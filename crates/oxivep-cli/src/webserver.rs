@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 
 const INDEX_HTML: &str = include_str!("../../../web/index.html");

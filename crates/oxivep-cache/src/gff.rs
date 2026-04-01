@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use oxivep_core::Strand;
 use oxivep_genome::{Exon, Gene, Transcript, Translation};
 use std::collections::HashMap;
@@ -418,6 +418,7 @@ struct GffGene {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct GffTranscript {
     id: String,
     parent_gene: String,
@@ -441,6 +442,7 @@ struct GffExon {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct GffCds {
     parent_transcript: String,
     protein_id: String,

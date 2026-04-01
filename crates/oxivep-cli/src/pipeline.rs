@@ -3,7 +3,7 @@ use oxivep_cache::fasta::FastaReader;
 use oxivep_cache::gff::parse_gff3;
 use oxivep_cache::providers::{FastaSequenceProvider, MemoryTranscriptProvider, SequenceProvider, TranscriptProvider};
 use oxivep_consequence::ConsequencePredictor;
-use oxivep_core::{Allele, Consequence};
+use oxivep_core::Consequence;
 use oxivep_hgvs;
 use oxivep_io::output;
 use oxivep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};

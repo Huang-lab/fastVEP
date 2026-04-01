@@ -2,3 +2,4 @@ ensembl-vep/
 target/
 benchmarks/
 manuscript/
+.DS_Store

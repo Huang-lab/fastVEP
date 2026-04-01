@@ -128,16 +128,12 @@ impl ConsequencePredictor {
         let tr_end = transcript.end;
 
         let mut consequences = Vec::new();
-        let mut cdna_start = None;
-        let mut cdna_end = None;
         let mut cds_start = None;
         let mut cds_end = None;
         let mut protein_start = None;
         let mut protein_end = None;
         let mut amino_acids = None;
         let mut codons = None;
-        let mut exon_info = None;
-        let mut intron_info = None;
         let mut distance = None;
 
         // 1. Check if variant overlaps the transcript at all
@@ -188,12 +184,12 @@ impl ConsequencePredictor {
         }
 
         // 2. Map to cDNA coordinates
-        cdna_start = transcript.genomic_to_cdna(var_start);
-        cdna_end = transcript.genomic_to_cdna(var_end);
+        let cdna_start = transcript.genomic_to_cdna(var_start);
+        let cdna_end = transcript.genomic_to_cdna(var_end);
 
         // 3. Determine exon/intron location
-        exon_info = transcript.exon_at(var_start).map(|(i, t)| (i as u32 + 1, t as u32));
-        intron_info = transcript.intron_at(var_start).map(|(i, t)| (i as u32 + 1, t as u32));
+        let exon_info = transcript.exon_at(var_start).map(|(i, t)| (i as u32 + 1, t as u32));
+        let intron_info = transcript.intron_at(var_start).map(|(i, t)| (i as u32 + 1, t as u32));
 
         let in_exon = exon_info.is_some();
         let in_intron = intron_info.is_some();

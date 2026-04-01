@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::Path;
 
 /// Indexed FASTA reader for reference sequence access.
 ///
