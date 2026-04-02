@@ -113,8 +113,9 @@ pub fn hgvsp_frameshift(
     let alt_aa3 = aa_one_to_three(alt_aa);
 
     // Find the new stop codon position in the alt sequence.
-    // Skip if the sequence is mostly N/X (unresolved) — can't determine real ProfsTer.
+    // If the sequence contains unresolved (X) amino acids, use Ter? to indicate uncertainty.
     let mut stop_dist = None;
+    let mut hit_unresolved = false;
     let unresolved_count = alt_peptide[first_changed_offset..].iter()
         .take(10)
         .filter(|&&aa| aa == b'X')
@@ -126,12 +127,22 @@ pub fn hgvsp_frameshift(
                 stop_dist = Some(i - first_changed_offset + 1);
                 break;
             }
+            if alt_peptide[i] == b'X' {
+                hit_unresolved = true;
+            }
         }
+    } else {
+        hit_unresolved = true;
     }
 
-    match stop_dist {
-        Some(d) => Some(format!("{}{}{}{}fsTer{}", prefix, ref_aa3, first_changed_pos, alt_aa3, d)),
-        None => Some(format!("{}{}{}{}fs", prefix, ref_aa3, first_changed_pos, alt_aa3)),
+    if let Some(d) = stop_dist {
+        Some(format!("{}{}{}{}fsTer{}", prefix, ref_aa3, first_changed_pos, alt_aa3, d))
+    } else if hit_unresolved || mostly_unresolved {
+        // Sequence has unresolved regions - can't determine stop position
+        Some(format!("{}{}{}{}fsTer?", prefix, ref_aa3, first_changed_pos, alt_aa3))
+    } else {
+        // No stop found and sequence is clean - true extension
+        Some(format!("{}{}{}{}fsTer?", prefix, ref_aa3, first_changed_pos, alt_aa3))
     }
 }
 

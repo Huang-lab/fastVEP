@@ -295,10 +295,73 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                     } else if ac.intron.is_some() {
                                         // Intronic variant: offset notation
                                         // Note: intronic HGVS uses original coding_start (no phase adjustment)
-                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(vf.position.start) {
+                                        // Apply HGVS 3' normalization for intronic indels
+                                        let (shifted_start, shifted_end) = if let Some(ref sp) = seq_provider {
+                                            let is_indel = matches!((&hgvs_ref, &hgvs_alt),
+                                                (Allele::Sequence(_), Allele::Deletion) |
+                                                (Allele::Deletion, Allele::Sequence(_)));
+                                            if is_indel {
+                                                if let Some((istart, iend)) = tr.intron_bounds_at(vf.position.start) {
+                                                    // Use genomic-strand alleles for ref comparison
+                                                    three_prime_shift_intronic(
+                                                        sp as &dyn SequenceProvider, chrom,
+                                                        vf.position.start, vf.position.end,
+                                                        &vf.ref_allele, &ac.allele,
+                                                        tr.strand, istart, iend,
+                                                    )
+                                                } else {
+                                                    (vf.position.start, vf.position.end)
+                                                }
+                                            } else {
+                                                (vf.position.start, vf.position.end)
+                                            }
+                                        } else {
+                                            (vf.position.start, vf.position.end)
+                                        };
+                                        // For insertions, build the rotated insertion bases
+                                        // after 3' shifting (bases rotate as position shifts)
+                                        let shifted_hgvs_alt = if let (Allele::Deletion, Allele::Sequence(ins_bases)) = (&hgvs_ref, &hgvs_alt) {
+                                            if shifted_start != vf.position.start && !ins_bases.is_empty() {
+                                                // Calculate how many positions we shifted
+                                                let shift_amount = if tr.strand == oxivep_core::Strand::Forward {
+                                                    (shifted_start as i64 - vf.position.start as i64) as usize
+                                                } else {
+                                                    (vf.position.start as i64 - shifted_start as i64) as usize
+                                                };
+                                                // Rotate: for forward strand, each shift moves first base to end
+                                                // For reverse strand, each shift moves last base to front
+                                                let mut rotated = ins_bases.clone();
+                                                let len = rotated.len();
+                                                if len > 0 {
+                                                    let effective_shift = shift_amount % len;
+                                                    match tr.strand {
+                                                        oxivep_core::Strand::Forward => {
+                                                            rotated.rotate_left(effective_shift);
+                                                        }
+                                                        oxivep_core::Strand::Reverse => {
+                                                            rotated.rotate_right(effective_shift);
+                                                        }
+                                                    }
+                                                }
+                                                Allele::Sequence(rotated)
+                                            } else {
+                                                hgvs_alt.clone()
+                                            }
+                                        } else {
+                                            hgvs_alt.clone()
+                                        };
+
+                                        // For insertions, use position before insertion
+                                        // for the primary HGVS coordinate (ins is BETWEEN two bases)
+                                        let hgvs_pos = if matches!((&hgvs_ref, &shifted_hgvs_alt), (Allele::Deletion, Allele::Sequence(_))) {
+                                            shifted_end // base before insertion
+                                        } else {
+                                            shifted_start
+                                        };
+                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(hgvs_pos) {
                                             // For multi-base variants, compute end position too
-                                            let (end_cdna, end_offset) = if vf.position.start != vf.position.end {
-                                                tr.genomic_to_intronic_cdna(vf.position.end)
+                                            let (end_cdna, end_offset) = if shifted_start != shifted_end && hgvs_pos == shifted_start {
+                                                tr.genomic_to_intronic_cdna(shifted_end)
                                                     .map(|(c, o)| (Some(c), Some(o)))
                                                     .unwrap_or((None, None))
                                             } else {
@@ -311,20 +374,15 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                                 end_cdna,
                                                 end_offset,
                                                 &hgvs_ref,
-                                                &hgvs_alt,
+                                                &shifted_hgvs_alt,
                                                 coding_start,
                                                 tr.cdna_coding_end,
                                             );
                                             // For intronic insertions, check if it's a dup.
-                                            // A dup occurs when the inserted bases match the
-                                            // immediately preceding OR following reference sequence.
-                                            // We use the original (non-complemented) alt allele for
-                                            // comparison since we're checking against genomic ref.
                                             if let (Some(ref h), Allele::Deletion, Allele::Sequence(_)) =
                                                 (&hgvsc, &hgvs_ref, &hgvs_alt)
                                             {
                                                 if h.contains("ins") {
-                                                    // Get the original (genomic-strand) insertion bases
                                                     let orig_ins = match &ac.allele {
                                                         Allele::Sequence(b) => b.clone(),
                                                         _ => vec![],
@@ -332,7 +390,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                                     if !orig_ins.is_empty() {
                                                         if let Some(ref sp) = seq_provider {
                                                             let ins_len = orig_ins.len() as u64;
-                                                            // Check if insertion duplicates the preceding bases
+                                                            // Check dup_before: base(s) before insertion match
                                                             let check_end = vf.position.end;
                                                             let check_start = check_end.saturating_sub(ins_len - 1);
                                                             let dup_before = if let Ok(ref_seq) = sp.fetch_sequence(chrom, check_start, check_end) {
@@ -340,18 +398,42 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                                                     && ref_seq.iter().zip(orig_ins.iter())
                                                                         .all(|(a, b)| a.to_ascii_uppercase() == b.to_ascii_uppercase())
                                                             } else { false };
-                                                            // Check if insertion duplicates the following bases
+                                                            // Check dup_after: base(s) after insertion match
                                                             let dup_after = if !dup_before {
-                                                                let check_start = vf.position.start;
-                                                                let check_end = check_start + ins_len - 1;
-                                                                if let Ok(ref_seq) = sp.fetch_sequence(chrom, check_start, check_end) {
+                                                                let cs = vf.position.start;
+                                                                let ce = cs + ins_len - 1;
+                                                                if let Ok(ref_seq) = sp.fetch_sequence(chrom, cs, ce) {
                                                                     ref_seq.len() == orig_ins.len()
                                                                         && ref_seq.iter().zip(orig_ins.iter())
                                                                             .all(|(a, b)| a.to_ascii_uppercase() == b.to_ascii_uppercase())
                                                                 } else { false }
                                                             } else { false };
                                                             if dup_before || dup_after {
-                                                                hgvsc = convert_ins_to_dup(h, offset, ins_len, cdna_pos, coding_start, tr.cdna_coding_end);
+                                                                // For dups, determine the dup base position and 3' shift it
+                                                                let dup_base_pos = if dup_before {
+                                                                    // Dup base is before insertion: position.end
+                                                                    vf.position.end
+                                                                } else {
+                                                                    // Dup base is after insertion: position.start
+                                                                    vf.position.start
+                                                                };
+                                                                // 3' shift the dup position within the intron
+                                                                let shifted_dup = if let Some((istart, iend)) = tr.intron_bounds_at(dup_base_pos) {
+                                                                    let (sd, _) = three_prime_shift_intronic(
+                                                                        sp as &dyn SequenceProvider, chrom,
+                                                                        dup_base_pos, dup_base_pos,
+                                                                        &Allele::Sequence(orig_ins.clone()), &Allele::Deletion,
+                                                                        tr.strand, istart, iend,
+                                                                    );
+                                                                    sd
+                                                                } else {
+                                                                    dup_base_pos
+                                                                };
+                                                                // For multi-base dups, the end of the dup region
+                                                                let shifted_dup_end = shifted_dup + ins_len - 1;
+                                                                if let Some((dup_cdna, dup_offset)) = tr.genomic_to_intronic_cdna(shifted_dup_end) {
+                                                                    hgvsc = convert_ins_to_dup(h, dup_offset, ins_len, dup_cdna, coding_start, tr.cdna_coding_end);
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -370,10 +452,57 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                             &hgvs_alt,
                                         );
                                     } else if ac.intron.is_some() {
-                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(vf.position.start) {
-                                            // For multi-base variants, compute end position
-                                            let (end_cdna, end_offset) = if vf.position.start != vf.position.end {
-                                                tr.genomic_to_intronic_cdna(vf.position.end)
+                                        // Apply 3' normalization for non-coding intronic indels
+                                        let (nc_shifted_start, nc_shifted_end) = if let Some(ref sp) = seq_provider {
+                                            let is_indel = matches!((&hgvs_ref, &hgvs_alt),
+                                                (Allele::Sequence(_), Allele::Deletion) |
+                                                (Allele::Deletion, Allele::Sequence(_)));
+                                            if is_indel {
+                                                if let Some((istart, iend)) = tr.intron_bounds_at(vf.position.start) {
+                                                    three_prime_shift_intronic(
+                                                        sp as &dyn SequenceProvider, chrom,
+                                                        vf.position.start, vf.position.end,
+                                                        &vf.ref_allele, &ac.allele,
+                                                        tr.strand, istart, iend,
+                                                    )
+                                                } else {
+                                                    (vf.position.start, vf.position.end)
+                                                }
+                                            } else {
+                                                (vf.position.start, vf.position.end)
+                                            }
+                                        } else {
+                                            (vf.position.start, vf.position.end)
+                                        };
+
+                                        // Rotate insertion bases for non-coding
+                                        let nc_shifted_hgvs_alt = if let (Allele::Deletion, Allele::Sequence(ins_bases)) = (&hgvs_ref, &hgvs_alt) {
+                                            if nc_shifted_start != vf.position.start && !ins_bases.is_empty() {
+                                                let shift_amount = if tr.strand == oxivep_core::Strand::Forward {
+                                                    (nc_shifted_start as i64 - vf.position.start as i64) as usize
+                                                } else {
+                                                    (vf.position.start as i64 - nc_shifted_start as i64) as usize
+                                                };
+                                                let mut rotated = ins_bases.clone();
+                                                let len = rotated.len();
+                                                if len > 0 {
+                                                    let effective_shift = shift_amount % len;
+                                                    match tr.strand {
+                                                        oxivep_core::Strand::Forward => rotated.rotate_left(effective_shift),
+                                                        oxivep_core::Strand::Reverse => rotated.rotate_right(effective_shift),
+                                                    }
+                                                }
+                                                Allele::Sequence(rotated)
+                                            } else {
+                                                hgvs_alt.clone()
+                                            }
+                                        } else {
+                                            hgvs_alt.clone()
+                                        };
+
+                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(nc_shifted_start) {
+                                            let (end_cdna, end_offset) = if nc_shifted_start != nc_shifted_end {
+                                                tr.genomic_to_intronic_cdna(nc_shifted_end)
                                                     .map(|(c, o)| (Some(c), Some(o)))
                                                     .unwrap_or((None, None))
                                             } else {
@@ -386,7 +515,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                                 end_cdna,
                                                 end_offset,
                                                 &hgvs_ref,
-                                                &hgvs_alt,
+                                                &nc_shifted_hgvs_alt,
                                             );
                                             // Dup detection for non-coding intronic insertions
                                             if let (Some(ref h), Allele::Deletion, Allele::Sequence(_)) =
@@ -417,7 +546,22 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                                                 } else { false }
                                                             } else { false };
                                                             if dup_before || dup_after {
-                                                                hgvsc = convert_ins_to_dup_noncoding(h, offset, ins_len, cdna_pos);
+                                                                let dup_base_pos = if dup_before { vf.position.end } else { vf.position.start };
+                                                                let shifted_dup = if let Some((istart, iend)) = tr.intron_bounds_at(dup_base_pos) {
+                                                                    let (sd, _) = three_prime_shift_intronic(
+                                                                        sp as &dyn SequenceProvider, chrom,
+                                                                        dup_base_pos, dup_base_pos,
+                                                                        &Allele::Sequence(orig_ins.clone()), &Allele::Deletion,
+                                                                        tr.strand, istart, iend,
+                                                                    );
+                                                                    sd
+                                                                } else {
+                                                                    dup_base_pos
+                                                                };
+                                                                let shifted_dup_end = shifted_dup + ins_len - 1;
+                                                                if let Some((dup_cdna, dup_offset)) = tr.genomic_to_intronic_cdna(shifted_dup_end) {
+                                                                    hgvsc = convert_ins_to_dup_noncoding(h, dup_offset, ins_len, dup_cdna);
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -633,6 +777,138 @@ fn convert_ins_to_dup_noncoding(
         let start_offset = intron_offset - ins_len as i64 + 1;
         let start_pos = build_pos(start_offset);
         Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
+    }
+}
+
+/// 3' shift an intronic indel along the transcript direction.
+///
+/// HGVS requires variants to be described at the most 3' position.
+/// For intronic deletions and insertions/dups in repetitive regions,
+/// the position must be shifted toward the 3' end of the transcript.
+///
+/// Returns the shifted genomic start and end positions.
+fn three_prime_shift_intronic(
+    seq_provider: &dyn SequenceProvider,
+    chrom: &str,
+    start: u64,
+    end: u64,
+    ref_allele: &oxivep_core::Allele,
+    alt_allele: &oxivep_core::Allele,
+    strand: oxivep_core::Strand,
+    intron_genomic_start: u64,
+    intron_genomic_end: u64,
+) -> (u64, u64) {
+    use oxivep_core::Allele;
+
+    match (ref_allele, alt_allele) {
+        // Deletion: shift the deleted bases toward 3' end
+        (Allele::Sequence(ref_bases), Allele::Deletion) if !ref_bases.is_empty() => {
+            let del_len = ref_bases.len() as u64;
+            let mut s = start;
+            let mut e = end;
+
+            match strand {
+                oxivep_core::Strand::Forward => {
+                    // 3' is toward higher genomic coords
+                    // Shift while base after deletion matches first deleted base
+                    loop {
+                        let next_pos = e + 1;
+                        if next_pos > intron_genomic_end { break; }
+                        // Get the base after the current deletion end
+                        let next_base = match seq_provider.fetch_sequence(chrom, next_pos, next_pos) {
+                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                            _ => break,
+                        };
+                        // Get the first deleted base
+                        let first_base = match seq_provider.fetch_sequence(chrom, s, s) {
+                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                            _ => break,
+                        };
+                        if next_base == first_base {
+                            s += 1;
+                            e += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                oxivep_core::Strand::Reverse => {
+                    // 3' is toward lower genomic coords
+                    loop {
+                        if s == 0 || s - 1 < intron_genomic_start { break; }
+                        let prev_pos = s - 1;
+                        let prev_base = match seq_provider.fetch_sequence(chrom, prev_pos, prev_pos) {
+                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                            _ => break,
+                        };
+                        let last_base = match seq_provider.fetch_sequence(chrom, e, e) {
+                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                            _ => break,
+                        };
+                        if prev_base == last_base {
+                            s -= 1;
+                            e -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            (s, e)
+        }
+        // Insertion/dup: shift toward 3' end using the actual inserted bases
+        (Allele::Deletion, Allele::Sequence(ins_bases)) if !ins_bases.is_empty() => {
+            let ins_len = ins_bases.len();
+            let mut pos = start;
+            // Use the actual inserted bases (genomic strand) for comparison.
+            // ins_bases here are on the genomic strand since they come from VCF normalization.
+            let genomic_ins: Vec<u8> = ins_bases.iter().map(|b| b.to_ascii_uppercase()).collect();
+
+            match strand {
+                oxivep_core::Strand::Forward => {
+                    // 3' is toward higher genomic coords
+                    // Compare base at position with cycling insertion bases
+                    let mut shift_count = 0u64;
+                    loop {
+                        if pos > intron_genomic_end { break; }
+                        let check_base = match seq_provider.fetch_sequence(chrom, pos, pos) {
+                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                            _ => break,
+                        };
+                        let idx = (shift_count as usize) % ins_len;
+                        if check_base == genomic_ins[idx] {
+                            pos += 1;
+                            shift_count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                oxivep_core::Strand::Reverse => {
+                    // 3' is toward lower genomic coords
+                    // Compare base before position with cycling insertion bases (from end)
+                    let mut shift_count = 0u64;
+                    loop {
+                        if pos == 0 || pos - 1 < intron_genomic_start { break; }
+                        let check_pos = pos - 1;
+                        let check_base = match seq_provider.fetch_sequence(chrom, check_pos, check_pos) {
+                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                            _ => break,
+                        };
+                        // Compare from end of insertion, cycling backwards
+                        let idx = ins_len - 1 - (shift_count as usize % ins_len);
+                        if check_base == genomic_ins[idx] {
+                            pos -= 1;
+                            shift_count += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            (pos, pos.saturating_sub(1))
+        }
+        _ => (start, end),
     }
 }
 

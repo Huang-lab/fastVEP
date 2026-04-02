@@ -189,7 +189,10 @@ impl ConsequencePredictor {
         let cdna_end = transcript.genomic_to_cdna(var_end);
 
         // 3. Determine exon/intron location
-        let exon_info = transcript.exon_at(var_start).map(|(i, t)| (i as u32 + 1, t as u32));
+        // Use range-based overlap for exon detection to handle large indels
+        let exon_info = transcript.exon_at(var_start)
+            .or_else(|| transcript.exon_overlapping(var_start, var_end))
+            .map(|(i, t)| (i as u32 + 1, t as u32));
         let intron_info = transcript.intron_at(var_start).map(|(i, t)| (i as u32 + 1, t as u32));
 
         let in_exon = exon_info.is_some();
@@ -213,8 +216,7 @@ impl ConsequencePredictor {
             let is_donor_region = splice::is_splice_donor_region(transcript, var_start);
             if is_donor_5th {
                 consequences.push(Consequence::SpliceDonorFifthBaseVariant);
-            }
-            if is_donor_region {
+            } else if is_donor_region {
                 consequences.push(Consequence::SpliceDonorRegionVariant);
             }
             if splice::is_splice_polypyrimidine_tract(transcript, var_start) {
@@ -540,8 +542,24 @@ impl ConsequencePredictor {
             };
 
             // For frameshifts, alt amino acid is always X (unknown/frameshift)
-            let aa_pair = Some((ref_aa_str, "X".to_string()));
-            let codon_pair = Some((ref_codon_display, alt_codon_display));
+            // For pure insertions, VEP uses "-" for ref amino acid/codon
+            // and only the inserted bases for alt codon
+            let (fs_ref_aa, fs_ref_codon, fs_alt_codon) = if *ref_allele == Allele::Deletion {
+                let ins_codon = if let Allele::Sequence(ins_bases) = alt_allele {
+                    let mut bases = ins_bases.clone();
+                    if transcript.strand == Strand::Reverse {
+                        bases = bases.iter().map(|&b| complement(b)).collect();
+                    }
+                    bases.iter().map(|&b| (b as char).to_ascii_uppercase()).collect::<String>()
+                } else {
+                    alt_codon_display
+                };
+                ("-".to_string(), "-".to_string(), ins_codon)
+            } else {
+                (ref_aa_str, ref_codon_display, alt_codon_display)
+            };
+            let aa_pair = Some((fs_ref_aa, "X".to_string()));
+            let codon_pair = Some((fs_ref_codon, fs_alt_codon));
             (aa_pair, codon_pair)
         } else {
             // In-frame indel: show affected amino acids

@@ -207,6 +207,19 @@ impl Transcript {
         None
     }
 
+    /// Check if a genomic range [start, end] overlaps any exon.
+    /// Returns the first overlapping exon info, or None.
+    pub fn exon_overlapping(&self, range_start: u64, range_end: u64) -> Option<(usize, usize)> {
+        let (start, end) = (range_start.min(range_end), range_start.max(range_end));
+        let sorted = self.sorted_exons();
+        for (i, exon) in sorted.iter().enumerate() {
+            if start <= exon.end && end >= exon.start {
+                return Some((i, sorted.len()));
+            }
+        }
+        None
+    }
+
     /// Map a genomic position in an intron to HGVSc offset notation.
     ///
     /// Returns `(nearest_exon_boundary_cdna_pos, signed_offset)`:
@@ -253,6 +266,23 @@ impl Transcript {
                     let acceptor_cdna = self.genomic_to_cdna(acceptor_genomic)?;
                     return Some((acceptor_cdna, -(dist_from_acceptor as i64)));
                 }
+            }
+        }
+        None
+    }
+
+    /// Get the genomic boundaries (start, end) of the intron containing the given position.
+    /// Returns None if the position is not in an intron.
+    pub fn intron_bounds_at(&self, genomic_pos: u64) -> Option<(u64, u64)> {
+        let sorted = self.sorted_exons();
+        let n_introns = sorted.len().saturating_sub(1);
+        for i in 0..n_introns {
+            let (intron_start, intron_end) = match self.strand {
+                Strand::Forward => (sorted[i].end + 1, sorted[i + 1].start - 1),
+                Strand::Reverse => (sorted[i + 1].end + 1, sorted[i].start - 1),
+            };
+            if genomic_pos >= intron_start && genomic_pos <= intron_end {
+                return Some((intron_start, intron_end));
             }
         }
         None
