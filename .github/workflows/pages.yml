@@ -28,6 +28,8 @@ jobs:
       - name: Sync web to docs
         run: cp web/index.html docs/index.html
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs
