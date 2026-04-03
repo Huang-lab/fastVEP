@@ -91,7 +91,11 @@ The consequence prediction engine is the computational core of OxiVEP, implement
    - Identifying frameshift vs. in-frame indels based on whether the length change is divisible by three
    - For frameshifts, scanning the altered reading frame to determine the new termination codon position
 
-5. **Assigns the most severe consequence** across all transcripts for summary reporting.
+5. **Handles non-coding transcripts** by assigning `non_coding_transcript_exon_variant` for exonic positions and `non_coding_transcript_variant` (combined with `intron_variant` where applicable) for intronic positions, bypassing the coding consequence pathway entirely.
+
+6. **Appends the `NMD_transcript_variant` modifier** for any transcript annotated with the `nonsense_mediated_decay` biotype, regardless of the primary consequence. This modifier is added after all other consequence terms and before deduplication, matching Ensembl VEP's behavior of flagging variants in transcripts predicted to undergo nonsense-mediated mRNA decay.
+
+7. **Assigns the most severe consequence** across all transcripts for summary reporting.
 
 ### 2.5 HGVS Nomenclature
 
@@ -101,13 +105,15 @@ OxiVEP generates HGVS nomenclature following the Human Genome Variation Society 
 - **HGVSc** (coding DNA): `ENST00000001:c.51A>G`, `ENST00000001:c.4_6del`
 - **HGVSp** (protein): `ENSP00000001:p.Arg41Lys`, `ENSP00000001:p.Arg41Ter`, `ENSP00000001:p.Ala527ProfsTer48`
 
-Notation types include substitutions, deletions, insertions, deletion-insertions (delins), duplications, frameshifts with termination position, and extensions.
+Notation types include substitutions, deletions, insertions, deletion-insertions (delins), duplications, frameshifts with termination position, stop-lost extensions (`p.Ter100ext*?`), and synonymous variants (`p.Arg41=`).
+
+For frameshift variants, the `hgvsp_frameshift` function constructs both the reference and alternative translateable sequences from the CDS start through the 3' UTR, applies the indel to produce the frameshifted coding sequence, and then translates both in parallel. It identifies the first amino acid position where the reference and alternative peptides diverge, then scans the alternative peptide downstream to locate the new termination codon. The resulting notation follows the format `p.Ala498ProfsTer28`, indicating the first changed residue (Ala498), the new amino acid at that position (Pro), and the distance to the new stop codon (Ter28). When the frameshifted sequence contains unresolved regions (e.g., due to incomplete 3' UTR coverage), the function reports `fsTer?` to indicate an indeterminate termination position.
 
 ### 2.6 Output Formats
 
 OxiVEP supports three output formats:
 
-1. **VCF output** adds a `CSQ` INFO field with 47 pipe-delimited annotation fields matching Ensembl VEP's extended format, including: Allele, Consequence, IMPACT, SYMBOL, Gene, Feature, BIOTYPE, EXON, INTRON, HGVSc, HGVSp, cDNA/CDS/Protein positions, Amino_acids, Codons, CANONICAL, SYMBOL_SOURCE, HGNC_ID, MANE, TSL, APPRIS, CCDS, ENSP, SOURCE, HGVS_OFFSET, SIFT, PolyPhen, AF, CLIN_SIG, SOMATIC, PHENO, and PUBMED. Special characters are escaped following VEP conventions: commas -> `&`, semicolons -> `%3B`, pipes -> `&`.
+1. **VCF output** adds a `CSQ` INFO field with 47 pipe-delimited annotation fields matching Ensembl VEP's extended format: Allele, Consequence, IMPACT, SYMBOL, Gene, Feature_type, Feature, BIOTYPE, EXON, INTRON, HGVSc, HGVSp, cDNA_position, CDS_position, Protein_position, Amino_acids, Codons, Existing_variation, REF_ALLELE, UPLOADED_ALLELE, DISTANCE, STRAND, FLAGS, CANONICAL, SYMBOL_SOURCE, HGNC_ID, MANE, MANE_SELECT, MANE_PLUS_CLINICAL, TSL, APPRIS, CCDS, ENSP, SOURCE, HGVS_OFFSET, SIFT, PolyPhen, AF, CLIN_SIG, SOMATIC, PHENO, PUBMED, MOTIF_NAME, MOTIF_POS, HIGH_INF_POS, MOTIF_SCORE_CHANGE, and TRANSCRIPTION_FACTORS. Special characters are escaped following VEP conventions: commas -> `&`, semicolons -> `%3B`, pipes -> `&`.
 
 2. **Tab-delimited output** produces one line per variant-allele-transcript combination with 17 default columns matching the VEP default output format.
 
@@ -119,9 +125,9 @@ OxiVEP uses a trait-based provider architecture for annotation sources:
 
 - `TranscriptProvider`: Returns transcripts overlapping a genomic region. The current implementation loads all transcripts from a GFF3 file into an in-memory store with interval-based lookup.
 - `SequenceProvider`: Provides reference sequences for regions. Implemented via `FastaSequenceProvider` with both in-memory and indexed FASTA support.
-- `VariationProvider`: Looks up known variants via tabix-indexed VEP cache files, providing dbSNP IDs, allele frequencies, clinical significance, and SIFT/PolyPhen predictions.
+- `VariationProvider`: Looks up co-located known variants via tabix-indexed VEP cache files (`all_vars.gz` per chromosome). The `TabixVariationProvider` implementation performs allele-aware matching that accounts for multi-allelic sites, strand orientation (with automatic reverse-complement matching for minus-strand records), and VCF-to-Ensembl deletion marker normalization. For each matched variant, the provider extracts the dbSNP identifier, allele-specific population frequencies (gnomAD, 1000 Genomes continental populations), minor allele frequency, clinical significance, somatic status, phenotype/disease associations, and PubMed references. These annotations populate the `Existing_variation`, `AF`, `CLIN_SIG`, `SOMATIC`, `PHENO`, and `PUBMED` CSQ output fields.
 
-This trait-based design allows transparent substitution of annotation sources -- for example, replacing the GFF3 provider with a binary cache reader -- without modifying the prediction engine.
+This trait-based design allows transparent substitution of annotation sources -- for example, replacing the GFF3 provider with a binary cache reader or the tabix variation provider with a database-backed implementation -- without modifying the prediction engine.
 
 ### 2.8 Web Interface
 
