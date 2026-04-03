@@ -24,7 +24,7 @@ The Ensembl Variant Effect Predictor (VEP) has become the de facto standard tool
 
 However, VEP's implementation in Perl presents several limitations in the era of large-scale genomics. The Perl runtime introduces substantial memory overhead (typically 500 MB or more), slow startup times due to module loading, and single-threaded performance that limits throughput to hundreds of variants per second in offline mode. These limitations become increasingly problematic as variant call sets grow to millions of entries in population-scale studies (Taliun et al., 2021) and clinical laboratories require rapid turnaround times.
 
-Several alternative tools have been developed to address performance concerns, including SnpEff (Cingolani et al., 2012), ANNOVAR (Wang et al., 2010), and Nirvana (Stromberg et al., 2024). However, these tools make different trade-offs in terms of annotation completeness, SO term coverage, and compatibility with the VEP ecosystem.
+Several alternative tools have been developed to address performance concerns, including SnpEff (Cingolani et al., 2012), ANNOVAR (Wang et al., 2010), Nirvana (Stromberg et al., 2024), and echtvar (Pedersen, 2023). Of these, echtvar demonstrated that Rust's systems-level performance combined with compact integer encoding and binary search strategies can achieve million-variant-per-second annotation speeds for population frequency lookups. However, these tools make different trade-offs in terms of annotation completeness, SO term coverage, and compatibility with the VEP ecosystem.
 
 Here we present OxiVEP, a complete reimplementation of the VEP variant consequence prediction engine in Rust (Matsakis & Klock, 2014). Rust is a systems programming language that guarantees memory safety without garbage collection, enabling both the performance of C/C++ and the safety of managed languages. OxiVEP achieves throughputs exceeding 118,000 variants per second while maintaining 100% annotation accuracy against Ensembl VEP across 23 validated fields, ships as a dependency-free static binary, and includes a built-in web interface for interactive use.
 
@@ -123,7 +123,7 @@ OxiVEP supports three output formats:
 
 OxiVEP uses a trait-based provider architecture for annotation sources:
 
-- `TranscriptProvider`: Returns transcripts overlapping a genomic region. The current implementation loads all transcripts from a GFF3 file into an in-memory store with interval-based lookup.
+- `TranscriptProvider`: Returns transcripts overlapping a genomic region. The `IndexedTranscriptProvider` implementation groups transcripts by chromosome into sorted arrays and uses binary search (`partition_point`) for O(log n + k) overlap queries, where n is the number of transcripts on the chromosome and k is the number of overlapping results. This approach, inspired by echtvar's chunked binary search strategy (Pedersen, 2023), replaces naive linear scans and is critical for performance when annotating against large gene models (e.g., 11,605 transcripts for chromosome 22).
 - `SequenceProvider`: Provides reference sequences for regions. Implemented via `FastaSequenceProvider` with both in-memory and indexed FASTA support.
 - `VariationProvider`: Looks up co-located known variants via tabix-indexed VEP cache files (`all_vars.gz` per chromosome). The `TabixVariationProvider` implementation performs allele-aware matching that accounts for multi-allelic sites, strand orientation (with automatic reverse-complement matching for minus-strand records), and VCF-to-Ensembl deletion marker normalization. For each matched variant, the provider extracts the dbSNP identifier, allele-specific population frequencies (gnomAD, 1000 Genomes continental populations), minor allele frequency, clinical significance, somatic status, phenotype/disease associations, and PubMed references. These annotations populate the `Existing_variation`, `AF`, `CLIN_SIG`, `SOMATIC`, `PHENO`, and `PUBMED` CSQ output fields.
 
@@ -347,7 +347,9 @@ Several design decisions in OxiVEP's architecture merit discussion:
 
 **Modular crate structure.** The eight-crate workspace allows independent compilation and testing of components, improving development velocity and code quality. The trait-based provider architecture (`TranscriptProvider`, `SequenceProvider`, `VariationProvider`) enables transparent substitution of data sources without modifying the prediction engine.
 
-**GFF3 as primary annotation source.** Unlike Ensembl VEP, which relies on pre-built caches in Perl's Storable/Sereal serialization format, OxiVEP uses standard GFF3 files as its primary transcript source. This eliminates the dependency on Perl-specific serialization and leverages a widely supported standard format. The trade-off is startup time for loading GFF3 files (~12 seconds for full chromosome annotations), which can be mitigated by implementing a native binary cache format in future versions.
+**Indexed transcript lookup.** OxiVEP's transcript overlap queries use per-chromosome sorted arrays with binary search, inspired by the chunked binary search strategy employed in echtvar (Pedersen, 2023) for fast variant-to-annotation matching. This achieves O(log n + k) query complexity compared to the O(n) linear scan used in naive implementations, which is essential when annotating against large gene models containing tens of thousands of transcripts per chromosome.
+
+**GFF3 as primary annotation source.** Unlike Ensembl VEP, which relies on pre-built caches in Perl's Storable/Sereal serialization format, OxiVEP uses standard GFF3 files as its primary transcript source. This eliminates the dependency on Perl-specific serialization and leverages a widely supported standard format. The trade-off is startup time for loading GFF3 files (~12 seconds for full chromosome annotations), which can be mitigated by implementing a native binary cache format -- potentially using echtvar-style integer compression and ZIP-based chunked storage -- in future versions.
 
 **47-field CSQ output.** OxiVEP outputs 47 annotation fields in its CSQ format, exceeding VEP's default 30-field output. The additional fields (CANONICAL, CCDS, ENSP, MANE, MANE_SELECT, MANE_PLUS_CLINICAL, SIFT, PolyPhen, AF, CLIN_SIG, SOMATIC, PHENO, PUBMED, HGVS_OFFSET, and regulatory motif fields) provide comprehensive downstream analysis data in a single annotation pass.
 
@@ -424,6 +426,8 @@ Karczewski, K. J., Francioli, L. C., Tiao, G., Cummings, B. B., Alfoldi, J., Wan
 Matsakis, N. D., & Klock, F. S. (2014). The Rust language. *ACM SIGAda Ada Letters*, 34(3), 103-104.
 
 McLaren, W., Gil, L., Hunt, S. E., Riat, H. S., Ritchie, G. R., Thormann, A., ... & Cunningham, F. (2016). The Ensembl Variant Effect Predictor. *Genome Biology*, 17(1), 122.
+
+Pedersen, B. S. (2023). echtvar: compressed variant representation for rapid annotation and filtering. *GitHub*. https://github.com/brentp/echtvar
 
 Stromberg, M., et al. (2024). Nirvana: clinical-grade computational annotation of genomic variants. *Bioinformatics*, 40(3).
 
