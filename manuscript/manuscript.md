@@ -186,12 +186,14 @@ To assess real-world clinical utility, we benchmarked OxiVEP on the Genome in a 
 | Dataset | Build | Variants | Transcripts | OxiVEP | VEP v115 | Speedup |
 |---------|-------|----------|-------------|--------|----------|---------|
 | NA12878 chr22 | GRCh38 | 49,484 | 11,605 | **0.25s** | 83.0s | 332x |
-| NA12878 full WGS | GRCh38 | 3,893,341 | 508,530 | **10.2s** | est. ~6,500s | ~640x |
+| NA12878 full WGS | GRCh38 | 3,893,341 | 508,530 | **10.2s** | est. 6,530s^a^ | ~640x |
 | NA12878 chr22 | GRCh37 | 49,056 | 116,606 | **2.1s** | 33.1s | 16x |
+
+^a^ VEP full-WGS time extrapolated from measured chr22 throughput (596 v/s); VEP could not complete the full-genome GFF3 annotation run due to resource constraints.
 
 OxiVEP annotates a complete clinical WGS (3.89 million variants) against the full Ensembl GRCh38 gene model (508,530 transcripts) in **10.2 seconds** on a single core, using the binary transcript cache. For chromosome 22 alone, OxiVEP achieves a 332x speedup over Ensembl VEP (0.25 seconds vs. 83 seconds). The GRCh37 benchmark demonstrates backward compatibility with the previous genome build, with OxiVEP completing in 2.1 seconds compared to VEP's 33.1 seconds for 49,056 variants.
 
-These results demonstrate that OxiVEP can annotate a complete clinical WGS in under 11 seconds -- fast enough for real-time integration into clinical sequencing pipelines where variant annotation has traditionally been a multi-hour bottleneck.
+These results demonstrate that OxiVEP can annotate a complete clinical WGS in under 11 seconds -- fast enough for real-time integration into clinical sequencing pipelines where variant annotation has traditionally been a multi-hour bottleneck. Notably, Ensembl VEP was unable to complete the full-genome annotation using GFF3 mode due to the resource demands of loading 508,530 transcripts, highlighting OxiVEP's binary cache architecture as a practical advantage for genome-scale annotation.
 
 ### 3.3 Annotation Accuracy Against Ensembl VEP
 
