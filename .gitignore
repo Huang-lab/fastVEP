@@ -12,3 +12,7 @@ benchmarks/human_50k.vcf
 test_data/
 echtvar/
 tests/
+benchmarks/ensembl_chr22_full.vcf.gz
+benchmarks/ensembl_chr22_full.vcf.gz.tbi
+benchmarks/chr22.oxivep.cache
+benchmarks/real_chr22_500k.vcf

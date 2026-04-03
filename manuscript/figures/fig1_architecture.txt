@@ -1,23 +1,23 @@
 
     ┌─────────────────────────────────────────────────────────────────┐
     │                        oxivep-cli                               │
-    │              (CLI binary, pipeline, web server)                  │
+    │    (CLI binary, pipeline, cache builder, embedded web server)    │
     └──────┬──────────┬──────────┬──────────┬──────────┬─────────────┘
            │          │          │          │          │
     ┌──────▼──┐ ┌─────▼─────┐ ┌─▼────────┐ │   ┌──────▼──────┐
     │oxivep-io│ │oxivep-hgvs│ │oxivep-   │ │   │oxivep-filter│
     │(VCF I/O,│ │(HGVSg,    │ │consequen-│ │   │(filtering)  │
-    │ output) │ │ HGVSc,    │ │ce engine)│ │   └─────────────┘
-    └────┬────┘ │ HGVSp)    │ └──┬───────┘ │
-         │      └─────┬─────┘    │         │
-         │            │          │    ┌────▼─────┐
-    ┌────▼────────────▼──────────▼──┐ │oxivep-   │
-    │        oxivep-genome          │ │cache     │
-    │  (Transcript, Exon, Gene,     │ │(GFF3,    │
-    │   CodonTable, coord mapping)  │ │ FASTA,   │
-    └────────────┬──────────────────┘ │ info.txt)│
-                 │                    └────┬─────┘
-            ┌────▼────────────────────────▼──┐
+    │ 47-field│ │ HGVSc,    │ │ce engine)│ │   └─────────────┘
+    │  CSQ)   │ │ HGVSp)    │ └──┬───────┘ │
+    └────┬────┘ └─────┬─────┘    │         │
+         │            │          │    ┌────▼─────────┐
+    ┌────▼────────────▼──────────▼──┐ │oxivep-cache  │
+    │        oxivep-genome          │ │(GFF3, FASTA, │
+    │  (Transcript, Exon, Gene,     │ │ tabix, mmap, │
+    │   CodonTable, coord mapping)  │ │ binary cache)│
+    └────────────┬──────────────────┘ └────┬─────────┘
+                 │                         │
+            ┌────▼─────────────────────────▼──┐
             │          oxivep-core            │
             │  (GenomicPosition, Consequence, │
             │   Allele, Strand, Impact)       │

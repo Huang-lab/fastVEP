@@ -1,7 +1,8 @@
 metric,value,unit
 binary_size,2.9,MB
-startup_time,37.3,ms
-startup_with_gff3,40.6,ms
+startup_time_cached,219,ms
+startup_time_gff3_chr22,560,ms
+startup_time_gff3_chr17,450,ms
 peak_memory_1000v,2.3,MB
 peak_memory_10000v,2.5,MB
 peak_memory_100000v,2.8,MB

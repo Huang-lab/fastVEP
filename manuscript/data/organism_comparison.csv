@@ -1,6 +1,7 @@
-organism,genes,variants,time_sec,variants_per_sec
-human_synthetic,20,1000,0.0598,16732
-mouse_synthetic,10,500,0.0518,9660
-zebrafish_synthetic,8,300,0.0539,5567
-human_real_chr22,11605,173,12.97,13
-human_real_chr22_1kgp,11605,1000,12.84,78
+organism,transcripts,variants,time_sec,variants_per_sec
+human_chr22,11605,1000,0.219,4574
+human_chr22,11605,10000,0.233,42935
+human_chr22,11605,100000,0.363,275639
+human_chr22,11605,500000,6.692,74719
+mouse_chr19,7923,500,0.501,998
+zebrafish_chr5,2721,300,0.377,796
