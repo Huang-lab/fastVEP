@@ -1,5 +1,13 @@
 ensembl-vep/
 target/
-benchmarks/
 manuscript/
 .DS_Store
+
+# Benchmark outputs (inputs and scripts are tracked)
+benchmarks/output/
+benchmarks/*.gff3
+benchmarks/human_10k.vcf
+benchmarks/human_50k.vcf
+
+# Test data (large reference files)
+test_data/
