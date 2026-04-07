@@ -138,16 +138,19 @@ This trait-based design allows transparent substitution of annotation sources --
 
 ### 2.8 Web Interface
 
-OxiVEP includes a built-in web interface accessible via `oxivep web --port 8080`. The interface is a single-page application (1,305 lines of HTML/CSS/JavaScript) embedded directly in the binary using Rust's `include_str!` macro, requiring no external files or dependencies.
+OxiVEP includes a built-in web interface accessible via `oxivep web --gff3 <file> --fasta <file> --port 8080`. The interface is a single-page application (~1,750 lines of HTML/CSS/JavaScript) embedded directly in the binary using Rust's `include_str!` macro, requiring no external files or dependencies.
+
+The web interface operates in two modes. When served by the OxiVEP binary (`oxivep web`), annotation requests are handled by the Rust backend via a REST API (`POST /api/annotate`), providing the same performance and accuracy as the CLI. Users can upload custom GFF3 files through the browser, which are parsed server-side by the Rust GFF3 parser (`POST /api/upload-gff3`), avoiding the latency of client-side parsing for large annotation files. When deployed as a static page (e.g., GitHub Pages), the interface falls back to a client-side JavaScript annotation engine that reimplements core consequence prediction logic for interactive use without a server.
 
 The web interface features:
-- A VCF input area with example data loading
-- Configurable annotation options (HGVS, distance, pick mode)
-- An interactive results table with column sorting and search/filter
+- A VCF input area with example datasets (coding, splicing, non-coding variants)
+- Custom GFF3 file upload with server-side or client-side parsing
+- Configurable annotation options (upstream/downstream distance, pick mode for canonical transcripts)
+- Light/dark mode with system preference detection
+- An interactive results table with all annotation fields (HGVSg/c/p, canonical, strand, distance), column sorting, and search/filter
 - A summary view with bar charts showing impact and consequence distributions
 - Raw output in VCF (with 47-field CSQ), tab-delimited, or JSON format
-
-The client-side annotation engine reimplements the core consequence prediction logic in JavaScript for interactive use, enabling instant annotation without server round-trips.
+- Automatic backend detection with transparent fallback to client-side annotation
 
 ### 2.9 Implementation Language Choice
 
@@ -337,7 +340,7 @@ OxiVEP's consequence prediction accuracy was validated through a comprehensive t
 | Regulatory features | Yes | -- (planned) |
 | Plugin system | Yes (Perl) | -- (planned) |
 | Parallelism | Fork-based | Thread-based (rayon) |
-| Web interface | REST API | Built-in GUI |
+| Web interface | REST API | Built-in GUI + REST API |
 | Installation | Complex (Perl, CPAN, C libs) | `cargo build --release` |
 | Binary size | ~200 MB installed | 3.2 MB |
 | Dependencies | >10 CPAN modules | None |
@@ -377,7 +380,7 @@ Several design decisions in OxiVEP's architecture merit discussion:
 
 **47-field CSQ output.** OxiVEP outputs 47 annotation fields in its CSQ format, exceeding VEP's default 30-field output. The additional fields (CANONICAL, CCDS, ENSP, MANE, MANE_SELECT, MANE_PLUS_CLINICAL, SIFT, PolyPhen, AF, CLIN_SIG, SOMATIC, PHENO, PUBMED, HGVS_OFFSET, and regulatory motif fields) provide comprehensive downstream analysis data in a single annotation pass.
 
-**Client-side web annotation.** The web interface implements consequence prediction in JavaScript rather than through server-side API calls. This design eliminates server load, enables offline use after initial page load, and provides instant feedback. The trade-off is that the JavaScript implementation must mirror the Rust logic, creating a maintenance burden.
+**Hybrid web architecture.** The web interface supports both server-side and client-side annotation. When served by the OxiVEP binary, annotation requests are processed by the Rust backend, providing identical performance and accuracy to the CLI pipeline. GFF3 files uploaded through the browser are parsed server-side, avoiding the performance limitations of JavaScript parsing for large annotation files. For static deployments (e.g., GitHub Pages), the interface transparently falls back to a client-side JavaScript annotation engine, enabling offline use after page load at the cost of reduced performance and a maintenance burden of mirroring the Rust logic.
 
 ### 4.5 Future Directions
 

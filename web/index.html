@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OxiVEP - Variant Effect Predictor</title>
   <style>
-    :root, [data-theme="dark"] {
+    :root {
       --bg: #0f1117;
       --surface: #1a1d27;
       --surface2: #242734;
@@ -22,6 +22,27 @@
       --radius: 10px;
       --shadow: 0 4px 24px rgba(0,0,0,0.3);
     }
+    /* System preference: light mode */
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg: #f5f6fa;
+        --surface: #ffffff;
+        --surface2: #ebedf3;
+        --border: #d1d5e0;
+        --text: #1a1d27;
+        --text-dim: #5f6477;
+        --accent: #5563d8;
+        --accent-hover: #4451c0;
+        --high: #dc2f5a;
+        --moderate: #d48a00;
+        --low: #2563eb;
+        --modifier: #6b7280;
+        --success: #059669;
+        --radius: 10px;
+        --shadow: 0 4px 24px rgba(0,0,0,0.08);
+      }
+    }
+    /* Explicit light override */
     [data-theme="light"] {
       --bg: #f5f6fa;
       --surface: #ffffff;
@@ -224,6 +245,13 @@
       display: none;
     }
     .status-bar.visible { display: flex; }
+    .status-bar.done {
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.25);
+      color: var(--success);
+    }
+    .status-bar.done .spinner { display: none; }
+    .done-icon { font-size: 16px; }
     .spinner {
       width: 16px; height: 16px;
       border: 2px solid var(--border);
@@ -483,6 +511,24 @@
     }
     .warning-banner .warn-close:hover { color: var(--text); }
 
+    /* Example pills */
+    .example-links { margin-top: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .example-links span { font-size: 12px; color: var(--text-dim); }
+    .example-pill {
+      display: inline-block;
+      padding: 3px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--accent);
+      background: rgba(108,122,238,0.08);
+      border: 1px solid rgba(108,122,238,0.2);
+      border-radius: 14px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .example-pill:hover { background: rgba(108,122,238,0.15); border-color: var(--accent); }
+
     /* Animations */
     .fade-in { animation: fadeIn 0.3s ease; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -506,10 +552,11 @@
       <div class="input-grid">
         <div>
           <textarea id="vcfInput" placeholder="Paste VCF data here, or try an example below.&#10;&#10;Supported format: VCF (tab-separated)&#10;#CHROM  POS  ID  REF  ALT  QUAL  FILTER  INFO&#10;1       69080  .  C    T    30    PASS    .&#10;&#10;Supports SNVs, insertions, deletions, multi-allelic, and MNVs."></textarea>
-          <div style="margin-top:6px;font-size:12px;color:var(--text-dim)">
-            Try: <a href="#" onclick="loadExample('coding');return false" style="color:var(--accent);text-decoration:none">coding</a>
-            &middot; <a href="#" onclick="loadExample('splicing');return false" style="color:var(--accent);text-decoration:none">splicing</a>
-            &middot; <a href="#" onclick="loadExample('noncoding');return false" style="color:var(--accent);text-decoration:none">noncoding</a>
+          <div class="example-links">
+            <span>Examples:</span>
+            <a class="example-pill" href="#" onclick="loadExample('coding');return false">Coding variants</a>
+            <a class="example-pill" href="#" onclick="loadExample('splicing');return false">Splice sites</a>
+            <a class="example-pill" href="#" onclick="loadExample('noncoding');return false">Non-coding</a>
           </div>
         </div>
         <div class="controls">
@@ -549,6 +596,7 @@
       </div>
       <div class="status-bar" id="statusBar">
         <div class="spinner"></div>
+        <span class="done-icon" id="doneIcon" style="display:none">&#10003;</span>
         <span id="statusText">Annotating variants...</span>
       </div>
     </div>
@@ -1150,12 +1198,131 @@ function impactRank(imp) { return {HIGH:0,MODERATE:1,LOW:2,MODIFIER:3}[imp]||3; 
 let allResults = [];
 let currentTab = 'table';
 let transcripts = [];
+let hasBackend = null; // null = unknown, true/false after check
+
+// Detect backend on load
+async function checkBackend() {
+  try {
+    const r = await fetch('/api/status', { method: 'GET' });
+    if (r.ok) { const j = await r.json(); hasBackend = j.backend === true; }
+    else hasBackend = false;
+  } catch { hasBackend = false; }
+  // Show mode indicator
+  const badge = document.querySelector('.badge');
+  if (badge) badge.textContent = hasBackend ? 'v0.1.0 (server)' : 'v0.1.0 (client)';
+}
+checkBackend();
 
 function annotate() {
   const vcfText = document.getElementById('vcfInput').value.trim();
   if (!vcfText) return;
   const status = document.getElementById('statusBar');
+  status.classList.remove('done');
+  document.getElementById('doneIcon').style.display = 'none';
   status.classList.add('visible');
+
+  // Use backend if available (custom GFF was already uploaded to server)
+  if (hasBackend) {
+    annotateBackend(vcfText);
+  } else {
+    annotateClientSide(vcfText);
+  }
+}
+
+async function annotateBackend(vcfText) {
+  const status = document.getElementById('statusBar');
+  const pick = document.getElementById('optPick').checked;
+  document.getElementById('statusText').textContent = 'Sending to server...';
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/api/annotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vcf: vcfText, pick }),
+    });
+    const data = await r.json();
+    if (data.error) {
+      status.classList.remove('visible');
+      showWarning('Server error', data.error);
+      return;
+    }
+    const t1 = performance.now();
+    // Convert server JSON results to our internal format
+    allResults = convertServerResults(data.results || []);
+    status.classList.remove('visible');
+    showResults(
+      new Set(allResults.map(r => `${r.variant.chrom}:${r.variant.start}`)).size,
+      allResults.length,
+      data.time_ms || Math.round(t1 - t0)
+    );
+  } catch (e) {
+    // Fall back to client-side on network error
+    console.warn('Backend failed, falling back to client-side:', e);
+    hasBackend = false;
+    annotateClientSide(vcfText);
+  }
+}
+
+// Convert Ensembl-style JSON from the Rust backend to our internal result format
+function convertServerResults(results) {
+  const out = [];
+  for (const vf of results) {
+    const chrom = vf.seq_region_name || vf.input?.split(/\s+/)?.[0] || '?';
+    const start = vf.start || 0;
+    const end = vf.end || start;
+    const variantBase = { chrom, start, end, origPos: start, origRef: '', origAlt: '' };
+    // Parse allele_string for ref/alt
+    if (vf.allele_string) {
+      const parts = vf.allele_string.split('/');
+      variantBase.origRef = parts[0] || '';
+      variantBase.origAlt = parts.slice(1).join(',');
+    }
+    const tcs = vf.transcript_consequences || [];
+    if (tcs.length === 0) {
+      // Intergenic
+      out.push({
+        variant: variantBase,
+        allele: vf.allele_string?.split('/')?.[1] || '-',
+        consequences: vf.most_severe_consequence ? [vf.most_severe_consequence] : ['intergenic_variant'],
+        impact: 'MODIFIER',
+        transcript: null,
+        exon: null, intron: null, cdna: null, cds: null, protein: null,
+        aa: null, codons: null, dist: null,
+        hgvsc: null, hgvsp: null, hgvsg: null,
+      });
+    }
+    for (const tc of tcs) {
+      out.push({
+        variant: variantBase,
+        allele: tc.variant_allele || '-',
+        consequences: tc.consequence_terms || [],
+        impact: tc.impact || 'MODIFIER',
+        transcript: {
+          id: tc.transcript_id || '-',
+          gene: { id: tc.gene_id || '-', symbol: tc.gene_symbol || tc.gene_symbol_source || null },
+          biotype: tc.biotype || '-',
+          canonical: tc.canonical === 1,
+          strand: tc.strand === 1 ? 1 : tc.strand === -1 ? -1 : 0,
+        },
+        exon: tc.exon || null,
+        intron: tc.intron || null,
+        cdna: tc.cdna_start || null,
+        cds: tc.cds_start || null,
+        protein: tc.protein_start || null,
+        aa: tc.amino_acids || null,
+        codons: tc.codons || null,
+        dist: tc.distance != null ? tc.distance : null,
+        hgvsc: tc.hgvsc || null,
+        hgvsp: tc.hgvsp || null,
+        hgvsg: tc.hgvsg || null,
+      });
+    }
+  }
+  return out;
+}
+
+function annotateClientSide(vcfText) {
+  const status = document.getElementById('statusBar');
   document.getElementById('statusText').textContent = 'Parsing gene models...';
   setTimeout(() => {
     const t0 = performance.now();
@@ -1169,10 +1336,8 @@ function annotate() {
       for (const v of variants) {
         const preds = predict(v, transcripts, distance);
         if (pick) {
-          // Keep only canonical transcripts; if none, keep the most severe
           const canonical = preds.filter(p => p.transcript?.canonical);
           const picked = canonical.length > 0 ? canonical : preds.slice(0, 1);
-          // Among picked, keep only the most severe per allele
           const byAllele = {};
           for (const p of picked) {
             const key = p.allele;
@@ -1195,7 +1360,22 @@ function showResults(nVariants, nAnnotations, timeMs) {
   document.getElementById('resultsSection').classList.add('visible');
   document.getElementById('statVariants').textContent = nVariants;
   document.getElementById('statAnnotations').textContent = nAnnotations;
-  document.getElementById('statTime').textContent = timeMs < 1 ? '<1ms' : Math.round(timeMs) + 'ms';
+  const timeStr = timeMs < 1 ? '<1ms' : Math.round(timeMs) + 'ms';
+  document.getElementById('statTime').textContent = timeStr;
+
+  // Show completion status
+  const status = document.getElementById('statusBar');
+  const doneIcon = document.getElementById('doneIcon');
+  status.classList.add('visible', 'done');
+  doneIcon.style.display = '';
+  document.getElementById('statusText').textContent =
+    `Done — ${nVariants} variant${nVariants !== 1 ? 's' : ''}, ${nAnnotations} annotation${nAnnotations !== 1 ? 's' : ''} in ${timeStr}`;
+  // Auto-hide after 4 seconds
+  setTimeout(() => {
+    status.classList.remove('visible', 'done');
+    doneIcon.style.display = 'none';
+  }, 4000);
+
   renderTable();
   renderSummary();
   renderRaw();
@@ -1451,11 +1631,17 @@ function dismissWarning() {
 }
 
 // --- Theme toggle ---
+function getEffectiveTheme() {
+  const saved = localStorage.getItem('oxivep-theme');
+  if (saved) return saved;
+  // Follow system preference
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
 function toggleTheme() {
-  const html = document.documentElement;
-  const current = html.getAttribute('data-theme') || 'dark';
+  const current = getEffectiveTheme();
   const next = current === 'dark' ? 'light' : 'dark';
-  html.setAttribute('data-theme', next);
+  document.documentElement.setAttribute('data-theme', next);
   localStorage.setItem('oxivep-theme', next);
   updateThemeButton(next);
 }
@@ -1465,11 +1651,14 @@ function updateThemeButton(theme) {
   document.getElementById('themeLabel').textContent = theme === 'dark' ? 'Light' : 'Dark';
 }
 
-// Apply saved theme on load
+// Apply theme on load — respect system preference, override with saved choice
 (function() {
-  const saved = localStorage.getItem('oxivep-theme') || 'dark';
-  document.documentElement.setAttribute('data-theme', saved);
-  document.addEventListener('DOMContentLoaded', () => updateThemeButton(saved));
+  const theme = getEffectiveTheme();
+  if (localStorage.getItem('oxivep-theme')) {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+  // else: no data-theme attr → CSS @media prefers-color-scheme handles it
+  document.addEventListener('DOMContentLoaded', () => updateThemeButton(theme));
 })();
 
 // --- GFF file upload ---
@@ -1493,13 +1682,36 @@ function loadGffFile(input) {
   const file = input.files[0];
   if (!file) return;
   const info = document.getElementById('gffInfo');
-  info.textContent = 'Loading...';
+  info.textContent = 'Reading file...';
   const reader = new FileReader();
-  reader.onload = function(e) {
-    customGFF3 = e.target.result;
-    const lines = customGFF3.split('\n').filter(l => l && !l.startsWith('#'));
-    const genes = lines.filter(l => l.split('\t')[2] === 'gene').length;
-    info.textContent = `Loaded: ${file.name} (${genes} genes, ${lines.length} features)`;
+  reader.onload = async function(e) {
+    const gffText = e.target.result;
+    if (hasBackend) {
+      // Upload to server — Rust parses it instantly
+      info.textContent = 'Uploading to server...';
+      try {
+        const r = await fetch('/api/upload-gff3', {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: gffText,
+        });
+        const data = await r.json();
+        if (data.error) {
+          info.textContent = 'Server error: ' + data.error;
+        } else {
+          customGFF3 = gffText; // Mark as loaded so annotate() knows custom GFF is active
+          info.textContent = `Loaded on server: ${file.name} (${data.genes} genes, ${data.transcripts} transcripts, ${data.time_ms}ms)`;
+        }
+      } catch (e) {
+        info.textContent = 'Upload failed: ' + e.message;
+      }
+    } else {
+      // Client-side fallback: just store the text, parse lazily during annotate()
+      customGFF3 = gffText;
+      const lines = gffText.split('\n').filter(l => l && !l.startsWith('#'));
+      const genes = lines.filter(l => l.split('\t')[2] === 'gene').length;
+      info.textContent = `Loaded: ${file.name} (${genes} genes, ${lines.length} features)`;
+    }
   };
   reader.onerror = function() { info.textContent = 'Error reading file'; };
   reader.readAsText(file);
