@@ -3,7 +3,7 @@ name = "oxivep-filter"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Variant filtering for OxiVEP"
+description = "Expression-based variant filter engine for OxiVEP (filter_vep-compatible)"
 
 [dependencies]
 oxivep-core = { workspace = true }

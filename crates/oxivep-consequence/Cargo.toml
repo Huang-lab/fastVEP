@@ -3,7 +3,7 @@ name = "oxivep-consequence"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Consequence prediction engine for OxiVEP"
+description = "Consequence prediction engine for OxiVEP (small variants + structural variants)"
 
 [dependencies]
 oxivep-core = { workspace = true }

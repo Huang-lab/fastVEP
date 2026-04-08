@@ -3,7 +3,7 @@ name = "oxivep-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI binary for OxiVEP"
+description = "CLI binary for OxiVEP: annotate, sa-build, filter, cache, web commands"
 
 [[bin]]
 name = "oxivep"

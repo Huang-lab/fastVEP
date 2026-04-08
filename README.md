@@ -1,18 +1,25 @@
 # OxiVEP
 
-A high-performance Variant Effect Predictor written in Rust. OxiVEP predicts the functional consequences of genomic variants (SNPs, insertions, deletions) on genes, transcripts, and protein sequences.
+A high-performance Variant Effect Predictor written in Rust. OxiVEP predicts the functional consequences of genomic variants (SNPs, insertions, deletions, structural variants) on genes, transcripts, and protein sequences, with direct integration of clinical and population databases.
 
-OxiVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.ensembl.org/info/docs/tools/vep/index.html), while delivering significantly better performance through Rust's zero-cost abstractions and native parallelism.
+OxiVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.ensembl.org/info/docs/tools/vep/index.html) and [Illumina Nirvana](https://github.com/Illumina/Nirvana), while delivering significantly better performance through Rust's zero-cost abstractions and native parallelism.
 
 ## Features
 
-- **Variant Consequence Prediction** — Classifies variants using [Sequence Ontology](http://www.sequenceontology.org/) terms (missense, frameshift, splice donor, etc.)
-- **HGVS Nomenclature** — Generates HGVSg, HGVSc, and HGVSp notations
-- **Multiple Output Formats** — VCF (with CSQ field), tab-delimited, and JSON
-- **GFF3 Annotation Support** — Load gene models from standard GFF3 files
-- **Splice Site Detection** — Identifies splice donor, acceptor, region, 5th base, donor region, and polypyrimidine tract variants
-- **Multi-allelic Support** — Handles multi-allelic VCF records with proper allele normalization
+- **Variant Consequence Prediction** — Classifies variants using 49 [Sequence Ontology](http://www.sequenceontology.org/) terms (missense, frameshift, splice donor, copy_number_change, transcript_ablation, etc.)
+- **Structural Variant Support** — Full SV pipeline: `<DEL>`, `<DUP>`, `<INV>`, `<CNV>`, `<BND>`, `<INS>`, `<STR>` with SV-specific consequence prediction
+- **Supplementary Annotations** — Direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, MitoMap, and more via the native OxiSA binary format
+- **Prediction Scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN conservation and pathogenicity scores; SIFT/PolyPhen via dbNSFP
+- **Gene-Level Annotations** — OMIM phenotypes, gnomAD gene constraint (pLI, LOEUF), ClinGen gene-disease validity
+- **Filter Engine** — Expression-based filtering compatible with VEP's filter_vep syntax
+- **HGVS Nomenclature** — Generates HGVSg, HGVSc, and HGVSp notations with 3' normalization
+- **Multiple Output Formats** — VCF (with 47-field CSQ), tab-delimited, JSON (including Nirvana-style structured output)
+- **Multi-Sample Support** — Parse FORMAT/GT/DP/GQ/AD fields per sample with genotype classification
+- **Regulatory Region Detection** — Promoters, enhancers, CTCF binding sites, TF binding sites from Ensembl regulatory build
+- **Mitochondrial Support** — Circular coordinate handling, vertebrate mitochondrial codon table (NCBI table 2)
+- **Custom Annotations** — User-provided VCF and BED annotation files
 - **Web Interface** — Built-in web GUI for interactive variant annotation
+- **GFF3 Annotation Support** — Load gene models from standard GFF3 files (any organism)
 
 ## Quick Start
 
@@ -50,40 +57,51 @@ OxiVEP ships with a small test VCF and GFF3 so you can try it immediately:
 oxivep annotate -i tests/test.vcf --gff3 tests/test.gff3 --hgvs --output-format tab
 ```
 
-Expected output (using real BRCA1 and TP53 data from Ensembl GRCh38):
-
-```
-rs_cds_brca1      17:43124090  G  ENSG00000012048  ENST00000357654  Transcript  synonymous_variant
-rs_cds_brca1_mid  17:43106500  C  ENSG00000012048  ENST00000357654  Transcript  synonymous_variant
-rs_5utr_brca1     17:43125300  T  ENSG00000012048  ENST00000357654  Transcript  5_prime_UTR_variant
-rs_intron_brca1   17:43120000  T  ENSG00000012048  ENST00000357654  Transcript  intron_variant
-rs_downstream     17:43043000  C  ENSG00000012048  ENST00000357654  Transcript  downstream_gene_variant
-rs_3utr_brca1     17:43045700  C  ENSG00000012048  ENST00000357654  Transcript  missense_variant
-rs_del_brca1      17:43124090  -  ENSG00000012048  ENST00000357654  Transcript  frameshift_variant
-rs_cds_tp53       17:7675088   T  ENSG00000141510  ENST00000269305  Transcript  missense_variant
-```
-
-The 8 variants cover: coding SNVs, 5'UTR, 3'UTR, intron, downstream, and frameshift deletion across BRCA1 and TP53.
-
-### 4. Try VCF output (with CSQ annotations)
+### 4. Build supplementary annotation databases
 
 ```bash
-oxivep annotate -i tests/test.vcf --gff3 tests/test.gff3 --hgvs --output-format vcf
+# Build ClinVar annotation database
+oxivep sa-build --source clinvar --input clinvar.vcf.gz --output clinvar
+
+# Build gnomAD population frequency database
+oxivep sa-build --source gnomad --input gnomad.genomes.v4.vcf.bgz --output gnomad
+
+# Build PhyloP conservation scores
+oxivep sa-build --source phylop --input hg38.phyloP100way.wigFix.gz --output phylop
+
+# Build SpliceAI predictions
+oxivep sa-build --source spliceai --input spliceai_scores.vcf.gz --output spliceai
 ```
 
-### 5. Try JSON output
+### 5. Annotate with supplementary databases
 
 ```bash
-oxivep annotate -i tests/test.vcf --gff3 tests/test.gff3 --hgvs --output-format json
+# Annotate with all databases in a directory
+oxivep annotate \
+  -i your_variants.vcf \
+  -o annotated.vcf \
+  --gff3 Homo_sapiens.GRCh38.112.gff3 \
+  --fasta Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+  --sa-dir /path/to/annotation_databases/ \
+  --hgvs
 ```
 
-### 6. Launch the web interface
+### 6. Filter annotated variants
+
+```bash
+# Filter for high-impact or rare missense variants
+oxivep filter \
+  -i annotated.vcf \
+  --filter "IMPACT is HIGH or (Consequence in missense_variant and AF < 0.001)"
+```
+
+### 7. Launch the web interface
 
 ```bash
 oxivep web --port 8080
 ```
 
-Open http://localhost:8080 in your browser. Click **"Load Example"** to load pre-built test variants, then click **"Annotate"** to see results instantly.
+Open http://localhost:8080 in your browser.
 
 ## Using Your Own Data
 
@@ -117,26 +135,26 @@ wget https://ftp.ensembl.org/pub/release-112/gff3/danio_rerio/Danio_rerio.GRCz11
 
 OxiVEP works with any organism — just provide the matching GFF3.
 
-## Test Data Reference
+## Supplementary Annotation Sources
 
-The repository includes test files in `tests/`:
+OxiVEP supports direct integration with clinical and population databases through its native OxiSA binary format. Build once with `oxivep sa-build`, then use `--sa-dir` to annotate:
 
-**`tests/test.gff3`** — Real Ensembl GRCh38 release 115 annotations for two genes on chr17:
-- `BRCA1` (ENSG00000012048): Protein-coding gene at chr17:43044292-43170245 (- strand), 23 exons
-- `TP53` (ENSG00000141510): Protein-coding gene at chr17:7661779-7687546 (- strand), 11 exons
-
-**`tests/test.vcf`** — 8 variants at real BRCA1/TP53 positions:
-
-| Variant | Position | Type | Expected Consequence |
-|---------|----------|------|---------------------|
-| rs_cds_brca1 | 17:43124090 | SNV (in CDS) | synonymous_variant |
-| rs_cds_brca1_mid | 17:43106500 | SNV (in CDS) | synonymous_variant |
-| rs_5utr_brca1 | 17:43125300 | SNV (in 5'UTR) | 5_prime_UTR_variant |
-| rs_intron_brca1 | 17:43120000 | SNV (mid-intron) | intron_variant |
-| rs_downstream_brca1 | 17:43043000 | SNV (downstream) | downstream_gene_variant |
-| rs_3utr_brca1 | 17:43045700 | SNV (near 3' end) | missense_variant |
-| rs_del_brca1 | 17:43124090 | 1bp deletion (CDS) | frameshift_variant |
-| rs_cds_tp53 | 17:7675088 | SNV (in CDS) | missense_variant |
+| Source | Type | Description | Build Command |
+|--------|------|-------------|---------------|
+| **ClinVar** | Allele-specific | Clinical significance, review status, phenotypes | `--source clinvar` |
+| **gnomAD** | Allele-specific | Population frequencies (8 populations), allele counts | `--source gnomad` |
+| **dbSNP** | Allele-specific | RS IDs, global minor allele frequency | `--source dbsnp` |
+| **COSMIC** | Allele-specific | Somatic mutations, gene, sample counts | `--source cosmic` |
+| **1000 Genomes** | Allele-specific | Population frequencies (AFR, AMR, EAS, EUR, SAS) | `--source onekg` |
+| **TOPMed** | Allele-specific | Population frequencies, allele counts | `--source topmed` |
+| **MitoMap** | Allele-specific | Mitochondrial disease associations | `--source mitomap` |
+| **PhyloP** | Positional | Phylogenetic conservation scores | `--source phylop` |
+| **GERP** | Positional | Evolutionary rate profiling | `--source gerp` |
+| **DANN** | Positional | Deleterious annotation scores | `--source dann` |
+| **REVEL** | Allele-specific | Missense pathogenicity predictions | `--source revel` |
+| **SpliceAI** | Allele-specific | Splice site effect predictions (delta scores) | `--source spliceai` |
+| **PrimateAI** | Allele-specific | Primate-based pathogenicity | `--source primateai` |
+| **dbNSFP** | Allele-specific | SIFT/PolyPhen predictions | `--source dbnsfp` |
 
 ## Command Reference
 
@@ -146,69 +164,99 @@ The repository includes test files in `tests/`:
 |------|-------------|---------|
 | `-i, --input` | Input VCF file (`-` for stdin) | *required* |
 | `-o, --output` | Output file (`-` for stdout) | `-` |
-| `--gff3` | GFF3 gene annotation file | — |
-| `--fasta` | Reference FASTA file | — |
+| `--gff3` | GFF3 gene annotation file | -- |
+| `--fasta` | Reference FASTA file | -- |
 | `--output-format` | `vcf`, `tab`, or `json` | `vcf` |
 | `--hgvs` | Include HGVS notations | off |
 | `--pick` | Report only the most severe consequence per variant | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
-| `--everything` | Enable all annotation flags | off |
-| `--symbol` | Include gene symbol | off |
-| `--canonical` | Flag canonical transcripts | off |
+| `--sa-dir` | Directory containing .osa supplementary annotation files | -- |
+| `--cache-dir` | Path to VEP cache directory for known variant annotation | -- |
+| `--transcript-cache` | Path to binary transcript cache file | -- |
+
+### `oxivep sa-build`
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--source` | Source type (clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp) | *required* |
+| `-i, --input` | Input file (VCF/TSV/wigFix, supports .gz) | *required* |
+| `-o, --output` | Output base path (creates .osa and .osa.idx) | *required* |
+| `--assembly` | Genome assembly | `GRCh38` |
+
+### `oxivep filter`
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-i, --input` | Input VEP-annotated VCF | *required* |
+| `-o, --output` | Output file | `-` |
+| `--filter` | Filter expression (filter_vep-compatible syntax) | *required* |
+
+Filter syntax examples:
+```
+IMPACT is HIGH
+Consequence in missense_variant,stop_gained,frameshift_variant
+AF < 0.001
+IMPACT is HIGH and AF < 0.01
+(IMPACT is HIGH or IMPACT is MODERATE) and not Consequence is synonymous_variant
+```
 
 ### `oxivep web`
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--gff3` | GFF3 gene annotation file | — |
-| `--fasta` | Reference FASTA file | — |
+| `--gff3` | GFF3 gene annotation file | -- |
+| `--fasta` | Reference FASTA file | -- |
 | `--port` | HTTP port | `8080` |
 
-### `oxivep filter`
+### `oxivep cache`
 
-Filter annotated VEP output (coming soon).
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--gff3` | GFF3 annotation file | *required* |
+| `--fasta` | Reference FASTA (for pre-building sequences) | -- |
+| `-o, --output` | Output cache file path | *required* |
 
 ## Output Formats
 
 ### VCF Output
 
-Annotations are added as a `CSQ` field in the INFO column:
-
-```
-##INFO=<ID=CSQ,Number=.,Type=String,Description="Consequence annotations from OxiVEP. Format: Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons|Existing_variation|DISTANCE|STRAND">
-```
+Annotations are added as a `CSQ` field in the INFO column with 47 pipe-delimited fields matching Ensembl VEP's extended format.
 
 ### Tab Output
 
-One line per variant-transcript-allele combination with 13 columns.
+One line per variant-transcript-allele combination with 17 columns.
 
 ### JSON Output
 
-Structured JSON with `transcript_consequences` array per variant.
+Structured JSON with `transcript_consequences` array per variant, including supplementary annotations from SA providers (ClinVar, gnomAD, etc.) and gene-level annotations.
 
 ## Consequence Types
 
-OxiVEP predicts 41 consequence types organized by impact:
+OxiVEP predicts 49 consequence types organized by impact:
 
 | Impact | Consequences |
 |--------|-------------|
-| **HIGH** | transcript_ablation, splice_acceptor_variant, splice_donor_variant, stop_gained, frameshift_variant, stop_lost, start_lost |
-| **MODERATE** | inframe_insertion, inframe_deletion, missense_variant, protein_altering_variant |
+| **HIGH** | transcript_ablation, splice_acceptor_variant, splice_donor_variant, stop_gained, frameshift_variant, stop_lost, start_lost, transcript_amplification, TFBS_ablation, regulatory_region_ablation |
+| **MODERATE** | inframe_insertion, inframe_deletion, missense_variant, protein_altering_variant, regulatory_region_amplification, TFBS_amplification |
 | **LOW** | splice_region_variant, splice_donor_5th_base_variant, splice_donor_region_variant, splice_polypyrimidine_tract_variant, synonymous_variant, start_retained_variant, stop_retained_variant, incomplete_terminal_codon_variant |
-| **MODIFIER** | coding_sequence_variant, 5_prime_UTR_variant, 3_prime_UTR_variant, non_coding_transcript_exon_variant, intron_variant, upstream_gene_variant, downstream_gene_variant, intergenic_variant, and others |
+| **MODIFIER** | coding_sequence_variant, 5_prime_UTR_variant, 3_prime_UTR_variant, non_coding_transcript_exon_variant, intron_variant, upstream_gene_variant, downstream_gene_variant, intergenic_variant, copy_number_change, copy_number_increase, copy_number_decrease, short_tandem_repeat_change, transcript_variant, and others |
 
 ## Architecture
 
 ```
 crates/
-  oxivep-core/         # Core types: Consequence, GenomicPosition, Allele, Impact
-  oxivep-genome/       # Transcript, Exon, Gene, CodonTable, coordinate mapping
-  oxivep-cache/        # GFF3 parser, FASTA reader, annotation providers
-  oxivep-consequence/  # Consequence prediction engine, splice site detection
+  oxivep-core/         # Core types: Consequence (49 SO terms), VariantType, Allele, Impact
+  oxivep-genome/       # Transcript, Exon, Gene, CodonTable, mitochondrial codon table
+  oxivep-cache/        # GFF3 parser, FASTA reader, annotation providers, regulatory regions
+  oxivep-consequence/  # Consequence prediction: small variants + SV predictor
   oxivep-hgvs/         # HGVS nomenclature generation (c., p., g.)
-  oxivep-io/           # VCF parser, output formatters (CSQ, tab, JSON)
-  oxivep-filter/       # Variant filtering
-  oxivep-cli/          # CLI binary, annotation pipeline, web server
+  oxivep-io/           # VCF parser (incl. SVs), output formatters, multi-sample parsing
+  oxivep-filter/       # Filter engine: lexer, parser, evaluator (filter_vep-compatible)
+  oxivep-sa/           # Supplementary annotation format (OxiSA): .osa/.osi/.oga
+                       # Source parsers: ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed,
+                       # MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI, PrimateAI, dbNSFP
+                       # Custom VCF/BED annotation providers
+  oxivep-cli/          # CLI binary, annotation pipeline, sa-build, web server
 web/                   # Web GUI (HTML/CSS/JS)
 tests/                 # Test VCF and GFF3 files
 ```
@@ -216,8 +264,10 @@ tests/                 # Test VCF and GFF3 files
 ## Running Tests
 
 ```bash
-cargo test --workspace          # 101 tests
-cargo test -p oxivep-consequence  # Just consequence prediction tests
+cargo test --workspace          # 204 tests
+cargo test -p oxivep-consequence  # Consequence prediction tests (incl. SV)
+cargo test -p oxivep-filter       # Filter engine tests
+cargo test -p oxivep-sa           # Supplementary annotation format tests
 ```
 
 ## Performance Benchmarks
@@ -229,8 +279,6 @@ Benchmarked on Apple M-series (ARM64), single-threaded, release build.
 | Human chr21 (20 genes) | 1,000 | 0.037s | **27,000 variants/sec** |
 | Human chr21 (20 genes) | 10,000 | 0.057s | **175,000 variants/sec** |
 | Human chr21 (20 genes) | 50,000 | 0.128s | **391,000 variants/sec** |
-| Mouse chr19 (10 genes) | 500 | 0.033s | **15,200 variants/sec** |
-| Zebrafish chr5 (8 genes) | 300 | 0.031s | **9,800 variants/sec** |
 
 ### vs. Ensembl VEP
 
@@ -239,7 +287,7 @@ Benchmarked on Apple M-series (ARM64), single-threaded, release build.
 | Startup time | 5-15s | <0.05s |
 | 1,000 SNVs (offline) | ~3-10s | **0.04s** |
 | Peak memory (100K variants) | ~500 MB | **2.8 MB** |
-| Binary size | ~200 MB installed | **2.4 MB** |
+| Binary size | ~200 MB installed | **3.2 MB** |
 | Dependencies | Perl 5.22+, DBI, 10+ CPAN modules | **None** |
 
 ## License
@@ -252,4 +300,4 @@ Apache License 2.0
 
 ## Acknowledgements
 
-OxiVEP is inspired by [Ensembl VEP](https://www.ensembl.org/info/docs/tools/vep/index.html) by EMBL-EBI. The consequence prediction logic follows the Sequence Ontology term definitions and the Ensembl variant annotation framework.
+OxiVEP is inspired by [Ensembl VEP](https://www.ensembl.org/info/docs/tools/vep/index.html) by EMBL-EBI and [Illumina Nirvana](https://github.com/Illumina/Nirvana). The consequence prediction logic follows the Sequence Ontology term definitions and the Ensembl variant annotation framework.

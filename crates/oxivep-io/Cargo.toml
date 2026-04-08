@@ -3,7 +3,7 @@ name = "oxivep-io"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "VCF parsing, output formatting for OxiVEP"
+description = "VCF parsing (incl. SVs), multi-sample genotype parsing, output formatting for OxiVEP"
 
 [dependencies]
 oxivep-core = { workspace = true }

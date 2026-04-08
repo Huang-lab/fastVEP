@@ -16,7 +16,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "A high-performance variant effect predictor written in Rust"
+description = "A high-performance variant effect predictor with clinical database integration, written in Rust"
 
 [workspace.dependencies]
 # Internal crates
