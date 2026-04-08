@@ -1,3 +1,4 @@
+pub mod annotation;
 pub mod gff;
 pub mod fasta;
 pub mod info;

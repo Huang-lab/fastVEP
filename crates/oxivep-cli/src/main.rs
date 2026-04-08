@@ -72,6 +72,10 @@ enum Commands {
         /// Path to binary transcript cache file (auto-generated if not specified)
         #[arg(long)]
         transcript_cache: Option<String>,
+
+        /// Directory containing supplementary annotation files (.osa, .osi, .oga)
+        #[arg(long)]
+        sa_dir: Option<String>,
     },
 
     /// Launch the web interface for interactive variant annotation
@@ -140,6 +144,7 @@ fn main() -> Result<()> {
             distance,
             cache_dir,
             transcript_cache,
+            sa_dir,
         } => {
             pipeline::run_annotate(pipeline::AnnotateConfig {
                 input,
@@ -152,6 +157,7 @@ fn main() -> Result<()> {
                 distance,
                 cache_dir,
                 transcript_cache,
+                sa_dir,
             })?;
         }
         Commands::Cache { gff3, fasta, output } => {

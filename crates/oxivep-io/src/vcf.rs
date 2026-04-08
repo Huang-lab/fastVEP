@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use oxivep_core::{Allele, GenomicPosition, Strand};
+use oxivep_core::{Allele, GenomicPosition, Strand, VariantType};
 use std::io::{BufRead, BufReader, Read};
 
 use crate::variant::{VariationFeature, VcfFields};
@@ -58,14 +58,18 @@ impl<R: Read> VcfParser<R> {
             }
         }
 
-        let line = self.line_buf.trim_end().to_string();
-        self.line_buf.clear(); // consumed
+        // Trim in-place to avoid allocating a new String
+        let trimmed_len = self.line_buf.trim_end().len();
+        self.line_buf.truncate(trimmed_len);
 
-        if line.is_empty() || line.starts_with('#') {
+        if self.line_buf.is_empty() || self.line_buf.starts_with('#') {
+            self.line_buf.clear();
             return self.next_variant();
         }
 
-        parse_vcf_line(&line).map(Some)
+        let result = parse_vcf_line(&self.line_buf).map(Some);
+        self.line_buf.clear(); // consumed
+        result
     }
 
     /// Read all variants into a Vec.
@@ -214,12 +218,16 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         ref_allele,
         alt_alleles,
         variation_name,
-        vcf_line: Some(line.to_string()),
         vcf_fields: Some(vcf_fields),
         transcript_variations: Vec::new(),
         existing_variants: Vec::new(),
         minimised: false,
         most_severe_consequence: None,
+        variant_type: VariantType::Unknown,
+        sv_end: None,
+        sv_len: None,
+        supplementary_annotations: Vec::new(),
+        gene_annotations: Vec::new(),
     })
 }
 

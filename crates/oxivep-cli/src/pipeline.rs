@@ -31,6 +31,8 @@ pub struct AnnotateConfig {
     pub distance: u64,
     pub cache_dir: Option<String>,
     pub transcript_cache: Option<String>,
+    /// Directory containing supplementary annotation files (.osa, .osi, .oga).
+    pub sa_dir: Option<String>,
 }
 
 pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
@@ -346,6 +348,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                 .unwrap_or_default(),
                             sift: None,
                             polyphen: None,
+                            supplementary: Vec::new(),
                         };
 
                         // Generate HGVS if requested
@@ -1005,6 +1008,7 @@ impl AnnotationContext {
                             existing_variation: vec![],
                             sift: None,
                             polyphen: None,
+                            supplementary: Vec::new(),
                         };
 
                         if self.hgvs {
@@ -1453,6 +1457,7 @@ fn annotate_intergenic(vf: &mut VariationFeature) {
                 existing_variation: vec![],
                 sift: None,
                 polyphen: None,
+                supplementary: Vec::new(),
             }],
             canonical: false,
             strand: oxivep_core::Strand::Forward,

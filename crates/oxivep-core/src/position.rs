@@ -1,5 +1,61 @@
 use serde::{Deserialize, Serialize};
 
+/// Classification of variant type for dispatch between small-variant and SV pipelines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum VariantType {
+    /// Single nucleotide variant.
+    Snv,
+    /// Insertion of one or more bases.
+    Insertion,
+    /// Deletion of one or more bases.
+    Deletion,
+    /// Combined insertion and deletion.
+    Indel,
+    /// Multi-nucleotide variant (substitution of >1 base).
+    Mnv,
+    // -- Structural variant types --
+    /// Copy number variation (unspecified direction).
+    CopyNumberVariation,
+    /// Copy number loss.
+    CopyNumberLoss,
+    /// Copy number gain.
+    CopyNumberGain,
+    /// Tandem duplication.
+    TandemDuplication,
+    /// Inversion.
+    Inversion,
+    /// Translocation breakend.
+    TranslocationBreakend,
+    /// Short tandem repeat expansion/contraction.
+    ShortTandemRepeatVariation,
+    /// Unknown or unclassified variant.
+    Unknown,
+}
+
+impl VariantType {
+    /// Returns true for structural variant types that need the SV annotation pipeline.
+    pub fn is_structural(self) -> bool {
+        matches!(
+            self,
+            Self::CopyNumberVariation
+                | Self::CopyNumberLoss
+                | Self::CopyNumberGain
+                | Self::TandemDuplication
+                | Self::Inversion
+                | Self::TranslocationBreakend
+                | Self::ShortTandemRepeatVariation
+        )
+    }
+
+    /// Returns true for small variant types handled by the standard pipeline.
+    pub fn is_small(self) -> bool {
+        matches!(
+            self,
+            Self::Snv | Self::Insertion | Self::Deletion | Self::Indel | Self::Mnv
+        )
+    }
+}
+
 /// Strand orientation of a genomic feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Strand {
@@ -65,6 +121,8 @@ pub enum Allele {
     Deletion,
     /// A missing/unspecified allele "*".
     Missing,
+    /// A symbolic allele such as `<DEL>`, `<DUP>`, `<INV>`, `<CNV>`, `<INS>`, `<BND>`.
+    Symbolic(String),
 }
 
 impl Allele {
@@ -73,15 +131,18 @@ impl Allele {
         match s {
             "-" => Allele::Deletion,
             "*" => Allele::Missing,
+            _ if s.starts_with('<') && s.ends_with('>') => {
+                Allele::Symbolic(s.to_string())
+            }
             _ => Allele::Sequence(s.as_bytes().to_vec()),
         }
     }
 
-    /// Get the length of the allele in bases (0 for deletion/missing).
+    /// Get the length of the allele in bases (0 for deletion/missing/symbolic).
     pub fn len(&self) -> usize {
         match self {
             Allele::Sequence(bases) => bases.len(),
-            Allele::Deletion | Allele::Missing => 0,
+            Allele::Deletion | Allele::Missing | Allele::Symbolic(_) => 0,
         }
     }
 
@@ -89,12 +150,17 @@ impl Allele {
         self.len() == 0
     }
 
-    /// Return the sequence bytes, or an empty slice for deletion/missing.
+    /// Return the sequence bytes, or an empty slice for deletion/missing/symbolic.
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             Allele::Sequence(bases) => bases,
-            Allele::Deletion | Allele::Missing => &[],
+            Allele::Deletion | Allele::Missing | Allele::Symbolic(_) => &[],
         }
+    }
+
+    /// Returns true if this is a symbolic allele (e.g., `<DEL>`, `<DUP>`).
+    pub fn is_symbolic(&self) -> bool {
+        matches!(self, Allele::Symbolic(_))
     }
 }
 
@@ -106,6 +172,7 @@ impl std::fmt::Display for Allele {
             }
             Allele::Deletion => write!(f, "-"),
             Allele::Missing => write!(f, "*"),
+            Allele::Symbolic(s) => write!(f, "{}", s),
         }
     }
 }

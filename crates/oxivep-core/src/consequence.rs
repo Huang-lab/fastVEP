@@ -14,6 +14,18 @@ pub enum Impact {
     Modifier,
 }
 
+impl Impact {
+    /// Return the impact as an uppercase static string, avoiding format!("{:?}").
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Impact::High => "HIGH",
+            Impact::Moderate => "MODERATE",
+            Impact::Low => "LOW",
+            Impact::Modifier => "MODIFIER",
+        }
+    }
+}
+
 /// Sequence Ontology consequence terms used by Ensembl VEP.
 ///
 /// Variants are ordered by severity rank (lower rank = more severe).
@@ -61,6 +73,17 @@ pub enum Consequence {
     RegulatoryRegionVariant,
     IntergenicVariant,
     SequenceVariant,
+    // -- Structural variant consequence terms (Nirvana parity) --
+    CopyNumberChange,
+    CopyNumberIncrease,
+    CopyNumberDecrease,
+    ShortTandemRepeatChange,
+    ShortTandemRepeatExpansion,
+    ShortTandemRepeatContraction,
+    /// Unidirectional gene fusion (from breakend analysis).
+    UnidirectionalGeneFusion,
+    /// Transcript variant (generic SV overlap with transcript).
+    TranscriptVariant,
 }
 
 impl Consequence {
@@ -108,6 +131,14 @@ impl Consequence {
             Self::RegulatoryRegionVariant => 39,
             Self::IntergenicVariant => 40,
             Self::SequenceVariant => 41,
+            Self::CopyNumberChange => 42,
+            Self::CopyNumberIncrease => 43,
+            Self::CopyNumberDecrease => 44,
+            Self::ShortTandemRepeatChange => 45,
+            Self::ShortTandemRepeatExpansion => 46,
+            Self::ShortTandemRepeatContraction => 47,
+            Self::UnidirectionalGeneFusion => 48,
+            Self::TranscriptVariant => 49,
         }
     }
 
@@ -157,7 +188,15 @@ impl Consequence {
             | Self::IntergenicVariant
             | Self::SequenceVariant
             | Self::FeatureElongation
-            | Self::FeatureTruncation => Impact::Modifier,
+            | Self::FeatureTruncation
+            | Self::CopyNumberChange
+            | Self::CopyNumberIncrease
+            | Self::CopyNumberDecrease
+            | Self::ShortTandemRepeatChange
+            | Self::ShortTandemRepeatExpansion
+            | Self::ShortTandemRepeatContraction
+            | Self::UnidirectionalGeneFusion
+            | Self::TranscriptVariant => Impact::Modifier,
         }
     }
 
@@ -205,6 +244,14 @@ impl Consequence {
             Self::RegulatoryRegionVariant => "regulatory_region_variant",
             Self::IntergenicVariant => "intergenic_variant",
             Self::SequenceVariant => "sequence_variant",
+            Self::CopyNumberChange => "copy_number_change",
+            Self::CopyNumberIncrease => "copy_number_increase",
+            Self::CopyNumberDecrease => "copy_number_decrease",
+            Self::ShortTandemRepeatChange => "short_tandem_repeat_change",
+            Self::ShortTandemRepeatExpansion => "short_tandem_repeat_expansion",
+            Self::ShortTandemRepeatContraction => "short_tandem_repeat_contraction",
+            Self::UnidirectionalGeneFusion => "unidirectional_gene_fusion",
+            Self::TranscriptVariant => "transcript_variant",
         }
     }
 
@@ -254,6 +301,14 @@ impl Consequence {
             "regulatory_region_variant" => Some(Self::RegulatoryRegionVariant),
             "intergenic_variant" => Some(Self::IntergenicVariant),
             "sequence_variant" => Some(Self::SequenceVariant),
+            "copy_number_change" => Some(Self::CopyNumberChange),
+            "copy_number_increase" => Some(Self::CopyNumberIncrease),
+            "copy_number_decrease" => Some(Self::CopyNumberDecrease),
+            "short_tandem_repeat_change" => Some(Self::ShortTandemRepeatChange),
+            "short_tandem_repeat_expansion" => Some(Self::ShortTandemRepeatExpansion),
+            "short_tandem_repeat_contraction" => Some(Self::ShortTandemRepeatContraction),
+            "unidirectional_gene_fusion" => Some(Self::UnidirectionalGeneFusion),
+            "transcript_variant" => Some(Self::TranscriptVariant),
             _ => None,
         }
     }

@@ -1,5 +1,9 @@
-use oxivep_core::{Allele, Consequence, GenomicPosition, Impact, Strand};
+use oxivep_core::{
+    Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, Strand,
+    SupplementaryAnnotation, VariantType,
+};
 use std::sync::Arc;
+
 /// A variant feature ready for annotation.
 #[derive(Debug, Clone)]
 pub struct VariationFeature {
@@ -12,8 +16,6 @@ pub struct VariationFeature {
     pub alt_alleles: Vec<Allele>,
     /// Variant ID (e.g., rs number) from VCF ID column.
     pub variation_name: Option<String>,
-    /// Original VCF line for pass-through output.
-    pub vcf_line: Option<String>,
     /// Original VCF fields for reconstruction.
     pub vcf_fields: Option<VcfFields>,
     /// Transcript-level annotations (populated during annotation).
@@ -24,6 +26,16 @@ pub struct VariationFeature {
     pub minimised: bool,
     /// Most severe consequence across all transcripts/alleles.
     pub most_severe_consequence: Option<Consequence>,
+    /// Classified variant type (SNV, insertion, deletion, SV, etc.).
+    pub variant_type: VariantType,
+    /// For structural variants: the END position from VCF INFO.
+    pub sv_end: Option<u64>,
+    /// For structural variants: the SVLEN from VCF INFO.
+    pub sv_len: Option<i64>,
+    /// Supplementary annotations from external data sources (ClinVar, gnomAD, etc.).
+    pub supplementary_annotations: Vec<SupplementaryAnnotation>,
+    /// Gene-level annotations (OMIM, pLI, etc.).
+    pub gene_annotations: Vec<GeneAnnotation>,
 }
 
 /// Parsed VCF fields for output reconstruction.
@@ -85,6 +97,8 @@ pub struct AlleleAnnotation {
     pub existing_variation: Vec<String>,
     pub sift: Option<String>,
     pub polyphen: Option<String>,
+    /// Per-allele supplementary annotations as (json_key, json_value) pairs.
+    pub supplementary: Vec<(String, String)>,
 }
 
 /// A known/existing variant from the variation cache.

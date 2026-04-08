@@ -3,9 +3,9 @@
 /// These tests verify that OxiVEP's VCF parsing, allele normalization,
 /// and variant representation matches the behavior documented in
 /// ensembl-vep's Parser_VCF.t test suite.
-use oxivep_core::{Allele, Impact, Strand};
+use oxivep_core::{Allele, Impact, Strand, VariantType};
 use oxivep_io::output;
-use oxivep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature, VcfFields};
+use oxivep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use oxivep_io::vcf::{parse_vcf_line, VcfParser};
 
 // =============================================================================
@@ -451,7 +451,7 @@ fn mock_vf_missense() -> VariationFeature {
         ref_allele: Allele::from_str("A"),
         alt_alleles: vec![Allele::from_str("C")],
         variation_name: Some("1_65568_A/C".into()),
-        vcf_line: None,
+
         vcf_fields: None,
         transcript_variations: vec![TranscriptVariation {
             transcript_id: "ENST00000641515.2".into(),
@@ -477,6 +477,7 @@ fn mock_vf_missense() -> VariationFeature {
                 existing_variation: vec![],
                 sift: Some("tolerated_low_confidence(0.06)".into()),
                 polyphen: Some("benign(0)".into()),
+                supplementary: Vec::new(),
             }],
             canonical: false,
             strand: Strand::Forward,
@@ -494,6 +495,11 @@ fn mock_vf_missense() -> VariationFeature {
         existing_variants: vec![],
         minimised: false,
         most_severe_consequence: Some(Consequence::MissenseVariant),
+        variant_type: VariantType::Snv,
+        sv_end: None,
+        sv_len: None,
+        supplementary_annotations: Vec::new(),
+        gene_annotations: Vec::new(),
     }
 }
 
@@ -546,7 +552,7 @@ fn test_csq_frameshift_codon_format() {
         ref_allele: Allele::from_str("A"),
         alt_alleles: vec![Allele::Deletion],
         variation_name: Some("3_319781_A/-".into()),
-        vcf_line: None,
+
         vcf_fields: None,
         transcript_variations: vec![TranscriptVariation {
             transcript_id: "ENST00000256509.7".into(),
@@ -572,6 +578,7 @@ fn test_csq_frameshift_codon_format() {
                 existing_variation: vec![],
                 sift: None,
                 polyphen: None,
+                supplementary: Vec::new(),
             }],
             canonical: false,
             strand: Strand::Forward,
@@ -589,6 +596,11 @@ fn test_csq_frameshift_codon_format() {
         existing_variants: vec![],
         minimised: false,
         most_severe_consequence: Some(Consequence::FrameshiftVariant),
+        variant_type: VariantType::Unknown,
+        sv_end: None,
+        sv_len: None,
+        supplementary_annotations: Vec::new(),
+        gene_annotations: Vec::new(),
     };
 
     let csq = output::format_csq(&vf, output::DEFAULT_CSQ_FIELDS);
@@ -720,7 +732,7 @@ fn test_csq_frameshift_full_42_field_match() {
         ref_allele: Allele::from_str("A"),
         alt_alleles: vec![Allele::Deletion],
         variation_name: Some("3_319781_A/-".into()),
-        vcf_line: None,
+
         vcf_fields: None,
         transcript_variations: vec![TranscriptVariation {
             transcript_id: "ENST00000421198.5".into(),
@@ -746,6 +758,7 @@ fn test_csq_frameshift_full_42_field_match() {
                 existing_variation: vec![],
                 sift: None,
                 polyphen: None,
+                supplementary: Vec::new(),
             }],
             canonical: false,
             strand: Strand::Forward,
@@ -763,6 +776,11 @@ fn test_csq_frameshift_full_42_field_match() {
         existing_variants: vec![],
         minimised: false,
         most_severe_consequence: Some(Consequence::FrameshiftVariant),
+        variant_type: VariantType::Unknown,
+        sv_end: None,
+        sv_len: None,
+        supplementary_annotations: Vec::new(),
+        gene_annotations: Vec::new(),
     };
 
     let csq = output::format_csq(&vf, output::DEFAULT_CSQ_FIELDS);
@@ -842,7 +860,7 @@ fn test_csq_downstream_variant_match() {
         ref_allele: Allele::from_str("A"),
         alt_alleles: vec![Allele::from_str("C")],
         variation_name: Some("1_65568_A/C".into()),
-        vcf_line: None,
+
         vcf_fields: None,
         transcript_variations: vec![TranscriptVariation {
             transcript_id: "ENST00000492842.2".into(),
@@ -868,6 +886,7 @@ fn test_csq_downstream_variant_match() {
                 existing_variation: vec![],
                 sift: None,
                 polyphen: None,
+                supplementary: Vec::new(),
             }],
             canonical: false,
             strand: Strand::Forward,
@@ -885,6 +904,11 @@ fn test_csq_downstream_variant_match() {
         existing_variants: vec![],
         minimised: false,
         most_severe_consequence: Some(Consequence::DownstreamGeneVariant),
+        variant_type: VariantType::Unknown,
+        sv_end: None,
+        sv_len: None,
+        supplementary_annotations: Vec::new(),
+        gene_annotations: Vec::new(),
     };
 
     let csq = output::format_csq(&vf, output::DEFAULT_CSQ_FIELDS);
@@ -924,7 +948,7 @@ fn test_csq_intron_variant_match() {
         ref_allele: Allele::from_str("C"),
         alt_alleles: vec![Allele::from_str("T")],
         variation_name: Some("2_265023_C/T".into()),
-        vcf_line: None,
+
         vcf_fields: None,
         transcript_variations: vec![TranscriptVariation {
             transcript_id: "ENST00000272065.10".into(),
@@ -950,6 +974,7 @@ fn test_csq_intron_variant_match() {
                 existing_variation: vec![],
                 sift: None,
                 polyphen: None,
+                supplementary: Vec::new(),
             }],
             canonical: false,
             strand: Strand::Forward,
@@ -967,6 +992,11 @@ fn test_csq_intron_variant_match() {
         existing_variants: vec![],
         minimised: false,
         most_severe_consequence: Some(Consequence::IntronVariant),
+        variant_type: VariantType::Unknown,
+        sv_end: None,
+        sv_len: None,
+        supplementary_annotations: Vec::new(),
+        gene_annotations: Vec::new(),
     };
 
     let csq = output::format_csq(&vf, output::DEFAULT_CSQ_FIELDS);
