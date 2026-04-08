@@ -47,9 +47,9 @@ OxiVEP is organized as a Cargo workspace containing nine modular crates (librari
 | `oxivep-hgvs` | 20 | HGVS nomenclature generation: HGVSg (genomic), HGVSc (coding DNA), HGVSp (protein), including frameshift termination scanning |
 | `oxivep-io` | 21 + 30 | VCF parser with allele normalization and structural variant detection; output formatters (VCF CSQ, tab, JSON, Nirvana-style structured JSON); multi-sample FORMAT/GT/DP/GQ/AD parsing; 30 VEP compatibility integration tests |
 | `oxivep-filter` | 21 | Filter engine: tokenizer, recursive-descent parser, AST evaluator; filter_vep-compatible syntax (is, !=, <, >, in, match, and, or, not, parentheses) |
-| `oxivep-sa` | 28 | Supplementary annotation format (OxiSA): .osa (position/allele-level, zstd block compression, mmap reader), .osi (interval-based for SVs), .oga (gene-level); source parsers for ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed, MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI, PrimateAI, dbNSFP; custom VCF/BED providers |
+| `oxivep-sa` | 57 | Supplementary annotation format: v1 (.osa, zstd block compression, mmap reader), v2 (.osa2, echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding, LRU cache, Bloom filters), .osi (interval-based for SVs), .oga (gene-level); source parsers for ClinVar, gnomAD (v1+v2), dbSNP, COSMIC, 1000G, TOPMed, MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI, PrimateAI, dbNSFP; custom VCF/BED providers; compact variant encoding (Var32, kmer16, zigzag) |
 | `oxivep-cli` | -- | CLI binary: `annotate` (pipeline with SA provider integration), `sa-build` (database builder), `filter`, `cache`, `web` (embedded server) |
-| **Total** | **204** | |
+| **Total** | **233** | |
 
 ### 2.2 Data Model
 
@@ -157,7 +157,7 @@ The web interface features:
 
 OxiVEP includes a native supplementary annotation framework (OxiSA) for direct integration with clinical and population databases, inspired by Illumina Nirvana's NSA architecture (Stromberg et al., 2024). The framework defines three binary file formats:
 
-1. **Position/allele-level annotations (.osa):** Block-compressed (zstd) data files with per-chromosome indexing for O(1) block lookups via memory-mapped I/O. Each block contains serialized (position, ref_allele, alt_allele, JSON) entries. Annotations can be allele-specific (e.g., ClinVar, gnomAD) or positional (e.g., PhyloP conservation scores).
+1. **Position/allele-level annotations (.osa / .osa2):** Two format generations are supported. The v1 format (.osa) uses zstd block-compressed data files with per-chromosome indexing and memory-mapped I/O. The v2 format (.osa2), inspired by echtvar's high-performance architecture (Pedersen, 2023), uses ZIP-based archives with ~1MB genomic chunks (position >> 20), compact 32-bit variant encoding (Var32: 20-bit position + 2-bit ref_len + 2-bit alt_len + 8-bit encoded bases), parallel u32 value arrays instead of JSON strings, delta encoding for variant keys, float quantization (value * multiplier -> u32), categorical string-to-index encoding, zigzag encoding for signed values, and LRU chunk caching. The v2 format eliminates JSON parsing from the hot path and enables O(log n) binary search on 4-byte keys instead of variable-length string comparisons. Bloom filters provide fast negative lookups, skipping chunk decompression when a position is definitely not annotated.
 
 2. **Interval-level annotations (.osi):** For structural variant databases (gnomAD SV, ClinGen dosage, DGV) where annotations are genomic regions. Supports overlap queries with reciprocal overlap calculation.
 
@@ -340,7 +340,7 @@ The predominance of intronic (41.1%) and non-coding transcript (37.8%) variants,
 
 ### 3.7 Test Suite Coverage
 
-OxiVEP's annotation accuracy was validated through a comprehensive test suite of 204 tests organized across ten testing categories (Table 8).
+OxiVEP's annotation accuracy was validated through a comprehensive test suite of 233 tests organized across ten testing categories (Table 8).
 
 **Table 8. Test suite coverage.**
 
@@ -353,7 +353,7 @@ OxiVEP's annotation accuracy was validated through a comprehensive test suite of
 | HGVS nomenclature | 20 | HGVSg, HGVSc, HGVSp (SNV, deletion, insertion, frameshift, stop lost, MNV, UTR, intronic) |
 | VEP compatibility | 30 | VCF parsing (incl. 6 SV parsing tests), allele normalization, chromosome prefix handling, CSQ field formatting |
 | Filter engine | 21 | Tokenizer, parser (simple/compound/nested expressions), evaluator (equality, numeric comparison, in operator, and/or/not, parentheses, missing fields, case-insensitive matching) |
-| Supplementary annotations | 28 | OxiSA format round-trip (writer -> reader, 1000-record tests), interval overlap queries, gene annotation lookup, source parsers (ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed, MitoMap, PhyloP, GERP, REVEL, SpliceAI, PrimateAI, dbNSFP, OMIM, gnomAD gene scores), custom VCF/BED providers |
+| Supplementary annotations | 57 | OxiSA v1 format round-trip (writer -> reader, 1000-record tests), v2 format round-trip (.osa2 chunked ZIP with Var32 binary search, delta encoding, parallel u32 arrays), interval overlap queries, gene annotation lookup, source parsers (ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed, MitoMap, PhyloP, GERP, REVEL, SpliceAI, PrimateAI, dbNSFP, OMIM, gnomAD gene scores, gnomAD v2 encoder), custom VCF/BED providers, Var32/kmer16/zigzag encoding, Bloom filter, field type encoding, chunk delta encoding |
 | Multi-sample parsing | 3 | FORMAT/GT parsing, genotype classification (het/hom_ref/hom_alt/missing), trio sample extraction |
 | **VEP concordance** | -- | 100% accuracy on 23 fields across 2,340 transcript-allele pairs vs. Ensembl VEP v115.1 |
 

@@ -8,7 +8,7 @@ OxiVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.e
 
 - **Variant Consequence Prediction** — Classifies variants using 49 [Sequence Ontology](http://www.sequenceontology.org/) terms (missense, frameshift, splice donor, copy_number_change, transcript_ablation, etc.)
 - **Structural Variant Support** — Full SV pipeline: `<DEL>`, `<DUP>`, `<INV>`, `<CNV>`, `<BND>`, `<INS>`, `<STR>` with SV-specific consequence prediction
-- **Supplementary Annotations** — Direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, MitoMap, and more via the native OxiSA binary format
+- **Supplementary Annotations** — Direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, MitoMap via the native OxiSA format (v1: zstd block compression; v2: echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding, and LRU caching)
 - **Prediction Scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN conservation and pathogenicity scores; SIFT/PolyPhen via dbNSFP
 - **Gene-Level Annotations** — OMIM phenotypes, gnomAD gene constraint (pLI, LOEUF), ClinGen gene-disease validity
 - **Filter Engine** — Expression-based filtering compatible with VEP's filter_vep syntax
@@ -252,7 +252,11 @@ crates/
   oxivep-hgvs/         # HGVS nomenclature generation (c., p., g.)
   oxivep-io/           # VCF parser (incl. SVs), output formatters, multi-sample parsing
   oxivep-filter/       # Filter engine: lexer, parser, evaluator (filter_vep-compatible)
-  oxivep-sa/           # Supplementary annotation format (OxiSA): .osa/.osi/.oga
+  oxivep-sa/           # Supplementary annotation format (OxiSA):
+                       #   v1 (.osa): zstd block compression, binary search
+                       #   v2 (.osa2): echtvar-inspired chunked ZIP with Var32 encoding,
+                       #     parallel u32 value arrays, delta encoding, LRU chunk cache,
+                       #     Bloom filters for negative lookups
                        # Source parsers: ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed,
                        # MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI, PrimateAI, dbNSFP
                        # Custom VCF/BED annotation providers
@@ -264,7 +268,7 @@ tests/                 # Test VCF and GFF3 files
 ## Running Tests
 
 ```bash
-cargo test --workspace          # 204 tests
+cargo test --workspace          # 233 tests
 cargo test -p oxivep-consequence  # Consequence prediction tests (incl. SV)
 cargo test -p oxivep-filter       # Filter engine tests
 cargo test -p oxivep-sa           # Supplementary annotation format tests
