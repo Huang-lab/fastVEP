@@ -194,6 +194,23 @@ run_benchmarks() {
     fi
 
     # ═══════════════════════════════════════════════════════════════
+    # HUMAN full genome WGS (GRCh38, ~508K transcripts)
+    # ═══════════════════════════════════════════════════════════════
+    if [[ -f "$TEST_DATA/Homo_sapiens.GRCh38.115.gff3" && -f "$TEST_DATA/Homo_sapiens.GRCh38.dna.primary_assembly.fa" ]]; then
+        print_section "Pre-warming: Human full genome (GRCh38, ~508K transcripts)"
+        warm_cache "$TEST_DATA/Homo_sapiens.GRCh38.115.gff3" "$TEST_DATA/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+
+        # GIAB NA12878 full WGS
+        if [[ -f "$SCRIPT_DIR/giab/NA12878_GRCh38_full.vcf" ]]; then
+            ALL_NAMES+=("human_giab_full_wgs")
+            ALL_VCFS+=("$SCRIPT_DIR/giab/NA12878_GRCh38_full.vcf")
+            ALL_GFF3S+=("$TEST_DATA/Homo_sapiens.GRCh38.115.gff3")
+            ALL_FASTAS+=("$TEST_DATA/Homo_sapiens.GRCh38.dna.primary_assembly.fa")
+            ALL_ORGANISMS+=("Human")
+        fi
+    fi
+
+    # ═══════════════════════════════════════════════════════════════
     # MOUSE (GRCm39 full genome)
     # ═══════════════════════════════════════════════════════════════
     if [[ -f "$ORG_DATA/mouse.gff3" && -f "$ORG_DATA/mouse.fa" ]]; then
