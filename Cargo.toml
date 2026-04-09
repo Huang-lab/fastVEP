@@ -9,6 +9,7 @@ members = [
     "crates/oxivep-filter",
     "crates/oxivep-sa",
     "crates/oxivep-cli",
+    "crates/oxivep-web",
 ]
 resolver = "2"
 

@@ -562,7 +562,7 @@
         <div class="controls">
           <div class="control-group">
             <label>GFF3 Gene Model</label>
-            <select id="gffSource" onchange="toggleGffUpload()">
+            <select id="gffSource" onchange="onGffSourceChange()">
               <option value="builtin">Built-in (OR4F5 + lncRNA, chr1)</option>
               <option value="upload">Upload custom GFF3 file</option>
             </select>
@@ -704,22 +704,30 @@
 // OxiVEP Client-Side Annotation Engine
 // ============================================================
 
-// Embedded example GFF3 gene model — real Ensembl data (GRCh38 release 115)
-// OR4F5: ENSG00000186092, chr1:65419-71585 (+), 3 exons, protein_coding
-// lncRNA: ENSG00000290826, chr1:57598-64116 (+), 3 exons, lncRNA
+// Embedded example GFF3 gene model — extracted from Ensembl GRCh38 release 115
+// OR4F5: ENSG00000186092, chr1:65419-71585 (+), protein_coding, Ensembl_canonical + MANE_Select
+// lncRNA: ENSG00000290826, chr1:51891-64116 (+), 2 transcripts (ENST00000832531 canonical, ENST00000642116)
 const EXAMPLE_GFF3 = `##gff-version 3
-1\thavana\tgene\t65419\t71585\t.\t+\t.\tID=gene:ENSG00000186092;Name=OR4F5;biotype=protein_coding;gene_id=ENSG00000186092;version=7
-1\thavana\tmRNA\t65419\t71585\t.\t+\t.\tID=transcript:ENST00000641515;Parent=gene:ENSG00000186092;Name=OR4F5-201;biotype=protein_coding;tag=Ensembl_canonical,MANE_Select;transcript_id=ENST00000641515;version=2
-1\thavana\texon\t65419\t65433\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003812156;exon_id=ENSE00003812156;rank=1;version=1
-1\thavana\texon\t65520\t65573\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003813641;exon_id=ENSE00003813641;rank=2;version=1
-1\thavana\tCDS\t65565\t65573\t.\t+\t0\tID=CDS:ENSP00000493376;Parent=transcript:ENST00000641515;protein_id=ENSP00000493376;version=2
-1\thavana\texon\t69037\t71585\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003813949;exon_id=ENSE00003813949;rank=3;version=1
-1\thavana\tCDS\t69037\t70008\t.\t+\t0\tID=CDS:ENSP00000493376;Parent=transcript:ENST00000641515;protein_id=ENSP00000493376;version=2
-1\thavana\tgene\t57598\t64116\t.\t+\t.\tID=gene:ENSG00000290826;biotype=lncRNA;gene_id=ENSG00000290826;version=2
-1\thavana\tlnc_RNA\t57598\t64116\t.\t+\t.\tID=transcript:ENST00000642116;Parent=gene:ENSG00000290826;biotype=lncRNA;tag=Ensembl_canonical;transcript_id=ENST00000642116;version=1
+1\thavana\tncRNA_gene\t51891\t64116\t.\t+\t.\tID=gene:ENSG00000290826;biotype=lncRNA;description=novel transcript;gene_id=ENSG00000290826;logic_name=havana_homo_sapiens;version=2
+1\thavana_tagene\tlnc_RNA\t51891\t63526\t.\t+\t.\tID=transcript:ENST00000832531;Parent=gene:ENSG00000290826;biotype=lncRNA;tag=gencode_basic,gencode_primary,Ensembl_canonical;transcript_id=ENST00000832531;version=1
+1\thavana_tagene\texon\t51891\t51994\t.\t+\t.\tParent=transcript:ENST00000832531;Name=ENSE00004248110;exon_id=ENSE00004248110;rank=1;version=1
+1\thavana_tagene\texon\t53282\t53372\t.\t+\t.\tParent=transcript:ENST00000832531;Name=ENSE00004248112;exon_id=ENSE00004248112;rank=2;version=1
+1\thavana_tagene\texon\t58700\t58856\t.\t+\t.\tParent=transcript:ENST00000832531;Name=ENSE00003812505;exon_id=ENSE00003812505;rank=3;version=1
+1\thavana_tagene\texon\t62916\t63526\t.\t+\t.\tParent=transcript:ENST00000832531;Name=ENSE00004248111;exon_id=ENSE00004248111;rank=4;version=1
+1\thavana\tlnc_RNA\t57598\t64116\t.\t+\t.\tID=transcript:ENST00000642116;Parent=gene:ENSG00000290826;biotype=lncRNA;tag=gencode_basic;transcript_id=ENST00000642116;version=1
 1\thavana\texon\t57598\t57653\t.\t+\t.\tParent=transcript:ENST00000642116;Name=ENSE00003812686;exon_id=ENSE00003812686;rank=1;version=1
 1\thavana\texon\t58700\t58856\t.\t+\t.\tParent=transcript:ENST00000642116;Name=ENSE00003812505;exon_id=ENSE00003812505;rank=2;version=1
-1\thavana\texon\t62916\t64116\t.\t+\t.\tParent=transcript:ENST00000642116;Name=ENSE00003811818;exon_id=ENSE00003811818;rank=3;version=1`;
+1\thavana\texon\t62916\t64116\t.\t+\t.\tParent=transcript:ENST00000642116;Name=ENSE00003811818;exon_id=ENSE00003811818;rank=3;version=1
+1\tensembl_havana\tgene\t65419\t71585\t.\t+\t.\tID=gene:ENSG00000186092;Name=OR4F5;biotype=protein_coding;description=olfactory receptor family 4 subfamily F member 5 [Source:HGNC Symbol%3BAcc:HGNC:14825];gene_id=ENSG00000186092;logic_name=ensembl_havana_gene_homo_sapiens;version=7
+1\thavana\tmRNA\t65419\t71585\t.\t+\t.\tID=transcript:ENST00000641515;Parent=gene:ENSG00000186092;Name=OR4F5-201;biotype=protein_coding;ccdsid=CCDS30547.2;tag=gencode_basic,gencode_primary,Ensembl_canonical,MANE_Select;transcript_id=ENST00000641515;version=2
+1\thavana\texon\t65419\t65433\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003812156;exon_id=ENSE00003812156;rank=1;version=1
+1\thavana\tfive_prime_UTR\t65419\t65433\t.\t+\t.\tParent=transcript:ENST00000641515
+1\thavana\tfive_prime_UTR\t65520\t65564\t.\t+\t.\tParent=transcript:ENST00000641515
+1\thavana\texon\t65520\t65573\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003813641;exon_id=ENSE00003813641;rank=2;version=1
+1\thavana\tCDS\t65565\t65573\t.\t+\t0\tID=CDS:ENSP00000493376;Parent=transcript:ENST00000641515;protein_id=ENSP00000493376;version=2
+1\thavana\tCDS\t69037\t70008\t.\t+\t0\tID=CDS:ENSP00000493376;Parent=transcript:ENST00000641515;protein_id=ENSP00000493376;version=2
+1\thavana\texon\t69037\t71585\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003813949;exon_id=ENSE00003813949;rank=3;version=1
+1\thavana\tthree_prime_UTR\t70009\t71585\t.\t+\t.\tParent=transcript:ENST00000641515`;
 
 // Real spliced transcript sequences from Ensembl GRCh38 (fetched via REST API)
 const SPLICED_SEQS = {
@@ -1199,21 +1207,92 @@ let allResults = [];
 let currentTab = 'table';
 let transcripts = [];
 let hasBackend = null; // null = unknown, true/false after check
+let serverTranscripts = 0; // how many transcripts are loaded on the server
+let serverGenomes = []; // available genomes from --data-dir
+let builtinUploadedToServer = false; // track if we've uploaded the example GFF3
 
-// Detect backend on load
+// Detect backend on load, fetch available genomes, ensure transcripts are loaded
 async function checkBackend() {
   try {
     const r = await fetch('/api/status', { method: 'GET' });
-    if (r.ok) { const j = await r.json(); hasBackend = j.backend === true; }
-    else hasBackend = false;
+    if (r.ok) {
+      const j = await r.json();
+      hasBackend = j.backend === true;
+      serverTranscripts = j.transcripts || 0;
+    } else {
+      hasBackend = false;
+    }
   } catch { hasBackend = false; }
-  // Show mode indicator
+
   const badge = document.querySelector('.badge');
   if (badge) badge.textContent = hasBackend ? 'v0.1.0 (server)' : 'v0.1.0 (client)';
+
+  if (!hasBackend) return;
+
+  // Fetch available genomes from the server's data directory
+  try {
+    const r = await fetch('/api/genomes', { method: 'GET' });
+    if (r.ok) {
+      const data = await r.json();
+      serverGenomes = data.genomes || [];
+    }
+  } catch { /* ignore */ }
+
+  // Populate genome options in the dropdown
+  const sel = document.getElementById('gffSource');
+  if (serverGenomes.length > 0) {
+    for (const g of serverGenomes) {
+      const opt = document.createElement('option');
+      opt.value = 'server:' + g.name;
+      opt.textContent = g.name + (g.has_fasta ? ' (+ FASTA)' : '');
+      // Insert before "Upload custom" option
+      sel.insertBefore(opt, sel.querySelector('option[value="upload"]'));
+    }
+  }
+
+  // If server has no transcripts loaded, auto-upload the built-in example GFF3
+  if (serverTranscripts === 0) {
+    await uploadBuiltinToServer();
+  }
+
+  updateGffInfo();
 }
+
+// Upload the built-in example GFF3 to the server so server-mode annotation works
+async function uploadBuiltinToServer() {
+  if (builtinUploadedToServer) return;
+  const info = document.getElementById('gffInfo');
+  info.textContent = 'Loading built-in gene model on server...';
+  try {
+    const r = await fetch('/api/upload-gff3', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: EXAMPLE_GFF3,
+    });
+    const data = await r.json();
+    if (!data.error) {
+      builtinUploadedToServer = true;
+      serverTranscripts = data.transcripts || 0;
+      info.textContent = `Built-in: ${data.genes} genes, ${data.transcripts} transcripts`;
+    } else {
+      info.textContent = 'Failed to load built-in: ' + data.error;
+    }
+  } catch (e) {
+    info.textContent = 'Failed to load built-in: ' + e.message;
+  }
+}
+
+function updateGffInfo() {
+  const info = document.getElementById('gffInfo');
+  const source = document.getElementById('gffSource').value;
+  if (source === 'builtin' && hasBackend && builtinUploadedToServer) {
+    info.textContent = `Built-in loaded on server (${serverTranscripts} transcripts)`;
+  }
+}
+
 checkBackend();
 
-function annotate() {
+async function annotate() {
   const vcfText = document.getElementById('vcfInput').value.trim();
   if (!vcfText) return;
   const status = document.getElementById('statusBar');
@@ -1221,8 +1300,11 @@ function annotate() {
   document.getElementById('doneIcon').style.display = 'none';
   status.classList.add('visible');
 
-  // Use backend if available (custom GFF was already uploaded to server)
   if (hasBackend) {
+    // Ensure server has transcripts loaded (upload builtin if needed)
+    if (serverTranscripts === 0) {
+      await uploadBuiltinToServer();
+    }
     annotateBackend(vcfText);
   } else {
     annotateClientSide(vcfText);
@@ -1664,19 +1746,56 @@ function updateThemeButton(theme) {
 // --- GFF file upload ---
 let customGFF3 = null;
 
-function toggleGffUpload() {
+function onGffSourceChange() {
   const source = document.getElementById('gffSource').value;
   const fileInput = document.getElementById('gffFile');
   const info = document.getElementById('gffInfo');
+
   if (source === 'upload') {
     fileInput.style.display = 'block';
     info.textContent = customGFF3 ? 'Custom GFF3 loaded' : 'Select a GFF3 file';
-  } else {
+  } else if (source.startsWith('server:')) {
+    // Load a genome from the server's data directory
     fileInput.style.display = 'none';
-    info.textContent = '';
     customGFF3 = null;
+    const genomeName = source.replace('server:', '');
+    loadServerGenome(genomeName);
+  } else {
+    // builtin
+    fileInput.style.display = 'none';
+    customGFF3 = null;
+    if (hasBackend && !builtinUploadedToServer) {
+      uploadBuiltinToServer();
+    } else {
+      updateGffInfo();
+    }
   }
 }
+
+// Load a genome from the server's --data-dir
+async function loadServerGenome(name) {
+  const info = document.getElementById('gffInfo');
+  info.textContent = 'Loading ' + name + '...';
+  try {
+    const r = await fetch('/api/load-genome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await r.json();
+    if (data.error) {
+      info.textContent = 'Error: ' + data.error;
+    } else {
+      serverTranscripts = data.transcripts || 0;
+      info.textContent = `${name}: ${data.transcripts} transcripts (${data.time_ms}ms)`;
+    }
+  } catch (e) {
+    info.textContent = 'Failed to load: ' + e.message;
+  }
+}
+
+// Keep old name as alias for any other references
+function toggleGffUpload() { onGffSourceChange(); }
 
 function loadGffFile(input) {
   const file = input.files[0];

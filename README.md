@@ -36,8 +36,9 @@ source "$HOME/.cargo/env"
 git clone https://github.com/kuanlinhuang/OxiVEP.git
 cd OxiVEP
 
-# Build and install to your PATH (~/.cargo/bin/oxivep)
-cargo install --path crates/oxivep-cli
+# Build and install both binaries to ~/.cargo/bin/
+cargo install --path crates/oxivep-cli   # oxivep (CLI annotator)
+cargo install --path crates/oxivep-web   # oxivep-web (production web server)
 
 # Verify it works
 oxivep --version
@@ -98,42 +99,117 @@ oxivep filter \
 ### 7. Launch the web interface
 
 ```bash
-oxivep web --port 8080
+# Quick start — uses a built-in example gene model (OR4F5, chr1)
+oxivep-web
+
+# With your own data
+oxivep-web --gff3 Homo_sapiens.GRCh38.115.gff3 --fasta Homo_sapiens.GRCh38.dna.primary_assembly.fa
+
+# With supplementary annotations (ClinVar, gnomAD, etc.)
+oxivep-web --gff3 genes.gff3 --fasta ref.fa --sa-dir /path/to/sa_databases/
 ```
 
-Open http://localhost:8080 in your browser.
+Open http://localhost:8080 in your browser. The web interface lets you paste VCF data, switch gene models, and view results in an interactive table.
 
-## Using Your Own Data
+> **Note:** `oxivep-web` is a separate production-quality binary (axum/tokio, async, multi-connection). The legacy `oxivep web` command still works but is single-threaded.
 
-### Annotate a real VCF against Ensembl gene models
+## Local Setup Guide
+
+This section walks through setting up OxiVEP with full annotation capabilities (gene models, reference sequence, and supplementary databases like ClinVar and gnomAD).
+
+### Step 1: Download reference data
 
 ```bash
-# Download Ensembl GFF3 (human GRCh38)
-wget https://ftp.ensembl.org/pub/release-112/gff3/homo_sapiens/Homo_sapiens.GRCh38.112.gff3.gz
-gunzip Homo_sapiens.GRCh38.112.gff3.gz
+mkdir -p data && cd data
 
-# Annotate your VCF
+# Gene models (GFF3) — pick your organism
+# Human GRCh38
+wget https://ftp.ensembl.org/pub/release-115/gff3/homo_sapiens/Homo_sapiens.GRCh38.115.gff3.gz
+gunzip Homo_sapiens.GRCh38.115.gff3.gz
+
+# Reference FASTA (needed for HGVS and sequence context)
+wget https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+gunzip Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+
+# Create FASTA index (enables memory-mapped access — important for large genomes)
+samtools faidx Homo_sapiens.GRCh38.dna.primary_assembly.fa
+```
+
+### Step 2: Build supplementary annotation databases
+
+Download source files and build OxiSA databases. Each build is a one-time operation.
+
+```bash
+mkdir -p sa_databases
+
+# ClinVar — clinical variant significance (~30MB download)
+wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
+oxivep sa-build --source clinvar -i clinvar.vcf.gz -o sa_databases/clinvar --assembly GRCh38
+
+# gnomAD v4 — population allele frequencies (~25GB download per chromosome)
+# Download from https://gnomad.broadinstitute.org/downloads
+oxivep sa-build --source gnomad -i gnomad.genomes.v4.0.sites.vcf.bgz -o sa_databases/gnomad --assembly GRCh38
+
+# dbSNP — variant identifiers
+wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
+oxivep sa-build --source dbsnp -i GCF_000001405.40.gz -o sa_databases/dbsnp --assembly GRCh38
+
+# COSMIC — somatic mutations (requires license, see https://cancer.sanger.ac.uk/cosmic/download)
+oxivep sa-build --source cosmic -i CosmicCodingMuts.vcf.gz -o sa_databases/cosmic --assembly GRCh38
+```
+
+### Step 3: Run the CLI annotator
+
+```bash
 oxivep annotate \
   -i your_variants.vcf \
   -o annotated.vcf \
-  --gff3 Homo_sapiens.GRCh38.112.gff3 \
+  --gff3 data/Homo_sapiens.GRCh38.115.gff3 \
+  --fasta data/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+  --sa-dir sa_databases/ \
   --hgvs
-
-# Or pipe from bcftools
-bcftools view sample.vcf.gz chr21 | oxivep annotate -i - --gff3 Homo_sapiens.GRCh38.112.gff3 --output-format tab
 ```
 
-### Mouse, zebrafish, or other organisms
+### Step 4: Run the web server
 
 ```bash
-# Mouse
-wget https://ftp.ensembl.org/pub/release-112/gff3/mus_musculus/Mus_musculus.GRCm39.112.gff3.gz
+# Install the web server binary
+cargo install --path crates/oxivep-web
 
-# Zebrafish
-wget https://ftp.ensembl.org/pub/release-112/gff3/danio_rerio/Danio_rerio.GRCz11.112.gff3.gz
+# Run with all annotation sources
+oxivep-web \
+  --gff3 data/Homo_sapiens.GRCh38.115.gff3 \
+  --fasta data/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+  --sa-dir sa_databases/ \
+  --port 8080
 ```
 
-OxiVEP works with any organism — just provide the matching GFF3.
+All flags also accept environment variables (`OXIVEP_GFF3`, `OXIVEP_FASTA`, `OXIVEP_SA_DIR`, `OXIVEP_PORT`) for container deployments.
+
+### Multi-organism setup
+
+To serve multiple genomes from the web interface, organize data into subdirectories and use `--data-dir`:
+
+```bash
+mkdir -p genomes/human_grch38 genomes/mouse_grcm39 genomes/zebrafish
+
+# Human
+cp data/Homo_sapiens.GRCh38.115.gff3 genomes/human_grch38/
+cp data/Homo_sapiens.GRCh38.dna.primary_assembly.fa* genomes/human_grch38/
+
+# Mouse
+wget -P genomes/mouse_grcm39/ https://ftp.ensembl.org/pub/release-115/gff3/mus_musculus/Mus_musculus.GRCm39.115.gff3.gz
+gunzip genomes/mouse_grcm39/Mus_musculus.GRCm39.115.gff3.gz
+
+# Zebrafish
+wget -P genomes/zebrafish/ https://ftp.ensembl.org/pub/release-115/gff3/danio_rerio/Danio_rerio.GRCz11.115.gff3.gz
+gunzip genomes/zebrafish/Danio_rerio.GRCz11.115.gff3.gz
+
+# Run — users can switch genomes from the dropdown in the web UI
+oxivep-web --data-dir genomes/ --sa-dir sa_databases/
+```
+
+OxiVEP works with any organism — just provide the matching GFF3 (and optionally FASTA for HGVS).
 
 ## Supplementary Annotation Sources
 
@@ -200,13 +276,19 @@ IMPACT is HIGH and AF < 0.01
 (IMPACT is HIGH or IMPACT is MODERATE) and not Consequence is synonymous_variant
 ```
 
-### `oxivep web`
+### `oxivep-web` (production web server)
 
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--gff3` | GFF3 gene annotation file | -- |
 | `--fasta` | Reference FASTA file | -- |
-| `--port` | HTTP port | `8080` |
+| `--sa-dir` | Directory containing .osa/.osa2 supplementary annotation files | -- |
+| `--data-dir` | Directory of genome subdirectories (for multi-organism switching) | -- |
+| `--port` | HTTP port (also `OXIVEP_PORT` env) | `8080` |
+| `--bind` | Bind address (also `OXIVEP_BIND` env) | `0.0.0.0` |
+| `--distance` | Upstream/downstream distance in bp | `5000` |
+| `--max-body-size` | Max request body in bytes | `10485760` |
+| `--max-concurrent` | Max concurrent annotation requests | `64` |
 
 ### `oxivep cache`
 
@@ -260,9 +342,11 @@ crates/
                        # Source parsers: ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed,
                        # MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI, PrimateAI, dbNSFP
                        # Custom VCF/BED annotation providers
-  oxivep-cli/          # CLI binary, annotation pipeline, sa-build, web server
-web/                   # Web GUI (HTML/CSS/JS)
-tests/                 # Test VCF and GFF3 files
+  oxivep-cli/          # CLI binary: annotation pipeline, sa-build, legacy web server
+  oxivep-web/          # Production web server (axum/tokio): async, multi-connection,
+                       #   genome switching, SA integration, rate limiting
+web/                   # Web GUI (HTML/CSS/JS, embedded in both server binaries)
+tests/                 # Test data: chr1 (OR4F5) and chr17 (BRCA1) VCF + GFF3
 ```
 
 ## Running Tests

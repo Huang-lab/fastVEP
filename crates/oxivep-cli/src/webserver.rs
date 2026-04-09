@@ -94,7 +94,15 @@ fn handle_request(stream: &mut std::net::TcpStream, ctx: &mut AnnotationContext)
             stream.write_all(response.as_bytes())?;
         }
         ("GET", "/api/status") => {
-            send_json(stream, 200, r#"{"status":"ok","backend":true}"#)?;
+            let tr_count = ctx.transcript_provider.transcript_count();
+            let status_json = serde_json::json!({
+                "status": "ok",
+                "backend": true,
+                "transcripts": tr_count,
+                "gff3_source": ctx.gff3_source,
+                "has_fasta": ctx.seq_provider.is_some(),
+            });
+            send_json(stream, 200, &serde_json::to_string(&status_json)?)?;
         }
         ("POST", "/api/upload-gff3") => {
             let mut body = vec![0u8; content_length];
