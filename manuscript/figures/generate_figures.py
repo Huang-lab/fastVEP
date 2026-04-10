@@ -194,9 +194,82 @@ def fig2_multi_organism_benchmark():
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Fig 3: VEP concordance (keep as-is)
+# Fig 3: fastVEP vs Ensembl VEP head-to-head (NEW — the striking comparison)
 # ═══════════════════════════════════════════════════════════════════
-def fig3_vep_concordance():
+def fig3_vep_comparison():
+    data = read_csv('vep_comparison.csv')
+    variants = [int(d['variants']) for d in data]
+    f_time = [float(d['fastvep_sec']) for d in data]
+    v_time = [float(d['vep_sec']) for d in data]
+    f_vps = [int(d['fastvep_vps']) for d in data]
+    v_vps = [int(d['vep_vps']) for d in data]
+    speedups = [float(d['speedup']) for d in data]
+
+    if not HAS_MPL:
+        print("Figure 3: VEP Comparison")
+        for v, ft, vt, s in zip(variants, f_time, v_time, speedups):
+            print(f"  {v:>6,}: fastVEP {ft:.2f}s  VEP {vt:.1f}s  {s:.0f}x")
+        return
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Panel A: Wall-clock time comparison (log-log)
+    ax1.plot(variants, f_time, 'o-', color=COLORS['primary'], linewidth=2.5, markersize=10, label='fastVEP', zorder=3)
+    ax1.plot(variants, v_time, 's-', color=COLORS['vep'], linewidth=2.5, markersize=10, label='Ensembl VEP v115', zorder=3)
+
+    # Add full-genome extrapolation for VEP (dashed)
+    ax1.plot([50000, 4048342], [96.79, 96.79 * (4048342/50000)], 's--', color=COLORS['vep'],
+             linewidth=1.5, markersize=8, alpha=0.4, zorder=2)
+    ax1.scatter([4048342], [71], c=COLORS['primary'], s=150, marker='*', zorder=4, edgecolors='white', linewidth=2)
+    ax1.annotate('fastVEP full WGS\n4.05M variants in 71s', xy=(4048342, 71), xytext=(-80, 30),
+                 textcoords='offset points', fontsize=9, fontweight='bold', color=COLORS['primary'],
+                 arrowprops=dict(arrowstyle='->', color=COLORS['primary'], lw=1.5))
+    ax1.annotate('VEP: cannot complete\n(est. ~2.2 hours)', xy=(4048342, 96.79*(4048342/50000)), xytext=(-80, -30),
+                 textcoords='offset points', fontsize=9, color=COLORS['vep'], style='italic',
+                 arrowprops=dict(arrowstyle='->', color=COLORS['vep'], lw=1, ls='--'))
+
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    ax1.set_xlabel('Number of variants (GIAB HG002 chr22)', fontsize=12)
+    ax1.set_ylabel('Wall-clock time (seconds)', fontsize=12)
+    ax1.set_title('A. Annotation Time', fontsize=14, fontweight='bold')
+    ax1.legend(fontsize=11, loc='upper left')
+    ax1.grid(True, alpha=0.2)
+    ax1.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1e6:.1f}M' if x >= 1e6 else f'{x/1e3:.0f}K'))
+
+    # Panel B: Throughput comparison
+    ax2.plot(variants, f_vps, 'o-', color=COLORS['primary'], linewidth=2.5, markersize=10, label='fastVEP', zorder=3)
+    ax2.plot(variants, v_vps, 's-', color=COLORS['vep'], linewidth=2.5, markersize=10, label='Ensembl VEP v115', zorder=3)
+    ax2.set_xscale('log')
+    ax2.set_yscale('log')
+    ax2.set_xlabel('Number of variants', fontsize=12)
+    ax2.set_ylabel('Throughput (variants/sec)', fontsize=12)
+    ax2.set_title('B. Annotation Throughput', fontsize=14, fontweight='bold')
+    ax2.legend(fontsize=11)
+    ax2.grid(True, alpha=0.2)
+    ax2.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1e6:.1f}M' if x >= 1e6 else f'{x/1e3:.0f}K'))
+    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K' if x >= 1000 else f'{x:.0f}'))
+
+    for v, fv, vv, s in zip(variants, f_vps, v_vps, speedups):
+        if s > 1:
+            ax2.annotate(f'{s:.0f}x', xy=(v, fv), xytext=(0, 14),
+                         textcoords='offset points', ha='center', fontsize=10,
+                         color=COLORS['primary'], fontweight='bold')
+
+    # Highlight the divergence
+    ax2.fill_between(variants, v_vps, f_vps, alpha=0.1, color=COLORS['primary'])
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(FIG_DIR, 'fig3_vep_comparison.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'fig3_vep_comparison.pdf'), bbox_inches='tight')
+    print("Saved fig3_vep_comparison.png/pdf")
+    plt.close()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Fig 4: VEP concordance
+# ═══════════════════════════════════════════════════════════════════
+def fig4_vep_concordance():
     data = read_csv('vep_concordance.csv')
     fields = [d['field'] for d in data]
     accuracy = [float(d['accuracy']) for d in data]
@@ -224,16 +297,16 @@ def fig3_vep_concordance():
                 f'{acc:.1f}%', va='center', ha='right', fontsize=9, color='white', fontweight='bold')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(FIG_DIR, 'fig3_vep_concordance.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(FIG_DIR, 'fig3_vep_concordance.pdf'), bbox_inches='tight')
-    print("Saved fig3_vep_concordance.png/pdf")
+    plt.savefig(os.path.join(FIG_DIR, 'fig4_vep_concordance.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'fig4_vep_concordance.pdf'), bbox_inches='tight')
+    print("Saved fig4_vep_concordance.png/pdf")
     plt.close()
 
 
 # ═══════════════════════════════════════════════════════════════════
 # Fig 4: Consequence distribution (keep as-is)
 # ═══════════════════════════════════════════════════════════════════
-def fig4_consequence_distribution():
+def fig5_consequence_distribution():
     data = read_csv('consequence_distribution.csv')
     consequences = [d['consequence'] for d in data]
     counts = [int(d['count']) for d in data]
@@ -281,9 +354,9 @@ def fig4_consequence_distribution():
     ax.legend(handles=legend_elements, title='Impact', loc='lower right', fontsize=9)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(FIG_DIR, 'fig4_consequence_distribution.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(FIG_DIR, 'fig4_consequence_distribution.pdf'), bbox_inches='tight')
-    print("Saved fig4_consequence_distribution.png/pdf")
+    plt.savefig(os.path.join(FIG_DIR, 'fig5_consequence_distribution.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'fig5_consequence_distribution.pdf'), bbox_inches='tight')
+    print("Saved fig5_consequence_distribution.png/pdf")
     plt.close()
 
 
@@ -291,7 +364,7 @@ def fig4_consequence_distribution():
 # Fig 5: Throughput vs Genome Complexity (NEW — replaces old resource usage)
 # Shows throughput stays high even as transcript count increases 72x
 # ═══════════════════════════════════════════════════════════════════
-def fig5_throughput_vs_complexity():
+def fig6_throughput_vs_complexity():
     data = read_csv('organism_comparison.csv')
 
     if not HAS_MPL:
@@ -346,9 +419,9 @@ def fig5_throughput_vs_complexity():
                  va='center', fontsize=10, fontweight='bold', color='#333')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(FIG_DIR, 'fig5_throughput_complexity.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(FIG_DIR, 'fig5_throughput_complexity.pdf'), bbox_inches='tight')
-    print("Saved fig5_throughput_complexity.png/pdf")
+    plt.savefig(os.path.join(FIG_DIR, 'fig6_throughput_complexity.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'fig6_throughput_complexity.pdf'), bbox_inches='tight')
+    print("Saved fig6_throughput_complexity.png/pdf")
     plt.close()
 
 
@@ -359,7 +432,8 @@ if __name__ == '__main__':
     print()
     fig1_architecture()
     fig2_multi_organism_benchmark()
-    fig3_vep_concordance()
-    fig4_consequence_distribution()
-    fig5_throughput_vs_complexity()
+    fig3_vep_comparison()
+    fig4_vep_concordance()
+    fig5_consequence_distribution()
+    fig6_throughput_vs_complexity()
     print("\nDone.")
