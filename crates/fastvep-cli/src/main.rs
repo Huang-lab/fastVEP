@@ -193,9 +193,12 @@ fn main() -> Result<()> {
         } => {
             pipeline::run_sa_build(&source, &input, &output, &assembly)?;
         }
-        Commands::Filter { input, filter, .. } => {
-            log::info!("fastVEP filter: input={}, filter={}", input, filter);
-            eprintln!("fastVEP filter engine is under construction.");
+        Commands::Filter {
+            input,
+            output,
+            filter,
+        } => {
+            pipeline::run_filter(&input, &output, &filter)?;
         }
     }
 
