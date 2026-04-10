@@ -6,12 +6,11 @@
 # real Ensembl annotations and gold-standard variant call sets.
 #
 # Data sources:
-#   Human     — GIAB HG002 (GRCh38), Ensembl 115
-#   Mouse     — Mouse Genomes Project (GRCm39), Ensembl 115
-#   Yeast     — 1002 Yeast Genomes (R64), Ensembl 115
-#   Drosophila — Ensembl variation (BDGP6), Ensembl 115
-#   C. elegans — Ensembl variation (WBcel235), Ensembl 115
-#   Arabidopsis — Ensembl Plants variation (TAIR10), Ensembl 115
+#   Yeast       — 260K Ensembl/SGD variants (R64), Ensembl 115
+#   Drosophila  — 4.4M DGRP2 variants (BDGP6), Ensembl 115
+#   Arabidopsis — 12.9M 1001 Genomes variants (TAIR10), Ensembl 115
+#   Mouse       — 1M Ensembl/EVA variants (GRCm39), Ensembl 115
+#   Human       — 4.05M GIAB HG002 variants (GRCh38), Ensembl 115
 #
 # Prerequisites:
 #   ./download_data.sh --all
@@ -174,66 +173,46 @@ add_benchmark() {
 run_benchmarks() {
     mkdir -p "$OUTPUT_DIR"
 
-    # ── Yeast (R64, full genome) ──
+    # ── Yeast (R64, full genome — 260K Ensembl/SGD variants) ──
     local YD="$ORG_DATA/yeast"
     if [[ -f "$YD/yeast.gff3" ]]; then
         print_section "Pre-warming: Yeast (R64)"
         warm_cache "$YD/yeast.gff3" "$YD/yeast.fa"
-        add_benchmark "yeast_260k" "$YD/yeast_ensembl.vcf" "$YD/yeast.gff3" "$YD/yeast.fa" "Yeast"
+        add_benchmark "yeast_full" "$YD/yeast_ensembl_full.vcf" "$YD/yeast.gff3" "$YD/yeast.fa" "Yeast"
     fi
 
-    # ── C. elegans (WBcel235, full genome) ──
-    local ED="$ORG_DATA/elegans"
-    if [[ -f "$ED/elegans.gff3" ]]; then
-        print_section "Pre-warming: C. elegans (WBcel235)"
-        warm_cache "$ED/elegans.gff3" "$ED/elegans.fa"
-        add_benchmark "elegans_100k" "$ED/elegans_100k.vcf" "$ED/elegans.gff3" "$ED/elegans.fa" "C.elegans"
-    fi
-
-    # ── Drosophila (BDGP6, full genome) ──
+    # ── Drosophila (BDGP6, full genome — 4.4M DGRP2 variants) ──
     local DD="$ORG_DATA/drosophila"
     if [[ -f "$DD/drosophila.gff3" ]]; then
         print_section "Pre-warming: Drosophila (BDGP6)"
         warm_cache "$DD/drosophila.gff3" "$DD/drosophila.fa"
-        add_benchmark "drosophila_100k" "$DD/drosophila_100k.vcf" "$DD/drosophila.gff3" "$DD/drosophila.fa" "Drosophila"
+        add_benchmark "drosophila_full" "$DD/drosophila_dgrp2_full.vcf" "$DD/drosophila.gff3" "$DD/drosophila.fa" "Drosophila"
     fi
 
-    # ── Zebrafish (GRCz11, full genome) ──
-    local ZD="$ORG_DATA/zebrafish"
-    if [[ -f "$ZD/zebrafish.gff3" ]]; then
-        print_section "Pre-warming: Zebrafish (GRCz11)"
-        warm_cache "$ZD/zebrafish.gff3" "$ZD/zebrafish.fa"
-        add_benchmark "zebrafish_100k" "$ZD/zebrafish_100k.vcf" "$ZD/zebrafish.gff3" "$ZD/zebrafish.fa" "Zebrafish"
-    fi
-
-    # ── Arabidopsis (TAIR10, full genome) ──
+    # ── Arabidopsis (TAIR10, full genome — 12.9M 1001 Genomes variants) ──
     local AD="$ORG_DATA/arabidopsis"
     if [[ -f "$AD/arabidopsis.gff3" ]]; then
         print_section "Pre-warming: Arabidopsis (TAIR10)"
         warm_cache "$AD/arabidopsis.gff3" "$AD/arabidopsis.fa"
-        add_benchmark "arabidopsis_100k" "$AD/arabidopsis_100k.vcf" "$AD/arabidopsis.gff3" "$AD/arabidopsis.fa" "Arabidopsis"
-        add_benchmark "arabidopsis_500k" "$AD/arabidopsis_500k.vcf" "$AD/arabidopsis.gff3" "$AD/arabidopsis.fa" "Arabidopsis"
+        add_benchmark "arabidopsis_full" "$AD/arabidopsis_1001g_full.vcf" "$AD/arabidopsis.gff3" "$AD/arabidopsis.fa" "Arabidopsis"
     fi
 
-    # ── Mouse (GRCm39, full genome) ──
+    # ── Mouse (GRCm39, full genome — 1M Ensembl/EVA variants) ──
     local MD="$ORG_DATA/mouse"
     if [[ -f "$MD/mouse.gff3" ]]; then
         print_section "Pre-warming: Mouse (GRCm39)"
         warm_cache "$MD/mouse.gff3" "$MD/mouse.fa"
-        add_benchmark "mouse_100k" "$MD/mouse_100k.vcf" "$MD/mouse.gff3" "$MD/mouse.fa" "Mouse"
-        add_benchmark "mouse_500k" "$MD/mouse_500k.vcf" "$MD/mouse.gff3" "$MD/mouse.fa" "Mouse"
+        add_benchmark "mouse_full" "$MD/mouse_ensembl_1m.vcf" "$MD/mouse.gff3" "$MD/mouse.fa" "Mouse"
     fi
 
-    # ── Human (GRCh38, full genome) ──
+    # ── Human (GRCh38, full genome — 4.05M GIAB HG002 variants) ──
     local HD="$ORG_DATA/human"
     local HUMAN_GFF3="$HD/Homo_sapiens.GRCh38.115.gff3"
     local HUMAN_FA="$HD/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
     if [[ -f "$HUMAN_GFF3" ]]; then
         print_section "Pre-warming: Human full genome (GRCh38)"
         warm_cache "$HUMAN_GFF3" "$HUMAN_FA"
-        add_benchmark "human_hg002_100k" "$HD/human_hg002_100k.vcf" "$HUMAN_GFF3" "$HUMAN_FA" "Human"
-        add_benchmark "human_hg002_500k" "$HD/human_hg002_500k.vcf" "$HUMAN_GFF3" "$HUMAN_FA" "Human"
-        add_benchmark "human_hg002_full" "$HD/human_giab_hg002_full.vcf" "$HUMAN_GFF3" "$HUMAN_FA" "Human"
+        add_benchmark "human_full" "$HD/human_giab_hg002_full.vcf" "$HUMAN_GFF3" "$HUMAN_FA" "Human"
     fi
 
     # ═══════════════════════════════════════════════════════════════
