@@ -2,17 +2,19 @@
 #
 # OxiVEP Multi-Organism Benchmark Suite
 #
-# Benchmarks OxiVEP annotation performance across 7 model organisms using
-# real Ensembl annotations and gold-standard/Ensembl variation VCF data.
+# Benchmarks OxiVEP annotation performance across model organisms using
+# real Ensembl annotations and gold-standard variant call sets.
 #
-# Organisms:
-#   Human (GRCh38 chr22)    - GIAB NA12878 + scaled Ensembl variation
-#   Mouse (GRCm39 full)     - Ensembl variation database
-#   Zebrafish (GRCz11 chr5) - Generated benchmark variants
-#   Drosophila (BDGP6 full) - Generated benchmark variants
-#   C. elegans (WBcel235)   - Generated benchmark variants
-#   Arabidopsis (TAIR10)    - Generated benchmark variants
-#   Yeast (R64 full)        - Ensembl variation database
+# Data sources:
+#   Human     — GIAB HG002 (GRCh38), Ensembl 115
+#   Mouse     — Mouse Genomes Project (GRCm39), Ensembl 115
+#   Yeast     — 1002 Yeast Genomes (R64), Ensembl 115
+#   Drosophila — Ensembl variation (BDGP6), Ensembl 115
+#   C. elegans — Ensembl variation (WBcel235), Ensembl 115
+#   Arabidopsis — Ensembl Plants variation (TAIR10), Ensembl 115
+#
+# Prerequisites:
+#   ./download_data.sh --all
 #
 # Each benchmark: 3 runs, median reported, with binary transcript cache.
 #
@@ -24,9 +26,9 @@ OXIVEP="$PROJECT_DIR/target/release/oxivep"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 TEST_DATA="$PROJECT_DIR/test_data"
 ORG_DATA="$TEST_DATA/organisms"
+VCF_DATA="$TEST_DATA/benchmark_vcfs"
 RUNS=3
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -82,7 +84,7 @@ time_run() {
         "${fasta_args[@]}" \
         --output "$outfile" \
         --output-format "$fmt" \
-        --symbol --hgvs --canonical \
+        --hgvs \
         2>/dev/null || true
     end=$(python3 -c 'import time; print(int(time.time()*1e9))')
 
@@ -109,7 +111,6 @@ warm_cache() {
     local fasta="${2:-}"
     local cache_file
 
-    # Determine cache path
     if [[ "$gff3" == *.gz ]]; then
         cache_file="${gff3%.gz}.oxivep.cache"
     else
@@ -124,10 +125,9 @@ warm_cache() {
     echo -e "  ${YELLOW}Building cache for $(basename $gff3)...${NC}"
     local tmp_vcf
     tmp_vcf=$(mktemp /tmp/oxivep_warm_XXXXXX.vcf)
-    # Get first chromosome from the GFF3
     local chrom
     chrom=$(grep -m1 -v '^#' "$gff3" | cut -f1)
-    echo -e "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n${chrom}\t1\t.\tA\tG\t.\tPASS\t." > "$tmp_vcf"
+    printf '##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n%s\t1\t.\tA\tG\t.\tPASS\t.\n' "$chrom" > "$tmp_vcf"
 
     local fasta_args=""
     if [[ -n "$fasta" && -f "$fasta" ]]; then
@@ -145,195 +145,104 @@ warm_cache() {
     fi
 }
 
-# Main benchmark logic
+# ═══════════════════════════════════════════════════════════════
+# Register benchmarks
+# ═══════════════════════════════════════════════════════════════
+
+declare -a ALL_NAMES=()
+declare -a ALL_VCFS=()
+declare -a ALL_GFF3S=()
+declare -a ALL_FASTAS=()
+declare -a ALL_ORGANISMS=()
+
+add_benchmark() {
+    local name="$1" vcf="$2" gff3="$3" fasta="${4:-}" organism="$5"
+    if [[ ! -f "$vcf" ]]; then
+        echo -e "  ${YELLOW}Skipping $name: $(basename "$vcf") not found${NC}"
+        return 0
+    fi
+    if [[ ! -f "$gff3" ]]; then
+        echo -e "  ${YELLOW}Skipping $name: $(basename "$gff3") not found${NC}"
+        return 0
+    fi
+    ALL_NAMES+=("$name")
+    ALL_VCFS+=("$vcf")
+    ALL_GFF3S+=("$gff3")
+    ALL_FASTAS+=("$fasta")
+    ALL_ORGANISMS+=("$organism")
+}
+
 run_benchmarks() {
     mkdir -p "$OUTPUT_DIR"
 
-    # Arrays for collecting all benchmarks
-    declare -a ALL_NAMES=()
-    declare -a ALL_VCFS=()
-    declare -a ALL_GFF3S=()
-    declare -a ALL_FASTAS=()
-    declare -a ALL_ORGANISMS=()
+    # ── Human (GRCh38) ──
+    local HUMAN_GFF3="$TEST_DATA/Homo_sapiens.GRCh38.115.gff3"
+    local HUMAN_FA="$TEST_DATA/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
 
-    # ═══════════════════════════════════════════════════════════════
-    # HUMAN (GRCh38 chr22) - GIAB + scaled Ensembl variation
-    # ═══════════════════════════════════════════════════════════════
-    if [[ -f "$TEST_DATA/chr22.gff3" && -f "$TEST_DATA/chr22.fa" ]]; then
-        print_section "Pre-warming: Human chr22 (GRCh38)"
-        warm_cache "$TEST_DATA/chr22.gff3" "$TEST_DATA/chr22.fa"
+    if [[ -f "$HUMAN_GFF3" ]]; then
+        print_section "Pre-warming: Human full genome (GRCh38)"
+        warm_cache "$HUMAN_GFF3" "$HUMAN_FA"
 
-        # Scaled real chr22 datasets
-        for size_vcf in "$SCRIPT_DIR"/real_chr22_*.vcf; do
-            [[ -f "$size_vcf" ]] || continue
-            local bn=$(basename "$size_vcf" .vcf)
-            ALL_NAMES+=("human_$bn")
-            ALL_VCFS+=("$size_vcf")
-            ALL_GFF3S+=("$TEST_DATA/chr22.gff3")
-            ALL_FASTAS+=("$TEST_DATA/chr22.fa")
-            ALL_ORGANISMS+=("Human")
-        done
-
-        # 1KGP chr22
-        if [[ -f "$SCRIPT_DIR/human_chr22_1kgp.vcf" ]]; then
-            ALL_NAMES+=("human_1kgp_1k")
-            ALL_VCFS+=("$SCRIPT_DIR/human_chr22_1kgp.vcf")
-            ALL_GFF3S+=("$TEST_DATA/chr22.gff3")
-            ALL_FASTAS+=("$TEST_DATA/chr22.fa")
-            ALL_ORGANISMS+=("Human")
-        fi
-
-        # GIAB NA12878 chr22
-        if [[ -f "$SCRIPT_DIR/giab/NA12878_GRCh38_chr22.vcf" ]]; then
-            ALL_NAMES+=("human_giab_chr22")
-            ALL_VCFS+=("$SCRIPT_DIR/giab/NA12878_GRCh38_chr22.vcf")
-            ALL_GFF3S+=("$TEST_DATA/chr22.gff3")
-            ALL_FASTAS+=("$TEST_DATA/chr22.fa")
-            ALL_ORGANISMS+=("Human")
-        fi
+        add_benchmark "human_100k"    "$VCF_DATA/human_100k.vcf"       "$HUMAN_GFF3" "$HUMAN_FA" "Human"
+        add_benchmark "human_500k"    "$VCF_DATA/human_500k.vcf"       "$HUMAN_GFF3" "$HUMAN_FA" "Human"
+        add_benchmark "human_giab_full" "$VCF_DATA/human_giab_full.vcf" "$HUMAN_GFF3" "$HUMAN_FA" "Human"
+        # Fallback: use tracked 100k chr22 VCF if no GIAB data
+        add_benchmark "human_chr22_100k" "$SCRIPT_DIR/real_chr22_100k.vcf" "$HUMAN_GFF3" "$HUMAN_FA" "Human"
     fi
 
-    # ═══════════════════════════════════════════════════════════════
-    # HUMAN full genome WGS (GRCh38, ~508K transcripts)
-    # ═══════════════════════════════════════════════════════════════
-    if [[ -f "$TEST_DATA/Homo_sapiens.GRCh38.115.gff3" && -f "$TEST_DATA/Homo_sapiens.GRCh38.dna.primary_assembly.fa" ]]; then
-        print_section "Pre-warming: Human full genome (GRCh38, ~508K transcripts)"
-        warm_cache "$TEST_DATA/Homo_sapiens.GRCh38.115.gff3" "$TEST_DATA/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
-
-        # GIAB NA12878 full WGS
-        if [[ -f "$SCRIPT_DIR/giab/NA12878_GRCh38_full.vcf" ]]; then
-            ALL_NAMES+=("human_giab_full_wgs")
-            ALL_VCFS+=("$SCRIPT_DIR/giab/NA12878_GRCh38_full.vcf")
-            ALL_GFF3S+=("$TEST_DATA/Homo_sapiens.GRCh38.115.gff3")
-            ALL_FASTAS+=("$TEST_DATA/Homo_sapiens.GRCh38.dna.primary_assembly.fa")
-            ALL_ORGANISMS+=("Human")
-        fi
-    fi
-
-    # ═══════════════════════════════════════════════════════════════
-    # MOUSE (GRCm39 full genome)
-    # ═══════════════════════════════════════════════════════════════
-    if [[ -f "$ORG_DATA/mouse.gff3" && -f "$ORG_DATA/mouse.fa" ]]; then
-        print_section "Pre-warming: Mouse full genome (GRCm39)"
+    # ── Mouse (GRCm39) ──
+    if [[ -f "$ORG_DATA/mouse.gff3" ]]; then
+        print_section "Pre-warming: Mouse (GRCm39)"
         warm_cache "$ORG_DATA/mouse.gff3" "$ORG_DATA/mouse.fa"
 
-        for sz in 10k 100k 500k; do
-            if [[ -f "$ORG_DATA/mouse_real_${sz}.vcf" ]]; then
-                ALL_NAMES+=("mouse_${sz}")
-                ALL_VCFS+=("$ORG_DATA/mouse_real_${sz}.vcf")
-                ALL_GFF3S+=("$ORG_DATA/mouse.gff3")
-                ALL_FASTAS+=("$ORG_DATA/mouse.fa")
-                ALL_ORGANISMS+=("Mouse")
-            fi
-        done
-    elif [[ -f "$TEST_DATA/mouse_chr19.gff3" && -f "$TEST_DATA/mouse_chr19.fa" ]]; then
-        # Fallback: mouse chr19 only
-        print_section "Pre-warming: Mouse chr19 (GRCm39)"
-        warm_cache "$TEST_DATA/mouse_chr19.gff3" "$TEST_DATA/mouse_chr19.fa"
-
-        for sz in 10k 100k 500k; do
-            if [[ -f "$ORG_DATA/mouse_real_${sz}.vcf" ]]; then
-                ALL_NAMES+=("mouse_chr19_${sz}")
-                ALL_VCFS+=("$ORG_DATA/mouse_real_${sz}.vcf")
-                ALL_GFF3S+=("$TEST_DATA/mouse_chr19.gff3")
-                ALL_FASTAS+=("$TEST_DATA/mouse_chr19.fa")
-                ALL_ORGANISMS+=("Mouse")
-            fi
-        done
+        add_benchmark "mouse_100k" "$VCF_DATA/mouse_100k.vcf" "$ORG_DATA/mouse.gff3" "$ORG_DATA/mouse.fa" "Mouse"
+        add_benchmark "mouse_500k" "$VCF_DATA/mouse_500k.vcf" "$ORG_DATA/mouse.gff3" "$ORG_DATA/mouse.fa" "Mouse"
     fi
 
-    # ═══════════════════════════════════════════════════════════════
-    # ZEBRAFISH (GRCz11 chr5)
-    # ═══════════════════════════════════════════════════════════════
-    if [[ -f "$TEST_DATA/zebrafish_chr5.gff3" && -f "$TEST_DATA/zebrafish_chr5.fa" ]]; then
-        print_section "Pre-warming: Zebrafish chr5 (GRCz11)"
-        warm_cache "$TEST_DATA/zebrafish_chr5.gff3" "$TEST_DATA/zebrafish_chr5.fa"
-    fi
-
-    # ═══════════════════════════════════════════════════════════════
-    # YEAST (S. cerevisiae R64 full genome)
-    # ═══════════════════════════════════════════════════════════════
-    if [[ -f "$ORG_DATA/yeast.gff3" && -f "$ORG_DATA/yeast.fa" ]]; then
-        print_section "Pre-warming: Yeast full genome (R64)"
+    # ── Yeast (R64) ──
+    if [[ -f "$ORG_DATA/yeast.gff3" ]]; then
+        print_section "Pre-warming: Yeast (R64)"
         warm_cache "$ORG_DATA/yeast.gff3" "$ORG_DATA/yeast.fa"
 
-        for sz in 10k 50k; do
-            if [[ -f "$ORG_DATA/yeast_real_${sz}.vcf" ]]; then
-                ALL_NAMES+=("yeast_real_${sz}")
-                ALL_VCFS+=("$ORG_DATA/yeast_real_${sz}.vcf")
-                ALL_GFF3S+=("$ORG_DATA/yeast.gff3")
-                ALL_FASTAS+=("$ORG_DATA/yeast.fa")
-                ALL_ORGANISMS+=("Yeast")
-            fi
-        done
-        if [[ -f "$ORG_DATA/yeast_real_all.vcf" ]]; then
-            ALL_NAMES+=("yeast_real_all")
-            ALL_VCFS+=("$ORG_DATA/yeast_real_all.vcf")
-            ALL_GFF3S+=("$ORG_DATA/yeast.gff3")
-            ALL_FASTAS+=("$ORG_DATA/yeast.fa")
-            ALL_ORGANISMS+=("Yeast")
-        fi
+        add_benchmark "yeast_100k" "$VCF_DATA/yeast_100k.vcf" "$ORG_DATA/yeast.gff3" "$ORG_DATA/yeast.fa" "Yeast"
     fi
 
-    # ═══════════════════════════════════════════════════════════════
-    # C. ELEGANS (WBcel235 full genome)
-    # ═══════════════════════════════════════════════════════════════
-    if [[ -f "$ORG_DATA/elegans.gff3" && -f "$ORG_DATA/elegans.fa" ]]; then
-        print_section "Pre-warming: C. elegans full genome (WBcel235)"
+    # ── C. elegans (WBcel235) ──
+    if [[ -f "$ORG_DATA/elegans.gff3" ]]; then
+        print_section "Pre-warming: C. elegans (WBcel235)"
         warm_cache "$ORG_DATA/elegans.gff3" "$ORG_DATA/elegans.fa"
 
-        for sz in 10k 50k 100k; do
-            if [[ -f "$ORG_DATA/elegans_${sz}.vcf" ]]; then
-                ALL_NAMES+=("elegans_${sz}")
-                ALL_VCFS+=("$ORG_DATA/elegans_${sz}.vcf")
-                ALL_GFF3S+=("$ORG_DATA/elegans.gff3")
-                ALL_FASTAS+=("$ORG_DATA/elegans.fa")
-                ALL_ORGANISMS+=("C.elegans")
-            fi
-        done
+        add_benchmark "elegans_100k" "$VCF_DATA/elegans_100k.vcf" "$ORG_DATA/elegans.gff3" "$ORG_DATA/elegans.fa" "C.elegans"
     fi
 
-    # ═══════════════════════════════════════════════════════════════
-    # DROSOPHILA (BDGP6 full genome)
-    # ═══════════════════════════════════════════════════════════════
-    if [[ -f "$ORG_DATA/drosophila.gff3" && -f "$ORG_DATA/drosophila.fa" ]]; then
-        print_section "Pre-warming: Drosophila full genome (BDGP6)"
+    # ── Drosophila (BDGP6) ──
+    if [[ -f "$ORG_DATA/drosophila.gff3" ]]; then
+        print_section "Pre-warming: Drosophila (BDGP6)"
         warm_cache "$ORG_DATA/drosophila.gff3" "$ORG_DATA/drosophila.fa"
 
-        for sz in 10k 50k 100k; do
-            if [[ -f "$ORG_DATA/drosophila_${sz}.vcf" ]]; then
-                ALL_NAMES+=("drosophila_${sz}")
-                ALL_VCFS+=("$ORG_DATA/drosophila_${sz}.vcf")
-                ALL_GFF3S+=("$ORG_DATA/drosophila.gff3")
-                ALL_FASTAS+=("$ORG_DATA/drosophila.fa")
-                ALL_ORGANISMS+=("Drosophila")
-            fi
-        done
+        add_benchmark "drosophila_100k" "$VCF_DATA/drosophila_100k.vcf" "$ORG_DATA/drosophila.gff3" "$ORG_DATA/drosophila.fa" "Drosophila"
     fi
 
-    # ═══════════════════════════════════════════════════════════════
-    # ARABIDOPSIS (TAIR10 full genome)
-    # ═══════════════════════════════════════════════════════════════
-    if [[ -f "$ORG_DATA/arabidopsis.gff3" && -f "$ORG_DATA/arabidopsis.fa" ]]; then
-        print_section "Pre-warming: Arabidopsis full genome (TAIR10)"
+    # ── Arabidopsis (TAIR10) ──
+    if [[ -f "$ORG_DATA/arabidopsis.gff3" ]]; then
+        print_section "Pre-warming: Arabidopsis (TAIR10)"
         warm_cache "$ORG_DATA/arabidopsis.gff3" "$ORG_DATA/arabidopsis.fa"
 
-        for sz in 10k 100k 500k; do
-            if [[ -f "$ORG_DATA/arabidopsis_real_${sz}.vcf" ]]; then
-                ALL_NAMES+=("arabidopsis_${sz}")
-                ALL_VCFS+=("$ORG_DATA/arabidopsis_real_${sz}.vcf")
-                ALL_GFF3S+=("$ORG_DATA/arabidopsis.gff3")
-                ALL_FASTAS+=("$ORG_DATA/arabidopsis.fa")
-                ALL_ORGANISMS+=("Arabidopsis")
-            fi
-        done
+        add_benchmark "arabidopsis_100k" "$VCF_DATA/arabidopsis_100k.vcf" "$ORG_DATA/arabidopsis.gff3" "$ORG_DATA/arabidopsis.fa" "Arabidopsis"
+        add_benchmark "arabidopsis_500k" "$VCF_DATA/arabidopsis_500k.vcf" "$ORG_DATA/arabidopsis.gff3" "$ORG_DATA/arabidopsis.fa" "Arabidopsis"
     fi
 
     # ═══════════════════════════════════════════════════════════════
-    # RUN ALL BENCHMARKS (VCF format only for speed)
+    # RUN ALL BENCHMARKS
     # ═══════════════════════════════════════════════════════════════
+    if [[ ${#ALL_NAMES[@]} -eq 0 ]]; then
+        echo -e "\n${RED}No benchmark data found. Run ./download_data.sh --all first.${NC}"
+        exit 1
+    fi
+
+    print_section "Running benchmarks (median of $RUNS runs each)"
+
     declare -A RESULTS
-    declare -A VARIANT_COUNTS
 
     for i in "${!ALL_NAMES[@]}"; do
         local name="${ALL_NAMES[$i]}"
@@ -343,9 +252,8 @@ run_benchmarks() {
         local organism="${ALL_ORGANISMS[$i]}"
         local nvar
         nvar=$(count_variants "$vcf")
-        VARIANT_COUNTS["$name"]="$nvar"
 
-        printf "  %-30s (%8s variants, %s) ... " "$name" "$nvar" "$organism"
+        printf "  %-25s (%8s variants, %-12s) ... " "$name" "$nvar" "$organism"
         local elapsed
         elapsed=$(median_time "$RUNS" "$vcf" "$gff" "vcf" "$OUTPUT_DIR/${name}.annotated.vcf" "$fasta")
 
@@ -353,7 +261,7 @@ run_benchmarks() {
         vps=$(python3 -c "
 e = float('$elapsed')
 n = int('$nvar')
-print(f'{n/e:.1f}' if e > 0 else 'inf')
+print(f'{n/e:,.0f}' if e > 0 else 'inf')
 ")
         printf "${GREEN}%8s sec${NC}  (%s v/s)\n" "$elapsed" "$vps"
         RESULTS["${name}"]="${elapsed} ${nvar} ${vps} ${organism}"
@@ -367,13 +275,13 @@ print(f'{n/e:.1f}' if e > 0 else 'inf')
     echo -e "${BOLD}  Benchmark Summary (median of ${RUNS} runs, VCF output)${NC}"
     echo -e "${BOLD}============================================================${NC}"
     echo ""
-    printf "${BOLD}%-30s %-12s %10s %10s %15s${NC}\n" "Dataset" "Organism" "Variants" "Time (s)" "Variants/sec"
-    printf "%-30s %-12s %10s %10s %15s\n"   "------------------------------" "------------" "----------" "----------" "---------------"
+    printf "${BOLD}%-25s %-12s %10s %10s %15s${NC}\n" "Dataset" "Organism" "Variants" "Time (s)" "Variants/sec"
+    printf "%-25s %-12s %10s %10s %15s\n" "-------------------------" "------------" "----------" "----------" "---------------"
 
     for name in "${ALL_NAMES[@]}"; do
         if [ -n "${RESULTS[$name]+x}" ]; then
             local parts=(${RESULTS[$name]})
-            printf "%-30s %-12s %10s %10s %15s\n" "$name" "${parts[3]}" "${parts[1]}" "${parts[0]}" "${parts[2]}"
+            printf "%-25s %-12s %10s %10s %15s\n" "$name" "${parts[3]}" "${parts[1]}" "${parts[0]}" "${parts[2]}"
         fi
     done
 
@@ -403,6 +311,7 @@ echo "Date:     $(date '+%Y-%m-%d %H:%M:%S')"
 echo "System:   $(uname -s) $(uname -m)"
 echo "Rust:     $(rustc --version 2>/dev/null || echo 'not found')"
 echo "Runs:     $RUNS per benchmark (median reported)"
+echo "Data:     $VCF_DATA/"
 echo ""
 
 build_release

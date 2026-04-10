@@ -362,24 +362,21 @@ cargo test -p oxivep-sa           # Supplementary annotation format tests
 
 Benchmarked on Apple M-series (ARM64), release build with LTO. Median of 3 runs, full Ensembl annotations with FASTA and HGVS.
 
-### Multi-Organism Throughput
+### Multi-Organism Throughput (Gold-Standard Datasets)
 
-| Organism | Transcripts | Variants | Time | Throughput |
-|----------|-------------|----------|------|------------|
-| Yeast (R64, full genome) | 7,036 | 260,526 | 1.47s | **176,796 v/s** |
-| C. elegans (WBcel235, full) | 44,365 | 100,000 | 2.70s | **37,023 v/s** |
-| Drosophila (BDGP6, full) | 35,442 | 100,000 | 2.76s | **36,286 v/s** |
-| Arabidopsis (TAIR10, full) | 54,013 | 500,000 | 5.95s | **83,967 v/s** |
-| Human chr22 (GRCh38) | 11,605 | 500,000 | 4.76s | **105,117 v/s** |
-| Mouse (GRCm39, full genome) | 142,626 | 500,000 | 12.32s | **40,577 v/s** |
-| Human full WGS (GRCh38) | 508,530 | 3,893,341 | 29.69s | **131,155 v/s** |
+| Organism | Transcripts | Variants | Source | Time | Throughput |
+|----------|-------------|----------|--------|------|------------|
+| Yeast (R64, full genome) | 7,036 | 260,526 | Ensembl/SGD | 1.42s | **183,754 v/s** |
+| Drosophila (BDGP6, full) | 35,442 | 100,000 | DGRP2 | 2.63s | **38,013 v/s** |
+| Arabidopsis (TAIR10, full) | 54,013 | 500,000 | 1001 Genomes | 5.77s | **86,649 v/s** |
+| Mouse (GRCm39, full genome) | 142,626 | 500,000 | Ensembl/EVA | 12.02s | **41,604 v/s** |
+| Human full WGS (GRCh38) | 508,530 | 4,048,342 | GIAB HG002 | 64.09s | **63,165 v/s** |
 
 ### vs. Ensembl VEP
 
 | Metric | Ensembl VEP (Perl) | OxiVEP (Rust) |
 |--------|-------------------|---------------|
-| Full WGS (3.9M variants) | est. ~109 min | **29.7s** |
-| 500K variants (chr22) | 674s | **4.76s (142x)** |
+| Full WGS (4M variants) | est. ~112 min | **64s** |
 | Peak memory (100K variants) | ~500 MB | **2.8 MB** |
 | Binary size | ~200 MB installed | **2.3 MB** |
 | Dependencies | Perl 5.22+, DBI, 10+ CPAN modules | **None** |

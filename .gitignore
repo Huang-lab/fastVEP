@@ -1,24 +1,22 @@
+# External tools
 ensembl-vep/
 Nirvana/
 echtvar-src/
+echtvar/
+
+# Build
 target/
 .DS_Store
 
-# Benchmark outputs (inputs and scripts are tracked)
-benchmarks/output/
-benchmarks/*.gff3
-benchmarks/human_10k.vcf
-benchmarks/human_50k.vcf
-
-# Test data (large reference files)
+# Large data (downloaded via benchmarks/download_data.sh)
 test_data/
-echtvar/
+
+# Test directory (small test files are force-added via git add -f)
 tests/
-benchmarks/ensembl_chr22_full.vcf.gz
-benchmarks/ensembl_chr22_full.vcf.gz.tbi
-benchmarks/chr22.oxivep.cache
-benchmarks/real_chr22_500k.vcf
-benchmarks/real_mouse_chr19_10k.vcf
-benchmarks/wes_30k.vcf
-benchmarks/wgs_4.5m.vcf
-benchmarks/giab/
+
+# Benchmark data and output (scripts are tracked)
+benchmarks/output/
+benchmarks/*.oxivep.cache
+
+# Auto-generated caches
+*.oxivep.cache

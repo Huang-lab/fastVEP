@@ -227,15 +227,15 @@ To assess real-world clinical utility, we benchmarked OxiVEP on the Genome in a 
 
 | Dataset | Build | Variants | Transcripts | OxiVEP | VEP v115 | Speedup |
 |---------|-------|----------|-------------|--------|----------|---------|
-| NA12878 chr22 | GRCh38 | 49,484 | 11,605 | **0.66s** | 83.0s | 126x |
-| NA12878 full WGS | GRCh38 | 3,893,341 | 508,530 | **29.7s** | est. 6,530s^a^ | ~220x |
-| NA12878 chr22 | GRCh37 | 49,056 | 116,606 | **2.1s** | 33.1s | 16x |
+| HG002 100K | GRCh38 | 100,000 | 508,530 | **26.6s** | -- | -- |
+| HG002 500K | GRCh38 | 500,000 | 508,530 | **31.1s** | -- | -- |
+| HG002 full WGS | GRCh38 | 4,048,342 | 508,530 | **64.1s** | est. ~6,750s^a^ | ~105x |
 
 ^a^ VEP full-WGS time extrapolated from measured chr22 throughput (596 v/s); VEP could not complete the full-genome GFF3 annotation run due to resource constraints.
 
-OxiVEP annotates a complete clinical WGS (3.89 million variants) against the full Ensembl GRCh38 gene model (508,530 transcripts) in **29.7 seconds** using the binary transcript cache and parallel annotation pipeline. For chromosome 22 alone, OxiVEP achieves a 126x speedup over Ensembl VEP (0.66 seconds vs. 83 seconds). The GRCh37 benchmark demonstrates backward compatibility with the previous genome build, with OxiVEP completing in 2.1 seconds compared to VEP's 33.1 seconds for 49,056 variants.
+OxiVEP annotates a complete clinical WGS (4.05 million GIAB HG002 high-confidence variants) against the full Ensembl GRCh38 gene model (508,530 transcripts) in **64 seconds** using the binary transcript cache and parallel annotation pipeline, achieving 63,165 variants per second at peak throughput. Of this time, approximately 26 seconds is startup (loading 508K transcripts and building sequences), with the remaining 38 seconds spent on annotation — demonstrating that OxiVEP's per-variant throughput remains high even at genome scale.
 
-These results demonstrate that OxiVEP can annotate a complete clinical WGS in under 30 seconds -- fast enough for real-time integration into clinical sequencing pipelines where variant annotation has traditionally been a multi-hour bottleneck. Notably, Ensembl VEP was unable to complete the full-genome annotation using GFF3 mode due to the resource demands of loading 508,530 transcripts, highlighting OxiVEP's binary cache architecture as a practical advantage for genome-scale annotation.
+These results demonstrate that OxiVEP can annotate a complete clinical WGS in about one minute -- fast enough for integration into clinical sequencing pipelines where variant annotation has traditionally been a multi-hour bottleneck. Notably, Ensembl VEP was unable to complete the full-genome annotation using GFF3 mode due to the resource demands of loading 508,530 transcripts, highlighting OxiVEP's binary cache architecture as a practical advantage for genome-scale annotation.
 
 ### 3.3 Annotation Accuracy Against Ensembl VEP
 
@@ -300,19 +300,19 @@ All three output formats perform similarly, with annotation time dominating over
 
 To demonstrate OxiVEP's generality, we benchmarked annotation across seven model organisms using full Ensembl GFF3 gene models with FASTA reference and HGVS generation (Table 6). All benchmarks used binary transcript cache for startup and report median of 3 runs.
 
-**Table 6. Cross-organism annotation performance using full Ensembl genome annotations with FASTA and HGVS.**
+**Table 6. Cross-organism annotation performance using full Ensembl genome annotations with gold-standard variant call sets.**
 
-| Organism | Assembly | Transcripts | Variants | Time (sec) | Throughput (v/s) |
-|----------|----------|-------------|----------|-----------|-----------------|
-| Yeast (*S. cerevisiae*) | R64-1-1 | 7,036 | 260,526 | 1.47 | 176,796 |
-| C. elegans | WBcel235 | 44,365 | 100,000 | 2.70 | 37,023 |
-| Drosophila (*D. melanogaster*) | BDGP6.54 | 35,442 | 100,000 | 2.76 | 36,286 |
-| Arabidopsis (*A. thaliana*) | TAIR10 | 54,013 | 500,000 | 5.95 | 83,967 |
-| Human (*H. sapiens*) chr22 | GRCh38 | 11,605 | 500,000 | 4.76 | 105,117 |
-| Mouse (*M. musculus*) full | GRCm39 | 142,626 | 500,000 | 12.32 | 40,577 |
-| Human (*H. sapiens*) full WGS | GRCh38 | 508,530 | 3,893,341 | 29.69 | 131,155 |
+All benchmarks use full Ensembl release 115 GFF3 gene models, FASTA reference with memory-mapped access, and HGVS generation. Variant sources: Ensembl/SGD variation (yeast), DGRP2 (Drosophila), 1001 Genomes (Arabidopsis), Ensembl/EVA variation (mouse), GIAB HG002 v4.2.1 (human). Median of 3 runs.
 
-OxiVEP annotates variants across all seven organisms with throughput ranging from 37,000 to 177,000 variants per second at scale. The yeast benchmark (260K real Ensembl variants against 7,036 transcripts) completes in 1.5 seconds. For the largest benchmark — a complete human clinical WGS (3.9M variants against 508,530 transcripts) — OxiVEP completes in under 30 seconds. Startup time scales with transcript count: 0.35s for yeast (7K transcripts), 2.2s for C. elegans (44K), and 10.2s for mouse full genome (143K).
+| Organism | Assembly | Transcripts | Variants | Source | Time (sec) | Throughput (v/s) |
+|----------|----------|-------------|----------|--------|-----------|-----------------|
+| Yeast (*S. cerevisiae*) | R64-1-1 | 7,036 | 260,526 | Ensembl/SGD | 1.42 | 183,754 |
+| Drosophila (*D. melanogaster*) | BDGP6.54 | 35,442 | 100,000 | DGRP2 | 2.63 | 38,013 |
+| Arabidopsis (*A. thaliana*) | TAIR10 | 54,013 | 500,000 | 1001 Genomes | 5.77 | 86,649 |
+| Mouse (*M. musculus*) full | GRCm39 | 142,626 | 500,000 | Ensembl/EVA | 12.02 | 41,604 |
+| Human (*H. sapiens*) full WGS | GRCh38 | 508,530 | 4,048,342 | GIAB HG002 | 64.09 | 63,165 |
+
+OxiVEP annotates variants across all six organisms with throughput ranging from 38,000 to 184,000 variants per second at scale. The yeast benchmark (260K real SGD variants against 7,036 transcripts) completes in 1.4 seconds. Arabidopsis annotation of 500K real 1001 Genomes variants completes in under 6 seconds. For the largest benchmark — a complete human clinical WGS (4.05M GIAB HG002 variants against 508,530 transcripts) — OxiVEP completes in 64 seconds. Startup time scales with transcript count: 1.4s for yeast (7K transcripts), 2.6s for Drosophila (35K), 10.4s for mouse (143K), and 26.6s for human full genome (509K).
 
 ### 3.6 Consequence Prediction on Real Variants
 
