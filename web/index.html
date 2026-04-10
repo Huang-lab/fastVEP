@@ -356,10 +356,12 @@
       padding: 8px 12px;
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
-      max-width: 300px;
+      max-width: 500px;
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    td[title] { cursor: help; }
+    td:hover { max-width: none; white-space: normal; word-break: break-all; }
     tr:hover td { background: var(--surface2); }
 
     /* Impact badges */
@@ -1638,35 +1640,49 @@ function renderSummary() {
 function renderRaw() {
   const fmt = document.getElementById('outputFormat').value;
   let text = '';
+  // Collect SA keys across all results for consistent column order
+  const allSaKeys = new Set();
+  for (const r of allResults) {
+    if (r.sa) for (const k of Object.keys(r.sa)) allSaKeys.add(k);
+  }
+  const saKeys = [...allSaKeys].sort();
+
   if (fmt === 'json') {
-    text = JSON.stringify(allResults.map(r => ({
-      location: `${r.variant.chrom}:${r.variant.start}`,
-      allele: r.allele,
-      consequences: r.consequences,
-      impact: r.impact,
-      symbol: r.transcript?.gene?.symbol || null,
-      gene: r.transcript?.gene?.id || null,
-      transcript: r.transcript?.id || null,
-      biotype: r.transcript?.biotype || null,
-      canonical: r.transcript?.canonical || false,
-      exon: r.exon || null,
-      intron: r.intron || null,
-      hgvsg: r.hgvsg || null,
-      hgvsc: r.hgvsc || null,
-      hgvsp: r.hgvsp || null,
-      cdna_position: r.cdna || null,
-      cds_position: r.cds || null,
-      protein_position: r.protein || null,
-      amino_acids: r.aa || null,
-      codons: r.codons || null,
-      distance: r.dist || null,
-      strand: r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : null,
-    })), null, 2);
+    text = JSON.stringify(allResults.map(r => {
+      const obj = {
+        location: `${r.variant.chrom}:${r.variant.start}`,
+        allele: r.allele,
+        consequences: r.consequences,
+        impact: r.impact,
+        symbol: r.transcript?.gene?.symbol || null,
+        gene: r.transcript?.gene?.id || null,
+        transcript: r.transcript?.id || null,
+        biotype: r.transcript?.biotype || null,
+        canonical: r.transcript?.canonical || false,
+        exon: r.exon || null,
+        intron: r.intron || null,
+        hgvsg: r.hgvsg || null,
+        hgvsc: r.hgvsc || null,
+        hgvsp: r.hgvsp || null,
+        cdna_position: r.cdna || null,
+        cds_position: r.cds || null,
+        protein_position: r.protein || null,
+        amino_acids: r.aa || null,
+        codons: r.codons || null,
+        distance: r.dist || null,
+        strand: r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : null,
+      };
+      if (r.sa) Object.assign(obj, r.sa);
+      return obj;
+    }), null, 2);
   } else if (fmt === 'tab') {
-    text = '#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND\n';
+    const saHeader = saKeys.length ? '\t' + saKeys.join('\t') : '';
+    text = `#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
     for (const r of allResults) {
       const strand = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
-      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}\n`;
+      const saCols = saKeys.map(k => r.sa?.[k] != null ? formatSAValue(r.sa[k]) : '-').join('\t');
+      const saStr = saKeys.length ? '\t' + saCols : '';
+      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
     }
   } else if (fmt === 'vcf') {
     const CSQ_FORMAT = 'Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons|Existing_variation|REF_ALLELE|UPLOADED_ALLELE|DISTANCE|STRAND|FLAGS|CANONICAL|SYMBOL_SOURCE|HGNC_ID|MANE|MANE_SELECT|MANE_PLUS_CLINICAL|TSL|APPRIS|CCDS|ENSP|SOURCE|HGVS_OFFSET|SIFT|PolyPhen|AF|CLIN_SIG|SOMATIC|PHENO|PUBMED|MOTIF_NAME|MOTIF_POS|HIGH_INF_POS|MOTIF_SCORE_CHANGE|TRANSCRIPTION_FACTORS';
@@ -1683,10 +1699,13 @@ function renderRaw() {
     }
   } else {
     // Default "table" format — show tab-delimited in raw view
-    text = '#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND\n';
+    const saHeader = saKeys.length ? '\t' + saKeys.join('\t') : '';
+    text = `#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
     for (const r of allResults) {
       const strand = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
-      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}\n`;
+      const saCols = saKeys.map(k => r.sa?.[k] != null ? formatSAValue(r.sa[k]) : '-').join('\t');
+      const saStr = saKeys.length ? '\t' + saCols : '';
+      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
     }
   }
   document.getElementById('rawOutput').textContent = text;
