@@ -632,7 +632,8 @@ fn load_sa_providers(
     let mut providers: Vec<Mutex<Box<dyn AnnotationProvider>>> = Vec::new();
 
     if !sa_dir.is_dir() {
-        anyhow::bail!("SA directory does not exist: {}", sa_dir.display());
+        tracing::warn!("SA directory does not exist: {} (skipping)", sa_dir.display());
+        return Ok(providers);
     }
 
     for entry in std::fs::read_dir(sa_dir)? {

@@ -2017,7 +2017,8 @@ pub fn load_sa_providers(
     let mut providers: Vec<Box<dyn fastvep_cache::annotation::AnnotationProvider>> = Vec::new();
 
     if !sa_dir.is_dir() {
-        anyhow::bail!("SA directory does not exist: {}", sa_dir.display());
+        eprintln!("Warning: SA directory does not exist: {} (skipping)", sa_dir.display());
+        return Ok(providers);
     }
 
     for entry in std::fs::read_dir(sa_dir)? {

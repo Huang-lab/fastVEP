@@ -237,11 +237,7 @@ fastvep-web --data-dir genomes/
 
 Users can switch between organisms from the dropdown in the web UI. When a genome has a `sa/` subdirectory, its SA databases are automatically loaded. The dropdown shows "(FASTA + SA)" labels for genomes that have these resources.
 
-You can also pass a global `--sa-dir` that applies when a genome's subdirectory doesn't have its own `sa/` folder:
-
-```bash
-fastvep-web --data-dir genomes/ --sa-dir shared_sa_databases/
-```
+`--sa-dir` is optional — if provided, it serves as a fallback for genomes that don't have their own `sa/` folder. If the directory doesn't exist, the server starts without SA (no error).
 
 fastVEP works with any organism — just provide the matching GFF3 (and optionally FASTA for HGVS).
 
