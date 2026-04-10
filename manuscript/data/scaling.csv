@@ -1,4 +1,6 @@
-variants,fastvep_time_sec,fastvep_vps,dataset,source
-100000,26.61,3757,human_full_genome,GIAB_HG002
-500000,31.09,16081,human_full_genome,GIAB_HG002
-4048342,64.09,63165,human_full_genome,GIAB_HG002
+organism,variants,fastvep_time_sec,fastvep_vps
+yeast,260526,1.47,177012
+drosophila,4438427,26.73,166058
+arabidopsis,12883854,78.92,163253
+mouse,1000000,15.23,65674
+human,4048342,70.73,57233

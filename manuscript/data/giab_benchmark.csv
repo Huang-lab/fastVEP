@@ -1,4 +1,2 @@
-dataset,build,source,variants,transcripts,fastvep_time_sec,vep_time_sec,speedup
-HG002_100k,GRCh38,GIAB_HG002,100000,508530,26.61,,
-HG002_500k,GRCh38,GIAB_HG002,500000,508530,31.09,,
-HG002_full_wgs,GRCh38,GIAB_HG002,4048342,508530,64.09,,
+dataset,build,source,variants,transcripts,fastvep_time_sec
+HG002_full_wgs,GRCh38,GIAB_HG002,4048342,508530,70.73
