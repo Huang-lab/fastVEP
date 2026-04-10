@@ -13,7 +13,7 @@ try:
     import matplotlib.pyplot as plt
     import matplotlib.ticker as ticker
     import matplotlib.patches as mpatches
-    from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+    from matplotlib.patches import FancyBboxPatch
     HAS_MPL = True
 except ImportError:
     HAS_MPL = False
@@ -38,6 +38,22 @@ COLORS = {
     'sa': '#f472b6',
 }
 
+ORG_COLORS = {
+    'yeast': '#10b981',
+    'drosophila': '#f59e0b',
+    'arabidopsis': '#8b5cf6',
+    'mouse': '#ef4444',
+    'human': '#3b82f6',
+}
+
+ORG_LABELS = {
+    'yeast': 'Yeast (R64)',
+    'drosophila': 'Drosophila (BDGP6)',
+    'arabidopsis': 'Arabidopsis (TAIR10)',
+    'mouse': 'Mouse (GRCm39)',
+    'human': 'Human (GRCh38)',
+}
+
 def read_csv(filename):
     path = os.path.join(DATA_DIR, filename)
     with open(path) as f:
@@ -45,10 +61,12 @@ def read_csv(filename):
         return list(reader)
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Fig 1: Architecture diagram
+# ═══════════════════════════════════════════════════════════════════
 def fig1_architecture():
-    """Figure 1: Architecture diagram as a proper figure."""
     if not HAS_MPL:
-        print("Figure 1: Architecture (text-only, matplotlib not available)")
+        print("Figure 1: Architecture (text-only)")
         return
 
     fig, ax = plt.subplots(figsize=(14, 9))
@@ -70,46 +88,35 @@ def fig1_architecture():
         ax.annotate('', xy=(x2, y2), xytext=(x1, y1),
                     arrowprops=dict(arrowstyle='->', color='#6b7280', lw=1.5))
 
-    # Title
     ax.text(7, 8.6, 'fastVEP Architecture', ha='center', va='center',
             fontsize=16, fontweight='bold', color='#1f2937')
-    ax.text(7, 8.25, '9-crate Cargo workspace', ha='center', va='center',
+    ax.text(7, 8.25, '10-crate Cargo workspace', ha='center', va='center',
             fontsize=10, color='#6b7280')
 
-    # Layer 1: CLI (top)
-    box(2.5, 7.0, 9, 0.9, 'fastvep-cli', 'Pipeline, web server, cache builder, SA builder', COLORS['cli'], 13)
+    box(1.5, 7.0, 5, 0.9, 'fastvep-cli', 'Pipeline, cache builder, SA builder', COLORS['cli'], 13)
+    box(7.5, 7.0, 5, 0.9, 'fastvep-web', 'Production web server (axum)', COLORS['cli'], 13)
 
-    # Layer 2: Middle crates
     box(0.3, 5.3, 2.6, 0.9, 'fastvep-io', 'VCF/CSQ/JSON I/O', COLORS['mid'])
     box(3.2, 5.3, 2.6, 0.9, 'fastvep-hgvs', 'HGVSg/c/p', COLORS['mid'])
     box(6.1, 5.3, 2.8, 0.9, 'fastvep-consequence', 'SNV/indel/SV engine', COLORS['mid'])
     box(9.2, 5.3, 2.2, 0.9, 'fastvep-filter', 'Filter engine', COLORS['mid'])
     box(11.7, 5.3, 2.0, 0.9, 'fastvep-sa', 'Annotations', COLORS['sa'])
 
-    # Layer 3: Data layer
     box(0.5, 3.5, 3.5, 0.9, 'fastvep-genome', 'Transcript, Exon, Gene, CodonTable', COLORS['data'])
     box(4.5, 3.5, 5.0, 0.9, 'fastvep-cache', 'GFF3, FASTA mmap, tabix, binary cache', COLORS['data'])
     box(10.0, 3.5, 3.5, 0.9, 'fastvep-sa (fastSA)', 'ClinVar, gnomAD, REVEL, ...', COLORS['sa'])
 
-    # Layer 4: Core (bottom)
     box(3.0, 1.7, 8.0, 0.9, 'fastvep-core', 'GenomicPosition, Consequence (49 SO terms), Allele, Strand, Impact, VariantType', COLORS['core'], 12)
 
-    # Arrows: CLI -> middle layer
     for x in [1.6, 4.5, 7.5, 10.3, 12.7]:
-        arrow(7, 7.0, x, 6.2)
-
-    # Arrows: middle -> data layer
-    for x in [1.6, 4.5, 7.5]:
+        arrow(4, 7.0, x, 6.2)
+        arrow(10, 7.0, x, 6.2)
+    for x in [2.25, 7.0, 11.75]:
         arrow(x, 5.3, x, 4.4)
-    arrow(12.7, 5.3, 11.75, 4.4)
-
-    # Arrows: data -> core
-    for x in [2.25, 7.0]:
+    for x in [2.25, 7.0, 11.75]:
         arrow(x, 3.5, 7.0, 2.6)
-    arrow(11.75, 3.5, 7.0, 2.6)
 
-    # Stats annotation
-    stats_text = "16,885 LOC  |  233 tests  |  2.3 MB binary (LTO + strip)"
+    stats_text = "17,966 LOC  |  173 tests  |  3.2 MB binary (LTO + strip)  |  fastVEP.org"
     ax.text(7, 0.8, stats_text, ha='center', va='center',
             fontsize=10, color='#6b7280',
             bbox=dict(boxstyle='round,pad=0.3', facecolor='#f3f4f6', edgecolor='#d1d5db'))
@@ -121,58 +128,75 @@ def fig1_architecture():
     plt.close()
 
 
-def fig2_throughput_scaling():
-    """Figure 2: fastVEP throughput scaling on GIAB HG002 full-genome data."""
-    data = read_csv('scaling.csv')
-    variants = [int(d['variants']) for d in data]
-    oxi_vps = [int(d['fastvep_vps']) for d in data]
-    oxi_time = [float(d['fastvep_time_sec']) for d in data]
+# ═══════════════════════════════════════════════════════════════════
+# Fig 2: Multi-organism benchmark (THE money shot)
+# Scatter: variant count vs wall-clock time, bubble size = transcripts
+# ═══════════════════════════════════════════════════════════════════
+def fig2_multi_organism_benchmark():
+    data = read_csv('organism_comparison.csv')
 
     if not HAS_MPL:
-        print("Figure 2: Throughput Scaling")
-        for v, ot, ovps in zip(variants, oxi_time, oxi_vps):
-            print(f"  {v:>10,}v: {ot:.1f}s ({ovps:,.0f} v/s)")
-        print()
+        print("Figure 2: Multi-organism benchmark")
+        for d in data:
+            print(f"  {d['organism']:15s} {int(d['variants']):>12,} variants  {float(d['time_sec']):>6.1f}s  {int(d['variants_per_sec']):>8,} v/s")
         return
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-    # Panel A: Wall-clock time
-    ax1.plot(variants, oxi_time, 'o-', color=COLORS['primary'], linewidth=2.5, markersize=10, zorder=3)
+    orgs = [d['organism'] for d in data]
+    variants = [int(d['variants']) for d in data]
+    times = [float(d['time_sec']) for d in data]
+    vps = [int(d['variants_per_sec']) for d in data]
+    transcripts = [int(d['transcripts']) for d in data]
+    colors = [ORG_COLORS.get(o, '#999') for o in orgs]
+    sizes = [max(80, t/1000 * 15) for t in transcripts]  # scale bubble by transcript count
+
+    # Panel A: Variants vs Wall-clock time (log-log scatter)
+    for o, v, t, c, s, tr in zip(orgs, variants, times, colors, sizes, transcripts):
+        ax1.scatter(v, t, c=c, s=s, alpha=0.85, edgecolors='white', linewidth=1.5, zorder=3)
+        label = ORG_LABELS.get(o, o)
+        offset_y = 0.15 if o != 'mouse' else -0.2
+        ax1.annotate(f'{label}\n{v/1e6:.1f}M in {t:.0f}s' if v > 500000 else f'{label}\n{v/1e3:.0f}K in {t:.1f}s',
+                     xy=(v, t), xytext=(12, 8),
+                     textcoords='offset points', fontsize=8.5, color='#333',
+                     fontweight='bold')
+
     ax1.set_xscale('log')
-    ax1.set_xlabel('Number of variants (GIAB HG002)', fontsize=12)
+    ax1.set_yscale('log')
+    ax1.set_xlabel('Variants annotated (gold-standard datasets)', fontsize=12)
     ax1.set_ylabel('Wall-clock time (seconds)', fontsize=12)
-    ax1.set_title('A. Annotation Time\n(508,530 transcripts, full GRCh38)', fontsize=13, fontweight='bold')
-    ax1.grid(True, alpha=0.3)
-    ax1.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K' if x < 1e6 else f'{x/1e6:.1f}M'))
-    for v, t in zip(variants, oxi_time):
-        ax1.annotate(f'{t:.1f}s', xy=(v, t), xytext=(0, 12),
-                     textcoords='offset points', ha='center', fontsize=10,
-                     color=COLORS['primary'], fontweight='bold')
+    ax1.set_title('A. Annotation Time Across Organisms', fontsize=13, fontweight='bold')
+    ax1.grid(True, alpha=0.2)
+    ax1.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1e6:.0f}M' if x >= 1e6 else f'{x/1e3:.0f}K'))
 
-    # Panel B: Throughput
-    ax2.plot(variants, oxi_vps, 'o-', color=COLORS['primary'], linewidth=2.5, markersize=10, zorder=3)
-    ax2.set_xscale('log')
-    ax2.set_xlabel('Number of variants (GIAB HG002)', fontsize=12)
-    ax2.set_ylabel('Throughput (variants/sec)', fontsize=12)
-    ax2.set_title('B. Annotation Throughput', fontsize=13, fontweight='bold')
-    ax2.grid(True, alpha=0.3)
-    ax2.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K' if x < 1e6 else f'{x/1e6:.1f}M'))
-    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K' if x < 1e6 else f'{x/1e6:.1f}M'))
-    for v, vps in zip(variants, oxi_vps):
-        ax2.annotate(f'{vps:,.0f}', xy=(v, vps), xytext=(0, 12),
-                     textcoords='offset points', ha='center', fontsize=10,
-                     color=COLORS['primary'], fontweight='bold')
+    # Panel B: Throughput by organism (horizontal bar)
+    sorted_data = sorted(zip(orgs, vps, transcripts, colors), key=lambda x: x[1])
+    s_orgs, s_vps, s_tr, s_colors = zip(*sorted_data)
+    labels = [f"{ORG_LABELS.get(o,o)}\n({tr:,} transcripts)" for o, tr in zip(s_orgs, s_tr)]
+
+    bars = ax2.barh(range(len(s_orgs)), s_vps, color=s_colors, alpha=0.85, height=0.6)
+    ax2.set_yticks(range(len(s_orgs)))
+    ax2.set_yticklabels(labels, fontsize=10)
+    ax2.set_xlabel('Throughput (variants/sec)', fontsize=12)
+    ax2.set_title('B. Peak Throughput by Organism', fontsize=13, fontweight='bold')
+    ax2.grid(True, alpha=0.2, axis='x')
+    ax2.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K'))
+
+    for bar, v in zip(bars, s_vps):
+        ax2.text(bar.get_width() + 2000, bar.get_y() + bar.get_height()/2,
+                 f'{v:,} v/s', va='center', fontsize=10, fontweight='bold', color='#333')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(FIG_DIR, 'fig2_throughput_scaling.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(FIG_DIR, 'fig2_throughput_scaling.pdf'), bbox_inches='tight')
-    print("Saved fig2_throughput_scaling.png/pdf")
+    plt.savefig(os.path.join(FIG_DIR, 'fig2_multi_organism.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'fig2_multi_organism.pdf'), bbox_inches='tight')
+    print("Saved fig2_multi_organism.png/pdf")
     plt.close()
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Fig 3: VEP concordance (keep as-is)
+# ═══════════════════════════════════════════════════════════════════
 def fig3_vep_concordance():
-    """Figure 3: VEP concordance heatmap/bar chart."""
     data = read_csv('vep_concordance.csv')
     fields = [d['field'] for d in data]
     accuracy = [float(d['accuracy']) for d in data]
@@ -181,7 +205,6 @@ def fig3_vep_concordance():
         print("Figure 3: VEP Concordance")
         for f, a in zip(fields, accuracy):
             print(f"  {f:25s} {a:.1f}%")
-        print()
         return
 
     fig, ax = plt.subplots(figsize=(10, 7))
@@ -207,8 +230,10 @@ def fig3_vep_concordance():
     plt.close()
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Fig 4: Consequence distribution (keep as-is)
+# ═══════════════════════════════════════════════════════════════════
 def fig4_consequence_distribution():
-    """Figure 4: Consequence distribution from real 1KGP data."""
     data = read_csv('consequence_distribution.csv')
     consequences = [d['consequence'] for d in data]
     counts = [int(d['count']) for d in data]
@@ -229,9 +254,7 @@ def fig4_consequence_distribution():
     if not HAS_MPL:
         print("Figure 4: Consequence Distribution")
         for c, n in zip(consequences, counts):
-            bar = '#' * (n // 200)
-            print(f"  {c:45s} {n:>6d}  {bar}")
-        print()
+            print(f"  {c:45s} {n:>6d}")
         return
 
     fig, ax = plt.subplots(figsize=(11, 7))
@@ -264,130 +287,68 @@ def fig4_consequence_distribution():
     plt.close()
 
 
-def fig5_resource_usage():
-    """Figure 5: Startup time scaling by genome complexity."""
-    data = read_csv('resource_usage.csv')
-    mem_data = {d['metric']: float(d['value']) for d in data}
-
-    if not HAS_MPL:
-        print("Figure 5: Resource Usage")
-        for d in data:
-            print(f"  {d['metric']}: {d['value']} {d['unit']}")
-        print()
-        return
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
-
-    # Panel A: Startup time vs transcript count
-    organisms = ['Yeast\n(7K)', 'Drosophila\n(35K)', 'Arabidopsis\n(54K)', 'Mouse\n(143K)', 'Human\n(509K)']
-    transcripts = [7036, 35442, 54013, 142626, 508530]
-    startup_times = [
-        mem_data.get('startup_time_yeast_7k', 0),
-        mem_data.get('startup_time_drosophila_35k', 0),
-        mem_data.get('startup_time_arabidopsis_54k', 0),
-        mem_data.get('startup_time_mouse_143k', 0),
-        mem_data.get('startup_time_human_509k', 0),
-    ]
-
-    colors = ['#10b981', '#10b981', '#f59e0b', '#ef4444', '#ef4444']
-    ax1.bar(range(len(organisms)), startup_times, color=colors, alpha=0.85)
-    ax1.set_xticks(range(len(organisms)))
-    ax1.set_xticklabels(organisms, fontsize=10)
-    ax1.set_ylabel('Startup time (seconds)', fontsize=12)
-    ax1.set_title('A. Startup Time by Genome Complexity', fontsize=13, fontweight='bold')
-    ax1.grid(True, alpha=0.3, axis='y')
-    for i, (t, tr) in enumerate(zip(startup_times, transcripts)):
-        ax1.text(i, t + 0.5, f'{t:.1f}s', ha='center', fontsize=10, fontweight='bold', color='#333')
-
-    # Panel B: Binary size comparison
-    tools = ['Ensembl VEP\n(Perl + deps)', 'fastVEP\n(static binary)']
-    sizes = [200, mem_data.get('binary_size', 3.2)]
-    bar_colors = [COLORS['vep'], COLORS['primary']]
-    ax2.bar(range(len(tools)), sizes, color=bar_colors, alpha=0.85, width=0.5)
-    ax2.set_xticks(range(len(tools)))
-    ax2.set_xticklabels(tools, fontsize=11)
-    ax2.set_ylabel('Size (MB)', fontsize=12)
-    ax2.set_title('B. Installation Footprint', fontsize=13, fontweight='bold')
-    ax2.grid(True, alpha=0.3, axis='y')
-    for i, s in enumerate(sizes):
-        ax2.text(i, s + 5, f'{s:.1f} MB', ha='center', fontsize=11, fontweight='bold', color='#333')
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(FIG_DIR, 'fig5_resource_usage.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(FIG_DIR, 'fig5_resource_usage.pdf'), bbox_inches='tight')
-    print("Saved fig5_resource_usage.png/pdf")
-    plt.close()
-
-
-def fig6_organism_throughput():
-    """Figure 6: Multi-organism throughput comparison (new figure)."""
+# ═══════════════════════════════════════════════════════════════════
+# Fig 5: Throughput vs Genome Complexity (NEW — replaces old resource usage)
+# Shows throughput stays high even as transcript count increases 72x
+# ═══════════════════════════════════════════════════════════════════
+def fig5_throughput_vs_complexity():
     data = read_csv('organism_comparison.csv')
 
     if not HAS_MPL:
-        print("Figure 6: Organism Throughput")
+        print("Figure 5: Throughput vs Complexity")
         for d in data:
-            print(f"  {d['organism']:20s} {int(d['variants']):>8,}v  {float(d['time_sec']):.2f}s  {int(d['variants_per_sec']):>8,} v/s")
-        print()
+            print(f"  {d['organism']:15s} {int(d['transcripts']):>8,} transcripts  {int(d['variants_per_sec']):>8,} v/s")
         return
 
-    # Pick the largest-variant entry per organism for the bar chart
-    best = {}
-    for d in data:
-        org = d['organism']
-        vps = int(d['variants_per_sec'])
-        if org not in best or vps > best[org]['vps']:
-            best[org] = {
-                'vps': vps,
-                'variants': int(d['variants']),
-                'transcripts': int(d['transcripts']),
-                'time': float(d['time_sec']),
-                'assembly': d['assembly'],
-            }
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5))
 
-    # Sort by throughput
-    orgs = sorted(best.keys(), key=lambda o: best[o]['vps'])
-    vps_vals = [best[o]['vps'] for o in orgs]
-    labels = [f"{o}\n({best[o]['assembly']}, {best[o]['transcripts']:,} tr.)" for o in orgs]
+    orgs = [d['organism'] for d in data]
+    transcripts = [int(d['transcripts']) for d in data]
+    vps = [int(d['variants_per_sec']) for d in data]
+    times = [float(d['time_sec']) for d in data]
+    variants = [int(d['variants']) for d in data]
+    colors = [ORG_COLORS.get(o, '#999') for o in orgs]
 
-    # Color by genome size category
-    org_colors = []
-    for o in orgs:
-        tr = best[o]['transcripts']
-        if tr > 100000:
-            org_colors.append('#ef4444')  # red - large
-        elif tr > 30000:
-            org_colors.append('#f59e0b')  # amber - medium
-        else:
-            org_colors.append('#10b981')  # green - small
+    # Panel A: Throughput vs Transcript count (shows consistency)
+    for o, tr, v, c in zip(orgs, transcripts, vps, colors):
+        ax1.scatter(tr, v, c=c, s=200, alpha=0.85, edgecolors='white', linewidth=2, zorder=3)
+        ax1.annotate(ORG_LABELS.get(o, o), xy=(tr, v), xytext=(8, 8),
+                     textcoords='offset points', fontsize=9, fontweight='bold', color='#333')
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    bars = ax.barh(range(len(orgs)), vps_vals, color=org_colors, alpha=0.85)
-    ax.set_yticks(range(len(orgs)))
-    ax.set_yticklabels(labels, fontsize=10)
-    ax.set_xlabel('Peak throughput (variants/sec)', fontsize=12)
-    ax.set_title('Cross-Organism Annotation Throughput\n(full Ensembl genome annotations, FASTA + HGVS, median of 3 runs)', fontsize=13, fontweight='bold')
-    ax.grid(True, alpha=0.3, axis='x')
-    ax.set_xscale('log')
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K' if x < 1e6 else f'{x/1e6:.1f}M'))
+    ax1.set_xscale('log')
+    ax1.set_xlabel('Gene model complexity (number of transcripts)', fontsize=12)
+    ax1.set_ylabel('Throughput (variants/sec)', fontsize=12)
+    ax1.set_title('A. Throughput vs Genome Complexity', fontsize=13, fontweight='bold')
+    ax1.grid(True, alpha=0.2)
+    ax1.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K'))
+    ax1.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K'))
 
-    for bar, vps, org in zip(bars, vps_vals, orgs):
-        v = best[org]['variants']
-        t = best[org]['time']
-        ax.text(bar.get_width() * 1.15, bar.get_y() + bar.get_height()/2,
-                f'{vps:,.0f} v/s  ({v:,} variants in {t:.1f}s)',
-                va='center', fontsize=9, color='#333')
+    # Add shaded band showing the 57K-177K throughput range
+    ax1.axhspan(50000, 185000, alpha=0.08, color=COLORS['primary'])
+    ax1.text(300000, 120000, '57K–177K v/s\nacross 72x complexity range',
+             ha='center', fontsize=9, color=COLORS['primary'], style='italic')
 
-    legend_elements = [
-        mpatches.Patch(facecolor='#10b981', alpha=0.85, label='<30K transcripts'),
-        mpatches.Patch(facecolor='#f59e0b', alpha=0.85, label='30K-100K transcripts'),
-        mpatches.Patch(facecolor='#ef4444', alpha=0.85, label='>100K transcripts'),
-    ]
-    ax.legend(handles=legend_elements, title='Genome complexity', loc='lower right', fontsize=9)
+    # Panel B: Total variants processed (shows scale)
+    sorted_data = sorted(zip(orgs, variants, times, colors), key=lambda x: x[1])
+    s_orgs, s_vars, s_times, s_colors = zip(*sorted_data)
+    labels = [ORG_LABELS.get(o, o) for o in s_orgs]
+
+    bars = ax2.barh(range(len(s_orgs)), [v/1e6 for v in s_vars], color=s_colors, alpha=0.85, height=0.6)
+    ax2.set_yticks(range(len(s_orgs)))
+    ax2.set_yticklabels(labels, fontsize=10)
+    ax2.set_xlabel('Variants annotated (millions)', fontsize=12)
+    ax2.set_title('B. Gold-Standard Dataset Scale', fontsize=13, fontweight='bold')
+    ax2.grid(True, alpha=0.2, axis='x')
+
+    for bar, v, t in zip(bars, s_vars, s_times):
+        ax2.text(bar.get_width() + 0.15, bar.get_y() + bar.get_height()/2,
+                 f'{v/1e6:.1f}M variants in {t:.0f}s',
+                 va='center', fontsize=10, fontweight='bold', color='#333')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(FIG_DIR, 'fig6_organism_throughput.png'), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(FIG_DIR, 'fig6_organism_throughput.pdf'), bbox_inches='tight')
-    print("Saved fig6_organism_throughput.png/pdf")
+    plt.savefig(os.path.join(FIG_DIR, 'fig5_throughput_complexity.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(FIG_DIR, 'fig5_throughput_complexity.pdf'), bbox_inches='tight')
+    print("Saved fig5_throughput_complexity.png/pdf")
     plt.close()
 
 
@@ -397,9 +358,8 @@ if __name__ == '__main__':
     print(f"Output dir: {os.path.abspath(FIG_DIR)}")
     print()
     fig1_architecture()
-    fig2_throughput_scaling()
+    fig2_multi_organism_benchmark()
     fig3_vep_concordance()
     fig4_consequence_distribution()
-    fig5_resource_usage()
-    fig6_organism_throughput()
+    fig5_throughput_vs_complexity()
     print("\nDone.")
