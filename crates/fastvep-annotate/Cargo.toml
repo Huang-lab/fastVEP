@@ -1,30 +1,20 @@
 [package]
-name = "fastvep-cli"
+name = "fastvep-annotate"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI binary for fastVEP: annotate, sa-build, filter, cache, web commands"
-
-[[bin]]
-name = "fastvep"
-path = "src/main.rs"
+description = "Shared annotation engine for fastVEP: loads data and annotates variants"
 
 [dependencies]
-fastvep-annotate = { workspace = true }
 fastvep-core = { workspace = true }
 fastvep-genome = { workspace = true }
 fastvep-cache = { workspace = true }
 fastvep-consequence = { workspace = true }
 fastvep-hgvs = { workspace = true }
 fastvep-io = { workspace = true }
-fastvep-filter = { workspace = true }
 fastvep-sa = { workspace = true }
-clap = { workspace = true }
-anyhow = { workspace = true }
-flate2 = { workspace = true }
-rayon = { workspace = true }
-serde_json = { workspace = true }
-log = { workspace = true }
-env_logger = { workspace = true }
 
-[dev-dependencies]
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+rayon = { workspace = true }
+tracing = "0.1"

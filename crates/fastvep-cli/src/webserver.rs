@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 
-use crate::pipeline::AnnotationContext;
+use fastvep_annotate::AnnotationContext;
 
 const INDEX_HTML: &str = include_str!("../../../web/index.html");
 
@@ -10,6 +10,7 @@ pub fn run_server(port: u16, gff3: Option<String>, fasta: Option<String>) -> Res
     let mut ctx = AnnotationContext::new(
         gff3.as_deref(),
         fasta.as_deref(),
+        None, // no SA directory for embedded web server
         5000,
     )?;
 

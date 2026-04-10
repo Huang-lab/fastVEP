@@ -201,6 +201,9 @@ fn parse_gff3_lines(lines: impl Iterator<Item = String>) -> Result<Vec<Transcrip
                     .unwrap_or_else(|| feature_type.to_string());
                 let tag_str = attrs.get("tag").cloned().unwrap_or_default();
                 let canonical = tag_str.contains("Ensembl_canonical");
+                let mane_select = tag_str.contains("MANE_Select");
+                let mane_plus_clinical = tag_str.contains("MANE_Plus_Clinical");
+                let gencode_primary = tag_str.contains("gencode_primary");
 
                 // Parse CDS completeness flags from tags
                 let mut flags = Vec::new();
@@ -212,6 +215,12 @@ fn parse_gff3_lines(lines: impl Iterator<Item = String>) -> Result<Vec<Transcrip
                 }
 
                 let version: Option<u32> = attrs.get("version").and_then(|v| v.parse().ok());
+                let ccds = attrs.get("ccdsid").cloned();
+
+                // Parse TSL: "1 (assigned to previous version 2)" → 1
+                let tsl: Option<u8> = attrs.get("transcript_support_level").and_then(|v| {
+                    v.split_whitespace().next().and_then(|n| n.parse().ok())
+                });
 
                 transcripts.insert(
                     transcript_id.clone(),
@@ -224,6 +233,11 @@ fn parse_gff3_lines(lines: impl Iterator<Item = String>) -> Result<Vec<Transcrip
                         end,
                         strand,
                         canonical,
+                        mane_select,
+                        mane_plus_clinical,
+                        gencode_primary,
+                        ccds,
+                        tsl,
                         flags,
                         version,
                     },
@@ -321,6 +335,11 @@ fn parse_gff3_lines(lines: impl Iterator<Item = String>) -> Result<Vec<Transcrip
                         end: gene.end,
                         strand: gene.strand,
                         canonical: true,
+                        mane_select: false,
+                        mane_plus_clinical: false,
+                        gencode_primary: false,
+                        ccds: None,
+                        tsl: None,
                         flags: vec![],
                         version: None,
                     },
@@ -573,11 +592,27 @@ fn parse_gff3_lines(lines: impl Iterator<Item = String>) -> Result<Vec<Transcrip
             translateable_seq: None,
             peptide: None,
             canonical: gff_tr.canonical,
-            mane_select: None,
-            mane_plus_clinical: None,
-            tsl: None,
+            mane_select: if gff_tr.mane_select {
+                let vid = match gff_tr.version {
+                    Some(v) => format!("{}.{}", tid, v),
+                    None => tid.to_string(),
+                };
+                Some(vid)
+            } else {
+                None
+            },
+            mane_plus_clinical: if gff_tr.mane_plus_clinical {
+                let vid = match gff_tr.version {
+                    Some(v) => format!("{}.{}", tid, v),
+                    None => tid.to_string(),
+                };
+                Some(vid)
+            } else {
+                None
+            },
+            tsl: gff_tr.tsl,
             appris: None,
-            ccds: None,
+            ccds: gff_tr.ccds.clone(),
             protein_id: tr_cds.first().map(|c| c.protein_id.clone()),
             protein_version: if !tr_cds.is_empty() {
                 Some(1)
@@ -589,7 +624,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = String>) -> Result<Vec<Transcrip
             uniparc: vec![],
             refseq_id: None,
             source: Some("GFF3".into()),
-            gencode_primary: false,
+            gencode_primary: gff_tr.gencode_primary,
             flags: gff_tr.flags.clone(),
             codon_table_start_phase: first_cds_ensembl_phase,
         });
@@ -651,6 +686,11 @@ struct GffTranscript {
     end: u64,
     strand: Strand,
     canonical: bool,
+    mane_select: bool,
+    mane_plus_clinical: bool,
+    gencode_primary: bool,
+    ccds: Option<String>,
+    tsl: Option<u8>,
     flags: Vec<String>,
     version: Option<u32>,
 }
@@ -757,6 +797,38 @@ chr2\tensembl\tCDS\t1100\t1500\t.\t-\t1\tID=CDS:ENSP00000002;Parent=transcript:E
         // For reverse strand: first exon in transcript order is 2500-3000
         assert_eq!(tr.exons[0].start, 2500);
         assert_eq!(tr.exons[1].start, 1000);
+    }
+
+    #[test]
+    fn test_parse_gff3_mane_and_metadata() {
+        let gff = "##gff-version 3
+chr1\tensembl\tgene\t1000\t5000\t.\t+\t.\tID=gene:ENSG00000001;Name=TESTGENE;biotype=protein_coding
+chr1\tensembl\tmRNA\t1000\t5000\t.\t+\t.\tID=transcript:ENST00000001;Parent=gene:ENSG00000001;biotype=protein_coding;tag=gencode_basic,gencode_primary,Ensembl_canonical,MANE_Select;ccdsid=CCDS30547.2;transcript_support_level=1 (assigned to previous version 2);version=7
+chr1\tensembl\texon\t1000\t5000\t.\t+\t.\tID=exon:ENSE00000001;Parent=transcript:ENST00000001;rank=1
+chr1\tensembl\tgene\t6000\t9000\t.\t-\t.\tID=gene:ENSG00000002;Name=TESTGENE2;biotype=protein_coding
+chr1\tensembl\tmRNA\t6000\t9000\t.\t-\t.\tID=transcript:ENST00000002;Parent=gene:ENSG00000002;biotype=protein_coding;tag=gencode_basic,MANE_Plus_Clinical;transcript_support_level=2;version=3
+chr1\tensembl\texon\t6000\t9000\t.\t-\t.\tID=exon:ENSE00000002;Parent=transcript:ENST00000002;rank=1";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        assert_eq!(transcripts.len(), 2);
+
+        // MANE Select transcript
+        let ms = transcripts.iter().find(|t| &*t.stable_id == "ENST00000001").unwrap();
+        assert!(ms.canonical);
+        assert_eq!(ms.mane_select.as_deref(), Some("ENST00000001.7"));
+        assert!(ms.mane_plus_clinical.is_none());
+        assert!(ms.gencode_primary);
+        assert_eq!(ms.ccds.as_deref(), Some("CCDS30547.2"));
+        assert_eq!(ms.tsl, Some(1));
+
+        // MANE Plus Clinical transcript
+        let mpc = transcripts.iter().find(|t| &*t.stable_id == "ENST00000002").unwrap();
+        assert!(!mpc.canonical);
+        assert!(mpc.mane_select.is_none());
+        assert_eq!(mpc.mane_plus_clinical.as_deref(), Some("ENST00000002.3"));
+        assert!(!mpc.gencode_primary);
+        assert_eq!(mpc.tsl, Some(2));
+        assert!(mpc.ccds.is_none());
     }
 
     #[test]

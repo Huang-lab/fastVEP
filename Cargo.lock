@@ -373,6 +373,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
+name = "fastvep-annotate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fastvep-cache",
+ "fastvep-consequence",
+ "fastvep-core",
+ "fastvep-genome",
+ "fastvep-hgvs",
+ "fastvep-io",
+ "fastvep-sa",
+ "rayon",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "fastvep-cache"
 version = "0.1.0"
 dependencies = [
@@ -390,6 +407,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "zstd",
 ]
 
 [[package]]
@@ -399,6 +417,7 @@ dependencies = [
  "anyhow",
  "clap",
  "env_logger",
+ "fastvep-annotate",
  "fastvep-cache",
  "fastvep-consequence",
  "fastvep-core",
@@ -491,13 +510,11 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "fastvep-annotate",
  "fastvep-cache",
- "fastvep-consequence",
  "fastvep-core",
- "fastvep-genome",
- "fastvep-hgvs",
  "fastvep-io",
- "fastvep-sa",
+ "rayon",
  "serde",
  "serde_json",
  "tokio",

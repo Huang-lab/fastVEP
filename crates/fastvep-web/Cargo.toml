@@ -11,13 +11,10 @@ path = "src/main.rs"
 
 [dependencies]
 # Internal crates
+fastvep-annotate = { workspace = true }
 fastvep-core = { workspace = true }
-fastvep-genome = { workspace = true }
 fastvep-cache = { workspace = true }
-fastvep-consequence = { workspace = true }
-fastvep-hgvs = { workspace = true }
 fastvep-io = { workspace = true }
-fastvep-sa = { workspace = true }
 
 # Web framework
 axum = "0.8"
@@ -28,6 +25,9 @@ tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Parallelism
+rayon = { workspace = true }
 
 # CLI
 clap = { workspace = true, features = ["env"] }

@@ -8,7 +8,7 @@ use fastvep_cache::providers::{
     TabixVariationProvider, TranscriptProvider, VariationProvider,
 };
 use fastvep_consequence::ConsequencePredictor;
-use fastvep_core::Consequence;
+use fastvep_core::{Allele, Consequence};
 use fastvep_hgvs;
 use fastvep_io::output;
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufWriter, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BATCH_SIZE: usize = 1024;
 
@@ -119,8 +120,8 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     let needs_seq_build = transcripts.iter().any(|t| t.is_coding() && t.spliced_seq.is_none());
     if needs_seq_build {
         if let Some(ref sp) = seq_provider {
-            let mut built = 0usize;
-            for tr in &mut transcripts {
+            let built = AtomicUsize::new(0);
+            transcripts.par_iter_mut().for_each(|tr| {
                 if tr.is_coding() && tr.spliced_seq.is_none() {
                     if let Err(e) = tr.build_sequences(|chrom, start, end| {
                         sp.fetch_sequence(chrom, start, end)
@@ -128,18 +129,17 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                     }) {
                         eprintln!("Warning: could not build sequences for {}: {}", tr.stable_id, e);
                     } else {
-                        built += 1;
+                        built.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-            }
-            eprintln!("Built sequences for {} coding transcripts", built);
+            });
+            eprintln!("Built sequences for {} coding transcripts", built.load(Ordering::Relaxed));
         }
     }
 
-    // Save cache if we parsed from GFF3 and have a cache path
-    if let Some(ref cp) = cache_path {
-        if !cp.exists() || !config.transcript_cache.is_some() {
-            // Auto-save cache after GFF3 parse + sequence build
+    // Save cache after sequence build (only if sequences were built or cache doesn't exist)
+    if needs_seq_build {
+        if let Some(ref cp) = cache_path {
             if config.gff3.is_some() {
                 if let Err(e) = fastvep_cache::transcript_cache::save_cache(&transcripts, cp) {
                     eprintln!("Warning: could not save cache: {}", e);
@@ -167,8 +167,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     };
 
     // Load supplementary annotation providers from --sa-dir
+    // Shared load_sa_providers returns Mutex-wrapped providers; unwrap for batch pipeline
+    // (batch pipeline processes variants sequentially per chunk, no concurrent access).
     let sa_providers: Vec<Box<dyn AnnotationProvider>> = if let Some(ref dir) = config.sa_dir {
         load_sa_providers(Path::new(dir))?
+            .into_iter()
+            .map(|m| m.into_inner().unwrap())
+            .collect()
     } else {
         Vec::new()
     };
@@ -808,6 +813,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                         tsl: transcript.and_then(|t| t.tsl),
                         appris: transcript.and_then(|t| t.appris.clone()),
                         ccds: transcript.and_then(|t| t.ccds.clone()),
+                        gencode_primary: transcript.map(|t| t.gencode_primary).unwrap_or(false),
                         symbol_source: transcript.and_then(|t| t.gene.symbol_source.clone()),
                         hgnc_id: transcript.and_then(|t| t.gene.hgnc_id.clone()),
                         flags: transcript.map(|t| t.flags.clone()).unwrap_or_default(),
@@ -882,666 +888,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     Ok(())
 }
 
-/// Pre-loaded annotation context for the web server.
-/// Holds transcript models and sequence provider so they're loaded once at startup.
-pub struct AnnotationContext {
-    pub transcript_provider: IndexedTranscriptProvider,
-    pub seq_provider: Option<Box<dyn SequenceProvider + Send + Sync>>,
-    pub predictor: ConsequencePredictor,
-    pub gff3_source: Option<String>,
-    pub distance: u64,
-    pub hgvs: bool,
-}
+// Shared annotation utilities from fastvep-annotate (used by batch pipeline).
+use fastvep_annotate::{
+    annotate_intergenic, complement_allele, convert_ins_to_dup, convert_ins_to_dup_noncoding,
+    load_sa_providers, three_prime_shift_intronic, zip_positions,
+};
 
-impl AnnotationContext {
-    /// Build a context from GFF3 (and optional FASTA) paths — called once at server startup.
-    pub fn new(
-        gff3: Option<&str>,
-        fasta: Option<&str>,
-        distance: u64,
-    ) -> Result<Self> {
-        let gff3_source: Option<String> = gff3.map(|p| {
-            Path::new(p).file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| p.to_string())
-        });
 
-        // Load transcripts (same logic as run_annotate)
-        let mut transcripts = if let Some(gff3_path) = gff3 {
-            let cache_path = fastvep_cache::transcript_cache::default_cache_path(Path::new(gff3_path));
-            let from_cache = if cache_path.exists() {
-                let is_fresh = fastvep_cache::transcript_cache::cache_is_fresh(&cache_path, Path::new(gff3_path));
-                if is_fresh {
-                    fastvep_cache::transcript_cache::load_cache(&cache_path).ok()
-                } else { None }
-            } else { None };
-            if let Some(trs) = from_cache {
-                eprintln!("[web] Loaded {} transcripts from cache", trs.len());
-                trs
-            } else {
-                let tbi_path = format!("{}.tbi", gff3_path);
-                let trs = if gff3_path.ends_with(".gz") && Path::new(&tbi_path).exists() {
-                    // No region pre-scan for web mode — load all
-                    let gff_file = File::open(gff3_path)
-                        .with_context(|| format!("Opening GFF3 file: {}", gff3_path))?;
-                    parse_gff3(gff_file)?
-                } else {
-                    let gff_file = File::open(gff3_path)
-                        .with_context(|| format!("Opening GFF3 file: {}", gff3_path))?;
-                    parse_gff3(gff_file)?
-                };
-                eprintln!("[web] Loaded {} transcripts from {}", trs.len(), gff3_path);
-                // Save cache for next time
-                if let Err(e) = fastvep_cache::transcript_cache::save_cache(&trs, &cache_path) {
-                    eprintln!("[web] Warning: could not save cache: {}", e);
-                }
-                trs
-            }
-        } else {
-            Vec::new()
-        };
-
-        // Load FASTA
-        let seq_provider: Option<Box<dyn SequenceProvider + Send + Sync>> = if let Some(fasta_path) = fasta {
-            let fai_path = format!("{}.fai", fasta_path);
-            if Path::new(&fai_path).exists() {
-                let reader = fastvep_cache::fasta::MmapFastaReader::open(Path::new(fasta_path))?;
-                eprintln!("[web] Memory-mapped FASTA from {}", fasta_path);
-                Some(Box::new(fastvep_cache::providers::MmapFastaSequenceProvider::new(reader)))
-            } else {
-                let fasta_file = File::open(fasta_path)
-                    .with_context(|| format!("Opening FASTA: {}", fasta_path))?;
-                let reader = FastaReader::from_reader(fasta_file)?;
-                eprintln!("[web] Loaded FASTA from {}", fasta_path);
-                Some(Box::new(FastaSequenceProvider::new(reader)))
-            }
-        } else {
-            None
-        };
-
-        // Build sequences for coding transcripts
-        if let Some(ref sp) = seq_provider {
-            let mut built = 0usize;
-            for tr in &mut transcripts {
-                if tr.is_coding() && tr.spliced_seq.is_none() {
-                    if tr.build_sequences(|chrom, start, end| {
-                        sp.fetch_sequence(chrom, start, end).map_err(|e| e.to_string())
-                    }).is_ok() {
-                        built += 1;
-                    }
-                }
-            }
-            eprintln!("[web] Built sequences for {} coding transcripts", built);
-        }
-
-        let transcript_provider = IndexedTranscriptProvider::new(transcripts);
-        let predictor = ConsequencePredictor::new(distance, distance);
-
-        Ok(Self {
-            transcript_provider,
-            seq_provider,
-            predictor,
-            gff3_source,
-            distance,
-            hgvs: true,
-        })
-    }
-
-    /// Replace the transcript models by parsing GFF3 text uploaded from the browser.
-    /// Returns (gene_count, transcript_count).
-    pub fn update_gff3_text(&mut self, gff3_text: &str) -> Result<(usize, usize)> {
-        let mut transcripts = parse_gff3(gff3_text.as_bytes())?;
-        let gene_count = {
-            let mut genes = std::collections::HashSet::new();
-            for t in &transcripts {
-                genes.insert(t.gene.stable_id.clone());
-            }
-            genes.len()
-        };
-
-        // Build sequences if FASTA is available
-        if let Some(ref sp) = self.seq_provider {
-            let mut built = 0usize;
-            for tr in &mut transcripts {
-                if tr.is_coding() && tr.spliced_seq.is_none() {
-                    if tr.build_sequences(|chrom, start, end| {
-                        sp.fetch_sequence(chrom, start, end).map_err(|e| e.to_string())
-                    }).is_ok() {
-                        built += 1;
-                    }
-                }
-            }
-            if built > 0 {
-                eprintln!("[web] Built sequences for {} coding transcripts", built);
-            }
-        }
-
-        let tr_count = transcripts.len();
-        self.transcript_provider = IndexedTranscriptProvider::new(transcripts);
-        self.gff3_source = Some("user-upload".to_string());
-        eprintln!("[web] Updated GFF3: {} genes, {} transcripts", gene_count, tr_count);
-        Ok((gene_count, tr_count))
-    }
-
-    /// Annotate VCF text and return JSON results.
-    pub fn annotate_vcf_text(&self, vcf_text: &str, pick: bool) -> Result<Vec<serde_json::Value>> {
-        let mut vcf_parser = VcfParser::new(vcf_text.as_bytes())?;
-        let mut variants = vcf_parser.read_all()?;
-
-        // Annotate all variants (single-threaded for simplicity in web context;
-        // requests are typically small)
-        for vf in &mut variants {
-            let chrom = &vf.position.chromosome;
-            let query_start = vf.position.start.saturating_sub(self.distance).max(1);
-            let query_end = vf.position.end + self.distance;
-            let overlapping = self.transcript_provider.get_transcripts(chrom, query_start, query_end)
-                .unwrap_or_default();
-
-            if overlapping.is_empty() {
-                annotate_intergenic(vf);
-            } else {
-                let ref_seq = self.seq_provider.as_ref().and_then(|sp| {
-                    sp.fetch_sequence(chrom, query_start, query_end).ok()
-                });
-
-                let result = self.predictor.predict(
-                    &vf.position,
-                    &vf.ref_allele,
-                    &vf.alt_alleles,
-                    &overlapping,
-                    ref_seq.as_deref(),
-                );
-
-                for tc in &result.transcript_consequences {
-                    let transcript = overlapping.iter().find(|t| t.stable_id == tc.transcript_id);
-
-                    let allele_annotations: Vec<AlleleAnnotation> = tc.allele_consequences.iter().map(|ac| {
-                        let mut ann = AlleleAnnotation {
-                            allele: ac.allele.clone(),
-                            consequences: ac.consequences.clone(),
-                            impact: ac.impact,
-                            cdna_position: zip_positions(ac.cdna_start, ac.cdna_end),
-                            cds_position: zip_positions(ac.cds_start, ac.cds_end),
-                            protein_position: zip_positions(ac.protein_start, ac.protein_end),
-                            amino_acids: ac.amino_acids.clone(),
-                            codons: ac.codons.clone(),
-                            exon: ac.exon,
-                            intron: ac.intron,
-                            distance: ac.distance,
-                            hgvsc: None,
-                            hgvsp: None,
-                            hgvsg: None,
-                            hgvs_offset: None,
-                            existing_variation: vec![],
-                            sift: None,
-                            polyphen: None,
-                            supplementary: Vec::new(),
-                        };
-
-                        if self.hgvs {
-                            ann.hgvsg = Some(fastvep_hgvs::hgvsg(
-                                chrom, vf.position.start, vf.position.end,
-                                &vf.ref_allele, &ac.allele,
-                            ));
-                            if let Some(tr) = transcript {
-                                let versioned_tid = match tr.version {
-                                    Some(v) => format!("{}.{}", tc.transcript_id, v),
-                                    None => tc.transcript_id.to_string(),
-                                };
-                                let (hgvs_ref, hgvs_alt) = if tr.strand == fastvep_core::Strand::Reverse {
-                                    (complement_allele(&vf.ref_allele), complement_allele(&ac.allele))
-                                } else {
-                                    (vf.ref_allele.clone(), ac.allele.clone())
-                                };
-                                if let Some(coding_start) = tr.cdna_coding_start {
-                                    if let (Some(cs), Some(ce)) = (ac.cdna_start, ac.cdna_end) {
-                                        let (cs, ce) = (cs.min(ce), cs.max(ce));
-                                        ann.hgvsc = fastvep_hgvs::hgvsc_with_seq(
-                                            &versioned_tid, cs, ce,
-                                            &hgvs_ref, &hgvs_alt,
-                                            coding_start, tr.cdna_coding_end,
-                                            tr.spliced_seq.as_deref(), tr.codon_table_start_phase,
-                                        );
-                                    } else if ac.intron.is_some() {
-                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(vf.position.start) {
-                                            let (end_cdna, end_offset) = if vf.position.start != vf.position.end {
-                                                tr.genomic_to_intronic_cdna(vf.position.end)
-                                                    .map(|(c, o)| (Some(c), Some(o)))
-                                                    .unwrap_or((None, None))
-                                            } else { (None, None) };
-                                            ann.hgvsc = fastvep_hgvs::hgvsc_intronic_range(
-                                                &versioned_tid, cdna_pos, offset,
-                                                end_cdna, end_offset,
-                                                &hgvs_ref, &hgvs_alt,
-                                                coding_start, tr.cdna_coding_end,
-                                            );
-                                        }
-                                    }
-                                } else if let (Some(cs), Some(ce)) = (ac.cdna_start, ac.cdna_end) {
-                                    ann.hgvsc = fastvep_hgvs::hgvsc_noncoding(
-                                        &versioned_tid, cs, ce, &hgvs_ref, &hgvs_alt,
-                                    );
-                                } else if ac.intron.is_some() {
-                                    if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(vf.position.start) {
-                                        let (end_cdna, end_offset) = if vf.position.start != vf.position.end {
-                                            tr.genomic_to_intronic_cdna(vf.position.end)
-                                                .map(|(c, o)| (Some(c), Some(o)))
-                                                .unwrap_or((None, None))
-                                        } else { (None, None) };
-                                        ann.hgvsc = fastvep_hgvs::hgvsc_noncoding_intronic_range(
-                                            &versioned_tid, cdna_pos, offset,
-                                            end_cdna, end_offset,
-                                            &hgvs_ref, &hgvs_alt,
-                                        );
-                                    }
-                                }
-
-                                // HGVSp
-                                if let (Some(ref aa), Some(ps)) = (&ac.amino_acids, ac.protein_start) {
-                                    if let Some(ref pid) = tr.protein_id {
-                                        let versioned_pid = match tr.protein_version {
-                                            Some(v) => {
-                                                let suffix = format!(".{}", v);
-                                                if pid.ends_with(&suffix) { pid.clone() } else { format!("{}.{}", pid, v) }
-                                            }
-                                            None => pid.clone(),
-                                        };
-                                        let is_fs = ac.consequences.contains(&Consequence::FrameshiftVariant);
-                                        if is_fs {
-                                            if let (Some(ref spliced), Some(coding_start), Some(cds_s)) =
-                                                (&tr.spliced_seq, tr.cdna_coding_start, ac.cds_start)
-                                            {
-                                                let coding_start_idx = (coding_start - 1) as usize;
-                                                let ref_from_cds = &spliced.as_bytes()[coding_start_idx..];
-                                                let cds_idx = (cds_s - 1) as usize;
-                                                let mut alt_from_cds = ref_from_cds.to_vec();
-                                                if ac.allele == fastvep_core::Allele::Deletion {
-                                                    let del_len = vf.ref_allele.len();
-                                                    let end = (cds_idx + del_len).min(alt_from_cds.len());
-                                                    alt_from_cds.drain(cds_idx..end);
-                                                } else if let fastvep_core::Allele::Sequence(ins_bases) = &ac.allele {
-                                                    let mut bases = ins_bases.clone();
-                                                    if tr.strand == fastvep_core::Strand::Reverse {
-                                                        bases = bases.iter().map(|&b| match b {
-                                                            b'A' => b'T', b'T' => b'A', b'C' => b'G', b'G' => b'C', o => o,
-                                                        }).collect();
-                                                    }
-                                                    for (j, &b) in bases.iter().enumerate() {
-                                                        if cds_idx + j <= alt_from_cds.len() {
-                                                            alt_from_cds.insert(cds_idx + j, b);
-                                                        }
-                                                    }
-                                                }
-                                                let codon_start = cds_idx / 3;
-                                                ann.hgvsp = fastvep_hgvs::hgvsp_frameshift(
-                                                    &versioned_pid, ref_from_cds, &alt_from_cds, codon_start,
-                                                );
-                                            }
-                                        } else {
-                                            let ref_aa_byte = aa.0.as_bytes().first().copied().unwrap_or(b'X');
-                                            let alt_aa_byte = aa.1.as_bytes().first().copied().unwrap_or(b'X');
-                                            ann.hgvsp = fastvep_hgvs::hgvsp(
-                                                &versioned_pid, ps, ref_aa_byte, alt_aa_byte, false,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        ann
-                    }).collect();
-
-                    let should_include = !pick || tc.canonical || vf.transcript_variations.is_empty();
-                    if should_include {
-                        vf.transcript_variations.push(TranscriptVariation {
-                            transcript_id: tc.transcript_id.clone(),
-                            gene_id: tc.gene_id.clone(),
-                            gene_symbol: tc.gene_symbol.clone(),
-                            biotype: tc.biotype.clone(),
-                            allele_annotations,
-                            canonical: tc.canonical,
-                            strand: tc.strand,
-                            source: self.gff3_source.clone(),
-                            protein_id: transcript.and_then(|t| t.protein_id.clone()),
-                            mane_select: transcript.and_then(|t| t.mane_select.clone()),
-                            mane_plus_clinical: transcript.and_then(|t| t.mane_plus_clinical.clone()),
-                            tsl: transcript.and_then(|t| t.tsl),
-                            appris: transcript.and_then(|t| t.appris.clone()),
-                            ccds: transcript.and_then(|t| t.ccds.clone()),
-                            symbol_source: transcript.and_then(|t| t.gene.symbol_source.clone()),
-                            hgnc_id: transcript.and_then(|t| t.gene.hgnc_id.clone()),
-                            flags: transcript.map(|t| t.flags.clone()).unwrap_or_default(),
-                        });
-                    }
-                }
-            }
-            vf.compute_most_severe();
-        }
-
-        Ok(variants.iter().map(|vf| output::format_json(vf)).collect())
-    }
-}
-
-/// Convert an intronic insertion HGVSc notation to duplication notation for coding transcripts.
-///
-/// For single-base dups: `c.X+N_X+N+1insB` → `c.X+Ndup`
-/// For multi-base dups: `c.X+N_X+N+1insBBB` → `c.X+(N-len+1)_X+Ndup`
-fn convert_ins_to_dup(
-    hgvsc: &str,
-    intron_offset: i64,
-    ins_len: u64,
-    nearest_exon_cdna_pos: u64,
-    coding_start: u64,
-    coding_end: Option<u64>,
-) -> Option<String> {
-    // Find the prefix (e.g., "ENST00000334363.14:c." or "ENST...:n.")
-    // The prefix ends at "c." or "n." — everything up to and including that
-    let prefix_end = hgvsc.find(":c.").map(|i| i + 3)
-        .or_else(|| hgvsc.find(":n.").map(|i| i + 3))?;
-    let prefix = &hgvsc[..prefix_end];
-
-    let build_pos = |cdna: u64, off: i64| -> String {
-        let raw = cdna as i64 - coding_start as i64 + 1;
-        let cp = if raw <= 0 { raw - 1 } else { raw }; // skip position 0 for 5'UTR
-        if cp < 0 {
-            if off > 0 { format!("{}+{}", cp, off) } else { format!("{}{}", cp, off) }
-        } else if coding_end.is_some() && cdna > coding_end.unwrap() {
-            let u = cdna - coding_end.unwrap();
-            if off > 0 { format!("*{}+{}", u, off) } else { format!("*{}{}", u, off) }
-        } else if off > 0 {
-            format!("{}+{}", cp, off)
-        } else {
-            format!("{}{}", cp, off)
-        }
-    };
-
-    if ins_len == 1 {
-        let pos = build_pos(nearest_exon_cdna_pos, intron_offset);
-        Some(format!("{}{}dup", prefix, pos))
-    } else {
-        // The dup range is ins_len bases ending at intron_offset
-        let start_offset = intron_offset - ins_len as i64 + 1;
-        let start_pos = build_pos(nearest_exon_cdna_pos, start_offset);
-        let end_pos = build_pos(nearest_exon_cdna_pos, intron_offset);
-        Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
-    }
-}
-
-/// Convert intronic insertion to dup notation with explicit start/end offsets (coding).
-#[allow(dead_code)]
-fn convert_ins_to_dup_range(
-    hgvsc: &str,
-    start_offset: i64,
-    end_offset: i64,
-    nearest_exon_cdna_pos: u64,
-    coding_start: u64,
-    coding_end: Option<u64>,
-) -> Option<String> {
-    let prefix_end = hgvsc.find(":c.").map(|i| i + 3)
-        .or_else(|| hgvsc.find(":n.").map(|i| i + 3))?;
-    let prefix = &hgvsc[..prefix_end];
-
-    let build_pos = |cdna: u64, off: i64| -> String {
-        let raw = cdna as i64 - coding_start as i64 + 1;
-        let cp = if raw <= 0 { raw - 1 } else { raw };
-        if cp < 0 {
-            if off > 0 { format!("{}+{}", cp, off) } else { format!("{}{}", cp, off) }
-        } else if coding_end.is_some() && cdna > coding_end.unwrap() {
-            let u = cdna - coding_end.unwrap();
-            if off > 0 { format!("*{}+{}", u, off) } else { format!("*{}{}", u, off) }
-        } else if off > 0 {
-            format!("{}+{}", cp, off)
-        } else {
-            format!("{}{}", cp, off)
-        }
-    };
-
-    if start_offset == end_offset {
-        let pos = build_pos(nearest_exon_cdna_pos, start_offset);
-        Some(format!("{}{}dup", prefix, pos))
-    } else {
-        let start_pos = build_pos(nearest_exon_cdna_pos, start_offset);
-        let end_pos = build_pos(nearest_exon_cdna_pos, end_offset);
-        Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
-    }
-}
-
-/// Convert intronic insertion to dup notation with explicit start/end offsets (non-coding).
-#[allow(dead_code)]
-fn convert_ins_to_dup_range_noncoding(
-    hgvsc: &str,
-    start_offset: i64,
-    end_offset: i64,
-    nearest_exon_cdna_pos: u64,
-) -> Option<String> {
-    let prefix_end = hgvsc.find(":n.").map(|i| i + 3)
-        .or_else(|| hgvsc.find(":c.").map(|i| i + 3))?;
-    let prefix = &hgvsc[..prefix_end];
-
-    let build_pos = |off: i64| -> String {
-        if off > 0 {
-            format!("{}+{}", nearest_exon_cdna_pos, off)
-        } else {
-            format!("{}{}", nearest_exon_cdna_pos, off)
-        }
-    };
-
-    if start_offset == end_offset {
-        let pos = build_pos(start_offset);
-        Some(format!("{}{}dup", prefix, pos))
-    } else {
-        let start_pos = build_pos(start_offset);
-        let end_pos = build_pos(end_offset);
-        Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
-    }
-}
-
-/// Convert an intronic insertion HGVSc notation to duplication notation for non-coding transcripts.
-fn convert_ins_to_dup_noncoding(
-    hgvsc: &str,
-    intron_offset: i64,
-    ins_len: u64,
-    nearest_exon_cdna_pos: u64,
-) -> Option<String> {
-    let prefix_end = hgvsc.find(":n.").map(|i| i + 3)
-        .or_else(|| hgvsc.find(":c.").map(|i| i + 3))?;
-    let prefix = &hgvsc[..prefix_end];
-
-    let build_pos = |off: i64| -> String {
-        if off > 0 {
-            format!("{}+{}", nearest_exon_cdna_pos, off)
-        } else {
-            format!("{}{}", nearest_exon_cdna_pos, off)
-        }
-    };
-
-    if ins_len == 1 {
-        let pos = build_pos(intron_offset);
-        Some(format!("{}{}dup", prefix, pos))
-    } else {
-        let start_offset = intron_offset - ins_len as i64 + 1;
-        let start_pos = build_pos(start_offset);
-        let end_pos = build_pos(intron_offset);
-        Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
-    }
-}
-
-/// 3' shift an intronic indel along the transcript direction.
-///
-/// HGVS requires variants to be described at the most 3' position.
-/// For intronic deletions and insertions/dups in repetitive regions,
-/// the position must be shifted toward the 3' end of the transcript.
-///
-/// Returns the shifted genomic start and end positions.
-fn three_prime_shift_intronic(
-    seq_provider: &dyn SequenceProvider,
-    chrom: &str,
-    start: u64,
-    end: u64,
-    ref_allele: &fastvep_core::Allele,
-    alt_allele: &fastvep_core::Allele,
-    strand: fastvep_core::Strand,
-    intron_genomic_start: u64,
-    intron_genomic_end: u64,
-) -> (u64, u64) {
-    use fastvep_core::Allele;
-
-    match (ref_allele, alt_allele) {
-        // Deletion: shift the deleted bases toward 3' end
-        (Allele::Sequence(ref_bases), Allele::Deletion) if !ref_bases.is_empty() => {
-            let _del_len = ref_bases.len() as u64;
-            let mut s = start;
-            let mut e = end;
-
-            match strand {
-                fastvep_core::Strand::Forward => {
-                    // 3' is toward higher genomic coords
-                    // Shift while base after deletion matches first deleted base
-                    loop {
-                        let next_pos = e + 1;
-                        if next_pos > intron_genomic_end { break; }
-                        // Get the base after the current deletion end
-                        let next_base = match seq_provider.fetch_sequence(chrom, next_pos, next_pos) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        // Get the first deleted base
-                        let first_base = match seq_provider.fetch_sequence(chrom, s, s) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        if next_base == first_base {
-                            s += 1;
-                            e += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                fastvep_core::Strand::Reverse => {
-                    // 3' is toward lower genomic coords
-                    loop {
-                        if s == 0 || s - 1 < intron_genomic_start { break; }
-                        let prev_pos = s - 1;
-                        let prev_base = match seq_provider.fetch_sequence(chrom, prev_pos, prev_pos) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        let last_base = match seq_provider.fetch_sequence(chrom, e, e) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        if prev_base == last_base {
-                            s -= 1;
-                            e -= 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-            (s, e)
-        }
-        // Insertion/dup: shift toward 3' end using the actual inserted bases
-        (Allele::Deletion, Allele::Sequence(ins_bases)) if !ins_bases.is_empty() => {
-            let ins_len = ins_bases.len();
-            let mut pos = start;
-            // Use the actual inserted bases (genomic strand) for comparison.
-            // ins_bases here are on the genomic strand since they come from VCF normalization.
-            let genomic_ins: Vec<u8> = ins_bases.iter().map(|b| b.to_ascii_uppercase()).collect();
-
-            match strand {
-                fastvep_core::Strand::Forward => {
-                    // 3' is toward higher genomic coords
-                    // Compare base at position with cycling insertion bases
-                    let mut shift_count = 0u64;
-                    loop {
-                        if pos > intron_genomic_end { break; }
-                        let check_base = match seq_provider.fetch_sequence(chrom, pos, pos) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        let idx = (shift_count as usize) % ins_len;
-                        if check_base == genomic_ins[idx] {
-                            pos += 1;
-                            shift_count += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                fastvep_core::Strand::Reverse => {
-                    // 3' is toward lower genomic coords
-                    // Compare base before position with cycling insertion bases (from end)
-                    let mut shift_count = 0u64;
-                    loop {
-                        if pos == 0 || pos - 1 < intron_genomic_start { break; }
-                        let check_pos = pos - 1;
-                        let check_base = match seq_provider.fetch_sequence(chrom, check_pos, check_pos) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        // Compare from end of insertion, cycling backwards
-                        let idx = ins_len - 1 - (shift_count as usize % ins_len);
-                        if check_base == genomic_ins[idx] {
-                            pos -= 1;
-                            shift_count += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-            (pos, pos.saturating_sub(1))
-        }
-        _ => (start, end),
-    }
-}
-
-fn annotate_intergenic(vf: &mut VariationFeature) {
-    for alt in &vf.alt_alleles {
-        vf.transcript_variations.push(TranscriptVariation {
-            transcript_id: "-".into(),
-            gene_id: "-".into(),
-            gene_symbol: None,
-            biotype: "-".into(),
-            allele_annotations: vec![AlleleAnnotation {
-                allele: alt.clone(),
-                consequences: vec![Consequence::IntergenicVariant],
-                impact: fastvep_core::Impact::Modifier,
-                cdna_position: None,
-                cds_position: None,
-                protein_position: None,
-                amino_acids: None,
-                codons: None,
-                exon: None,
-                intron: None,
-                distance: None,
-                hgvsc: None,
-                hgvsp: None,
-                hgvsg: None,
-                hgvs_offset: None,
-                existing_variation: vec![],
-                sift: None,
-                polyphen: None,
-                supplementary: Vec::new(),
-            }],
-            canonical: false,
-            strand: fastvep_core::Strand::Forward,
-            source: None,
-            protein_id: None,
-            mane_select: None,
-            mane_plus_clinical: None,
-            tsl: None,
-            appris: None,
-            ccds: None,
-            symbol_source: None,
-            hgnc_id: None,
-            flags: Vec::new(),
-        });
-    }
-    vf.most_severe_consequence = Some(Consequence::IntergenicVariant);
-}
 
 fn write_vcf_line(writer: &mut impl Write, vf: &VariationFeature) -> Result<()> {
     if let Some(ref fields) = vf.vcf_fields {
@@ -1570,36 +923,6 @@ fn write_vcf_line(writer: &mut impl Write, vf: &VariationFeature) -> Result<()> 
     Ok(())
 }
 
-fn zip_positions(start: Option<u64>, end: Option<u64>) -> Option<(u64, u64)> {
-    match (start, end) {
-        (Some(s), Some(e)) => {
-            // Normalize order: smaller position first (minus-strand can reverse start/end)
-            Some((s.min(e), s.max(e)))
-        }
-        (Some(s), None) => Some((s, s)),
-        (None, Some(e)) => Some((e, e)),
-        _ => None,
-    }
-}
-
-use fastvep_core::Allele;
-
-/// Complement an allele for minus strand HGVS notation.
-fn complement_allele(allele: &Allele) -> Allele {
-    match allele {
-        Allele::Sequence(bases) => {
-            let comp: Vec<u8> = bases.iter().map(|&b| match b {
-                b'A' | b'a' => b'T',
-                b'T' | b't' => b'A',
-                b'C' | b'c' => b'G',
-                b'G' | b'g' => b'C',
-                other => other,
-            }).collect();
-            Allele::Sequence(comp)
-        }
-        other => other.clone(),
-    }
-}
 
 use serde_json;
 
@@ -2003,71 +1326,4 @@ pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> 
     Ok(())
 }
 
-// =============================================================================
-// SA Provider Loading: discover and load .osa files from --sa-dir
-// =============================================================================
-
-/// Load all .osa annotation providers from a directory.
-pub fn load_sa_providers(
-    sa_dir: &Path,
-) -> Result<Vec<Box<dyn fastvep_cache::annotation::AnnotationProvider>>> {
-    use fastvep_sa::reader::SaReader;
-    use fastvep_sa::reader_v2::Osa2Reader;
-
-    let mut providers: Vec<Box<dyn fastvep_cache::annotation::AnnotationProvider>> = Vec::new();
-
-    if !sa_dir.is_dir() {
-        eprintln!("Warning: SA directory does not exist: {} (skipping)", sa_dir.display());
-        return Ok(providers);
-    }
-
-    for entry in std::fs::read_dir(sa_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str());
-
-        match ext {
-            // v2 format (echtvar-inspired chunked ZIP)
-            Some("osa2") => {
-                match Osa2Reader::open(&path) {
-                    Ok(reader) => {
-                        eprintln!(
-                            "Loaded SA v2 provider: {} ({})",
-                            reader.name(),
-                            path.display()
-                        );
-                        providers.push(Box::new(reader));
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: could not load .osa2 file {}: {}",
-                            path.display(), e
-                        );
-                    }
-                }
-            }
-            // v1 format (original zstd blocks)
-            Some("osa") => {
-                match SaReader::open(&path) {
-                    Ok(reader) => {
-                        eprintln!(
-                            "Loaded SA provider: {} ({})",
-                            reader.name(),
-                            path.display()
-                        );
-                        providers.push(Box::new(reader));
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: could not load .osa file {}: {}",
-                            path.display(), e
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(providers)
-}
+// SA provider loading is now in fastvep-annotate::load_sa_providers.

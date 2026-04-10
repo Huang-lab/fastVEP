@@ -69,6 +69,7 @@ pub struct TranscriptVariation {
     pub tsl: Option<u8>,
     pub appris: Option<String>,
     pub ccds: Option<String>,
+    pub gencode_primary: bool,
     pub symbol_source: Option<String>,
     pub hgnc_id: Option<String>,
     /// Flags like "cds_end_NF", "cds_start_NF"

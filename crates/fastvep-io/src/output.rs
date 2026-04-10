@@ -130,6 +130,7 @@ fn format_csq_entry_into(
             "TSL" => { if let Some(t) = tv.tsl { let _ = write!(buf, "{}", t); } }
             "APPRIS" => escape_csq_str(tv.appris.as_deref().unwrap_or_default(), buf),
             "CCDS" => escape_csq_str(tv.ccds.as_deref().unwrap_or_default(), buf),
+            "GENCODE_PRIMARY" => { if tv.gencode_primary { buf.push_str("YES"); } }
             "ENSP" => escape_csq_str(tv.protein_id.as_deref().unwrap_or_default(), buf),
             "SIFT" => escape_csq_str(aa.sift.as_deref().unwrap_or_default(), buf),
             "PolyPhen" => escape_csq_str(aa.polyphen.as_deref().unwrap_or_default(), buf),
@@ -424,6 +425,27 @@ pub fn format_json(vf: &VariationFeature) -> serde_json::Value {
                 if tv.canonical {
                     tc.insert("canonical".into(), serde_json::Value::Number(1.into()));
                 }
+                if let Some(ref ms) = tv.mane_select {
+                    tc.insert("mane_select".into(), serde_json::Value::String(ms.clone()));
+                }
+                if let Some(ref mpc) = tv.mane_plus_clinical {
+                    tc.insert("mane_plus_clinical".into(), serde_json::Value::String(mpc.clone()));
+                }
+                if let Some(t) = tv.tsl {
+                    tc.insert("tsl".into(), serde_json::Value::Number(t.into()));
+                }
+                if let Some(ref a) = tv.appris {
+                    tc.insert("appris".into(), serde_json::Value::String(a.clone()));
+                }
+                if let Some(ref c) = tv.ccds {
+                    tc.insert("ccds".into(), serde_json::Value::String(c.clone()));
+                }
+                if tv.gencode_primary {
+                    tc.insert("gencode_primary".into(), serde_json::Value::Number(1.into()));
+                }
+                if let Some(ref pid) = tv.protein_id {
+                    tc.insert("protein_id".into(), serde_json::Value::String(pid.clone()));
+                }
                 if let Some((s, e)) = aa.cdna_position {
                     tc.insert("cdna_start".into(), serde_json::Value::Number(s.into()));
                     tc.insert("cdna_end".into(), serde_json::Value::Number(e.into()));
@@ -573,6 +595,13 @@ pub fn format_nirvana_json(vf: &VariationFeature) -> serde_json::Value {
                     ));
                     tc.insert("impact".into(), serde_json::Value::String(aa.impact.as_str().to_string()));
                     if tv.canonical { tc.insert("isCanonical".into(), serde_json::Value::Bool(true)); }
+                    if let Some(ref ms) = tv.mane_select { tc.insert("maneSelect".into(), serde_json::Value::String(ms.clone())); }
+                    if let Some(ref mpc) = tv.mane_plus_clinical { tc.insert("manePlusClinical".into(), serde_json::Value::String(mpc.clone())); }
+                    if let Some(t) = tv.tsl { tc.insert("tsl".into(), serde_json::Value::Number(t.into())); }
+                    if let Some(ref a) = tv.appris { tc.insert("appris".into(), serde_json::Value::String(a.clone())); }
+                    if let Some(ref c) = tv.ccds { tc.insert("ccds".into(), serde_json::Value::String(c.clone())); }
+                    if tv.gencode_primary { tc.insert("isGencodePrimary".into(), serde_json::Value::Bool(true)); }
+                    if let Some(ref pid) = tv.protein_id { tc.insert("proteinId".into(), serde_json::Value::String(pid.clone())); }
                     if let Some(ref h) = aa.hgvsg { tc.insert("hgvsg".into(), serde_json::Value::String(h.clone())); }
                     if let Some(ref h) = aa.hgvsc { tc.insert("hgvsc".into(), serde_json::Value::String(h.clone())); }
                     if let Some(ref h) = aa.hgvsp { tc.insert("hgvsp".into(), serde_json::Value::String(h.clone())); }
