@@ -260,14 +260,50 @@ certbot --nginx -d your-domain.com
 # Follow prompts; auto-renews via systemd timer
 ```
 
-**Option B: Cloudflare (free, DDoS protection)**
+**Option B: Cloudflare (recommended — free DDoS protection + CDN)**
 
-1. Add your domain to Cloudflare (free plan)
-2. Point DNS A record to your server IP (proxy enabled, orange cloud)
-3. SSL/TLS → Full (strict) in Cloudflare dashboard
-4. Origin certificate: Create one in Cloudflare and install in nginx
+1. **Sign up** at [cloudflare.com](https://www.cloudflare.com/) (free plan)
+2. **Add your domain**: Enter your domain, Cloudflare scans existing DNS records
+3. **Update nameservers**: Point your domain registrar's nameservers to Cloudflare's (shown during setup)
+4. **DNS records**: Add an A record:
+   - Type: `A`
+   - Name: `@` (or subdomain like `vep`)
+   - IPv4: your Hetzner server IP
+   - Proxy: **Proxied** (orange cloud icon ON) — this enables CDN + DDoS protection
+5. **SSL/TLS settings** (Cloudflare dashboard → SSL/TLS):
+   - Mode: **Full (strict)**
+   - Edge Certificates: enabled (automatic)
+6. **Origin certificate** (SSL/TLS → Origin Server):
+   - Click "Create Certificate"
+   - Let Cloudflare generate key + cert (RSA 2048, 15 years)
+   - Save `origin.pem` and `origin-key.pem` to server:
+   ```bash
+   mkdir -p /etc/ssl/cloudflare
+   # paste cert into /etc/ssl/cloudflare/origin.pem
+   # paste key into /etc/ssl/cloudflare/origin-key.pem
+   chmod 600 /etc/ssl/cloudflare/origin-key.pem
+   ```
+7. **Update nginx** to use the origin certificate:
+   ```nginx
+   server {
+       listen 443 ssl;
+       server_name your-domain.com;
+       ssl_certificate /etc/ssl/cloudflare/origin.pem;
+       ssl_certificate_key /etc/ssl/cloudflare/origin-key.pem;
 
-Cloudflare is recommended — free DDoS protection, caching of static assets, and analytics.
+       # ... same proxy_pass config as above ...
+   }
+   server {
+       listen 80;
+       server_name your-domain.com;
+       return 301 https://$host$request_uri;
+   }
+   ```
+8. **Recommended Cloudflare settings** (free tier):
+   - Caching → Cache Rules: Cache the HTML page (`/` and `/index.html`) with short TTL (1 hour)
+   - Security → WAF: Managed rules enabled (automatic)
+   - Speed → Auto Minify: Enable HTML/CSS/JS minification
+   - Analytics: Monitor traffic and threats for free
 
 ## 5. Verify
 

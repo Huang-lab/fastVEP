@@ -531,6 +531,22 @@
     }
     .example-pill:hover { background: rgba(108,122,238,0.15); border-color: var(--accent); }
 
+    .step-header { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .step-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border-radius: 50%;
+      background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
+    }
+    .advanced-toggle {
+      font-size: 12px; color: var(--text-dim); text-decoration: none; margin-top: 4px; display: inline-block;
+    }
+    .advanced-toggle:hover { color: var(--accent); }
+    .mane-badge {
+      display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    }
+    .mane-badge-select { background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid rgba(52,211,153,0.3); }
+    .mane-badge-clinical { background: rgba(96,165,250,0.15); color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+
     /* Animations */
     .fade-in { animation: fadeIn 0.3s ease; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -548,51 +564,66 @@
   </header>
 
   <div class="container">
-    <!-- Input Section -->
+    <!-- Step 1: Genome Selection -->
+    <div class="input-section" style="margin-bottom:12px">
+      <div class="step-header">
+        <span class="step-badge">1</span>
+        <h2 style="margin:0;display:inline">Select Genome</h2>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap">
+        <select id="gffSource" onchange="onGffSourceChange()" style="flex:1;min-width:250px;max-width:500px">
+          <option value="builtin">Built-in demo (OR4F5 + lncRNA, chr1 only)</option>
+          <option value="upload">Upload custom GFF3 file</option>
+        </select>
+        <input type="file" id="gffFile" accept=".gff,.gff3,.gff.gz" style="display:none;font-size:12px;color:var(--text-dim)" onchange="loadGffFile(this)">
+        <small id="gffInfo" style="color:var(--text-dim);font-size:11px"></small>
+      </div>
+    </div>
+
+    <!-- Step 2: Input & Annotate -->
     <div class="input-section">
-      <h2>Input Variants</h2>
+      <div class="step-header">
+        <span class="step-badge">2</span>
+        <h2 style="margin:0;display:inline">Input Variants</h2>
+      </div>
       <div class="input-grid">
         <div>
           <textarea id="vcfInput" placeholder="Paste VCF data here, or try an example below.&#10;&#10;Supported format: VCF (tab-separated)&#10;#CHROM  POS  ID  REF  ALT  QUAL  FILTER  INFO&#10;1       69080  .  C    T    30    PASS    .&#10;&#10;Supports SNVs, insertions, deletions, multi-allelic, and MNVs."></textarea>
           <div class="example-links">
             <span>Examples:</span>
-            <a class="example-pill" href="#" onclick="loadExample('coding');return false">Coding variants</a>
-            <a class="example-pill" href="#" onclick="loadExample('splicing');return false">Splice sites</a>
-            <a class="example-pill" href="#" onclick="loadExample('noncoding');return false">Non-coding</a>
+            <a class="example-pill" href="#" onclick="loadExample('coding');return false">OR4F5 coding (missense, frameshift, UTR)</a>
+            <a class="example-pill" href="#" onclick="loadExample('splicing');return false">OR4F5 splice sites</a>
+            <a class="example-pill" href="#" onclick="loadExample('noncoding');return false">lncRNA + intergenic</a>
+            <span style="margin-left:8px;color:var(--text-dim)">|</span>
+            <a class="example-pill" href="#" onclick="document.getElementById('vcfFile').click();return false">Upload VCF</a>
+            <input type="file" id="vcfFile" accept=".vcf,.vcf.gz" style="display:none" onchange="loadVcfFile(this)">
           </div>
         </div>
         <div class="controls">
           <div class="control-group">
-            <label>GFF3 Gene Model</label>
-            <select id="gffSource" onchange="onGffSourceChange()">
-              <option value="builtin">Built-in (OR4F5 + lncRNA, chr1)</option>
-              <option value="upload">Upload custom GFF3 file</option>
-            </select>
-            <input type="file" id="gffFile" accept=".gff,.gff3,.gff.gz" style="display:none;margin-top:6px;font-size:12px;color:var(--text-dim)" onchange="loadGffFile(this)">
-            <small id="gffInfo" style="color:var(--text-dim);font-size:11px;margin-top:4px;display:block"></small>
-          </div>
-          <div class="control-group">
-            <label>Output Format</label>
-            <select id="outputFormat" onchange="onFormatChange()">
-              <option value="table">Interactive Table</option>
-              <option value="vcf">VCF (CSQ field)</option>
-              <option value="tab">Tab-delimited</option>
-              <option value="json">JSON</option>
-            </select>
-          </div>
-          <div class="control-group">
-            <label>Upstream/Downstream Distance</label>
-            <input type="number" id="distance" value="5000" min="0" max="50000">
-          </div>
-          <div class="control-group">
-            <label>Options</label>
             <div class="checkbox-group">
-              <label title="Report only one consequence per variant (most severe, canonical transcript)"><input type="checkbox" id="optPick"><span>Pick (canonical only)</span></label>
+              <label title="Report one consequence per variant using the canonical (MANE Select preferred) transcript"><input type="checkbox" id="optPick"><span>Show canonical transcript only</span></label>
             </div>
           </div>
           <div class="btn-row">
             <button class="btn btn-primary" id="btnAnnotate" onclick="annotate()">Annotate</button>
             <button class="btn btn-secondary" onclick="clearAll()">Clear</button>
+          </div>
+          <a href="#" class="advanced-toggle" onclick="toggleAdvanced();return false" id="advancedToggle">Advanced options &#9662;</a>
+          <div id="advancedOptions" style="display:none">
+            <div class="control-group">
+              <label>Output Format</label>
+              <select id="outputFormat" onchange="onFormatChange()">
+                <option value="table">Interactive Table</option>
+                <option value="vcf">VCF (CSQ field)</option>
+                <option value="tab">Tab-delimited</option>
+                <option value="json">JSON</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label>Upstream/Downstream Distance</label>
+              <input type="number" id="distance" value="5000" min="0" max="50000">
+            </div>
           </div>
         </div>
       </div>
@@ -617,6 +648,7 @@
     <div class="results-section" id="resultsSection">
       <div class="results-header">
         <h2>Results</h2>
+        <button class="btn btn-secondary" onclick="downloadResults()" style="font-size:12px;padding:4px 12px;margin-left:auto">Download</button>
         <div class="stats">
           <div class="stat">
             <div class="stat-value" id="statVariants">0</div>
@@ -666,18 +698,22 @@
                 <th onclick="sortTable(6)">Transcript</th>
                 <th onclick="sortTable(7)">Biotype</th>
                 <th onclick="sortTable(8)">Canonical</th>
-                <th onclick="sortTable(9)">Exon</th>
-                <th onclick="sortTable(10)">Intron</th>
-                <th onclick="sortTable(11)">HGVSg</th>
-                <th onclick="sortTable(12)">HGVSc</th>
-                <th onclick="sortTable(13)">HGVSp</th>
-                <th onclick="sortTable(14)">cDNA</th>
-                <th onclick="sortTable(15)">CDS</th>
-                <th onclick="sortTable(16)">Protein</th>
-                <th onclick="sortTable(17)">AA</th>
-                <th onclick="sortTable(18)">Codons</th>
-                <th onclick="sortTable(19)">Distance</th>
-                <th onclick="sortTable(20)">Strand</th>
+                <th onclick="sortTable(9)">MANE</th>
+                <th onclick="sortTable(10)">ENSP</th>
+                <th onclick="sortTable(11)">TSL</th>
+                <th onclick="sortTable(12)">CCDS</th>
+                <th onclick="sortTable(13)">Exon</th>
+                <th onclick="sortTable(14)">Intron</th>
+                <th onclick="sortTable(15)">HGVSg</th>
+                <th onclick="sortTable(16)">HGVSc</th>
+                <th onclick="sortTable(17)">HGVSp</th>
+                <th onclick="sortTable(18)">cDNA</th>
+                <th onclick="sortTable(19)">CDS</th>
+                <th onclick="sortTable(20)">Protein</th>
+                <th onclick="sortTable(21)">AA</th>
+                <th onclick="sortTable(22)">Codons</th>
+                <th onclick="sortTable(23)">Distance</th>
+                <th onclick="sortTable(24)">Strand</th>
               </tr>
             </thead>
             <tbody id="resultsBody"></tbody>
@@ -1243,6 +1279,7 @@ async function checkBackend() {
 
   // Populate genome options in the dropdown
   const sel = document.getElementById('gffSource');
+  let humanGenome = null;
   if (serverGenomes.length > 0) {
     for (const g of serverGenomes) {
       const opt = document.createElement('option');
@@ -1251,11 +1288,19 @@ async function checkBackend() {
       opt.textContent = g.name + (tags.length ? ' (' + tags.join(' + ') + ')' : '');
       // Insert before "Upload custom" option
       sel.insertBefore(opt, sel.querySelector('option[value="upload"]'));
+      // Detect human genome for auto-selection
+      const lower = g.name.toLowerCase();
+      if (!humanGenome && (lower.includes('human') || lower.includes('sapiens') || lower.includes('grch38') || lower.includes('hg38'))) {
+        humanGenome = g;
+      }
     }
   }
 
-  // If server has no transcripts loaded, auto-upload the built-in example GFF3
-  if (serverTranscripts === 0) {
+  // Auto-select human genome if available; otherwise fall back to built-in demo
+  if (humanGenome) {
+    sel.value = 'server:' + humanGenome.name;
+    await loadServerGenome(humanGenome.name);
+  } else if (serverTranscripts === 0) {
     await uploadBuiltinToServer();
   }
 
@@ -1368,6 +1413,7 @@ function extractSA(obj) {
     'consequence_terms','impact','variant_allele','strand','canonical','cdna_start','cdna_end',
     'cds_start','cds_end','protein_start','protein_end','amino_acids','codons','exon','intron',
     'hgvsc','hgvsp','hgvsg','distance','hgvs_offset',
+    'mane_select','mane_plus_clinical','tsl','ccds','protein_id','gencode_primary',
     'seq_region_name','start','end','allele_string','most_severe_consequence',
     'transcript_consequences','id','variant_type','sv_end','sv_len','genes']);
   for (const [k, v] of Object.entries(obj)) {
@@ -1438,6 +1484,12 @@ function convertServerResults(results) {
           biotype: tc.biotype || '-',
           canonical: tc.canonical === 1,
           strand: tc.strand === 1 ? 1 : tc.strand === -1 ? -1 : 0,
+          mane_select: tc.mane_select || null,
+          mane_plus_clinical: tc.mane_plus_clinical || null,
+          tsl: tc.tsl != null ? tc.tsl : null,
+          ccds: tc.ccds || null,
+          protein_id: tc.protein_id || null,
+          gencode_primary: tc.gencode_primary === 1,
         },
         exon: tc.exon || null,
         intron: tc.intron || null,
@@ -1561,16 +1613,26 @@ function renderTable() {
       return `<td title="${key}">${val != null ? formatSAValue(val) : '-'}</td>`;
     }).join('');
 
+    // MANE badge
+    const t = r.transcript;
+    let maneBadge = '-';
+    if (t?.mane_select) maneBadge = '<span class="mane-badge mane-badge-select">MANE Select</span>';
+    else if (t?.mane_plus_clinical) maneBadge = '<span class="mane-badge mane-badge-clinical">MANE+Clinical</span>';
+
     tr.innerHTML = `
       <td>${loc}</td>
       <td><code>${r.allele}</code></td>
       <td>${r.consequences.map(c=>`<span class="consequence-tag">${c}</span>`).join(' ')}</td>
       <td><span class="impact impact-${r.impact}">${r.impact}</span></td>
-      <td>${r.transcript?.gene?.symbol||'-'}</td>
-      <td><code>${r.transcript?.gene?.id||'-'}</code></td>
-      <td><code>${r.transcript?.id||'-'}</code></td>
-      <td>${r.transcript?.biotype||'-'}</td>
-      <td>${r.transcript?.canonical ? 'YES' : '-'}</td>
+      <td>${t?.gene?.symbol||'-'}</td>
+      <td><code>${t?.gene?.id||'-'}</code></td>
+      <td><code>${t?.id||'-'}</code></td>
+      <td>${t?.biotype||'-'}</td>
+      <td>${t?.canonical ? 'YES' : '-'}</td>
+      <td>${maneBadge}</td>
+      <td><code>${t?.protein_id||'-'}</code></td>
+      <td>${t?.tsl != null ? t.tsl : '-'}</td>
+      <td><code>${t?.ccds||'-'}</code></td>
       <td>${r.exon||'-'}</td>
       <td>${r.intron||'-'}</td>
       <td>${r.hgvsg||'-'}</td>
@@ -1634,6 +1696,16 @@ function renderSummary() {
         return `<div class="bar-row"><span class="bar-label">${g}</span><div class="bar-track"><div class="bar-fill" style="width:${cnt/allResults.length*100}%;background:var(--accent)"></div></div><span class="bar-count">${cnt}</span></div>`;
       }).join('')}
       </div>
+    </div>
+    <div class="summary-card">
+      <h3>Transcript Metadata</h3>
+      <div class="bar-chart">
+        <div class="bar-row"><span class="bar-label"><span class="mane-badge mane-badge-select">MANE Select</span></span><span class="bar-count">${allResults.filter(r=>r.transcript?.mane_select).length}</span></div>
+        <div class="bar-row"><span class="bar-label"><span class="mane-badge mane-badge-clinical">MANE+Clinical</span></span><span class="bar-count">${allResults.filter(r=>r.transcript?.mane_plus_clinical).length}</span></div>
+        <div class="bar-row"><span class="bar-label">Canonical</span><span class="bar-count">${allResults.filter(r=>r.transcript?.canonical).length}</span></div>
+        <div class="bar-row"><span class="bar-label">With CCDS</span><span class="bar-count">${allResults.filter(r=>r.transcript?.ccds).length}</span></div>
+        <div class="bar-row"><span class="bar-label">Total annotations</span><span class="bar-count">${allResults.length}</span></div>
+      </div>
     </div>`;
 }
 
@@ -1659,6 +1731,11 @@ function renderRaw() {
         transcript: r.transcript?.id || null,
         biotype: r.transcript?.biotype || null,
         canonical: r.transcript?.canonical || false,
+        mane_select: r.transcript?.mane_select || null,
+        mane_plus_clinical: r.transcript?.mane_plus_clinical || null,
+        protein_id: r.transcript?.protein_id || null,
+        tsl: r.transcript?.tsl != null ? r.transcript.tsl : null,
+        ccds: r.transcript?.ccds || null,
         exon: r.exon || null,
         intron: r.intron || null,
         hgvsg: r.hgvsg || null,
@@ -1677,12 +1754,13 @@ function renderRaw() {
     }), null, 2);
   } else if (fmt === 'tab') {
     const saHeader = saKeys.length ? '\t' + saKeys.join('\t') : '';
-    text = `#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
+    text = `#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tMANE\tENSP\tTSL\tCCDS\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
     for (const r of allResults) {
       const strand = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
       const saCols = saKeys.map(k => r.sa?.[k] != null ? formatSAValue(r.sa[k]) : '-').join('\t');
       const saStr = saKeys.length ? '\t' + saCols : '';
-      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
+      const mane = r.transcript?.mane_select ? 'MANE_Select' : r.transcript?.mane_plus_clinical ? 'MANE_Plus_Clinical' : '-';
+      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${mane}\t${r.transcript?.protein_id||'-'}\t${r.transcript?.tsl!=null?r.transcript.tsl:'-'}\t${r.transcript?.ccds||'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
     }
   } else if (fmt === 'vcf') {
     const CSQ_FORMAT = 'Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons|Existing_variation|REF_ALLELE|UPLOADED_ALLELE|DISTANCE|STRAND|FLAGS|CANONICAL|SYMBOL_SOURCE|HGNC_ID|MANE|MANE_SELECT|MANE_PLUS_CLINICAL|TSL|APPRIS|CCDS|ENSP|SOURCE|HGVS_OFFSET|SIFT|PolyPhen|AF|CLIN_SIG|SOMATIC|PHENO|PUBMED|MOTIF_NAME|MOTIF_POS|HIGH_INF_POS|MOTIF_SCORE_CHANGE|TRANSCRIPTION_FACTORS';
@@ -1700,12 +1778,13 @@ function renderRaw() {
   } else {
     // Default "table" format — show tab-delimited in raw view
     const saHeader = saKeys.length ? '\t' + saKeys.join('\t') : '';
-    text = `#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
+    text = `#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tMANE\tENSP\tTSL\tCCDS\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
     for (const r of allResults) {
       const strand = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
       const saCols = saKeys.map(k => r.sa?.[k] != null ? formatSAValue(r.sa[k]) : '-').join('\t');
       const saStr = saKeys.length ? '\t' + saCols : '';
-      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
+      const mane = r.transcript?.mane_select ? 'MANE_Select' : r.transcript?.mane_plus_clinical ? 'MANE_Plus_Clinical' : '-';
+      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${mane}\t${r.transcript?.protein_id||'-'}\t${r.transcript?.tsl!=null?r.transcript.tsl:'-'}\t${r.transcript?.ccds||'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
     }
   }
   document.getElementById('rawOutput').textContent = text;
@@ -1737,6 +1816,43 @@ function clearAll() {
   document.getElementById('vcfInput').value = '';
   document.getElementById('resultsSection').classList.remove('visible');
   allResults = [];
+}
+
+function loadVcfFile(input) {
+  if (!input.files.length) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('vcfInput').value = reader.result;
+    input.value = '';
+  };
+  reader.readAsText(input.files[0]);
+}
+
+function downloadResults() {
+  const fmt = document.getElementById('outputFormat').value;
+  const ext = fmt === 'json' ? 'json' : fmt === 'vcf' ? 'vcf' : 'tsv';
+  const mime = fmt === 'json' ? 'application/json' : 'text/plain';
+  // Render raw output to get the text
+  renderRaw();
+  const text = document.getElementById('rawOutput').textContent;
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `fastvep_results.${ext}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function toggleAdvanced() {
+  const opts = document.getElementById('advancedOptions');
+  const toggle = document.getElementById('advancedToggle');
+  if (opts.style.display === 'none') {
+    opts.style.display = 'block';
+    toggle.innerHTML = 'Advanced options &#9652;';
+  } else {
+    opts.style.display = 'none';
+    toggle.innerHTML = 'Advanced options &#9662;';
+  }
 }
 
 function sortTable(col) {
