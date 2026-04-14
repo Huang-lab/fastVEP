@@ -77,6 +77,7 @@ echo "[4/8] Building dbSNP (GRCh38, ~20GB download → ~5GB .osa)..."
 if [ ! -f dbsnp.osa ]; then
     wget -q --show-progress https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
     "$BIN_DIR/fastvep" sa-build --source dbsnp -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38
+    # Clean up the 20GB download immediately
     rm -f GCF_000001405.40.gz
 fi
 
