@@ -7,14 +7,45 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
+use serde::{Deserialize, Serialize};
+
 use crate::context::AnnotationContext;
 use crate::errors::AppError;
+
+#[derive(Serialize, Deserialize, Default)]
+struct SavedStats {
+    total_variants: u64,
+    total_genomes: u64,
+}
 
 /// Shared application state.
 pub struct SharedState {
     pub ctx: RwLock<AnnotationContext>,
     pub data_dir: Option<PathBuf>,
     pub sa_dir: Option<PathBuf>,
+    pub stats_file: Option<PathBuf>,
+    pub total_variants: AtomicU64,
+    pub total_genomes: AtomicU64,
+}
+
+impl SharedState {
+    pub fn save_stats(&self) {
+        if let Some(ref path) = self.stats_file {
+            let stats = SavedStats {
+                total_variants: self.total_variants.load(Ordering::Relaxed),
+                total_genomes: self.total_genomes.load(Ordering::Relaxed),
+            };
+            if let Ok(json) = serde_json::to_string(&stats) {
+                let _ = std::fs::write(path, json);
+            }
+        }
+    }
 }
 
 pub type AppState = Arc<SharedState>;
@@ -47,6 +78,8 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
         "gff3_source": gff3_source,
         "has_fasta": has_fasta,
         "sa_sources": sa_sources,
+        "total_variants": state.total_variants.load(Ordering::Relaxed),
+        "total_genomes": state.total_genomes.load(Ordering::Relaxed),
     }))
 }
 
@@ -168,6 +201,8 @@ pub async fn load_genome(
         )?;
         let tr_count = guard.transcript_count();
         let sa_names = guard.sa_source_names();
+        state.total_genomes.fetch_add(1, Ordering::Relaxed);
+        state.save_stats();
         Ok::<_, anyhow::Error>((tr_count, sa_names))
     })
     .await??;
@@ -208,6 +243,11 @@ pub async fn annotate(
         guard.annotate_vcf_text(&vcf_text, pick)
     })
     .await??;
+
+    state
+        .total_variants
+        .fetch_add(results.len() as u64, Ordering::Relaxed);
+    state.save_stats();
 
     let time_ms = start.elapsed().as_millis() as u64;
     Ok(Json(serde_json::json!({

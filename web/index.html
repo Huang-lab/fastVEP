@@ -4,6 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>fastVEP - Variant Effect Predictor</title>
+
+  <!-- Google tag (gtag.js) replaced with user-configurable snippet if needed -->
+  <!-- 
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-YOURID"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-YOURID');
+  </script>
+  -->
+
   <style>
     :root {
       --bg: #0f1117;
@@ -558,6 +570,10 @@
     <h1><span>fast</span>VEP</h1>
     <span class="badge">v0.1.0</span>
     <span class="spacer"></span>
+    <div id="stats" style="display:none; font-size:12px; color:var(--text-dim); margin-right:20px; text-align:right">
+      <div id="genomeStat"></div>
+      <div id="variantStat"></div>
+    </div>
     <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
       <span id="themeIcon">&#9790;</span> <span id="themeLabel">Light</span>
     </button>
@@ -1302,6 +1318,13 @@ async function checkBackend() {
       hasBackend = j.backend === true;
       serverTranscripts = j.transcripts || 0;
       serverSaSources = j.sa_sources || [];
+
+      // Update counters
+      if (j.total_genomes !== undefined || j.total_variants !== undefined) {
+        document.getElementById('stats').style.display = 'block';
+        document.getElementById('genomeStat').textContent = `Genomes: ${j.total_genomes || 0}`;
+        document.getElementById('variantStat').textContent = `Variants: ${j.total_variants || 0}`;
+      }
     } else {
       hasBackend = false;
     }

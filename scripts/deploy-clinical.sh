@@ -107,6 +107,62 @@ if [ ! -f Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa ]; then
     samtools faidx Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa
 fi
 
+# C. elegans (~200MB)
+echo "  → C. elegans (WBcel235)..."
+mkdir -p "$DATA_DIR/celegans_wbcel235_ensembl_115"
+cd "$DATA_DIR/celegans_wbcel235_ensembl_115"
+if [ ! -f Caenorhabditis_elegans.WBcel235.115.gff3 ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/gff3/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.115.gff3.gz
+    gunzip Caenorhabditis_elegans.WBcel235.115.gff3.gz
+fi
+if [ ! -f Caenorhabditis_elegans.WBcel235.dna.toplevel.fa ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/fasta/caenorhabditis_elegans/dna/Caenorhabditis_elegans.WBcel235.dna.toplevel.fa.gz
+    gunzip Caenorhabditis_elegans.WBcel235.dna.toplevel.fa.gz
+    samtools faidx Caenorhabditis_elegans.WBcel235.dna.toplevel.fa
+fi
+
+# Yeast (~20MB)
+echo "  → Yeast (R64)..."
+mkdir -p "$DATA_DIR/yeast_r64_ensembl_115"
+cd "$DATA_DIR/yeast_r64_ensembl_115"
+if [ ! -f Saccharomyces_cerevisiae.R64-1-1.115.gff3 ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/gff3/saccharomyces_cerevisiae/Saccharomyces_cerevisiae.R64-1-1.115.gff3.gz
+    gunzip Saccharomyces_cerevisiae.R64-1-1.115.gff3.gz
+fi
+if [ ! -f Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
+    gunzip Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
+    samtools faidx Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa
+fi
+
+# Rat (~2GB)
+echo "  → Rat (mRatBN7.2)..."
+mkdir -p "$DATA_DIR/rat_mratbn72_ensembl_115"
+cd "$DATA_DIR/rat_mratbn72_ensembl_115"
+if [ ! -f Rattus_norvegicus.mRatBN7.2.115.gff3 ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/gff3/rattus_norvegicus/Rattus_norvegicus.mRatBN7.2.115.gff3.gz
+    gunzip Rattus_norvegicus.mRatBN7.2.115.gff3.gz
+fi
+if [ ! -f Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/fasta/rattus_norvegicus/dna/Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa.gz
+    gunzip Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa.gz
+    samtools faidx Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa
+fi
+
+# Arabidopsis (~200MB)
+echo "  → Arabidopsis (TAIR10)..."
+mkdir -p "$DATA_DIR/arabidopsis_tair10_ensembl_115"
+cd "$DATA_DIR/arabidopsis_tair10_ensembl_115"
+if [ ! -f Arabidopsis_thaliana.TAIR10.58.gff3 ]; then
+    wget -q --show-progress https://ftp.ensemblgenomes.org/pub/plants/release-58/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.58.gff3.gz
+    gunzip Arabidopsis_thaliana.TAIR10.58.gff3.gz
+fi
+if [ ! -f Arabidopsis_thaliana.TAIR10.dna.toplevel.fa ]; then
+    wget -q --show-progress https://ftp.ensemblgenomes.org/pub/plants/release-58/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
+    gunzip Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
+    samtools faidx Arabidopsis_thaliana.TAIR10.dna.toplevel.fa
+fi
+
 # --- 6. Set ownership ---
 echo "[6/6] Setting permissions..."
 chown -R fastvep:fastvep /opt/fastvep 2>/dev/null || true

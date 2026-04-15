@@ -7,6 +7,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
 use tower::limit::ConcurrencyLimitLayer;
 use tower::ServiceBuilder;
@@ -55,6 +56,10 @@ struct Cli {
     /// Maximum concurrent annotation requests
     #[arg(long, default_value_t = 64)]
     max_concurrent: usize,
+
+    /// Path to a file for persistent statistics tracking
+    #[arg(long, default_value = "stats.json", env = "FASTVEP_STATS_FILE")]
+    stats_file: PathBuf,
 }
 
 #[tokio::main]
@@ -85,10 +90,30 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("SA directory: {}", dir.display());
     }
 
+    // Load persistent stats
+    let mut initial_variants = 0;
+    let mut initial_genomes = 0;
+    if cli.stats_file.exists() {
+        if let Ok(data) = std::fs::read_to_string(&cli.stats_file) {
+            if let Ok(stats) = serde_json::from_str::<serde_json::Value>(&data) {
+                initial_variants = stats["total_variants"].as_u64().unwrap_or(0);
+                initial_genomes = stats["total_genomes"].as_u64().unwrap_or(0);
+                tracing::info!(
+                    "Loaded persistent stats: {} variants, {} genomes",
+                    initial_variants,
+                    initial_genomes
+                );
+            }
+        }
+    }
+
     let state: AppState = Arc::new(SharedState {
         ctx: RwLock::new(ctx),
         data_dir,
         sa_dir,
+        stats_file: Some(cli.stats_file),
+        total_variants: AtomicU64::new(initial_variants),
+        total_genomes: AtomicU64::new(initial_genomes),
     });
 
     let app = Router::new()
