@@ -3,7 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>fastVEP - Variant Effect Predictor</title>
+  <meta name="theme-color" content="#2bbd8c">
+  <meta name="description" content="fastVEP — high-performance variant effect prediction in Rust. 10–100x faster than VEP.">
+  <title>fastVEP — Variant Effect Predictor</title>
+
+  <!-- Inline SVG favicon (browser tab icon). Rounded square, blue→green gradient, stylized 'fv' with arrow. -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%232b6cb0'/><stop offset='1' stop-color='%2334d399'/></linearGradient></defs><rect width='64' height='64' rx='14' fill='url(%23g)'/><path d='M22 16 h12 a2 2 0 0 1 0 4 h-8 v9 h6 a2 2 0 0 1 0 4 h-6 v11 a2 2 0 0 1 -4 0 V18 a2 2 0 0 1 2 -2z' fill='white'/><path d='M34 28 l6 15 l6 -15 l-4 0 l-2 7 l-2 -7z' fill='white'/><path d='M44 42 l7 0 l-3 -3 M51 42 l-3 3' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+  <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%232b6cb0'/><stop offset='1' stop-color='%2334d399'/></linearGradient></defs><rect width='64' height='64' rx='14' fill='url(%23g)'/><path d='M22 16 h12 a2 2 0 0 1 0 4 h-8 v9 h6 a2 2 0 0 1 0 4 h-6 v11 a2 2 0 0 1 -4 0 V18 a2 2 0 0 1 2 -2z' fill='white'/><path d='M34 28 l6 15 l6 -15 l-4 0 l-2 7 l-2 -7z' fill='white'/></svg>">
 
   <!-- Google tag (gtag.js) replaced with user-configurable snippet if needed -->
   <!-- 
@@ -42,7 +48,7 @@
         --surface2: #ebedf3;
         --border: #d1d5e0;
         --text: #1a1d27;
-        --text-dim: #5f6477;
+        --text-dim: #4a4f62;
         --accent: #5563d8;
         --accent-hover: #4451c0;
         --high: #dc2f5a;
@@ -61,7 +67,7 @@
       --surface2: #ebedf3;
       --border: #d1d5e0;
       --text: #1a1d27;
-      --text-dim: #5f6477;
+      --text-dim: #4a4f62;
       --accent: #5563d8;
       --accent-hover: #4451c0;
       --high: #dc2f5a;
@@ -84,14 +90,22 @@
     header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 16px 32px;
+      padding: 14px 32px;
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    header .logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(43,108,176,0.2);
     }
     header h1 {
-      font-size: 20px;
-      font-weight: 700;
+      font-size: 22px;
+      font-weight: 800;
       letter-spacing: -0.5px;
     }
     header h1 span { color: var(--accent); }
@@ -108,8 +122,35 @@
       color: var(--text-dim);
       text-decoration: none;
       font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
-    header a:hover { color: var(--text); }
+    header a:hover { color: var(--text); background: var(--surface2); }
+    header a.link-slack:hover { color: #611f69; }
+    @media (max-width: 700px) {
+      header { padding: 12px 16px; gap: 8px; }
+      header h1 { font-size: 18px; }
+      header .badge { display: none; }
+    }
+
+    /* Hero tagline band */
+    .hero {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px 32px 0;
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .hero strong { color: var(--text); font-weight: 600; }
+    .hero .hero-accent { color: var(--accent); font-weight: 600; }
+    @media (max-width: 700px) {
+      .hero { padding: 14px 16px 0; font-size: 13px; }
+    }
     .theme-toggle {
       background: var(--surface2);
       border: 1px solid var(--border);
@@ -244,34 +285,103 @@
     .btn-secondary:hover { background: var(--border); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Status bar */
+    /* Status bar — prominent loading feedback */
     .status-bar {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 10px 16px;
-      background: var(--surface2);
+      gap: 14px;
+      padding: 14px 20px;
+      background: rgba(108,122,238,0.12);
+      border: 1px solid rgba(108,122,238,0.3);
+      border-left: 4px solid var(--accent);
       border-radius: 8px;
-      font-size: 13px;
-      margin-top: 12px;
+      font-size: 14px;
+      font-weight: 500;
+      margin-top: 14px;
+      position: relative;
+      overflow: hidden;
       display: none;
     }
     .status-bar.visible { display: flex; }
     .status-bar.done {
-      background: rgba(16,185,129,0.1);
-      border: 1px solid rgba(16,185,129,0.25);
+      background: rgba(16,185,129,0.12);
+      border-color: rgba(16,185,129,0.35);
+      border-left-color: var(--success);
       color: var(--success);
     }
     .status-bar.done .spinner { display: none; }
-    .done-icon { font-size: 16px; }
+    .status-bar.done::after { display: none; }
+    .status-bar::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+      background-size: 40% 100%;
+      background-repeat: no-repeat;
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .status-bar::after { animation: none; opacity: 0.5; }
+    }
+    @keyframes shimmer {
+      0%   { background-position: -40% 0; }
+      100% { background-position: 140% 0; }
+    }
+    .done-icon { font-size: 18px; }
     .spinner {
-      width: 16px; height: 16px;
-      border: 2px solid var(--border);
+      width: 20px; height: 20px;
+      border: 2.5px solid var(--border);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    .btn .spinner {
+      width: 14px; height: 14px;
+      border-width: 2px;
+      border-top-color: white;
+      margin-right: 6px;
+      display: inline-block;
+      vertical-align: middle;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Step header subtitle */
+    .step-subtitle {
+      display: block;
+      margin-top: 6px;
+      margin-left: 36px;
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    /* CTA hint under annotate button */
+    .kbd-hint {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-align: center;
+    }
+    .kbd-hint kbd {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: inherit;
+      font-size: 10px;
+      color: var(--text);
+    }
+    /* Empty-results notice */
+    .empty-results {
+      padding: 40px 24px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .empty-results .big { font-size: 28px; margin-bottom: 8px; opacity: 0.7; }
 
     /* Results Section */
     .results-section {
@@ -544,11 +654,16 @@
     }
     .example-pill:hover { background: rgba(108,122,238,0.15); border-color: var(--accent); }
 
-    .step-header { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .step-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
     .step-badge {
       display: inline-flex; align-items: center; justify-content: center;
-      width: 26px; height: 26px; border-radius: 50%;
-      background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--accent); color: #fff; font-weight: 700; font-size: 14px;
+      box-shadow: 0 0 0 4px rgba(108,122,238,0.15);
+      flex-shrink: 0;
+    }
+    .input-section {
+      position: relative;
     }
     .advanced-toggle {
       font-size: 13px; color: var(--text-dim); text-decoration: none; margin-top: 8px; display: inline-block;
@@ -567,6 +682,18 @@
 </head>
 <body>
   <header>
+    <svg class="logo" viewBox="0 0 64 64" aria-label="fastVEP logo" role="img">
+      <defs>
+        <linearGradient id="hdr-logo-g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#2b6cb0"/>
+          <stop offset="1" stop-color="#34d399"/>
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="14" fill="url(#hdr-logo-g)"/>
+      <path d="M22 16 h12 a2 2 0 0 1 0 4 h-8 v9 h6 a2 2 0 0 1 0 4 h-6 v11 a2 2 0 0 1 -4 0 V18 a2 2 0 0 1 2 -2z" fill="white"/>
+      <path d="M34 28 l6 15 l6 -15 l-4 0 l-2 7 l-2 -7z" fill="white"/>
+      <path d="M44 42 l7 0 l-3 -3 M51 42 l-3 3" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>
     <h1><span>fast</span>VEP</h1>
     <span class="badge">v0.1.0</span>
     <span class="spacer"></span>
@@ -577,8 +704,15 @@
     <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
       <span id="themeIcon">&#9790;</span> <span id="themeLabel">Light</span>
     </button>
-    <a href="https://github.com/Huang-lab/fastVEP">GitHub</a>
+    <a href="https://github.com/Huang-lab/fastVEP" target="_blank" rel="noopener">GitHub</a>
+    <a class="link-slack" href="https://join.slack.com/t/fastvep/shared_invite/zt-3vynbbs2o-1EIu4KPbzrEn_zSyyG~BOQ" target="_blank" rel="noopener">Slack</a>
+    <a href="https://labs.icahn.mssm.edu/kuanhuanglab/" target="_blank" rel="noopener">Huang Lab</a>
   </header>
+
+  <div class="hero">
+    <strong>fastVEP</strong> — high-performance variant effect prediction in Rust.
+    <span class="hero-accent">10–100&times; faster than VEP</span>, with MANE, HGVS, splice-site and consequence annotation.
+  </div>
 
   <div class="container">
     <!-- Step 1: Genome Selection -->
@@ -587,7 +721,8 @@
         <span class="step-badge">1</span>
         <h2 style="margin:0;display:inline">Select Genome</h2>
       </div>
-      <div style="display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap">
+      <span class="step-subtitle">Choose a reference genome and gene model (or upload a custom GFF3).</span>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
         <select id="gffSource" onchange="onGffSourceChange()" style="flex:1;min-width:250px;max-width:500px">
           <option value="builtin">Built-in demo (OR4F5 + lncRNA, chr1 only)</option>
           <option value="upload">Upload custom GFF3 file</option>
@@ -603,7 +738,8 @@
         <span class="step-badge">2</span>
         <h2 style="margin:0;display:inline">Input Variants</h2>
       </div>
-      <div class="input-grid">
+      <span class="step-subtitle">Paste VCF variants, try an example, or upload a .vcf / .vcf.gz file.</span>
+      <div class="input-grid" style="margin-top:12px">
         <div>
           <textarea id="vcfInput" placeholder="Paste VCF data here, or try an example below.&#10;&#10;Supported format: VCF (tab-separated)&#10;#CHROM  POS  ID  REF  ALT  QUAL  FILTER  INFO&#10;1       69080  .  C    T    30    PASS    .&#10;&#10;Supports SNVs, insertions, deletions, multi-allelic, and MNVs."></textarea>
           <div class="example-links">
@@ -623,9 +759,10 @@
             </div>
           </div>
           <div class="btn-row">
-            <button class="btn btn-primary" id="btnAnnotate" onclick="annotate()">Annotate</button>
+            <button class="btn btn-primary" id="btnAnnotate" onclick="annotate()" style="flex:1;padding:12px 28px;font-size:15px">Annotate</button>
             <button class="btn btn-secondary" onclick="clearAll()">Clear</button>
           </div>
+          <div class="kbd-hint">Tip: press <kbd>&#8984;</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd> in the textarea to annotate</div>
           <a href="#" class="advanced-toggle" onclick="toggleAdvanced();return false" id="advancedToggle">Advanced options &#9662;</a>
           <div id="advancedOptions" style="display:none">
             <div class="control-group">
@@ -751,7 +888,13 @@
   </div>
 
   <footer>
-    fastVEP &mdash; High-performance variant effect prediction in Rust
+    <div style="margin-bottom:6px">fastVEP &mdash; High-performance variant effect prediction in Rust</div>
+    <div style="display:flex;gap:18px;justify-content:center;flex-wrap:wrap;font-size:12px">
+      <a href="https://github.com/Huang-lab/fastVEP" target="_blank" rel="noopener" style="color:var(--text-dim);text-decoration:none">GitHub</a>
+      <a href="https://join.slack.com/t/fastvep/shared_invite/zt-3vynbbs2o-1EIu4KPbzrEn_zSyyG~BOQ" target="_blank" rel="noopener" style="color:var(--text-dim);text-decoration:none">Slack community</a>
+      <a href="https://labs.icahn.mssm.edu/kuanhuanglab/" target="_blank" rel="noopener" style="color:var(--text-dim);text-decoration:none">Huang Lab</a>
+      <a href="https://github.com/Huang-lab/fastVEP/issues" target="_blank" rel="noopener" style="color:var(--text-dim);text-decoration:none">Report issue</a>
+    </div>
   </footer>
 
 <script>
@@ -1271,12 +1414,12 @@ let builtinUploadedToServer = false; // track if we've uploaded the example GFF3
 // "Human GRCh38 / hg38 (Ensembl 115)". Falls back to the raw name if unrecognized.
 function formatGenomeLabel(name) {
   const lower = name.toLowerCase();
-  // Species/build detection
+  // Species/build detection — species name first so scanning the dropdown is easy.
   const parts = [];
   let species = null;
-  if (lower.includes('grch38') || lower.includes('hg38')) species = 'Human GRCh38 / hg38';
-  else if (lower.includes('grch37') || lower.includes('hg19') || lower.includes('hg37')) species = 'Human GRCh37 / hg19';
-  else if (lower.includes('t2t') || lower.includes('chm13')) species = 'Human T2T-CHM13v2.0';
+  if (lower.includes('grch38') || lower.includes('hg38')) species = 'Human (GRCh38 / hg38)';
+  else if (lower.includes('grch37') || lower.includes('hg19') || lower.includes('hg37')) species = 'Human (GRCh37 / hg19)';
+  else if (lower.includes('t2t') || lower.includes('chm13')) species = 'Human (T2T-CHM13v2.0)';
   else if (lower.includes('grcm39') || lower.includes('mouse')) species = 'Mouse GRCm39';
   else if (lower.includes('grcm38') || lower.includes('mm10')) species = 'Mouse GRCm38 / mm10';
   else if (lower.includes('mratbn') || lower.includes('rnor') || lower.includes('rat')) species = 'Rat mRatBN7.2';
@@ -1306,6 +1449,11 @@ function formatGenomeLabel(name) {
   }
   if (species) {
     return source ? `${species} (${source})` : species;
+  }
+  // Defensive fallback: name wasn't recognized but looks like a human build (e.g. unusual casing) —
+  // still surface "Human" so it's scannable.
+  if (/(?:^|[_\W])(?:hg\d+|grch\d+)(?:[_\W]|$)/i.test(name)) {
+    return 'Human — ' + name;
   }
   return name; // fallback
 }
@@ -1413,17 +1561,65 @@ function updateGffInfo() {
 
 checkBackend();
 
-async function annotate() {
-  const vcfText = document.getElementById('vcfInput').value.trim();
-  if (!vcfText) return;
+// Keyboard shortcut: Cmd/Ctrl+Enter in the VCF textarea triggers Annotate.
+(function wireAnnotateShortcut() {
+  const ta = document.getElementById('vcfInput');
+  if (!ta) return;
+  ta.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      annotate();
+    }
+  });
+})();
+
+// --- Prominent loading helpers ---
+function showLoading(message) {
   const status = document.getElementById('statusBar');
   status.classList.remove('done');
   document.getElementById('doneIcon').style.display = 'none';
+  document.getElementById('statusText').textContent = message;
   status.classList.add('visible');
+  status.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+function updateLoading(message) {
+  document.getElementById('statusText').textContent = message;
+}
+function finishLoading(message) {
+  const status = document.getElementById('statusBar');
+  document.getElementById('statusText').textContent = message;
+  document.getElementById('doneIcon').style.display = 'inline';
+  status.classList.add('done');
+  // Auto-hide after a moment so the UI stays clean
+  setTimeout(() => { status.classList.remove('visible'); status.classList.remove('done'); }, 2000);
+}
+function hideLoading() {
+  const status = document.getElementById('statusBar');
+  status.classList.remove('visible');
+  status.classList.remove('done');
+}
+function setAnnotateBusy(busy, label) {
+  const btn = document.getElementById('btnAnnotate');
+  if (!btn) return;
+  btn.disabled = busy;
+  if (busy) {
+    btn.dataset.origText = btn.dataset.origText || btn.textContent;
+    btn.innerHTML = '<span class="spinner"></span>' + (label || 'Annotating…');
+  } else {
+    btn.innerHTML = btn.dataset.origText || 'Annotate';
+  }
+}
+
+async function annotate() {
+  const vcfText = document.getElementById('vcfInput').value.trim();
+  if (!vcfText) return;
+  showLoading('Preparing variants…');
+  setAnnotateBusy(true);
 
   if (hasBackend) {
     // Ensure server has transcripts loaded (upload builtin if needed)
     if (serverTranscripts === 0) {
+      updateLoading('Loading gene model…');
       await uploadBuiltinToServer();
     }
     annotateBackend(vcfText);
@@ -1433,9 +1629,9 @@ async function annotate() {
 }
 
 async function annotateBackend(vcfText) {
-  const status = document.getElementById('statusBar');
   const pick = document.getElementById('optPick').checked;
-  document.getElementById('statusText').textContent = 'Sending to server...';
+  const variantCount = vcfText.split('\n').filter(l => l && !l.startsWith('#')).length;
+  updateLoading(`Annotating ${variantCount.toLocaleString()} variant${variantCount === 1 ? '' : 's'}…`);
   const t0 = performance.now();
   try {
     const r = await fetch('/api/annotate', {
@@ -1445,18 +1641,20 @@ async function annotateBackend(vcfText) {
     });
     const data = await r.json();
     if (data.error) {
-      status.classList.remove('visible');
+      hideLoading();
+      setAnnotateBusy(false);
       showWarning('Server error', data.error);
       return;
     }
     const t1 = performance.now();
     // Convert server JSON results to our internal format
     allResults = convertServerResults(data.results || []);
-    status.classList.remove('visible');
+    const ms = data.time_ms || Math.round(t1 - t0);
+    setAnnotateBusy(false);
     showResults(
       new Set(allResults.map(r => `${r.variant.chrom}:${r.variant.start}`)).size,
       allResults.length,
-      data.time_ms || Math.round(t1 - t0)
+      ms
     );
   } catch (e) {
     // Fall back to client-side on network error
@@ -1591,11 +1789,11 @@ function convertServerResults(results) {
 
 function annotateClientSide(vcfText) {
   const status = document.getElementById('statusBar');
-  document.getElementById('statusText').textContent = 'Parsing gene models...';
+  updateLoading('Parsing gene models…');
   setTimeout(() => {
     const t0 = performance.now();
     transcripts = parseGFF3(getGFF3Text());
-    document.getElementById('statusText').textContent = `Loaded ${transcripts.length} transcripts. Annotating...`;
+    updateLoading(`Loaded ${transcripts.length} transcripts. Annotating…`);
     setTimeout(() => {
       const variants = parseVCF(vcfText);
       const distance = +document.getElementById('distance').value || 5000;
@@ -1617,7 +1815,7 @@ function annotateClientSide(vcfText) {
         }
       }
       const t1 = performance.now();
-      status.classList.remove('visible');
+      setAnnotateBusy(false);
       checkMismatch(variants, transcripts);
       showResults(variants.length, allResults.length, t1 - t0);
     }, 10);
@@ -1655,6 +1853,20 @@ function renderTable() {
   tbody.innerHTML = '';
   const search = document.getElementById('searchInput').value.toLowerCase();
   const impFilter = document.getElementById('impactFilter').value;
+
+  // Empty-results helper message when no annotations came back at all.
+  if (allResults.length === 0) {
+    const colCount = document.querySelectorAll('#resultsHead th').length || 1;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="${colCount}"><div class="empty-results">
+      <div class="big">&#128269;</div>
+      <div><strong>No annotations returned.</strong></div>
+      <div style="margin-top:6px">Check that your variants fall within the loaded gene model's range
+        (&plusmn; upstream/downstream distance). For the built-in demo, try a variant on chr1 near OR4F5.</div>
+    </div></td>`;
+    tbody.appendChild(tr);
+    return;
+  }
 
   // Detect which SA columns are present in the results
   const saKeys = new Set();
@@ -2075,7 +2287,9 @@ function onGffSourceChange() {
 // Load a genome from the server's --data-dir
 async function loadServerGenome(name) {
   const info = document.getElementById('gffInfo');
-  info.textContent = 'Loading ' + name + '...';
+  const label = formatGenomeLabel(name);
+  info.textContent = 'Loading ' + label + '…';
+  showLoading(`Loading genome: ${label}… (this may take a few seconds)`);
   try {
     const r = await fetch('/api/load-genome', {
       method: 'POST',
@@ -2085,17 +2299,22 @@ async function loadServerGenome(name) {
     const data = await r.json();
     if (data.error) {
       info.textContent = 'Error: ' + data.error;
+      hideLoading();
+      showWarning('Genome load failed', data.error);
     } else {
       serverTranscripts = data.transcripts || 0;
       serverSaSources = data.sa_sources || [];
-      let text = `${name}: ${data.transcripts} transcripts (${data.time_ms}ms)`;
+      let text = `${data.transcripts.toLocaleString()} transcripts (${data.time_ms}\u202fms)`;
       if (serverSaSources.length > 0) {
         text += ` | SA: ${serverSaSources.join(', ')}`;
       }
       info.textContent = text;
+      finishLoading(`Loaded ${label} — ${data.transcripts.toLocaleString()} transcripts`);
     }
   } catch (e) {
     info.textContent = 'Failed to load: ' + e.message;
+    hideLoading();
+    showWarning('Network error', e.message);
   }
 }
 
