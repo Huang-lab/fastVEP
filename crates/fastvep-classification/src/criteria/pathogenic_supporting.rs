@@ -33,7 +33,7 @@ fn evaluate_pp1(
         default_strength: EvidenceStrength::Supporting,
         met: false,
         evaluated: false,
-        summary: "Not evaluated: requires family segregation data".to_string(),
+        summary: "Requires multi-generation pedigree with affection status to assess co-segregation".to_string(),
         details: serde_json::Value::Null,
     }
 }
@@ -266,7 +266,7 @@ fn evaluate_pp4(
         default_strength: EvidenceStrength::Supporting,
         met: false,
         evaluated: false,
-        summary: "Not evaluated: requires patient phenotype data".to_string(),
+        summary: "Requires patient HPO phenotype terms matched to disease-gene associations".to_string(),
         details: serde_json::Value::Null,
     }
 }

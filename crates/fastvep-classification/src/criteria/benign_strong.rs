@@ -76,18 +76,46 @@ fn evaluate_bs1(
 /// dominant (heterozygous), or X-linked (hemizygous) disorder with full penetrance
 /// expected at an early age.
 ///
-/// Approximated: gnomAD homozygote count > 0 as proxy for observed in healthy adults.
+/// For dominant disorders: presence in gnomAD at any frequency with adequate sample size.
+/// For recessive disorders: homozygotes in gnomAD.
+/// Inheritance pattern inferred from OMIM phenotype annotations when available.
 fn evaluate_bs2(
     input: &ClassificationInput,
     _config: &AcmgConfig,
 ) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
+    let is_dominant = input
+        .omim
+        .as_ref()
+        .map_or(false, |o| o.has_dominant_inheritance());
+    let is_recessive = input
+        .omim
+        .as_ref()
+        .map_or(false, |o| o.has_recessive_inheritance());
+    details.insert("omim_dominant".into(), serde_json::json!(is_dominant));
+    details.insert("omim_recessive".into(), serde_json::json!(is_recessive));
+
     let (met, evaluated, summary) = if let Some(ref gnomad) = input.gnomad {
         let hc = gnomad.all_hc.unwrap_or(0);
+        let an = gnomad.all_an.unwrap_or(0);
+        let af = gnomad.all_af.unwrap_or(0.0);
         details.insert("gnomad_allHc".into(), serde_json::json!(hc));
+        details.insert("gnomad_allAn".into(), serde_json::json!(an));
 
-        if hc > 0 {
+        if is_dominant && af > 0.0 && an > 10000 {
+            // For dominant fully-penetrant disorders, any carrier in a large population
+            // suggests benign (the individual would be affected if pathogenic)
+            (
+                true,
+                true,
+                format!(
+                    "Present in gnomAD (AF={:.6}, AN={}) for autosomal dominant disorder, suggesting tolerated",
+                    af, an
+                ),
+            )
+        } else if hc > 0 {
+            // For recessive or unknown inheritance: homozygotes suggest benign
             (
                 true,
                 true,
@@ -131,7 +159,7 @@ fn evaluate_bs3(
         default_strength: EvidenceStrength::Strong,
         met: false,
         evaluated: false,
-        summary: "Not evaluated: requires functional study data".to_string(),
+        summary: "Requires curated functional study evidence showing no damaging effect — not automatable from variant data".to_string(),
         details: serde_json::Value::Null,
     }
 }
@@ -148,7 +176,7 @@ fn evaluate_bs4(
         default_strength: EvidenceStrength::Strong,
         met: false,
         evaluated: false,
-        summary: "Not evaluated: requires family segregation data".to_string(),
+        summary: "Requires multi-generation pedigree with affection status to assess lack of segregation".to_string(),
         details: serde_json::Value::Null,
     }
 }

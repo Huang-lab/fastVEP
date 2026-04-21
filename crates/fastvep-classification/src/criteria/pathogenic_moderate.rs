@@ -20,19 +20,83 @@ pub fn evaluate_all(
 }
 
 /// PM1: Located in a mutational hot spot and/or critical functional domain.
+///
+/// Approximated using ClinVar pathogenic variant density as a hotspot proxy:
+/// if >=N pathogenic variants exist within ±W amino acid positions, the region
+/// is considered a hotspot.
 fn evaluate_pm1(
-    _input: &ClassificationInput,
-    _config: &AcmgConfig,
+    input: &ClassificationInput,
+    config: &AcmgConfig,
 ) -> EvidenceCriterion {
-    EvidenceCriterion {
-        code: "PM1".to_string(),
-        direction: EvidenceDirection::Pathogenic,
-        strength: EvidenceStrength::Moderate,
-        default_strength: EvidenceStrength::Moderate,
-        met: false,
-        evaluated: false,
-        summary: "Not evaluated: requires UniProt/InterPro functional domain data".to_string(),
-        details: serde_json::Value::Null,
+    let mut details = serde_json::Map::new();
+    let window = config.pm1_hotspot_window;
+    let threshold = config.pm1_hotspot_min_pathogenic;
+    details.insert("hotspot_window".into(), serde_json::json!(window));
+    details.insert("hotspot_threshold".into(), serde_json::json!(threshold));
+
+    let prot_pos = match input.protein_position {
+        Some(pos) => pos,
+        None => {
+            return EvidenceCriterion {
+                code: "PM1".to_string(),
+                direction: EvidenceDirection::Pathogenic,
+                strength: EvidenceStrength::Moderate,
+                default_strength: EvidenceStrength::Moderate,
+                met: false,
+                evaluated: false,
+                summary: "Protein position not available".to_string(),
+                details: serde_json::Value::Object(details),
+            };
+        }
+    };
+
+    details.insert("protein_position".into(), serde_json::json!(prot_pos));
+
+    if let Some(ref cpd) = input.clinvar_protein {
+        let low = prot_pos.saturating_sub(window);
+        let high = prot_pos + window;
+        let nearby_pathogenic: usize = cpd
+            .protein_variants
+            .iter()
+            .filter(|v| v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("pathogenic"))
+            .count();
+
+        details.insert("nearby_pathogenic_count".into(), serde_json::json!(nearby_pathogenic));
+
+        let met = nearby_pathogenic >= threshold as usize;
+        let summary = if met {
+            format!(
+                "Mutational hotspot: {} pathogenic variants within ±{} AA of position {} (threshold: {})",
+                nearby_pathogenic, window, prot_pos, threshold
+            )
+        } else {
+            format!(
+                "Not a hotspot: {} pathogenic variants within ±{} AA of position {} (threshold: {})",
+                nearby_pathogenic, window, prot_pos, threshold
+            )
+        };
+
+        EvidenceCriterion {
+            code: "PM1".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met,
+            evaluated: true,
+            summary,
+            details: serde_json::Value::Object(details),
+        }
+    } else {
+        EvidenceCriterion {
+            code: "PM1".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: false,
+            summary: "ClinVar protein-position index not available for hotspot analysis".to_string(),
+            details: serde_json::Value::Object(details),
+        }
     }
 }
 
@@ -99,6 +163,8 @@ fn evaluate_pm2(
 }
 
 /// PM3: For recessive disorders, detected in trans with a pathogenic variant.
+///
+/// Can be evaluated with phased VCF data and multi-variant gene context.
 fn evaluate_pm3(
     _input: &ClassificationInput,
     _config: &AcmgConfig,
@@ -110,7 +176,7 @@ fn evaluate_pm3(
         default_strength: EvidenceStrength::Moderate,
         met: false,
         evaluated: false,
-        summary: "Not evaluated: requires phasing data from trio/family analysis".to_string(),
+        summary: "Requires phased VCF with compound heterozygote analysis to detect in-trans with pathogenic variant".to_string(),
         details: serde_json::Value::Null,
     }
 }
@@ -166,23 +232,116 @@ fn evaluate_pm4(
 
 /// PM5: Novel missense change at an amino acid residue where a different pathogenic
 /// missense change has been seen before.
+///
+/// Uses the ClinVar protein-position index to check if pathogenic variants
+/// with a DIFFERENT amino acid change exist at the same protein position.
 fn evaluate_pm5(
-    _input: &ClassificationInput,
+    input: &ClassificationInput,
     _config: &AcmgConfig,
 ) -> EvidenceCriterion {
-    EvidenceCriterion {
-        code: "PM5".to_string(),
-        direction: EvidenceDirection::Pathogenic,
-        strength: EvidenceStrength::Moderate,
-        default_strength: EvidenceStrength::Moderate,
-        met: false,
-        evaluated: false,
-        summary: "Not evaluated: requires protein-position ClinVar index to check for different pathogenic missense at same residue".to_string(),
-        details: serde_json::Value::Null,
+    let is_missense = input
+        .consequences
+        .iter()
+        .any(|c| matches!(c, Consequence::MissenseVariant));
+
+    let mut details = serde_json::Map::new();
+
+    if !is_missense {
+        return EvidenceCriterion {
+            code: "PM5".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: true,
+            summary: "Not a missense variant".to_string(),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    let (prot_pos, _ref_aa, alt_aa) = match (&input.protein_position, &input.amino_acids) {
+        (Some(pos), Some((r, a))) => (*pos, r.as_str(), a.as_str()),
+        _ => {
+            return EvidenceCriterion {
+                code: "PM5".to_string(),
+                direction: EvidenceDirection::Pathogenic,
+                strength: EvidenceStrength::Moderate,
+                default_strength: EvidenceStrength::Moderate,
+                met: false,
+                evaluated: false,
+                summary: "Protein position or amino acid change not available".to_string(),
+                details: serde_json::Value::Object(details),
+            };
+        }
+    };
+
+    details.insert("protein_position".into(), serde_json::json!(prot_pos));
+    details.insert("alt_aa".into(), serde_json::json!(alt_aa));
+
+    if let Some(ref cpd) = input.clinvar_protein {
+        // Find pathogenic variants at same position with DIFFERENT amino acid change
+        let different_aa_matches: Vec<&crate::sa_extract::ClinvarProteinVariant> = cpd
+            .protein_variants
+            .iter()
+            .filter(|v| {
+                v.pos == prot_pos
+                    && v.alt_aa != alt_aa
+                    && v.sig.to_lowercase().contains("pathogenic")
+            })
+            .collect();
+
+        details.insert(
+            "different_aa_pathogenic_count".into(),
+            serde_json::json!(different_aa_matches.len()),
+        );
+
+        if !different_aa_matches.is_empty() {
+            let other_aas: Vec<&str> = different_aa_matches.iter().map(|v| v.alt_aa.as_str()).collect();
+            details.insert("other_pathogenic_aas".into(), serde_json::json!(other_aas));
+
+            return EvidenceCriterion {
+                code: "PM5".to_string(),
+                direction: EvidenceDirection::Pathogenic,
+                strength: EvidenceStrength::Moderate,
+                default_strength: EvidenceStrength::Moderate,
+                met: true,
+                evaluated: true,
+                summary: format!(
+                    "Different pathogenic missense at same residue {} (other AA changes: {})",
+                    prot_pos,
+                    other_aas.join(", ")
+                ),
+                details: serde_json::Value::Object(details),
+            };
+        }
+
+        EvidenceCriterion {
+            code: "PM5".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: true,
+            summary: format!("No different pathogenic missense at position {}", prot_pos),
+            details: serde_json::Value::Object(details),
+        }
+    } else {
+        EvidenceCriterion {
+            code: "PM5".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: false,
+            summary: "ClinVar protein-position index not available".to_string(),
+            details: serde_json::Value::Object(details),
+        }
     }
 }
 
 /// PM6: Assumed de novo, but without confirmation of paternity and maternity.
+///
+/// Can be evaluated with partial trio data (one parent only).
 fn evaluate_pm6(
     _input: &ClassificationInput,
     _config: &AcmgConfig,
@@ -194,7 +353,7 @@ fn evaluate_pm6(
         default_strength: EvidenceStrength::Moderate,
         met: false,
         evaluated: false,
-        summary: "Not evaluated: requires family/trio analysis data".to_string(),
+        summary: "Requires trio VCF with at least one parent to assess assumed de novo status".to_string(),
         details: serde_json::Value::Null,
     }
 }

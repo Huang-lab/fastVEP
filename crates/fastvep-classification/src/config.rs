@@ -64,6 +64,14 @@ pub struct AcmgConfig {
     #[serde(default = "default_misz")]
     pub pp2_misz_threshold: f64,
 
+    // ── PM1 hotspot detection thresholds ──
+    /// Window size (in amino acid positions) for hotspot detection (default: 5)
+    #[serde(default = "default_pm1_window")]
+    pub pm1_hotspot_window: u64,
+    /// Minimum pathogenic variants in window to call hotspot (default: 3)
+    #[serde(default = "default_pm1_threshold")]
+    pub pm1_hotspot_min_pathogenic: u32,
+
     // ── ClinGen SVI behavior modifications ──
     /// Downgrade PM2 from Moderate to Supporting (ClinGen SVI recommendation)
     #[serde(default = "default_true")]
@@ -113,6 +121,8 @@ impl Default for AcmgConfig {
             pli_lof_intolerant: 0.9,
             loeuf_lof_intolerant: 0.35,
             pp2_misz_threshold: 3.09,
+            pm1_hotspot_window: 5,
+            pm1_hotspot_min_pathogenic: 3,
             pm2_downgrade_to_supporting: true,
             use_pp5_bp6: false,
             gene_overrides: HashMap::new(),
@@ -178,6 +188,8 @@ fn default_gerp() -> f64 { 2.0 }
 fn default_pli() -> f64 { 0.9 }
 fn default_loeuf() -> f64 { 0.35 }
 fn default_misz() -> f64 { 3.09 }
+fn default_pm1_window() -> u64 { 5 }
+fn default_pm1_threshold() -> u32 { 3 }
 fn default_true() -> bool { true }
 
 #[cfg(test)]

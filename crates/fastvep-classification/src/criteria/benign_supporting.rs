@@ -105,14 +105,14 @@ fn evaluate_bp2(
         default_strength: EvidenceStrength::Supporting,
         met: false,
         evaluated: false,
-        summary: "Not evaluated: requires phasing/haplotype data".to_string(),
+        summary: "Requires phased VCF with compound heterozygote analysis to assess in-trans/in-cis with pathogenic variant".to_string(),
         details: serde_json::Value::Null,
     }
 }
 
 /// BP3: In-frame deletions/insertions in a repetitive region without a known function.
 ///
-/// Partially evaluated: can detect in-frame indels but cannot confirm repeat region.
+/// Uses RepeatMasker interval annotations when available.
 fn evaluate_bp3(
     input: &ClassificationInput,
     _config: &AcmgConfig,
@@ -130,22 +130,44 @@ fn evaluate_bp3(
         serde_json::json!(is_inframe_indel),
     );
 
-    // We can detect in-frame indels but cannot verify repeat region without additional data
-    let summary = if is_inframe_indel {
-        "In-frame indel detected, but repeat region status cannot be confirmed without additional data".to_string()
-    } else {
-        "Not an in-frame insertion or deletion".to_string()
-    };
+    if let Some(in_repeat) = input.in_repeat_region {
+        details.insert("in_repeat_region".into(), serde_json::json!(in_repeat));
+        let met = is_inframe_indel && in_repeat;
+        let summary = if met {
+            "In-frame indel in a repetitive region".to_string()
+        } else if is_inframe_indel && !in_repeat {
+            "In-frame indel but not in a repetitive region".to_string()
+        } else {
+            "Not an in-frame insertion or deletion".to_string()
+        };
 
-    EvidenceCriterion {
-        code: "BP3".to_string(),
-        direction: EvidenceDirection::Benign,
-        strength: EvidenceStrength::Supporting,
-        default_strength: EvidenceStrength::Supporting,
-        met: false, // Cannot confirm repeat region, so never met automatically
-        evaluated: false,
-        summary,
-        details: serde_json::Value::Object(details),
+        EvidenceCriterion {
+            code: "BP3".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Supporting,
+            default_strength: EvidenceStrength::Supporting,
+            met,
+            evaluated: true,
+            summary,
+            details: serde_json::Value::Object(details),
+        }
+    } else {
+        let summary = if is_inframe_indel {
+            "In-frame indel detected, but repeat region data not available (load RepeatMasker .osi)".to_string()
+        } else {
+            "Not an in-frame insertion or deletion".to_string()
+        };
+
+        EvidenceCriterion {
+            code: "BP3".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Supporting,
+            default_strength: EvidenceStrength::Supporting,
+            met: false,
+            evaluated: !is_inframe_indel, // evaluated if not applicable; not evaluated if it's relevant but no data
+            summary,
+            details: serde_json::Value::Object(details),
+        }
     }
 }
 
@@ -270,7 +292,7 @@ fn evaluate_bp5(
         default_strength: EvidenceStrength::Supporting,
         met: false,
         evaluated: false,
-        summary: "Not evaluated: requires clinical case data".to_string(),
+        summary: "Requires case-level knowledge of other confirmed pathogenic variants explaining the phenotype".to_string(),
         details: serde_json::Value::Null,
     }
 }

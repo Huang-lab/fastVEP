@@ -182,6 +182,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         Vec::new()
     };
 
+    // Load gene-level annotation providers (.oga files)
+    let gene_providers: Vec<fastvep_sa::gene::GeneIndex> = if let Some(ref dir) = config.sa_dir {
+        load_gene_providers(Path::new(dir))?
+    } else {
+        Vec::new()
+    };
+
     // Load ACMG-AMP classification config if enabled
     let acmg_config: Option<fastvep_classification::AcmgConfig> = if config.acmg {
         if let Some(ref path) = config.acmg_config {
@@ -865,6 +872,29 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                 }
             }
 
+            // Gene-level annotation pass (OMIM, gnomAD gene constraints, etc.)
+            if !gene_providers.is_empty() {
+                use fastvep_cache::annotation::GeneAnnotationProvider;
+                let mut seen_genes = std::collections::HashSet::new();
+                for tv in &vf.transcript_variations {
+                    if let Some(gene_sym) = tv.gene_symbol.as_deref() {
+                        if seen_genes.insert(gene_sym.to_string()) {
+                            for gp in &gene_providers {
+                                if let Ok(Some(json)) = gp.annotate_gene(gene_sym) {
+                                    vf.gene_annotations.push(
+                                        fastvep_core::GeneAnnotation {
+                                            gene_symbol: gene_sym.to_string(),
+                                            json_key: gp.json_key().to_string(),
+                                            json_string: json,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // ACMG-AMP classification pass (after all SA annotations are attached)
             if let Some(ref acmg_cfg) = acmg_config {
                 for tv in &mut vf.transcript_variations {
@@ -936,7 +966,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
     annotate_intergenic, complement_allele, convert_ins_to_dup, convert_ins_to_dup_noncoding,
-    load_sa_providers, three_prime_shift_intronic, zip_positions,
+    load_gene_providers, load_sa_providers, three_prime_shift_intronic, zip_positions,
 };
 
 

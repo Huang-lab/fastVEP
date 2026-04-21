@@ -197,6 +197,50 @@ pub struct OmimData {
     pub phenotypes: Option<Vec<String>>,
 }
 
+impl OmimData {
+    /// Check if any phenotype suggests autosomal dominant inheritance.
+    pub fn has_dominant_inheritance(&self) -> bool {
+        self.phenotypes.as_ref().map_or(false, |ps| {
+            ps.iter().any(|p| {
+                let lower = p.to_lowercase();
+                lower.contains("autosomal dominant")
+                    || lower.contains("{ad}")
+                    || (lower.contains("dominant") && !lower.contains("recessive"))
+            })
+        })
+    }
+
+    /// Check if any phenotype suggests autosomal recessive inheritance.
+    pub fn has_recessive_inheritance(&self) -> bool {
+        self.phenotypes.as_ref().map_or(false, |ps| {
+            ps.iter().any(|p| {
+                let lower = p.to_lowercase();
+                lower.contains("autosomal recessive")
+                    || lower.contains("{ar}")
+                    || (lower.contains("recessive") && !lower.contains("dominant"))
+            })
+        })
+    }
+}
+
+/// ClinVar pathogenic variants indexed by protein position (from .oga).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ClinvarProteinData {
+    #[serde(rename = "proteinVariants")]
+    pub protein_variants: Vec<ClinvarProteinVariant>,
+}
+
+/// A single ClinVar pathogenic variant at a protein position.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClinvarProteinVariant {
+    pub pos: u64,
+    #[serde(rename = "refAa")]
+    pub ref_aa: String,
+    #[serde(rename = "altAa")]
+    pub alt_aa: String,
+    pub sig: String,
+}
+
 /// All data needed for ACMG-AMP classification, extracted from pipeline annotations.
 #[derive(Debug, Clone)]
 pub struct ClassificationInput {
@@ -215,6 +259,10 @@ pub struct ClassificationInput {
     pub gerp: Option<f64>,
     pub gene_constraints: Option<GnomadGeneData>,
     pub omim: Option<OmimData>,
+    /// ClinVar pathogenic variants at protein positions for this gene (from .oga).
+    pub clinvar_protein: Option<ClinvarProteinData>,
+    /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
+    pub in_repeat_region: Option<bool>,
 }
 
 /// Extract classification input from pipeline annotation data.
@@ -277,6 +325,7 @@ pub fn extract_classification_input(
     // Parse gene-level annotations
     let mut gene_constraints = None;
     let mut omim = None;
+    let mut clinvar_protein = None;
     for ga in gene_annotations {
         match ga.json_key.as_str() {
             "gnomad_genes" | "gnomad_gene" => {
@@ -285,9 +334,21 @@ pub fn extract_classification_input(
             "omim" => {
                 omim = serde_json::from_str(&ga.json_string).ok();
             }
+            "clinvar_protein" => {
+                clinvar_protein = serde_json::from_str(&ga.json_string).ok();
+            }
             _ => {}
         }
     }
+
+    // Check if variant overlaps a repeat region (from interval SA)
+    let in_repeat_region = {
+        let has_repeat = allele_supplementary.iter().any(|(key, _)| {
+            let k = key.to_lowercase();
+            k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
+        });
+        if has_repeat { Some(true) } else { None }
+    };
 
     ClassificationInput {
         consequences: consequences.to_vec(),
@@ -305,6 +366,8 @@ pub fn extract_classification_input(
         gerp,
         gene_constraints,
         omim,
+        clinvar_protein,
+        in_repeat_region,
     }
 }
 

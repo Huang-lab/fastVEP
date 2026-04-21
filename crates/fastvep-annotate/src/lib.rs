@@ -46,6 +46,8 @@ pub struct AnnotationContext {
     /// Supplementary annotation providers (ClinVar, gnomAD, etc.)
     /// Wrapped in Mutex because SA readers use internal caches that need &mut.
     pub sa_providers: Vec<Mutex<Box<dyn AnnotationProvider>>>,
+    /// Gene-level annotation providers (OMIM, gnomAD gene constraints, ClinVar protein index).
+    pub gene_providers: Vec<fastvep_sa::gene::GeneIndex>,
     /// ACMG-AMP classification configuration (None = disabled).
     pub acmg_config: Option<fastvep_classification::AcmgConfig>,
 }
@@ -161,6 +163,12 @@ impl AnnotationContext {
             Vec::new()
         };
 
+        let gene_providers = if let Some(dir) = sa_dir {
+            load_gene_providers(Path::new(dir))?
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             transcript_provider,
             seq_provider,
@@ -169,6 +177,7 @@ impl AnnotationContext {
             distance,
             hgvs: true,
             sa_providers,
+            gene_providers,
             acmg_config: None,
         })
     }
@@ -203,6 +212,7 @@ impl AnnotationContext {
         self.predictor = new_ctx.predictor;
         self.gff3_source = new_ctx.gff3_source;
         self.sa_providers = new_ctx.sa_providers;
+        self.gene_providers = new_ctx.gene_providers;
         Ok(tr_count)
     }
 
@@ -586,6 +596,29 @@ impl AnnotationContext {
                 }
             }
 
+            // Gene-level annotation pass (OMIM, gnomAD gene constraints, etc.)
+            if !self.gene_providers.is_empty() {
+                use fastvep_cache::annotation::GeneAnnotationProvider;
+                let mut seen_genes = std::collections::HashSet::new();
+                for tv in &vf.transcript_variations {
+                    if let Some(gene_sym) = tv.gene_symbol.as_deref() {
+                        if seen_genes.insert(gene_sym.to_string()) {
+                            for gp in &self.gene_providers {
+                                if let Ok(Some(json)) = gp.annotate_gene(gene_sym) {
+                                    vf.gene_annotations.push(
+                                        fastvep_core::GeneAnnotation {
+                                            gene_symbol: gene_sym.to_string(),
+                                            json_key: gp.json_key().to_string(),
+                                            json_string: json,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // ACMG-AMP classification pass (after all SA annotations are attached)
             if let Some(ref acmg_cfg) = self.acmg_config {
                 for tv in &mut vf.transcript_variations {
@@ -739,6 +772,45 @@ pub fn load_sa_providers(
                 }
             },
             _ => {}
+        }
+    }
+
+    Ok(providers)
+}
+
+/// Load gene-level annotation providers (.oga files) from a directory.
+pub fn load_gene_providers(
+    sa_dir: &Path,
+) -> Result<Vec<fastvep_sa::gene::GeneIndex>> {
+    let mut providers = Vec::new();
+
+    if !sa_dir.is_dir() {
+        return Ok(providers);
+    }
+
+    for entry in std::fs::read_dir(sa_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str());
+
+        if ext == Some("oga") {
+            match std::fs::File::open(&path)
+                .map_err(anyhow::Error::from)
+                .and_then(|mut f| fastvep_sa::gene::GeneIndex::read_from(&mut f))
+            {
+                Ok(index) => {
+                    tracing::info!(
+                        "Loaded gene annotations: {} ({}, {} genes)",
+                        index.header.name,
+                        path.display(),
+                        index.gene_count()
+                    );
+                    providers.push(index);
+                }
+                Err(e) => {
+                    tracing::warn!("Could not load {}: {}", path.display(), e);
+                }
+            }
         }
     }
 
