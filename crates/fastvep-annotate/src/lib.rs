@@ -46,6 +46,8 @@ pub struct AnnotationContext {
     /// Supplementary annotation providers (ClinVar, gnomAD, etc.)
     /// Wrapped in Mutex because SA readers use internal caches that need &mut.
     pub sa_providers: Vec<Mutex<Box<dyn AnnotationProvider>>>,
+    /// ACMG-AMP classification configuration (None = disabled).
+    pub acmg_config: Option<fastvep_classification::AcmgConfig>,
 }
 
 impl AnnotationContext {
@@ -167,6 +169,7 @@ impl AnnotationContext {
             distance,
             hgvs: true,
             sa_providers,
+            acmg_config: None,
         })
     }
 
@@ -309,6 +312,7 @@ impl AnnotationContext {
                                 sift: None,
                                 polyphen: None,
                                 supplementary: Vec::new(),
+                                acmg_classification: None,
                             };
 
                             if self.hgvs {
@@ -582,6 +586,35 @@ impl AnnotationContext {
                 }
             }
 
+            // ACMG-AMP classification pass (after all SA annotations are attached)
+            if let Some(ref acmg_cfg) = self.acmg_config {
+                for tv in &mut vf.transcript_variations {
+                    let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
+                    let gene_anns: Vec<&fastvep_core::annotation_types::GeneAnnotation> =
+                        vf.gene_annotations
+                            .iter()
+                            .filter(|ga| ga.gene_symbol == gene_sym)
+                            .collect();
+                    for aa in &mut tv.allele_annotations {
+                        let input =
+                            fastvep_classification::extract_classification_input(
+                                &aa.consequences,
+                                aa.impact,
+                                tv.gene_symbol.as_deref(),
+                                tv.canonical,
+                                aa.amino_acids.as_ref(),
+                                aa.protein_position.map(|(s, _)| s),
+                                &aa.supplementary,
+                                &gene_anns,
+                                &vf.supplementary_annotations,
+                            );
+                        let result = fastvep_classification::classify(&input, acmg_cfg);
+                        aa.acmg_classification =
+                            serde_json::to_value(&result).ok();
+                    }
+                }
+            }
+
             vf.compute_most_severe();
         }
 
@@ -616,6 +649,7 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 sift: None,
                 polyphen: None,
                 supplementary: Vec::new(),
+                acmg_classification: None,
             }],
             canonical: false,
             strand: fastvep_core::Strand::Forward,

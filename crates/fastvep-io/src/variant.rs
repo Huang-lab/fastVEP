@@ -100,6 +100,8 @@ pub struct AlleleAnnotation {
     pub polyphen: Option<String>,
     /// Per-allele supplementary annotations as (json_key, json_value) pairs.
     pub supplementary: Vec<(String, String)>,
+    /// ACMG-AMP classification result (serialized as serde_json::Value).
+    pub acmg_classification: Option<serde_json::Value>,
 }
 
 /// A known/existing variant from the variation cache.

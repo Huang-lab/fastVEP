@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 # Internal crates
 fastvep-annotate = { workspace = true }
+fastvep-classification = { workspace = true }
 fastvep-core = { workspace = true }
 fastvep-cache = { workspace = true }
 fastvep-io = { workspace = true }

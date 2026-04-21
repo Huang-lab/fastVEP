@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 fastvep-annotate = { workspace = true }
+fastvep-classification = { workspace = true }
 fastvep-core = { workspace = true }
 fastvep-genome = { workspace = true }
 fastvep-cache = { workspace = true }

@@ -35,6 +35,10 @@ pub struct AnnotateConfig {
     pub transcript_cache: Option<String>,
     /// Directory containing supplementary annotation files (.osa, .osi, .oga).
     pub sa_dir: Option<String>,
+    /// Enable ACMG-AMP variant classification.
+    pub acmg: bool,
+    /// Path to ACMG configuration file (TOML).
+    pub acmg_config: Option<String>,
 }
 
 pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
@@ -176,6 +180,17 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             .collect()
     } else {
         Vec::new()
+    };
+
+    // Load ACMG-AMP classification config if enabled
+    let acmg_config: Option<fastvep_classification::AcmgConfig> = if config.acmg {
+        if let Some(ref path) = config.acmg_config {
+            Some(fastvep_classification::AcmgConfig::from_toml_file(path)?)
+        } else {
+            Some(fastvep_classification::AcmgConfig::default())
+        }
+    } else {
+        None
     };
 
     // Create consequence predictor
@@ -393,6 +408,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                             sift: None,
                             polyphen: None,
                             supplementary: Vec::new(),
+                            acmg_classification: None,
                         };
 
                         // Generate HGVS if requested
@@ -845,6 +861,35 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                 ));
                             }
                         }
+                    }
+                }
+            }
+
+            // ACMG-AMP classification pass (after all SA annotations are attached)
+            if let Some(ref acmg_cfg) = acmg_config {
+                for tv in &mut vf.transcript_variations {
+                    let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
+                    let gene_anns: Vec<&fastvep_core::annotation_types::GeneAnnotation> =
+                        vf.gene_annotations
+                            .iter()
+                            .filter(|ga| ga.gene_symbol == gene_sym)
+                            .collect();
+                    for aa in &mut tv.allele_annotations {
+                        let input =
+                            fastvep_classification::extract_classification_input(
+                                &aa.consequences,
+                                aa.impact,
+                                tv.gene_symbol.as_deref(),
+                                tv.canonical,
+                                aa.amino_acids.as_ref(),
+                                aa.protein_position.map(|(s, _)| s),
+                                &aa.supplementary,
+                                &gene_anns,
+                                &vf.supplementary_annotations,
+                            );
+                        let result = fastvep_classification::classify(&input, acmg_cfg);
+                        aa.acmg_classification =
+                            serde_json::to_value(&result).ok();
                     }
                 }
             }

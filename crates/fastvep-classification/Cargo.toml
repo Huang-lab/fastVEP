@@ -1,0 +1,13 @@
+[package]
+name = "fastvep-classification"
+version.workspace = true
+edition.workspace = true
+description = "ACMG-AMP variant classification engine for fastVEP"
+
+[dependencies]
+fastvep-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+toml = "0.8"
+log = { workspace = true }

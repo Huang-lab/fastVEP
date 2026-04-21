@@ -76,6 +76,14 @@ enum Commands {
         /// Directory containing supplementary annotation files (.osa, .osi, .oga)
         #[arg(long)]
         sa_dir: Option<String>,
+
+        /// Enable ACMG-AMP variant classification
+        #[arg(long)]
+        acmg: bool,
+
+        /// Path to ACMG configuration file (TOML) for custom thresholds
+        #[arg(long)]
+        acmg_config: Option<String>,
     },
 
     /// Launch the web interface for interactive variant annotation
@@ -164,6 +172,8 @@ fn main() -> Result<()> {
             cache_dir,
             transcript_cache,
             sa_dir,
+            acmg,
+            acmg_config,
         } => {
             pipeline::run_annotate(pipeline::AnnotateConfig {
                 input,
@@ -177,6 +187,8 @@ fn main() -> Result<()> {
                 cache_dir,
                 transcript_cache,
                 sa_dir,
+                acmg,
+                acmg_config,
             })?;
         }
         Commands::Cache { gff3, fasta, output } => {

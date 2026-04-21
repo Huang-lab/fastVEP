@@ -226,6 +226,8 @@ pub async fn load_genome(
 pub struct AnnotateRequest {
     vcf: Option<String>,
     pick: Option<bool>,
+    /// Enable ACMG-AMP variant classification for this request.
+    acmg: Option<bool>,
 }
 
 pub async fn annotate(
@@ -238,14 +240,21 @@ pub async fn annotate(
     }
 
     let pick = req.pick.unwrap_or(false);
+    let acmg_requested = req.acmg.unwrap_or(false);
     let ctx = Arc::clone(&state);
 
     let start = Instant::now();
     let results = tokio::task::spawn_blocking(move || {
-        let guard = ctx
+        let mut guard = ctx
             .ctx
-            .read()
+            .write()
             .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        // Enable/disable ACMG per request
+        if acmg_requested && guard.acmg_config.is_none() {
+            guard.acmg_config = Some(fastvep_classification::AcmgConfig::default());
+        } else if !acmg_requested {
+            guard.acmg_config = None;
+        }
         guard.annotate_vcf_text(&vcf_text, pick)
     })
     .await??;

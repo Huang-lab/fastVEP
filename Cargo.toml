@@ -9,6 +9,7 @@ members = [
     "crates/fastvep-filter",
     "crates/fastvep-sa",
     "crates/fastvep-annotate",
+    "crates/fastvep-classification",
     "crates/fastvep-cli",
     "crates/fastvep-web",
 ]
@@ -31,6 +32,7 @@ fastvep-io = { path = "crates/fastvep-io" }
 fastvep-filter = { path = "crates/fastvep-filter" }
 fastvep-sa = { path = "crates/fastvep-sa" }
 fastvep-annotate = { path = "crates/fastvep-annotate" }
+fastvep-classification = { path = "crates/fastvep-classification" }
 
 # External crates
 anyhow = "1"
