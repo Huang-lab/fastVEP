@@ -88,7 +88,8 @@ impl ClinvarData {
             }
             Some(s) if s.contains("multiple_submitters") || s.contains("multiple submitters") => 2,
             Some(s)
-                if s.contains("criteria_provided") || s.contains("criteria provided") =>
+                if (s.contains("criteria_provided") || s.contains("criteria provided"))
+                    && !s.contains("no_assertion") && !s.contains("no assertion") =>
             {
                 1
             }

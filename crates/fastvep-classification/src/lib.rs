@@ -193,14 +193,16 @@ mod tests {
         });
         input.phylop = Some(0.3);
         input.revel = Some(RevelData { score: Some(0.10) });
+        // Provide gnomAD data to prevent PM2_Supporting from firing (which would cause conflict)
+        input.gnomad = Some(GnomadData {
+            all_af: Some(0.005), // Above PM2 threshold (0.0001) but below BS1 (0.01)
+            ..Default::default()
+        });
 
         let result = classify(&input, &AcmgConfig::default());
-        // BP7 (synonymous + no splice + not conserved) + BP4 (REVEL=0.10 < 0.016? No, 0.10 > 0.016)
-        // REVEL=0.10: is 0.10 <= 0.290? Yes → BP4 Supporting
-        // Is 0.10 <= 0.183? Yes → BP4 Moderate
-        // Is 0.10 <= 0.016? No
-        // So BP4_Moderate (counts as benign strong)
-        // BP7 (benign supporting) + BP4_Moderate (benign strong) → BS + BP → Likely Benign
+        // BP7 (synonymous + no splice + not conserved): benign supporting
+        // BP4_Moderate (REVEL=0.10 <= 0.183): counts as benign strong
+        // BS + BP → Likely Benign
         assert_eq!(result.classification, AcmgClassification::LikelyBenign);
     }
 
@@ -223,6 +225,8 @@ mod tests {
 
     #[test]
     fn test_classify_conflicting_evidence() {
+        // When both pathogenic AND benign criteria are met but benign
+        // doesn't reach standalone/>=2 Strong thresholds, it's VUS
         let mut input = make_input(
             vec![Consequence::FrameshiftVariant],
             Impact::High,
@@ -233,16 +237,17 @@ mod tests {
             loeuf: Some(0.03),
             ..Default::default()
         });
-        // PVS1 should fire
+        // PVS1 should fire (frameshift in LOF-intolerant gene)
+        // BS1 fires (AF > 0.01) but BS2 does NOT (no homozygotes)
+        // So we have 1 BS (not 2), plus some BP → conflicting with PVS1
         input.gnomad = Some(GnomadData {
             all_af: Some(0.02),
-            all_hc: Some(5),
+            all_hc: Some(0), // No homozygotes → BS2 does not fire
             ..Default::default()
         });
-        // BS1 fires (AF > 0.01), BS2 fires (homozygotes > 0)
-        // PVS1 + BS1 + BS2 = conflicting evidence → VUS
 
         let result = classify(&input, &AcmgConfig::default());
+        // PVS1 (pathogenic) + BS1 (benign) = conflicting → VUS
         assert_eq!(
             result.classification,
             AcmgClassification::UncertainSignificance
