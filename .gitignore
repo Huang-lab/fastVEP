@@ -8,6 +8,10 @@ echtvar/
 target/
 .DS_Store
 
+# Conda build artifacts
+conda/recipe/build/
+conda-bld/
+
 # Large data (downloaded via benchmarks/download_data.sh)
 test_data/
 
