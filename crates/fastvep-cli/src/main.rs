@@ -84,6 +84,18 @@ enum Commands {
         /// Path to ACMG configuration file (TOML) for custom thresholds
         #[arg(long)]
         acmg_config: Option<String>,
+
+        /// Proband sample name for trio analysis (enables de novo / compound-het detection)
+        #[arg(long)]
+        proband: Option<String>,
+
+        /// Mother sample name for trio analysis
+        #[arg(long)]
+        mother: Option<String>,
+
+        /// Father sample name for trio analysis
+        #[arg(long)]
+        father: Option<String>,
     },
 
     /// Launch the web interface for interactive variant annotation
@@ -174,6 +186,9 @@ fn main() -> Result<()> {
             sa_dir,
             acmg,
             acmg_config,
+            proband,
+            mother,
+            father,
         } => {
             pipeline::run_annotate(pipeline::AnnotateConfig {
                 input,
@@ -189,6 +204,9 @@ fn main() -> Result<()> {
                 sa_dir,
                 acmg,
                 acmg_config,
+                proband,
+                mother,
+                father,
             })?;
         }
         Commands::Cache { gff3, fasta, output } => {

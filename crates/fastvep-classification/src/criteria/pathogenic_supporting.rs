@@ -348,6 +348,12 @@ mod tests {
             gerp: None,
             gene_constraints: None,
             omim: None,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
         }
     }
 
@@ -407,6 +413,12 @@ mod tests {
             gerp: None,
             gene_constraints: None,
             omim: None,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
         };
         let result = evaluate_pp3(&input, &AcmgConfig::default());
         assert!(result.met);
@@ -434,6 +446,12 @@ mod tests {
                 ..Default::default()
             }),
             omim: None,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
         };
         let result = evaluate_pp2(&input, &AcmgConfig::default());
         assert!(result.met);
@@ -460,6 +478,12 @@ mod tests {
                 ..Default::default()
             }),
             omim: None,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
         };
         let result = evaluate_pp2(&input, &AcmgConfig::default());
         assert!(!result.met);

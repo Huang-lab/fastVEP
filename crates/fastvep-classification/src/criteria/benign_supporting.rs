@@ -94,19 +94,123 @@ fn evaluate_bp1(
 
 /// BP2: Observed in trans with a pathogenic variant for a fully penetrant dominant
 /// gene/disorder or observed in cis with a pathogenic variant in any inheritance pattern.
+///
+/// Two triggers:
+/// 1. Dominant disorders: variant is in trans with a ClinVar pathogenic variant (phased).
+/// 2. Any inheritance: variant is in cis with a ClinVar pathogenic variant (phased).
 fn evaluate_bp2(
-    _input: &ClassificationInput,
+    input: &ClassificationInput,
     _config: &AcmgConfig,
 ) -> EvidenceCriterion {
+    let mut details = serde_json::Map::new();
+
+    if input.companion_variants.is_empty() {
+        return EvidenceCriterion {
+            code: "BP2".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Supporting,
+            default_strength: EvidenceStrength::Supporting,
+            met: false,
+            evaluated: false,
+            summary: "No companion variants available for in-trans/in-cis analysis".to_string(),
+            details: serde_json::Value::Null,
+        };
+    }
+
+    let is_dominant = input
+        .omim
+        .as_ref()
+        .map_or(false, |o| o.has_dominant_inheritance());
+    details.insert("is_dominant_gene".into(), serde_json::json!(is_dominant));
+
+    // Check for in-cis with pathogenic (any inheritance pattern)
+    let in_cis_pathogenic: Vec<&crate::sa_extract::CompanionVariant> = input
+        .companion_variants
+        .iter()
+        .filter(|cv| cv.is_clinvar_pathogenic && cv.is_in_trans == Some(false))
+        .collect();
+
+    // Check for in-trans with pathogenic in dominant gene
+    let in_trans_pathogenic: Vec<&crate::sa_extract::CompanionVariant> = input
+        .companion_variants
+        .iter()
+        .filter(|cv| cv.is_clinvar_pathogenic && cv.is_in_trans == Some(true))
+        .collect();
+
+    details.insert("in_cis_pathogenic_count".into(), serde_json::json!(in_cis_pathogenic.len()));
+    details.insert("in_trans_pathogenic_count".into(), serde_json::json!(in_trans_pathogenic.len()));
+
+    // Collect HGVSc for reporting
+    let cis_ids: Vec<String> = in_cis_pathogenic
+        .iter()
+        .filter_map(|cv| cv.hgvsc.clone())
+        .collect();
+    let trans_ids: Vec<String> = in_trans_pathogenic
+        .iter()
+        .filter_map(|cv| cv.hgvsc.clone())
+        .collect();
+    if !cis_ids.is_empty() {
+        details.insert("in_cis_hgvsc".into(), serde_json::json!(cis_ids));
+    }
+    if !trans_ids.is_empty() {
+        details.insert("in_trans_hgvsc".into(), serde_json::json!(trans_ids));
+    }
+
+    // Trigger 1: In cis with pathogenic (any inheritance)
+    if !in_cis_pathogenic.is_empty() {
+        return EvidenceCriterion {
+            code: "BP2".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Supporting,
+            default_strength: EvidenceStrength::Supporting,
+            met: true,
+            evaluated: true,
+            summary: format!(
+                "Observed in cis (same haplotype) with ClinVar pathogenic variant ({} companion(s))",
+                in_cis_pathogenic.len()
+            ),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    // Trigger 2: In trans with pathogenic in dominant gene
+    if is_dominant && !in_trans_pathogenic.is_empty() {
+        return EvidenceCriterion {
+            code: "BP2".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Supporting,
+            default_strength: EvidenceStrength::Supporting,
+            met: true,
+            evaluated: true,
+            summary: format!(
+                "Observed in trans with ClinVar pathogenic variant in dominant gene ({} companion(s))",
+                in_trans_pathogenic.len()
+            ),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    // Check if we have any phased data at all (to determine if evaluated)
+    let has_phased_data = input
+        .companion_variants
+        .iter()
+        .any(|cv| cv.is_in_trans.is_some());
+
+    let summary = if has_phased_data {
+        "Phased companion variants do not meet BP2 criteria".to_string()
+    } else {
+        "Companion variants are unphased; BP2 requires phased data to determine cis/trans".to_string()
+    };
+
     EvidenceCriterion {
         code: "BP2".to_string(),
         direction: EvidenceDirection::Benign,
         strength: EvidenceStrength::Supporting,
         default_strength: EvidenceStrength::Supporting,
         met: false,
-        evaluated: false,
-        summary: "Requires phased VCF with compound heterozygote analysis to assess in-trans/in-cis with pathogenic variant".to_string(),
-        details: serde_json::Value::Null,
+        evaluated: has_phased_data,
+        summary,
+        details: serde_json::Value::Object(details),
     }
 }
 
@@ -464,6 +568,12 @@ mod tests {
             gerp: None,
             gene_constraints,
             omim: None,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
         }
     }
 

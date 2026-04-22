@@ -241,6 +241,47 @@ pub struct ClinvarProteinVariant {
     pub sig: String,
 }
 
+/// Genotype information for a sample at a specific variant.
+#[derive(Debug, Clone)]
+pub struct GenotypeInfo {
+    pub is_het: bool,
+    pub is_hom_ref: bool,
+    pub is_hom_alt: bool,
+    pub is_missing: bool,
+    pub is_phased: bool,
+    pub depth: Option<u32>,
+    pub quality: Option<u32>,
+    /// Which alt allele index this genotype carries (1-based). None if hom_ref or missing.
+    pub alt_allele_index: Option<u32>,
+}
+
+impl GenotypeInfo {
+    /// Returns true if genotype passes depth and quality thresholds.
+    pub fn passes_quality(&self, min_depth: u32, min_gq: u32) -> bool {
+        let depth_ok = self.depth.map_or(false, |d| d >= min_depth);
+        let gq_ok = self.quality.map_or(false, |q| q >= min_gq);
+        depth_ok && gq_ok
+    }
+
+    /// Returns true if the sample carries the variant allele (het or hom_alt).
+    pub fn carries_variant(&self) -> bool {
+        self.is_het || self.is_hom_alt
+    }
+}
+
+/// Information about another variant in the same gene for compound-het analysis.
+#[derive(Debug, Clone)]
+pub struct CompanionVariant {
+    /// Whether the companion variant is ClinVar pathogenic
+    pub is_clinvar_pathogenic: bool,
+    /// Whether variants are in trans (different haplotypes). None = unphased.
+    pub is_in_trans: Option<bool>,
+    /// Whether proband is heterozygous for the companion variant
+    pub proband_het: bool,
+    /// HGVSc of the companion variant for reporting
+    pub hgvsc: Option<String>,
+}
+
 /// All data needed for ACMG-AMP classification, extracted from pipeline annotations.
 #[derive(Debug, Clone)]
 pub struct ClassificationInput {
@@ -263,6 +304,14 @@ pub struct ClassificationInput {
     pub clinvar_protein: Option<ClinvarProteinData>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
+    /// Proband genotype information (from trio VCF)
+    pub proband_genotype: Option<GenotypeInfo>,
+    /// Mother genotype information (from trio VCF)
+    pub mother_genotype: Option<GenotypeInfo>,
+    /// Father genotype information (from trio VCF)
+    pub father_genotype: Option<GenotypeInfo>,
+    /// Other variants in the same gene that the proband carries (for compound-het)
+    pub companion_variants: Vec<CompanionVariant>,
 }
 
 /// Extract classification input from pipeline annotation data.
@@ -278,6 +327,10 @@ pub fn extract_classification_input(
     allele_supplementary: &[(String, String)],
     gene_annotations: &[&GeneAnnotation],
     variant_supplementary: &[SupplementaryAnnotation],
+    proband_genotype: Option<GenotypeInfo>,
+    mother_genotype: Option<GenotypeInfo>,
+    father_genotype: Option<GenotypeInfo>,
+    companion_variants: Vec<CompanionVariant>,
 ) -> ClassificationInput {
     let mut gnomad = None;
     let mut clinvar = None;
@@ -368,6 +421,10 @@ pub fn extract_classification_input(
         omim,
         clinvar_protein,
         in_repeat_region,
+        proband_genotype,
+        mother_genotype,
+        father_genotype,
+        companion_variants,
     }
 }
 

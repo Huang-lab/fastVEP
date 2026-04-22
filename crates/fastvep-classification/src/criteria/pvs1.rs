@@ -165,6 +165,12 @@ mod tests {
             gerp: None,
             gene_constraints,
             omim,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
         }
     }
 

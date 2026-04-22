@@ -15,8 +15,10 @@ pub mod criteria;
 pub mod sa_extract;
 pub mod types;
 
-pub use config::AcmgConfig;
-pub use sa_extract::{extract_classification_input, ClassificationInput};
+pub use config::{AcmgConfig, TrioConfig};
+pub use sa_extract::{
+    extract_classification_input, ClassificationInput, CompanionVariant, GenotypeInfo,
+};
 pub use types::{AcmgClassification, AcmgResult, EvidenceCounts, EvidenceCriterion};
 
 /// Classify a variant using the ACMG-AMP framework.
@@ -73,6 +75,12 @@ mod tests {
             gerp: None,
             gene_constraints: None,
             omim: None,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
         }
     }
 

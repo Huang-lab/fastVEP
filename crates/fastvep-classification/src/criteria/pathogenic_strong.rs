@@ -118,20 +118,167 @@ fn evaluate_ps1(
 
 /// PS2: De novo (both maternity and paternity confirmed) in a patient with the disease.
 ///
-/// Can be evaluated when a trio VCF is provided with --proband/--mother/--father flags.
+/// Requires trio VCF with both parents. Proband carries the variant, both parents are
+/// homozygous reference, and all three pass depth/quality thresholds.
 fn evaluate_ps2(
-    _input: &ClassificationInput,
-    _config: &AcmgConfig,
+    input: &ClassificationInput,
+    config: &AcmgConfig,
 ) -> EvidenceCriterion {
+    let mut details = serde_json::Map::new();
+
+    let trio = match &config.trio {
+        Some(t) => t,
+        None => {
+            return EvidenceCriterion {
+                code: "PS2".to_string(),
+                direction: EvidenceDirection::Pathogenic,
+                strength: EvidenceStrength::Strong,
+                default_strength: EvidenceStrength::Strong,
+                met: false,
+                evaluated: false,
+                summary: "Requires trio VCF with --proband/--mother/--father sample names to assess de novo status".to_string(),
+                details: serde_json::Value::Null,
+            };
+        }
+    };
+
+    // PS2 requires BOTH parents
+    if trio.mother.is_none() || trio.father.is_none() {
+        return EvidenceCriterion {
+            code: "PS2".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: false,
+            summary: "PS2 requires both mother and father in trio configuration; use PM6 for partial trio".to_string(),
+            details: serde_json::Value::Null,
+        };
+    }
+
+    let proband_gt = match &input.proband_genotype {
+        Some(gt) => gt,
+        None => {
+            return EvidenceCriterion {
+                code: "PS2".to_string(),
+                direction: EvidenceDirection::Pathogenic,
+                strength: EvidenceStrength::Strong,
+                default_strength: EvidenceStrength::Strong,
+                met: false,
+                evaluated: false,
+                summary: "Proband genotype not available for this variant".to_string(),
+                details: serde_json::Value::Null,
+            };
+        }
+    };
+
+    let mother_gt = match &input.mother_genotype {
+        Some(gt) => gt,
+        None => {
+            return EvidenceCriterion {
+                code: "PS2".to_string(),
+                direction: EvidenceDirection::Pathogenic,
+                strength: EvidenceStrength::Strong,
+                default_strength: EvidenceStrength::Strong,
+                met: false,
+                evaluated: false,
+                summary: "Mother genotype not available for this variant".to_string(),
+                details: serde_json::Value::Null,
+            };
+        }
+    };
+
+    let father_gt = match &input.father_genotype {
+        Some(gt) => gt,
+        None => {
+            return EvidenceCriterion {
+                code: "PS2".to_string(),
+                direction: EvidenceDirection::Pathogenic,
+                strength: EvidenceStrength::Strong,
+                default_strength: EvidenceStrength::Strong,
+                met: false,
+                evaluated: false,
+                summary: "Father genotype not available for this variant".to_string(),
+                details: serde_json::Value::Null,
+            };
+        }
+    };
+
+    let min_dp = trio.min_depth;
+    let min_gq = trio.min_gq;
+    details.insert("min_depth".into(), serde_json::json!(min_dp));
+    details.insert("min_gq".into(), serde_json::json!(min_gq));
+    details.insert("proband_carries_variant".into(), serde_json::json!(proband_gt.carries_variant()));
+    details.insert("mother_hom_ref".into(), serde_json::json!(mother_gt.is_hom_ref));
+    details.insert("father_hom_ref".into(), serde_json::json!(father_gt.is_hom_ref));
+    details.insert("proband_depth".into(), serde_json::json!(proband_gt.depth));
+    details.insert("mother_depth".into(), serde_json::json!(mother_gt.depth));
+    details.insert("father_depth".into(), serde_json::json!(father_gt.depth));
+    details.insert("proband_gq".into(), serde_json::json!(proband_gt.quality));
+    details.insert("mother_gq".into(), serde_json::json!(mother_gt.quality));
+    details.insert("father_gq".into(), serde_json::json!(father_gt.quality));
+
+    let proband_carries = proband_gt.carries_variant();
+    let mother_ref = mother_gt.is_hom_ref;
+    let father_ref = father_gt.is_hom_ref;
+    let proband_qc = proband_gt.passes_quality(min_dp, min_gq);
+    let mother_qc = mother_gt.passes_quality(min_dp, min_gq);
+    let father_qc = father_gt.passes_quality(min_dp, min_gq);
+
+    if !proband_carries {
+        return EvidenceCriterion {
+            code: "PS2".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: true,
+            summary: "Proband does not carry the variant allele".to_string(),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    if !proband_qc || !mother_qc || !father_qc {
+        let mut fail_reasons = Vec::new();
+        if !proband_qc { fail_reasons.push("proband"); }
+        if !mother_qc { fail_reasons.push("mother"); }
+        if !father_qc { fail_reasons.push("father"); }
+        return EvidenceCriterion {
+            code: "PS2".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: true,
+            summary: format!(
+                "Genotype quality insufficient for {}: requires DP>={} and GQ>={}",
+                fail_reasons.join(", "), min_dp, min_gq
+            ),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    let is_de_novo = proband_carries && mother_ref && father_ref;
+    details.insert("is_de_novo".into(), serde_json::json!(is_de_novo));
+
+    let summary = if is_de_novo {
+        "De novo variant: proband carries variant, both parents homozygous reference, all pass quality thresholds".to_string()
+    } else {
+        let mut reasons = Vec::new();
+        if !mother_ref { reasons.push("mother is not hom_ref"); }
+        if !father_ref { reasons.push("father is not hom_ref"); }
+        format!("Not de novo: {}", reasons.join(", "))
+    };
+
     EvidenceCriterion {
         code: "PS2".to_string(),
         direction: EvidenceDirection::Pathogenic,
         strength: EvidenceStrength::Strong,
         default_strength: EvidenceStrength::Strong,
-        met: false,
-        evaluated: false,
-        summary: "Requires trio VCF with --proband/--mother/--father sample names to assess de novo status".to_string(),
-        details: serde_json::Value::Null,
+        met: is_de_novo,
+        evaluated: true,
+        summary,
+        details: serde_json::Value::Object(details),
     }
 }
 
@@ -225,6 +372,12 @@ mod tests {
             gerp: None,
             gene_constraints: None,
             omim: None,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
         }
     }
 

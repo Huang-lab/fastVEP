@@ -3,6 +3,30 @@ use std::collections::HashMap;
 
 use crate::types::EvidenceStrength;
 
+/// Trio configuration for de novo and compound heterozygote analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrioConfig {
+    /// Sample name of the proband (required)
+    pub proband: String,
+    /// Sample name of the mother (optional)
+    pub mother: Option<String>,
+    /// Sample name of the father (optional)
+    pub father: Option<String>,
+    /// Minimum read depth for reliable genotype call (default: 10)
+    #[serde(default = "default_min_depth")]
+    pub min_depth: u32,
+    /// Minimum genotype quality for reliable genotype call (default: 20)
+    #[serde(default = "default_min_gq")]
+    pub min_gq: u32,
+}
+
+fn default_min_depth() -> u32 {
+    10
+}
+fn default_min_gq() -> u32 {
+    20
+}
+
 /// Configuration for ACMG-AMP classification thresholds and behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcmgConfig {
@@ -83,6 +107,11 @@ pub struct AcmgConfig {
     // ── Gene-specific overrides ──
     #[serde(default)]
     pub gene_overrides: HashMap<String, GeneOverride>,
+
+    // ── Trio configuration ──
+    /// Trio configuration for de novo and compound heterozygote analysis.
+    #[serde(default)]
+    pub trio: Option<TrioConfig>,
 }
 
 /// Gene-specific overrides for ACMG-AMP criteria.
@@ -126,6 +155,7 @@ impl Default for AcmgConfig {
             pm2_downgrade_to_supporting: true,
             use_pp5_bp6: false,
             gene_overrides: HashMap::new(),
+            trio: None,
         }
     }
 }
