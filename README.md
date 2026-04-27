@@ -51,6 +51,23 @@ fastvep --version
 > source "$HOME/.cargo/env"
 > ```
 
+#### Alternative: build a conda package
+
+Prefer conda? The repo ships a recipe under `conda/recipe/` that builds both `fastvep` and `fastvep-web` into a local conda package (Linux and macOS):
+
+```bash
+# One-time: tools for building conda packages
+conda install -n base -c conda-forge conda-build
+
+# Build the package from the repo root
+conda build conda/recipe
+
+# Install into a fresh environment
+conda create -n fastvep -c local fastvep
+conda activate fastvep
+fastvep --version
+```
+
 ### 3. Try it — annotate the included test data
 
 fastVEP ships with a small test VCF and GFF3 so you can try it immediately:
