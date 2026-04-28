@@ -314,6 +314,14 @@ fn resolve_genome_paths(
     data_dir: &std::path::Path,
     name: &str,
 ) -> Result<(PathBuf, Option<PathBuf>), AppError> {
+    // Sanitize: reject any name containing path separators or traversal sequences
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(AppError::BadRequest(format!(
+            "Genome '{}' not found in data directory",
+            name
+        )));
+    }
+
     // Check if it's a subdirectory
     let subdir = data_dir.join(name);
     if subdir.is_dir() {
