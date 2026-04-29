@@ -77,23 +77,28 @@ All thresholds are configurable via a TOML file passed with `--acmg-config`. Any
 # ── Allele frequency thresholds ──
 ba1_af_threshold = 0.05        # BA1: benign standalone (>5% in any population)
 bs1_af_threshold = 0.01        # BS1: benign strong (greater than expected for disorder)
-pm2_af_threshold = 0.0001      # PM2: rare/absent (below threshold or absent)
 
-# ── REVEL thresholds (ClinGen SVI calibrated) ──
-pp3_revel_supporting = 0.644   # PP3: computational pathogenic (Supporting)
-pp3_revel_moderate = 0.773     # PP3: computational pathogenic (Moderate strength)
-pp3_revel_strong = 0.932       # PP3: computational pathogenic (Strong strength)
-bp4_revel_supporting = 0.290   # BP4: computational benign (Supporting)
-bp4_revel_moderate = 0.183     # BP4: computational benign (Moderate strength)
-bp4_revel_strong = 0.016       # BP4: computational benign (Strong strength)
+# ── PM2 inheritance-aware thresholds (ClinGen SVI v1.0, Sept 2020) ──
+pm2_ad_af_threshold = 0.0      # PM2: AD/unknown — strict absence (AC=0 AND AF=0)
+pm2_ar_af_threshold = 0.00007  # PM2: AR — AF ≤ 0.00007 (0.007%)
+pm2_af_threshold = 0.0001      # Legacy single-threshold field, retained for back-compat
+                               # with pre-PR4 configs; not consulted in the default path.
 
-# ── SpliceAI thresholds ──
-spliceai_pathogenic = 0.2      # Minimum delta score for splice impact
-spliceai_strong = 0.8          # Delta score for strong splice evidence
+# ── REVEL thresholds (ClinGen SVI calibrated, Pejaver 2022) ──
+pp3_revel_supporting = 0.644   # PP3 Supporting
+pp3_revel_moderate = 0.773     # PP3 Moderate
+pp3_revel_strong = 0.932       # PP3 Strong
+bp4_revel_supporting = 0.290   # BP4 Supporting
+bp4_revel_moderate = 0.183     # BP4 Moderate
+bp4_revel_strong = 0.016       # BP4 Strong
+bp4_revel_very_strong = 0.003  # BP4 Very Strong (only REVEL reaches this band)
+
+# ── SpliceAI thresholds (Walker 2023, ClinGen SVI Splicing Subgroup) ──
+spliceai_pathogenic = 0.2      # PP3 Supporting cap (SpliceAI alone never reaches Strong)
+spliceai_benign = 0.1          # BP4 Supporting threshold; 0.1–0.2 is uninformative
 
 # ── Conservation thresholds ──
 phylop_conserved = 2.0         # PhyloP score above which position is "conserved"
-gerp_conserved = 2.0           # GERP score above which position is "constrained"
 
 # ── Gene constraint thresholds ──
 pli_lof_intolerant = 0.9       # pLI score for LOF-intolerant gene
@@ -104,9 +109,22 @@ pp2_misz_threshold = 3.09      # Missense Z-score threshold for PP2
 pm1_hotspot_window = 5         # Window size (amino acid positions) for hotspot scan
 pm1_hotspot_min_pathogenic = 3 # Minimum pathogenic variants in window to call hotspot
 
+# ── gnomAD v4 AN minimum (ClinGen SVI March 2024) ──
+min_an_for_frequency_criteria = 2000  # BA1/BS1 require AN ≥ this; below → NotEvaluated
+
 # ── ClinGen SVI behavior ──
-pm2_downgrade_to_supporting = true  # Downgrade PM2 from Moderate to Supporting (SVI recommendation)
-use_pp5_bp6 = false                 # Enable PP5/BP6 (disabled by default per SVI)
+pm2_downgrade_to_supporting = true     # Downgrade PM2 from Moderate to Supporting (SVI)
+use_pp5_bp6 = false                    # Enable PP5/BP6 (disabled by default per SVI)
+use_clinvar_stars_as_ps4_proxy = false # Opt back into the legacy ClinVar-stars PS4 proxy
+                                       # (true PS4 needs case-control statistics, so off by default)
+
+# ── BA1 exception list (Ghosh 2018, 9 known-pathogenic high-AF variants) ──
+# Specifying ba1_exceptions in TOML REPLACES the default 9-variant list.
+# Include the defaults plus your additions if you want to retain them.
+[[ba1_exceptions]]
+gene = "HFE"
+hgvs_c = "c.845G>A"
+reason = "p.Cys282Tyr — hereditary hemochromatosis"
 
 # ── Trio analysis ──
 [trio]
@@ -150,8 +168,7 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 
 | Source | SA Key | Used By | Description |
 |---|---|---|---|
-| **PhyloP** | `phylop` | PP3, BP4, BP7 | Conservation scores |
-| **GERP** | `gerp` | PP3 | Evolutionary rate profiling |
+| **PhyloP** | `phylop` | BP7 (conservation tier) | Conservation scores |
 
 ### Gene-Level Sources (`.oga`)
 
@@ -198,7 +215,7 @@ When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2
 | **PM6** | Moderate | Assumed de novo (partial confirmation) | Partial trio VCF | Yes (with trio) |
 | **PP1** | Supporting | Co-segregation in family | Pedigree data | No |
 | **PP2** | Supporting | Missense in constrained gene | Gene misZ score | Yes |
-| **PP3** | Supporting-Strong | Computational evidence (deleterious) | REVEL/SpliceAI/SIFT/PolyPhen/PhyloP/GERP | Yes |
+| **PP3** | Supporting-Strong | Computational evidence (deleterious) | REVEL (missense, Pejaver 2022 calibrated) + SpliceAI (caps at Supporting per Walker 2023) | Yes |
 | **PP4** | Supporting | Phenotype-specific for single-gene disease | HPO phenotype data | No |
 | **PP5** | Supporting | Reputable source reports pathogenic | ClinVar (disabled by default per SVI) | Partial |
 
@@ -216,23 +233,24 @@ When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2
 | **BP1** | Supporting | Missense in LOF-only gene | pLI + misZ | Yes |
 | **BP2** | Supporting | In trans/cis with pathogenic | Phased VCF + ClinVar | Yes (with trio) |
 | **BP3** | Supporting | In-frame indel in repeat region | Consequence + RepeatMasker | Yes (with .osi) |
-| **BP4** | Supporting-Strong | Computational evidence (benign) | REVEL/SIFT/PolyPhen/PhyloP | Yes |
+| **BP4** | Supporting-Very Strong | Computational evidence (benign) | REVEL (missense, Pejaver 2022 calibrated; ≤ 0.003 reaches Very Strong) + SpliceAI ≤ 0.1 (Walker 2023) | Yes |
 | **BP5** | Supporting | Alternate molecular basis in case | Case-level analysis | No |
 | **BP6** | Supporting | Reputable source reports benign | ClinVar (disabled by default per SVI) | Partial |
 | **BP7** | Supporting | Synonymous + no splice impact + not conserved | Consequence + SpliceAI + PhyloP | Yes |
 
 ### PP3/BP4 Strength Elevation (ClinGen SVI Calibrated)
 
-PP3 and BP4 can be elevated beyond Supporting based on REVEL score:
+PP3 and BP4 can be elevated beyond Supporting based on REVEL score (Pejaver 2022). BP4 reaches Very Strong only via REVEL — none of the other 12 calibrated tools reach that band.
 
 | REVEL Score | PP3 Strength | BP4 Strength |
 |---|---|---|
-| >= 0.932 | Strong | - |
-| >= 0.773 | Moderate | - |
-| >= 0.644 | Supporting | - |
-| <= 0.290 | - | Supporting |
-| <= 0.183 | - | Moderate |
-| <= 0.016 | - | Strong |
+| ≥ 0.932 | Strong | — |
+| ≥ 0.773 | Moderate | — |
+| ≥ 0.644 | Supporting | — |
+| ≤ 0.290 | — | Supporting |
+| ≤ 0.183 | — | Moderate |
+| ≤ 0.016 | — | Strong |
+| ≤ 0.003 | — | **Very Strong** |
 
 ## Classification Combination Rules
 
@@ -246,13 +264,14 @@ PP3 and BP4 can be elevated beyond Supporting based on REVEL score:
 7. PS >= 1 AND PM >= 2 AND PP >= 2
 8. PS >= 1 AND PM >= 1 AND PP >= 4
 
-### Likely Pathogenic (6 rules)
+### Likely Pathogenic (7 rules)
 1. PVS >= 1 AND PM >= 1
-2. PS >= 1 AND PM = 1-2
-3. PS >= 1 AND PP >= 2
-4. PM >= 3
-5. PM >= 2 AND PP >= 2
-6. PM >= 1 AND PP >= 4
+2. **PVS >= 1 AND PP >= 1** (ClinGen SVI Sept 2020 — compensates for PM2 downgrade; Bayesian Post_P = 0.988)
+3. PS >= 1 AND PM = 1-2
+4. PS >= 1 AND PP >= 2
+5. PM >= 3
+6. PM >= 2 AND PP >= 2
+7. PM >= 1 AND PP >= 4
 
 ### Benign (2 rules)
 1. BA >= 1 (standalone)
@@ -263,7 +282,14 @@ PP3 and BP4 can be elevated beyond Supporting based on REVEL score:
 2. BP >= 2
 
 ### Conflicting Evidence
-If both pathogenic and benign criteria are met, the variant is classified as **Uncertain Significance (VUS)**.
+
+The combiner evaluates the pathogenic and benign rule sets **independently**. Conflicting → VUS only when **both directions reach a definite call** (P/LP and B/LB simultaneously); otherwise the directional call wins. So:
+
+- PVS1 + PM2_Supporting + BP4_Supporting → LP (PVS+PP rule fires; the lone BP4_Supporting doesn't reach LB)
+- PVS1 + 2 BS → VUS (Conflicting — both sides definite)
+- PVS1 + BS1 alone → plain VUS (no benign rule fires; no "Conflicting" label)
+
+This replaces the pre-PR9 behavior, which short-circuited any pathogenic-met + benign-met combination to VUS — over-zealous, since sub-threshold benign evidence shouldn't override a definite pathogenic call.
 
 ## Trio Analysis
 

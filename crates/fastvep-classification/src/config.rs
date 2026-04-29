@@ -95,9 +95,6 @@ pub struct AcmgConfig {
     /// PhyloP threshold for conserved position (default: 2.0)
     #[serde(default = "default_phylop")]
     pub phylop_conserved: f64,
-    /// GERP threshold for conserved position (default: 2.0)
-    #[serde(default = "default_gerp")]
-    pub gerp_conserved: f64,
 
     // ── Gene constraint thresholds ──
     /// pLI threshold for LOF-intolerant gene (default: 0.9)
@@ -224,7 +221,6 @@ impl Default for AcmgConfig {
             spliceai_pathogenic: 0.2,
             spliceai_benign: 0.1,
             phylop_conserved: 2.0,
-            gerp_conserved: 2.0,
             pli_lof_intolerant: 0.9,
             loeuf_lof_intolerant: 0.35,
             pp2_misz_threshold: 3.09,
@@ -271,15 +267,6 @@ impl AcmgConfig {
         .unwrap_or(self.bs1_af_threshold)
     }
 
-    /// Get effective PM2 threshold for a gene (gene-specific or default).
-    pub fn effective_pm2_threshold(&self, gene: Option<&str>) -> f64 {
-        gene.and_then(|g| {
-            self.gene_overrides
-                .get(g)
-                .and_then(|o| o.pm2_af_threshold)
-        })
-        .unwrap_or(self.pm2_af_threshold)
-    }
 }
 
 // Default value functions for serde
@@ -298,7 +285,6 @@ fn default_bp4_very_strong() -> f64 { 0.003 }
 fn default_spliceai_pathogenic() -> f64 { 0.2 }
 fn default_spliceai_benign() -> f64 { 0.1 }
 fn default_phylop() -> f64 { 2.0 }
-fn default_gerp() -> f64 { 2.0 }
 fn default_pli() -> f64 { 0.9 }
 fn default_loeuf() -> f64 { 0.35 }
 fn default_misz() -> f64 { 3.09 }

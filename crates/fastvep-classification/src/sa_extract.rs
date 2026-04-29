@@ -368,6 +368,7 @@ pub struct ClassificationInput {
 /// Extract classification input from pipeline annotation data.
 ///
 /// Parses the pre-serialized JSON strings from supplementary annotations into typed structs.
+#[allow(clippy::too_many_arguments)]
 pub fn extract_classification_input(
     consequences: &[Consequence],
     impact: Impact,
@@ -375,6 +376,7 @@ pub fn extract_classification_input(
     is_canonical: bool,
     amino_acids: Option<&(String, String)>,
     protein_position: Option<u64>,
+    hgvs_c: Option<&str>,
     allele_supplementary: &[(String, String)],
     gene_annotations: &[&GeneAnnotation],
     variant_supplementary: &[SupplementaryAnnotation],
@@ -471,9 +473,11 @@ pub fn extract_classification_input(
         gene_constraints,
         omim,
         clinvar_protein,
-        // hgvs_c is populated by the pipeline once HGVS is computed; remains
-        // None for now and BA1 falls back to default behavior.
-        hgvs_c: None,
+        // Threaded from the caller (typically `aa.hgvsc` from the annotation
+        // context). When the pipeline doesn't compute HGVS — i.e. the user
+        // didn't pass `--hgvs` — this stays `None` and BA1 falls back to its
+        // default behavior (no exception-list lookup).
+        hgvs_c: hgvs_c.map(|s| s.to_string()),
         // PVS1 decision-tree signals — populated once the pipeline plumbing
         // (transcript exon coords + ClinVar protein index) lands. Until
         // then, PVS1 falls back to its legacy binary rule.
