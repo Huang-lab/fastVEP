@@ -17,16 +17,45 @@ struct ProteinVariant {
     sig: String,
 }
 
-/// Parse a ClinVar VCF file and produce gene-level records containing
-/// pathogenic/likely-pathogenic missense variants indexed by protein position.
+/// Parse a ClinVar source (VCF or variant_summary.txt.gz) and produce
+/// gene-level records of pathogenic/likely-pathogenic missense variants
+/// indexed by protein position. Auto-detects format from the header line:
 ///
-/// Output: Vec<GeneRecord> where each record's JSON has the structure:
+/// - **VCF (`clinvar.vcf.gz`)**: header begins with `#`. Per-record protein
+///   change is rarely available in the VCF (ClinVar's MC field is just an SO
+///   term, and CLNHGVS is genomic), so the VCF path will yield very few
+///   records — the variant_summary path is preferred.
+/// - **variant_summary.txt (`variant_summary.txt.gz`)**: header begins with
+///   `#AlleleID` and contains a `Name` column with full HGVS like
+///   `NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)`. Protein changes are
+///   extracted from the parenthesised `p.` block.
+///
+/// Output JSON per gene:
 /// `{"proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"Pathogenic"}, ...]}`
 pub fn parse_clinvar_protein_vcf<R: BufRead>(reader: R) -> Result<Vec<GeneRecord>> {
+    // Buffer the first line to detect format. Both formats start with `#`,
+    // but the variant_summary header begins with `#AlleleID\t...`.
+    let mut iter = reader.lines();
+    let first = match iter.next() {
+        Some(l) => l.context("Reading first line of ClinVar source")?,
+        None => return Ok(Vec::new()),
+    };
+    if first.starts_with("#AlleleID") || first.contains("\tName\t") {
+        return parse_variant_summary_inner(first, iter);
+    }
+    // Otherwise treat as VCF — re-prepend the buffered first line.
+    let chained = std::iter::once(Ok(first)).chain(iter);
+    parse_clinvar_vcf_inner(chained)
+}
+
+fn parse_clinvar_vcf_inner<I>(lines: I) -> Result<Vec<GeneRecord>>
+where
+    I: Iterator<Item = std::io::Result<String>>,
+{
     // Collect pathogenic missense variants per gene
     let mut gene_variants: HashMap<String, Vec<ProteinVariant>> = HashMap::new();
 
-    for line in reader.lines() {
+    for line in lines {
         let line = line.context("Reading ClinVar VCF line")?;
         if line.starts_with('#') {
             continue;
@@ -148,6 +177,111 @@ pub fn parse_clinvar_protein_vcf<R: BufRead>(reader: R) -> Result<Vec<GeneRecord
 
     records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
     Ok(records)
+}
+
+/// Parse ClinVar `variant_summary.txt` (or .gz) into protein-position records.
+///
+/// Header columns of interest (1-based per ClinVar docs, 0-based here):
+///  - col 2: `Type` (e.g. "single nucleotide variant")
+///  - col 3: `Name` — full HGVS, e.g. `NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)`
+///  - col 5: `GeneSymbol`
+///  - col 7: `ClinicalSignificance`
+///  - col 25: `ReviewStatus`
+///  - col 26: `Assembly` (we keep all rows; protein change is independent of build)
+fn parse_variant_summary_inner<I>(header: String, lines: I) -> Result<Vec<GeneRecord>>
+where
+    I: Iterator<Item = std::io::Result<String>>,
+{
+    let header_fields: Vec<&str> = header.trim_start_matches('#').split('\t').collect();
+    let find = |needle: &str| header_fields.iter().position(|f| f.eq_ignore_ascii_case(needle));
+    let i_name = find("Name").context("variant_summary missing Name column")?;
+    let i_gene = find("GeneSymbol").context("variant_summary missing GeneSymbol column")?;
+    let i_sig = find("ClinicalSignificance").context("variant_summary missing ClinicalSignificance column")?;
+
+    let mut gene_variants: HashMap<String, Vec<ProteinVariant>> = HashMap::new();
+    for line in lines {
+        let line = line.context("Reading variant_summary line")?;
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() <= i_name.max(i_gene).max(i_sig) {
+            continue;
+        }
+        let sig = cols[i_sig].to_lowercase();
+        if !sig.contains("pathogenic") || sig.contains("conflicting") {
+            continue;
+        }
+        let gene = cols[i_gene].trim();
+        if gene.is_empty() || gene == "-" {
+            continue;
+        }
+        let name = cols[i_name];
+        // Extract the parenthesised "p." block from the Name column.
+        let pv = match parse_protein_from_summary_name(name) {
+            Some(pv) => pv,
+            None => continue,
+        };
+
+        let sig_clean = if sig.contains("likely") {
+            "Likely_pathogenic".to_string()
+        } else {
+            "Pathogenic".to_string()
+        };
+
+        // GeneSymbol may be a semicolon-delimited list; split and emit per gene.
+        for g in gene.split(';').map(str::trim).filter(|g| !g.is_empty()) {
+            gene_variants
+                .entry(g.to_string())
+                .or_default()
+                .push(ProteinVariant {
+                    pos: pv.0,
+                    ref_aa: pv.1.clone(),
+                    alt_aa: pv.2.clone(),
+                    sig: sig_clean.clone(),
+                });
+        }
+    }
+
+    let mut records: Vec<GeneRecord> = gene_variants
+        .into_iter()
+        .map(|(gene, variants)| {
+            let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
+            for v in &variants {
+                unique
+                    .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
+                    .or_insert_with(|| v.sig.clone());
+            }
+            let variant_jsons: Vec<String> = unique
+                .iter()
+                .map(|((pos, ref_aa, alt_aa), sig)| {
+                    format!(
+                        r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
+                        pos, ref_aa, alt_aa, sig
+                    )
+                })
+                .collect();
+            let json = format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(","));
+            GeneRecord {
+                gene_symbol: gene,
+                json,
+            }
+        })
+        .collect();
+    records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
+    Ok(records)
+}
+
+/// Pull a `(pos, ref, alt)` protein change from a Name string like
+/// `"NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)"`. Returns None for
+/// anything that isn't a missense (silent / synonymous / stop / frameshift /
+/// non-protein names).
+fn parse_protein_from_summary_name(name: &str) -> Option<(u64, String, String)> {
+    // Find the trailing `(p.` block.
+    let p_open = name.rfind("(p.")?;
+    let after = &name[p_open + 1..];
+    let p_close = after.find(')')?;
+    parse_protein_hgvs(&after[..p_close])
 }
 
 /// Extract protein position and amino acid change from MC field component.
@@ -279,5 +413,41 @@ mod tests {
     fn test_parse_three_letter_protein() {
         let result = parse_three_letter_protein("Cys315Met").unwrap();
         assert_eq!(result, (315, "C".to_string(), "M".to_string()));
+    }
+
+    #[test]
+    fn test_parse_protein_from_summary_name_typical() {
+        let n = "NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)";
+        assert_eq!(
+            parse_protein_from_summary_name(n).unwrap(),
+            (1692, "D".to_string(), "H".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_protein_from_summary_name_silent_skipped() {
+        // p.= and p.? are not missense; should yield None
+        assert!(parse_protein_from_summary_name("NM_x:c.1A>G (p.=)").is_none());
+        assert!(parse_protein_from_summary_name("NM_x:c.1+5G>T (p.?)").is_none());
+    }
+
+    #[test]
+    fn test_parse_clinvar_protein_variant_summary_format() {
+        // Synthetic variant_summary with two pathogenic missense, one silent
+        let data = "\
+#AlleleID\tType\tName\tGeneID\tGeneSymbol\tHGNC_ID\tClinicalSignificance\tClinSigSimple\tLastEvaluated\tRS# (dbSNP)\tnsv/esv (dbVar)\tRCVaccession\tPhenotypeIDS\tPhenotypeList\tOrigin\tOriginSimple\tAssembly\tChromosomeAccession\tChromosome\tStart\tStop\tReferenceAllele\tAlternateAllele\tCytogenetic\tReviewStatus\tNumberSubmitters\tGuidelines\tTestedInGTR\tOtherIDs\tSubmitterCategories\tVariationID\tPositionVCF\tReferenceAlleleVCF\tAlternateAlleleVCF\tSomaticClinicalImpact\tSomaticClinicalImpactLastEvaluated\tReviewStatusClinicalImpact\tOncogenicity\tOncogenicityLastEvaluated\tReviewStatusOncogenicity
+1\tsingle nucleotide variant\tNM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)\t672\tBRCA1\tHGNC:1100\tPathogenic\t1\t-\t-\t-\tRCV000031208\t-\t-\tgermline\tgermline\tGRCh38\tNC_000017.11\t17\t43057105\t43057105\tG\tC\t17q21.31\tcriteria provided, multiple submitters, no conflicts\t5\t-\t-\t-\t1\t1\t43057105\tG\tC\t-\t-\t-\t-\t-\t-
+2\tsingle nucleotide variant\tNM_000546.6(TP53):c.524G>A (p.Arg175His)\t7157\tTP53\tHGNC:11998\tPathogenic\t1\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000017.11\t17\t7674220\t7674220\tG\tA\t17p13.1\tcriteria provided, multiple submitters, no conflicts\t5\t-\t-\t-\t1\t2\t7674220\tG\tA\t-\t-\t-\t-\t-\t-
+3\tsingle nucleotide variant\tNM_000218.3(KCNQ1):c.123C>T (p.=)\t3784\tKCNQ1\tHGNC:6294\tBenign\t0\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000011.10\t11\t1\t1\tC\tT\t11p15.5-p15.4\tcriteria provided, single submitter\t1\t-\t-\t-\t1\t3\t1\tC\tT\t-\t-\t-\t-\t-\t-
+";
+        let records = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
+        // Two genes (BRCA1, TP53) — KCNQ1 entry is silent (p.=) and benign so
+        // both gates skip it.
+        assert_eq!(records.len(), 2);
+        let brca1 = records.iter().find(|r| r.gene_symbol == "BRCA1").unwrap();
+        assert!(brca1.json.contains("\"pos\":1692"));
+        assert!(brca1.json.contains("\"refAa\":\"D\""));
+        assert!(brca1.json.contains("\"altAa\":\"H\""));
+        assert!(brca1.json.contains("\"sig\":\"Pathogenic\""));
     }
 }

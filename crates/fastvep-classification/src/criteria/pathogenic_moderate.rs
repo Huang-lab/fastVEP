@@ -230,15 +230,18 @@ fn evaluate_pm2(
             }
         }
     } else {
-        // Absent from gnomAD entirely (no record at all).
+        // No gnomAD annotation at all. We cannot distinguish "this variant is
+        // truly absent from gnomAD" (PM2 would fire) from "the gnomAD database
+        // wasn't loaded for this run / this region" (PM2 cannot be evaluated).
+        // Without an explicit positive assertion of coverage, mark PM2
+        // NotEvaluated rather than firing — pre-fix the classifier called PM2
+        // on every variant when gnomAD wasn't loaded, which inflated the
+        // pathogenic-direction call across the board.
         details.insert("gnomad_allAf".into(), serde_json::Value::Null);
         (
-            true,
-            true,
-            format!(
-                "Absent from gnomAD (no record) — meets PM2 under {} rule",
-                inheritance_basis
-            ),
+            false,
+            false,
+            "PM2 not evaluated: no gnomAD annotation present (cannot distinguish 'absent from gnomAD' from 'gnomAD database not loaded'). Load a gnomAD .osa to enable PM2.".to_string(),
         )
     };
 
@@ -785,11 +788,34 @@ mod tests {
     }
 
     #[test]
-    fn test_pm2_absent_from_gnomad() {
+    fn test_pm2_no_gnomad_data_not_evaluated() {
+        // When the pipeline has no gnomAD annotation at all, PM2 cannot be
+        // safely fired — we can't distinguish "truly absent from gnomAD"
+        // from "gnomAD database not loaded." Older behavior fired PM2 here
+        // and inflated the pathogenic call for variants in regions/runs
+        // without gnomAD coverage.
         let input = make_input(vec![Consequence::MissenseVariant], None);
         let result = evaluate_pm2(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(!result.evaluated);
+        assert!(result.summary.contains("not evaluated"));
+    }
+
+    #[test]
+    fn test_pm2_truly_absent_with_gnomad_record_fires() {
+        // Real "absent from gnomAD" means a gnomAD record exists with AC=0
+        // and AF=0 (the variant was tested for and found absent). PM2 fires.
+        let input = make_input(
+            vec![Consequence::MissenseVariant],
+            Some(GnomadData {
+                all_ac: Some(0),
+                all_af: Some(0.0),
+                ..Default::default()
+            }),
+        );
+        let result = evaluate_pm2(&input, &AcmgConfig::default());
         assert!(result.met);
-        assert_eq!(result.strength, EvidenceStrength::Supporting); // Downgraded per SVI
+        assert_eq!(result.strength, EvidenceStrength::Supporting);
         assert_eq!(result.code, "PM2_Supporting");
     }
 
@@ -917,9 +943,18 @@ mod tests {
 
     #[test]
     fn test_pm2_not_downgraded() {
+        // When the SVI downgrade is disabled, PM2 fires at Moderate strength
+        // — but still requires real gnomAD data confirming absence (AC=0).
         let mut config = AcmgConfig::default();
         config.pm2_downgrade_to_supporting = false;
-        let input = make_input(vec![Consequence::MissenseVariant], None);
+        let input = make_input(
+            vec![Consequence::MissenseVariant],
+            Some(GnomadData {
+                all_ac: Some(0),
+                all_af: Some(0.0),
+                ..Default::default()
+            }),
+        );
         let result = evaluate_pm2(&input, &config);
         assert!(result.met);
         assert_eq!(result.strength, EvidenceStrength::Moderate);

@@ -119,7 +119,6 @@ mod tests {
             Impact::High,
             "BRCA1",
         );
-        // Absent from gnomAD → PM2_Supporting
         // High pLI → PVS1
         input.gene_constraints = Some(GnomadGeneData {
             pli: Some(1.0),
@@ -127,12 +126,19 @@ mod tests {
             mis_z: Some(2.5),
             syn_z: Some(0.5),
         });
+        // Confirmed-absent gnomAD record (AC=0, AF=0) → PM2_Supporting fires.
+        // Pre-fix the test relied on PM2 firing when gnomAD was None, which
+        // was the buggy "no-data == absent" behavior fixed in PR23.
+        input.gnomad = Some(GnomadData {
+            all_ac: Some(0),
+            all_af: Some(0.0),
+            ..Default::default()
+        });
         let config = AcmgConfig::default();
         let result = classify(&input, &config);
 
         // PVS1 (VeryStrong) + PM2_Supporting (Supporting) = PVS=1, PP=1
         // Per ClinGen SVI (Sept 2020): PVS + >=1 PP → Likely Pathogenic
-        // Bayesian Post_P = 0.988, within LP range (0.90–0.99)
         assert!(result.counts.pathogenic_very_strong >= 1); // PVS1
         assert!(result.counts.pathogenic_supporting >= 1); // PM2_Supporting
         assert_eq!(result.classification, AcmgClassification::LikelyPathogenic);
@@ -158,6 +164,12 @@ mod tests {
             syn_z: Some(0.5),
         });
         input.revel = Some(RevelData { score: Some(0.95) });
+        // Confirmed-absent gnomAD record so PM2_Supporting fires.
+        input.gnomad = Some(GnomadData {
+            all_ac: Some(0),
+            all_af: Some(0.0),
+            ..Default::default()
+        });
 
         let config = AcmgConfig::default();
         let result = classify(&input, &config);

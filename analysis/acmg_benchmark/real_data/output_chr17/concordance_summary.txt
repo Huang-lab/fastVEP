@@ -1,0 +1,36 @@
+ClinVar 2-star+ concordance against fastvep ACMG classifier (real data)
+===========================================================================
+
+Truth records:       47,591
+Classified:          42,239
+Truth not annotated: 5,352
+
+Per-class breakdown:
+truth                         n    exact   same_dir   opposite  no_call
+Pathogenic                 4775        0        859          0        0
+Likely_pathogenic           888      219        219          0        0
+VUS                       18015    18011      18011          0        0
+Likely_benign              8022        0          0          0        0
+Benign                    10539        0          0          0        0
+
+TOTAL                     42239    18230      19089          0        0
+
+Exact-match rate:        43.2%
+Same-direction rate:     45.2%
+Opposite-direction rate: 0.0%
+NoCall rate:             0.0%
+
+Top 20 triggered rules:
+       922 PS + 1-2 PM
+       160 PVS + PM
+
+Criterion firing rates (% of variants in each truth class where the criterion fired):
+criterion                       Pathogenic   Likely_pathogenic                 VUS       Likely_benign              Benign
+BP1                        155 (  3.2%)       21 (  2.4%)     1650 (  9.2%)       73 (  0.9%)      106 (  1.0%) 
+PM1                        931 ( 19.5%)      215 ( 24.2%)      926 (  5.1%)      563 (  7.0%)      204 (  1.9%) 
+PM4                          3 (  0.1%)        3 (  0.3%)        7 (  0.0%)        0 (  0.0%)        2 (  0.0%) 
+PM5                        568 ( 11.9%)      148 ( 16.7%)      295 (  1.6%)        7 (  0.1%)        5 (  0.0%) 
+PP2                        418 (  8.8%)       71 (  8.0%)     2739 ( 15.2%)      107 (  1.3%)      167 (  1.6%) 
+PS1                        874 ( 18.3%)      303 ( 34.1%)       11 (  0.1%)        0 (  0.0%)        0 (  0.0%) 
+PVS1                      1123 ( 23.5%)       32 (  3.6%)       13 (  0.1%)        0 (  0.0%)        1 (  0.0%) 
+PVS1_Supporting              1 (  0.0%)        0 (  0.0%)        4 (  0.0%)        0 (  0.0%)        0 (  0.0%) 
