@@ -1210,6 +1210,10 @@ fn enrich_compound_het_batch(
 
                     fastvep_classification::CompanionVariant {
                         is_clinvar_pathogenic: other.is_clinvar_pathogenic,
+                        // The pipeline does not yet distinguish LP from P;
+                        // future change will populate this from a richer
+                        // ClinVar classification field.
+                        is_clinvar_likely_pathogenic: false,
                         is_in_trans,
                         proband_het: other.proband_het,
                         hgvsc: other.hgvsc.clone(),

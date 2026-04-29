@@ -275,6 +275,10 @@ impl GenotypeInfo {
 pub struct CompanionVariant {
     /// Whether the companion variant is ClinVar pathogenic
     pub is_clinvar_pathogenic: bool,
+    /// Whether the companion variant is ClinVar likely pathogenic.
+    /// Used by PM3 v1.0 points scoring (PR7) — LP companions earn fewer
+    /// points than P companions. Defaults to false to preserve back-compat.
+    pub is_clinvar_likely_pathogenic: bool,
     /// Whether variants are in trans (different haplotypes). None = unphased.
     pub is_in_trans: Option<bool>,
     /// Whether proband is heterozygous for the companion variant
