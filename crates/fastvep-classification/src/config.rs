@@ -125,6 +125,12 @@ pub struct AcmgConfig {
     /// Enable PP5/BP6 criteria (disabled by default per ClinGen SVI)
     #[serde(default)]
     pub use_pp5_bp6: bool,
+    /// Opt back into the legacy PS4 proxy: ClinVar pathogenic with ≥3 review
+    /// stars → PS4. ClinGen SVI considers this proxy invalid (true PS4
+    /// requires case-control statistics), so it is disabled by default. Set
+    /// `true` only for backward-comparable benchmarks.
+    #[serde(default)]
+    pub use_clinvar_stars_as_ps4_proxy: bool,
 
     /// Variants exempted from BA1 per the ClinGen SVI updated recommendation
     /// (Ghosh et al. 2018, Hum Mutat). These are well-known high-AF variants
@@ -200,6 +206,7 @@ impl Default for AcmgConfig {
             pm2_downgrade_to_supporting: true,
             use_pp5_bp6: false,
             ba1_exceptions: default_ba1_exceptions(),
+            use_clinvar_stars_as_ps4_proxy: false,
             gene_overrides: HashMap::new(),
             trio: None,
         }

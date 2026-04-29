@@ -14,13 +14,13 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 
 | Criterion | Strength | Description | Data Source |
 |-----------|----------|-------------|-------------|
-| PVS1 | VeryStrong / Strong / Moderate / Supporting (Abou Tayoun 2018 decision tree) | Null variant in LOF-intolerant gene | Consequence + gnomAD gene constraints + transcript NMD prediction + critical-region check + alt-start distance |
-| PS1 | Strong | Same amino acid change as known pathogenic | ClinVar protein-position index |
+| PVS1 | Very Strong | Null variant in LOF-intolerant gene | Consequence + gnomAD gene constraints (pLI, LOEUF) + OMIM |
+| PS1 | Strong | Same amino acid change as known pathogenic, or same RNA outcome for canonical splice variants (Walker 2023) | ClinVar protein-position index + same-position pathogenic splice catalog |
 | PS2 | Strong | Confirmed de novo (trio) | VCF genotype (proband + both parents) |
-| PS4 | Strong | Prevalence in affected vs controls | ClinVar 3-star+ expert panel |
+| PS4 | Strong | Prevalence in affected vs controls | **NotEvaluated by default** — requires case-control statistics (opt-in proxy via `use_clinvar_stars_as_ps4_proxy`) |
 | PM1 | Moderate | Mutational hotspot / functional domain | ClinVar protein-position index (pathogenic density) |
 | PM2 | Supporting* | Absent/rare in population | gnomAD allele frequency (AF ≤ 0.0001) |
-| PM3 | Supporting/Moderate/Strong/VeryStrong (SVI v1.0 points) | In trans with pathogenic (recessive) | VCF genotype + OMIM inheritance + ClinVar companion (P/LP) |
+| PM3 | Moderate | In trans with pathogenic (recessive) | VCF genotype + OMIM inheritance + ClinVar companion |
 | PM4 | Moderate | Protein length change | Consequence (in-frame indel, stop-loss) |
 | PM5 | Moderate | Novel missense at known pathogenic position | ClinVar protein-position index |
 | PM6 | Moderate | Assumed de novo (partial trio) | VCF genotype (proband + ≥1 parent) |
@@ -31,7 +31,7 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 
 | Criterion | Strength | Description | Data Source |
 |-----------|----------|-------------|-------------|
-| BA1 | Standalone | Common variant (AF > 5%) — except 9 known-pathogenic high-AF alleles per Ghosh 2018 | gnomAD max population allele frequency + ClinGen BA1 exception list |
+| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population allele frequency |
 | BS1 | Strong | Greater than expected frequency | gnomAD allele frequency (AF > 0.01) |
 | BS2 | Strong | Observed in healthy adults | gnomAD homozygote count + OMIM inheritance |
 | BP1 | Supporting | Missense in truncation-disease gene | gnomAD gene constraints (pLI + misZ) |
@@ -62,26 +62,6 @@ BP4 (benign computational evidence):
 PP3 also evaluates SpliceAI delta scores for splice impact:
 - **Supporting**: max delta score ≥ 0.2
 - **Strong**: max delta score ≥ 0.8
-
-### BA1 Exception List (Ghosh 2018)
-
-Per the ClinGen SVI updated recommendation for BA1 (Ghosh et al. 2018, *Hum
-Mutat*), nine variants are **exempt** from BA1 despite exceeding the 5% AF
-threshold. The classifier embeds this list and refuses to call BA1 for any
-allele on it. Match is on `(gene_symbol, hgvs_c)` (case-insensitive). The
-list is configurable via `config.ba1_exceptions` so VCEPs can extend it.
-
-| Gene | Variant | Note |
-|------|---------|------|
-| ACAD9 | c.-44_-41dupTAAG | VUS |
-| ACADS | c.511C>T (p.Arg171Trp) | VUS |
-| BTD | c.1330G>C (p.Asp444His) | Pathogenic — biotinidase deficiency |
-| GJB2 | c.109G>A (p.Val37Ile) | Pathogenic — DFNB1 hearing loss |
-| HFE | c.187C>G (p.His63Asp) | Pathogenic — hereditary hemochromatosis |
-| HFE | c.845G>A (p.Cys282Tyr) | Pathogenic — hereditary hemochromatosis |
-| MEFV | c.1105C>T (p.Pro369Ser) | VUS |
-| MEFV | c.1223G>A (p.Arg408Gln) | VUS |
-| PIBF1 | c.1214G>A (p.Arg405Gln) | VUS |
 
 ### Combination Rules
 
@@ -221,4 +201,3 @@ bs1_af_threshold = 0.001
 - Richards S, et al. Standards and guidelines for the interpretation of sequence variants. *Genet Med*. 2015;17(5):405-424.
 - Pejaver V, et al. Calibration of computational tools for missense variant pathogenicity classification and ClinGen recommendations for PP3/BP4 criteria. *Am J Hum Genet*. 2022;109(12):2163-2177.
 - ClinGen Sequence Variant Interpretation Working Group. Recommendations for ACMG/AMP guideline criteria modifications.
-- Ghosh R, et al. Updated recommendation for the benign stand-alone ACMG/AMP criterion. *Hum Mutat*. 2018;39(11):1525-1530.

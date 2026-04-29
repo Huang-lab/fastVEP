@@ -15,10 +15,16 @@ pub fn evaluate_all(
     ]
 }
 
-/// PS1: Same amino acid change as a previously established pathogenic variant.
+/// PS1: Same amino acid change as a previously established pathogenic variant
+/// (or, per Walker 2023, same RNA outcome for canonical splice variants).
 ///
-/// Uses the ClinVar protein-position index (.oga) to check if pathogenic variants
-/// with the same amino acid change exist at the same protein position.
+/// Two paths:
+/// 1. **Missense (Richards 2015)** — uses the ClinVar protein-position index
+///    to check if pathogenic variants with the same amino acid change exist.
+/// 2. **Splice (Walker 2023, ClinGen SVI Splicing Subgroup)** — for canonical
+///    ±1/2 splice variants, fires when `same_splice_position_pathogenic` is
+///    true (a known pathogenic splice variant at the same position produces
+///    the same RNA outcome).
 fn evaluate_ps1(
     input: &ClassificationInput,
     _config: &AcmgConfig,
@@ -27,9 +33,35 @@ fn evaluate_ps1(
         .consequences
         .iter()
         .any(|c| matches!(c, fastvep_core::Consequence::MissenseVariant));
+    let is_canonical_splice = input.consequences.iter().any(|c| {
+        matches!(
+            c,
+            fastvep_core::Consequence::SpliceAcceptorVariant
+                | fastvep_core::Consequence::SpliceDonorVariant
+        )
+    });
 
     let mut details = serde_json::Map::new();
     details.insert("is_missense".into(), serde_json::json!(is_missense));
+    details.insert(
+        "is_canonical_splice".into(),
+        serde_json::json!(is_canonical_splice),
+    );
+
+    // Walker 2023 splice-RNA path.
+    if is_canonical_splice && input.same_splice_position_pathogenic == Some(true) {
+        details.insert("ps1_path".into(), serde_json::json!("splice_rna_match"));
+        return EvidenceCriterion {
+            code: "PS1".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: true,
+            evaluated: true,
+            summary: "Canonical ±1/2 splice variant predicted to produce the same RNA outcome as a known pathogenic splice variant (Walker 2023)".to_string(),
+            details: serde_json::Value::Object(details),
+        };
+    }
 
     if !is_missense {
         return EvidenceCriterion {
@@ -39,10 +71,15 @@ fn evaluate_ps1(
             default_strength: EvidenceStrength::Strong,
             met: false,
             evaluated: true,
-            summary: "Not a missense variant".to_string(),
+            summary: if is_canonical_splice {
+                "Canonical splice variant; no same-position pathogenic splice match available for PS1".to_string()
+            } else {
+                "Not a missense or canonical splice variant".to_string()
+            },
             details: serde_json::Value::Object(details),
         };
     }
+    details.insert("ps1_path".into(), serde_json::json!("missense_aa_match"));
 
     let (prot_pos, ref_aa, alt_aa) = match (&input.protein_position, &input.amino_acids) {
         (Some(pos), Some((r, a))) => (*pos, r.as_str(), a.as_str()),
@@ -299,15 +336,44 @@ fn evaluate_ps3(
     }
 }
 
-/// PS4: Prevalence of the variant in affected individuals is significantly increased
-/// compared with controls.
+/// PS4: Prevalence of the variant in affected individuals is significantly
+/// increased compared with controls.
 ///
-/// Approximated using ClinVar pathogenic with high review confidence.
+/// **Marked NotEvaluated by default** — true PS4 requires case-control
+/// statistical comparison (or VCEP-curated case counts), neither of which
+/// are available from variant-level annotation alone. The previous
+/// "ClinVar 3-star+ pathogenic" proxy conflated PS4 with what is closer
+/// to a PP5/BP6 ClinVar-significance signal (already disabled by default
+/// per ClinGen SVI), and could double-count when ClinVar already drove
+/// other criteria.
+///
+/// Set `config.use_clinvar_stars_as_ps4_proxy = true` to opt back into
+/// the old proxy behavior — primarily for benchmarks against historical
+/// fastVEP runs.
 fn evaluate_ps4(
     input: &ClassificationInput,
-    _config: &AcmgConfig,
+    config: &AcmgConfig,
 ) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
+
+    if !config.use_clinvar_stars_as_ps4_proxy {
+        details.insert(
+            "svi_note".into(),
+            serde_json::json!(
+                "PS4 requires case-control statistics; ClinVar review stars are not a valid proxy. Disabled by default; opt in via config.use_clinvar_stars_as_ps4_proxy"
+            ),
+        );
+        return EvidenceCriterion {
+            code: "PS4".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: false,
+            summary: "PS4 requires case-control statistics; not automatable from variant-level data".to_string(),
+            details: serde_json::Value::Object(details),
+        };
+    }
 
     let (met, summary) = if let Some(ref clinvar) = input.clinvar {
         let stars = clinvar.review_stars();
@@ -319,7 +385,7 @@ fn evaluate_ps4(
             (
                 true,
                 format!(
-                    "ClinVar pathogenic with {}-star review (expert panel or practice guideline)",
+                    "ClinVar pathogenic with {}-star review (expert panel or practice guideline) [proxy mode]",
                     stars
                 ),
             )
@@ -327,7 +393,7 @@ fn evaluate_ps4(
             (
                 false,
                 format!(
-                    "ClinVar significance: {:?}, review: {}-star (needs >=3 stars for PS4)",
+                    "ClinVar significance: {:?}, review: {}-star (needs >=3 stars for PS4 proxy)",
                     clinvar.significance.as_deref().unwrap_or(&[]),
                     stars
                 ),
@@ -379,6 +445,7 @@ mod tests {
             is_last_exon: None,
             in_critical_region: None,
             alt_start_codon_distance: None,
+            same_splice_position_pathogenic: None,
             in_repeat_region: None,
             at_exon_edge: None,
             intronic_offset: None,
@@ -390,31 +457,75 @@ mod tests {
     }
 
     #[test]
-    fn test_ps4_expert_panel_pathogenic() {
+    fn test_ps4_not_evaluated_by_default() {
+        // PR8: PS4 cannot be derived from ClinVar review stars; SVI considers
+        // that an invalid proxy. Default config returns NotEvaluated.
         let input = make_input(Some(ClinvarData {
             significance: Some(vec!["Pathogenic".to_string()]),
             review_status: Some("reviewed_by_expert_panel".to_string()),
             ..Default::default()
         }));
         let result = evaluate_ps4(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(!result.evaluated);
+        assert!(result.summary.contains("case-control"));
+    }
+
+    #[test]
+    fn test_ps4_proxy_path_when_opted_in() {
+        // Backward-comparable: setting use_clinvar_stars_as_ps4_proxy=true
+        // restores the previous proxy behavior.
+        let mut config = AcmgConfig::default();
+        config.use_clinvar_stars_as_ps4_proxy = true;
+        let input = make_input(Some(ClinvarData {
+            significance: Some(vec!["Pathogenic".to_string()]),
+            review_status: Some("reviewed_by_expert_panel".to_string()),
+            ..Default::default()
+        }));
+        let result = evaluate_ps4(&input, &config);
         assert!(result.met);
         assert!(result.evaluated);
     }
 
     #[test]
-    fn test_ps4_single_submitter_not_enough() {
+    fn test_ps4_proxy_single_submitter_not_enough() {
+        let mut config = AcmgConfig::default();
+        config.use_clinvar_stars_as_ps4_proxy = true;
         let input = make_input(Some(ClinvarData {
             significance: Some(vec!["Pathogenic".to_string()]),
             review_status: Some("criteria_provided,_single_submitter".to_string()),
             ..Default::default()
         }));
-        let result = evaluate_ps4(&input, &AcmgConfig::default());
+        let result = evaluate_ps4(&input, &config);
         assert!(!result.met);
     }
 
     #[test]
+    fn test_ps1_splice_path_with_pathogenic_match() {
+        // Walker 2023: canonical splice variant matching a known pathogenic
+        // splice variant at the same position fires PS1 (Strong).
+        let mut input = make_input(None);
+        input.consequences = vec![Consequence::SpliceDonorVariant];
+        input.same_splice_position_pathogenic = Some(true);
+        let r = evaluate_ps1(&input, &AcmgConfig::default());
+        assert!(r.met);
+        assert_eq!(r.strength, EvidenceStrength::Strong);
+    }
+
+    #[test]
+    fn test_ps1_splice_no_match_does_not_fire() {
+        let mut input = make_input(None);
+        input.consequences = vec![Consequence::SpliceDonorVariant];
+        input.same_splice_position_pathogenic = Some(false);
+        let r = evaluate_ps1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+    }
+
+    #[test]
     fn test_ps1_not_evaluated() {
-        let input = make_input(None);
+        // Missense + no protein position → not evaluable.
+        let mut input = make_input(None);
+        input.consequences = vec![Consequence::MissenseVariant];
         let result = evaluate_ps1(&input, &AcmgConfig::default());
         assert!(!result.evaluated);
         assert!(!result.met);

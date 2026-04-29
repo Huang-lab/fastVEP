@@ -211,6 +211,7 @@ mod tests {
             is_last_exon: None,
             in_critical_region: None,
             alt_start_codon_distance: None,
+            same_splice_position_pathogenic: None,
             in_repeat_region: None,
             at_exon_edge: None,
             intronic_offset: None,

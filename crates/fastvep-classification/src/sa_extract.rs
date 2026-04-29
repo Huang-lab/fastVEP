@@ -333,6 +333,12 @@ pub struct ClassificationInput {
     /// Distance (in codons) to the next downstream Met for start-loss
     /// variants. None if no alternative start codon exists.
     pub alt_start_codon_distance: Option<i64>,
+    /// PS1 splice path (Walker 2023): set to true when this canonical ±1/2
+    /// splice variant matches a known pathogenic splice variant predicted to
+    /// produce the same RNA outcome (e.g. same intron, same direction of
+    /// splice loss). The pipeline computes this from a position-indexed
+    /// ClinVar splice catalog. None when the data isn't available.
+    pub same_splice_position_pathogenic: Option<bool>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
     /// Whether the variant sits at the first base or last 3 bases of an exon
@@ -476,6 +482,7 @@ pub fn extract_classification_input(
         is_last_exon: None,
         in_critical_region: None,
         alt_start_codon_distance: None,
+        same_splice_position_pathogenic: None,
         in_repeat_region,
         // BP7 exon-edge / deep-intronic signals (Walker 2023). The pipeline
         // populates these once per-transcript exon coordinates are wired in;
