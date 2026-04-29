@@ -912,7 +912,7 @@ mod tests {
 
     // ── PM3 v1.0 points scoring ────────────────────────────────────────
 
-    use crate::sa_extract::{CompanionVariant, GenotypeInfo, OmimData};
+    use crate::sa_extract::{CompanionVariant, GenotypeInfo};
 
     fn ar_input_with_proband(het: bool, hom_alt: bool) -> ClassificationInput {
         let mut input = make_input(vec![Consequence::MissenseVariant], None);
