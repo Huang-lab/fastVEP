@@ -25,7 +25,7 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 | PM5 | Moderate | Novel missense at known pathogenic position | ClinVar protein-position index |
 | PM6 | Moderate | Assumed de novo (partial trio) | VCF genotype (proband + ≥1 parent) |
 | PP2 | Supporting | Missense in constrained gene | gnomAD gene constraints (missense Z-score ≥ 3.09) |
-| PP3 | Supporting+ | Computational deleterious evidence | REVEL (missense only, ClinGen SVI calibrated) or SpliceAI ≥ 0.2 (Supporting only, Walker 2023) |
+| PP3 | Supporting+ | Computational deleterious evidence | REVEL (ClinGen SVI calibrated), SpliceAI, SIFT/PolyPhen, PhyloP, GERP |
 
 **Benign Criteria (7 automated):**
 
@@ -36,8 +36,8 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 | BS2 | Strong | Observed in healthy adults | gnomAD homozygote count + OMIM inheritance |
 | BP1 | Supporting | Missense in truncation-disease gene | gnomAD gene constraints (pLI + misZ) |
 | BP3 | Supporting | In-frame indel in repeat region | Consequence + RepeatMasker |
-| BP4 | Supporting+ | Computational benign evidence | REVEL (missense only, calibrated incl. Very Strong band) or SpliceAI ≤ 0.1 (Supporting only, Walker 2023) |
-| BP7 | Supporting | Synonymous, no splice, not conserved | Consequence + SpliceAI + PhyloP |
+| BP4 | Supporting+ | Computational benign evidence | REVEL (ClinGen SVI calibrated), SIFT/PolyPhen, PhyloP |
+| BP7 | Supporting | Synonymous (mid-exon) or deep-intronic, no splice, not conserved | Consequence + SpliceAI + PhyloP + transcript exon coords (Walker 2023) |
 
 *PM2 downgraded from Moderate to Supporting per ClinGen SVI recommendation.
 +PP3/BP4 use ClinGen SVI calibrated REVEL thresholds with strength escalation to Moderate or Strong.
@@ -47,10 +47,7 @@ PS3/BS3 (functional studies), PP1/BS4 (segregation), PP4 (phenotype), PP5/BP6 (r
 
 ### ClinGen SVI Calibrated REVEL Thresholds
 
-REVEL is applied **only to missense variants** per Pejaver et al. 2022 — the
-calibration is not endorsed for non-missense consequences. Calibrated bands:
-
-PP3 (pathogenic computational evidence):
+PP3 (pathogenic computational evidence) uses calibrated thresholds from Pejaver et al. 2022:
 - **Supporting**: REVEL ≥ 0.644
 - **Moderate**: REVEL ≥ 0.773
 - **Strong**: REVEL ≥ 0.932
@@ -59,46 +56,35 @@ BP4 (benign computational evidence):
 - **Supporting**: REVEL ≤ 0.290
 - **Moderate**: REVEL ≤ 0.183 (counts as Benign Strong in combination rules)
 - **Strong**: REVEL ≤ 0.016
-- **Very Strong**: REVEL ≤ 0.003 (counts as 2 BS — sufficient to reach Benign on its own per Tavtigian Bayesian framework)
-
-Pejaver 2022 explicitly recommends a single calibrated tool over ad-hoc
-ensembles, so the previous SIFT/PolyPhen/PhyloP/GERP ≥3-of-4 (PP3) and ≥2-of-3
-(BP4) consensus paths have been removed. Those scores are still recorded in
-the criterion `details` for transparency.
 
 ### SpliceAI Integration
 
-Per Walker et al. 2023 (ClinGen SVI Splicing Subgroup), SpliceAI predictions
-contribute at *Supporting* strength only — Strong splicing claims require
-experimental RNA evidence (PVS1_RNA / PS3).
+PP3 also evaluates SpliceAI delta scores for splice impact:
+- **Supporting**: max delta score ≥ 0.2
+- **Strong**: max delta score ≥ 0.8
 
-- **PP3 Supporting**: max delta score ≥ 0.2 (any consequence)
-- **BP4 Supporting**: max delta score ≤ 0.1 (any consequence)
-- **Uninformative zone**: 0.1 < max_ds < 0.2 (neither PP3 nor BP4 fires)
+### BP7 Refinements (Walker 2023, ClinGen SVI Splicing Subgroup)
 
-### Anti-Double-Counting (PP3 Reconciliation)
+BP7 follows the original synonymous-low-impact rule plus two ClinGen SVI
+refinements (Walker et al. 2023, *Am J Hum Genet*):
 
-Computational evidence (PP3) is a surrogate for molecular signals that other
-criteria capture more directly. Letting both fire inflates the evidence weight
-for the same biology. Per Pejaver 2022 and Walker 2023, the classifier runs a
-post-evaluation reconciliation pass that suppresses PP3 (or PM1) under these
-overlap conditions:
+1. **Exon-edge exclusion**: BP7 cannot fire for synonymous variants at the
+   first base or last 3 bases of an exon (the canonical splice region).
+   SpliceAI is unreliable in these positions, so a low SpliceAI score there
+   is not adequate evidence for BP7. Requires `at_exon_edge` provided by the
+   pipeline (computed from cached transcript exon coordinates).
 
-| Trigger | Suppressed | Source |
-|---------|------------|--------|
-| PVS1 fires AND PP3 was driven by SpliceAI | PP3 | Walker 2023 |
-| PS1 fires AND PP3 was driven by REVEL (missense) | PP3 | Pejaver 2022 |
-| PM5 fires AND PP3 was driven by REVEL (missense) | PP3 | Pejaver 2022 |
-| PP3_Strong + PM1 (combined > Strong cap) | PM1 | Pejaver 2022 |
+2. **Deep-intronic extension**: BP7 may also fire for intronic variants
+   located outside the standard splice region — donor-side offset ≥ 7 bp or
+   acceptor-side offset ≤ -21 bp — when SpliceAI is low and the position is
+   not highly conserved. Requires `intronic_offset` provided by the pipeline.
 
-PP3 records its firing source (`details.pp3_source`: `revel_missense` /
-`spliceai`) so reconciliation can dispatch precisely without re-inferring from
-score fields. Suppressed criteria stay in the result list with `met=false` and
-a `details.suppressed_by_reconcile` note explaining why.
+When the pipeline does not yet supply these signals, BP7 falls back to the
+legacy synonymous-only rule.
 
 ### Combination Rules
 
-19 combination rules determine the final classification, applied in order. This includes the 18 rules from Richards et al. 2015 plus one novel rule from the ClinGen SVI Working Group (September 2020).
+18 combination rules determine the final classification, applied in order:
 
 **Benign (2 rules):**
 1. BA1 standalone (any BA criterion met)
@@ -117,26 +103,17 @@ a `details.suppressed_by_reconcile` note explaining why.
 10. 1 PS + 2 PM + ≥2 PP
 11. 1 PS + 1 PM + ≥4 PP
 
-**Likely Pathogenic (7 rules):**
+**Likely Pathogenic (6 rules):**
 12. PVS + 1 PM
-13. **PVS + ≥1 PP** *(ClinGen SVI novel rule, Sept 2020)*
-14. 1 PS + 1–2 PM
-15. 1 PS + ≥2 PP
-16. ≥3 PM
-17. 2 PM + ≥2 PP
-18. 1 PM + ≥4 PP
+13. 1 PS + 1–2 PM
+14. 1 PS + ≥2 PP
+15. ≥3 PM
+16. 2 PM + ≥2 PP
+17. 1 PM + ≥4 PP
 
 **Likely Benign (2 rules):**
-19. 1 BS + 1 BP
-20. ≥2 BP
-
-### ClinGen SVI PVS + PP Rule
-
-Rule 13 (PVS + ≥1 PP → Likely Pathogenic) is a novel combination not listed in the original 2015 ACMG/AMP guidelines. It was proposed by the ClinGen SVI Working Group in their *SVI Recommendation for Absence/Rarity (PM2) — Version 1.0* (approved September 4, 2020) to compensate for the PM2 downgrade from Moderate to Supporting strength.
-
-The SVI rationale: rarity is given too much weight in the 2015 framework — 99% of ExAC variants have frequency <1%, 54% are singletons, and all individuals harbor variants absent from the rest of the population (Lek et al. 2016, PMID:27535533). The odds of pathogenicity for rare/absent-from-controls evidence do not meet the 4.33:1 threshold for Moderate strength (Tavtigian et al. 2018, PMID:29300386).
-
-Without this rule, PVS1 + PM2_Supporting (the most common evidence combination for loss-of-function variants in disease genes) would fall to VUS — PVS + 1 PP does not match any combination in the original 2015 rules. The SVI demonstrated via Bayesian modeling that PVS + 1 PP yields a posterior probability of pathogenicity of 0.988, which falls within the Likely Pathogenic range (0.90–0.99), justifying this addition.
+18. 1 BS + 1 BP
+19. ≥2 BP
 
 ### Trio Analysis
 
@@ -215,18 +192,13 @@ ba1_af_threshold = 0.05
 bs1_af_threshold = 0.01
 pm2_af_threshold = 0.0001
 
-# REVEL thresholds (ClinGen SVI calibrated, Pejaver 2022; missense only)
+# REVEL thresholds (ClinGen SVI calibrated)
 pp3_revel_supporting = 0.644
 pp3_revel_moderate = 0.773
 pp3_revel_strong = 0.932
 bp4_revel_supporting = 0.290
 bp4_revel_moderate = 0.183
 bp4_revel_strong = 0.016
-bp4_revel_very_strong = 0.003  # Only REVEL reaches Very Strong (BP4_Very_Strong)
-
-# SpliceAI thresholds (Walker 2023; SpliceAI alone caps at Supporting)
-spliceai_pathogenic = 0.2  # PP3 Supporting threshold (any consequence)
-spliceai_benign = 0.1      # BP4 Supporting threshold; 0.1-0.2 is uninformative
 
 # Gene constraint thresholds
 pli_lof_intolerant = 0.9
@@ -246,8 +218,6 @@ bs1_af_threshold = 0.001
 ## References
 
 - Richards S, et al. Standards and guidelines for the interpretation of sequence variants. *Genet Med*. 2015;17(5):405-424.
-- ClinGen Sequence Variant Interpretation Working Group. SVI Recommendation for Absence/Rarity (PM2) — Version 1.0. Approved September 4, 2020. https://clinicalgenome.org/working-groups/sequence-variant-interpretation/
 - Pejaver V, et al. Calibration of computational tools for missense variant pathogenicity classification and ClinGen recommendations for PP3/BP4 criteria. *Am J Hum Genet*. 2022;109(12):2163-2177.
 - Walker LC, et al. (ClinGen SVI Splicing Subgroup). Using the ACMG/AMP framework to capture evidence related to predicted and observed impact on splicing: Recommendations from the ClinGen SVI Splicing Subgroup. *Am J Hum Genet*. 2023;110(7):1046-1067.
-- Tavtigian SV, et al. Modeling the ACMG/AMP variant classification guidelines as a Bayesian classification framework. *Genet Med*. 2018;20(9):1054-1060. PMID:29300386.
-- Lek M, et al. Analysis of protein-coding genetic variation in 60,706 humans. *Nature*. 2016;536(7616):285-291. PMID:27535533.
+- ClinGen Sequence Variant Interpretation Working Group. Recommendations for ACMG/AMP guideline criteria modifications.

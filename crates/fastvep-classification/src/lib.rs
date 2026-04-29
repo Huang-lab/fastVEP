@@ -77,6 +77,8 @@ mod tests {
             omim: None,
             clinvar_protein: None,
             in_repeat_region: None,
+            at_exon_edge: None,
+            intronic_offset: None,
             proband_genotype: None,
             mother_genotype: None,
             father_genotype: None,

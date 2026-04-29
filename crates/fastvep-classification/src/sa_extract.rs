@@ -305,6 +305,20 @@ pub struct ClassificationInput {
     pub clinvar_protein: Option<ClinvarProteinData>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
+    /// Whether the variant sits at the first base or last 3 bases of an exon
+    /// (the canonical splice region). Per Walker 2023 (ClinGen SVI Splicing
+    /// Subgroup), BP7 must NOT fire for synonymous variants at these positions
+    /// because SpliceAI can miss splice impact in this region. `None` means
+    /// the pipeline didn't populate this signal (BP7 falls back to legacy
+    /// behavior — fire if SpliceAI low + PhyloP low).
+    pub at_exon_edge: Option<bool>,
+    /// Signed offset in bp from the nearest exon boundary, for intronic
+    /// variants. Convention: positive after the donor (e.g. c.123+5 → +5),
+    /// negative before the acceptor (e.g. c.123-15 → -15). Per Walker 2023,
+    /// BP7 may extend to intronic variants outside the standard splice region:
+    /// donor-side `offset ≥ 7` or acceptor-side `offset ≤ -21`. `None` for
+    /// non-intronic variants or when the pipeline can't compute it.
+    pub intronic_offset: Option<i64>,
     /// Proband genotype information (from trio VCF)
     pub proband_genotype: Option<GenotypeInfo>,
     /// Mother genotype information (from trio VCF)
@@ -422,6 +436,11 @@ pub fn extract_classification_input(
         omim,
         clinvar_protein,
         in_repeat_region,
+        // BP7 exon-edge / deep-intronic signals (Walker 2023). The pipeline
+        // populates these once per-transcript exon coordinates are wired in;
+        // until then they remain None and BP7 falls back to legacy behavior.
+        at_exon_edge: None,
+        intronic_offset: None,
         proband_genotype,
         mother_genotype,
         father_genotype,

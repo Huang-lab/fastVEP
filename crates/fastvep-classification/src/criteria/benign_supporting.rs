@@ -496,9 +496,25 @@ fn evaluate_bp6(
     }
 }
 
-/// BP7: A synonymous (silent) variant for which splicing prediction algorithms
-/// predict no impact to the splice consensus sequence AND the nucleotide is not
-/// highly conserved.
+/// BP7: A synonymous (silent) variant — or, per Walker 2023, a deep-intronic
+/// variant outside the canonical splice region — for which splicing prediction
+/// algorithms predict no impact AND the nucleotide is not highly conserved.
+///
+/// Walker 2023 (ClinGen SVI Splicing Subgroup) refines BP7 in two ways:
+///
+/// 1. **Exon-edge exclusion**: BP7 must NOT fire for synonymous variants at
+///    the first base of an exon or the last 3 bases of an exon. SpliceAI is
+///    known to miss splice impact in these positions, so a low SpliceAI score
+///    there is not reliable evidence for BP7.
+///
+/// 2. **Deep-intronic extension**: BP7 may fire for intronic variants located
+///    *outside* the standard splice region — donor-side `offset ≥ 7` or
+///    acceptor-side `offset ≤ -21` — when SpliceAI shows no impact and the
+///    position is not highly conserved.
+///
+/// When the pipeline does not populate `at_exon_edge` / `intronic_offset`
+/// (current default), behavior reverts to the legacy synonymous-only rule
+/// for backward compatibility.
 fn evaluate_bp7(
     input: &ClassificationInput,
     config: &AcmgConfig,
@@ -507,11 +523,38 @@ fn evaluate_bp7(
         .consequences
         .iter()
         .any(|c| matches!(c, Consequence::SynonymousVariant));
+    let is_intronic = input
+        .consequences
+        .iter()
+        .any(|c| matches!(c, Consequence::IntronVariant));
 
     let mut details = serde_json::Map::new();
     details.insert("is_synonymous".into(), serde_json::json!(is_synonymous));
+    details.insert("is_intronic".into(), serde_json::json!(is_intronic));
 
-    if !is_synonymous {
+    // Determine whether this variant type qualifies for BP7 at all.
+    // - Synonymous: traditional BP7 target.
+    // - Intronic: Walker 2023 extension, but only outside the standard splice
+    //   region (donor-side offset ≥ 7, acceptor-side offset ≤ -21).
+    let intronic_eligible = match (is_intronic, input.intronic_offset) {
+        (true, Some(off)) if off >= 7 || off <= -21 => true,
+        _ => false,
+    };
+    if let Some(off) = input.intronic_offset {
+        details.insert("intronic_offset".into(), serde_json::json!(off));
+    }
+
+    if !is_synonymous && !intronic_eligible {
+        let summary = if is_intronic && input.intronic_offset.is_none() {
+            "Intronic variant but offset from splice site not provided; BP7 requires intronic_offset to extend beyond synonymous (Walker 2023)".to_string()
+        } else if is_intronic {
+            format!(
+                "Intronic variant within standard splice region (offset={}), BP7 does not apply (Walker 2023)",
+                input.intronic_offset.unwrap_or(0)
+            )
+        } else {
+            "Not a synonymous or eligible deep-intronic variant".to_string()
+        };
         return EvidenceCriterion {
             code: "BP7".to_string(),
             direction: EvidenceDirection::Benign,
@@ -519,9 +562,29 @@ fn evaluate_bp7(
             default_strength: EvidenceStrength::Supporting,
             met: false,
             evaluated: true,
-            summary: "Not a synonymous variant".to_string(),
+            summary,
             details: serde_json::Value::Object(details),
         };
+    }
+
+    // Walker 2023 exon-edge exclusion (synonymous only). When the pipeline has
+    // populated `at_exon_edge`, refuse to fire BP7 at the first base or last
+    // 3 bases of an exon. When None (legacy fallback), behave as before.
+    if is_synonymous && input.at_exon_edge == Some(true) {
+        details.insert("at_exon_edge".into(), serde_json::json!(true));
+        return EvidenceCriterion {
+            code: "BP7".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Supporting,
+            default_strength: EvidenceStrength::Supporting,
+            met: false,
+            evaluated: true,
+            summary: "Synonymous at exon edge (first base or last 3 bases) — BP7 cannot fire (Walker 2023)".to_string(),
+            details: serde_json::Value::Object(details),
+        };
+    }
+    if let Some(edge) = input.at_exon_edge {
+        details.insert("at_exon_edge".into(), serde_json::json!(edge));
     }
 
     // Check SpliceAI: no predicted splice impact
@@ -548,20 +611,27 @@ fn evaluate_bp7(
     let splice_ai_available = input.splice_ai.is_some();
     let phylop_available = input.phylop.is_some();
     let evaluated = splice_ai_available || phylop_available;
-    let met = is_synonymous && no_splice_impact && not_conserved;
+    let met = (is_synonymous || intronic_eligible) && no_splice_impact && not_conserved;
+
+    let context = if is_synonymous {
+        "Synonymous variant"
+    } else {
+        "Deep-intronic variant (outside standard splice region)"
+    };
 
     let summary = if met {
         format!(
-            "Synonymous variant with no predicted splice impact (SpliceAI max_ds={:.2}) and not conserved (PhyloP={:.2})",
+            "{} with no predicted splice impact (SpliceAI max_ds={:.2}) and not conserved (PhyloP={:.2})",
+            context,
             input.splice_ai.as_ref().and_then(|s| s.max_delta_score()).unwrap_or(0.0),
             input.phylop.unwrap_or(0.0)
         )
-    } else if is_synonymous && !no_splice_impact {
-        "Synonymous but predicted to affect splicing".to_string()
-    } else if is_synonymous && !not_conserved {
-        "Synonymous but position is highly conserved".to_string()
+    } else if !no_splice_impact {
+        format!("{} but predicted to affect splicing", context)
+    } else if !not_conserved {
+        format!("{} but position is highly conserved", context)
     } else {
-        "Synonymous variant but insufficient data to confirm BP7".to_string()
+        format!("{} but insufficient data to confirm BP7", context)
     };
 
     EvidenceCriterion {
@@ -610,6 +680,8 @@ mod tests {
             omim: None,
             clinvar_protein: None,
             in_repeat_region: None,
+            at_exon_edge: None,
+            intronic_offset: None,
             proband_genotype: None,
             mother_genotype: None,
             father_genotype: None,
@@ -732,6 +804,104 @@ mod tests {
         );
         let result = evaluate_bp7(&input, &AcmgConfig::default());
         assert!(result.met);
+    }
+
+    #[test]
+    fn test_bp7_synonymous_at_exon_edge_does_not_fire() {
+        // Walker 2023: BP7 must NOT fire for synonymous at first base or last
+        // 3 bases of an exon, even when SpliceAI low + PhyloP low — SpliceAI is
+        // unreliable in the canonical splice region.
+        let mut input = make_input(
+            vec![Consequence::SynonymousVariant],
+            None,
+            Some(0.05),
+            Some(0.5),
+            None,
+        );
+        input.at_exon_edge = Some(true);
+        let result = evaluate_bp7(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(result.evaluated);
+        assert!(result.summary.contains("exon edge"));
+    }
+
+    #[test]
+    fn test_bp7_synonymous_not_at_exon_edge_still_fires() {
+        // When the pipeline confirms the variant is mid-exon, BP7 fires
+        // normally. (Distinct from None=legacy fallback.)
+        let mut input = make_input(
+            vec![Consequence::SynonymousVariant],
+            None,
+            Some(0.05),
+            Some(0.5),
+            None,
+        );
+        input.at_exon_edge = Some(false);
+        let result = evaluate_bp7(&input, &AcmgConfig::default());
+        assert!(result.met);
+    }
+
+    #[test]
+    fn test_bp7_deep_intronic_donor_side_fires() {
+        // Walker 2023 extension: intronic variant at offset ≥ 7 from donor
+        // with low SpliceAI and low PhyloP fires BP7 Supporting.
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.03),
+            Some(0.4),
+            None,
+        );
+        input.intronic_offset = Some(15); // donor-side, well outside +1..+6
+        let result = evaluate_bp7(&input, &AcmgConfig::default());
+        assert!(result.met);
+        assert!(result.summary.contains("Deep-intronic"));
+    }
+
+    #[test]
+    fn test_bp7_deep_intronic_acceptor_side_fires() {
+        // Acceptor-side: offset ≤ -21 qualifies per Walker 2023.
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.04),
+            Some(0.5),
+            None,
+        );
+        input.intronic_offset = Some(-25);
+        let result = evaluate_bp7(&input, &AcmgConfig::default());
+        assert!(result.met);
+    }
+
+    #[test]
+    fn test_bp7_intronic_within_splice_region_does_not_fire() {
+        // Standard splice region (offset 5 from donor): BP7 must not fire.
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.03),
+            Some(0.4),
+            None,
+        );
+        input.intronic_offset = Some(5);
+        let result = evaluate_bp7(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(result.summary.contains("standard splice region"));
+    }
+
+    #[test]
+    fn test_bp7_intronic_acceptor_within_splice_region_does_not_fire() {
+        // Acceptor-side offset between -1 and -20: still standard splice region.
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.03),
+            Some(0.4),
+            None,
+        );
+        input.intronic_offset = Some(-15);
+        let result = evaluate_bp7(&input, &AcmgConfig::default());
+        assert!(!result.met);
     }
 
     #[test]
