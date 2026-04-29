@@ -286,8 +286,8 @@ fn evaluate_bp3(
 /// remain in `details` for transparency.
 ///
 /// Per Walker 2023 (ClinGen SVI Splicing Subgroup): SpliceAI ≤ 0.1 yields BP4
-/// at Supporting strength for non-canonical splice context (scores between 0.1
-/// and 0.2 are uninformative).
+/// at Supporting strength when a SpliceAI score is available (scores between
+/// 0.1 and 0.2 are uninformative).
 fn evaluate_bp4(
     input: &ClassificationInput,
     config: &AcmgConfig,

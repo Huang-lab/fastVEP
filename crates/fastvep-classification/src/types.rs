@@ -149,7 +149,7 @@ impl EvidenceCounts {
                 (EvidenceDirection::Benign, EvidenceStrength::Moderate) => {
                     counts.benign_strong += 1
                 }
-                // Benign Very Strong (e.g. BP4_VeryStrong from REVEL ≤ 0.003 per
+                // Benign Very Strong (e.g. BP4_Very_Strong from REVEL ≤ 0.003 per
                 // Pejaver 2022) reaches the Benign classification on its own under
                 // the Tavtigian Bayesian framework. Counting it as 2 BS triggers
                 // the existing ≥2 BS → Benign rule without introducing a new slot.

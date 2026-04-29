@@ -172,7 +172,7 @@ PRIORS = {
     "pp3_supporting_if_path_missense": 0.35,
 
     # For benign missense (with the Pejaver 2022 Very Strong band added):
-    #   ~5%  get BP4_VeryStrong (REVEL <= 0.003) — only REVEL reaches this band
+    #   ~5%  get BP4_Very_Strong (REVEL <= 0.003) — only REVEL reaches this band
     #   ~25% get BP4_Strong (0.003 < REVEL <= 0.016)
     #   ~30% get BP4_Moderate (0.016-0.183)
     #   ~25% get BP4_Supporting (0.183-0.290)
@@ -312,9 +312,9 @@ def simulate_for_variant(consequence, clinvar_sig, stars, seed=None):
             m_thr = s_thr + PRIORS["bp4_moderate_if_benign_missense"]
             sup_thr = m_thr + PRIORS["bp4_supporting_if_benign_missense"]
             if r < vs_thr:
-                # BP4_VeryStrong → counts as 2 BS (per types.rs), enough to call Benign on its own
+                # BP4_Very_Strong → counts as 2 BS (per types.rs), enough to call Benign on its own
                 bs += 2
-                reasons.append("BP4_VeryStrong")
+                reasons.append("BP4_Very_Strong")
             elif r < s_thr:
                 bs += 1  # BP4_Strong counts as Benign Strong
                 reasons.append("BP4_Strong")

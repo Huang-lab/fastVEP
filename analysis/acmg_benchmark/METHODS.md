@@ -202,7 +202,7 @@ pp3_revel_strong = 0.932
 bp4_revel_supporting = 0.290
 bp4_revel_moderate = 0.183
 bp4_revel_strong = 0.016
-bp4_revel_very_strong = 0.003  # Only REVEL reaches Very Strong (BP4_VeryStrong)
+bp4_revel_very_strong = 0.003  # Only REVEL reaches Very Strong (BP4_Very_Strong)
 
 # SpliceAI thresholds (Walker 2023; SpliceAI alone caps at Supporting)
 spliceai_pathogenic = 0.2  # PP3 Supporting threshold (any consequence)
