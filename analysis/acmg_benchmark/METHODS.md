@@ -14,7 +14,7 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 
 | Criterion | Strength | Description | Data Source |
 |-----------|----------|-------------|-------------|
-| PVS1 | Very Strong | Null variant in LOF-intolerant gene | Consequence + gnomAD gene constraints (pLI, LOEUF) + OMIM |
+| PVS1 | VeryStrong / Strong / Moderate / Supporting (Abou Tayoun 2018 decision tree) | Null variant in LOF-intolerant gene | Consequence + gnomAD gene constraints + transcript NMD prediction + critical-region check + alt-start distance |
 | PS1 | Strong | Same amino acid change as known pathogenic | ClinVar protein-position index |
 | PS2 | Strong | Confirmed de novo (trio) | VCF genotype (proband + both parents) |
 | PS4 | Strong | Prevalence in affected vs controls | ClinVar 3-star+ expert panel |
