@@ -164,17 +164,76 @@ fastvep sa-build --source gerp -i gerp_scores.tsv -o gerp --assembly GRCh38
 
 ## Gene-level sources (`.oga`)
 
-> ⚠️ **Current limitation:** `fastvep sa-build` does **not** yet support gene-level (`.oga`) sources. The library has parsers for OMIM, gnomAD gene constraints, and the ClinVar protein index, but no CLI build path is wired up. PVS1, PS1, PM1, PM5, and inheritance-aware PM2 will silently fall back to default behavior without `.oga` files. Tracking: see [`crates/fastvep-sa/src/gene.rs`](../crates/fastvep-sa/src/gene.rs) and [`crates/fastvep-sa/src/sources/{clinvar_protein,omim,gnomad_gene}.rs`](../crates/fastvep-sa/src/sources/).
+`fastvep sa-build` supports three gene-level sources. The output is a `.oga` file (gene-keyed annotation index); place it in the same `--sa-dir` as your `.osa` files and the runtime will pick it up automatically.
 
-When this is wired up, the planned recipes will be:
+| Source | Builder key | json_key (runtime) | Used by |
+|---|---|---|---|
+| OMIM `genemap2.txt` | `omim` | `omim` | PVS1, BS2, PM3, BP2 |
+| gnomAD gene constraints | `gnomad_genes` | `gnomad_genes` | PVS1, PP2, BP1 |
+| ClinVar protein index | `clinvar_protein` | `clinvar_protein` | PS1, PM1, PM5 |
 
-| Source | Builder source key | Used by |
-|---|---|---|
-| OMIM `genemap2.txt` | `omim` (planned) | PVS1, BS2, PM3, BP2 |
-| gnomAD gene constraints | `gnomad_genes` (planned) | PVS1, PP2, BP1 |
-| ClinVar protein index | `clinvar_protein` (planned) | PS1, PM1, PM5 |
+The classifier degrades gracefully when these are absent — every criterion that depends on a missing `.oga` is marked `evaluated: false` rather than firing — so it's fine to start with allele-level sources only and layer these in later.
 
-Until then, the classifier runs without these signals and degrades gracefully — every criterion that depends on a missing `.oga` is marked `evaluated: false` rather than firing.
+### OMIM — gene-phenotype map
+
+Used by PVS1 (LOF-intolerance proxy from disease association), BS2 (inheritance pattern), PM3 (recessive disorder check), BP2 (recessive cis check).
+
+```bash
+# 1. Download genemap2.txt from OMIM (account required, free for academic use)
+#    https://www.omim.org/downloads
+#    File: genemap2.txt (~5 MB, tab-separated)
+
+# 2. Build
+fastvep sa-build --source omim -i genemap2.txt -o sa_databases/omim --assembly GRCh38
+
+# Expected output:
+#   sa_databases/omim.oga (~2–4 MB)
+```
+
+### gnomAD gene constraints
+
+Used by PVS1 (pLI / LOEUF), PP2 (mis_z), BP1 (LOF-only gene check).
+
+```bash
+# 1. Download the constraint TSV
+#    https://gnomad.broadinstitute.org/downloads → "Gene constraint metrics"
+wget https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/constraint/gnomad.v4.1.constraint_metrics.tsv
+
+# 2. Build
+fastvep sa-build --source gnomad_genes -i gnomad.v4.1.constraint_metrics.tsv -o sa_databases/gnomad_genes --assembly GRCh38
+
+# Expected output:
+#   sa_databases/gnomad_genes.oga (~4–6 MB)
+```
+
+### ClinVar protein index
+
+Used by PS1 (same-AA pathogenic match), PM5 (different-AA at same position), PM1 (hotspot density).
+
+This source is built from the **same** ClinVar VCF you used for the allele-level `clinvar.osa` — but `clinvar_protein` extracts a different view (pathogenic missense indexed by protein position) and writes a separate `.oga`.
+
+```bash
+# Reuse the clinvar.vcf.gz you already downloaded for the .osa build
+fastvep sa-build --source clinvar_protein -i clinvar.vcf.gz -o sa_databases/clinvar_protein --assembly GRCh38
+
+# Expected output:
+#   sa_databases/clinvar_protein.oga (~5–10 MB)
+```
+
+### Verifying gene-level annotations
+
+`.oga` files don't show up in the standard `ls` size sanity check the same way `.osa` files do — they're more compact (single MB range). To verify:
+
+```bash
+# Each .oga is loaded at startup; --acmg run will log the gene count.
+fastvep annotate -i tests/test.vcf --gff3 tests/test.gff3 \
+  --sa-dir sa_databases/ --acmg --output-format json 2>&1 \
+  | grep -E 'Loaded gene annotations'
+# Expected:
+#   Loaded gene annotations: OMIM (... N genes)
+#   Loaded gene annotations: gnomAD gene constraints (... N genes)
+#   Loaded gene annotations: ClinVar protein index (... N genes)
+```
 
 ## Putting it together
 

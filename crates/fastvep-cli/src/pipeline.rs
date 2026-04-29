@@ -1514,6 +1514,11 @@ pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> 
     use fastvep_sa::index::IndexHeader;
     use fastvep_sa::writer::SaWriter;
 
+    // Gene-level sources (.oga) — dispatched separately from variant-level (.osa).
+    if matches!(source, "omim" | "gnomad_genes" | "gnomad_gene" | "clinvar_protein") {
+        return run_oga_build(source, input, output, assembly);
+    }
+
     let (chrom_list, chrom_map) = standard_chrom_map();
 
     let header = match source {
@@ -1658,7 +1663,7 @@ pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> 
             is_positional: false,
         },
         _ => anyhow::bail!(
-            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp",
+            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein",
             source
         ),
     };
@@ -1701,6 +1706,83 @@ pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> 
         "Wrote: {} and {}",
         output_path.with_extension("osa").display(),
         output_path.with_extension("osa.idx").display()
+    );
+
+    Ok(())
+}
+
+/// Build a gene-level annotation database (`.oga`) from a source file.
+///
+/// Supports three gene-level sources used by the ACMG-AMP classifier:
+/// - `omim`            — OMIM `genemap2.txt` (PVS1, BS2, PM3, BP2)
+/// - `gnomad_genes`    — gnomAD constraint metrics TSV (PVS1, PP2, BP1)
+/// - `clinvar_protein` — ClinVar VCF, extracts pathogenic missense by
+///                       protein position (PS1, PM1, PM5)
+///
+/// The output is `<output>.oga`. The runtime loader at
+/// `fastvep_annotate::load_gene_providers` picks up any `.oga` file in
+/// `--sa-dir` and routes records to the classifier by `json_key`
+/// (`omim`, `gnomad_genes`, `clinvar_protein`).
+pub fn run_oga_build(source: &str, input: &str, output: &str, _assembly: &str) -> Result<()> {
+    use fastvep_sa::common::SCHEMA_VERSION;
+    use fastvep_sa::gene::{GeneHeader, GeneIndex};
+
+    let (json_key, name) = match source {
+        "omim" => ("omim", "OMIM"),
+        "gnomad_genes" | "gnomad_gene" => ("gnomad_genes", "gnomAD gene constraints"),
+        "clinvar_protein" => ("clinvar_protein", "ClinVar protein index"),
+        _ => anyhow::bail!(
+            "run_oga_build called with non-gene source: {} (expected omim, gnomad_genes, clinvar_protein)",
+            source
+        ),
+    };
+
+    eprintln!("Building {} .oga from: {}", source, input);
+
+    let file = File::open(input)
+        .with_context(|| format!("Opening input file: {}", input))?;
+    let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
+        Box::new(flate2::read::MultiGzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let buf_reader = io::BufReader::new(reader);
+
+    let records = match source {
+        "omim" => fastvep_sa::sources::omim::parse_omim_genemap(buf_reader)?,
+        "gnomad_genes" | "gnomad_gene" => {
+            fastvep_sa::sources::gnomad_gene::parse_gnomad_gene_scores(buf_reader)?
+        }
+        "clinvar_protein" => {
+            fastvep_sa::sources::clinvar_protein::parse_clinvar_protein_vcf(buf_reader)?
+        }
+        _ => unreachable!(),
+    };
+
+    eprintln!("Parsed {} records from {}", records.len(), source);
+
+    let header = GeneHeader {
+        schema_version: SCHEMA_VERSION,
+        json_key: json_key.into(),
+        name: name.into(),
+        version: "latest".into(),
+        assembly: _assembly.into(),
+    };
+
+    let mut index = GeneIndex::new(header);
+    for record in records {
+        index.add(record);
+    }
+
+    let output_path = Path::new(output).with_extension("oga");
+    let mut out_file = File::create(&output_path)
+        .with_context(|| format!("Creating output file: {}", output_path.display()))?;
+    index.write_to(&mut out_file)?;
+
+    eprintln!(
+        "Wrote: {} ({} genes)",
+        output_path.display(),
+        index.gene_count()
     );
 
     Ok(())

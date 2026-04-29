@@ -1,8 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-mod pipeline;
-mod webserver;
+use fastvep_cli::{pipeline, webserver};
 
 #[derive(Parser)]
 #[command(name = "fastvep")]

@@ -169,9 +169,15 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 
 ### Gene-level (.oga) sources
 
-> ⚠️ **Current limitation:** `fastvep sa-build` does not yet support gene-level (`.oga`) sources — OMIM, gnomAD gene constraints, and the ClinVar protein index. The library has parsers for all three (see `crates/fastvep-sa/src/sources/{omim,gnomad_gene,clinvar_protein}.rs`) but no CLI build path is wired up. PVS1, PS1, PM1, PM5, and inheritance-aware PM2 fall back to default behavior (typically `evaluated: false`) when their `.oga` files are absent. Tracking this work is on the roadmap.
+`fastvep sa-build` supports three gene-level sources, each producing a `.oga` file that the runtime picks up automatically from `--sa-dir`:
 
-See [ACMG_SETUP.md](ACMG_SETUP.md) for the full setup walkthrough including allele-level sources that *are* supported by `sa-build` today (clinvar, gnomad, revel, spliceai, dbnsfp, phylop, gerp).
+```bash
+fastvep sa-build --source omim -i genemap2.txt -o sa/omim --assembly GRCh38
+fastvep sa-build --source gnomad_genes -i gnomad.v4.1.constraint_metrics.tsv -o sa/gnomad_genes --assembly GRCh38
+fastvep sa-build --source clinvar_protein -i clinvar.vcf.gz -o sa/clinvar_protein --assembly GRCh38
+```
+
+When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2, PP2, BS2) degrade gracefully to `evaluated: false` rather than misfiring. See [ACMG_SETUP.md](ACMG_SETUP.md) for download URLs, expected file sizes, and end-to-end verification.
 
 ## Evidence Criteria Reference
 

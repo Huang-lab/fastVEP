@@ -444,6 +444,7 @@ dependencies = [
  "log",
  "rayon",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
