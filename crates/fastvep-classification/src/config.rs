@@ -60,14 +60,22 @@ pub struct AcmgConfig {
     /// BP4 strong threshold (default: 0.016)
     #[serde(default = "default_bp4_strong")]
     pub bp4_revel_strong: f64,
+    /// BP4 very strong threshold (default: 0.003) — Pejaver 2022 endorses
+    /// REVEL ≤ 0.003 as Very Strong benign evidence; only REVEL reaches this band.
+    #[serde(default = "default_bp4_very_strong")]
+    pub bp4_revel_very_strong: f64,
 
     // ── SpliceAI thresholds ──
-    /// SpliceAI delta score threshold for pathogenic splice impact (default: 0.2)
+    /// SpliceAI delta score threshold for PP3 pathogenic splice impact (default: 0.2).
+    /// Per Walker 2023 SVI Splicing Subgroup, ≥ 0.2 yields PP3 at *Supporting* strength only.
+    /// SpliceAI alone does not reach Strong — that requires experimental RNA assay (PVS1_RNA).
     #[serde(default = "default_spliceai_pathogenic")]
     pub spliceai_pathogenic: f64,
-    /// SpliceAI delta score threshold for strong splice impact (default: 0.8)
-    #[serde(default = "default_spliceai_strong")]
-    pub spliceai_strong: f64,
+    /// SpliceAI delta score upper bound for BP4 benign splice impact (default: 0.1).
+    /// Per Walker 2023 SVI Splicing Subgroup, ≤ 0.1 yields BP4 at Supporting strength.
+    /// Scores between 0.1 and 0.2 are uninformative.
+    #[serde(default = "default_spliceai_benign")]
+    pub spliceai_benign: f64,
 
     // ── Conservation thresholds ──
     /// PhyloP threshold for conserved position (default: 2.0)
@@ -143,8 +151,9 @@ impl Default for AcmgConfig {
             bp4_revel_supporting: 0.290,
             bp4_revel_moderate: 0.183,
             bp4_revel_strong: 0.016,
+            bp4_revel_very_strong: 0.003,
             spliceai_pathogenic: 0.2,
-            spliceai_strong: 0.8,
+            spliceai_benign: 0.1,
             phylop_conserved: 2.0,
             gerp_conserved: 2.0,
             pli_lof_intolerant: 0.9,
@@ -211,8 +220,9 @@ fn default_pp3_strong() -> f64 { 0.932 }
 fn default_bp4_supporting() -> f64 { 0.290 }
 fn default_bp4_moderate() -> f64 { 0.183 }
 fn default_bp4_strong() -> f64 { 0.016 }
+fn default_bp4_very_strong() -> f64 { 0.003 }
 fn default_spliceai_pathogenic() -> f64 { 0.2 }
-fn default_spliceai_strong() -> f64 { 0.8 }
+fn default_spliceai_benign() -> f64 { 0.1 }
 fn default_phylop() -> f64 { 2.0 }
 fn default_gerp() -> f64 { 2.0 }
 fn default_pli() -> f64 { 0.9 }

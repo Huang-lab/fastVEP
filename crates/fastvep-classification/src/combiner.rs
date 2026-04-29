@@ -8,9 +8,14 @@ use crate::types::{AcmgClassification, EvidenceCounts, EvidenceCriterion};
 /// 1. Benign (BA1 standalone, or >=2 BS)
 /// 2. Check for conflicting evidence (pathogenic + benign criteria both met -> VUS)
 /// 3. Pathogenic (8 combinations)
-/// 4. Likely Pathogenic (6 combinations)
+/// 4. Likely Pathogenic (7 combinations, includes ClinGen SVI PVS+PP rule)
 /// 5. Likely Benign (BS+BP, or >=2 BP)
 /// 6. Default: VUS
+///
+/// Note: Includes the ClinGen SVI novel combination rule (Sept 2020) that
+/// PVS + >=1 PP → Likely Pathogenic. This rule was added to compensate for
+/// the PM2 downgrade to Supporting, ensuring that PVS1 + PM2_Supporting
+/// still reaches LP (Bayesian Post_P = 0.988, within LP range 0.90–0.99).
 pub fn combine(criteria: &[EvidenceCriterion]) -> (AcmgClassification, Option<String>) {
     let counts = EvidenceCounts::from_criteria(criteria);
 
@@ -89,11 +94,20 @@ pub fn combine(criteria: &[EvidenceCriterion]) -> (AcmgClassification, Option<St
         );
     }
 
-    // ── Likely Pathogenic (6 combinations) ──
+    // ── Likely Pathogenic (7 combinations) ──
     if pvs >= 1 && pm >= 1 {
         return (
             AcmgClassification::LikelyPathogenic,
             Some("PVS + PM".to_string()),
+        );
+    }
+    // ClinGen SVI novel rule (Sept 2020): PVS + >=1 PP → LP
+    // Bayesian Post_P = 0.988, within LP range (0.90–0.99).
+    // Compensates for PM2 downgrade to Supporting, so PVS1 + PM2_Supporting → LP.
+    if pvs >= 1 && pp >= 1 {
+        return (
+            AcmgClassification::LikelyPathogenic,
+            Some("PVS + >=1 PP (SVI)".to_string()),
         );
     }
     if ps >= 1 && (1..=2).contains(&pm) {
@@ -336,6 +350,21 @@ mod tests {
         let (cls, rule) = combine(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyPathogenic);
         assert_eq!(rule.unwrap(), "2 PM + >=2 PP");
+    }
+
+    // ── ClinGen SVI PVS + PP Rule ──
+
+    #[test]
+    fn test_pvs_plus_pp_likely_pathogenic_svi() {
+        // ClinGen SVI (Sept 2020): PVS + >=1 PP → LP
+        // This is the key rule for PVS1 + PM2_Supporting
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            met("PM2_Supporting", Pathogenic, Supporting),
+        ];
+        let (cls, rule) = combine(&criteria);
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
+        assert_eq!(rule.unwrap(), "PVS + >=1 PP (SVI)");
     }
 
     // ── Likely Benign Rules ──

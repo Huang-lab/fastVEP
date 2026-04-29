@@ -160,8 +160,9 @@ PRIORS = {
     "pm2_if_vus": 0.80,
     "pm2_if_benign": 0.15,
 
-    # PP3/BP4 REVEL: ClinGen SVI calibrated thresholds
-    # For pathogenic missense (REVEL distributions from Pejaver et al.):
+    # PP3/BP4 REVEL: ClinGen SVI calibrated thresholds (Pejaver 2022).
+    # REVEL is applied ONLY to missense variants (Pejaver 2022 explicitly
+    # restricts the calibration to missense). For pathogenic missense:
     #   ~15% get PP3_Strong (REVEL >= 0.932)
     #   ~25% get PP3_Moderate (0.773-0.932)
     #   ~35% get PP3_Supporting (0.644-0.773)
@@ -170,12 +171,14 @@ PRIORS = {
     "pp3_moderate_if_path_missense": 0.25,
     "pp3_supporting_if_path_missense": 0.35,
 
-    # For benign missense:
-    #   ~30% get BP4_Strong (REVEL <= 0.016)
+    # For benign missense (with the Pejaver 2022 Very Strong band added):
+    #   ~5%  get BP4_VeryStrong (REVEL <= 0.003) — only REVEL reaches this band
+    #   ~25% get BP4_Strong (0.003 < REVEL <= 0.016)
     #   ~30% get BP4_Moderate (0.016-0.183)
     #   ~25% get BP4_Supporting (0.183-0.290)
     #   ~15% get nothing (REVEL > 0.290)
-    "bp4_strong_if_benign_missense": 0.30,
+    "bp4_very_strong_if_benign_missense": 0.05,
+    "bp4_strong_if_benign_missense": 0.25,
     "bp4_moderate_if_benign_missense": 0.30,
     "bp4_supporting_if_benign_missense": 0.25,
 
@@ -192,9 +195,19 @@ PRIORS = {
     "bs1_if_benign_no_ba1": 0.70,
     "bs1_if_lb_no_ba1": 0.55,
 
-    # PP3 SpliceAI for splice_canonical:
-    # ~90% of canonical splice variants have SpliceAI max_ds >= 0.8 (Strong)
-    "pp3_strong_if_splice_canonical": 0.90,
+    # PP3 SpliceAI: per Walker 2023 (ClinGen SVI Splicing Subgroup),
+    # SpliceAI alone tops out at PP3 *Supporting* (max_ds >= 0.2). It does not
+    # reach Strong even at very high delta scores; experimental RNA evidence is
+    # required for Strong splicing claims. ~90% of canonical splice variants
+    # exceed the Supporting threshold.
+    # NOTE: the actual classifier also fires PVS1 for canonical splice variants
+    # in LOF genes; the PP3 splice path here is to model the residual signal
+    # contributed by SpliceAI for non-canonical splice contexts.
+    "pp3_supporting_if_splice_canonical": 0.90,
+    # BP4 SpliceAI: per Walker 2023, max_ds <= 0.1 → BP4 Supporting for
+    # non-canonical splice context. ~70% of benign synonymous + intronic
+    # variants land in this band.
+    "bp4_supporting_if_splice_low": 0.70,
 
     # BP7: synonymous + no splice + not conserved
     # ~75% of synonymous variants have low SpliceAI + low PhyloP
@@ -294,24 +307,35 @@ def simulate_for_variant(consequence, clinvar_sig, stars, seed=None):
                 reasons.append("PP3_Supp")
         elif is_benign:
             r = rng.random()
-            if r < PRIORS["bp4_strong_if_benign_missense"]:
+            vs_thr = PRIORS["bp4_very_strong_if_benign_missense"]
+            s_thr = vs_thr + PRIORS["bp4_strong_if_benign_missense"]
+            m_thr = s_thr + PRIORS["bp4_moderate_if_benign_missense"]
+            sup_thr = m_thr + PRIORS["bp4_supporting_if_benign_missense"]
+            if r < vs_thr:
+                # BP4_VeryStrong → counts as 2 BS (per types.rs), enough to call Benign on its own
+                bs += 2
+                reasons.append("BP4_VeryStrong")
+            elif r < s_thr:
                 bs += 1  # BP4_Strong counts as Benign Strong
                 reasons.append("BP4_Strong")
-            elif r < (PRIORS["bp4_strong_if_benign_missense"] +
-                      PRIORS["bp4_moderate_if_benign_missense"]):
+            elif r < m_thr:
                 bs += 1  # BP4_Moderate counts as Benign Strong (per types.rs)
                 reasons.append("BP4_Mod")
-            elif r < (PRIORS["bp4_strong_if_benign_missense"] +
-                      PRIORS["bp4_moderate_if_benign_missense"] +
-                      PRIORS["bp4_supporting_if_benign_missense"]):
+            elif r < sup_thr:
                 bp += 1
                 reasons.append("BP4_Supp")
 
-    # ── PP3 SpliceAI for splice variants ──
+    # ── PP3/BP4 SpliceAI ──
+    # Per Walker 2023, SpliceAI tops out at PP3 Supporting (no Strong from
+    # SpliceAI alone). For non-canonical splice context, SpliceAI ≤ 0.1 → BP4 Supporting.
     if consequence == "splice_canonical":
-        if rng.random() < PRIORS["pp3_strong_if_splice_canonical"]:
-            ps += 1
-            reasons.append("PP3_Strong_splice")
+        if rng.random() < PRIORS["pp3_supporting_if_splice_canonical"]:
+            pp += 1
+            reasons.append("PP3_Supp_splice")
+    elif consequence in ("synonymous", "intron", "splice_region") and is_benign:
+        if rng.random() < PRIORS["bp4_supporting_if_splice_low"]:
+            bp += 1
+            reasons.append("BP4_Supp_splice")
 
     # ── BA1: common variant ──
     if clinvar_sig == "Benign":
@@ -344,7 +368,12 @@ def simulate_for_variant(consequence, clinvar_sig, stars, seed=None):
 
 
 def apply_combination_rules(pvs, ps, pm, pp, ba, bs, bp):
-    """Apply ACMG combination rules (matches Rust combiner.rs exactly)."""
+    """Apply ACMG combination rules (matches Rust combiner.rs exactly).
+
+    Includes the ClinGen SVI novel rule (Sept 2020): PVS + >=1 PP → LP.
+    This compensates for PM2 downgrade to Supporting, ensuring PVS1 +
+    PM2_Supporting still reaches LP (Bayesian Post_P = 0.988).
+    """
     # Benign
     if ba >= 1:
         return "Benign"
@@ -375,8 +404,10 @@ def apply_combination_rules(pvs, ps, pm, pp, ba, bs, bp):
     if ps >= 1 and pm >= 1 and pp >= 4:
         return "Pathogenic"
 
-    # Likely Pathogenic (6 rules)
+    # Likely Pathogenic (7 rules, includes ClinGen SVI PVS+PP rule)
     if pvs >= 1 and pm >= 1:
+        return "Likely_pathogenic"
+    if pvs >= 1 and pp >= 1:  # ClinGen SVI novel rule (Sept 2020)
         return "Likely_pathogenic"
     if ps >= 1 and 1 <= pm <= 2:
         return "Likely_pathogenic"

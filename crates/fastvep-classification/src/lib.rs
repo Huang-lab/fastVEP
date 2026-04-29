@@ -120,38 +120,22 @@ mod tests {
         let config = AcmgConfig::default();
         let result = classify(&input, &config);
 
-        // PVS1 + PM2_Supporting = PVS + PP → depends on PM2 being Supporting
-        // PVS1 (VeryStrong) + PM2_Supporting (Supporting) = PVS + PP
-        // This matches "PVS + PM" if PM2 is at Moderate, or "PVS + >=2 PP" if only 2 supporting
-        // With default config (pm2_downgrade_to_supporting=true), PM2 is Supporting
-        // So we have PVS=1, PP=1 (PM2_Supporting counts as Supporting)
-        // That doesn't match any Pathogenic rule, and PVS + PM is Likely Pathogenic but we only have Supporting
-        // Actually PVS >= 1 && pp >= 2 requires 2 supporting, we only have 1
-        // So this should be VUS with just PVS1 + PM2_Supporting
-        // Unless we also have PP2 (misZ < 3.09, so no) or other criteria
-
-        // With PVS1 alone and PM2_Supporting: PVS=1, PP=1 → doesn't match any LP rule either
-        // Need to check: PVS + PM needs at least 1 Moderate, but PM2 is downgraded to Supporting
-        // So the result depends on exact counts
-
-        // Let's verify the counts
+        // PVS1 (VeryStrong) + PM2_Supporting (Supporting) = PVS=1, PP=1
+        // Per ClinGen SVI (Sept 2020): PVS + >=1 PP → Likely Pathogenic
+        // Bayesian Post_P = 0.988, within LP range (0.90–0.99)
         assert!(result.counts.pathogenic_very_strong >= 1); // PVS1
         assert!(result.counts.pathogenic_supporting >= 1); // PM2_Supporting
-
-        // PVS + >=2 PP requires 2 supporting, we only have 1 from PM2_Supporting
-        // So this should be VUS unless we add more evidence
-        // Actually no: let's trace through. PVS=1, PS=0, PM=0, PP=1
-        // No pathogenic rule matches (need PVS+PS, PVS+2PM, PVS+PM+PP, PVS+2PP)
-        // None matches with PS=0, PM=0, PP=1
-        // So it's VUS. Let's verify.
-        assert!(
-            result.classification == AcmgClassification::UncertainSignificance
-                || result.classification == AcmgClassification::LikelyPathogenic
-        );
+        assert_eq!(result.classification, AcmgClassification::LikelyPathogenic);
     }
 
     #[test]
-    fn test_classify_frameshift_lof_gene_pathogenic_with_more_evidence() {
+    fn test_classify_frameshift_revel_does_not_drive_pathogenic() {
+        // Pre-PR1, a high REVEL score on a frameshift incorrectly fired
+        // PP3_Strong, pushing PVS1 + REVEL → Pathogenic via the PVS+PS rule.
+        // Per Pejaver 2022, REVEL is calibrated for missense only and must
+        // not contribute to non-missense classification. Without other
+        // pathogenic-Strong evidence, PVS1 + PM2_Supporting tops out at LP
+        // via the ClinGen SVI PVS+PP rule.
         let mut input = make_input(
             vec![Consequence::FrameshiftVariant],
             Impact::High,
@@ -163,18 +147,11 @@ mod tests {
             mis_z: Some(2.5),
             syn_z: Some(0.5),
         });
-        // Add REVEL high score for PP3 (though REVEL is really for missense, it still triggers)
         input.revel = Some(RevelData { score: Some(0.95) });
-        // gnomAD absent → PM2_Supporting
-        // This gives us PVS1 + PP3_Strong + PM2_Supporting
-        // PVS=1 + PS=0 (PP3_Strong counts as Strong? No, PP3 is pathogenic supporting elevated to Strong)
-        // Actually PP3_Strong: code="PP3_Strong", direction=Pathogenic, strength=Strong
-        // So that counts as PS=1
-        // PVS=1 + PS=1 → Pathogenic (rule: PVS + >=1 PS)
 
         let config = AcmgConfig::default();
         let result = classify(&input, &config);
-        assert_eq!(result.classification, AcmgClassification::Pathogenic);
+        assert_eq!(result.classification, AcmgClassification::LikelyPathogenic);
     }
 
     #[test]

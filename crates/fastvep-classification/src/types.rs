@@ -149,7 +149,15 @@ impl EvidenceCounts {
                 (EvidenceDirection::Benign, EvidenceStrength::Moderate) => {
                     counts.benign_strong += 1
                 }
-                _ => {}
+                // Benign Very Strong (e.g. BP4_VeryStrong from REVEL ≤ 0.003 per
+                // Pejaver 2022) reaches the Benign classification on its own under
+                // the Tavtigian Bayesian framework. Counting it as 2 BS triggers
+                // the existing ≥2 BS → Benign rule without introducing a new slot.
+                (EvidenceDirection::Benign, EvidenceStrength::VeryStrong) => {
+                    counts.benign_strong += 2
+                }
+                // Pathogenic + Standalone is not defined in ACMG/AMP.
+                (EvidenceDirection::Pathogenic, EvidenceStrength::Standalone) => {}
             }
         }
         counts
