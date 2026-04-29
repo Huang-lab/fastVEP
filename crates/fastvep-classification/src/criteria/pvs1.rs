@@ -166,6 +166,7 @@ mod tests {
             gene_constraints,
             omim,
             clinvar_protein: None,
+            hgvs_c: None,
             in_repeat_region: None,
             at_exon_edge: None,
             intronic_offset: None,

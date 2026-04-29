@@ -19,7 +19,7 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 | PS2 | Strong | Confirmed de novo (trio) | VCF genotype (proband + both parents) |
 | PS4 | Strong | Prevalence in affected vs controls | ClinVar 3-star+ expert panel |
 | PM1 | Moderate | Mutational hotspot / functional domain | ClinVar protein-position index (pathogenic density) |
-| PM2 | Supporting* | Absent/rare in population | gnomAD raw AF, inheritance-aware (AD/unknown: AC=0; AR: AF ≤ 0.00007) — ClinGen SVI v1.0 |
+| PM2 | Supporting* | Absent/rare in population | gnomAD allele frequency (AF ≤ 0.0001) |
 | PM3 | Moderate | In trans with pathogenic (recessive) | VCF genotype + OMIM inheritance + ClinVar companion |
 | PM4 | Moderate | Protein length change | Consequence (in-frame indel, stop-loss) |
 | PM5 | Moderate | Novel missense at known pathogenic position | ClinVar protein-position index |
@@ -31,13 +31,13 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 
 | Criterion | Strength | Description | Data Source |
 |-----------|----------|-------------|-------------|
-| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population allele frequency |
+| BA1 | Standalone | Common variant (AF > 5%) — except 9 known-pathogenic high-AF alleles per Ghosh 2018 | gnomAD max population allele frequency + ClinGen BA1 exception list |
 | BS1 | Strong | Greater than expected frequency | gnomAD allele frequency (AF > 0.01) |
 | BS2 | Strong | Observed in healthy adults | gnomAD homozygote count + OMIM inheritance |
 | BP1 | Supporting | Missense in truncation-disease gene | gnomAD gene constraints (pLI + misZ) |
 | BP3 | Supporting | In-frame indel in repeat region | Consequence + RepeatMasker |
 | BP4 | Supporting+ | Computational benign evidence | REVEL (ClinGen SVI calibrated), SIFT/PolyPhen, PhyloP |
-| BP7 | Supporting | Synonymous (mid-exon) or deep-intronic, no splice, not conserved | Consequence + SpliceAI + PhyloP + transcript exon coords (Walker 2023) |
+| BP7 | Supporting | Synonymous, no splice, not conserved | Consequence + SpliceAI + PhyloP |
 
 *PM2 downgraded from Moderate to Supporting per ClinGen SVI recommendation.
 +PP3/BP4 use ClinGen SVI calibrated REVEL thresholds with strength escalation to Moderate or Strong.
@@ -57,42 +57,31 @@ BP4 (benign computational evidence):
 - **Moderate**: REVEL ≤ 0.183 (counts as Benign Strong in combination rules)
 - **Strong**: REVEL ≤ 0.016
 
-### PM2 — Inheritance-Aware Frequency (ClinGen SVI v1.0)
-
-Per ClinGen SVI Recommendation for PM2 v1.0 (Sept 2020):
-- Strength is downgraded to **Supporting** by default (`pm2_downgrade_to_supporting=true`).
-- Uses **raw gnomAD allele frequency** (NOT filtering allele frequency / FAF).
-- Threshold depends on inheritance, inferred from OMIM phenotypes:
-  - **Autosomal recessive**: AF ≤ **0.00007** (0.007%)
-  - **Autosomal dominant or unknown**: strict absence (AC = 0, AF = 0)
-- A per-gene `pm2_af_threshold` override (in `gene_overrides`) takes
-  precedence over the inheritance-based default — this is how VCEPs apply
-  gene-specific calibrated thresholds.
-
 ### SpliceAI Integration
 
 PP3 also evaluates SpliceAI delta scores for splice impact:
 - **Supporting**: max delta score ≥ 0.2
 - **Strong**: max delta score ≥ 0.8
 
-### BP7 Refinements (Walker 2023, ClinGen SVI Splicing Subgroup)
+### BA1 Exception List (Ghosh 2018)
 
-BP7 follows the original synonymous-low-impact rule plus two ClinGen SVI
-refinements (Walker et al. 2023, *Am J Hum Genet*):
+Per the ClinGen SVI updated recommendation for BA1 (Ghosh et al. 2018, *Hum
+Mutat*), nine variants are **exempt** from BA1 despite exceeding the 5% AF
+threshold. The classifier embeds this list and refuses to call BA1 for any
+allele on it. Match is on `(gene_symbol, hgvs_c)` (case-insensitive). The
+list is configurable via `config.ba1_exceptions` so VCEPs can extend it.
 
-1. **Exon-edge exclusion**: BP7 cannot fire for synonymous variants at the
-   first base or last 3 bases of an exon (the canonical splice region).
-   SpliceAI is unreliable in these positions, so a low SpliceAI score there
-   is not adequate evidence for BP7. Requires `at_exon_edge` provided by the
-   pipeline (computed from cached transcript exon coordinates).
-
-2. **Deep-intronic extension**: BP7 may also fire for intronic variants
-   located outside the standard splice region — donor-side offset ≥ 7 bp or
-   acceptor-side offset ≤ -21 bp — when SpliceAI is low and the position is
-   not highly conserved. Requires `intronic_offset` provided by the pipeline.
-
-When the pipeline does not yet supply these signals, BP7 falls back to the
-legacy synonymous-only rule.
+| Gene | Variant | Note |
+|------|---------|------|
+| ACAD9 | c.-44_-41dupTAAG | VUS |
+| ACADS | c.511C>T (p.Arg171Trp) | VUS |
+| BTD | c.1330G>C (p.Asp444His) | Pathogenic — biotinidase deficiency |
+| GJB2 | c.109G>A (p.Val37Ile) | Pathogenic — DFNB1 hearing loss |
+| HFE | c.187C>G (p.His63Asp) | Pathogenic — hereditary hemochromatosis |
+| HFE | c.845G>A (p.Cys282Tyr) | Pathogenic — hereditary hemochromatosis |
+| MEFV | c.1105C>T (p.Pro369Ser) | VUS |
+| MEFV | c.1223G>A (p.Arg408Gln) | VUS |
+| PIBF1 | c.1214G>A (p.Arg405Gln) | VUS |
 
 ### Combination Rules
 
@@ -231,5 +220,5 @@ bs1_af_threshold = 0.001
 
 - Richards S, et al. Standards and guidelines for the interpretation of sequence variants. *Genet Med*. 2015;17(5):405-424.
 - Pejaver V, et al. Calibration of computational tools for missense variant pathogenicity classification and ClinGen recommendations for PP3/BP4 criteria. *Am J Hum Genet*. 2022;109(12):2163-2177.
-- Walker LC, et al. (ClinGen SVI Splicing Subgroup). Using the ACMG/AMP framework to capture evidence related to predicted and observed impact on splicing: Recommendations from the ClinGen SVI Splicing Subgroup. *Am J Hum Genet*. 2023;110(7):1046-1067.
 - ClinGen Sequence Variant Interpretation Working Group. Recommendations for ACMG/AMP guideline criteria modifications.
+- Ghosh R, et al. Updated recommendation for the benign stand-alone ACMG/AMP criterion. *Hum Mutat*. 2018;39(11):1525-1530.

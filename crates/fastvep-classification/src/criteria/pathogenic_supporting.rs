@@ -363,6 +363,7 @@ mod tests {
             gene_constraints: None,
             omim: None,
             clinvar_protein: None,
+            hgvs_c: None,
             in_repeat_region: None,
             at_exon_edge: None,
             intronic_offset: None,
@@ -433,6 +434,7 @@ mod tests {
             gene_constraints: None,
             omim: None,
             clinvar_protein: None,
+            hgvs_c: None,
             in_repeat_region: None,
             at_exon_edge: None,
             intronic_offset: None,
@@ -492,6 +494,7 @@ mod tests {
             companion_variants: vec![],
             at_exon_edge: None,
             intronic_offset: None,
+            hgvs_c: None,
         };
         // Synthesize a dbNSFP entry with deleterious SIFT + damaging PolyPhen
         // by going through the same JSON path the evaluator uses.
@@ -525,6 +528,7 @@ mod tests {
             }),
             omim: None,
             clinvar_protein: None,
+            hgvs_c: None,
             in_repeat_region: None,
             at_exon_edge: None,
             intronic_offset: None,
@@ -559,6 +563,7 @@ mod tests {
             }),
             omim: None,
             clinvar_protein: None,
+            hgvs_c: None,
             in_repeat_region: None,
             at_exon_edge: None,
             intronic_offset: None,
