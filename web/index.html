@@ -486,6 +486,31 @@
     .impact-LOW { background: rgba(59,130,246,0.15); color: var(--low); }
     .impact-MODIFIER { background: rgba(107,114,128,0.15); color: var(--modifier); }
 
+    /* ACMG-AMP classification badges */
+    .acmg-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+    .acmg-P   { background:#ef4444; color:#fff; }
+    .acmg-LP  { background:#f59e0b; color:#fff; }
+    .acmg-VUS { background:#6b7280; color:#fff; }
+    .acmg-LB  { background:#3b82f6; color:#fff; }
+    .acmg-B   { background:#10b981; color:#fff; }
+
+    /* ACMG detail modal */
+    .acmg-modal-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; display:flex; align-items:center; justify-content:center; }
+    .acmg-modal { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:20px; max-width:720px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+    .acmg-modal h3 { margin:0 0 12px 0; display:flex; align-items:center; gap:10px; }
+    .acmg-modal .close-btn { margin-left:auto; cursor:pointer; background:none; border:none; color:var(--text); font-size:20px; }
+    .acmg-criteria-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+    .acmg-criterion { padding:6px 10px; border-radius:4px; font-size:12px; border:1px solid var(--border); display:flex; align-items:center; gap:6px; }
+    .acmg-criterion.met-pathogenic { background:rgba(239,68,68,0.12); border-color:rgba(239,68,68,0.3); }
+    .acmg-criterion.met-benign { background:rgba(16,185,129,0.12); border-color:rgba(16,185,129,0.3); }
+    .acmg-criterion.not-met { opacity:0.45; }
+    .acmg-criterion.not-evaluated { opacity:0.3; font-style:italic; }
+    .acmg-criterion .code { font-weight:700; font-family:monospace; min-width:80px; }
+    .acmg-criterion .strength { font-size:10px; padding:1px 4px; border-radius:2px; background:var(--surface2); }
+    .acmg-criterion .summary { font-size:11px; color:var(--text-secondary); margin-left:auto; text-align:right; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .acmg-counts { display:flex; gap:12px; margin:10px 0; font-size:12px; flex-wrap:wrap; }
+    .acmg-counts .count { padding:2px 8px; border-radius:3px; background:var(--surface2); }
+
     /* Consequence tags */
     .consequence-tag {
       display: inline-block;
@@ -722,6 +747,7 @@
           <div class="control-group">
             <div class="checkbox-group">
               <label title="Report one consequence per variant using the canonical (MANE Select preferred) transcript"><input type="checkbox" id="optPick"><span>Show canonical transcript only</span></label>
+              <label title="Run ACMG-AMP variant classification (Richards et al. 2015) to assess pathogenicity"><input type="checkbox" id="optAcmg" checked><span>ACMG-AMP Classification</span></label>
             </div>
           </div>
           <div class="btn-row">
@@ -804,27 +830,28 @@
                 <th onclick="sortTable(1)">Allele</th>
                 <th onclick="sortTable(2)">Consequence</th>
                 <th onclick="sortTable(3)">Impact</th>
-                <th onclick="sortTable(4)">Symbol</th>
-                <th onclick="sortTable(5)">Gene</th>
-                <th onclick="sortTable(6)">Transcript</th>
-                <th onclick="sortTable(7)">Biotype</th>
-                <th onclick="sortTable(8)">Canonical</th>
-                <th onclick="sortTable(9)">MANE</th>
-                <th onclick="sortTable(10)">ENSP</th>
-                <th onclick="sortTable(11)">TSL</th>
-                <th onclick="sortTable(12)">CCDS</th>
-                <th onclick="sortTable(13)">Exon</th>
-                <th onclick="sortTable(14)">Intron</th>
-                <th onclick="sortTable(15)">HGVSg</th>
-                <th onclick="sortTable(16)">HGVSc</th>
-                <th onclick="sortTable(17)">HGVSp</th>
-                <th onclick="sortTable(18)">cDNA</th>
-                <th onclick="sortTable(19)">CDS</th>
-                <th onclick="sortTable(20)">Protein</th>
-                <th onclick="sortTable(21)">AA</th>
-                <th onclick="sortTable(22)">Codons</th>
-                <th onclick="sortTable(23)">Distance</th>
-                <th onclick="sortTable(24)">Strand</th>
+                <th onclick="sortTable(4)">ACMG</th>
+                <th onclick="sortTable(5)">Symbol</th>
+                <th onclick="sortTable(6)">Gene</th>
+                <th onclick="sortTable(7)">Transcript</th>
+                <th onclick="sortTable(8)">Biotype</th>
+                <th onclick="sortTable(9)">Canonical</th>
+                <th onclick="sortTable(10)">MANE</th>
+                <th onclick="sortTable(11)">ENSP</th>
+                <th onclick="sortTable(12)">TSL</th>
+                <th onclick="sortTable(13)">CCDS</th>
+                <th onclick="sortTable(14)">Exon</th>
+                <th onclick="sortTable(15)">Intron</th>
+                <th onclick="sortTable(16)">HGVSg</th>
+                <th onclick="sortTable(17)">HGVSc</th>
+                <th onclick="sortTable(18)">HGVSp</th>
+                <th onclick="sortTable(19)">cDNA</th>
+                <th onclick="sortTable(20)">CDS</th>
+                <th onclick="sortTable(21)">Protein</th>
+                <th onclick="sortTable(22)">AA</th>
+                <th onclick="sortTable(23)">Codons</th>
+                <th onclick="sortTable(24)">Distance</th>
+                <th onclick="sortTable(25)">Strand</th>
               </tr>
             </thead>
             <tbody id="resultsBody"></tbody>
@@ -1593,6 +1620,7 @@ async function annotate() {
 
 async function annotateBackend(vcfText) {
   const pick = document.getElementById('optPick').checked;
+  const acmg = document.getElementById('optAcmg').checked;
   const variantCount = vcfText.split('\n').filter(l => l && !l.startsWith('#')).length;
   updateLoading(`Annotating ${variantCount.toLocaleString()} variant${variantCount === 1 ? '' : 's'}…`);
   const t0 = performance.now();
@@ -1600,7 +1628,7 @@ async function annotateBackend(vcfText) {
     const r = await fetch('/api/annotate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vcf: vcfText, pick }),
+      body: JSON.stringify({ vcf: vcfText, pick, acmg }),
     });
     const data = await r.json();
     if (data.error) {
@@ -1644,7 +1672,7 @@ function extractSA(obj) {
     'hgvsc','hgvsp','hgvsg','distance','hgvs_offset',
     'mane_select','mane_plus_clinical','tsl','ccds','protein_id','gencode_primary',
     'seq_region_name','start','end','allele_string','most_severe_consequence',
-    'transcript_consequences','id','variant_type','sv_end','sv_len','genes']);
+    'transcript_consequences','id','variant_type','sv_end','sv_len','genes','acmg']);
   for (const [k, v] of Object.entries(obj)) {
     if (!stdKeys.has(k) && v != null && typeof v === 'object') {
       sa[k] = v;
@@ -1743,6 +1771,7 @@ function convertServerResults(results) {
         hgvsc: tc.hgvsc || null,
         hgvsp: tc.hgvsp || null,
         hgvsg: tc.hgvsg || null,
+        acmg: tc.acmg || null,
         sa: Object.keys(mergedSA).length > 0 ? mergedSA : null,
       });
     }
@@ -1866,10 +1895,13 @@ function renderTable() {
     }
   }
 
+  filteredResults = [];
+  let shown = 0;
   for (const r of allResults) {
     if (impFilter && r.impact !== impFilter) continue;
     const text = [r.variant.chrom, r.transcript?.gene?.symbol, r.transcript?.id, ...r.consequences].join(' ').toLowerCase();
     if (search && !text.includes(search)) continue;
+    filteredResults.push(r);
     const loc = r.variant.start === r.variant.end ? `${r.variant.chrom}:${r.variant.start}` : `${r.variant.chrom}:${r.variant.start}-${r.variant.end}`;
     const tr = document.createElement('tr');
     const strandStr = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
@@ -1886,11 +1918,13 @@ function renderTable() {
     if (t?.mane_select) maneBadge = '<span class="mane-badge mane-badge-select">MANE Select</span>';
     else if (t?.mane_plus_clinical) maneBadge = '<span class="mane-badge mane-badge-clinical">MANE+Clinical</span>';
 
+    const acmgCell = r.acmg ? `<span class="acmg-badge acmg-${r.acmg.shorthand}" onclick="showAcmgDetail(event, ${shown})" title="${(r.acmg.criteria||[]).filter(c=>c.met).map(c=>c.code).join(', ')}">${r.acmg.classification?.replace(/_/g,' ')||'VUS'}</span>` : '-';
     tr.innerHTML = `
       <td>${loc}</td>
       <td><code>${r.allele}</code></td>
       <td>${r.consequences.map(c=>`<span class="consequence-tag">${c}</span>`).join(' ')}</td>
       <td><span class="impact impact-${r.impact}">${r.impact}</span></td>
+      <td>${acmgCell}</td>
       <td>${t?.gene?.symbol||'-'}</td>
       <td><code>${t?.gene?.id||'-'}</code></td>
       <td><code>${t?.id||'-'}</code></td>
@@ -1914,6 +1948,7 @@ function renderTable() {
       ${saCells}
       <td>${strandStr}</td>`;
     tbody.appendChild(tr);
+    shown++;
   }
 }
 
@@ -1962,6 +1997,25 @@ function renderSummary() {
         const cnt = allResults.filter(r=>r.transcript?.gene?.symbol===g).length;
         return `<div class="bar-row"><span class="bar-label">${g}</span><div class="bar-track"><div class="bar-fill" style="width:${cnt/allResults.length*100}%;background:var(--accent)"></div></div><span class="bar-count">${cnt}</span></div>`;
       }).join('')}
+      </div>
+    </div>
+    <div class="summary-card">
+      <h3>ACMG-AMP Classification</h3>
+      <div class="bar-chart">${(() => {
+        const acmgCount = {P:0,LP:0,VUS:0,LB:0,B:0};
+        const acmgColors = {P:'#ef4444',LP:'#f59e0b',VUS:'#6b7280',LB:'#3b82f6',B:'#10b981'};
+        const acmgLabels = {P:'Pathogenic',LP:'Likely Pathogenic',VUS:'Uncertain Significance',LB:'Likely Benign',B:'Benign'};
+        for (const r of allResults) { if (r.acmg?.shorthand) acmgCount[r.acmg.shorthand]++; }
+        const maxA = Math.max(...Object.values(acmgCount), 1);
+        const hasAny = Object.values(acmgCount).some(v => v > 0);
+        if (!hasAny) return '<div style="color:var(--text-secondary);font-size:12px;padding:8px">No ACMG classifications available. Enable the ACMG checkbox and re-annotate.</div>';
+        return Object.entries(acmgCount).filter(([,v])=>v>0).map(([k,v])=>`
+          <div class="bar-row">
+            <span class="bar-label"><span class="acmg-badge acmg-${k}">${acmgLabels[k]}</span></span>
+            <div class="bar-track"><div class="bar-fill" style="width:${v/maxA*100}%;background:${acmgColors[k]}"></div></div>
+            <span class="bar-count">${v}</span>
+          </div>`).join('');
+      })()}
       </div>
     </div>
     <div class="summary-card">
@@ -2016,19 +2070,24 @@ function buildOutputText(fmt) {
         codons: r.codons || null,
         distance: r.dist || null,
         strand: r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : null,
+        acmg_classification: r.acmg?.classification || null,
+        acmg_criteria: r.acmg?.criteria?.filter(c=>c.met).map(c=>c.code).join(',') || null,
       };
+      if (r.acmg) obj.acmg = r.acmg;
       if (r.sa) Object.assign(obj, r.sa);
       return obj;
     }), null, 2);
   } else if (fmt === 'tab') {
     const saHeader = saKeys.length ? '\t' + saKeys.join('\t') : '';
-    text = `#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tMANE\tENSP\tTSL\tCCDS\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
+    text = `#Location\tAllele\tConsequence\tIMPACT\tACMG\tACMG_CRITERIA\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tMANE\tENSP\tTSL\tCCDS\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
     for (const r of allResults) {
       const strand = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
       const saCols = saKeys.map(k => r.sa?.[k] != null ? formatSAValue(r.sa[k]) : '-').join('\t');
       const saStr = saKeys.length ? '\t' + saCols : '';
       const mane = r.transcript?.mane_select ? 'MANE_Select' : r.transcript?.mane_plus_clinical ? 'MANE_Plus_Clinical' : '-';
-      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${mane}\t${r.transcript?.protein_id||'-'}\t${r.transcript?.tsl!=null?r.transcript.tsl:'-'}\t${r.transcript?.ccds||'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
+      const acmgCls = r.acmg?.shorthand || '-';
+      const acmgCrit = r.acmg?.criteria?.filter(c=>c.met).map(c=>c.code).join(',') || '-';
+      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${acmgCls}\t${acmgCrit}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${mane}\t${r.transcript?.protein_id||'-'}\t${r.transcript?.tsl!=null?r.transcript.tsl:'-'}\t${r.transcript?.ccds||'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
     }
   } else if (fmt === 'vcf') {
     const CSQ_FORMAT = 'Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons|Existing_variation|REF_ALLELE|UPLOADED_ALLELE|DISTANCE|STRAND|FLAGS|CANONICAL|SYMBOL_SOURCE|HGNC_ID|MANE|MANE_SELECT|MANE_PLUS_CLINICAL|TSL|APPRIS|CCDS|ENSP|SOURCE|HGVS_OFFSET|SIFT|PolyPhen|AF|CLIN_SIG|SOMATIC|PHENO|PUBMED|MOTIF_NAME|MOTIF_POS|HIGH_INF_POS|MOTIF_SCORE_CHANGE|TRANSCRIPTION_FACTORS';
@@ -2134,6 +2193,68 @@ function toggleAdvanced() {
     toggle.innerHTML = 'Advanced options &#9662;';
   }
 }
+
+// ── ACMG-AMP Evidence Detail Modal ──
+function showAcmgDetail(event, resultIndex) {
+  event.stopPropagation();
+  const r = filteredResults[resultIndex];
+  if (!r || !r.acmg) return;
+  const a = r.acmg;
+
+  // Remove existing modal
+  document.querySelectorAll('.acmg-modal-overlay').forEach(el => el.remove());
+
+  const overlay = document.createElement('div');
+  overlay.className = 'acmg-modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const metCriteria = (a.criteria||[]).filter(c => c.met);
+  const metCodes = metCriteria.map(c => c.code).join(', ') || 'None';
+
+  let criteriaHTML = '';
+  for (const c of (a.criteria || [])) {
+    let cls = 'not-met';
+    if (!c.evaluated) cls = 'not-evaluated';
+    else if (c.met && c.direction === 'Pathogenic') cls = 'met-pathogenic';
+    else if (c.met && c.direction === 'Benign') cls = 'met-benign';
+
+    const icon = !c.evaluated ? '&#x25CB;' : c.met ? '&#x2713;' : '&#x2717;';
+    criteriaHTML += `<div class="acmg-criterion ${cls}" title="${c.summary}">
+      <span>${icon}</span>
+      <span class="code">${c.code}</span>
+      <span class="strength">${c.strength?.replace(/_/g,' ')||''}</span>
+      <span class="summary">${c.summary||''}</span>
+    </div>`;
+  }
+
+  const counts = a.counts || {};
+  overlay.innerHTML = `<div class="acmg-modal">
+    <h3>
+      <span class="acmg-badge acmg-${a.shorthand}">${a.classification?.replace(/_/g,' ')}</span>
+      <span style="font-size:13px;color:var(--text-secondary)">${r.transcript?.gene?.symbol||''} &middot; ${r.hgvsc||r.hgvsp||''}</span>
+      <button class="close-btn" onclick="this.closest('.acmg-modal-overlay').remove()">&times;</button>
+    </h3>
+    ${a.triggered_rule ? `<div style="margin-bottom:10px;font-size:12px;color:var(--text-secondary)">Triggered rule: <strong>${a.triggered_rule}</strong></div>` : ''}
+    <div class="acmg-counts">
+      <span class="count" style="color:#ef4444">PVS: ${counts.pathogenic_very_strong||0}</span>
+      <span class="count" style="color:#ef4444">PS: ${counts.pathogenic_strong||0}</span>
+      <span class="count" style="color:#f59e0b">PM: ${counts.pathogenic_moderate||0}</span>
+      <span class="count" style="color:#f59e0b">PP: ${counts.pathogenic_supporting||0}</span>
+      <span class="count" style="color:#10b981">BA: ${counts.benign_standalone||0}</span>
+      <span class="count" style="color:#3b82f6">BS: ${counts.benign_strong||0}</span>
+      <span class="count" style="color:#3b82f6">BP: ${counts.benign_supporting||0}</span>
+    </div>
+    <div style="margin-bottom:8px;font-size:12px">Met criteria: <strong>${metCodes}</strong></div>
+    <div class="acmg-criteria-grid">${criteriaHTML}</div>
+    <div style="margin-top:12px;font-size:11px;color:var(--text-secondary)">
+      Based on ACMG-AMP guidelines (Richards et al. 2015) with ClinGen SVI recommendations.
+      Criteria marked &#x25CB; require clinical data not available from automated annotation.
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+let filteredResults = [];
 
 function sortTable(col) {
   const tbody = document.getElementById('resultsBody');

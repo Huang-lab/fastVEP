@@ -46,6 +46,10 @@ pub struct AnnotationContext {
     /// Supplementary annotation providers (ClinVar, gnomAD, etc.)
     /// Wrapped in Mutex because SA readers use internal caches that need &mut.
     pub sa_providers: Vec<Mutex<Box<dyn AnnotationProvider>>>,
+    /// Gene-level annotation providers (OMIM, gnomAD gene constraints, ClinVar protein index).
+    pub gene_providers: Vec<fastvep_sa::gene::GeneIndex>,
+    /// ACMG-AMP classification configuration (None = disabled).
+    pub acmg_config: Option<fastvep_classification::AcmgConfig>,
 }
 
 impl AnnotationContext {
@@ -159,6 +163,12 @@ impl AnnotationContext {
             Vec::new()
         };
 
+        let gene_providers = if let Some(dir) = sa_dir {
+            load_gene_providers(Path::new(dir))?
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             transcript_provider,
             seq_provider,
@@ -167,6 +177,8 @@ impl AnnotationContext {
             distance,
             hgvs: true,
             sa_providers,
+            gene_providers,
+            acmg_config: None,
         })
     }
 
@@ -200,6 +212,7 @@ impl AnnotationContext {
         self.predictor = new_ctx.predictor;
         self.gff3_source = new_ctx.gff3_source;
         self.sa_providers = new_ctx.sa_providers;
+        self.gene_providers = new_ctx.gene_providers;
         Ok(tr_count)
     }
 
@@ -252,6 +265,15 @@ impl AnnotationContext {
         pick: bool,
     ) -> Result<Vec<serde_json::Value>> {
         let mut vcf_parser = VcfParser::new(vcf_text.as_bytes())?;
+
+        // Extract sample names from VCF #CHROM header
+        let sample_names: Vec<String> = vcf_parser
+            .header_lines()
+            .last()
+            .filter(|l| l.starts_with("#CHROM"))
+            .map(|l| l.split('\t').skip(9).map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+
         let mut variants = vcf_parser.read_all()?;
 
         for vf in &mut variants {
@@ -309,6 +331,7 @@ impl AnnotationContext {
                                 sift: None,
                                 polyphen: None,
                                 supplementary: Vec::new(),
+                                acmg_classification: None,
                             };
 
                             if self.hgvs {
@@ -582,7 +605,73 @@ impl AnnotationContext {
                 }
             }
 
+            // Gene-level annotation pass (OMIM, gnomAD gene constraints, etc.)
+            if !self.gene_providers.is_empty() {
+                use fastvep_cache::annotation::GeneAnnotationProvider;
+                let mut seen_genes = std::collections::HashSet::new();
+                for tv in &vf.transcript_variations {
+                    if let Some(gene_sym) = tv.gene_symbol.as_deref() {
+                        if seen_genes.insert(gene_sym.to_string()) {
+                            for gp in &self.gene_providers {
+                                if let Ok(Some(json)) = gp.annotate_gene(gene_sym) {
+                                    vf.gene_annotations.push(
+                                        fastvep_core::GeneAnnotation {
+                                            gene_symbol: gene_sym.to_string(),
+                                            json_key: gp.json_key().to_string(),
+                                            json_string: json,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ACMG-AMP classification pass (after all SA annotations are attached)
+            if let Some(ref acmg_cfg) = self.acmg_config {
+                // Parse sample genotypes if trio config is present
+                let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, &sample_names);
+
+                for tv in &mut vf.transcript_variations {
+                    let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
+                    let gene_anns: Vec<&fastvep_core::GeneAnnotation> =
+                        vf.gene_annotations
+                            .iter()
+                            .filter(|ga| ga.gene_symbol == gene_sym)
+                            .collect();
+                    for aa in &mut tv.allele_annotations {
+                        let input =
+                            fastvep_classification::extract_classification_input(
+                                &aa.consequences,
+                                aa.impact,
+                                tv.gene_symbol.as_deref(),
+                                tv.canonical,
+                                aa.amino_acids.as_ref(),
+                                aa.protein_position.map(|(s, _)| s),
+                                &aa.supplementary,
+                                &gene_anns,
+                                &vf.supplementary_annotations,
+                                trio_genotypes.0.clone(),
+                                trio_genotypes.1.clone(),
+                                trio_genotypes.2.clone(),
+                                vec![], // companion_variants populated in second pass
+                            );
+                        let result = fastvep_classification::classify(&input, acmg_cfg);
+                        aa.acmg_classification =
+                            serde_json::to_value(&result).ok();
+                    }
+                }
+            }
+
             vf.compute_most_severe();
+        }
+
+        // Compound-het enrichment pass: re-evaluate PM3/BP2 with companion variant data
+        if let Some(ref acmg_cfg) = self.acmg_config {
+            if acmg_cfg.trio.is_some() {
+                enrich_compound_het(&mut variants, acmg_cfg, &sample_names);
+            }
         }
 
         Ok(variants.iter().map(|vf| output::format_json(vf)).collect())
@@ -616,6 +705,7 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 sift: None,
                 polyphen: None,
                 supplementary: Vec::new(),
+                acmg_classification: None,
             }],
             canonical: false,
             strand: fastvep_core::Strand::Forward,
@@ -663,6 +753,311 @@ pub fn complement_allele(allele: &Allele) -> Allele {
     }
 }
 
+/// Extract trio genotype information from a VariationFeature's VCF sample columns.
+///
+/// Returns (proband, mother, father) GenotypeInfo tuples.
+fn extract_trio_genotypes(
+    vf: &VariationFeature,
+    acmg_cfg: &fastvep_classification::AcmgConfig,
+    sample_names: &[String],
+) -> (
+    Option<fastvep_classification::GenotypeInfo>,
+    Option<fastvep_classification::GenotypeInfo>,
+    Option<fastvep_classification::GenotypeInfo>,
+) {
+    let trio = match &acmg_cfg.trio {
+        Some(t) => t,
+        None => return (None, None, None),
+    };
+
+    let vcf_fields = match &vf.vcf_fields {
+        Some(f) => f,
+        None => return (None, None, None),
+    };
+
+    // rest[0] is FORMAT, rest[1..] are sample columns
+    if vcf_fields.rest.is_empty() {
+        return (None, None, None);
+    }
+
+    let format_str = &vcf_fields.rest[0];
+    let sample_strs: Vec<&str> = vcf_fields.rest[1..].iter().map(|s| s.as_str()).collect();
+
+    let samples =
+        fastvep_io::sample::parse_samples(format_str, &sample_strs, sample_names);
+
+    let proband_gt = samples
+        .iter()
+        .find(|s| s.name == trio.proband)
+        .map(|s| sample_data_to_genotype_info(s));
+
+    let mother_gt = trio.mother.as_ref().and_then(|name| {
+        samples
+            .iter()
+            .find(|s| &s.name == name)
+            .map(|s| sample_data_to_genotype_info(s))
+    });
+
+    let father_gt = trio.father.as_ref().and_then(|name| {
+        samples
+            .iter()
+            .find(|s| &s.name == name)
+            .map(|s| sample_data_to_genotype_info(s))
+    });
+
+    (proband_gt, mother_gt, father_gt)
+}
+
+/// Convert a SampleData to GenotypeInfo.
+fn sample_data_to_genotype_info(
+    sample: &fastvep_io::sample::SampleData,
+) -> fastvep_classification::GenotypeInfo {
+    let gt = sample.genotype.as_ref();
+    let is_het = gt.map_or(false, |g| g.is_het());
+    let is_hom_ref = gt.map_or(false, |g| g.is_hom_ref());
+    let is_hom_alt = gt.map_or(false, |g| g.is_hom_alt());
+    let is_missing = gt.map_or(true, |g| g.is_missing());
+    let is_phased = gt.map_or(false, |g| g.phased);
+
+    // Determine which alt allele index is carried
+    let alt_allele_index = gt.and_then(|g| {
+        g.alleles
+            .iter()
+            .filter_map(|a| *a)
+            .find(|&a| a > 0)
+            .map(|a| a)
+    });
+
+    fastvep_classification::GenotypeInfo {
+        is_het,
+        is_hom_ref,
+        is_hom_alt,
+        is_missing,
+        is_phased,
+        depth: sample.depth,
+        quality: sample.quality,
+        alt_allele_index,
+    }
+}
+
+/// Compound-het enrichment pass: after all variants are annotated,
+/// group by gene and identify companion variant relationships,
+/// then re-evaluate PM3/BP2 with companion data.
+fn enrich_compound_het(
+    variants: &mut [VariationFeature],
+    acmg_cfg: &fastvep_classification::AcmgConfig,
+    sample_names: &[String],
+) {
+    use std::collections::HashMap;
+
+    // Collect per-gene variant info: (variant_index, gene_symbol, ClinVar P/LP flags, proband_het, is_phased, hgvsc, allele_indices for phase)
+    struct VariantGeneInfo {
+        vf_idx: usize,
+        tv_idx: usize,
+        aa_idx: usize,
+        is_clinvar_pathogenic: bool,
+        is_clinvar_likely_pathogenic: bool,
+        proband_het: bool,
+        is_phased: bool,
+        /// Proband's allele indices for phase comparison
+        proband_alleles: Vec<Option<u32>>,
+        hgvsc: Option<String>,
+    }
+
+    let mut gene_variants: HashMap<String, Vec<VariantGeneInfo>> = HashMap::new();
+
+    for (vf_idx, vf) in variants.iter().enumerate() {
+        let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, sample_names);
+        let proband_gt = &trio_genotypes.0;
+
+        for (tv_idx, tv) in vf.transcript_variations.iter().enumerate() {
+            let gene_sym = match tv.gene_symbol.as_deref() {
+                Some(g) if !g.is_empty() && g != "-" => g.to_string(),
+                _ => continue,
+            };
+
+            for (aa_idx, aa) in tv.allele_annotations.iter().enumerate() {
+                let is_clinvar_pathogenic = aa
+                    .acmg_classification
+                    .as_ref()
+                    .and_then(|v| v.get("criteria"))
+                    .and_then(|c| c.as_array())
+                    .map_or(false, |criteria| {
+                        // Check if this variant has ClinVar pathogenic data
+                        criteria.iter().any(|c| {
+                            c.get("code")
+                                .and_then(|v| v.as_str())
+                                .map_or(false, |code| code == "PP5" || code == "PS4")
+                                && c.get("met")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false)
+                        })
+                    });
+
+                // Classify ClinVar supplementary as Pathogenic / Likely pathogenic
+                // separately so PM3 v1.0 can score them at their proper point
+                // values. A bare substring match on "pathogenic" matches both
+                // "Pathogenic" and "Likely pathogenic" — this would over-score
+                // LP companions as P. Strip "Likely pathogenic" first, then
+                // see if any "pathogenic" remains: that residual signals true P.
+                let (clinvar_p_from_sa, clinvar_lp_from_sa) = aa
+                    .supplementary
+                    .iter()
+                    .filter(|(key, json)| {
+                        key == "clinvar"
+                            && !json.contains("Conflicting")
+                            && !json.contains("conflicting")
+                    })
+                    .map(|(_, json)| {
+                        let lower = json.to_lowercase();
+                        let has_lp = lower.contains("likely pathogenic");
+                        let stripped = lower.replace("likely pathogenic", "");
+                        let has_p = stripped.contains("pathogenic");
+                        (has_p, has_lp && !has_p)
+                    })
+                    .fold((false, false), |(p_acc, lp_acc), (p, lp)| {
+                        (p_acc || p, lp_acc || lp)
+                    });
+
+                let proband_het = proband_gt.as_ref().map_or(false, |g| g.is_het);
+                let is_phased = proband_gt.as_ref().map_or(false, |g| g.is_phased);
+                let proband_alleles = if let Some(ref vcf_fields) = vf.vcf_fields {
+                    if !vcf_fields.rest.is_empty() && !sample_names.is_empty() {
+                        let format_str = &vcf_fields.rest[0];
+                        let sample_strs: Vec<&str> =
+                            vcf_fields.rest[1..].iter().map(|s| s.as_str()).collect();
+                        let samples = fastvep_io::sample::parse_samples(
+                            format_str,
+                            &sample_strs,
+                            sample_names,
+                        );
+                        if let Some(trio) = &acmg_cfg.trio {
+                            samples
+                                .iter()
+                                .find(|s| s.name == trio.proband)
+                                .and_then(|s| s.genotype.as_ref())
+                                .map(|g| g.alleles.clone())
+                                .unwrap_or_default()
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                };
+
+                gene_variants
+                    .entry(gene_sym.clone())
+                    .or_default()
+                    .push(VariantGeneInfo {
+                        vf_idx,
+                        tv_idx,
+                        aa_idx,
+                        is_clinvar_pathogenic: is_clinvar_pathogenic || clinvar_p_from_sa,
+                        is_clinvar_likely_pathogenic: clinvar_lp_from_sa,
+                        proband_het,
+                        is_phased,
+                        proband_alleles,
+                        hgvsc: aa.hgvsc.clone(),
+                    });
+            }
+        }
+    }
+
+    // For each gene with multiple het variants, build companion relationships and re-classify
+    for (_gene, gene_infos) in &gene_variants {
+        let het_variants: Vec<&VariantGeneInfo> =
+            gene_infos.iter().filter(|v| v.proband_het).collect();
+        if het_variants.len() < 2 {
+            continue;
+        }
+
+        // For each het variant, build companion list from other het variants in the gene
+        for info in &het_variants {
+            let companions: Vec<fastvep_classification::CompanionVariant> = het_variants
+                .iter()
+                .filter(|other| {
+                    other.vf_idx != info.vf_idx
+                        || other.tv_idx != info.tv_idx
+                        || other.aa_idx != info.aa_idx
+                })
+                .map(|other| {
+                    // Determine trans/cis from phase information
+                    let is_in_trans = if info.is_phased && other.is_phased {
+                        // Both phased: check if they're on different haplotypes
+                        // In a phased genotype like 0|1 vs 1|0, alleles at same index
+                        // come from the same parent. So het 0|1 and 1|0 means they're
+                        // on different haplotypes (trans).
+                        if info.proband_alleles.len() >= 2 && other.proband_alleles.len() >= 2 {
+                            let info_alt_on_first = info
+                                .proband_alleles
+                                .first()
+                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                            let other_alt_on_first = other
+                                .proband_alleles
+                                .first()
+                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                            // If alt alleles are on different haplotypes, they're in trans
+                            Some(info_alt_on_first != other_alt_on_first)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    fastvep_classification::CompanionVariant {
+                        is_clinvar_pathogenic: other.is_clinvar_pathogenic,
+                        is_clinvar_likely_pathogenic: other.is_clinvar_likely_pathogenic,
+                        is_in_trans,
+                        proband_het: other.proband_het,
+                        hgvsc: other.hgvsc.clone(),
+                    }
+                })
+                .collect();
+
+            if companions.is_empty() {
+                continue;
+            }
+
+            // Re-extract classification input with companion data and re-classify
+            let vf = &variants[info.vf_idx];
+            let tv = &vf.transcript_variations[info.tv_idx];
+            let aa = &tv.allele_annotations[info.aa_idx];
+            let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
+            let gene_anns: Vec<&fastvep_core::GeneAnnotation> = vf
+                .gene_annotations
+                .iter()
+                .filter(|ga| ga.gene_symbol == gene_sym)
+                .collect();
+
+            let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, sample_names);
+
+            let input = fastvep_classification::extract_classification_input(
+                &aa.consequences,
+                aa.impact,
+                tv.gene_symbol.as_deref(),
+                tv.canonical,
+                aa.amino_acids.as_ref(),
+                aa.protein_position.map(|(s, _)| s),
+                &aa.supplementary,
+                &gene_anns,
+                &vf.supplementary_annotations,
+                trio_genotypes.0,
+                trio_genotypes.1,
+                trio_genotypes.2,
+                companions,
+            );
+            let result = fastvep_classification::classify(&input, acmg_cfg);
+            variants[info.vf_idx].transcript_variations[info.tv_idx].allele_annotations
+                [info.aa_idx]
+                .acmg_classification = serde_json::to_value(&result).ok();
+        }
+    }
+}
+
 /// Load supplementary annotation providers (.osa, .osa2 files) from a directory.
 pub fn load_sa_providers(
     sa_dir: &Path,
@@ -705,6 +1100,45 @@ pub fn load_sa_providers(
                 }
             },
             _ => {}
+        }
+    }
+
+    Ok(providers)
+}
+
+/// Load gene-level annotation providers (.oga files) from a directory.
+pub fn load_gene_providers(
+    sa_dir: &Path,
+) -> Result<Vec<fastvep_sa::gene::GeneIndex>> {
+    let mut providers = Vec::new();
+
+    if !sa_dir.is_dir() {
+        return Ok(providers);
+    }
+
+    for entry in std::fs::read_dir(sa_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str());
+
+        if ext == Some("oga") {
+            match std::fs::File::open(&path)
+                .map_err(anyhow::Error::from)
+                .and_then(|mut f| fastvep_sa::gene::GeneIndex::read_from(&mut f))
+            {
+                Ok(index) => {
+                    tracing::info!(
+                        "Loaded gene annotations: {} ({}, {} genes)",
+                        index.header.name,
+                        path.display(),
+                        index.gene_count()
+                    );
+                    providers.push(index);
+                }
+                Err(e) => {
+                    tracing::warn!("Could not load {}: {}", path.display(), e);
+                }
+            }
         }
     }
 

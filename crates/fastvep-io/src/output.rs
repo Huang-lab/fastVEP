@@ -168,6 +168,29 @@ fn format_csq_entry_into(
                     let _ = write!(buf, "{}", o);
                 }
             }
+            "ACMG" => {
+                if let Some(ref acmg) = aa.acmg_classification {
+                    if let Some(sh) = acmg.get("shorthand").and_then(|v| v.as_str()) {
+                        buf.push_str(sh);
+                    }
+                }
+            }
+            "ACMG_CRITERIA" => {
+                if let Some(ref acmg) = aa.acmg_classification {
+                    if let Some(criteria) = acmg.get("criteria").and_then(|v| v.as_array()) {
+                        let mut first = true;
+                        for c in criteria {
+                            if c.get("met").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                if let Some(code) = c.get("code").and_then(|v| v.as_str()) {
+                                    if !first { buf.push('&'); }
+                                    first = false;
+                                    buf.push_str(code);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -264,6 +287,8 @@ pub const DEFAULT_CSQ_FIELDS: &[&str] = &[
     "HIGH_INF_POS",
     "MOTIF_SCORE_CHANGE",
     "TRANSCRIPTION_FACTORS",
+    "ACMG",
+    "ACMG_CRITERIA",
 ];
 
 /// Generate the VCF INFO header line for CSQ.
@@ -491,6 +516,10 @@ pub fn format_json(vf: &VariationFeature) -> serde_json::Value {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                         tc.insert(key.clone(), val);
                     }
+                }
+                // ACMG-AMP classification
+                if let Some(ref acmg) = aa.acmg_classification {
+                    tc.insert("acmg".into(), acmg.clone());
                 }
                 serde_json::Value::Object(tc)
             })

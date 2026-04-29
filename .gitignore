@@ -22,6 +22,9 @@ tests/
 benchmarks/output/
 benchmarks/*.fastvep.cache
 
+# ACMG benchmark output (regenerated via analysis/acmg_benchmark/clinvar_concordance.py)
+analysis/acmg_benchmark/output/
+
 # Auto-generated caches
 *.fastvep.cache
 

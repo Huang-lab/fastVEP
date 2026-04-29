@@ -226,6 +226,8 @@ pub async fn load_genome(
 pub struct AnnotateRequest {
     vcf: Option<String>,
     pick: Option<bool>,
+    /// Enable ACMG-AMP variant classification for this request.
+    acmg: Option<bool>,
 }
 
 pub async fn annotate(
@@ -238,14 +240,21 @@ pub async fn annotate(
     }
 
     let pick = req.pick.unwrap_or(false);
+    let acmg_requested = req.acmg.unwrap_or(false);
     let ctx = Arc::clone(&state);
 
     let start = Instant::now();
     let results = tokio::task::spawn_blocking(move || {
-        let guard = ctx
+        let mut guard = ctx
             .ctx
-            .read()
+            .write()
             .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+        // Enable/disable ACMG per request
+        if acmg_requested && guard.acmg_config.is_none() {
+            guard.acmg_config = Some(fastvep_classification::AcmgConfig::default());
+        } else if !acmg_requested {
+            guard.acmg_config = None;
+        }
         guard.annotate_vcf_text(&vcf_text, pick)
     })
     .await??;
@@ -314,6 +323,14 @@ fn resolve_genome_paths(
     data_dir: &std::path::Path,
     name: &str,
 ) -> Result<(PathBuf, Option<PathBuf>), AppError> {
+    // Sanitize: reject any name containing path separators or traversal sequences
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(AppError::BadRequest(format!(
+            "Genome '{}' not found in data directory",
+            name
+        )));
+    }
+
     // Check if it's a subdirectory
     let subdir = data_dir.join(name);
     if subdir.is_dir() {

@@ -5,12 +5,17 @@ edition.workspace = true
 license.workspace = true
 description = "CLI binary for fastVEP: annotate, sa-build, filter, cache, web commands"
 
+[lib]
+name = "fastvep_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "fastvep"
 path = "src/main.rs"
 
 [dependencies]
 fastvep-annotate = { workspace = true }
+fastvep-classification = { workspace = true }
 fastvep-core = { workspace = true }
 fastvep-genome = { workspace = true }
 fastvep-cache = { workspace = true }
@@ -28,3 +33,5 @@ log = { workspace = true }
 env_logger = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
+fastvep-sa = { workspace = true }
