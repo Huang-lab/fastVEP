@@ -109,8 +109,17 @@ fn evaluate_pp2(
 
 /// PP3: Multiple lines of computational evidence support a deleterious effect.
 ///
-/// Uses ClinGen SVI calibrated REVEL thresholds. PP3 can be elevated to
-/// Moderate or Strong strength based on REVEL score.
+/// Per ClinGen SVI calibration (Pejaver et al. 2022, AJHG): REVEL is applied
+/// only to **missense** variants and uses calibrated bands for Supporting /
+/// Moderate / Strong. Pejaver explicitly recommends a single calibrated tool
+/// rather than ad-hoc consensus across SIFT/PolyPhen/PhyloP/GERP, so the
+/// previous ≥3-of-4 consensus path has been removed; those scores are still
+/// captured in `details` for transparency.
+///
+/// Per Walker 2023 (ClinGen SVI Splicing Subgroup): SpliceAI ≥ 0.2 yields
+/// PP3 at *Supporting* strength only. SpliceAI alone does not reach Strong;
+/// experimental RNA evidence (PVS1_RNA / PS3) is required for Strong splicing
+/// claims.
 fn evaluate_pp3(
     input: &ClassificationInput,
     config: &AcmgConfig,
@@ -118,108 +127,106 @@ fn evaluate_pp3(
     let mut details = serde_json::Map::new();
     let mut evidence_lines: Vec<String> = Vec::new();
 
-    // Primary: REVEL score (ClinGen SVI calibrated thresholds)
-    let (revel_met, revel_strength) = if let Some(ref revel) = input.revel {
-        if let Some(score) = revel.score {
-            details.insert("revel_score".into(), serde_json::json!(score));
-            if score >= config.pp3_revel_strong {
-                evidence_lines.push(format!("REVEL={:.3} (Strong)", score));
-                (true, Some(EvidenceStrength::Strong))
-            } else if score >= config.pp3_revel_moderate {
-                evidence_lines.push(format!("REVEL={:.3} (Moderate)", score));
-                (true, Some(EvidenceStrength::Moderate))
-            } else if score >= config.pp3_revel_supporting {
-                evidence_lines.push(format!("REVEL={:.3} (Supporting)", score));
-                (true, Some(EvidenceStrength::Supporting))
+    let is_missense = input
+        .consequences
+        .iter()
+        .any(|c| matches!(c, Consequence::MissenseVariant));
+    details.insert("is_missense".into(), serde_json::json!(is_missense));
+
+    // Primary missense path: REVEL with calibrated bands (Pejaver 2022).
+    // Only applied to missense variants — REVEL is undefined / uncalibrated for
+    // other consequence types.
+    let (revel_met, revel_strength) = if is_missense {
+        if let Some(ref revel) = input.revel {
+            if let Some(score) = revel.score {
+                details.insert("revel_score".into(), serde_json::json!(score));
+                if score >= config.pp3_revel_strong {
+                    evidence_lines.push(format!("REVEL={:.3} (Strong)", score));
+                    (true, Some(EvidenceStrength::Strong))
+                } else if score >= config.pp3_revel_moderate {
+                    evidence_lines.push(format!("REVEL={:.3} (Moderate)", score));
+                    (true, Some(EvidenceStrength::Moderate))
+                } else if score >= config.pp3_revel_supporting {
+                    evidence_lines.push(format!("REVEL={:.3} (Supporting)", score));
+                    (true, Some(EvidenceStrength::Supporting))
+                } else {
+                    evidence_lines.push(format!("REVEL={:.3} (below threshold)", score));
+                    (false, None)
+                }
             } else {
-                evidence_lines.push(format!("REVEL={:.3} (below threshold)", score));
                 (false, None)
             }
         } else {
             (false, None)
         }
     } else {
+        if let Some(ref revel) = input.revel {
+            if let Some(score) = revel.score {
+                details.insert("revel_score".into(), serde_json::json!(score));
+                details.insert(
+                    "revel_skipped_reason".into(),
+                    serde_json::json!(
+                        "REVEL is calibrated for missense only (Pejaver 2022); not applied to non-missense consequences"
+                    ),
+                );
+            }
+        }
         (false, None)
     };
 
-    // Secondary: SIFT/PolyPhen/PhyloP/GERP consensus (when REVEL unavailable)
-    let mut computational_votes = 0u8;
-    let mut computational_total = 0u8;
-
+    // Capture transparency-only secondary scores (no longer used for PP3 firing
+    // per Pejaver 2022 — single calibrated tool only).
     if let Some(ref dbnsfp) = input.dbnsfp {
         if let Some(sift) = dbnsfp.parse_sift() {
             details.insert("sift".into(), serde_json::json!(sift.prediction));
-            computational_total += 1;
-            if sift.prediction.contains("deleterious") && !sift.prediction.contains("tolerated") {
-                computational_votes += 1;
-                evidence_lines.push(format!("SIFT={}", sift.prediction));
-            }
         }
         if let Some(pp) = dbnsfp.parse_polyphen() {
             details.insert("polyphen".into(), serde_json::json!(pp.prediction));
-            computational_total += 1;
-            if pp.prediction.contains("damaging") {
-                computational_votes += 1;
-                evidence_lines.push(format!("PolyPhen={}", pp.prediction));
-            }
         }
     }
-
     if let Some(phylop) = input.phylop {
         details.insert("phylop".into(), serde_json::json!(phylop));
-        computational_total += 1;
-        if phylop > config.phylop_conserved {
-            computational_votes += 1;
-            evidence_lines.push(format!("PhyloP={:.2} (conserved)", phylop));
-        }
     }
-
     if let Some(gerp) = input.gerp {
         details.insert("gerp".into(), serde_json::json!(gerp));
-        computational_total += 1;
-        if gerp > config.gerp_conserved {
-            computational_votes += 1;
-            evidence_lines.push(format!("GERP={:.2} (constrained)", gerp));
-        }
     }
 
-    // SpliceAI evidence (for variants near splice sites)
-    if let Some(ref splice) = input.splice_ai {
+    // Splicing path: SpliceAI ≥ spliceai_pathogenic → PP3 Supporting.
+    // Per Walker 2023, SpliceAI alone does not reach Strong even at very high
+    // delta scores; that requires experimental RNA evidence (PVS1_RNA / PS3).
+    let splice_supporting = if let Some(ref splice) = input.splice_ai {
         if let Some(max_ds) = splice.max_delta_score() {
             details.insert("spliceai_max_ds".into(), serde_json::json!(max_ds));
             if max_ds >= config.spliceai_pathogenic {
-                evidence_lines.push(format!("SpliceAI max_ds={:.2}", max_ds));
+                evidence_lines.push(format!(
+                    "SpliceAI max_ds={:.2} (Supporting per Walker 2023)",
+                    max_ds
+                ));
+                true
+            } else {
+                false
             }
+        } else {
+            false
         }
-    }
+    } else {
+        false
+    };
 
-    // Determine final result
+    // Resolve final strength.
+    // - REVEL (missense) takes precedence and is already strength-graded.
+    // - Otherwise, SpliceAI Supporting may fire for any consequence (canonical
+    //   splice variants typically also fire PVS1; anti-double-counting between
+    //   PP3 and PVS1 for splice is handled in PR2).
     let (met, strength) = if revel_met {
         (true, revel_strength.unwrap_or(EvidenceStrength::Supporting))
-    } else if computational_total >= 3 && computational_votes >= 3 {
-        // Consensus of at least 3 out of 4 computational tools
+    } else if splice_supporting {
         (true, EvidenceStrength::Supporting)
-    } else if let Some(ref splice) = input.splice_ai {
-        if splice
-            .max_delta_score()
-            .map_or(false, |ds| ds >= config.spliceai_strong)
-        {
-            (true, EvidenceStrength::Strong)
-        } else if splice
-            .max_delta_score()
-            .map_or(false, |ds| ds >= config.spliceai_pathogenic)
-        {
-            (true, EvidenceStrength::Supporting)
-        } else {
-            (false, EvidenceStrength::Supporting)
-        }
     } else {
         (false, EvidenceStrength::Supporting)
     };
 
-    let evaluated = input.revel.is_some()
-        || computational_total >= 2
-        || input.splice_ai.is_some();
+    let evaluated = (is_missense && input.revel.is_some()) || input.splice_ai.is_some();
 
     details.insert("evidence_lines".into(), serde_json::json!(evidence_lines));
 
@@ -231,6 +238,8 @@ fn evaluate_pp3(
         )
     } else if evaluated {
         "Computational evidence does not support deleterious effect".to_string()
+    } else if !is_missense && input.splice_ai.is_none() {
+        "PP3 requires REVEL (missense) or SpliceAI; neither available".to_string()
     } else {
         "Insufficient computational prediction data available".to_string()
     };
@@ -390,7 +399,10 @@ mod tests {
     }
 
     #[test]
-    fn test_pp3_spliceai_strong() {
+    fn test_pp3_spliceai_caps_at_supporting() {
+        // Walker 2023 (ClinGen SVI Splicing Subgroup): SpliceAI alone tops
+        // out at PP3 Supporting, even at very high delta scores. Strong
+        // splicing evidence requires experimental RNA assay (PVS1_RNA / PS3).
         let input = ClassificationInput {
             consequences: vec![Consequence::SpliceRegionVariant],
             impact: Impact::Low,
@@ -422,7 +434,62 @@ mod tests {
         };
         let result = evaluate_pp3(&input, &AcmgConfig::default());
         assert!(result.met);
-        assert_eq!(result.strength, EvidenceStrength::Strong);
+        assert_eq!(result.strength, EvidenceStrength::Supporting);
+        assert_eq!(result.code, "PP3");
+    }
+
+    #[test]
+    fn test_pp3_revel_ignored_for_non_missense() {
+        // Pejaver 2022: REVEL is calibrated for missense only. A high REVEL
+        // score on a frameshift / synonymous / splice variant must NOT fire PP3.
+        let mut input = make_input_with_revel(0.95);
+        input.consequences = vec![Consequence::FrameshiftVariant];
+        let result = evaluate_pp3(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        // REVEL score is still recorded in details for transparency.
+        let details = result.details.as_object().unwrap();
+        assert!(details.contains_key("revel_score"));
+        assert!(details.contains_key("revel_skipped_reason"));
+    }
+
+    #[test]
+    fn test_pp3_consensus_dropped() {
+        // Pre-PR1 behavior allowed ≥3-of-4 SIFT/PolyPhen/PhyloP/GERP consensus
+        // to fire PP3 Supporting in the absence of REVEL. Pejaver 2022 explicitly
+        // recommends a single calibrated tool, not ad-hoc consensus, so this
+        // path has been removed. Without REVEL or SpliceAI, PP3 must NOT fire
+        // even when SIFT/PolyPhen/PhyloP/GERP all signal pathogenic.
+        let mut input = ClassificationInput {
+            consequences: vec![Consequence::MissenseVariant],
+            impact: Impact::Moderate,
+            gene_symbol: Some("TEST".to_string()),
+            is_canonical: true,
+            amino_acids: None,
+            protein_position: None,
+            gnomad: None,
+            clinvar: None,
+            revel: None,
+            splice_ai: None,
+            dbnsfp: None,
+            phylop: Some(5.0),
+            gerp: Some(5.0),
+            gene_constraints: None,
+            omim: None,
+            clinvar_protein: None,
+            in_repeat_region: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
+        };
+        // Synthesize a dbNSFP entry with deleterious SIFT + damaging PolyPhen
+        // by going through the same JSON path the evaluator uses.
+        input.dbnsfp = Some(crate::sa_extract::DbNsfpData {
+            sift: Some("deleterious(0.000)".to_string()),
+            polyphen: Some("probably_damaging(0.998)".to_string()),
+        });
+        let result = evaluate_pp3(&input, &AcmgConfig::default());
+        assert!(!result.met);
     }
 
     #[test]

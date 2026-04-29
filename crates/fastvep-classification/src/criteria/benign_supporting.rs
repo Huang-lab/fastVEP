@@ -277,8 +277,17 @@ fn evaluate_bp3(
 
 /// BP4: Multiple lines of computational evidence suggest no impact on gene or gene product.
 ///
-/// Uses ClinGen SVI calibrated REVEL thresholds. BP4 can be elevated to Moderate or
-/// Strong strength based on REVEL score.
+/// Per ClinGen SVI calibration (Pejaver et al. 2022, AJHG): REVEL is applied
+/// only to **missense** variants and uses calibrated bands for Supporting /
+/// Moderate / Strong / Very Strong. The Very Strong band (REVEL ≤ 0.003) is
+/// reached only by REVEL among the 13 calibrated tools. Pejaver explicitly
+/// recommends a single calibrated tool over ad-hoc consensus, so the previous
+/// SIFT/PolyPhen/PhyloP ≥2-of-3 consensus path has been removed; those scores
+/// remain in `details` for transparency.
+///
+/// Per Walker 2023 (ClinGen SVI Splicing Subgroup): SpliceAI ≤ 0.1 yields BP4
+/// at Supporting strength for non-canonical splice context (scores between 0.1
+/// and 0.2 are uninformative).
 fn evaluate_bp4(
     input: &ClassificationInput,
     config: &AcmgConfig,
@@ -286,72 +295,101 @@ fn evaluate_bp4(
     let mut details = serde_json::Map::new();
     let mut evidence_lines: Vec<String> = Vec::new();
 
-    // Primary: REVEL score (ClinGen SVI calibrated thresholds)
-    let (revel_met, revel_strength) = if let Some(ref revel) = input.revel {
-        if let Some(score) = revel.score {
-            details.insert("revel_score".into(), serde_json::json!(score));
-            if score <= config.bp4_revel_strong {
-                evidence_lines.push(format!("REVEL={:.3} (Strong benign)", score));
-                (true, Some(EvidenceStrength::Strong))
-            } else if score <= config.bp4_revel_moderate {
-                evidence_lines.push(format!("REVEL={:.3} (Moderate benign)", score));
-                (true, Some(EvidenceStrength::Moderate))
-            } else if score <= config.bp4_revel_supporting {
-                evidence_lines.push(format!("REVEL={:.3} (Supporting benign)", score));
-                (true, Some(EvidenceStrength::Supporting))
+    let is_missense = input
+        .consequences
+        .iter()
+        .any(|c| matches!(c, Consequence::MissenseVariant));
+    details.insert("is_missense".into(), serde_json::json!(is_missense));
+
+    // Primary missense path: REVEL with calibrated bands (Pejaver 2022),
+    // including the Very Strong band (REVEL ≤ 0.003) which only REVEL reaches.
+    let (revel_met, revel_strength) = if is_missense {
+        if let Some(ref revel) = input.revel {
+            if let Some(score) = revel.score {
+                details.insert("revel_score".into(), serde_json::json!(score));
+                if score <= config.bp4_revel_very_strong {
+                    evidence_lines.push(format!("REVEL={:.3} (Very Strong benign)", score));
+                    (true, Some(EvidenceStrength::VeryStrong))
+                } else if score <= config.bp4_revel_strong {
+                    evidence_lines.push(format!("REVEL={:.3} (Strong benign)", score));
+                    (true, Some(EvidenceStrength::Strong))
+                } else if score <= config.bp4_revel_moderate {
+                    evidence_lines.push(format!("REVEL={:.3} (Moderate benign)", score));
+                    (true, Some(EvidenceStrength::Moderate))
+                } else if score <= config.bp4_revel_supporting {
+                    evidence_lines.push(format!("REVEL={:.3} (Supporting benign)", score));
+                    (true, Some(EvidenceStrength::Supporting))
+                } else {
+                    evidence_lines.push(format!("REVEL={:.3} (above benign threshold)", score));
+                    (false, None)
+                }
             } else {
-                evidence_lines.push(format!("REVEL={:.3} (above benign threshold)", score));
                 (false, None)
             }
         } else {
             (false, None)
         }
     } else {
+        if let Some(ref revel) = input.revel {
+            if let Some(score) = revel.score {
+                details.insert("revel_score".into(), serde_json::json!(score));
+                details.insert(
+                    "revel_skipped_reason".into(),
+                    serde_json::json!(
+                        "REVEL is calibrated for missense only (Pejaver 2022); not applied to non-missense consequences"
+                    ),
+                );
+            }
+        }
         (false, None)
     };
 
-    // Secondary: SIFT/PolyPhen/PhyloP consensus
-    let mut benign_votes = 0u8;
-    let mut computational_total = 0u8;
-
+    // Capture transparency-only secondary scores (no longer used for BP4 firing
+    // per Pejaver 2022 — single calibrated tool only).
     if let Some(ref dbnsfp) = input.dbnsfp {
         if let Some(sift) = dbnsfp.parse_sift() {
             details.insert("sift".into(), serde_json::json!(sift.prediction));
-            computational_total += 1;
-            if sift.prediction.contains("tolerated") && !sift.prediction.contains("deleterious") {
-                benign_votes += 1;
-                evidence_lines.push(format!("SIFT={}", sift.prediction));
-            }
         }
         if let Some(pp) = dbnsfp.parse_polyphen() {
             details.insert("polyphen".into(), serde_json::json!(pp.prediction));
-            computational_total += 1;
-            if pp.prediction == "benign" {
-                benign_votes += 1;
-                evidence_lines.push(format!("PolyPhen={}", pp.prediction));
-            }
         }
     }
-
     if let Some(phylop) = input.phylop {
         details.insert("phylop".into(), serde_json::json!(phylop));
-        computational_total += 1;
-        if phylop < 0.5 {
-            benign_votes += 1;
-            evidence_lines.push(format!("PhyloP={:.2} (not conserved)", phylop));
-        }
     }
 
-    // Determine final result
-    let (met, strength) = if revel_met {
-        (true, revel_strength.unwrap_or(EvidenceStrength::Supporting))
-    } else if computational_total >= 2 && benign_votes >= 2 {
-        (true, EvidenceStrength::Supporting)
+    // Splicing path: SpliceAI ≤ spliceai_benign → BP4 Supporting (Walker 2023).
+    let splice_supporting = if let Some(ref splice) = input.splice_ai {
+        if let Some(max_ds) = splice.max_delta_score() {
+            details.insert("spliceai_max_ds".into(), serde_json::json!(max_ds));
+            if max_ds <= config.spliceai_benign {
+                evidence_lines.push(format!(
+                    "SpliceAI max_ds={:.2} (Supporting benign per Walker 2023)",
+                    max_ds
+                ));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     } else {
-        (false, EvidenceStrength::Supporting)
+        false
     };
 
-    let evaluated = input.revel.is_some() || computational_total >= 2;
+    // Resolve final strength. REVEL (missense, already strength-graded) takes
+    // precedence over splice. If both fire, prefer the stronger.
+    let (met, strength) = match (revel_met, splice_supporting) {
+        (true, _) => (
+            true,
+            revel_strength.unwrap_or(EvidenceStrength::Supporting),
+        ),
+        (false, true) => (true, EvidenceStrength::Supporting),
+        (false, false) => (false, EvidenceStrength::Supporting),
+    };
+
+    let evaluated = (is_missense && input.revel.is_some()) || input.splice_ai.is_some();
     details.insert("evidence_lines".into(), serde_json::json!(evidence_lines));
 
     let summary = if met {
@@ -362,6 +400,8 @@ fn evaluate_bp4(
         )
     } else if evaluated {
         "Computational evidence does not support benign classification".to_string()
+    } else if !is_missense && input.splice_ai.is_none() {
+        "BP4 requires REVEL (missense) or SpliceAI; neither available".to_string()
     } else {
         "Insufficient computational prediction data".to_string()
     };
@@ -589,6 +629,69 @@ mod tests {
         let result = evaluate_bp4(&input, &AcmgConfig::default());
         assert!(result.met);
         assert_eq!(result.strength, EvidenceStrength::Strong);
+    }
+
+    #[test]
+    fn test_bp4_revel_very_strong_benign() {
+        // Pejaver 2022: REVEL ≤ 0.003 → Very Strong benign. Only REVEL reaches
+        // this band among the 13 calibrated tools.
+        let input = make_input(
+            vec![Consequence::MissenseVariant],
+            Some(0.002),
+            None,
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(result.met);
+        assert_eq!(result.strength, EvidenceStrength::VeryStrong);
+        assert_eq!(result.code, "BP4_Very_Strong");
+    }
+
+    #[test]
+    fn test_bp4_revel_ignored_for_non_missense() {
+        // REVEL is calibrated for missense only. A low REVEL score on a
+        // synonymous variant must NOT fire BP4 (BP7 is the synonymous code).
+        let input = make_input(
+            vec![Consequence::SynonymousVariant],
+            Some(0.001),
+            None,
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(!result.met);
+    }
+
+    #[test]
+    fn test_bp4_spliceai_low_supporting() {
+        // Walker 2023: SpliceAI ≤ 0.1 → BP4 Supporting for non-canonical
+        // splice context. Non-missense variant with low SpliceAI alone fires.
+        let input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.05),
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(result.met);
+        assert_eq!(result.strength, EvidenceStrength::Supporting);
+    }
+
+    #[test]
+    fn test_bp4_spliceai_uninformative_zone() {
+        // Walker 2023: SpliceAI scores 0.10 < ds < 0.20 are uninformative —
+        // BP4 must not fire and PP3 (splice) must not fire.
+        let input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.15),
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(!result.met);
     }
 
     #[test]
