@@ -19,7 +19,7 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 | PS2 | Strong | Confirmed de novo (trio) | VCF genotype (proband + both parents) |
 | PS4 | Strong | Prevalence in affected vs controls | ClinVar 3-star+ expert panel |
 | PM1 | Moderate | Mutational hotspot / functional domain | ClinVar protein-position index (pathogenic density) |
-| PM2 | Supporting* | Absent/rare in population | gnomAD allele frequency (AF ≤ 0.0001) |
+| PM2 | Supporting* | Absent/rare in population | gnomAD raw AF, inheritance-aware (AD/unknown: AC=0; AR: AF ≤ 0.00007) — ClinGen SVI v1.0 |
 | PM3 | Moderate | In trans with pathogenic (recessive) | VCF genotype + OMIM inheritance + ClinVar companion |
 | PM4 | Moderate | Protein length change | Consequence (in-frame indel, stop-loss) |
 | PM5 | Moderate | Novel missense at known pathogenic position | ClinVar protein-position index |
@@ -56,6 +56,18 @@ BP4 (benign computational evidence):
 - **Supporting**: REVEL ≤ 0.290
 - **Moderate**: REVEL ≤ 0.183 (counts as Benign Strong in combination rules)
 - **Strong**: REVEL ≤ 0.016
+
+### PM2 — Inheritance-Aware Frequency (ClinGen SVI v1.0)
+
+Per ClinGen SVI Recommendation for PM2 v1.0 (Sept 2020):
+- Strength is downgraded to **Supporting** by default (`pm2_downgrade_to_supporting=true`).
+- Uses **raw gnomAD allele frequency** (NOT filtering allele frequency / FAF).
+- Threshold depends on inheritance, inferred from OMIM phenotypes:
+  - **Autosomal recessive**: AF ≤ **0.00007** (0.007%)
+  - **Autosomal dominant or unknown**: strict absence (AC = 0, AF = 0)
+- A per-gene `pm2_af_threshold` override (in `gene_overrides`) takes
+  precedence over the inheritance-based default — this is how VCEPs apply
+  gene-specific calibrated thresholds.
 
 ### SpliceAI Integration
 

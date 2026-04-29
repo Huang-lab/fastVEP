@@ -102,52 +102,109 @@ fn evaluate_pm1(
 
 /// PM2: Absent from controls (or at extremely low frequency if recessive).
 ///
-/// Per ClinGen SVI recommendation, PM2 is downgraded to Supporting strength by default.
+/// Per ClinGen SVI v1.0 (Sept 2020):
+/// - Strength is Supporting (downgraded from Moderate by default).
+/// - Use raw gnomAD allele frequency (NOT filtering allele frequency / FAF).
+/// - Threshold depends on inheritance:
+///     * AD / unknown: strict absence (AC = 0 or AF = 0).
+///     * AR: AF ≤ 0.00007 (0.007%).
+///
+/// Inheritance is inferred from OMIM phenotypes (`OmimData::has_recessive_inheritance` /
+/// `has_dominant_inheritance`). When a per-gene `pm2_af_threshold` override is
+/// configured, that value wins regardless of inheritance.
 fn evaluate_pm2(
     input: &ClassificationInput,
     config: &AcmgConfig,
 ) -> EvidenceCriterion {
-    let threshold = config.effective_pm2_threshold(input.gene_symbol.as_deref());
     let strength = if config.pm2_downgrade_to_supporting {
         EvidenceStrength::Supporting
     } else {
         EvidenceStrength::Moderate
     };
-
     let code = if config.pm2_downgrade_to_supporting {
         "PM2_Supporting".to_string()
     } else {
         "PM2".to_string()
     };
 
+    // Determine the effective threshold and which inheritance rule applied.
+    // Order of precedence:
+    //   1. Per-gene override (config.gene_overrides[GENE].pm2_af_threshold)
+    //   2. AR inheritance (from OMIM) → config.pm2_ar_af_threshold
+    //   3. AD or unknown → config.pm2_ad_af_threshold (default 0.0 = strict absence)
+    //
+    // The legacy single-threshold field `config.pm2_af_threshold` is kept as a
+    // fallback when neither AD nor AR-specific knobs are configured (back-compat).
+    let gene = input.gene_symbol.as_deref();
+    let gene_specific_threshold = gene.and_then(|g| {
+        config
+            .gene_overrides
+            .get(g)
+            .and_then(|o| o.pm2_af_threshold)
+    });
+
+    let is_recessive = input
+        .omim
+        .as_ref()
+        .map_or(false, |o| o.has_recessive_inheritance());
+    let is_dominant = input
+        .omim
+        .as_ref()
+        .map_or(false, |o| o.has_dominant_inheritance());
+
+    let (threshold, inheritance_basis): (f64, &'static str) = if let Some(t) = gene_specific_threshold {
+        (t, "gene_override")
+    } else if is_recessive && !is_dominant {
+        (config.pm2_ar_af_threshold, "AR")
+    } else {
+        (config.pm2_ad_af_threshold, "AD_or_unknown")
+    };
+
     let mut details = serde_json::Map::new();
     details.insert("af_threshold".into(), serde_json::json!(threshold));
+    details.insert("inheritance_basis".into(), serde_json::json!(inheritance_basis));
+    details.insert("is_recessive".into(), serde_json::json!(is_recessive));
+    details.insert("is_dominant".into(), serde_json::json!(is_dominant));
 
     let (met, summary) = if let Some(ref gnomad) = input.gnomad {
         let af = gnomad.all_af.unwrap_or(0.0);
+        let ac = gnomad.all_ac.unwrap_or(0);
         details.insert("gnomad_allAf".into(), serde_json::json!(af));
+        details.insert("gnomad_allAc".into(), serde_json::json!(ac));
 
-        if af <= threshold {
-            (
-                true,
-                format!(
-                    "Rare in gnomAD (AF={:.6}, threshold={:.6})",
-                    af, threshold
-                ),
+        // For strict absence (threshold = 0.0), require AC = 0 AND AF = 0.
+        // For non-zero thresholds (e.g. AR 0.00007), allow AF ≤ threshold.
+        let met = if threshold == 0.0 {
+            ac == 0 && af == 0.0
+        } else {
+            af <= threshold
+        };
+        let summary = if met {
+            format!(
+                "{} in gnomAD (AF={:.6}, AC={}, threshold={:.6}, inheritance={})",
+                if threshold == 0.0 { "Absent" } else { "Rare" },
+                af,
+                ac,
+                threshold,
+                inheritance_basis
             )
         } else {
-            (
-                false,
-                format!(
-                    "Not rare in gnomAD (AF={:.6}, threshold={:.6})",
-                    af, threshold
-                ),
+            format!(
+                "Not rare enough in gnomAD (AF={:.6}, AC={}, threshold={:.6}, inheritance={})",
+                af, ac, threshold, inheritance_basis
             )
-        }
+        };
+        (met, summary)
     } else {
-        // Absent from gnomAD entirely
+        // Absent from gnomAD entirely (no record at all).
         details.insert("gnomad_allAf".into(), serde_json::Value::Null);
-        (true, "Absent from gnomAD".to_string())
+        (
+            true,
+            format!(
+                "Absent from gnomAD (no record) — meets PM2 under {} rule",
+                inheritance_basis
+            ),
+        )
     };
 
     EvidenceCriterion {
@@ -627,7 +684,7 @@ fn evaluate_pm6(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sa_extract::GnomadData;
+    use crate::sa_extract::{GnomadData, OmimData};
     use fastvep_core::Impact;
 
     fn make_input(
@@ -671,16 +728,79 @@ mod tests {
     }
 
     #[test]
-    fn test_pm2_rare_in_gnomad() {
+    fn test_pm2_unknown_inheritance_requires_strict_absence() {
+        // Per ClinGen SVI v1.0: AD/unknown-inheritance defaults to strict
+        // absence (AC=0). A variant with AF=0.00005 but a record in gnomAD is
+        // NOT absent and must NOT fire PM2 in this configuration.
         let input = make_input(
             vec![Consequence::MissenseVariant],
             Some(GnomadData {
                 all_af: Some(0.00005),
+                all_ac: Some(1),
                 ..Default::default()
             }),
         );
         let result = evaluate_pm2(&input, &AcmgConfig::default());
+        assert!(!result.met);
+    }
+
+    #[test]
+    fn test_pm2_ar_gene_under_threshold_fires() {
+        // AR gene (OMIM phenotype contains "autosomal recessive") + AF below
+        // 0.00007 → PM2_Supporting fires per ClinGen SVI v1.0.
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            Some(GnomadData {
+                all_af: Some(0.00006),
+                all_ac: Some(2),
+                ..Default::default()
+            }),
+        );
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec!["Cystic fibrosis, autosomal recessive".to_string()]),
+        });
+        let result = evaluate_pm2(&input, &AcmgConfig::default());
         assert!(result.met);
+        assert!(result.summary.contains("AR"));
+    }
+
+    #[test]
+    fn test_pm2_ar_gene_above_threshold_does_not_fire() {
+        // AR gene with AF > 0.00007 → PM2 must not fire.
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            Some(GnomadData {
+                all_af: Some(0.0001),
+                all_ac: Some(5),
+                ..Default::default()
+            }),
+        );
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec!["Some disease, autosomal recessive".to_string()]),
+        });
+        let result = evaluate_pm2(&input, &AcmgConfig::default());
+        assert!(!result.met);
+    }
+
+    #[test]
+    fn test_pm2_ad_gene_with_one_allele_does_not_fire() {
+        // AD gene + any AC > 0 → not absent → PM2 must not fire under SVI v1.0.
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            Some(GnomadData {
+                all_af: Some(0.000005),
+                all_ac: Some(1),
+                ..Default::default()
+            }),
+        );
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec!["Some disease, autosomal dominant".to_string()]),
+        });
+        let result = evaluate_pm2(&input, &AcmgConfig::default());
+        assert!(!result.met);
     }
 
     #[test]
@@ -694,6 +814,38 @@ mod tests {
         );
         let result = evaluate_pm2(&input, &AcmgConfig::default());
         assert!(!result.met);
+    }
+
+    #[test]
+    fn test_pm2_gene_override_takes_precedence_over_inheritance() {
+        // A per-gene pm2_af_threshold override should win even when OMIM says AR.
+        let mut config = AcmgConfig::default();
+        config.gene_overrides.insert(
+            "TEST".to_string(),
+            crate::config::GeneOverride {
+                mechanism: None,
+                bs1_af_threshold: None,
+                pm2_af_threshold: Some(0.001),
+                disabled_criteria: vec![],
+                strength_overrides: Default::default(),
+            },
+        );
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            Some(GnomadData {
+                all_af: Some(0.0005),
+                all_ac: Some(20),
+                ..Default::default()
+            }),
+        );
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec!["Test, autosomal recessive".to_string()]),
+        });
+        // Override threshold = 0.001; AF = 0.0005 → PM2 fires under override.
+        let result = evaluate_pm2(&input, &config);
+        assert!(result.met);
+        assert!(result.summary.contains("gene_override"));
     }
 
     #[test]
