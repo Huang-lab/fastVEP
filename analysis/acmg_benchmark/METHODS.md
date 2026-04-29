@@ -304,7 +304,6 @@ spliceai_benign = 0.1
 
 # Conservation
 phylop_conserved = 2.0
-gerp_conserved = 2.0
 
 # Gene constraints
 pli_lof_intolerant = 0.9

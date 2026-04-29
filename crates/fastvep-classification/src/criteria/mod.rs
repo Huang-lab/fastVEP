@@ -120,17 +120,22 @@ fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
         if !c.met {
             continue;
         }
-        match c.code.as_str() {
-            "PVS1" => pvs1_met = true,
-            "PS1" => ps1_met = true,
-            "PM5" => pm5_met = true,
-            "PM1" => {
-                pm1_met = true;
-                pm1_idx = Some(i);
-            }
-            // PP3 may be elevated (PP3_Moderate / PP3_Strong) — match by prefix.
-            code if code.starts_with("PP3") => pp3_idx = Some(i),
-            _ => {}
+        // Match by code prefix so any graded variants (e.g. PVS1_Strong from
+        // the Abou Tayoun decision tree) participate in reconciliation. An
+        // exact match would silently miss graded codes once the pipeline
+        // populates the PVS1 grading signals.
+        let code = c.code.as_str();
+        if code == "PVS1" || code.starts_with("PVS1_") {
+            pvs1_met = true;
+        } else if code == "PS1" || code.starts_with("PS1_") {
+            ps1_met = true;
+        } else if code == "PM5" || code.starts_with("PM5_") {
+            pm5_met = true;
+        } else if code == "PM1" || code.starts_with("PM1_") {
+            pm1_met = true;
+            pm1_idx = Some(i);
+        } else if code.starts_with("PP3") {
+            pp3_idx = Some(i);
         }
     }
 
@@ -338,5 +343,36 @@ mod reconcile_tests {
         reconcile_evidence(&mut criteria);
         assert!(find(&criteria, "PP3").met);
         assert!(find(&criteria, "PM1").met);
+    }
+
+    #[test]
+    fn graded_pvs1_codes_still_suppress_pp3_splice() {
+        // Regression guard: an exact-match `"PVS1"` check would silently miss
+        // graded codes from the Abou Tayoun decision tree (PVS1_Strong /
+        // PVS1_Moderate / PVS1_Supporting). The reconcile pass uses prefix
+        // matching so PVS1_* + PP3(splice) still drops PP3 (Walker 2023).
+        for graded_code in ["PVS1_Strong", "PVS1_Moderate", "PVS1_Supporting"] {
+            let mut criteria = vec![
+                met(graded_code, EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+                pp3_with_source(EvidenceStrength::Supporting, "spliceai"),
+            ];
+            reconcile_evidence(&mut criteria);
+            assert!(
+                !find(&criteria, "PP3").met,
+                "PP3(splice) should be suppressed when {} fires",
+                graded_code
+            );
+        }
+    }
+
+    #[test]
+    fn graded_pm1_code_still_capped_by_pp3_strong() {
+        // Same regression guard for PM1 graded codes (if ever introduced).
+        let mut criteria = vec![
+            pp3_with_source(EvidenceStrength::Strong, "revel_missense"),
+            met("PM1_Strong", EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+        ];
+        reconcile_evidence(&mut criteria);
+        assert!(!find(&criteria, "PM1").met, "graded PM1 should be capped under PP3_Strong");
     }
 }
