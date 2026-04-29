@@ -850,12 +850,13 @@ fn enrich_compound_het(
 ) {
     use std::collections::HashMap;
 
-    // Collect per-gene variant info: (variant_index, gene_symbol, is_clinvar_pathogenic, proband_het, is_phased, hgvsc, allele_indices for phase)
+    // Collect per-gene variant info: (variant_index, gene_symbol, ClinVar P/LP flags, proband_het, is_phased, hgvsc, allele_indices for phase)
     struct VariantGeneInfo {
         vf_idx: usize,
         tv_idx: usize,
         aa_idx: usize,
         is_clinvar_pathogenic: bool,
+        is_clinvar_likely_pathogenic: bool,
         proband_het: bool,
         is_phased: bool,
         /// Proband's allele indices for phase comparison
@@ -893,13 +894,30 @@ fn enrich_compound_het(
                         })
                     });
 
-                // Also check the supplementary annotations directly for ClinVar pathogenic
-                let clinvar_pathogenic_from_sa = aa.supplementary.iter().any(|(key, json)| {
-                    key == "clinvar"
-                        && (json.contains("Pathogenic") || json.contains("pathogenic"))
-                        && !json.contains("Conflicting")
-                        && !json.contains("conflicting")
-                });
+                // Classify ClinVar supplementary as Pathogenic / Likely pathogenic
+                // separately so PM3 v1.0 can score them at their proper point
+                // values. A bare substring match on "pathogenic" matches both
+                // "Pathogenic" and "Likely pathogenic" — this would over-score
+                // LP companions as P. Strip "Likely pathogenic" first, then
+                // see if any "pathogenic" remains: that residual signals true P.
+                let (clinvar_p_from_sa, clinvar_lp_from_sa) = aa
+                    .supplementary
+                    .iter()
+                    .filter(|(key, json)| {
+                        key == "clinvar"
+                            && !json.contains("Conflicting")
+                            && !json.contains("conflicting")
+                    })
+                    .map(|(_, json)| {
+                        let lower = json.to_lowercase();
+                        let has_lp = lower.contains("likely pathogenic");
+                        let stripped = lower.replace("likely pathogenic", "");
+                        let has_p = stripped.contains("pathogenic");
+                        (has_p, has_lp && !has_p)
+                    })
+                    .fold((false, false), |(p_acc, lp_acc), (p, lp)| {
+                        (p_acc || p, lp_acc || lp)
+                    });
 
                 let proband_het = proband_gt.as_ref().map_or(false, |g| g.is_het);
                 let is_phased = proband_gt.as_ref().map_or(false, |g| g.is_phased);
@@ -937,7 +955,8 @@ fn enrich_compound_het(
                         vf_idx,
                         tv_idx,
                         aa_idx,
-                        is_clinvar_pathogenic: is_clinvar_pathogenic || clinvar_pathogenic_from_sa,
+                        is_clinvar_pathogenic: is_clinvar_pathogenic || clinvar_p_from_sa,
+                        is_clinvar_likely_pathogenic: clinvar_lp_from_sa,
                         proband_het,
                         is_phased,
                         proband_alleles,
@@ -991,7 +1010,7 @@ fn enrich_compound_het(
 
                     fastvep_classification::CompanionVariant {
                         is_clinvar_pathogenic: other.is_clinvar_pathogenic,
-                        is_clinvar_likely_pathogenic: false,
+                        is_clinvar_likely_pathogenic: other.is_clinvar_likely_pathogenic,
                         is_in_trans,
                         proband_het: other.proband_het,
                         hgvsc: other.hgvsc.clone(),

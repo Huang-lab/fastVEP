@@ -1102,6 +1102,7 @@ fn enrich_compound_het_batch(
         tv_idx: usize,
         aa_idx: usize,
         is_clinvar_pathogenic: bool,
+        is_clinvar_likely_pathogenic: bool,
         proband_het: bool,
         is_phased: bool,
         proband_alleles: Vec<Option<u32>>,
@@ -1121,12 +1122,29 @@ fn enrich_compound_het_batch(
             };
 
             for (aa_idx, aa) in tv.allele_annotations.iter().enumerate() {
-                let clinvar_pathogenic_from_sa = aa.supplementary.iter().any(|(key, json)| {
-                    key == "clinvar"
-                        && (json.contains("Pathogenic") || json.contains("pathogenic"))
-                        && !json.contains("Conflicting")
-                        && !json.contains("conflicting")
-                });
+                // Classify ClinVar supplementary as Pathogenic / Likely pathogenic
+                // separately so PM3 v1.0 scores them at their proper point values.
+                // Strip "Likely pathogenic" before checking for "pathogenic"
+                // residual to avoid the substring-match bug that double-counts
+                // LP as P.
+                let (clinvar_p_from_sa, clinvar_lp_from_sa) = aa
+                    .supplementary
+                    .iter()
+                    .filter(|(key, json)| {
+                        key == "clinvar"
+                            && !json.contains("Conflicting")
+                            && !json.contains("conflicting")
+                    })
+                    .map(|(_, json)| {
+                        let lower = json.to_lowercase();
+                        let has_lp = lower.contains("likely pathogenic");
+                        let stripped = lower.replace("likely pathogenic", "");
+                        let has_p = stripped.contains("pathogenic");
+                        (has_p, has_lp && !has_p)
+                    })
+                    .fold((false, false), |(p_acc, lp_acc), (p, lp)| {
+                        (p_acc || p, lp_acc || lp)
+                    });
 
                 let proband_het = proband_gt.as_ref().map_or(false, |g| g.is_het);
                 let is_phased = proband_gt.as_ref().map_or(false, |g| g.is_phased);
@@ -1164,7 +1182,8 @@ fn enrich_compound_het_batch(
                         vf_idx,
                         tv_idx,
                         aa_idx,
-                        is_clinvar_pathogenic: clinvar_pathogenic_from_sa,
+                        is_clinvar_pathogenic: clinvar_p_from_sa,
+                        is_clinvar_likely_pathogenic: clinvar_lp_from_sa,
                         proband_het,
                         is_phased,
                         proband_alleles,
@@ -1210,10 +1229,7 @@ fn enrich_compound_het_batch(
 
                     fastvep_classification::CompanionVariant {
                         is_clinvar_pathogenic: other.is_clinvar_pathogenic,
-                        // The pipeline does not yet distinguish LP from P;
-                        // future change will populate this from a richer
-                        // ClinVar classification field.
-                        is_clinvar_likely_pathogenic: false,
+                        is_clinvar_likely_pathogenic: other.is_clinvar_likely_pathogenic,
                         is_in_trans,
                         proband_het: other.proband_het,
                         hgvsc: other.hgvsc.clone(),

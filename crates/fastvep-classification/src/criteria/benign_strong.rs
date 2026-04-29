@@ -27,33 +27,42 @@ fn evaluate_bs1(
 
     let (met, summary) = if let Some(ref gnomad) = input.gnomad {
         // ClinGen SVI gnomAD v4 guidance (March 2024): require minimum AN
-        // before BS1 fires, same as BA1.
-        let an_ok = gnomad
-            .all_an
-            .map_or(true, |an| an >= config.min_an_for_frequency_criteria);
-        if !an_ok {
-            details.insert(
-                "an_below_minimum".into(),
-                serde_json::json!(gnomad.all_an),
-            );
-            details.insert(
-                "min_an_for_frequency_criteria".into(),
-                serde_json::json!(config.min_an_for_frequency_criteria),
-            );
-            return EvidenceCriterion {
-                code: "BS1".to_string(),
-                direction: EvidenceDirection::Benign,
-                strength: EvidenceStrength::Strong,
-                default_strength: EvidenceStrength::Strong,
-                met: false,
-                evaluated: false,
-                summary: format!(
-                    "BS1 not evaluated: gnomAD AN={} below minimum {} (gnomAD v4 guidance)",
-                    gnomad.all_an.unwrap_or(0),
-                    config.min_an_for_frequency_criteria
-                ),
-                details: serde_json::Value::Object(details),
-            };
+        // before BS1 fires, same as BA1. Treat missing AN as NotEvaluated
+        // (the SVI guidance is a requirement, not an opt-in).
+        match gnomad.all_an {
+            Some(an) if an >= config.min_an_for_frequency_criteria => {}
+            other => {
+                details.insert(
+                    "min_an_for_frequency_criteria".into(),
+                    serde_json::json!(config.min_an_for_frequency_criteria),
+                );
+                let summary = match other {
+                    Some(an) => {
+                        details.insert("an_below_minimum".into(), serde_json::json!(an));
+                        format!(
+                            "BS1 not evaluated: gnomAD AN={} below minimum {} (gnomAD v4 guidance)",
+                            an, config.min_an_for_frequency_criteria
+                        )
+                    }
+                    None => {
+                        details.insert("an_missing".into(), serde_json::json!(true));
+                        format!(
+                            "BS1 not evaluated: gnomAD AN unavailable; minimum {} required (gnomAD v4 guidance)",
+                            config.min_an_for_frequency_criteria
+                        )
+                    }
+                };
+                return EvidenceCriterion {
+                    code: "BS1".to_string(),
+                    direction: EvidenceDirection::Benign,
+                    strength: EvidenceStrength::Strong,
+                    default_strength: EvidenceStrength::Strong,
+                    met: false,
+                    evaluated: false,
+                    summary,
+                    details: serde_json::Value::Object(details),
+                };
+            }
         }
         let af = gnomad.all_af.unwrap_or(0.0);
         details.insert("gnomad_allAf".into(), serde_json::json!(af));
@@ -255,6 +264,7 @@ mod tests {
     fn test_bs1_above_threshold() {
         let input = make_input(Some(GnomadData {
             all_af: Some(0.02),
+            all_an: Some(100_000),
             ..Default::default()
         }));
         let result = evaluate_bs1(&input, &AcmgConfig::default());
@@ -265,6 +275,7 @@ mod tests {
     fn test_bs1_below_threshold() {
         let input = make_input(Some(GnomadData {
             all_af: Some(0.001),
+            all_an: Some(100_000),
             ..Default::default()
         }));
         let result = evaluate_bs1(&input, &AcmgConfig::default());
@@ -276,10 +287,39 @@ mod tests {
         let input = make_input(Some(GnomadData {
             all_af: Some(0.10),
             afr_af: Some(0.10),
+            all_an: Some(100_000),
             ..Default::default()
         }));
         let result = evaluate_bs1(&input, &AcmgConfig::default());
         assert!(!result.met); // BA1 would fire, so BS1 should not
+    }
+
+    #[test]
+    fn test_bs1_low_an_not_evaluated() {
+        // gnomAD v4 guidance: AN below 2000 → NotEvaluated, even at high AF.
+        let input = make_input(Some(GnomadData {
+            all_af: Some(0.02),
+            all_an: Some(500),
+            ..Default::default()
+        }));
+        let result = evaluate_bs1(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(!result.evaluated);
+        assert!(result.summary.contains("below minimum"));
+    }
+
+    #[test]
+    fn test_bs1_missing_an_not_evaluated() {
+        // gnomAD record present but AN is None → NotEvaluated, never fires.
+        let input = make_input(Some(GnomadData {
+            all_af: Some(0.02),
+            all_an: None,
+            ..Default::default()
+        }));
+        let result = evaluate_bs1(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(!result.evaluated);
+        assert!(result.summary.contains("AN unavailable"));
     }
 
     #[test]

@@ -95,20 +95,42 @@ enum NullKind {
 
 impl NullKind {
     fn detect(cs: &[Consequence]) -> Option<Self> {
+        // Scan all consequences and pick the most severe null kind so the
+        // result doesn't depend on input ordering (e.g. when both
+        // splice_donor_variant and frameshift_variant appear, splice wins
+        // deterministically). Severity rank below matches Ensembl VEP's
+        // null-variant ordering.
+        let mut best: Option<Self> = None;
         for c in cs {
-            match c {
-                Consequence::StopGained | Consequence::FrameshiftVariant => {
-                    return Some(Self::NonsenseOrFrameshift)
-                }
+            let kind = match c {
+                Consequence::TranscriptAblation => Some(Self::WholeGeneDeletion),
                 Consequence::SpliceAcceptorVariant | Consequence::SpliceDonorVariant => {
-                    return Some(Self::CanonicalSplice)
+                    Some(Self::CanonicalSplice)
                 }
-                Consequence::StartLost => return Some(Self::StartLost),
-                Consequence::TranscriptAblation => return Some(Self::WholeGeneDeletion),
-                _ => {}
+                Consequence::StopGained | Consequence::FrameshiftVariant => {
+                    Some(Self::NonsenseOrFrameshift)
+                }
+                Consequence::StartLost => Some(Self::StartLost),
+                _ => None,
+            };
+            if let Some(k) = kind {
+                best = Some(match best {
+                    None => k,
+                    Some(prev) if k.severity_rank() > prev.severity_rank() => k,
+                    Some(prev) => prev,
+                });
             }
         }
-        None
+        best
+    }
+
+    fn severity_rank(&self) -> u8 {
+        match self {
+            Self::WholeGeneDeletion => 4,
+            Self::CanonicalSplice => 3,
+            Self::NonsenseOrFrameshift => 2,
+            Self::StartLost => 1,
+        }
     }
 
     fn label(&self) -> &'static str {
@@ -161,9 +183,8 @@ fn grade_nonsense_frameshift(
                 ),
             ),
             _ => (
-                EvidenceStrength::Strong,
-                "NMD-escape; insufficient signal to grade further → PVS1_Strong (conservative)"
-                    .to_string(),
+                EvidenceStrength::VeryStrong,
+                "NMD-escape; grading signals incomplete → PVS1 (legacy fallback)".to_string(),
             ),
         }
     } else {
@@ -208,23 +229,33 @@ fn grade_start_lost(
 ) -> (EvidenceStrength, String) {
     if let Some(d) = input.alt_start_codon_distance {
         details.insert("alt_start_codon_distance".into(), serde_json::json!(d));
-        if d.unsigned_abs() <= 100 && input.in_critical_region == Some(true) {
-            return (
-                EvidenceStrength::Moderate,
-                format!(
-                    "Start-lost with downstream Met {} codons away and pathogenic variant upstream → PVS1_Moderate",
-                    d
-                ),
-            );
-        }
-        if d.unsigned_abs() > 100 {
-            return (
-                EvidenceStrength::Supporting,
-                format!(
-                    "Start-lost; alternative downstream Met is {} codons away → PVS1_Supporting",
-                    d
-                ),
-            );
+        // alt_start_codon_distance is the downstream distance in codons; the
+        // pipeline produces a non-negative value. A negative value is
+        // out-of-contract — treat it as "no usable signal" rather than
+        // silently abs() it (which would let upstream / invalid distances
+        // qualify the variant for PVS1_Moderate or _Supporting).
+        if d < 0 {
+            details.insert("alt_start_codon_distance_invalid".into(), serde_json::json!(true));
+        } else {
+            let d_codons = d as u64;
+            if d_codons <= 100 && input.in_critical_region == Some(true) {
+                return (
+                    EvidenceStrength::Moderate,
+                    format!(
+                        "Start-lost with downstream Met {} codons away and pathogenic variant upstream → PVS1_Moderate",
+                        d_codons
+                    ),
+                );
+            }
+            if d_codons > 100 {
+                return (
+                    EvidenceStrength::Supporting,
+                    format!(
+                        "Start-lost; alternative downstream Met is {} codons away → PVS1_Supporting",
+                        d_codons
+                    ),
+                );
+            }
         }
     }
     (

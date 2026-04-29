@@ -166,39 +166,74 @@ fn evaluate_pm2(
     details.insert("is_recessive".into(), serde_json::json!(is_recessive));
     details.insert("is_dominant".into(), serde_json::json!(is_dominant));
 
-    let (met, summary) = if let Some(ref gnomad) = input.gnomad {
-        let af = gnomad.all_af.unwrap_or(0.0);
-        let ac = gnomad.all_ac.unwrap_or(0);
-        details.insert("gnomad_allAf".into(), serde_json::json!(af));
-        details.insert("gnomad_allAc".into(), serde_json::json!(ac));
+    let (met, evaluated, summary) = if let Some(ref gnomad) = input.gnomad {
+        details.insert("gnomad_allAf".into(), serde_json::json!(gnomad.all_af));
+        details.insert("gnomad_allAc".into(), serde_json::json!(gnomad.all_ac));
 
-        // For strict absence (threshold = 0.0), require AC = 0 AND AF = 0.
-        // For non-zero thresholds (e.g. AR 0.00007), allow AF ≤ threshold.
-        let met = if threshold == 0.0 {
-            ac == 0 && af == 0.0
+        // For strict absence (threshold = 0.0), require AC and AF to both be
+        // PRESENT and equal to zero — treating missing fields as zero would
+        // call PM2 on incomplete gnomAD records. For non-zero thresholds
+        // (e.g. AR 0.00007), require AF present and ≤ threshold.
+        if threshold == 0.0 {
+            match (gnomad.all_ac, gnomad.all_af) {
+                (Some(0), Some(af)) if af == 0.0 => (
+                    true,
+                    true,
+                    format!(
+                        "Absent in gnomAD (AC=0, AF=0, inheritance={})",
+                        inheritance_basis
+                    ),
+                ),
+                (Some(ac), Some(af)) => (
+                    false,
+                    true,
+                    format!(
+                        "Not absent in gnomAD (AF={:.6}, AC={}, inheritance={})",
+                        af, ac, inheritance_basis
+                    ),
+                ),
+                _ => (
+                    false,
+                    false,
+                    format!(
+                        "PM2 not evaluated: gnomAD record present but AC/AF missing (inheritance={})",
+                        inheritance_basis
+                    ),
+                ),
+            }
         } else {
-            af <= threshold
-        };
-        let summary = if met {
-            format!(
-                "{} in gnomAD (AF={:.6}, AC={}, threshold={:.6}, inheritance={})",
-                if threshold == 0.0 { "Absent" } else { "Rare" },
-                af,
-                ac,
-                threshold,
-                inheritance_basis
-            )
-        } else {
-            format!(
-                "Not rare enough in gnomAD (AF={:.6}, AC={}, threshold={:.6}, inheritance={})",
-                af, ac, threshold, inheritance_basis
-            )
-        };
-        (met, summary)
+            match gnomad.all_af {
+                Some(af) if af <= threshold => (
+                    true,
+                    true,
+                    format!(
+                        "Rare in gnomAD (AF={:.6}, threshold={:.6}, inheritance={})",
+                        af, threshold, inheritance_basis
+                    ),
+                ),
+                Some(af) => (
+                    false,
+                    true,
+                    format!(
+                        "Not rare enough in gnomAD (AF={:.6}, threshold={:.6}, inheritance={})",
+                        af, threshold, inheritance_basis
+                    ),
+                ),
+                None => (
+                    false,
+                    false,
+                    format!(
+                        "PM2 not evaluated: gnomAD record present but AF missing (inheritance={})",
+                        inheritance_basis
+                    ),
+                ),
+            }
+        }
     } else {
         // Absent from gnomAD entirely (no record at all).
         details.insert("gnomad_allAf".into(), serde_json::Value::Null);
         (
+            true,
             true,
             format!(
                 "Absent from gnomAD (no record) — meets PM2 under {} rule",
@@ -213,7 +248,7 @@ fn evaluate_pm2(
         strength,
         default_strength: EvidenceStrength::Moderate,
         met,
-        evaluated: true,
+        evaluated,
         summary,
         details: serde_json::Value::Object(details),
     }

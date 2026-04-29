@@ -58,33 +58,43 @@ pub fn evaluate_ba1(
     let (met, summary) = if let Some(ref gnomad) = input.gnomad {
         // ClinGen SVI gnomAD v4 guidance (March 2024): require minimum AN
         // before frequency-based criteria fire — protects against noisy AF
-        // estimates in poorly-covered populations.
-        let an_ok = gnomad
-            .all_an
-            .map_or(true, |an| an >= config.min_an_for_frequency_criteria);
-        if !an_ok {
-            details.insert(
-                "an_below_minimum".into(),
-                serde_json::json!(gnomad.all_an),
-            );
-            details.insert(
-                "min_an_for_frequency_criteria".into(),
-                serde_json::json!(config.min_an_for_frequency_criteria),
-            );
-            return EvidenceCriterion {
-                code: "BA1".to_string(),
-                direction: EvidenceDirection::Benign,
-                strength: EvidenceStrength::Standalone,
-                default_strength: EvidenceStrength::Standalone,
-                met: false,
-                evaluated: false,
-                summary: format!(
-                    "BA1 not evaluated: gnomAD AN={} below minimum {} (gnomAD v4 guidance)",
-                    gnomad.all_an.unwrap_or(0),
-                    config.min_an_for_frequency_criteria
-                ),
-                details: serde_json::Value::Object(details),
-            };
+        // estimates in poorly-covered populations. Treat missing AN the
+        // same as below-minimum: the SVI guidance is a *requirement*, not
+        // an opt-in check, so we cannot fire BA1 without confirming AN.
+        match gnomad.all_an {
+            Some(an) if an >= config.min_an_for_frequency_criteria => {}
+            other => {
+                details.insert(
+                    "min_an_for_frequency_criteria".into(),
+                    serde_json::json!(config.min_an_for_frequency_criteria),
+                );
+                let summary = match other {
+                    Some(an) => {
+                        details.insert("an_below_minimum".into(), serde_json::json!(an));
+                        format!(
+                            "BA1 not evaluated: gnomAD AN={} below minimum {} (gnomAD v4 guidance)",
+                            an, config.min_an_for_frequency_criteria
+                        )
+                    }
+                    None => {
+                        details.insert("an_missing".into(), serde_json::json!(true));
+                        format!(
+                            "BA1 not evaluated: gnomAD AN unavailable; minimum {} required (gnomAD v4 guidance)",
+                            config.min_an_for_frequency_criteria
+                        )
+                    }
+                };
+                return EvidenceCriterion {
+                    code: "BA1".to_string(),
+                    direction: EvidenceDirection::Benign,
+                    strength: EvidenceStrength::Standalone,
+                    default_strength: EvidenceStrength::Standalone,
+                    met: false,
+                    evaluated: false,
+                    summary,
+                    details: serde_json::Value::Object(details),
+                };
+            }
         }
         let max_af = gnomad.max_pop_af();
         if let Some(af) = max_af {
@@ -155,6 +165,7 @@ mod tests {
             gnomad: Some(GnomadData {
                 all_af: Some(0.10),
                 afr_af: Some(0.15),
+                all_an: Some(100_000),
                 ..Default::default()
             }),
             clinvar: None,
@@ -323,7 +334,7 @@ mod tests {
             is_canonical: true,
             amino_acids: None,
             protein_position: None,
-            gnomad: Some(GnomadData { all_af: Some(0.10), ..Default::default() }),
+            gnomad: Some(GnomadData { all_af: Some(0.10), all_an: Some(100_000), ..Default::default() }),
             clinvar: None,
             revel: None,
             splice_ai: None,
@@ -410,6 +421,7 @@ mod tests {
             gnomad: Some(GnomadData {
                 all_af: Some(0.02),
                 eas_af: Some(0.06), // Only EAS above 5%
+                all_an: Some(100_000),
                 ..Default::default()
             }),
             clinvar: None,

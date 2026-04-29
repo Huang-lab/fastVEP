@@ -49,18 +49,49 @@ fn evaluate_ps1(
     );
 
     // Walker 2023 splice-RNA path.
-    if is_canonical_splice && input.same_splice_position_pathogenic == Some(true) {
-        details.insert("ps1_path".into(), serde_json::json!("splice_rna_match"));
-        return EvidenceCriterion {
-            code: "PS1".to_string(),
-            direction: EvidenceDirection::Pathogenic,
-            strength: EvidenceStrength::Strong,
-            default_strength: EvidenceStrength::Strong,
-            met: true,
-            evaluated: true,
-            summary: "Canonical ±1/2 splice variant predicted to produce the same RNA outcome as a known pathogenic splice variant (Walker 2023)".to_string(),
-            details: serde_json::Value::Object(details),
-        };
+    if is_canonical_splice {
+        match input.same_splice_position_pathogenic {
+            Some(true) => {
+                details.insert("ps1_path".into(), serde_json::json!("splice_rna_match"));
+                return EvidenceCriterion {
+                    code: "PS1".to_string(),
+                    direction: EvidenceDirection::Pathogenic,
+                    strength: EvidenceStrength::Strong,
+                    default_strength: EvidenceStrength::Strong,
+                    met: true,
+                    evaluated: true,
+                    summary: "Canonical ±1/2 splice variant predicted to produce the same RNA outcome as a known pathogenic splice variant (Walker 2023)".to_string(),
+                    details: serde_json::Value::Object(details),
+                };
+            }
+            Some(false) => {
+                return EvidenceCriterion {
+                    code: "PS1".to_string(),
+                    direction: EvidenceDirection::Pathogenic,
+                    strength: EvidenceStrength::Strong,
+                    default_strength: EvidenceStrength::Strong,
+                    met: false,
+                    evaluated: true,
+                    summary: "Canonical splice variant; no known same-position pathogenic splice match (Walker 2023 PS1 splice path does not fire)".to_string(),
+                    details: serde_json::Value::Object(details),
+                };
+            }
+            None => {
+                // Splice catalog data isn't available — distinguish "no data"
+                // from "no match" so downstream consumers don't treat this as
+                // an evaluated negative call.
+                return EvidenceCriterion {
+                    code: "PS1".to_string(),
+                    direction: EvidenceDirection::Pathogenic,
+                    strength: EvidenceStrength::Strong,
+                    default_strength: EvidenceStrength::Strong,
+                    met: false,
+                    evaluated: false,
+                    summary: "Canonical splice variant; PS1 splice catalog (same_splice_position_pathogenic) not populated by pipeline".to_string(),
+                    details: serde_json::Value::Object(details),
+                };
+            }
+        }
     }
 
     if !is_missense {
@@ -71,11 +102,7 @@ fn evaluate_ps1(
             default_strength: EvidenceStrength::Strong,
             met: false,
             evaluated: true,
-            summary: if is_canonical_splice {
-                "Canonical splice variant; no same-position pathogenic splice match available for PS1".to_string()
-            } else {
-                "Not a missense or canonical splice variant".to_string()
-            },
+            summary: "Not a missense or canonical splice variant".to_string(),
             details: serde_json::Value::Object(details),
         };
     }

@@ -103,6 +103,7 @@ mod tests {
         input.gnomad = Some(GnomadData {
             all_af: Some(0.10),
             afr_af: Some(0.15),
+            all_an: Some(100_000),
             ..Default::default()
         });
         let result = classify(&input, &AcmgConfig::default());
