@@ -211,8 +211,10 @@ mod tests {
 
     #[test]
     fn test_classify_conflicting_evidence() {
-        // When both pathogenic AND benign criteria are met but benign
-        // doesn't reach standalone/>=2 Strong thresholds, it's VUS
+        // PR9: combiner conflict-gating fix. PVS1 alone + BS1 alone do NOT
+        // reach a definite call on either side (PVS1 needs PS/PM/PP to fire
+        // a pathogenic rule, and BS1 alone is sub-threshold for Benign).
+        // Result is plain VUS without a "Conflicting" label.
         let mut input = make_input(
             vec![Consequence::FrameshiftVariant],
             Impact::High,
@@ -223,26 +225,32 @@ mod tests {
             loeuf: Some(0.03),
             ..Default::default()
         });
-        // PVS1 should fire (frameshift in LOF-intolerant gene)
-        // BS1 fires (AF > 0.01) but BS2 does NOT (no homozygotes)
-        // So we have 1 BS (not 2), plus some BP → conflicting with PVS1
         input.gnomad = Some(GnomadData {
             all_af: Some(0.02),
-            all_hc: Some(0), // No homozygotes → BS2 does not fire
+            all_hc: Some(0),
             ..Default::default()
         });
 
         let result = classify(&input, &AcmgConfig::default());
-        // PVS1 (pathogenic) + BS1 (benign) = conflicting → VUS
+        // The pathogenic rules engage (PVS1 + PM2_Supporting → PVS+PP → LP via SVI rule)
+        // because PM2_Supporting fires when AF below threshold or absent.
+        // Here AF = 0.02 (above PM2 threshold) so PM2 does NOT fire.
+        // We have just PVS1 (pathogenic) and BS1 (benign, sub-threshold).
+        // Both directions sub-definite → plain VUS, no "Conflicting" label.
         assert_eq!(
             result.classification,
             AcmgClassification::UncertainSignificance
         );
-        assert!(result
-            .triggered_rule
-            .as_deref()
-            .unwrap_or("")
-            .contains("Conflicting"));
+        assert!(
+            result.triggered_rule.is_none()
+                || !result
+                    .triggered_rule
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Conflicting"),
+            "PR9 expects no Conflicting label here; got {:?}",
+            result.triggered_rule
+        );
     }
 
     #[test]

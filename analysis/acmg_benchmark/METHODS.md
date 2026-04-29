@@ -72,7 +72,7 @@ PP3 also evaluates SpliceAI delta scores for splice impact:
 2. ≥2 BS criteria
 
 **Conflicting → VUS:**
-3. Any pathogenic AND any benign criteria both met
+3. Pathogenic rules reach a definite call (P/LP) **AND** benign rules reach a definite call (B/LB). Pre-PR9 short-circuited any pathogenic-met + benign-met pair to VUS; PR9 lets the directional call win when only one side reaches a definite call.
 
 **Pathogenic (8 rules):**
 4. PVS + ≥1 PS
