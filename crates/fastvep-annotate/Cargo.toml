@@ -13,6 +13,7 @@ fastvep-consequence = { workspace = true }
 fastvep-hgvs = { workspace = true }
 fastvep-io = { workspace = true }
 fastvep-sa = { workspace = true }
+fastvep-classification = { workspace = true }
 
 anyhow = { workspace = true }
 serde_json = { workspace = true }

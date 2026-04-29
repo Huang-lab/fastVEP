@@ -1,6 +1,7 @@
 //! Source-specific parsers for building annotation databases.
 
 pub mod clinvar;
+pub mod clinvar_protein;
 pub mod cosmic;
 pub mod dbnsfp;
 pub mod dbsnp;
