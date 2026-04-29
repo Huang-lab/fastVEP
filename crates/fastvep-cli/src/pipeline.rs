@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use flate2::read::MultiGzDecoder;
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue};
 use fastvep_cache::fasta::FastaReader;
 use fastvep_cache::gff::parse_gff3;
@@ -16,11 +17,37 @@ use fastvep_io::vcf::VcfParser;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BATCH_SIZE: usize = 1024;
+
+fn open_vcf_input_reader(input: &str) -> Result<Box<dyn io::Read>> {
+    let reader: Box<dyn io::Read> = if input == "-" {
+        Box::new(io::stdin())
+    } else {
+        Box::new(
+            File::open(input)
+                .with_context(|| format!("Opening input file: {}", input))?,
+        )
+    };
+
+    wrap_maybe_gzip_reader(reader, input)
+}
+
+fn wrap_maybe_gzip_reader(mut reader: Box<dyn io::Read>, source: &str) -> Result<Box<dyn io::Read>> {
+    let mut prefix = [0u8; 2];
+    let bytes_read = reader.read(&mut prefix)?;
+    let looks_like_gzip = bytes_read == 2 && prefix == [0x1f, 0x8b];
+
+    let replay = io::Cursor::new(prefix[..bytes_read].to_vec()).chain(reader);
+    if looks_like_gzip || (source != "-" && source.ends_with(".gz")) {
+        Ok(Box::new(MultiGzDecoder::new(replay)))
+    } else {
+        Ok(Box::new(replay))
+    }
+}
 
 pub struct AnnotateConfig {
     pub input: String,
@@ -220,15 +247,8 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     // Create consequence predictor
     let predictor = ConsequencePredictor::new(config.distance, config.distance);
 
-    // Open input VCF
-    let input_reader: Box<dyn io::Read> = if config.input == "-" {
-        Box::new(io::stdin())
-    } else {
-        Box::new(
-            File::open(&config.input)
-                .with_context(|| format!("Opening input file: {}", config.input))?,
-        )
-    };
+    // Open input VCF (supports plain text or gzipped VCF)
+    let input_reader = open_vcf_input_reader(&config.input)?;
     let mut vcf_parser = VcfParser::new(input_reader)?;
 
     // Extract sample names from VCF #CHROM header
@@ -1462,9 +1482,9 @@ pub fn run_cache_build(gff3_path: &str, fasta_path: Option<&str>, output_path: &
 /// Quick VCF pre-scan to collect variant regions for indexed GFF3 loading.
 /// Returns merged (chrom, start, end) regions expanded by the given distance.
 fn prescan_vcf_regions(vcf_path: &str, distance: u64) -> Result<Vec<(String, u64, u64)>> {
-    let file = File::open(vcf_path)
+    let input_reader = open_vcf_input_reader(vcf_path)
         .with_context(|| format!("Pre-scanning VCF: {}", vcf_path))?;
-    let reader = io::BufReader::new(file);
+    let reader = io::BufReader::new(input_reader);
 
     let mut regions: HashMap<String, (u64, u64)> = HashMap::new();
 
