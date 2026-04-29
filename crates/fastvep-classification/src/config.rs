@@ -37,9 +37,23 @@ pub struct AcmgConfig {
     /// BS1: allele frequency threshold for strong benign (default: 0.01)
     #[serde(default = "default_bs1")]
     pub bs1_af_threshold: f64,
-    /// PM2: allele frequency threshold for rare/absent (default: 0.0001)
+    /// PM2: legacy single allele frequency threshold (default: 0.0001).
+    ///
+    /// Retained for backward compatibility with configs predating PR4. The
+    /// classifier prefers the inheritance-aware fields below
+    /// (`pm2_ad_af_threshold` / `pm2_ar_af_threshold`); this field is no
+    /// longer consulted by the default code path but remains so that existing
+    /// TOML configs continue to deserialize.
     #[serde(default = "default_pm2")]
     pub pm2_af_threshold: f64,
+    /// PM2: AF threshold for autosomal-dominant or unknown-inheritance genes
+    /// per ClinGen SVI v1.0 (Sept 2020). Default 0.0 → strict absence (AC = 0).
+    #[serde(default = "default_pm2_ad")]
+    pub pm2_ad_af_threshold: f64,
+    /// PM2: AF threshold for autosomal-recessive genes per ClinGen SVI v1.0
+    /// (Sept 2020). Default 0.00007 (0.007%).
+    #[serde(default = "default_pm2_ar")]
+    pub pm2_ar_af_threshold: f64,
 
     // ── REVEL thresholds (ClinGen SVI calibrated) ──
     /// PP3 supporting threshold (default: 0.644)
@@ -145,6 +159,8 @@ impl Default for AcmgConfig {
             ba1_af_threshold: 0.05,
             bs1_af_threshold: 0.01,
             pm2_af_threshold: 0.0001,
+            pm2_ad_af_threshold: 0.0,
+            pm2_ar_af_threshold: 0.00007,
             pp3_revel_supporting: 0.644,
             pp3_revel_moderate: 0.773,
             pp3_revel_strong: 0.932,
@@ -214,6 +230,8 @@ impl AcmgConfig {
 fn default_ba1() -> f64 { 0.05 }
 fn default_bs1() -> f64 { 0.01 }
 fn default_pm2() -> f64 { 0.0001 }
+fn default_pm2_ad() -> f64 { 0.0 }
+fn default_pm2_ar() -> f64 { 0.00007 }
 fn default_pp3_supporting() -> f64 { 0.644 }
 fn default_pp3_moderate() -> f64 { 0.773 }
 fn default_pp3_strong() -> f64 { 0.932 }
