@@ -167,15 +167,11 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 |---|---|---|---|
 | **RepeatMasker** | `repeatmasker` | BP3 | Repeat region intervals (`.osi` format) |
 
-### Building the ClinVar Protein Index
+### Gene-level (.oga) sources
 
-```bash
-fastvep sa-build --source clinvar_protein \
-  --input clinvar.vcf.gz \
-  --output sa/clinvar_protein.oga
-```
+> ⚠️ **Current limitation:** `fastvep sa-build` does not yet support gene-level (`.oga`) sources — OMIM, gnomAD gene constraints, and the ClinVar protein index. The library has parsers for all three (see `crates/fastvep-sa/src/sources/{omim,gnomad_gene,clinvar_protein}.rs`) but no CLI build path is wired up. PVS1, PS1, PM1, PM5, and inheritance-aware PM2 fall back to default behavior (typically `evaluated: false`) when their `.oga` files are absent. Tracking this work is on the roadmap.
 
-This extracts protein-level data for pathogenic/likely-pathogenic missense variants, enabling PS1, PM5, and PM1 (hotspot) criteria.
+See [ACMG_SETUP.md](ACMG_SETUP.md) for the full setup walkthrough including allele-level sources that *are* supported by `sa-build` today (clinvar, gnomad, revel, spliceai, dbnsfp, phylop, gerp).
 
 ## Evidence Criteria Reference
 

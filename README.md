@@ -156,26 +156,40 @@ samtools faidx Homo_sapiens.GRCh38.dna.primary_assembly.fa
 
 ### Step 2: Build supplementary annotation databases
 
-Download source files and build fastSA databases. Each build is a one-time operation.
+Each supplementary database (ClinVar, gnomAD, etc.) is built in **two steps** — *download the source file*, then run `fastvep sa-build` to convert it into the fastSA `.osa` + `.osa.idx` pair. **`sa-build` is a converter, not a downloader; if you skip the download, the resulting `.osa` will be empty and your annotations will silently come back blank.** After each build, check that the `.osa` size matches the expected magnitude (column below); a few-KB `.osa` is the tell that the source file wasn't real.
 
 ```bash
 mkdir -p sa_databases
 
-# ClinVar — clinical variant significance (~30MB download)
+# ── ClinVar — clinical variant significance ──
+# Download (~50 MB)
 wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
+# Build (expect ~80–120 MB .osa)
 fastvep sa-build --source clinvar -i clinvar.vcf.gz -o sa_databases/clinvar --assembly GRCh38
 
-# gnomAD v4 — population allele frequencies (~25GB download per chromosome)
-# Download from https://gnomad.broadinstitute.org/downloads
+# ── gnomAD v4 — population allele frequencies ──
+# Download per-chromosome from https://gnomad.broadinstitute.org/downloads
+# (~30–60 GB total for genomes v4.0)
 fastvep sa-build --source gnomad -i gnomad.genomes.v4.0.sites.vcf.bgz -o sa_databases/gnomad --assembly GRCh38
 
-# dbSNP — variant identifiers
+# ── dbSNP — variant identifiers ──
 wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
 fastvep sa-build --source dbsnp -i GCF_000001405.40.gz -o sa_databases/dbsnp --assembly GRCh38
 
-# COSMIC — somatic mutations (requires license, see https://cancer.sanger.ac.uk/cosmic/download)
+# ── COSMIC — somatic mutations (requires license) ──
+# https://cancer.sanger.ac.uk/cosmic/download
 fastvep sa-build --source cosmic -i CosmicCodingMuts.vcf.gz -o sa_databases/cosmic --assembly GRCh38
 ```
+
+**Verify before moving on:**
+
+```bash
+ls -la sa_databases/*.osa
+# Expected: clinvar ~100 MB; gnomad several GB; dbsnp ~5 GB.
+# Anything < 1 MB usually means an empty build — re-check the source file.
+```
+
+> For ACMG-AMP classification specifically (REVEL, SpliceAI, PhyloP, dbNSFP, OMIM, ClinVar protein index, etc.), see the dedicated **[ACMG Setup Guide](docs/ACMG_SETUP.md)** — it walks through every source the classifier needs with download URLs, build commands, expected disk sizes, and a verification recipe.
 
 ### Step 3: Run the CLI annotator
 
