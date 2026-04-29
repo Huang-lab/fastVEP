@@ -76,6 +76,26 @@ experimental RNA evidence (PVS1_RNA / PS3).
 - **BP4 Supporting**: max delta score ≤ 0.1 (any consequence)
 - **Uninformative zone**: 0.1 < max_ds < 0.2 (neither PP3 nor BP4 fires)
 
+### Anti-Double-Counting (PP3 Reconciliation)
+
+Computational evidence (PP3) is a surrogate for molecular signals that other
+criteria capture more directly. Letting both fire inflates the evidence weight
+for the same biology. Per Pejaver 2022 and Walker 2023, the classifier runs a
+post-evaluation reconciliation pass that suppresses PP3 (or PM1) under these
+overlap conditions:
+
+| Trigger | Suppressed | Source |
+|---------|------------|--------|
+| PVS1 fires AND PP3 was driven by SpliceAI | PP3 | Walker 2023 |
+| PS1 fires AND PP3 was driven by REVEL (missense) | PP3 | Pejaver 2022 |
+| PM5 fires AND PP3 was driven by REVEL (missense) | PP3 | Pejaver 2022 |
+| PP3_Strong + PM1 (combined > Strong cap) | PM1 | Pejaver 2022 |
+
+PP3 records its firing source (`details.pp3_source`: `revel_missense` /
+`spliceai`) so reconciliation can dispatch precisely without re-inferring from
+score fields. Suppressed criteria stay in the result list with `met=false` and
+a `details.suppressed_by_reconcile` note explaining why.
+
 ### Combination Rules
 
 19 combination rules determine the final classification, applied in order. This includes the 18 rules from Richards et al. 2015 plus one novel rule from the ClinGen SVI Working Group (September 2020).

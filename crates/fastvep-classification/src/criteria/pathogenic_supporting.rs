@@ -217,17 +217,22 @@ fn evaluate_pp3(
     // - REVEL (missense) takes precedence and is already strength-graded.
     // - Otherwise, SpliceAI Supporting may fire for any consequence (canonical
     //   splice variants typically also fire PVS1; anti-double-counting between
-    //   PP3 and PVS1 for splice is handled in PR2).
-    let (met, strength) = if revel_met {
-        (true, revel_strength.unwrap_or(EvidenceStrength::Supporting))
+    //   PP3 and PVS1 for splice is handled in `criteria::reconcile_evidence`).
+    let (met, strength, source) = if revel_met {
+        (
+            true,
+            revel_strength.unwrap_or(EvidenceStrength::Supporting),
+            "revel_missense",
+        )
     } else if splice_supporting {
-        (true, EvidenceStrength::Supporting)
+        (true, EvidenceStrength::Supporting, "spliceai")
     } else {
-        (false, EvidenceStrength::Supporting)
+        (false, EvidenceStrength::Supporting, "none")
     };
 
     let evaluated = (is_missense && input.revel.is_some()) || input.splice_ai.is_some();
 
+    details.insert("pp3_source".into(), serde_json::json!(source));
     details.insert("evidence_lines".into(), serde_json::json!(evidence_lines));
 
     let summary = if met {
