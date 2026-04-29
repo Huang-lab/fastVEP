@@ -31,7 +31,7 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 
 | Criterion | Strength | Description | Data Source |
 |-----------|----------|-------------|-------------|
-| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population allele frequency |
+| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population allele frequency, with AN ≥ 2000 minimum (gnomAD v4 / SVI March 2024) |
 | BS1 | Strong | Greater than expected frequency | gnomAD allele frequency (AF > 0.01) |
 | BS2 | Strong | Observed in healthy adults | gnomAD homozygote count + OMIM inheritance |
 | BP1 | Supporting | Missense in truncation-disease gene | gnomAD gene constraints (pLI + misZ) |

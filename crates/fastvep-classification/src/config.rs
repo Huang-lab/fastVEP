@@ -140,6 +140,15 @@ pub struct AcmgConfig {
     #[serde(default = "default_ba1_exceptions")]
     pub ba1_exceptions: Vec<Ba1Exception>,
 
+    /// Minimum allele number (AN) required for BA1 / BS1 to fire (gnomAD v4
+    /// guidance, ClinGen SVI March 2024). With v4's massive expansion (807k
+    /// exomes, 76k genomes), the overall AN should be ≥ 2000 before a
+    /// frequency-based call is reliable. When the AN drops below this
+    /// threshold, BA1/BS1 are marked NotEvaluated rather than firing on
+    /// noisy frequency estimates. Default 2000.
+    #[serde(default = "default_min_an")]
+    pub min_an_for_frequency_criteria: u64,
+
     // ── Gene-specific overrides ──
     #[serde(default)]
     pub gene_overrides: HashMap<String, GeneOverride>,
@@ -177,6 +186,24 @@ pub struct GeneOverride {
     /// Criteria strength overrides (code -> new strength)
     #[serde(default)]
     pub strength_overrides: HashMap<String, EvidenceStrength>,
+    /// Per-disorder thresholds for genes associated with multiple disorders
+    /// (ClinGen SVI guidance July 2025). The classifier consumes whichever
+    /// disorder context is active for the call; in the absence of explicit
+    /// disorder selection, this scaffold is currently informational only —
+    /// the active disorder selection mechanism is part of a follow-up PR.
+    #[serde(default)]
+    pub disorders: HashMap<String, DisorderOverride>,
+}
+
+/// Per-disorder override values within a multi-disorder gene.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DisorderOverride {
+    /// Inheritance for this disorder ("AD", "AR", or "AD_AR").
+    pub inheritance: Option<String>,
+    /// Override BS1 AF threshold for this disorder.
+    pub bs1_af_threshold: Option<f64>,
+    /// Override PM2 AF threshold for this disorder.
+    pub pm2_af_threshold: Option<f64>,
 }
 
 impl Default for AcmgConfig {
@@ -207,6 +234,7 @@ impl Default for AcmgConfig {
             use_pp5_bp6: false,
             ba1_exceptions: default_ba1_exceptions(),
             use_clinvar_stars_as_ps4_proxy: false,
+            min_an_for_frequency_criteria: 2000,
             gene_overrides: HashMap::new(),
             trio: None,
         }
@@ -277,6 +305,7 @@ fn default_misz() -> f64 { 3.09 }
 fn default_pm1_window() -> u64 { 5 }
 fn default_pm1_threshold() -> u32 { 3 }
 fn default_true() -> bool { true }
+fn default_min_an() -> u64 { 2000 }
 
 /// Default BA1 exception list (Ghosh et al. 2018, Hum Mutat — 9 variants).
 fn default_ba1_exceptions() -> Vec<Ba1Exception> {
@@ -321,6 +350,7 @@ mod tests {
                 pm2_af_threshold: None,
                 disabled_criteria: vec![],
                 strength_overrides: HashMap::new(),
+                disorders: HashMap::new(),
             },
         );
         assert_eq!(cfg.effective_bs1_threshold(Some("BRCA1")), 0.001);

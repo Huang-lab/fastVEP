@@ -26,6 +26,35 @@ fn evaluate_bs1(
     details.insert("af_threshold".into(), serde_json::json!(threshold));
 
     let (met, summary) = if let Some(ref gnomad) = input.gnomad {
+        // ClinGen SVI gnomAD v4 guidance (March 2024): require minimum AN
+        // before BS1 fires, same as BA1.
+        let an_ok = gnomad
+            .all_an
+            .map_or(true, |an| an >= config.min_an_for_frequency_criteria);
+        if !an_ok {
+            details.insert(
+                "an_below_minimum".into(),
+                serde_json::json!(gnomad.all_an),
+            );
+            details.insert(
+                "min_an_for_frequency_criteria".into(),
+                serde_json::json!(config.min_an_for_frequency_criteria),
+            );
+            return EvidenceCriterion {
+                code: "BS1".to_string(),
+                direction: EvidenceDirection::Benign,
+                strength: EvidenceStrength::Strong,
+                default_strength: EvidenceStrength::Strong,
+                met: false,
+                evaluated: false,
+                summary: format!(
+                    "BS1 not evaluated: gnomAD AN={} below minimum {} (gnomAD v4 guidance)",
+                    gnomad.all_an.unwrap_or(0),
+                    config.min_an_for_frequency_criteria
+                ),
+                details: serde_json::Value::Object(details),
+            };
+        }
         let af = gnomad.all_af.unwrap_or(0.0);
         details.insert("gnomad_allAf".into(), serde_json::json!(af));
 

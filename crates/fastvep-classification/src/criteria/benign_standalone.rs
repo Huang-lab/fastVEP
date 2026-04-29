@@ -56,6 +56,36 @@ pub fn evaluate_ba1(
     }
 
     let (met, summary) = if let Some(ref gnomad) = input.gnomad {
+        // ClinGen SVI gnomAD v4 guidance (March 2024): require minimum AN
+        // before frequency-based criteria fire — protects against noisy AF
+        // estimates in poorly-covered populations.
+        let an_ok = gnomad
+            .all_an
+            .map_or(true, |an| an >= config.min_an_for_frequency_criteria);
+        if !an_ok {
+            details.insert(
+                "an_below_minimum".into(),
+                serde_json::json!(gnomad.all_an),
+            );
+            details.insert(
+                "min_an_for_frequency_criteria".into(),
+                serde_json::json!(config.min_an_for_frequency_criteria),
+            );
+            return EvidenceCriterion {
+                code: "BA1".to_string(),
+                direction: EvidenceDirection::Benign,
+                strength: EvidenceStrength::Standalone,
+                default_strength: EvidenceStrength::Standalone,
+                met: false,
+                evaluated: false,
+                summary: format!(
+                    "BA1 not evaluated: gnomAD AN={} below minimum {} (gnomAD v4 guidance)",
+                    gnomad.all_an.unwrap_or(0),
+                    config.min_an_for_frequency_criteria
+                ),
+                details: serde_json::Value::Object(details),
+            };
+        }
         let max_af = gnomad.max_pop_af();
         if let Some(af) = max_af {
             details.insert("max_pop_af".into(), serde_json::json!(af));
@@ -320,6 +350,52 @@ mod tests {
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(result.met);
+    }
+
+    #[test]
+    fn test_ba1_low_an_not_evaluated() {
+        // PR10 (gnomAD v4 guidance): AN below 2000 → NotEvaluated, not Benign,
+        // even at high AF — the frequency estimate is unreliable.
+        let input = ClassificationInput {
+            consequences: vec![],
+            impact: fastvep_core::Impact::Modifier,
+            gene_symbol: None,
+            is_canonical: false,
+            amino_acids: None,
+            protein_position: None,
+            gnomad: Some(GnomadData {
+                all_af: Some(0.10),
+                all_an: Some(500), // way below 2000
+                ..Default::default()
+            }),
+            clinvar: None,
+            revel: None,
+            splice_ai: None,
+            dbnsfp: None,
+            phylop: None,
+            gerp: None,
+            gene_constraints: None,
+            omim: None,
+            clinvar_protein: None,
+            hgvs_c: None,
+            predicted_nmd: None,
+            protein_truncation_pct: None,
+            is_last_exon: None,
+            in_critical_region: None,
+            alt_start_codon_distance: None,
+            same_splice_position_pathogenic: None,
+            in_repeat_region: None,
+            at_exon_edge: None,
+            intronic_offset: None,
+            proband_genotype: None,
+            mother_genotype: None,
+            father_genotype: None,
+            companion_variants: vec![],
+        };
+        let result = evaluate_ba1(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(!result.evaluated);
+        assert!(result.summary.contains("below minimum"));
     }
 
     #[test]

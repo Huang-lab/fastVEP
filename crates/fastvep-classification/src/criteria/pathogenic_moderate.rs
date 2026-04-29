@@ -859,6 +859,7 @@ mod tests {
                 pm2_af_threshold: Some(0.001),
                 disabled_criteria: vec![],
                 strength_overrides: Default::default(),
+                disorders: Default::default(),
             },
         );
         let mut input = make_input(
