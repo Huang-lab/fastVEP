@@ -308,6 +308,27 @@ pub struct ClassificationInput {
     /// pathogenic variants that must not call BA1. `None` if the pipeline
     /// did not produce HGVS — BA1 then proceeds with its default behavior.
     pub hgvs_c: Option<String>,
+    // ── PVS1 decision-tree signals (Abou Tayoun 2018) ────────────────────
+    // All Optional. The PVS1 evaluator uses them to grade the strength of
+    // null-variant evidence (PVS1 / PVS1_Strong / PVS1_Moderate /
+    // PVS1_Supporting / N/A). When unpopulated, PVS1 falls back to its
+    // legacy binary behavior (full Very Strong if a null variant is in a
+    // LOF-intolerant gene). The pipeline (fastvep-cli) computes these from
+    // cached transcript exon coordinates + ClinVar protein index.
+    /// True if the predicted premature termination is expected to undergo
+    /// nonsense-mediated decay (NOT in 3'-most exon AND NOT in last 50 nt
+    /// of penultimate exon).
+    pub predicted_nmd: Option<bool>,
+    /// Fraction of the protein removed by the variant (0.0–1.0).
+    pub protein_truncation_pct: Option<f64>,
+    /// True if the variant lies in the 3'-most (last) exon.
+    pub is_last_exon: Option<bool>,
+    /// True if downstream pathogenic variants exist past the truncation point
+    /// (used as a proxy for "critical functional region").
+    pub in_critical_region: Option<bool>,
+    /// Distance (in codons) to the next downstream Met for start-loss
+    /// variants. None if no alternative start codon exists.
+    pub alt_start_codon_distance: Option<i64>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
     /// Whether the variant sits at the first base or last 3 bases of an exon
@@ -443,6 +464,14 @@ pub fn extract_classification_input(
         // hgvs_c is populated by the pipeline once HGVS is computed; remains
         // None for now and BA1 falls back to default behavior.
         hgvs_c: None,
+        // PVS1 decision-tree signals — populated once the pipeline plumbing
+        // (transcript exon coords + ClinVar protein index) lands. Until
+        // then, PVS1 falls back to its legacy binary rule.
+        predicted_nmd: None,
+        protein_truncation_pct: None,
+        is_last_exon: None,
+        in_critical_region: None,
+        alt_start_codon_distance: None,
         in_repeat_region,
         // BP7 exon-edge / deep-intronic signals (Walker 2023). The pipeline
         // populates these once per-transcript exon coordinates are wired in;
