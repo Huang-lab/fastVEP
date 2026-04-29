@@ -125,7 +125,19 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             } else {
                 let gff_file = File::open(gff3_path)
                     .with_context(|| format!("Opening GFF3 file: {}", gff3_path))?;
-                let trs = parse_gff3(gff_file)?;
+                // Auto-decompress gzipped GFF3. Without this, parse_gff3 reads
+                // gz bytes as text and silently produces zero transcripts.
+                let trs = if gff3_path.ends_with(".gz") || gff3_path.ends_with(".bgz") {
+                    parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
+                } else {
+                    parse_gff3(gff_file)?
+                };
+                if trs.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "GFF3 file {} produced 0 transcripts — likely malformed, truncated, or unrecognized format. Refusing to continue with empty transcript set.",
+                        gff3_path
+                    ));
+                }
                 eprintln!("Loaded {} transcripts from {}", trs.len(), gff3_path);
                 trs
             }
@@ -1448,7 +1460,19 @@ pub fn run_filter(input: &str, output_path: &str, filter_expr: &str) -> Result<(
 pub fn run_cache_build(gff3_path: &str, fasta_path: Option<&str>, output_path: &str) -> Result<()> {
     let gff_file = File::open(gff3_path)
         .with_context(|| format!("Opening GFF3 file: {}", gff3_path))?;
-    let mut transcripts = parse_gff3(gff_file)?;
+    // Auto-decompress .gz / .bgz GFF3 inputs. Without this we'd silently
+    // produce a 0-transcript cache.
+    let mut transcripts = if gff3_path.ends_with(".gz") || gff3_path.ends_with(".bgz") {
+        parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
+    } else {
+        parse_gff3(gff_file)?
+    };
+    if transcripts.is_empty() {
+        return Err(anyhow::anyhow!(
+            "GFF3 file {} produced 0 transcripts — refusing to write an empty cache.",
+            gff3_path
+        ));
+    }
     eprintln!("Loaded {} transcripts from {}", transcripts.len(), gff3_path);
 
     if let Some(fasta) = fasta_path {

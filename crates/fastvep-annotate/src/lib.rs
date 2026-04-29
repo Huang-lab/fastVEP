@@ -89,7 +89,20 @@ impl AnnotationContext {
             } else {
                 let gff_file = File::open(gff3_path)
                     .with_context(|| format!("Opening GFF3 file: {}", gff3_path))?;
-                let trs = parse_gff3(gff_file)?;
+                // Auto-decompress gzipped GFF3. Without this, parse_gff3
+                // reads binary gz bytes as text, yields zero transcripts,
+                // and downstream silently produces empty annotations.
+                let trs = if gff3_path.ends_with(".gz") || gff3_path.ends_with(".bgz") {
+                    parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
+                } else {
+                    parse_gff3(gff_file)?
+                };
+                if trs.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "GFF3 file {} produced 0 transcripts — likely malformed, truncated, or unrecognized format. Refusing to continue with empty transcript set.",
+                        gff3_path
+                    ));
+                }
                 tracing::info!("Loaded {} transcripts from {}", trs.len(), gff3_path);
                 if let Err(e) = fastvep_cache::transcript_cache::save_cache(&trs, &cache_path) {
                     tracing::warn!("Could not save cache: {}", e);
