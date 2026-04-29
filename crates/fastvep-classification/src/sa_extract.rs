@@ -303,6 +303,11 @@ pub struct ClassificationInput {
     pub omim: Option<OmimData>,
     /// ClinVar pathogenic variants at protein positions for this gene (from .oga).
     pub clinvar_protein: Option<ClinvarProteinData>,
+    /// HGVS c. notation for the variant (e.g. "c.845G>A"). Used by the BA1
+    /// exception list lookup (Ghosh 2018) to identify well-known high-AF
+    /// pathogenic variants that must not call BA1. `None` if the pipeline
+    /// did not produce HGVS — BA1 then proceeds with its default behavior.
+    pub hgvs_c: Option<String>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
     /// Whether the variant sits at the first base or last 3 bases of an exon
@@ -435,6 +440,9 @@ pub fn extract_classification_input(
         gene_constraints,
         omim,
         clinvar_protein,
+        // hgvs_c is populated by the pipeline once HGVS is computed; remains
+        // None for now and BA1 falls back to default behavior.
+        hgvs_c: None,
         in_repeat_region,
         // BP7 exon-edge / deep-intronic signals (Walker 2023). The pipeline
         // populates these once per-transcript exon coordinates are wired in;

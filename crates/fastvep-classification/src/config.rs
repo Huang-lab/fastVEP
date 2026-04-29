@@ -126,6 +126,14 @@ pub struct AcmgConfig {
     #[serde(default)]
     pub use_pp5_bp6: bool,
 
+    /// Variants exempted from BA1 per the ClinGen SVI updated recommendation
+    /// (Ghosh et al. 2018, Hum Mutat). These are well-known high-AF variants
+    /// whose pathogenicity is established despite exceeding the 5% AF threshold.
+    /// Defaults to the original 9-variant list; users may add VCEP-specific
+    /// entries via TOML.
+    #[serde(default = "default_ba1_exceptions")]
+    pub ba1_exceptions: Vec<Ba1Exception>,
+
     // ── Gene-specific overrides ──
     #[serde(default)]
     pub gene_overrides: HashMap<String, GeneOverride>,
@@ -134,6 +142,18 @@ pub struct AcmgConfig {
     /// Trio configuration for de novo and compound heterozygote analysis.
     #[serde(default)]
     pub trio: Option<TrioConfig>,
+}
+
+/// One entry on the BA1 exception list. A variant is exempt from BA1 when its
+/// `(gene_symbol, hgvs_c)` matches an entry, regardless of allele frequency.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Ba1Exception {
+    pub gene: String,
+    /// HGVS c. notation, e.g. "c.845G>A". Compared case-insensitively.
+    pub hgvs_c: String,
+    /// Optional human-readable reason — surfaced in the criterion `summary`.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// Gene-specific overrides for ACMG-AMP criteria.
@@ -179,6 +199,7 @@ impl Default for AcmgConfig {
             pm1_hotspot_min_pathogenic: 3,
             pm2_downgrade_to_supporting: true,
             use_pp5_bp6: false,
+            ba1_exceptions: default_ba1_exceptions(),
             gene_overrides: HashMap::new(),
             trio: None,
         }
@@ -249,6 +270,26 @@ fn default_misz() -> f64 { 3.09 }
 fn default_pm1_window() -> u64 { 5 }
 fn default_pm1_threshold() -> u32 { 3 }
 fn default_true() -> bool { true }
+
+/// Default BA1 exception list (Ghosh et al. 2018, Hum Mutat — 9 variants).
+fn default_ba1_exceptions() -> Vec<Ba1Exception> {
+    let mk = |gene: &str, hgvs: &str, reason: &str| Ba1Exception {
+        gene: gene.to_string(),
+        hgvs_c: hgvs.to_string(),
+        reason: Some(reason.to_string()),
+    };
+    vec![
+        mk("ACAD9", "c.-44_-41dupTAAG", "Ghosh 2018 BA1 exception (VUS)"),
+        mk("GJB2", "c.109G>A", "Ghosh 2018 BA1 exception (Pathogenic) — DFNB1 hearing loss"),
+        mk("HFE", "c.187C>G", "Ghosh 2018 BA1 exception (Pathogenic) — hereditary hemochromatosis"),
+        mk("HFE", "c.845G>A", "Ghosh 2018 BA1 exception (Pathogenic) — hereditary hemochromatosis (p.Cys282Tyr)"),
+        mk("MEFV", "c.1105C>T", "Ghosh 2018 BA1 exception (VUS)"),
+        mk("MEFV", "c.1223G>A", "Ghosh 2018 BA1 exception (VUS)"),
+        mk("PIBF1", "c.1214G>A", "Ghosh 2018 BA1 exception (VUS)"),
+        mk("ACADS", "c.511C>T", "Ghosh 2018 BA1 exception (VUS)"),
+        mk("BTD", "c.1330G>C", "Ghosh 2018 BA1 exception (Pathogenic) — biotinidase deficiency"),
+    ]
+}
 
 #[cfg(test)]
 mod tests {
