@@ -20,7 +20,7 @@ Of the 28 ACMG-AMP criteria, 18 are fully automatable from variant-level data an
 | PS4 | Strong | Prevalence in affected vs controls | ClinVar 3-star+ expert panel |
 | PM1 | Moderate | Mutational hotspot / functional domain | ClinVar protein-position index (pathogenic density) |
 | PM2 | Supporting* | Absent/rare in population | gnomAD allele frequency (AF ≤ 0.0001) |
-| PM3 | Moderate | In trans with pathogenic (recessive) | VCF genotype + OMIM inheritance + ClinVar companion |
+| PM3 | Supporting/Moderate/Strong/VeryStrong (SVI v1.0 points) | In trans with pathogenic (recessive) | VCF genotype + OMIM inheritance + ClinVar companion (P/LP) |
 | PM4 | Moderate | Protein length change | Consequence (in-frame indel, stop-loss) |
 | PM5 | Moderate | Novel missense at known pathogenic position | ClinVar protein-position index |
 | PM6 | Moderate | Assumed de novo (partial trio) | VCF genotype (proband + ≥1 parent) |

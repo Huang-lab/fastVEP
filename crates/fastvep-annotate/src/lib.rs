@@ -991,6 +991,7 @@ fn enrich_compound_het(
 
                     fastvep_classification::CompanionVariant {
                         is_clinvar_pathogenic: other.is_clinvar_pathogenic,
+                        is_clinvar_likely_pathogenic: false,
                         is_in_trans,
                         proband_het: other.proband_het,
                         hgvsc: other.hgvsc.clone(),

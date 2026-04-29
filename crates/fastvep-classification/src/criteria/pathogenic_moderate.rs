@@ -221,16 +221,37 @@ fn evaluate_pm2(
 
 /// PM3: For recessive disorders, detected in trans with a pathogenic variant.
 ///
-/// Requires: gene has recessive inheritance (from OMIM), proband is het for this variant,
-/// and a companion variant in the same gene is ClinVar pathogenic and proband is het for it.
-/// If phased, requires is_in_trans=true. If unphased, PM3 still applies with a limitation note.
+/// Implements the **ClinGen SVI PM3 v1.0** points-based scoring framework.
+/// Each qualifying companion / homozygous occurrence contributes a point
+/// value depending on phasing × variant classification:
+///
+/// | Scenario | Points |
+/// |----------|--------|
+/// | Confirmed in-trans + co-occurring **Pathogenic** companion | 1.0 |
+/// | Confirmed in-trans + co-occurring **Likely Pathogenic** | 0.5 |
+/// | Phase unknown + co-occurring Pathogenic | 0.5 |
+/// | Phase unknown + co-occurring Likely Pathogenic | 0.25 |
+/// | Homozygous occurrence (proband hom-alt) | 0.5 each, capped at 1.0 |
+///
+/// The total point value maps to PM3 strength:
+///
+/// | Total | Strength |
+/// |-------|----------|
+/// | < 0.5 | not met |
+/// | ≥ 0.5 | PM3_Supporting |
+/// | ≥ 1.0 | PM3 (Moderate) |
+/// | ≥ 2.0 | PM3_Strong |
+/// | ≥ 4.0 | PM3_VeryStrong |
+///
+/// Companions in cis with a pathogenic variant are excluded (those count
+/// toward BP2 instead). Requires AR inheritance from OMIM.
 fn evaluate_pm3(
     input: &ClassificationInput,
     _config: &AcmgConfig,
 ) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
-    // Check if gene has recessive inheritance
+    // Recessive inheritance gate.
     let is_recessive = input
         .omim
         .as_ref()
@@ -238,133 +259,136 @@ fn evaluate_pm3(
     details.insert("is_recessive_gene".into(), serde_json::json!(is_recessive));
 
     if !is_recessive {
-        return EvidenceCriterion {
-            code: "PM3".to_string(),
-            direction: EvidenceDirection::Pathogenic,
-            strength: EvidenceStrength::Moderate,
-            default_strength: EvidenceStrength::Moderate,
-            met: false,
-            evaluated: true,
-            summary: "Gene does not have autosomal recessive inheritance (PM3 requires recessive disorder)".to_string(),
-            details: serde_json::Value::Object(details),
-        };
+        return mk_pm3(
+            "PM3".to_string(),
+            EvidenceStrength::Moderate,
+            false,
+            true,
+            "Gene does not have autosomal recessive inheritance (PM3 requires recessive disorder)".to_string(),
+            details,
+        );
     }
 
-    // Check if proband is het for this variant
-    let proband_het = input
-        .proband_genotype
-        .as_ref()
-        .map_or(false, |g| g.is_het);
+    let proband = input.proband_genotype.as_ref();
+    let proband_het = proband.map_or(false, |g| g.is_het);
+    let proband_hom_alt = proband.map_or(false, |g| g.is_hom_alt);
     details.insert("proband_het".into(), serde_json::json!(proband_het));
+    details.insert("proband_hom_alt".into(), serde_json::json!(proband_hom_alt));
 
-    if !proband_het {
-        return EvidenceCriterion {
-            code: "PM3".to_string(),
-            direction: EvidenceDirection::Pathogenic,
-            strength: EvidenceStrength::Moderate,
-            default_strength: EvidenceStrength::Moderate,
-            met: false,
-            evaluated: input.proband_genotype.is_some(),
-            summary: if input.proband_genotype.is_some() {
-                "Proband is not heterozygous for this variant (PM3 requires het in compound-het context)".to_string()
+    if !proband_het && !proband_hom_alt {
+        return mk_pm3(
+            "PM3".to_string(),
+            EvidenceStrength::Moderate,
+            false,
+            proband.is_some(),
+            if proband.is_some() {
+                "Proband is neither het nor hom-alt for this variant (PM3 requires presence)".to_string()
             } else {
-                "Proband genotype not available; requires trio VCF for compound-het analysis".to_string()
+                "Proband genotype not available; PM3 requires trio VCF for compound-het analysis".to_string()
             },
-            details: serde_json::Value::Object(details),
+            details,
+        );
+    }
+
+    // Score each contributing observation.
+    let mut total: f64 = 0.0;
+    let mut hom_points: f64 = 0.0;
+    let mut breakdown: Vec<String> = Vec::new();
+
+    // Homozygous occurrence (proband hom-alt) earns 0.5 pt, capped at 1.0
+    // total across all hom contributions. We model this single proband as one
+    // hom occurrence; a full pedigree workflow would aggregate across probands.
+    if proband_hom_alt {
+        let pts = 0.5_f64.min(1.0 - hom_points);
+        if pts > 0.0 {
+            hom_points += pts;
+            total += pts;
+            breakdown.push(format!("homozygous_proband:+{:.2}", pts));
+        }
+    }
+
+    // Compound-het companions in trans / phase-unknown.
+    for cv in &input.companion_variants {
+        if !cv.proband_het {
+            continue;
+        }
+        // In-cis companions go to BP2, not PM3.
+        if cv.is_in_trans == Some(false) {
+            continue;
+        }
+        let confirmed_trans = cv.is_in_trans == Some(true);
+        let pts = match (confirmed_trans, cv.is_clinvar_pathogenic, cv.is_clinvar_likely_pathogenic) {
+            (true, true, _) => 1.0,
+            (true, _, true) => 0.5,
+            (false, true, _) => 0.5,
+            (false, _, true) => 0.25,
+            _ => 0.0,
         };
-    }
-
-    // Check companion variants: need at least one that is ClinVar pathogenic and proband is het
-    let qualifying_companions: Vec<&crate::sa_extract::CompanionVariant> = input
-        .companion_variants
-        .iter()
-        .filter(|cv| cv.is_clinvar_pathogenic && cv.proband_het)
-        .collect();
-
-    details.insert(
-        "qualifying_companion_count".into(),
-        serde_json::json!(qualifying_companions.len()),
-    );
-
-    if qualifying_companions.is_empty() {
-        let companion_total = input.companion_variants.len();
-        return EvidenceCriterion {
-            code: "PM3".to_string(),
-            direction: EvidenceDirection::Pathogenic,
-            strength: EvidenceStrength::Moderate,
-            default_strength: EvidenceStrength::Moderate,
-            met: false,
-            evaluated: true,
-            summary: if companion_total == 0 {
-                "No companion variants in the same gene for compound-het analysis".to_string()
-            } else {
-                format!(
-                    "No qualifying companion: {} companion variant(s) in gene, but none are ClinVar pathogenic with proband het",
-                    companion_total
-                )
-            },
-            details: serde_json::Value::Object(details),
+        if pts == 0.0 {
+            continue;
+        }
+        let label = match (confirmed_trans, cv.is_clinvar_pathogenic, cv.is_clinvar_likely_pathogenic) {
+            (true, true, _) => "trans+P",
+            (true, _, true) => "trans+LP",
+            (false, true, _) => "unphased+P",
+            (false, _, true) => "unphased+LP",
+            _ => "skipped",
         };
-    }
-
-    // Check phase information
-    let has_phased_trans = qualifying_companions
-        .iter()
-        .any(|cv| cv.is_in_trans == Some(true));
-    let has_phased_cis = qualifying_companions
-        .iter()
-        .any(|cv| cv.is_in_trans == Some(false));
-    let all_unphased = qualifying_companions
-        .iter()
-        .all(|cv| cv.is_in_trans.is_none());
-
-    details.insert("has_phased_trans".into(), serde_json::json!(has_phased_trans));
-    details.insert("has_phased_cis".into(), serde_json::json!(has_phased_cis));
-    details.insert("all_unphased".into(), serde_json::json!(all_unphased));
-
-    // Collect companion HGVSc for reporting
-    let companion_ids: Vec<String> = qualifying_companions
-        .iter()
-        .filter_map(|cv| cv.hgvsc.clone())
-        .collect();
-    if !companion_ids.is_empty() {
-        details.insert("companion_hgvsc".into(), serde_json::json!(companion_ids));
-    }
-
-    if has_phased_cis && !has_phased_trans {
-        // All qualifying companions are in cis -- not PM3 (but may be BP2)
-        return EvidenceCriterion {
-            code: "PM3".to_string(),
-            direction: EvidenceDirection::Pathogenic,
-            strength: EvidenceStrength::Moderate,
-            default_strength: EvidenceStrength::Moderate,
-            met: false,
-            evaluated: true,
-            summary: "Phased data shows companion pathogenic variant is in cis (same haplotype), not trans".to_string(),
-            details: serde_json::Value::Object(details),
+        let label = if let Some(ref hgvs) = cv.hgvsc {
+            format!("{}({}):+{:.2}", label, hgvs, pts)
+        } else {
+            format!("{}:+{:.2}", label, pts)
         };
+        breakdown.push(label);
+        total += pts;
     }
 
-    let met = has_phased_trans || all_unphased;
-    let summary = if has_phased_trans {
-        format!(
-            "Compound heterozygote: in trans with ClinVar pathogenic variant in recessive gene (phased, {} companion(s))",
-            qualifying_companions.len()
-        )
+    details.insert("total_points".into(), serde_json::json!(total));
+    details.insert("breakdown".into(), serde_json::json!(breakdown));
+
+    let (strength, code) = if total >= 4.0 {
+        (EvidenceStrength::VeryStrong, "PM3_Very_Strong".to_string())
+    } else if total >= 2.0 {
+        (EvidenceStrength::Strong, "PM3_Strong".to_string())
+    } else if total >= 1.0 {
+        (EvidenceStrength::Moderate, "PM3".to_string())
+    } else if total >= 0.5 {
+        (EvidenceStrength::Supporting, "PM3_Supporting".to_string())
     } else {
-        format!(
-            "Compound heterozygote: co-occurs with ClinVar pathogenic variant in recessive gene (unphased data, {} companion(s) -- phase not confirmed)",
-            qualifying_companions.len()
-        )
+        return mk_pm3(
+            "PM3".to_string(),
+            EvidenceStrength::Moderate,
+            false,
+            true,
+            "PM3 points = 0; no qualifying compound-het / homozygous observation".to_string(),
+            details,
+        );
     };
 
+    let summary = format!(
+        "PM3 v1.0 points = {:.2} → {} ({})",
+        total,
+        strength.as_str(),
+        breakdown.join(", ")
+    );
+    mk_pm3(code, strength, true, true, summary, details)
+}
+
+fn mk_pm3(
+    code: String,
+    strength: EvidenceStrength,
+    met: bool,
+    evaluated: bool,
+    summary: String,
+    details: serde_json::Map<String, serde_json::Value>,
+) -> EvidenceCriterion {
     EvidenceCriterion {
-        code: "PM3".to_string(),
+        code,
         direction: EvidenceDirection::Pathogenic,
-        strength: EvidenceStrength::Moderate,
+        strength,
         default_strength: EvidenceStrength::Moderate,
         met,
-        evaluated: true,
+        evaluated,
         summary,
         details: serde_json::Value::Object(details),
     }
@@ -884,5 +908,128 @@ mod tests {
         let input = make_input(vec![Consequence::MissenseVariant], None);
         let result = evaluate_pm4(&input, &AcmgConfig::default());
         assert!(!result.met);
+    }
+
+    // ── PM3 v1.0 points scoring ────────────────────────────────────────
+
+    use crate::sa_extract::{CompanionVariant, GenotypeInfo};
+
+    fn ar_input_with_proband(het: bool, hom_alt: bool) -> ClassificationInput {
+        let mut input = make_input(vec![Consequence::MissenseVariant], None);
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec!["Cystic fibrosis, autosomal recessive".to_string()]),
+        });
+        input.proband_genotype = Some(GenotypeInfo {
+            is_het: het,
+            is_hom_alt: hom_alt,
+            is_hom_ref: !het && !hom_alt,
+            is_missing: false,
+            is_phased: false,
+            depth: Some(30),
+            quality: Some(50),
+            alt_allele_index: if het || hom_alt { Some(1) } else { None },
+        });
+        input
+    }
+
+    fn cv(p: bool, lp: bool, in_trans: Option<bool>, het: bool) -> CompanionVariant {
+        CompanionVariant {
+            is_clinvar_pathogenic: p,
+            is_clinvar_likely_pathogenic: lp,
+            is_in_trans: in_trans,
+            proband_het: het,
+            hgvsc: None,
+        }
+    }
+
+    #[test]
+    fn test_pm3_not_recessive_gene_does_not_fire() {
+        let input = make_input(vec![Consequence::MissenseVariant], None);
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert!(!r.met);
+    }
+
+    #[test]
+    fn test_pm3_in_trans_pathogenic_moderate() {
+        // 1 confirmed in-trans + Pathogenic = 1.0 pt → PM3 (Moderate)
+        let mut input = ar_input_with_proband(true, false);
+        input.companion_variants = vec![cv(true, false, Some(true), true)];
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert!(r.met);
+        assert_eq!(r.strength, EvidenceStrength::Moderate);
+        assert_eq!(r.code, "PM3");
+    }
+
+    #[test]
+    fn test_pm3_in_trans_lp_supporting() {
+        // 1 confirmed in-trans + LP = 0.5 pt → PM3_Supporting
+        let mut input = ar_input_with_proband(true, false);
+        input.companion_variants = vec![cv(false, true, Some(true), true)];
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert_eq!(r.strength, EvidenceStrength::Supporting);
+        assert_eq!(r.code, "PM3_Supporting");
+    }
+
+    #[test]
+    fn test_pm3_unphased_pathogenic_supporting() {
+        // 1 phase-unknown + Pathogenic = 0.5 pt → PM3_Supporting
+        let mut input = ar_input_with_proband(true, false);
+        input.companion_variants = vec![cv(true, false, None, true)];
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert_eq!(r.strength, EvidenceStrength::Supporting);
+    }
+
+    #[test]
+    fn test_pm3_two_in_trans_pathogenic_strong() {
+        // 2 confirmed in-trans + P = 2.0 pt → PM3_Strong
+        let mut input = ar_input_with_proband(true, false);
+        input.companion_variants = vec![
+            cv(true, false, Some(true), true),
+            cv(true, false, Some(true), true),
+        ];
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert_eq!(r.strength, EvidenceStrength::Strong);
+        assert_eq!(r.code, "PM3_Strong");
+    }
+
+    #[test]
+    fn test_pm3_in_cis_does_not_score() {
+        // In-cis companion is excluded from PM3 (it's a BP2 case).
+        let mut input = ar_input_with_proband(true, false);
+        input.companion_variants = vec![cv(true, false, Some(false), true)];
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert!(!r.met);
+    }
+
+    #[test]
+    fn test_pm3_homozygous_proband_capped_at_one_point() {
+        // Hom-alt proband alone earns 0.5 pt → PM3_Supporting.
+        let input = ar_input_with_proband(false, true);
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert_eq!(r.strength, EvidenceStrength::Supporting);
+    }
+
+    #[test]
+    fn test_pm3_homozygous_plus_in_trans_p_combines() {
+        // Hom-alt (0.5) + in-trans P (1.0) = 1.5 pt → PM3 (Moderate)
+        let mut input = ar_input_with_proband(false, true);
+        input.companion_variants = vec![cv(true, false, Some(true), true)];
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert_eq!(r.strength, EvidenceStrength::Moderate);
+    }
+
+    #[test]
+    fn test_pm3_four_in_trans_p_very_strong() {
+        let mut input = ar_input_with_proband(true, false);
+        input.companion_variants = vec![
+            cv(true, false, Some(true), true),
+            cv(true, false, Some(true), true),
+            cv(true, false, Some(true), true),
+            cv(true, false, Some(true), true),
+        ];
+        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        assert_eq!(r.strength, EvidenceStrength::VeryStrong);
+        assert_eq!(r.code, "PM3_Very_Strong");
     }
 }
