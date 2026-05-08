@@ -81,13 +81,15 @@ impl Osa2Reader {
             }
         }
 
-        // Validate metadata.chunk_bits before it's used as a shift amount.
-        // u32 shift by >= 32 is undefined behavior, and a bit-count of 0
-        // would put every variant in chunk 0.
-        if metadata.chunk_bits == 0 || metadata.chunk_bits > 31 {
+        // Validate metadata.chunk_bits before it's used as a shift amount
+        // and as the within-chunk position width in Var32 keys.
+        // A bit-count of 0 would put every variant in chunk 0, and values
+        // above var32::CHUNK_BITS would be truncated by Var32 encoding.
+        if metadata.chunk_bits == 0 || metadata.chunk_bits > var32::CHUNK_BITS {
             anyhow::bail!(
-                "Invalid chunk_bits {} (must be 1..=31)",
-                metadata.chunk_bits
+                "Invalid chunk_bits {} (must be 1..={})",
+                metadata.chunk_bits,
+                var32::CHUNK_BITS
             );
         }
 
