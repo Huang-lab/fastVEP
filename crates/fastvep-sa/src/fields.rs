@@ -69,14 +69,15 @@ impl Field {
         }
         if self.zigzag {
             // Clamp into i32 range before zigzag-encoding signed values.
-            let clamped = scaled.clamp(i32::MIN as f64, i32::MAX as f64) as i32;
-            let encoded = crate::zigzag::encode(clamped);
-            if encoded == self.missing_value {
-                // Vanishingly rare collision with the sentinel; nudge by one.
-                encoded.wrapping_sub(1)
+            // When the missing sentinel is u32::MAX, reserve it by excluding
+            // i32::MIN, whose zigzag encoding is also u32::MAX.
+            let min_storable = if self.missing_value == u32::MAX {
+                (i32::MIN + 1) as f64
             } else {
-                encoded
-            }
+                i32::MIN as f64
+            };
+            let clamped = scaled.clamp(min_storable, i32::MAX as f64) as i32;
+            crate::zigzag::encode(clamped)
         } else {
             // Saturate in u32 range. Avoid colliding with the missing sentinel
             // when the field uses u32::MAX as its missing value.
