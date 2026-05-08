@@ -133,13 +133,16 @@ impl SaBlock {
         let count = u32::from_le_bytes(raw[cursor..cursor + 4].try_into()?) as usize;
         cursor += 4;
 
-        // Reasonable cap on entry count: each entry is at least 12 bytes
-        // (4 pos + 2+0 ref + 2+0 alt + 4+0 json), so count must fit in raw.
-        if count > raw.len() / 12 + 1 {
+        // Each entry requires at least 12 bytes after the count field:
+        // 4 position + 2 ref_len + 0 ref + 2 alt_len + 0 alt + 4 json_len + 0 json.
+        // Validate against the bytes remaining in the block, and do not use the
+        // untrusted count for large upfront allocation.
+        let remaining = raw.len() - cursor;
+        if count > remaining / 12 {
             anyhow::bail!("Block claims {} entries, exceeds data size", count);
         }
 
-        let mut entries = Vec::with_capacity(count);
+        let mut entries = Vec::new();
         for _ in 0..count {
             // Position
             need(cursor, 4, &raw)?;
