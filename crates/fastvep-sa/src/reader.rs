@@ -178,14 +178,18 @@ impl AnnotationProvider for SaReader {
         let cache = unsafe { &mut *self.preloaded.get() };
         cache.clear();
 
-        // u32 positions are required by the on-disk format; clamp/bail loudly
+        // u32 positions are required by the on-disk format; bail loudly
         // rather than silently truncating.
         let max_u32 = u32::MAX as u64;
         if max_pos_u64 > max_u32 {
             anyhow::bail!("Position {} exceeds u32::MAX", max_pos_u64);
         }
-        let min_pos = min_pos_u64 as u32;
-        let max_pos = max_pos_u64 as u32;
+        let min_pos: u32 = min_pos_u64
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Position {} exceeds u32::MAX", min_pos_u64))?;
+        let max_pos: u32 = max_pos_u64
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Position {} exceeds u32::MAX", max_pos_u64))?;
 
         let block_refs = self.index.find_blocks_range(chrom, min_pos, max_pos);
 
