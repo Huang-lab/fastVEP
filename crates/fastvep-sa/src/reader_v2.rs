@@ -11,16 +11,27 @@ use crate::writer_v2::{read_u32_array, Osa2Metadata};
 use anyhow::{Context, Result};
 use lru::LruCache;
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, SaMetadata};
-use std::cell::UnsafeCell;
 use std::fs::File;
 use std::io::Read;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::Mutex;
+
+/// Hard cap on a per-chunk zstd-decompressed JSON blob (256 MiB). Defends
+/// against zstd bombs in maliciously crafted .osa2 files.
+const MAX_JSON_BLOB_DECOMPRESSED: usize = 256 * 1024 * 1024;
+
+/// Number of recently-used chunks held in the LRU cache.
+const CHUNK_CACHE_SIZE: usize = 8;
 
 /// Reader for .osa2 annotation files.
 ///
 /// Loads genomic chunks on demand from a ZIP archive, caches recently used
 /// chunks in an LRU cache, and performs binary search for variant lookups.
+///
+/// The chunk cache is guarded by a `Mutex` because `LruCache::get` is itself
+/// a mutating operation (it reorders the LRU recency list), so concurrent
+/// queries from multiple worker threads cannot share an `UnsafeCell`.
 pub struct Osa2Reader {
     /// Path to the .osa2 ZIP file (re-opened for each chunk load).
     zip_path: std::path::PathBuf,
@@ -30,14 +41,8 @@ pub struct Osa2Reader {
     /// Categorical string lookup tables per field.
     string_tables: Vec<Vec<String>>,
     /// LRU cache of loaded chunks, keyed by "chrom/chunk_id".
-    /// Written during preload/query (sequential access pattern), read during annotation.
-    chunk_cache: UnsafeCell<LruCache<String, Chunk>>,
+    chunk_cache: Mutex<LruCache<String, Chunk>>,
 }
-
-// SAFETY: chunk_cache is written only in single-threaded preload phase
-// and individual query paths that are protected by the batch pattern.
-unsafe impl Send for Osa2Reader {}
-unsafe impl Sync for Osa2Reader {}
 
 impl Osa2Reader {
     /// Open an .osa2 file.
@@ -76,6 +81,16 @@ impl Osa2Reader {
             }
         }
 
+        // Validate metadata.chunk_bits before it's used as a shift amount.
+        // u32 shift by >= 32 is undefined behavior, and a bit-count of 0
+        // would put every variant in chunk 0.
+        if metadata.chunk_bits == 0 || metadata.chunk_bits > 31 {
+            anyhow::bail!(
+                "Invalid chunk_bits {} (must be 1..=31)",
+                metadata.chunk_bits
+            );
+        }
+
         let sa_metadata = SaMetadata {
             name: metadata.name.clone(),
             version: metadata.version.clone(),
@@ -87,24 +102,23 @@ impl Osa2Reader {
             is_positional: metadata.is_positional,
         };
 
+        let cache_size = NonZeroUsize::new(CHUNK_CACHE_SIZE)
+            .expect("CHUNK_CACHE_SIZE is a non-zero compile-time constant");
+
         Ok(Self {
             zip_path: path.to_path_buf(),
             metadata,
             sa_metadata,
             fields,
             string_tables,
-            chunk_cache: UnsafeCell::new(LruCache::new(NonZeroUsize::new(8).unwrap())),
+            chunk_cache: Mutex::new(LruCache::new(cache_size)),
         })
     }
 
-    /// Load a chunk from the ZIP archive into the LRU cache.
-    fn load_chunk(&self, chrom: &str, chunk_id: u32) -> Result<()> {
-        let cache_key = format!("{}/{}", chrom, chunk_id);
-        let cache = unsafe { &mut *self.chunk_cache.get() };
-        if cache.contains(&cache_key) {
-            return Ok(());
-        }
-
+    /// Build a chunk by reading its files from the ZIP archive. Pure (no cache
+    /// access), so it can run with the cache mutex unheld and avoid blocking
+    /// other readers during disk I/O.
+    fn build_chunk(&self, chrom: &str, chunk_id: u32) -> Result<Chunk> {
         let file = File::open(&self.zip_path)?;
         let mut archive = zip::ZipArchive::new(file)?;
         let prefix = format!("fastsa/{}/{}/", chrom, chunk_id);
@@ -122,8 +136,7 @@ impl Osa2Reader {
                 }
                 Err(_) => {
                     // Chunk doesn't exist in this archive
-                    cache.put(cache_key, Chunk::empty());
-                    return Ok(());
+                    return Ok(Chunk::empty());
                 }
             }
         };
@@ -141,7 +154,7 @@ impl Osa2Reader {
             }
         };
 
-        // Read parallel value arrays
+        // Read parallel value arrays (one per non-JsonBlob field, in field order).
         let mut values = Vec::new();
         for field in &self.fields {
             if field.ftype == FieldType::JsonBlob {
@@ -168,7 +181,17 @@ impl Osa2Reader {
                 Ok(mut entry) => {
                     let mut buf = Vec::new();
                     entry.read_to_end(&mut buf)?;
-                    let decompressed = zstd::decode_all(buf.as_slice())?;
+                    // Bound the decompressed size to defend against zstd bombs.
+                    let mut decoder = zstd::stream::Decoder::new(buf.as_slice())?;
+                    let mut decompressed = Vec::new();
+                    let mut limited = (&mut decoder).take(MAX_JSON_BLOB_DECOMPRESSED as u64 + 1);
+                    limited.read_to_end(&mut decompressed)?;
+                    if decompressed.len() > MAX_JSON_BLOB_DECOMPRESSED {
+                        anyhow::bail!(
+                            "JSON blob decompressed size exceeds limit ({} bytes)",
+                            MAX_JSON_BLOB_DECOMPRESSED
+                        );
+                    }
                     let text = String::from_utf8(decompressed)?;
                     Some(text.lines().map(|l| l.to_string()).collect())
                 }
@@ -176,7 +199,32 @@ impl Osa2Reader {
             }
         };
 
-        cache.put(cache_key, Chunk { var32s, longs, values, json_blobs });
+        Ok(Chunk { var32s, longs, values, json_blobs })
+    }
+
+    /// Ensure a chunk is in the LRU cache. Idempotent.
+    fn load_chunk(&self, chrom: &str, chunk_id: u32) -> Result<()> {
+        let cache_key = format!("{}/{}", chrom, chunk_id);
+        {
+            let cache = self
+                .chunk_cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("chunk_cache mutex poisoned"))?;
+            if cache.contains(&cache_key) {
+                return Ok(());
+            }
+        }
+
+        // Build the chunk without holding the lock to avoid blocking readers
+        // during disk I/O. Two concurrent loads of the same chunk will each
+        // build a chunk; the LRU keeps only the last `put`, which is acceptable.
+        let chunk = self.build_chunk(chrom, chunk_id)?;
+
+        let mut cache = self
+            .chunk_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("chunk_cache mutex poisoned"))?;
+        cache.put(cache_key, chunk);
         Ok(())
     }
 
@@ -188,7 +236,13 @@ impl Osa2Reader {
         // Ensure chunk is loaded
         self.load_chunk(chrom, chunk_id)?;
 
-        let cache = unsafe { &mut *self.chunk_cache.get() };
+        // Lookup must happen with the cache lock held: `LruCache::get`
+        // mutates LRU order. We do the binary search on the chunk while
+        // holding the lock, then drop it before reconstructing JSON.
+        let mut cache = self
+            .chunk_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("chunk_cache mutex poisoned"))?;
         let chunk = match cache.get(&cache_key) {
             Some(c) => c,
             None => return Ok(None),
@@ -198,7 +252,7 @@ impl Osa2Reader {
             return Ok(None);
         }
 
-        // Try Var32 lookup first
+        // chunk_bits validated in `open()` so the shift below is well-defined.
         let chunk_mask = (1u32 << self.metadata.chunk_bits) - 1;
         let within_pos = pos & chunk_mask;
 
@@ -259,11 +313,15 @@ impl AnnotationProvider for Osa2Reader {
             return Ok(());
         }
 
-        // Determine which chunks need to be loaded
-        let mut chunk_ids: Vec<u32> = positions
-            .iter()
-            .map(|&p| (p as u32) >> self.metadata.chunk_bits)
-            .collect();
+        // Determine which chunks need to be loaded. Reject positions that
+        // overflow u32 rather than silently truncating into the wrong chunk.
+        let mut chunk_ids: Vec<u32> = Vec::with_capacity(positions.len());
+        for &p in positions {
+            let p32: u32 = p
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Position {} exceeds u32::MAX", p))?;
+            chunk_ids.push(p32 >> self.metadata.chunk_bits);
+        }
         chunk_ids.sort_unstable();
         chunk_ids.dedup();
 

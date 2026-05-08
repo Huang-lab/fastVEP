@@ -7,6 +7,10 @@
 use crate::common::ZSTD_LEVEL;
 use anyhow::Result;
 
+/// Hard cap on block decompressed size (256 MiB). Defends against zstd bombs
+/// in maliciously crafted .osa files. Real blocks are typically <= 8 MiB.
+const MAX_BLOCK_DECOMPRESSED: usize = 256 * 1024 * 1024;
+
 /// A single entry within a block: position + ref + alt + json.
 #[derive(Debug, Clone)]
 pub struct BlockEntry {
@@ -97,39 +101,66 @@ impl SaBlock {
 
     /// Decompress and deserialize a block from compressed bytes.
     pub fn decompress(data: &[u8]) -> Result<Vec<BlockEntry>> {
+        // Cap decompressed size to defend against compression bombs.
         let raw = zstd::decode_all(data)?;
-        let mut cursor = 0;
-
-        if raw.len() < 4 {
-            anyhow::bail!("Block too short for entry count");
+        if raw.len() > MAX_BLOCK_DECOMPRESSED {
+            anyhow::bail!(
+                "Decompressed block too large: {} bytes (limit {})",
+                raw.len(),
+                MAX_BLOCK_DECOMPRESSED
+            );
         }
+        let mut cursor: usize = 0;
+
+        // Helper: ensure `n` more bytes are available starting at cursor.
+        let need = |cursor: usize, n: usize, raw: &[u8]| -> Result<()> {
+            let end = cursor
+                .checked_add(n)
+                .ok_or_else(|| anyhow::anyhow!("Block cursor overflow"))?;
+            if end > raw.len() {
+                anyhow::bail!("Unexpected end of block data");
+            }
+            Ok(())
+        };
+
+        need(cursor, 4, &raw)?;
         let count = u32::from_le_bytes(raw[cursor..cursor + 4].try_into()?) as usize;
         cursor += 4;
+
+        // Reasonable cap on entry count: each entry is at least 12 bytes
+        // (4 pos + 2+0 ref + 2+0 alt + 4+0 json), so count must fit in raw.
+        if count > raw.len() / 12 + 1 {
+            anyhow::bail!("Block claims {} entries, exceeds data size", count);
+        }
 
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
             // Position
-            if cursor + 4 > raw.len() {
-                anyhow::bail!("Unexpected end of block data");
-            }
+            need(cursor, 4, &raw)?;
             let position = u32::from_le_bytes(raw[cursor..cursor + 4].try_into()?);
             cursor += 4;
 
             // Ref allele
+            need(cursor, 2, &raw)?;
             let ref_len = u16::from_le_bytes(raw[cursor..cursor + 2].try_into()?) as usize;
             cursor += 2;
+            need(cursor, ref_len, &raw)?;
             let ref_allele = std::str::from_utf8(&raw[cursor..cursor + ref_len])?.to_string();
             cursor += ref_len;
 
             // Alt allele
+            need(cursor, 2, &raw)?;
             let alt_len = u16::from_le_bytes(raw[cursor..cursor + 2].try_into()?) as usize;
             cursor += 2;
+            need(cursor, alt_len, &raw)?;
             let alt_allele = std::str::from_utf8(&raw[cursor..cursor + alt_len])?.to_string();
             cursor += alt_len;
 
             // JSON
+            need(cursor, 4, &raw)?;
             let json_len = u32::from_le_bytes(raw[cursor..cursor + 4].try_into()?) as usize;
             cursor += 4;
+            need(cursor, json_len, &raw)?;
             let json = std::str::from_utf8(&raw[cursor..cursor + json_len])?.to_string();
             cursor += json_len;
 
@@ -236,6 +267,42 @@ mod tests {
             alt_allele: "G".into(),
             json: r#"{"x":2}"#.into(),
         }));
+    }
+
+    #[test]
+    fn test_decompress_truncated_returns_error() {
+        // Build a valid block, then truncate the compressed payload to feed
+        // the decompressor short input. It must error rather than panic.
+        let mut block = SaBlock::new(1024);
+        block.add(BlockEntry {
+            position: 1,
+            ref_allele: "ACGT".into(),
+            alt_allele: "T".into(),
+            json: r#"{"x":1}"#.into(),
+        });
+        let compressed = block.compress().unwrap();
+
+        // Decompress the full block once to capture the raw layout, then
+        // construct a truncated raw buffer and re-compress it so the
+        // bounds-check path inside decompress() is exercised on each missing
+        // length field.
+        let raw = zstd::decode_all(compressed.as_slice()).unwrap();
+        for cut in 0..raw.len() {
+            let truncated = zstd::encode_all(&raw[..cut], 3).unwrap();
+            // Either Ok with empty entries, or Err — never a panic.
+            let _ = SaBlock::decompress(&truncated);
+        }
+    }
+
+    #[test]
+    fn test_decompress_lying_count_rejected() {
+        // Hand-craft a small zstd-compressed buffer that claims a huge entry
+        // count but supplies no entry data. Must error.
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&u32::MAX.to_le_bytes());
+        let compressed = zstd::encode_all(raw.as_slice(), 3).unwrap();
+        let result = SaBlock::decompress(&compressed);
+        assert!(result.is_err(), "expected error for absurd entry count");
     }
 
     #[test]

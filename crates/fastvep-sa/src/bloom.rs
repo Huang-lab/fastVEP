@@ -65,14 +65,35 @@ fn fmix32(mut h: u32) -> u32 {
     h
 }
 
+/// Maximum number of hash functions used. Capped to keep `might_contain`
+/// fast and bounded.
+const MAX_HASHES: u32 = 16;
+
 fn optimal_num_bits(n: usize, p: f64) -> usize {
+    if n == 0 {
+        return 64;
+    }
+    // Clamp false-positive rate to a sane open interval so `p.ln()` is finite
+    // and negative.
+    let p = p.clamp(1e-12, 0.5);
     let ln2_sq = std::f64::consts::LN_2 * std::f64::consts::LN_2;
-    (-(n as f64) * p.ln() / ln2_sq).ceil() as usize
+    let bits = (-(n as f64) * p.ln() / ln2_sq).ceil();
+    if !bits.is_finite() || bits <= 0.0 {
+        64
+    } else {
+        bits as usize
+    }
 }
 
 fn optimal_num_hashes(n: usize, m: usize) -> u32 {
+    if n == 0 {
+        return 1;
+    }
     let k = (m as f64 / n as f64) * std::f64::consts::LN_2;
-    (k.ceil() as u32).max(1).min(16)
+    if !k.is_finite() {
+        return 1;
+    }
+    (k.ceil() as u32).max(1).min(MAX_HASHES)
 }
 
 #[cfg(test)]

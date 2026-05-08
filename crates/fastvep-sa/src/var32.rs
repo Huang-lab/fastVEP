@@ -83,6 +83,10 @@ pub fn encode(pos: u32, ref_allele: &[u8], alt_allele: &[u8]) -> Option<u32> {
 }
 
 /// Decode a Var32 back to (within-chunk position, ref_allele, alt_allele).
+///
+/// `is_long` enforces `rlen + alen <= MAX_COMBINED_LEN` (4) at encode time,
+/// so decoding consumes at most 4 base slots from the 8-bit packed field.
+/// Shifts here are statically bounded to 0, 2, 4, 6.
 #[inline]
 pub fn decode(v: u32) -> (u32, Vec<u8>, Vec<u8>) {
     let pos = (v >> 12) & 0xF_FFFF;
@@ -93,21 +97,18 @@ pub fn decode(v: u32) -> (u32, Vec<u8>, Vec<u8>) {
     let mut ref_allele = Vec::with_capacity(rlen);
     let mut alt_allele = Vec::with_capacity(alen);
 
-    let mut bit_pos = 6i8;
-    for _ in 0..rlen {
-        let idx = ((enc >> bit_pos as u8) & 0x3) as usize;
-        ref_allele.push(BASE_DEC[idx]);
-        bit_pos -= 2;
-    }
-    for _ in 0..alen {
-        let bp = if bit_pos >= 0 { bit_pos as u8 } else { 0 };
-        let idx = if bit_pos >= 0 {
-            ((enc >> bp) & 0x3) as usize
+    // bit_pos goes 6, 4, 2, 0 across at most 4 bases.
+    let mut shift: u32 = 6;
+    let total = rlen + alen;
+    let total = total.min(MAX_COMBINED_LEN);
+    for i in 0..total {
+        let idx = ((enc >> shift) & 0x3) as usize;
+        if i < rlen {
+            ref_allele.push(BASE_DEC[idx]);
         } else {
-            0
-        };
-        alt_allele.push(BASE_DEC[idx]);
-        bit_pos -= 2;
+            alt_allele.push(BASE_DEC[idx]);
+        }
+        shift = shift.saturating_sub(2);
     }
 
     (pos, ref_allele, alt_allele)
@@ -195,6 +196,26 @@ mod tests {
         assert!(v1 < v2); // position 100 < 200
         // Same position: sorted by allele encoding
         assert!(v1 != v3);
+    }
+
+    #[test]
+    fn test_round_trip_all_combined_lengths() {
+        // Exhaustively round-trip every (rlen, alen) shape allowed by the
+        // encoder using a representative base for each slot. Catches the
+        // historic bug where decoding the 4th base used a stale shift.
+        for rlen in 1..=4usize {
+            for alen in 1..=4usize {
+                if rlen + alen > MAX_COMBINED_LEN { continue; }
+                let r: Vec<u8> = (0..rlen).map(|i| BASE_DEC[i % 4]).collect();
+                let a: Vec<u8> = (0..alen).map(|i| BASE_DEC[(i + 1) % 4]).collect();
+                let encoded = encode(7, &r, &a)
+                    .unwrap_or_else(|| panic!("encode failed for rlen={}, alen={}", rlen, alen));
+                let (dp, dr, da) = decode(encoded);
+                assert_eq!(dp, 7);
+                assert_eq!(dr, r, "ref mismatch for rlen={} alen={}", rlen, alen);
+                assert_eq!(da, a, "alt mismatch for rlen={} alen={}", rlen, alen);
+            }
+        }
     }
 
     #[test]

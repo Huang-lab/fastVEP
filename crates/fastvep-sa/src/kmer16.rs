@@ -81,27 +81,44 @@ pub fn encode_var(ref_allele: &[u8], alt_allele: &[u8]) -> Vec<u32> {
 }
 
 /// Decode a kmer16 sequence vector back to (ref_allele, alt_allele).
+///
+/// Returns empty vectors if the sequence is malformed or claims a length that
+/// exceeds the bases packed into its trailing words.
 pub fn decode_var(sequence: &[u32]) -> (Vec<u8>, Vec<u8>) {
     if sequence.len() < 2 {
         return (Vec::new(), Vec::new());
     }
     let ref_len = sequence[0] as usize;
     let alt_len = sequence[1] as usize;
-    let total = ref_len + alt_len;
+    let total = match ref_len.checked_add(alt_len) {
+        Some(t) => t,
+        None => return (Vec::new(), Vec::new()),
+    };
+
+    // Each trailing word holds 16 bases; verify the encoded sequence has
+    // capacity for the claimed total before decoding.
+    let max_bases = sequence.len().saturating_sub(2).saturating_mul(16);
+    if total > max_bases {
+        return (Vec::new(), Vec::new());
+    }
 
     let bases_decode = [b'A', b'C', b'G', b'T'];
     let mut all_bases = Vec::with_capacity(total);
 
     let mut count = 0;
-    for &word in &sequence[2..] {
+    'outer: for &word in &sequence[2..] {
         for shift in (0..32).step_by(2) {
             if count >= total {
-                break;
+                break 'outer;
             }
             let idx = ((word >> shift) & 0x3) as usize;
             all_bases.push(bases_decode[idx]);
             count += 1;
         }
+    }
+
+    if all_bases.len() < total {
+        return (Vec::new(), Vec::new());
     }
 
     let ref_allele = all_bases[..ref_len].to_vec();

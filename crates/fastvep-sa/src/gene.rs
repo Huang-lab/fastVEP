@@ -3,7 +3,7 @@
 //! Used for gene-keyed databases (OMIM, gnomAD gene scores, ClinGen).
 //! Annotations are looked up by gene symbol.
 
-use crate::common::{GeneRecord, OGA_MAGIC, SCHEMA_VERSION};
+use crate::common::{GeneRecord, MAX_INDEX_PAYLOAD, OGA_MAGIC, SCHEMA_VERSION};
 use anyhow::Result;
 use fastvep_cache::annotation::GeneAnnotationProvider;
 use serde::{Deserialize, Serialize};
@@ -79,8 +79,15 @@ impl GeneIndex {
         }
         let mut len_bytes = [0u8; 8];
         reader.read_exact(&mut len_bytes)?;
-        let len = u64::from_le_bytes(len_bytes) as usize;
-        let mut data = vec![0u8; len];
+        let len_u64 = u64::from_le_bytes(len_bytes);
+        if len_u64 > MAX_INDEX_PAYLOAD as u64 {
+            anyhow::bail!(
+                "OGA payload size {} exceeds limit {}",
+                len_u64,
+                MAX_INDEX_PAYLOAD
+            );
+        }
+        let mut data = vec![0u8; len_u64 as usize];
         reader.read_exact(&mut data)?;
         let index: GeneIndex = bincode::deserialize(&data)?;
         Ok(index)

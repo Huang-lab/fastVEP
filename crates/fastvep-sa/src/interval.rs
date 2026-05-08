@@ -3,7 +3,7 @@
 //! Used for structural variant databases (gnomAD SV, ClinGen dosage, DGV)
 //! where annotations are regions rather than point positions.
 
-use crate::common::{IntervalRecord, OSI_MAGIC, SCHEMA_VERSION};
+use crate::common::{IntervalRecord, MAX_INDEX_PAYLOAD, OSI_MAGIC, SCHEMA_VERSION};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -119,8 +119,15 @@ impl IntervalIndex {
         }
         let mut len_bytes = [0u8; 8];
         reader.read_exact(&mut len_bytes)?;
-        let len = u64::from_le_bytes(len_bytes) as usize;
-        let mut data = vec![0u8; len];
+        let len_u64 = u64::from_le_bytes(len_bytes);
+        if len_u64 > MAX_INDEX_PAYLOAD as u64 {
+            anyhow::bail!(
+                "OSI payload size {} exceeds limit {}",
+                len_u64,
+                MAX_INDEX_PAYLOAD
+            );
+        }
+        let mut data = vec![0u8; len_u64 as usize];
         reader.read_exact(&mut data)?;
         let index: IntervalIndex = bincode::deserialize(&data)?;
         Ok(index)

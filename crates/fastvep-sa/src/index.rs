@@ -3,7 +3,7 @@
 //! The index maps (chromosome, position) -> file offset so the reader can
 //! seek directly to the relevant compressed block.
 
-use crate::common::{OSA_MAGIC, SCHEMA_VERSION};
+use crate::common::{MAX_INDEX_PAYLOAD, OSA_MAGIC, SCHEMA_VERSION};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -143,7 +143,15 @@ impl SaIndex {
         // Read bincode data
         let mut len_bytes = [0u8; 8];
         reader.read_exact(&mut len_bytes)?;
-        let len = u64::from_le_bytes(len_bytes) as usize;
+        let len_u64 = u64::from_le_bytes(len_bytes);
+        if len_u64 > MAX_INDEX_PAYLOAD as u64 {
+            anyhow::bail!(
+                "Index payload size {} exceeds limit {}",
+                len_u64,
+                MAX_INDEX_PAYLOAD
+            );
+        }
+        let len = len_u64 as usize;
 
         let mut data = vec![0u8; len];
         reader.read_exact(&mut data)?;
