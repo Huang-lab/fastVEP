@@ -299,10 +299,10 @@ impl AnnotationProvider for Osa2Reader {
         let ref_bytes = ref_allele.as_bytes();
         let alt_bytes = alt_allele.as_bytes();
 
-        let pos: u32 = pos
+        let pos_u32: u32 = pos
             .try_into()
             .map_err(|_| anyhow::anyhow!("Position {} exceeds u32::MAX", pos))?;
-        match self.query(chrom, pos, ref_bytes, alt_bytes)? {
+        match self.query(chrom, pos_u32, ref_bytes, alt_bytes)? {
             Some(json) => {
                 if self.sa_metadata.is_positional {
                     Ok(Some(AnnotationValue::Positional(json)))
