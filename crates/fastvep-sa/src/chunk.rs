@@ -12,7 +12,12 @@ pub struct Chunk {
     pub var32s: Vec<u32>,
     /// Long variants (ref+alt > 4 bases) sorted for binary search.
     pub longs: Vec<LongVariant>,
-    /// Parallel value arrays: `values[field_idx][variant_idx]`.
+    /// Parallel value arrays, one per non-JsonBlob field in field-config order:
+    /// `values[non_jsonblob_position][variant_idx]`. JsonBlob fields do not
+    /// contribute a column here (their payloads live in `json_blobs`), so this
+    /// vector is shorter than `fields.len()` whenever any JsonBlob is present.
+    /// `reconstruct_json` tracks a separate counter that advances only for
+    /// non-JsonBlob fields when indexing into this array.
     pub values: Vec<Vec<u32>>,
     /// Optional JSON blob strings for JsonBlob fields.
     pub json_blobs: Option<Vec<String>>,

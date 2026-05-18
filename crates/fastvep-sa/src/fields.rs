@@ -54,10 +54,15 @@ fn default_missing_string() -> String { ".".into() }
 impl Field {
     /// Encode a float value as a u32 using this field's multiplier.
     ///
-    /// Non-finite values (NaN, +/-Inf) and out-of-range scaled values map to
-    /// the field's `missing_value`. Without this guard, `f64 as u32` would
-    /// silently produce 0 for NaN and saturate to `u32::MAX` for huge values
-    /// — which collides with the default missing sentinel and corrupts data.
+    /// Non-finite inputs (NaN, +/-Inf) — and scalings that overflow to
+    /// non-finite — map to the field's `missing_value`. Finite scaled values
+    /// are clamped into the storable range: `[0, u32::MAX]` for non-zigzag
+    /// (or `[0, u32::MAX - 1]` when the missing sentinel is `u32::MAX`) and
+    /// `[i32::MIN, i32::MAX]` for zigzag (with `i32::MIN` excluded when the
+    /// missing sentinel is `u32::MAX`, since its zigzag encoding collides).
+    /// Without this guard, `f64 as u32` would silently produce 0 for NaN and
+    /// saturate to `u32::MAX` for huge values — which collides with the
+    /// default missing sentinel and corrupts data.
     #[inline]
     pub fn encode_float(&self, value: f64) -> u32 {
         if !value.is_finite() {
@@ -108,8 +113,13 @@ impl Field {
 
     /// Encode an integer value, optionally with zigzag.
     ///
-    /// For non-zigzag fields, negative inputs would wrap to large `u32`
-    /// values; this function clamps into the storable range instead.
+    /// For zigzag fields, the value is clamped into `[i32::MIN, i32::MAX]`
+    /// before encoding (with `i32::MIN` excluded when the missing sentinel is
+    /// `u32::MAX`, since its zigzag encoding collides with the sentinel).
+    ///
+    /// For non-zigzag fields, negative inputs or values exceeding `u32::MAX`
+    /// are returned as `missing_value` rather than silently wrapping into a
+    /// large unrelated `u32`.
     #[inline]
     pub fn encode_int(&self, value: i64) -> u32 {
         if self.zigzag {

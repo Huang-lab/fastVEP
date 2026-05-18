@@ -268,6 +268,22 @@ impl Osa2Reader {
 
         match idx {
             Some(i) => {
+                // Defensive bounds check: `find_long` returns an index baked
+                // into the on-disk `LongVariant` record, so an internally
+                // inconsistent or corrupted chunk could yield an index past
+                // the value columns and JSON-blob array. Without this guard
+                // `reconstruct_json` would silently return `{}` and the caller
+                // would treat it as a positive match.
+                let data_len = chunk
+                    .values
+                    .iter()
+                    .map(|c| c.len())
+                    .max()
+                    .unwrap_or(0)
+                    .max(chunk.json_blobs.as_ref().map_or(0, |b| b.len()));
+                if i >= data_len {
+                    return Ok(None);
+                }
                 let json = chunk.reconstruct_json(i, &self.fields, &self.string_tables);
                 Ok(Some(json))
             }
