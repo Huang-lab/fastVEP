@@ -549,6 +549,108 @@ pub fn vcf_info_header_id(line: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
+/// Return the supplementary projection column names (info IDs) for tab output,
+/// in the same order as `vcf_info_header_lines` emits them. SpliceAI is
+/// included first when it's loaded, followed by every loaded
+/// `VCF_PROJECTION_SPECS` entry.
+pub fn tab_supplementary_column_names(
+    sa_keys: &[String],
+    gene_keys: &[String],
+) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if sa_keys.iter().any(|key| key == "spliceAI") {
+        names.push("SpliceAI");
+    }
+    for spec in VCF_PROJECTION_SPECS {
+        let loaded = match spec.kind {
+            VcfProjectionKind::GeneObject | VcfProjectionKind::ClinvarProtein => {
+                gene_keys.iter().any(|key| key == spec.json_key)
+            }
+            VcfProjectionKind::AlleleObject | VcfProjectionKind::AlleleScalar => {
+                sa_keys.iter().any(|key| key == spec.json_key)
+            }
+        };
+        if loaded {
+            names.push(spec.info_id);
+        }
+    }
+    names
+}
+
+/// Format `##` header comment lines describing the tab pipe-format for each
+/// loaded supplementary source. Mirrors `vcf_info_header_lines` content so the
+/// tab and VCF outputs document the same schema.
+pub fn tab_supplementary_header_lines(
+    sa_keys: &[String],
+    gene_keys: &[String],
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if sa_keys.iter().any(|key| key == "spliceAI") {
+        lines.push(format!(
+            "## COLUMN=<ID=SpliceAI,Description=\"{}\">",
+            "SpliceAI annotations. Format: ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL"
+        ));
+    }
+    for spec in VCF_PROJECTION_SPECS {
+        let loaded = match spec.kind {
+            VcfProjectionKind::GeneObject | VcfProjectionKind::ClinvarProtein => {
+                gene_keys.iter().any(|key| key == spec.json_key)
+            }
+            VcfProjectionKind::AlleleObject | VcfProjectionKind::AlleleScalar => {
+                sa_keys.iter().any(|key| key == spec.json_key)
+            }
+        };
+        if loaded {
+            lines.push(format!(
+                "## COLUMN=<ID={},Description=\"{}\">",
+                spec.info_id, spec.description
+            ));
+        }
+    }
+    lines
+}
+
+/// Render the per-allele supplementary projection columns for a single tab
+/// row, in the same order as `tab_supplementary_column_names`. Missing values
+/// render as `-` so the column count is fixed.
+pub fn format_supplementary_tab_columns_for_allele(
+    vf: &VariationFeature,
+    tv: &TranscriptVariation,
+    aa: &AlleleAnnotation,
+    sa_keys: &[String],
+    gene_keys: &[String],
+) -> Vec<String> {
+    let mut cols = Vec::new();
+    if sa_keys.iter().any(|key| key == "spliceAI") {
+        let value = format_spliceai_for_allele(vf, aa).unwrap_or_else(|| "-".to_string());
+        cols.push(value);
+    }
+    for spec in VCF_PROJECTION_SPECS {
+        let loaded = match spec.kind {
+            VcfProjectionKind::GeneObject | VcfProjectionKind::ClinvarProtein => {
+                gene_keys.iter().any(|key| key == spec.json_key)
+            }
+            VcfProjectionKind::AlleleObject | VcfProjectionKind::AlleleScalar => {
+                sa_keys.iter().any(|key| key == spec.json_key)
+            }
+        };
+        if !loaded {
+            continue;
+        }
+        let value = match spec.kind {
+            VcfProjectionKind::AlleleObject | VcfProjectionKind::AlleleScalar => {
+                format_allele_projection_for_aa(vf, aa, spec)
+            }
+            VcfProjectionKind::GeneObject => format_gene_projection_for_tv(vf, tv, spec),
+            VcfProjectionKind::ClinvarProtein => {
+                format_clinvar_protein_projection_for_tv(vf, tv, spec)
+            }
+        };
+        cols.push(value.unwrap_or_else(|| "-".to_string()));
+    }
+    cols
+}
+
 /// Format all supplementary VCF INFO projections for an annotated variant.
 pub fn format_supplementary_vcf_info(vf: &VariationFeature) -> Vec<(String, String)> {
     let mut projected = Vec::new();
@@ -719,6 +821,120 @@ fn format_gene_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> Op
     if values.is_empty() { None } else { Some(values.join(",")) }
 }
 
+fn format_spliceai_for_allele(vf: &VariationFeature, aa: &AlleleAnnotation) -> Option<String> {
+    let allele = uploaded_allele_for_annotation(vf, &aa.allele);
+    let mut values: Vec<String> = Vec::new();
+    for (key, json_str) in &aa.supplementary {
+        if key != "spliceAI" {
+            continue;
+        }
+        if let Some(value) = format_spliceai_entry(&allele, json_str) {
+            if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+    }
+    if values.is_empty() { None } else { Some(values.join(",")) }
+}
+
+fn format_allele_projection_for_aa(
+    vf: &VariationFeature,
+    aa: &AlleleAnnotation,
+    spec: &VcfProjectionSpec,
+) -> Option<String> {
+    let allele = uploaded_allele_for_annotation(vf, &aa.allele);
+    let mut values: Vec<String> = Vec::new();
+    for (key, json_str) in &aa.supplementary {
+        if key != spec.json_key {
+            continue;
+        }
+        let parsed = serde_json::from_str::<Value>(json_str)
+            .unwrap_or_else(|_| Value::String(json_str.clone()));
+        let entries = match spec.kind {
+            VcfProjectionKind::AlleleScalar => {
+                vec![format!("{}|{}", escape_vcf_subfield(&allele), json_value_to_vcf(&parsed))]
+            }
+            _ => format_object_projection_entries(&allele, &parsed, spec.fields),
+        };
+        for value in entries {
+            if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+    }
+    if values.is_empty() { None } else { Some(values.join(",")) }
+}
+
+fn format_gene_projection_for_tv(
+    vf: &VariationFeature,
+    tv: &TranscriptVariation,
+    spec: &VcfProjectionSpec,
+) -> Option<String> {
+    let want = tv.gene_symbol.as_deref().unwrap_or(&tv.gene_id);
+    let mut values: Vec<String> = Vec::new();
+    for ga in &vf.gene_annotations {
+        if ga.json_key != spec.json_key || ga.gene_symbol != want {
+            continue;
+        }
+        let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
+            continue;
+        };
+        let mut parts = Vec::with_capacity(spec.fields.len() + 1);
+        parts.push(escape_vcf_subfield(&ga.gene_symbol));
+        if let Some(obj) = parsed.as_object() {
+            for (_, json_key) in spec.fields {
+                parts.push(obj.get(*json_key).map(json_value_to_vcf).unwrap_or_default());
+            }
+        }
+        let value = parts.join("|");
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
+    if values.is_empty() { None } else { Some(values.join(",")) }
+}
+
+fn format_clinvar_protein_projection_for_tv(
+    vf: &VariationFeature,
+    tv: &TranscriptVariation,
+    spec: &VcfProjectionSpec,
+) -> Option<String> {
+    let want = tv.gene_symbol.as_deref().unwrap_or(&tv.gene_id);
+    let mut values: Vec<String> = Vec::new();
+    for ga in &vf.gene_annotations {
+        if ga.json_key != spec.json_key || ga.gene_symbol != want {
+            continue;
+        }
+        let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
+            continue;
+        };
+        let variants = parsed
+            .get("proteinVariants")
+            .and_then(|v| v.as_array())
+            .map(|vars| {
+                vars.iter()
+                    .filter_map(|v| {
+                        let pos = v.get("pos").map(json_leaf_to_string)?;
+                        let ref_aa = v.get("refAa").map(json_leaf_to_string)?;
+                        let alt_aa = v.get("altAa").map(json_leaf_to_string)?;
+                        let sig = v.get("sig").map(json_leaf_to_string).unwrap_or_default();
+                        Some(escape_vcf_subfield(&format!("{pos}:{ref_aa}>{alt_aa}:{sig}")))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("&")
+            })
+            .unwrap_or_default();
+        if variants.is_empty() {
+            continue;
+        }
+        let value = format!("{}|{}", escape_vcf_subfield(&ga.gene_symbol), variants);
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
+    if values.is_empty() { None } else { Some(values.join(",")) }
+}
+
 fn format_clinvar_protein_projection(
     vf: &VariationFeature,
     spec: &VcfProjectionSpec,
@@ -847,7 +1063,17 @@ fn uploaded_allele_for_annotation(vf: &VariationFeature, allele: &Allele) -> Str
 }
 
 /// Format a VariationFeature as a tab-delimited VEP output line.
-pub fn format_tab_line(vf: &VariationFeature) -> Vec<String> {
+///
+/// `sa_keys` and `gene_keys` enumerate the supplementary annotation sources
+/// loaded for this run. For each loaded source, one extra tab column is
+/// appended carrying the same pipe-delimited value emitted into the VCF
+/// `FV_*` INFO field (`SpliceAI=` for the SpliceAI source). The column order
+/// matches `tab_supplementary_column_names`. Missing values render as `-`.
+pub fn format_tab_line(
+    vf: &VariationFeature,
+    sa_keys: &[String],
+    gene_keys: &[String],
+) -> Vec<String> {
     let mut lines = Vec::new();
 
     let location = if vf.position.start == vf.position.end {
@@ -864,6 +1090,8 @@ pub fn format_tab_line(vf: &VariationFeature) -> Vec<String> {
         .clone()
         .unwrap_or_else(|| format!("{}_{}", location, vf.allele_string));
 
+    let supplementary_loaded = !sa_keys.is_empty() || !gene_keys.is_empty();
+
     for tv in &vf.transcript_variations {
         for aa in &tv.allele_annotations {
             let consequence_str = aa
@@ -878,47 +1106,77 @@ pub fn format_tab_line(vf: &VariationFeature) -> Vec<String> {
             let strand_str = format!("{}", tv.strand.as_int());
             let flags_str = if tv.canonical { "canonical" } else { "-" };
 
-            let line = format!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                uploaded_variation,
-                location,
-                aa.allele,
-                tv.gene_id,
-                tv.transcript_id,
-                "Transcript",
-                consequence_str,
-                format_position_range(aa.cdna_position),
-                format_position_range(aa.cds_position),
-                format_position_range(aa.protein_position),
+            let mut parts: Vec<String> = Vec::with_capacity(17);
+            parts.push(uploaded_variation.clone());
+            parts.push(location.clone());
+            parts.push(aa.allele.to_string());
+            parts.push(tv.gene_id.to_string());
+            parts.push(tv.transcript_id.to_string());
+            parts.push("Transcript".to_string());
+            parts.push(consequence_str);
+            parts.push(format_position_range(aa.cdna_position));
+            parts.push(format_position_range(aa.cds_position));
+            parts.push(format_position_range(aa.protein_position));
+            parts.push(
                 aa.amino_acids
                     .as_ref()
                     .map(|(r, a)| format!("{}/{}", r, a))
                     .unwrap_or("-".to_string()),
+            );
+            parts.push(
                 aa.codons
                     .as_ref()
                     .map(|(r, a)| format!("{}/{}", r, a))
                     .unwrap_or("-".to_string()),
-                if aa.existing_variation.is_empty() { "-".to_string() } else { aa.existing_variation.join(",") },
-                impact_str,
-                distance_str,
-                strand_str,
-                flags_str,
             );
-            lines.push(line);
+            parts.push(if aa.existing_variation.is_empty() {
+                "-".to_string()
+            } else {
+                aa.existing_variation.join(",")
+            });
+            parts.push(impact_str);
+            parts.push(distance_str);
+            parts.push(strand_str);
+            parts.push(flags_str.to_string());
+
+            if supplementary_loaded {
+                parts.extend(format_supplementary_tab_columns_for_allele(
+                    vf, tv, aa, sa_keys, gene_keys,
+                ));
+            }
+
+            lines.push(parts.join("\t"));
         }
     }
 
     // If no transcript annotations, still output the variant with intergenic
     if vf.transcript_variations.is_empty() {
         for alt in &vf.alt_alleles {
-            let line = format!(
-                "{}\t{}\t{}\t-\t-\t-\t{}\t-\t-\t-\t-\t-\t-",
-                uploaded_variation,
-                location,
-                alt,
-                Consequence::IntergenicVariant.so_term(),
-            );
-            lines.push(line);
+            let mut parts: Vec<String> = vec![
+                uploaded_variation.clone(),
+                location.clone(),
+                alt.to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                Consequence::IntergenicVariant.so_term().to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+                "-".to_string(),
+            ];
+            if supplementary_loaded {
+                let column_count =
+                    tab_supplementary_column_names(sa_keys, gene_keys).len();
+                parts.extend(std::iter::repeat("-".to_string()).take(column_count));
+            }
+            lines.push(parts.join("\t"));
         }
     }
 
@@ -1417,6 +1675,182 @@ mod tests {
         assert!(!info.contains("CSQ=old"));
         assert!(!info.contains("SpliceAI=old"));
         assert!(!info.contains("FV_CLINVAR=old"));
+    }
+
+    fn all_supplementary_sa_keys() -> Vec<String> {
+        vec![
+            "clinvar".into(),
+            "gnomad".into(),
+            "dbsnp".into(),
+            "cosmic".into(),
+            "oneKg".into(),
+            "topmed".into(),
+            "mitomap".into(),
+            "phylop".into(),
+            "gerp".into(),
+            "dann".into(),
+            "revel".into(),
+            "primateAI".into(),
+            "dbnsfp".into(),
+            "spliceAI".into(),
+        ]
+    }
+
+    fn all_supplementary_gene_keys() -> Vec<String> {
+        vec!["omim".into(), "gnomad_genes".into(), "clinvar_protein".into()]
+    }
+
+    #[test]
+    fn tab_supplementary_column_names_match_vcf_header_order() {
+        let sa_keys = all_supplementary_sa_keys();
+        let gene_keys = all_supplementary_gene_keys();
+        let cols = tab_supplementary_column_names(&sa_keys, &gene_keys);
+        // SpliceAI is emitted first to mirror the VCF header ordering, then
+        // every loaded VCF_PROJECTION_SPECS entry in declaration order.
+        assert_eq!(cols.first().copied(), Some("SpliceAI"));
+        for expected in [
+            "FV_CLINVAR",
+            "FV_GNOMAD",
+            "FV_DBSNP",
+            "FV_COSMIC",
+            "FV_1KG",
+            "FV_TOPMED",
+            "FV_MITOMAP",
+            "FV_PHYLOP",
+            "FV_GERP",
+            "FV_DANN",
+            "FV_REVEL",
+            "FV_PRIMATEAI",
+            "FV_DBNSFP",
+            "FV_OMIM",
+            "FV_GNOMAD_GENE",
+            "FV_CLINVAR_PROTEIN",
+        ] {
+            assert!(cols.contains(&expected), "missing column {expected}: {cols:?}");
+        }
+    }
+
+    #[test]
+    fn tab_supplementary_header_lines_document_pipe_format() {
+        let sa_keys = vec!["clinvar".into()];
+        let gene_keys: Vec<String> = vec![];
+        let lines = tab_supplementary_header_lines(&sa_keys, &gene_keys);
+        let joined = lines.join("\n");
+        assert!(
+            joined.contains("## COLUMN=<ID=FV_CLINVAR,Description=\"fastVEP ClinVar annotations. Format: ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION\">"),
+            "header lines should document FV_CLINVAR pipe format: {joined}"
+        );
+    }
+
+    #[test]
+    fn tab_line_emits_supplementary_columns_for_loaded_sources() {
+        let vf = projection_test_variant();
+        let sa_keys = all_supplementary_sa_keys();
+        let gene_keys = all_supplementary_gene_keys();
+        let lines = format_tab_line(&vf, &sa_keys, &gene_keys);
+        assert_eq!(lines.len(), 1, "test variant has exactly one TV×AA row");
+        let row = &lines[0];
+        let cols: Vec<&str> = row.split('\t').collect();
+
+        let extra_cols = tab_supplementary_column_names(&sa_keys, &gene_keys);
+        assert_eq!(
+            cols.len(),
+            17 + extra_cols.len(),
+            "tab row should carry 17 base columns plus one per loaded source"
+        );
+
+        // Pipe values must match the VCF projection exactly — they share the
+        // same renderer.
+        let vcf_projections: std::collections::HashMap<String, String> =
+            format_supplementary_vcf_info(&vf)
+                .into_iter()
+                .collect();
+
+        for (i, info_id) in extra_cols.iter().enumerate() {
+            let tab_value = cols[17 + i];
+            let expected = vcf_projections.get(*info_id).cloned().unwrap_or_else(|| "-".into());
+            assert_eq!(
+                tab_value, expected,
+                "tab column {info_id} should equal VCF INFO value"
+            );
+        }
+
+        // No JSON braces or quotes leaked into tab output.
+        assert!(!row.contains('{'), "tab row must not contain JSON: {row}");
+        assert!(!row.contains('}'), "tab row must not contain JSON: {row}");
+        assert!(!row.contains('"'), "tab row must not contain JSON quotes: {row}");
+    }
+
+    #[test]
+    fn tab_line_emits_dashes_when_no_supplementary_loaded_but_columns_requested() {
+        let mut vf = projection_test_variant();
+        // Drop all supplementary content from the test fixture.
+        for tv in &mut vf.transcript_variations {
+            for aa in &mut tv.allele_annotations {
+                aa.supplementary.clear();
+            }
+        }
+        vf.gene_annotations.clear();
+
+        let sa_keys = vec!["clinvar".into(), "dbnsfp".into()];
+        let gene_keys: Vec<String> = vec![];
+        let lines = format_tab_line(&vf, &sa_keys, &gene_keys);
+        let cols: Vec<&str> = lines[0].split('\t').collect();
+        assert_eq!(cols.len(), 17 + 2);
+        assert_eq!(cols[17], "-", "FV_CLINVAR column should be '-' when absent");
+        assert_eq!(cols[18], "-", "FV_DBNSFP column should be '-' when absent");
+    }
+
+    #[test]
+    fn tab_line_has_no_extra_columns_when_no_sa_loaded() {
+        let vf = projection_test_variant();
+        let sa_keys: Vec<String> = vec![];
+        let gene_keys: Vec<String> = vec![];
+        let lines = format_tab_line(&vf, &sa_keys, &gene_keys);
+        let cols: Vec<&str> = lines[0].split('\t').collect();
+        assert_eq!(
+            cols.len(),
+            17,
+            "without any loaded SA sources, the tab row keeps the original 17-column shape"
+        );
+    }
+
+    #[test]
+    fn supplementary_annotations_doc_lists_every_projection_spec() {
+        // The user-facing `docs/SUPPLEMENTARY_ANNOTATIONS.md` is the single
+        // place we point users at for the FV_* schema. If a new
+        // VCF_PROJECTION_SPECS entry is added without a matching doc entry,
+        // downstream parsers won't know its pipe format. This test fails CI
+        // in that case so the doc cannot drift from the code.
+        let doc = include_str!("../../../docs/SUPPLEMENTARY_ANNOTATIONS.md");
+        for spec in VCF_PROJECTION_SPECS {
+            assert!(
+                doc.contains(spec.info_id),
+                "docs/SUPPLEMENTARY_ANNOTATIONS.md is missing INFO ID {}",
+                spec.info_id
+            );
+            // Each spec's Description ends with "Format: <pipe layout>".
+            // Verify the pipe layout itself appears verbatim in the doc so
+            // grep-style downstream consumers can pull the schema from
+            // either source. (The "fastVEP X annotations. Format: " prose
+            // intentionally does not need to appear verbatim.)
+            let format = spec
+                .description
+                .split_once("Format: ")
+                .map(|(_, layout)| layout)
+                .unwrap_or(spec.description);
+            assert!(
+                doc.contains(format),
+                "docs/SUPPLEMENTARY_ANNOTATIONS.md is missing pipe format for {}: expected `{}`",
+                spec.info_id,
+                format
+            );
+        }
+        let spliceai_format = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL";
+        assert!(
+            doc.contains(spliceai_format),
+            "docs/SUPPLEMENTARY_ANNOTATIONS.md must document the SpliceAI pipe format"
+        );
     }
 
     #[test]

@@ -312,14 +312,20 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             }
         }
         "tab" => {
-            writeln!(
-                writer,
-                "## fastVEP output"
-            )?;
-            writeln!(
-                writer,
-                "#Uploaded_variation\tLocation\tAllele\tGene\tFeature\tFeature_type\tConsequence\tcDNA_position\tCDS_position\tProtein_position\tAmino_acids\tCodons\tExisting_variation\tIMPACT\tDISTANCE\tSTRAND\tFLAGS"
-            )?;
+            writeln!(writer, "## fastVEP output")?;
+            for line in output::tab_supplementary_header_lines(&sa_json_keys, &gene_json_keys) {
+                writeln!(writer, "{}", line)?;
+            }
+            let extra_columns =
+                output::tab_supplementary_column_names(&sa_json_keys, &gene_json_keys);
+            let mut header = String::from(
+                "#Uploaded_variation\tLocation\tAllele\tGene\tFeature\tFeature_type\tConsequence\tcDNA_position\tCDS_position\tProtein_position\tAmino_acids\tCodons\tExisting_variation\tIMPACT\tDISTANCE\tSTRAND\tFLAGS",
+            );
+            for col in &extra_columns {
+                header.push('\t');
+                header.push_str(col);
+            }
+            writeln!(writer, "{}", header)?;
         }
         "json" => {
             writeln!(writer, "[")?;
@@ -1043,7 +1049,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             match config.output_format.as_str() {
                 "vcf" => write_vcf_line(&mut writer, vf)?,
                 "tab" => {
-                    for line in output::format_tab_line(vf) {
+                    for line in output::format_tab_line(vf, &sa_json_keys, &gene_json_keys) {
                         writeln!(writer, "{}", line)?;
                     }
                 }

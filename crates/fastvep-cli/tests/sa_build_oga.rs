@@ -471,3 +471,124 @@ fn annotate_vcf_emits_fastsa_projection_for_gnomad() {
     );
     assert!(!annotated.contains("FV_GNOMAD={"), "{annotated}");
 }
+
+#[test]
+fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
+    // Regression test for issue #30: tab output silently dropped every
+    // supplementary annotation source. After fix, each loaded source must
+    // produce one extra tab column with the same pipe-delimited value used
+    // for the VCF `FV_*` INFO field.
+    let tmp = tempfile::tempdir().unwrap();
+    let clinvar_source = tmp.path().join("clinvar-mini.vcf");
+    let gnomad_source = tmp.path().join("gnomad-mini.vcf");
+    let input_vcf = tmp.path().join("input.vcf");
+    let gff3 = tmp.path().join("mini.gff3");
+    let clinvar_base = tmp.path().join("clinvar-mini");
+    let gnomad_base = tmp.path().join("gnomad-mini");
+    let output_tab = tmp.path().join("annotated.tab");
+    let transcript_cache = tmp.path().join("mini.fastvep.cache");
+
+    let clinvar_fixture = "\
+##fileformat=VCFv4.1
+##INFO=<ID=CLNSIG,Number=.,Type=String>
+##INFO=<ID=CLNREVSTAT,Number=.,Type=String>
+##INFO=<ID=CLNDN,Number=.,Type=String>
+##INFO=<ID=CLNVC,Number=.,Type=String>
+##INFO=<ID=CLNVCSO,Number=.,Type=String>
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+1\t25000\trs1\tA\tG\t.\t.\tCLNSIG=Pathogenic;CLNREVSTAT=criteria_provided,_multiple_submitters,_no_conflicts;CLNDN=Breast_cancer;CLNVC=SNV;CLNVCSO=SO:0001483
+";
+    fs::write(&clinvar_source, clinvar_fixture).unwrap();
+    fs::write(&gnomad_source, GNOMAD_SOURCE_VCF).unwrap();
+    fs::write(&input_vcf, INPUT_NO_SPLICEAI_INFO_VCF).unwrap();
+    fs::write(&gff3, MINI_GFF3).unwrap();
+
+    run_sa_build(
+        "clinvar",
+        clinvar_source.to_str().unwrap(),
+        clinvar_base.to_str().unwrap(),
+        "GRCh38",
+    )
+    .unwrap();
+    run_sa_build(
+        "gnomad",
+        gnomad_source.to_str().unwrap(),
+        gnomad_base.to_str().unwrap(),
+        "GRCh38",
+    )
+    .unwrap();
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_tab.to_string_lossy().into_owned(),
+        gff3: Some(gff3.to_string_lossy().into_owned()),
+        fasta: None,
+        output_format: "tab".into(),
+        pick: false,
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: Some(transcript_cache.to_string_lossy().into_owned()),
+        sa_dir: Some(tmp.path().to_string_lossy().into_owned()),
+        acmg: false,
+        acmg_config: None,
+        proband: None,
+        mother: None,
+        father: None,
+    })
+    .unwrap();
+
+    let annotated = fs::read_to_string(output_tab).unwrap();
+
+    // Tab schema header must document the pipe format for every loaded source.
+    assert!(
+        annotated.contains("## COLUMN=<ID=FV_CLINVAR,Description=\"fastVEP ClinVar annotations. Format: ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION\">"),
+        "tab output must declare FV_CLINVAR schema:\n{}",
+        annotated
+    );
+    assert!(
+        annotated.contains("## COLUMN=<ID=FV_GNOMAD,Description="),
+        "tab output must declare FV_GNOMAD schema:\n{}",
+        annotated
+    );
+
+    // The column header line must end with the FV_* columns.
+    let column_header = annotated
+        .lines()
+        .find(|l| l.starts_with("#Uploaded_variation"))
+        .expect("missing tab column header");
+    assert!(
+        column_header.ends_with("\tFV_CLINVAR\tFV_GNOMAD"),
+        "extra columns must append after FLAGS in spec order: {}",
+        column_header
+    );
+
+    // At least one data row carries a populated FV_CLINVAR value at position 25000.
+    let data_rows: Vec<&str> = annotated
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .collect();
+    assert!(!data_rows.is_empty(), "tab output must contain data rows");
+    let pos25k = data_rows
+        .iter()
+        .find(|r| r.contains("1:25000\t"))
+        .expect("expected an annotated row for chr1:25000");
+    let cols: Vec<&str> = pos25k.split('\t').collect();
+    assert_eq!(cols.len(), 17 + 2);
+    assert_eq!(
+        cols[17], "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO%3A0001483",
+        "FV_CLINVAR tab column must match the VCF pipe schema: {}",
+        pos25k
+    );
+    // The fixture only populates a subset of gnomAD fields; absent positions
+    // render as empty between pipes (matches VCF behavior).
+    assert_eq!(
+        cols[18], "G|0.00012|12|100000|0|0.00021||||||0.00009|||",
+        "FV_GNOMAD tab column must match the VCF pipe schema: {}",
+        pos25k
+    );
+
+    // Sanity: no raw JSON leaked into the tab file.
+    assert!(!annotated.contains('{'), "tab output must not contain raw JSON:\n{}", annotated);
+    assert!(!annotated.contains('}'), "tab output must not contain raw JSON:\n{}", annotated);
+}

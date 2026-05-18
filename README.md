@@ -293,6 +293,10 @@ fastVEP supports direct integration with clinical and population databases throu
 | **PrimateAI** | Allele-specific | Primate-based pathogenicity | `--source primateai` |
 | **dbNSFP** | Allele-specific | SIFT/PolyPhen predictions | `--source dbnsfp` |
 
+For the per-source VCF `FV_*` / tab column / JSON-key schema (pipe formats,
+escaping rules, identifiers), see
+[`docs/SUPPLEMENTARY_ANNOTATIONS.md`](docs/SUPPLEMENTARY_ANNOTATIONS.md).
+
 ## Command Reference
 
 ### `fastvep annotate`
