@@ -567,6 +567,10 @@ pub struct LoadedSupplementarySpecs {
     /// Parallel to `VCF_PROJECTION_SPECS`: `true` when that spec's source is
     /// loaded for this run.
     per_spec: Vec<bool>,
+    /// Total number of extra tab columns (`spliceai` + number of `true`
+    /// entries in `per_spec`), cached at construction so the per-row hot
+    /// path doesn't re-scan `per_spec` for the column count.
+    column_count: usize,
 }
 
 impl LoadedSupplementarySpecs {
@@ -574,7 +578,7 @@ impl LoadedSupplementarySpecs {
     /// computed by the annotation pipeline.
     pub fn new(sa_keys: &[String], gene_keys: &[String]) -> Self {
         let spliceai = sa_keys.iter().any(|key| key == "spliceAI");
-        let per_spec = VCF_PROJECTION_SPECS
+        let per_spec: Vec<bool> = VCF_PROJECTION_SPECS
             .iter()
             .map(|spec| match spec.kind {
                 VcfProjectionKind::GeneObject | VcfProjectionKind::ClinvarProtein => {
@@ -585,19 +589,20 @@ impl LoadedSupplementarySpecs {
                 }
             })
             .collect();
-        Self { spliceai, per_spec }
+        let column_count = spliceai as usize + per_spec.iter().filter(|b| **b).count();
+        Self { spliceai, per_spec, column_count }
     }
 
     /// Number of extra tab columns this lookup will produce (including
-    /// SpliceAI). O(1) — just `popcount` over the precomputed flags.
+    /// SpliceAI). True O(1) — value is cached at construction.
     pub fn column_count(&self) -> usize {
-        self.spliceai as usize + self.per_spec.iter().filter(|b| **b).count()
+        self.column_count
     }
 
     /// True when no supplementary source is loaded; callers can skip the
     /// per-row work entirely in that case.
     pub fn is_empty(&self) -> bool {
-        !self.spliceai && self.per_spec.iter().all(|b| !*b)
+        self.column_count == 0
     }
 
     fn loaded_specs(&self) -> impl Iterator<Item = &'static VcfProjectionSpec> + '_ {
@@ -801,8 +806,21 @@ fn format_allele_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> 
     if values.is_empty() { None } else { Some(values.join(",")) }
 }
 
+/// `GeneIndex::annotate_gene` returns either a single JSON object for a gene
+/// with one record or a JSON array of objects when several records hit the
+/// same gene symbol. This helper flattens both shapes to a slice of object
+/// `Value`s so the projection helpers can produce one pipe entry per record
+/// without losing data on multi-record genes.
+fn iter_gene_objects(parsed: &Value) -> Vec<&Value> {
+    match parsed {
+        Value::Object(_) => vec![parsed],
+        Value::Array(items) => items.iter().filter(|v| v.is_object()).collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn format_gene_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> Option<String> {
-    let mut values = Vec::new();
+    let mut values: Vec<String> = Vec::new();
     for ga in &vf.gene_annotations {
         if ga.json_key != spec.json_key {
             continue;
@@ -810,16 +828,18 @@ fn format_gene_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> Op
         let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
             continue;
         };
-        let mut parts = Vec::with_capacity(spec.fields.len() + 1);
-        parts.push(escape_vcf_subfield(&ga.gene_symbol));
-        if let Some(obj) = parsed.as_object() {
-            for (_, json_key) in spec.fields {
-                parts.push(obj.get(*json_key).map(json_value_to_vcf).unwrap_or_default());
+        for object in iter_gene_objects(&parsed) {
+            let mut parts = Vec::with_capacity(spec.fields.len() + 1);
+            parts.push(escape_vcf_subfield(&ga.gene_symbol));
+            if let Some(obj) = object.as_object() {
+                for (_, json_key) in spec.fields {
+                    parts.push(obj.get(*json_key).map(json_value_to_vcf).unwrap_or_default());
+                }
             }
-        }
-        let value = parts.join("|");
-        if !values.contains(&value) {
-            values.push(value);
+            let value = parts.join("|");
+            if !values.contains(&value) {
+                values.push(value);
+            }
         }
     }
     if values.is_empty() { None } else { Some(values.join(",")) }
@@ -892,16 +912,18 @@ fn format_gene_projection_for_tv(
         let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
             continue;
         };
-        let mut parts = Vec::with_capacity(spec.fields.len() + 1);
-        parts.push(escape_vcf_subfield(&ga.gene_symbol));
-        if let Some(obj) = parsed.as_object() {
-            for (_, json_key) in spec.fields {
-                parts.push(obj.get(*json_key).map(json_value_to_vcf).unwrap_or_default());
+        for object in iter_gene_objects(&parsed) {
+            let mut parts = Vec::with_capacity(spec.fields.len() + 1);
+            parts.push(escape_vcf_subfield(&ga.gene_symbol));
+            if let Some(obj) = object.as_object() {
+                for (_, json_key) in spec.fields {
+                    parts.push(obj.get(*json_key).map(json_value_to_vcf).unwrap_or_default());
+                }
             }
-        }
-        let value = parts.join("|");
-        if !values.contains(&value) {
-            values.push(value);
+            let value = parts.join("|");
+            if !values.contains(&value) {
+                values.push(value);
+            }
         }
     }
     if values.is_empty() { None } else { Some(values.join(",")) }
@@ -928,22 +950,7 @@ fn format_clinvar_protein_projection_for_tv(
         let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
             continue;
         };
-        let variants = parsed
-            .get("proteinVariants")
-            .and_then(|v| v.as_array())
-            .map(|vars| {
-                vars.iter()
-                    .filter_map(|v| {
-                        let pos = v.get("pos").map(json_leaf_to_string)?;
-                        let ref_aa = v.get("refAa").map(json_leaf_to_string)?;
-                        let alt_aa = v.get("altAa").map(json_leaf_to_string)?;
-                        let sig = v.get("sig").map(json_leaf_to_string).unwrap_or_default();
-                        Some(escape_vcf_subfield(&format!("{pos}:{ref_aa}>{alt_aa}:{sig}")))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("&")
-            })
-            .unwrap_or_default();
+        let variants = collect_clinvar_protein_variants(&parsed);
         if variants.is_empty() {
             continue;
         }
@@ -955,11 +962,31 @@ fn format_clinvar_protein_projection_for_tv(
     if values.is_empty() { None } else { Some(values.join(",")) }
 }
 
+/// Pull every `proteinVariants[*]` entry out of a ClinVar-protein JSON
+/// payload and render the `&`-joined `pos:ref>alt:sig` list. Accepts either
+/// a single object payload or the JSON array `GeneIndex::annotate_gene`
+/// emits when a gene has multiple records.
+fn collect_clinvar_protein_variants(parsed: &Value) -> String {
+    iter_gene_objects(parsed)
+        .into_iter()
+        .filter_map(|obj| obj.get("proteinVariants").and_then(|v| v.as_array()))
+        .flat_map(|vars| vars.iter())
+        .filter_map(|v| {
+            let pos = v.get("pos").map(json_leaf_to_string)?;
+            let ref_aa = v.get("refAa").map(json_leaf_to_string)?;
+            let alt_aa = v.get("altAa").map(json_leaf_to_string)?;
+            let sig = v.get("sig").map(json_leaf_to_string).unwrap_or_default();
+            Some(escape_vcf_subfield(&format!("{pos}:{ref_aa}>{alt_aa}:{sig}")))
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 fn format_clinvar_protein_projection(
     vf: &VariationFeature,
     spec: &VcfProjectionSpec,
 ) -> Option<String> {
-    let mut values = Vec::new();
+    let mut values: Vec<String> = Vec::new();
     for ga in &vf.gene_annotations {
         if ga.json_key != spec.json_key {
             continue;
@@ -967,22 +994,7 @@ fn format_clinvar_protein_projection(
         let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
             continue;
         };
-        let variants = parsed
-            .get("proteinVariants")
-            .and_then(|v| v.as_array())
-            .map(|vars| {
-                vars.iter()
-                    .filter_map(|v| {
-                        let pos = v.get("pos").map(json_leaf_to_string)?;
-                        let ref_aa = v.get("refAa").map(json_leaf_to_string)?;
-                        let alt_aa = v.get("altAa").map(json_leaf_to_string)?;
-                        let sig = v.get("sig").map(json_leaf_to_string).unwrap_or_default();
-                        Some(escape_vcf_subfield(&format!("{pos}:{ref_aa}>{alt_aa}:{sig}")))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("&")
-            })
-            .unwrap_or_default();
+        let variants = collect_clinvar_protein_variants(&parsed);
         if variants.is_empty() {
             continue;
         }
@@ -1087,8 +1099,10 @@ fn uploaded_allele_for_annotation(vf: &VariationFeature, allele: &Allele) -> Str
 /// `specs` enumerates which supplementary annotation sources are loaded for
 /// this run (build once via `LoadedSupplementarySpecs::new`). For each
 /// loaded source, one extra tab column is appended carrying the same
-/// pipe-delimited value emitted into the corresponding VCF `FV_*` INFO field
-/// (and `SpliceAI=` for the SpliceAI source). The column order matches
+/// pipe-delimited value emitted into the corresponding VCF `FV_*` INFO
+/// field (or the `SpliceAI` INFO field for the SpliceAI source). The
+/// VCF-side `<ID>=` prefix is *not* included — the column header line
+/// already names each column. The column order matches
 /// `tab_supplementary_column_names`. Missing values render as `-`.
 pub fn format_tab_line(vf: &VariationFeature, specs: &LoadedSupplementarySpecs) -> Vec<String> {
     let mut lines = Vec::new();
@@ -1911,6 +1925,72 @@ mod tests {
             fv_omim.starts_with("GENE1|113705|"),
             "FV_OMIM cell should still carry the gene annotation: {}",
             fv_omim
+        );
+    }
+
+    #[test]
+    fn gene_projections_flatten_json_array_gene_payloads() {
+        // GeneIndex::annotate_gene wraps multi-record genes in a JSON
+        // array (`[{...},{...}]`). The variant- and per-tv-level helpers
+        // must flatten that into one pipe entry per record instead of
+        // emitting just `GENE1` with no fields (or dropping the value
+        // entirely for clinvar_protein). Regression test for Copilot
+        // review of PR #31.
+        let mut vf = projection_test_variant();
+        vf.gene_annotations = vec![
+            GeneAnnotation {
+                gene_symbol: "GENE1".into(),
+                json_key: "omim".into(),
+                json_string: r#"[{"mimNumber":113705,"phenotypes":["Breast cancer"]},{"mimNumber":167000,"phenotypes":["Ovarian cancer"]}]"#.into(),
+            },
+            GeneAnnotation {
+                gene_symbol: "GENE1".into(),
+                json_key: "clinvar_protein".into(),
+                json_string: r#"[{"proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"Pathogenic"}]},{"proteinVariants":[{"pos":248,"refAa":"R","altAa":"W","sig":"Pathogenic"}]}]"#.into(),
+            },
+        ];
+
+        // VCF projection — should carry both OMIM entries comma-joined.
+        let info: std::collections::HashMap<String, String> =
+            format_supplementary_vcf_info(&vf).into_iter().collect();
+        let omim = info.get("FV_OMIM").expect("FV_OMIM should be present");
+        assert!(
+            omim.contains("GENE1|113705|Breast%20cancer"),
+            "FV_OMIM should carry first record: {omim}"
+        );
+        assert!(
+            omim.contains("GENE1|167000|Ovarian%20cancer"),
+            "FV_OMIM should carry second record: {omim}"
+        );
+        let cvp = info
+            .get("FV_CLINVAR_PROTEIN")
+            .expect("FV_CLINVAR_PROTEIN should be present even for array payload");
+        assert!(
+            cvp.contains("175%3AR>H%3APathogenic"),
+            "FV_CLINVAR_PROTEIN should carry first proteinVariants entry: {cvp}"
+        );
+        assert!(
+            cvp.contains("248%3AR>W%3APathogenic"),
+            "FV_CLINVAR_PROTEIN should carry second proteinVariants entry: {cvp}"
+        );
+
+        // Tab projection — same pipe values land in the per-row cells.
+        let specs = LoadedSupplementarySpecs::new(
+            &[],
+            &["omim".to_string(), "clinvar_protein".to_string()],
+        );
+        let lines = format_tab_line(&vf, &specs);
+        let row = &lines[0];
+        let cols: Vec<&str> = row.split('\t').collect();
+        let fv_omim = cols[17];
+        let fv_cvp = cols[18];
+        assert!(
+            fv_omim.contains("113705") && fv_omim.contains("167000"),
+            "tab FV_OMIM cell should carry both records: {fv_omim}"
+        );
+        assert!(
+            fv_cvp.contains("175%3AR>H") && fv_cvp.contains("248%3AR>W"),
+            "tab FV_CLINVAR_PROTEIN cell should carry both proteinVariants: {fv_cvp}"
         );
     }
 
