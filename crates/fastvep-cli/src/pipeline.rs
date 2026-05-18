@@ -292,6 +292,10 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     let owned_vcf_info_ids = output::vcf_owned_info_ids(&sa_json_keys, &gene_json_keys);
     let generated_vcf_headers =
         output::vcf_info_header_lines(&sa_json_keys, &gene_json_keys, output::DEFAULT_CSQ_FIELDS);
+    // Precompute the loaded-source lookup once so the per-row tab writer
+    // doesn't redo an O(specs × keys) membership scan for every variant.
+    let supplementary_specs =
+        output::LoadedSupplementarySpecs::new(&sa_json_keys, &gene_json_keys);
 
     // Write headers based on output format
     match config.output_format.as_str() {
@@ -313,11 +317,10 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         }
         "tab" => {
             writeln!(writer, "## fastVEP output")?;
-            for line in output::tab_supplementary_header_lines(&sa_json_keys, &gene_json_keys) {
+            for line in output::tab_supplementary_header_lines(&supplementary_specs) {
                 writeln!(writer, "{}", line)?;
             }
-            let extra_columns =
-                output::tab_supplementary_column_names(&sa_json_keys, &gene_json_keys);
+            let extra_columns = output::tab_supplementary_column_names(&supplementary_specs);
             let mut header = String::from(
                 "#Uploaded_variation\tLocation\tAllele\tGene\tFeature\tFeature_type\tConsequence\tcDNA_position\tCDS_position\tProtein_position\tAmino_acids\tCodons\tExisting_variation\tIMPACT\tDISTANCE\tSTRAND\tFLAGS",
             );
@@ -1049,7 +1052,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             match config.output_format.as_str() {
                 "vcf" => write_vcf_line(&mut writer, vf)?,
                 "tab" => {
-                    for line in output::format_tab_line(vf, &sa_json_keys, &gene_json_keys) {
+                    for line in output::format_tab_line(vf, &supplementary_specs) {
                         writeln!(writer, "{}", line)?;
                     }
                 }
