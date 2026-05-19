@@ -588,13 +588,24 @@ impl AnnotationContext {
                 }
             }
 
-            // Supplementary annotation: query SA providers for each allele
+            // Supplementary annotation: query SA providers once per unique
+            // allele, then attach the result to each (transcript, allele)
+            // slot. SA results don't depend on the transcript, so this avoids
+            // the T× amplification across overlapping transcripts.
             if !self.sa_providers.is_empty() {
                 let chrom = &vf.position.chromosome;
-                for tv in &mut vf.transcript_variations {
-                    for aa in &mut tv.allele_annotations {
+                let ref_str = vf.ref_allele.to_string();
+                let mut allele_results: std::collections::HashMap<
+                    String,
+                    Vec<(String, String)>,
+                > = std::collections::HashMap::new();
+                for tv in &vf.transcript_variations {
+                    for aa in &tv.allele_annotations {
                         let alt_str = aa.allele.to_string();
-                        let ref_str = vf.ref_allele.to_string();
+                        if allele_results.contains_key(&alt_str) {
+                            continue;
+                        }
+                        let mut results: Vec<(String, String)> = Vec::new();
                         for sa in &self.sa_providers {
                             let sa_guard = sa.lock().unwrap();
                             if let Ok(Some(ann)) = sa_guard.annotate_position(
@@ -610,9 +621,16 @@ impl AnnotationContext {
                                         format!("[{}]", v.join(","))
                                     }
                                 };
-                                aa.supplementary
-                                    .push((sa_guard.json_key().to_string(), json_str));
+                                results.push((sa_guard.json_key().to_string(), json_str));
                             }
+                        }
+                        allele_results.insert(alt_str, results);
+                    }
+                }
+                for tv in &mut vf.transcript_variations {
+                    for aa in &mut tv.allele_annotations {
+                        if let Some(results) = allele_results.get(&aa.allele.to_string()) {
+                            aa.supplementary.extend(results.iter().cloned());
                         }
                     }
                 }

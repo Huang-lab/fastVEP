@@ -932,13 +932,22 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                 }
             }
 
-            // Supplementary annotation: query SA providers for each allele
+            // Supplementary annotation: query SA providers once per unique
+            // allele, then attach the result to every (transcript, allele)
+            // slot that shares it. SA results depend only on (pos, ref, alt),
+            // never on the transcript context, so this avoids T× amplification
+            // for variants overlapping many transcripts.
             if !sa_providers.is_empty() {
                 let chrom = &vf.position.chromosome;
                 let sa_queries = supplementary_query_alleles(vf);
-                for tv in &mut vf.transcript_variations {
-                    for aa in &mut tv.allele_annotations {
+                let mut allele_results: HashMap<String, Vec<(String, String)>> =
+                    HashMap::new();
+                for tv in &vf.transcript_variations {
+                    for aa in &tv.allele_annotations {
                         let allele_key = aa.allele.to_string();
+                        if allele_results.contains_key(&allele_key) {
+                            continue;
+                        }
                         let (query_pos, ref_str, alt_str) = sa_queries
                             .iter()
                             .find(|(allele, _, _, _)| allele == &allele_key)
@@ -946,8 +955,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                 (*pos, ref_allele.clone(), alt_allele.clone())
                             })
                             .unwrap_or_else(|| {
-                                (vf.position.start, vf.ref_allele.to_string(), allele_key)
+                                (
+                                    vf.position.start,
+                                    vf.ref_allele.to_string(),
+                                    allele_key.clone(),
+                                )
                             });
+                        let mut results: Vec<(String, String)> = Vec::new();
                         for sa in &sa_providers {
                             let (sa_pos, sa_ref, sa_alt) = if sa.metadata().match_by_allele {
                                 (query_pos, ref_str.as_str(), alt_str.as_str())
@@ -964,11 +978,16 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                         format!("[{}]", v.join(","))
                                     }
                                 };
-                                aa.supplementary.push((
-                                    sa.json_key().to_string(),
-                                    json_str,
-                                ));
+                                results.push((sa.json_key().to_string(), json_str));
                             }
+                        }
+                        allele_results.insert(allele_key, results);
+                    }
+                }
+                for tv in &mut vf.transcript_variations {
+                    for aa in &mut tv.allele_annotations {
+                        if let Some(results) = allele_results.get(&aa.allele.to_string()) {
+                            aa.supplementary.extend(results.iter().cloned());
                         }
                     }
                 }
