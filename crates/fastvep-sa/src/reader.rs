@@ -65,6 +65,10 @@ fn block_bytes(entries: &[BlockEntry]) -> usize {
 /// used entries until total cached bytes is within budget. Always keeps at
 /// least one entry (the just-inserted one) so a single oversized block
 /// doesn't keep falling out from under a parallel-worker batch.
+///
+/// Byte accounting goes through `pop_lru` (explicit) and `push` (which
+/// returns the evicted entry on capacity overflow), so the inner `LruCache`
+/// can never silently drop an entry without `total_bytes` reflecting it.
 struct BlockCache {
     lru: LruCache<u64, (Arc<Vec<BlockEntry>>, usize)>,
     total_bytes: usize,
@@ -86,12 +90,14 @@ impl BlockCache {
     }
 
     fn put(&mut self, offset: u64, value: Arc<Vec<BlockEntry>>, bytes: usize) {
+        // Replace-in-place: drop the old bytes first so the budget loop
+        // below sees the correct `total_bytes`.
         if let Some((_, old_bytes)) = self.lru.pop(&offset) {
             self.total_bytes = self.total_bytes.saturating_sub(old_bytes);
         }
-        // Evict LRU entries until the new block fits, but always leave room
-        // for the one we're about to insert (i.e. evict while
-        // total > budget AND cache has at least 1 other entry).
+        // Byte-budget eviction: free space for the new block, but always
+        // leave room to insert it (cache may go above budget for a single
+        // oversized block; parallel workers must not thrash that one).
         while self.total_bytes + bytes > self.budget_bytes && !self.lru.is_empty() {
             if let Some((_, (_, ev_bytes))) = self.lru.pop_lru() {
                 self.total_bytes = self.total_bytes.saturating_sub(ev_bytes);
@@ -99,8 +105,18 @@ impl BlockCache {
                 break;
             }
         }
+        // `push` returns any entry the inner LruCache evicts to make room
+        // (capacity overflow); subtract its bytes so `total_bytes` doesn't
+        // drift if `CACHE_MAX_ENTRIES` ever bites before the byte budget.
+        if let Some((_, (_, ev_bytes))) = self.lru.push(offset, (value, bytes)) {
+            self.total_bytes = self.total_bytes.saturating_sub(ev_bytes);
+        }
         self.total_bytes = self.total_bytes.saturating_add(bytes);
-        self.lru.put(offset, (value, bytes));
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.lru.len()
     }
 }
 
@@ -169,6 +185,24 @@ impl SaReader {
 
         if data_end > self.mmap.len() {
             anyhow::bail!("Block extends beyond data file");
+        }
+
+        // Cross-check the on-disk length prefix against the index. If they
+        // disagree the `.osa` and `.osa.idx` are out of sync (corrupt or
+        // mismatched files) and we'd otherwise silently decompress the wrong
+        // byte range.
+        let on_disk_len = u32::from_le_bytes(
+            self.mmap[offset..offset + 4]
+                .try_into()
+                .expect("4-byte slice"),
+        );
+        if on_disk_len != compressed_len {
+            anyhow::bail!(
+                "Block length mismatch at offset {}: index says {} bytes, data file prefix says {}",
+                file_offset,
+                compressed_len,
+                on_disk_len,
+            );
         }
 
         SaBlock::decompress(&self.mmap[data_start..data_end])
@@ -408,26 +442,49 @@ mod tests {
     fn preload_only_touches_blocks_containing_queried_positions() {
         let dir = TempDir::new().unwrap();
         let base = dir.path().join("test");
-        // Records spaced far enough to force multiple blocks (block sized
-        // generously by default; here we generate enough variants that several
-        // blocks are flushed).
-        let records: Vec<AnnotationRecord> = (0..200_000)
+        // Use a JSON payload big enough that the writer flushes multiple
+        // 8 MiB blocks (entry_size accounting in SaBlock::add is
+        // 4 + 2 + ref + 2 + alt + 4 + json bytes ≈ 13 + 200 ≈ 213 B; at
+        // 100_000 entries that's ~21 MiB → at least 3 blocks).
+        let big_json = "x".repeat(200);
+        let records: Vec<AnnotationRecord> = (0..100_000)
             .map(|i| AnnotationRecord {
                 chrom_idx: 0,
                 position: 1000 + i,
                 ref_allele: "A".into(),
                 alt_allele: "G".into(),
-                json: r#"{}"#.into(),
+                json: format!(r#"{{"i":{},"pad":"{}"}}"#, i, big_json),
             })
             .collect();
         write_fixture(&base, records);
 
         let reader = SaReader::open(&base.with_extension("osa")).unwrap();
-        // Preload a single position; only the containing block should warm up.
+        // Guard: the fixture must actually contain multiple blocks, otherwise
+        // the assertion below is vacuous.
+        let total_blocks: usize = reader
+            .index
+            .chromosomes
+            .values()
+            .map(|v| v.len())
+            .sum();
+        assert!(
+            total_blocks >= 2,
+            "test fixture should have ≥ 2 blocks, got {}",
+            total_blocks
+        );
+
+        // Preload a single position; the cache should hold exactly the one
+        // block that contains it, not the full chromosome.
         reader.preload("chr1", &[1042]).unwrap();
-        let ann = reader
-            .annotate_position("chr1", 1042, "A", "G")
-            .unwrap();
+        let cached = reader.block_cache.lock().unwrap().len();
+        assert_eq!(
+            cached, 1,
+            "preload of a single position should load exactly 1 block, got {}",
+            cached
+        );
+
+        // The preloaded block must satisfy a real query.
+        let ann = reader.annotate_position("chr1", 1042, "A", "G").unwrap();
         assert!(ann.is_some());
 
         // Unknown chromosome must be a no-op rather than an error.

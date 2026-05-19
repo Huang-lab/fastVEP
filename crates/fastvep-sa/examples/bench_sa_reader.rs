@@ -16,7 +16,7 @@
 
 use anyhow::Result;
 use fastvep_cache::annotation::AnnotationProvider;
-use fastvep_sa::common::AnnotationRecord;
+use fastvep_sa::common::{AnnotationRecord, SCHEMA_VERSION};
 use fastvep_sa::index::IndexHeader;
 use fastvep_sa::reader::SaReader;
 use fastvep_sa::writer::SaWriter;
@@ -100,7 +100,7 @@ fn build_synthetic_osa(path: &PathBuf, n_records: usize) -> Result<u64> {
     });
 
     let header = IndexHeader {
-        schema_version: 1,
+        schema_version: SCHEMA_VERSION,
         json_key: "clinvar".into(),
         name: "Synthetic ClinVar".into(),
         version: "bench".into(),
@@ -121,10 +121,19 @@ fn build_synthetic_osa(path: &PathBuf, n_records: usize) -> Result<u64> {
 
 fn build_query_workload(n_variants: usize) -> Vec<(String, u64)> {
     // Sorted positions across the genome, mimicking a normal VCF input.
+    // Mirror build_synthetic_osa: track allocations and hand the integer-
+    // division remainder to the last chromosome so workload.len() actually
+    // matches n_variants instead of being a few short.
     let total_len: u64 = HUMAN_CHROMS.iter().map(|(_, _, l)| *l as u64).sum();
     let mut variants = Vec::with_capacity(n_variants);
-    for (_, name, length) in HUMAN_CHROMS {
-        let share = ((*length as u64 * n_variants as u64) / total_len) as usize;
+    let mut allocated = 0usize;
+    for (i, (_, name, length)) in HUMAN_CHROMS.iter().enumerate() {
+        let share = if i == HUMAN_CHROMS.len() - 1 {
+            n_variants.saturating_sub(allocated)
+        } else {
+            ((*length as u64 * n_variants as u64) / total_len) as usize
+        };
+        allocated += share;
         if share == 0 {
             continue;
         }
@@ -177,7 +186,9 @@ fn main() -> Result<()> {
             by_chrom.entry(chrom.as_str()).or_default().push(*pos);
         }
         for (chrom, positions) in &by_chrom {
-            let _ = reader.preload(chrom, positions);
+            // Propagate so the benchmark fails loudly on a real preload error
+            // (unknown chrom is a no-op inside preload, not an error).
+            reader.preload(chrom, positions)?;
         }
         // Per-transcript / per-allele queries (parallel in real pipeline; here
         // we just measure total work).

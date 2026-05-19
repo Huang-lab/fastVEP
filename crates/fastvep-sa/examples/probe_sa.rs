@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     let mut max_decomp = 0usize;
     let mut decomp_struct_overhead = 0u64;
 
-    for (_chrom, blocks) in &idx.chromosomes {
+    for blocks in idx.chromosomes.values() {
         for br in blocks {
             count += 1;
             let off = br.file_offset as usize;
