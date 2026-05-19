@@ -1,7 +1,8 @@
 //! fastSA: Supplementary annotation format for fastVEP.
 //!
 //! Two format generations:
-//! - **v1 (.osa)**: Zstd block-compressed with per-entry JSON strings
+//! - **v1 (.osa)**: Zstd block-compressed with per-entry JSON strings, plus a
+//!   byte-budgeted LRU cache of decompressed blocks (see [`reader`])
 //! - **v2 (.osa2)**: ZIP-based chunked format with Var32 encoding, parallel
 //!   u32 value arrays, delta encoding, and LRU chunk caching (echtvar-inspired)
 //!

@@ -2,7 +2,8 @@
 //!
 //! Uses memory-mapped I/O for the data file and binary search on the index
 //! for O(log n) block lookups. Decompressed blocks are held in a thread-safe
-//! LRU cache shared across batches and across queries on the same block.
+//! byte-budgeted LRU cache shared across batches and across queries on the
+//! same block.
 
 use crate::block::{BlockEntry, SaBlock};
 use crate::common::OSA_MAGIC;
@@ -16,13 +17,92 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-/// Number of decompressed blocks retained in the LRU cache.
+/// Default per-reader byte budget for the decompressed-block cache (32 MiB).
 ///
-/// VCF inputs are sorted by (chrom, pos) and a batch of 1024 variants typically
-/// spans only a handful of blocks, but the per-transcript/per-allele query
-/// pattern hits each block many times. 64 blocks is enough to keep the
-/// working set hot across sorted-input batches without bounding RSS too high.
-const BLOCK_CACHE_CAPACITY: usize = 64;
+/// Block sizes vary a lot by data source — clinvar/gnomad/spliceai are
+/// ~10 MiB per block once decompressed, REVEL is ~25 MiB, PhyloP can be
+/// ~40 MiB. A fixed *count* cap (e.g. 4 blocks) inflates total RSS by an
+/// order of magnitude on PhyloP/REVEL-heavy stacks and OOMs on
+/// full-genome inputs. A byte budget adapts: low-density readers cache
+/// 2–3 blocks, high-density readers cache 1.
+///
+/// With ~100 readers in the full SA stack (one per chrom × DB), 32 MiB
+/// caps cache memory at roughly 3.2 GiB worst case, leaving headroom on
+/// a 12 GiB sandbox after the GFF3 cache + indexes (~3.5 GiB baseline).
+/// Override via `FASTVEP_SA_CACHE_BYTES_PER_READER` (in bytes). The cache
+/// is guaranteed to retain at least 1 block to avoid thrashing on a
+/// single just-decompressed block under parallel queries.
+const DEFAULT_CACHE_BYTES_PER_READER: usize = 32 * 1024 * 1024;
+
+/// Soft upper bound on entries to prevent the underlying `LruCache`'s
+/// capacity field from being a pathological size if blocks ever ended up
+/// being tiny. The byte budget is the real gate.
+const CACHE_MAX_ENTRIES: usize = 1024;
+
+fn cache_bytes_per_reader() -> usize {
+    std::env::var("FASTVEP_SA_CACHE_BYTES_PER_READER")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(DEFAULT_CACHE_BYTES_PER_READER)
+}
+
+/// Approximate in-memory footprint of a decompressed block: the BlockEntry
+/// struct slots in the `Vec`, plus the heap storage backing each entry's
+/// three `String`s. The `Vec` capacity is bounded by its length here
+/// because the writer pre-sizes the allocation, so `len * size_of` is a
+/// reasonable proxy for the slab.
+fn block_bytes(entries: &[BlockEntry]) -> usize {
+    let slot_bytes = std::mem::size_of::<BlockEntry>().saturating_mul(entries.len());
+    let string_bytes: usize = entries
+        .iter()
+        .map(|e| e.ref_allele.len() + e.alt_allele.len() + e.json.len())
+        .sum();
+    slot_bytes.saturating_add(string_bytes)
+}
+
+/// LRU keyed by file_offset, with byte-based eviction. Evicts least-recently-
+/// used entries until total cached bytes is within budget. Always keeps at
+/// least one entry (the just-inserted one) so a single oversized block
+/// doesn't keep falling out from under a parallel-worker batch.
+struct BlockCache {
+    lru: LruCache<u64, (Arc<Vec<BlockEntry>>, usize)>,
+    total_bytes: usize,
+    budget_bytes: usize,
+}
+
+impl BlockCache {
+    fn new(budget_bytes: usize) -> Self {
+        let cap = NonZeroUsize::new(CACHE_MAX_ENTRIES).expect("non-zero");
+        Self {
+            lru: LruCache::new(cap),
+            total_bytes: 0,
+            budget_bytes,
+        }
+    }
+
+    fn get(&mut self, offset: u64) -> Option<Arc<Vec<BlockEntry>>> {
+        self.lru.get(&offset).map(|(arc, _)| Arc::clone(arc))
+    }
+
+    fn put(&mut self, offset: u64, value: Arc<Vec<BlockEntry>>, bytes: usize) {
+        if let Some((_, old_bytes)) = self.lru.pop(&offset) {
+            self.total_bytes = self.total_bytes.saturating_sub(old_bytes);
+        }
+        // Evict LRU entries until the new block fits, but always leave room
+        // for the one we're about to insert (i.e. evict while
+        // total > budget AND cache has at least 1 other entry).
+        while self.total_bytes + bytes > self.budget_bytes && !self.lru.is_empty() {
+            if let Some((_, (_, ev_bytes))) = self.lru.pop_lru() {
+                self.total_bytes = self.total_bytes.saturating_sub(ev_bytes);
+            } else {
+                break;
+            }
+        }
+        self.total_bytes = self.total_bytes.saturating_add(bytes);
+        self.lru.put(offset, (value, bytes));
+    }
+}
 
 /// Reader for .osa annotation files.
 ///
@@ -33,11 +113,11 @@ pub struct SaReader {
     mmap: Mmap,
     index: SaIndex,
     metadata: SaMetadata,
-    /// LRU cache of decompressed blocks, keyed by file offset.
+    /// Byte-budgeted LRU cache of decompressed blocks, keyed by file offset.
     ///
     /// `Arc` lets a worker clone a reference to the block payload and drop the
     /// mutex before searching, so other workers can hit the cache concurrently.
-    block_cache: Mutex<LruCache<u64, Arc<Vec<BlockEntry>>>>,
+    block_cache: Mutex<BlockCache>,
 }
 
 impl SaReader {
@@ -66,14 +146,11 @@ impl SaReader {
             is_positional: index.header.is_positional,
         };
 
-        let capacity = NonZeroUsize::new(BLOCK_CACHE_CAPACITY)
-            .expect("BLOCK_CACHE_CAPACITY is a non-zero compile-time constant");
-
         Ok(Self {
             mmap,
             index,
             metadata,
-            block_cache: Mutex::new(LruCache::new(capacity)),
+            block_cache: Mutex::new(BlockCache::new(cache_bytes_per_reader())),
         })
     }
 
@@ -106,8 +183,8 @@ impl SaReader {
                 .block_cache
                 .lock()
                 .map_err(|_| anyhow::anyhow!("SA block cache mutex poisoned"))?;
-            if let Some(arc) = cache.get(&block_ref.file_offset) {
-                return Ok(Arc::clone(arc));
+            if let Some(arc) = cache.get(block_ref.file_offset) {
+                return Ok(arc);
             }
         }
 
@@ -116,13 +193,14 @@ impl SaReader {
         // race on the same missing block they each decompress once; the second
         // `put` simply replaces an identical entry — acceptable for an LRU.
         let entries = self.decompress_block(block_ref.file_offset, block_ref.compressed_len)?;
+        let bytes = block_bytes(&entries);
         let arc = Arc::new(entries);
 
         let mut cache = self
             .block_cache
             .lock()
             .map_err(|_| anyhow::anyhow!("SA block cache mutex poisoned"))?;
-        cache.put(block_ref.file_offset, Arc::clone(&arc));
+        cache.put(block_ref.file_offset, Arc::clone(&arc), bytes);
         Ok(arc)
     }
 
@@ -354,6 +432,44 @@ mod tests {
 
         // Unknown chromosome must be a no-op rather than an error.
         reader.preload("chrUnknown", &[1, 2, 3]).unwrap();
+    }
+
+    #[test]
+    fn block_cache_evicts_lru_when_byte_budget_exceeded() {
+        // Three "blocks" of 100 bytes each, budget of 250 bytes — the third
+        // insert must evict the first to stay within budget.
+        let mut cache = BlockCache::new(250);
+        let mk = |i: u32| {
+            Arc::new(vec![BlockEntry {
+                position: i,
+                ref_allele: "A".into(),
+                alt_allele: "G".into(),
+                json: "x".repeat(100),
+            }])
+        };
+        cache.put(0, mk(0), 100);
+        cache.put(1, mk(1), 100);
+        cache.put(2, mk(2), 100); // evicts offset 0 (LRU)
+        assert!(cache.get(0).is_none(), "offset 0 should have been evicted");
+        assert!(cache.get(1).is_some());
+        assert!(cache.get(2).is_some());
+        assert!(cache.total_bytes <= cache.budget_bytes);
+    }
+
+    #[test]
+    fn block_cache_retains_just_inserted_entry_even_if_oversized() {
+        // A single block larger than the entire budget must still be cached;
+        // otherwise concurrent workers querying the same oversized block
+        // would each re-decompress it.
+        let mut cache = BlockCache::new(50);
+        let entry = Arc::new(vec![BlockEntry {
+            position: 1,
+            ref_allele: "A".into(),
+            alt_allele: "G".into(),
+            json: "x".repeat(1000),
+        }]);
+        cache.put(0, entry, 1000);
+        assert!(cache.get(0).is_some(), "just-inserted block must be retained");
     }
 
     #[test]

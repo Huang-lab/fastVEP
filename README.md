@@ -10,7 +10,7 @@ fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.
 
 - **Variant Consequence Prediction** — Classifies variants using 49 [Sequence Ontology](http://www.sequenceontology.org/) terms (missense, frameshift, splice donor, copy_number_change, transcript_ablation, etc.)
 - **Structural Variant Support** — Full SV pipeline: `<DEL>`, `<DUP>`, `<INV>`, `<CNV>`, `<BND>`, `<INS>`, `<STR>` with SV-specific consequence prediction
-- **Supplementary Annotations** — Direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, MitoMap via the native fastSA format (v1: zstd block compression; v2: echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding, and LRU caching)
+- **Supplementary Annotations** — Direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, MitoMap via the native fastSA format (v1: zstd block compression with byte-budgeted block cache; v2: echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding, and LRU caching)
 - **Prediction Scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN conservation and pathogenicity scores; SIFT/PolyPhen via dbNSFP
 - **Gene-Level Annotations** — OMIM phenotypes, gnomAD gene constraint (pLI, LOEUF), ClinGen gene-disease validity
 - **Filter Engine** — Expression-based filtering compatible with VEP's filter_vep syntax
@@ -402,7 +402,10 @@ crates/
   fastvep-io/           # VCF parser (incl. SVs), output formatters, multi-sample parsing
   fastvep-filter/       # Filter engine: lexer, parser, evaluator (filter_vep-compatible)
   fastvep-sa/           # Supplementary annotation format (fastSA):
-                       #   v1 (.osa): zstd block compression, binary search
+                       #   v1 (.osa): zstd block compression, binary search,
+                       #     byte-budgeted LRU cache of decompressed blocks
+                       #     (default 32 MiB/reader; override via
+                       #     FASTVEP_SA_CACHE_BYTES_PER_READER)
                        #   v2 (.osa2): echtvar-inspired chunked ZIP with Var32 encoding,
                        #     parallel u32 value arrays, delta encoding, LRU chunk cache,
                        #     Bloom filters for negative lookups
