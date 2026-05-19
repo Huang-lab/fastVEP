@@ -6,14 +6,8 @@ package:
   version: {{ version }}
 
 source:
-  # Build against the working tree in this repo. Run `conda build conda/recipe`
-  # from the repo root.
-  path: ../..
-  # For a future bioconda / conda-forge submission, replace the `path:` entry
-  # above with the tagged release tarball:
-  #
-  # url: https://github.com/Huang-lab/fastVEP/archive/refs/tags/v{{ version }}.tar.gz
-  # sha256: <fill-in-on-release>
+  url: https://github.com/Huang-lab/fastVEP/archive/refs/tags/v{{ version }}.tar.gz
+  sha256: 89f9bc3622f53ec20512f8e62801617fdb073a09e00014664069fc095ab68a07
 
 build:
   number: 0
