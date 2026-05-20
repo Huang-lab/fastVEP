@@ -526,8 +526,13 @@ pub fn vcf_info_header_lines(
     sa_keys: &[String],
     gene_keys: &[String],
     csq_fields: &[&str],
+    sa_only: bool,
 ) -> Vec<String> {
-    let mut headers = vec![csq_header_line(csq_fields)];
+    let mut headers = if sa_only {
+        Vec::new()
+    } else {
+        vec![csq_header_line(csq_fields)]
+    };
     if sa_keys.iter().any(|key| key == "spliceAI") {
         headers.push(spliceai_header_line());
     }
@@ -701,6 +706,11 @@ pub fn format_supplementary_vcf_info(vf: &VariationFeature) -> Vec<(String, Stri
 }
 
 /// Format final VCF INFO by replacing fastVEP-owned fields and appending current projections.
+///
+/// CSQ is always stripped from `original_info` (it is fastVEP-owned), then
+/// re-added only when `csq` is non-empty. This prevents stale `CSQ=` from a
+/// re-annotated VCF from leaking through in `--sa-only` mode where the CSQ
+/// header has already been removed.
 pub fn format_vcf_info_fields(original_info: &str, vf: &VariationFeature, csq: &str) -> String {
     let mut projections = format_supplementary_vcf_info(vf);
     if !csq.is_empty() {
@@ -714,6 +724,9 @@ pub fn format_vcf_info_fields(original_info: &str, vf: &VariationFeature, csq: &
             .split(';')
             .filter(|field| {
                 let key = field.split_once('=').map_or(*field, |(key, _)| key);
+                if key == "CSQ" {
+                    return false;
+                }
                 !projections.iter().any(|(id, _)| id == key)
             })
             .map(ToOwned::to_owned)
@@ -1104,7 +1117,11 @@ fn uploaded_allele_for_annotation(vf: &VariationFeature, allele: &Allele) -> Str
 /// VCF-side `<ID>=` prefix is *not* included — the column header line
 /// already names each column. The column order matches
 /// `tab_supplementary_column_names`. Missing values render as `-`.
-pub fn format_tab_line(vf: &VariationFeature, specs: &LoadedSupplementarySpecs) -> Vec<String> {
+pub fn format_tab_line(
+    vf: &VariationFeature,
+    specs: &LoadedSupplementarySpecs,
+    sa_only: bool,
+) -> Vec<String> {
     let mut lines = Vec::new();
 
     let location = if vf.position.start == vf.position.end {
@@ -1122,6 +1139,39 @@ pub fn format_tab_line(vf: &VariationFeature, specs: &LoadedSupplementarySpecs) 
         .unwrap_or_else(|| format!("{}_{}", location, vf.allele_string));
 
     let extra_count = specs.column_count();
+
+    if sa_only {
+        for tv in &vf.transcript_variations {
+            for aa in &tv.allele_annotations {
+                let mut parts: Vec<String> = Vec::with_capacity(3 + extra_count);
+                parts.push(uploaded_variation.clone());
+                parts.push(location.clone());
+                parts.push(aa.allele.to_string());
+                if extra_count > 0 {
+                    parts.extend(format_supplementary_tab_columns_for_allele(vf, tv, aa, specs));
+                }
+                lines.push(parts.join("\t"));
+            }
+        }
+        // Defensive fallback: if transcript_variations is empty (the scaffold
+        // should prevent this, but guard against direct callers), still emit
+        // one row per alt allele padded with `-` so column count matches the
+        // header.
+        if lines.is_empty() {
+            for alt in &vf.alt_alleles {
+                let mut parts: Vec<String> = Vec::with_capacity(3 + extra_count);
+                parts.push(uploaded_variation.clone());
+                parts.push(location.clone());
+                parts.push(alt.to_string());
+                if extra_count > 0 {
+                    parts.extend(vec!["-".to_string(); extra_count]);
+                }
+                lines.push(parts.join("\t"));
+            }
+        }
+        return lines;
+    }
+
     let row_capacity = 17 + extra_count;
 
     for tv in &vf.transcript_variations {
@@ -1202,7 +1252,14 @@ pub fn format_tab_line(vf: &VariationFeature, specs: &LoadedSupplementarySpecs) 
 }
 
 /// Format a VariationFeature as JSON.
-pub fn format_json(vf: &VariationFeature) -> serde_json::Value {
+///
+/// When `sa_only` is true (used by `--sa-only` mode), the
+/// `transcript_consequences`, `most_severe_consequence`, and per-allele
+/// ACMG metadata blocks are omitted, and per-allele supplementary
+/// annotations are surfaced under a top-level `alleles` array
+/// (`[{"allele": .., "<sa_key>": <value>, ...}]`). Variant-level
+/// `supplementary_annotations` and `gene_annotations` (if any) still emit.
+pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
 
     obj.insert("id".into(), json_str(&vf.variation_name));
@@ -1217,6 +1274,54 @@ pub fn format_json(vf: &VariationFeature) -> serde_json::Value {
         serde_json::Value::String(vf.allele_string.clone()),
     );
     obj.insert("strand".into(), serde_json::Value::Number(vf.position.strand.as_int().into()));
+
+    if sa_only {
+        let alleles: Vec<serde_json::Value> = vf
+            .transcript_variations
+            .iter()
+            .flat_map(|tv| {
+                tv.allele_annotations.iter().map(|aa| {
+                    let mut a = serde_json::Map::new();
+                    a.insert(
+                        "allele".into(),
+                        serde_json::Value::String(aa.allele.to_string()),
+                    );
+                    for (key, json_str) in &aa.supplementary {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                            a.insert(key.clone(), val);
+                        }
+                    }
+                    serde_json::Value::Object(a)
+                })
+            })
+            .collect();
+        if !alleles.is_empty() {
+            obj.insert("alleles".into(), serde_json::Value::Array(alleles));
+        }
+
+        for sa in &vf.supplementary_annotations {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&sa.json_string) {
+                obj.insert(sa.json_key.clone(), val);
+            }
+        }
+        if !vf.gene_annotations.is_empty() {
+            let mut genes_map = serde_json::Map::new();
+            for ga in &vf.gene_annotations {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ga.json_string) {
+                    genes_map
+                        .entry(ga.gene_symbol.clone())
+                        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+                        .as_object_mut()
+                        .map(|obj| obj.insert(ga.json_key.clone(), val));
+                }
+            }
+            if !genes_map.is_empty() {
+                obj.insert("genes".into(), serde_json::Value::Object(genes_map));
+            }
+        }
+
+        return serde_json::Value::Object(obj);
+    }
 
     if let Some(ref msq) = vf.most_severe_consequence {
         obj.insert(
@@ -1768,7 +1873,7 @@ mod tests {
         let sa_keys = all_supplementary_sa_keys();
         let gene_keys = all_supplementary_gene_keys();
         let specs = LoadedSupplementarySpecs::new(&sa_keys, &gene_keys);
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         assert_eq!(lines.len(), 1, "test variant has exactly one TV×AA row");
         let row = &lines[0];
         let cols: Vec<&str> = row.split('\t').collect();
@@ -1813,7 +1918,7 @@ mod tests {
             &["clinvar".to_string(), "dbnsfp".to_string()],
             &[],
         );
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         let cols: Vec<&str> = lines[0].split('\t').collect();
         assert_eq!(cols.len(), 17 + 2);
         assert_eq!(cols[17], "-", "FV_CLINVAR column should be '-' when absent");
@@ -1825,7 +1930,7 @@ mod tests {
         let vf = projection_test_variant();
         let specs = LoadedSupplementarySpecs::new(&[], &[]);
         assert!(specs.is_empty());
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         let cols: Vec<&str> = lines[0].split('\t').collect();
         assert_eq!(
             cols.len(),
@@ -1845,7 +1950,7 @@ mod tests {
         let gene_keys = vec!["omim".to_string()];
         let specs = LoadedSupplementarySpecs::new(&sa_keys, &gene_keys);
 
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         assert_eq!(lines.len(), 1, "single alt allele yields one intergenic row");
         let cols: Vec<&str> = lines[0].split('\t').collect();
         assert_eq!(cols.len(), 17 + 3, "intergenic row must include FV_* columns");
@@ -1862,7 +1967,7 @@ mod tests {
         let mut vf = projection_test_variant();
         vf.transcript_variations.clear();
         let specs = LoadedSupplementarySpecs::new(&[], &[]);
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         let cols: Vec<&str> = lines[0].split('\t').collect();
         assert_eq!(cols.len(), 17);
     }
@@ -1894,7 +1999,7 @@ mod tests {
         vf.transcript_variations = vec![tv_g, tv_t];
 
         let specs = LoadedSupplementarySpecs::new(&["clinvar".to_string()], &[]);
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         assert_eq!(lines.len(), 2);
         assert!(
             lines[0].split('\t').last().unwrap().starts_with("G|Pathogenic|"),
@@ -1918,7 +2023,7 @@ mod tests {
         let mut vf = projection_test_variant();
         vf.transcript_variations[0].gene_symbol = None;
         let specs = LoadedSupplementarySpecs::new(&[], &["omim".to_string()]);
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         let cols: Vec<&str> = lines[0].split('\t').collect();
         let fv_omim = cols.last().unwrap();
         assert!(
@@ -1979,7 +2084,7 @@ mod tests {
             &[],
             &["omim".to_string(), "clinvar_protein".to_string()],
         );
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         let row = &lines[0];
         let cols: Vec<&str> = row.split('\t').collect();
         let fv_omim = cols[17];
@@ -2012,7 +2117,7 @@ mod tests {
             &["clinvar".to_string(), "dbnsfp".to_string()],
             &[],
         );
-        let lines = format_tab_line(&vf, &specs);
+        let lines = format_tab_line(&vf, &specs, false);
         let row = &lines[0];
         assert!(!row.contains('{'), "malformed JSON must not leak: {row}");
         // Whatever the renderer does with the broken payload, the cell is

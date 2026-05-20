@@ -62,6 +62,9 @@ pub struct AnnotateConfig {
     pub transcript_cache: Option<String>,
     /// Directory containing supplementary annotation files (.osa, .osi, .oga).
     pub sa_dir: Option<String>,
+    /// Skip the default 49-field CSQ annotation pipeline and emit only
+    /// supplementary annotations from `--sa-dir`. Requires `sa_dir`.
+    pub sa_only: bool,
     /// Enable ACMG-AMP variant classification.
     pub acmg: bool,
     /// Path to ACMG configuration file (TOML).
@@ -75,6 +78,31 @@ pub struct AnnotateConfig {
 }
 
 pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
+    let sa_only = config.sa_only;
+    if sa_only {
+        if config.sa_dir.is_none() {
+            return Err(anyhow::anyhow!(
+                "--sa-only requires --sa-dir to be set (otherwise there is nothing to emit)."
+            ));
+        }
+        for (set, name) in [
+            (config.gff3.is_some(), "--gff3"),
+            (config.fasta.is_some(), "--fasta"),
+            (config.cache_dir.is_some(), "--cache-dir"),
+            (config.transcript_cache.is_some(), "--transcript-cache"),
+            (config.acmg, "--acmg"),
+            (config.hgvs, "--hgvs"),
+            (config.pick, "--pick"),
+            (config.proband.is_some(), "--proband"),
+            (config.mother.is_some(), "--mother"),
+            (config.father.is_some(), "--father"),
+        ] {
+            if set {
+                eprintln!("warning: --sa-only is set; ignoring {}", name);
+            }
+        }
+    }
+
     // Extract the GFF3 source name (filename) for the SOURCE field
     let gff3_source: Option<String> = config.gff3.as_ref().map(|p| {
         Path::new(p).file_name()
@@ -82,11 +110,16 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             .unwrap_or_else(|| p.clone())
     });
 
-    // Load transcript models: try binary cache first, fall back to GFF3
-    let cache_path = config.transcript_cache.as_ref().map(|p| Path::new(p).to_path_buf())
-        .or_else(|| config.gff3.as_ref().map(|p| fastvep_cache::transcript_cache::default_cache_path(Path::new(p))));
+    // Load transcript models: try binary cache first, fall back to GFF3.
+    // Skipped entirely in --sa-only mode (no default annotation needed).
+    let cache_path = if sa_only {
+        None
+    } else {
+        config.transcript_cache.as_ref().map(|p| Path::new(p).to_path_buf())
+            .or_else(|| config.gff3.as_ref().map(|p| fastvep_cache::transcript_cache::default_cache_path(Path::new(p))))
+    };
 
-    let mut transcripts = 'load: {
+    let mut transcripts = if sa_only { Vec::new() } else { 'load: {
         // Try loading from binary cache
         if let Some(ref cp) = cache_path {
             if cp.exists() {
@@ -145,10 +178,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             eprintln!("Warning: No GFF3 file provided. Only intergenic variants will be annotated.");
             Vec::new()
         }
-    };
+    }};
 
-    // Load FASTA reference (prefer mmap with .fai index, fall back to in-memory)
-    let seq_provider: Option<Box<dyn SequenceProvider>> = if let Some(ref fasta_path) = config.fasta {
+    // Load FASTA reference (prefer mmap with .fai index, fall back to in-memory).
+    // Skipped in --sa-only mode.
+    let seq_provider: Option<Box<dyn SequenceProvider>> = if sa_only {
+        None
+    } else if let Some(ref fasta_path) = config.fasta {
         let fai_path = format!("{}.fai", fasta_path);
         if Path::new(&fai_path).exists() {
             let reader = fastvep_cache::fasta::MmapFastaReader::open(Path::new(fasta_path))?;
@@ -201,8 +237,11 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
 
     let transcript_provider = IndexedTranscriptProvider::new(transcripts);
 
-    // Initialize variation provider from VEP cache if provided
-    let var_provider: Option<TabixVariationProvider> = if let Some(ref dir) = config.cache_dir {
+    // Initialize variation provider from VEP cache if provided.
+    // Skipped in --sa-only mode (existing_variation comes from defaults).
+    let var_provider: Option<TabixVariationProvider> = if sa_only {
+        None
+    } else if let Some(ref dir) = config.cache_dir {
         let info_path = Path::new(dir).join("info.txt");
         let cache_info = CacheInfo::from_file(&info_path)
             .with_context(|| format!("Reading cache info: {}", info_path.display()))?;
@@ -227,15 +266,38 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         Vec::new()
     };
 
-    // Load gene-level annotation providers (.oga files)
-    let gene_providers: Vec<fastvep_sa::gene::GeneIndex> = if let Some(ref dir) = config.sa_dir {
+    if sa_only && sa_providers.is_empty() {
+        eprintln!(
+            "warning: --sa-only is set but --sa-dir {:?} loaded zero allele-level supplementary providers; output will contain no annotations.",
+            config.sa_dir.as_deref().unwrap_or("")
+        );
+    }
+
+    // Load gene-level annotation providers (.oga files).
+    // Skipped in --sa-only mode: gene-level SA needs a gene symbol from
+    // transcript overlap, which sa_only does not produce. Loading them anyway
+    // would emit always-empty headers/columns.
+    let gene_providers: Vec<fastvep_sa::gene::GeneIndex> = if sa_only {
+        if let Some(ref dir) = config.sa_dir {
+            let probe = load_gene_providers(Path::new(dir))?;
+            if !probe.is_empty() {
+                eprintln!(
+                    "warning: --sa-only ignores {} gene-level annotation source(s) (.oga) in {}; gene-level SA requires transcript overlap.",
+                    probe.len(),
+                    dir
+                );
+            }
+        }
+        Vec::new()
+    } else if let Some(ref dir) = config.sa_dir {
         load_gene_providers(Path::new(dir))?
     } else {
         Vec::new()
     };
 
-    // Load ACMG-AMP classification config if enabled
-    let acmg_config: Option<fastvep_classification::AcmgConfig> = if config.acmg {
+    // Load ACMG-AMP classification config if enabled.
+    // Skipped in --sa-only mode (ACMG depends on default annotations).
+    let acmg_config: Option<fastvep_classification::AcmgConfig> = if config.acmg && !sa_only {
         let mut cfg = if let Some(ref path) = config.acmg_config {
             fastvep_classification::AcmgConfig::from_toml_file(path)?
         } else {
@@ -291,7 +353,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         .collect();
     let owned_vcf_info_ids = output::vcf_owned_info_ids(&sa_json_keys, &gene_json_keys);
     let generated_vcf_headers =
-        output::vcf_info_header_lines(&sa_json_keys, &gene_json_keys, output::DEFAULT_CSQ_FIELDS);
+        output::vcf_info_header_lines(&sa_json_keys, &gene_json_keys, output::DEFAULT_CSQ_FIELDS, sa_only);
     // Precompute the loaded-source lookup once so the per-row tab writer
     // doesn't redo an O(specs × keys) membership scan for every variant.
     let supplementary_specs =
@@ -321,9 +383,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                 writeln!(writer, "{}", line)?;
             }
             let extra_columns = output::tab_supplementary_column_names(&supplementary_specs);
-            let mut header = String::from(
-                "#Uploaded_variation\tLocation\tAllele\tGene\tFeature\tFeature_type\tConsequence\tcDNA_position\tCDS_position\tProtein_position\tAmino_acids\tCodons\tExisting_variation\tIMPACT\tDISTANCE\tSTRAND\tFLAGS",
-            );
+            let mut header = if sa_only {
+                String::from("#Uploaded_variation\tLocation\tAllele")
+            } else {
+                String::from(
+                    "#Uploaded_variation\tLocation\tAllele\tGene\tFeature\tFeature_type\tConsequence\tcDNA_position\tCDS_position\tProtein_position\tAmino_acids\tCodons\tExisting_variation\tIMPACT\tDISTANCE\tSTRAND\tFLAGS",
+                )
+            };
             for col in &extra_columns {
                 header.push('\t');
                 header.push_str(col);
@@ -422,6 +488,12 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
 
         // Phase 2: Annotate batch in parallel (transcript lookup + consequence prediction + HGVS)
         batch.par_iter_mut().for_each(|(vf, matched_by_allele)| {
+            // In --sa-only mode, skip transcript lookup + consequence
+            // prediction + HGVS entirely. Use a neutral scaffold so the SA
+            // attachment loop below has per-allele slots to populate.
+            if sa_only {
+                annotate_sa_only_scaffold(vf);
+            } else {
             let chrom = &vf.position.chromosome;
             let query_start = if vf.position.start > config.distance {
                 vf.position.start - config.distance
@@ -931,12 +1003,16 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                     });
                 }
             }
+            } // close `else` of overlapping.is_empty()
+            } // close `else` of `if sa_only`
 
             // Supplementary annotation: query SA providers once per unique
             // allele, then attach the result to every (transcript, allele)
             // slot that shares it. SA results depend only on (pos, ref, alt),
             // never on the transcript context, so this avoids T× amplification
-            // for variants overlapping many transcripts.
+            // for variants overlapping many transcripts. Runs for all variants
+            // (intergenic, transcript-overlapping, and sa_only scaffold) so
+            // supplementary databases attach to every record that matches.
             if !sa_providers.is_empty() {
                 let chrom = &vf.position.chromosome;
                 let sa_queries = supplementary_query_alleles(vf);
@@ -1053,8 +1129,9 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                 }
             }
 
-            vf.compute_most_severe();
-        }
+            if !sa_only {
+                vf.compute_most_severe();
+            }
         }); // end par_iter_mut
 
         // Phase 2.5: Compound-het enrichment pass (sequential, after parallel annotation)
@@ -1069,9 +1146,9 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         // Phase 3: Write output sequentially (preserves VCF order)
         for (vf, _) in &batch {
             match config.output_format.as_str() {
-                "vcf" => write_vcf_line(&mut writer, vf)?,
+                "vcf" => write_vcf_line(&mut writer, vf, sa_only)?,
                 "tab" => {
-                    for line in output::format_tab_line(vf, &supplementary_specs) {
+                    for line in output::format_tab_line(vf, &supplementary_specs, sa_only) {
                         writeln!(writer, "{}", line)?;
                     }
                 }
@@ -1080,7 +1157,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                         writeln!(writer, ",")?;
                     }
                     first_json = false;
-                    let json = output::format_json(vf);
+                    let json = output::format_json(vf, sa_only);
                     write!(writer, "{}", serde_json::to_string_pretty(&json)?)?;
                 }
                 _ => {}
@@ -1103,8 +1180,9 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
 
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
-    annotate_intergenic, complement_allele, convert_ins_to_dup, convert_ins_to_dup_noncoding,
-    load_gene_providers, load_sa_providers, three_prime_shift_intronic, zip_positions,
+    annotate_intergenic, annotate_sa_only_scaffold, complement_allele, convert_ins_to_dup,
+    convert_ins_to_dup_noncoding, load_gene_providers, load_sa_providers,
+    three_prime_shift_intronic, zip_positions,
 };
 
 /// Extract trio genotype information from a VariationFeature's VCF sample columns (CLI path).
@@ -1410,9 +1488,13 @@ fn supplementary_query_alleles(vf: &VariationFeature) -> Vec<(String, u64, Strin
         .collect()
 }
 
-fn write_vcf_line(writer: &mut impl Write, vf: &VariationFeature) -> Result<()> {
+fn write_vcf_line(writer: &mut impl Write, vf: &VariationFeature, sa_only: bool) -> Result<()> {
     if let Some(ref fields) = vf.vcf_fields {
-        let csq = output::format_csq(vf, output::DEFAULT_CSQ_FIELDS);
+        let csq = if sa_only {
+            String::new()
+        } else {
+            output::format_csq(vf, output::DEFAULT_CSQ_FIELDS)
+        };
         let info = output::format_vcf_info_fields(&fields.info, vf, &csq);
 
         write!(

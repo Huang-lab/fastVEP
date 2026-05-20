@@ -76,6 +76,12 @@ enum Commands {
         #[arg(long)]
         sa_dir: Option<String>,
 
+        /// Skip the default 49-field CSQ annotation pipeline (transcript
+        /// consequence, HGVS, ACMG, VEP variation cache) and emit only
+        /// supplementary annotations from --sa-dir. Requires --sa-dir.
+        #[arg(long)]
+        sa_only: bool,
+
         /// Enable ACMG-AMP variant classification
         #[arg(long)]
         acmg: bool,
@@ -183,6 +189,7 @@ fn main() -> Result<()> {
             cache_dir,
             transcript_cache,
             sa_dir,
+            sa_only,
             acmg,
             acmg_config,
             proband,
@@ -201,6 +208,7 @@ fn main() -> Result<()> {
                 cache_dir,
                 transcript_cache,
                 sa_dir,
+                sa_only,
                 acmg,
                 acmg_config,
                 proband,

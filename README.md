@@ -312,6 +312,7 @@ escaping rules, identifiers), see
 | `--pick` | Report only the most severe consequence per variant | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--sa-dir` | Directory containing .osa supplementary annotation files | -- |
+| `--sa-only` | Skip the default CSQ annotation and emit only supplementary annotations from `--sa-dir` (requires `--sa-dir`) | off |
 | `--cache-dir` | Path to VEP cache directory for known variant annotation | -- |
 | `--transcript-cache` | Path to binary transcript cache file | -- |
 
