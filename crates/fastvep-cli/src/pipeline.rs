@@ -93,6 +93,9 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             (config.acmg, "--acmg"),
             (config.hgvs, "--hgvs"),
             (config.pick, "--pick"),
+            (config.proband.is_some(), "--proband"),
+            (config.mother.is_some(), "--mother"),
+            (config.father.is_some(), "--father"),
         ] {
             if set {
                 eprintln!("warning: --sa-only is set; ignoring {}", name);
@@ -263,8 +266,30 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         Vec::new()
     };
 
-    // Load gene-level annotation providers (.oga files)
-    let gene_providers: Vec<fastvep_sa::gene::GeneIndex> = if let Some(ref dir) = config.sa_dir {
+    if sa_only && sa_providers.is_empty() {
+        eprintln!(
+            "warning: --sa-only is set but --sa-dir {:?} loaded zero allele-level supplementary providers; output will contain no annotations.",
+            config.sa_dir.as_deref().unwrap_or("")
+        );
+    }
+
+    // Load gene-level annotation providers (.oga files).
+    // Skipped in --sa-only mode: gene-level SA needs a gene symbol from
+    // transcript overlap, which sa_only does not produce. Loading them anyway
+    // would emit always-empty headers/columns.
+    let gene_providers: Vec<fastvep_sa::gene::GeneIndex> = if sa_only {
+        if let Some(ref dir) = config.sa_dir {
+            let probe = load_gene_providers(Path::new(dir))?;
+            if !probe.is_empty() {
+                eprintln!(
+                    "warning: --sa-only ignores {} gene-level annotation source(s) (.oga) in {}; gene-level SA requires transcript overlap.",
+                    probe.len(),
+                    dir
+                );
+            }
+        }
+        Vec::new()
+    } else if let Some(ref dir) = config.sa_dir {
         load_gene_providers(Path::new(dir))?
     } else {
         Vec::new()
@@ -1104,7 +1129,9 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                 }
             }
 
-            vf.compute_most_severe();
+            if !sa_only {
+                vf.compute_most_severe();
+            }
         }); // end par_iter_mut
 
         // Phase 2.5: Compound-het enrichment pass (sequential, after parallel annotation)

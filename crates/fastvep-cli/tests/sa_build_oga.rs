@@ -483,37 +483,18 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
     // produce one extra tab column with the same pipe-delimited value used
     // for the VCF `FV_*` INFO field.
     let tmp = tempfile::tempdir().unwrap();
-    let clinvar_source = tmp.path().join("clinvar-mini.vcf");
     let gnomad_source = tmp.path().join("gnomad-mini.vcf");
     let input_vcf = tmp.path().join("input.vcf");
     let gff3 = tmp.path().join("mini.gff3");
-    let clinvar_base = tmp.path().join("clinvar-mini");
     let gnomad_base = tmp.path().join("gnomad-mini");
     let output_tab = tmp.path().join("annotated.tab");
     let transcript_cache = tmp.path().join("mini.fastvep.cache");
 
-    let clinvar_fixture = "\
-##fileformat=VCFv4.1
-##INFO=<ID=CLNSIG,Number=.,Type=String>
-##INFO=<ID=CLNREVSTAT,Number=.,Type=String>
-##INFO=<ID=CLNDN,Number=.,Type=String>
-##INFO=<ID=CLNVC,Number=.,Type=String>
-##INFO=<ID=CLNVCSO,Number=.,Type=String>
-#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
-1\t25000\trs1\tA\tG\t.\t.\tCLNSIG=Pathogenic;CLNREVSTAT=criteria_provided,_multiple_submitters,_no_conflicts;CLNDN=Breast_cancer;CLNVC=SNV;CLNVCSO=SO:0001483
-";
-    fs::write(&clinvar_source, clinvar_fixture).unwrap();
+    write_clinvar_fixture(tmp.path());
     fs::write(&gnomad_source, GNOMAD_SOURCE_VCF).unwrap();
     fs::write(&input_vcf, INPUT_NO_SPLICEAI_INFO_VCF).unwrap();
     fs::write(&gff3, MINI_GFF3).unwrap();
 
-    run_sa_build(
-        "clinvar",
-        clinvar_source.to_str().unwrap(),
-        clinvar_base.to_str().unwrap(),
-        "GRCh38",
-    )
-    .unwrap();
     run_sa_build(
         "gnomad",
         gnomad_source.to_str().unwrap(),
@@ -802,14 +783,31 @@ fn sa_only_json_omits_transcript_consequences() {
         .find(|a| a["allele"].as_str() == Some("G"))
         .expect("expected an allele:G entry on chr1:25000");
     let clinvar = g.get("clinvar").expect("clinvar key on allele:G");
-    let significance = &clinvar["significance"];
-    let contains_pathogenic = significance
+    // The fixture's CLNSIG=Pathogenic round-trips as a single-element array
+    // of strings. Assert the exact shape so a regression that flips array vs
+    // bare-string representation is caught.
+    let significance = clinvar["significance"]
         .as_array()
-        .map(|a| a.iter().any(|v| v.as_str() == Some("Pathogenic")))
-        .unwrap_or_else(|| significance.as_str() == Some("Pathogenic"));
-    assert!(
-        contains_pathogenic,
-        "clinvar.significance should include Pathogenic: {}",
+        .expect("clinvar.significance should be an array");
+    assert_eq!(
+        significance.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+        vec!["Pathogenic"],
+        "clinvar.significance should be exactly [\"Pathogenic\"]: {}",
+        clinvar
+    );
+    assert_eq!(
+        clinvar["reviewStatus"].as_str(),
+        Some("criteria_provided,_multiple_submitters,_no_conflicts"),
+        "clinvar.reviewStatus mismatch: {}",
+        clinvar
+    );
+    let phenotypes = clinvar["phenotypes"]
+        .as_array()
+        .expect("clinvar.phenotypes should be an array");
+    assert_eq!(
+        phenotypes.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+        vec!["Breast_cancer"],
+        "clinvar.phenotypes mismatch: {}",
         clinvar
     );
 }
@@ -845,5 +843,157 @@ fn sa_only_requires_sa_dir() {
         err.to_string().contains("--sa-only requires --sa-dir"),
         "error message should mention --sa-dir requirement: {}",
         err
+    );
+}
+
+#[test]
+fn sa_only_strips_preexisting_csq_from_input_info() {
+    // Regression: --sa-only must strip any stale CSQ=... already present in
+    // the input VCF's INFO column. Otherwise the output has CSQ= data rows
+    // with no matching ##INFO=<ID=CSQ> header (we drop the header in sa_only).
+    let tmp = tempfile::tempdir().unwrap();
+    let input_vcf = tmp.path().join("input_with_csq.vcf");
+    let output_vcf = tmp.path().join("annotated.vcf");
+    fs::write(
+        &input_vcf,
+        "##fileformat=VCFv4.2\n\
+         ##INFO=<ID=CSQ,Number=.,Type=String,Description=\"stale\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+         1\t25000\t.\tA\tG\t.\t.\tCSQ=stale_value;DP=10\n",
+    )
+    .unwrap();
+    write_clinvar_fixture(tmp.path());
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_vcf.to_string_lossy().into_owned(),
+        gff3: None,
+        fasta: None,
+        output_format: "vcf".into(),
+        pick: false,
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: None,
+        sa_dir: Some(tmp.path().to_string_lossy().into_owned()),
+        sa_only: true,
+        acmg: false,
+        acmg_config: None,
+        proband: None,
+        mother: None,
+        father: None,
+    })
+    .unwrap();
+
+    let annotated = fs::read_to_string(&output_vcf).unwrap();
+    assert!(
+        !annotated.contains("##INFO=<ID=CSQ"),
+        "--sa-only must drop the CSQ header from input:\n{}",
+        annotated
+    );
+    let data_row = annotated
+        .lines()
+        .find(|l| !l.starts_with('#'))
+        .expect("expected a data row");
+    assert!(
+        !data_row.contains("CSQ="),
+        "--sa-only must strip stale CSQ= from input INFO: {}",
+        data_row
+    );
+    assert!(
+        data_row.contains("DP=10"),
+        "non-CSQ INFO fields must pass through: {}",
+        data_row
+    );
+    assert!(
+        data_row.contains("FV_CLINVAR="),
+        "FV_CLINVAR must still be added: {}",
+        data_row
+    );
+}
+
+#[test]
+fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
+    // Documents a behavior change in this PR: when running in default mode
+    // (no --sa-only) with --sa-dir loaded, intergenic variants now also
+    // receive supplementary annotations. Previously the SA attachment block
+    // was nested inside the `else` of `if overlapping.is_empty()` and so
+    // ran only for variants overlapping at least one transcript.
+    let tmp = tempfile::tempdir().unwrap();
+    let input_vcf = tmp.path().join("input.vcf");
+    let output_vcf = tmp.path().join("annotated.vcf");
+    let gff3 = tmp.path().join("mini.gff3");
+    let transcript_cache = tmp.path().join("mini.fastvep.cache");
+
+    // The fixture transcript covers chr1:25000-30000 region. We pick chr2
+    // (no transcripts) to force the intergenic path.
+    fs::write(
+        &input_vcf,
+        "##fileformat=VCFv4.2\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+         2\t25000\t.\tA\tG\t.\t.\t.\n",
+    )
+    .unwrap();
+    fs::write(&gff3, MINI_GFF3).unwrap();
+
+    // ClinVar fixture covers chr2:25000.
+    let clinvar_source = tmp.path().join("clinvar-mini.vcf");
+    let clinvar_base = tmp.path().join("clinvar-mini");
+    fs::write(
+        &clinvar_source,
+        "##fileformat=VCFv4.1\n\
+         ##INFO=<ID=CLNSIG,Number=.,Type=String>\n\
+         ##INFO=<ID=CLNREVSTAT,Number=.,Type=String>\n\
+         ##INFO=<ID=CLNDN,Number=.,Type=String>\n\
+         ##INFO=<ID=CLNVC,Number=.,Type=String>\n\
+         ##INFO=<ID=CLNVCSO,Number=.,Type=String>\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+         2\t25000\trs1\tA\tG\t.\t.\tCLNSIG=Pathogenic;CLNREVSTAT=criteria_provided,_single_submitter;CLNDN=Disease;CLNVC=SNV;CLNVCSO=SO:0001483\n",
+    )
+    .unwrap();
+    run_sa_build(
+        "clinvar",
+        clinvar_source.to_str().unwrap(),
+        clinvar_base.to_str().unwrap(),
+        "GRCh38",
+    )
+    .unwrap();
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_vcf.to_string_lossy().into_owned(),
+        gff3: Some(gff3.to_string_lossy().into_owned()),
+        fasta: None,
+        output_format: "vcf".into(),
+        pick: false,
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: Some(transcript_cache.to_string_lossy().into_owned()),
+        sa_dir: Some(tmp.path().to_string_lossy().into_owned()),
+        sa_only: false,
+        acmg: false,
+        acmg_config: None,
+        proband: None,
+        mother: None,
+        father: None,
+    })
+    .unwrap();
+
+    let annotated = fs::read_to_string(&output_vcf).unwrap();
+    let data_row = annotated
+        .lines()
+        .find(|l| l.starts_with("2\t25000\t"))
+        .expect("expected an intergenic data row");
+    assert!(
+        data_row.contains("FV_CLINVAR=G|Pathogenic"),
+        "intergenic variant should now receive FV_CLINVAR: {}",
+        data_row
+    );
+    // The CSQ field is still emitted with the intergenic_variant consequence.
+    assert!(
+        data_row.contains("CSQ=G|intergenic_variant|"),
+        "intergenic variant should still emit CSQ: {}",
+        data_row
     );
 }

@@ -706,6 +706,11 @@ pub fn format_supplementary_vcf_info(vf: &VariationFeature) -> Vec<(String, Stri
 }
 
 /// Format final VCF INFO by replacing fastVEP-owned fields and appending current projections.
+///
+/// CSQ is always stripped from `original_info` (it is fastVEP-owned), then
+/// re-added only when `csq` is non-empty. This prevents stale `CSQ=` from a
+/// re-annotated VCF from leaking through in `--sa-only` mode where the CSQ
+/// header has already been removed.
 pub fn format_vcf_info_fields(original_info: &str, vf: &VariationFeature, csq: &str) -> String {
     let mut projections = format_supplementary_vcf_info(vf);
     if !csq.is_empty() {
@@ -719,6 +724,9 @@ pub fn format_vcf_info_fields(original_info: &str, vf: &VariationFeature, csq: &
             .split(';')
             .filter(|field| {
                 let key = field.split_once('=').map_or(*field, |(key, _)| key);
+                if key == "CSQ" {
+                    return false;
+                }
                 !projections.iter().any(|(id, _)| id == key)
             })
             .map(ToOwned::to_owned)
@@ -1145,6 +1153,22 @@ pub fn format_tab_line(
                 lines.push(parts.join("\t"));
             }
         }
+        // Defensive fallback: if transcript_variations is empty (the scaffold
+        // should prevent this, but guard against direct callers), still emit
+        // one row per alt allele padded with `-` so column count matches the
+        // header.
+        if lines.is_empty() {
+            for alt in &vf.alt_alleles {
+                let mut parts: Vec<String> = Vec::with_capacity(3 + extra_count);
+                parts.push(uploaded_variation.clone());
+                parts.push(location.clone());
+                parts.push(alt.to_string());
+                if extra_count > 0 {
+                    parts.extend(vec!["-".to_string(); extra_count]);
+                }
+                lines.push(parts.join("\t"));
+            }
+        }
         return lines;
     }
 
@@ -1230,9 +1254,11 @@ pub fn format_tab_line(
 /// Format a VariationFeature as JSON.
 ///
 /// When `sa_only` is true (used by `--sa-only` mode), the
-/// `transcript_consequences` and `most_severe_consequence` blocks are
-/// omitted, and per-allele supplementary annotations are surfaced under a
-/// top-level `alleles` array (`[{"allele": .., "<sa_key>": <value>, ...}]`).
+/// `transcript_consequences`, `most_severe_consequence`, and per-allele
+/// ACMG metadata blocks are omitted, and per-allele supplementary
+/// annotations are surfaced under a top-level `alleles` array
+/// (`[{"allele": .., "<sa_key>": <value>, ...}]`). Variant-level
+/// `supplementary_annotations` and `gene_annotations` (if any) still emit.
 pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
 
