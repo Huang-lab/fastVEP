@@ -706,7 +706,56 @@ impl AnnotationContext {
             }
         }
 
-        Ok(variants.iter().map(|vf| output::format_json(vf)).collect())
+        Ok(variants.iter().map(|vf| output::format_json(vf, false)).collect())
+    }
+}
+
+/// Per-allele scaffold for `--sa-only` mode: creates a TranscriptVariation
+/// per alt allele with empty consequences so the SA attachment loop has a
+/// slot to populate while emitting no default-CSQ annotation.
+pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
+    for alt in &vf.alt_alleles {
+        vf.transcript_variations.push(TranscriptVariation {
+            transcript_id: "-".into(),
+            gene_id: "-".into(),
+            gene_symbol: None,
+            biotype: "-".into(),
+            allele_annotations: vec![AlleleAnnotation {
+                allele: alt.clone(),
+                consequences: vec![],
+                impact: fastvep_core::Impact::Modifier,
+                cdna_position: None,
+                cds_position: None,
+                protein_position: None,
+                amino_acids: None,
+                codons: None,
+                exon: None,
+                intron: None,
+                distance: None,
+                hgvsc: None,
+                hgvsp: None,
+                hgvsg: None,
+                hgvs_offset: None,
+                existing_variation: vec![],
+                sift: None,
+                polyphen: None,
+                supplementary: Vec::new(),
+                acmg_classification: None,
+            }],
+            canonical: false,
+            strand: fastvep_core::Strand::Forward,
+            source: None,
+            protein_id: None,
+            mane_select: None,
+            mane_plus_clinical: None,
+            tsl: None,
+            appris: None,
+            ccds: None,
+            gencode_primary: false,
+            symbol_source: None,
+            hgnc_id: None,
+            flags: Vec::new(),
+        });
     }
 }
 
