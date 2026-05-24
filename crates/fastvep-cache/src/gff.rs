@@ -630,6 +630,9 @@ fn parse_gff3_lines(lines: impl Iterator<Item = String>) -> Result<Vec<Transcrip
         });
     }
 
+    // Sort transcripts by stable ID to ensure deterministic cache serialization
+    result.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+
     Ok(result)
 }
 
