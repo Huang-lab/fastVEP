@@ -977,10 +977,8 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                     })
                     .collect();
 
-                // Apply pick filter if needed
-                let should_include = !config.pick || tc.canonical || vf.transcript_variations.is_empty();
-
-                if should_include {
+                // Include all transcripts (filtering will be done as a post-process if --pick is enabled)
+                if true {
                     vf.transcript_variations.push(TranscriptVariation {
                         transcript_id: tc.transcript_id.clone(),
                         gene_id: tc.gene_id.clone(),
@@ -1130,6 +1128,33 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             }
 
             if !sa_only {
+                // Apply pick filter if requested, selecting exactly one best transcript variation
+                if config.pick && !vf.transcript_variations.is_empty() {
+                    let best_idx = vf.transcript_variations.iter()
+                        .enumerate()
+                        .min_by_key(|(_, tv)| {
+                            let most_severe_rank = tv.allele_annotations.iter()
+                                .flat_map(|aa| aa.consequences.iter())
+                                .map(|c| c.rank())
+                                .min()
+                                .unwrap_or(u32::MAX);
+
+                            (
+                                !tv.canonical,
+                                if tv.biotype.as_ref() == "protein_coding" { 0 } else { 1 },
+                                most_severe_rank,
+                                tv.transcript_id.clone(),
+                            )
+                        })
+                        .map(|(idx, _)| idx);
+
+                    if let Some(idx) = best_idx {
+                        let best = vf.transcript_variations.remove(idx);
+                        vf.transcript_variations.clear();
+                        vf.transcript_variations.push(best);
+                    }
+                }
+
                 vf.compute_most_severe();
             }
         }); // end par_iter_mut
