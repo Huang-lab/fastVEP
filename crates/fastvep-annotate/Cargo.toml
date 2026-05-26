@@ -14,6 +14,7 @@ fastvep-hgvs = { workspace = true }
 fastvep-io = { workspace = true }
 fastvep-sa = { workspace = true }
 fastvep-classification = { workspace = true }
+fastvep-loftee = { workspace = true }
 
 anyhow = { workspace = true }
 serde_json = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "fastvep-loftee"
+version.workspace = true
+edition.workspace = true
+description = "LOFTEE loss-of-function annotation engine for fastVEP"
+
+[dependencies]
+fastvep-core = { workspace = true }
+fastvep-genome = { path = "../fastvep-genome" }
+fastvep-cache = { path = "../fastvep-cache" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+anyhow = { workspace = true }

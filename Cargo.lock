@@ -385,6 +385,7 @@ dependencies = [
  "fastvep-genome",
  "fastvep-hgvs",
  "fastvep-io",
+ "fastvep-loftee",
  "fastvep-sa",
  "flate2",
  "rayon",
@@ -502,6 +503,18 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "fastvep-loftee"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fastvep-cache",
+ "fastvep-core",
+ "fastvep-genome",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

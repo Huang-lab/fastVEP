@@ -717,6 +717,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                             polyphen: None,
                             supplementary: Vec::new(),
                             acmg_classification: None,
+                            loftee: None,
                         };
 
                         // Generate HGVS if requested

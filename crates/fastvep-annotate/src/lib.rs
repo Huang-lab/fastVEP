@@ -50,6 +50,8 @@ pub struct AnnotationContext {
     pub gene_providers: Vec<fastvep_sa::gene::GeneIndex>,
     /// ACMG-AMP classification configuration (None = disabled).
     pub acmg_config: Option<fastvep_classification::AcmgConfig>,
+    /// LOFTEE loss-of-function annotation configuration (None = disabled).
+    pub loftee_config: Option<fastvep_loftee::LofteeConfig>,
 }
 
 impl AnnotationContext {
@@ -192,6 +194,7 @@ impl AnnotationContext {
             sa_providers,
             gene_providers,
             acmg_config: None,
+            loftee_config: None,
         })
     }
 
@@ -363,6 +366,7 @@ impl AnnotationContext {
                                 polyphen: None,
                                 supplementary: Vec::new(),
                                 acmg_classification: None,
+                                loftee: None,
                             };
 
                             if self.hgvs {
@@ -723,6 +727,55 @@ impl AnnotationContext {
                 }
             }
 
+            // LOFTEE loss-of-function annotation pass
+            if let Some(ref loftee_cfg) = self.loftee_config {
+                for tv in &mut vf.transcript_variations {
+                    // Only process protein-coding transcripts
+                    if tv.biotype.as_ref() != "protein_coding" {
+                        continue;
+                    }
+                    // Look up the transcript model from overlapping set
+                    let transcript = overlapping
+                        .iter()
+                        .find(|t| t.stable_id == tv.transcript_id);
+                    let transcript = match transcript {
+                        Some(t) => t,
+                        None => continue,
+                    };
+                    for aa in &mut tv.allele_annotations {
+                        if fastvep_loftee::has_lof_consequence(&aa.consequences) {
+                            let allele_str = aa.allele.to_string();
+                            let ref_str = vf.ref_allele.to_string();
+                            let input = fastvep_loftee::LofteeInput {
+                                transcript,
+                                consequences: &aa.consequences,
+                                exon: aa.exon,
+                                intron: aa.intron,
+                                cds_end: aa.cds_position.map(|(_, e)| e),
+                                variant_start: vf.position.start,
+                                variant_end: vf.position.end,
+                                allele: &allele_str,
+                                ref_allele: &ref_str,
+                                flags: &tv.flags,
+                            };
+                            let result = fastvep_loftee::evaluate(
+                                &input,
+                                loftee_cfg,
+                                self.seq_provider.as_deref(),
+                            );
+                            if !result.confidence.is_empty() {
+                                aa.loftee = Some(fastvep_io::variant::LofteeResult {
+                                    confidence: result.confidence,
+                                    filters: result.filters,
+                                    flags: result.flags,
+                                    info: result.info,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
             // ACMG-AMP classification pass (after all SA annotations are attached)
             if let Some(acmg_cfg) = acmg_config {
                 // Parse sample genotypes if trio config is present
@@ -806,6 +859,7 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
                 polyphen: None,
                 supplementary: Vec::new(),
                 acmg_classification: None,
+                loftee: None,
             }],
             canonical: false,
             strand: fastvep_core::Strand::Forward,
@@ -852,6 +906,7 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 polyphen: None,
                 supplementary: Vec::new(),
                 acmg_classification: None,
+                loftee: None,
             }],
             canonical: false,
             strand: fastvep_core::Strand::Forward,

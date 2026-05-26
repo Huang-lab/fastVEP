@@ -2,7 +2,17 @@ use fastvep_core::{
     Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, Strand,
     SupplementaryAnnotation, VariantType,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Result of LOFTEE evaluation for a single allele annotation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LofteeResult {
+    pub confidence: String,
+    pub filters: Vec<String>,
+    pub flags: Vec<String>,
+    pub info: HashMap<String, String>,
+}
 
 /// A variant feature ready for annotation.
 #[derive(Debug, Clone)]
@@ -102,6 +112,8 @@ pub struct AlleleAnnotation {
     pub supplementary: Vec<(String, String)>,
     /// ACMG-AMP classification result (serialized as serde_json::Value).
     pub acmg_classification: Option<serde_json::Value>,
+    /// LOFTEE loss-of-function annotation result.
+    pub loftee: Option<LofteeResult>,
 }
 
 /// A known/existing variant from the variation cache.

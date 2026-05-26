@@ -176,6 +176,29 @@ fn format_csq_entry_into(
                     }
                 }
             }
+            "LoF" => {
+                if let Some(ref loftee) = aa.loftee {
+                    buf.push_str(&loftee.confidence);
+                }
+            }
+            "LoF_filter" => {
+                if let Some(ref loftee) = aa.loftee {
+                    buf.push_str(&loftee.filters.join("&"));
+                }
+            }
+            "LoF_flags" => {
+                if let Some(ref loftee) = aa.loftee {
+                    buf.push_str(&loftee.flags.join("&"));
+                }
+            }
+            "LoF_info" => {
+                if let Some(ref loftee) = aa.loftee {
+                    let info_str: Vec<String> = loftee.info.iter()
+                        .map(|(k, v)| format!("{}:{}", k, v))
+                        .collect();
+                    buf.push_str(&info_str.join("&"));
+                }
+            }
             "ACMG_CRITERIA" => {
                 if let Some(ref acmg) = aa.acmg_classification {
                     if let Some(criteria) = acmg.get("criteria").and_then(|v| v.as_array()) {
@@ -288,6 +311,10 @@ pub const DEFAULT_CSQ_FIELDS: &[&str] = &[
     "HIGH_INF_POS",
     "MOTIF_SCORE_CHANGE",
     "TRANSCRIPTION_FACTORS",
+    "LoF",
+    "LoF_filter",
+    "LoF_flags",
+    "LoF_info",
     "ACMG",
     "ACMG_CRITERIA",
 ];
@@ -1549,6 +1576,12 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                 if let Some(ref acmg) = aa.acmg_classification {
                     tc.insert("acmg".into(), acmg.clone());
                 }
+                // LOFTEE loss-of-function annotation
+                if let Some(ref loftee) = aa.loftee {
+                    if let Ok(val) = serde_json::to_value(loftee) {
+                        tc.insert("loftee".into(), val);
+                    }
+                }
                 serde_json::Value::Object(tc)
             })
         })
@@ -1789,6 +1822,7 @@ mod tests {
                     polyphen: None,
                     supplementary,
                     acmg_classification: None,
+                    loftee: None,
                 }],
                 canonical: false,
                 strand: Strand::Forward,
