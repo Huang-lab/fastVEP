@@ -4,6 +4,7 @@
 //! Var32 binary search on sorted genomic chunks.
 
 use crate::chunk::{delta_decode, Chunk};
+use crate::common::chrom_aliases;
 use crate::fields::{Field, FieldType};
 use crate::kmer16::LongVariant;
 use crate::var32;
@@ -132,7 +133,14 @@ impl Osa2Reader {
     fn build_chunk(&self, chrom: &str, chunk_id: u32) -> Result<Chunk> {
         let file = File::open(&self.zip_path)?;
         let mut archive = zip::ZipArchive::new(file)?;
-        let prefix = format!("fastsa/{}/{}/", chrom, chunk_id);
+        // Resolve chrom against on-disk aliases (chr1 <-> 1, chrM <-> MT)
+        // so a query against an index built with the alternate style still
+        // finds its chunk. See issue #37.
+        let prefix = chrom_aliases(chrom)
+            .into_iter()
+            .map(|alias| format!("fastsa/{}/{}/", alias, chunk_id))
+            .find(|p| archive.by_name(&format!("{}var32.bin", p)).is_ok())
+            .unwrap_or_else(|| format!("fastsa/{}/{}/", chrom, chunk_id));
 
         // Read var32 keys. If absent, this chunk has no short variants at all,
         // which also implies no long variants and no parallel value arrays —

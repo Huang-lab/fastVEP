@@ -98,6 +98,84 @@ impl ChromMap {
     }
 }
 
+/// Equivalent on-disk names for a chromosome.
+///
+/// Different upstream sources (and different user VCFs) mix `chr*` and bare
+/// styles, and historically the SA writer canonicalized to the bare form
+/// (`"1"`, `"X"`, `"MT"`) while modern inputs use `chr*`. This returns the
+/// query name first, then all known aliases — so the reader can satisfy a
+/// `chr1` query against an index built with `1`, or vice versa, without
+/// requiring users to rebuild databases. See issue #37.
+///
+/// The returned `Vec` is small (1–3 entries) so caller-side iteration is
+/// cheap. The first element is always the input name unchanged.
+pub fn chrom_aliases(chrom: &str) -> Vec<String> {
+    let mut out = Vec::with_capacity(3);
+    out.push(chrom.to_string());
+
+    // chr1 <-> 1
+    if let Some(stripped) = chrom.strip_prefix("chr") {
+        if !stripped.is_empty() && stripped != chrom {
+            out.push(stripped.to_string());
+        }
+    } else {
+        out.push(format!("chr{}", chrom));
+    }
+
+    // Mitochondrial special case: chrM / M / MT / chrMT all refer to the
+    // same contig but UCSC uses chrM, NCBI uses MT.
+    let mito_set = ["chrM", "M", "MT", "chrMT"];
+    if mito_set.contains(&chrom) {
+        for alt in mito_set {
+            if alt != chrom && !out.iter().any(|n| n == alt) {
+                out.push(alt.to_string());
+            }
+        }
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod chrom_alias_tests {
+    use super::chrom_aliases;
+
+    #[test]
+    fn chr_prefix_round_trips() {
+        let aliases = chrom_aliases("chr1");
+        assert!(aliases.iter().any(|n| n == "chr1"));
+        assert!(aliases.iter().any(|n| n == "1"));
+    }
+
+    #[test]
+    fn bare_form_round_trips() {
+        let aliases = chrom_aliases("1");
+        assert!(aliases.iter().any(|n| n == "1"));
+        assert!(aliases.iter().any(|n| n == "chr1"));
+    }
+
+    #[test]
+    fn mitochondrial_aliases_cover_all_four_forms() {
+        for name in ["chrM", "M", "MT", "chrMT"] {
+            let aliases = chrom_aliases(name);
+            for form in ["chrM", "M", "MT", "chrMT"] {
+                assert!(
+                    aliases.iter().any(|n| n == form),
+                    "{} should resolve {}",
+                    name,
+                    form
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_contig_returns_just_self_and_chr_variant() {
+        let aliases = chrom_aliases("HLA-A*01:01");
+        assert!(aliases.iter().any(|n| n == "HLA-A*01:01"));
+    }
+}
+
 /// A single gene annotation record.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GeneRecord {

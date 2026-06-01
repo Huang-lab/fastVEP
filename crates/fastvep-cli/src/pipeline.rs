@@ -1726,24 +1726,34 @@ fn prescan_vcf_regions(vcf_path: &str, distance: u64) -> Result<Vec<(String, u64
 // =============================================================================
 
 /// Standard chromosome ordering for SA builds.
+///
+/// Canonical names use the UCSC `chr*` style so the resulting `.osa.idx`
+/// keys match the GRCh38 convention used by modern gnomAD / ClinVar
+/// releases — and by most input VCFs we annotate against. The HashMap
+/// resolves both `chr*` and bare forms (plus `MT`/`M`) so source parsers
+/// can hand us either style. See issue #37.
 fn standard_chrom_map() -> (Vec<String>, std::collections::HashMap<String, u16>) {
-    // Support both "chr1" and "1" naming conventions
     let chroms: Vec<String> = (1..=22)
-        .map(|i| i.to_string())
-        .chain(["X", "Y", "MT"].iter().map(|s| s.to_string()))
+        .map(|i| format!("chr{}", i))
+        .chain(["chrX", "chrY", "chrM"].iter().map(|s| s.to_string()))
         .collect();
     let mut map: std::collections::HashMap<String, u16> = chroms
         .iter()
         .enumerate()
         .map(|(i, c)| (c.clone(), i as u16))
         .collect();
-    // Also map "chr" prefixed names to the same indices
+    // Accept bare-style aliases (e.g. NCBI / 1000G), mapping to the same
+    // canonical index so the on-disk key still ends up `chr*`.
     for (i, c) in chroms.iter().enumerate() {
-        map.insert(format!("chr{}", c), i as u16);
+        if let Some(bare) = c.strip_prefix("chr") {
+            map.insert(bare.to_string(), i as u16);
+        }
     }
-    // Common aliases
-    map.insert("chrM".to_string(), *map.get("MT").unwrap_or(&24));
-    map.insert("M".to_string(), *map.get("MT").unwrap_or(&24));
+    // Mitochondrial aliases: canonical is `chrM`; accept `MT` and `chrMT`.
+    if let Some(&mt_idx) = map.get("chrM") {
+        map.insert("MT".to_string(), mt_idx);
+        map.insert("chrMT".to_string(), mt_idx);
+    }
     (chroms, map)
 }
 

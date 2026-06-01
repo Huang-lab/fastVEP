@@ -6,7 +6,7 @@
 //! same block.
 
 use crate::block::{BlockEntry, SaBlock};
-use crate::common::OSA_MAGIC;
+use crate::common::{chrom_aliases, OSA_MAGIC};
 use crate::index::{BlockRef, SaIndex};
 use anyhow::Result;
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, SaMetadata};
@@ -325,8 +325,15 @@ impl AnnotationProvider for SaReader {
             return Ok(());
         }
 
-        let blocks = match self.index.chromosomes.get(chrom) {
-            Some(b) => b.as_slice(),
+        // Honor the same chr*/bare/mitochondrial aliases as `find_blocks`
+        // so a preload on `chr1` against an index built with `1` (or vice
+        // versa) still primes the cache instead of silently no-op'ing.
+        let blocks = chrom_aliases(chrom)
+            .iter()
+            .find_map(|alias| self.index.chromosomes.get(alias))
+            .map(|v| v.as_slice());
+        let blocks = match blocks {
+            Some(b) => b,
             None => {
                 // A chromosome the caller asked about that is not in the
                 // index isn't necessarily an error (e.g., chrM absent from
@@ -335,7 +342,7 @@ impl AnnotationProvider for SaReader {
                 // operators can grep their logs without drowning in noise
                 // on normal runs.
                 log::debug!(
-                    "SA preload: chromosome '{}' not present in {} index",
+                    "SA preload: chromosome '{}' (and aliases) not present in {} index",
                     chrom,
                     self.metadata.name
                 );

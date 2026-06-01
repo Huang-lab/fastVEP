@@ -3,7 +3,7 @@
 //! The index maps (chromosome, position) -> file offset so the reader can
 //! seek directly to the relevant compressed block.
 
-use crate::common::{MAX_INDEX_PAYLOAD, OSA_MAGIC, SCHEMA_VERSION};
+use crate::common::{chrom_aliases, MAX_INDEX_PAYLOAD, OSA_MAGIC, SCHEMA_VERSION};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -61,10 +61,22 @@ impl SaIndex {
             .push(block_ref);
     }
 
+    /// Resolve a chromosome name to the on-disk key, tolerating `chr*` vs
+    /// bare naming and mitochondrial aliases. Returns `None` if no alias is
+    /// present in the index.
+    fn blocks_for_chrom(&self, chrom: &str) -> Option<&Vec<BlockRef>> {
+        for alias in chrom_aliases(chrom) {
+            if let Some(blocks) = self.chromosomes.get(&alias) {
+                return Some(blocks);
+            }
+        }
+        None
+    }
+
     /// Find the block(s) that may contain the given position on a chromosome.
     /// Returns the file offset and compressed length of each matching block.
     pub fn find_blocks(&self, chrom: &str, position: u32) -> Vec<&BlockRef> {
-        let blocks = match self.chromosomes.get(chrom) {
+        let blocks = match self.blocks_for_chrom(chrom) {
             Some(b) => b,
             None => return Vec::new(),
         };
@@ -85,7 +97,7 @@ impl SaIndex {
 
     /// Find all blocks that overlap the given range [start, end].
     pub fn find_blocks_range(&self, chrom: &str, start: u32, end: u32) -> Vec<&BlockRef> {
-        let blocks = match self.chromosomes.get(chrom) {
+        let blocks = match self.blocks_for_chrom(chrom) {
             Some(b) => b,
             None => return Vec::new(),
         };
