@@ -113,6 +113,14 @@ pub fn chrom_aliases(chrom: &str) -> Vec<String> {
     let mut out = Vec::with_capacity(3);
     out.push(chrom.to_string());
 
+    // An empty input is most likely a programming error upstream — return
+    // it unchanged so the caller still sees a single (empty) "alias" and
+    // can surface a meaningful miss, rather than synthesizing a bogus
+    // `"chr"` lookup.
+    if chrom.is_empty() {
+        return out;
+    }
+
     // chr1 <-> 1
     if let Some(stripped) = chrom.strip_prefix("chr") {
         if !stripped.is_empty() && stripped != chrom {
@@ -172,7 +180,21 @@ mod chrom_alias_tests {
     #[test]
     fn unknown_contig_returns_just_self_and_chr_variant() {
         let aliases = chrom_aliases("HLA-A*01:01");
-        assert!(aliases.iter().any(|n| n == "HLA-A*01:01"));
+        // Exactly two: the input plus its `chr`-prefixed form. Pinning the
+        // length here keeps a future over-eager alias expansion from
+        // silently broadening the lookup set.
+        assert_eq!(aliases.len(), 2, "unexpected aliases: {:?}", aliases);
+        assert_eq!(aliases[0], "HLA-A*01:01");
+        assert_eq!(aliases[1], "chrHLA-A*01:01");
+    }
+
+    #[test]
+    fn empty_input_does_not_synthesize_bogus_chr_alias() {
+        // Regression: an earlier version pushed `format!("chr{}", "")` =
+        // `"chr"` for empty input, which then collided with the synthetic
+        // chr-strip case and could match unrelated index keys.
+        let aliases = chrom_aliases("");
+        assert_eq!(aliases, vec![String::new()]);
     }
 }
 

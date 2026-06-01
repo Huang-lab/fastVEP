@@ -12,6 +12,7 @@ use crate::writer_v2::{read_u32_array, Osa2Metadata};
 use anyhow::{Context, Result};
 use lru::LruCache;
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, SaMetadata};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::num::NonZeroUsize;
@@ -41,7 +42,13 @@ pub struct Osa2Reader {
     fields: Vec<Field>,
     /// Categorical string lookup tables per field.
     string_tables: Vec<Vec<String>>,
-    /// LRU cache of loaded chunks, keyed by "chrom/chunk_id".
+    /// Chromosome names present on-disk under `fastsa/<chrom>/...`.
+    /// Used by `resolve_chrom` to canonicalize a query name (e.g. `chr1`
+    /// → `1`) before any cache key is built, so a workload that mixes
+    /// `chr*` and bare styles for the same physical contig never warms
+    /// two cache slots for the same chunk. See issue #37.
+    on_disk_chroms: HashSet<String>,
+    /// LRU cache of loaded chunks, keyed by `"<canonical-chrom>/<chunk_id>"`.
     chunk_cache: Mutex<LruCache<String, Arc<Chunk>>>,
 }
 
@@ -105,6 +112,28 @@ impl Osa2Reader {
             is_positional: metadata.is_positional,
         };
 
+        // Enumerate chromosome directories once so `resolve_chrom` can
+        // pick the on-disk canonical name without re-scanning the ZIP per
+        // query. Entries look like `fastsa/<chrom>/<chunk_id>/var32.bin`,
+        // so we collect the second path segment under `fastsa/`.
+        let mut on_disk_chroms = HashSet::new();
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i)?;
+            let name = entry.name();
+            let Some(rest) = name.strip_prefix("fastsa/") else {
+                continue;
+            };
+            let Some((chrom, _)) = rest.split_once('/') else {
+                continue;
+            };
+            // Skip the sibling metadata/config/strings subtrees, which
+            // share the `fastsa/` parent but aren't chromosome shards.
+            if matches!(chrom, "metadata.json" | "config.json" | "strings") {
+                continue;
+            }
+            on_disk_chroms.insert(chrom.to_string());
+        }
+
         let cache_size = NonZeroUsize::new(CHUNK_CACHE_SIZE)
             .expect("CHUNK_CACHE_SIZE is a non-zero compile-time constant");
 
@@ -114,8 +143,23 @@ impl Osa2Reader {
             sa_metadata,
             fields,
             string_tables,
+            on_disk_chroms,
             chunk_cache: Mutex::new(LruCache::new(cache_size)),
         })
+    }
+
+    /// Resolve a query chromosome name (e.g. `chr1`, `1`, `chrM`, `MT`)
+    /// to the canonical on-disk name actually present in the archive.
+    /// Returns the input unchanged when no alias is present — callers
+    /// then naturally produce empty results.
+    fn resolve_chrom<'a>(&self, chrom: &'a str) -> String {
+        if self.on_disk_chroms.contains(chrom) {
+            return chrom.to_string();
+        }
+        chrom_aliases(chrom)
+            .into_iter()
+            .find(|alias| self.on_disk_chroms.contains(alias))
+            .unwrap_or_else(|| chrom.to_string())
     }
 
     /// Build a chunk by reading its files from the ZIP archive. Pure (no cache
@@ -133,14 +177,9 @@ impl Osa2Reader {
     fn build_chunk(&self, chrom: &str, chunk_id: u32) -> Result<Chunk> {
         let file = File::open(&self.zip_path)?;
         let mut archive = zip::ZipArchive::new(file)?;
-        // Resolve chrom against on-disk aliases (chr1 <-> 1, chrM <-> MT)
-        // so a query against an index built with the alternate style still
-        // finds its chunk. See issue #37.
-        let prefix = chrom_aliases(chrom)
-            .into_iter()
-            .map(|alias| format!("fastsa/{}/{}/", alias, chunk_id))
-            .find(|p| archive.by_name(&format!("{}var32.bin", p)).is_ok())
-            .unwrap_or_else(|| format!("fastsa/{}/{}/", chrom, chunk_id));
+        // `chrom` is expected to be canonical (resolved by `resolve_chrom`
+        // at the public entry points), so no alias walk is needed here.
+        let prefix = format!("fastsa/{}/{}/", chrom, chunk_id);
 
         // Read var32 keys. If absent, this chunk has no short variants at all,
         // which also implies no long variants and no parallel value arrays —
@@ -281,11 +320,14 @@ impl Osa2Reader {
 
     /// Query a variant in the loaded chunks.
     fn query(&self, chrom: &str, pos: u32, ref_allele: &[u8], alt_allele: &[u8]) -> Result<Option<String>> {
+        // Canonicalize before constructing the cache key so `chr1` and `1`
+        // (same physical chunk) share a single LRU slot.
+        let chrom = self.resolve_chrom(chrom);
         let chunk_id = pos >> self.metadata.chunk_bits;
         let cache_key = format!("{}/{}", chrom, chunk_id);
 
         // Ensure chunk is loaded
-        self.load_chunk(chrom, chunk_id)?;
+        self.load_chunk(&chrom, chunk_id)?;
 
         // `LruCache::get` mutates recency order, so lock only for lookup and
         // clone an `Arc` to release the mutex before search/reconstruction.
@@ -390,6 +432,11 @@ impl AnnotationProvider for Osa2Reader {
             return Ok(());
         }
 
+        // Canonicalize once so the chunks preloaded here share cache keys
+        // with the subsequent `annotate_position` calls that follow,
+        // regardless of which naming style each side uses.
+        let chrom = self.resolve_chrom(chrom);
+
         // Determine which chunks need to be loaded. Reject positions that
         // overflow u32 rather than silently truncating into the wrong chunk.
         let mut chunk_ids: Vec<u32> = Vec::with_capacity(positions.len());
@@ -403,7 +450,7 @@ impl AnnotationProvider for Osa2Reader {
         chunk_ids.dedup();
 
         for cid in chunk_ids {
-            self.load_chunk(chrom, cid)?;
+            self.load_chunk(&chrom, cid)?;
         }
 
         Ok(())

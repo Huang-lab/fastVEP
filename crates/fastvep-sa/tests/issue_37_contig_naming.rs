@@ -11,7 +11,7 @@
 
 use fastvep_cache::annotation::AnnotationProvider;
 use fastvep_sa::common::AnnotationRecord;
-use fastvep_sa::index::IndexHeader;
+use fastvep_sa::index::{IndexHeader, SaIndex};
 use fastvep_sa::reader::SaReader;
 use fastvep_sa::writer::SaWriter;
 
@@ -139,4 +139,44 @@ fn mitochondrial_aliases_round_trip() {
             );
         }
     }
+}
+
+/// `find_blocks_range` shares the new alias-resolving lookup with
+/// `find_blocks`. The range path is used by interval-style providers,
+/// so a regression on its side wouldn't be caught by the
+/// annotate-position tests above.
+#[test]
+fn find_blocks_range_uses_alias_resolution() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("range");
+    let records: Vec<AnnotationRecord> = (0..10)
+        .map(|i| AnnotationRecord {
+            chrom_idx: 0,
+            position: 1_000 + i * 50,
+            ref_allele: "A".into(),
+            alt_allele: "G".into(),
+            json: format!(r#"{{"i":{}}}"#, i),
+        })
+        .collect();
+    let mut writer = SaWriter::new(gnomad_header());
+    writer
+        .write_to_files(&base, records.into_iter(), &["chr5".to_string()])
+        .unwrap();
+
+    // Re-open the index directly so we can probe the range lookup.
+    let idx_path = base.with_extension("osa.idx");
+    let mut f = std::fs::File::open(&idx_path).unwrap();
+    let index = SaIndex::read_from(&mut f).unwrap();
+
+    let by_chr = index.find_blocks_range("chr5", 1_000, 2_000);
+    let by_bare = index.find_blocks_range("5", 1_000, 2_000);
+    assert!(!by_chr.is_empty(), "chr5 range query must return blocks");
+    assert_eq!(
+        by_chr.len(),
+        by_bare.len(),
+        "chr5 and 5 must return the same range blocks"
+    );
+
+    // A truly unknown contig must still return empty.
+    assert!(index.find_blocks_range("chrZZ", 1_000, 2_000).is_empty());
 }
