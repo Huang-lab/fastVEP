@@ -10,20 +10,18 @@ use std::sync::Arc;
 ///
 /// Builds gene -> transcript -> exon/CDS hierarchy from GFF3 features.
 ///
-/// Surfaces line-read errors instead of swallowing them (earlier this
-/// folded any IO error into an empty line via `unwrap_or_default`, which
-/// silently produced an empty transcript set on truncated or unreadable
-/// GFF3 files).
+/// Streams lines from `reader` straight into the parser so a multi-GB
+/// Ensembl/GENCODE GFF3 doesn't have to be materialised as `Vec<String>`
+/// before parsing begins. Per-line IO errors are surfaced via the
+/// `Result<String>` iterator with a 1-based line number for diagnostics
+/// (earlier code folded IO errors into empty lines via `unwrap_or_default`,
+/// which silently produced an empty transcript set on truncated files).
 pub fn parse_gff3<R: Read>(reader: R) -> Result<Vec<Transcript>> {
     let buf = BufReader::new(reader);
-    let mut lines: Vec<String> = Vec::new();
-    for (i, line) in buf.lines().enumerate() {
-        let line = line.map_err(|e| {
-            anyhow::anyhow!("Reading GFF3 line {}: {}", i + 1, e)
-        })?;
-        lines.push(line);
-    }
-    parse_gff3_lines(lines.into_iter())
+    let lines = buf.lines().enumerate().map(|(i, line)| {
+        line.map_err(|e| anyhow::anyhow!("Reading GFF3 line {}: {}", i + 1, e))
+    });
+    parse_gff3_lines(lines)
 }
 
 /// Parse a tabix-indexed GFF3 file, loading only transcripts overlapping given regions.
@@ -117,17 +115,25 @@ pub fn parse_gff3_indexed(
         }
     }
 
-    parse_gff3_lines(all_lines.into_iter())
+    // Lines were already collected into memory by the tabix-chunk loop above,
+    // so wrap them in `Ok` to satisfy the streaming-aware parser signature.
+    parse_gff3_lines(all_lines.into_iter().map(Ok))
 }
 
-/// Core GFF3 parsing logic: takes an iterator of lines and builds Transcript models.
-fn parse_gff3_lines(lines: impl Iterator<Item = String>) -> Result<Vec<Transcript>> {
+/// Core GFF3 parsing logic: takes an iterator of `Result<String>` lines and
+/// builds Transcript models. Each item is either a raw line or a typed IO
+/// error from the underlying reader; the latter aborts parsing immediately
+/// rather than being silently treated as an empty line.
+fn parse_gff3_lines(
+    lines: impl Iterator<Item = Result<String>>,
+) -> Result<Vec<Transcript>> {
     let mut genes: HashMap<String, GffGene> = HashMap::new();
     let mut transcripts: HashMap<String, GffTranscript> = HashMap::new();
     let mut exons: Vec<GffExon> = Vec::new();
     let mut cds_features: Vec<GffCds> = Vec::new();
 
     for line in lines {
+        let line = line?;
         let line = line.trim().to_string();
         let line = line.as_str();
         if line.is_empty() || line.starts_with('#') {

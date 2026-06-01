@@ -757,8 +757,13 @@ fn format_spliceai_projection(vf: &VariationFeature) -> Option<String> {
             // allele; split them back out so variant-level dedupe stays
             // entry-by-entry rather than across whole allele payloads.
             for value in joined.split(',') {
-                if seen.insert(value.to_string()) {
-                    values.push(value.to_string());
+                // Allocate the owned String once; clone it into the HashSet
+                // and only retain it in `values` on first-seen. Earlier code
+                // called `value.to_string()` twice per unique entry, doubling
+                // allocations in this hot path.
+                let owned = value.to_string();
+                if seen.insert(owned.clone()) {
+                    values.push(owned);
                 }
             }
         }
@@ -815,8 +820,10 @@ fn format_allele_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> 
                 continue;
             };
             for value in joined.split(',') {
-                if seen.insert(value.to_string()) {
-                    values.push(value.to_string());
+                // Single allocation per unique value (see `format_spliceai_projection`).
+                let owned = value.to_string();
+                if seen.insert(owned.clone()) {
+                    values.push(owned);
                 }
             }
         }

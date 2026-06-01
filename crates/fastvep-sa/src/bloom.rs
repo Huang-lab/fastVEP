@@ -69,13 +69,23 @@ fn fmix32(mut h: u32) -> u32 {
 /// fast and bounded.
 const MAX_HASHES: u32 = 16;
 
-/// Upper bound on bits per element. At 14 bits/element a Bloom filter with
-/// the optimal number of hashes has a false-positive rate of ~1e-4, which is
-/// more than enough for any reasonable genomic deployment. Capping here
-/// keeps the bit-count math entirely inside `u64`/`usize` even when `n`
-/// exceeds `2^53` (the f64 mantissa) — beyond that point the `as f64` cast
-/// loses integer precision and the previous formula could yield 0 or +∞.
+/// Upper bound on bits per element. The optimal formula
+/// `m = -n * ln(p) / (ln 2)^2` runs through `as f64` and loses integer
+/// precision once `n` exceeds `2^53` (the f64 mantissa). For tiny `p` or
+/// huge `n` the unbounded result can also be 0 or +∞. Capping the
+/// bits/element ratio keeps the result in a sane range no matter what the
+/// caller asks for.
+///
+/// 64 bits/element is generous (well below `f64`'s precision boundary and
+/// far past the ~14 bits/element that already gives FPR ≈ 1e-4 at the
+/// optimal hash count). A reasonable genomic deployment will never hit it;
+/// the cap exists solely as a numerical-safety belt.
 const MAX_BITS_PER_ELEMENT: usize = 64;
+
+/// Headroom we hold back from `usize::MAX` so that downstream word-count
+/// math like `(num_bits + 63) / 64` cannot overflow even in debug builds.
+/// Choosing 1024 leaves room for any conceivable round-up by the caller.
+const NUM_BITS_HEADROOM: usize = 1024;
 
 fn optimal_num_bits(n: usize, p: f64) -> usize {
     if n == 0 {
@@ -84,7 +94,13 @@ fn optimal_num_bits(n: usize, p: f64) -> usize {
     // Clamp false-positive rate to a sane open interval so `p.ln()` is finite
     // and negative.
     let p = p.clamp(1e-12, 0.5);
-    let hard_cap = n.saturating_mul(MAX_BITS_PER_ELEMENT);
+    // `saturating_mul` can return `usize::MAX` for astronomically large `n`.
+    // Subtract a small headroom so downstream callers (e.g.
+    // `BloomFilter::new`, which computes `(num_bits + 63) / 64`) cannot
+    // overflow on the round-up to whole 64-bit words.
+    let hard_cap = n
+        .saturating_mul(MAX_BITS_PER_ELEMENT)
+        .min(usize::MAX - NUM_BITS_HEADROOM);
     let ln2_sq = std::f64::consts::LN_2 * std::f64::consts::LN_2;
     let bits = (-(n as f64) * p.ln() / ln2_sq).ceil();
     if !bits.is_finite() || bits <= 0.0 {
@@ -155,6 +171,33 @@ mod tests {
         let bits = optimal_num_bits(1usize << 53, 1e-12);
         assert!(bits >= 64);
         assert!(bits <= (1usize << 53).saturating_mul(MAX_BITS_PER_ELEMENT));
+    }
+
+    #[test]
+    fn test_optimal_num_bits_does_not_saturate_to_usize_max() {
+        // For an `n` so large that `n * MAX_BITS_PER_ELEMENT` saturates
+        // `usize::MAX`, the helper must still leave room for the caller's
+        // `(num_bits + 63) / 64` round-up. Earlier the saturating multiply
+        // could return `usize::MAX` directly, which then overflowed in
+        // `BloomFilter::new`.
+        let bits = optimal_num_bits(usize::MAX, 1e-12);
+        assert!(bits <= usize::MAX - NUM_BITS_HEADROOM);
+        // And the headroom is sufficient for the downstream word-count math.
+        let _ = bits.checked_add(63).expect("(num_bits + 63) must not overflow");
+    }
+
+    #[test]
+    fn test_bloom_new_does_not_panic_for_huge_n() {
+        // Smoke test: construction with absurd `n` must not panic. We don't
+        // actually allocate the bit vector at this size — we just want to
+        // prove the arithmetic guards work.
+        let n = (1usize << 40) - 1;
+        let bits = optimal_num_bits(n, 1e-9);
+        let words = bits
+            .checked_add(63)
+            .map(|x| x / 64)
+            .expect("word-count math must not overflow");
+        assert!(words >= 1);
     }
 
     #[test]
