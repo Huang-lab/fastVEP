@@ -1219,7 +1219,7 @@ fn pick_best_transcript_idx(tvs: &[TranscriptVariation]) -> Option<usize> {
     (0..tvs.len()).min_by(|&a, &b| pick_key(&tvs[a]).cmp(&pick_key(&tvs[b])))
 }
 
-fn pick_key(tv: &TranscriptVariation) -> (bool, bool, bool, bool, u8, u8, bool, u32, &str) {
+fn pick_key(tv: &TranscriptVariation) -> (bool, bool, bool, u8, u8, u8, bool, u32, &str) {
     let most_severe_rank = tv
         .allele_annotations
         .iter()
@@ -1231,13 +1231,36 @@ fn pick_key(tv: &TranscriptVariation) -> (bool, bool, bool, bool, u8, u8, bool, 
         tv.mane_select.is_none(),
         tv.mane_plus_clinical.is_none(),
         !tv.canonical,
-        tv.appris.is_none(),
+        appris_rank(tv.appris.as_deref()),
         tv.tsl.unwrap_or(u8::MAX),
         if tv.biotype.as_ref() == "protein_coding" { 0 } else { 1 },
         tv.ccds.is_none(),
         most_severe_rank,
         tv.transcript_id.as_ref(),
     )
+}
+
+/// Map an APPRIS tag (`P1`/`principal1`, ..., `A1`/`alternative1`, ...) to a
+/// rank where lower is better, matching VEP's `--pick_order` APPRIS tier:
+/// principal1 < principal2 < ... < alternative1 < alternative2 < absent.
+fn appris_rank(appris: Option<&str>) -> u8 {
+    let Some(s) = appris else { return u8::MAX };
+    let lower = s.to_ascii_lowercase();
+    let (is_alt, digits) = if let Some(d) = lower.strip_prefix("principal") {
+        (false, d)
+    } else if let Some(d) = lower.strip_prefix("alternative") {
+        (true, d)
+    } else if let Some(d) = lower.strip_prefix('p') {
+        (false, d)
+    } else if let Some(d) = lower.strip_prefix('a') {
+        (true, d)
+    } else {
+        // Present but unrecognised: still better than absent, worse than any
+        // recognised principal/alternative.
+        return u8::MAX - 1;
+    };
+    let n: u8 = digits.parse().unwrap_or(9);
+    if is_alt { 5u8.saturating_add(n) } else { n }
 }
 
 /// Extract trio genotype information from a VariationFeature's VCF sample columns (CLI path).
@@ -2292,6 +2315,48 @@ mod pick_tests {
             make_tv("TX_TSL1", false, "protein_coding",
                 vec![Consequence::MissenseVariant],
                 None, None, None, Some(1), None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_prefers_lower_appris_principal() {
+        // P1 should beat P3 even though both are APPRIS-tagged — would fail
+        // if APPRIS were compared by presence-only.
+        let tvs = vec![
+            make_tv("TX_P3", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, Some("P3"), None, None),
+            make_tv("TX_P1", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, Some("P1"), None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_prefers_principal_over_alternative_appris() {
+        let tvs = vec![
+            make_tv("TX_A1", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, Some("A1"), None, None),
+            make_tv("TX_P5", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, Some("P5"), None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_accepts_long_form_appris_tags() {
+        // Ensembl GFF3 sometimes uses "principal1" / "alternative2".
+        let tvs = vec![
+            make_tv("TX_ALT", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, Some("alternative2"), None, None),
+            make_tv("TX_PRINC", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, Some("principal1"), None, None),
         ];
         assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
     }
