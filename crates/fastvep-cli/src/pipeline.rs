@@ -1248,7 +1248,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                     // Classify variant against QC rules (if any). The
                     // classifier reads the VCF INFO column once via a
                     // streaming view; no HashMap, no allocation.
-                    let qc_label: Option<String> = if let Some(ref rules) = qc_rules {
+                    let qc_label: Option<&str> = if let Some(ref rules) = qc_rules {
                         let (info_str, qual): (&str, Option<f64>) = match &vf.vcf_fields {
                             Some(f) => (f.info.as_str(), f.qual.parse::<f64>().ok()),
                             None => ("", None),
@@ -1259,7 +1259,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                             .as_ref()
                             .map(|f| f.filter.as_str())
                             .unwrap_or("");
-                        Some(rules.classify(&view, filter).to_string())
+                        Some(rules.classify(&view, filter))
                     } else {
                         None
                     };
@@ -1267,7 +1267,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                     let opts = output::TabOptions {
                         gene_set: gene_set.as_ref(),
                         explicit_ref: config.explicit_alleles,
-                        qc_class: qc_label.as_deref(),
+                        qc_class: qc_label,
                     };
                     for line in output::format_tab_line_with(
                         vf,
