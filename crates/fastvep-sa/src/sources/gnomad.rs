@@ -2,10 +2,18 @@
 //!
 //! Parses gnomAD's sites-only VCF to extract allele frequencies
 //! per population, allele counts, and homozygote counts.
+//!
+//! Auto-detects the INFO field-naming convention used by the input. gnomAD
+//! v2.1 / v3 / v4.0 (exomes, genomes) use bare `AF` / `AC` / `AN` /
+//! `nhomalt` with `AF_<pop>` for population subsets. The v4.1 *joint*
+//! release (`gnomad.joint.v4.1.sites.*.vcf.bgz`) instead exposes
+//! `AF_joint` / `AC_joint` / `AN_joint` / `nhomalt_joint` and
+//! `AF_joint_<pop>` for per-population frequencies. We pick the scheme by
+//! scanning `##INFO=<ID=...>` header lines.
 
 use crate::common::AnnotationRecord;
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 
 /// Population keys to extract from gnomAD VCF INFO field. Covers both
@@ -15,17 +23,99 @@ const POPULATIONS: &[&str] = &[
     "afr", "amr", "asj", "eas", "fin", "mid", "nfe", "oth", "remaining", "sas",
 ];
 
+/// INFO field names for a particular gnomAD release flavor.
+///
+/// Built from the VCF header so we use whatever names the upstream file
+/// actually exposes. See module docs for the v4.1-joint vs. v4.0 split.
+#[derive(Debug, Clone)]
+struct FieldNames {
+    af: String,
+    an: String,
+    ac: String,
+    nhomalt: String,
+    /// Format string for per-population AF, with `{}` substituted for the
+    /// population code (e.g., `"AF_{}"` or `"AF_joint_{}"`).
+    af_pop_template: String,
+}
+
+impl FieldNames {
+    fn standard() -> Self {
+        Self {
+            af: "AF".into(),
+            an: "AN".into(),
+            ac: "AC".into(),
+            nhomalt: "nhomalt".into(),
+            af_pop_template: "AF_{}".into(),
+        }
+    }
+
+    fn joint() -> Self {
+        Self {
+            af: "AF_joint".into(),
+            an: "AN_joint".into(),
+            ac: "AC_joint".into(),
+            nhomalt: "nhomalt_joint".into(),
+            af_pop_template: "AF_joint_{}".into(),
+        }
+    }
+
+    fn pop_key(&self, pop: &str) -> String {
+        self.af_pop_template.replace("{}", pop)
+    }
+}
+
+/// Pick a field-naming scheme based on which INFO IDs the VCF header
+/// declares. Prefer standard names when present; fall back to the joint
+/// names if the standard `AF` is absent but `AF_joint` is declared.
+fn detect_field_names(info_ids: &HashSet<String>) -> FieldNames {
+    if info_ids.contains("AF") {
+        FieldNames::standard()
+    } else if info_ids.contains("AF_joint") {
+        FieldNames::joint()
+    } else {
+        // Nothing declared — default to standard so behavior is unchanged
+        // for malformed or header-less inputs.
+        FieldNames::standard()
+    }
+}
+
+/// Extract the `ID=` value from a `##INFO=<ID=...,Number=...,...>` header
+/// line. Returns `None` for non-INFO lines or malformed entries.
+fn parse_info_id(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("##INFO=<")?;
+    // Find the ID= key. INFO meta-lines always start with ID, but be
+    // defensive against reordered fields just in case.
+    for part in rest.split(',') {
+        if let Some(id) = part.strip_prefix("ID=") {
+            return Some(id);
+        }
+    }
+    None
+}
+
 /// Parse a gnomAD sites-only VCF and produce sorted `AnnotationRecord`s.
 pub fn parse_gnomad_vcf<R: BufRead>(
     reader: R,
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records = Vec::new();
+    let mut info_ids: HashSet<String> = HashSet::new();
+    let mut field_names = FieldNames::standard();
+    let mut header_done = false;
 
     for line in reader.lines() {
         let line = line.context("Reading gnomAD VCF line")?;
         if line.starts_with('#') {
+            if let Some(id) = parse_info_id(&line) {
+                info_ids.insert(id.to_string());
+            }
             continue;
+        }
+
+        // First data line: finalize the field-naming choice.
+        if !header_done {
+            field_names = detect_field_names(&info_ids);
+            header_done = true;
         }
 
         let fields: Vec<&str> = line.splitn(9, '\t').collect();
@@ -52,10 +142,11 @@ pub fn parse_gnomad_vcf<R: BufRead>(
 
         // Handle multi-allelic: split allele-specific fields by comma
         let alts: Vec<&str> = alt_field.split(',').collect();
-        let all_afs = split_info_values(info_map.get("AF").map(|s| s.as_str()));
-        let all_ans = split_info_values(info_map.get("AN").map(|s| s.as_str()));
-        let all_acs = split_info_values(info_map.get("AC").map(|s| s.as_str()));
-        let all_nhomalt = split_info_values(info_map.get("nhomalt").map(|s| s.as_str()));
+        let all_afs = split_info_values(info_map.get(&field_names.af).map(|s| s.as_str()));
+        let all_ans = split_info_values(info_map.get(&field_names.an).map(|s| s.as_str()));
+        let all_acs = split_info_values(info_map.get(&field_names.ac).map(|s| s.as_str()));
+        let all_nhomalt =
+            split_info_values(info_map.get(&field_names.nhomalt).map(|s| s.as_str()));
 
         for (i, alt) in alts.iter().enumerate() {
             if *alt == "." || *alt == "*" {
@@ -69,6 +160,7 @@ pub fn parse_gnomad_vcf<R: BufRead>(
                 all_nhomalt.get(i).map(|s| s.as_str()),
                 &info_map,
                 i,
+                &field_names,
             );
 
             records.push(AnnotationRecord {
@@ -92,6 +184,7 @@ fn build_gnomad_json(
     nhomalt: Option<&str>,
     info_map: &HashMap<String, String>,
     allele_idx: usize,
+    field_names: &FieldNames,
 ) -> String {
     let mut parts = Vec::new();
 
@@ -115,7 +208,7 @@ fn build_gnomad_json(
 
     // Per-population AFs
     for pop in POPULATIONS {
-        let key = format!("AF_{}", pop);
+        let key = field_names.pop_key(pop);
         if let Some(val) = info_map.get(&key) {
             let vals = split_info_values(Some(val.as_str()));
             if let Some(af_str) = vals.get(allele_idx) {
@@ -162,6 +255,9 @@ mod tests {
     fn test_parse_gnomad_vcf() {
         let vcf = "\
 ##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"Allele frequency\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"Total allele number\">
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"Allele count\">
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
 chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=150000;AC=150;nhomalt=2;AF_afr=0.002;AF_nfe=0.0005
 chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF=0.01,0.005;AN=140000;AC=1400,700;nhomalt=10,3;AF_eas=0.02,0.01
@@ -182,5 +278,91 @@ chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF=0.01,0.005;AN=140000;AC=1400,700;nhomalt=10,
         // Multi-allelic: second alt
         assert_eq!(records[2].position, 20000);
         assert_eq!(records[2].alt_allele, "A");
+    }
+
+    #[test]
+    fn test_parse_gnomad_v41_joint_vcf() {
+        // Regression for issue #39: v4.1 joint release uses *_joint suffixes
+        // and FV_GNOMAD came out empty because the parser only looked for
+        // the bare AF/AC/AN names.
+        let vcf = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF_joint,Number=A,Type=Float,Description=\"Joint allele frequency\">
+##INFO=<ID=AN_joint,Number=1,Type=Integer,Description=\"Joint total allele number\">
+##INFO=<ID=AC_joint,Number=A,Type=Integer,Description=\"Joint allele count\">
+##INFO=<ID=nhomalt_joint,Number=A,Type=Integer,Description=\"Joint homozygote count\">
+##INFO=<ID=AF_joint_afr,Number=A,Type=Float,Description=\"Joint AF AFR\">
+##INFO=<ID=AF_joint_nfe,Number=A,Type=Float,Description=\"Joint AF NFE\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t10001\t.\tA\tG\t.\tPASS\tAF_joint=0.001;AN_joint=150000;AC_joint=150;nhomalt_joint=2;AF_joint_afr=0.002;AF_joint_nfe=0.0005
+chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF_joint=0.01,0.005;AN_joint=140000;AC_joint=1400,700;nhomalt_joint=10,3;AF_joint_eas=0.02,0.01
+";
+
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".to_string(), 0u16);
+
+        let records = parse_gnomad_vcf(vcf.as_bytes(), &chrom_map).unwrap();
+        assert_eq!(records.len(), 3);
+
+        // First record: all frequency fields populated, not empty.
+        assert_eq!(records[0].position, 10001);
+        assert!(
+            records[0].json.contains("\"allAf\":"),
+            "missing allAf in: {}",
+            records[0].json
+        );
+        assert!(
+            records[0].json.contains("\"allAn\":150000"),
+            "missing allAn in: {}",
+            records[0].json
+        );
+        assert!(
+            records[0].json.contains("\"allAc\":150"),
+            "missing allAc in: {}",
+            records[0].json
+        );
+        assert!(
+            records[0].json.contains("\"allHc\":2"),
+            "missing allHc in: {}",
+            records[0].json
+        );
+        assert!(
+            records[0].json.contains("\"afrAf\":"),
+            "missing afrAf in: {}",
+            records[0].json
+        );
+        assert!(
+            records[0].json.contains("\"nfeAf\":"),
+            "missing nfeAf in: {}",
+            records[0].json
+        );
+
+        // Multi-allelic: second alt also gets per-allele values.
+        assert_eq!(records[2].position, 20000);
+        assert_eq!(records[2].alt_allele, "A");
+        assert!(
+            records[2].json.contains("\"allAc\":700"),
+            "second alt should pick second AC value: {}",
+            records[2].json
+        );
+    }
+
+    #[test]
+    fn test_detect_field_names_prefers_standard() {
+        let mut ids = HashSet::new();
+        ids.insert("AF".into());
+        ids.insert("AF_joint".into());
+        let names = detect_field_names(&ids);
+        assert_eq!(names.af, "AF");
+    }
+
+    #[test]
+    fn test_detect_field_names_falls_back_to_joint() {
+        let mut ids = HashSet::new();
+        ids.insert("AF_joint".into());
+        ids.insert("AC_joint".into());
+        let names = detect_field_names(&ids);
+        assert_eq!(names.af, "AF_joint");
+        assert_eq!(names.pop_key("nfe"), "AF_joint_nfe");
     }
 }
