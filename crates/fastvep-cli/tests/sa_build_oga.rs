@@ -242,6 +242,9 @@ fn annotate_vcf_emits_spliceai_from_fastsa() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -332,6 +335,9 @@ chr1\t26011\t2.71
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -404,6 +410,9 @@ fn annotate_vcf_replaces_existing_fastvep_info() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -461,6 +470,9 @@ fn annotate_vcf_emits_fastsa_projection_for_gnomad() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -521,6 +533,9 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -633,6 +648,9 @@ fn sa_only_vcf_omits_csq_and_default_pipeline() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -690,6 +708,9 @@ fn sa_only_tab_emits_minimal_columns() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -750,6 +771,9 @@ fn sa_only_json_omits_transcript_consequences() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -837,6 +861,9 @@ fn sa_only_requires_sa_dir() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .expect_err("--sa-only without --sa-dir must error");
     assert!(
@@ -898,6 +925,9 @@ fn sa_only_multi_allelic_emits_per_alt_rows_with_independent_sa_columns() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -965,6 +995,9 @@ fn sa_only_strips_preexisting_csq_from_input_info() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -1031,6 +1064,9 @@ fn sa_only_strips_csq_when_in_middle_of_info_field() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -1110,6 +1146,9 @@ fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
         proband: None,
         mother: None,
         father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
     })
     .unwrap();
 
@@ -1128,5 +1167,214 @@ fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
         data_row.contains("CSQ=G|intergenic_variant|"),
         "intergenic variant should still emit CSQ: {}",
         data_row
+    );
+}
+
+#[test]
+fn annotate_tab_gene_list_filters_to_panel_genes() {
+    // Issue #1 ask #4: --gene-list keeps only rows whose transcript matches
+    // a gene in the panel. Variants in non-panel genes drop out entirely.
+    let tmp = tempfile::tempdir().unwrap();
+    let input_vcf = tmp.path().join("input.vcf");
+    let gff3 = tmp.path().join("mini.gff3");
+    let panel = tmp.path().join("panel.txt");
+    let output_tab = tmp.path().join("annotated.tab");
+    let transcript_cache = tmp.path().join("mini.fastvep.cache");
+
+    fs::write(&input_vcf, INPUT_NO_SPLICEAI_INFO_VCF).unwrap();
+    fs::write(&gff3, MINI_GFF3).unwrap();
+
+    // Panel includes GENE1 (in the GFF3) but not OTHER_GENE.
+    fs::write(&panel, "# DDR panel\nGENE1\nOTHER_GENE\n").unwrap();
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_tab.to_string_lossy().into_owned(),
+        gff3: Some(gff3.to_string_lossy().into_owned()),
+        fasta: None,
+        output_format: "tab".into(),
+        pick: false,
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: Some(transcript_cache.to_string_lossy().into_owned()),
+        sa_dir: None,
+        sa_only: false,
+        acmg: false,
+        acmg_config: None,
+        proband: None,
+        mother: None,
+        father: None,
+        gene_list: Some(panel.to_string_lossy().into_owned()),
+        explicit_alleles: false,
+        qc_rules: None,
+    })
+    .unwrap();
+
+    let annotated = fs::read_to_string(&output_tab).unwrap();
+    let data_rows: Vec<&str> = annotated.lines().filter(|l| !l.starts_with('#')).collect();
+    assert!(!data_rows.is_empty(), "panel-matching rows should remain");
+    for row in &data_rows {
+        let cols: Vec<&str> = row.split('\t').collect();
+        // Gene id is column 3 (0-based); the fixture uses gene id "GENE1".
+        assert_eq!(
+            cols[3], "GENE1",
+            "every emitted row should belong to a panel gene: {}",
+            row
+        );
+    }
+}
+
+#[test]
+fn annotate_tab_explicit_alleles_inserts_ref_column() {
+    // Issue #1 ask #1: --explicit-alleles adds a REF column right after the
+    // Allele column so spreadsheets can read REF/ALT side-by-side.
+    let tmp = tempfile::tempdir().unwrap();
+    let input_vcf = tmp.path().join("input.vcf");
+    let gff3 = tmp.path().join("mini.gff3");
+    let output_tab = tmp.path().join("annotated.tab");
+    let transcript_cache = tmp.path().join("mini.fastvep.cache");
+
+    fs::write(&input_vcf, INPUT_NO_SPLICEAI_INFO_VCF).unwrap();
+    fs::write(&gff3, MINI_GFF3).unwrap();
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_tab.to_string_lossy().into_owned(),
+        gff3: Some(gff3.to_string_lossy().into_owned()),
+        fasta: None,
+        output_format: "tab".into(),
+        pick: false,
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: Some(transcript_cache.to_string_lossy().into_owned()),
+        sa_dir: None,
+        sa_only: false,
+        acmg: false,
+        acmg_config: None,
+        proband: None,
+        mother: None,
+        father: None,
+        gene_list: None,
+        explicit_alleles: true,
+        qc_rules: None,
+    })
+    .unwrap();
+
+    let annotated = fs::read_to_string(&output_tab).unwrap();
+    let column_header = annotated
+        .lines()
+        .find(|l| l.starts_with("#Uploaded_variation"))
+        .expect("missing tab column header");
+    assert!(
+        column_header.starts_with("#Uploaded_variation\tLocation\tAllele\tREF\tGene"),
+        "REF column must come right after Allele: {}",
+        column_header
+    );
+
+    let pos25k = annotated
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .find(|r| r.contains("1:25000\t"))
+        .expect("expected a row at 1:25000");
+    let cols: Vec<&str> = pos25k.split('\t').collect();
+    // Base 17 columns + 1 REF column = 18.
+    assert_eq!(cols.len(), 18, "row should carry 18 cols, got: {:?}", cols);
+    assert_eq!(cols[2], "G", "Allele column holds ALT");
+    assert_eq!(cols[3], "A", "REF column holds REF allele");
+}
+
+#[test]
+fn annotate_tab_qc_rules_classifies_from_info_fields() {
+    // Issue #1 ask #3: --qc-rules adds a QC_CLASS column populated from
+    // INFO fields. No per-sample work; rules are evaluated on each row.
+    let tmp = tempfile::tempdir().unwrap();
+    let input_vcf = tmp.path().join("input.vcf");
+    let gff3 = tmp.path().join("mini.gff3");
+    let qc_rules_path = tmp.path().join("qc.toml");
+    let output_tab = tmp.path().join("annotated.tab");
+    let transcript_cache = tmp.path().join("mini.fastvep.cache");
+
+    // Two variants with different INFO/DP values.
+    fs::write(
+        &input_vcf,
+        "##fileformat=VCFv4.2\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+         1\t25000\t.\tA\tG\t.\tPASS\tDP=50;QD=30;MQ=60\n\
+         1\t30000\t.\tC\tT\t.\tPASS\tDP=5;QD=2\n",
+    )
+    .unwrap();
+    fs::write(&gff3, MINI_GFF3).unwrap();
+    fs::write(
+        &qc_rules_path,
+        r#"
+[[class]]
+name = "HIGH_QC"
+min_dp = 15
+min_qd = 20
+
+[[class]]
+name = "LOW_QC"
+min_dp = 8
+"#,
+    )
+    .unwrap();
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_tab.to_string_lossy().into_owned(),
+        gff3: Some(gff3.to_string_lossy().into_owned()),
+        fasta: None,
+        output_format: "tab".into(),
+        pick: false,
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: Some(transcript_cache.to_string_lossy().into_owned()),
+        sa_dir: None,
+        sa_only: false,
+        acmg: false,
+        acmg_config: None,
+        proband: None,
+        mother: None,
+        father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: Some(qc_rules_path.to_string_lossy().into_owned()),
+    })
+    .unwrap();
+
+    let annotated = fs::read_to_string(&output_tab).unwrap();
+    let column_header = annotated
+        .lines()
+        .find(|l| l.starts_with("#Uploaded_variation"))
+        .expect("missing tab column header");
+    assert!(
+        column_header.ends_with("\tQC_CLASS"),
+        "QC_CLASS column should be appended last: {}",
+        column_header
+    );
+
+    let row_25k = annotated
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .find(|r| r.contains("1:25000\t"))
+        .expect("expected a row at 1:25000");
+    assert!(
+        row_25k.ends_with("\tHIGH_QC"),
+        "DP=50, QD=30 should classify as HIGH_QC: {}",
+        row_25k
+    );
+
+    let row_30k = annotated
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .find(|r| r.contains("1:30000\t"))
+        .expect("expected a row at 1:30000");
+    assert!(
+        row_30k.ends_with("\tFAIL_QC"),
+        "DP=5 falls below LOW_QC threshold (min_dp=8) → fallback: {}",
+        row_30k
     );
 }

@@ -75,6 +75,14 @@ pub struct AnnotateConfig {
     pub mother: Option<String>,
     /// Father sample name for trio analysis.
     pub father: Option<String>,
+    /// Path to a gene panel file. When set, tab output keeps only rows
+    /// whose transcript's gene_id or gene_symbol is in the panel.
+    pub gene_list: Option<String>,
+    /// Add an explicit REF column to tab output after the Allele/ALT column.
+    pub explicit_alleles: bool,
+    /// Path to a QC rules TOML file. When set, tab output gains a
+    /// `QC_CLASS` column.
+    pub qc_rules: Option<String>,
 }
 
 pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
@@ -330,6 +338,57 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         None
     };
 
+    // Load optional gene-panel filter (issue #1 ask 4). Loaded once at
+    // startup so per-variant filtering is an O(1) HashSet lookup against
+    // gene_id / gene_symbol.
+    let gene_set: Option<fastvep_io::geneset::GeneSet> = match config.gene_list.as_deref() {
+        Some(path) => {
+            let set = fastvep_io::geneset::GeneSet::from_file(path)
+                .with_context(|| format!("Loading gene list: {}", path))?;
+            eprintln!("Loaded gene panel: {} entries from {}", set.len(), path);
+            if config.output_format != "tab" {
+                eprintln!(
+                    "warning: --gene-list currently filters tab output only; \
+                     --output-format {} will emit unfiltered rows.",
+                    config.output_format
+                );
+            }
+            Some(set)
+        }
+        None => None,
+    };
+
+    // Load optional QC rule set (issue #1 ask 3). Variant-level: reads
+    // INFO field thresholds, no per-sample work.
+    let qc_rules: Option<fastvep_io::qc::QcRules> = match config.qc_rules.as_deref() {
+        Some(path) => {
+            let rules = fastvep_io::qc::QcRules::from_toml_file(path)
+                .with_context(|| format!("Loading QC rules: {}", path))?;
+            eprintln!(
+                "Loaded QC rules: {} class(es) from {}",
+                rules.classes.len(),
+                path
+            );
+            if config.output_format != "tab" {
+                eprintln!(
+                    "warning: --qc-rules currently annotates tab output only; \
+                     --output-format {} will not gain a QC_CLASS column.",
+                    config.output_format
+                );
+            }
+            Some(rules)
+        }
+        None => None,
+    };
+
+    if config.explicit_alleles && config.output_format != "tab" {
+        eprintln!(
+            "warning: --explicit-alleles applies to tab output only; \
+             --output-format {} ignores it.",
+            config.output_format
+        );
+    }
+
     // Create consequence predictor
     let predictor = ConsequencePredictor::new(config.distance, config.distance);
 
@@ -400,15 +459,27 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             }
             let extra_columns = output::tab_supplementary_column_names(&supplementary_specs);
             let mut header = if sa_only {
-                String::from("#Uploaded_variation\tLocation\tAllele")
+                let mut h = String::from("#Uploaded_variation\tLocation\tAllele");
+                if config.explicit_alleles {
+                    h.push_str("\tREF");
+                }
+                h
             } else {
-                String::from(
-                    "#Uploaded_variation\tLocation\tAllele\tGene\tFeature\tFeature_type\tConsequence\tcDNA_position\tCDS_position\tProtein_position\tAmino_acids\tCodons\tExisting_variation\tIMPACT\tDISTANCE\tSTRAND\tFLAGS",
-                )
+                let mut h = String::from("#Uploaded_variation\tLocation\tAllele");
+                if config.explicit_alleles {
+                    h.push_str("\tREF");
+                }
+                h.push_str(
+                    "\tGene\tFeature\tFeature_type\tConsequence\tcDNA_position\tCDS_position\tProtein_position\tAmino_acids\tCodons\tExisting_variation\tIMPACT\tDISTANCE\tSTRAND\tFLAGS",
+                );
+                h
             };
             for col in &extra_columns {
                 header.push('\t');
                 header.push_str(col);
+            }
+            if qc_rules.is_some() {
+                header.push_str("\tQC_CLASS");
             }
             writeln!(writer, "{}", header)?;
         }
@@ -1174,7 +1245,36 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             match config.output_format.as_str() {
                 "vcf" => write_vcf_line(&mut writer, vf, sa_only)?,
                 "tab" => {
-                    for line in output::format_tab_line(vf, &supplementary_specs, sa_only) {
+                    // Classify variant against QC rules (if any). The
+                    // classifier reads the VCF INFO column once via a
+                    // streaming view; no HashMap, no allocation.
+                    let qc_label: Option<String> = if let Some(ref rules) = qc_rules {
+                        let (info_str, qual): (&str, Option<f64>) = match &vf.vcf_fields {
+                            Some(f) => (f.info.as_str(), f.qual.parse::<f64>().ok()),
+                            None => ("", None),
+                        };
+                        let view = fastvep_io::qc::InfoView::new(info_str, qual);
+                        let filter = vf
+                            .vcf_fields
+                            .as_ref()
+                            .map(|f| f.filter.as_str())
+                            .unwrap_or("");
+                        Some(rules.classify(&view, filter).to_string())
+                    } else {
+                        None
+                    };
+
+                    let opts = output::TabOptions {
+                        gene_set: gene_set.as_ref(),
+                        explicit_ref: config.explicit_alleles,
+                        qc_class: qc_label.as_deref(),
+                    };
+                    for line in output::format_tab_line_with(
+                        vf,
+                        &supplementary_specs,
+                        sa_only,
+                        opts,
+                    ) {
                         writeln!(writer, "{}", line)?;
                     }
                 }

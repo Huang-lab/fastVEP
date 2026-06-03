@@ -101,6 +101,25 @@ enum Commands {
         /// Father sample name for trio analysis
         #[arg(long)]
         father: Option<String>,
+
+        /// Path to a gene-panel file (one gene symbol or Ensembl gene ID per
+        /// line; `#` comments and blank lines ignored). When set, tab output
+        /// keeps only rows whose transcript belongs to a gene in the panel.
+        #[arg(long)]
+        gene_list: Option<String>,
+
+        /// Add an explicit REF column to tab output (after the Allele/ALT
+        /// column) so spreadsheets can see REF/ALT side-by-side without
+        /// reparsing the Location string.
+        #[arg(long)]
+        explicit_alleles: bool,
+
+        /// Path to a QC rules TOML file. When set, tab output gains a
+        /// `QC_CLASS` column populated by the first class whose
+        /// INFO-field thresholds the variant satisfies (variant-level,
+        /// no per-sample parsing).
+        #[arg(long)]
+        qc_rules: Option<String>,
     },
 
     /// Launch the web interface for interactive variant annotation
@@ -195,6 +214,9 @@ fn main() -> Result<()> {
             proband,
             mother,
             father,
+            gene_list,
+            explicit_alleles,
+            qc_rules,
         } => {
             pipeline::run_annotate(pipeline::AnnotateConfig {
                 input,
@@ -214,6 +236,9 @@ fn main() -> Result<()> {
                 proband,
                 mother,
                 father,
+                gene_list,
+                explicit_alleles,
+                qc_rules,
             })?;
         }
         Commands::Cache { gff3, fasta, output } => {

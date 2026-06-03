@@ -1140,7 +1140,25 @@ fn uploaded_allele_for_annotation(vf: &VariationFeature, allele: &Allele) -> Str
         .to_string()
 }
 
-/// Format a VariationFeature as a tab-delimited VEP output line.
+/// Optional knobs that extend the base tab schema. All fields are
+/// no-op by default so the hot path is unchanged unless a caller opts in.
+#[derive(Default, Clone, Copy)]
+pub struct TabOptions<'a> {
+    /// Drop rows whose transcript's gene_id / gene_symbol is not in this
+    /// set. Variant-level rows (intergenic) are dropped entirely; in
+    /// `sa_only` mode the filter is ignored because there is no transcript
+    /// context.
+    pub gene_set: Option<&'a crate::geneset::GeneSet>,
+    /// Insert an explicit `REF` column right after `Allele`.
+    pub explicit_ref: bool,
+    /// Append a `QC_CLASS` column carrying the supplied class name. When
+    /// `None`, the column is omitted.
+    pub qc_class: Option<&'a str>,
+}
+
+/// Format a VariationFeature as a tab-delimited VEP output line using the
+/// default schema. Equivalent to `format_tab_line_with(vf, specs, sa_only,
+/// TabOptions::default())`.
 ///
 /// `specs` enumerates which supplementary annotation sources are loaded for
 /// this run (build once via `LoadedSupplementarySpecs::new`). For each
@@ -1154,6 +1172,16 @@ pub fn format_tab_line(
     vf: &VariationFeature,
     specs: &LoadedSupplementarySpecs,
     sa_only: bool,
+) -> Vec<String> {
+    format_tab_line_with(vf, specs, sa_only, TabOptions::default())
+}
+
+/// Tab formatter with optional schema extensions. See [`TabOptions`].
+pub fn format_tab_line_with(
+    vf: &VariationFeature,
+    specs: &LoadedSupplementarySpecs,
+    sa_only: bool,
+    opts: TabOptions<'_>,
 ) -> Vec<String> {
     let mut lines = Vec::new();
 
@@ -1172,16 +1200,30 @@ pub fn format_tab_line(
         .unwrap_or_else(|| format!("{}_{}", location, vf.allele_string));
 
     let extra_count = specs.column_count();
+    let ref_str: Option<String> = if opts.explicit_ref {
+        Some(vf.ref_allele.to_string())
+    } else {
+        None
+    };
+    let qc_extra = if opts.qc_class.is_some() { 1 } else { 0 };
+    let ref_extra = if opts.explicit_ref { 1 } else { 0 };
 
     if sa_only {
         for tv in &vf.transcript_variations {
             for aa in &tv.allele_annotations {
-                let mut parts: Vec<String> = Vec::with_capacity(3 + extra_count);
+                let mut parts: Vec<String> =
+                    Vec::with_capacity(3 + ref_extra + extra_count + qc_extra);
                 parts.push(uploaded_variation.clone());
                 parts.push(location.clone());
                 parts.push(aa.allele.to_string());
+                if let Some(ref r) = ref_str {
+                    parts.push(r.clone());
+                }
                 if extra_count > 0 {
                     parts.extend(format_supplementary_tab_columns_for_allele(vf, tv, aa, specs));
+                }
+                if let Some(cls) = opts.qc_class {
+                    parts.push(cls.to_string());
                 }
                 lines.push(parts.join("\t"));
             }
@@ -1192,12 +1234,19 @@ pub fn format_tab_line(
         // header.
         if lines.is_empty() {
             for alt in &vf.alt_alleles {
-                let mut parts: Vec<String> = Vec::with_capacity(3 + extra_count);
+                let mut parts: Vec<String> =
+                    Vec::with_capacity(3 + ref_extra + extra_count + qc_extra);
                 parts.push(uploaded_variation.clone());
                 parts.push(location.clone());
                 parts.push(alt.to_string());
+                if let Some(ref r) = ref_str {
+                    parts.push(r.clone());
+                }
                 if extra_count > 0 {
                     parts.extend(vec!["-".to_string(); extra_count]);
+                }
+                if let Some(cls) = opts.qc_class {
+                    parts.push(cls.to_string());
                 }
                 lines.push(parts.join("\t"));
             }
@@ -1205,9 +1254,14 @@ pub fn format_tab_line(
         return lines;
     }
 
-    let row_capacity = 17 + extra_count;
+    let row_capacity = 17 + ref_extra + extra_count + qc_extra;
 
     for tv in &vf.transcript_variations {
+        if let Some(set) = opts.gene_set {
+            if !set.contains_gene(&tv.gene_id, tv.gene_symbol.as_deref()) {
+                continue;
+            }
+        }
         for aa in &tv.allele_annotations {
             let consequence_str = aa
                 .consequences
@@ -1225,6 +1279,9 @@ pub fn format_tab_line(
             parts.push(uploaded_variation.clone());
             parts.push(location.clone());
             parts.push(aa.allele.to_string());
+            if let Some(ref r) = ref_str {
+                parts.push(r.clone());
+            }
             parts.push(tv.gene_id.to_string());
             parts.push(tv.transcript_id.to_string());
             parts.push("Transcript".to_string());
@@ -1258,24 +1315,34 @@ pub fn format_tab_line(
                 parts.extend(format_supplementary_tab_columns_for_allele(vf, tv, aa, specs));
             }
 
+            if let Some(cls) = opts.qc_class {
+                parts.push(cls.to_string());
+            }
+
             lines.push(parts.join("\t"));
         }
     }
 
-    // If no transcript annotations, still output the variant with intergenic.
-    // Pad the row to the full 17 + extra column shape so all tab rows share
-    // a header — even when only intergenic alleles are present.
-    if vf.transcript_variations.is_empty() {
+    // If no transcript annotations, still output the variant with intergenic
+    // — unless a gene-set filter is active, in which case an unannotated
+    // variant has nothing to match and is dropped.
+    if vf.transcript_variations.is_empty() && opts.gene_set.is_none() {
         for alt in &vf.alt_alleles {
             let mut parts: Vec<String> = Vec::with_capacity(row_capacity);
             parts.push(uploaded_variation.clone());
             parts.push(location.clone());
             parts.push(alt.to_string());
+            if let Some(ref r) = ref_str {
+                parts.push(r.clone());
+            }
             parts.extend(vec!["-".to_string(); 3]);
             parts.push(Consequence::IntergenicVariant.so_term().to_string());
             parts.extend(vec!["-".to_string(); 10]);
             if extra_count > 0 {
                 parts.extend(vec!["-".to_string(); extra_count]);
+            }
+            if let Some(cls) = opts.qc_class {
+                parts.push(cls.to_string());
             }
             lines.push(parts.join("\t"));
         }
@@ -2233,5 +2300,87 @@ mod tests {
             "{info}"
         );
         assert!(!info.contains("SpliceAI=-|"), "{info}");
+    }
+
+    #[test]
+    fn tab_options_explicit_ref_adds_ref_column() {
+        let vf = projection_test_variant();
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+        let opts = TabOptions {
+            explicit_ref: true,
+            ..TabOptions::default()
+        };
+        let lines = format_tab_line_with(&vf, &specs, false, opts);
+        assert_eq!(lines.len(), 1);
+        let cols: Vec<&str> = lines[0].split('\t').collect();
+        // Base 17 columns + 1 REF column inserted after Allele (index 2).
+        assert_eq!(cols.len(), 18, "expected 18 cols, got: {:?}", cols);
+        assert_eq!(cols[2], "G", "Allele column should still hold ALT");
+        assert_eq!(cols[3], "A", "REF column should follow Allele");
+    }
+
+    #[test]
+    fn tab_options_qc_class_adds_trailing_column() {
+        let vf = projection_test_variant();
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+        let opts = TabOptions {
+            qc_class: Some("HIGH_QC"),
+            ..TabOptions::default()
+        };
+        let lines = format_tab_line_with(&vf, &specs, false, opts);
+        let cols: Vec<&str> = lines[0].split('\t').collect();
+        assert_eq!(cols.len(), 18);
+        assert_eq!(cols.last().copied(), Some("HIGH_QC"));
+    }
+
+    #[test]
+    fn tab_options_gene_set_drops_non_matching_transcripts() {
+        let vf = projection_test_variant();
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+
+        let included = crate::geneset::GeneSet::from_iter(["GENE1"]);
+        let opts_match = TabOptions {
+            gene_set: Some(&included),
+            ..TabOptions::default()
+        };
+        let lines = format_tab_line_with(&vf, &specs, false, opts_match);
+        assert_eq!(lines.len(), 1, "GENE1 in panel → row kept");
+
+        let excluded = crate::geneset::GeneSet::from_iter(["OTHER"]);
+        let opts_no_match = TabOptions {
+            gene_set: Some(&excluded),
+            ..TabOptions::default()
+        };
+        let lines = format_tab_line_with(&vf, &specs, false, opts_no_match);
+        assert!(lines.is_empty(), "GENE1 not in panel → row dropped");
+    }
+
+    #[test]
+    fn tab_options_combined_ref_and_qc_class_preserve_order() {
+        let vf = projection_test_variant();
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+        let opts = TabOptions {
+            explicit_ref: true,
+            qc_class: Some("HIGH_QC"),
+            ..TabOptions::default()
+        };
+        let lines = format_tab_line_with(&vf, &specs, false, opts);
+        let cols: Vec<&str> = lines[0].split('\t').collect();
+        // Base 17 + REF + QC = 19. REF at index 3, QC last.
+        assert_eq!(cols.len(), 19);
+        assert_eq!(cols[3], "A");
+        assert_eq!(cols.last().copied(), Some("HIGH_QC"));
+    }
+
+    #[test]
+    fn tab_line_default_unchanged_when_options_empty() {
+        // Regression guard: the no-option call path must match the original
+        // 17-column shape exactly.
+        let vf = projection_test_variant();
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+        let baseline = format_tab_line(&vf, &specs, false);
+        let with_default = format_tab_line_with(&vf, &specs, false, TabOptions::default());
+        assert_eq!(baseline, with_default);
+        assert_eq!(baseline[0].split('\t').count(), 17);
     }
 }
