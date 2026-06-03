@@ -81,13 +81,55 @@ fn detect_field_names(info_ids: &HashSet<String>) -> FieldNames {
 
 /// Extract the `ID=` value from a `##INFO=<ID=...,Number=...,...>` header
 /// line. Returns `None` for non-INFO lines or malformed entries.
+///
+/// Handles the two real-world quirks of VCF headers:
+/// - The trailing `>` when `ID` is the last attribute
+///   (`##INFO=<...,ID=AF>` must yield `"AF"`, not `"AF>"`).
+/// - Commas inside quoted `Description="foo, bar"` values, which a naive
+///   `split(',')` would split on. We walk the body tracking quote state
+///   so attributes can appear in any order.
 fn parse_info_id(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("##INFO=<")?;
-    // Find the ID= key. INFO meta-lines always start with ID, but be
-    // defensive against reordered fields just in case.
-    for part in rest.split(',') {
-        if let Some(id) = part.strip_prefix("ID=") {
-            return Some(id);
+    let body = line.strip_prefix("##INFO=<")?.strip_suffix('>')?;
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Skip leading whitespace between attributes.
+        while i < bytes.len() && bytes[i] == b' ' {
+            i += 1;
+        }
+        let key_start = i;
+        while i < bytes.len() && bytes[i] != b'=' && bytes[i] != b',' {
+            i += 1;
+        }
+        let key = &body[key_start..i];
+        // Bare attribute with no value: skip the separator and continue.
+        if i >= bytes.len() || bytes[i] == b',' {
+            if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        // Consume '=' and read the value, respecting double-quoted strings.
+        i += 1;
+        let value_start = i;
+        let mut in_quotes = false;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' => in_quotes = !in_quotes,
+                b',' if !in_quotes => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        if key == "ID" {
+            let mut value = &body[value_start..i];
+            if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
+                value = &value[1..value.len() - 1];
+            }
+            return Some(value);
+        }
+        if i < bytes.len() {
+            i += 1; // skip the ',' separator
         }
     }
     None
@@ -364,5 +406,45 @@ chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF_joint=0.01,0.005;AN_joint=140000;AC_joint=14
         let names = detect_field_names(&ids);
         assert_eq!(names.af, "AF_joint");
         assert_eq!(names.pop_key("nfe"), "AF_joint_nfe");
+    }
+
+    #[test]
+    fn test_parse_info_id_standard() {
+        let line = "##INFO=<ID=AF,Number=A,Type=Float,Description=\"Allele frequency\">";
+        assert_eq!(parse_info_id(line), Some("AF"));
+    }
+
+    #[test]
+    fn test_parse_info_id_trailing_angle_bracket() {
+        // ID is the last attribute — the closing '>' must not be captured.
+        let line = "##INFO=<Number=A,Type=Float,ID=AF>";
+        assert_eq!(parse_info_id(line), Some("AF"));
+    }
+
+    #[test]
+    fn test_parse_info_id_reordered_with_quoted_comma() {
+        // Description quoted string contains commas — must not split inside it.
+        let line =
+            "##INFO=<Number=A,Type=Float,Description=\"AF, joint, multi-pop\",ID=AF_joint>";
+        assert_eq!(parse_info_id(line), Some("AF_joint"));
+    }
+
+    #[test]
+    fn test_parse_info_id_quoted_id_value() {
+        let line = "##INFO=<ID=\"weird_id\",Number=A,Type=Float,Description=\"x\">";
+        assert_eq!(parse_info_id(line), Some("weird_id"));
+    }
+
+    #[test]
+    fn test_parse_info_id_non_info_line() {
+        assert_eq!(parse_info_id("##fileformat=VCFv4.2"), None);
+        assert_eq!(parse_info_id("#CHROM\tPOS\tID"), None);
+    }
+
+    #[test]
+    fn test_parse_info_id_malformed_no_closing_bracket() {
+        // Missing trailing '>' — refuse to parse rather than guess.
+        let line = "##INFO=<ID=AF,Number=A";
+        assert_eq!(parse_info_id(line), None);
     }
 }
