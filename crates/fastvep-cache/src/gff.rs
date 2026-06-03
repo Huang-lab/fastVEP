@@ -659,6 +659,10 @@ fn parse_gff3_lines(
         });
     }
 
+    // HashMap iteration order is randomized per process, so sort by stable_id
+    // to make cache serialization bit-for-bit reproducible across builds.
+    result.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+
     Ok(result)
 }
 

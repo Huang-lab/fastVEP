@@ -993,34 +993,44 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                     })
                     .collect();
 
-                // Apply pick filter if needed
-                let should_include = !config.pick || tc.canonical || vf.transcript_variations.is_empty();
-
-                if should_include {
-                    vf.transcript_variations.push(TranscriptVariation {
-                        transcript_id: tc.transcript_id.clone(),
-                        gene_id: tc.gene_id.clone(),
-                        gene_symbol: tc.gene_symbol.clone(),
-                        biotype: tc.biotype.clone(),
-                        allele_annotations,
-                        canonical: tc.canonical,
-                        strand: tc.strand,
-                        source: gff3_source.clone(),
-                        protein_id: transcript.and_then(|t| t.protein_id.clone()),
-                        mane_select: transcript.and_then(|t| t.mane_select.clone()),
-                        mane_plus_clinical: transcript.and_then(|t| t.mane_plus_clinical.clone()),
-                        tsl: transcript.and_then(|t| t.tsl),
-                        appris: transcript.and_then(|t| t.appris.clone()),
-                        ccds: transcript.and_then(|t| t.ccds.clone()),
-                        gencode_primary: transcript.map(|t| t.gencode_primary).unwrap_or(false),
-                        symbol_source: transcript.and_then(|t| t.gene.symbol_source.clone()),
-                        hgnc_id: transcript.and_then(|t| t.gene.hgnc_id.clone()),
-                        flags: transcript.map(|t| t.flags.clone()).unwrap_or_default(),
-                    });
-                }
+                // Collect every transcript here; --pick filtering runs as a
+                // single post-pass below so it can compare all candidates
+                // before SA/gene/ACMG annotation, instead of picking the first
+                // canonical one we happen to encounter.
+                vf.transcript_variations.push(TranscriptVariation {
+                    transcript_id: tc.transcript_id.clone(),
+                    gene_id: tc.gene_id.clone(),
+                    gene_symbol: tc.gene_symbol.clone(),
+                    biotype: tc.biotype.clone(),
+                    allele_annotations,
+                    canonical: tc.canonical,
+                    strand: tc.strand,
+                    source: gff3_source.clone(),
+                    protein_id: transcript.and_then(|t| t.protein_id.clone()),
+                    mane_select: transcript.and_then(|t| t.mane_select.clone()),
+                    mane_plus_clinical: transcript.and_then(|t| t.mane_plus_clinical.clone()),
+                    tsl: transcript.and_then(|t| t.tsl),
+                    appris: transcript.and_then(|t| t.appris.clone()),
+                    ccds: transcript.and_then(|t| t.ccds.clone()),
+                    gencode_primary: transcript.map(|t| t.gencode_primary).unwrap_or(false),
+                    symbol_source: transcript.and_then(|t| t.gene.symbol_source.clone()),
+                    hgnc_id: transcript.and_then(|t| t.gene.hgnc_id.clone()),
+                    flags: transcript.map(|t| t.flags.clone()).unwrap_or_default(),
+                });
             }
             } // close `else` of overlapping.is_empty()
             } // close `else` of `if sa_only`
+
+            // Apply --pick before SA/gene/ACMG so those passes only run on the
+            // single surviving transcript. Running pick after them would still
+            // produce correct output but would waste the most expensive work
+            // (ACMG classification) on transcripts that get thrown away.
+            if config.pick && !sa_only && vf.transcript_variations.len() > 1 {
+                if let Some(idx) = pick_best_transcript_idx(&vf.transcript_variations) {
+                    vf.transcript_variations =
+                        vec![vf.transcript_variations.swap_remove(idx)];
+                }
+            }
 
             // Supplementary annotation: query SA providers once per unique
             // allele, then attach the result to every (transcript, allele)
@@ -1200,6 +1210,35 @@ use fastvep_annotate::{
     convert_ins_to_dup_noncoding, load_gene_providers, load_sa_providers,
     three_prime_shift_intronic, zip_positions,
 };
+
+/// Index of the best transcript variation under VEP's default `--pick_order`
+/// hierarchy: mane_select, mane_plus_clinical, canonical, appris, tsl, biotype
+/// (protein_coding preferred), ccds, then most-severe consequence rank, with
+/// transcript_id alphabetical order as a final deterministic tie-breaker.
+fn pick_best_transcript_idx(tvs: &[TranscriptVariation]) -> Option<usize> {
+    (0..tvs.len()).min_by(|&a, &b| pick_key(&tvs[a]).cmp(&pick_key(&tvs[b])))
+}
+
+fn pick_key(tv: &TranscriptVariation) -> (bool, bool, bool, bool, u8, u8, bool, u32, &str) {
+    let most_severe_rank = tv
+        .allele_annotations
+        .iter()
+        .flat_map(|aa| aa.consequences.iter())
+        .map(|c| c.rank())
+        .min()
+        .unwrap_or(u32::MAX);
+    (
+        tv.mane_select.is_none(),
+        tv.mane_plus_clinical.is_none(),
+        !tv.canonical,
+        tv.appris.is_none(),
+        tv.tsl.unwrap_or(u8::MAX),
+        if tv.biotype.as_ref() == "protein_coding" { 0 } else { 1 },
+        tv.ccds.is_none(),
+        most_severe_rank,
+        tv.transcript_id.as_ref(),
+    )
+}
 
 /// Extract trio genotype information from a VariationFeature's VCF sample columns (CLI path).
 fn extract_trio_genotypes_cli(
@@ -2091,3 +2130,175 @@ pub fn run_oga_build(source: &str, input: &str, output: &str, _assembly: &str) -
 }
 
 // SA provider loading is now in fastvep-annotate::load_sa_providers.
+
+#[cfg(test)]
+mod pick_tests {
+    use super::*;
+    use fastvep_core::{Allele, Impact, Strand};
+    use std::sync::Arc;
+
+    fn make_tv(
+        transcript_id: &str,
+        canonical: bool,
+        biotype: &str,
+        consequences: Vec<Consequence>,
+        mane_select: Option<&str>,
+        mane_plus_clinical: Option<&str>,
+        appris: Option<&str>,
+        tsl: Option<u8>,
+        ccds: Option<&str>,
+    ) -> TranscriptVariation {
+        TranscriptVariation {
+            transcript_id: Arc::from(transcript_id),
+            gene_id: Arc::from("GENE"),
+            gene_symbol: Some(Arc::from("GENE")),
+            biotype: Arc::from(biotype),
+            allele_annotations: vec![AlleleAnnotation {
+                allele: Allele::from_str("A"),
+                consequences,
+                impact: Impact::Modifier,
+                cdna_position: None,
+                cds_position: None,
+                protein_position: None,
+                amino_acids: None,
+                codons: None,
+                exon: None,
+                intron: None,
+                distance: None,
+                hgvsc: None,
+                hgvsp: None,
+                hgvsg: None,
+                hgvs_offset: None,
+                existing_variation: Vec::new(),
+                sift: None,
+                polyphen: None,
+                supplementary: Vec::new(),
+                acmg_classification: None,
+            }],
+            canonical,
+            strand: Strand::Forward,
+            source: None,
+            protein_id: None,
+            mane_select: mane_select.map(String::from),
+            mane_plus_clinical: mane_plus_clinical.map(String::from),
+            tsl,
+            appris: appris.map(String::from),
+            ccds: ccds.map(String::from),
+            gencode_primary: false,
+            symbol_source: None,
+            hgnc_id: None,
+            flags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn pick_prefers_mane_select_over_canonical() {
+        let tvs = vec![
+            make_tv("TX_CANON", true, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+            make_tv("TX_MANE", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                Some("TX_MANE.1"), None, None, None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_prefers_mane_plus_clinical_over_canonical() {
+        let tvs = vec![
+            make_tv("TX_CANON", true, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+            make_tv("TX_MANE_PC", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, Some("TX_MANE_PC.1"), None, None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_prefers_mane_select_over_mane_plus_clinical() {
+        let tvs = vec![
+            make_tv("TX_MANE_PC", true, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, Some("TX_MANE_PC.1"), None, None, None),
+            make_tv("TX_MANE", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                Some("TX_MANE.1"), None, None, None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_falls_back_to_canonical_when_no_mane() {
+        let tvs = vec![
+            make_tv("TX_NONCAN", false, "protein_coding",
+                vec![Consequence::StopGained],
+                None, None, None, None, None),
+            make_tv("TX_CANON", true, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+        ];
+        // Canonical wins even though TX_NONCAN has a more severe consequence.
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_prefers_protein_coding_biotype() {
+        let tvs = vec![
+            make_tv("TX_NONCODING", false, "lncRNA",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+            make_tv("TX_PC", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_uses_severity_when_other_fields_equal() {
+        let tvs = vec![
+            make_tv("TX_A", false, "protein_coding",
+                vec![Consequence::SynonymousVariant],
+                None, None, None, None, None),
+            make_tv("TX_B", false, "protein_coding",
+                vec![Consequence::StopGained],
+                None, None, None, None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_tie_breaks_alphabetically_on_transcript_id() {
+        let tvs = vec![
+            make_tv("TX_Z", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+            make_tv("TX_A", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_prefers_lower_tsl() {
+        let tvs = vec![
+            make_tv("TX_TSL5", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, Some(5), None),
+            make_tv("TX_TSL1", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, Some(1), None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_returns_none_for_empty_input() {
+        let tvs: Vec<TranscriptVariation> = vec![];
+        assert_eq!(pick_best_transcript_idx(&tvs), None);
+    }
+}
