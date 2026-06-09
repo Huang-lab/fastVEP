@@ -42,7 +42,7 @@ import gzip
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path("/Users/kuan-lin.huang/Projects/fastVEP")
+ROOT = Path(__file__).resolve().parents[3]
 OUT_DIR = ROOT / "data/benchmark/output_v7"
 DISC = OUT_DIR / "discrepancies.tsv"
 TRUTH = ROOT / "data/benchmark/clinvar_2star_truth.tsv"

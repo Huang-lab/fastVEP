@@ -3,7 +3,8 @@
 # sa-build per chrom .osa. Skips chroms whose both .osa already exist.
 set -euo pipefail
 
-ROOT=/Users/kuan-lin.huang/Projects/fastVEP
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 EXTRACTS=$ROOT/data/benchmark/sa_sources/spliceai_phylop_extracts
 SA_DB=$ROOT/data/benchmark/sa_db
 LOG_DIR=$ROOT/data/benchmark/sa_sources/spliceai_phylop_logs

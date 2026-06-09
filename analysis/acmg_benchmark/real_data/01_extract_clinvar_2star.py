@@ -14,10 +14,13 @@ import re
 import sys
 from pathlib import Path
 
+# Default paths resolve relative to the repo root (this file lives at
+# <repo>/analysis/acmg_benchmark/real_data/01_extract_clinvar_2star.py).
+REPO_ROOT = Path(__file__).resolve().parents[3]
 CLNVAR_VCF = Path(sys.argv[1] if len(sys.argv) > 1 else
-                  "/Users/kuan-lin.huang/Projects/fastVEP/genomes/human/sa_sources/clinvar.vcf.gz")
+                  REPO_ROOT / "data/benchmark/sa_sources/clinvar.vcf.gz")
 OUT_DIR = Path(sys.argv[2] if len(sys.argv) > 2 else
-               "/Users/kuan-lin.huang/Projects/fastVEP/analysis/acmg_benchmark/real_data")
+               REPO_ROOT / "data/benchmark")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 OUT_VCF = OUT_DIR / "clinvar_2star.vcf"
 OUT_TSV = OUT_DIR / "clinvar_2star_truth.tsv"

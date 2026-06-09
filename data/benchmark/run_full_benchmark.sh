@@ -21,7 +21,8 @@
 # format that includes ACMG/ACMG_CRITERIA in the per-transcript CSQ entry.
 
 set -euo pipefail
-ROOT=/Users/kuan-lin.huang/Projects/fastVEP
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 INPUT=$ROOT/data/benchmark/clinvar_2star.vcf
 GFF3=$ROOT/test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3
 FASTA=$ROOT/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa

@@ -21,8 +21,9 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
-ROOT = "/Users/kuan-lin.huang/Projects/fastVEP"
+ROOT = Path(__file__).resolve().parents[3]
 BED = f"{ROOT}/data/benchmark/sa_sources/clinvar_2star_regions.bed"
 OUT = f"{ROOT}/data/benchmark/sa_sources/spliceai_phylop_extracts"
 URL = "https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/exomes/gnomad.exomes.v4.1.sites.chr{}.vcf.bgz"
