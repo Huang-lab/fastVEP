@@ -424,7 +424,7 @@ crates/fastvep-classification/src/
   types.rs            # EvidenceStrength, EvidenceCriterion, AcmgClassification, AcmgResult
   sa_extract.rs       # ClassificationInput, typed SA deserialization, GenotypeInfo, CompanionVariant
   config.rs           # AcmgConfig, TrioConfig, GeneOverride, TOML loading
-  combiner.rs         # 18 classification combination rules
+  combiner.rs         # 19 classification combination rules
   criteria/
     mod.rs            # evaluate_all_criteria() orchestrator
     pvs1.rs           # PVS1: null variant in LOF gene

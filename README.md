@@ -15,11 +15,15 @@ fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.
 - **Gene-Level Annotations** — OMIM phenotypes, gnomAD gene constraint (pLI, LOEUF), ClinGen gene-disease validity
 - **Filter Engine** — Expression-based filtering compatible with VEP's filter_vep syntax
 - **HGVS Nomenclature** — Generates HGVSg, HGVSc, and HGVSp notations with 3' normalization
-- **Multiple Output Formats** — VCF (with 47-field CSQ), tab-delimited, JSON (including Nirvana-style structured output)
+- **Multiple Output Formats** — VCF (with 49-field CSQ), tab-delimited, JSON (including Nirvana-style structured output)
 - **Multi-Sample Support** — Parse FORMAT/GT/DP/GQ/AD fields per sample with genotype classification
 - **Regulatory Region Detection** — Promoters, enhancers, CTCF binding sites, TF binding sites from Ensembl regulatory build
 - **Mitochondrial Support** — Circular coordinate handling, vertebrate mitochondrial codon table (NCBI table 2)
-- **Custom Annotations** — User-provided VCF and BED annotation files
+- **Custom Annotations** — User-provided VCF (`--source custom_vcf`) and BED (`--source custom_bed`) files; `.osi` interval databases load alongside `.osa` via `--sa-dir`
+- **ACMG-AMP Classification** — `--acmg` runs the full Richards 2015 + ClinGen SVI rule set (28 criteria, configurable thresholds, trio / compound-het support via `--proband`/`--mother`/`--father`)
+- **VEP `--merged` Cache** — `--gff3` is repeatable on `annotate` and `cache`; combine Ensembl + RefSeq in a single run with per-transcript SOURCE labels
+- **`--sa-only` Mode** — Skip the default CSQ pipeline and emit only supplementary annotations, useful for re-annotating already-annotated VCFs
+- **Gzipped VCF Input** — `annotate` auto-detects `.vcf.gz` / `.vcf.bgz` (no upstream decompression needed)
 - **Web Interface** — Built-in web GUI for interactive variant annotation
 - **GFF3 Annotation Support** — Load gene models from standard GFF3 files (any organism)
 
@@ -327,8 +331,12 @@ fastVEP supports direct integration with clinical and population databases throu
 | **SpliceAI** | Allele-specific | Splice site effect predictions (delta scores) | `--source spliceai` |
 | **PrimateAI** | Allele-specific | Primate-based pathogenicity | `--source primateai` |
 | **dbNSFP** | Allele-specific | SIFT/PolyPhen predictions | `--source dbnsfp` |
-| **Custom VCF** | Allele-specific | Any user-supplied VCF, INFO fields become the JSON object | `--source custom_vcf` |
-| **Custom BED** | Interval | Any user-supplied BED, name/score columns become the JSON object | `--source custom_bed` |
+| **OMIM / ClinGen GDV** | Gene-level (`.oga`) | Disease-gene annotations driving PVS1, BS2, PM3, BP2 in ACMG | `--source omim` |
+| **gnomAD constraint** | Gene-level (`.oga`) | gnomAD constraint metrics (pLI, LOEUF) for PVS1, PP2, BP1 | `--source gnomad_genes` |
+| **ClinVar protein index** | Gene-level (`.oga`) | Pathogenic missense by protein position (PS1, PM1, PM5) | `--source clinvar_protein` |
+| **Custom VCF** | Allele-specific (`.osa`) | Any user-supplied VCF, INFO fields become the JSON object | `--source custom_vcf` |
+| **Custom BED** | Interval (`.osi`) | Any user-supplied BED, name/score columns become the JSON object | `--source custom_bed` |
+| **Custom (auto-detect)** | VCF or BED | Auto-detects format from `.vcf[.gz]` / `.bed[.gz]` extension | `--source custom` |
 
 For the per-source VCF `FV_*` / tab column / JSON-key schema (pipe formats,
 escaping rules, identifiers), see
@@ -372,18 +380,28 @@ objects will be heterogeneous.
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-i, --input` | Input VCF file (`-` for stdin) | *required* |
+| `-i, --input` | Input VCF file (`-` for stdin; `.vcf.gz` auto-detected) | *required* |
 | `-o, --output` | Output file (`-` for stdout) | `-` |
 | `--gff3` | GFF3 gene annotation file. May be repeated to replicate VEP's `--merged` cache (Ensembl + RefSeq in a single run); each value may be `LABEL=path` to control the SOURCE column. | -- |
 | `--fasta` | Reference FASTA file | -- |
 | `--output-format` | `vcf`, `tab`, or `json` | `vcf` |
 | `--hgvs` | Include HGVS notations | off |
 | `--pick` | Report only the most severe consequence per variant | off |
+| `--symbol` | Include gene symbol in output | off |
+| `--canonical` | Include canonical-transcript flag in output | off |
+| `--everything` | Turn on all common annotation flags | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
-| `--sa-dir` | Directory containing .osa supplementary annotation files | -- |
+| `--buffer-size` | Variants buffered per parallel batch | `5000` |
+| `--sa-dir` | Directory containing `.osa` / `.osa2` / `.osi` / `.oga` supplementary annotations | -- |
 | `--sa-only` | Skip the default CSQ annotation and emit only supplementary annotations from `--sa-dir` (requires `--sa-dir`) | off |
-| `--cache-dir` | Path to VEP cache directory for known variant annotation | -- |
-| `--transcript-cache` | Path to binary transcript cache file | -- |
+| `--cache-dir` | Path to VEP cache directory for known-variant lookup | -- |
+| `--transcript-cache` | Path to binary transcript cache file (overrides the auto-managed `<gff3>.fastvep.cache` sidecar) | -- |
+| `--acmg` | Run ACMG-AMP classification (Richards 2015 + ClinGen SVI); adds `ACMG` + `ACMG_CRITERIA` to CSQ | off |
+| `--acmg-config` | TOML file with custom ACMG thresholds | built-in defaults |
+| `--proband` / `--mother` / `--father` | Sample names for trio analysis — enables PS2 (de novo), PM6, BP2 | -- |
+| `--gene-list` | Path to a gene-panel file (one symbol or Ensembl gene ID per line). Tab output drops rows whose transcript isn't on the panel. | -- |
+| `--explicit-alleles` | Add an explicit `REF` column to tab output after `Allele` | off |
+| `--qc-rules` | TOML file of QC class rules; populates a `QC_CLASS` column in tab output | -- |
 
 ### `fastvep sa-build`
 
@@ -419,27 +437,32 @@ IMPACT is HIGH and AF < 0.01
 |------|-------------|---------|
 | `--gff3` | GFF3 gene annotation file | -- |
 | `--fasta` | Reference FASTA file | -- |
-| `--sa-dir` | Directory containing .osa/.osa2 supplementary annotation files | -- |
+| `--sa-dir` | Directory containing `.osa` / `.osa2` / `.osi` / `.oga` supplementary annotations | -- |
 | `--data-dir` | Directory of genome subdirectories (for multi-organism switching) | -- |
 | `--port` | HTTP port (also `FASTVEP_PORT` env) | `8080` |
 | `--bind` | Bind address (also `FASTVEP_BIND` env) | `0.0.0.0` |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--max-body-size` | Max request body in bytes | `10485760` |
 | `--max-concurrent` | Max concurrent annotation requests | `64` |
+| `--stats-file` | JSON file to write per-request stats to (also `FASTVEP_STATS_FILE` env) | -- |
 
 ### `fastvep cache`
 
+Pre-builds a binary transcript cache for fast startup. Accepts the same
+multi-`--gff3` / `LABEL=path` syntax as `annotate`, so a merged Ensembl
++ RefSeq cache can be built once and reused via `--transcript-cache`.
+
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--gff3` | GFF3 annotation file | *required* |
-| `--fasta` | Reference FASTA (for pre-building sequences) | -- |
+| `--gff3` | GFF3 annotation file(s). Repeatable; each value may be `LABEL=path`. | *required* |
+| `--fasta` | Reference FASTA (for pre-building spliced sequences) | -- |
 | `-o, --output` | Output cache file path | *required* |
 
 ## Output Formats
 
 ### VCF Output
 
-Consequence annotations are added as a `CSQ` field in the INFO column with 47 pipe-delimited fields matching Ensembl VEP's extended format. When supplementary annotation databases are loaded with `--sa-dir`, fastVEP also emits VCF-compatible INFO projections for supported fastSA sources: standard `SpliceAI` for SpliceAI databases, and fastVEP-specific `FV_*` fields such as `FV_CLINVAR`, `FV_GNOMAD`, `FV_DBSNP`, `FV_REVEL`, and gene-level `FV_OMIM`.
+Consequence annotations are added as a `CSQ` field in the INFO column with 49 pipe-delimited fields matching Ensembl VEP's extended format, plus fastVEP-specific `ACMG` and `ACMG_CRITERIA` slots when `--acmg` is set. When supplementary annotation databases are loaded with `--sa-dir`, fastVEP also emits VCF-compatible INFO projections for supported fastSA sources: standard `SpliceAI` for SpliceAI databases, and fastVEP-specific `FV_*` fields such as `FV_CLINVAR`, `FV_GNOMAD`, `FV_DBSNP`, `FV_REVEL`, and gene-level `FV_OMIM`.
 
 The VCF output never embeds raw JSON in INFO values. Use `--output-format json` for the richest structured representation of all supplementary annotation objects.
 
@@ -481,10 +504,20 @@ crates/
                        #   v2 (.osa2): echtvar-inspired chunked ZIP with Var32 encoding,
                        #     parallel u32 value arrays, delta encoding, LRU chunk cache,
                        #     Bloom filters for negative lookups
-                       # Source parsers: ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed,
-                       # MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI, PrimateAI, dbNSFP
-                       # Custom VCF/BED annotation providers
-  fastvep-cli/          # CLI binary: annotation pipeline, sa-build, legacy web server
+                       #   .osi: interval-level annotations (BED-derived), positional overlap
+                       #   .oga: gene-level annotations (OMIM, gnomAD constraint, ClinVar
+                       #     protein index)
+                       # Source parsers: ClinVar, gnomAD (incl. v4.1 joint), dbSNP, COSMIC,
+                       # 1000G, TOPMed, MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI,
+                       # PrimateAI, dbNSFP, plus user-supplied custom_vcf / custom_bed.
+  fastvep-annotate/     # Shared annotation pipeline (used by CLI batch and web server):
+                       #   variant overlap, consequence prediction, HGVS, SA/gene SA
+                       #   provider loading
+  fastvep-classification/ # ACMG-AMP variant classification engine (Richards 2015 +
+                       #   ClinGen SVI). 28 criteria, trio/compound-het support,
+                       #   configurable thresholds via TOML
+  fastvep-cli/          # CLI binary: annotation pipeline, sa-build, filter, cache,
+                       #   legacy web server
   fastvep-web/          # Production web server (axum/tokio): async, multi-connection,
                        #   genome switching, SA integration, rate limiting
 web/                   # Web GUI (HTML/CSS/JS, embedded in both server binaries)
@@ -494,7 +527,7 @@ tests/                 # Test data: chr1 (OR4F5) and chr17 (BRCA1) VCF + GFF3
 ## Running Tests
 
 ```bash
-cargo test --workspace          # 233 tests
+cargo test --workspace          # 515 tests
 cargo test -p fastvep-consequence  # Consequence prediction tests (incl. SV)
 cargo test -p fastvep-filter       # Filter engine tests
 cargo test -p fastvep-sa           # Supplementary annotation format tests

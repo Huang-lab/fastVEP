@@ -33,10 +33,39 @@ input's other headers pass through unchanged.
 | OMIM / ClinGen GDV| `omim`              | `omim`            | `FV_OMIM`           | `FV_OMIM`           | Gene         |
 | gnomAD constraint | `gnomad_genes`      | `gnomad_genes`    | `FV_GNOMAD_GENE`    | `FV_GNOMAD_GENE`    | Gene         |
 | ClinVar protein   | `clinvar_protein`   | `clinvar_protein` | `FV_CLINVAR_PROTEIN`| `FV_CLINVAR_PROTEIN`| Gene         |
+| Custom VCF        | `custom_vcf`        | `<--name>`        | `FV_<--NAME>`*      | `FV_<--NAME>`*      | Allele       |
+| Custom BED        | `custom_bed`        | `<--name>`        | `FV_<--NAME>`*      | `FV_<--NAME>`*      | Interval     |
+| Custom (auto)     | `custom`            | `<--name>`        | `FV_<--NAME>`*      | `FV_<--NAME>`*      | depends on input |
 
 `SpliceAI` is intentionally **not** namespaced under `FV_*` to remain
 compatible with the standard SpliceAI INFO contract that downstream tools
 already parse.
+
+\* For `custom_vcf` / `custom_bed` / `custom`, the JSON key and `FV_*`
+INFO ID derive from the `--name` flag at build time (or the input
+filename if `--name` is omitted). For example, `sa-build --source
+custom_vcf --name clinical -i my.vcf -o my` produces a `.osa` whose
+JSON key is `clinical` and whose VCF projection is emitted under
+`FV_CLINICAL`.
+
+## On-disk file formats
+
+`sa-build` writes one of three binary container types depending on the
+source scope:
+
+| Extension | Scope        | Producers                                             | Loaded by `--sa-dir`? |
+|-----------|--------------|-------------------------------------------------------|-----------------------|
+| `.osa`    | Allele-level | All allele-level sources above                        | Yes (`SaReader`)      |
+| `.osa2`   | Allele-level | Optional v2 encoding (echtvar-style, chunked ZIP)     | Yes (`Osa2Reader`)    |
+| `.osi`    | Interval     | `custom_bed` (and any future structural-variant DB)   | Yes (`OsiReader`)     |
+| `.oga`    | Gene         | `omim`, `gnomad_genes`, `clinvar_protein`             | Yes (`GeneIndex`)     |
+
+All readers refuse malformed/oversized index payloads (the `.osa.idx`,
+`.osi`, and `.oga` headers carry a `schema_version` and the payload
+size is bounded — see `crates/fastvep-sa/src/common.rs::MAX_INDEX_PAYLOAD`).
+A directory passed to `--sa-dir` is scanned for any of the four
+extensions; mismatched files (e.g. a `.tsv` left in place) are silently
+skipped.
 
 ## Pipe formats
 
