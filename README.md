@@ -272,6 +272,41 @@ Users can switch between organisms from the dropdown in the web UI. When a genom
 
 fastVEP works with any organism — just provide the matching GFF3 (and optionally FASTA for HGVS).
 
+### Merged annotation (Ensembl + RefSeq, à la VEP `--merged`)
+
+`--gff3` accepts multiple values, so a single run can annotate against
+Ensembl and RefSeq side-by-side — fastVEP's analog of VEP's `--merged`
+cache. The SOURCE column of each CSQ entry records which file produced
+that transcript.
+
+```bash
+# Auto-detected SOURCE labels (filename contains "ensembl"/"gencode" → Ensembl;
+# "refseq" or GCF_ prefix → RefSeq; otherwise the basename).
+fastvep annotate -i variants.vcf \
+  --gff3 Homo_sapiens.GRCh38.115.gff3 \
+  --gff3 GCF_000001405.40.gff.gz \
+  --fasta GRCh38.fa --hgvs
+
+# Or set the labels explicitly with `LABEL=path` (also accepts comma-separated):
+fastvep annotate -i variants.vcf \
+  --gff3 Ensembl=ensembl.gff3,RefSeq=refseq.gff3 \
+  --fasta GRCh38.fa
+```
+
+Each transcript carries its source through to all output formats:
+`SOURCE` field in the VCF CSQ string, the `source` key in JSON, and the
+SOURCE column in tab output (with `--canonical` / extended fields).
+Transcripts from both sources are queried independently — overlap
+detection, HGVS, and supplementary annotation all run per-transcript,
+so RefSeq NM_… and Ensembl ENST… records appear as separate CSQ entries
+for the same variant.
+
+The auto-managed sidecar cache (`<gff3>.fastvep.cache`) only kicks in
+for single-GFF3 runs. For merged workflows, pre-build a combined binary
+cache with `fastvep cache --gff3 ensembl.gff3 -o combined.cache` once
+per source and pass `--transcript-cache combined.cache` on subsequent
+runs — though GFF3 parsing is fast enough that this is rarely needed.
+
 ## Supplementary Annotation Sources
 
 fastVEP supports direct integration with clinical and population databases through its native fastSA binary format. Build once with `fastvep sa-build`, then use `--sa-dir` to annotate:
@@ -292,10 +327,44 @@ fastVEP supports direct integration with clinical and population databases throu
 | **SpliceAI** | Allele-specific | Splice site effect predictions (delta scores) | `--source spliceai` |
 | **PrimateAI** | Allele-specific | Primate-based pathogenicity | `--source primateai` |
 | **dbNSFP** | Allele-specific | SIFT/PolyPhen predictions | `--source dbnsfp` |
+| **Custom VCF** | Allele-specific | Any user-supplied VCF, INFO fields become the JSON object | `--source custom_vcf` |
+| **Custom BED** | Interval | Any user-supplied BED, name/score columns become the JSON object | `--source custom_bed` |
 
 For the per-source VCF `FV_*` / tab column / JSON-key schema (pipe formats,
 escaping rules, identifiers), see
 [`docs/SUPPLEMENTARY_ANNOTATIONS.md`](docs/SUPPLEMENTARY_ANNOTATIONS.md).
+
+### Custom annotation sources
+
+You don't have to wait for a built-in parser to plug in your own data —
+`sa-build` accepts arbitrary VCFs and BEDs via `--source custom_vcf`,
+`--source custom_bed`, or `--source custom` (auto-detects from the
+input extension). The `--name` flag becomes the JSON / column key for
+the resulting database, so it shows up in output exactly like a
+first-class source.
+
+```bash
+# Custom allele-level VCF — select which INFO fields to keep
+fastvep sa-build --source custom_vcf \
+  --name clinical --info-fields CLIN_LABEL,CLIN_SCORE \
+  -i my_clinical.vcf.gz -o sa_databases/clinical
+
+# Custom interval-level BED — score/name columns flow through automatically
+fastvep sa-build --source custom_bed \
+  --name myregions \
+  -i my_regions.bed -o sa_databases/myregions
+
+# Annotate as usual — both .osa and .osi in --sa-dir are picked up
+fastvep annotate -i variants.vcf --gff3 genes.gff3 \
+  --sa-dir sa_databases/ --output-format json
+```
+
+Allele-level custom VCFs produce a `.osa` and attach to records whose
+`(pos, ref, alt)` matches. Interval-level custom BEDs produce a `.osi`
+and attach via positional overlap (returning every interval that
+contains the variant). Omit `--info-fields` to capture every INFO key
+on every record — convenient for exploration, but the resulting JSON
+objects will be heterogeneous.
 
 ## Command Reference
 
@@ -305,7 +374,7 @@ escaping rules, identifiers), see
 |------|-------------|---------|
 | `-i, --input` | Input VCF file (`-` for stdin) | *required* |
 | `-o, --output` | Output file (`-` for stdout) | `-` |
-| `--gff3` | GFF3 gene annotation file | -- |
+| `--gff3` | GFF3 gene annotation file. May be repeated to replicate VEP's `--merged` cache (Ensembl + RefSeq in a single run); each value may be `LABEL=path` to control the SOURCE column. | -- |
 | `--fasta` | Reference FASTA file | -- |
 | `--output-format` | `vcf`, `tab`, or `json` | `vcf` |
 | `--hgvs` | Include HGVS notations | off |
@@ -320,10 +389,12 @@ escaping rules, identifiers), see
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--source` | Source type (clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp) | *required* |
-| `-i, --input` | Input file (VCF/TSV/wigFix, supports .gz) | *required* |
-| `-o, --output` | Output base path (creates .osa and .osa.idx) | *required* |
+| `--source` | Source type (clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom) | *required* |
+| `-i, --input` | Input file (VCF/TSV/wigFix/BED, supports .gz) | *required* |
+| `-o, --output` | Output base path (creates .osa + .osa.idx, or .osi for BED) | *required* |
 | `--assembly` | Genome assembly | `GRCh38` |
+| `--name` | Display + JSON-key name for `custom_*` sources | derived from input filename |
+| `--info-fields` | Comma-separated INFO keys to extract for `custom_vcf` | all INFO keys |
 
 ### `fastvep filter`
 

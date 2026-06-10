@@ -17,11 +17,26 @@ use std::sync::Arc;
 /// (earlier code folded IO errors into empty lines via `unwrap_or_default`,
 /// which silently produced an empty transcript set on truncated files).
 pub fn parse_gff3<R: Read>(reader: R) -> Result<Vec<Transcript>> {
+    parse_gff3_with_source(reader, "GFF3")
+}
+
+/// Like `parse_gff3`, but stamps every returned transcript with `source`.
+///
+/// Used by the merged-cache path so transcripts from different GFF3s
+/// (e.g. Ensembl + RefSeq) carry their origin through to the SOURCE
+/// column of the output. Without per-file tagging the whole call would
+/// collapse to a single "GFF3" label and a merged run would be
+/// indistinguishable from a single-source one.
+pub fn parse_gff3_with_source<R: Read>(reader: R, source: &str) -> Result<Vec<Transcript>> {
     let buf = BufReader::new(reader);
     let lines = buf.lines().enumerate().map(|(i, line)| {
         line.map_err(|e| anyhow::anyhow!("Reading GFF3 line {}: {}", i + 1, e))
     });
-    parse_gff3_lines(lines)
+    let mut trs = parse_gff3_lines(lines)?;
+    for tr in &mut trs {
+        tr.source = Some(source.to_string());
+    }
+    Ok(trs)
 }
 
 /// Parse a tabix-indexed GFF3 file, loading only transcripts overlapping given regions.
@@ -29,6 +44,26 @@ pub fn parse_gff3<R: Read>(reader: R) -> Result<Vec<Transcript>> {
 /// Regions are specified as (chrom, start, end) tuples. This loads gene/transcript/exon/CDS
 /// features from the indexed file for each region, then assembles transcripts.
 pub fn parse_gff3_indexed(
+    gff3_gz_path: &Path,
+    regions: &[(String, u64, u64)],
+) -> Result<Vec<Transcript>> {
+    parse_gff3_indexed_with_source(gff3_gz_path, regions, "GFF3")
+}
+
+/// Like `parse_gff3_indexed`, but stamps every transcript with `source`.
+pub fn parse_gff3_indexed_with_source(
+    gff3_gz_path: &Path,
+    regions: &[(String, u64, u64)],
+    source: &str,
+) -> Result<Vec<Transcript>> {
+    let mut trs = parse_gff3_indexed_inner(gff3_gz_path, regions)?;
+    for tr in &mut trs {
+        tr.source = Some(source.to_string());
+    }
+    Ok(trs)
+}
+
+fn parse_gff3_indexed_inner(
     gff3_gz_path: &Path,
     regions: &[(String, u64, u64)],
 ) -> Result<Vec<Transcript>> {
@@ -888,6 +923,29 @@ chr1\tensembl\tCDS\t1050\t1200\t.\t+\t0\tID=CDS:P1;Parent=transcript:TX2";
         assert_eq!(transcripts.len(), 1);
         assert_eq!(&*transcripts[0].stable_id, "TX2");
         assert_eq!(transcripts[0].start, 1000);
+    }
+
+    #[test]
+    fn test_parse_gff3_with_source_tags_every_transcript() {
+        // The merged-cache path relies on per-file source tagging — without
+        // it, transcripts from Ensembl and RefSeq runs are indistinguishable
+        // in the SOURCE column.
+        let transcripts =
+            parse_gff3_with_source(sample_gff3().as_bytes(), "RefSeq").unwrap();
+        assert!(!transcripts.is_empty());
+        for tr in &transcripts {
+            assert_eq!(tr.source.as_deref(), Some("RefSeq"));
+        }
+    }
+
+    #[test]
+    fn test_parse_gff3_default_source_is_gff3() {
+        // Bare `parse_gff3()` must keep its historical "GFF3" label for
+        // backwards compat with any caller (tests, web upload, etc.) that
+        // doesn't thread a source through.
+        let transcripts = parse_gff3(sample_gff3().as_bytes()).unwrap();
+        assert!(!transcripts.is_empty());
+        assert_eq!(transcripts[0].source.as_deref(), Some("GFF3"));
     }
 
     #[test]

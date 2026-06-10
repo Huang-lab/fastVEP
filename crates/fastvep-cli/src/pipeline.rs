@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use flate2::read::MultiGzDecoder;
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, GeneAnnotationProvider};
 use fastvep_cache::fasta::FastaReader;
-use fastvep_cache::gff::parse_gff3;
+use fastvep_cache::gff::parse_gff3_with_source;
 use fastvep_cache::info::CacheInfo;
 use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, MatchedVariant, SequenceProvider,
@@ -52,7 +52,11 @@ fn wrap_maybe_gzip_reader(mut reader: Box<dyn io::Read>, source: &str) -> Result
 pub struct AnnotateConfig {
     pub input: String,
     pub output: String,
-    pub gff3: Option<String>,
+    /// One or more GFF3 annotation sources. An empty Vec means "no
+    /// transcript annotation" (only intergenic / SA results). Each entry
+    /// is either a bare path or `LABEL=path` — see `parse_gff3_arg` for
+    /// the parsing/auto-detection rules.
+    pub gff3: Vec<String>,
     pub fasta: Option<String>,
     pub output_format: String,
     pub pick: bool,
@@ -94,7 +98,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             ));
         }
         for (set, name) in [
-            (config.gff3.is_some(), "--gff3"),
+            (!config.gff3.is_empty(), "--gff3"),
             (config.fasta.is_some(), "--fasta"),
             (config.cache_dir.is_some(), "--cache-dir"),
             (config.transcript_cache.is_some(), "--transcript-cache"),
@@ -111,32 +115,51 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         }
     }
 
-    // Extract the GFF3 source name (filename) for the SOURCE field
-    let gff3_source: Option<String> = config.gff3.as_ref().map(|p| {
-        Path::new(p).file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| p.clone())
-    });
+    // Parse `LABEL=path` syntax up front so a typo fails before we touch IO.
+    let gff3_specs: Vec<Gff3Spec> = config.gff3
+        .iter()
+        .map(|s| parse_gff3_arg(s))
+        .collect();
 
     // Load transcript models: try binary cache first, fall back to GFF3.
+    // The auto-managed sidecar cache only kicks in for a single GFF3 — with
+    // multiple sources we'd need a content-hashed key to know which combo
+    // produced a given cache, and users running merged caches can pre-build
+    // via `fastvep cache` and pass `--transcript-cache` explicitly.
     // Skipped entirely in --sa-only mode (no default annotation needed).
+    let single_gff3: Option<&Gff3Spec> = if gff3_specs.len() == 1 {
+        Some(&gff3_specs[0])
+    } else {
+        None
+    };
     let cache_path = if sa_only {
         None
     } else {
         config.transcript_cache.as_ref().map(|p| Path::new(p).to_path_buf())
-            .or_else(|| config.gff3.as_ref().map(|p| fastvep_cache::transcript_cache::default_cache_path(Path::new(p))))
+            .or_else(|| single_gff3.map(|s| fastvep_cache::transcript_cache::default_cache_path(Path::new(&s.path))))
     };
 
     let mut transcripts = if sa_only { Vec::new() } else { 'load: {
-        // Try loading from binary cache
+        // Try loading from binary cache (single-GFF3 path only — see above).
         if let Some(ref cp) = cache_path {
             if cp.exists() {
-                let is_fresh = config.gff3.as_ref()
-                    .map(|gff| fastvep_cache::transcript_cache::cache_is_fresh(cp, Path::new(gff)))
+                let is_fresh = single_gff3
+                    .map(|s| fastvep_cache::transcript_cache::cache_is_fresh(cp, Path::new(&s.path)))
                     .unwrap_or(true);
                 if is_fresh {
                     match fastvep_cache::transcript_cache::load_cache(cp) {
-                        Ok(trs) => {
+                        Ok(mut trs) => {
+                            // For single-GFF3 mode, re-stamp the source so the
+                            // SOURCE column reflects the user's current label
+                            // (or our auto-detected one). Without this, every
+                            // legacy cache still emits the old literal "GFF3"
+                            // and the merged-cache UX leaks back into the
+                            // single-source case.
+                            if let Some(spec) = single_gff3 {
+                                for tr in &mut trs {
+                                    tr.source = Some(spec.source.clone());
+                                }
+                            }
                             eprintln!("Loaded {} transcripts from cache {}", trs.len(), cp.display());
                             break 'load trs;
                         }
@@ -150,41 +173,33 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             }
         }
 
-        // Fall back to GFF3 parsing
-        if let Some(ref gff3_path) = config.gff3 {
-            let gff_path = Path::new(gff3_path);
-            let tbi_path = format!("{}.tbi", gff3_path);
-
-            // Use indexed loading if .gff3.gz + .tbi available
-            if gff3_path.ends_with(".gz") && Path::new(&tbi_path).exists() {
-                // Pre-scan VCF to collect regions
-                let regions = prescan_vcf_regions(&config.input, config.distance)?;
-                eprintln!("Pre-scanned {} variant regions from {}", regions.len(), config.input);
-                let trs = fastvep_cache::gff::parse_gff3_indexed(gff_path, &regions)?;
-                eprintln!("Loaded {} transcripts from indexed {}", trs.len(), gff3_path);
-                trs
-            } else {
-                let gff_file = File::open(gff3_path)
-                    .with_context(|| format!("Opening GFF3 file: {}", gff3_path))?;
-                // Auto-decompress gzipped GFF3. Without this, parse_gff3 reads
-                // gz bytes as text and silently produces zero transcripts.
-                let trs = if gff3_path.ends_with(".gz") || gff3_path.ends_with(".bgz") {
-                    parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
-                } else {
-                    parse_gff3(gff_file)?
-                };
-                if trs.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "GFF3 file {} produced 0 transcripts — likely malformed, truncated, or unrecognized format. Refusing to continue with empty transcript set.",
-                        gff3_path
-                    ));
-                }
-                eprintln!("Loaded {} transcripts from {}", trs.len(), gff3_path);
-                trs
-            }
-        } else {
+        // Fall back to GFF3 parsing. With multiple sources, load each one and
+        // concatenate — IndexedTranscriptProvider sorts and indexes by chrom,
+        // and the consequence predictor doesn't require globally-unique
+        // stable_ids, so Ensembl + RefSeq can simply coexist.
+        if gff3_specs.is_empty() {
             eprintln!("Warning: No GFF3 file provided. Only intergenic variants will be annotated.");
             Vec::new()
+        } else {
+            let mut all: Vec<fastvep_genome::Transcript> = Vec::new();
+            for spec in &gff3_specs {
+                let trs = load_one_gff3(spec, &config.input, config.distance)?;
+                eprintln!(
+                    "Loaded {} transcripts from {} (source label: {})",
+                    trs.len(), spec.path, spec.source
+                );
+                all.extend(trs);
+            }
+            if all.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "GFF3 source(s) [{}] produced 0 transcripts — likely malformed, truncated, or unrecognized format. Refusing to continue with empty transcript set.",
+                    gff3_specs.iter().map(|s| s.path.as_str()).collect::<Vec<_>>().join(", ")
+                ));
+            }
+            if gff3_specs.len() > 1 {
+                eprintln!("Merged {} GFF3 sources into {} total transcripts", gff3_specs.len(), all.len());
+            }
+            all
         }
     }};
 
@@ -230,10 +245,14 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         }
     }
 
-    // Save cache after sequence build (only if sequences were built or cache doesn't exist)
+    // Save cache after sequence build (only if sequences were built or
+    // cache doesn't exist). Sidecar-cache writes are gated to the
+    // single-GFF3 case — multi-source caches need to round-trip through
+    // an explicit `--transcript-cache` path so the on-disk filename
+    // isn't tied to one of N inputs.
     if needs_seq_build {
         if let Some(ref cp) = cache_path {
-            if config.gff3.is_some() {
+            if single_gff3.is_some() || config.transcript_cache.is_some() {
                 if let Err(e) = fastvep_cache::transcript_cache::save_cache(&transcripts, cp) {
                     eprintln!("Warning: could not save cache: {}", e);
                 } else {
@@ -1076,7 +1095,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                     allele_annotations,
                     canonical: tc.canonical,
                     strand: tc.strand,
-                    source: gff3_source.clone(),
+                    source: transcript.and_then(|t| t.source.clone()),
                     protein_id: transcript.and_then(|t| t.protein_id.clone()),
                     mane_select: transcript.and_then(|t| t.mane_select.clone()),
                     mane_plus_clinical: transcript.and_then(|t| t.mane_plus_clinical.clone()),
@@ -1810,24 +1829,42 @@ pub fn run_filter(input: &str, output_path: &str, filter_expr: &str) -> Result<(
     Ok(())
 }
 
-/// Build a binary transcript cache from GFF3 + optional FASTA.
-pub fn run_cache_build(gff3_path: &str, fasta_path: Option<&str>, output_path: &str) -> Result<()> {
-    let gff_file = File::open(gff3_path)
-        .with_context(|| format!("Opening GFF3 file: {}", gff3_path))?;
-    // Auto-decompress .gz / .bgz GFF3 inputs. Without this we'd silently
-    // produce a 0-transcript cache.
-    let mut transcripts = if gff3_path.ends_with(".gz") || gff3_path.ends_with(".bgz") {
-        parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
-    } else {
-        parse_gff3(gff_file)?
-    };
+/// Build a binary transcript cache from one or more GFF3s + optional FASTA.
+///
+/// With multiple GFF3 inputs (e.g. Ensembl + RefSeq), transcripts from all
+/// files are merged into a single cache, each stamped with its source so
+/// the SOURCE column on annotate output stays per-transcript.
+pub fn run_cache_build(gff3_paths: &[String], fasta_path: Option<&str>, output_path: &str) -> Result<()> {
+    if gff3_paths.is_empty() {
+        return Err(anyhow::anyhow!("`fastvep cache` requires at least one --gff3"));
+    }
+    let specs: Vec<Gff3Spec> = gff3_paths.iter().map(|s| parse_gff3_arg(s)).collect();
+    let mut transcripts: Vec<fastvep_genome::Transcript> = Vec::new();
+    for spec in &specs {
+        let gff_file = File::open(&spec.path)
+            .with_context(|| format!("Opening GFF3 file: {}", spec.path))?;
+        // Auto-decompress .gz / .bgz GFF3 inputs. Without this we'd silently
+        // produce a 0-transcript cache.
+        let trs = if spec.path.ends_with(".gz") || spec.path.ends_with(".bgz") {
+            parse_gff3_with_source(flate2::read::MultiGzDecoder::new(gff_file), &spec.source)?
+        } else {
+            parse_gff3_with_source(gff_file, &spec.source)?
+        };
+        eprintln!(
+            "Loaded {} transcripts from {} (source label: {})",
+            trs.len(), spec.path, spec.source
+        );
+        transcripts.extend(trs);
+    }
     if transcripts.is_empty() {
         return Err(anyhow::anyhow!(
-            "GFF3 file {} produced 0 transcripts — refusing to write an empty cache.",
-            gff3_path
+            "GFF3 source(s) [{}] produced 0 transcripts — refusing to write an empty cache.",
+            specs.iter().map(|s| s.path.as_str()).collect::<Vec<_>>().join(", ")
         ));
     }
-    eprintln!("Loaded {} transcripts from {}", transcripts.len(), gff3_path);
+    if specs.len() > 1 {
+        eprintln!("Merged {} GFF3 sources into {} total transcripts", specs.len(), transcripts.len());
+    }
 
     if let Some(fasta) = fasta_path {
         let fasta_file = File::open(fasta)
@@ -1859,6 +1896,76 @@ pub fn run_cache_build(gff3_path: &str, fasta_path: Option<&str>, output_path: &
 
 /// Quick VCF pre-scan to collect variant regions for indexed GFF3 loading.
 /// Returns merged (chrom, start, end) regions expanded by the given distance.
+/// One resolved GFF3 input: file path plus the SOURCE label that should be
+/// attached to every transcript loaded from it.
+#[derive(Debug, Clone)]
+pub struct Gff3Spec {
+    pub path: String,
+    pub source: String,
+}
+
+/// Parse a single `--gff3` value. Accepts either `path/to/file.gff3` or
+/// `LABEL=path/to/file.gff3`. When no label is provided, infers one from
+/// the filename so merged Ensembl + RefSeq runs produce VEP-style
+/// `SOURCE=Ensembl` / `SOURCE=RefSeq` values out of the box.
+pub fn parse_gff3_arg(arg: &str) -> Gff3Spec {
+    // Only treat `=` as a label separator when the prefix doesn't look like
+    // a path (no slash) — otherwise something like `./x=1/file.gff3` would
+    // get mis-split.
+    if let Some((label, rest)) = arg.split_once('=') {
+        if !label.contains('/') && !label.contains('\\') && !label.is_empty() {
+            return Gff3Spec {
+                path: rest.to_string(),
+                source: label.to_string(),
+            };
+        }
+    }
+    Gff3Spec {
+        path: arg.to_string(),
+        source: detect_gff3_source(arg),
+    }
+}
+
+fn detect_gff3_source(path: &str) -> String {
+    let fname = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string());
+    let lower = fname.to_lowercase();
+    // RefSeq: NCBI GFF3 archives ship as GCF_*.gff.gz; many user-renamed
+    // copies just contain "refseq" in the name.
+    if lower.contains("refseq") || lower.starts_with("gcf_") {
+        "RefSeq".to_string()
+    } else if lower.contains("ensembl") || lower.contains("gencode") {
+        "Ensembl".to_string()
+    } else {
+        fname
+    }
+}
+
+fn load_one_gff3(
+    spec: &Gff3Spec,
+    vcf_input: &str,
+    distance: u64,
+) -> Result<Vec<fastvep_genome::Transcript>> {
+    let gff_path = Path::new(&spec.path);
+    let tbi_path = format!("{}.tbi", spec.path);
+
+    if spec.path.ends_with(".gz") && Path::new(&tbi_path).exists() {
+        let regions = prescan_vcf_regions(vcf_input, distance)?;
+        eprintln!("Pre-scanned {} variant regions for {}", regions.len(), spec.path);
+        fastvep_cache::gff::parse_gff3_indexed_with_source(gff_path, &regions, &spec.source)
+    } else {
+        let gff_file = File::open(&spec.path)
+            .with_context(|| format!("Opening GFF3 file: {}", spec.path))?;
+        if spec.path.ends_with(".gz") || spec.path.ends_with(".bgz") {
+            parse_gff3_with_source(flate2::read::MultiGzDecoder::new(gff_file), &spec.source)
+        } else {
+            parse_gff3_with_source(gff_file, &spec.source)
+        }
+    }
+}
+
 fn prescan_vcf_regions(vcf_path: &str, distance: u64) -> Result<Vec<(String, u64, u64)>> {
     let input_reader = open_vcf_input_reader(vcf_path)
         .with_context(|| format!("Pre-scanning VCF: {}", vcf_path))?;
@@ -1941,13 +2048,37 @@ fn parse_phylop_auto<R: BufRead>(
 }
 
 /// Build a supplementary annotation .osa file from a source VCF.
-pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> Result<()> {
+pub fn run_sa_build(
+    source: &str,
+    input: &str,
+    output: &str,
+    assembly: &str,
+    name: Option<&str>,
+    info_fields: &[String],
+) -> Result<()> {
     use fastvep_sa::index::IndexHeader;
     use fastvep_sa::writer::SaWriter;
 
     // Gene-level sources (.oga) — dispatched separately from variant-level (.osa).
     if matches!(source, "omim" | "gnomad_genes" | "gnomad_gene" | "clinvar_protein") {
         return run_oga_build(source, input, output, assembly);
+    }
+
+    // Custom VCF / BED — generic user-supplied annotation sources. `custom`
+    // is an alias that auto-detects from the input extension. We dispatch
+    // these before the built-in header-lookup so they don't have to thread
+    // through every `match source` arm below.
+    if matches!(source, "custom_vcf" | "custom_bed" | "custom") {
+        let resolved = if source == "custom" {
+            classify_custom_input(input)?
+        } else {
+            source
+        };
+        return match resolved {
+            "custom_vcf" => run_custom_vcf_build(input, output, assembly, name, info_fields),
+            "custom_bed" => run_custom_bed_build(input, output, assembly, name),
+            _ => unreachable!("classify_custom_input only returns custom_vcf or custom_bed"),
+        };
     }
 
     let (chrom_list, chrom_map) = standard_chrom_map();
@@ -2096,7 +2227,7 @@ pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> 
             is_positional: false,
         },
         _ => anyhow::bail!(
-            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein",
+            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
             source
         ),
     };
@@ -2166,6 +2297,192 @@ pub fn run_sa_build(source: &str, input: &str, output: &str, assembly: &str) -> 
         output_path.with_extension("osa.idx").display()
     );
 
+    Ok(())
+}
+
+/// Classify a `--source custom` input as either `custom_vcf` or
+/// `custom_bed` based on its extension. Centralised so the dispatcher in
+/// `run_sa_build` and any future callers stay in agreement on the
+/// extension rules.
+fn classify_custom_input(input: &str) -> Result<&'static str> {
+    let lower = input.to_lowercase();
+    let stripped = lower.trim_end_matches(".gz").trim_end_matches(".bgz");
+    if stripped.ends_with(".vcf") {
+        Ok("custom_vcf")
+    } else if stripped.ends_with(".bed") {
+        Ok("custom_bed")
+    } else {
+        anyhow::bail!(
+            "--source custom could not infer format from input '{}'. Use --source custom_vcf or --source custom_bed explicitly, or rename the file so it ends in .vcf[.gz] / .bed[.gz].",
+            input
+        )
+    }
+}
+
+/// Default the `--name` flag from the input filename so a user invoking
+/// `sa-build --source custom_vcf -i myset.vcf.gz` doesn't strictly need
+/// `--name` (though we still warn that the column name will be derived
+/// from the file path). Strips conventional extensions and falls back to
+/// "custom" if the path doesn't have a useful stem.
+fn resolve_custom_name(name: Option<&str>, input: &str) -> String {
+    if let Some(n) = name {
+        if !n.is_empty() {
+            return n.to_string();
+        }
+    }
+    let stem = Path::new(input)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "custom".to_string());
+    let stem = stem
+        .trim_end_matches(".gz")
+        .trim_end_matches(".bgz")
+        .trim_end_matches(".vcf")
+        .trim_end_matches(".bed")
+        .trim_end_matches('.');
+    if stem.is_empty() {
+        "custom".to_string()
+    } else {
+        stem.to_string()
+    }
+}
+
+/// Build a generic allele-level annotation database from a user-supplied
+/// VCF. Produces a `.osa` keyed by `name` that the annotate pipeline picks
+/// up exactly like a built-in source (ClinVar, gnomAD, …). INFO fields
+/// listed in `info_fields` are extracted; an empty list means "include
+/// whatever INFO keys each record carries", which is convenient for
+/// exploration but yields a heterogeneous schema.
+fn run_custom_vcf_build(
+    input: &str,
+    output: &str,
+    assembly: &str,
+    name: Option<&str>,
+    info_fields: &[String],
+) -> Result<()> {
+    use fastvep_sa::index::IndexHeader;
+    use fastvep_sa::writer::SaWriter;
+
+    let (chrom_list, chrom_map) = standard_chrom_map();
+    let resolved_name = resolve_custom_name(name, input);
+    let json_key = resolved_name.clone();
+
+    eprintln!(
+        "Building custom_vcf .osa from: {} (name={}, info_fields={})",
+        input,
+        resolved_name,
+        if info_fields.is_empty() { "<all>".to_string() } else { info_fields.join(",") }
+    );
+
+    let header = IndexHeader {
+        schema_version: fastvep_sa::common::SCHEMA_VERSION,
+        json_key,
+        name: resolved_name,
+        version: "user-supplied".into(),
+        description: format!("Custom VCF annotations for {}", assembly),
+        assembly: assembly.into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+    };
+
+    let file = File::open(input)
+        .with_context(|| format!("Opening input file: {}", input))?;
+    let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
+        Box::new(flate2::read::MultiGzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let buf_reader = io::BufReader::new(reader);
+
+    let records = fastvep_sa::custom::parse_custom_vcf(
+        buf_reader,
+        &chrom_map,
+        &header.name,
+        info_fields,
+    )?;
+    if records.is_empty() {
+        // Build proceeds (writes an empty .osa rather than failing) so the
+        // user can iterate on their filter, but call this out clearly —
+        // a silent zero-record build is the #1 source of "why is my
+        // annotation column always empty" tickets.
+        eprintln!(
+            "warning: custom VCF produced 0 records — check that {} contains data lines with valid chrom/pos and the requested INFO fields.",
+            input
+        );
+    } else {
+        eprintln!("Parsed {} records from custom VCF", records.len());
+    }
+
+    let output_path = Path::new(output);
+    let mut writer = SaWriter::new(header);
+    writer.write_to_files(output_path, records.into_iter(), &chrom_list)?;
+    eprintln!(
+        "Wrote: {} and {}",
+        output_path.with_extension("osa").display(),
+        output_path.with_extension("osa.idx").display()
+    );
+    Ok(())
+}
+
+/// Build a generic interval-level annotation database from a user-supplied
+/// BED. Produces a `.osi` keyed by `name` that the annotate pipeline picks
+/// up via the same `--sa-dir` mechanism as `.osa` files.
+fn run_custom_bed_build(
+    input: &str,
+    output: &str,
+    assembly: &str,
+    name: Option<&str>,
+) -> Result<()> {
+    use fastvep_sa::interval::{IntervalHeader, IntervalIndex};
+
+    let (_chrom_list, chrom_map) = standard_chrom_map();
+    let resolved_name = resolve_custom_name(name, input);
+
+    eprintln!(
+        "Building custom_bed .osi from: {} (name={})",
+        input, resolved_name
+    );
+
+    let file = File::open(input)
+        .with_context(|| format!("Opening input file: {}", input))?;
+    let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
+        Box::new(flate2::read::MultiGzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+    let buf_reader = io::BufReader::new(reader);
+
+    let records = fastvep_sa::custom::parse_custom_bed(buf_reader, &chrom_map)?;
+    if records.is_empty() {
+        eprintln!(
+            "warning: custom BED produced 0 records — check that {} has at least 3 tab-separated columns (chrom, start, end).",
+            input
+        );
+    } else {
+        eprintln!("Parsed {} interval records from custom BED", records.len());
+    }
+
+    let header = IntervalHeader {
+        schema_version: fastvep_sa::common::SCHEMA_VERSION,
+        json_key: resolved_name.clone(),
+        name: resolved_name,
+        version: "user-supplied".into(),
+        assembly: assembly.into(),
+    };
+
+    let mut index = IntervalIndex::new(header);
+    for rec in records {
+        index.add(rec);
+    }
+    index.sort();
+
+    let output_path = Path::new(output);
+    let osi_path = output_path.with_extension("osi");
+    let mut file = File::create(&osi_path)
+        .with_context(|| format!("Creating output file: {}", osi_path.display()))?;
+    index.write_to(&mut file)?;
+    eprintln!("Wrote: {}", osi_path.display());
     Ok(())
 }
 
@@ -2465,5 +2782,184 @@ mod pick_tests {
     fn pick_returns_none_for_empty_input() {
         let tvs: Vec<TranscriptVariation> = vec![];
         assert_eq!(pick_best_transcript_idx(&tvs), None);
+    }
+}
+
+#[cfg(test)]
+mod gff3_arg_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_label_overrides_detection() {
+        let spec = parse_gff3_arg("MyEnsembl=/data/refseq_v115.gff3.gz");
+        assert_eq!(spec.path, "/data/refseq_v115.gff3.gz");
+        assert_eq!(spec.source, "MyEnsembl");
+    }
+
+    #[test]
+    fn refseq_filename_autodetected() {
+        let spec = parse_gff3_arg("/data/RefSeq.GRCh38.gff");
+        assert_eq!(spec.source, "RefSeq");
+
+        let spec = parse_gff3_arg("/refs/GCF_000001405.40.gff.gz");
+        assert_eq!(spec.source, "RefSeq");
+    }
+
+    #[test]
+    fn ensembl_filename_autodetected() {
+        let spec = parse_gff3_arg("/data/Homo_sapiens.GRCh38.115.ensembl.gff3");
+        assert_eq!(spec.source, "Ensembl");
+
+        let spec = parse_gff3_arg("/data/gencode.v45.annotation.gff3.gz");
+        assert_eq!(spec.source, "Ensembl");
+    }
+
+    #[test]
+    fn unknown_filename_falls_back_to_basename() {
+        let spec = parse_gff3_arg("/data/custom_organism.gff3");
+        assert_eq!(spec.source, "custom_organism.gff3");
+    }
+
+    #[test]
+    fn path_with_equals_in_it_is_not_mistaken_for_label() {
+        // Real paths containing `=` are rare but possible. A `=` only counts
+        // as the label separator if no slash appears before it.
+        let spec = parse_gff3_arg("/odd=path/file.gff3");
+        assert_eq!(spec.path, "/odd=path/file.gff3");
+        // The basename has no Ensembl/RefSeq marker, so we fall back to it.
+        assert_eq!(spec.source, "file.gff3");
+    }
+}
+
+#[cfg(test)]
+mod custom_source_tests {
+    use super::*;
+
+    #[test]
+    fn classify_custom_recognises_vcf_and_bed_with_compression() {
+        assert_eq!(classify_custom_input("foo.vcf").unwrap(), "custom_vcf");
+        assert_eq!(classify_custom_input("foo.vcf.gz").unwrap(), "custom_vcf");
+        assert_eq!(classify_custom_input("foo.vcf.bgz").unwrap(), "custom_vcf");
+        assert_eq!(classify_custom_input("foo.bed").unwrap(), "custom_bed");
+        assert_eq!(classify_custom_input("foo.BED.GZ").unwrap(), "custom_bed");
+        assert!(classify_custom_input("foo.tsv").is_err());
+        assert!(classify_custom_input("foo").is_err());
+    }
+
+    #[test]
+    fn resolve_custom_name_prefers_flag_then_strips_extensions() {
+        // Explicit --name wins.
+        assert_eq!(resolve_custom_name(Some("MyDB"), "anything.vcf.gz"), "MyDB");
+        // Empty --name acts like "not set".
+        assert_eq!(resolve_custom_name(Some(""), "myset.vcf.gz"), "myset");
+        // Strips .gz, .bgz, .vcf, .bed conventional suffixes.
+        assert_eq!(resolve_custom_name(None, "/data/regions.bed.gz"), "regions");
+        assert_eq!(resolve_custom_name(None, "myset.vcf"), "myset");
+        // Pathological case: input is just `.gz` → fall through to "custom".
+        assert_eq!(resolve_custom_name(None, ".gz"), "custom");
+    }
+
+    #[test]
+    fn run_custom_vcf_build_produces_loadable_osa() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let vcf_path = dir.path().join("custom.vcf");
+        let mut f = std::fs::File::create(&vcf_path).unwrap();
+        writeln!(f, "##fileformat=VCFv4.2").unwrap();
+        writeln!(f, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO").unwrap();
+        writeln!(f, "1\t100\t.\tA\tG\t.\t.\tMY_SCORE=0.95;FLAG=hot").unwrap();
+        writeln!(f, "1\t200\t.\tC\tT\t.\t.\tMY_SCORE=0.10").unwrap();
+        drop(f);
+
+        let out_base = dir.path().join("custom_db");
+        run_sa_build(
+            "custom_vcf",
+            vcf_path.to_str().unwrap(),
+            out_base.to_str().unwrap(),
+            "GRCh38",
+            Some("mydb"),
+            &["MY_SCORE".to_string()],
+        )
+        .unwrap();
+
+        let osa = out_base.with_extension("osa");
+        let osa_idx = out_base.with_extension("osa.idx");
+        assert!(osa.exists(), ".osa should be written");
+        assert!(osa_idx.exists(), ".osa.idx should be written");
+
+        // Loadable via the same reader the runtime uses, and the records
+        // we wrote come back through annotate_position.
+        let reader = fastvep_sa::reader::SaReader::open(&osa).unwrap();
+        assert_eq!(reader.json_key(), "mydb");
+        let val = reader.annotate_position("chr1", 100, "A", "G").unwrap();
+        assert!(val.is_some(), "should match the inserted record");
+        match val.unwrap() {
+            fastvep_cache::annotation::AnnotationValue::Json(j) => {
+                assert!(j.contains("MY_SCORE"));
+                // FLAG was not requested in info_fields → must not leak.
+                assert!(!j.contains("FLAG"));
+            }
+            other => panic!("expected Json, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_custom_bed_build_produces_loadable_osi() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let bed_path = dir.path().join("regions.bed");
+        let mut f = std::fs::File::create(&bed_path).unwrap();
+        // BED is 0-based half-open: chr1:99-200 → 1-based 100..=200.
+        writeln!(f, "1\t99\t200\tpromoterA\t0.5").unwrap();
+        writeln!(f, "1\t499\t600\tpromoterB").unwrap();
+        drop(f);
+
+        let out_base = dir.path().join("myregions");
+        run_sa_build(
+            "custom_bed",
+            bed_path.to_str().unwrap(),
+            out_base.to_str().unwrap(),
+            "GRCh38",
+            Some("myregions"),
+            &[],
+        )
+        .unwrap();
+
+        let osi_path = out_base.with_extension("osi");
+        assert!(osi_path.exists(), ".osi should be written");
+
+        let reader = fastvep_sa::interval::OsiReader::open(&osi_path).unwrap();
+        // Position inside region A (1-based 100..=200).
+        let val = reader.annotate_position("chr1", 150, "", "").unwrap();
+        match val {
+            Some(fastvep_cache::annotation::AnnotationValue::Interval(v)) => {
+                assert_eq!(v.len(), 1);
+                assert!(v[0].contains("promoterA"));
+                assert!(v[0].contains("0.5"));
+            }
+            other => panic!("expected Interval, got {:?}", other),
+        }
+        // Position in the gap between regions → None.
+        let val = reader.annotate_position("chr1", 350, "", "").unwrap();
+        assert!(val.is_none());
+    }
+
+    #[test]
+    fn run_sa_build_with_unknown_source_reports_custom_in_message() {
+        // Regression: the user in issue #43 ran `--source custom` and got
+        // "Unknown source" without seeing the new custom_* options. Verify
+        // the help string now mentions them.
+        let err = run_sa_build(
+            "definitely_not_a_source",
+            "/dev/null",
+            "/tmp/out",
+            "GRCh38",
+            None,
+            &[],
+        )
+        .expect_err("must error on unknown source");
+        let msg = format!("{}", err);
+        assert!(msg.contains("custom_vcf"), "error message must mention custom_vcf: {}", msg);
+        assert!(msg.contains("custom_bed"), "error message must mention custom_bed: {}", msg);
     }
 }

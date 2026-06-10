@@ -1144,6 +1144,7 @@ fn enrich_compound_het(
 pub fn load_sa_providers(
     sa_dir: &Path,
 ) -> Result<Vec<Mutex<Box<dyn AnnotationProvider>>>> {
+    use fastvep_sa::interval::OsiReader;
     use fastvep_sa::reader::SaReader;
     use fastvep_sa::reader_v2::Osa2Reader;
 
@@ -1175,6 +1176,23 @@ pub fn load_sa_providers(
             Some("osa") => match SaReader::open(&path) {
                 Ok(reader) => {
                     tracing::info!("Loaded SA: {} ({})", reader.name(), path.display());
+                    providers.push(Mutex::new(Box::new(reader)));
+                }
+                Err(e) => {
+                    tracing::warn!("Could not load {}: {}", path.display(), e);
+                }
+            },
+            // Interval-level (.osi) — typically BED-derived custom sources.
+            // Wired up alongside .osa so a directory with mixed file types
+            // "just works" via --sa-dir; the OsiReader exposes the same
+            // AnnotationProvider trait, returning AnnotationValue::Interval.
+            Some("osi") => match OsiReader::open(&path) {
+                Ok(reader) => {
+                    tracing::info!(
+                        "Loaded SA interval: {} ({})",
+                        reader.name(),
+                        path.display()
+                    );
                     providers.push(Mutex::new(Box::new(reader)));
                 }
                 Err(e) => {

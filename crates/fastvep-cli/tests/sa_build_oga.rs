@@ -44,6 +44,8 @@ fn sa_build_omim_writes_oga_with_records() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
@@ -86,6 +88,8 @@ TP53\tENST00000269305\t0\t25.1\t0.00\t0.05\t0.9999\t5.67\t-0.34
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
@@ -123,6 +127,8 @@ BRCA1\tENST00000357654\t0\t50.2\t0.00\t0.03\t1.0000\t3.45\t0.12
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
@@ -155,6 +161,8 @@ fn sa_build_clinvar_protein_writes_oga_with_records() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
@@ -193,6 +201,8 @@ fn sa_build_unknown_source_errors_with_full_supported_list() {
         input.to_str().unwrap(),
         "out",
         "GRCh38",
+        None,
+        &[],
     )
     .expect_err("must error on unknown source");
     let msg = format!("{}", err);
@@ -221,13 +231,15 @@ fn annotate_vcf_emits_spliceai_from_fastsa() {
         spliceai_source.to_str().unwrap(),
         output_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -307,6 +319,8 @@ chr1\t26011\t2.71
         spliceai_source.to_str().unwrap(),
         output_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
     run_sa_build(
@@ -314,13 +328,15 @@ chr1\t26011\t2.71
         phylop_source.to_str().unwrap(),
         phylop_output_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -389,13 +405,15 @@ fn annotate_vcf_replaces_existing_fastvep_info() {
         spliceai_source.to_str().unwrap(),
         output_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -449,13 +467,15 @@ fn annotate_vcf_emits_fastsa_projection_for_gnomad() {
         gnomad_source.to_str().unwrap(),
         output_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -512,13 +532,15 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
         gnomad_source.to_str().unwrap(),
         gnomad_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_tab.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "tab".into(),
         pick: false,
@@ -615,6 +637,8 @@ fn write_clinvar_fixture(tmp: &std::path::Path) {
         clinvar_source.to_str().unwrap(),
         clinvar_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 }
@@ -633,7 +657,7 @@ fn sa_only_vcf_omits_csq_and_default_pipeline() {
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: None,
+        gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -693,7 +717,7 @@ fn sa_only_tab_emits_minimal_columns() {
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_tab.to_string_lossy().into_owned(),
-        gff3: None,
+        gff3: vec![],
         fasta: None,
         output_format: "tab".into(),
         pick: false,
@@ -756,7 +780,7 @@ fn sa_only_json_omits_transcript_consequences() {
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_json.to_string_lossy().into_owned(),
-        gff3: None,
+        gff3: vec![],
         fasta: None,
         output_format: "json".into(),
         pick: false,
@@ -846,7 +870,7 @@ fn sa_only_requires_sa_dir() {
     let err = run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: None,
+        gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -904,13 +928,15 @@ fn sa_only_multi_allelic_emits_per_alt_rows_with_independent_sa_columns() {
         clinvar_source.to_str().unwrap(),
         clinvar_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_tab.to_string_lossy().into_owned(),
-        gff3: None,
+        gff3: vec![],
         fasta: None,
         output_format: "tab".into(),
         pick: false,
@@ -980,7 +1006,7 @@ fn sa_only_strips_preexisting_csq_from_input_info() {
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: None,
+        gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -1049,7 +1075,7 @@ fn sa_only_strips_csq_when_in_middle_of_info_field() {
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: None,
+        gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -1125,13 +1151,15 @@ fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
         clinvar_source.to_str().unwrap(),
         clinvar_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
     )
     .unwrap();
 
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_vcf.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
         pick: false,
@@ -1190,7 +1218,7 @@ fn annotate_tab_gene_list_filters_to_panel_genes() {
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_tab.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "tab".into(),
         pick: false,
@@ -1241,7 +1269,7 @@ fn annotate_tab_explicit_alleles_inserts_ref_column() {
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_tab.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "tab".into(),
         pick: false,
@@ -1324,7 +1352,7 @@ min_dp = 8
     run_annotate(AnnotateConfig {
         input: input_vcf.to_string_lossy().into_owned(),
         output: output_tab.to_string_lossy().into_owned(),
-        gff3: Some(gff3.to_string_lossy().into_owned()),
+        gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "tab".into(),
         pick: false,

@@ -5,9 +5,11 @@
 
 use crate::common::{IntervalRecord, MAX_INDEX_PAYLOAD, OSI_MAGIC, SCHEMA_VERSION};
 use anyhow::Result;
+use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, SaMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::Path;
 
 /// Header for .osi files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +158,92 @@ impl IntervalIndex {
     }
 }
 
+/// Annotation-pipeline-facing wrapper around a loaded `.osi`. Holds the
+/// SaMetadata view that the annotate pipeline expects from every SA
+/// provider, plus the `IntervalIndex` itself for overlap queries.
+pub struct OsiReader {
+    pub index: IntervalIndex,
+    metadata: SaMetadata,
+}
+
+impl OsiReader {
+    /// Open a `.osi` file and wrap it as an `AnnotationProvider`.
+    pub fn open(path: &Path) -> Result<Self> {
+        let mut file = std::fs::File::open(path)?;
+        let mut index = IntervalIndex::read_from(&mut file)?;
+        // `find_overlapping` does a linear scan from the start of the
+        // chromosome's interval vector, so the sort invariant is
+        // load-bearing — `IntervalIndex::read_from` already sorts on read
+        // as a safety net (see its docs), but if any caller mutates after
+        // load they're responsible for re-sorting.
+        index.sort();
+        let metadata = SaMetadata {
+            name: index.header.name.clone(),
+            version: index.header.version.clone(),
+            description: format!(
+                "Interval annotation database from {}",
+                path.display()
+            ),
+            assembly: index.header.assembly.clone(),
+            json_key: index.header.json_key.clone(),
+            // Intervals are inherently positional — overlap doesn't care
+            // about REF/ALT. Setting these correctly lets the runtime
+            // dispatch in the annotate pipeline skip allele matching.
+            match_by_allele: false,
+            is_array: true,
+            is_positional: true,
+        };
+        Ok(Self { index, metadata })
+    }
+}
+
+impl AnnotationProvider for OsiReader {
+    fn name(&self) -> &str {
+        &self.metadata.name
+    }
+
+    fn json_key(&self) -> &str {
+        &self.metadata.json_key
+    }
+
+    fn metadata(&self) -> &SaMetadata {
+        &self.metadata
+    }
+
+    fn annotate_position(
+        &self,
+        chrom: &str,
+        pos: u64,
+        _ref_allele: &str,
+        _alt_allele: &str,
+    ) -> Result<Option<AnnotationValue>> {
+        // Point-query semantics: report every interval that contains
+        // `pos`. We probe every standard alias for the chromosome so a
+        // BED stored as `chrM` matches a VCF query of `MT` (and vice
+        // versa), matching the behaviour of `SaReader`.
+        let pos32: u32 = match u32::try_from(pos) {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+        let mut json_hits: Vec<String> = Vec::new();
+        for alias in crate::common::chrom_aliases(chrom) {
+            let hits = self.index.find_overlapping(&alias, pos32, pos32);
+            if !hits.is_empty() {
+                json_hits.extend(hits.into_iter().map(|h| h.json));
+                // A `.osi` only stores each chromosome under one canonical
+                // name, so the first alias that matches is the right one;
+                // stop here to avoid double-counting if a (corrupted) file
+                // somehow had two names for one contig.
+                break;
+            }
+        }
+        if json_hits.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(AnnotationValue::Interval(json_hits)))
+    }
+}
+
 /// Result of an overlap query.
 #[derive(Debug, Clone)]
 pub struct OverlapResult {
@@ -278,5 +366,95 @@ mod tests {
         // No overlap
         let results = index.find_overlapping("chr1", 900, 950);
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn osi_reader_round_trip_and_provider_query() {
+        // Write a `.osi`, reopen it as `OsiReader`, and exercise the
+        // `AnnotationProvider` query path that the runtime annotate
+        // pipeline actually uses.
+        let header = IntervalHeader {
+            schema_version: SCHEMA_VERSION,
+            json_key: "myregions".into(),
+            name: "MyRegions".into(),
+            version: "1.0".into(),
+            assembly: "GRCh38".into(),
+        };
+        let mut index = IntervalIndex::new(header);
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 100,
+            end: 200,
+            json: r#"{"name":"alpha"}"#.into(),
+        });
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 150,
+            end: 300,
+            json: r#"{"name":"beta"}"#.into(),
+        });
+        index.sort();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().with_extension("osi");
+        let mut file = std::fs::File::create(&path).unwrap();
+        index.write_to(&mut file).unwrap();
+        drop(file);
+
+        let reader = OsiReader::open(&path).unwrap();
+        assert_eq!(reader.json_key(), "myregions");
+        assert_eq!(reader.metadata().is_positional, true);
+
+        // Position inside both intervals → returns both JSONs.
+        let val = reader.annotate_position("chr1", 175, "", "").unwrap();
+        match val {
+            Some(AnnotationValue::Interval(v)) => {
+                assert_eq!(v.len(), 2);
+                assert!(v.iter().any(|s| s.contains("alpha")));
+                assert!(v.iter().any(|s| s.contains("beta")));
+            }
+            other => panic!("expected Interval value, got {:?}", other),
+        }
+
+        // Bare-chromosome input matches the chr-prefixed BED-style storage.
+        let val = reader.annotate_position("1", 175, "", "").unwrap();
+        assert!(val.is_some(), "chr-prefix normalization should match");
+
+        // Position outside any interval → None.
+        let val = reader.annotate_position("chr1", 50, "", "").unwrap();
+        assert!(val.is_none());
+    }
+
+    #[test]
+    fn osi_reader_matches_mito_chromosome_aliases() {
+        // Index stores `chrM` (UCSC). Query with NCBI-style `MT` and bare
+        // `M` must still match via the shared `chrom_aliases` helper.
+        let header = IntervalHeader {
+            schema_version: SCHEMA_VERSION,
+            json_key: "mito".into(),
+            name: "Mito".into(),
+            version: "1.0".into(),
+            assembly: "GRCh38".into(),
+        };
+        let mut index = IntervalIndex::new(header);
+        index.add(IntervalRecord {
+            chrom: "chrM".into(),
+            start: 1000,
+            end: 2000,
+            json: r#"{"name":"mito_region"}"#.into(),
+        });
+        index.sort();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().with_extension("osi");
+        let mut file = std::fs::File::create(&path).unwrap();
+        index.write_to(&mut file).unwrap();
+        drop(file);
+
+        let reader = OsiReader::open(&path).unwrap();
+        for alias in &["chrM", "M", "MT", "chrMT"] {
+            let val = reader.annotate_position(alias, 1500, "", "").unwrap();
+            assert!(val.is_some(), "mito query '{}' should match", alias);
+        }
     }
 }
