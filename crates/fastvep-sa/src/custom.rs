@@ -5,7 +5,7 @@
 
 use crate::common::AnnotationRecord;
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
 
 /// Parse a custom VCF annotation file.
@@ -30,6 +30,10 @@ pub fn parse_custom_vcf<R: BufRead>(
 
     for line in reader.lines() {
         let line = line.context("Reading custom VCF")?;
+        // Strip CRLF from Windows-produced VCFs. `BufRead::lines` only
+        // strips `\n`, so without this the last INFO value carries a
+        // trailing `\r` that breaks downstream serde_json parsing.
+        let line = line.trim_end_matches('\r');
         if line.starts_with('#') {
             continue;
         }
@@ -68,27 +72,38 @@ pub fn parse_custom_vcf<R: BufRead>(
         let n_alts = alts.len();
 
         for (alt_idx, alt) in alts.iter().enumerate() {
-            // Build the JSON object for *this specific ALT*. Per-allele
-            // INFO arrays (Number=A / Number=R) get the right slice;
-            // everything else is shared verbatim across alts.
-            let mut parts = Vec::new();
+            // Build the JSON object for *this specific ALT* using serde_json
+            // so escaping is correct for control chars, tabs, embedded
+            // quotes, etc. Per-allele INFO arrays (Number=A / Number=R)
+            // get the right slice; everything else is shared verbatim
+            // across alts.
+            let mut obj = serde_json::Map::new();
+            let mut push = |key: &str, val: &str| {
+                obj.insert(key.to_string(), serde_json::Value::String(val.to_string()));
+            };
             if info_fields.is_empty() {
                 for (key, val) in &info_map {
                     let v = pick_per_allele(val, alt_idx, n_alts);
-                    parts.push(format!("\"{}\":\"{}\"", key, escape_json(v)));
+                    push(key, v);
                 }
             } else {
                 for field in info_fields {
                     if let Some(val) = info_map.get(field.as_str()) {
                         let v = pick_per_allele(val, alt_idx, n_alts);
-                        parts.push(format!("\"{}\":\"{}\"", field, escape_json(v)));
+                        push(field, v);
                     }
                 }
             }
-            if parts.is_empty() {
-                parts.push(format!("\"source\":\"{}\"", name));
+            if obj.is_empty() {
+                obj.insert(
+                    "source".to_string(),
+                    serde_json::Value::String(name.to_string()),
+                );
             }
-            let json = format!("{{{}}}", parts.join(","));
+            // `serde_json::to_string` on a `Map<String, Value>` produces
+            // a well-formed JSON object string.
+            let json = serde_json::to_string(&obj)
+                .unwrap_or_else(|_| "{}".to_string());
 
             records.push(AnnotationRecord {
                 chrom_idx,
@@ -105,12 +120,27 @@ pub fn parse_custom_vcf<R: BufRead>(
 }
 
 /// Pick the per-allele value out of a possibly-arrayed INFO field.
+///
+/// Auto-detection only fires for multi-allelic records (`n_alts > 1`) —
+/// for a bi-allelic record (`n_alts == 1`) a 2-element value like
+/// `"AC_male,AC_female"` is indistinguishable from a Number=R array and
+/// silently mis-splitting it would corrupt categorical fields. Bi-allelic
+/// custom VCFs are the typical user input (the standard workflow runs
+/// `bcftools norm -m -any` upstream of sa-build); they keep the value
+/// verbatim, which is the safe behaviour.
+///
+/// For `n_alts > 1`:
 /// - If `val` has exactly `n_alts` comma-separated elements, treat as Number=A.
-/// - If `val` has exactly `n_alts + 1` elements, treat as Number=R (skip the REF slot).
-/// - Otherwise, return `val` unchanged.
+/// - If `val` has exactly `n_alts + 1` elements, treat as Number=R (skip REF).
+/// - Otherwise, return `val` unchanged (shared across all alts).
 fn pick_per_allele(val: &str, alt_idx: usize, n_alts: usize) -> &str {
     // Fast path: no comma → can't be a per-allele list.
     if !val.contains(',') {
+        return val;
+    }
+    // Single-ALT records are too ambiguous to auto-split safely; see the
+    // doc above.
+    if n_alts < 2 {
         return val;
     }
     let pieces: Vec<&str> = val.split(',').collect();
@@ -135,6 +165,10 @@ pub fn parse_custom_bed<R: BufRead>(
 
     for line in reader.lines() {
         let line = line.context("Reading custom BED")?;
+        // Strip trailing CR (Windows CRLF) — without this the `end` field
+        // parse fails for every record on a CRLF-terminated file and the
+        // whole BED silently produces 0 intervals.
+        let line = line.trim_end_matches('\r');
         if line.starts_with('#') || line.starts_with("track") || line.is_empty() {
             continue;
         }
@@ -170,29 +204,39 @@ pub fn parse_custom_bed<R: BufRead>(
         let name = fields.get(3).unwrap_or(&".").to_string();
         let score = fields.get(4).unwrap_or(&".").to_string();
 
-        let mut parts = Vec::new();
+        // Build the JSON via serde_json so embedded control chars / tabs
+        // / quotes in the name field don't break downstream consumers.
+        let mut obj = serde_json::Map::new();
         if name != "." {
-            parts.push(format!("\"name\":\"{}\"", escape_json(&name)));
+            obj.insert("name".to_string(), serde_json::Value::String(name.clone()));
         }
         if score != "." {
             if let Ok(s) = score.parse::<f64>() {
-                parts.push(format!("\"score\":{}", s));
+                if let Some(n) = serde_json::Number::from_f64(s) {
+                    obj.insert("score".to_string(), serde_json::Value::Number(n));
+                }
             }
         }
+        let json = serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string());
 
         records.push(crate::common::IntervalRecord {
             chrom,
             start,
             end,
-            json: format!("{{{}}}", parts.join(",")),
+            json,
         });
     }
 
     Ok(records)
 }
 
-fn parse_info(info: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
+/// Parse a VCF INFO field into a deterministic `(key → value)` map.
+///
+/// `BTreeMap` (not `HashMap`) so iteration order is stable across runs —
+/// this directly affects the byte layout of the resulting `.osa` and is
+/// what makes the build content-hash-reproducible.
+fn parse_info(info: &str) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
     for pair in info.split(';') {
         let pair = pair.trim();
         if pair.is_empty() {
@@ -216,10 +260,6 @@ fn parse_info(info: &str) -> HashMap<String, String> {
 
 fn normalize_chrom(chrom: &str) -> String {
     if chrom.starts_with("chr") { chrom.to_string() } else { format!("chr{}", chrom) }
-}
-
-fn escape_json(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(test)]
@@ -295,6 +335,80 @@ mod tests {
         let t = recs.iter().find(|r| r.alt_allele == "T").unwrap();
         assert!(g.json.contains(r#""AD":"12""#), "{}", g.json);
         assert!(t.json.contains(r#""AD":"8""#), "{}", t.json);
+    }
+
+    #[test]
+    fn test_parse_custom_vcf_handles_crlf_line_endings() {
+        // BufRead::lines strips only `\n`. Without an explicit CRLF trim,
+        // the last INFO value carries a trailing `\r` and the resulting
+        // JSON contains a literal CR, which fails downstream serde_json
+        // parsing. Verify the round-trip JSON is parseable.
+        let vcf = "##h\r\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\r\nchr1\t100\t.\tA\tG\t.\t.\tCLIN=hot\r\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let recs = parse_custom_vcf(vcf.as_bytes(), &m, "t", &[]).unwrap();
+        assert_eq!(recs.len(), 1);
+        let val: serde_json::Value = serde_json::from_str(&recs[0].json)
+            .expect("JSON must be parseable; CRLF likely leaked into the value");
+        assert_eq!(val["CLIN"], "hot");
+    }
+
+    #[test]
+    fn test_parse_custom_vcf_escapes_quotes_and_backslashes() {
+        // INFO values containing literal `"` or `\` — the old hand-rolled
+        // `escape_json` got these right too, but exercising the path
+        // through serde_json confirms we haven't regressed.
+        let vcf = "#h\nchr1\t100\t.\tA\tG\t.\t.\tDESC=has\"quote\\and\\\\bs\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let recs = parse_custom_vcf(vcf.as_bytes(), &m, "t", &[]).unwrap();
+        assert_eq!(recs.len(), 1);
+        // The serialised JSON must round-trip through serde_json. The old
+        // hand-rolled escaper produced output that *some* strict parsers
+        // rejected; we now use serde_json end-to-end.
+        let val: serde_json::Value = serde_json::from_str(&recs[0].json).expect("parseable JSON");
+        assert_eq!(val["DESC"], "has\"quote\\and\\\\bs");
+    }
+
+    #[test]
+    fn test_parse_custom_vcf_info_order_is_deterministic() {
+        // BTreeMap iteration yields sorted keys, so the byte layout of
+        // the resulting JSON is stable across runs and identical inputs
+        // produce identical .osa contents (content-hash reproducible).
+        let vcf = "#h\nchr1\t100\t.\tA\tG\t.\t.\tZED=1;APPLE=2;MID=3\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let r1 = parse_custom_vcf(vcf.as_bytes(), &m, "t", &[]).unwrap();
+        let r2 = parse_custom_vcf(vcf.as_bytes(), &m, "t", &[]).unwrap();
+        assert_eq!(r1[0].json, r2[0].json);
+        // Sorted: APPLE, MID, ZED.
+        assert!(r1[0].json.find("APPLE").unwrap() < r1[0].json.find("MID").unwrap());
+        assert!(r1[0].json.find("MID").unwrap() < r1[0].json.find("ZED").unwrap());
+    }
+
+    #[test]
+    fn test_pick_per_allele_skips_split_for_biallelic_records() {
+        // Bi-allelic record with a 2-value INFO that *looks* like Number=R
+        // could be a genuine Number=2 categorical — the older code would
+        // mis-split. With n_alts < 2 we now keep the value whole.
+        let vcf = "#h\nchr1\t100\t.\tA\tG\t.\t.\tCAT=foo,bar\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let recs = parse_custom_vcf(vcf.as_bytes(), &m, "t", &[]).unwrap();
+        assert_eq!(recs.len(), 1);
+        let val: serde_json::Value = serde_json::from_str(&recs[0].json).unwrap();
+        assert_eq!(val["CAT"], "foo,bar", "biallelic 2-value field must stay intact");
+    }
+
+    #[test]
+    fn test_parse_custom_bed_handles_crlf() {
+        let bed = "chr1\t99\t200\tregion1\t0.5\r\nchr1\t499\t600\tregion2\r\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let recs = parse_custom_bed(bed.as_bytes(), &m).unwrap();
+        assert_eq!(recs.len(), 2, "CRLF must not break end-field parsing");
+        let val: serde_json::Value = serde_json::from_str(&recs[0].json).unwrap();
+        assert_eq!(val["name"], "region1");
     }
 
     #[test]
