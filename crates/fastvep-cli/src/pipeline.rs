@@ -1866,7 +1866,12 @@ pub fn run_filter(input: &str, output_path: &str, filter_expr: &str) -> Result<(
 /// With multiple GFF3 inputs (e.g. Ensembl + RefSeq), transcripts from all
 /// files are merged into a single cache, each stamped with its source so
 /// the SOURCE column on annotate output stays per-transcript.
-pub fn run_cache_build(gff3_paths: &[String], fasta_path: Option<&str>, output_path: &str) -> Result<()> {
+pub fn run_cache_build(
+    gff3_paths: &[String],
+    fasta_path: Option<&str>,
+    synonyms_path: Option<&str>,
+    output_path: &str,
+) -> Result<()> {
     if gff3_paths.is_empty() {
         return Err(anyhow::anyhow!("`fastvep cache` requires at least one --gff3"));
     }
@@ -1898,13 +1903,77 @@ pub fn run_cache_build(gff3_paths: &[String], fasta_path: Option<&str>, output_p
         eprintln!("Merged {} GFF3 sources into {} total transcripts", specs.len(), transcripts.len());
     }
 
+    // Chromosome synonyms (VEP `chr_synonyms.txt`). An empty table still
+    // resolves chr↔bare / mitochondrial forms via mechanical aliases.
+    let synonyms = match synonyms_path {
+        Some(p) => {
+            let contents = std::fs::read_to_string(p)
+                .with_context(|| format!("Reading synonyms file: {}", p))?;
+            eprintln!("Loaded chromosome synonyms from {}", p);
+            fastvep_core::ChromSynonyms::parse(&contents)
+        }
+        None => fastvep_core::ChromSynonyms::new(),
+    };
+
     if let Some(fasta) = fasta_path {
         let fasta_file = File::open(fasta)
             .with_context(|| format!("Opening FASTA file: {}", fasta))?;
         let reader = FastaReader::from_reader(fasta_file)?;
-        let sp = FastaSequenceProvider::new(reader);
         eprintln!("Loaded reference FASTA from {}", fasta);
 
+        // Canonicalize every transcript (and its gene) to the FASTA's contig
+        // naming. This both lets sequence fetch succeed and makes a merged
+        // Ensembl + RefSeq cache use one consistent naming scheme, so
+        // `annotate` matches a VCF regardless of which GFF3 the transcript
+        // came from. RefSeq accessions only resolve when a synonyms file maps
+        // them; chr↔bare / mito resolve with no synonyms file at all.
+        let contigs: std::collections::HashSet<String> =
+            reader.sequence_names().into_iter().map(|s| s.to_string()).collect();
+        let mut resolved: HashMap<String, Option<std::sync::Arc<str>>> = HashMap::new();
+        let mut unresolved: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for tr in &mut transcripts {
+            let orig: &str = tr.chromosome.as_ref();
+            if contigs.contains(orig) {
+                continue; // already matches a FASTA contig
+            }
+            let canonical = resolved
+                .entry(orig.to_string())
+                .or_insert_with(|| {
+                    synonyms
+                        .aliases(orig)
+                        .into_iter()
+                        .find(|a| contigs.contains(a))
+                        .map(|a| std::sync::Arc::from(a.as_str()))
+                })
+                .clone();
+            match canonical {
+                Some(name) => {
+                    tr.chromosome = std::sync::Arc::clone(&name);
+                    tr.gene.chromosome = name;
+                }
+                None => {
+                    unresolved.insert(orig.to_string());
+                }
+            }
+        }
+        if !unresolved.is_empty() {
+            let refseq_like = unresolved
+                .iter()
+                .any(|c| fastvep_core::looks_like_refseq_accession(c));
+            let hint = if refseq_like && synonyms_path.is_none() {
+                " — some look like RefSeq accessions; pass a VEP-style synonyms file with `--synonyms` to map them"
+            } else {
+                ""
+            };
+            eprintln!(
+                "Warning: {} GFF3 contig(s) have no matching FASTA sequence{}: {}",
+                unresolved.len(),
+                hint,
+                unresolved.iter().cloned().collect::<Vec<_>>().join(", ")
+            );
+        }
+
+        let sp = FastaSequenceProvider::new(reader);
         let mut built = 0usize;
         for tr in &mut transcripts {
             if tr.is_coding() {
@@ -1919,6 +1988,10 @@ pub fn run_cache_build(gff3_paths: &[String], fasta_path: Option<&str>, output_p
             }
         }
         eprintln!("Built sequences for {} coding transcripts", built);
+    } else if synonyms_path.is_some() {
+        eprintln!(
+            "Warning: --synonyms has no effect without --fasta; chromosome names are kept as-is from the GFF3."
+        );
     }
 
     fastvep_cache::transcript_cache::save_cache(&transcripts, Path::new(output_path))?;

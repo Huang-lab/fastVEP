@@ -1,4 +1,5 @@
 use anyhow::Result;
+use fastvep_core::chrom_aliases;
 use fastvep_genome::Transcript;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -106,15 +107,28 @@ impl IndexedTranscriptProvider {
     pub fn transcript_count(&self) -> usize {
         self.by_chrom.values().map(|v| v.len()).sum()
     }
+
+    /// Resolve a query chromosome to the stored key, falling back to chr↔bare
+    /// and mitochondrial aliases. Lets a `chr17` VCF match a cache built with
+    /// `17` (and vice versa) instead of silently returning no transcripts.
+    fn resolve_key(&self, chrom: &str) -> Option<&str> {
+        if let Some((k, _)) = self.by_chrom.get_key_value(chrom) {
+            return Some(k.as_ref());
+        }
+        chrom_aliases(chrom)
+            .into_iter()
+            .find_map(|alias| self.by_chrom.get_key_value(alias.as_str()).map(|(k, _)| k.as_ref()))
+    }
 }
 
 impl TranscriptProvider for IndexedTranscriptProvider {
     fn get_transcripts(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<&Transcript>> {
-        let trs = match self.by_chrom.get(chrom) {
-            Some(trs) => trs,
+        let key = match self.resolve_key(chrom) {
+            Some(key) => key,
             None => return Ok(Vec::new()),
         };
-        let sme = &self.suffix_max_end[chrom];
+        let trs = &self.by_chrom[key];
+        let sme = &self.suffix_max_end[key];
 
         // Binary search: find the first transcript whose start > end (query end).
         // All transcripts that could overlap must have start <= end, so they're in [0..upper).
@@ -137,8 +151,8 @@ impl TranscriptProvider for IndexedTranscriptProvider {
     }
 
     fn get_transcripts_by_chrom(&self, chrom: &str) -> Result<Vec<&Transcript>> {
-        match self.by_chrom.get(chrom) {
-            Some(trs) => Ok(trs.iter().collect()),
+        match self.resolve_key(chrom) {
+            Some(key) => Ok(self.by_chrom[key].iter().collect()),
             None => Ok(Vec::new()),
         }
     }
