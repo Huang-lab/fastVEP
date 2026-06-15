@@ -311,6 +311,40 @@ cache with `fastvep cache --gff3 ensembl.gff3 -o combined.cache` once
 per source and pass `--transcript-cache combined.cache` on subsequent
 runs — though GFF3 parsing is fast enough that this is rarely needed.
 
+#### Chromosome naming across sources (`--synonyms`)
+
+Ensembl GFF3/FASTA use bare contig names (`17`), UCSC prefixes `chr`
+(`chr17`), and NCBI RefSeq GFF3 uses accessions (`NC_000017.11`). When
+you build a merged cache against one FASTA, those names must be
+reconciled or sequence-building fails with
+`Chromosome 'NC_000017.11' not found in FASTA index`.
+
+- **`chr` ↔ bare and mitochondrial (`M`/`MT`/`chrM`/`chrMT`) forms resolve
+  automatically** — no configuration needed.
+- **RefSeq accessions need a mapping table.** Pass a VEP-style synonyms
+  file with `--synonyms` (only takes effect together with `--fasta`):
+
+  ```bash
+  fastvep cache \
+    --gff3 Homo_sapiens.GRCh38.115.gff3 \
+    --gff3 GCF_000001405.40_GRCh38.p14_genomic.gff \
+    --fasta GRCh38.fa \
+    --synonyms chr_synonyms.txt \
+    -o combined.cache
+  ```
+
+  The file format matches Ensembl VEP's `chr_synonyms.txt`: one line per
+  contig, whitespace/tab-separated equivalent names
+  (e.g. `17  chr17  NC_000017.11`). Ensembl ships one with each release;
+  you can also generate a two-column map from the NCBI
+  `*_assembly_report.txt` (`Sequence-Name` ↔ `RefSeq-Accn` columns).
+
+Every transcript is **canonicalized to the FASTA's contig names at build
+time**, so the merged cache uses one consistent naming scheme and
+`annotate` matches your VCF regardless of which GFF3 each transcript came
+from. Contigs with no FASTA match are reported in a warning and skipped
+(no sequences built for them).
+
 ## Supplementary Annotation Sources
 
 fastVEP supports direct integration with clinical and population databases through its native fastSA binary format. Build once with `fastvep sa-build`, then use `--sa-dir` to annotate:
@@ -456,6 +490,7 @@ multi-`--gff3` / `LABEL=path` syntax as `annotate`, so a merged Ensembl
 |------|-------------|---------|
 | `--gff3` | GFF3 annotation file(s). Repeatable; each value may be `LABEL=path`. | *required* |
 | `--fasta` | Reference FASTA (for pre-building spliced sequences) | -- |
+| `--synonyms` | VEP-style `chr_synonyms.txt` mapping equivalent contig names (e.g. RefSeq `NC_000017.11` ↔ `17`). Reconciles mixed Ensembl/RefSeq naming against the FASTA. Only effective with `--fasta`. | -- |
 | `-o, --output` | Output cache file path | *required* |
 
 ## Output Formats

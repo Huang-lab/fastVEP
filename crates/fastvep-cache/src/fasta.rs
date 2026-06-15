@@ -1,6 +1,23 @@
 use anyhow::{Context, Result};
+use fastvep_core::{chrom_aliases, looks_like_refseq_accession};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+
+/// Build the "not found" error for a missing contig, adding an actionable
+/// hint when the name looks like an NCBI RefSeq accession (the common cause:
+/// a RefSeq GFF3/VCF queried against an Ensembl/UCSC-named FASTA).
+fn not_found_error(chrom: &str, location: &str) -> anyhow::Error {
+    if looks_like_refseq_accession(chrom) {
+        anyhow::anyhow!(
+            "Chromosome '{chrom}' not found in {location} — it looks like an NCBI RefSeq \
+             accession. Build the cache with a VEP-style synonyms file \
+             (`fastvep cache --synonyms chr_synonyms.txt ...`) to map RefSeq accessions to \
+             your FASTA's contig names."
+        )
+    } else {
+        anyhow::anyhow!("Chromosome '{chrom}' not found in {location}")
+    }
+}
 
 /// Indexed FASTA reader for reference sequence access.
 ///
@@ -63,10 +80,17 @@ impl FastaReader {
     /// Fetch a region as a borrowed slice (1-based, inclusive coordinates).
     /// Zero-allocation since data is already stored uppercase in memory.
     pub fn fetch_slice(&self, chrom: &str, start: u64, end: u64) -> Result<&[u8]> {
-        let seq = self
-            .sequences
-            .get(chrom)
-            .with_context(|| format!("Chromosome '{}' not found in FASTA", chrom))?;
+        // Exact match is the fast path; fall back to chr↔bare / mitochondrial
+        // aliases so a `chr1` query hits a FASTA built with `1` (and vice
+        // versa) without a synonyms file. RefSeq accessions are reconciled
+        // upstream at cache-build time, so they reach here already canonical.
+        let seq = match self.sequences.get(chrom) {
+            Some(seq) => seq,
+            None => chrom_aliases(chrom)
+                .iter()
+                .find_map(|alias| self.sequences.get(alias))
+                .ok_or_else(|| not_found_error(chrom, "FASTA"))?,
+        };
 
         let start_idx = (start.saturating_sub(1)) as usize;
         let end_idx = (end as usize).min(seq.len());
@@ -89,9 +113,12 @@ impl FastaReader {
         self.fetch_slice(chrom, start, end).map(|s| s.to_vec())
     }
 
-    /// Get the length of a chromosome.
+    /// Get the length of a chromosome (with chr↔bare / mito alias fallback).
     pub fn sequence_length(&self, chrom: &str) -> Option<u64> {
-        self.sequences.get(chrom).map(|s| s.len() as u64)
+        chrom_aliases(chrom)
+            .iter()
+            .find_map(|alias| self.sequences.get(alias))
+            .map(|s| s.len() as u64)
     }
 }
 
@@ -126,9 +153,15 @@ impl MmapFastaReader {
 
     #[inline]
     fn get_entry(&self, chrom: &str) -> Result<&FaiEntry> {
-        let idx = self.name_to_idx.get(chrom)
-            .with_context(|| format!("Chromosome '{}' not found in FASTA index", chrom))?;
-        Ok(&self.index[*idx])
+        // Exact match first; fall back to chr↔bare / mitochondrial aliases.
+        let idx = match self.name_to_idx.get(chrom) {
+            Some(idx) => *idx,
+            None => *chrom_aliases(chrom)
+                .iter()
+                .find_map(|alias| self.name_to_idx.get(alias))
+                .ok_or_else(|| not_found_error(chrom, "FASTA index"))?,
+        };
+        Ok(&self.index[idx])
     }
 
     /// Fetch a region as a new Vec (1-based, inclusive coordinates).
@@ -216,10 +249,10 @@ pub fn fetch_with_index<RS: Read + Seek>(
     start: u64,
     end: u64,
 ) -> Result<Vec<u8>> {
-    let entry = fai_entries
+    let entry = chrom_aliases(chrom)
         .iter()
-        .find(|e| e.name == chrom)
-        .with_context(|| format!("Chromosome '{}' not found in FASTA index", chrom))?;
+        .find_map(|alias| fai_entries.iter().find(|e| &e.name == alias))
+        .ok_or_else(|| not_found_error(chrom, "FASTA index"))?;
 
     let start_0 = start.saturating_sub(1);
     let end_0 = (end.min(entry.length)).saturating_sub(1);
@@ -281,6 +314,24 @@ mod tests {
         let fasta = ">chr1\nACGT\n";
         let reader = FastaReader::from_reader(fasta.as_bytes()).unwrap();
         assert!(reader.fetch("chr99", 1, 4).is_err());
+    }
+
+    #[test]
+    fn test_fasta_reader_chr_bare_alias_fallback() {
+        // FASTA uses bare `1`; a `chr1` query should still resolve.
+        let fasta = ">1\nACGTACGT\n";
+        let reader = FastaReader::from_reader(fasta.as_bytes()).unwrap();
+        assert_eq!(reader.fetch("chr1", 1, 4).unwrap(), b"ACGT");
+        assert_eq!(reader.sequence_length("chr1"), Some(8));
+    }
+
+    #[test]
+    fn test_refseq_accession_miss_has_actionable_hint() {
+        let fasta = ">17\nACGT\n";
+        let reader = FastaReader::from_reader(fasta.as_bytes()).unwrap();
+        let err = reader.fetch("NC_000017.11", 1, 4).unwrap_err().to_string();
+        assert!(err.contains("RefSeq"), "missing RefSeq hint: {err}");
+        assert!(err.contains("--synonyms"), "missing --synonyms hint: {err}");
     }
 
     #[test]

@@ -157,6 +157,13 @@ enum Commands {
         #[arg(long)]
         fasta: Option<String>,
 
+        /// VEP-style chromosome synonyms file (e.g. Ensembl `chr_synonyms.txt`):
+        /// one line per contig, whitespace-separated equivalent names. Used to
+        /// reconcile GFF3 seqids (e.g. RefSeq `NC_000017.11`) with the FASTA's
+        /// contig names. Only takes effect together with `--fasta`.
+        #[arg(long)]
+        synonyms: Option<String>,
+
         /// Output cache file path
         #[arg(short, long)]
         output: String,
@@ -270,8 +277,8 @@ fn main() -> Result<()> {
                 qc_rules,
             })?;
         }
-        Commands::Cache { gff3, fasta, output } => {
-            pipeline::run_cache_build(&gff3, fasta.as_deref(), &output)?;
+        Commands::Cache { gff3, fasta, synonyms, output } => {
+            pipeline::run_cache_build(&gff3, fasta.as_deref(), synonyms.as_deref(), &output)?;
         }
         Commands::Web { port, gff3, fasta } => {
             webserver::run_server(port, gff3, fasta)?;

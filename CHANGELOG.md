@@ -3,6 +3,30 @@
 All notable changes to fastVEP will be documented in this file. Dates are
 ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- `fastvep cache --synonyms <chr_synonyms.txt>`: VEP-style chromosome
+  synonym support, so a merged Ensembl + RefSeq cache built against a
+  single FASTA reconciles accession seqids (`NC_000017.11`) with the
+  FASTA's contig names (`17`). Transcripts are canonicalized to the FASTA
+  naming at build time, so the merged cache uses one consistent scheme and
+  `annotate` matches a VCF regardless of which GFF3 a transcript came from.
+  Resolves issue #47.
+
+### Changed
+
+- Cache build and FASTA lookups now resolve `chr` ↔ bare and
+  mitochondrial (`M`/`MT`/`chrM`/`chrMT`) contig aliases automatically
+  (no synonyms file needed). `IndexedTranscriptProvider` applies the same
+  aliasing at query time, so a `chr17` VCF matches a `17` cache.
+- The "Chromosome … not found in FASTA index" error now suggests
+  `--synonyms` when the missing name looks like a RefSeq accession.
+- `chrom_aliases()` moved to `fastvep-core` (re-exported from
+  `fastvep-sa::common`) so the cache builder and SA readers share one
+  implementation.
+
 ## [0.2.0] — 2026-06-10
 
 This release accumulates ~55 commits since v0.1.0, headlined by an
