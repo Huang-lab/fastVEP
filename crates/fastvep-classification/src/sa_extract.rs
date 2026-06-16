@@ -58,6 +58,14 @@ pub struct ClinvarData {
     pub phenotypes: Option<Vec<String>>,
     #[serde(rename = "variantClass")]
     pub variant_class: Option<String>,
+    /// ClinVar-distributed population allele frequencies (ExAC / 1000G / ESP).
+    /// Absent in caches built before these were emitted → `None`.
+    #[serde(rename = "afExac")]
+    pub af_exac: Option<f64>,
+    #[serde(rename = "afTgp")]
+    pub af_tgp: Option<f64>,
+    #[serde(rename = "afEsp")]
+    pub af_esp: Option<f64>,
 }
 
 impl ClinvarData {
@@ -79,6 +87,17 @@ impl ClinvarData {
                 lower.contains("benign") && !lower.contains("conflicting")
             })
         })
+    }
+
+    /// Maximum of the ClinVar-distributed population allele frequencies
+    /// (ExAC / 1000G / ESP). `None` when none are present (e.g. caches built
+    /// before these fields were emitted). Used as a PM2 frequency backstop
+    /// when gnomAD has no record at the variant.
+    pub fn max_pop_af(&self) -> Option<f64> {
+        [self.af_exac, self.af_tgp, self.af_esp]
+            .into_iter()
+            .flatten()
+            .reduce(f64::max)
     }
 
     /// Returns the review star level (0-4).
@@ -382,6 +401,7 @@ pub fn extract_classification_input(
     amino_acids: Option<&(String, String)>,
     protein_position: Option<u64>,
     hgvs_c: Option<&str>,
+    exon: Option<(u32, u32)>,
     allele_supplementary: &[(String, String)],
     gene_annotations: &[&GeneAnnotation],
     variant_supplementary: &[SupplementaryAnnotation],
@@ -486,6 +506,19 @@ pub fn extract_classification_input(
         if has_repeat { Some(true) } else { None }
     };
 
+    // ── PVS1 / BP7 decision-tree signals derived from data the pipeline
+    // already computes (exon rank/total + HGVS c. notation). ────────────────
+    // `is_last_exon`: the variant sits in the 3'-most exon (rank == total).
+    let is_last_exon = exon.and_then(|(rank, total)| (total > 0).then_some(rank == total));
+    // `intronic_offset`: distance from the nearest exon boundary, parsed from
+    // the HGVS `+N`/`-N` token. None for purely exonic variants.
+    let intronic_offset = hgvs_c.and_then(parse_intronic_offset);
+    // `predicted_nmd`: conservative proxy — a premature termination escapes NMD
+    // only in the last exon. (The penultimate-exon last-50nt escape window is
+    // not modeled here; such PTCs stay NMD-competent, i.e. conservative toward
+    // keeping PVS1 at Very Strong.) Only consulted by PVS1 for null variants.
+    let predicted_nmd = is_last_exon.map(|last| !last);
+
     ClassificationInput {
         consequences: consequences.to_vec(),
         impact,
@@ -508,26 +541,70 @@ pub fn extract_classification_input(
         // didn't pass `--hgvs` — this stays `None` and BA1 falls back to its
         // default behavior (no exception-list lookup).
         hgvs_c: hgvs_c.map(|s| s.to_string()),
-        // PVS1 decision-tree signals — populated once the pipeline plumbing
-        // (transcript exon coords + ClinVar protein index) lands. Until
-        // then, PVS1 falls back to its legacy binary rule.
-        predicted_nmd: None,
+        // PVS1 decision-tree signals. `is_last_exon` / `predicted_nmd` /
+        // `intronic_offset` are now derived above from the exon rank/total and
+        // HGVS c. notation the pipeline already produces. The remaining finer
+        // signals (truncation %, critical region, alt-start distance, PS1
+        // splice catalog) await dedicated plumbing; until then PVS1 uses the
+        // conservative defaults (last-exon → Moderate, else legacy fallback).
+        predicted_nmd,
         protein_truncation_pct: None,
-        is_last_exon: None,
+        is_last_exon,
         in_critical_region: None,
         alt_start_codon_distance: None,
         same_splice_position_pathogenic: None,
         in_repeat_region,
-        // BP7 exon-edge / deep-intronic signals (Walker 2023). The pipeline
-        // populates these once per-transcript exon coordinates are wired in;
-        // until then they remain None and BP7 falls back to legacy behavior.
+        // BP7 exon-edge / deep-intronic signals (Walker 2023). `intronic_offset`
+        // is derived above; `at_exon_edge` awaits exon-coordinate plumbing and
+        // stays None (BP7 exon-edge exclusion falls back to legacy behavior).
         at_exon_edge: None,
-        intronic_offset: None,
+        intronic_offset,
         proband_genotype,
         mother_genotype,
         father_genotype,
         companion_variants,
     }
+}
+
+/// Extract the intronic offset (distance from the nearest exon boundary) from
+/// an HGVS c./n. string.
+///
+/// The offset is the HGVS `+N` / `-N` token that *follows* the CDS position
+/// number, so it is always immediately preceded by a digit. That distinguishes
+/// it from the leading sign of a UTR position (`c.-23…`, where the `-` is
+/// preceded by `.`) and from transcript-version dots (`ENST….7:c.…`). For range
+/// variants (e.g. `c.4001+12_4001+15del`) the endpoint nearest the boundary
+/// (smallest |offset|) is returned. Returns `None` for purely exonic variants
+/// (no such token) — e.g. `c.5098G>C`, `c.*1411T>A`.
+fn parse_intronic_offset(hgvs_c: &str) -> Option<i64> {
+    let bytes = hgvs_c.as_bytes();
+    let mut best: Option<i64> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if (b == b'+' || b == b'-') && i > 0 && bytes[i - 1].is_ascii_digit() {
+            let sign = if b == b'-' { -1i64 } else { 1i64 };
+            let mut j = i + 1;
+            let mut val: i64 = 0;
+            let mut any = false;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                val = val.saturating_mul(10).saturating_add((bytes[j] - b'0') as i64);
+                any = true;
+                j += 1;
+            }
+            if any {
+                let off = sign * val;
+                best = Some(match best {
+                    Some(prev) if prev.abs() <= off.abs() => prev,
+                    _ => off,
+                });
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    best
 }
 
 #[cfg(test)]
@@ -661,5 +738,36 @@ mod tests {
         let c: ClinvarData = serde_json::from_str(json).unwrap();
         assert!(c.has_pathogenic());
         assert_eq!(c.review_stars(), 2);
+        // No AF keys → max_pop_af is None (back-compat with old caches).
+        assert_eq!(c.max_pop_af(), None);
+    }
+
+    #[test]
+    fn test_clinvar_population_af_parsing() {
+        let json = r#"{"significance":["Pathogenic"],"afExac":0.0113,"afEsp":0.002}"#;
+        let c: ClinvarData = serde_json::from_str(json).unwrap();
+        assert_eq!(c.af_exac, Some(0.0113));
+        assert_eq!(c.af_esp, Some(0.002));
+        assert_eq!(c.af_tgp, None);
+        assert_eq!(c.max_pop_af(), Some(0.0113));
+    }
+
+    #[test]
+    fn test_parse_intronic_offset() {
+        // Exonic substitution / UTR → no offset.
+        assert_eq!(parse_intronic_offset("ENST00000272371.7:c.5098G>C"), None);
+        assert_eq!(parse_intronic_offset("c.*1411T>A"), None);
+        // Canonical splice positions.
+        assert_eq!(parse_intronic_offset("c.964+1G>A"), Some(1));
+        assert_eq!(parse_intronic_offset("ENST00000378156.9:c.2818-2A>."), Some(-2));
+        // Deep-intronic single position.
+        assert_eq!(parse_intronic_offset("c.4001+12_4001+15del"), Some(12));
+        assert_eq!(parse_intronic_offset("n.162-24414C>T"), Some(-24414));
+        // Range spanning the boundary → nearest endpoint (smallest |offset|).
+        assert_eq!(parse_intronic_offset("c.366-1_366+2dup"), Some(-1));
+        assert_eq!(parse_intronic_offset("c.541-30_541-2dup"), Some(-2));
+        // UTR position sign must not be mistaken for an offset.
+        assert_eq!(parse_intronic_offset("c.-23+1G>A"), Some(1));
+        assert_eq!(parse_intronic_offset("c.-23-1G>A"), Some(-1));
     }
 }

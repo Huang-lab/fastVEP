@@ -250,14 +250,38 @@ fn evaluate_pm2(
         // flag in that case (or load gnomAD) to avoid firing PM2 globally.
         details.insert("gnomad_allAf".into(), serde_json::Value::Null);
         details.insert("pm2_absent_when_no_record".into(), serde_json::json!(true));
-        (
-            true,
-            true,
-            format!(
-                "Absent in gnomAD: no record at this position/allele (inheritance={}, treating as absent per pm2_absent_when_no_record)",
-                inheritance_basis
+
+        // Frequency backstop: even without a gnomAD record, ClinVar ships
+        // ExAC / 1000G / ESP allele frequencies. When those show the variant
+        // is not extremely rare, the "absent" assumption is wrong — do not
+        // fire PM2. This catches common variants that silently fail to match
+        // gnomAD (e.g. indels: GIGYF2, NOTCH2; or coverage gaps: ASPM,
+        // TOR1AIP1) in the ClinVar 2★+ benchmark. The bar is the PM2 rarity
+        // threshold, floored at the AR "extremely rare" cutoff so the AD
+        // strict-absence case (threshold 0.0) doesn't reject on noise.
+        let crosscheck_cutoff = threshold.max(config.pm2_ar_af_threshold);
+        let clinvar_pop_af = input.clinvar.as_ref().and_then(|c| c.max_pop_af());
+        if let Some(af) = clinvar_pop_af {
+            details.insert("clinvar_max_pop_af".into(), serde_json::json!(af));
+        }
+        match clinvar_pop_af {
+            Some(af) if af > crosscheck_cutoff => (
+                false,
+                true,
+                format!(
+                    "No gnomAD record, but ClinVar population AF={:.6} exceeds the PM2 rarity bar ({:.6}); not treated as absent (inheritance={})",
+                    af, crosscheck_cutoff, inheritance_basis
+                ),
             ),
-        )
+            _ => (
+                true,
+                true,
+                format!(
+                    "Absent in gnomAD: no record at this position/allele (inheritance={}, treating as absent per pm2_absent_when_no_record)",
+                    inheritance_basis
+                ),
+            ),
+        }
     } else {
         // Strict-coverage stance: cannot distinguish "absent from gnomAD"
         // from "gnomAD .osa not loaded for this region". Mark NotEvaluated.
@@ -774,7 +798,7 @@ fn evaluate_pm6(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sa_extract::{GnomadData, OmimData};
+    use crate::sa_extract::{ClinvarData, GnomadData, OmimData};
     use fastvep_core::Impact;
 
     fn make_input(
@@ -825,6 +849,33 @@ mod tests {
         assert!(result.met);
         assert!(result.evaluated);
         assert!(result.summary.contains("Absent in gnomAD"));
+    }
+
+    #[test]
+    fn test_pm2_no_gnomad_record_suppressed_by_common_clinvar_af() {
+        // Backstop: no gnomAD record, but ClinVar ships a population AF showing
+        // the variant is common (e.g. an indel that failed to match gnomAD, or
+        // a coverage gap like ASPM/TOR1AIP1). PM2 must NOT fire.
+        let mut input = make_input(vec![Consequence::MissenseVariant], None);
+        input.clinvar = Some(ClinvarData {
+            af_tgp: Some(0.0113),
+            ..Default::default()
+        });
+        let result = evaluate_pm2(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(result.summary.contains("ClinVar population AF"));
+    }
+
+    #[test]
+    fn test_pm2_no_gnomad_record_still_fires_when_clinvar_af_rare() {
+        // A ClinVar AF below the rarity bar does not block PM2.
+        let mut input = make_input(vec![Consequence::MissenseVariant], None);
+        input.clinvar = Some(ClinvarData {
+            af_tgp: Some(0.00001),
+            ..Default::default()
+        });
+        let result = evaluate_pm2(&input, &AcmgConfig::default());
+        assert!(result.met);
     }
 
     #[test]

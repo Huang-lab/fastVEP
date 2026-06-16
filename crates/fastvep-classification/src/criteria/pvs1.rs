@@ -32,7 +32,7 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
         serde_json::json!(null_kind.as_ref().map(|k| k.label()).unwrap_or("none")),
     );
 
-    let Some(kind) = null_kind else {
+    let Some(mut kind) = null_kind else {
         return mk(
             "PVS1".to_string(),
             EvidenceStrength::VeryStrong,
@@ -64,6 +64,46 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
             format!("Null variant but gene {} is not established as LOF-intolerant", gene),
             details,
         );
+    }
+
+    // Canonical-splice offset gate (Abou Tayoun 2018 / Walker 2023): PVS1's
+    // splice track applies only to the canonical ±1/±2 dinucleotide. When the
+    // pipeline provides an intronic offset that falls outside ±2, the variant
+    // is not a canonical null splice variant — it was labeled splice_donor /
+    // splice_acceptor by an indel spanning the region or by a deep-intronic
+    // call. In that case PVS1's splice track does not apply. But if the same
+    // indel ALSO deletes coding sequence (frameshift / nonsense) or hits the
+    // start codon, PVS1 still applies via that null track — re-grade as such
+    // rather than discarding genuine LOF evidence. Only when there is no
+    // coding-null consequence is PVS1 dropped entirely (defer to SpliceAI/PP3).
+    if matches!(kind, NullKind::CanonicalSplice) {
+        if let Some(offset) = input.intronic_offset {
+            details.insert("intronic_offset".into(), serde_json::json!(offset));
+            if offset.abs() > 2 {
+                match NullKind::detect_non_splice(&input.consequences) {
+                    Some(coding_null) => {
+                        details.insert(
+                            "splice_offset_regraded_to".into(),
+                            serde_json::json!(coding_null.label()),
+                        );
+                        kind = coding_null;
+                    }
+                    None => {
+                        return mk(
+                            "PVS1".to_string(),
+                            EvidenceStrength::VeryStrong,
+                            false,
+                            true,
+                            format!(
+                                "Splice consequence at intronic offset {:+} is outside the canonical ±1/±2 dinucleotide and no coding-null consequence is present → PVS1 not applicable (defer to SpliceAI/PP3)",
+                                offset
+                            ),
+                            details,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     let (strength, summary) = match kind {
@@ -107,6 +147,32 @@ impl NullKind {
                 Consequence::SpliceAcceptorVariant | Consequence::SpliceDonorVariant => {
                     Some(Self::CanonicalSplice)
                 }
+                Consequence::StopGained | Consequence::FrameshiftVariant => {
+                    Some(Self::NonsenseOrFrameshift)
+                }
+                Consequence::StartLost => Some(Self::StartLost),
+                _ => None,
+            };
+            if let Some(k) = kind {
+                best = Some(match best {
+                    None => k,
+                    Some(prev) if k.severity_rank() > prev.severity_rank() => k,
+                    Some(prev) => prev,
+                });
+            }
+        }
+        best
+    }
+
+    /// Detect the most severe NON-splice null kind (whole-gene deletion,
+    /// nonsense/frameshift, start-lost). Used when a non-canonical splice
+    /// offset disqualifies the splice track but a co-occurring coding-null
+    /// consequence still justifies PVS1.
+    fn detect_non_splice(cs: &[Consequence]) -> Option<Self> {
+        let mut best: Option<Self> = None;
+        for c in cs {
+            let kind = match c {
+                Consequence::TranscriptAblation => Some(Self::WholeGeneDeletion),
                 Consequence::StopGained | Consequence::FrameshiftVariant => {
                     Some(Self::NonsenseOrFrameshift)
                 }
@@ -181,6 +247,10 @@ fn grade_nonsense_frameshift(
                     "NMD-escape in non-critical region, only {:.0}% of protein removed (<10%) → PVS1_Supporting",
                     p * 100.0
                 ),
+            ),
+            _ if input.is_last_exon == Some(true) => (
+                EvidenceStrength::Moderate,
+                "NMD-escape PTC in last exon; truncation magnitude unknown → PVS1_Moderate (conservative)".to_string(),
             ),
             _ => (
                 EvidenceStrength::VeryStrong,
@@ -407,6 +477,70 @@ mod tests {
         );
         let result = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(result.met); // OMIM disease association is proxy for LOF gene
+    }
+
+    #[test]
+    fn test_pvs1_canonical_splice_deep_offset_not_applicable() {
+        // splice_donor/acceptor consequence but the HGVS offset is beyond ±2
+        // (e.g. an indel spanning into the intron, c.4001+12_4001+15del). PVS1
+        // must not fire — splicing signal is left to SpliceAI/PP3.
+        let mut input = make_input(
+            vec![Consequence::SpliceDonorVariant],
+            Some(GnomadGeneData { pli: Some(1.0), loeuf: Some(0.03), ..Default::default() }),
+            None,
+        );
+        input.intronic_offset = Some(12);
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.summary.contains("canonical ±1/±2"));
+    }
+
+    #[test]
+    fn test_pvs1_canonical_splice_within_2_still_fires() {
+        // Canonical ±1/2 splice (offset = -2) keeps PVS1.
+        let mut input = make_input(
+            vec![Consequence::SpliceAcceptorVariant],
+            Some(GnomadGeneData { pli: Some(1.0), loeuf: Some(0.03), ..Default::default() }),
+            None,
+        );
+        input.intronic_offset = Some(-2);
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met);
+        assert_eq!(r.strength, EvidenceStrength::VeryStrong);
+    }
+
+    #[test]
+    fn test_pvs1_deep_offset_with_coding_frameshift_still_fires() {
+        // An indel called BOTH splice_donor (deep offset >2, e.g. an exon→intron
+        // deletion) AND frameshift must keep PVS1 via the frameshift track — the
+        // genuine coding LOF must not be discarded by the splice offset gate.
+        let mut input = make_input(
+            vec![Consequence::SpliceDonorVariant, Consequence::FrameshiftVariant],
+            Some(GnomadGeneData { pli: Some(1.0), loeuf: Some(0.03), ..Default::default() }),
+            None,
+        );
+        input.intronic_offset = Some(7); // outside canonical ±1/±2
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met, "frameshift LOF should keep PVS1 despite deep splice offset");
+        // No NMD/grading signals → frameshift legacy fallback → Very Strong.
+        assert_eq!(r.strength, EvidenceStrength::VeryStrong);
+    }
+
+    #[test]
+    fn test_pvs1_last_exon_nonsense_downgraded_to_moderate() {
+        // A PTC in the last exon escapes NMD; with no finer truncation signals
+        // it downgrades to PVS1_Moderate instead of the legacy Very Strong.
+        let mut input = make_input(
+            vec![Consequence::StopGained],
+            Some(GnomadGeneData { pli: Some(1.0), loeuf: Some(0.03), ..Default::default() }),
+            None,
+        );
+        input.predicted_nmd = Some(false);
+        input.is_last_exon = Some(true);
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met);
+        assert_eq!(r.strength, EvidenceStrength::Moderate);
+        assert_eq!(r.code, "PVS1_Moderate");
     }
 
     // ── Abou Tayoun 2018 decision-tree tests ────────────────────────────

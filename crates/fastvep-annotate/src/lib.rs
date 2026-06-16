@@ -595,6 +595,17 @@ impl AnnotationContext {
             if !self.sa_providers.is_empty() {
                 let chrom = &vf.position.chromosome;
                 let ref_str = vf.ref_allele.to_string();
+                // gnomAD stores left-aligned, parsimonious alleles; normalize the
+                // query to its minimal representation so indels (especially in
+                // repeats) match instead of silently missing — which otherwise
+                // makes PM2 misfire on common variants. Only when a reference and
+                // a gnomAD provider are present; applied only to the gnomAD lookup
+                // (every other source keeps the existing query unchanged).
+                let has_gnomad = self.seq_provider.is_some()
+                    && self
+                        .sa_providers
+                        .iter()
+                        .any(|sa| sa.lock().unwrap().json_key() == "gnomad");
                 let mut allele_results: std::collections::HashMap<
                     String,
                     Vec<(String, String)>,
@@ -605,15 +616,35 @@ impl AnnotationContext {
                         if allele_results.contains_key(&alt_str) {
                             continue;
                         }
+                        let gnomad_norm = if has_gnomad {
+                            self.seq_provider.as_ref().map(|sp| {
+                                fastvep_cache::normalize::normalize_variant(
+                                    &**sp,
+                                    chrom,
+                                    vf.position.start,
+                                    &ref_str,
+                                    &alt_str,
+                                )
+                            })
+                        } else {
+                            None
+                        };
                         let mut results: Vec<(String, String)> = Vec::new();
                         for sa in &self.sa_providers {
                             let sa_guard = sa.lock().unwrap();
-                            if let Ok(Some(ann)) = sa_guard.annotate_position(
-                                chrom,
-                                vf.position.start,
-                                &ref_str,
-                                &alt_str,
-                            ) {
+                            let (q_pos, q_ref, q_alt) = if sa_guard.json_key() == "gnomad" {
+                                match &gnomad_norm {
+                                    Some(n) => {
+                                        (n.pos, n.ref_allele.as_str(), n.alt_allele.as_str())
+                                    }
+                                    None => (vf.position.start, ref_str.as_str(), alt_str.as_str()),
+                                }
+                            } else {
+                                (vf.position.start, ref_str.as_str(), alt_str.as_str())
+                            };
+                            if let Ok(Some(ann)) =
+                                sa_guard.annotate_position(chrom, q_pos, q_ref, q_alt)
+                            {
                                 let json_str = match ann {
                                     AnnotationValue::Json(j) => j,
                                     AnnotationValue::Positional(j) => j,
@@ -681,6 +712,7 @@ impl AnnotationContext {
                                 aa.amino_acids.as_ref(),
                                 aa.protein_position.map(|(s, _)| s),
                                 aa.hgvsc.as_deref(),
+                                aa.exon,
                                 &aa.supplementary,
                                 &gene_anns,
                                 &vf.supplementary_annotations,
@@ -1124,6 +1156,7 @@ fn enrich_compound_het(
                 aa.amino_acids.as_ref(),
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
+                aa.exon,
                 &aa.supplementary,
                 &gene_anns,
                 &vf.supplementary_annotations,

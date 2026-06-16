@@ -2,6 +2,7 @@ pub mod annotation;
 pub mod gff;
 pub mod fasta;
 pub mod info;
+pub mod normalize;
 pub mod providers;
 pub mod regulatory;
 pub mod transcript_cache;

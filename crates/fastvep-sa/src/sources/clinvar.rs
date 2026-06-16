@@ -52,6 +52,11 @@ pub fn parse_clinvar_vcf<R: BufRead>(
         let clndn = info_map.get("CLNDN").cloned().unwrap_or_default();
         let clnacc = info_map.get("CLNVC").cloned(); // variant class
         let clnid = info_map.get("CLNVCSO").cloned(); // SO accession
+        // ClinVar-distributed population allele frequencies (ExAC / 1000G / ESP).
+        // Used as a frequency backstop by PM2 when gnomAD has no record.
+        let af_exac = info_map.get("AF_EXAC").and_then(|s| s.parse::<f64>().ok());
+        let af_tgp = info_map.get("AF_TGP").and_then(|s| s.parse::<f64>().ok());
+        let af_esp = info_map.get("AF_ESP").and_then(|s| s.parse::<f64>().ok());
 
         // Handle multi-allelic: each ALT gets its own record
         for alt in alt_field.split(',') {
@@ -59,7 +64,16 @@ pub fn parse_clinvar_vcf<R: BufRead>(
                 continue;
             }
 
-            let json = build_clinvar_json(&clnsig, &clnrevstat, &clndn, clnacc.as_deref(), clnid.as_deref());
+            let json = build_clinvar_json(
+                &clnsig,
+                &clnrevstat,
+                &clndn,
+                clnacc.as_deref(),
+                clnid.as_deref(),
+                af_exac,
+                af_tgp,
+                af_esp,
+            );
 
             records.push(AnnotationRecord {
                 chrom_idx,
@@ -77,12 +91,16 @@ pub fn parse_clinvar_vcf<R: BufRead>(
     Ok(records)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_clinvar_json(
     clnsig: &str,
     clnrevstat: &str,
     clndn: &str,
     clnvc: Option<&str>,
     clnvcso: Option<&str>,
+    af_exac: Option<f64>,
+    af_tgp: Option<f64>,
+    af_esp: Option<f64>,
 ) -> String {
     let mut parts = Vec::new();
 
@@ -118,6 +136,18 @@ fn build_clinvar_json(
 
     if let Some(vcso) = clnvcso {
         parts.push(format!("\"soAccession\":\"{}\"", escape_json(vcso)));
+    }
+
+    // Population AFs are finite floats (parsed via f64::from_str); Display emits
+    // plain decimal JSON numbers (never NaN/inf), so this stays valid JSON.
+    if let Some(af) = af_exac {
+        parts.push(format!("\"afExac\":{}", af));
+    }
+    if let Some(af) = af_tgp {
+        parts.push(format!("\"afTgp\":{}", af));
+    }
+    if let Some(af) = af_esp {
+        parts.push(format!("\"afEsp\":{}", af));
     }
 
     format!("{{{}}}", parts.join(","))
@@ -179,5 +209,29 @@ mod tests {
         assert!(records[1].json.contains("Benign"));
         // "not_provided" should be filtered out
         assert!(!records[1].json.contains("phenotypes"));
+    }
+
+    #[test]
+    fn test_parse_clinvar_population_af() {
+        // ExAC / 1000G / ESP allele frequencies are emitted as numeric JSON
+        // (afExac / afTgp / afEsp) for the PM2 frequency backstop. Variants
+        // without these INFO keys must not emit the keys at all.
+        let vcf = "\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+1\t12345\trs1\tA\tG\t.\t.\tCLNSIG=Pathogenic;AF_EXAC=0.00054;AF_TGP=0.0016
+1\t67890\trs2\tC\tT\t.\t.\tCLNSIG=Pathogenic
+";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".to_string(), 0u16);
+
+        let records = parse_clinvar_vcf(vcf.as_bytes(), &chrom_map).unwrap();
+        assert_eq!(records.len(), 2);
+        assert!(records[0].json.contains("\"afExac\":0.00054"));
+        assert!(records[0].json.contains("\"afTgp\":0.0016"));
+        assert!(!records[0].json.contains("afEsp"));
+        // No AF INFO at all → no AF keys emitted.
+        assert!(!records[1].json.contains("afExac"));
+        assert!(!records[1].json.contains("afTgp"));
+        assert!(!records[1].json.contains("afEsp"));
     }
 }
