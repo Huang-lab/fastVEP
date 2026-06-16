@@ -378,11 +378,34 @@ fn evaluate_bp4(
                 | Consequence::SpliceAcceptorVariant
         )
     });
+    // Walker 2023 BP4-splice applies only where splicing is plausibly the
+    // question. A deep-exonic missense whose predicted effect is the
+    // amino-acid change is assessed by REVEL, not SpliceAI: a low SpliceAI
+    // score there is NOT benign evidence. Without this gate, every missense
+    // with SpliceAI≈0 collected a spurious BP4 even when REVEL was clearly
+    // pathogenic — e.g. OTOF p.Glu1700Gln (REVEL 0.85), RERE p.Pro1049Leu
+    // (REVEL 0.9988). A missense that also overlaps a splice region stays
+    // splice-assessable.
+    let overlaps_splice_region = input.consequences.iter().any(|c| {
+        matches!(
+            c,
+            Consequence::SpliceRegionVariant | Consequence::SplicePolypyrimidineTractVariant
+        )
+    });
+    let missense_outside_splice_region = is_missense && !overlaps_splice_region;
     let splice_supporting = if is_pvs1_territory {
         details.insert(
             "splice_skipped_reason".into(),
             serde_json::json!(
                 "BP4 splice does not apply to PVS1-territory consequences (frameshift / stop_gained / start_lost / transcript_ablation / canonical splice donor or acceptor)"
+            ),
+        );
+        false
+    } else if missense_outside_splice_region {
+        details.insert(
+            "splice_skipped_reason".into(),
+            serde_json::json!(
+                "BP4 splice does not apply to a missense variant outside a splice region; computational benign evidence for missense comes from REVEL only (Walker 2023 / Pejaver 2022)"
             ),
         );
         false
@@ -825,6 +848,45 @@ mod tests {
         );
         let result = evaluate_bp4(&input, &AcmgConfig::default());
         assert!(!result.met);
+    }
+
+    #[test]
+    fn test_bp4_missense_low_spliceai_no_splice_region_not_met() {
+        // The core bug fix: a deep-exonic missense with SpliceAI=0 and no REVEL
+        // must NOT collect BP4 from the splice path (its predicted effect is the
+        // amino-acid change). Previously fired on pathogenic missense with high
+        // REVEL (e.g. OTOF, RERE) because SpliceAI was ~0.
+        let input = make_input(
+            vec![Consequence::MissenseVariant],
+            None,
+            Some(0.0),
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(result
+            .details
+            .get("splice_skipped_reason")
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("missense"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn test_bp4_missense_in_splice_region_low_spliceai_still_fires() {
+        // A missense that ALSO overlaps a splice region is splice-assessable, so
+        // a low SpliceAI score still yields BP4 Supporting (Walker 2023).
+        let input = make_input(
+            vec![Consequence::MissenseVariant, Consequence::SpliceRegionVariant],
+            None,
+            Some(0.0),
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(result.met);
+        assert_eq!(result.strength, EvidenceStrength::Supporting);
     }
 
     #[test]

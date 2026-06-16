@@ -1185,10 +1185,41 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                     allele_key.clone(),
                                 )
                             });
+                        // gnomAD stores left-aligned, parsimonious alleles; the
+                        // raw input representation can differ for indels (esp.
+                        // in repeats), silently missing the match and making
+                        // PM2 misfire on common variants. Normalize the query to
+                        // gnomAD's minimal representation — only when a gnomAD
+                        // provider and a reference are present, and applied only
+                        // to the gnomAD lookup (other sources keep the raw key).
+                        let gnomad_norm = if seq_provider.is_some()
+                            && sa_providers.iter().any(|sa| sa.json_key() == "gnomad")
+                        {
+                            seq_provider.as_ref().map(|sp| {
+                                fastvep_cache::normalize::normalize_variant(
+                                    &**sp,
+                                    chrom,
+                                    query_pos,
+                                    &ref_str,
+                                    &alt_str,
+                                )
+                            })
+                        } else {
+                            None
+                        };
                         let mut results: Vec<(String, String)> = Vec::new();
                         for sa in &sa_providers {
                             let (sa_pos, sa_ref, sa_alt) = if sa.metadata().match_by_allele {
-                                (query_pos, ref_str.as_str(), alt_str.as_str())
+                                if sa.json_key() == "gnomad" {
+                                    match &gnomad_norm {
+                                        Some(n) => {
+                                            (n.pos, n.ref_allele.as_str(), n.alt_allele.as_str())
+                                        }
+                                        None => (query_pos, ref_str.as_str(), alt_str.as_str()),
+                                    }
+                                } else {
+                                    (query_pos, ref_str.as_str(), alt_str.as_str())
+                                }
                             } else {
                                 (vf.position.start, "", "")
                             };
@@ -1262,6 +1293,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                 aa.amino_acids.as_ref(),
                                 aa.protein_position.map(|(s, _)| s),
                                 aa.hgvsc.as_deref(),
+                                aa.exon,
                                 &aa.supplementary,
                                 &gene_anns,
                                 &vf.supplementary_annotations,
@@ -1665,6 +1697,7 @@ fn enrich_compound_het_batch(
                 aa.amino_acids.as_ref(),
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
+                aa.exon,
                 &aa.supplementary,
                 &gene_anns,
                 &vf.supplementary_annotations,
