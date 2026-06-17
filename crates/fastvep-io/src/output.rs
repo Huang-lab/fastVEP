@@ -352,6 +352,14 @@ const GNOMAD_FIELDS: &[(&str, &str)] = &[
     ("OTH_AF", "othAf"),
     ("REMAINING_AF", "remainingAf"),
     ("SAS_AF", "sasAf"),
+    // ACMG-relevant fields: group-max AF + ancestry, filtering AF, FILTER
+    // status. Appended (never reordered) — VCF/tab consumers read by position.
+    // Per-pop nhomalt, sex AF, and region flags stay JSON-only by design.
+    ("GRPMAX_AF", "grpmaxAf"),
+    ("GRPMAX_GROUP", "grpmaxGroup"),
+    ("FAF95", "faf95"),
+    ("FAF99", "faf99"),
+    ("FILTER", "filter"),
 ];
 const DBSNP_FIELDS: &[(&str, &str)] = &[("ID", "id"), ("GLOBAL_MAF", "globalMaf")];
 const COSMIC_FIELDS: &[(&str, &str)] = &[("ID", "id"), ("GENE", "gene"), ("COUNT", "count")];
@@ -388,7 +396,7 @@ const VCF_PROJECTION_SPECS: &[VcfProjectionSpec] = &[
     VcfProjectionSpec {
         json_key: "gnomad",
         info_id: "FV_GNOMAD",
-        description: "fastVEP gnomAD annotations. Format: ALLELE|ALL_AF|ALL_AC|ALL_AN|ALL_HC|AFR_AF|AMR_AF|ASJ_AF|EAS_AF|FIN_AF|MID_AF|NFE_AF|OTH_AF|REMAINING_AF|SAS_AF",
+        description: "fastVEP gnomAD annotations. Format: ALLELE|ALL_AF|ALL_AC|ALL_AN|ALL_HC|AFR_AF|AMR_AF|ASJ_AF|EAS_AF|FIN_AF|MID_AF|NFE_AF|OTH_AF|REMAINING_AF|SAS_AF|GRPMAX_AF|GRPMAX_GROUP|FAF95|FAF99|FILTER",
         fields: GNOMAD_FIELDS,
         kind: VcfProjectionKind::AlleleObject,
     },

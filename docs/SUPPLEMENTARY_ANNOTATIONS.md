@@ -81,7 +81,7 @@ lead with the **gene symbol**.
 ### Allele-level
 
 - `FV_CLINVAR`: `ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION`
-- `FV_GNOMAD`: `ALLELE|ALL_AF|ALL_AC|ALL_AN|ALL_HC|AFR_AF|AMR_AF|ASJ_AF|EAS_AF|FIN_AF|MID_AF|NFE_AF|OTH_AF|REMAINING_AF|SAS_AF`
+- `FV_GNOMAD`: `ALLELE|ALL_AF|ALL_AC|ALL_AN|ALL_HC|AFR_AF|AMR_AF|ASJ_AF|EAS_AF|FIN_AF|MID_AF|NFE_AF|OTH_AF|REMAINING_AF|SAS_AF|GRPMAX_AF|GRPMAX_GROUP|FAF95|FAF99|FILTER` — `GRPMAX_AF`/`GRPMAX_GROUP` are the group-max AF and its ancestry group; `FAF95`/`FAF99` are the grpmax filtering AF (Poisson 95%/99% CI, ClinGen-recommended for BA1/BS1); `FILTER` is the verbatim gnomAD FILTER, present only when not PASS. Per-population AC/AN/nhomalt, sex-stratified AF, and joint region flags are emitted in **JSON only**.
 - `FV_DBSNP`: `ALLELE|ID|GLOBAL_MAF`
 - `FV_COSMIC`: `ALLELE|ID|GENE|COUNT`
 - `FV_1KG`: `ALLELE|ALL_AF|AFR_AF|AMR_AF|EAS_AF|EUR_AF|SAS_AF`
@@ -146,6 +146,29 @@ structured object.
   JSON key (`clinvar`, `dbnsfp`, …) on the relevant transcript consequence
   (allele-level) or under the variant's `genes` map (gene-level). JSON
   output is the richest projection; VCF and tab are flattened views.
+
+## Field naming differs by output format
+
+A field has **one canonical name** — the camelCase JSON key produced by the
+source parser (e.g. `allAf`, `grpmaxAf`, `faf95`). How it surfaces depends on
+the format:
+
+- **JSON** emits the parser's object verbatim under the source's JSON key
+  (`"gnomad": {"allAf": …, "faf95": …}`) — self-describing, order-independent.
+- **VCF / tab** write values **positionally** as a pipe string
+  (`FV_GNOMAD=T|…`); the UPPER_CASE field *names* live only in the
+  `##INFO` / `## COLUMN` `Description`, never in the data line.
+
+The two are bridged by the `(LABEL, json_key)` pairs in each source's `*_FIELDS`
+constant. Consequences when adding a field:
+
+- The parser key is the JSON name (free in JSON). It reaches VCF/tab **only** if
+  added to `*_FIELDS`; a field with a JSON key but no `*_FIELDS` entry is
+  **JSON-only** by design (e.g. gnomAD per-population `nhomalt`, sex AF, region
+  flags).
+- VCF/tab is positional, so `*_FIELDS` is **append-only** — never reorder.
+- Downstream JSON consumers key off the camelCase names, so a new
+  field is invisible to them until their JSON-key mapping is updated too.
 
 ## Adding a new source
 
