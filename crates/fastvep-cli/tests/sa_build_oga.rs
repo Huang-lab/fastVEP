@@ -606,7 +606,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
     // The fixture only populates a subset of gnomAD fields; absent positions
     // render as empty between pipes (matches VCF behavior).
     assert_eq!(
-        cols[18], "G|0.00012|12|100000|0|0.00021||||||0.00009|||",
+        cols[18], "G|0.00012|12|100000|0|0.00021||||||0.00009||||||||",
         "FV_GNOMAD tab column must match the VCF pipe schema: {}",
         pos25k
     );
