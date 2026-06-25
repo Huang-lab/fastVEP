@@ -82,6 +82,92 @@ pub fn looks_like_refseq_accession(name: &str) -> bool {
         && version.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Canonical RefSeq molecule accessions for the primary chromosomes of a human
+/// reference assembly, as `(accession, canonical_chr_name)` pairs.
+///
+/// NCBI resources — most notably the dbSNP VCF release (`GCF_000001405.*`) —
+/// name contigs by these accessions (`NC_000001.11`) instead of `1`/`chr1`.
+/// Unlike chr↔bare, the accession has no algorithmic relationship to the
+/// chromosome number, so the mapping is an explicit table. The first 24 entries
+/// are the autosomes + X/Y; the last is the mitochondrion (rCRS, shared by both
+/// assemblies). Returns `None` for an assembly we don't have a table for.
+///
+/// Accepts the common spellings of each assembly (`GRCh38`, `hg38`, `38`,
+/// `b38`, case-insensitively) and tolerates a patch-level suffix
+/// (`GRCh38.p14`), so new NCBI patches keep resolving without a code change.
+pub fn refseq_primary_accessions(assembly: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    let mut a = assembly.trim().to_ascii_lowercase();
+    // Drop a patch-level suffix (`grch38.p14`, `grch38.p15`, …). The primary
+    // chromosome accessions are stable across patches of a given major build,
+    // so matching on the base name avoids enumerating every patch release.
+    if let Some(idx) = a.find(".p") {
+        a.truncate(idx);
+    }
+    match a.as_str() {
+        "grch38" | "hg38" | "38" | "b38" => Some(GRCH38_REFSEQ),
+        "grch37" | "hg19" | "37" | "b37" => Some(GRCH37_REFSEQ),
+        _ => None,
+    }
+}
+
+/// GRCh38 primary-assembly RefSeq accessions (`GCF_000001405.26`–`.40`).
+const GRCH38_REFSEQ: &[(&str, &str)] = &[
+    ("NC_000001.11", "chr1"),
+    ("NC_000002.12", "chr2"),
+    ("NC_000003.12", "chr3"),
+    ("NC_000004.12", "chr4"),
+    ("NC_000005.10", "chr5"),
+    ("NC_000006.12", "chr6"),
+    ("NC_000007.14", "chr7"),
+    ("NC_000008.11", "chr8"),
+    ("NC_000009.12", "chr9"),
+    ("NC_000010.11", "chr10"),
+    ("NC_000011.10", "chr11"),
+    ("NC_000012.12", "chr12"),
+    ("NC_000013.11", "chr13"),
+    ("NC_000014.9", "chr14"),
+    ("NC_000015.10", "chr15"),
+    ("NC_000016.10", "chr16"),
+    ("NC_000017.11", "chr17"),
+    ("NC_000018.10", "chr18"),
+    ("NC_000019.10", "chr19"),
+    ("NC_000020.11", "chr20"),
+    ("NC_000021.9", "chr21"),
+    ("NC_000022.11", "chr22"),
+    ("NC_000023.11", "chrX"),
+    ("NC_000024.10", "chrY"),
+    ("NC_012920.1", "chrM"),
+];
+
+/// GRCh37 primary-assembly RefSeq accessions (`GCF_000001405.13`–`.25`).
+const GRCH37_REFSEQ: &[(&str, &str)] = &[
+    ("NC_000001.10", "chr1"),
+    ("NC_000002.11", "chr2"),
+    ("NC_000003.11", "chr3"),
+    ("NC_000004.11", "chr4"),
+    ("NC_000005.9", "chr5"),
+    ("NC_000006.11", "chr6"),
+    ("NC_000007.13", "chr7"),
+    ("NC_000008.10", "chr8"),
+    ("NC_000009.11", "chr9"),
+    ("NC_000010.10", "chr10"),
+    ("NC_000011.9", "chr11"),
+    ("NC_000012.11", "chr12"),
+    ("NC_000013.10", "chr13"),
+    ("NC_000014.8", "chr14"),
+    ("NC_000015.9", "chr15"),
+    ("NC_000016.9", "chr16"),
+    ("NC_000017.10", "chr17"),
+    ("NC_000018.9", "chr18"),
+    ("NC_000019.9", "chr19"),
+    ("NC_000020.10", "chr20"),
+    ("NC_000021.8", "chr21"),
+    ("NC_000022.10", "chr22"),
+    ("NC_000023.10", "chrX"),
+    ("NC_000024.9", "chrY"),
+    ("NC_012920.1", "chrM"),
+];
+
 /// Bidirectional chromosome synonym table, loaded from a VEP-style
 /// `chr_synonyms.txt`.
 ///
@@ -253,6 +339,33 @@ mod synonym_tests {
     fn single_token_lines_ignored() {
         let syn = ChromSynonyms::parse("17\n\nchr17\n");
         assert!(syn.is_empty());
+    }
+
+    #[test]
+    fn refseq_primary_accessions_cover_both_assemblies() {
+        use super::refseq_primary_accessions;
+
+        for spelling in ["GRCh38", "grch38", "hg38", "38", "b38", "GRCh38.p14", "GRCh38.p15"] {
+            let table = refseq_primary_accessions(spelling).expect("GRCh38 table");
+            assert_eq!(table.len(), 25, "24 chromosomes + MT");
+            assert!(table.contains(&("NC_000001.11", "chr1")));
+            assert!(table.contains(&("NC_000023.11", "chrX")));
+            assert!(table.contains(&("NC_000024.10", "chrY")));
+            assert!(table.contains(&("NC_012920.1", "chrM")));
+        }
+
+        for spelling in ["GRCh37", "hg19", "37", "b37"] {
+            let table = refseq_primary_accessions(spelling).expect("GRCh37 table");
+            assert_eq!(table.len(), 25);
+            // GRCh37 carries the older accession versions.
+            assert!(table.contains(&("NC_000001.10", "chr1")));
+            assert!(table.contains(&("NC_000023.10", "chrX")));
+            // rCRS mitochondrion is shared across both builds.
+            assert!(table.contains(&("NC_012920.1", "chrM")));
+        }
+
+        assert!(refseq_primary_accessions("GRCm39").is_none());
+        assert!(refseq_primary_accessions("").is_none());
     }
 
     #[test]

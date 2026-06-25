@@ -99,7 +99,11 @@ fn parse_info(info: &str) -> HashMap<String, String> {
 }
 
 fn normalize_chrom(chrom: &str) -> String {
-    if chrom.starts_with("chr") {
+    // NCBI's dbSNP VCF names contigs by RefSeq accession (`NC_000001.11`).
+    // Leave those untouched so the lookup hits the accession keys the builder
+    // seeds into the chromosome map; mangling them to `chrNC_000001.11` is what
+    // produced "0 records parsed" (issue #51).
+    if chrom.starts_with("chr") || fastvep_core::looks_like_refseq_accession(chrom) {
         chrom.to_string()
     } else {
         format!("chr{}", chrom)
@@ -132,5 +136,28 @@ mod tests {
         assert_eq!(records[1].position, 10039);
         assert!(records[1].json.contains("rs978760828"));
         assert!(!records[1].json.contains("globalMaf")); // No CAF
+    }
+
+    #[test]
+    fn test_parse_dbsnp_refseq_accessions() {
+        // The real NCBI dbSNP release (GCF_000001405.40) names contigs by
+        // RefSeq accession, not `1`/`chr1`. Regression for issue #51: these
+        // must resolve when the chromosome map carries the accession key.
+        let vcf = "\
+##fileformat=VCFv4.0
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+NC_000001.11\t10019\trs775809821\tTA\tT\t.\t.\tRS=775809821;CAF=0.9998,0.0002
+NC_000023.11\t100\trs1\tA\tG\t.\t.\tRS=1
+";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("NC_000001.11".to_string(), 0u16);
+        chrom_map.insert("NC_000023.11".to_string(), 22u16);
+
+        let records = parse_dbsnp_vcf(vcf.as_bytes(), &chrom_map).unwrap();
+        assert_eq!(records.len(), 2, "RefSeq-accession contigs were skipped");
+        assert_eq!(records[0].chrom_idx, 0);
+        assert!(records[0].json.contains("rs775809821"));
+        assert_eq!(records[1].chrom_idx, 22);
+        assert!(records[1].json.contains("rs1"));
     }
 }
