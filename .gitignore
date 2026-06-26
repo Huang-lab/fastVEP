@@ -38,3 +38,11 @@ data/
 # tabix index files cached during remote queries (placed in CWD by htslib)
 *.tbi
 *.csi
+
+# Spurious reference files from test runs
+*.osa
+*.idx
+
+# log files from test runs
+*.log
+*.out

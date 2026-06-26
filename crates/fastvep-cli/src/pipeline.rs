@@ -87,9 +87,12 @@ pub struct AnnotateConfig {
     /// Path to a QC rules TOML file. When set, tab output gains a
     /// `QC_CLASS` column.
     pub qc_rules: Option<String>,
+    /// Show periodic progress output.
+    pub show_progress: bool,
 }
 
 pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
+    eprintln!("Annotating: {} -> {}", config.input, config.output);
     let sa_only = config.sa_only;
     if sa_only {
         if config.sa_dir.is_none() {
@@ -541,7 +544,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     }
 
     // Process variants in batches for parallel annotation
-    let mut count = 0u64;
+    let mut meter = crate::progress::ProgressMeter::new(config.show_progress);
     let mut first_json = true;
 
     loop {
@@ -1373,7 +1376,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             }
         }
 
-        count += batch.len() as u64;
+        meter.update_n(batch.len() as u64);
     } // end batch loop
 
     // Close JSON array
@@ -1382,7 +1385,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     }
 
     writer.flush()?;
-    eprintln!("Annotated {} variants", count);
+    meter.finish();
 
     Ok(())
 }
@@ -1904,6 +1907,7 @@ pub fn run_cache_build(
     fasta_path: Option<&str>,
     synonyms_path: Option<&str>,
     output_path: &str,
+    show_progress: bool,
 ) -> Result<()> {
     if gff3_paths.is_empty() {
         return Err(anyhow::anyhow!("`fastvep cache` requires at least one --gff3"));
@@ -2007,7 +2011,7 @@ pub fn run_cache_build(
         }
 
         let sp = FastaSequenceProvider::new(reader);
-        let mut built = 0usize;
+        let mut meter = crate::progress::ProgressMeter::new(show_progress);
         for tr in &mut transcripts {
             if tr.is_coding() {
                 if let Err(e) = tr.build_sequences(|chrom, start, end| {
@@ -2016,11 +2020,11 @@ pub fn run_cache_build(
                 }) {
                     eprintln!("Warning: could not build sequences for {}: {}", tr.stable_id, e);
                 } else {
-                    built += 1;
+                    meter.update();
                 }
             }
         }
-        eprintln!("Built sequences for {} coding transcripts", built);
+        meter.finish();
     } else if synonyms_path.is_some() {
         eprintln!(
             "Warning: --synonyms has no effect without --fasta; chromosome names are kept as-is from the GFF3."
@@ -2204,6 +2208,7 @@ pub fn run_sa_build(
     assembly: &str,
     name: Option<&str>,
     info_fields: &[String],
+    show_progress: bool,
 ) -> Result<()> {
     use fastvep_sa::index::IndexHeader;
     use fastvep_sa::writer::SaWriter;
@@ -2381,7 +2386,155 @@ pub fn run_sa_build(
         ),
     };
 
-    eprintln!("Building {} .osa from: {}", source, input);
+    eprintln!("Building {} .osa: {} -> {}", source, input, Path::new(output).with_extension("osa").display());
+
+    if source == "spliceai" {
+        let output_path = Path::new(output);
+        let mut writer = SaWriter::new(header);
+        let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+        let byte_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let file = File::open(input)
+            .with_context(|| format!("Opening input file: {}", input))?;
+        let counting = crate::progress::CountingReader { inner: file, bytes: std::sync::Arc::clone(&byte_counter) };
+        let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
+            Box::new(flate2::read::MultiGzDecoder::new(counting))
+        } else {
+            Box::new(counting)
+        };
+        let buf_reader = io::BufReader::new(reader);
+        let mut meter = if show_progress && file_size > 0 {
+            crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
+        } else {
+            crate::progress::ProgressMeter::new(show_progress)
+        };
+        let records = fastvep_sa::sources::spliceai::iter_spliceai_vcf(buf_reader, &chrom_map)
+            .map(|record| {
+                if record.is_ok() {
+                    meter.update();
+                }
+                record
+            });
+        writer.write_results_to_files(output_path, records, &chrom_list)?;
+        meter.finish();
+        eprintln!(
+            "Wrote: {} and {}",
+            output_path.with_extension("osa").display(),
+            output_path.with_extension("osa.idx").display()
+        );
+
+        return Ok(());
+    }
+
+    if source == "gnomad" {
+        let output_path = Path::new(output);
+        let mut writer = SaWriter::new(header);
+        let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+        let byte_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let file = File::open(input)
+            .with_context(|| format!("Opening input file: {}", input))?;
+        let counting = crate::progress::CountingReader { inner: file, bytes: std::sync::Arc::clone(&byte_counter) };
+        let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
+            Box::new(flate2::read::MultiGzDecoder::new(counting))
+        } else {
+            Box::new(counting)
+        };
+        let buf_reader = io::BufReader::new(reader);
+        let mut meter = if show_progress && file_size > 0 {
+            crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
+        } else {
+            crate::progress::ProgressMeter::new(show_progress)
+        };
+        let records = fastvep_sa::sources::gnomad::iter_gnomad_vcf(buf_reader, &chrom_map)
+            .map(|record| {
+                if record.is_ok() {
+                    meter.update();
+                }
+                record
+            });
+        writer.write_results_to_files(output_path, records, &chrom_list)?;
+        meter.finish();
+        eprintln!(
+            "Wrote: {} and {}",
+            output_path.with_extension("osa").display(),
+            output_path.with_extension("osa.idx").display()
+        );
+
+        return Ok(());
+    }
+
+    if source == "dbsnp" {
+        let output_path = Path::new(output);
+        let mut writer = SaWriter::new(header);
+        let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+        let byte_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let file = File::open(input)
+            .with_context(|| format!("Opening input file: {}", input))?;
+        let counting = crate::progress::CountingReader { inner: file, bytes: std::sync::Arc::clone(&byte_counter) };
+        let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
+            Box::new(flate2::read::MultiGzDecoder::new(counting))
+        } else {
+            Box::new(counting)
+        };
+        let buf_reader = io::BufReader::new(reader);
+        let mut meter = if show_progress && file_size > 0 {
+            crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
+        } else {
+            crate::progress::ProgressMeter::new(show_progress)
+        };
+        let records = fastvep_sa::sources::dbsnp::iter_dbsnp_vcf(buf_reader, &chrom_map)
+            .map(|record| {
+                if record.is_ok() {
+                    meter.update();
+                }
+                record
+            });
+        writer.write_results_to_files(output_path, records, &chrom_list)?;
+        meter.finish();
+        eprintln!(
+            "Wrote: {} and {}",
+            output_path.with_extension("osa").display(),
+            output_path.with_extension("osa.idx").display()
+        );
+
+        return Ok(());
+    }
+
+    if source == "topmed" {
+        let output_path = Path::new(output);
+        let mut writer = SaWriter::new(header);
+        let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+        let byte_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let file = File::open(input)
+            .with_context(|| format!("Opening input file: {}", input))?;
+        let counting = crate::progress::CountingReader { inner: file, bytes: std::sync::Arc::clone(&byte_counter) };
+        let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
+            Box::new(flate2::read::MultiGzDecoder::new(counting))
+        } else {
+            Box::new(counting)
+        };
+        let buf_reader = io::BufReader::new(reader);
+        let mut meter = if show_progress && file_size > 0 {
+            crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
+        } else {
+            crate::progress::ProgressMeter::new(show_progress)
+        };
+        let records = fastvep_sa::sources::topmed::iter_topmed_vcf(buf_reader, &chrom_map)
+            .map(|record| {
+                if record.is_ok() {
+                    meter.update();
+                }
+                record
+            });
+        writer.write_results_to_files(output_path, records, &chrom_list)?;
+        meter.finish();
+        eprintln!(
+            "Wrote: {} and {}",
+            output_path.with_extension("osa").display(),
+            output_path.with_extension("osa.idx").display()
+        );
+
+        return Ok(());
+    }
 
     let file = File::open(input)
         .with_context(|| format!("Opening input file: {}", input))?;
@@ -2392,36 +2545,17 @@ pub fn run_sa_build(
     };
     let buf_reader = io::BufReader::new(reader);
 
-    if source == "spliceai" {
-        let output_path = Path::new(output);
-        let mut writer = SaWriter::new(header);
-        let mut record_count = 0usize;
-        let records = fastvep_sa::sources::spliceai::iter_spliceai_vcf(buf_reader, &chrom_map)
-            .map(|record| {
-                if record.is_ok() {
-                    record_count += 1;
-                }
-                record
-            });
-        writer.write_results_to_files(output_path, records, &chrom_list)?;
-
-        eprintln!("Parsed {} records from {}", record_count, source);
-        eprintln!(
-            "Wrote: {} and {}",
-            output_path.with_extension("osa").display(),
-            output_path.with_extension("osa.idx").display()
-        );
-
-        return Ok(());
-    }
+    eprintln!(
+        "INFO  ProgressMeter - Parsing '{}': {} -> {}",
+        source, input,
+        Path::new(output).with_extension("osa").display()
+    );
+    let t_parse = std::time::Instant::now();
 
     let records = match source {
         "clinvar" => fastvep_sa::sources::clinvar::parse_clinvar_vcf(buf_reader, &chrom_map)?,
-        "gnomad" => fastvep_sa::sources::gnomad::parse_gnomad_vcf(buf_reader, &chrom_map)?,
-        "dbsnp" => fastvep_sa::sources::dbsnp::parse_dbsnp_vcf(buf_reader, &chrom_map)?,
         "cosmic" => fastvep_sa::sources::cosmic::parse_cosmic_vcf(buf_reader, &chrom_map)?,
         "onekg" | "1000g" => fastvep_sa::sources::onekg::parse_onekg_vcf(buf_reader, &chrom_map)?,
-        "topmed" => fastvep_sa::sources::topmed::parse_topmed_vcf(buf_reader, &chrom_map)?,
         "mitomap" => fastvep_sa::sources::mitomap::parse_mitomap(buf_reader, &chrom_map)?,
         // PhyloP supports two on-disk formats: UCSC fixed-step wig and
         // simple TSV (`chrom\tpos\tscore`). Auto-detect by peeking the
@@ -2434,7 +2568,7 @@ pub fn run_sa_build(
         _ => unreachable!(),
     };
 
-    eprintln!("Parsed {} records from {}", records.len(), source);
+    let n = records.len() as u64;
     if records.is_empty() {
         eprintln!(
             "Warning: 0 records parsed from {} — if the input is non-empty, this \
@@ -2445,11 +2579,22 @@ pub fn run_sa_build(
             source, assembly
         );
     }
+    eprintln!(
+        "INFO  ProgressMeter - Parsed {} records in {:.1} min. Writing ...",
+        crate::progress::fmt_count(n),
+        t_parse.elapsed().as_secs_f64() / 60.0
+    );
 
     let output_path = Path::new(output);
+    let t_write = std::time::Instant::now();
     let mut writer = SaWriter::new(header);
     writer.write_to_files(output_path, records.into_iter(), &chrom_list)?;
 
+    eprintln!(
+        "INFO  ProgressMeter - Done. Wrote {} records in {:.1} min.",
+        crate::progress::fmt_count(n),
+        t_write.elapsed().as_secs_f64() / 60.0
+    );
     eprintln!(
         "Wrote: {} and {}",
         output_path.with_extension("osa").display(),
@@ -3038,6 +3183,7 @@ mod custom_source_tests {
             "GRCh38",
             Some("mydb"),
             &["MY_SCORE".to_string()],
+            false,
         )
         .unwrap();
 
@@ -3081,6 +3227,7 @@ mod custom_source_tests {
             "GRCh38",
             Some("myregions"),
             &[],
+            false,
         )
         .unwrap();
 
@@ -3192,6 +3339,7 @@ mod custom_source_tests {
             "GRCh38",
             None,
             &[],
+            false,
         )
         .expect_err("must error on unknown source");
         let msg = format!("{}", err);
