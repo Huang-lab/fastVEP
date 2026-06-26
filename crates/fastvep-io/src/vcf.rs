@@ -304,27 +304,45 @@ fn classify_sv_type(svtype: Option<&str>, alts: &[String]) -> VariantType {
 }
 
 /// Classify small variant type from alleles.
+/// For multi-allelic sites, returns the most complex type across all ALT alleles.
 fn classify_small_variant(ref_allele: &Allele, alt_alleles: &[Allele]) -> VariantType {
     if alt_alleles.is_empty() {
         return VariantType::Unknown;
     }
-    let first_alt = &alt_alleles[0];
 
-    match (ref_allele, first_alt) {
-        (Allele::Deletion, Allele::Sequence(_)) => VariantType::Insertion,
-        (Allele::Sequence(_), Allele::Deletion) => VariantType::Deletion,
-        (Allele::Sequence(r), Allele::Sequence(a)) => {
-            if r.len() == 1 && a.len() == 1 {
-                VariantType::Snv
-            } else if r.len() == a.len() {
-                VariantType::Mnv
-            } else {
-                VariantType::Indel
-            }
+    fn type_rank(vt: VariantType) -> u8 {
+        match vt {
+            VariantType::Unknown => 0,
+            VariantType::Snv => 1,
+            VariantType::Mnv => 2,
+            VariantType::Deletion | VariantType::Insertion => 3,
+            VariantType::Indel => 4,
+            _ => 0,
         }
-        (_, Allele::Symbolic(_)) => VariantType::Unknown, // Handled by classify_sv_type
-        _ => VariantType::Unknown,
     }
+
+    let mut best = VariantType::Unknown;
+    for alt in alt_alleles {
+        let vt = match (ref_allele, alt) {
+            (Allele::Deletion, Allele::Sequence(_)) => VariantType::Insertion,
+            (Allele::Sequence(_), Allele::Deletion) => VariantType::Deletion,
+            (Allele::Sequence(r), Allele::Sequence(a)) => {
+                if r.len() == 1 && a.len() == 1 {
+                    VariantType::Snv
+                } else if r.len() == a.len() {
+                    VariantType::Mnv
+                } else {
+                    VariantType::Indel
+                }
+            }
+            (_, Allele::Symbolic(_)) => VariantType::Unknown, // Handled by classify_sv_type
+            _ => VariantType::Unknown,
+        };
+        if type_rank(vt) > type_rank(best) {
+            best = vt;
+        }
+    }
+    best
 }
 
 #[cfg(test)]
@@ -486,5 +504,15 @@ mod tests {
         let line = "chr1\t100\t.\tA\tACG\t.\tPASS\t.";
         let vf = parse_vcf_line(line).unwrap();
         assert_eq!(vf.variant_type, VariantType::Insertion);
+
+        // Mixed multi-allelic: SNV + insertion → must be classified as Indel (most complex)
+        let line = "chr1\t100\t.\tA\tG,ACG\t.\tPASS\t.";
+        let vf = parse_vcf_line(line).unwrap();
+        assert_eq!(vf.variant_type, VariantType::Indel);
+
+        // Multi-allelic SNVs → Snv
+        let line = "chr1\t100\t.\tA\tG,T\t.\tPASS\t.";
+        let vf = parse_vcf_line(line).unwrap();
+        assert_eq!(vf.variant_type, VariantType::Snv);
     }
 }
