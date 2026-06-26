@@ -40,6 +40,9 @@ pub fn parse_clinvar_vcf<R: BufRead>(
             Err(_) => continue,
         };
 
+        // ClinVar's VCF release carries the integer VariationID in the ID column
+        // (column 3); rsIDs, when present, live in the RS INFO field instead.
+        let variation_id = fields[2];
         let ref_allele = fields[3].to_string();
         let alt_field = fields[4];
 
@@ -52,6 +55,9 @@ pub fn parse_clinvar_vcf<R: BufRead>(
         let clndn = info_map.get("CLNDN").cloned().unwrap_or_default();
         let clnacc = info_map.get("CLNVC").cloned(); // variant class
         let clnid = info_map.get("CLNVCSO").cloned(); // SO accession
+        let clnsigconf = info_map.get("CLNSIGCONF").cloned(); // conflicting-significance breakdown
+        let clndisdb = info_map.get("CLNDISDB").cloned(); // disease-database cross-references
+        let mc = info_map.get("MC").cloned(); // molecular consequence (SO term | label)
         // ClinVar-distributed population allele frequencies (ExAC / 1000G / ESP).
         // Used as a frequency backstop by PM2 when gnomAD has no record.
         let af_exac = info_map.get("AF_EXAC").and_then(|s| s.parse::<f64>().ok());
@@ -65,11 +71,15 @@ pub fn parse_clinvar_vcf<R: BufRead>(
             }
 
             let json = build_clinvar_json(
+                variation_id,
                 &clnsig,
                 &clnrevstat,
                 &clndn,
                 clnacc.as_deref(),
                 clnid.as_deref(),
+                clnsigconf.as_deref(),
+                clndisdb.as_deref(),
+                mc.as_deref(),
                 af_exac,
                 af_tgp,
                 af_esp,
@@ -93,11 +103,15 @@ pub fn parse_clinvar_vcf<R: BufRead>(
 
 #[allow(clippy::too_many_arguments)]
 fn build_clinvar_json(
+    variation_id: &str,
     clnsig: &str,
     clnrevstat: &str,
     clndn: &str,
     clnvc: Option<&str>,
     clnvcso: Option<&str>,
+    clnsigconf: Option<&str>,
+    clndisdb: Option<&str>,
+    mc: Option<&str>,
     af_exac: Option<f64>,
     af_tgp: Option<f64>,
     af_esp: Option<f64>,
@@ -150,7 +164,54 @@ fn build_clinvar_json(
         parts.push(format!("\"afEsp\":{}", af));
     }
 
+    // VariationID (the VCF ID column). Emit only when present (non-empty, not ".").
+    if !variation_id.is_empty() && variation_id != "." {
+        parts.push(format!("\"variationId\":\"{}\"", escape_json(variation_id)));
+    }
+
+    // Review confidence as 0-4 "gold stars" derived from CLNREVSTAT. 0 is a
+    // meaningful "no assertion" signal, so it is emitted rather than suppressed.
+    if !clnrevstat.is_empty() {
+        parts.push(format!(
+            "\"goldStars\":{}",
+            clnrevstat_to_gold_stars(clnrevstat)
+        ));
+    }
+
+    // Auxiliary, curator-facing detail — JSON-only (not projected to the pipe).
+    if let Some(c) = clnsigconf {
+        parts.push(format!("\"clnSigConf\":\"{}\"", escape_json(c)));
+    }
+    if let Some(d) = clndisdb {
+        if d != "not_provided" {
+            parts.push(format!("\"clnDisDb\":\"{}\"", escape_json(d)));
+        }
+    }
+    if let Some(m) = mc {
+        parts.push(format!("\"molecularConsequence\":\"{}\"", escape_json(m)));
+    }
+
     format!("{{{}}}", parts.join(","))
+}
+
+/// Map ClinVar `CLNREVSTAT` to the 0-4 "gold star" review-confidence scale.
+///
+/// Checked most-confident first; the 2-star "multiple_submitters,_no_conflicts"
+/// case is matched before the 1-star conflicting / single-submitter cases.
+fn clnrevstat_to_gold_stars(clnrevstat: &str) -> u8 {
+    if clnrevstat.contains("practice_guideline") {
+        4
+    } else if clnrevstat.contains("reviewed_by_expert_panel") {
+        3
+    } else if clnrevstat.contains("criteria_provided,_multiple_submitters,_no_conflicts") {
+        2
+    } else if clnrevstat.contains("criteria_provided,_conflicting")
+        || clnrevstat.contains("criteria_provided,_single_submitter")
+    {
+        1
+    } else {
+        0
+    }
 }
 
 fn parse_info(info: &str) -> HashMap<String, String> {
@@ -191,8 +252,8 @@ mod tests {
 ##INFO=<ID=CLNREVSTAT,Number=.,Type=String>
 ##INFO=<ID=CLNDN,Number=.,Type=String>
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
-1\t12345\trs123\tA\tG\t.\t.\tCLNSIG=Pathogenic;CLNREVSTAT=criteria_provided,_multiple_submitters,_no_conflicts;CLNDN=Breast_cancer
-1\t67890\trs456\tC\tT\t.\t.\tCLNSIG=Benign;CLNREVSTAT=criteria_provided,_single_submitter;CLNDN=not_provided
+1\t12345\t12500\tA\tG\t.\t.\tCLNSIG=Pathogenic;CLNREVSTAT=reviewed_by_expert_panel;CLNDN=Breast_cancer;CLNSIGCONF=Pathogenic(3);CLNDISDB=MedGen:C0006142,OMIM:114480;MC=SO:0001583|missense_variant
+1\t67890\t67900\tC\tT\t.\t.\tCLNSIG=Benign;CLNREVSTAT=criteria_provided,_single_submitter;CLNDN=not_provided
 ";
 
         let mut chrom_map = HashMap::new();
@@ -204,9 +265,19 @@ mod tests {
         assert_eq!(records[0].position, 12345);
         assert!(records[0].json.contains("Pathogenic"));
         assert!(records[0].json.contains("Breast_cancer"));
+        // VariationID is the integer VCF ID column (not an rsID).
+        assert!(records[0].json.contains("\"variationId\":\"12500\""));
+        // reviewed_by_expert_panel -> 3 gold stars.
+        assert!(records[0].json.contains("\"goldStars\":3"));
+        assert!(records[0].json.contains("\"clnSigConf\":\"Pathogenic(3)\""));
+        assert!(records[0].json.contains("OMIM:114480"));
+        assert!(records[0].json.contains("missense_variant"));
 
         assert_eq!(records[1].position, 67890);
         assert!(records[1].json.contains("Benign"));
+        assert!(records[1].json.contains("\"variationId\":\"67900\""));
+        // single_submitter -> 1 gold star.
+        assert!(records[1].json.contains("\"goldStars\":1"));
         // "not_provided" should be filtered out
         assert!(!records[1].json.contains("phenotypes"));
     }
@@ -233,5 +304,25 @@ mod tests {
         assert!(!records[1].json.contains("afExac"));
         assert!(!records[1].json.contains("afTgp"));
         assert!(!records[1].json.contains("afEsp"));
+    }
+
+    #[test]
+    fn test_clnrevstat_to_gold_stars() {
+        assert_eq!(clnrevstat_to_gold_stars("practice_guideline"), 4);
+        assert_eq!(clnrevstat_to_gold_stars("reviewed_by_expert_panel"), 3);
+        assert_eq!(
+            clnrevstat_to_gold_stars("criteria_provided,_multiple_submitters,_no_conflicts"),
+            2
+        );
+        assert_eq!(
+            clnrevstat_to_gold_stars("criteria_provided,_conflicting_classifications"),
+            1
+        );
+        assert_eq!(
+            clnrevstat_to_gold_stars("criteria_provided,_single_submitter"),
+            1
+        );
+        assert_eq!(clnrevstat_to_gold_stars("no_assertion_criteria_provided"), 0);
+        assert_eq!(clnrevstat_to_gold_stars(""), 0);
     }
 }
