@@ -2139,7 +2139,7 @@ fn prescan_vcf_regions(vcf_path: &str, distance: u64) -> Result<Vec<(String, u64
 /// releases — and by most input VCFs we annotate against. The HashMap
 /// resolves both `chr*` and bare forms (plus `MT`/`M`) so source parsers
 /// can hand us either style. See issue #37.
-fn standard_chrom_map() -> (Vec<String>, std::collections::HashMap<String, u16>) {
+fn standard_chrom_map(assembly: &str) -> (Vec<String>, std::collections::HashMap<String, u16>) {
     let chroms: Vec<String> = (1..=22)
         .map(|i| format!("chr{}", i))
         .chain(["chrX", "chrY", "chrM"].iter().map(|s| s.to_string()))
@@ -2160,6 +2160,17 @@ fn standard_chrom_map() -> (Vec<String>, std::collections::HashMap<String, u16>)
     if let Some(&mt_idx) = map.get("chrM") {
         map.insert("MT".to_string(), mt_idx);
         map.insert("chrMT".to_string(), mt_idx);
+    }
+    // RefSeq molecule accessions (`NC_000001.11`). NCBI's dbSNP VCF release
+    // names contigs this way, so without these every record's chromosome misses
+    // the map and zero records are parsed (issue #51). The accession→chromosome
+    // relationship is assembly-specific and non-algorithmic, hence a table.
+    if let Some(accessions) = fastvep_core::refseq_primary_accessions(assembly) {
+        for (acc, chr_name) in accessions {
+            if let Some(&idx) = map.get(*chr_name) {
+                map.insert(acc.to_string(), idx);
+            }
+        }
     }
     (chroms, map)
 }
@@ -2219,7 +2230,7 @@ pub fn run_sa_build(
         };
     }
 
-    let (chrom_list, chrom_map) = standard_chrom_map();
+    let (chrom_list, chrom_map) = standard_chrom_map(assembly);
 
     let header = match source {
         "clinvar" => IndexHeader {
@@ -2424,6 +2435,16 @@ pub fn run_sa_build(
     };
 
     eprintln!("Parsed {} records from {}", records.len(), source);
+    if records.is_empty() {
+        eprintln!(
+            "Warning: 0 records parsed from {} — if the input is non-empty, this \
+             usually means none of its chromosome names matched assembly '{}'. \
+             NCBI releases (e.g. dbSNP) name contigs by RefSeq accession \
+             (NC_000001.11); pass the --assembly (GRCh38 or GRCh37) matching the \
+             build you downloaded.",
+            source, assembly
+        );
+    }
 
     let output_path = Path::new(output);
     let mut writer = SaWriter::new(header);
@@ -2501,7 +2522,7 @@ fn run_custom_vcf_build(
     use fastvep_sa::index::IndexHeader;
     use fastvep_sa::writer::SaWriter;
 
-    let (chrom_list, chrom_map) = standard_chrom_map();
+    let (chrom_list, chrom_map) = standard_chrom_map(assembly);
     let resolved_name = resolve_custom_name(name, input);
     let json_key = resolved_name.clone();
 
@@ -2574,7 +2595,7 @@ fn run_custom_bed_build(
 ) -> Result<()> {
     use fastvep_sa::interval::{IntervalHeader, IntervalIndex};
 
-    let (_chrom_list, chrom_map) = standard_chrom_map();
+    let (_chrom_list, chrom_map) = standard_chrom_map(assembly);
     let resolved_name = resolve_custom_name(name, input);
 
     eprintln!(
