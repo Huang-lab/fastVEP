@@ -80,7 +80,7 @@ lead with the **gene symbol**.
 
 ### Allele-level
 
-- `FV_CLINVAR`: `ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION`
+- `FV_CLINVAR`: `ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION|GOLD_STARS|VARIATION_ID` — `GOLD_STARS` is the 0–4 ClinVar review-confidence scale (derived from `CLNREVSTAT`); `VARIATION_ID` is the ClinVar VariationID (the VCF ID column). The conflicting-significance breakdown (`CLNSIGCONF`), disease-database xrefs (`CLNDISDB`), and molecular consequence (`MC`) are emitted in **JSON only** (`clnSigConf`, `clnDisDb`, `molecularConsequence`).
 - `FV_GNOMAD`: `ALLELE|ALL_AF|ALL_AC|ALL_AN|ALL_HC|AFR_AF|AMR_AF|ASJ_AF|EAS_AF|FIN_AF|MID_AF|NFE_AF|OTH_AF|REMAINING_AF|SAS_AF|GRPMAX_AF|GRPMAX_GROUP|FAF95|FAF99|FILTER` — `GRPMAX_AF`/`GRPMAX_GROUP` are the group-max AF and its ancestry group; `FAF95`/`FAF99` are the grpmax filtering AF (Poisson 95%/99% CI, ClinGen-recommended for BA1/BS1); `FILTER` is the verbatim gnomAD FILTER, present only when not PASS. Per-population AC/AN/nhomalt, sex-stratified AF, and joint region flags are emitted in **JSON only**.
 - `FV_DBSNP`: `ALLELE|ID|GLOBAL_MAF`
 - `FV_COSMIC`: `ALLELE|ID|GENE|COUNT`
@@ -92,7 +92,7 @@ lead with the **gene symbol**.
 - `FV_DANN`: `ALLELE|SCORE`
 - `FV_REVEL`: `ALLELE|SCORE`
 - `FV_PRIMATEAI`: `ALLELE|SCORE`
-- `FV_DBNSFP`: `ALLELE|SIFT|POLYPHEN`
+- `FV_DBNSFP`: `ALLELE|SIFT|POLYPHEN|ALPHAMISSENSE|BAYESDEL` — `ALPHAMISSENSE` and `BAYESDEL` are calibrated missense pathogenicity scores (numeric); `BAYESDEL` is the no-AF variant (frequency-independent, ACMG-appropriate for PP3/BP4). Both are sourced from dbNSFP.
 - `SpliceAI`: `ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL`
 
 ### Gene-level

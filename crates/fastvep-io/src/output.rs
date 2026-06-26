@@ -336,6 +336,11 @@ const CLINVAR_FIELDS: &[(&str, &str)] = &[
     ("PHENOTYPES", "phenotypes"),
     ("VARIANT_CLASS", "variantClass"),
     ("SO_ACCESSION", "soAccession"),
+    // Appended (never reordered) — VCF/tab consumers read by position. VariationID
+    // and the 0-4 gold-star review confidence are compact, high-value signals;
+    // CLNSIGCONF / CLNDISDB / MC stay JSON-only by design.
+    ("GOLD_STARS", "goldStars"),
+    ("VARIATION_ID", "variationId"),
 ];
 const GNOMAD_FIELDS: &[(&str, &str)] = &[
     ("ALL_AF", "allAf"),
@@ -375,7 +380,13 @@ const TOPMED_FIELDS: &[(&str, &str)] = &[("ALL_AF", "allAf"), ("ALL_AC", "allAc"
 const MITOMAP_FIELDS: &[(&str, &str)] = &[("DISEASE", "disease"), ("STATUS", "status")];
 const SCORE_FIELDS: &[(&str, &str)] = &[("SCORE", "")];
 const SCORE_OBJECT_FIELDS: &[(&str, &str)] = &[("SCORE", "score")];
-const DBNSFP_FIELDS: &[(&str, &str)] = &[("SIFT", "sift"), ("POLYPHEN", "polyphen")];
+const DBNSFP_FIELDS: &[(&str, &str)] = &[
+    ("SIFT", "sift"),
+    ("POLYPHEN", "polyphen"),
+    // Appended (never reordered): calibrated missense predictors.
+    ("ALPHAMISSENSE", "alphaMissense"),
+    ("BAYESDEL", "bayesDel"),
+];
 const OMIM_FIELDS: &[(&str, &str)] = &[("MIM_NUMBER", "mimNumber"), ("PHENOTYPES", "phenotypes")];
 const GNOMAD_GENE_FIELDS: &[(&str, &str)] = &[
     ("PLI", "pLI"),
@@ -389,7 +400,7 @@ const VCF_PROJECTION_SPECS: &[VcfProjectionSpec] = &[
     VcfProjectionSpec {
         json_key: "clinvar",
         info_id: "FV_CLINVAR",
-        description: "fastVEP ClinVar annotations. Format: ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION",
+        description: "fastVEP ClinVar annotations. Format: ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION|GOLD_STARS|VARIATION_ID",
         fields: CLINVAR_FIELDS,
         kind: VcfProjectionKind::AlleleObject,
     },
@@ -473,7 +484,7 @@ const VCF_PROJECTION_SPECS: &[VcfProjectionSpec] = &[
     VcfProjectionSpec {
         json_key: "dbnsfp",
         info_id: "FV_DBNSFP",
-        description: "fastVEP dbNSFP annotations. Format: ALLELE|SIFT|POLYPHEN",
+        description: "fastVEP dbNSFP annotations. Format: ALLELE|SIFT|POLYPHEN|ALPHAMISSENSE|BAYESDEL",
         fields: DBNSFP_FIELDS,
         kind: VcfProjectionKind::AlleleObject,
     },
@@ -1970,7 +1981,7 @@ mod tests {
         let lines = tab_supplementary_header_lines(&specs);
         let joined = lines.join("\n");
         assert!(
-            joined.contains("## COLUMN=<ID=FV_CLINVAR,Description=\"fastVEP ClinVar annotations. Format: ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION\">"),
+            joined.contains("## COLUMN=<ID=FV_CLINVAR,Description=\"fastVEP ClinVar annotations. Format: ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION|GOLD_STARS|VARIATION_ID\">"),
             "header lines should document FV_CLINVAR pipe format: {joined}"
         );
     }

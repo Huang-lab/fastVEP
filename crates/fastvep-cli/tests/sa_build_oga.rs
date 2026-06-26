@@ -565,7 +565,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
 
     // Tab schema header must document the pipe format for every loaded source.
     assert!(
-        annotated.contains("## COLUMN=<ID=FV_CLINVAR,Description=\"fastVEP ClinVar annotations. Format: ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION\">"),
+        annotated.contains("## COLUMN=<ID=FV_CLINVAR,Description=\"fastVEP ClinVar annotations. Format: ALLELE|SIGNIFICANCE|REVIEW_STATUS|PHENOTYPES|VARIANT_CLASS|SO_ACCESSION|GOLD_STARS|VARIATION_ID\">"),
         "tab output must declare FV_CLINVAR schema:\n{}",
         annotated
     );
@@ -599,7 +599,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
     let cols: Vec<&str> = pos25k.split('\t').collect();
     assert_eq!(cols.len(), 17 + 2);
     assert_eq!(
-        cols[17], "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO%3A0001483",
+        cols[17], "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO%3A0001483|2|12500",
         "FV_CLINVAR tab column must match the VCF pipe schema: {}",
         pos25k
     );
@@ -629,7 +629,7 @@ fn write_clinvar_fixture(tmp: &std::path::Path) {
 ##INFO=<ID=CLNVC,Number=.,Type=String>
 ##INFO=<ID=CLNVCSO,Number=.,Type=String>
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
-1\t25000\trs1\tA\tG\t.\t.\tCLNSIG=Pathogenic;CLNREVSTAT=criteria_provided,_multiple_submitters,_no_conflicts;CLNDN=Breast_cancer;CLNVC=SNV;CLNVCSO=SO:0001483
+1\t25000\t12500\tA\tG\t.\t.\tCLNSIG=Pathogenic;CLNREVSTAT=criteria_provided,_multiple_submitters,_no_conflicts;CLNDN=Breast_cancer;CLNVC=SNV;CLNVCSO=SO:0001483
 ";
     fs::write(&clinvar_source, clinvar_fixture).unwrap();
     run_sa_build(
@@ -763,7 +763,7 @@ fn sa_only_tab_emits_minimal_columns() {
     assert_eq!(cols[2], "G");
     assert_eq!(
         cols[3],
-        "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO%3A0001483"
+        "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO%3A0001483|2|12500"
     );
 }
 
