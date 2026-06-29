@@ -4,6 +4,7 @@
 //! `run_sa_build` (the same entrypoint the CLI uses), and reads the resulting
 //! database back to confirm the round-trip.
 
+use fastvep_cache::annotation::AnnotationProvider;
 use fastvep_cli::pipeline::{run_annotate, run_sa_build, AnnotateConfig};
 use fastvep_sa::gene::GeneIndex;
 use std::fs::{self, File};
@@ -46,6 +47,7 @@ fn sa_build_omim_writes_oga_with_records() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -90,6 +92,7 @@ TP53\tENST00000269305\t0\t25.1\t0.00\t0.05\t0.9999\t5.67\t-0.34
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -129,6 +132,7 @@ BRCA1\tENST00000357654\t0\t50.2\t0.00\t0.03\t1.0000\t3.45\t0.12
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -163,6 +167,7 @@ fn sa_build_clinvar_protein_writes_oga_with_records() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -203,6 +208,7 @@ fn sa_build_unknown_source_errors_with_full_supported_list() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .expect_err("must error on unknown source");
     let msg = format!("{}", err);
@@ -233,6 +239,7 @@ fn annotate_vcf_emits_spliceai_from_fastsa() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -257,6 +264,7 @@ fn annotate_vcf_emits_spliceai_from_fastsa() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -321,6 +329,7 @@ chr1\t26011\t2.71
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
     run_sa_build(
@@ -330,6 +339,7 @@ chr1\t26011\t2.71
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -354,6 +364,7 @@ chr1\t26011\t2.71
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -407,6 +418,7 @@ fn annotate_vcf_replaces_existing_fastvep_info() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -431,6 +443,7 @@ fn annotate_vcf_replaces_existing_fastvep_info() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -469,6 +482,7 @@ fn annotate_vcf_emits_fastsa_projection_for_gnomad() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -493,6 +507,7 @@ fn annotate_vcf_emits_fastsa_projection_for_gnomad() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -534,6 +549,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -558,6 +574,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -639,6 +656,7 @@ fn write_clinvar_fixture(tmp: &std::path::Path) {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 }
@@ -675,6 +693,7 @@ fn sa_only_vcf_omits_csq_and_default_pipeline() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -735,6 +754,7 @@ fn sa_only_tab_emits_minimal_columns() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -798,6 +818,7 @@ fn sa_only_json_omits_transcript_consequences() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -888,6 +909,7 @@ fn sa_only_requires_sa_dir() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .expect_err("--sa-only without --sa-dir must error");
     assert!(
@@ -930,6 +952,7 @@ fn sa_only_multi_allelic_emits_per_alt_rows_with_independent_sa_columns() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -954,6 +977,7 @@ fn sa_only_multi_allelic_emits_per_alt_rows_with_independent_sa_columns() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -1024,6 +1048,7 @@ fn sa_only_strips_preexisting_csq_from_input_info() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -1093,6 +1118,7 @@ fn sa_only_strips_csq_when_in_middle_of_info_field() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -1153,6 +1179,7 @@ fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
         "GRCh38",
         None,
         &[],
+        false,
     )
     .unwrap();
 
@@ -1177,6 +1204,7 @@ fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
         gene_list: None,
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -1236,6 +1264,7 @@ fn annotate_tab_gene_list_filters_to_panel_genes() {
         gene_list: Some(panel.to_string_lossy().into_owned()),
         explicit_alleles: false,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -1287,6 +1316,7 @@ fn annotate_tab_explicit_alleles_inserts_ref_column() {
         gene_list: None,
         explicit_alleles: true,
         qc_rules: None,
+        show_progress: false,
     })
     .unwrap();
 
@@ -1370,6 +1400,7 @@ min_dp = 8
         gene_list: None,
         explicit_alleles: false,
         qc_rules: Some(qc_rules_path.to_string_lossy().into_owned()),
+        show_progress: false,
     })
     .unwrap();
 
@@ -1406,3 +1437,4 @@ min_dp = 8
         row_30k
     );
 }
+

@@ -38,3 +38,13 @@ data/
 # tabix index files cached during remote queries (placed in CWD by htslib)
 *.tbi
 *.csi
+
+# Supplementary-annotation databases emitted by `sa-build` during test runs
+*.osa
+*.osa.idx
+*.oga
+*.osi
+
+# log files from test runs
+*.log
+*.out

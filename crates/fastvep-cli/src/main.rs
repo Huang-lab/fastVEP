@@ -128,6 +128,10 @@ enum Commands {
         /// no per-sample parsing).
         #[arg(long)]
         qc_rules: Option<String>,
+
+        /// Suppress periodic progress output
+        #[arg(long, default_value_t = false)]
+        no_progress: bool,
     },
 
     /// Launch the web interface for interactive variant annotation
@@ -167,6 +171,10 @@ enum Commands {
         /// Output cache file path
         #[arg(short, long)]
         output: String,
+
+        /// Suppress periodic progress output
+        #[arg(long, default_value_t = false)]
+        no_progress: bool,
     },
 
     /// Build a supplementary annotation database (.osa or .osi) from a source file
@@ -205,6 +213,10 @@ enum Commands {
         /// vary by which INFO keys it carries.
         #[arg(long, value_delimiter = ',')]
         info_fields: Vec<String>,
+
+        /// Suppress periodic progress output
+        #[arg(long, default_value_t = false)]
+        no_progress: bool,
     },
 
     /// Filter annotated VEP output
@@ -253,6 +265,7 @@ fn main() -> Result<()> {
             gene_list,
             explicit_alleles,
             qc_rules,
+            no_progress,
         } => {
             pipeline::run_annotate(pipeline::AnnotateConfig {
                 input,
@@ -275,10 +288,11 @@ fn main() -> Result<()> {
                 gene_list,
                 explicit_alleles,
                 qc_rules,
+                show_progress: !no_progress,
             })?;
         }
-        Commands::Cache { gff3, fasta, synonyms, output } => {
-            pipeline::run_cache_build(&gff3, fasta.as_deref(), synonyms.as_deref(), &output)?;
+        Commands::Cache { gff3, fasta, synonyms, output, no_progress } => {
+            pipeline::run_cache_build(&gff3, fasta.as_deref(), synonyms.as_deref(), &output, !no_progress)?;
         }
         Commands::Web { port, gff3, fasta } => {
             webserver::run_server(port, gff3, fasta)?;
@@ -290,6 +304,7 @@ fn main() -> Result<()> {
             assembly,
             name,
             info_fields,
+            no_progress,
         } => {
             pipeline::run_sa_build(
                 &source,
@@ -298,6 +313,7 @@ fn main() -> Result<()> {
                 &assembly,
                 name.as_deref(),
                 &info_fields,
+                !no_progress,
             )?;
         }
         Commands::Filter {

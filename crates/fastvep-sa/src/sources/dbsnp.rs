@@ -1,89 +1,123 @@
 //! dbSNP VCF parser for building .osa annotation files.
 //!
 //! Parses dbSNP's VCF release to extract RS IDs and global MAF.
+//!
+//! The full NCBI dbSNP VCF contains ~800 million records. Use
+//! `iter_dbsnp_vcf` for streaming builds; `parse_dbsnp_vcf` is retained for
+//! tests and small inputs.
 
 use crate::common::AnnotationRecord;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::io::BufRead;
 
-/// Parse a dbSNP VCF and produce sorted `AnnotationRecord`s.
-pub fn parse_dbsnp_vcf<R: BufRead>(
+/// Stream a coordinate-sorted dbSNP VCF as `AnnotationRecord`s without
+/// buffering the whole file in memory.
+///
+/// The input must already be sorted by chromosome and position (all standard
+/// NCBI dbSNP releases are).
+pub fn iter_dbsnp_vcf<'a, R: BufRead>(
     reader: R,
-    chrom_to_idx: &HashMap<String, u16>,
-) -> Result<Vec<AnnotationRecord>> {
-    let mut records = Vec::new();
+    chrom_to_idx: &'a HashMap<String, u16>,
+) -> DbsnpRecordIter<'a, R> {
+    DbsnpRecordIter {
+        lines: reader.lines(),
+        chrom_to_idx,
+        pending: VecDeque::new(),
+    }
+}
 
-    for line in reader.lines() {
-        let line = line.context("Reading dbSNP VCF line")?;
-        if line.starts_with('#') {
-            continue;
-        }
+pub struct DbsnpRecordIter<'a, R: BufRead> {
+    lines: std::io::Lines<R>,
+    chrom_to_idx: &'a HashMap<String, u16>,
+    pending: VecDeque<AnnotationRecord>,
+}
 
-        let fields: Vec<&str> = line.splitn(9, '\t').collect();
-        if fields.len() < 8 {
-            continue;
-        }
+impl<R: BufRead> Iterator for DbsnpRecordIter<'_, R> {
+    type Item = Result<AnnotationRecord>;
 
-        let chrom = normalize_chrom(fields[0]);
-        let chrom_idx = match chrom_to_idx.get(&chrom) {
-            Some(&idx) => idx,
-            None => continue,
-        };
-
-        let pos: u32 = match fields[1].parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        let id = fields[2];
-        let ref_allele = fields[3].to_string();
-        let alt_field = fields[4];
-        let info = fields[7];
-
-        // Extract RS ID
-        let rs_id = if id.starts_with("rs") {
-            id.to_string()
-        } else {
-            // Try INFO field
-            let info_map = parse_info(info);
-            match info_map.get("RS") {
-                Some(rs) => format!("rs{}", rs),
-                None => continue, // Skip if no RS ID
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(record) = self.pending.pop_front() {
+                return Some(Ok(record));
             }
-        };
 
-        // Parse global MAF if available
-        let info_map = parse_info(info);
-        let freq = info_map
-            .get("CAF")
-            .and_then(|caf| {
-                // CAF format: ref_freq,alt1_freq,alt2_freq,...
+            let line = match self.lines.next()? {
+                Ok(l) => l,
+                Err(e) => return Some(Err(e).context("Reading dbSNP VCF line")),
+            };
+
+            if line.starts_with('#') {
+                continue;
+            }
+
+            let fields: Vec<&str> = line.splitn(9, '\t').collect();
+            if fields.len() < 8 {
+                continue;
+            }
+
+            let chrom = normalize_chrom(fields[0]);
+            let chrom_idx = match self.chrom_to_idx.get(&chrom) {
+                Some(&idx) => idx,
+                None => continue,
+            };
+
+            let pos: u32 = match fields[1].parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            let id = fields[2];
+            let ref_allele = fields[3].to_string();
+            let alt_field = fields[4];
+            let info = fields[7];
+
+            let rs_id = if id.starts_with("rs") {
+                id.to_string()
+            } else {
+                let info_map = parse_info(info);
+                match info_map.get("RS") {
+                    Some(rs) => format!("rs{}", rs),
+                    None => continue,
+                }
+            };
+
+            let info_map = parse_info(info);
+            let freq = info_map.get("CAF").and_then(|caf| {
                 let parts: Vec<&str> = caf.split(',').collect();
                 parts.get(1).and_then(|s| s.parse::<f64>().ok())
             });
 
-        for alt in alt_field.split(',') {
-            if alt == "." || alt == "*" {
-                continue;
+            for alt in alt_field.split(',') {
+                if alt == "." || alt == "*" {
+                    continue;
+                }
+                let mut parts = vec![format!("\"id\":\"{}\"", rs_id)];
+                if let Some(f) = freq {
+                    parts.push(format!("\"globalMaf\":{:.6e}", f));
+                }
+                self.pending.push_back(AnnotationRecord {
+                    chrom_idx,
+                    position: pos,
+                    ref_allele: ref_allele.clone(),
+                    alt_allele: alt.to_string(),
+                    json: format!("{{{}}}", parts.join(",")),
+                });
             }
-
-            let mut parts = vec![format!("\"id\":\"{}\"", rs_id)];
-            if let Some(f) = freq {
-                parts.push(format!("\"globalMaf\":{:.6e}", f));
-            }
-            let json = format!("{{{}}}", parts.join(","));
-
-            records.push(AnnotationRecord {
-                chrom_idx,
-                position: pos,
-                ref_allele: ref_allele.clone(),
-                alt_allele: alt.to_string(),
-                json,
-            });
         }
     }
+}
 
+/// Parse a dbSNP VCF and produce sorted `AnnotationRecord`s.
+///
+/// Loads all records into memory — suitable for tests and small inputs.
+/// For the full NCBI release use `iter_dbsnp_vcf` via the pipeline instead.
+pub fn parse_dbsnp_vcf<R: BufRead>(
+    reader: R,
+    chrom_to_idx: &HashMap<String, u16>,
+) -> Result<Vec<AnnotationRecord>> {
+    let mut records: Vec<_> = iter_dbsnp_vcf(reader, chrom_to_idx).collect::<Result<_>>()?;
     records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
     Ok(records)
 }
