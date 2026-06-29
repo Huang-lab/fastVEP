@@ -59,10 +59,20 @@ pub fn parse_clinvar_vcf<R: BufRead>(
         let clndisdb = info_map.get("CLNDISDB").cloned(); // disease-database cross-references
         let mc = info_map.get("MC").cloned(); // molecular consequence (SO term | label)
         // ClinVar-distributed population allele frequencies (ExAC / 1000G / ESP).
-        // Used as a frequency backstop by PM2 when gnomAD has no record.
-        let af_exac = info_map.get("AF_EXAC").and_then(|s| s.parse::<f64>().ok());
-        let af_tgp = info_map.get("AF_TGP").and_then(|s| s.parse::<f64>().ok());
-        let af_esp = info_map.get("AF_ESP").and_then(|s| s.parse::<f64>().ok());
+        // Used as a frequency backstop by PM2 when gnomAD has no record. Reject
+        // non-finite values: `f64::from_str` accepts "inf"/"nan", whose Display
+        // form is invalid JSON and would poison the entire record's JSON string
+        // (silently dropping its ClinVar annotation). Real ClinVar AFs are
+        // always finite decimals, so this only guards against malformed input.
+        let parse_af = |k: &str| {
+            info_map
+                .get(k)
+                .and_then(|s| s.parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+        };
+        let af_exac = parse_af("AF_EXAC");
+        let af_tgp = parse_af("AF_TGP");
+        let af_esp = parse_af("AF_ESP");
 
         // Handle multi-allelic: each ALT gets its own record
         for alt in alt_field.split(',') {
@@ -324,5 +334,30 @@ mod tests {
         );
         assert_eq!(clnrevstat_to_gold_stars("no_assertion_criteria_provided"), 0);
         assert_eq!(clnrevstat_to_gold_stars(""), 0);
+    }
+
+    #[test]
+    fn test_parse_clinvar_non_finite_af_dropped() {
+        // `f64::from_str` accepts "inf"/"nan"; their Display form is invalid
+        // JSON and would poison the whole record. A malformed AF must be
+        // dropped (treated as absent), leaving the rest of the record intact
+        // and the JSON parseable.
+        let vcf = "\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+1\t12345\trs1\tA\tG\t.\t.\tCLNSIG=Pathogenic;AF_EXAC=inf;AF_TGP=nan;AF_ESP=0.0016
+";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".to_string(), 0u16);
+
+        let records = parse_clinvar_vcf(vcf.as_bytes(), &chrom_map).unwrap();
+        assert_eq!(records.len(), 1);
+        // Non-finite AFs dropped; the finite one survives.
+        assert!(!records[0].json.contains("afExac"));
+        assert!(!records[0].json.contains("afTgp"));
+        assert!(records[0].json.contains("\"afEsp\":0.0016"));
+        // The emitted JSON must still be valid.
+        let v: serde_json::Value = serde_json::from_str(&records[0].json).unwrap();
+        assert!(v.get("afExac").is_none());
+        assert_eq!(v.get("afEsp").and_then(|x| x.as_f64()), Some(0.0016));
     }
 }
