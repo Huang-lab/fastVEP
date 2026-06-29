@@ -17,7 +17,7 @@ use fastvep_io::vcf::VcfParser;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufWriter, Read, Write};
+use std::io::{self, BufRead, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2179,6 +2179,36 @@ fn standard_chrom_map(assembly: &str) -> (Vec<String>, std::collections::HashMap
     (chroms, map)
 }
 
+/// Open an `sa-build` input file and transparently decompress gzip/bgzip.
+///
+/// Detection is by the gzip magic bytes (`0x1f 0x8b`) first, falling back to the
+/// `.gz`/`.bgz` extension — mirroring `wrap_maybe_gzip_reader` on the annotate
+/// path so a bgzipped source with a non-standard name (e.g. `gnomad.sites.vcf`)
+/// still decodes instead of silently parsing to zero records. The file is
+/// seekable, so we sniff and rewind rather than chaining the peeked bytes.
+///
+/// When `byte_counter` is supplied the raw (still-compressed) file is wrapped in
+/// a `CountingReader` *before* decompression, so progress reflects compressed
+/// bytes consumed against the on-disk file size.
+fn open_sa_input(input: &str, byte_counter: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>) -> Result<Box<dyn io::Read>> {
+    let mut file = File::open(input).with_context(|| format!("Opening input file: {}", input))?;
+    let mut magic = [0u8; 2];
+    let n = file.read(&mut magic)?;
+    file.seek(SeekFrom::Start(0))?;
+    let is_gzip =
+        (n == 2 && magic == [0x1f, 0x8b]) || input.ends_with(".gz") || input.ends_with(".bgz");
+
+    let raw: Box<dyn io::Read> = match byte_counter {
+        Some(bytes) => Box::new(crate::progress::CountingReader { inner: file, bytes }),
+        None => Box::new(file),
+    };
+    if is_gzip {
+        Ok(Box::new(MultiGzDecoder::new(raw)))
+    } else {
+        Ok(raw)
+    }
+}
+
 /// Stream a coordinate-sorted source VCF straight into the .osa writer without
 /// buffering every record in memory (issue #55: gnomAD/TOPMed/dbSNP releases
 /// carry 100M+ records). The input is wrapped in a `CountingReader` so the
@@ -2212,16 +2242,7 @@ where
 
     let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
     let byte_counter = Arc::new(AtomicU64::new(0));
-    let file = File::open(input).with_context(|| format!("Opening input file: {}", input))?;
-    let counting = crate::progress::CountingReader {
-        inner: file,
-        bytes: Arc::clone(&byte_counter),
-    };
-    let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
-        Box::new(flate2::read::MultiGzDecoder::new(counting))
-    } else {
-        Box::new(counting)
-    };
+    let reader = open_sa_input(input, Some(Arc::clone(&byte_counter)))?;
     let buf_reader = io::BufReader::new(reader);
 
     let mut meter = if show_progress && file_size > 0 {
@@ -2499,14 +2520,7 @@ pub fn run_sa_build(
         _ => {}
     }
 
-    let file = File::open(input)
-        .with_context(|| format!("Opening input file: {}", input))?;
-    let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
-        Box::new(flate2::read::MultiGzDecoder::new(file))
-    } else {
-        Box::new(file)
-    };
-    let buf_reader = io::BufReader::new(reader);
+    let buf_reader = io::BufReader::new(open_sa_input(input, None)?);
 
     eprintln!(
         "INFO  ProgressMeter - Parsing '{}': {} -> {}",
