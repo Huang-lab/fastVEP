@@ -47,7 +47,15 @@ fn dump_with_index(path: &PathBuf, idx_path: &PathBuf, max_records: Option<u64>)
     'outer: for chrom in chroms {
         for br in &idx.chromosomes[chrom] {
             let off = br.file_offset as usize;
-            let data = &mmap[off + 4..off + 4 + br.compressed_len as usize];
+            let data = mmap
+                .get(off + 4..off + 4 + br.compressed_len as usize)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "block at offset {} extends past end of {} — truncated/partial .osa?",
+                        off,
+                        path.display()
+                    )
+                })?;
             let entries = SaBlock::decompress(data)?;
             for entry in entries {
                 println!(

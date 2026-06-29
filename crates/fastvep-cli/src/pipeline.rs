@@ -2179,6 +2179,86 @@ fn standard_chrom_map(assembly: &str) -> (Vec<String>, std::collections::HashMap
     (chroms, map)
 }
 
+/// Stream a coordinate-sorted source VCF straight into the .osa writer without
+/// buffering every record in memory (issue #55: gnomAD/TOPMed/dbSNP releases
+/// carry 100M+ records). The input is wrapped in a `CountingReader` so the
+/// `ProgressMeter` can report byte-based % done + ETA for gz/bgz inputs whose
+/// compressed size is known; plain or size-unknown inputs fall back to the
+/// records-only meter.
+///
+/// `make_iter` adapts the (already gz-decoded) reader into a source-specific
+/// streaming iterator; all callers must yield records in `(chrom_idx, position)`
+/// order because the writer streams blocks and rejects out-of-order input.
+fn run_streaming_sa_build<'a, I>(
+    input: &str,
+    output: &str,
+    header: fastvep_sa::index::IndexHeader,
+    chrom_map: &'a std::collections::HashMap<String, u16>,
+    chrom_list: &[String],
+    show_progress: bool,
+    make_iter: impl FnOnce(
+        io::BufReader<Box<dyn io::Read>>,
+        &'a std::collections::HashMap<String, u16>,
+    ) -> I,
+) -> Result<()>
+where
+    I: Iterator<Item = Result<fastvep_sa::common::AnnotationRecord>>,
+{
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+
+    let output_path = Path::new(output);
+    let mut writer = fastvep_sa::writer::SaWriter::new(header);
+
+    let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+    let byte_counter = Arc::new(AtomicU64::new(0));
+    let file = File::open(input).with_context(|| format!("Opening input file: {}", input))?;
+    let counting = crate::progress::CountingReader {
+        inner: file,
+        bytes: Arc::clone(&byte_counter),
+    };
+    let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
+        Box::new(flate2::read::MultiGzDecoder::new(counting))
+    } else {
+        Box::new(counting)
+    };
+    let buf_reader = io::BufReader::new(reader);
+
+    let mut meter = if show_progress && file_size > 0 {
+        crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
+    } else {
+        crate::progress::ProgressMeter::new(show_progress)
+    };
+
+    let records = make_iter(buf_reader, chrom_map).map(|record| {
+        if record.is_ok() {
+            meter.update();
+        }
+        record
+    });
+
+    // The streaming writer creates and fills the .osa incrementally, so a
+    // mid-stream failure (a parse error, or the writer's own out-of-order
+    // `bail!`) leaves a truncated .osa and never writes the .idx. The old
+    // buffer-then-write path parsed everything first and so left nothing behind
+    // on failure; preserve that contract by removing the partial artifacts
+    // rather than leaving a corrupt half-built database on disk.
+    if let Err(e) = writer.write_results_to_files(output_path, records, chrom_list) {
+        let _ = std::fs::remove_file(output_path.with_extension("osa"));
+        let _ = std::fs::remove_file(output_path.with_extension("osa.idx"));
+        return Err(e);
+    }
+
+    meter.finish();
+    eprintln!(
+        "Wrote: {} and {}",
+        output_path.with_extension("osa").display(),
+        output_path.with_extension("osa.idx").display()
+    );
+
+    Ok(())
+}
+
 /// PhyloP comes in two on-disk formats: UCSC fixed-step wig (`fixedStep
 /// chrom=...`) and a simple `chrom\tpos\tscore` TSV (which is what we
 /// emit when distilling PhyloP from gnomAD v4 INFO). Detect by peeking
@@ -2388,152 +2468,35 @@ pub fn run_sa_build(
 
     eprintln!("Building {} .osa: {} -> {}", source, input, Path::new(output).with_extension("osa").display());
 
-    if source == "spliceai" {
-        let output_path = Path::new(output);
-        let mut writer = SaWriter::new(header);
-        let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-        let byte_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let file = File::open(input)
-            .with_context(|| format!("Opening input file: {}", input))?;
-        let counting = crate::progress::CountingReader { inner: file, bytes: std::sync::Arc::clone(&byte_counter) };
-        let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
-            Box::new(flate2::read::MultiGzDecoder::new(counting))
-        } else {
-            Box::new(counting)
-        };
-        let buf_reader = io::BufReader::new(reader);
-        let mut meter = if show_progress && file_size > 0 {
-            crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
-        } else {
-            crate::progress::ProgressMeter::new(show_progress)
-        };
-        let records = fastvep_sa::sources::spliceai::iter_spliceai_vcf(buf_reader, &chrom_map)
-            .map(|record| {
-                if record.is_ok() {
-                    meter.update();
-                }
-                record
-            });
-        writer.write_results_to_files(output_path, records, &chrom_list)?;
-        meter.finish();
-        eprintln!(
-            "Wrote: {} and {}",
-            output_path.with_extension("osa").display(),
-            output_path.with_extension("osa.idx").display()
-        );
-
-        return Ok(());
-    }
-
-    if source == "gnomad" {
-        let output_path = Path::new(output);
-        let mut writer = SaWriter::new(header);
-        let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-        let byte_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let file = File::open(input)
-            .with_context(|| format!("Opening input file: {}", input))?;
-        let counting = crate::progress::CountingReader { inner: file, bytes: std::sync::Arc::clone(&byte_counter) };
-        let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
-            Box::new(flate2::read::MultiGzDecoder::new(counting))
-        } else {
-            Box::new(counting)
-        };
-        let buf_reader = io::BufReader::new(reader);
-        let mut meter = if show_progress && file_size > 0 {
-            crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
-        } else {
-            crate::progress::ProgressMeter::new(show_progress)
-        };
-        let records = fastvep_sa::sources::gnomad::iter_gnomad_vcf(buf_reader, &chrom_map)
-            .map(|record| {
-                if record.is_ok() {
-                    meter.update();
-                }
-                record
-            });
-        writer.write_results_to_files(output_path, records, &chrom_list)?;
-        meter.finish();
-        eprintln!(
-            "Wrote: {} and {}",
-            output_path.with_extension("osa").display(),
-            output_path.with_extension("osa.idx").display()
-        );
-
-        return Ok(());
-    }
-
-    if source == "dbsnp" {
-        let output_path = Path::new(output);
-        let mut writer = SaWriter::new(header);
-        let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-        let byte_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let file = File::open(input)
-            .with_context(|| format!("Opening input file: {}", input))?;
-        let counting = crate::progress::CountingReader { inner: file, bytes: std::sync::Arc::clone(&byte_counter) };
-        let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
-            Box::new(flate2::read::MultiGzDecoder::new(counting))
-        } else {
-            Box::new(counting)
-        };
-        let buf_reader = io::BufReader::new(reader);
-        let mut meter = if show_progress && file_size > 0 {
-            crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
-        } else {
-            crate::progress::ProgressMeter::new(show_progress)
-        };
-        let records = fastvep_sa::sources::dbsnp::iter_dbsnp_vcf(buf_reader, &chrom_map)
-            .map(|record| {
-                if record.is_ok() {
-                    meter.update();
-                }
-                record
-            });
-        writer.write_results_to_files(output_path, records, &chrom_list)?;
-        meter.finish();
-        eprintln!(
-            "Wrote: {} and {}",
-            output_path.with_extension("osa").display(),
-            output_path.with_extension("osa.idx").display()
-        );
-
-        return Ok(());
-    }
-
-    if source == "topmed" {
-        let output_path = Path::new(output);
-        let mut writer = SaWriter::new(header);
-        let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
-        let byte_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let file = File::open(input)
-            .with_context(|| format!("Opening input file: {}", input))?;
-        let counting = crate::progress::CountingReader { inner: file, bytes: std::sync::Arc::clone(&byte_counter) };
-        let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
-            Box::new(flate2::read::MultiGzDecoder::new(counting))
-        } else {
-            Box::new(counting)
-        };
-        let buf_reader = io::BufReader::new(reader);
-        let mut meter = if show_progress && file_size > 0 {
-            crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
-        } else {
-            crate::progress::ProgressMeter::new(show_progress)
-        };
-        let records = fastvep_sa::sources::topmed::iter_topmed_vcf(buf_reader, &chrom_map)
-            .map(|record| {
-                if record.is_ok() {
-                    meter.update();
-                }
-                record
-            });
-        writer.write_results_to_files(output_path, records, &chrom_list)?;
-        meter.finish();
-        eprintln!(
-            "Wrote: {} and {}",
-            output_path.with_extension("osa").display(),
-            output_path.with_extension("osa.idx").display()
-        );
-
-        return Ok(());
+    // Large, coordinate-sorted population/score sources stream straight into
+    // the writer instead of buffering every record (issue #55). They share one
+    // helper that differs only in which per-source iterator adapts the reader.
+    match source {
+        "spliceai" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::spliceai::iter_spliceai_vcf(r, m),
+            );
+        }
+        "gnomad" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::gnomad::iter_gnomad_vcf(r, m),
+            );
+        }
+        "dbsnp" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::dbsnp::iter_dbsnp_vcf(r, m),
+            );
+        }
+        "topmed" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::topmed::iter_topmed_vcf(r, m),
+            );
+        }
+        _ => {}
     }
 
     let file = File::open(input)

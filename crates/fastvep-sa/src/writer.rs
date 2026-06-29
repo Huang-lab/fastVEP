@@ -92,7 +92,9 @@ impl SaWriter {
         if let Some((last_chrom, last_pos)) = self.last_key {
             if (record.chrom_idx, record.position) < (last_chrom, last_pos) {
                 anyhow::bail!(
-                    "SA records are not sorted: previous chrom_idx={}, position={}; current chrom_idx={}, position={}",
+                    "SA records are not sorted: previous chrom_idx={}, position={}; current chrom_idx={}, position={}. \
+                     The streaming .osa builder requires input sorted by chromosome (chr1..chr22,X,Y,M) then position \
+                     — sort the source file (e.g. `bcftools sort` / `sort -k1,1 -k2,2n`) and rebuild.",
                     last_chrom,
                     last_pos,
                     record.chrom_idx,

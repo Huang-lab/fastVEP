@@ -39,9 +39,11 @@ data/
 *.tbi
 *.csi
 
-# Spurious reference files from test runs
+# Supplementary-annotation databases emitted by `sa-build` during test runs
 *.osa
-*.idx
+*.osa.idx
+*.oga
+*.osi
 
 # log files from test runs
 *.log

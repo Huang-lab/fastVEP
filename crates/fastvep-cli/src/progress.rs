@@ -123,6 +123,12 @@ impl ProgressMeter {
         if !self.enabled {
             return;
         }
+        // The gz decoder can stop a few trailing compressed bytes short of EOF,
+        // so the final byte-based row would otherwise read e.g. 99.9% / ETA>0.
+        // Pin the counter to the full size so the closing line reads 100% / 0.
+        if let Some(ref counter) = self.bytes_read {
+            counter.store(self.total_bytes, Ordering::Relaxed);
+        }
         self.print_row();
         let elapsed_min = self.start.elapsed().as_secs_f64() / 60.0;
         eprintln!(
