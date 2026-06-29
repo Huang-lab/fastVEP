@@ -4,4 +4,5 @@
 //! integration tests in `tests/`. The binary entry point is `src/main.rs`.
 
 pub mod pipeline;
+pub mod progress;
 pub mod webserver;

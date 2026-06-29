@@ -7,7 +7,7 @@
 use crate::block::{BlockEntry, SaBlock};
 use crate::common::{AnnotationRecord, DEFAULT_BLOCK_SIZE, OSA_MAGIC, SCHEMA_VERSION};
 use crate::index::{BlockRef, IndexHeader, SaIndex};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -92,7 +92,9 @@ impl SaWriter {
         if let Some((last_chrom, last_pos)) = self.last_key {
             if (record.chrom_idx, record.position) < (last_chrom, last_pos) {
                 anyhow::bail!(
-                    "SA records are not sorted: previous chrom_idx={}, position={}; current chrom_idx={}, position={}",
+                    "SA records are not sorted: previous chrom_idx={}, position={}; current chrom_idx={}, position={}. \
+                     The streaming .osa builder requires input sorted by chromosome (chr1..chr22,X,Y,M) then position \
+                     — sort the source file (e.g. `bcftools sort` / `sort -k1,1 -k2,2n`) and rebuild.",
                     last_chrom,
                     last_pos,
                     record.chrom_idx,
@@ -172,12 +174,14 @@ impl SaWriter {
         let data_path = base_path.with_extension("osa");
         let idx_path = base_path.with_extension("osa.idx");
 
-        let data_file = std::fs::File::create(&data_path)?;
+        let data_file = std::fs::File::create(&data_path)
+            .with_context(|| format!("Creating output file {} (does the output directory exist?)", data_path.display()))?;
         let mut data_writer = BufWriter::new(data_file);
         self.write_all(&mut data_writer, records, chrom_map)?;
         data_writer.flush()?;
 
-        let idx_file = std::fs::File::create(&idx_path)?;
+        let idx_file = std::fs::File::create(&idx_path)
+            .with_context(|| format!("Creating index file {}", idx_path.display()))?;
         let mut idx_writer = BufWriter::new(idx_file);
         self.write_index(&mut idx_writer)?;
         idx_writer.flush()?;
@@ -195,12 +199,14 @@ impl SaWriter {
         let data_path = base_path.with_extension("osa");
         let idx_path = base_path.with_extension("osa.idx");
 
-        let data_file = std::fs::File::create(&data_path)?;
+        let data_file = std::fs::File::create(&data_path)
+            .with_context(|| format!("Creating output file {} (does the output directory exist?)", data_path.display()))?;
         let mut data_writer = BufWriter::new(data_file);
         self.write_all_results(&mut data_writer, records, chrom_map)?;
         data_writer.flush()?;
 
-        let idx_file = std::fs::File::create(&idx_path)?;
+        let idx_file = std::fs::File::create(&idx_path)
+            .with_context(|| format!("Creating index file {}", idx_path.display()))?;
         let mut idx_writer = BufWriter::new(idx_file);
         self.write_index(&mut idx_writer)?;
         idx_writer.flush()?;

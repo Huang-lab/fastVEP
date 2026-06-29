@@ -17,7 +17,7 @@ use fastvep_io::vcf::VcfParser;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufWriter, Read, Write};
+use std::io::{self, BufRead, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -87,9 +87,12 @@ pub struct AnnotateConfig {
     /// Path to a QC rules TOML file. When set, tab output gains a
     /// `QC_CLASS` column.
     pub qc_rules: Option<String>,
+    /// Show periodic progress output.
+    pub show_progress: bool,
 }
 
 pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
+    eprintln!("Annotating: {} -> {}", config.input, config.output);
     let sa_only = config.sa_only;
     if sa_only {
         if config.sa_dir.is_none() {
@@ -541,7 +544,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     }
 
     // Process variants in batches for parallel annotation
-    let mut count = 0u64;
+    let mut meter = crate::progress::ProgressMeter::new(config.show_progress);
     let mut first_json = true;
 
     loop {
@@ -1373,7 +1376,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             }
         }
 
-        count += batch.len() as u64;
+        meter.update_n(batch.len() as u64);
     } // end batch loop
 
     // Close JSON array
@@ -1382,7 +1385,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     }
 
     writer.flush()?;
-    eprintln!("Annotated {} variants", count);
+    meter.finish();
 
     Ok(())
 }
@@ -1904,6 +1907,7 @@ pub fn run_cache_build(
     fasta_path: Option<&str>,
     synonyms_path: Option<&str>,
     output_path: &str,
+    show_progress: bool,
 ) -> Result<()> {
     if gff3_paths.is_empty() {
         return Err(anyhow::anyhow!("`fastvep cache` requires at least one --gff3"));
@@ -2007,7 +2011,7 @@ pub fn run_cache_build(
         }
 
         let sp = FastaSequenceProvider::new(reader);
-        let mut built = 0usize;
+        let mut meter = crate::progress::ProgressMeter::new(show_progress);
         for tr in &mut transcripts {
             if tr.is_coding() {
                 if let Err(e) = tr.build_sequences(|chrom, start, end| {
@@ -2016,11 +2020,11 @@ pub fn run_cache_build(
                 }) {
                     eprintln!("Warning: could not build sequences for {}: {}", tr.stable_id, e);
                 } else {
-                    built += 1;
+                    meter.update();
                 }
             }
         }
-        eprintln!("Built sequences for {} coding transcripts", built);
+        meter.finish();
     } else if synonyms_path.is_some() {
         eprintln!(
             "Warning: --synonyms has no effect without --fasta; chromosome names are kept as-is from the GFF3."
@@ -2175,6 +2179,107 @@ fn standard_chrom_map(assembly: &str) -> (Vec<String>, std::collections::HashMap
     (chroms, map)
 }
 
+/// Open an `sa-build` input file and transparently decompress gzip/bgzip.
+///
+/// Detection is by the gzip magic bytes (`0x1f 0x8b`) first, falling back to the
+/// `.gz`/`.bgz` extension — mirroring `wrap_maybe_gzip_reader` on the annotate
+/// path so a bgzipped source with a non-standard name (e.g. `gnomad.sites.vcf`)
+/// still decodes instead of silently parsing to zero records. The file is
+/// seekable, so we sniff and rewind rather than chaining the peeked bytes.
+///
+/// When `byte_counter` is supplied the raw (still-compressed) file is wrapped in
+/// a `CountingReader` *before* decompression, so progress reflects compressed
+/// bytes consumed against the on-disk file size.
+fn open_sa_input(input: &str, byte_counter: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>) -> Result<Box<dyn io::Read>> {
+    let mut file = File::open(input).with_context(|| format!("Opening input file: {}", input))?;
+    let mut magic = [0u8; 2];
+    let n = file.read(&mut magic)?;
+    file.seek(SeekFrom::Start(0))?;
+    let is_gzip =
+        (n == 2 && magic == [0x1f, 0x8b]) || input.ends_with(".gz") || input.ends_with(".bgz");
+
+    let raw: Box<dyn io::Read> = match byte_counter {
+        Some(bytes) => Box::new(crate::progress::CountingReader { inner: file, bytes }),
+        None => Box::new(file),
+    };
+    if is_gzip {
+        Ok(Box::new(MultiGzDecoder::new(raw)))
+    } else {
+        Ok(raw)
+    }
+}
+
+/// Stream a coordinate-sorted source VCF straight into the .osa writer without
+/// buffering every record in memory (issue #55: gnomAD/TOPMed/dbSNP releases
+/// carry 100M+ records). The input is wrapped in a `CountingReader` so the
+/// `ProgressMeter` can report byte-based % done + ETA for gz/bgz inputs whose
+/// compressed size is known; plain or size-unknown inputs fall back to the
+/// records-only meter.
+///
+/// `make_iter` adapts the (already gz-decoded) reader into a source-specific
+/// streaming iterator; all callers must yield records in `(chrom_idx, position)`
+/// order because the writer streams blocks and rejects out-of-order input.
+fn run_streaming_sa_build<'a, I>(
+    input: &str,
+    output: &str,
+    header: fastvep_sa::index::IndexHeader,
+    chrom_map: &'a std::collections::HashMap<String, u16>,
+    chrom_list: &[String],
+    show_progress: bool,
+    make_iter: impl FnOnce(
+        io::BufReader<Box<dyn io::Read>>,
+        &'a std::collections::HashMap<String, u16>,
+    ) -> I,
+) -> Result<()>
+where
+    I: Iterator<Item = Result<fastvep_sa::common::AnnotationRecord>>,
+{
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+
+    let output_path = Path::new(output);
+    let mut writer = fastvep_sa::writer::SaWriter::new(header);
+
+    let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+    let byte_counter = Arc::new(AtomicU64::new(0));
+    let reader = open_sa_input(input, Some(Arc::clone(&byte_counter)))?;
+    let buf_reader = io::BufReader::new(reader);
+
+    let mut meter = if show_progress && file_size > 0 {
+        crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
+    } else {
+        crate::progress::ProgressMeter::new(show_progress)
+    };
+
+    let records = make_iter(buf_reader, chrom_map).map(|record| {
+        if record.is_ok() {
+            meter.update();
+        }
+        record
+    });
+
+    // The streaming writer creates and fills the .osa incrementally, so a
+    // mid-stream failure (a parse error, or the writer's own out-of-order
+    // `bail!`) leaves a truncated .osa and never writes the .idx. The old
+    // buffer-then-write path parsed everything first and so left nothing behind
+    // on failure; preserve that contract by removing the partial artifacts
+    // rather than leaving a corrupt half-built database on disk.
+    if let Err(e) = writer.write_results_to_files(output_path, records, chrom_list) {
+        let _ = std::fs::remove_file(output_path.with_extension("osa"));
+        let _ = std::fs::remove_file(output_path.with_extension("osa.idx"));
+        return Err(e);
+    }
+
+    meter.finish();
+    eprintln!(
+        "Wrote: {} and {}",
+        output_path.with_extension("osa").display(),
+        output_path.with_extension("osa.idx").display()
+    );
+
+    Ok(())
+}
+
 /// PhyloP comes in two on-disk formats: UCSC fixed-step wig (`fixedStep
 /// chrom=...`) and a simple `chrom\tpos\tscore` TSV (which is what we
 /// emit when distilling PhyloP from gnomAD v4 INFO). Detect by peeking
@@ -2204,6 +2309,7 @@ pub fn run_sa_build(
     assembly: &str,
     name: Option<&str>,
     info_fields: &[String],
+    show_progress: bool,
 ) -> Result<()> {
     use fastvep_sa::index::IndexHeader;
     use fastvep_sa::writer::SaWriter;
@@ -2381,47 +2487,52 @@ pub fn run_sa_build(
         ),
     };
 
-    eprintln!("Building {} .osa from: {}", source, input);
+    eprintln!("Building {} .osa: {} -> {}", source, input, Path::new(output).with_extension("osa").display());
 
-    let file = File::open(input)
-        .with_context(|| format!("Opening input file: {}", input))?;
-    let reader: Box<dyn io::Read> = if input.ends_with(".gz") || input.ends_with(".bgz") {
-        Box::new(flate2::read::MultiGzDecoder::new(file))
-    } else {
-        Box::new(file)
-    };
-    let buf_reader = io::BufReader::new(reader);
-
-    if source == "spliceai" {
-        let output_path = Path::new(output);
-        let mut writer = SaWriter::new(header);
-        let mut record_count = 0usize;
-        let records = fastvep_sa::sources::spliceai::iter_spliceai_vcf(buf_reader, &chrom_map)
-            .map(|record| {
-                if record.is_ok() {
-                    record_count += 1;
-                }
-                record
-            });
-        writer.write_results_to_files(output_path, records, &chrom_list)?;
-
-        eprintln!("Parsed {} records from {}", record_count, source);
-        eprintln!(
-            "Wrote: {} and {}",
-            output_path.with_extension("osa").display(),
-            output_path.with_extension("osa.idx").display()
-        );
-
-        return Ok(());
+    // Large, coordinate-sorted population/score sources stream straight into
+    // the writer instead of buffering every record (issue #55). They share one
+    // helper that differs only in which per-source iterator adapts the reader.
+    match source {
+        "spliceai" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::spliceai::iter_spliceai_vcf(r, m),
+            );
+        }
+        "gnomad" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::gnomad::iter_gnomad_vcf(r, m),
+            );
+        }
+        "dbsnp" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::dbsnp::iter_dbsnp_vcf(r, m),
+            );
+        }
+        "topmed" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::topmed::iter_topmed_vcf(r, m),
+            );
+        }
+        _ => {}
     }
+
+    let buf_reader = io::BufReader::new(open_sa_input(input, None)?);
+
+    eprintln!(
+        "INFO  ProgressMeter - Parsing '{}': {} -> {}",
+        source, input,
+        Path::new(output).with_extension("osa").display()
+    );
+    let t_parse = std::time::Instant::now();
 
     let records = match source {
         "clinvar" => fastvep_sa::sources::clinvar::parse_clinvar_vcf(buf_reader, &chrom_map)?,
-        "gnomad" => fastvep_sa::sources::gnomad::parse_gnomad_vcf(buf_reader, &chrom_map)?,
-        "dbsnp" => fastvep_sa::sources::dbsnp::parse_dbsnp_vcf(buf_reader, &chrom_map)?,
         "cosmic" => fastvep_sa::sources::cosmic::parse_cosmic_vcf(buf_reader, &chrom_map)?,
         "onekg" | "1000g" => fastvep_sa::sources::onekg::parse_onekg_vcf(buf_reader, &chrom_map)?,
-        "topmed" => fastvep_sa::sources::topmed::parse_topmed_vcf(buf_reader, &chrom_map)?,
         "mitomap" => fastvep_sa::sources::mitomap::parse_mitomap(buf_reader, &chrom_map)?,
         // PhyloP supports two on-disk formats: UCSC fixed-step wig and
         // simple TSV (`chrom\tpos\tscore`). Auto-detect by peeking the
@@ -2434,7 +2545,7 @@ pub fn run_sa_build(
         _ => unreachable!(),
     };
 
-    eprintln!("Parsed {} records from {}", records.len(), source);
+    let n = records.len() as u64;
     if records.is_empty() {
         eprintln!(
             "Warning: 0 records parsed from {} — if the input is non-empty, this \
@@ -2445,11 +2556,22 @@ pub fn run_sa_build(
             source, assembly
         );
     }
+    eprintln!(
+        "INFO  ProgressMeter - Parsed {} records in {:.1} min. Writing ...",
+        crate::progress::fmt_count(n),
+        t_parse.elapsed().as_secs_f64() / 60.0
+    );
 
     let output_path = Path::new(output);
+    let t_write = std::time::Instant::now();
     let mut writer = SaWriter::new(header);
     writer.write_to_files(output_path, records.into_iter(), &chrom_list)?;
 
+    eprintln!(
+        "INFO  ProgressMeter - Done. Wrote {} records in {:.1} min.",
+        crate::progress::fmt_count(n),
+        t_write.elapsed().as_secs_f64() / 60.0
+    );
     eprintln!(
         "Wrote: {} and {}",
         output_path.with_extension("osa").display(),
@@ -3038,6 +3160,7 @@ mod custom_source_tests {
             "GRCh38",
             Some("mydb"),
             &["MY_SCORE".to_string()],
+            false,
         )
         .unwrap();
 
@@ -3081,6 +3204,7 @@ mod custom_source_tests {
             "GRCh38",
             Some("myregions"),
             &[],
+            false,
         )
         .unwrap();
 
@@ -3192,6 +3316,7 @@ mod custom_source_tests {
             "GRCh38",
             None,
             &[],
+            false,
         )
         .expect_err("must error on unknown source");
         let msg = format!("{}", err);

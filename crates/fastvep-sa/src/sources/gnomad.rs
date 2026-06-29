@@ -3,17 +3,23 @@
 //! Parses gnomAD's sites-only VCF to extract allele frequencies
 //! per population, allele counts, and homozygote counts.
 //!
-//! Auto-detects the INFO field-naming convention used by the input. gnomAD
-//! v2.1 / v3 / v4.0 (exomes, genomes) use bare `AF` / `AC` / `AN` /
-//! `nhomalt` with `AF_<pop>` for population subsets. The v4.1 *joint*
-//! release (`gnomad.joint.v4.1.sites.*.vcf.bgz`) instead exposes
-//! `AF_joint` / `AC_joint` / `AN_joint` / `nhomalt_joint` and
-//! `AF_joint_<pop>` for per-population frequencies. We pick the scheme by
-//! scanning `##INFO=<ID=...>` header lines.
+//! Auto-detects the INFO field-naming convention used by the input:
+//!
+//! | Release | Top-level | Per-population |
+//! |---------|-----------|----------------|
+//! | v2.x (exomes/genomes) | `AF` / `AC` / `AN` / `nhomalt` | `AF_afr` (underscore) |
+//! | v3.x (genomes)        | `AF` / `AC` / `AN` / `nhomalt` | none at top level (only subset-qualified, e.g. `AF-non_neuro-afr`) |
+//! | v4.0/v4.1 (exomes/genomes) | `AF` / `AC` / `AN` / `nhomalt` | `AF_afr` (underscore) |
+//! | v4.1 joint            | `AF_joint` / `AC_joint` / `AN_joint` / `nhomalt_joint` | `AF_joint_afr` |
+//!
+//! Some locally-processed files expose simple per-population fields with a
+//! hyphen separator (`AF-afr`). The parser detects and handles this case.
+//!
+//! We pick the scheme by scanning `##INFO=<ID=...>` header lines.
 
 use crate::common::AnnotationRecord;
 use anyhow::{Context, Result};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::BufRead;
 
 /// Population keys to extract from gnomAD VCF INFO field. Covers both
@@ -67,14 +73,23 @@ impl FieldNames {
 /// Pick a field-naming scheme based on which INFO IDs the VCF header
 /// declares. Prefer standard names when present; fall back to the joint
 /// names if the standard `AF` is absent but `AF_joint` is declared.
+///
+/// Some locally-processed files may use a hyphen separator for per-population
+/// fields (`AF-afr`) rather than the standard underscore (`AF_afr`). We
+/// detect this by checking whether any `AF-<pop>` field appears in the header.
 fn detect_field_names(info_ids: &HashSet<String>) -> FieldNames {
     if info_ids.contains("AF") {
-        FieldNames::standard()
+        let mut names = FieldNames::standard();
+        if POPULATIONS
+            .iter()
+            .any(|p| info_ids.contains(&format!("AF-{p}")))
+        {
+            names.af_pop_template = "AF-{}".into();
+        }
+        names
     } else if info_ids.contains("AF_joint") {
         FieldNames::joint()
     } else {
-        // Nothing declared — default to standard so behavior is unchanged
-        // for malformed or header-less inputs.
         FieldNames::standard()
     }
 }
@@ -136,87 +151,122 @@ fn parse_info_id(line: &str) -> Option<&str> {
 }
 
 /// Parse a gnomAD sites-only VCF and produce sorted `AnnotationRecord`s.
+///
+/// Collects all records into memory and sorts. For genome-scale VCFs use
+/// `iter_gnomad_vcf` instead, which streams one block at a time.
 pub fn parse_gnomad_vcf<R: BufRead>(
     reader: R,
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
-    let mut records = Vec::new();
-    let mut info_ids: HashSet<String> = HashSet::new();
-    let mut field_names = FieldNames::standard();
-    let mut header_done = false;
+    let mut records: Vec<_> = iter_gnomad_vcf(reader, chrom_to_idx).collect::<Result<_>>()?;
+    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    Ok(records)
+}
 
-    for line in reader.lines() {
-        let line = line.context("Reading gnomAD VCF line")?;
-        if line.starts_with('#') {
-            if let Some(id) = parse_info_id(&line) {
-                info_ids.insert(id.to_string());
+/// Stream a coordinate-sorted gnomAD VCF as `AnnotationRecord`s without
+/// buffering the whole file in memory.
+///
+/// The input must already be sorted by chromosome and position (all standard
+/// gnomAD releases are). The writer will detect and error on out-of-order
+/// records.
+pub fn iter_gnomad_vcf<'a, R: BufRead>(
+    reader: R,
+    chrom_to_idx: &'a HashMap<String, u16>,
+) -> GnomadRecordIter<'a, R> {
+    GnomadRecordIter {
+        lines: reader.lines(),
+        chrom_to_idx,
+        pending: VecDeque::new(),
+        info_ids: HashSet::new(),
+        field_names: None,
+    }
+}
+
+pub struct GnomadRecordIter<'a, R: BufRead> {
+    lines: std::io::Lines<R>,
+    chrom_to_idx: &'a HashMap<String, u16>,
+    pending: VecDeque<AnnotationRecord>,
+    info_ids: HashSet<String>,
+    field_names: Option<FieldNames>,
+}
+
+impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
+    type Item = Result<AnnotationRecord>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(record) = self.pending.pop_front() {
+                return Some(Ok(record));
             }
-            continue;
-        }
 
-        // First data line: finalize the field-naming choice.
-        if !header_done {
-            field_names = detect_field_names(&info_ids);
-            header_done = true;
-        }
+            let line = match self.lines.next()? {
+                Ok(l) => l,
+                Err(e) => return Some(Err(e).context("Reading gnomAD VCF line")),
+            };
 
-        let fields: Vec<&str> = line.splitn(9, '\t').collect();
-        if fields.len() < 8 {
-            continue;
-        }
-
-        let chrom = normalize_chrom(fields[0]);
-        let chrom_idx = match chrom_to_idx.get(&chrom) {
-            Some(&idx) => idx,
-            None => continue,
-        };
-
-        let pos: u32 = match fields[1].parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        let ref_allele = fields[3].to_string();
-        let alt_field = fields[4];
-        let info = fields[7];
-
-        let info_map = parse_info(info);
-
-        // Handle multi-allelic: split allele-specific fields by comma
-        let alts: Vec<&str> = alt_field.split(',').collect();
-        let all_afs = split_info_values(info_map.get(&field_names.af).map(|s| s.as_str()));
-        let all_ans = split_info_values(info_map.get(&field_names.an).map(|s| s.as_str()));
-        let all_acs = split_info_values(info_map.get(&field_names.ac).map(|s| s.as_str()));
-        let all_nhomalt =
-            split_info_values(info_map.get(&field_names.nhomalt).map(|s| s.as_str()));
-
-        for (i, alt) in alts.iter().enumerate() {
-            if *alt == "." || *alt == "*" {
+            if line.starts_with('#') {
+                if let Some(id) = parse_info_id(&line) {
+                    self.info_ids.insert(id.to_string());
+                }
                 continue;
             }
 
-            let json = build_gnomad_json(
-                all_afs.get(i).map(|s| s.as_str()),
-                all_ans.first().map(|s| s.as_str()), // AN is typically single-valued
-                all_acs.get(i).map(|s| s.as_str()),
-                all_nhomalt.get(i).map(|s| s.as_str()),
-                &info_map,
-                i,
-                &field_names,
-            );
+            if self.field_names.is_none() {
+                self.field_names = Some(detect_field_names(&self.info_ids));
+            }
+            let field_names = self.field_names.as_ref().unwrap();
 
-            records.push(AnnotationRecord {
-                chrom_idx,
-                position: pos,
-                ref_allele: ref_allele.clone(),
-                alt_allele: alt.to_string(),
-                json,
-            });
+            let fields: Vec<&str> = line.splitn(9, '\t').collect();
+            if fields.len() < 8 {
+                continue;
+            }
+
+            let chrom = normalize_chrom(fields[0]);
+            let chrom_idx = match self.chrom_to_idx.get(&chrom) {
+                Some(&idx) => idx,
+                None => continue,
+            };
+
+            let pos: u32 = match fields[1].parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            let ref_allele = fields[3].to_string();
+            let alt_field = fields[4];
+            let info = fields[7];
+
+            let info_map = parse_info(info);
+            let alts: Vec<&str> = alt_field.split(',').collect();
+            let all_afs = split_info_values(info_map.get(&field_names.af).map(|s| s.as_str()));
+            let all_ans = split_info_values(info_map.get(&field_names.an).map(|s| s.as_str()));
+            let all_acs = split_info_values(info_map.get(&field_names.ac).map(|s| s.as_str()));
+            let all_nhomalt =
+                split_info_values(info_map.get(&field_names.nhomalt).map(|s| s.as_str()));
+
+            for (i, alt) in alts.iter().enumerate() {
+                if *alt == "." || *alt == "*" {
+                    continue;
+                }
+                let json = build_gnomad_json(
+                    all_afs.get(i).map(|s| s.as_str()),
+                    all_ans.first().map(|s| s.as_str()),
+                    all_acs.get(i).map(|s| s.as_str()),
+                    all_nhomalt.get(i).map(|s| s.as_str()),
+                    &info_map,
+                    i,
+                    field_names,
+                );
+                self.pending.push_back(AnnotationRecord {
+                    chrom_idx,
+                    position: pos,
+                    ref_allele: ref_allele.clone(),
+                    alt_allele: alt.to_string(),
+                    json,
+                });
+            }
         }
     }
-
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
-    Ok(records)
 }
 
 fn build_gnomad_json(
@@ -396,6 +446,20 @@ chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF_joint=0.01,0.005;AN_joint=140000;AC_joint=14
         ids.insert("AF_joint".into());
         let names = detect_field_names(&ids);
         assert_eq!(names.af, "AF");
+    }
+
+    #[test]
+    fn test_detect_field_names_hyphen_separator() {
+        // Some locally-processed files use AF-afr (hyphen) instead of the standard AF_afr.
+        let mut ids = HashSet::new();
+        ids.insert("AF".into());
+        ids.insert("AN".into());
+        ids.insert("AF-afr".into());
+        ids.insert("AF-nfe".into());
+        let names = detect_field_names(&ids);
+        assert_eq!(names.af, "AF");
+        assert_eq!(names.pop_key("afr"), "AF-afr");
+        assert_eq!(names.pop_key("nfe"), "AF-nfe");
     }
 
     #[test]

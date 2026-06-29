@@ -49,6 +49,7 @@ fn merged_cache_with_synonyms_canonicalizes_to_fasta_names() {
         Some(fa.to_str().unwrap()),
         Some(syn.to_str().unwrap()),
         out.to_str().unwrap(),
+        false,
     )
     .expect("merged cache build should succeed with a synonyms file");
 
@@ -85,6 +86,7 @@ fn refseq_unresolved_without_synonyms_but_build_still_succeeds() {
         Some(fa.to_str().unwrap()),
         None,
         out.to_str().unwrap(),
+        false,
     )
     .expect("build should not fail just because one contig is unresolved");
 
