@@ -199,6 +199,7 @@ def main():
     criterion_fires = {tc: Counter() for tc in CLASSES}
     rule_dist = Counter()
     discrepancies = []
+    n_soft_disc = 0
     matched = set()
     n_classified = 0
 
@@ -230,18 +231,31 @@ def main():
         rule_dist[rule] += 1
         n_classified += 1
         matched.add(key)
-        if (
+        # An "opposite-direction" call flips benign-side <-> pathogenic-side:
+        # these are the review-critical errors and must ALWAYS be logged in
+        # full (they feed 04_build_md_review_table.py). "Soft" discrepancies
+        # (a directional truth landing on VUS / NoCall) are far more numerous
+        # and only the first 10k are kept — but they must never crowd out an
+        # opposite-direction call, which the old single 10k cap allowed once
+        # the soft calls filled the buffer before the end of the genome.
+        is_opposite = (
             tc_truth in ("Pathogenic", "Likely_pathogenic")
-            and pc in ("Benign", "Likely_benign", "VUS", "NoCall")
+            and pc in ("Benign", "Likely_benign")
         ) or (
             tc_truth in ("Benign", "Likely_benign")
             and pc in ("Pathogenic", "Likely_pathogenic")
-        ):
-            if len(discrepancies) < 10000:
-                discrepancies.append((
-                    chrom, pos, ref, alt, t["gene"], t["review_stars"],
-                    tc_truth, pc, top_csq, rule, ";".join(criteria)
-                ))
+        )
+        is_soft = (
+            tc_truth in ("Pathogenic", "Likely_pathogenic")
+            and pc in ("VUS", "NoCall")
+        )
+        if is_opposite or (is_soft and n_soft_disc < 10000):
+            if is_soft:
+                n_soft_disc += 1
+            discrepancies.append((
+                chrom, pos, ref, alt, t["gene"], t["review_stars"],
+                tc_truth, pc, top_csq, rule, ";".join(criteria)
+            ))
 
     n_truth = len(truth)
     n_unmatched = n_truth - len(matched)

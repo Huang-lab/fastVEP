@@ -39,11 +39,17 @@ from __future__ import annotations
 
 import csv
 import gzip
+import os
+import sys
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT_DIR = ROOT / "data/benchmark/output_v7"
+# Which benchmark run to build the review table for. Override with the
+# FASTVEP_BENCH_OUT env var (dir name under data/benchmark/, e.g. output_v8)
+# or pass it as the first CLI argument; defaults to the v7 baseline.
+_run = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("FASTVEP_BENCH_OUT", "output_v7"))
+OUT_DIR = ROOT / "data/benchmark" / _run
 DISC = OUT_DIR / "discrepancies.tsv"
 TRUTH = ROOT / "data/benchmark/clinvar_2star_truth.tsv"
 CLINVAR_VCF = ROOT / "data/benchmark/clinvar_2star.vcf"
