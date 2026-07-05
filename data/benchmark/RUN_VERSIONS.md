@@ -30,16 +30,25 @@ explicit Definitive/Strong/Moderate filtering.)
 
 ## Code fixes per run
 
-|                                                              |  v1  |  v2  |  v4  |  v5  |  v6  |  v7  |
-|--------------------------------------------------------------|:----:|:----:|:----:|:----:|:----:|:----:|
-| SpliceAI `spliceAI` json_key recognised in classifier        |      |      |  ✅  |  ✅  |  ✅  |  ✅  |
-| PhyloP read from `allele_supplementary` (CLI's actual route) |      |      |  ✅  |  ✅  |  ✅  |  ✅  |
-| VCF + bgzip output (vs 25 GB pretty JSON)                    |      |      |  ✅  |  ✅  |  ✅  |  ✅  |
-| `vep_allele(ref, alt)` indel matching in concordance script  |      |      |      |  ✅  |  ✅  |  ✅  |
-| **PM2 fires when variant absent from gnomAD** (`pm2_absent_when_no_record`) |      |      |      |      |  ✅  |  ✅  |
-| **BP4-splice gated to non-PVS1 consequences** (Walker 2023)  |      |      |      |      |  ✅  |  ✅  |
-| **BS1 uses max-pop AF (mirrors BA1)** (ClinGen SVI)          |      |      |      |      |      |  ✅  |
-| **BS2 AD requires AC ≥ 5 (`bs2_ad_min_ac`)** (Richards 2015) |      |      |      |      |      |  ✅  |
+|                                                              |  v1  |  v2  |  v4  |  v5  |  v6  |  v7  |  v8  |
+|--------------------------------------------------------------|:----:|:----:|:----:|:----:|:----:|:----:|:----:|
+| SpliceAI `spliceAI` json_key recognised in classifier        |      |      |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+| PhyloP read from `allele_supplementary` (CLI's actual route) |      |      |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+| VCF + bgzip output (vs 25 GB pretty JSON)                    |      |      |  ✅  |  ✅  |  ✅  |  ✅  |  ✅  |
+| `vep_allele(ref, alt)` indel matching in concordance script  |      |      |      |  ✅  |  ✅  |  ✅  |  ✅  |
+| **PM2 fires when variant absent from gnomAD** (`pm2_absent_when_no_record`) |      |      |      |      |  ✅  |  ✅  |  ✅  |
+| **BP4-splice gated to non-PVS1 consequences** (Walker 2023)  |      |      |      |      |  ✅  |  ✅  |  ✅  |
+| **BS1 uses max-pop AF (mirrors BA1)** (ClinGen SVI)          |      |      |      |      |      |  ✅  |  ✅  |
+| **BS2 AD requires AC ≥ 5 (`bs2_ad_min_ac`)** (Richards 2015) |      |      |      |      |      |  ✅  |  ✅  |
+| **PVS1 graded (last-exon→Moderate, deep-intron gate)** (#50) |      |      |      |      |      |      |  ✅  |
+| **BP4 SpliceAI path skips deep-exonic missense** (#50)      |      |      |      |      |      |      |  ✅  |
+| **PM2 gnomAD query left-aligned + ClinVar-AF backstop** (#50) |      |      |      |      |      |      |  ✅  |
+| **Opposite-direction discrepancies never truncated** (03 cap fix) |      |      |      |      |      |      |  ✅  |
+
+The SA stack is unchanged from v7. v8 adds only the three ACMG
+criterion-execution fixes from the medical-genetics discordance review
+(merged in #50) plus a concordance-script fix so the review export is
+complete (see below).
 
 v3 was a partial run (PhyloP+SpliceAI loaded but bugs still latent);
 its results are functionally indistinguishable from v2 and were
@@ -47,11 +56,11 @@ overwritten before being preserved.
 
 ## Headline metrics per run
 
-|                            |     v1     |     v5     |     v6     |     v7     |  Δ v1→v7  |
+|                            |     v1     |     v6     |     v7     |     v8     |  Δ v7→v8  |
 |----------------------------|-----------:|-----------:|-----------:|-----------:|----------:|
-| Same-direction concordance |   54.7 %   |   65.1 %   |   70.3 %   | **70.8 %** |**+16.1 pp**|
-| Exact match                |   52.7 %   |   56.0 %   |   56.8 %   | **58.7 %** |**+6.0 pp** |
-| Opposite direction         |   0.005 %  |   0.06 %   |   0.05 %   |   0.0 %    | (≈0)      |
+| Same-direction concordance |   54.7 %   |   70.3 %   |   70.8 %   | **73.6 %** |**+2.8 pp**|
+| Exact match                |   52.7 %   |   56.8 %   |   58.7 %   | **61.3 %** |**+2.6 pp**|
+| Opposite direction         |   0.005 %  |   0.05 %   |  0.046 %   | **0.018 %**| **−61 %** |
 | NoCall                     |   0.0 %    |   0.0 %    |   0.0 %    |   0.0 %    | —         |
 | **Pathogenic recall**      |   **15.7 %** | 20.6 %   |   63.8 %   | **64.0 %** |**+48 pp** |
 | **Likely_pathogenic recall** | **20.9 %** | 26.7 %   |   51.8 %   | **52.0 %** |**+31 pp** |
@@ -98,10 +107,30 @@ overwritten before being preserved.
   by default (`bs2_ad_min_ac`). False-positive BS2 fires on
   Pathogenic ClinVar variants cut by **52%** (809 → 389). Net
   opposite-direction rate dropped from 0.05% to 0.0%.
+- **+2.6 pp exact, +2.8 pp same-direction, opposite −61%** (v7 → v8):
+  the three ACMG criterion-execution fixes from the medical-genetics
+  discordance review (#50). (1) PVS1 was always firing Very-Strong
+  because its grading inputs were hard-coded empty; now last-exon PTCs
+  downgrade to Moderate and deep-intronic mislabeled-splice variants
+  don't fire PVS1. (2) BP4's SpliceAI benign path was firing on
+  deep-exonic missense (SpliceAI = 0) against a pathogenic REVEL; now
+  gated to splice-territory consequences. (3) PM2 was calling
+  repeat-region indels "absent" because a differently-anchored query
+  missed gnomAD's left-aligned record; queries are now
+  reference-normalized before the gnomAD lookup, with ClinVar's
+  ExAC/1000G/ESP AFs as a backstop. Opposite-direction errors fell
+  313 → 122; per-class exact gains led by Likely_benign (+7,009) and
+  VUS (+6,467). Also fixed the concordance script's 10k discrepancy
+  cap, which had been silently truncating the opposite-direction review
+  export at chr5 (so the geneticist's earlier list of ~101 was
+  incomplete; the true post-fix set is 122).
 
 ## Where to find each version
 
 - v1 baseline: `output_v1/concordance_matrix.csv` +
   `output_v1/README.md` (raw outputs were overwritten; matrix
   reconstructed from documentation)
-- v7 current: `output_v7/` (full outputs + figures + raw VCF.gz)
+- v7: `output_v7/` (previous baseline — full outputs + figures + raw VCF.gz)
+- **v8 current: `output_v8/`** (discordance-review fixes; full outputs +
+  `discrepancies_for_md_review.tsv` medical-geneticist review table +
+  `README.md`; ClinVar 2026-06-27 refresh check noted in that README)
