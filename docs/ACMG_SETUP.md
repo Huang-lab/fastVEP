@@ -46,23 +46,29 @@ mkdir -p sa_databases && cd sa_databases
 
 ### ClinVar — clinical significance
 
-Used by PP5, BP6 (both off by default per SVI; enable with `use_pp5_bp6 = true`). PS4 is `NotEvaluated` by default — true PS4 needs case-control statistics, which ClinVar review-stars do not provide; opt in via `use_clinvar_stars_as_ps4_proxy = true` for backward-comparable benchmarks. ClinVar is also consumed by PM3 / BP2 (companion-variant pathogenicity check) and feeds the separate `clinvar_protein` `.oga` (PS1 / PM5 / PM1). Updated weekly.
+Used by PP5, BP6 (both off by default per SVI; enable with `use_pp5_bp6 = true`). PS4 is `NotEvaluated` by default — true PS4 needs case-control statistics, which ClinVar review-stars do not provide; opt in via `use_clinvar_stars_as_ps4_proxy = true` for backward-comparable benchmarks. ClinVar is also consumed by PM3 / BP2 (companion-variant pathogenicity check), feeds the separate `clinvar_protein` `.oga` (PS1 / PM5 / PM1), and — since the discordance-review fixes — provides a **PM2 frequency backstop**: `clinvar.osa` now stores ClinVar's distributed `AF_EXAC` / `AF_TGP` / `AF_ESP` allele frequencies (as `afExac` / `afTgp` / `afEsp`), which PM2 consults when gnomAD has no matching record so a common variant isn't wrongly called "absent." **This requires an NCBI ClinVar VCF** — the official release carries those INFO fields; a stripped or third-party VCF may not. Updated weekly.
 
 ```bash
-# 1. Download
-wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
+# 1. Download (always from NCBI — carries AF_EXAC/AF_TGP/AF_ESP for the PM2 backstop)
+curl -LO https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
+curl -LO https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz.md5
 
-# 2. Verify the file is real (~30–60 MB, contains actual VCF records)
-zcat clinvar.vcf.gz | head -30 | grep -c '^#CHROM'  # → 1
-zcat clinvar.vcf.gz | grep -v '^#' | wc -l           # → ~3M records
+# 2. Verify integrity BEFORE building — a truncated download builds a partial
+#    .osa without erroring (this bit us once: the file ended mid-chr4).
+gzip -t clinvar.vcf.gz && echo "gzip OK"                       # must succeed
+md5 -q clinvar.vcf.gz    # (macOS) or: md5sum clinvar.vcf.gz   # compare to .md5
+zcat clinvar.vcf.gz | grep -v '^#' | wc -l                     # → ~4.4M records
+zcat clinvar.vcf.gz | grep -m1 '^##INFO=<ID=AF_EXAC'           # backstop field present
 
 # 3. Build
 fastvep sa-build --source clinvar -i clinvar.vcf.gz -o clinvar --assembly GRCh38
 
 # Expected output:
-#   sa_databases/clinvar.osa      (~80–120 MB)
-#   sa_databases/clinvar.osa.idx  (~5–10 MB)
+#   sa_databases/clinvar.osa      (~50 MB for the 2026 release; grows over time)
+#   sa_databases/clinvar.osa.idx  (a few KB)
 ```
+
+> **Tip:** to grab every ACMG source in one shot (ClinVar, gnomAD constraints, REVEL, ClinGen GDV) with integrity + md5 checks and auto-refresh of any truncated file, use [`data/benchmark/sa_sources/download_sa_sources.sh`](../data/benchmark/sa_sources/download_sa_sources.sh). Re-running it re-downloads only corrupt/missing files; `FORCE=1 bash download_sa_sources.sh` re-downloads everything.
 
 ### gnomAD — population allele frequencies
 
@@ -210,14 +216,20 @@ fastvep sa-build --source gnomad_genes -i gnomad.v4.1.constraint_metrics.tsv -o 
 
 Used by PS1 (same-AA pathogenic match), PM5 (different-AA at same position), PM1 (hotspot density).
 
-This source is built from the **same** ClinVar VCF you used for the allele-level `clinvar.osa` — but `clinvar_protein` extracts a different view (pathogenic missense indexed by protein position) and writes a separate `.oga`.
+`clinvar_protein` extracts a different view (pathogenic missense indexed by protein position) and writes a separate `.oga`. It accepts **either** input:
+
+- the **`clinvar.vcf.gz`** you already downloaded for `clinvar.osa` (reuse it — no extra download), or
+- ClinVar's **`variant_summary.txt.gz`** (richer HGVS/protein columns; this is what the benchmark uses):
+  `curl -LO https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz`
 
 ```bash
-# Reuse the clinvar.vcf.gz you already downloaded for the .osa build
+# From the allele VCF (simplest):
 fastvep sa-build --source clinvar_protein -i clinvar.vcf.gz -o sa_databases/clinvar_protein --assembly GRCh38
+# ...or from variant_summary.txt.gz (same command, either file works):
+# fastvep sa-build --source clinvar_protein -i variant_summary.txt.gz -o sa_databases/clinvar_protein --assembly GRCh38
 
 # Expected output:
-#   sa_databases/clinvar_protein.oga (~5–10 MB)
+#   sa_databases/clinvar_protein.oga (~4–5 MB)
 ```
 
 ### Verifying gene-level annotations

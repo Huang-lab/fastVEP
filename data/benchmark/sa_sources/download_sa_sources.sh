@@ -19,18 +19,58 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# FORCE=1 re-downloads every file even if a valid copy already exists.
+FORCE="${FORCE:-0}"
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 NC='\033[0m'
+
+# Is an existing file structurally intact? gzip members are integrity-checked
+# with `gzip -t`; everything else just has to be non-empty. This is what stops
+# a truncated download (e.g. a connection dropped mid-transfer, which is how
+# clinvar.vcf.gz once ended mid-chr4) from being silently reused forever.
+is_intact() {
+    local f="$1"
+    [[ -s "$f" ]] || return 1
+    case "$f" in
+        *.gz|*.bgz|*.zip) gzip -t "$f" 2>/dev/null || return 1 ;;
+    esac
+    return 0
+}
 
 download() {
     local url="$1" dest="$2"
-    if [[ -f "$dest" ]]; then
-        echo -e "  ${GREEN}Already exists:${NC} $(basename "$dest")"
-        return 0
+    if [[ "$FORCE" != "1" && -f "$dest" ]]; then
+        if is_intact "$dest"; then
+            echo -e "  ${GREEN}Already exists (intact):${NC} $(basename "$dest")"
+            return 0
+        fi
+        echo -e "  ${RED}Corrupt/truncated, re-downloading:${NC} $(basename "$dest")"
     fi
     echo -e "  ${YELLOW}Downloading:${NC} $(basename "$dest")"
-    curl -L --progress-bar --fail -o "$dest" "$url"
+    # Download to a temp file and only swap in once it verifies, so an
+    # interrupted transfer never overwrites a good copy with a partial one.
+    curl -L --progress-bar --fail -o "$dest.part" "$url"
+    if ! is_intact "$dest.part"; then
+        echo -e "  ${RED}Downloaded file failed integrity check:${NC} $(basename "$dest")" >&2
+        rm -f "$dest.part"; return 1
+    fi
+    mv -f "$dest.part" "$dest"
+    # If NCBI publishes a .md5 sidecar, fetch and verify it (best-effort).
+    if [[ "$dest" == *clinvar.vcf.gz ]]; then
+        if curl -L --fail -s -o "$dest.md5" "$url.md5" 2>/dev/null; then
+            local want got
+            want="$(awk '{print $1}' "$dest.md5")"
+            got="$( (md5 -q "$dest" 2>/dev/null) || (md5sum "$dest" | awk '{print $1}') )"
+            if [[ -n "$want" && "$want" == "$got" ]]; then
+                echo -e "  ${GREEN}md5 verified:${NC} $got"
+            else
+                echo -e "  ${RED}md5 MISMATCH${NC} (want $want, got $got)" >&2
+            fi
+        fi
+    fi
 }
 
 cd "$SCRIPT_DIR"
