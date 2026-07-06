@@ -194,6 +194,20 @@ fn parse_gff3_lines(
             log::warn!("GFF3: skipping line with non-numeric end: {}", fields[4]);
             continue;
         };
+        // GFF3 coordinates are 1-based and inclusive, so start must be >= 1
+        // and <= end. A `start` of 0 (or start > end) parses fine as a u64
+        // but is invalid; feeding it through would underflow the `- 1`
+        // conversions to 0-based offsets done downstream (e.g. transcript
+        // exon/CDS math), the same class of bug the non-numeric check above
+        // guards against.
+        if start == 0 || start > end {
+            log::warn!(
+                "GFF3: skipping line with invalid coordinates (start={}, end={})",
+                start,
+                end
+            );
+            continue;
+        }
         let strand = match fields[6] {
             "-" => Strand::Reverse,
             _ => Strand::Forward,
@@ -922,6 +936,27 @@ chr1\tensembl\tCDS\t1050\t1200\t.\t+\t0\tID=CDS:P1;Parent=transcript:TX2";
         // Only TX2 should appear; TX1 had a bogus start and was skipped.
         assert_eq!(transcripts.len(), 1);
         assert_eq!(&*transcripts[0].stable_id, "TX2");
+        assert_eq!(transcripts[0].start, 1000);
+    }
+
+    #[test]
+    fn test_gff3_skips_zero_and_inverted_coordinate_lines() {
+        // Both lines parse fine as u64 (unlike the non-numeric case above)
+        // but are invalid GFF3: start=0 is out of the 1-based coordinate
+        // system, and start > end is inverted. Left unchecked, either would
+        // underflow the `- 1` conversions to 0-based offsets done downstream
+        // (e.g. transcript exon/CDS math in fastvep-genome).
+        let gff = "##gff-version 3
+chr1\tensembl\tgene\t1000\t5000\t.\t+\t.\tID=gene:G1;Name=T;biotype=protein_coding
+chr1\tensembl\tmRNA\t0\t5000\t.\t+\t.\tID=transcript:TX1;Parent=gene:G1;biotype=protein_coding
+chr1\tensembl\tmRNA\t5000\t1000\t.\t+\t.\tID=transcript:TX2;Parent=gene:G1;biotype=protein_coding
+chr1\tensembl\tmRNA\t1000\t5000\t.\t+\t.\tID=transcript:TX3;Parent=gene:G1;biotype=protein_coding;tag=Ensembl_canonical
+chr1\tensembl\texon\t1000\t1200\t.\t+\t.\tID=exon:E1;Parent=transcript:TX3;rank=1
+chr1\tensembl\tCDS\t1050\t1200\t.\t+\t0\tID=CDS:P1;Parent=transcript:TX3";
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        // Only TX3 should appear; TX1 (start=0) and TX2 (start>end) were skipped.
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(&*transcripts[0].stable_id, "TX3");
         assert_eq!(transcripts[0].start, 1000);
     }
 

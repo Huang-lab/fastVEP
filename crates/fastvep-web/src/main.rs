@@ -3,6 +3,7 @@ mod errors;
 mod handlers;
 
 use axum::extract::DefaultBodyLimit;
+use axum::http::{header, Method};
 use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
@@ -133,10 +134,14 @@ async fn main() -> anyhow::Result<()> {
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(
+                    // Origin stays open (this is a public annotation API by
+                    // design, per DEPLOYMENT.md), but methods/headers are
+                    // scoped to what the routes above actually use instead
+                    // of blanket `Any` on every axis.
                     CorsLayer::new()
                         .allow_origin(Any)
-                        .allow_methods(Any)
-                        .allow_headers(Any),
+                        .allow_methods([Method::GET, Method::POST])
+                        .allow_headers([header::CONTENT_TYPE]),
                 )
                 .layer(ConcurrencyLimitLayer::new(cli.max_concurrent)),
         );

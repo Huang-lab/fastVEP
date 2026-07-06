@@ -378,19 +378,16 @@ fn evaluate_pm3(
 
     // Score each contributing observation.
     let mut total: f64 = 0.0;
-    let mut hom_points: f64 = 0.0;
     let mut breakdown: Vec<String> = Vec::new();
 
     // Homozygous occurrence (proband hom-alt) earns 0.5 pt, capped at 1.0
     // total across all hom contributions. We model this single proband as one
-    // hom occurrence; a full pedigree workflow would aggregate across probands.
+    // hom occurrence (so the 1.0 cap can never bind yet); a full pedigree
+    // workflow would aggregate multiple hom occurrences against that cap.
     if proband_hom_alt {
-        let pts = 0.5_f64.min(1.0 - hom_points);
-        if pts > 0.0 {
-            hom_points += pts;
-            total += pts;
-            breakdown.push(format!("homozygous_proband:+{:.2}", pts));
-        }
+        let pts: f64 = 0.5;
+        total += pts;
+        breakdown.push(format!("homozygous_proband:+{:.2}", pts));
     }
 
     // Compound-het companions in trans / phase-unknown.

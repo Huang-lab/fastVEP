@@ -95,6 +95,9 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         .with_context(|| format!("Invalid POS: {}", fields[1]))?;
     let id = fields[2];
     let ref_str = fields[3];
+    if ref_str.is_empty() {
+        anyhow::bail!("VCF REF field is empty: {}", line);
+    }
     let alt_str = fields[4];
     let qual = fields[5];
     let filter = fields[6];
@@ -342,6 +345,16 @@ mod tests {
         assert_eq!(vf.ref_allele, Allele::Sequence(b"A".to_vec()));
         assert_eq!(vf.alt_alleles, vec![Allele::Sequence(b"G".to_vec())]);
         assert_eq!(vf.variation_name, Some("rs1".to_string()));
+    }
+
+    #[test]
+    fn test_empty_ref_field_is_rejected() {
+        // A malformed/malicious empty REF must be rejected outright rather
+        // than reaching `ref_allele_str.len() as u64 - 1`, which underflows
+        // (panics in debug, wraps to a bogus huge `end` in release).
+        let line = "1\t100\t.\t\tG\t.\tPASS\t.";
+        let err = parse_vcf_line(line).unwrap_err();
+        assert!(err.to_string().contains("REF field is empty"));
     }
 
     #[test]

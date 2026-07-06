@@ -245,24 +245,44 @@ pub async fn annotate(
 
     let start = Instant::now();
     let results = tokio::task::spawn_blocking(move || {
-        let mut guard = ctx
+        // A read lock is sufficient: annotate_vcf_text_with_acmg only needs
+        // &self, and the ACMG toggle is now passed as a per-call argument
+        // instead of mutating the shared context. Previously this took a
+        // write lock just to flip guard.acmg_config, which serialized every
+        // concurrent request (including unrelated /api/status reads) behind
+        // whichever annotation was running, and let one request's ACMG
+        // preference clobber another's mid-flight.
+        let guard = ctx
             .ctx
-            .write()
+            .read()
             .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
-        // Enable/disable ACMG per request
-        if acmg_requested && guard.acmg_config.is_none() {
-            guard.acmg_config = Some(fastvep_classification::AcmgConfig::default());
-        } else if !acmg_requested {
-            guard.acmg_config = None;
-        }
-        guard.annotate_vcf_text(&vcf_text, pick)
+        // Borrow the existing config instead of cloning it; only build a
+        // fresh default when none is loaded (no need to deep-clone
+        // gene_overrides/ba1_exceptions on every ACMG-enabled request).
+        let default_acmg;
+        let acmg_config = if acmg_requested {
+            Some(match guard.acmg_config.as_ref() {
+                Some(cfg) => cfg,
+                None => {
+                    default_acmg = fastvep_classification::AcmgConfig::default();
+                    &default_acmg
+                }
+            })
+        } else {
+            None
+        };
+        let results = guard.annotate_vcf_text_with_acmg(&vcf_text, pick, acmg_config)?;
+        drop(guard);
+
+        ctx.total_variants
+            .fetch_add(results.len() as u64, Ordering::Relaxed);
+        // Best-effort persistence, already on the blocking pool here — no
+        // need for a second spawn_blocking just for this fs::write.
+        ctx.save_stats();
+
+        Ok::<_, anyhow::Error>(results)
     })
     .await??;
-
-    state
-        .total_variants
-        .fetch_add(results.len() as u64, Ordering::Relaxed);
-    state.save_stats();
 
     let time_ms = start.elapsed().as_millis() as u64;
     Ok(Json(serde_json::json!({
