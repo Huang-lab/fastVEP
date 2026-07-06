@@ -271,11 +271,29 @@ impl AnnotationContext {
         Ok((gene_count, tr_count))
     }
 
-    /// Annotate VCF text and return JSON results.
+    /// Annotate VCF text and return JSON results, using `self.acmg_config`.
     pub fn annotate_vcf_text(
         &self,
         vcf_text: &str,
         pick: bool,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.annotate_vcf_text_with_acmg(vcf_text, pick, self.acmg_config.as_ref())
+    }
+
+    /// Annotate VCF text and return JSON results, using an explicit ACMG
+    /// config for this call instead of `self.acmg_config`.
+    ///
+    /// This only needs `&self` (no mutation of shared context state), so
+    /// callers serving concurrent requests over a shared `AnnotationContext`
+    /// can take a read lock instead of a write lock — see fastvep-web's
+    /// `annotate` handler, which used to mutate `self.acmg_config` per
+    /// request under a write lock, serializing all concurrent traffic
+    /// (including unrelated reads) behind whichever annotation was running.
+    pub fn annotate_vcf_text_with_acmg(
+        &self,
+        vcf_text: &str,
+        pick: bool,
+        acmg_config: Option<&fastvep_classification::AcmgConfig>,
     ) -> Result<Vec<serde_json::Value>> {
         let mut vcf_parser = VcfParser::new(vcf_text.as_bytes())?;
 
@@ -691,7 +709,7 @@ impl AnnotationContext {
             }
 
             // ACMG-AMP classification pass (after all SA annotations are attached)
-            if let Some(ref acmg_cfg) = self.acmg_config {
+            if let Some(acmg_cfg) = acmg_config {
                 // Parse sample genotypes if trio config is present
                 let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, &sample_names);
 
@@ -732,7 +750,7 @@ impl AnnotationContext {
         }
 
         // Compound-het enrichment pass: re-evaluate PM3/BP2 with companion variant data
-        if let Some(ref acmg_cfg) = self.acmg_config {
+        if let Some(acmg_cfg) = acmg_config {
             if acmg_cfg.trio.is_some() {
                 enrich_compound_het(&mut variants, acmg_cfg, &sample_names);
             }
@@ -1276,4 +1294,51 @@ pub fn load_gene_providers(
     }
 
     Ok(providers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// fastvep-annotate is the shared engine both fastvep-cli and
+    /// fastvep-web sit on top of, and had zero unit tests before this. This
+    /// exercises the full annotate_vcf_text path without needing a real
+    /// genome: an empty transcript set (gff3 = None) makes every variant
+    /// intergenic, which is enough to verify the pipeline runs end-to-end
+    /// and produces well-formed output.
+    fn empty_context() -> AnnotationContext {
+        AnnotationContext::new(None, None, None, 0).expect("empty context should build")
+    }
+
+    #[test]
+    fn annotate_vcf_text_returns_one_result_per_variant() {
+        let ctx = empty_context();
+        let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                   1\t100\t.\tA\tG\t.\tPASS\t.\n\
+                   1\t200\t.\tC\tT\t.\tPASS\t.\n";
+        let results = ctx.annotate_vcf_text(vcf, false).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0]["most_severe_consequence"],
+            serde_json::json!("intergenic_variant")
+        );
+    }
+
+    #[test]
+    fn annotate_vcf_text_with_acmg_none_disables_classification_regardless_of_self_config() {
+        let mut ctx = empty_context();
+        // self.acmg_config is enabled...
+        ctx.acmg_config = Some(fastvep_classification::AcmgConfig::default());
+        let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                   1\t100\t.\tA\tG\t.\tPASS\t.\n";
+
+        // ...but an explicit None override (as fastvep-web now passes for
+        // acmg_requested=false) must take precedence over self.acmg_config,
+        // since concurrent requests share one AnnotationContext and must not
+        // leak each other's ACMG preference.
+        let results = ctx
+            .annotate_vcf_text_with_acmg(vcf, false, None)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+    }
 }

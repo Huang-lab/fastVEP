@@ -245,24 +245,30 @@ pub async fn annotate(
 
     let start = Instant::now();
     let results = tokio::task::spawn_blocking(move || {
-        let mut guard = ctx
+        // A read lock is sufficient: annotate_vcf_text_with_acmg only needs
+        // &self, and the ACMG toggle is now passed as a per-call argument
+        // instead of mutating the shared context. Previously this took a
+        // write lock just to flip guard.acmg_config, which serialized every
+        // concurrent request (including unrelated /api/status reads) behind
+        // whichever annotation was running, and let one request's ACMG
+        // preference clobber another's mid-flight.
+        let guard = ctx
             .ctx
-            .write()
+            .read()
             .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
-        // Enable/disable ACMG per request
-        if acmg_requested && guard.acmg_config.is_none() {
-            guard.acmg_config = Some(fastvep_classification::AcmgConfig::default());
-        } else if !acmg_requested {
-            guard.acmg_config = None;
-        }
-        guard.annotate_vcf_text(&vcf_text, pick)
+        let acmg_config = acmg_requested.then(|| guard.acmg_config.clone().unwrap_or_default());
+        guard.annotate_vcf_text_with_acmg(&vcf_text, pick, acmg_config.as_ref())
     })
     .await??;
 
     state
         .total_variants
         .fetch_add(results.len() as u64, Ordering::Relaxed);
-    state.save_stats();
+    // save_stats() does a synchronous fs::write; run it on the blocking pool
+    // so it doesn't stall this tokio worker thread on every annotate request.
+    // Best-effort persistence — not worth making the client wait on it.
+    let stats_state = Arc::clone(&state);
+    tokio::task::spawn_blocking(move || stats_state.save_stats());
 
     let time_ms = start.elapsed().as_millis() as u64;
     Ok(Json(serde_json::json!({

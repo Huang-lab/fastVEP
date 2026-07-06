@@ -5,7 +5,46 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+### Fixed
+
+- **fastvep-web**: stored XSS via gene/transcript metadata (symbol, IDs,
+  HGVS strings, supplementary-annotation values) rendered unescaped into
+  the results table and ACMG modal; a crafted GFF3 `Name`/`ID` or
+  supplementary-annotation string could execute in every viewer's browser.
+  All such fields are now HTML-escaped before interpolation.
+- **fastvep-web**: `/api/annotate` responses leaked internal error detail
+  (file paths, parse internals) to clients; errors are now logged
+  server-side only and clients get a generic message.
+- **fastvep-io**: VCF lines with an empty REF field caused an integer
+  underflow in end-coordinate calculation (panic in debug, silent
+  corruption in release). Now rejected with a clear parse error.
+- **fastvep-cache**: GFF3 lines with `start == 0` or `start > end` parsed
+  as valid u64 coordinates but are invalid 1-based GFF3, risking
+  downstream underflow in exon/CDS offset math. Now skipped with a
+  warning, matching the existing non-numeric-coordinate guard.
+
+### Changed
+
+- **fastvep-web**: `/api/annotate` no longer holds a write lock on the
+  shared `AnnotationContext` for the duration of annotation (previously
+  needed only to toggle `acmg_config` per request); annotation now takes
+  a read lock and passes the ACMG config as a call argument
+  (`annotate_vcf_text_with_acmg`), so concurrent requests — including
+  unrelated `/api/status` reads — no longer serialize behind whichever
+  annotation is running, and one request's ACMG toggle can no longer
+  clobber another's mid-flight.
+- **fastvep-web**: stats persistence (`save_stats`) now runs on the
+  blocking thread pool instead of the async request path, so it no
+  longer stalls a tokio worker thread on disk I/O for every annotate call.
+- **fastvep-web**: CORS now scopes `allow_methods`/`allow_headers` to
+  what the API actually uses (GET/POST, `Content-Type`) instead of `Any`
+  on every axis.
+
 ### Added
+
+- Unit tests for `fastvep-annotate` and `fastvep-web` (previously zero in
+  both crates despite being the code every request flows through), plus
+  regression tests for the fixes above.
 
 - `fastvep cache --synonyms <chr_synonyms.txt>`: VEP-style chromosome
   synonym support, so a merged Ensembl + RefSeq cache built against a

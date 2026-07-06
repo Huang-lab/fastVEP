@@ -886,6 +886,20 @@
 // fastVEP Client-Side Annotation Engine
 // ============================================================
 
+// Gene/transcript metadata (symbol, id, protein id, biotype, ...) originates
+// from an uploaded GFF3 and variant text originates from user-pasted VCF, so
+// both must be escaped before going into innerHTML template literals below —
+// otherwise a crafted gene Name/ID renders as live HTML/script.
+function escapeHtml(s) {
+  if (s == null) return s;
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Embedded example GFF3 gene model — extracted from Ensembl GRCh38 release 115
 // OR4F5: ENSG00000186092, chr1:65419-71585 (+), protein_coding, Ensembl_canonical + MANE_Select
 // lncRNA: ENSG00000290826, chr1:51891-64116 (+), 2 transcripts (ENST00000832531 canonical, ENST00000642116)
@@ -1902,14 +1916,14 @@ function renderTable() {
     const text = [r.variant.chrom, r.transcript?.gene?.symbol, r.transcript?.id, ...r.consequences].join(' ').toLowerCase();
     if (search && !text.includes(search)) continue;
     filteredResults.push(r);
-    const loc = r.variant.start === r.variant.end ? `${r.variant.chrom}:${r.variant.start}` : `${r.variant.chrom}:${r.variant.start}-${r.variant.end}`;
+    const loc = r.variant.start === r.variant.end ? `${escapeHtml(r.variant.chrom)}:${r.variant.start}` : `${escapeHtml(r.variant.chrom)}:${r.variant.start}-${r.variant.end}`;
     const tr = document.createElement('tr');
     const strandStr = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
 
     // SA column values
     const saCells = saColumns.map(key => {
       const val = r.sa?.[key];
-      return `<td title="${key}">${val != null ? formatSAValue(val) : '-'}</td>`;
+      return `<td title="${escapeHtml(key)}">${val != null ? escapeHtml(formatSAValue(val)) : '-'}</td>`;
     }).join('');
 
     // MANE badge
@@ -1918,33 +1932,33 @@ function renderTable() {
     if (t?.mane_select) maneBadge = '<span class="mane-badge mane-badge-select">MANE Select</span>';
     else if (t?.mane_plus_clinical) maneBadge = '<span class="mane-badge mane-badge-clinical">MANE+Clinical</span>';
 
-    const acmgCell = r.acmg ? `<span class="acmg-badge acmg-${r.acmg.shorthand}" onclick="showAcmgDetail(event, ${shown})" title="${(r.acmg.criteria||[]).filter(c=>c.met).map(c=>c.code).join(', ')}">${r.acmg.classification?.replace(/_/g,' ')||'VUS'}</span>` : '-';
+    const acmgCell = r.acmg ? `<span class="acmg-badge acmg-${r.acmg.shorthand}" onclick="showAcmgDetail(event, ${shown})" title="${escapeHtml((r.acmg.criteria||[]).filter(c=>c.met).map(c=>c.code).join(', '))}">${escapeHtml(r.acmg.classification?.replace(/_/g,' '))||'VUS'}</span>` : '-';
     tr.innerHTML = `
       <td>${loc}</td>
-      <td><code>${r.allele}</code></td>
-      <td>${r.consequences.map(c=>`<span class="consequence-tag">${c}</span>`).join(' ')}</td>
+      <td><code>${escapeHtml(r.allele)}</code></td>
+      <td>${r.consequences.map(c=>`<span class="consequence-tag">${escapeHtml(c)}</span>`).join(' ')}</td>
       <td><span class="impact impact-${r.impact}">${r.impact}</span></td>
       <td>${acmgCell}</td>
-      <td>${t?.gene?.symbol||'-'}</td>
-      <td><code>${t?.gene?.id||'-'}</code></td>
-      <td><code>${t?.id||'-'}</code></td>
-      <td>${t?.biotype||'-'}</td>
+      <td>${escapeHtml(t?.gene?.symbol)||'-'}</td>
+      <td><code>${escapeHtml(t?.gene?.id)||'-'}</code></td>
+      <td><code>${escapeHtml(t?.id)||'-'}</code></td>
+      <td>${escapeHtml(t?.biotype)||'-'}</td>
       <td>${t?.canonical ? 'YES' : '-'}</td>
       <td>${maneBadge}</td>
-      <td><code>${t?.protein_id||'-'}</code></td>
+      <td><code>${escapeHtml(t?.protein_id)||'-'}</code></td>
       <td>${t?.tsl != null ? t.tsl : '-'}</td>
-      <td><code>${t?.ccds||'-'}</code></td>
-      <td>${r.exon||'-'}</td>
-      <td>${r.intron||'-'}</td>
-      <td>${r.hgvsg||'-'}</td>
-      <td>${r.hgvsc||'-'}</td>
-      <td>${r.hgvsp||'-'}</td>
-      <td>${r.cdna||'-'}</td>
-      <td>${r.cds||'-'}</td>
-      <td>${r.protein||'-'}</td>
-      <td>${r.aa||'-'}</td>
-      <td>${r.codons||'-'}</td>
-      <td>${r.dist||'-'}</td>
+      <td><code>${escapeHtml(t?.ccds)||'-'}</code></td>
+      <td>${escapeHtml(r.exon)||'-'}</td>
+      <td>${escapeHtml(r.intron)||'-'}</td>
+      <td>${escapeHtml(r.hgvsg)||'-'}</td>
+      <td>${escapeHtml(r.hgvsc)||'-'}</td>
+      <td>${escapeHtml(r.hgvsp)||'-'}</td>
+      <td>${escapeHtml(r.cdna)||'-'}</td>
+      <td>${escapeHtml(r.cds)||'-'}</td>
+      <td>${escapeHtml(r.protein)||'-'}</td>
+      <td>${escapeHtml(r.aa)||'-'}</td>
+      <td>${escapeHtml(r.codons)||'-'}</td>
+      <td>${escapeHtml(r.dist)||'-'}</td>
       ${saCells}
       <td>${strandStr}</td>`;
     tbody.appendChild(tr);
@@ -2219,22 +2233,22 @@ function showAcmgDetail(event, resultIndex) {
     else if (c.met && c.direction === 'Benign') cls = 'met-benign';
 
     const icon = !c.evaluated ? '&#x25CB;' : c.met ? '&#x2713;' : '&#x2717;';
-    criteriaHTML += `<div class="acmg-criterion ${cls}" title="${c.summary}">
+    criteriaHTML += `<div class="acmg-criterion ${cls}" title="${escapeHtml(c.summary)}">
       <span>${icon}</span>
-      <span class="code">${c.code}</span>
-      <span class="strength">${c.strength?.replace(/_/g,' ')||''}</span>
-      <span class="summary">${c.summary||''}</span>
+      <span class="code">${escapeHtml(c.code)}</span>
+      <span class="strength">${escapeHtml(c.strength?.replace(/_/g,' '))||''}</span>
+      <span class="summary">${escapeHtml(c.summary)||''}</span>
     </div>`;
   }
 
   const counts = a.counts || {};
   overlay.innerHTML = `<div class="acmg-modal">
     <h3>
-      <span class="acmg-badge acmg-${a.shorthand}">${a.classification?.replace(/_/g,' ')}</span>
-      <span style="font-size:13px;color:var(--text-secondary)">${r.transcript?.gene?.symbol||''} &middot; ${r.hgvsc||r.hgvsp||''}</span>
+      <span class="acmg-badge acmg-${a.shorthand}">${escapeHtml(a.classification?.replace(/_/g,' '))}</span>
+      <span style="font-size:13px;color:var(--text-secondary)">${escapeHtml(r.transcript?.gene?.symbol)||''} &middot; ${escapeHtml(r.hgvsc||r.hgvsp)||''}</span>
       <button class="close-btn" onclick="this.closest('.acmg-modal-overlay').remove()">&times;</button>
     </h3>
-    ${a.triggered_rule ? `<div style="margin-bottom:10px;font-size:12px;color:var(--text-secondary)">Triggered rule: <strong>${a.triggered_rule}</strong></div>` : ''}
+    ${a.triggered_rule ? `<div style="margin-bottom:10px;font-size:12px;color:var(--text-secondary)">Triggered rule: <strong>${escapeHtml(a.triggered_rule)}</strong></div>` : ''}
     <div class="acmg-counts">
       <span class="count" style="color:#ef4444">PVS: ${counts.pathogenic_very_strong||0}</span>
       <span class="count" style="color:#ef4444">PS: ${counts.pathogenic_strong||0}</span>
