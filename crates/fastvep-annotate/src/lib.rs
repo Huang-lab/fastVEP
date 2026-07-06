@@ -555,13 +555,12 @@ impl AnnotationContext {
                                                 // handled above). aa.0 holds the deleted
                                                 // residues, aa.1 the replacement ("-" for a
                                                 // pure deletion).
-                                                ann.hgvsp =
-                                                    fastvep_hgvs::hgvsp_inframe_deletion(
-                                                        &versioned_pid,
-                                                        ps,
-                                                        &aa.0,
-                                                        &aa.1,
-                                                    );
+                                                ann.hgvsp = fastvep_hgvs::hgvsp_inframe_deletion(
+                                                    &versioned_pid,
+                                                    ps,
+                                                    &aa.0,
+                                                    &aa.1,
+                                                );
                                             } else {
                                                 let ref_aa_byte = aa
                                                     .0
