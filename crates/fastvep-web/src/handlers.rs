@@ -256,19 +256,33 @@ pub async fn annotate(
             .ctx
             .read()
             .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
-        let acmg_config = acmg_requested.then(|| guard.acmg_config.clone().unwrap_or_default());
-        guard.annotate_vcf_text_with_acmg(&vcf_text, pick, acmg_config.as_ref())
+        // Borrow the existing config instead of cloning it; only build a
+        // fresh default when none is loaded (no need to deep-clone
+        // gene_overrides/ba1_exceptions on every ACMG-enabled request).
+        let default_acmg;
+        let acmg_config = if acmg_requested {
+            Some(match guard.acmg_config.as_ref() {
+                Some(cfg) => cfg,
+                None => {
+                    default_acmg = fastvep_classification::AcmgConfig::default();
+                    &default_acmg
+                }
+            })
+        } else {
+            None
+        };
+        let results = guard.annotate_vcf_text_with_acmg(&vcf_text, pick, acmg_config)?;
+        drop(guard);
+
+        ctx.total_variants
+            .fetch_add(results.len() as u64, Ordering::Relaxed);
+        // Best-effort persistence, already on the blocking pool here — no
+        // need for a second spawn_blocking just for this fs::write.
+        ctx.save_stats();
+
+        Ok::<_, anyhow::Error>(results)
     })
     .await??;
-
-    state
-        .total_variants
-        .fetch_add(results.len() as u64, Ordering::Relaxed);
-    // save_stats() does a synchronous fs::write; run it on the blocking pool
-    // so it doesn't stall this tokio worker thread on every annotate request.
-    // Best-effort persistence — not worth making the client wait on it.
-    let stats_state = Arc::clone(&state);
-    tokio::task::spawn_blocking(move || stats_state.save_stats());
 
     let time_ms = start.elapsed().as_millis() as u64;
     Ok(Json(serde_json::json!({

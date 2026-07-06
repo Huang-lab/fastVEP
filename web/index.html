@@ -1932,7 +1932,7 @@ function renderTable() {
     if (t?.mane_select) maneBadge = '<span class="mane-badge mane-badge-select">MANE Select</span>';
     else if (t?.mane_plus_clinical) maneBadge = '<span class="mane-badge mane-badge-clinical">MANE+Clinical</span>';
 
-    const acmgCell = r.acmg ? `<span class="acmg-badge acmg-${r.acmg.shorthand}" onclick="showAcmgDetail(event, ${shown})" title="${escapeHtml((r.acmg.criteria||[]).filter(c=>c.met).map(c=>c.code).join(', '))}">${escapeHtml(r.acmg.classification?.replace(/_/g,' '))||'VUS'}</span>` : '-';
+    const acmgCell = r.acmg ? `<span class="acmg-badge acmg-${escapeHtml(r.acmg.shorthand)}" onclick="showAcmgDetail(event, ${shown})" title="${escapeHtml((r.acmg.criteria||[]).filter(c=>c.met).map(c=>c.code).join(', '))}">${escapeHtml(r.acmg.classification?.replace(/_/g,' '))||'VUS'}</span>` : '-';
     tr.innerHTML = `
       <td>${loc}</td>
       <td><code>${escapeHtml(r.allele)}</code></td>
@@ -1958,7 +1958,7 @@ function renderTable() {
       <td>${escapeHtml(r.protein)||'-'}</td>
       <td>${escapeHtml(r.aa)||'-'}</td>
       <td>${escapeHtml(r.codons)||'-'}</td>
-      <td>${escapeHtml(r.dist)||'-'}</td>
+      <td>${r.dist||'-'}</td>
       ${saCells}
       <td>${strandStr}</td>`;
     tbody.appendChild(tr);
@@ -2009,7 +2009,7 @@ function renderSummary() {
       <h3>Genes Affected</h3>
       <div class="bar-chart">${[...new Set(allResults.filter(r=>r.transcript?.gene?.symbol).map(r=>r.transcript.gene.symbol))].map(g=>{
         const cnt = allResults.filter(r=>r.transcript?.gene?.symbol===g).length;
-        return `<div class="bar-row"><span class="bar-label">${g}</span><div class="bar-track"><div class="bar-fill" style="width:${cnt/allResults.length*100}%;background:var(--accent)"></div></div><span class="bar-count">${cnt}</span></div>`;
+        return `<div class="bar-row"><span class="bar-label">${escapeHtml(g)}</span><div class="bar-track"><div class="bar-fill" style="width:${cnt/allResults.length*100}%;background:var(--accent)"></div></div><span class="bar-count">${cnt}</span></div>`;
       }).join('')}
       </div>
     </div>
@@ -2244,7 +2244,7 @@ function showAcmgDetail(event, resultIndex) {
   const counts = a.counts || {};
   overlay.innerHTML = `<div class="acmg-modal">
     <h3>
-      <span class="acmg-badge acmg-${a.shorthand}">${escapeHtml(a.classification?.replace(/_/g,' '))}</span>
+      <span class="acmg-badge acmg-${escapeHtml(a.shorthand)}">${escapeHtml(a.classification?.replace(/_/g,' '))}</span>
       <span style="font-size:13px;color:var(--text-secondary)">${escapeHtml(r.transcript?.gene?.symbol)||''} &middot; ${escapeHtml(r.hgvsc||r.hgvsp)||''}</span>
       <button class="close-btn" onclick="this.closest('.acmg-modal-overlay').remove()">&times;</button>
     </h3>

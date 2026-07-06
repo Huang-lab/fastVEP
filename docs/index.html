@@ -3,7 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>fastVEP - Variant Effect Predictor</title>
+  <meta name="theme-color" content="#2bbd8c">
+  <meta name="description" content="fastVEP — high-performance variant effect prediction in Rust. 10–100x faster than VEP.">
+  <title>fastVEP — Variant Effect Predictor</title>
+
+  <!-- fastVEP logo. Served by the Rust backend (routes /assets/logo.png,
+       /favicon.ico, /apple-touch-icon.png) from web/assets/logo.png via include_bytes!. -->
+  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <link rel="apple-touch-icon" href="/assets/logo.png">
+
+  <!-- Google tag (gtag.js) replaced with user-configurable snippet if needed -->
+  <!-- 
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-YOURID"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-YOURID');
+  </script>
+  -->
+
   <style>
     :root {
       --bg: #0f1117;
@@ -30,7 +49,7 @@
         --surface2: #ebedf3;
         --border: #d1d5e0;
         --text: #1a1d27;
-        --text-dim: #5f6477;
+        --text-dim: #4a4f62;
         --accent: #5563d8;
         --accent-hover: #4451c0;
         --high: #dc2f5a;
@@ -49,7 +68,7 @@
       --surface2: #ebedf3;
       --border: #d1d5e0;
       --text: #1a1d27;
-      --text-dim: #5f6477;
+      --text-dim: #4a4f62;
       --accent: #5563d8;
       --accent-hover: #4451c0;
       --high: #dc2f5a;
@@ -72,14 +91,22 @@
     header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 16px 32px;
+      padding: 14px 32px;
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    header .logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(43,108,176,0.2);
     }
     header h1 {
-      font-size: 20px;
-      font-weight: 700;
+      font-size: 22px;
+      font-weight: 800;
       letter-spacing: -0.5px;
     }
     header h1 span { color: var(--accent); }
@@ -96,8 +123,35 @@
       color: var(--text-dim);
       text-decoration: none;
       font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
-    header a:hover { color: var(--text); }
+    header a:hover { color: var(--text); background: var(--surface2); }
+    header a.link-slack:hover { color: #611f69; }
+    @media (max-width: 700px) {
+      header { padding: 12px 16px; gap: 8px; }
+      header h1 { font-size: 18px; }
+      header .badge { display: none; }
+    }
+
+    /* Hero tagline band */
+    .hero {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px 32px 0;
+      color: var(--text-dim);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .hero strong { color: var(--text); font-weight: 600; }
+    .hero .hero-accent { color: var(--accent); font-weight: 600; }
+    @media (max-width: 700px) {
+      .hero { padding: 14px 16px 0; font-size: 13px; }
+    }
     .theme-toggle {
       background: var(--surface2);
       border: 1px solid var(--border);
@@ -232,34 +286,87 @@
     .btn-secondary:hover { background: var(--border); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Status bar */
+    /* Status bar — prominent loading feedback */
     .status-bar {
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 10px 16px;
-      background: var(--surface2);
+      gap: 14px;
+      padding: 14px 20px;
+      background: rgba(108,122,238,0.12);
+      border: 1px solid rgba(108,122,238,0.3);
+      border-left: 4px solid var(--accent);
       border-radius: 8px;
-      font-size: 13px;
-      margin-top: 12px;
+      font-size: 14px;
+      font-weight: 500;
+      margin-top: 14px;
+      position: relative;
+      overflow: hidden;
       display: none;
     }
     .status-bar.visible { display: flex; }
     .status-bar.done {
-      background: rgba(16,185,129,0.1);
-      border: 1px solid rgba(16,185,129,0.25);
+      background: rgba(16,185,129,0.12);
+      border-color: rgba(16,185,129,0.35);
+      border-left-color: var(--success);
       color: var(--success);
     }
     .status-bar.done .spinner { display: none; }
-    .done-icon { font-size: 16px; }
+    .status-bar.done::after { display: none; }
+    .status-bar::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+      background-size: 40% 100%;
+      background-repeat: no-repeat;
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .status-bar::after { animation: none; opacity: 0.5; }
+    }
+    @keyframes shimmer {
+      0%   { background-position: -40% 0; }
+      100% { background-position: 140% 0; }
+    }
+    .done-icon { font-size: 18px; }
     .spinner {
-      width: 16px; height: 16px;
-      border: 2px solid var(--border);
+      width: 20px; height: 20px;
+      border: 2.5px solid var(--border);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    .btn .spinner {
+      width: 14px; height: 14px;
+      border-width: 2px;
+      border-top-color: white;
+      margin-right: 6px;
+      display: inline-block;
+      vertical-align: middle;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Step header subtitle */
+    .step-subtitle {
+      display: block;
+      margin-top: 6px;
+      margin-left: 36px;
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    /* Empty-results notice */
+    .empty-results {
+      padding: 40px 24px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .empty-results .big { font-size: 28px; margin-bottom: 8px; opacity: 0.7; }
 
     /* Results Section */
     .results-section {
@@ -334,7 +441,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 12px;
+      font-size: 13px;
     }
     th {
       position: sticky;
@@ -343,7 +450,7 @@
       color: var(--text-dim);
       font-weight: 600;
       text-transform: uppercase;
-      font-size: 10px;
+      font-size: 11px;
       letter-spacing: 0.5px;
       padding: 10px 12px;
       text-align: left;
@@ -356,18 +463,20 @@
       padding: 8px 12px;
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
-      max-width: 300px;
+      max-width: 500px;
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    td[title] { cursor: help; }
+    td:hover { max-width: none; white-space: normal; word-break: break-all; }
     tr:hover td { background: var(--surface2); }
 
     /* Impact badges */
     .impact {
       display: inline-block;
-      padding: 2px 8px;
+      padding: 3px 10px;
       border-radius: 4px;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.3px;
@@ -377,12 +486,37 @@
     .impact-LOW { background: rgba(59,130,246,0.15); color: var(--low); }
     .impact-MODIFIER { background: rgba(107,114,128,0.15); color: var(--modifier); }
 
+    /* ACMG-AMP classification badges */
+    .acmg-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+    .acmg-P   { background:#ef4444; color:#fff; }
+    .acmg-LP  { background:#f59e0b; color:#fff; }
+    .acmg-VUS { background:#6b7280; color:#fff; }
+    .acmg-LB  { background:#3b82f6; color:#fff; }
+    .acmg-B   { background:#10b981; color:#fff; }
+
+    /* ACMG detail modal */
+    .acmg-modal-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; display:flex; align-items:center; justify-content:center; }
+    .acmg-modal { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:20px; max-width:720px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+    .acmg-modal h3 { margin:0 0 12px 0; display:flex; align-items:center; gap:10px; }
+    .acmg-modal .close-btn { margin-left:auto; cursor:pointer; background:none; border:none; color:var(--text); font-size:20px; }
+    .acmg-criteria-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+    .acmg-criterion { padding:6px 10px; border-radius:4px; font-size:12px; border:1px solid var(--border); display:flex; align-items:center; gap:6px; }
+    .acmg-criterion.met-pathogenic { background:rgba(239,68,68,0.12); border-color:rgba(239,68,68,0.3); }
+    .acmg-criterion.met-benign { background:rgba(16,185,129,0.12); border-color:rgba(16,185,129,0.3); }
+    .acmg-criterion.not-met { opacity:0.45; }
+    .acmg-criterion.not-evaluated { opacity:0.3; font-style:italic; }
+    .acmg-criterion .code { font-weight:700; font-family:monospace; min-width:80px; }
+    .acmg-criterion .strength { font-size:10px; padding:1px 4px; border-radius:2px; background:var(--surface2); }
+    .acmg-criterion .summary { font-size:11px; color:var(--text-secondary); margin-left:auto; text-align:right; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .acmg-counts { display:flex; gap:12px; margin:10px 0; font-size:12px; flex-wrap:wrap; }
+    .acmg-counts .count { padding:2px 8px; border-radius:3px; background:var(--surface2); }
+
     /* Consequence tags */
     .consequence-tag {
       display: inline-block;
-      padding: 2px 6px;
+      padding: 3px 8px;
       border-radius: 3px;
-      font-size: 11px;
+      font-size: 12px;
       font-family: monospace;
       background: var(--surface2);
       margin: 1px;
@@ -402,7 +536,7 @@
       padding: 16px;
     }
     .summary-card h3 {
-      font-size: 13px;
+      font-size: 14px;
       color: var(--text-dim);
       margin-bottom: 12px;
     }
@@ -413,7 +547,7 @@
       margin-bottom: 6px;
     }
     .bar-label {
-      font-size: 11px;
+      font-size: 13px;
       font-family: monospace;
       width: 200px;
       text-align: right;
@@ -433,16 +567,17 @@
       transition: width 0.5s ease;
     }
     .bar-count {
-      font-size: 11px;
+      font-size: 13px;
       color: var(--text-dim);
       width: 40px;
+      font-weight: 600;
     }
 
     /* Raw output */
     .raw-output {
       padding: 16px;
       font-family: 'JetBrains Mono', 'Fira Code', monospace;
-      font-size: 11px;
+      font-size: 12px;
       white-space: pre;
       overflow-x: auto;
       max-height: 500px;
@@ -516,8 +651,8 @@
     .example-links span { font-size: 12px; color: var(--text-dim); }
     .example-pill {
       display: inline-block;
-      padding: 3px 12px;
-      font-size: 12px;
+      padding: 5px 14px;
+      font-size: 13px;
       font-weight: 500;
       color: var(--accent);
       background: rgba(108,122,238,0.08);
@@ -529,6 +664,27 @@
     }
     .example-pill:hover { background: rgba(108,122,238,0.15); border-color: var(--accent); }
 
+    .step-header { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+    .step-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--accent); color: #fff; font-weight: 700; font-size: 14px;
+      box-shadow: 0 0 0 4px rgba(108,122,238,0.15);
+      flex-shrink: 0;
+    }
+    .input-section {
+      position: relative;
+    }
+    .advanced-toggle {
+      font-size: 13px; color: var(--text-dim); text-decoration: none; margin-top: 8px; display: inline-block;
+    }
+    .advanced-toggle:hover { color: var(--accent); }
+    .mane-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; white-space: nowrap;
+    }
+    .mane-badge-select { background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid rgba(52,211,153,0.3); }
+    .mane-badge-clinical { background: rgba(96,165,250,0.15); color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+
     /* Animations */
     .fade-in { animation: fadeIn 0.3s ease; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -536,60 +692,70 @@
 </head>
 <body>
   <header>
+    <img class="logo" src="/assets/logo.png" alt="fastVEP logo" width="36" height="36">
     <h1><span>fast</span>VEP</h1>
     <span class="badge">v0.1.0</span>
     <span class="spacer"></span>
+    <div id="stats" style="display:none; font-size:12px; color:var(--text-dim); margin-right:20px; text-align:right">
+      <div id="genomeStat"></div>
+      <div id="variantStat"></div>
+    </div>
     <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()">
       <span id="themeIcon">&#9790;</span> <span id="themeLabel">Light</span>
     </button>
-    <a href="https://github.com/Huang-lab/fastVEP">GitHub</a>
+    <a href="https://github.com/Huang-lab/fastVEP" target="_blank" rel="noopener">GitHub</a>
+    <a class="link-slack" href="https://join.slack.com/t/fastvep/shared_invite/zt-3vynbbs2o-1EIu4KPbzrEn_zSyyG~BOQ" target="_blank" rel="noopener">Slack</a>
+    <a href="https://labs.icahn.mssm.edu/kuanhuanglab/" target="_blank" rel="noopener">Huang Lab</a>
   </header>
 
   <div class="container">
-    <!-- Input Section -->
+    <!-- Step 1: Genome Selection -->
+    <div class="input-section" style="margin-bottom:12px">
+      <div class="step-header">
+        <span class="step-badge">1</span>
+        <h2 style="margin:0;display:inline">Select Genome</h2>
+      </div>
+      <span class="step-subtitle">Choose a reference genome and gene model (or upload a custom GFF3).</span>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
+        <select id="gffSource" onchange="onGffSourceChange()" style="flex:1;min-width:250px;max-width:500px">
+          <option value="builtin">Built-in demo (OR4F5 + lncRNA, chr1 only)</option>
+          <option value="upload">Upload custom GFF3 file</option>
+        </select>
+        <input type="file" id="gffFile" accept=".gff,.gff3,.gff.gz" style="display:none;font-size:12px;color:var(--text-dim)" onchange="loadGffFile(this)">
+        <small id="gffInfo" style="color:var(--text-dim);font-size:11px"></small>
+      </div>
+    </div>
+
+    <!-- Step 2: Input & Annotate -->
     <div class="input-section">
-      <h2>Input Variants</h2>
-      <div class="input-grid">
+      <div class="step-header">
+        <span class="step-badge">2</span>
+        <h2 style="margin:0;display:inline">Input Variants</h2>
+      </div>
+      <span class="step-subtitle">Paste VCF variants, try an example, or upload a .vcf / .vcf.gz file.</span>
+      <div class="input-grid" style="margin-top:12px">
         <div>
           <textarea id="vcfInput" placeholder="Paste VCF data here, or try an example below.&#10;&#10;Supported format: VCF (tab-separated)&#10;#CHROM  POS  ID  REF  ALT  QUAL  FILTER  INFO&#10;1       69080  .  C    T    30    PASS    .&#10;&#10;Supports SNVs, insertions, deletions, multi-allelic, and MNVs."></textarea>
           <div class="example-links">
             <span>Examples:</span>
-            <a class="example-pill" href="#" onclick="loadExample('coding');return false">Coding variants</a>
-            <a class="example-pill" href="#" onclick="loadExample('splicing');return false">Splice sites</a>
-            <a class="example-pill" href="#" onclick="loadExample('noncoding');return false">Non-coding</a>
+            <a class="example-pill" href="#" onclick="loadExample('coding');return false">OR4F5 coding (missense, frameshift, UTR)</a>
+            <a class="example-pill" href="#" onclick="loadExample('splicing');return false">OR4F5 splice sites</a>
+            <a class="example-pill" href="#" onclick="loadExample('noncoding');return false">lncRNA + intergenic</a>
           </div>
         </div>
         <div class="controls">
           <div class="control-group">
-            <label>GFF3 Gene Model</label>
-            <select id="gffSource" onchange="toggleGffUpload()">
-              <option value="builtin">Built-in (OR4F5 + lncRNA, chr1)</option>
-              <option value="upload">Upload custom GFF3 file</option>
-            </select>
-            <input type="file" id="gffFile" accept=".gff,.gff3,.gff.gz" style="display:none;margin-top:6px;font-size:12px;color:var(--text-dim)" onchange="loadGffFile(this)">
-            <small id="gffInfo" style="color:var(--text-dim);font-size:11px;margin-top:4px;display:block"></small>
-          </div>
-          <div class="control-group">
-            <label>Output Format</label>
-            <select id="outputFormat" onchange="onFormatChange()">
-              <option value="table">Interactive Table</option>
-              <option value="vcf">VCF (CSQ field)</option>
-              <option value="tab">Tab-delimited</option>
-              <option value="json">JSON</option>
-            </select>
-          </div>
-          <div class="control-group">
-            <label>Upstream/Downstream Distance</label>
-            <input type="number" id="distance" value="5000" min="0" max="50000">
-          </div>
-          <div class="control-group">
-            <label>Options</label>
             <div class="checkbox-group">
-              <label title="Report only one consequence per variant (most severe, canonical transcript)"><input type="checkbox" id="optPick"><span>Pick (canonical only)</span></label>
+              <label title="Report one consequence per variant using the canonical (MANE Select preferred) transcript"><input type="checkbox" id="optPick"><span>Show canonical transcript only</span></label>
+              <label title="Run ACMG-AMP variant classification (Richards et al. 2015) to assess pathogenicity"><input type="checkbox" id="optAcmg" checked><span>ACMG-AMP Classification</span></label>
             </div>
           </div>
           <div class="btn-row">
-            <button class="btn btn-primary" id="btnAnnotate" onclick="annotate()">Annotate</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('vcfFile').click();return false" style="flex:1">Upload VCF</button>
+            <input type="file" id="vcfFile" accept=".vcf,.vcf.gz" style="display:none" onchange="loadVcfFile(this)">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="btnAnnotate" onclick="annotate()" style="flex:1;padding:12px 28px;font-size:15px">Annotate</button>
             <button class="btn btn-secondary" onclick="clearAll()">Clear</button>
           </div>
         </div>
@@ -615,6 +781,11 @@
     <div class="results-section" id="resultsSection">
       <div class="results-header">
         <h2>Results</h2>
+        <div class="download-group" style="margin-left:auto;display:flex;align-items:center;gap:6px">
+          <span style="font-size:12px;color:var(--text-dim)">Download:</span>
+          <button class="btn btn-secondary" onclick="downloadResults('tsv')" style="font-size:12px;padding:4px 12px" title="Download results as tab-separated values">TSV</button>
+          <button class="btn btn-secondary" onclick="downloadResults('vcf')" style="font-size:12px;padding:4px 12px" title="Download results as VCF with CSQ field">VCF</button>
+        </div>
         <div class="stats">
           <div class="stat">
             <div class="stat-value" id="statVariants">0</div>
@@ -653,29 +824,34 @@
         <!-- Table View -->
         <div id="tabTable" class="table-wrapper">
           <table id="resultsTable">
-            <thead>
+            <thead id="resultsHead">
               <tr>
                 <th onclick="sortTable(0)">Location</th>
                 <th onclick="sortTable(1)">Allele</th>
                 <th onclick="sortTable(2)">Consequence</th>
                 <th onclick="sortTable(3)">Impact</th>
-                <th onclick="sortTable(4)">Symbol</th>
-                <th onclick="sortTable(5)">Gene</th>
-                <th onclick="sortTable(6)">Transcript</th>
-                <th onclick="sortTable(7)">Biotype</th>
-                <th onclick="sortTable(8)">Canonical</th>
-                <th onclick="sortTable(9)">Exon</th>
-                <th onclick="sortTable(10)">Intron</th>
-                <th onclick="sortTable(11)">HGVSg</th>
-                <th onclick="sortTable(12)">HGVSc</th>
-                <th onclick="sortTable(13)">HGVSp</th>
-                <th onclick="sortTable(14)">cDNA</th>
-                <th onclick="sortTable(15)">CDS</th>
-                <th onclick="sortTable(16)">Protein</th>
-                <th onclick="sortTable(17)">AA</th>
-                <th onclick="sortTable(18)">Codons</th>
-                <th onclick="sortTable(19)">Distance</th>
-                <th onclick="sortTable(20)">Strand</th>
+                <th onclick="sortTable(4)">ACMG</th>
+                <th onclick="sortTable(5)">Symbol</th>
+                <th onclick="sortTable(6)">Gene</th>
+                <th onclick="sortTable(7)">Transcript</th>
+                <th onclick="sortTable(8)">Biotype</th>
+                <th onclick="sortTable(9)">Canonical</th>
+                <th onclick="sortTable(10)">MANE</th>
+                <th onclick="sortTable(11)">ENSP</th>
+                <th onclick="sortTable(12)">TSL</th>
+                <th onclick="sortTable(13)">CCDS</th>
+                <th onclick="sortTable(14)">Exon</th>
+                <th onclick="sortTable(15)">Intron</th>
+                <th onclick="sortTable(16)">HGVSg</th>
+                <th onclick="sortTable(17)">HGVSc</th>
+                <th onclick="sortTable(18)">HGVSp</th>
+                <th onclick="sortTable(19)">cDNA</th>
+                <th onclick="sortTable(20)">CDS</th>
+                <th onclick="sortTable(21)">Protein</th>
+                <th onclick="sortTable(22)">AA</th>
+                <th onclick="sortTable(23)">Codons</th>
+                <th onclick="sortTable(24)">Distance</th>
+                <th onclick="sortTable(25)">Strand</th>
               </tr>
             </thead>
             <tbody id="resultsBody"></tbody>
@@ -696,7 +872,13 @@
   </div>
 
   <footer>
-    fastVEP &mdash; High-performance variant effect prediction in Rust
+    <div style="margin-bottom:6px">fastVEP &mdash; High-performance variant effect prediction in Rust</div>
+    <div style="display:flex;gap:18px;justify-content:center;flex-wrap:wrap;font-size:12px">
+      <a href="https://github.com/Huang-lab/fastVEP" target="_blank" rel="noopener" style="color:var(--text-dim);text-decoration:none">GitHub</a>
+      <a href="https://join.slack.com/t/fastvep/shared_invite/zt-3vynbbs2o-1EIu4KPbzrEn_zSyyG~BOQ" target="_blank" rel="noopener" style="color:var(--text-dim);text-decoration:none">Slack community</a>
+      <a href="https://labs.icahn.mssm.edu/kuanhuanglab/" target="_blank" rel="noopener" style="color:var(--text-dim);text-decoration:none">Huang Lab</a>
+      <a href="https://github.com/Huang-lab/fastVEP/issues" target="_blank" rel="noopener" style="color:var(--text-dim);text-decoration:none">Report issue</a>
+    </div>
   </footer>
 
 <script>
@@ -704,22 +886,44 @@
 // fastVEP Client-Side Annotation Engine
 // ============================================================
 
-// Embedded example GFF3 gene model — real Ensembl data (GRCh38 release 115)
-// OR4F5: ENSG00000186092, chr1:65419-71585 (+), 3 exons, protein_coding
-// lncRNA: ENSG00000290826, chr1:57598-64116 (+), 3 exons, lncRNA
+// Gene/transcript metadata (symbol, id, protein id, biotype, ...) originates
+// from an uploaded GFF3 and variant text originates from user-pasted VCF, so
+// both must be escaped before going into innerHTML template literals below —
+// otherwise a crafted gene Name/ID renders as live HTML/script.
+function escapeHtml(s) {
+  if (s == null) return s;
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Embedded example GFF3 gene model — extracted from Ensembl GRCh38 release 115
+// OR4F5: ENSG00000186092, chr1:65419-71585 (+), protein_coding, Ensembl_canonical + MANE_Select
+// lncRNA: ENSG00000290826, chr1:51891-64116 (+), 2 transcripts (ENST00000832531 canonical, ENST00000642116)
 const EXAMPLE_GFF3 = `##gff-version 3
-1\thavana\tgene\t65419\t71585\t.\t+\t.\tID=gene:ENSG00000186092;Name=OR4F5;biotype=protein_coding;gene_id=ENSG00000186092;version=7
-1\thavana\tmRNA\t65419\t71585\t.\t+\t.\tID=transcript:ENST00000641515;Parent=gene:ENSG00000186092;Name=OR4F5-201;biotype=protein_coding;tag=Ensembl_canonical,MANE_Select;transcript_id=ENST00000641515;version=2
-1\thavana\texon\t65419\t65433\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003812156;exon_id=ENSE00003812156;rank=1;version=1
-1\thavana\texon\t65520\t65573\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003813641;exon_id=ENSE00003813641;rank=2;version=1
-1\thavana\tCDS\t65565\t65573\t.\t+\t0\tID=CDS:ENSP00000493376;Parent=transcript:ENST00000641515;protein_id=ENSP00000493376;version=2
-1\thavana\texon\t69037\t71585\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003813949;exon_id=ENSE00003813949;rank=3;version=1
-1\thavana\tCDS\t69037\t70008\t.\t+\t0\tID=CDS:ENSP00000493376;Parent=transcript:ENST00000641515;protein_id=ENSP00000493376;version=2
-1\thavana\tgene\t57598\t64116\t.\t+\t.\tID=gene:ENSG00000290826;biotype=lncRNA;gene_id=ENSG00000290826;version=2
-1\thavana\tlnc_RNA\t57598\t64116\t.\t+\t.\tID=transcript:ENST00000642116;Parent=gene:ENSG00000290826;biotype=lncRNA;tag=Ensembl_canonical;transcript_id=ENST00000642116;version=1
+1\thavana\tncRNA_gene\t51891\t64116\t.\t+\t.\tID=gene:ENSG00000290826;biotype=lncRNA;description=novel transcript;gene_id=ENSG00000290826;logic_name=havana_homo_sapiens;version=2
+1\thavana_tagene\tlnc_RNA\t51891\t63526\t.\t+\t.\tID=transcript:ENST00000832531;Parent=gene:ENSG00000290826;biotype=lncRNA;tag=gencode_basic,gencode_primary,Ensembl_canonical;transcript_id=ENST00000832531;version=1
+1\thavana_tagene\texon\t51891\t51994\t.\t+\t.\tParent=transcript:ENST00000832531;Name=ENSE00004248110;exon_id=ENSE00004248110;rank=1;version=1
+1\thavana_tagene\texon\t53282\t53372\t.\t+\t.\tParent=transcript:ENST00000832531;Name=ENSE00004248112;exon_id=ENSE00004248112;rank=2;version=1
+1\thavana_tagene\texon\t58700\t58856\t.\t+\t.\tParent=transcript:ENST00000832531;Name=ENSE00003812505;exon_id=ENSE00003812505;rank=3;version=1
+1\thavana_tagene\texon\t62916\t63526\t.\t+\t.\tParent=transcript:ENST00000832531;Name=ENSE00004248111;exon_id=ENSE00004248111;rank=4;version=1
+1\thavana\tlnc_RNA\t57598\t64116\t.\t+\t.\tID=transcript:ENST00000642116;Parent=gene:ENSG00000290826;biotype=lncRNA;tag=gencode_basic;transcript_id=ENST00000642116;version=1
 1\thavana\texon\t57598\t57653\t.\t+\t.\tParent=transcript:ENST00000642116;Name=ENSE00003812686;exon_id=ENSE00003812686;rank=1;version=1
 1\thavana\texon\t58700\t58856\t.\t+\t.\tParent=transcript:ENST00000642116;Name=ENSE00003812505;exon_id=ENSE00003812505;rank=2;version=1
-1\thavana\texon\t62916\t64116\t.\t+\t.\tParent=transcript:ENST00000642116;Name=ENSE00003811818;exon_id=ENSE00003811818;rank=3;version=1`;
+1\thavana\texon\t62916\t64116\t.\t+\t.\tParent=transcript:ENST00000642116;Name=ENSE00003811818;exon_id=ENSE00003811818;rank=3;version=1
+1\tensembl_havana\tgene\t65419\t71585\t.\t+\t.\tID=gene:ENSG00000186092;Name=OR4F5;biotype=protein_coding;description=olfactory receptor family 4 subfamily F member 5 [Source:HGNC Symbol%3BAcc:HGNC:14825];gene_id=ENSG00000186092;logic_name=ensembl_havana_gene_homo_sapiens;version=7
+1\thavana\tmRNA\t65419\t71585\t.\t+\t.\tID=transcript:ENST00000641515;Parent=gene:ENSG00000186092;Name=OR4F5-201;biotype=protein_coding;ccdsid=CCDS30547.2;tag=gencode_basic,gencode_primary,Ensembl_canonical,MANE_Select;transcript_id=ENST00000641515;version=2
+1\thavana\texon\t65419\t65433\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003812156;exon_id=ENSE00003812156;rank=1;version=1
+1\thavana\tfive_prime_UTR\t65419\t65433\t.\t+\t.\tParent=transcript:ENST00000641515
+1\thavana\tfive_prime_UTR\t65520\t65564\t.\t+\t.\tParent=transcript:ENST00000641515
+1\thavana\texon\t65520\t65573\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003813641;exon_id=ENSE00003813641;rank=2;version=1
+1\thavana\tCDS\t65565\t65573\t.\t+\t0\tID=CDS:ENSP00000493376;Parent=transcript:ENST00000641515;protein_id=ENSP00000493376;version=2
+1\thavana\tCDS\t69037\t70008\t.\t+\t0\tID=CDS:ENSP00000493376;Parent=transcript:ENST00000641515;protein_id=ENSP00000493376;version=2
+1\thavana\texon\t69037\t71585\t.\t+\t.\tParent=transcript:ENST00000641515;Name=ENSE00003813949;exon_id=ENSE00003813949;rank=3;version=1
+1\thavana\tthree_prime_UTR\t70009\t71585\t.\t+\t.\tParent=transcript:ENST00000641515`;
 
 // Real spliced transcript sequences from Ensembl GRCh38 (fetched via REST API)
 const SPLICED_SEQS = {
@@ -760,14 +964,13 @@ const EXAMPLES = {
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
 1\t65565\t.\tA\tG\t50\tPASS\t.\t## start_lost (1st base of ATG)
 1\t65568\t.\tA\tG\t30\tPASS\t.\t## missense_variant K>E
+1\t69134\trs781394307\tA\tG\t30\tPASS\t.\t## missense_variant (ClinVar: Likely_benign)
+1\t69241\t.\tC\tT\t30\tPASS\t.\t## missense_variant (ClinVar: Uncertain_significance)
 1\t69080\t.\tC\tT\t30\tPASS\t.\t## missense_variant T>M
 1\t69080\t.\tCA\tC\t50\tPASS\t.\t## frameshift_variant (1bp del)
 1\t69080\t.\tCACG\tC\t50\tPASS\t.\t## inframe_deletion (3bp del)
-1\t69080\t.\tC\tCTTT\t30\tPASS\t.\t## inframe_insertion (3bp ins)
-1\t69080\t.\tC\tCTT\t30\tPASS\t.\t## frameshift_variant (2bp ins)
 1\t65425\t.\tA\tG\t30\tPASS\t.\t## 5_prime_UTR_variant
-1\t70100\t.\tC\tT\t30\tPASS\t.\t## 3_prime_UTR_variant
-1\t69080\t.\tC\tT,A\t30\tPASS\t.\t## multi-allelic SNV (2 alt alleles)`,
+1\t70100\t.\tC\tT\t30\tPASS\t.\t## 3_prime_UTR_variant`,
 
   // Splicing: donor/acceptor/region variants at OR4F5 exon-intron boundaries + upstream/downstream
   splicing: `##fileformat=VCFv4.2
@@ -1199,61 +1402,264 @@ let allResults = [];
 let currentTab = 'table';
 let transcripts = [];
 let hasBackend = null; // null = unknown, true/false after check
+let serverTranscripts = 0; // how many transcripts are loaded on the server
+let serverGenomes = []; // available genomes from --data-dir
+let serverSaSources = []; // loaded SA sources (ClinVar, gnomAD, etc.)
+let builtinUploadedToServer = false; // track if we've uploaded the example GFF3
 
-// Detect backend on load
+// Detect backend on load, fetch available genomes, ensure transcripts are loaded
+// Turn a directory name like "hg38_ensembl_115" into a friendly label
+// "Human GRCh38 / hg38 (Ensembl 115)". Falls back to the raw name if unrecognized.
+function formatGenomeLabel(name) {
+  const lower = name.toLowerCase();
+  // Species/build detection — species name first so scanning the dropdown is easy.
+  const parts = [];
+  let species = null;
+  if (lower.includes('grch38') || lower.includes('hg38')) species = 'Human (GRCh38 / hg38)';
+  else if (lower.includes('grch37') || lower.includes('hg19') || lower.includes('hg37')) species = 'Human (GRCh37 / hg19)';
+  else if (lower.includes('t2t') || lower.includes('chm13')) species = 'Human (T2T-CHM13v2.0)';
+  else if (lower.includes('grcm39') || lower.includes('mouse')) species = 'Mouse GRCm39';
+  else if (lower.includes('grcm38') || lower.includes('mm10')) species = 'Mouse GRCm38 / mm10';
+  else if (lower.includes('mratbn') || lower.includes('rnor') || lower.includes('rat')) species = 'Rat mRatBN7.2';
+  else if (lower.includes('grcz11') || lower.includes('zebrafish')) species = 'Zebrafish GRCz11';
+  else if (lower.includes('bdgp6') || lower.includes('drosophila')) species = 'Drosophila BDGP6';
+  else if (lower.includes('wbcel') || lower.includes('celegans') || lower.includes('elegans')) species = 'C. elegans WBcel235';
+  else if (lower.includes('r64') || lower.includes('cerevisiae') || lower.includes('yeast')) species = 'Yeast R64-1-1';
+  else if (lower.includes('tair') || lower.includes('arabidopsis')) species = 'Arabidopsis TAIR10';
+  // Bare species names (fallback for dirs without build info)
+  else if (lower === 'human') species = 'Human';
+  else if (lower === 'mouse') species = 'Mouse';
+  else if (lower === 'yeast') species = 'Yeast';
+  else if (lower === 'drosophila') species = 'Fruit fly';
+  else if (lower === 'elegans') species = 'C. elegans';
+  else if (lower === 'zebrafish') species = 'Zebrafish';
+  else if (lower === 'arabidopsis') species = 'Arabidopsis';
+  // Source detection
+  let source = null;
+  if (lower.includes('ensembl')) {
+    const m = name.match(/ensembl[_-]?(\d+)/i);
+    source = m ? `Ensembl ${m[1]}` : 'Ensembl';
+  } else if (lower.includes('gencode')) {
+    const m = name.match(/gencode[_-]?v?(\d+)/i);
+    source = m ? `GENCODE v${m[1]}` : 'GENCODE';
+  } else if (lower.includes('refseq')) {
+    source = 'RefSeq';
+  }
+  if (species) {
+    return source ? `${species} (${source})` : species;
+  }
+  // Defensive fallback: name wasn't recognized but looks like a human build (e.g. unusual casing) —
+  // still surface "Human" so it's scannable.
+  if (/(?:^|[_\W])(?:hg\d+|grch\d+)(?:[_\W]|$)/i.test(name)) {
+    return 'Human — ' + name;
+  }
+  return name; // fallback
+}
+
 async function checkBackend() {
   try {
     const r = await fetch('/api/status', { method: 'GET' });
-    if (r.ok) { const j = await r.json(); hasBackend = j.backend === true; }
-    else hasBackend = false;
+    if (r.ok) {
+      const j = await r.json();
+      hasBackend = j.backend === true;
+      serverTranscripts = j.transcripts || 0;
+      serverSaSources = j.sa_sources || [];
+
+      // Update counters
+      if (j.total_genomes !== undefined || j.total_variants !== undefined) {
+        document.getElementById('stats').style.display = 'block';
+        document.getElementById('genomeStat').textContent = `Genomes: ${j.total_genomes || 0}`;
+        document.getElementById('variantStat').textContent = `Variants: ${j.total_variants || 0}`;
+      }
+    } else {
+      hasBackend = false;
+    }
   } catch { hasBackend = false; }
-  // Show mode indicator
+
   const badge = document.querySelector('.badge');
   if (badge) badge.textContent = hasBackend ? 'v0.1.0 (server)' : 'v0.1.0 (client)';
+
+  if (!hasBackend) return;
+
+  // Fetch available genomes from the server's data directory
+  try {
+    const r = await fetch('/api/genomes', { method: 'GET' });
+    if (r.ok) {
+      const data = await r.json();
+      serverGenomes = data.genomes || [];
+    }
+  } catch { /* ignore */ }
+
+  // Populate genome options in the dropdown
+  const sel = document.getElementById('gffSource');
+  let humanGenome = null;
+  if (serverGenomes.length > 0) {
+    for (const g of serverGenomes) {
+      const opt = document.createElement('option');
+      opt.value = 'server:' + g.name;
+      const tags = [g.has_fasta ? 'FASTA' : null, g.has_sa ? 'SA' : null].filter(Boolean);
+      const label = formatGenomeLabel(g.name);
+      opt.textContent = label + (tags.length ? ' — ' + tags.join(' + ') : '');
+      // Insert before "Upload custom" option
+      sel.insertBefore(opt, sel.querySelector('option[value="upload"]'));
+      // Auto-select the first GRCh38 human genome
+      const lower = g.name.toLowerCase();
+      if (!humanGenome && (lower.includes('grch38') || lower.includes('hg38'))) {
+        humanGenome = g;
+      }
+    }
+  }
+
+  // Auto-select human genome if available; otherwise fall back to built-in demo
+  if (humanGenome) {
+    sel.value = 'server:' + humanGenome.name;
+    await loadServerGenome(humanGenome.name);
+  } else if (serverTranscripts === 0) {
+    await uploadBuiltinToServer();
+  }
+
+  updateGffInfo();
 }
+
+// Upload the built-in example GFF3 to the server so server-mode annotation works
+async function uploadBuiltinToServer() {
+  if (builtinUploadedToServer) return;
+  const info = document.getElementById('gffInfo');
+  info.textContent = 'Loading built-in gene model on server...';
+  try {
+    const r = await fetch('/api/upload-gff3', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: EXAMPLE_GFF3,
+    });
+    const data = await r.json();
+    if (!data.error) {
+      builtinUploadedToServer = true;
+      serverTranscripts = data.transcripts || 0;
+      info.textContent = `Built-in: ${data.genes} genes, ${data.transcripts} transcripts`;
+    } else {
+      info.textContent = 'Failed to load built-in: ' + data.error;
+    }
+  } catch (e) {
+    info.textContent = 'Failed to load built-in: ' + e.message;
+  }
+}
+
+function updateGffInfo() {
+  const info = document.getElementById('gffInfo');
+  const source = document.getElementById('gffSource').value;
+  if (hasBackend && (builtinUploadedToServer || serverTranscripts > 0)) {
+    let text = `${serverTranscripts} transcripts`;
+    if (serverSaSources.length > 0) {
+      text += ` | SA: ${serverSaSources.join(', ')}`;
+    }
+    info.textContent = text;
+  }
+}
+
 checkBackend();
 
-function annotate() {
-  const vcfText = document.getElementById('vcfInput').value.trim();
-  if (!vcfText) return;
+// Keyboard shortcut: Cmd/Ctrl+Enter in the VCF textarea triggers Annotate.
+(function wireAnnotateShortcut() {
+  const ta = document.getElementById('vcfInput');
+  if (!ta) return;
+  ta.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      annotate();
+    }
+  });
+})();
+
+// --- Prominent loading helpers ---
+function showLoading(message) {
   const status = document.getElementById('statusBar');
   status.classList.remove('done');
   document.getElementById('doneIcon').style.display = 'none';
+  document.getElementById('statusText').textContent = message;
   status.classList.add('visible');
-
-  // Use backend if available (custom GFF was already uploaded to server)
-  if (hasBackend) {
-    annotateBackend(vcfText);
+  status.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+function updateLoading(message) {
+  document.getElementById('statusText').textContent = message;
+}
+function finishLoading(message) {
+  const status = document.getElementById('statusBar');
+  document.getElementById('statusText').textContent = message;
+  document.getElementById('doneIcon').style.display = 'inline';
+  status.classList.add('done');
+  // Auto-hide after a moment so the UI stays clean
+  setTimeout(() => { status.classList.remove('visible'); status.classList.remove('done'); }, 2000);
+}
+function hideLoading() {
+  const status = document.getElementById('statusBar');
+  status.classList.remove('visible');
+  status.classList.remove('done');
+}
+function setAnnotateBusy(busy, label) {
+  const btn = document.getElementById('btnAnnotate');
+  if (!btn) return;
+  btn.disabled = busy;
+  if (busy) {
+    btn.dataset.origText = btn.dataset.origText || btn.textContent;
+    btn.innerHTML = '<span class="spinner"></span>' + (label || 'Annotating…');
   } else {
-    annotateClientSide(vcfText);
+    btn.innerHTML = btn.dataset.origText || 'Annotate';
+  }
+}
+
+async function annotate() {
+  const vcfText = document.getElementById('vcfInput').value.trim();
+  if (!vcfText) return;
+  showLoading('Preparing variants…');
+  setAnnotateBusy(true);
+
+  try {
+    if (hasBackend) {
+      // Ensure server has transcripts loaded (upload builtin if needed)
+      if (serverTranscripts === 0) {
+        updateLoading('Loading gene model…');
+        await uploadBuiltinToServer();
+      }
+      await annotateBackend(vcfText);
+    } else {
+      annotateClientSide(vcfText);
+    }
+  } catch (e) {
+    hideLoading();
+    setAnnotateBusy(false);
+    showWarning('Annotation failed', e?.message || String(e));
   }
 }
 
 async function annotateBackend(vcfText) {
-  const status = document.getElementById('statusBar');
   const pick = document.getElementById('optPick').checked;
-  document.getElementById('statusText').textContent = 'Sending to server...';
+  const acmg = document.getElementById('optAcmg').checked;
+  const variantCount = vcfText.split('\n').filter(l => l && !l.startsWith('#')).length;
+  updateLoading(`Annotating ${variantCount.toLocaleString()} variant${variantCount === 1 ? '' : 's'}…`);
   const t0 = performance.now();
   try {
     const r = await fetch('/api/annotate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vcf: vcfText, pick }),
+      body: JSON.stringify({ vcf: vcfText, pick, acmg }),
     });
     const data = await r.json();
     if (data.error) {
-      status.classList.remove('visible');
+      hideLoading();
+      setAnnotateBusy(false);
       showWarning('Server error', data.error);
       return;
     }
     const t1 = performance.now();
     // Convert server JSON results to our internal format
     allResults = convertServerResults(data.results || []);
-    status.classList.remove('visible');
+    const ms = data.time_ms || Math.round(t1 - t0);
+    setAnnotateBusy(false);
     showResults(
       new Set(allResults.map(r => `${r.variant.chrom}:${r.variant.start}`)).size,
       allResults.length,
-      data.time_ms || Math.round(t1 - t0)
+      ms
     );
   } catch (e) {
     // Fall back to client-side on network error
@@ -1264,6 +1670,59 @@ async function annotateBackend(vcfText) {
 }
 
 // Convert Ensembl-style JSON from the Rust backend to our internal result format
+// Known SA keys to extract from server JSON
+const SA_KEYS = ['clinvar', 'gnomad', 'dbsnp', 'cosmic', 'onekg', 'topmed', 'mitomap',
+  'phylop', 'gerp', 'dann', 'revel', 'spliceai', 'primateai', 'dbnsfp', 'sift', 'polyphen'];
+
+function extractSA(obj) {
+  const sa = {};
+  for (const key of SA_KEYS) {
+    if (obj[key] !== undefined) sa[key] = obj[key];
+  }
+  // Also grab any unknown keys that look like SA data (objects/arrays, not standard VEP fields)
+  const stdKeys = new Set(['gene_id','gene_symbol','gene_symbol_source','transcript_id','biotype',
+    'consequence_terms','impact','variant_allele','strand','canonical','cdna_start','cdna_end',
+    'cds_start','cds_end','protein_start','protein_end','amino_acids','codons','exon','intron',
+    'hgvsc','hgvsp','hgvsg','distance','hgvs_offset',
+    'mane_select','mane_plus_clinical','tsl','ccds','protein_id','gencode_primary',
+    'seq_region_name','start','end','allele_string','most_severe_consequence',
+    'transcript_consequences','id','variant_type','sv_end','sv_len','genes','acmg']);
+  for (const [k, v] of Object.entries(obj)) {
+    if (!stdKeys.has(k) && v != null && typeof v === 'object') {
+      sa[k] = v;
+    }
+  }
+  return Object.keys(sa).length > 0 ? sa : null;
+}
+
+function formatSAValue(val, key) {
+  if (val === null || val === undefined) return '-';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number') return typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(4) : String(val);
+  if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+  if (Array.isArray(val)) return val.map(v => formatSAValue(v)).join('; ');
+  if (typeof val === 'object') {
+    // Smart display for known SA sources
+    if (val.significance) {
+      // ClinVar-like: show significance prominently
+      const sig = Array.isArray(val.significance) ? val.significance.join('/') : val.significance;
+      const review = val.reviewStatus || '';
+      return sig + (review ? ' (' + review.replace(/_/g,' ') + ')' : '');
+    }
+    if (val.allAf !== undefined || val.af !== undefined) {
+      // gnomAD/population frequency: show allele frequency
+      const af = val.allAf ?? val.af ?? val.globalAf;
+      return af != null ? Number(af).toExponential(2) : '-';
+    }
+    const parts = [];
+    for (const [k, v] of Object.entries(val)) {
+      if (v != null && v !== '') parts.push(`${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`);
+    }
+    return parts.join(', ') || '-';
+  }
+  return String(val);
+}
+
 function convertServerResults(results) {
   const out = [];
   for (const vf of results) {
@@ -1271,15 +1730,16 @@ function convertServerResults(results) {
     const start = vf.start || 0;
     const end = vf.end || start;
     const variantBase = { chrom, start, end, origPos: start, origRef: '', origAlt: '' };
-    // Parse allele_string for ref/alt
     if (vf.allele_string) {
       const parts = vf.allele_string.split('/');
       variantBase.origRef = parts[0] || '';
       variantBase.origAlt = parts.slice(1).join(',');
     }
+    // Variant-level SA (e.g., positional scores like PhyloP)
+    const variantSA = extractSA(vf);
+
     const tcs = vf.transcript_consequences || [];
     if (tcs.length === 0) {
-      // Intergenic
       out.push({
         variant: variantBase,
         allele: vf.allele_string?.split('/')?.[1] || '-',
@@ -1289,9 +1749,13 @@ function convertServerResults(results) {
         exon: null, intron: null, cdna: null, cds: null, protein: null,
         aa: null, codons: null, dist: null,
         hgvsc: null, hgvsp: null, hgvsg: null,
+        sa: variantSA,
       });
     }
     for (const tc of tcs) {
+      // Merge variant-level + per-allele SA
+      const alleleSA = extractSA(tc);
+      const mergedSA = { ...(variantSA || {}), ...(alleleSA || {}) };
       out.push({
         variant: variantBase,
         allele: tc.variant_allele || '-',
@@ -1303,6 +1767,12 @@ function convertServerResults(results) {
           biotype: tc.biotype || '-',
           canonical: tc.canonical === 1,
           strand: tc.strand === 1 ? 1 : tc.strand === -1 ? -1 : 0,
+          mane_select: tc.mane_select || null,
+          mane_plus_clinical: tc.mane_plus_clinical || null,
+          tsl: tc.tsl != null ? tc.tsl : null,
+          ccds: tc.ccds || null,
+          protein_id: tc.protein_id || null,
+          gencode_primary: tc.gencode_primary === 1,
         },
         exon: tc.exon || null,
         intron: tc.intron || null,
@@ -1315,6 +1785,8 @@ function convertServerResults(results) {
         hgvsc: tc.hgvsc || null,
         hgvsp: tc.hgvsp || null,
         hgvsg: tc.hgvsg || null,
+        acmg: tc.acmg || null,
+        sa: Object.keys(mergedSA).length > 0 ? mergedSA : null,
       });
     }
   }
@@ -1322,37 +1794,49 @@ function convertServerResults(results) {
 }
 
 function annotateClientSide(vcfText) {
-  const status = document.getElementById('statusBar');
-  document.getElementById('statusText').textContent = 'Parsing gene models...';
+  updateLoading('Parsing gene models…');
   setTimeout(() => {
-    const t0 = performance.now();
-    transcripts = parseGFF3(getGFF3Text());
-    document.getElementById('statusText').textContent = `Loaded ${transcripts.length} transcripts. Annotating...`;
-    setTimeout(() => {
-      const variants = parseVCF(vcfText);
-      const distance = +document.getElementById('distance').value || 5000;
-      const pick = document.getElementById('optPick').checked;
-      allResults = [];
-      for (const v of variants) {
-        const preds = predict(v, transcripts, distance);
-        if (pick) {
-          const canonical = preds.filter(p => p.transcript?.canonical);
-          const picked = canonical.length > 0 ? canonical : preds.slice(0, 1);
-          const byAllele = {};
-          for (const p of picked) {
-            const key = p.allele;
-            if (!byAllele[key] || impactRank(p.impact) < impactRank(byAllele[key].impact)) byAllele[key] = p;
+    try {
+      const t0 = performance.now();
+      transcripts = parseGFF3(getGFF3Text());
+      updateLoading(`Loaded ${transcripts.length} transcripts. Annotating…`);
+      setTimeout(() => {
+        try {
+          const variants = parseVCF(vcfText);
+          const distanceInput = document.getElementById('distance');
+          const distance = distanceInput ? (+distanceInput.value || 5000) : 5000;
+          const pick = document.getElementById('optPick').checked;
+          allResults = [];
+          for (const v of variants) {
+            const preds = predict(v, transcripts, distance);
+            if (pick) {
+              const canonical = preds.filter(p => p.transcript?.canonical);
+              const picked = canonical.length > 0 ? canonical : preds.slice(0, 1);
+              const byAllele = {};
+              for (const p of picked) {
+                const key = p.allele;
+                if (!byAllele[key] || impactRank(p.impact) < impactRank(byAllele[key].impact)) byAllele[key] = p;
+              }
+              for (const p of Object.values(byAllele)) allResults.push({ variant: v, ...p });
+            } else {
+              for (const p of preds) allResults.push({ variant: v, ...p });
+            }
           }
-          for (const p of Object.values(byAllele)) allResults.push({ variant: v, ...p });
-        } else {
-          for (const p of preds) allResults.push({ variant: v, ...p });
+          const t1 = performance.now();
+          setAnnotateBusy(false);
+          checkMismatch(variants, transcripts);
+          showResults(variants.length, allResults.length, t1 - t0);
+        } catch (e) {
+          hideLoading();
+          setAnnotateBusy(false);
+          showWarning('Annotation failed', e?.message || String(e));
         }
-      }
-      const t1 = performance.now();
-      status.classList.remove('visible');
-      checkMismatch(variants, transcripts);
-      showResults(variants.length, allResults.length, t1 - t0);
-    }, 10);
+      }, 10);
+    } catch (e) {
+      hideLoading();
+      setAnnotateBusy(false);
+      showWarning('Annotation failed', e?.message || String(e));
+    }
   }, 10);
 }
 
@@ -1383,39 +1867,102 @@ function showResults(nVariants, nAnnotations, timeMs) {
 
 function renderTable() {
   const tbody = document.getElementById('resultsBody');
+  const thead = document.getElementById('resultsHead');
   tbody.innerHTML = '';
   const search = document.getElementById('searchInput').value.toLowerCase();
   const impFilter = document.getElementById('impactFilter').value;
+
+  // Empty-results helper message when no annotations came back at all.
+  if (allResults.length === 0) {
+    const colCount = document.querySelectorAll('#resultsHead th').length || 1;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="${colCount}"><div class="empty-results">
+      <div class="big">&#128269;</div>
+      <div><strong>No annotations returned.</strong></div>
+      <div style="margin-top:6px">Check that your variants fall within the loaded gene model's range
+        (&plusmn; upstream/downstream distance). For the built-in demo, try a variant on chr1 near OR4F5.</div>
+    </div></td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+
+  // Detect which SA columns are present in the results
+  const saKeys = new Set();
+  for (const r of allResults) {
+    if (r.sa) for (const k of Object.keys(r.sa)) saKeys.add(k);
+  }
+  const saColumns = [...saKeys].sort();
+
+  // Update header row with SA columns
+  if (thead) {
+    // Remove old dynamic SA columns (marked with data-sa)
+    thead.querySelectorAll('th[data-sa]').forEach(th => th.remove());
+    // Append SA column headers before Strand column (last column)
+    const headerRow = thead.querySelector('tr');
+    const strandTh = headerRow.lastElementChild;
+    for (const key of saColumns) {
+      const th = document.createElement('th');
+      th.textContent = key.charAt(0).toUpperCase() + key.slice(1);
+      th.setAttribute('data-sa', key);
+      th.style.cursor = 'pointer';
+      headerRow.insertBefore(th, strandTh);
+    }
+  }
+
+  filteredResults = [];
+  let shown = 0;
   for (const r of allResults) {
     if (impFilter && r.impact !== impFilter) continue;
     const text = [r.variant.chrom, r.transcript?.gene?.symbol, r.transcript?.id, ...r.consequences].join(' ').toLowerCase();
     if (search && !text.includes(search)) continue;
-    const loc = r.variant.start === r.variant.end ? `${r.variant.chrom}:${r.variant.start}` : `${r.variant.chrom}:${r.variant.start}-${r.variant.end}`;
+    filteredResults.push(r);
+    const loc = r.variant.start === r.variant.end ? `${escapeHtml(r.variant.chrom)}:${r.variant.start}` : `${escapeHtml(r.variant.chrom)}:${r.variant.start}-${r.variant.end}`;
     const tr = document.createElement('tr');
     const strandStr = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
+
+    // SA column values
+    const saCells = saColumns.map(key => {
+      const val = r.sa?.[key];
+      return `<td title="${escapeHtml(key)}">${val != null ? escapeHtml(formatSAValue(val)) : '-'}</td>`;
+    }).join('');
+
+    // MANE badge
+    const t = r.transcript;
+    let maneBadge = '-';
+    if (t?.mane_select) maneBadge = '<span class="mane-badge mane-badge-select">MANE Select</span>';
+    else if (t?.mane_plus_clinical) maneBadge = '<span class="mane-badge mane-badge-clinical">MANE+Clinical</span>';
+
+    const acmgCell = r.acmg ? `<span class="acmg-badge acmg-${escapeHtml(r.acmg.shorthand)}" onclick="showAcmgDetail(event, ${shown})" title="${escapeHtml((r.acmg.criteria||[]).filter(c=>c.met).map(c=>c.code).join(', '))}">${escapeHtml(r.acmg.classification?.replace(/_/g,' '))||'VUS'}</span>` : '-';
     tr.innerHTML = `
       <td>${loc}</td>
-      <td><code>${r.allele}</code></td>
-      <td>${r.consequences.map(c=>`<span class="consequence-tag">${c}</span>`).join(' ')}</td>
+      <td><code>${escapeHtml(r.allele)}</code></td>
+      <td>${r.consequences.map(c=>`<span class="consequence-tag">${escapeHtml(c)}</span>`).join(' ')}</td>
       <td><span class="impact impact-${r.impact}">${r.impact}</span></td>
-      <td>${r.transcript?.gene?.symbol||'-'}</td>
-      <td><code>${r.transcript?.gene?.id||'-'}</code></td>
-      <td><code>${r.transcript?.id||'-'}</code></td>
-      <td>${r.transcript?.biotype||'-'}</td>
-      <td>${r.transcript?.canonical ? 'YES' : '-'}</td>
-      <td>${r.exon||'-'}</td>
-      <td>${r.intron||'-'}</td>
-      <td>${r.hgvsg||'-'}</td>
-      <td>${r.hgvsc||'-'}</td>
-      <td>${r.hgvsp||'-'}</td>
-      <td>${r.cdna||'-'}</td>
-      <td>${r.cds||'-'}</td>
-      <td>${r.protein||'-'}</td>
-      <td>${r.aa||'-'}</td>
-      <td>${r.codons||'-'}</td>
+      <td>${acmgCell}</td>
+      <td>${escapeHtml(t?.gene?.symbol)||'-'}</td>
+      <td><code>${escapeHtml(t?.gene?.id)||'-'}</code></td>
+      <td><code>${escapeHtml(t?.id)||'-'}</code></td>
+      <td>${escapeHtml(t?.biotype)||'-'}</td>
+      <td>${t?.canonical ? 'YES' : '-'}</td>
+      <td>${maneBadge}</td>
+      <td><code>${escapeHtml(t?.protein_id)||'-'}</code></td>
+      <td>${t?.tsl != null ? t.tsl : '-'}</td>
+      <td><code>${escapeHtml(t?.ccds)||'-'}</code></td>
+      <td>${escapeHtml(r.exon)||'-'}</td>
+      <td>${escapeHtml(r.intron)||'-'}</td>
+      <td>${escapeHtml(r.hgvsg)||'-'}</td>
+      <td>${escapeHtml(r.hgvsc)||'-'}</td>
+      <td>${escapeHtml(r.hgvsp)||'-'}</td>
+      <td>${escapeHtml(r.cdna)||'-'}</td>
+      <td>${escapeHtml(r.cds)||'-'}</td>
+      <td>${escapeHtml(r.protein)||'-'}</td>
+      <td>${escapeHtml(r.aa)||'-'}</td>
+      <td>${escapeHtml(r.codons)||'-'}</td>
       <td>${r.dist||'-'}</td>
+      ${saCells}
       <td>${strandStr}</td>`;
     tbody.appendChild(tr);
+    shown++;
   }
 }
 
@@ -1462,44 +2009,99 @@ function renderSummary() {
       <h3>Genes Affected</h3>
       <div class="bar-chart">${[...new Set(allResults.filter(r=>r.transcript?.gene?.symbol).map(r=>r.transcript.gene.symbol))].map(g=>{
         const cnt = allResults.filter(r=>r.transcript?.gene?.symbol===g).length;
-        return `<div class="bar-row"><span class="bar-label">${g}</span><div class="bar-track"><div class="bar-fill" style="width:${cnt/allResults.length*100}%;background:var(--accent)"></div></div><span class="bar-count">${cnt}</span></div>`;
+        return `<div class="bar-row"><span class="bar-label">${escapeHtml(g)}</span><div class="bar-track"><div class="bar-fill" style="width:${cnt/allResults.length*100}%;background:var(--accent)"></div></div><span class="bar-count">${cnt}</span></div>`;
       }).join('')}
+      </div>
+    </div>
+    <div class="summary-card">
+      <h3>ACMG-AMP Classification</h3>
+      <div class="bar-chart">${(() => {
+        const acmgCount = {P:0,LP:0,VUS:0,LB:0,B:0};
+        const acmgColors = {P:'#ef4444',LP:'#f59e0b',VUS:'#6b7280',LB:'#3b82f6',B:'#10b981'};
+        const acmgLabels = {P:'Pathogenic',LP:'Likely Pathogenic',VUS:'Uncertain Significance',LB:'Likely Benign',B:'Benign'};
+        for (const r of allResults) { if (r.acmg?.shorthand) acmgCount[r.acmg.shorthand]++; }
+        const maxA = Math.max(...Object.values(acmgCount), 1);
+        const hasAny = Object.values(acmgCount).some(v => v > 0);
+        if (!hasAny) return '<div style="color:var(--text-secondary);font-size:12px;padding:8px">No ACMG classifications available. Enable the ACMG checkbox and re-annotate.</div>';
+        return Object.entries(acmgCount).filter(([,v])=>v>0).map(([k,v])=>`
+          <div class="bar-row">
+            <span class="bar-label"><span class="acmg-badge acmg-${k}">${acmgLabels[k]}</span></span>
+            <div class="bar-track"><div class="bar-fill" style="width:${v/maxA*100}%;background:${acmgColors[k]}"></div></div>
+            <span class="bar-count">${v}</span>
+          </div>`).join('');
+      })()}
+      </div>
+    </div>
+    <div class="summary-card">
+      <h3>Transcript Metadata</h3>
+      <div class="bar-chart">
+        <div class="bar-row"><span class="bar-label"><span class="mane-badge mane-badge-select">MANE Select</span></span><span class="bar-count">${allResults.filter(r=>r.transcript?.mane_select).length}</span></div>
+        <div class="bar-row"><span class="bar-label"><span class="mane-badge mane-badge-clinical">MANE+Clinical</span></span><span class="bar-count">${allResults.filter(r=>r.transcript?.mane_plus_clinical).length}</span></div>
+        <div class="bar-row"><span class="bar-label">Canonical</span><span class="bar-count">${allResults.filter(r=>r.transcript?.canonical).length}</span></div>
+        <div class="bar-row"><span class="bar-label">With CCDS</span><span class="bar-count">${allResults.filter(r=>r.transcript?.ccds).length}</span></div>
+        <div class="bar-row"><span class="bar-label">Total annotations</span><span class="bar-count">${allResults.length}</span></div>
       </div>
     </div>`;
 }
 
-function renderRaw() {
-  const fmt = document.getElementById('outputFormat').value;
+// Render results as a text string in the requested format. Shared between
+// the Raw tab preview (renderRaw) and the Download buttons (downloadResults).
+function buildOutputText(fmt) {
   let text = '';
+  // Collect SA keys across all results for consistent column order
+  const allSaKeys = new Set();
+  for (const r of allResults) {
+    if (r.sa) for (const k of Object.keys(r.sa)) allSaKeys.add(k);
+  }
+  const saKeys = [...allSaKeys].sort();
+
   if (fmt === 'json') {
-    text = JSON.stringify(allResults.map(r => ({
-      location: `${r.variant.chrom}:${r.variant.start}`,
-      allele: r.allele,
-      consequences: r.consequences,
-      impact: r.impact,
-      symbol: r.transcript?.gene?.symbol || null,
-      gene: r.transcript?.gene?.id || null,
-      transcript: r.transcript?.id || null,
-      biotype: r.transcript?.biotype || null,
-      canonical: r.transcript?.canonical || false,
-      exon: r.exon || null,
-      intron: r.intron || null,
-      hgvsg: r.hgvsg || null,
-      hgvsc: r.hgvsc || null,
-      hgvsp: r.hgvsp || null,
-      cdna_position: r.cdna || null,
-      cds_position: r.cds || null,
-      protein_position: r.protein || null,
-      amino_acids: r.aa || null,
-      codons: r.codons || null,
-      distance: r.dist || null,
-      strand: r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : null,
-    })), null, 2);
+    text = JSON.stringify(allResults.map(r => {
+      const obj = {
+        location: `${r.variant.chrom}:${r.variant.start}`,
+        allele: r.allele,
+        consequences: r.consequences,
+        impact: r.impact,
+        symbol: r.transcript?.gene?.symbol || null,
+        gene: r.transcript?.gene?.id || null,
+        transcript: r.transcript?.id || null,
+        biotype: r.transcript?.biotype || null,
+        canonical: r.transcript?.canonical || false,
+        mane_select: r.transcript?.mane_select || null,
+        mane_plus_clinical: r.transcript?.mane_plus_clinical || null,
+        protein_id: r.transcript?.protein_id || null,
+        tsl: r.transcript?.tsl != null ? r.transcript.tsl : null,
+        ccds: r.transcript?.ccds || null,
+        exon: r.exon || null,
+        intron: r.intron || null,
+        hgvsg: r.hgvsg || null,
+        hgvsc: r.hgvsc || null,
+        hgvsp: r.hgvsp || null,
+        cdna_position: r.cdna || null,
+        cds_position: r.cds || null,
+        protein_position: r.protein || null,
+        amino_acids: r.aa || null,
+        codons: r.codons || null,
+        distance: r.dist || null,
+        strand: r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : null,
+        acmg_classification: r.acmg?.classification || null,
+        acmg_criteria: r.acmg?.criteria?.filter(c=>c.met).map(c=>c.code).join(',') || null,
+      };
+      if (r.acmg) obj.acmg = r.acmg;
+      if (r.sa) Object.assign(obj, r.sa);
+      return obj;
+    }), null, 2);
   } else if (fmt === 'tab') {
-    text = '#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND\n';
+    const saHeader = saKeys.length ? '\t' + saKeys.join('\t') : '';
+    text = `#Location\tAllele\tConsequence\tIMPACT\tACMG\tACMG_CRITERIA\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tMANE\tENSP\tTSL\tCCDS\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
     for (const r of allResults) {
       const strand = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
-      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}\n`;
+      const saCols = saKeys.map(k => r.sa?.[k] != null ? formatSAValue(r.sa[k]) : '-').join('\t');
+      const saStr = saKeys.length ? '\t' + saCols : '';
+      const mane = r.transcript?.mane_select ? 'MANE_Select' : r.transcript?.mane_plus_clinical ? 'MANE_Plus_Clinical' : '-';
+      const acmgCls = r.acmg?.shorthand || '-';
+      const acmgCrit = r.acmg?.criteria?.filter(c=>c.met).map(c=>c.code).join(',') || '-';
+      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${acmgCls}\t${acmgCrit}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${mane}\t${r.transcript?.protein_id||'-'}\t${r.transcript?.tsl!=null?r.transcript.tsl:'-'}\t${r.transcript?.ccds||'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
     }
   } else if (fmt === 'vcf') {
     const CSQ_FORMAT = 'Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons|Existing_variation|REF_ALLELE|UPLOADED_ALLELE|DISTANCE|STRAND|FLAGS|CANONICAL|SYMBOL_SOURCE|HGNC_ID|MANE|MANE_SELECT|MANE_PLUS_CLINICAL|TSL|APPRIS|CCDS|ENSP|SOURCE|HGVS_OFFSET|SIFT|PolyPhen|AF|CLIN_SIG|SOMATIC|PHENO|PUBMED|MOTIF_NAME|MOTIF_POS|HIGH_INF_POS|MOTIF_SCORE_CHANGE|TRANSCRIPTION_FACTORS';
@@ -1516,13 +2118,27 @@ function renderRaw() {
     }
   } else {
     // Default "table" format — show tab-delimited in raw view
-    text = '#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND\n';
+    const saHeader = saKeys.length ? '\t' + saKeys.join('\t') : '';
+    text = `#Location\tAllele\tConsequence\tIMPACT\tSYMBOL\tGene\tFeature\tBIOTYPE\tCANONICAL\tMANE\tENSP\tTSL\tCCDS\tEXON\tINTRON\tHGVSg\tHGVSc\tHGVSp\tcDNA\tCDS\tProtein\tAA\tCodons\tDISTANCE\tSTRAND${saHeader}\n`;
     for (const r of allResults) {
       const strand = r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : '-';
-      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}\n`;
+      const saCols = saKeys.map(k => r.sa?.[k] != null ? formatSAValue(r.sa[k]) : '-').join('\t');
+      const saStr = saKeys.length ? '\t' + saCols : '';
+      const mane = r.transcript?.mane_select ? 'MANE_Select' : r.transcript?.mane_plus_clinical ? 'MANE_Plus_Clinical' : '-';
+      text += `${r.variant.chrom}:${r.variant.start}\t${r.allele}\t${r.consequences.join(',')}\t${r.impact}\t${r.transcript?.gene?.symbol||'-'}\t${r.transcript?.gene?.id||'-'}\t${r.transcript?.id||'-'}\t${r.transcript?.biotype||'-'}\t${r.transcript?.canonical?'YES':'-'}\t${mane}\t${r.transcript?.protein_id||'-'}\t${r.transcript?.tsl!=null?r.transcript.tsl:'-'}\t${r.transcript?.ccds||'-'}\t${r.exon||'-'}\t${r.intron||'-'}\t${r.hgvsg||'-'}\t${r.hgvsc||'-'}\t${r.hgvsp||'-'}\t${r.cdna||'-'}\t${r.cds||'-'}\t${r.protein||'-'}\t${r.aa||'-'}\t${r.codons||'-'}\t${r.dist||'-'}\t${strand}${saStr}\n`;
     }
   }
-  document.getElementById('rawOutput').textContent = text;
+  return text;
+}
+
+function getOutputFormat() {
+  const el = document.getElementById('outputFormat');
+  return el ? el.value : 'table';
+}
+
+function renderRaw() {
+  const fmt = getOutputFormat();
+  document.getElementById('rawOutput').textContent = buildOutputText(fmt);
 }
 
 function switchTab(tab) {
@@ -1552,6 +2168,107 @@ function clearAll() {
   document.getElementById('resultsSection').classList.remove('visible');
   allResults = [];
 }
+
+function loadVcfFile(input) {
+  if (!input.files.length) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('vcfInput').value = reader.result;
+    input.value = '';
+  };
+  reader.readAsText(input.files[0]);
+}
+
+// fmt: 'tsv' | 'vcf' | 'json' — rendered from allResults regardless of the
+// Advanced-options "Output Format" select, so users can download in the
+// format they want from the results header.
+function downloadResults(fmt) {
+  fmt = fmt || 'tsv';
+  const buildFmt = fmt === 'tsv' ? 'tab' : fmt; // internal name for the TSV branch is 'tab'
+  const ext = fmt === 'json' ? 'json' : fmt === 'vcf' ? 'vcf' : 'tsv';
+  const mime = fmt === 'json' ? 'application/json' : fmt === 'vcf' ? 'text/vcf' : 'text/tab-separated-values';
+  const text = buildOutputText(buildFmt);
+  const blob = new Blob([text], { type: mime + ';charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `fastvep_results.${ext}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function toggleAdvanced() {
+  const opts = document.getElementById('advancedOptions');
+  const toggle = document.getElementById('advancedToggle');
+  if (opts.style.display === 'none') {
+    opts.style.display = 'block';
+    toggle.innerHTML = 'Advanced options &#9652;';
+  } else {
+    opts.style.display = 'none';
+    toggle.innerHTML = 'Advanced options &#9662;';
+  }
+}
+
+// ── ACMG-AMP Evidence Detail Modal ──
+function showAcmgDetail(event, resultIndex) {
+  event.stopPropagation();
+  const r = filteredResults[resultIndex];
+  if (!r || !r.acmg) return;
+  const a = r.acmg;
+
+  // Remove existing modal
+  document.querySelectorAll('.acmg-modal-overlay').forEach(el => el.remove());
+
+  const overlay = document.createElement('div');
+  overlay.className = 'acmg-modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const metCriteria = (a.criteria||[]).filter(c => c.met);
+  const metCodes = metCriteria.map(c => c.code).join(', ') || 'None';
+
+  let criteriaHTML = '';
+  for (const c of (a.criteria || [])) {
+    let cls = 'not-met';
+    if (!c.evaluated) cls = 'not-evaluated';
+    else if (c.met && c.direction === 'Pathogenic') cls = 'met-pathogenic';
+    else if (c.met && c.direction === 'Benign') cls = 'met-benign';
+
+    const icon = !c.evaluated ? '&#x25CB;' : c.met ? '&#x2713;' : '&#x2717;';
+    criteriaHTML += `<div class="acmg-criterion ${cls}" title="${escapeHtml(c.summary)}">
+      <span>${icon}</span>
+      <span class="code">${escapeHtml(c.code)}</span>
+      <span class="strength">${escapeHtml(c.strength?.replace(/_/g,' '))||''}</span>
+      <span class="summary">${escapeHtml(c.summary)||''}</span>
+    </div>`;
+  }
+
+  const counts = a.counts || {};
+  overlay.innerHTML = `<div class="acmg-modal">
+    <h3>
+      <span class="acmg-badge acmg-${escapeHtml(a.shorthand)}">${escapeHtml(a.classification?.replace(/_/g,' '))}</span>
+      <span style="font-size:13px;color:var(--text-secondary)">${escapeHtml(r.transcript?.gene?.symbol)||''} &middot; ${escapeHtml(r.hgvsc||r.hgvsp)||''}</span>
+      <button class="close-btn" onclick="this.closest('.acmg-modal-overlay').remove()">&times;</button>
+    </h3>
+    ${a.triggered_rule ? `<div style="margin-bottom:10px;font-size:12px;color:var(--text-secondary)">Triggered rule: <strong>${escapeHtml(a.triggered_rule)}</strong></div>` : ''}
+    <div class="acmg-counts">
+      <span class="count" style="color:#ef4444">PVS: ${counts.pathogenic_very_strong||0}</span>
+      <span class="count" style="color:#ef4444">PS: ${counts.pathogenic_strong||0}</span>
+      <span class="count" style="color:#f59e0b">PM: ${counts.pathogenic_moderate||0}</span>
+      <span class="count" style="color:#f59e0b">PP: ${counts.pathogenic_supporting||0}</span>
+      <span class="count" style="color:#10b981">BA: ${counts.benign_standalone||0}</span>
+      <span class="count" style="color:#3b82f6">BS: ${counts.benign_strong||0}</span>
+      <span class="count" style="color:#3b82f6">BP: ${counts.benign_supporting||0}</span>
+    </div>
+    <div style="margin-bottom:8px;font-size:12px">Met criteria: <strong>${metCodes}</strong></div>
+    <div class="acmg-criteria-grid">${criteriaHTML}</div>
+    <div style="margin-top:12px;font-size:11px;color:var(--text-secondary)">
+      Based on ACMG-AMP guidelines (Richards et al. 2015) with ClinGen SVI recommendations.
+      Criteria marked &#x25CB; require clinical data not available from automated annotation.
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+let filteredResults = [];
 
 function sortTable(col) {
   const tbody = document.getElementById('resultsBody');
@@ -1664,19 +2381,68 @@ function updateThemeButton(theme) {
 // --- GFF file upload ---
 let customGFF3 = null;
 
-function toggleGffUpload() {
+function onGffSourceChange() {
   const source = document.getElementById('gffSource').value;
   const fileInput = document.getElementById('gffFile');
   const info = document.getElementById('gffInfo');
+
   if (source === 'upload') {
     fileInput.style.display = 'block';
     info.textContent = customGFF3 ? 'Custom GFF3 loaded' : 'Select a GFF3 file';
-  } else {
+  } else if (source.startsWith('server:')) {
+    // Load a genome from the server's data directory
     fileInput.style.display = 'none';
-    info.textContent = '';
     customGFF3 = null;
+    const genomeName = source.replace('server:', '');
+    loadServerGenome(genomeName);
+  } else {
+    // builtin
+    fileInput.style.display = 'none';
+    customGFF3 = null;
+    if (hasBackend && !builtinUploadedToServer) {
+      uploadBuiltinToServer();
+    } else {
+      updateGffInfo();
+    }
   }
 }
+
+// Load a genome from the server's --data-dir
+async function loadServerGenome(name) {
+  const info = document.getElementById('gffInfo');
+  const label = formatGenomeLabel(name);
+  info.textContent = 'Loading ' + label + '…';
+  showLoading(`Loading genome: ${label}… (this may take a few seconds)`);
+  try {
+    const r = await fetch('/api/load-genome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await r.json();
+    if (data.error) {
+      info.textContent = 'Error: ' + data.error;
+      hideLoading();
+      showWarning('Genome load failed', data.error);
+    } else {
+      serverTranscripts = data.transcripts || 0;
+      serverSaSources = data.sa_sources || [];
+      let text = `${data.transcripts.toLocaleString()} transcripts (${data.time_ms}\u202fms)`;
+      if (serverSaSources.length > 0) {
+        text += ` | SA: ${serverSaSources.join(', ')}`;
+      }
+      info.textContent = text;
+      finishLoading(`Loaded ${label} — ${data.transcripts.toLocaleString()} transcripts`);
+    }
+  } catch (e) {
+    info.textContent = 'Failed to load: ' + e.message;
+    hideLoading();
+    showWarning('Network error', e.message);
+  }
+}
+
+// Keep old name as alias for any other references
+function toggleGffUpload() { onGffSourceChange(); }
 
 function loadGffFile(input) {
   const file = input.files[0];
@@ -1724,7 +2490,7 @@ function getGFF3Text() {
 
 // --- Output format change ---
 function onFormatChange() {
-  const fmt = document.getElementById('outputFormat').value;
+  const fmt = getOutputFormat();
   if (allResults.length > 0) {
     // Re-render raw output with new format
     renderRaw();
