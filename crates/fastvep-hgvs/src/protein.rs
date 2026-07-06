@@ -41,6 +41,44 @@ pub fn hgvsp(
     Some(format!("{}{}{}{}", prefix, ref_aa3, protein_pos, alt_aa3))
 }
 
+/// Generate HGVSp notation for an in-frame deletion or delins.
+///
+/// `ref_aas` are the affected reference residues (one-letter, in order) starting
+/// at `protein_start`; `alt_aas` is the replacement ("-" or empty for a pure
+/// deletion). Produces standard HGVS:
+///   ENSP0:p.Phe157del                 (single-residue deletion)
+///   ENSP0:p.Tyr43_Gln45del            (multi-residue deletion)
+///   ENSP0:p.Asn2173_Leu2174delinsLys  (in-frame delins)
+///
+/// This replaces the incorrect missense-style output (e.g. `p.Tyr43???`, where
+/// the deletion marker `-` had no three-letter code) for in-frame deletions.
+pub fn hgvsp_inframe_deletion(
+    protein_id: &str,
+    protein_start: u64,
+    ref_aas: &str,
+    alt_aas: &str,
+) -> Option<String> {
+    let ref_bytes = ref_aas.as_bytes();
+    if ref_bytes.is_empty() {
+        return None;
+    }
+    let prefix = format!("{}:p.", protein_id);
+    let first = aa_one_to_three(ref_bytes[0]);
+    let range = if ref_bytes.len() == 1 {
+        format!("{}{}", first, protein_start)
+    } else {
+        let last = aa_one_to_three(ref_bytes[ref_bytes.len() - 1]);
+        let end = protein_start + ref_bytes.len() as u64 - 1;
+        format!("{}{}_{}{}", first, protein_start, last, end)
+    };
+    if alt_aas.is_empty() || alt_aas == "-" {
+        Some(format!("{}{}del", prefix, range))
+    } else {
+        let ins: String = alt_aas.bytes().map(aa_one_to_three).collect();
+        Some(format!("{}{}delins{}", prefix, range, ins))
+    }
+}
+
 /// Generate HGVSp notation for a frameshift variant.
 ///
 /// Scans the frameshifted sequence to find the first changed amino acid and
@@ -160,6 +198,27 @@ mod tests {
     fn test_hgvsp_synonymous() {
         let result = hgvsp("ENSP00000001", 41, b'R', b'R', false);
         assert_eq!(result, Some("ENSP00000001:p.Arg41=".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_deletion_single() {
+        // single-residue in-frame deletion
+        let r = hgvsp_inframe_deletion("ENSP00000001", 157, "F", "-");
+        assert_eq!(r, Some("ENSP00000001:p.Phe157del".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_deletion_range() {
+        // multi-residue in-frame deletion (regression for the p.Tyr43??? bug)
+        let r = hgvsp_inframe_deletion("ENSP00000001", 43, "YXQ", "-");
+        assert_eq!(r, Some("ENSP00000001:p.Tyr43_Gln45del".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_delins() {
+        // in-frame deletion-insertion
+        let r = hgvsp_inframe_deletion("ENSP00000001", 2173, "NL", "K");
+        assert_eq!(r, Some("ENSP00000001:p.Asn2173_Leu2174delinsLys".to_string()));
     }
 
     #[test]
