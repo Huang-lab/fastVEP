@@ -18,8 +18,11 @@ Includes only `Definitive`, `Strong`, `Moderate` ClinGen classifications
 Relationship`) to align with the SVI-recommended evidence threshold.
 
 Output is tab-separated with 13 columns matching the subset
-`parse_omim_genemap` reads (col 5: gene symbol, col 8: identifier,
-col 12: phenotype list joined with ";").
+`parse_omim_genemap` reads (col 5: MIM number / identifier, col 8:
+Approved Gene Symbol, col 12: phenotype list joined with ";") — this
+must match the real genemap2.txt column layout, since that's what
+`parse_omim_genemap` parses (see issue #64: these two columns were
+previously swapped in both the parser and this script).
 """
 
 import csv
@@ -63,12 +66,12 @@ def main():
         # starting with '#'.
         out.write(
             "# Synthetic genemap2 from ClinGen Gene-Disease Validity\n"
-            "# col5=gene_symbol, col8=mim_proxy (always 0), col12=phenotypes\n"
+            "# col5=mim_proxy (always 0), col8=gene_symbol, col12=phenotypes\n"
         )
         for gene, phenotypes in sorted(by_gene.items()):
             cols = [""] * 13
-            cols[5] = gene
-            cols[8] = "0"  # MIM proxy; classifier only checks col 12 non-emptiness
+            cols[5] = "0"  # MIM proxy; classifier only checks col 12 non-emptiness
+            cols[8] = gene
             cols[12] = "; ".join(phenotypes)
             out.write("\t".join(cols) + "\n")
 

@@ -54,11 +54,15 @@ pub fn parse_cosmic_vcf<R: BufRead>(
             if !id.is_empty() && id != "." {
                 parts.push(format!("\"id\":\"{}\"", escape_json(id)));
             }
-            if !gene.is_empty() {
+            if !gene.is_empty() && gene != "." {
                 parts.push(format!("\"gene\":\"{}\"", escape_json(&gene)));
             }
-            if !cnt.is_empty() {
-                parts.push(format!("\"count\":{}", cnt));
+            // CNT is written unquoted, so it must be a validated integer —
+            // the VCF missing-value sentinel "." (or any other garbage)
+            // would otherwise land in the JSON as a bare, unquoted token
+            // and break every downstream serde_json::from_str on this record.
+            if let Ok(count) = cnt.parse::<u64>() {
+                parts.push(format!("\"count\":{}", count));
             }
 
             records.push(AnnotationRecord {
@@ -116,5 +120,23 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&records[0].json)
             .expect("COSMIC record must be valid JSON even with quotes/backslashes in GENE");
         assert_eq!(parsed["gene"], "WEIRD\"GENE\\NAME");
+    }
+
+    #[test]
+    fn test_parse_cosmic_missing_value_sentinel_is_omitted_not_emitted_raw() {
+        // GENE="." (unmapped/intergenic) and CNT="." (missing count) are
+        // VCF's missing-value sentinel, not real values. GENE="." must not
+        // be stored as a literal gene symbol, and CNT="." must not be
+        // written unquoted into JSON (which would make it invalid).
+        let vcf = "#header\n1\t10001\tCOSV123\tA\tG\t.\t.\tGENE=.;CNT=.\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let records = parse_cosmic_vcf(vcf.as_bytes(), &m).unwrap();
+        assert_eq!(records.len(), 1);
+        let json = &records[0].json;
+        let _parsed: serde_json::Value =
+            serde_json::from_str(json).expect("record must still be valid JSON: {json}");
+        assert!(!json.contains("gene"), "GENE=. must be omitted: {json}");
+        assert!(!json.contains("count"), "CNT=. must be omitted: {json}");
     }
 }

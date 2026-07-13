@@ -155,9 +155,19 @@ for c in $(seq 1 22) X Y M; do
   wget "https://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP100way/hg38.100way.phyloP100way/chr${c}.phyloP100way.wigFix.gz"
 done
 
-# 2. Concatenate into a single multi-member gzip stream (fastvep reads gzip
-#    with MultiGzDecoder, so this is safe and avoids decompressing to disk)
-cat chr*.phyloP100way.wigFix.gz > hg38.phyloP100way.wigFix.gz
+# 2. Concatenate IN NUMERIC CHROMOSOME ORDER into a single multi-member
+#    gzip stream (fastvep reads gzip with MultiGzDecoder, so concatenating
+#    compressed members is safe and avoids decompressing to disk).
+#    IMPORTANT: `cat chr*.phyloP100way.wigFix.gz` sorts lexicographically
+#    (chr1, chr10, chr11, ..., chr2, chr20, ...), NOT in chromosome order —
+#    sa-build streams this file straight into the annotation index and
+#    requires it sorted by chromosome, so a lexicographic glob will build
+#    successfully but silently misorder chr2..chr9 and abort with a "not
+#    sorted" error. Reuse the same ordered loop as the download step:
+: > hg38.phyloP100way.wigFix.gz
+for c in $(seq 1 22) X Y M; do
+  cat "chr${c}.phyloP100way.wigFix.gz" >> hg38.phyloP100way.wigFix.gz
+done
 
 # 3. Build
 fastvep sa-build --source phylop -i hg38.phyloP100way.wigFix.gz -o phylop --assembly GRCh38

@@ -73,17 +73,17 @@ impl<R: BufRead> Iterator for DbsnpRecordIter<'_, R> {
             let alt_field = fields[4];
             let info = fields[7];
 
+            let info_map = parse_info(info);
+
             let rs_id = if id.starts_with("rs") {
                 id.to_string()
             } else {
-                let info_map = parse_info(info);
                 match info_map.get("RS") {
                     Some(rs) => format!("rs{}", rs),
                     None => continue,
                 }
             };
 
-            let info_map = parse_info(info);
             // dbSNP's CAF is `ref_freq,alt1_freq,alt2_freq,...` in ALT order
             // (i.e. index i+1 is the frequency for the i-th ALT); index it
             // per-alt below rather than once, or every ALT past the first in
