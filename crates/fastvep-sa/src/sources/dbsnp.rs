@@ -84,15 +84,21 @@ impl<R: BufRead> Iterator for DbsnpRecordIter<'_, R> {
             };
 
             let info_map = parse_info(info);
-            let freq = info_map.get("CAF").and_then(|caf| {
-                let parts: Vec<&str> = caf.split(',').collect();
-                parts.get(1).and_then(|s| s.parse::<f64>().ok())
-            });
+            // dbSNP's CAF is `ref_freq,alt1_freq,alt2_freq,...` in ALT order
+            // (i.e. index i+1 is the frequency for the i-th ALT); index it
+            // per-alt below rather than once, or every ALT past the first in
+            // a multi-allelic record gets the first ALT's frequency.
+            let caf_parts: Option<Vec<&str>> =
+                info_map.get("CAF").map(|caf| caf.split(',').collect());
 
-            for alt in alt_field.split(',') {
+            for (i, alt) in alt_field.split(',').enumerate() {
                 if alt == "." || alt == "*" {
                     continue;
                 }
+                let freq = caf_parts
+                    .as_ref()
+                    .and_then(|parts| parts.get(i + 1))
+                    .and_then(|s| s.parse::<f64>().ok());
                 let mut parts = vec![format!("\"id\":\"{}\"", rs_id)];
                 if let Some(f) = freq {
                     parts.push(format!("\"globalMaf\":{:.6e}", f));
@@ -170,6 +176,28 @@ mod tests {
         assert_eq!(records[1].position, 10039);
         assert!(records[1].json.contains("rs978760828"));
         assert!(!records[1].json.contains("globalMaf")); // No CAF
+    }
+
+    #[test]
+    fn test_parse_dbsnp_multiallelic_caf_indexed_per_alt() {
+        // CAF=ref_freq,alt1_freq,alt2_freq — each ALT must get its own
+        // frequency, not the first ALT's frequency repeated for every ALT.
+        let vcf = "\
+##fileformat=VCFv4.0
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+1\t10019\trs1\tA\tC,T\t.\t.\tRS=1;CAF=0.90,0.08,0.02
+";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".to_string(), 0u16);
+
+        let records = parse_dbsnp_vcf(vcf.as_bytes(), &chrom_map).unwrap();
+        assert_eq!(records.len(), 2);
+
+        let c = records.iter().find(|r| r.alt_allele == "C").unwrap();
+        assert!(c.json.contains("8.000000e-2"), "C should get CAF index 1 (0.08): {}", c.json);
+
+        let t = records.iter().find(|r| r.alt_allele == "T").unwrap();
+        assert!(t.json.contains("2.000000e-2"), "T should get CAF index 2 (0.02), not C's frequency: {}", t.json);
     }
 
     #[test]

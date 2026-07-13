@@ -16,7 +16,7 @@
 //! `has_dominant_inheritance()` and as a disease-gene fallback when
 //! gnomAD constraints don't cross the LOF threshold.
 
-use crate::common::GeneRecord;
+use crate::common::{escape_json, GeneRecord};
 use anyhow::{Context, Result};
 use std::io::BufRead;
 
@@ -82,12 +82,6 @@ pub fn parse_omim_genemap<R: BufRead>(reader: R) -> Result<Vec<GeneRecord>> {
     }
 
     Ok(records)
-}
-
-fn escape_json(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //!
 //! Extracts somatic mutation data from COSMIC's coding mutations file.
 
-use crate::common::AnnotationRecord;
+use crate::common::{escape_json, AnnotationRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -52,10 +52,10 @@ pub fn parse_cosmic_vcf<R: BufRead>(
 
             let mut parts = Vec::new();
             if !id.is_empty() && id != "." {
-                parts.push(format!("\"id\":\"{}\"", id));
+                parts.push(format!("\"id\":\"{}\"", escape_json(id)));
             }
             if !gene.is_empty() {
-                parts.push(format!("\"gene\":\"{}\"", gene));
+                parts.push(format!("\"gene\":\"{}\"", escape_json(&gene)));
             }
             if !cnt.is_empty() {
                 parts.push(format!("\"count\":{}", cnt));
@@ -102,5 +102,19 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert!(records[0].json.contains("COSV123"));
         assert!(records[0].json.contains("TP53"));
+    }
+
+    #[test]
+    fn test_parse_cosmic_escapes_gene_field_for_valid_json() {
+        // A GENE value containing a double quote or backslash must not
+        // produce invalid JSON in the .osa record.
+        let vcf = "#header\n1\t10001\tCOSV123\tA\tG\t.\t.\tGENE=WEIRD\"GENE\\NAME;CNT=1\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let records = parse_cosmic_vcf(vcf.as_bytes(), &m).unwrap();
+        assert_eq!(records.len(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(&records[0].json)
+            .expect("COSMIC record must be valid JSON even with quotes/backslashes in GENE");
+        assert_eq!(parsed["gene"], "WEIRD\"GENE\\NAME");
     }
 }

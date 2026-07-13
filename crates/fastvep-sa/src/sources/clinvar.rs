@@ -3,7 +3,7 @@
 //! Parses ClinVar's VCF release to extract clinical significance,
 //! review status, disease names, and accession numbers.
 
-use crate::common::AnnotationRecord;
+use crate::common::{escape_json, AnnotationRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -179,14 +179,6 @@ fn normalize_chrom(chrom: &str) -> String {
     } else {
         format!("chr{}", chrom)
     }
-}
-
-fn escape_json(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
 }
 
 #[cfg(test)]

@@ -112,3 +112,20 @@ pub struct GeneRecord {
     /// Pre-serialized JSON annotation string.
     pub json: String,
 }
+
+/// Escape a string for embedding in a hand-built JSON string value.
+///
+/// Source parsers build their `.osa`/`.oga` JSON payloads by hand (not via
+/// `serde_json`) for speed, so any field taken from an upstream file
+/// (gene names, disease descriptions, COSMIC/ClinVar free-text fields,
+/// etc.) must run through this before being interpolated into a `"..."`
+/// value — otherwise a raw `"`, `\`, or control character in the source
+/// data produces invalid JSON that silently corrupts that record for
+/// every downstream `serde_json::from_str` consumer.
+pub fn escape_json(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
