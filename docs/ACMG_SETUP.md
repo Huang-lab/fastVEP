@@ -149,10 +149,17 @@ fastvep sa-build --source dbnsfp -i dbNSFP4.5a.zip -o dbnsfp --assembly GRCh38
 Used by BP7 (conservation tier — `phylop_conserved` defaults to 2.0). The pre-PR1 PP3/BP4 consensus path that consumed PhyloP was removed; PhyloP is still surfaced in `details.phylop` for transparency. Position-level, not allele-level.
 
 ```bash
-# 1. Download (UCSC)
-wget https://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP100way/hg38.phyloP100way.wigFix.gz
+# 1. Download (UCSC) — UCSC no longer publishes a single combined wigFix for
+#    hg38; scores are split one file per chromosome under hg38.100way.phyloP100way/
+for c in $(seq 1 22) X Y M; do
+  wget "https://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP100way/hg38.100way.phyloP100way/chr${c}.phyloP100way.wigFix.gz"
+done
 
-# 2. Build
+# 2. Concatenate into a single multi-member gzip stream (fastvep reads gzip
+#    with MultiGzDecoder, so this is safe and avoids decompressing to disk)
+cat chr*.phyloP100way.wigFix.gz > hg38.phyloP100way.wigFix.gz
+
+# 3. Build
 fastvep sa-build --source phylop -i hg38.phyloP100way.wigFix.gz -o phylop --assembly GRCh38
 ```
 

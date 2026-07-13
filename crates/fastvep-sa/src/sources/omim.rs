@@ -22,9 +22,9 @@ use std::io::BufRead;
 
 /// Parse OMIM genemap2.txt into GeneRecords.
 ///
-/// Format: tab-separated with columns including:
-/// - Column 5: Gene Symbols (may have comma-separated aliases)
-/// - Column 8: MIM Number
+/// Format: tab-separated (0-indexed columns) with columns including:
+/// - Column 5: MIM Number
+/// - Column 8: Approved Gene Symbol (may be blank for phenotype/QTL-only rows)
 /// - Column 12: Phenotypes (semicolon-separated, each with MIM and inheritance)
 pub fn parse_omim_genemap<R: BufRead>(reader: R) -> Result<Vec<GeneRecord>> {
     let mut records = Vec::new();
@@ -40,8 +40,8 @@ pub fn parse_omim_genemap<R: BufRead>(reader: R) -> Result<Vec<GeneRecord>> {
             continue;
         }
 
-        let gene_symbols = fields[5]; // Approved Gene Symbol
-        let mim_number = fields[5 + 3]; // MIM Number (column 8, 0-indexed)
+        let mim_number = fields[5]; // MIM Number
+        let gene_symbols = fields[8]; // Approved Gene Symbol
 
         // Use the primary (first) gene symbol
         let gene_symbol = gene_symbols.split(',').next().unwrap_or("").trim();
@@ -96,15 +96,31 @@ mod tests {
 
     #[test]
     fn test_parse_omim() {
-        // Simplified genemap2 format
+        // Real genemap2.txt column layout (0-indexed):
+        // 0 Chromosome | 1 Genomic Position Start | 2 Genomic Position End |
+        // 3 Cyto Location | 4 Computed Cyto Location | 5 MIM Number |
+        // 6 Gene/Locus And Other Related Symbols | 7 Gene Name |
+        // 8 Approved Gene Symbol | 9 Entrez Gene ID | 10 Ensembl Gene ID |
+        // 11 Comments | 12 Phenotypes | 13 Mouse Gene Symbol/ID
         let data = "# Generated\n\
                      # Copyright OMIM\n\
-                     1\tp36.33\t1:10001-20000\tGene1\t\tBRCA1\tprotein\t\t113705\t\t\t\tBreast cancer, 114480 (3), Autosomal dominant; Ovarian cancer, 167000 (3)\n";
+                     chr17\t43044295\t43125483\t17q21.31\t\t113705\tBRCA1,RNF53\tBreast cancer 1, early onset\tBRCA1\t672\tENSG00000012048\t\tBreast cancer, 114480 (3), Autosomal dominant; Ovarian cancer, 167000 (3)\t\n";
 
         let records = parse_omim_genemap(data.as_bytes()).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].gene_symbol, "BRCA1");
         assert!(records[0].json.contains("113705"));
         assert!(records[0].json.contains("Breast cancer"));
+    }
+
+    #[test]
+    fn test_parse_omim_skips_rows_without_approved_symbol() {
+        // QTL/phenotype-only rows have no Approved Gene Symbol (column 8)
+        // but do have MIM Number and aliases; they should be skipped rather
+        // than mis-keyed under an alias or MIM number.
+        let data = "chr1\t1\t27600000\t1p36\t\t612367\tALPQTL2\tAlkaline phosphatase, plasma level of, QTL 2\t\t100196914\t\t\t\t\n";
+
+        let records = parse_omim_genemap(data.as_bytes()).unwrap();
+        assert!(records.is_empty());
     }
 }

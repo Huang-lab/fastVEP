@@ -90,7 +90,9 @@ fastvep sa-build --source clinvar --input clinvar.vcf.gz --output clinvar
 # Build gnomAD population frequency database
 fastvep sa-build --source gnomad --input gnomad.genomes.v4.vcf.bgz --output gnomad
 
-# Build PhyloP conservation scores
+# Build PhyloP conservation scores (see docs/ACMG_SETUP.md for how to
+# obtain hg38.phyloP100way.wigFix.gz — UCSC ships it as one file per
+# chromosome, not a single combined download)
 fastvep sa-build --source phylop --input hg38.phyloP100way.wigFix.gz --output phylop
 
 # Build SpliceAI predictions
