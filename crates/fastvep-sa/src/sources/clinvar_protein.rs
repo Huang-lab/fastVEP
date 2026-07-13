@@ -17,6 +17,42 @@ struct ProteinVariant {
     sig: String,
 }
 
+/// Serialize one gene's protein variants into a `GeneRecord`.
+///
+/// Dedups by `(pos, ref_aa, alt_aa)`, then sorts before serializing: HashMap
+/// iteration order is unspecified, so without the sort the `proteinVariants`
+/// array order (and thus the on-disk `.oga` bytes) would vary run-to-run for
+/// identical input, breaking build reproducibility/diffing. Shared by both the
+/// VCF and variant_summary parse paths so the two stay byte-for-byte identical.
+fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecord {
+    let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
+    for v in variants {
+        unique
+            .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
+            .or_insert_with(|| v.sig.clone());
+    }
+
+    let mut unique: Vec<_> = unique.into_iter().collect();
+    unique.sort_by(|((pos_a, ref_a, alt_a), _), ((pos_b, ref_b, alt_b), _)| {
+        pos_a.cmp(pos_b).then(ref_a.cmp(ref_b)).then(alt_a.cmp(alt_b))
+    });
+
+    let variant_jsons: Vec<String> = unique
+        .iter()
+        .map(|((pos, ref_aa, alt_aa), sig)| {
+            format!(
+                r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
+                pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig)
+            )
+        })
+        .collect();
+
+    GeneRecord {
+        gene_symbol: gene,
+        json: format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(",")),
+    }
+}
+
 /// Parse a ClinVar source (VCF or variant_summary.txt.gz) and produce
 /// gene-level records of pathogenic/likely-pathogenic missense variants
 /// indexed by protein position. Auto-detects format from the header line:
@@ -147,41 +183,7 @@ where
     // Convert to GeneRecords
     let mut records: Vec<GeneRecord> = gene_variants
         .into_iter()
-        .map(|(gene, variants)| {
-            // Deduplicate by (pos, ref_aa, alt_aa)
-            let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
-            for v in &variants {
-                unique
-                    .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
-                    .or_insert_with(|| v.sig.clone());
-            }
-
-            // Sort before serializing: HashMap iteration order is
-            // unspecified, so without this the proteinVariants array order
-            // (and thus the on-disk .oga bytes) would vary run-to-run for
-            // identical input, breaking build reproducibility/diffing.
-            let mut unique: Vec<_> = unique.into_iter().collect();
-            unique.sort_by(|((pos_a, ref_a, alt_a), _), ((pos_b, ref_b, alt_b), _)| {
-                pos_a.cmp(pos_b).then(ref_a.cmp(ref_b)).then(alt_a.cmp(alt_b))
-            });
-
-            let variant_jsons: Vec<String> = unique
-                .iter()
-                .map(|((pos, ref_aa, alt_aa), sig)| {
-                    format!(
-                        r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
-                        pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig)
-                    )
-                })
-                .collect();
-
-            let json = format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(","));
-
-            GeneRecord {
-                gene_symbol: gene,
-                json,
-            }
-        })
+        .map(|(gene, variants)| serialize_gene_record(gene, &variants))
         .collect();
 
     records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
@@ -254,37 +256,7 @@ where
 
     let mut records: Vec<GeneRecord> = gene_variants
         .into_iter()
-        .map(|(gene, variants)| {
-            let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
-            for v in &variants {
-                unique
-                    .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
-                    .or_insert_with(|| v.sig.clone());
-            }
-            // Sort before serializing: HashMap iteration order is
-            // unspecified, so without this the proteinVariants array order
-            // (and thus the on-disk .oga bytes) would vary run-to-run for
-            // identical input, breaking build reproducibility/diffing.
-            let mut unique: Vec<_> = unique.into_iter().collect();
-            unique.sort_by(|((pos_a, ref_a, alt_a), _), ((pos_b, ref_b, alt_b), _)| {
-                pos_a.cmp(pos_b).then(ref_a.cmp(ref_b)).then(alt_a.cmp(alt_b))
-            });
-
-            let variant_jsons: Vec<String> = unique
-                .iter()
-                .map(|((pos, ref_aa, alt_aa), sig)| {
-                    format!(
-                        r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
-                        pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig)
-                    )
-                })
-                .collect();
-            let json = format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(","));
-            GeneRecord {
-                gene_symbol: gene,
-                json,
-            }
-        })
+        .map(|(gene, variants)| serialize_gene_record(gene, &variants))
         .collect();
     records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
     Ok(records)

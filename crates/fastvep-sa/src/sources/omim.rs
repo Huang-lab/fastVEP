@@ -53,8 +53,12 @@ pub fn parse_omim_genemap<R: BufRead>(reader: R) -> Result<Vec<GeneRecord>> {
 
         let mut parts = Vec::new();
 
-        if !mim_number.is_empty() && mim_number != "." {
-            parts.push(format!("\"mimNumber\":{}", mim_number));
+        // MIM Number is emitted unquoted as a JSON number, so it must be a
+        // validated integer — a blank, "." sentinel, or any non-numeric junk
+        // in column 5 would otherwise land in the JSON as a bare token and
+        // break every downstream serde_json::from_str on this record.
+        if let Ok(mim) = mim_number.parse::<u64>() {
+            parts.push(format!("\"mimNumber\":{}", mim));
         }
 
         if !phenotypes_raw.is_empty() && phenotypes_raw != "." {
@@ -116,5 +120,21 @@ mod tests {
 
         let records = parse_omim_genemap(data.as_bytes()).unwrap();
         assert!(records.is_empty());
+    }
+
+    #[test]
+    fn test_parse_omim_non_numeric_mim_produces_valid_json() {
+        // mimNumber is emitted unquoted, so a non-numeric column-5 value must
+        // be dropped rather than written as a bare token (which would make the
+        // record invalid JSON). The record should still be emitted from its
+        // phenotypes, just without a mimNumber field.
+        let data = "chr17\t1\t2\t17q21.31\t\tNOTANUMBER\tBRCA1\tBreast cancer 1\tBRCA1\t672\tENSG0\t\tBreast cancer, 114480 (3), Autosomal dominant\t\n";
+
+        let records = parse_omim_genemap(data.as_bytes()).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].gene_symbol, "BRCA1");
+        assert!(!records[0].json.contains("mimNumber"), "non-numeric MIM must be omitted: {}", records[0].json);
+        // The emitted JSON must be parseable.
+        let _: serde_json::Value = serde_json::from_str(&records[0].json).expect("record must be valid JSON");
     }
 }

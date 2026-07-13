@@ -181,7 +181,15 @@ fastvep sa-build --source phylop -i hg38.phyloP100way.wigFix.gz -o phylop --asse
 # 1. Download from https://hgdownload.soe.ucsc.edu/gbdb/hg38/bbi/
 #    Convert to TSV: chrom, pos, score (one row per position)
 
-# 2. Build
+# 2. Build. Like phyloP, GERP (and DANN) is a per-base genome-wide source and
+#    streams straight into the index, so the TSV must already be sorted by
+#    CHROMOSOME in fastvep's internal order — chr1..chr22, then X, Y, M — and by
+#    position within each chromosome, or the build aborts with a "not sorted"
+#    error. A naive `sort -k1,1 -k2,2n` orders chromosomes LEXICOGRAPHICALLY
+#    (chr1, chr10, chr11, ..., chr2, ...) and is rejected; `sort -V` is closer
+#    but still misplaces chrM (before chrX). Safest is to emit/sort one file per
+#    chromosome and concatenate them in the order above (as with phyloP):
+#      for c in $(seq 1 22) X Y M; do sort -k2,2n "chr${c}.tsv"; done > gerp_scores.tsv
 fastvep sa-build --source gerp -i gerp_scores.tsv -o gerp --assembly GRCh38
 ```
 

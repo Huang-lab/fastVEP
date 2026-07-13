@@ -123,9 +123,40 @@ pub struct GeneRecord {
 /// data produces invalid JSON that silently corrupts that record for
 /// every downstream `serde_json::from_str` consumer.
 pub fn escape_json(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            // JSON requires every C0 control character (U+0000..=U+001F) to
+            // be escaped; the common ones have short forms above, the rest
+            // (backspace, form feed, vertical tab, NUL, etc.) must go out as
+            // \u00XX or the record is invalid JSON.
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_json_produces_valid_json_for_quotes_backslashes_and_controls() {
+        // A field carrying a quote, a backslash, and assorted control
+        // characters (including ones without a short escape form: backspace,
+        // form feed, vertical tab, NUL) must still round-trip as valid JSON.
+        let raw = "a\"b\\c\n\r\t\x08\x0c\x0b\x00d";
+        let json = format!(r#"{{"v":"{}"}}"#, escape_json(raw));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("escaped string must produce valid JSON");
+        assert_eq!(parsed["v"], raw, "value must survive an escape/parse round-trip unchanged");
+    }
 }
