@@ -3,7 +3,7 @@
 //! Parses ClinVar VCF to extract protein-level data for pathogenic/likely-pathogenic
 //! missense variants, enabling PS1, PM5, and PM1 (hotspot) ACMG criteria evaluation.
 
-use crate::common::GeneRecord;
+use crate::common::{escape_json, GeneRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -170,7 +170,7 @@ where
                 .map(|((pos, ref_aa, alt_aa), sig)| {
                     format!(
                         r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
-                        pos, ref_aa, alt_aa, sig
+                        pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig)
                     )
                 })
                 .collect();
@@ -275,7 +275,7 @@ where
                 .map(|((pos, ref_aa, alt_aa), sig)| {
                     format!(
                         r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
-                        pos, ref_aa, alt_aa, sig
+                        pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig)
                     )
                 })
                 .collect();
