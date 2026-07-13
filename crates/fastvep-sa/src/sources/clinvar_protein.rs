@@ -3,7 +3,7 @@
 //! Parses ClinVar VCF to extract protein-level data for pathogenic/likely-pathogenic
 //! missense variants, enabling PS1, PM5, and PM1 (hotspot) ACMG criteria evaluation.
 
-use crate::common::GeneRecord;
+use crate::common::{escape_json, GeneRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -15,6 +15,42 @@ struct ProteinVariant {
     ref_aa: String,
     alt_aa: String,
     sig: String,
+}
+
+/// Serialize one gene's protein variants into a `GeneRecord`.
+///
+/// Dedups by `(pos, ref_aa, alt_aa)`, then sorts before serializing: HashMap
+/// iteration order is unspecified, so without the sort the `proteinVariants`
+/// array order (and thus the on-disk `.oga` bytes) would vary run-to-run for
+/// identical input, breaking build reproducibility/diffing. Shared by both the
+/// VCF and variant_summary parse paths so the two stay byte-for-byte identical.
+fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecord {
+    let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
+    for v in variants {
+        unique
+            .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
+            .or_insert_with(|| v.sig.clone());
+    }
+
+    let mut unique: Vec<_> = unique.into_iter().collect();
+    unique.sort_by(|((pos_a, ref_a, alt_a), _), ((pos_b, ref_b, alt_b), _)| {
+        pos_a.cmp(pos_b).then(ref_a.cmp(ref_b)).then(alt_a.cmp(alt_b))
+    });
+
+    let variant_jsons: Vec<String> = unique
+        .iter()
+        .map(|((pos, ref_aa, alt_aa), sig)| {
+            format!(
+                r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
+                pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig)
+            )
+        })
+        .collect();
+
+    GeneRecord {
+        gene_symbol: gene,
+        json: format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(",")),
+    }
 }
 
 /// Parse a ClinVar source (VCF or variant_summary.txt.gz) and produce
@@ -147,32 +183,7 @@ where
     // Convert to GeneRecords
     let mut records: Vec<GeneRecord> = gene_variants
         .into_iter()
-        .map(|(gene, variants)| {
-            // Deduplicate by (pos, ref_aa, alt_aa)
-            let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
-            for v in &variants {
-                unique
-                    .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
-                    .or_insert_with(|| v.sig.clone());
-            }
-
-            let variant_jsons: Vec<String> = unique
-                .iter()
-                .map(|((pos, ref_aa, alt_aa), sig)| {
-                    format!(
-                        r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
-                        pos, ref_aa, alt_aa, sig
-                    )
-                })
-                .collect();
-
-            let json = format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(","));
-
-            GeneRecord {
-                gene_symbol: gene,
-                json,
-            }
-        })
+        .map(|(gene, variants)| serialize_gene_record(gene, &variants))
         .collect();
 
     records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
@@ -245,28 +256,7 @@ where
 
     let mut records: Vec<GeneRecord> = gene_variants
         .into_iter()
-        .map(|(gene, variants)| {
-            let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
-            for v in &variants {
-                unique
-                    .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
-                    .or_insert_with(|| v.sig.clone());
-            }
-            let variant_jsons: Vec<String> = unique
-                .iter()
-                .map(|((pos, ref_aa, alt_aa), sig)| {
-                    format!(
-                        r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
-                        pos, ref_aa, alt_aa, sig
-                    )
-                })
-                .collect();
-            let json = format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(","));
-            GeneRecord {
-                gene_symbol: gene,
-                json,
-            }
-        })
+        .map(|(gene, variants)| serialize_gene_record(gene, &variants))
         .collect();
     records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
     Ok(records)
@@ -449,5 +439,42 @@ mod tests {
         assert!(brca1.json.contains("\"refAa\":\"D\""));
         assert!(brca1.json.contains("\"altAa\":\"H\""));
         assert!(brca1.json.contains("\"sig\":\"Pathogenic\""));
+    }
+
+    #[test]
+    fn test_parse_clinvar_protein_variant_order_is_deterministic() {
+        // A gene with several distinct protein variants must always
+        // serialize proteinVariants in the same (sorted-by-position) order
+        // regardless of HashMap iteration order — otherwise the .oga bytes
+        // would vary run-to-run for identical input.
+        let header = "#AlleleID\tType\tName\tGeneID\tGeneSymbol\tHGNC_ID\tClinicalSignificance\tClinSigSimple\tLastEvaluated\tRS# (dbSNP)\tnsv/esv (dbVar)\tRCVaccession\tPhenotypeIDS\tPhenotypeList\tOrigin\tOriginSimple\tAssembly\tChromosomeAccession\tChromosome\tStart\tStop\tReferenceAllele\tAlternateAllele\tCytogenetic\tReviewStatus\tNumberSubmitters\tGuidelines\tTestedInGTR\tOtherIDs\tSubmitterCategories\tVariationID\tPositionVCF\tReferenceAlleleVCF\tAlternateAlleleVCF\tSomaticClinicalImpact\tSomaticClinicalImpactLastEvaluated\tReviewStatusClinicalImpact\tOncogenicity\tOncogenicityLastEvaluated\tReviewStatusOncogenicity";
+        let mut rows = vec![header.to_string()];
+        // Deliberately out of position order in the input.
+        for (variation_id, pos_aa) in [(1, "p.Arg175His"), (2, "p.Gly245Ser"), (3, "p.Cys135Tyr"), (4, "p.Arg273Cys")] {
+            rows.push(format!(
+                "{vid}\tsingle nucleotide variant\tNM_000546.6(TP53):c.1A>T ({pos_aa})\t7157\tTP53\tHGNC:11998\tPathogenic\t1\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000017.11\t17\t1\t1\tG\tA\t17p13.1\tcriteria provided, multiple submitters, no conflicts\t5\t-\t-\t-\t1\t{vid}\t1\tG\tA\t-\t-\t-\t-\t-\t-",
+                vid = variation_id,
+                pos_aa = pos_aa,
+            ));
+        }
+        let data = rows.join("\n") + "\n";
+
+        let first = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
+        let second = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
+        assert_eq!(
+            first[0].json, second[0].json,
+            "identical input must produce byte-identical proteinVariants ordering across runs"
+        );
+
+        let tp53 = first.iter().find(|r| r.gene_symbol == "TP53").unwrap();
+        let pos_135 = tp53.json.find("\"pos\":135").unwrap();
+        let pos_175 = tp53.json.find("\"pos\":175").unwrap();
+        let pos_245 = tp53.json.find("\"pos\":245").unwrap();
+        let pos_273 = tp53.json.find("\"pos\":273").unwrap();
+        assert!(
+            pos_135 < pos_175 && pos_175 < pos_245 && pos_245 < pos_273,
+            "proteinVariants must be sorted by position: {}",
+            tp53.json
+        );
     }
 }

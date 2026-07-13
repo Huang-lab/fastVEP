@@ -1,6 +1,6 @@
 //! MitoMap mitochondrial variant parser.
 
-use crate::common::AnnotationRecord;
+use crate::common::{escape_json, AnnotationRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -44,10 +44,6 @@ pub fn parse_mitomap<R: BufRead>(
     }
     records.sort_by_key(|r| r.position);
     Ok(records)
-}
-
-fn escape_json(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(test)]

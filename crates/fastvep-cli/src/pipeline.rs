@@ -2293,20 +2293,26 @@ where
 /// chrom=...`) and a simple `chrom\tpos\tscore` TSV (which is what we
 /// emit when distilling PhyloP from gnomAD v4 INFO). Detect by peeking
 /// the first non-blank line; everything else falls through to the TSV
-/// parser since it tolerates BED-4 too.
-fn parse_phylop_auto<R: BufRead>(
+/// parser since it tolerates BED-4 too. Streams either format straight
+/// into the writer — PhyloP/GERP are per-base, genome-wide sources
+/// (~3 billion positions for hg38) so buffering them as a Vec first
+/// would exhaust memory long before a real build finishes.
+fn iter_phylop_auto<'a, R: BufRead + 'a>(
     mut reader: R,
-    chrom_to_idx: &HashMap<String, u16>,
-) -> Result<Vec<fastvep_sa::common::AnnotationRecord>> {
+    chrom_to_idx: &'a HashMap<String, u16>,
+) -> Box<dyn Iterator<Item = Result<fastvep_sa::common::AnnotationRecord>> + 'a> {
     let mut peek = [0u8; 16];
-    let n = reader.read(&mut peek)?;
+    let n = match reader.read(&mut peek) {
+        Ok(n) => n,
+        Err(e) => return Box::new(std::iter::once(Err(e).context("Peeking phyloP input"))),
+    };
     let prefix = std::str::from_utf8(&peek[..n]).unwrap_or("");
     let chained = std::io::Cursor::new(peek[..n].to_vec()).chain(reader);
     let buf = io::BufReader::new(chained);
     if prefix.trim_start().starts_with("fixedStep") {
-        fastvep_sa::sources::scores::parse_wigfix(buf, chrom_to_idx)
+        Box::new(fastvep_sa::sources::scores::iter_wigfix(buf, chrom_to_idx))
     } else {
-        fastvep_sa::sources::scores::parse_score_tsv(buf, chrom_to_idx, false)
+        Box::new(fastvep_sa::sources::scores::iter_score_tsv(buf, chrom_to_idx, false))
     }
 }
 
@@ -2526,6 +2532,18 @@ pub fn run_sa_build(
                 |r, m| fastvep_sa::sources::topmed::iter_topmed_vcf(r, m),
             );
         }
+        "phylop" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| iter_phylop_auto(r, m),
+            );
+        }
+        "gerp" | "dann" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::scores::iter_score_tsv(r, m, false),
+            );
+        }
         _ => {}
     }
 
@@ -2543,11 +2561,6 @@ pub fn run_sa_build(
         "cosmic" => fastvep_sa::sources::cosmic::parse_cosmic_vcf(buf_reader, &chrom_map)?,
         "onekg" | "1000g" => fastvep_sa::sources::onekg::parse_onekg_vcf(buf_reader, &chrom_map)?,
         "mitomap" => fastvep_sa::sources::mitomap::parse_mitomap(buf_reader, &chrom_map)?,
-        // PhyloP supports two on-disk formats: UCSC fixed-step wig and
-        // simple TSV (`chrom\tpos\tscore`). Auto-detect by peeking the
-        // first non-comment byte: wigfix starts with "fixedStep".
-        "phylop" => parse_phylop_auto(buf_reader, &chrom_map)?,
-        "gerp" | "dann" => fastvep_sa::sources::scores::parse_score_tsv(buf_reader, &chrom_map, false)?,
         "revel" => fastvep_sa::sources::revel::parse_revel(buf_reader, &chrom_map, 2)?,
         "primateai" => fastvep_sa::sources::primateai::parse_primateai(buf_reader, &chrom_map)?,
         "dbnsfp" => fastvep_sa::sources::dbnsfp::parse_dbnsfp(buf_reader, &chrom_map)?,

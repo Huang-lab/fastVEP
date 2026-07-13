@@ -149,10 +149,27 @@ fastvep sa-build --source dbnsfp -i dbNSFP4.5a.zip -o dbnsfp --assembly GRCh38
 Used by BP7 (conservation tier — `phylop_conserved` defaults to 2.0). The pre-PR1 PP3/BP4 consensus path that consumed PhyloP was removed; PhyloP is still surfaced in `details.phylop` for transparency. Position-level, not allele-level.
 
 ```bash
-# 1. Download (UCSC)
-wget https://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP100way/hg38.phyloP100way.wigFix.gz
+# 1. Download (UCSC) — UCSC no longer publishes a single combined wigFix for
+#    hg38; scores are split one file per chromosome under hg38.100way.phyloP100way/
+for c in $(seq 1 22) X Y M; do
+  wget "https://hgdownload.cse.ucsc.edu/goldenpath/hg38/phyloP100way/hg38.100way.phyloP100way/chr${c}.phyloP100way.wigFix.gz"
+done
 
-# 2. Build
+# 2. Concatenate IN NUMERIC CHROMOSOME ORDER into a single multi-member
+#    gzip stream (fastvep reads gzip with MultiGzDecoder, so concatenating
+#    compressed members is safe and avoids decompressing to disk).
+#    IMPORTANT: `cat chr*.phyloP100way.wigFix.gz` sorts lexicographically
+#    (chr1, chr10, chr11, ..., chr2, chr20, ...), NOT in chromosome order —
+#    sa-build streams this file straight into the annotation index and
+#    requires it sorted by chromosome, so a lexicographic glob will build
+#    successfully but silently misorder chr2..chr9 and abort with a "not
+#    sorted" error. Reuse the same ordered loop as the download step:
+: > hg38.phyloP100way.wigFix.gz
+for c in $(seq 1 22) X Y M; do
+  cat "chr${c}.phyloP100way.wigFix.gz" >> hg38.phyloP100way.wigFix.gz
+done
+
+# 3. Build
 fastvep sa-build --source phylop -i hg38.phyloP100way.wigFix.gz -o phylop --assembly GRCh38
 ```
 
@@ -164,7 +181,15 @@ fastvep sa-build --source phylop -i hg38.phyloP100way.wigFix.gz -o phylop --asse
 # 1. Download from https://hgdownload.soe.ucsc.edu/gbdb/hg38/bbi/
 #    Convert to TSV: chrom, pos, score (one row per position)
 
-# 2. Build
+# 2. Build. Like phyloP, GERP (and DANN) is a per-base genome-wide source and
+#    streams straight into the index, so the TSV must already be sorted by
+#    CHROMOSOME in fastvep's internal order — chr1..chr22, then X, Y, M — and by
+#    position within each chromosome, or the build aborts with a "not sorted"
+#    error. A naive `sort -k1,1 -k2,2n` orders chromosomes LEXICOGRAPHICALLY
+#    (chr1, chr10, chr11, ..., chr2, ...) and is rejected; `sort -V` is closer
+#    but still misplaces chrM (before chrX). Safest is to emit/sort one file per
+#    chromosome and concatenate them in the order above (as with phyloP):
+#      for c in $(seq 1 22) X Y M; do sort -k2,2n "chr${c}.tsv"; done > gerp_scores.tsv
 fastvep sa-build --source gerp -i gerp_scores.tsv -o gerp --assembly GRCh38
 ```
 

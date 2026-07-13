@@ -2,7 +2,7 @@
 //!
 //! Extracts somatic mutation data from COSMIC's coding mutations file.
 
-use crate::common::AnnotationRecord;
+use crate::common::{escape_json, AnnotationRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -52,13 +52,17 @@ pub fn parse_cosmic_vcf<R: BufRead>(
 
             let mut parts = Vec::new();
             if !id.is_empty() && id != "." {
-                parts.push(format!("\"id\":\"{}\"", id));
+                parts.push(format!("\"id\":\"{}\"", escape_json(id)));
             }
-            if !gene.is_empty() {
-                parts.push(format!("\"gene\":\"{}\"", gene));
+            if !gene.is_empty() && gene != "." {
+                parts.push(format!("\"gene\":\"{}\"", escape_json(&gene)));
             }
-            if !cnt.is_empty() {
-                parts.push(format!("\"count\":{}", cnt));
+            // CNT is written unquoted, so it must be a validated integer —
+            // the VCF missing-value sentinel "." (or any other garbage)
+            // would otherwise land in the JSON as a bare, unquoted token
+            // and break every downstream serde_json::from_str on this record.
+            if let Ok(count) = cnt.parse::<u64>() {
+                parts.push(format!("\"count\":{}", count));
             }
 
             records.push(AnnotationRecord {
@@ -102,5 +106,37 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert!(records[0].json.contains("COSV123"));
         assert!(records[0].json.contains("TP53"));
+    }
+
+    #[test]
+    fn test_parse_cosmic_escapes_gene_field_for_valid_json() {
+        // A GENE value containing a double quote or backslash must not
+        // produce invalid JSON in the .osa record.
+        let vcf = "#header\n1\t10001\tCOSV123\tA\tG\t.\t.\tGENE=WEIRD\"GENE\\NAME;CNT=1\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let records = parse_cosmic_vcf(vcf.as_bytes(), &m).unwrap();
+        assert_eq!(records.len(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(&records[0].json)
+            .expect("COSMIC record must be valid JSON even with quotes/backslashes in GENE");
+        assert_eq!(parsed["gene"], "WEIRD\"GENE\\NAME");
+    }
+
+    #[test]
+    fn test_parse_cosmic_missing_value_sentinel_is_omitted_not_emitted_raw() {
+        // GENE="." (unmapped/intergenic) and CNT="." (missing count) are
+        // VCF's missing-value sentinel, not real values. GENE="." must not
+        // be stored as a literal gene symbol, and CNT="." must not be
+        // written unquoted into JSON (which would make it invalid).
+        let vcf = "#header\n1\t10001\tCOSV123\tA\tG\t.\t.\tGENE=.;CNT=.\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let records = parse_cosmic_vcf(vcf.as_bytes(), &m).unwrap();
+        assert_eq!(records.len(), 1);
+        let json = &records[0].json;
+        let _parsed: serde_json::Value =
+            serde_json::from_str(json).expect("record must still be valid JSON: {json}");
+        assert!(!json.contains("gene"), "GENE=. must be omitted: {json}");
+        assert!(!json.contains("count"), "CNT=. must be omitted: {json}");
     }
 }
