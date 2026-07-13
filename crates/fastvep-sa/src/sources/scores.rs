@@ -3,79 +3,110 @@
 //! These parsers produce positional AnnotationRecords where the JSON is
 //! just the numeric score value as a string. The SaWriter stores them
 //! as positional annotations (match_by_allele=false, is_positional=true).
+//!
+//! PhyloP/GERP are per-base, genome-wide sources (~3 billion positions for
+//! hg38) — denser than any VCF-based source. Use `iter_score_tsv` /
+//! `iter_wigfix` for streaming builds; `parse_score_tsv` / `parse_wigfix`
+//! buffer everything in memory and are retained for tests and small inputs.
 
 use crate::common::AnnotationRecord;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
 
-/// Parse a tab-separated score file (chrom, pos, score) into AnnotationRecords.
+/// Stream a tab-separated score file (chrom, pos, score) as `AnnotationRecord`s
+/// without buffering the whole file in memory.
 ///
 /// Supports formats like:
 /// - BED-like: `chr1\t12345\t12346\t2.345`  (4 columns: chrom, start, end, score)
 /// - Simple:   `chr1\t12345\t2.345`          (3 columns: chrom, pos, score)
 ///
 /// Positions are 0-based in BED format (converted to 1-based internally)
-/// or 1-based in simple format. Set `zero_based` accordingly.
+/// or 1-based in simple format. Set `zero_based` accordingly. The input must
+/// already be sorted by chromosome and position.
+pub fn iter_score_tsv<R: BufRead>(
+    reader: R,
+    chrom_to_idx: &HashMap<String, u16>,
+    zero_based: bool,
+) -> ScoreTsvIter<'_, R> {
+    ScoreTsvIter { lines: reader.lines(), chrom_to_idx, zero_based }
+}
+
+pub struct ScoreTsvIter<'a, R: BufRead> {
+    lines: std::io::Lines<R>,
+    chrom_to_idx: &'a HashMap<String, u16>,
+    zero_based: bool,
+}
+
+impl<R: BufRead> Iterator for ScoreTsvIter<'_, R> {
+    type Item = Result<AnnotationRecord>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let line = match self.lines.next()? {
+                Ok(l) => l,
+                Err(e) => return Some(Err(e).context("Reading score TSV line")),
+            };
+            if line.starts_with('#') || line.starts_with("track") || line.is_empty() {
+                continue;
+            }
+
+            let fields: Vec<&str> = line.split('\t').collect();
+
+            let (chrom_str, pos_str, score_str) = match fields.len() {
+                // BED 4-column: chrom, start (0-based), end, score
+                4.. => (fields[0], fields[1], fields[3]),
+                // Simple 3-column: chrom, pos, score
+                3 => (fields[0], fields[1], fields[2]),
+                _ => continue,
+            };
+
+            let chrom = normalize_chrom(chrom_str);
+            let chrom_idx = match self.chrom_to_idx.get(&chrom) {
+                Some(&idx) => idx,
+                None => continue,
+            };
+
+            let pos: u32 = match pos_str.parse::<u32>() {
+                Ok(p) => {
+                    if self.zero_based { p + 1 } else { p }
+                }
+                Err(_) => continue,
+            };
+
+            let score: f64 = match score_str.trim().parse() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            return Some(Ok(AnnotationRecord {
+                chrom_idx,
+                position: pos,
+                ref_allele: String::new(),
+                alt_allele: String::new(),
+                json: format_score(score),
+            }));
+        }
+    }
+}
+
+/// Parse a tab-separated score file into sorted `AnnotationRecord`s.
+///
+/// Loads all records into memory — suitable for tests and small inputs.
+/// For genome-wide sources use `iter_score_tsv` via the pipeline instead.
 pub fn parse_score_tsv<R: BufRead>(
     reader: R,
     chrom_to_idx: &HashMap<String, u16>,
     zero_based: bool,
 ) -> Result<Vec<AnnotationRecord>> {
-    let mut records = Vec::new();
-
-    for line in reader.lines() {
-        let line = line.context("Reading score TSV line")?;
-        if line.starts_with('#') || line.starts_with("track") || line.is_empty() {
-            continue;
-        }
-
-        let fields: Vec<&str> = line.split('\t').collect();
-
-        let (chrom_str, pos_str, score_str) = match fields.len() {
-            // BED 4-column: chrom, start (0-based), end, score
-            4.. => (fields[0], fields[1], fields[3]),
-            // Simple 3-column: chrom, pos, score
-            3 => (fields[0], fields[1], fields[2]),
-            _ => continue,
-        };
-
-        let chrom = normalize_chrom(chrom_str);
-        let chrom_idx = match chrom_to_idx.get(&chrom) {
-            Some(&idx) => idx,
-            None => continue,
-        };
-
-        let pos: u32 = match pos_str.parse::<u32>() {
-            Ok(p) => {
-                if zero_based { p + 1 } else { p }
-            }
-            Err(_) => continue,
-        };
-
-        // Validate score is a number
-        let score: f64 = match score_str.trim().parse() {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        // Format score compactly
-        let json = format_score(score);
-
-        records.push(AnnotationRecord {
-            chrom_idx,
-            position: pos,
-            ref_allele: String::new(),
-            alt_allele: String::new(),
-            json,
-        });
-    }
-
+    let mut records: Vec<_> =
+        iter_score_tsv(reader, chrom_to_idx, zero_based).collect::<Result<_>>()?;
     records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
     Ok(records)
 }
 
-/// Parse a UCSC wiggle fixed-step (wigFix) file into AnnotationRecords.
+/// Stream a UCSC wiggle fixed-step (wigFix) file as `AnnotationRecord`s
+/// without buffering the whole file in memory.
 ///
 /// Format:
 /// ```text
@@ -84,58 +115,85 @@ pub fn parse_score_tsv<R: BufRead>(
 /// -0.002
 /// ...
 /// ```
+///
+/// The input must already be sorted by chromosome (all standard UCSC
+/// per-chromosome releases are; concatenating them in chromosome order
+/// preserves this).
+pub fn iter_wigfix<R: BufRead>(reader: R, chrom_to_idx: &HashMap<String, u16>) -> WigFixIter<'_, R> {
+    WigFixIter { lines: reader.lines(), chrom_to_idx, current_chrom_idx: None, current_pos: 0, step: 1 }
+}
+
+pub struct WigFixIter<'a, R: BufRead> {
+    lines: std::io::Lines<R>,
+    chrom_to_idx: &'a HashMap<String, u16>,
+    current_chrom_idx: Option<u16>,
+    current_pos: u32,
+    step: u32,
+}
+
+impl<R: BufRead> Iterator for WigFixIter<'_, R> {
+    type Item = Result<AnnotationRecord>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let line = match self.lines.next()? {
+                Ok(l) => l,
+                Err(e) => return Some(Err(e).context("Reading wigFix line")),
+            };
+
+            if line.starts_with("fixedStep") {
+                // Parse header: fixedStep chrom=chr1 start=10001 step=1
+                let mut chrom = None;
+                let mut start = None;
+                self.step = 1;
+
+                for part in line.split_whitespace().skip(1) {
+                    if let Some((key, val)) = part.split_once('=') {
+                        match key {
+                            "chrom" => chrom = Some(normalize_chrom(val)),
+                            "start" => start = val.parse().ok(),
+                            "step" => self.step = val.parse().unwrap_or(1),
+                            _ => {}
+                        }
+                    }
+                }
+
+                self.current_chrom_idx = chrom.as_ref().and_then(|c| self.chrom_to_idx.get(c)).copied();
+                self.current_pos = start.unwrap_or(1);
+                continue;
+            }
+
+            if line.starts_with('#') || line.starts_with("track") || line.is_empty() {
+                continue;
+            }
+
+            if let Some(chrom_idx) = self.current_chrom_idx {
+                let pos = self.current_pos;
+                self.current_pos += self.step;
+                if let Ok(score) = line.trim().parse::<f64>() {
+                    return Some(Ok(AnnotationRecord {
+                        chrom_idx,
+                        position: pos,
+                        ref_allele: String::new(),
+                        alt_allele: String::new(),
+                        json: format_score(score),
+                    }));
+                }
+                continue;
+            }
+        }
+    }
+}
+
+/// Parse a UCSC wiggle fixed-step (wigFix) file into sorted AnnotationRecords.
+///
+/// Loads all records into memory — suitable for tests and small inputs.
+/// For genome-wide builds use `iter_wigfix` via the pipeline instead.
 pub fn parse_wigfix<R: BufRead>(
     reader: R,
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
-    let mut records = Vec::new();
-    let mut current_chrom_idx: Option<u16> = None;
-    let mut current_pos: u32 = 0;
-    let mut step: u32 = 1;
-
-    for line in reader.lines() {
-        let line = line.context("Reading wigFix line")?;
-
-        if line.starts_with("fixedStep") {
-            // Parse header: fixedStep chrom=chr1 start=10001 step=1
-            let mut chrom = None;
-            let mut start = None;
-            step = 1;
-
-            for part in line.split_whitespace().skip(1) {
-                if let Some((key, val)) = part.split_once('=') {
-                    match key {
-                        "chrom" => chrom = Some(normalize_chrom(val)),
-                        "start" => start = val.parse().ok(),
-                        "step" => step = val.parse().unwrap_or(1),
-                        _ => {}
-                    }
-                }
-            }
-
-            current_chrom_idx = chrom.as_ref().and_then(|c| chrom_to_idx.get(c)).copied();
-            current_pos = start.unwrap_or(1);
-            continue;
-        }
-
-        if line.starts_with('#') || line.starts_with("track") || line.is_empty() {
-            continue;
-        }
-
-        if let Some(chrom_idx) = current_chrom_idx {
-            if let Ok(score) = line.trim().parse::<f64>() {
-                records.push(AnnotationRecord {
-                    chrom_idx,
-                    position: current_pos,
-                    ref_allele: String::new(),
-                    alt_allele: String::new(),
-                    json: format_score(score),
-                });
-            }
-            current_pos += step;
-        }
-    }
-
+    let mut records: Vec<_> = iter_wigfix(reader, chrom_to_idx).collect::<Result<_>>()?;
     records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
     Ok(records)
 }

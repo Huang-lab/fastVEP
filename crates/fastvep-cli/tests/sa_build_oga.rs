@@ -30,11 +30,12 @@ fn sa_build_omim_writes_oga_with_records() {
     let output = tmp.path().join("omim");
 
     // Minimal genemap2.txt fixture — column layout matches the real OMIM
-    // file format (gene symbol at index 5, MIM at index 8, phenotypes at 12).
+    // file format (MIM Number at index 5, Approved Gene Symbol at index 8,
+    // phenotypes at 12). See issue #64: these were previously swapped.
     let fixture = "# Generated\n\
                    # Copyright OMIM\n\
-                   1\tp36.33\t1:10001-20000\tGene1\t\tBRCA1\tprotein\t\t113705\t\t\t\tBreast cancer, 114480 (3), Autosomal dominant; Ovarian cancer, 167000 (3)\n\
-                   1\tp36.33\t1:30001-40000\tGene2\t\tTP53\tprotein\t\t191170\t\t\t\tLi-Fraumeni syndrome 1, 151623 (3), Autosomal dominant\n";
+                   1\tp36.33\t1:10001-20000\tGene1\t\t113705\tprotein\t\tBRCA1\t\t\t\tBreast cancer, 114480 (3), Autosomal dominant; Ovarian cancer, 167000 (3)\n\
+                   1\tp36.33\t1:30001-40000\tGene2\t\t191170\tprotein\t\tTP53\t\t\t\tLi-Fraumeni syndrome 1, 151623 (3), Autosomal dominant\n";
     File::create(&input)
         .unwrap()
         .write_all(fixture.as_bytes())

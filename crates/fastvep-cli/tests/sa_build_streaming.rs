@@ -6,7 +6,9 @@
 //!   * a build that fails mid-stream (unsorted input) errors clearly and leaves
 //!     no corrupt partial `.osa`/`.osa.idx` behind.
 
+use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue};
 use fastvep_cli::pipeline::run_sa_build;
+use fastvep_sa::reader::SaReader;
 use std::fs;
 
 const GNOMAD_SORTED: &str = "\
@@ -102,4 +104,82 @@ fn streaming_build_detects_gzip_by_magic_bytes_not_extension() {
         plain_osa, gz_osa,
         "gzip-by-magic build must match the plain-text build"
     );
+}
+
+/// PhyloP/GERP are per-base genome-wide sources and must build via the
+/// streaming path (not buffer every position as a `Vec`) — see
+/// `iter_phylop_auto`/`iter_score_tsv`/`iter_wigfix` in fastvep-sa. This
+/// exercises both on-disk formats (wigFix and plain TSV) end to end
+/// through `run_sa_build` and confirms the resulting `.osa` answers
+/// positional queries correctly.
+#[test]
+fn streaming_build_handles_phylop_wigfix_and_gerp_tsv() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let wigfix = "\
+fixedStep chrom=chr1 start=100 step=1
+0.5
+0.75
+-1.25
+fixedStep chrom=chr2 start=50 step=1
+2.0
+";
+    let phylop_src = tmp.path().join("hg38.phyloP100way.wigFix");
+    fs::write(&phylop_src, wigfix).unwrap();
+    let phylop_out = tmp.path().join("phylop");
+    run_sa_build(
+        "phylop",
+        phylop_src.to_str().unwrap(),
+        phylop_out.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+
+    let phylop_reader = SaReader::open(&phylop_out.with_extension("osa")).unwrap();
+    let hit = phylop_reader
+        .annotate_position("chr1", 101, "", "")
+        .unwrap()
+        .expect("position 101 on chr1 should have a phyloP score");
+    match hit {
+        AnnotationValue::Positional(v) => assert!(v.contains("0.75"), "unexpected phyloP value: {v}"),
+        other => panic!("expected a positional phyloP value, got {other:?}"),
+    }
+    assert!(
+        phylop_reader
+            .annotate_position("chr2", 50, "", "")
+            .unwrap()
+            .is_some(),
+        "second fixedStep block (chr2) should also be present"
+    );
+
+    let gerp_tsv = "\
+chr1\t100\t1.234
+chr1\t200\t-0.5
+";
+    let gerp_src = tmp.path().join("gerp_scores.tsv");
+    fs::write(&gerp_src, gerp_tsv).unwrap();
+    let gerp_out = tmp.path().join("gerp");
+    run_sa_build(
+        "gerp",
+        gerp_src.to_str().unwrap(),
+        gerp_out.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+
+    let gerp_reader = SaReader::open(&gerp_out.with_extension("osa")).unwrap();
+    let hit = gerp_reader
+        .annotate_position("chr1", 100, "", "")
+        .unwrap()
+        .expect("position 100 on chr1 should have a GERP score");
+    match hit {
+        AnnotationValue::Positional(v) => assert!(v.contains("1.234"), "unexpected GERP value: {v}"),
+        other => panic!("expected a positional GERP value, got {other:?}"),
+    }
 }
