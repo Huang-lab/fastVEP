@@ -2258,7 +2258,7 @@ function showAcmgDetail(event, resultIndex) {
       <span class="count" style="color:#3b82f6">BS: ${counts.benign_strong||0}</span>
       <span class="count" style="color:#3b82f6">BP: ${counts.benign_supporting||0}</span>
     </div>
-    <div style="margin-bottom:8px;font-size:12px">Met criteria: <strong>${metCodes}</strong></div>
+    <div style="margin-bottom:8px;font-size:12px">Met criteria: <strong>${escapeHtml(metCodes)}</strong></div>
     <div class="acmg-criteria-grid">${criteriaHTML}</div>
     <div style="margin-top:12px;font-size:11px;color:var(--text-secondary)">
       Based on ACMG-AMP guidelines (Richards et al. 2015) with ClinGen SVI recommendations.

@@ -200,11 +200,24 @@ pub async fn load_genome(
             .ctx
             .write()
             .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
-        guard.load_genome(
-            gff3_path.to_str().unwrap(),
-            fasta_path.as_ref().map(|p| p.to_str().unwrap()),
-            sa_dir.as_ref().map(|p| p.to_str().unwrap()),
-        )?;
+        let gff3_str = gff3_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("GFF3 path is not valid UTF-8: {:?}", gff3_path))?;
+        let fasta_str = fasta_path
+            .as_ref()
+            .map(|p| {
+                p.to_str()
+                    .ok_or_else(|| anyhow::anyhow!("FASTA path is not valid UTF-8: {:?}", p))
+            })
+            .transpose()?;
+        let sa_str = sa_dir
+            .as_ref()
+            .map(|p| {
+                p.to_str()
+                    .ok_or_else(|| anyhow::anyhow!("SA dir path is not valid UTF-8: {:?}", p))
+            })
+            .transpose()?;
+        guard.load_genome(gff3_str, fasta_str, sa_str)?;
         let tr_count = guard.transcript_count();
         let sa_names = guard.sa_source_names();
         state.total_genomes.fetch_add(1, Ordering::Relaxed);
@@ -372,4 +385,91 @@ fn resolve_genome_paths(
         "Genome '{}' not found in data directory",
         name
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn tmp_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fastvep-web-test-{}-{}-{:?}",
+            label,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn resolve_genome_paths_rejects_path_traversal_sequences() {
+        let data_dir = tmp_dir("traversal");
+        for name in ["../etc/passwd", "..\\windows", "a/../../b", "a/b", "a\\b"] {
+            let err = resolve_genome_paths(&data_dir, name).unwrap_err();
+            let resp = err.into_response();
+            assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[test]
+    fn resolve_genome_paths_finds_gff3_in_subdirectory() {
+        let data_dir = tmp_dir("subdir");
+        let genome_dir = data_dir.join("hg38");
+        fs::create_dir_all(&genome_dir).unwrap();
+        fs::write(genome_dir.join("annotation.gff3"), "##gff-version 3\n").unwrap();
+        fs::write(genome_dir.join("genome.fa"), ">chr1\nACGT\n").unwrap();
+
+        let (gff3, fasta) = resolve_genome_paths(&data_dir, "hg38").unwrap();
+        assert_eq!(gff3, genome_dir.join("annotation.gff3"));
+        assert_eq!(fasta, Some(genome_dir.join("genome.fa")));
+    }
+
+    #[test]
+    fn resolve_genome_paths_finds_top_level_loose_gff3() {
+        let data_dir = tmp_dir("toplevel");
+        fs::write(data_dir.join("mygenome.gff3"), "##gff-version 3\n").unwrap();
+
+        let (gff3, fasta) = resolve_genome_paths(&data_dir, "mygenome").unwrap();
+        assert_eq!(gff3, data_dir.join("mygenome.gff3"));
+        assert_eq!(fasta, None);
+    }
+
+    #[test]
+    fn resolve_genome_paths_errors_when_genome_not_found() {
+        let data_dir = tmp_dir("missing");
+        let err = resolve_genome_paths(&data_dir, "nonexistent").unwrap_err();
+        let resp = err.into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn find_file_with_ext_prefers_higher_priority_extension() {
+        let dir = tmp_dir("priority");
+        fs::write(dir.join("genome.fa.gz"), b"").unwrap();
+        fs::write(dir.join("genome.fa"), b"").unwrap();
+
+        let found = find_file_with_ext(&dir, &["fa", "fa.gz"]).unwrap();
+        assert_eq!(found, dir.join("genome.fa"));
+    }
+
+    #[test]
+    fn find_file_with_ext_skips_fastvep_cache_shadow_files() {
+        let dir = tmp_dir("cache-shadow");
+        // A `.fastvep.cache.gff3` shadow file should not be mistaken for a
+        // real `.gff3` when searching by the `gff3` extension.
+        fs::write(dir.join("genome.fastvep.cache.gff3"), b"").unwrap();
+        fs::write(dir.join("genome.gff3"), b"##gff-version 3\n").unwrap();
+
+        let found = find_file_with_ext(&dir, &["gff3"]).unwrap();
+        assert_eq!(found, dir.join("genome.gff3"));
+    }
+
+    #[test]
+    fn find_file_with_ext_returns_none_when_absent() {
+        let dir = tmp_dir("absent");
+        assert!(find_file_with_ext(&dir, &["gff3", "gff3.gz"]).is_none());
+    }
 }
