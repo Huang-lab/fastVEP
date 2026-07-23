@@ -4,22 +4,40 @@
 
 ## Slide 1: The Problem
 
-**Goal:** Store annotations for millions of variants + hundreds of INFO fields efficiently.
+**Goal:** Efficiently store and query annotations for **~800 million variants** with hundreds of possible INFO fields.
 
-**Constraints:**
-- ~13M variants in gnomAD v4.1
-- Each variant has ~11 annotation fields (AC, AN, AF, nhomalt, FILTER, etc.)
-- Must support fast lookups: given a query variant (pos, ref, alt) → retrieve all annotations
-- Must compress well: real archives are gigabytes
+### The scale
 
-**Naive approach:** Store each variant as a row, each field as a column
-- ~150M cells of data
-- Uncompressed: hundreds of GB
-- Query path: linear scan or build an index per field
+- **~800M variants** in the dataset
+- **~11 commonly queried annotation fields per variant** (AC, AN, AF, nhomalt, FILTER, etc.)
+- **~8.8B annotation values** across those fields
+- Must support fast lookups:
+  - **Query:** `(chromosome, position, ref, alt)`
+  - **Result:** all annotations for that variant
+- Must compress well: raw archives are **tens to hundreds of GB**
 
-**echtvar's insight:** Pack variant identity (position + ref/alt) into a single sortable 32-bit integer, allowing binary search over compressed arrays.
+### Naive approach: Row-oriented storage
 
----
+Store each variant as a row, with each annotation as a column:
+
+- **800M rows × ~11 fields = ~8.8B values**
+- If values average just **4 bytes** → **~35 GB** of raw numeric data
+- Add variant identity, offsets, null/missing-value markers, strings, and metadata → **potentially 50–100+ GB uncompressed**
+- General-purpose compression helps, but random point lookups can be expensive
+- Indexing every field adds additional storage and complexity
+
+### echtvar's insight
+
+**Pack variant identity into a single sortable 32-bit integer**, allowing variants to be stored in sorted, compressed arrays.
+
+This enables:
+
+- **Binary search** to locate a variant
+- **Compact columnar arrays** for annotations
+- **Efficient compression** by exploiting sorted genomic positions and repeated values
+- **No large per-field database index required**
+
+> **Key idea:** Turn variant lookup into a binary search over a compact, sorted representation rather than scanning a massive table.
 
 ## Slide 2: var32 — The Core Encoding
 
