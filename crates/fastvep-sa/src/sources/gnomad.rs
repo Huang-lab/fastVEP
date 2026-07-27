@@ -286,16 +286,27 @@ fn build_gnomad_json(
         }
     }
 
+    // AN/AC/nhomalt are written unquoted, so each must be a validated
+    // non-negative integer — raw INFO-field text (e.g. the "." missing-value
+    // sentinel or other garbage) would otherwise land in the JSON as a bare,
+    // unquoted token and break every downstream serde_json::from_str on this
+    // record. Mirrors the CNT validation in sources/cosmic.rs.
     if let Some(an_str) = an {
-        parts.push(format!("\"allAn\":{}", an_str));
+        if let Ok(n) = an_str.parse::<u64>() {
+            parts.push(format!("\"allAn\":{}", n));
+        }
     }
 
     if let Some(ac_str) = ac {
-        parts.push(format!("\"allAc\":{}", ac_str));
+        if let Ok(n) = ac_str.parse::<u64>() {
+            parts.push(format!("\"allAc\":{}", n));
+        }
     }
 
     if let Some(nh) = nhomalt {
-        parts.push(format!("\"allHc\":{}", nh));
+        if let Ok(n) = nh.parse::<u64>() {
+            parts.push(format!("\"allHc\":{}", n));
+        }
     }
 
     // Per-population AFs
@@ -437,6 +448,34 @@ chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF_joint=0.01,0.005;AN_joint=140000;AC_joint=14
             "second alt should pick second AC value: {}",
             records[2].json
         );
+    }
+
+    #[test]
+    fn test_garbage_an_ac_nhomalt_omitted_not_emitted_unescaped() {
+        // AN/AC/nhomalt are spliced into the JSON unquoted, so malformed
+        // upstream text (e.g. the "." missing-value sentinel or other
+        // garbage) must be dropped rather than emitted as a bare token that
+        // would break serde_json::from_str on the whole record.
+        let vcf = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"Allele frequency\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"Total allele number\">
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"Allele count\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=not_a_number;AC=garbage;nhomalt=.
+";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".to_string(), 0u16);
+
+        let records = parse_gnomad_vcf(vcf.as_bytes(), &chrom_map).unwrap();
+        assert_eq!(records.len(), 1);
+        // Malformed fields must be entirely absent, not emitted as garbage.
+        assert!(!records[0].json.contains("allAn"));
+        assert!(!records[0].json.contains("allAc"));
+        assert!(!records[0].json.contains("allHc"));
+        // The emitted JSON must still be valid.
+        let v: serde_json::Value = serde_json::from_str(&records[0].json).unwrap();
+        assert!(v.get("allAf").is_some());
     }
 
     #[test]

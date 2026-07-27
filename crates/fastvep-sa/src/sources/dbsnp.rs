@@ -6,7 +6,7 @@
 //! `iter_dbsnp_vcf` for streaming builds; `parse_dbsnp_vcf` is retained for
 //! tests and small inputs.
 
-use crate::common::AnnotationRecord;
+use crate::common::{escape_json, AnnotationRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -99,7 +99,7 @@ impl<R: BufRead> Iterator for DbsnpRecordIter<'_, R> {
                     .as_ref()
                     .and_then(|parts| parts.get(i + 1))
                     .and_then(|s| s.parse::<f64>().ok());
-                let mut parts = vec![format!("\"id\":\"{}\"", rs_id)];
+                let mut parts = vec![format!("\"id\":\"{}\"", escape_json(&rs_id))];
                 if let Some(f) = freq {
                     parts.push(format!("\"globalMaf\":{:.6e}", f));
                 }
@@ -198,6 +198,27 @@ mod tests {
 
         let t = records.iter().find(|r| r.alt_allele == "T").unwrap();
         assert!(t.json.contains("2.000000e-2"), "T should get CAF index 2 (0.02), not C's frequency: {}", t.json);
+    }
+
+    #[test]
+    fn test_parse_dbsnp_rs_id_is_json_escaped() {
+        // The ID column is attacker-influenced free text in a corrupted/hostile
+        // build input; if it (or the RS= fallback) ever contains a quote or
+        // backslash, the emitted record must still be valid JSON rather than
+        // having the id value break out of its string.
+        let vcf = "\
+##fileformat=VCFv4.0
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+1\t10019\trs1\"evil\\n\tA\tG\t.\t.\tRS=1;CAF=0.9,0.1
+";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".to_string(), 0u16);
+
+        let records = parse_dbsnp_vcf(vcf.as_bytes(), &chrom_map).unwrap();
+        assert_eq!(records.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&records[0].json)
+            .expect("rs_id must be escaped so the record is valid JSON");
+        assert_eq!(v.get("id").and_then(|x| x.as_str()), Some("rs1\"evil\\n"));
     }
 
     #[test]

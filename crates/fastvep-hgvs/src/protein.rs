@@ -88,18 +88,25 @@ pub fn hgvsp_inframe_deletion(
 ///   - Ala498 = first amino acid that changes (ref)
 ///   - Pro = new amino acid at that position
 ///   - Ter28 = new stop codon 28 positions downstream
+///
+/// `codon_table` lets the caller select the genetic code to translate with —
+/// pass the vertebrate mitochondrial table (NCBI table 2) for MT transcripts
+/// so AGA/AGG/ATA/TGA are read correctly instead of with the standard code.
 pub fn hgvsp_frameshift(
     protein_id: &str,
     ref_translateable: &[u8],
     alt_translateable: &[u8],
     affected_codon_start: usize, // 0-based codon index where the frameshift starts
+    codon_table: &CodonTable,
 ) -> Option<String> {
     let prefix = format!("{}:p.", protein_id);
-    let codon_table = CodonTable::standard();
 
     // Translate both sequences from the affected codon onwards
     let ref_start = affected_codon_start * 3;
     if ref_start + 3 > ref_translateable.len() {
+        return None;
+    }
+    if ref_start > alt_translateable.len() {
         return None;
     }
 
@@ -187,6 +194,51 @@ pub fn hgvsp_frameshift(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fastvep_genome::mitochondrial_codon_table;
+
+    #[test]
+    fn test_hgvsp_frameshift_mitochondrial_table_differs() {
+        // Same ref/alt translateable sequences, only the codon table differs.
+        // Codon 0 changes (Arg CGT -> Pro CCC, same under both tables), so
+        // the frameshift starts there regardless of table. Codon 1 is TGA:
+        // a stop under the standard table but Trp under the vertebrate
+        // mitochondrial table (NCBI table 2), so the two tables must find
+        // the new stop codon (Ter) at different downstream distances.
+        let ref_translateable = b"CGTCGTCGTCGT"; // Arg Arg Arg Arg
+        let alt_translateable = b"CCCTGAAAATAA"; // Pro TGA(*/W) Lys TAA(*)
+
+        let standard = CodonTable::standard();
+        let mitochondrial = mitochondrial_codon_table();
+
+        let standard_result =
+            hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 0, &standard);
+        let mito_result =
+            hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 0, &mitochondrial);
+
+        // Standard table: TGA is a stop, so the new terminator is 2 codons in.
+        assert_eq!(standard_result, Some("ENSP1:p.Arg1ProfsTer2".to_string()));
+        // Mitochondrial table: TGA reads as Trp, so translation continues
+        // past it to the real stop (TAA) 4 codons in.
+        assert_eq!(mito_result, Some("ENSP1:p.Arg1ProfsTer4".to_string()));
+        assert_ne!(standard_result, mito_result);
+    }
+
+    #[test]
+    fn test_hgvsp_frameshift_short_alt_translateable_returns_none() {
+        // Regression: there's a bounds check guarding `ref_translateable`
+        // (`ref_start + 3 > ref_translateable.len()`) but nothing equivalent
+        // guarded `alt_translateable[ref_start..]` on the next line. If the
+        // alt sequence is shorter than `ref_start`, that slice must not
+        // panic ("start index out of range") -- it should return None, same
+        // as the existing ref-side guard.
+        let ref_translateable = b"CGTCGTCGTCGT"; // 12 bases, ref_start=3 is in-bounds
+        let alt_translateable = b"CC"; // only 2 bases -- shorter than ref_start (3)
+
+        let standard = CodonTable::standard();
+        let result =
+            hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 1, &standard);
+        assert_eq!(result, None);
+    }
 
     #[test]
     fn test_hgvsp_missense() {

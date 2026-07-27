@@ -3,6 +3,7 @@
 //! Each annotation field (e.g., gnomAD AF, ClinVar significance) has a type
 //! that determines how it's stored as a u32 integer and reconstructed for output.
 
+use crate::common::escape_json;
 use serde::{Deserialize, Serialize};
 
 /// How a field's values are stored internally.
@@ -176,7 +177,7 @@ pub fn format_value(field: &Field, stored: u32, strings: Option<&[String]>) -> S
             if let Some(strs) = strings {
                 let idx = stored as usize;
                 if idx < strs.len() {
-                    format!("\"{}\"", strs[idx])
+                    format!("\"{}\"", escape_json(&strs[idx]))
                 } else {
                     "null".into()
                 }
@@ -245,6 +246,28 @@ mod tests {
         assert_eq!(field.encode_float(f64::NAN), u32::MAX);
         assert_eq!(field.encode_float(f64::INFINITY), u32::MAX);
         assert_eq!(field.encode_float(f64::NEG_INFINITY), u32::MAX);
+    }
+
+    #[test]
+    fn test_categorical_format_value_escapes_json() {
+        // A Categorical field's string table can hold arbitrary free text
+        // (e.g. copied from an upstream annotation source); a value
+        // containing a quote or backslash must not break out of the emitted
+        // JSON string.
+        let field = Field {
+            field: "cat".into(), alias: "cat".into(), ftype: FieldType::Categorical,
+            multiplier: 1, zigzag: false, missing_value: u32::MAX,
+            missing_string: ".".into(), description: String::new(),
+        };
+        let strings = vec!["evil\"quote\\backslash".to_string()];
+        let json_fragment = format_value(&field, 0, Some(&strings));
+        let wrapped = format!("{{\"v\":{}}}", json_fragment);
+        let v: serde_json::Value =
+            serde_json::from_str(&wrapped).expect("Categorical value must be escaped JSON");
+        assert_eq!(
+            v.get("v").and_then(|x| x.as_str()),
+            Some("evil\"quote\\backslash")
+        );
     }
 
     #[test]
