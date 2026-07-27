@@ -5,7 +5,62 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+### Added
+
+- **fastvep-sa / CLI**: `sa-build --format osa2` builds the v2 `.osa2` format
+  for the numeric-payload sources — `--source gnomad`, `onekg` (`1000g`),
+  `topmed`, and `alphamissense`. The v2 format (chunked ZIP, u32 value arrays,
+  Var32 binary search) is smaller at genome scale and faster to query on the
+  sparse, scattered lookups a real VCF generates — `bench_v1_vs_v2` measures
+  v2 query throughput at ~3.8–4.5× v1 at 10M records on a strided workload,
+  with ~33% smaller files (v2 build is a one-time ~4× slower). The gnomAD
+  encoder reuses the v1 INFO field-name detection (v2/v3/v4/joint releases,
+  hyphen-separated locals); 1000G and TOPMed reuse their existing v1 parsers
+  through a generic `osa2_record_from_v1` bridge that re-encodes each record's
+  flat-object JSON into the parallel u32 layout. All v2 builds stream one chunk
+  at a time, so peak memory is bounded by the densest ~1 MB window rather than
+  the whole file, and v1/v2 output parity is verified by test.
+
+- **fastvep-sa / CLI**: new `--source alphamissense` builds AlphaMissense
+  pathogenicity predictions (Cheng et al. 2023; Zenodo 8208688) from the
+  genome-coordinate TSV releases into both `.osa` (v1) and `.osa2` (v2). Each
+  allele carries a pathogenicity score plus a three-level class
+  (`likely_benign` / `ambiguous` / `likely_pathogenic`) — a numeric-plus-small-
+  categorical payload that builds natively into v2 (one u32 score column plus a
+  u32 class-index column against a 3-entry string table), the first v2 source
+  to use categorical string tables. AlphaMissense is first-class in every
+  output: JSON (`alphaMissense`), tab, and VCF (`FV_ALPHAMISSENSE`, format
+  `ALLELE|PATHOGENICITY|CLASS`). The v1 JSON is built through the very same
+  `Field`/`format_value` code the v2 reader reconstructs with, so the two
+  formats emit byte-identical annotations (verified by test).
+
+- **fastvep-sa**: `bench_shapes` example measures v1 `.osa` vs v2 `.osa2`
+  on-disk size across the payload *shapes* fastVEP sources carry (numeric,
+  score+categorical, opaque id-string, array/blob). It answers "is v2 smaller
+  for everything?" empirically: **no, not universally** — the answer is shape-
+  and scale-dependent. At 2M records v2 is *larger* for numeric/score payloads
+  (1.07–1.12×, fixed per-chunk/ZIP overhead dominates) but already much smaller
+  for JSON-blob payloads (0.40×). At 10M records v2 is smaller or comparable
+  across *all* shapes: numeric 0.67×, score 0.93×, and the blob shapes
+  (dbSNP-/ClinVar-like) 0.30–0.34× — because v2 zstd-compresses a whole chunk's
+  JSON blobs together, exploiting cross-record redundancy v1's per-block scheme
+  can't. So v2 is a clear size win at genome scale, dramatically so for
+  blob-heavy sources; it is not a win for small inputs.
+
 ### Fixed
+
+- **fastvep-sa**: v2 (`.osa2`) reader re-opened the ZIP file and re-parsed the
+  entire central directory on *every* chunk load, making genome-scale queries
+  hundreds of times slower than v1. The archive is now parsed once at
+  `open()` and reused, restoring the format's intended performance.
+- **fastvep-sa**: v2 (`.osa2`) long variants (indels, ref+alt > 4 bases)
+  returned the wrong values or were unreadable. The writer keyed each
+  `LongVariant` to its input-order position while value columns held only
+  short variants in Var32-sorted order, and `Chunk::is_empty` ignored long
+  variants entirely (long-only chunks were skipped). Value columns now use a
+  combined short-then-long layout with each long variant's slot recorded, and
+  `is_empty` accounts for both. gnomAD is full of indels, so this is required
+  for correct v2 annotation.
 
 - **fastvep-web**: stored XSS via gene/transcript metadata (symbol, IDs,
   HGVS strings, supplementary-annotation values) rendered unescaped into

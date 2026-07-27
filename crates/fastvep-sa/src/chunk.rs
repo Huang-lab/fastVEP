@@ -29,13 +29,16 @@ impl Chunk {
         Self { var32s: Vec::new(), longs: Vec::new(), values: Vec::new(), json_blobs: None }
     }
 
-    /// Number of variants in this chunk.
+    /// Number of variants in this chunk (short + long).
     pub fn len(&self) -> usize {
-        self.var32s.len()
+        self.var32s.len() + self.longs.len()
     }
 
+    /// A chunk is empty only when it holds neither short nor long variants.
+    /// Long-only chunks (all indels) must not be treated as empty, or every
+    /// lookup against them would miss.
     pub fn is_empty(&self) -> bool {
-        self.var32s.is_empty()
+        self.var32s.is_empty() && self.longs.is_empty()
     }
 
     /// Look up a variant by Var32 key. Returns the index into value arrays.

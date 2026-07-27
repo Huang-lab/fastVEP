@@ -368,6 +368,8 @@ const MITOMAP_FIELDS: &[(&str, &str)] = &[("DISEASE", "disease"), ("STATUS", "st
 const SCORE_FIELDS: &[(&str, &str)] = &[("SCORE", "")];
 const SCORE_OBJECT_FIELDS: &[(&str, &str)] = &[("SCORE", "score")];
 const DBNSFP_FIELDS: &[(&str, &str)] = &[("SIFT", "sift"), ("POLYPHEN", "polyphen")];
+const ALPHAMISSENSE_FIELDS: &[(&str, &str)] =
+    &[("PATHOGENICITY", "amPathogenicity"), ("CLASS", "amClass")];
 const OMIM_FIELDS: &[(&str, &str)] = &[("MIM_NUMBER", "mimNumber"), ("PHENOTYPES", "phenotypes")];
 const GNOMAD_GENE_FIELDS: &[(&str, &str)] = &[
     ("PLI", "pLI"),
@@ -467,6 +469,13 @@ const VCF_PROJECTION_SPECS: &[VcfProjectionSpec] = &[
         info_id: "FV_DBNSFP",
         description: "fastVEP dbNSFP annotations. Format: ALLELE|SIFT|POLYPHEN",
         fields: DBNSFP_FIELDS,
+        kind: VcfProjectionKind::AlleleObject,
+    },
+    VcfProjectionSpec {
+        json_key: "alphaMissense",
+        info_id: "FV_ALPHAMISSENSE",
+        description: "fastVEP AlphaMissense annotations. Format: ALLELE|PATHOGENICITY|CLASS",
+        fields: ALPHAMISSENSE_FIELDS,
         kind: VcfProjectionKind::AlleleObject,
     },
     VcfProjectionSpec {

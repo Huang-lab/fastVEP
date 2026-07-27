@@ -29,6 +29,7 @@ input's other headers pass through unchanged.
 | REVEL             | `revel`             | `revel`           | `FV_REVEL`          | `FV_REVEL`          | Allele       |
 | PrimateAI         | `primateai`         | `primateAI`       | `FV_PRIMATEAI`      | `FV_PRIMATEAI`      | Allele       |
 | dbNSFP            | `dbnsfp`            | `dbnsfp`          | `FV_DBNSFP`         | `FV_DBNSFP`         | Allele       |
+| AlphaMissense     | `alphamissense`     | `alphaMissense`   | `FV_ALPHAMISSENSE`  | `FV_ALPHAMISSENSE`  | Allele       |
 | SpliceAI          | `spliceai`          | `spliceAI`        | `SpliceAI`          | `SpliceAI`          | Allele       |
 | OMIM / ClinGen GDV| `omim`              | `omim`            | `FV_OMIM`           | `FV_OMIM`           | Gene         |
 | gnomAD constraint | `gnomad_genes`      | `gnomad_genes`    | `FV_GNOMAD_GENE`    | `FV_GNOMAD_GENE`    | Gene         |
@@ -93,6 +94,7 @@ lead with the **gene symbol**.
 - `FV_REVEL`: `ALLELE|SCORE`
 - `FV_PRIMATEAI`: `ALLELE|SCORE`
 - `FV_DBNSFP`: `ALLELE|SIFT|POLYPHEN`
+- `FV_ALPHAMISSENSE`: `ALLELE|PATHOGENICITY|CLASS`
 - `SpliceAI`: `ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL`
 
 ### Gene-level

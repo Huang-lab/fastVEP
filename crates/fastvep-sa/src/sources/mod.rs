@@ -1,5 +1,6 @@
 //! Source-specific parsers for building annotation databases.
 
+pub mod alphamissense;
 pub mod clinvar;
 pub mod clinvar_protein;
 pub mod cosmic;
@@ -14,5 +15,4 @@ pub mod primateai;
 pub mod revel;
 pub mod scores;
 pub mod spliceai;
-pub mod gnomad_v2;
 pub mod topmed;

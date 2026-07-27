@@ -11,7 +11,7 @@ fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.
 - **Variant Consequence Prediction** — Classifies variants using 49 [Sequence Ontology](http://www.sequenceontology.org/) terms (missense, frameshift, splice donor, copy_number_change, transcript_ablation, etc.)
 - **Structural Variant Support** — Full SV pipeline: `<DEL>`, `<DUP>`, `<INV>`, `<CNV>`, `<BND>`, `<INS>`, `<STR>` with SV-specific consequence prediction
 - **Supplementary Annotations** — Direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, MitoMap via the native fastSA format (v1: zstd block compression with byte-budgeted block cache; v2: echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding, and LRU caching)
-- **Prediction Scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN conservation and pathogenicity scores; SIFT/PolyPhen via dbNSFP
+- **Prediction Scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN, AlphaMissense conservation and pathogenicity scores; SIFT/PolyPhen via dbNSFP
 - **Gene-Level Annotations** — OMIM phenotypes, gnomAD gene constraint (pLI, LOEUF), ClinGen gene-disease validity
 - **Filter Engine** — Expression-based filtering compatible with VEP's filter_vep syntax
 - **HGVS Nomenclature** — Generates HGVSg, HGVSc, and HGVSp notations with 3' normalization
@@ -89,6 +89,13 @@ fastvep sa-build --source clinvar --input clinvar.vcf.gz --output clinvar
 
 # Build gnomAD population frequency database
 fastvep sa-build --source gnomad --input gnomad.genomes.v4.vcf.bgz --output gnomad
+
+# ...or build gnomAD in the faster, smaller v2 format (writes gnomad.osa2)
+fastvep sa-build --source gnomad --format osa2 --input gnomad.genomes.v4.vcf.bgz --output gnomad
+
+# Build AlphaMissense pathogenicity predictions (v2 recommended; writes alphamissense.osa2)
+# Download AlphaMissense_hg38.tsv.gz from Zenodo record 8208688.
+fastvep sa-build --source alphamissense --format osa2 --input AlphaMissense_hg38.tsv.gz --output alphamissense
 
 # Build PhyloP conservation scores (see docs/ACMG_SETUP.md for how to
 # obtain hg38.phyloP100way.wigFix.gz — UCSC ships it as one file per
@@ -367,6 +374,7 @@ fastVEP supports direct integration with clinical and population databases throu
 | **SpliceAI** | Allele-specific | Splice site effect predictions (delta scores) | `--source spliceai` |
 | **PrimateAI** | Allele-specific | Primate-based pathogenicity | `--source primateai` |
 | **dbNSFP** | Allele-specific | SIFT/PolyPhen predictions | `--source dbnsfp` |
+| **AlphaMissense** | Allele-specific | Missense pathogenicity score + class | `--source alphamissense` |
 | **OMIM / ClinGen GDV** | Gene-level (`.oga`) | Disease-gene annotations driving PVS1, BS2, PM3, BP2 in ACMG | `--source omim` |
 | **gnomAD constraint** | Gene-level (`.oga`) | gnomAD constraint metrics (pLI, LOEUF) for PVS1, PP2, BP1 | `--source gnomad_genes` |
 | **ClinVar protein index** | Gene-level (`.oga`) | Pathogenic missense by protein position (PS1, PM1, PM5) | `--source clinvar_protein` |
@@ -449,6 +457,7 @@ objects will be heterogeneous.
 | `--assembly` | Genome assembly | `GRCh38` |
 | `--name` | Display + JSON-key name for `custom_*` sources | derived from input filename |
 | `--info-fields` | Comma-separated INFO keys to extract for `custom_vcf` | all INFO keys |
+| `--format` | On-disk format: `osa` (v1) or `osa2` (v2; supported for `--source gnomad`, `onekg`/`1000g`, `topmed`, and `alphamissense`). At genome scale v2 is smaller (~0.67× the size at 10M records for numeric payloads, and as low as ~0.30× for JSON-blob payloads) and faster to query on the sparse lookups a real VCF generates (~3.8–4.5× at 10M), at the cost of a one-time ~4× slower build. Not a win for small inputs, where fixed per-chunk overhead dominates. Writes `.osa2` instead of `.osa`/`.osa.idx`. | `osa` |
 
 ### `fastvep filter`
 

@@ -2510,6 +2510,17 @@ pub fn run_sa_build(
             is_array: false,
             is_positional: false,
         },
+        "alphamissense" => IndexHeader {
+            schema_version: fastvep_sa::common::SCHEMA_VERSION,
+            json_key: "alphaMissense".into(),
+            name: "AlphaMissense".into(),
+            version: "latest".into(),
+            description: format!("AlphaMissense pathogenicity predictions for {}", assembly),
+            assembly: assembly.into(),
+            match_by_allele: true,
+            is_array: false,
+            is_positional: false,
+        },
         "mitomap" => IndexHeader {
             schema_version: fastvep_sa::common::SCHEMA_VERSION,
             json_key: "mitomap".into(),
@@ -2522,7 +2533,7 @@ pub fn run_sa_build(
             is_positional: false,
         },
         _ => anyhow::bail!(
-            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
+            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, alphamissense, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
             source
         ),
     };
@@ -2555,6 +2566,12 @@ pub fn run_sa_build(
             return run_streaming_sa_build(
                 input, output, header, &chrom_map, &chrom_list, show_progress,
                 |r, m| fastvep_sa::sources::topmed::iter_topmed_vcf(r, m),
+            );
+        }
+        "alphamissense" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::alphamissense::iter_alphamissense_tsv(r, m),
             );
         }
         "phylop" => {
@@ -2626,6 +2643,226 @@ pub fn run_sa_build(
     );
 
     Ok(())
+}
+
+/// Build a v2 (`.osa2`) supplementary annotation database.
+///
+/// The v2 format (chunked ZIP, u32 value arrays, Var32 binary search) is
+/// faster to query and smaller on disk at genome scale than v1 `.osa`. It is
+/// currently wired for the numeric-payload sources whose output is a flat
+/// object of scalar values — gnomAD, 1000 Genomes, and TOPMed. Other sources
+/// continue to build v1 `.osa` via [`run_sa_build`].
+pub fn run_sa_build_v2(
+    source: &str,
+    input: &str,
+    output: &str,
+    assembly: &str,
+    show_progress: bool,
+) -> Result<()> {
+    use fastvep_sa::sources::{alphamissense, gnomad, onekg, topmed};
+
+    let (chrom_list, chrom_map) = standard_chrom_map(assembly);
+    let out_path = Path::new(output).with_extension("osa2");
+
+    match source {
+        // gnomAD has a dedicated streaming encoder that avoids the v1 JSON
+        // round-trip.
+        "gnomad" => {
+            eprintln!("Building gnomad .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records = gnomad::iter_gnomad_osa2(buf_reader, &chrom_map);
+            finish_osa2_build(
+                &out_path,
+                &gnomad::gnomad_osa2_metadata(assembly),
+                gnomad::gnomad_osa2_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // 1000 Genomes: the v1 parser buffers + sorts; bridge each record to
+        // the v2 layout and stream it out.
+        "onekg" | "1000g" => {
+            eprintln!("Building onekg .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let fields = onekg::onekg_osa2_fields();
+            // The bridge borrows the schema to re-encode each record; the
+            // writer takes ownership of it. Keep separate copies so both can
+            // live through the streaming loop.
+            let bridge_fields = fields.clone();
+            let mut v1 = onekg::parse_onekg_vcf(buf_reader, &chrom_map)?;
+            v1.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+            let records = bridge_v1_records(v1.into_iter().map(Ok), &chrom_list, &bridge_fields);
+            finish_osa2_build(
+                &out_path,
+                &onekg::onekg_osa2_metadata(assembly),
+                fields,
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // TOPMed has a streaming v1 iterator (the full freeze is ~450M
+        // records); bridge it record-by-record with bounded memory.
+        "topmed" => {
+            eprintln!("Building topmed .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let fields = topmed::topmed_osa2_fields();
+            let bridge_fields = fields.clone();
+            let records = bridge_v1_records(
+                topmed::iter_topmed_vcf(buf_reader, &chrom_map),
+                &chrom_list,
+                &bridge_fields,
+            );
+            finish_osa2_build(
+                &out_path,
+                &topmed::topmed_osa2_metadata(assembly),
+                fields,
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // AlphaMissense: numeric score + a 3-level categorical class. Streams
+        // straight into v2 with a dedicated encoder (the generic v1 bridge
+        // cannot encode categoricals) and a fixed 3-entry string table.
+        "alphamissense" => {
+            eprintln!("Building alphamissense .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records =
+                alphamissense::iter_alphamissense_osa2(buf_reader, &chrom_map, &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &alphamissense::alphamissense_osa2_metadata(assembly),
+                alphamissense::alphamissense_osa2_fields(),
+                &alphamissense::alphamissense_string_tables(),
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        _ => anyhow::bail!(
+            "--format osa2 is currently supported for --source gnomad, onekg (1000g), \
+             topmed, and alphamissense (got '{}'). Other sources build v1 .osa; omit \
+             --format or pass --format osa.",
+            source
+        ),
+    }
+}
+
+/// Adapt an iterator of v1 `AnnotationRecord`s into `Osa2Record`s by
+/// re-encoding each record's flat-object JSON against `fields`. Reuses the
+/// existing, well-tested v1 source parsers as the front end.
+fn bridge_v1_records<'a, I>(
+    records: I,
+    chrom_list: &'a [String],
+    fields: &'a [fastvep_sa::fields::Field],
+) -> impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>> + 'a
+where
+    I: Iterator<Item = Result<fastvep_sa::common::AnnotationRecord>> + 'a,
+{
+    records.map(move |r| {
+        let rec = r?;
+        let chrom = chrom_list
+            .get(rec.chrom_idx as usize)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("chrom_idx {} out of range", rec.chrom_idx))?;
+        fastvep_sa::writer_v2::osa2_record_from_v1(&rec, chrom, fields)
+    })
+}
+
+/// Open a (possibly gzipped) SA input and pair it with a byte-tracking
+/// progress meter, matching the v1 streaming builder's setup.
+fn open_sa_reader_with_meter(
+    input: &str,
+    show_progress: bool,
+) -> Result<(io::BufReader<Box<dyn io::Read>>, crate::progress::ProgressMeter)> {
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Arc;
+
+    let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+    let byte_counter = Arc::new(AtomicU64::new(0));
+    let reader = open_sa_input(input, Some(Arc::clone(&byte_counter)))?;
+    let buf_reader = io::BufReader::new(reader);
+    let meter = if show_progress && file_size > 0 {
+        crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
+    } else {
+        crate::progress::ProgressMeter::new(show_progress)
+    };
+    Ok((buf_reader, meter))
+}
+
+/// Stream `records` into `out_path` as a `.osa2` file, then report. Mirrors
+/// the v1 streaming builder's crash-safety contract: on any failure the
+/// partial `.osa2` is removed so no corrupt database is left behind.
+fn finish_osa2_build(
+    out_path: &Path,
+    metadata: &fastvep_sa::writer_v2::Osa2Metadata,
+    fields: Vec<fastvep_sa::fields::Field>,
+    string_tables: &[(usize, Vec<String>)],
+    records: impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>>,
+    mut meter: crate::progress::ProgressMeter,
+    input: &str,
+    assembly: &str,
+) -> Result<()> {
+    let n = match write_osa2_stream(out_path, metadata, fields, string_tables, records, &mut meter) {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = std::fs::remove_file(out_path);
+            return Err(e);
+        }
+    };
+    meter.finish();
+    if n == 0 {
+        eprintln!(
+            "Warning: 0 records parsed from {} — if the input is non-empty, none of its \
+             chromosome names matched assembly '{}'.",
+            input, assembly
+        );
+    }
+    eprintln!(
+        "Wrote: {} ({} records)",
+        out_path.display(),
+        crate::progress::fmt_count(n)
+    );
+    Ok(())
+}
+
+/// Core streaming loop: create the `.osa2` writer, push every record, finish.
+/// Returns the number of records written.
+fn write_osa2_stream(
+    out_path: &Path,
+    metadata: &fastvep_sa::writer_v2::Osa2Metadata,
+    fields: Vec<fastvep_sa::fields::Field>,
+    string_tables: &[(usize, Vec<String>)],
+    records: impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>>,
+    meter: &mut crate::progress::ProgressMeter,
+) -> Result<u64> {
+    use fastvep_sa::writer_v2::Osa2StreamWriter;
+
+    let out_file = std::fs::File::create(out_path)
+        .with_context(|| format!("Creating {}", out_path.display()))?;
+    let mut writer = Osa2StreamWriter::new(BufWriter::new(out_file), metadata, fields)?;
+    for (field_idx, table) in string_tables {
+        writer.set_string_table(*field_idx, table.clone());
+    }
+
+    let mut n = 0u64;
+    for record in records {
+        let record = record?;
+        meter.update();
+        writer.push(record)?;
+        n += 1;
+    }
+    writer.finish()?;
+    Ok(n)
 }
 
 /// Classify a `--source custom` input as either `custom_vcf` or

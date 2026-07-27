@@ -214,6 +214,13 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         info_fields: Vec<String>,
 
+        /// On-disk format: `osa` (v1, default) or `osa2` (v2). The v2 format
+        /// is faster to query and smaller at genome scale for numeric-payload
+        /// sources; supported for `--source gnomad`, `onekg` (`1000g`),
+        /// `topmed`, and `alphamissense`.
+        #[arg(long, default_value = "osa")]
+        format: String,
+
         /// Suppress periodic progress output
         #[arg(long, default_value_t = false)]
         no_progress: bool,
@@ -304,17 +311,27 @@ fn main() -> Result<()> {
             assembly,
             name,
             info_fields,
+            format,
             no_progress,
         } => {
-            pipeline::run_sa_build(
-                &source,
-                &input,
-                &output,
-                &assembly,
-                name.as_deref(),
-                &info_fields,
-                !no_progress,
-            )?;
+            match format.as_str() {
+                "osa" | "v1" => pipeline::run_sa_build(
+                    &source,
+                    &input,
+                    &output,
+                    &assembly,
+                    name.as_deref(),
+                    &info_fields,
+                    !no_progress,
+                )?,
+                "osa2" | "v2" => {
+                    pipeline::run_sa_build_v2(&source, &input, &output, &assembly, !no_progress)?
+                }
+                other => anyhow::bail!(
+                    "Unknown --format '{}': expected 'osa' (v1) or 'osa2' (v2)",
+                    other
+                ),
+            }
         }
         Commands::Filter {
             input,
