@@ -1,6 +1,6 @@
 use anyhow::Result;
 use fastvep_core::chrom_aliases;
-use fastvep_genome::Transcript;
+use fastvep_genome::{is_mitochondrial, wrap_position_for, Transcript, MT_LENGTH};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -158,6 +158,48 @@ impl TranscriptProvider for IndexedTranscriptProvider {
     }
 }
 
+/// Fetch a genomic region, wrapping around the origin for circular
+/// (mitochondrial) contigs when `end` extends past the contig's length.
+///
+/// A linear FASTA record for `MT`/`chrM` only has bases `1..=length`, so a
+/// variant whose reference allele runs past the last base (e.g. a 2bp allele
+/// starting at the human rCRS's last position, 16569) logically continues
+/// from position 1. Without this, `fetch` on the underlying reader either
+/// errors (mmap/.fai readers clamp `end` to `length` and would silently
+/// return a truncated, wrong-length slice) or simply omits the wrapped
+/// bases — see fastVEP issue #68.
+///
+/// Only mitochondrial contigs get this treatment; all other chromosomes (and
+/// any MT `end` that doesn't actually exceed the contig length) take the
+/// untouched fast path straight through to `fetch`.
+fn fetch_circular<F>(
+    chrom: &str,
+    start: u64,
+    end: u64,
+    contig_len: Option<u64>,
+    fetch: F,
+) -> Result<Vec<u8>>
+where
+    F: Fn(&str, u64, u64) -> Result<Vec<u8>>,
+{
+    if !is_mitochondrial(chrom) {
+        return fetch(chrom, start, end);
+    }
+    let length = contig_len.unwrap_or(MT_LENGTH);
+    if length == 0 || end <= length {
+        return fetch(chrom, start, end);
+    }
+
+    // The region wraps past the origin: take [start, length] then [1, wrapped_end].
+    let mut result = fetch(chrom, start, length)?;
+    let wrapped_end = wrap_position_for(end, length);
+    if wrapped_end > 0 {
+        let rest = fetch(chrom, 1, wrapped_end)?;
+        result.extend_from_slice(&rest);
+    }
+    Ok(result)
+}
+
 /// Sequence provider backed by a FASTA reader.
 pub struct FastaSequenceProvider {
     reader: crate::fasta::FastaReader,
@@ -171,7 +213,9 @@ impl FastaSequenceProvider {
 
 impl SequenceProvider for FastaSequenceProvider {
     fn fetch_sequence(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<u8>> {
-        self.reader.fetch(chrom, start, end)
+        fetch_circular(chrom, start, end, self.reader.sequence_length(chrom), |c, s, e| {
+            self.reader.fetch(c, s, e)
+        })
     }
 }
 
@@ -189,7 +233,9 @@ impl MmapFastaSequenceProvider {
 
 impl SequenceProvider for MmapFastaSequenceProvider {
     fn fetch_sequence(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<u8>> {
-        self.reader.fetch(chrom, start, end)
+        fetch_circular(chrom, start, end, self.reader.sequence_length(chrom), |c, s, e| {
+            self.reader.fetch(c, s, e)
+        })
     }
 }
 
@@ -467,5 +513,72 @@ mod tests {
         // Lowercase input is uppercased at load time
         let slice = provider.fetch_sequence_slice("chr2", 5, 8).unwrap();
         assert_eq!(slice, b"GGGG");
+    }
+
+    #[test]
+    fn test_mt_fetch_wraps_around_origin() {
+        // A short synthetic "MT" contig: 10 bases, so a query for [8, 12]
+        // should wrap and read positions 8,9,10 then 1,2 -> "HIJAB".
+        let fasta = ">MT\nABCDEFGHIJ\n";
+        let reader = crate::fasta::FastaReader::from_reader(fasta.as_bytes()).unwrap();
+        let provider = FastaSequenceProvider::new(reader);
+
+        let seq = provider.fetch_sequence("MT", 8, 12).unwrap();
+        assert_eq!(seq, b"HIJAB");
+
+        // A non-wrapping MT query behaves exactly like a normal fetch.
+        let seq = provider.fetch_sequence("MT", 1, 4).unwrap();
+        assert_eq!(seq, b"ABCD");
+    }
+
+    #[test]
+    fn test_mt_fetch_wraps_recognizes_chrm_alias() {
+        // Same as above but using the UCSC `chrM` alias for both the FASTA
+        // record and the query, to confirm is_mitochondrial + alias
+        // resolution compose correctly.
+        let fasta = ">chrM\nABCDEFGHIJ\n";
+        let reader = crate::fasta::FastaReader::from_reader(fasta.as_bytes()).unwrap();
+        let provider = FastaSequenceProvider::new(reader);
+
+        let seq = provider.fetch_sequence("MT", 9, 11).unwrap();
+        assert_eq!(seq, b"IJA");
+    }
+
+    #[test]
+    fn test_non_mt_chrom_is_never_wrapped() {
+        // A non-mitochondrial chromosome with `end` past its length must
+        // fail like a normal out-of-range fetch, not silently wrap.
+        let fasta = ">chr1\nACGT\n";
+        let reader = crate::fasta::FastaReader::from_reader(fasta.as_bytes()).unwrap();
+        let provider = FastaSequenceProvider::new(reader);
+        // fetch_slice-backed fetch clamps end to length rather than erroring;
+        // assert it returns the clamped (not wrapped) sequence.
+        let seq = provider.fetch_sequence("chr1", 1, 10).unwrap();
+        assert_eq!(seq, b"ACGT");
+    }
+
+    #[test]
+    fn test_mmap_mt_fetch_wraps_around_origin() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!(
+            "fastvep-cache-test-mt-wrap-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fasta_path = dir.join("mt.fa");
+        std::fs::write(&fasta_path, ">MT\nABCDEFGHIJ\n").unwrap();
+        let fai_path = dir.join("mt.fa.fai");
+        let mut fai = std::fs::File::create(&fai_path).unwrap();
+        // name, length, offset (after ">MT\n" = 4 bytes), line_bases, line_bytes
+        writeln!(fai, "MT\t10\t4\t10\t11").unwrap();
+
+        let reader = crate::fasta::MmapFastaReader::open(&fasta_path).unwrap();
+        let provider = MmapFastaSequenceProvider::new(reader);
+
+        let seq = provider.fetch_sequence("MT", 8, 12).unwrap();
+        assert_eq!(seq, b"HIJAB");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -88,14 +88,18 @@ pub fn hgvsp_inframe_deletion(
 ///   - Ala498 = first amino acid that changes (ref)
 ///   - Pro = new amino acid at that position
 ///   - Ter28 = new stop codon 28 positions downstream
+///
+/// `codon_table` lets the caller select the genetic code to translate with —
+/// pass the vertebrate mitochondrial table (NCBI table 2) for MT transcripts
+/// so AGA/AGG/ATA/TGA are read correctly instead of with the standard code.
 pub fn hgvsp_frameshift(
     protein_id: &str,
     ref_translateable: &[u8],
     alt_translateable: &[u8],
     affected_codon_start: usize, // 0-based codon index where the frameshift starts
+    codon_table: &CodonTable,
 ) -> Option<String> {
     let prefix = format!("{}:p.", protein_id);
-    let codon_table = CodonTable::standard();
 
     // Translate both sequences from the affected codon onwards
     let ref_start = affected_codon_start * 3;

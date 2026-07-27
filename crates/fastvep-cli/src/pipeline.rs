@@ -1095,11 +1095,18 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                                 }
 
                                                 let codon_start = cds_idx / 3;
+                                                let fs_codon_table =
+                                                    if fastvep_genome::is_mitochondrial(&tr.chromosome) {
+                                                        fastvep_genome::mitochondrial_codon_table()
+                                                    } else {
+                                                        fastvep_genome::CodonTable::standard()
+                                                    };
                                                 ann.hgvsp = fastvep_hgvs::hgvsp_frameshift(
                                                     &versioned_pid,
                                                     ref_from_cds,
                                                     &alt_from_cds,
                                                     codon_start,
+                                                    &fs_codon_table,
                                                 );
                                             }
                                         } else if aa.1 == "-"
