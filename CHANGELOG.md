@@ -7,6 +7,18 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ### Added
 
+- **CLI**: `sa-build --format` now defaults to `auto`, which builds the
+  smaller/faster v2 `.osa2` for the sources that support it and v1 `.osa` for
+  the rest — so users get the best format per source without having to know
+  which is which (previously the default was v1, and v2 was opt-in). `--format
+  osa`/`osa2` still force a specific format. The v2-capable source list lives
+  in one place (`OSA2_SUPPORTED_SOURCES` / `source_supports_osa2`) that feeds
+  both the `auto` dispatch and the `osa2` error message, and a new
+  "Choosing v1 vs v2" section in `docs/SUPPLEMENTARY_ANNOTATIONS.md` documents
+  when to override. The `--sa-dir` setup example now copies every SA extension
+  (`.osa2`/`.osa`/`.osi`/`.oga`) instead of only `.osa2`, so v1-only sources
+  (PhyloP, OMIM, …) aren't silently dropped.
+
 - **fastvep-sa / CLI**: `sa-build --format osa2` builds the v2 `.osa2` format
   for the numeric-payload sources — `--source gnomad`, `onekg` (`1000g`),
   `topmed`, and `alphamissense`. The v2 format (chunked ZIP, u32 value arrays,

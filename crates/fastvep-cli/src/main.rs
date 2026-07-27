@@ -214,11 +214,12 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         info_fields: Vec<String>,
 
-        /// On-disk format: `osa` (v1, default) or `osa2` (v2). The v2 format
-        /// is faster to query and smaller at genome scale; supported for
-        /// `--source gnomad`, `onekg` (`1000g`), `topmed`, `alphamissense`,
-        /// `dbsnp`, `cosmic`, and `clinvar`.
-        #[arg(long, default_value = "osa")]
+        /// On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2).
+        /// `auto` builds v2 for the sources that support it — smaller and
+        /// faster to query at genome scale — and v1 for the rest, so you get
+        /// the best format per source automatically. Pass `osa` to force v1
+        /// (e.g. for a faster one-time build) or `osa2` to force v2.
+        #[arg(long, default_value = "auto")]
         format: String,
 
         /// Suppress periodic progress output
@@ -314,24 +315,16 @@ fn main() -> Result<()> {
             format,
             no_progress,
         } => {
-            match format.as_str() {
-                "osa" | "v1" => pipeline::run_sa_build(
-                    &source,
-                    &input,
-                    &output,
-                    &assembly,
-                    name.as_deref(),
-                    &info_fields,
-                    !no_progress,
-                )?,
-                "osa2" | "v2" => {
-                    pipeline::run_sa_build_v2(&source, &input, &output, &assembly, !no_progress)?
-                }
-                other => anyhow::bail!(
-                    "Unknown --format '{}': expected 'osa' (v1) or 'osa2' (v2)",
-                    other
-                ),
-            }
+            pipeline::run_sa_build_format(
+                &format,
+                &source,
+                &input,
+                &output,
+                &assembly,
+                name.as_deref(),
+                &info_fields,
+                !no_progress,
+            )?
         }
         Commands::Filter {
             input,

@@ -2645,13 +2645,76 @@ pub fn run_sa_build(
     Ok(())
 }
 
+/// The allele-level sources that build to the v2 `.osa2` format. Single source
+/// of truth for the `--format auto` dispatch and the `--format osa2` error
+/// message — adding a source to v2 means adding it here plus a match arm in
+/// [`run_sa_build_v2`]. Includes the `1000g` alias of `onekg`.
+///
+/// Positional sources (PhyloP/GERP/DANN) are absent because the Var32 key
+/// scheme cannot represent an allele-less record; gene-level (`.oga`) and
+/// `custom_*` sources are absent because v2 is allele-level only.
+pub const OSA2_SUPPORTED_SOURCES: &[&str] = &[
+    "gnomad",
+    "onekg",
+    "1000g",
+    "topmed",
+    "alphamissense",
+    "dbsnp",
+    "cosmic",
+    "clinvar",
+];
+
+/// Whether `--format osa2` (and `--format auto`) can build this source to v2.
+pub fn source_supports_osa2(source: &str) -> bool {
+    OSA2_SUPPORTED_SOURCES.contains(&source)
+}
+
+/// Dispatch `sa-build` to the v1 or v2 builder according to `--format`:
+///
+/// * `auto` (the default) — build v2 for sources that support it (smaller and
+///   faster to query at genome scale), v1 for everything else. This gives users
+///   the higher-quality format per source without having to know which is which.
+/// * `osa` / `v1` — force v1 `.osa`.
+/// * `osa2` / `v2` — force v2 `.osa2` (errors if the source has no v2 encoder).
+pub fn run_sa_build_format(
+    format: &str,
+    source: &str,
+    input: &str,
+    output: &str,
+    assembly: &str,
+    name: Option<&str>,
+    info_fields: &[String],
+    show_progress: bool,
+) -> Result<()> {
+    match format {
+        "osa" | "v1" => {
+            run_sa_build(source, input, output, assembly, name, info_fields, show_progress)
+        }
+        "osa2" | "v2" => run_sa_build_v2(source, input, output, assembly, show_progress),
+        "auto" => {
+            if source_supports_osa2(source) {
+                run_sa_build_v2(source, input, output, assembly, show_progress)
+            } else {
+                run_sa_build(source, input, output, assembly, name, info_fields, show_progress)
+            }
+        }
+        other => anyhow::bail!(
+            "Unknown --format '{}': expected 'auto' (default; best format per source), \
+             'osa' (v1), or 'osa2' (v2)",
+            other
+        ),
+    }
+}
+
 /// Build a v2 (`.osa2`) supplementary annotation database.
 ///
 /// The v2 format (chunked ZIP, u32 value arrays, Var32 binary search) is
 /// faster to query and smaller on disk at genome scale than v1 `.osa`. It is
-/// currently wired for the numeric-payload sources whose output is a flat
-/// object of scalar values — gnomAD, 1000 Genomes, and TOPMed. Other sources
-/// continue to build v1 `.osa` via [`run_sa_build`].
+/// wired for the allele-level sources in [`OSA2_SUPPORTED_SOURCES`]: numeric
+/// payloads (gnomAD, 1000 Genomes, TOPMed, AlphaMissense) encode into parallel
+/// u32 columns, while opaque string/array payloads (dbSNP, COSMIC, ClinVar)
+/// are stored as whole-record JSON blobs. Other sources continue to build v1
+/// `.osa` via [`run_sa_build`].
 pub fn run_sa_build_v2(
     source: &str,
     input: &str,
@@ -2805,9 +2868,10 @@ pub fn run_sa_build_v2(
             )
         }
         _ => anyhow::bail!(
-            "--format osa2 is currently supported for --source gnomad, onekg (1000g), \
-             topmed, alphamissense, dbsnp, cosmic, and clinvar (got '{}'). Other sources \
-             build v1 .osa; omit --format or pass --format osa.",
+            "--format osa2 is currently supported for --source {} (got '{}'). Other \
+             sources build v1 .osa; use --format auto (the default) to pick the best \
+             format per source, or --format osa to force v1.",
+            OSA2_SUPPORTED_SOURCES.join(", "),
             source
         ),
     }

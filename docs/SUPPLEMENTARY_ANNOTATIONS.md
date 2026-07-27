@@ -68,6 +68,36 @@ A directory passed to `--sa-dir` is scanned for any of the four
 extensions; mismatched files (e.g. a `.tsv` left in place) are silently
 skipped.
 
+## Choosing v1 vs v2 (`--format`)
+
+Allele-level sources can build to either the v1 `.osa` or v2 `.osa2`
+container. **You normally don't have to choose:** `sa-build --format` defaults
+to `auto`, which builds v2 for the sources that support it and v1 for the rest.
+The annotate side loads either transparently from `--sa-dir`, so downstream
+usage is identical.
+
+Rule of thumb:
+
+- **`auto` (default)** — recommended. Gives the best format per source with no
+  decision required.
+- **`osa` (force v1)** — use for a faster one-time build, or when a downstream
+  tool specifically expects the `.osa`/`.osa.idx` file pair.
+- **`osa2` (force v2)** — use to build v2 for a source that supports it even if
+  the default ever changes; errors out for sources with no v2 encoder.
+
+Why v2 is the higher-quality default where available: at genome scale it is
+**smaller on disk** (≈0.67× for numeric payloads, as low as ≈0.30× for the
+JSON-blob sources) and **faster to query** on the sparse, scattered lookups a
+real VCF produces (≈3.8–4.5× at 10M records). The trade-off is a one-time
+build that is ≈4× slower; v2 is also not a size win for very small inputs,
+where its fixed per-chunk overhead dominates. Output is byte-identical between
+the two formats.
+
+Sources with a v2 encoder today: `gnomad`, `onekg` (`1000g`), `topmed`,
+`alphamissense`, `dbsnp`, `cosmic`, `clinvar`. The positional scores
+(`phylop`, `gerp`, `dann`), gene-level (`.oga`) sources, and `custom_*`
+inputs build v1 `.osa`/`.osi`/`.oga` regardless of `--format`.
+
 ## Pipe formats
 
 Each value is a pipe-delimited string. Multiple values for the same record

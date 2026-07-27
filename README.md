@@ -84,18 +84,18 @@ fastvep annotate -i tests/test.vcf --gff3 tests/test.gff3 --hgvs --output-format
 ### 4. Build supplementary annotation databases
 
 ```bash
-# Build ClinVar annotation database
+# Supported sources build the smaller, faster v2 `.osa2` format automatically
+# (`--format auto` is the default); pass `--format osa` to force v1 `.osa`.
+
+# Build ClinVar annotation database (writes clinvar.osa2)
 fastvep sa-build --source clinvar --input clinvar.vcf.gz --output clinvar
 
-# Build gnomAD population frequency database
+# Build gnomAD population frequency database (writes gnomad.osa2)
 fastvep sa-build --source gnomad --input gnomad.genomes.v4.vcf.bgz --output gnomad
 
-# ...or build gnomAD in the faster, smaller v2 format (writes gnomad.osa2)
-fastvep sa-build --source gnomad --format osa2 --input gnomad.genomes.v4.vcf.bgz --output gnomad
-
-# Build AlphaMissense pathogenicity predictions (v2 recommended; writes alphamissense.osa2)
+# Build AlphaMissense pathogenicity predictions (writes alphamissense.osa2).
 # Download AlphaMissense_hg38.tsv.gz from Zenodo record 8208688.
-fastvep sa-build --source alphamissense --format osa2 --input AlphaMissense_hg38.tsv.gz --output alphamissense
+fastvep sa-build --source alphamissense --input AlphaMissense_hg38.tsv.gz --output alphamissense
 
 # Build PhyloP conservation scores (see docs/ACMG_SETUP.md for how to
 # obtain hg38.phyloP100way.wigFix.gz — UCSC ships it as one file per
@@ -264,7 +264,10 @@ mkdir -p genomes/human_grch38/sa genomes/mouse_grcm39 genomes/zebrafish
 # Human: GFF3 + FASTA + SA databases
 cp data/Homo_sapiens.GRCh38.115.gff3 genomes/human_grch38/
 cp data/Homo_sapiens.GRCh38.dna.primary_assembly.fa* genomes/human_grch38/
-cp sa_databases/*.osa2 genomes/human_grch38/sa/   # ClinVar, gnomAD, etc.
+# Copy every supplementary database, whichever format it built to
+# (.osa2/.osa allele-level, .osi interval, .oga gene-level).
+cp sa_databases/*.osa2 sa_databases/*.osa sa_databases/*.osi sa_databases/*.oga \
+   genomes/human_grch38/sa/ 2>/dev/null   # ClinVar, gnomAD, PhyloP, OMIM, etc.
 
 # Mouse
 wget -O- https://ftp.ensembl.org/pub/release-115/gff3/mus_musculus/Mus_musculus.GRCm39.115.gff3.gz | gunzip > genomes/mouse_grcm39/Mus_musculus.GRCm39.115.gff3
@@ -457,7 +460,7 @@ objects will be heterogeneous.
 | `--assembly` | Genome assembly | `GRCh38` |
 | `--name` | Display + JSON-key name for `custom_*` sources | derived from input filename |
 | `--info-fields` | Comma-separated INFO keys to extract for `custom_vcf` | all INFO keys |
-| `--format` | On-disk format: `osa` (v1) or `osa2` (v2; supported for `--source gnomad`, `onekg`/`1000g`, `topmed`, `alphamissense`, `dbsnp`, `cosmic`, and `clinvar`). At genome scale v2 is smaller (~0.67× the size at 10M records for numeric payloads, and as low as ~0.30× for JSON-blob payloads such as dbSNP) and faster to query on the sparse lookups a real VCF generates (~3.8–4.5× at 10M), at the cost of a one-time ~4× slower build. Not a win for small inputs, where fixed per-chunk overhead dominates. Writes `.osa2` instead of `.osa`/`.osa.idx`. | `osa` |
+| `--format` | On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2). `auto` builds the smaller, faster v2 `.osa2` for the sources that support it and v1 `.osa` for the rest — the best format per source, no need to choose. See [Choosing v1 vs v2](docs/SUPPLEMENTARY_ANNOTATIONS.md#choosing-v1-vs-v2---format) for when to override. | `auto` |
 
 ### `fastvep filter`
 
