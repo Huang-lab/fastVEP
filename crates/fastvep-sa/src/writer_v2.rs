@@ -371,6 +371,47 @@ impl<W: Write + Seek> Osa2StreamWriter<W> {
     }
 }
 
+/// Field schema for a source stored as one opaque whole-record JSON blob per
+/// variant, with no decomposed value columns.
+///
+/// Used for the string/array payloads (ClinVar, dbSNP, COSMIC) that don't fit
+/// the parallel u32 layout — high-cardinality ID strings and nested arrays —
+/// but still benefit substantially from v2's chunk-level zstd of the blob
+/// column (it compresses a whole chunk's JSON records together, exploiting
+/// cross-record redundancy the v1 per-block scheme can't). The single field's
+/// **empty alias** is the signal to [`crate::chunk::Chunk::reconstruct_json`]
+/// that the stored blob is the complete record object and must be emitted
+/// verbatim rather than nested under a key — so v2 output is byte-identical to
+/// the v1 `.osa` this record came from.
+pub fn raw_json_blob_fields() -> Vec<Field> {
+    vec![Field {
+        field: String::new(),
+        alias: String::new(),
+        ftype: FieldType::JsonBlob,
+        multiplier: 1,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: "Whole-record JSON blob".into(),
+    }]
+}
+
+/// Bridge a v1 [`AnnotationRecord`] into a whole-record-blob [`Osa2Record`]:
+/// the entire v1 JSON string is stored as the blob (paired with
+/// [`raw_json_blob_fields`]), so the v2 reader returns exactly the bytes the v1
+/// reader would have. Reuses the existing, well-tested v1 parsers wholesale for
+/// sources whose payload is opaque to the numeric u32 encoding.
+pub fn osa2_raw_blob_from_v1(record: &AnnotationRecord, chrom: String) -> Osa2Record {
+    Osa2Record {
+        chrom,
+        position: record.position,
+        ref_allele: record.ref_allele.as_bytes().to_vec(),
+        alt_allele: record.alt_allele.as_bytes().to_vec(),
+        values: Vec::new(),
+        json_blob: Some(record.json.clone()),
+    }
+}
+
 /// Build an [`Osa2Record`] from a v1 [`AnnotationRecord`] whose `json` is a
 /// flat object of scalar values keyed by field alias.
 ///

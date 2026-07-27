@@ -215,9 +215,9 @@ enum Commands {
         info_fields: Vec<String>,
 
         /// On-disk format: `osa` (v1, default) or `osa2` (v2). The v2 format
-        /// is faster to query and smaller at genome scale for numeric-payload
-        /// sources; supported for `--source gnomad`, `onekg` (`1000g`),
-        /// `topmed`, and `alphamissense`.
+        /// is faster to query and smaller at genome scale; supported for
+        /// `--source gnomad`, `onekg` (`1000g`), `topmed`, `alphamissense`,
+        /// and `dbsnp`.
         #[arg(long, default_value = "osa")]
         format: String,
 

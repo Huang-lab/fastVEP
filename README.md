@@ -457,7 +457,7 @@ objects will be heterogeneous.
 | `--assembly` | Genome assembly | `GRCh38` |
 | `--name` | Display + JSON-key name for `custom_*` sources | derived from input filename |
 | `--info-fields` | Comma-separated INFO keys to extract for `custom_vcf` | all INFO keys |
-| `--format` | On-disk format: `osa` (v1) or `osa2` (v2; supported for `--source gnomad`, `onekg`/`1000g`, `topmed`, and `alphamissense`). At genome scale v2 is smaller (~0.67× the size at 10M records for numeric payloads, and as low as ~0.30× for JSON-blob payloads) and faster to query on the sparse lookups a real VCF generates (~3.8–4.5× at 10M), at the cost of a one-time ~4× slower build. Not a win for small inputs, where fixed per-chunk overhead dominates. Writes `.osa2` instead of `.osa`/`.osa.idx`. | `osa` |
+| `--format` | On-disk format: `osa` (v1) or `osa2` (v2; supported for `--source gnomad`, `onekg`/`1000g`, `topmed`, `alphamissense`, and `dbsnp`). At genome scale v2 is smaller (~0.67× the size at 10M records for numeric payloads, and as low as ~0.30× for JSON-blob payloads such as dbSNP) and faster to query on the sparse lookups a real VCF generates (~3.8–4.5× at 10M), at the cost of a one-time ~4× slower build. Not a win for small inputs, where fixed per-chunk overhead dominates. Writes `.osa2` instead of `.osa`/`.osa.idx`. | `osa` |
 
 ### `fastvep filter`
 

@@ -34,6 +34,16 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
   `Field`/`format_value` code the v2 reader reconstructs with, so the two
   formats emit byte-identical annotations (verified by test).
 
+- **fastvep-sa / CLI**: `--format osa2` now also supports the string/array
+  sources that don't fit the numeric u32 layout, starting with `--source
+  dbsnp`. Their whole-record JSON is stored as one opaque blob per variant
+  (`raw_json_blob_fields` — a single JsonBlob field with an empty alias that
+  the reader emits verbatim), so v2 output is byte-identical to v1 while v2's
+  chunk-level zstd of the blob column shrinks the database sharply (~0.30× at
+  genome scale per `bench_shapes`). dbSNP streams through the existing v1
+  parser via a `bridge_v1_raw_blobs` adapter; v1/v2 output parity is verified
+  by test.
+
 - **fastvep-sa**: `bench_shapes` example measures v1 `.osa` vs v2 `.osa2`
   on-disk size across the payload *shapes* fastVEP sources carry (numeric,
   score+categorical, opaque id-string, array/blob). It answers "is v2 smaller

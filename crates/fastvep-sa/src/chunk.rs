@@ -80,6 +80,14 @@ impl Chunk {
             if field.ftype == FieldType::JsonBlob {
                 if let Some(ref blobs) = self.json_blobs {
                     if idx < blobs.len() && !blobs[idx].is_empty() {
+                        // An empty alias marks a whole-record blob (see
+                        // `writer_v2::raw_json_blob_fields`): the stored blob is
+                        // the complete record object, so emit it verbatim rather
+                        // than nesting it under a key. Such sources carry this
+                        // as their sole field, so returning here is correct.
+                        if field.alias.is_empty() {
+                            return blobs[idx].clone();
+                        }
                         parts.push(format!("\"{}\":{}", field.alias, blobs[idx]));
                     }
                 }
@@ -216,6 +224,25 @@ mod tests {
         assert!(json.contains("\"af\":"), "missing af in: {}", json);
         assert!(json.contains("\"ac\":42"), "missing ac in: {}", json);
         assert!(json.contains("\"blob\":{\"k\":1}"), "missing blob in: {}", json);
+    }
+
+    #[test]
+    fn test_chunk_reconstruct_whole_record_blob_verbatim() {
+        // A single JsonBlob field with an empty alias means the stored blob is
+        // the complete record object; reconstruct_json must return it verbatim
+        // (not nested under a key), so v2 reproduces the v1 JSON exactly.
+        let fields = vec![Field {
+            field: String::new(), alias: String::new(), ftype: FieldType::JsonBlob,
+            multiplier: 1, zigzag: false, missing_value: u32::MAX,
+            missing_string: ".".into(), description: String::new(),
+        }];
+        let mut chunk = Chunk::empty();
+        chunk.var32s = vec![var32::encode(100, b"A", b"G").unwrap()];
+        let blob = r#"{"significance":["Pathogenic"],"reviewStatus":"criteria_provided"}"#;
+        chunk.json_blobs = Some(vec![blob.to_string()]);
+
+        let json = chunk.reconstruct_json(0, &fields, &[]);
+        assert_eq!(json, blob, "whole-record blob must round-trip verbatim");
     }
 
     #[test]

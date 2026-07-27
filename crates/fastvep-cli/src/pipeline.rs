@@ -2659,7 +2659,7 @@ pub fn run_sa_build_v2(
     assembly: &str,
     show_progress: bool,
 ) -> Result<()> {
-    use fastvep_sa::sources::{alphamissense, gnomad, onekg, topmed};
+    use fastvep_sa::sources::{alphamissense, dbsnp, gnomad, onekg, topmed};
 
     let (chrom_list, chrom_map) = standard_chrom_map(assembly);
     let out_path = Path::new(output).with_extension("osa2");
@@ -2748,13 +2748,52 @@ pub fn run_sa_build_v2(
                 assembly,
             )
         }
+        // dbSNP: whole-record JSON blob per variant (RS ID + optional MAF).
+        // Streams straight through (the full NCBI release is ~800M records).
+        "dbsnp" => {
+            eprintln!("Building dbsnp .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records =
+                bridge_v1_raw_blobs(dbsnp::iter_dbsnp_vcf(buf_reader, &chrom_map), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &dbsnp::dbsnp_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
         _ => anyhow::bail!(
             "--format osa2 is currently supported for --source gnomad, onekg (1000g), \
-             topmed, and alphamissense (got '{}'). Other sources build v1 .osa; omit \
-             --format or pass --format osa.",
+             topmed, alphamissense, and dbsnp (got '{}'). Other sources build v1 .osa; \
+             omit --format or pass --format osa.",
             source
         ),
     }
+}
+
+/// Adapt an iterator of v1 `AnnotationRecord`s into whole-record-blob
+/// `Osa2Record`s: each record's entire JSON is stored as the blob, so the v2
+/// reader returns exactly the v1 bytes. Used for string/array payloads
+/// (dbSNP, COSMIC, ClinVar) that don't decompose into numeric u32 columns.
+fn bridge_v1_raw_blobs<'a, I>(
+    records: I,
+    chrom_list: &'a [String],
+) -> impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>> + 'a
+where
+    I: Iterator<Item = Result<fastvep_sa::common::AnnotationRecord>> + 'a,
+{
+    records.map(move |r| {
+        let rec = r?;
+        let chrom = chrom_list
+            .get(rec.chrom_idx as usize)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("chrom_idx {} out of range", rec.chrom_idx))?;
+        Ok(fastvep_sa::writer_v2::osa2_raw_blob_from_v1(&rec, chrom))
+    })
 }
 
 /// Adapt an iterator of v1 `AnnotationRecord`s into `Osa2Record`s by
