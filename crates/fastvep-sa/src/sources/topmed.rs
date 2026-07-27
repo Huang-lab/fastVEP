@@ -81,10 +81,15 @@ impl<R: BufRead> Iterator for TopmedRecordIter<'_, R> {
                 if let Some(af) = all_afs.get(i).and_then(|s| s.parse::<f64>().ok()) {
                     parts.push(format!("\"allAf\":{:.6e}", af));
                 }
-                if let Some(ac) = all_acs.get(i) {
+                // AC/AN are written unquoted, so each must be a validated
+                // non-negative integer — raw INFO-field text would otherwise
+                // land in the JSON as a bare, unquoted token and break every
+                // downstream serde_json::from_str on this record. Mirrors
+                // the CNT validation in sources/cosmic.rs.
+                if let Some(ac) = all_acs.get(i).and_then(|s| s.parse::<u64>().ok()) {
                     parts.push(format!("\"allAc\":{}", ac));
                 }
-                if let Some(an) = info_map.get("AN") {
+                if let Some(an) = info_map.get("AN").and_then(|s| s.parse::<u64>().ok()) {
                     parts.push(format!("\"allAn\":{}", an));
                 }
                 if parts.is_empty() {
@@ -150,5 +155,21 @@ mod tests {
         let recs = parse_topmed_vcf(vcf.as_bytes(), &m).unwrap();
         assert_eq!(recs.len(), 1);
         assert!(recs[0].json.contains("\"allAf\":"));
+    }
+
+    #[test]
+    fn test_garbage_ac_an_omitted_not_emitted_unescaped() {
+        // AC/AN are spliced into the JSON unquoted, so malformed upstream
+        // text must be dropped rather than emitted as a bare token that
+        // would break serde_json::from_str on the whole record.
+        let vcf = "#h\nchr1\t100\t.\tA\tG\t.\t.\tAF=0.05;AC=garbage;AN=not_a_number\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".into(), 0u16);
+        let recs = parse_topmed_vcf(vcf.as_bytes(), &m).unwrap();
+        assert_eq!(recs.len(), 1);
+        assert!(!recs[0].json.contains("allAc"));
+        assert!(!recs[0].json.contains("allAn"));
+        let v: serde_json::Value = serde_json::from_str(&recs[0].json).unwrap();
+        assert!(v.get("allAf").is_some());
     }
 }

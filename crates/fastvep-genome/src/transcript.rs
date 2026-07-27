@@ -166,8 +166,15 @@ impl Transcript {
                 let translateable = format!("{}{}", padding, raw_translateable);
                 self.translateable_seq = Some(translateable.to_string());
 
-                // Translate to peptide
-                let codon_table = CodonTable::standard();
+                // Translate to peptide. Mitochondrial transcripts use the
+                // vertebrate mitochondrial genetic code (NCBI table 2) —
+                // AGA/AGG are stop codons, ATA is Met, and TGA is Trp there,
+                // unlike the standard nuclear table.
+                let codon_table = if crate::mitochondrial::is_mitochondrial(&self.chromosome) {
+                    crate::mitochondrial::mitochondrial_codon_table()
+                } else {
+                    CodonTable::standard()
+                };
                 let peptide_bytes = codon_table.translate_seq(translateable.as_bytes());
                 self.peptide = Some(String::from_utf8_lossy(&peptide_bytes).to_string());
             }

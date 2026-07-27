@@ -229,11 +229,19 @@ pub fn parse_fai(contents: &str) -> Result<Vec<FaiEntry>> {
         if fields.len() < 5 {
             continue;
         }
+        let line_bases: u64 = fields[3].parse()?;
+        // `line_bases` is used as a divisor wherever this entry is looked up
+        // (e.g. `pos / entry.line_bases`). A corrupted .fai with
+        // `line_bases=0` would cause an integer-division panic there; skip
+        // the entry here instead, same as any other malformed line above.
+        if line_bases == 0 {
+            continue;
+        }
         entries.push(FaiEntry {
             name: fields[0].to_string(),
             length: fields[1].parse()?,
             offset: fields[2].parse()?,
-            line_bases: fields[3].parse()?,
+            line_bases,
             line_bytes: fields[4].parse()?,
         });
     }
@@ -342,6 +350,19 @@ mod tests {
         assert_eq!(entries[0].name, "chr1");
         assert_eq!(entries[0].length, 248956422);
         assert_eq!(entries[1].name, "chr2");
+    }
+
+    #[test]
+    fn test_parse_fai_skips_zero_line_bases() {
+        // Regression: `line_bases` is used as a divisor everywhere a FaiEntry
+        // is looked up (`pos / entry.line_bases`). A corrupted .fai with
+        // line_bases=0 must not be turned into a usable entry -- it must be
+        // skipped, same as any other malformed line -- otherwise a later
+        // fetch against it divides by zero and panics.
+        let fai = "chr1\t248956422\t6\t0\t71\nchr2\t242193529\t252513167\t70\t71\n";
+        let entries = parse_fai(fai).unwrap();
+        assert_eq!(entries.len(), 1, "the line_bases=0 entry must be skipped");
+        assert_eq!(entries[0].name, "chr2");
     }
 
     #[test]

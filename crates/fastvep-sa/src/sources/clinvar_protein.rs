@@ -336,7 +336,7 @@ fn parse_three_letter_protein(s: &str) -> Option<(u64, String, String)> {
     if s.len() < 4 {
         return None;
     }
-    let ref_three = &s[..3];
+    let ref_three = s.get(..3)?;
     let ref_aa = aa_map.get(ref_three)?;
 
     // Extract position digits
@@ -349,7 +349,7 @@ fn parse_three_letter_protein(s: &str) -> Option<(u64, String, String)> {
     if after_digits.len() < 3 {
         return None;
     }
-    let alt_three = &after_digits[..3];
+    let alt_three = after_digits.get(..3)?;
     let alt_aa = aa_map.get(alt_three)?;
 
     // Skip stop codon/terminator variants (not missense)
@@ -403,6 +403,26 @@ mod tests {
     fn test_parse_three_letter_protein() {
         let result = parse_three_letter_protein("Cys315Met").unwrap();
         assert_eq!(result, (315, "C".to_string(), "M".to_string()));
+    }
+
+    #[test]
+    fn test_parse_three_letter_protein_multibyte_ref_no_panic() {
+        // A multi-byte UTF-8 character straddling byte offset 3 in untrusted
+        // ClinVar free text must not panic on the ref-AA slice ("byte index
+        // is not a char boundary") — it should just fail to parse.
+        // "C" (1 byte) + "€" (3 bytes, occupying byte offsets 1..4) + "s315Met":
+        // byte offset 3 lands inside the € character, not on a boundary.
+        let s = "C\u{20AC}s315Met";
+        assert!(s.len() >= 4);
+        assert!(parse_three_letter_protein(s).is_none());
+    }
+
+    #[test]
+    fn test_parse_three_letter_protein_multibyte_alt_no_panic() {
+        // Same hazard on the alt-AA slice: "Cys315" + "M€t" puts a multi-byte
+        // character straddling byte offset 3 of `after_digits`.
+        let s = "Cys315M\u{20AC}t";
+        assert!(parse_three_letter_protein(s).is_none());
     }
 
     #[test]

@@ -1067,8 +1067,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                             if let (Some(ref spliced), Some(coding_start), Some(cds_s)) =
                                                 (&tr.spliced_seq, tr.cdna_coding_start, ac.cds_start)
                                             {
-                                                // Extract from CDS start to end of spliced seq (includes 3'UTR)
+                                                // Extract from CDS start to end of spliced seq (includes 3'UTR).
+                                                // Guard against malformed/truncated GFF3-derived transcript data
+                                                // where `coding_start` is inconsistent with the actual spliced
+                                                // sequence length — skip HGVSp generation for this case rather
+                                                // than panicking on an out-of-bounds slice.
                                                 let coding_start_idx = (coding_start - 1) as usize;
+                                                if coding_start >= 1 && coding_start_idx <= spliced.len() {
                                                 let ref_from_cds = &spliced.as_bytes()[coding_start_idx..];
                                                 let cds_idx = (cds_s - 1) as usize;
                                                 let mut alt_from_cds = ref_from_cds.to_vec();
@@ -1095,12 +1100,20 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                                 }
 
                                                 let codon_start = cds_idx / 3;
+                                                let fs_codon_table =
+                                                    if fastvep_genome::is_mitochondrial(&tr.chromosome) {
+                                                        fastvep_genome::mitochondrial_codon_table()
+                                                    } else {
+                                                        fastvep_genome::CodonTable::standard()
+                                                    };
                                                 ann.hgvsp = fastvep_hgvs::hgvsp_frameshift(
                                                     &versioned_pid,
                                                     ref_from_cds,
                                                     &alt_from_cds,
                                                     codon_start,
+                                                    &fs_codon_table,
                                                 );
+                                                }
                                             }
                                         } else if aa.1 == "-"
                                             || ac.consequences.contains(&Consequence::InframeDeletion)
@@ -1821,6 +1834,7 @@ pub fn run_filter(input: &str, output_path: &str, filter_expr: &str) -> Result<(
     let mut csq_fields: Vec<String> = Vec::new();
     let mut kept = 0u64;
     let mut total = 0u64;
+    let mut malformed = 0u64;
 
     for line in reader.lines() {
         let line = line?;
@@ -1849,6 +1863,11 @@ pub fn run_filter(input: &str, output_path: &str, filter_expr: &str) -> Result<(
         // Parse VCF data line
         let fields: Vec<&str> = line.split('\t').collect();
         if fields.len() < 8 {
+            malformed += 1;
+            eprintln!(
+                "[filter] skipping malformed line {} (fewer than 8 tab-separated fields): {}",
+                total, line
+            );
             continue;
         }
 
@@ -1902,6 +1921,12 @@ pub fn run_filter(input: &str, output_path: &str, filter_expr: &str) -> Result<(
         "[filter] {} of {} variants passed filter: {}",
         kept, total, filter_expr
     );
+    if malformed > 0 {
+        eprintln!(
+            "[filter] {} of {} lines were skipped as malformed (fewer than 8 tab-separated fields)",
+            malformed, total
+        );
+    }
 
     Ok(())
 }
@@ -3344,5 +3369,61 @@ mod custom_source_tests {
         let msg = format!("{}", err);
         assert!(msg.contains("custom_vcf"), "error message must mention custom_vcf: {}", msg);
         assert!(msg.contains("custom_bed"), "error message must mention custom_bed: {}", msg);
+    }
+
+    #[test]
+    fn run_filter_still_processes_well_formed_lines_when_malformed_lines_present() {
+        // Regression: lines with fewer than 8 tab-separated fields were
+        // silently `continue`d with no diagnostic even though they were
+        // already counted toward `total`. This doesn't change the filtering
+        // behavior (malformed lines still can't match), but verifies that
+        // well-formed lines around a malformed one are still processed
+        // correctly and the function doesn't error out.
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let input_path = dir.path().join("in.vcf");
+        let mut f = std::fs::File::create(&input_path).unwrap();
+        writeln!(f, "##fileformat=VCFv4.2").unwrap();
+        writeln!(
+            f,
+            "##INFO=<ID=CSQ,Number=.,Type=String,Description=\"Consequence annotations. Format: Consequence|IMPACT\">"
+        )
+        .unwrap();
+        writeln!(f, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO").unwrap();
+        // Well-formed, matches the filter.
+        writeln!(f, "1\t100\t.\tA\tG\t.\tPASS\tCSQ=missense_variant|MODERATE").unwrap();
+        // Malformed: fewer than 8 tab-separated fields.
+        writeln!(f, "1\t200\t.\tC\tT").unwrap();
+        // Well-formed, matches the filter.
+        writeln!(f, "1\t300\t.\tG\tA\t.\tPASS\tCSQ=missense_variant|MODERATE").unwrap();
+        drop(f);
+
+        let output_path = dir.path().join("out.vcf");
+        run_filter(
+            input_path.to_str().unwrap(),
+            output_path.to_str().unwrap(),
+            "Consequence is missense_variant",
+        )
+        .expect("run_filter should not error on a malformed line");
+
+        let out = std::fs::read_to_string(&output_path).unwrap();
+        // Both well-formed matching lines pass through; the malformed line
+        // is absent from the output (it can't match) but doesn't crash the
+        // run or swallow its neighbors.
+        assert!(
+            out.contains("1\t100\t.\tA\tG"),
+            "first well-formed line should pass:\n{}",
+            out
+        );
+        assert!(
+            out.contains("1\t300\t.\tG\tA"),
+            "second well-formed line should pass:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("1\t200\t.\tC\tT"),
+            "malformed line must not appear in output:\n{}",
+            out
+        );
     }
 }

@@ -256,6 +256,14 @@ pub fn read_u32_array(data: &[u8]) -> Result<Vec<u32>> {
         anyhow::bail!("u32 array too short");
     }
     let count = u32::from_le_bytes(data[0..4].try_into()?) as usize;
+    // `count` comes from an untrusted .osa2 chunk sub-file. Bound it against
+    // how many 4-byte elements the remaining bytes could actually hold before
+    // allocating, so a corrupted file claiming `count = u32::MAX` can't force
+    // a multi-GB allocation attempt (mirrors block.rs's `decompress` guard).
+    let remaining = data.len() - 4;
+    if count > remaining / 4 {
+        anyhow::bail!("u32 array claims {} elements, exceeds data size", count);
+    }
     let mut values = Vec::with_capacity(count);
     let mut offset = 4;
     for _ in 0..count {
@@ -279,5 +287,18 @@ mod tests {
         write_u32_array(&mut buf, &values).unwrap();
         let decoded = read_u32_array(&buf).unwrap();
         assert_eq!(decoded, values);
+    }
+
+    #[test]
+    fn test_read_u32_array_rejects_oversized_claimed_count() {
+        // A corrupted/hostile .osa2 chunk sub-file claiming `count = u32::MAX`
+        // with only a few actual trailing bytes must be rejected up front,
+        // not passed to Vec::with_capacity(count) (which would attempt a
+        // multi-GB allocation and abort the process).
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes()); // a few trailing bytes only
+        let err = read_u32_array(&buf).unwrap_err();
+        assert!(err.to_string().contains("exceeds data size"));
     }
 }
