@@ -3410,8 +3410,20 @@ mod custom_source_tests {
         // Both well-formed matching lines pass through; the malformed line
         // is absent from the output (it can't match) but doesn't crash the
         // run or swallow its neighbors.
-        assert!(out.contains("1\t100\t.\tA\tG"), "first well-formed line should pass:\n{}", out);
-        assert!(out.contains("1\t300\t.\tG\tA"), "second well-formed line should pass:\n{}", out);
-        assert!(!out.contains("1\t200\t.\tC\tT"), "malformed line must not appear in output:\n{}", out);
+        assert!(
+            out.contains("1\t100\t.\tA\tG"),
+            "first well-formed line should pass:\n{}",
+            out
+        );
+        assert!(
+            out.contains("1\t300\t.\tG\tA"),
+            "second well-formed line should pass:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("1\t200\t.\tC\tT"),
+            "malformed line must not appear in output:\n{}",
+            out
+        );
     }
 }

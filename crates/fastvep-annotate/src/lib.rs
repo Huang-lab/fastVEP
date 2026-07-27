@@ -1477,7 +1477,10 @@ mod tests {
                 }
             })
             .expect("build_sequences should succeed for a well-formed test transcript");
-        assert_eq!(transcript.translateable_seq.as_deref(), Some("ATGAAACCCTAA"));
+        assert_eq!(
+            transcript.translateable_seq.as_deref(),
+            Some("ATGAAACCCTAA")
+        );
         assert_eq!(transcript.spliced_seq.as_deref().map(|s| s.len()), Some(62));
 
         // Simulate `spliced_seq` becoming shorter than `cdna_coding_start`

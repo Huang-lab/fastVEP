@@ -413,7 +413,7 @@ mod tests {
         // "C" (1 byte) + "€" (3 bytes, occupying byte offsets 1..4) + "s315Met":
         // byte offset 3 lands inside the € character, not on a boundary.
         let s = "C\u{20AC}s315Met";
-        assert_eq!(s.len() >= 4, true);
+        assert!(s.len() >= 4);
         assert!(parse_three_letter_protein(s).is_none());
     }
 
