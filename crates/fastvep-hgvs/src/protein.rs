@@ -106,6 +106,9 @@ pub fn hgvsp_frameshift(
     if ref_start + 3 > ref_translateable.len() {
         return None;
     }
+    if ref_start > alt_translateable.len() {
+        return None;
+    }
 
     let ref_peptide: Vec<u8> = ref_translateable[ref_start..]
         .chunks(3)
@@ -218,6 +221,23 @@ mod tests {
         // past it to the real stop (TAA) 4 codons in.
         assert_eq!(mito_result, Some("ENSP1:p.Arg1ProfsTer4".to_string()));
         assert_ne!(standard_result, mito_result);
+    }
+
+    #[test]
+    fn test_hgvsp_frameshift_short_alt_translateable_returns_none() {
+        // Regression: there's a bounds check guarding `ref_translateable`
+        // (`ref_start + 3 > ref_translateable.len()`) but nothing equivalent
+        // guarded `alt_translateable[ref_start..]` on the next line. If the
+        // alt sequence is shorter than `ref_start`, that slice must not
+        // panic ("start index out of range") -- it should return None, same
+        // as the existing ref-side guard.
+        let ref_translateable = b"CGTCGTCGTCGT"; // 12 bases, ref_start=3 is in-bounds
+        let alt_translateable = b"CC"; // only 2 bases -- shorter than ref_start (3)
+
+        let standard = CodonTable::standard();
+        let result =
+            hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 1, &standard);
+        assert_eq!(result, None);
     }
 
     #[test]
