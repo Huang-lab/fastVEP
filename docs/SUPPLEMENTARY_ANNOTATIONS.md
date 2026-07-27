@@ -94,7 +94,7 @@ where its fixed per-chunk overhead dominates. Output is byte-identical between
 the two formats.
 
 Sources with a v2 encoder today: `gnomad`, `onekg` (`1000g`), `topmed`,
-`alphamissense`, `dbsnp`, `cosmic`, `clinvar`. The positional scores
+`alphamissense`, `dbsnp`, `cosmic`, `clinvar`, `revel`. The positional scores
 (`phylop`, `gerp`, `dann`), gene-level (`.oga`) sources, and `custom_*`
 inputs build v1 `.osa`/`.osi`/`.oga` regardless of `--format`.
 

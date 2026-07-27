@@ -2662,6 +2662,7 @@ pub const OSA2_SUPPORTED_SOURCES: &[&str] = &[
     "dbsnp",
     "cosmic",
     "clinvar",
+    "revel",
 ];
 
 /// Whether `--format osa2` (and `--format auto`) can build this source to v2.
@@ -2722,7 +2723,9 @@ pub fn run_sa_build_v2(
     assembly: &str,
     show_progress: bool,
 ) -> Result<()> {
-    use fastvep_sa::sources::{alphamissense, clinvar, cosmic, dbsnp, gnomad, onekg, topmed};
+    use fastvep_sa::sources::{
+        alphamissense, clinvar, cosmic, dbsnp, gnomad, onekg, revel, topmed,
+    };
 
     let (chrom_list, chrom_map) = standard_chrom_map(assembly);
     let out_path = Path::new(output).with_extension("osa2");
@@ -2859,6 +2862,26 @@ pub fn run_sa_build_v2(
             finish_osa2_build(
                 &out_path,
                 &clinvar::clinvar_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // REVEL: single `{"score":..}` object per allele, stored as a
+        // whole-record blob (its fixed-decimal score text rides through
+        // untouched). The v1 parser buffers+sorts the CSV; column 2 is the
+        // GRCh38 position, matching the v1 build path.
+        "revel" => {
+            eprintln!("Building revel .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = revel::parse_revel(buf_reader, &chrom_map, 2)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &revel::revel_osa2_metadata(assembly),
                 fastvep_sa::writer_v2::raw_json_blob_fields(),
                 &[],
                 records,

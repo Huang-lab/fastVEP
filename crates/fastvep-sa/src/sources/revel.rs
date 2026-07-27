@@ -4,9 +4,30 @@
 //! Input format: CSV with columns chr, hg19_pos, grch38_pos, ref, alt, REVEL.
 
 use crate::common::AnnotationRecord;
+use crate::writer_v2::Osa2Metadata;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
+
+/// Standard REVEL `.osa2` metadata. REVEL's payload is a single `{"score":..}`
+/// object per allele; it is stored as a whole-record JSON blob (see
+/// [`crate::writer_v2::raw_json_blob_fields`]) so v2 output is byte-identical
+/// to v1 — the score's fixed-decimal text rides through untouched — while v2's
+/// chunk-level zstd of the blob column shrinks the database.
+pub fn revel_osa2_metadata(assembly: &str) -> Osa2Metadata {
+    Osa2Metadata {
+        format_version: 2,
+        name: "REVEL".into(),
+        version: "latest".into(),
+        assembly: assembly.into(),
+        json_key: "revel".into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+        chunk_bits: 20,
+        description: format!("REVEL missense pathogenicity scores for {assembly}"),
+    }
+}
 
 /// Parse a REVEL score file (CSV) into sorted AnnotationRecords.
 ///
