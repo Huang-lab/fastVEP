@@ -93,12 +93,18 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     let pos: u64 = fields[1]
         .parse()
         .with_context(|| format!("Invalid POS: {}", fields[1]))?;
+    if pos == 0 {
+        anyhow::bail!("VCF POS field is 0 (must be 1-based): {}", line);
+    }
     let id = fields[2];
     let ref_str = fields[3];
     if ref_str.is_empty() {
         anyhow::bail!("VCF REF field is empty: {}", line);
     }
     let alt_str = fields[4];
+    if alt_str.is_empty() {
+        anyhow::bail!("VCF ALT field is empty: {}", line);
+    }
     let qual = fields[5];
     let filter = fields[6];
     let info = fields[7];
@@ -355,6 +361,24 @@ mod tests {
         let line = "1\t100\t.\t\tG\t.\tPASS\t.";
         let err = parse_vcf_line(line).unwrap_err();
         assert!(err.to_string().contains("REF field is empty"));
+    }
+
+    #[test]
+    fn test_empty_alt_field_is_rejected() {
+        // A malformed/malicious empty ALT must be rejected outright rather
+        // than silently flowing through as a zero-length allele.
+        let line = "1\t100\t.\tA\t\t.\tPASS\t.";
+        let err = parse_vcf_line(line).unwrap_err();
+        assert!(err.to_string().contains("ALT field is empty"));
+    }
+
+    #[test]
+    fn test_pos_zero_is_rejected() {
+        // VCF POS is 1-based; a POS of 0 is malformed and must be rejected
+        // outright rather than flowing through as a bogus coordinate.
+        let line = "1\t0\t.\tA\tG\t.\tPASS\t.";
+        let err = parse_vcf_line(line).unwrap_err();
+        assert!(err.to_string().contains("POS field is 0"));
     }
 
     #[test]
