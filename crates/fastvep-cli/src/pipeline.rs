@@ -2663,6 +2663,7 @@ pub const OSA2_SUPPORTED_SOURCES: &[&str] = &[
     "cosmic",
     "clinvar",
     "revel",
+    "primateai",
 ];
 
 /// Whether `--format osa2` (and `--format auto`) can build this source to v2.
@@ -2724,7 +2725,7 @@ pub fn run_sa_build_v2(
     show_progress: bool,
 ) -> Result<()> {
     use fastvep_sa::sources::{
-        alphamissense, clinvar, cosmic, dbsnp, gnomad, onekg, revel, topmed,
+        alphamissense, clinvar, cosmic, dbsnp, gnomad, onekg, primateai, revel, topmed,
     };
 
     let (chrom_list, chrom_map) = standard_chrom_map(assembly);
@@ -2882,6 +2883,23 @@ pub fn run_sa_build_v2(
             finish_osa2_build(
                 &out_path,
                 &revel::revel_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // PrimateAI: single `{"score":..}` object per allele, whole-record blob.
+        "primateai" => {
+            eprintln!("Building primateai .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = primateai::parse_primateai(buf_reader, &chrom_map)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &primateai::primateai_osa2_metadata(assembly),
                 fastvep_sa::writer_v2::raw_json_blob_fields(),
                 &[],
                 records,

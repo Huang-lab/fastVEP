@@ -58,9 +58,10 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
   ClinVar's nested significance/phenotype arrays and its `is_array` metadata
   survive intact. v1/v2 output parity is verified by test for all three.
 
-- **fastvep-sa / CLI**: `--source revel` builds to v2 `.osa2` too, via the
-  same whole-record-blob path (its fixed-decimal `{"score":..}` payload rides
-  through byte-for-byte). v1/v2 output parity is verified by test.
+- **fastvep-sa / CLI**: `--source revel` and `--source primateai` build to v2
+  `.osa2` too, via the same whole-record-blob path (their fixed-decimal
+  `{"score":..}` payloads ride through byte-for-byte). v1/v2 output parity is
+  verified by test.
 
 - **fastvep-sa**: `bench_shapes` example measures v1 `.osa` vs v2 `.osa2`
   on-disk size across the payload *shapes* fastVEP sources carry (numeric,
