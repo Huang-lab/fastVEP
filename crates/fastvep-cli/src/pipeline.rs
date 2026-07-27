@@ -1067,8 +1067,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                             if let (Some(ref spliced), Some(coding_start), Some(cds_s)) =
                                                 (&tr.spliced_seq, tr.cdna_coding_start, ac.cds_start)
                                             {
-                                                // Extract from CDS start to end of spliced seq (includes 3'UTR)
+                                                // Extract from CDS start to end of spliced seq (includes 3'UTR).
+                                                // Guard against malformed/truncated GFF3-derived transcript data
+                                                // where `coding_start` is inconsistent with the actual spliced
+                                                // sequence length — skip HGVSp generation for this case rather
+                                                // than panicking on an out-of-bounds slice.
                                                 let coding_start_idx = (coding_start - 1) as usize;
+                                                if coding_start >= 1 && coding_start_idx <= spliced.len() {
                                                 let ref_from_cds = &spliced.as_bytes()[coding_start_idx..];
                                                 let cds_idx = (cds_s - 1) as usize;
                                                 let mut alt_from_cds = ref_from_cds.to_vec();
@@ -1108,6 +1113,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                                     codon_start,
                                                     &fs_codon_table,
                                                 );
+                                                }
                                             }
                                         } else if aa.1 == "-"
                                             || ac.consequences.contains(&Consequence::InframeDeletion)

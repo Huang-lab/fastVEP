@@ -494,10 +494,19 @@ impl AnnotationContext {
                                                     tr.cdna_coding_start,
                                                     ac.cds_start,
                                                 ) {
+                                                    // Guard against malformed/truncated
+                                                    // GFF3-derived transcript data where
+                                                    // `coding_start` is inconsistent with the
+                                                    // actual spliced sequence length — skip
+                                                    // HGVSp generation for this case rather
+                                                    // than panicking on an out-of-bounds slice.
                                                     let coding_start_idx =
                                                         (coding_start - 1) as usize;
                                                     let spliced_bytes: &[u8] =
                                                         spliced.as_bytes();
+                                                    if coding_start >= 1
+                                                        && coding_start_idx <= spliced_bytes.len()
+                                                    {
                                                     let ref_from_cds =
                                                         &spliced_bytes[coding_start_idx..];
                                                     let cds_idx = (cds_s - 1) as usize;
@@ -552,6 +561,7 @@ impl AnnotationContext {
                                                             codon_start,
                                                             &fs_codon_table,
                                                         );
+                                                    }
                                                 }
                                             } else if aa.1 == "-"
                                                 || ac
@@ -1362,5 +1372,162 @@ mod tests {
             .annotate_vcf_text_with_acmg(vcf, false, None)
             .unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn hgvsp_frameshift_skips_gracefully_on_inconsistent_spliced_seq_len() {
+        // Regression: the HGVSp-frameshift branch slices
+        // `spliced.as_bytes()[coding_start_idx..]` where `coding_start_idx`
+        // comes from `tr.cdna_coding_start`. If `spliced_seq` is ever shorter
+        // than `coding_start_idx` implies -- e.g. malformed/truncated GFF3-
+        // or cache-derived transcript data -- this must not panic ("range
+        // start index out of range"); it should just skip HGVSp generation.
+        //
+        // `cdna_coding_start`/`cdna_coding_end` (used by the predictor, via
+        // `cdna_to_cds`, to classify the variant and via `translateable_seq`
+        // to compute amino acids) are left internally consistent, so the
+        // variant is still correctly classified as a frameshift with real
+        // amino acids computed -- only `spliced_seq` itself (used solely by
+        // fastvep-annotate's separate HGVSp-slicing code, not by the
+        // predictor) is corrupted, isolating the guard under test.
+        use fastvep_genome::{Exon, Gene, Transcript, Translation};
+
+        // Two-exon transcript on chr1: exon1 is a 50bp 5' UTR (genomic
+        // 1-50), exon2 is the fully-coding CDS (genomic 51-62): ATG AAA CCC
+        // TAA (Met Lys Pro Stop).
+        let mut transcript = Transcript {
+            stable_id: "ENST_FS_TEST".into(),
+            version: None,
+            gene: Gene {
+                stable_id: "ENSG_FS_TEST".into(),
+                symbol: Some("FS-TEST".into()),
+                symbol_source: None,
+                hgnc_id: None,
+                biotype: "protein_coding".into(),
+                chromosome: "1".into(),
+                start: 1,
+                end: 62,
+                strand: fastvep_core::Strand::Forward,
+            },
+            biotype: "protein_coding".into(),
+            chromosome: "1".into(),
+            start: 1,
+            end: 62,
+            strand: fastvep_core::Strand::Forward,
+            exons: vec![
+                Exon {
+                    stable_id: "ENSE_FS_TEST_1".into(),
+                    start: 1,
+                    end: 50,
+                    strand: fastvep_core::Strand::Forward,
+                    phase: -1,
+                    end_phase: 0,
+                    rank: 1,
+                },
+                Exon {
+                    stable_id: "ENSE_FS_TEST_2".into(),
+                    start: 51,
+                    end: 62,
+                    strand: fastvep_core::Strand::Forward,
+                    phase: 0,
+                    end_phase: -1,
+                    rank: 2,
+                },
+            ],
+            translation: Some(Translation {
+                stable_id: "ENSP_FS_TEST".into(),
+                genomic_start: 51,
+                genomic_end: 62,
+                start_exon_rank: 2,
+                start_exon_offset: 0,
+                end_exon_rank: 2,
+                end_exon_offset: 11,
+            }),
+            cdna_coding_start: Some(51),
+            cdna_coding_end: Some(62),
+            coding_region_start: Some(51),
+            coding_region_end: Some(62),
+            spliced_seq: None,
+            translateable_seq: None,
+            peptide: None,
+            canonical: true,
+            mane_select: None,
+            mane_plus_clinical: None,
+            tsl: None,
+            appris: None,
+            ccds: None,
+            protein_id: Some("ENSP_FS_TEST".into()),
+            protein_version: None,
+            swissprot: vec![],
+            trembl: vec![],
+            uniparc: vec![],
+            refseq_id: None,
+            source: None,
+            gencode_primary: false,
+            flags: vec![],
+            codon_table_start_phase: 0,
+        };
+
+        transcript
+            .build_sequences(|_chrom, start, _end| {
+                if start == 1 {
+                    Ok(b"N".repeat(50))
+                } else {
+                    Ok(b"ATGAAACCCTAA".to_vec())
+                }
+            })
+            .expect("build_sequences should succeed for a well-formed test transcript");
+        assert_eq!(transcript.translateable_seq.as_deref(), Some("ATGAAACCCTAA"));
+        assert_eq!(transcript.spliced_seq.as_deref().map(|s| s.len()), Some(62));
+
+        // Simulate `spliced_seq` becoming shorter than `cdna_coding_start`
+        // implies (e.g. a corrupted/truncated cache reload of just this
+        // field) -- `cdna_coding_start` (51) is left untouched, so
+        // coding_start_idx (50) now exceeds the truncated spliced_seq's
+        // length (20).
+        transcript.spliced_seq = transcript.spliced_seq.map(|s| s[..20].to_string());
+
+        let mut ctx = empty_context();
+        ctx.transcript_provider = IndexedTranscriptProvider::new(vec![transcript]);
+
+        // 1bp deletion of the "G" at genomic position 53 (VCF-anchored at
+        // 52): ATG -> AT_ + AAA... = frameshift.
+        let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                   1\t52\t.\tTG\tT\t.\tPASS\t.\n";
+
+        // Must not panic despite the truncated spliced_seq.
+        let results = ctx
+            .annotate_vcf_text_with_acmg(vcf, false, None)
+            .expect("annotation should succeed even with a truncated spliced_seq");
+        assert_eq!(results.len(), 1);
+
+        // Confirm this actually exercised the guarded path: the variant must
+        // still be classified as a frameshift with real amino acids (proving
+        // the truncated spliced_seq didn't derail classification, since that
+        // uses translateable_seq/coding_region_start/coding_region_end
+        // instead), but with no hgvsp emitted (proving the slicing guard
+        // skipped it rather than panicking).
+        let tc = &results[0]["transcript_consequences"][0];
+        let terms = tc["consequence_terms"]
+            .as_array()
+            .expect("consequence_terms should be present");
+        assert!(
+            terms
+                .iter()
+                .any(|t| t.as_str() == Some("frameshift_variant")),
+            "expected frameshift_variant, got: {:?}",
+            terms
+        );
+        assert!(
+            tc.get("amino_acids").is_some(),
+            "amino acids should still be computed from the intact translateable_seq: {:?}",
+            tc
+        );
+        assert!(
+            tc.get("hgvsp").is_none(),
+            "hgvsp should be omitted (skipped), not present, when spliced_seq is \
+             shorter than coding_start_idx implies: {:?}",
+            tc
+        );
     }
 }
