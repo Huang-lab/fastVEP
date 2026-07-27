@@ -2659,7 +2659,7 @@ pub fn run_sa_build_v2(
     assembly: &str,
     show_progress: bool,
 ) -> Result<()> {
-    use fastvep_sa::sources::{alphamissense, dbsnp, gnomad, onekg, topmed};
+    use fastvep_sa::sources::{alphamissense, cosmic, dbsnp, gnomad, onekg, topmed};
 
     let (chrom_list, chrom_map) = standard_chrom_map(assembly);
     let out_path = Path::new(output).with_extension("osa2");
@@ -2766,10 +2766,29 @@ pub fn run_sa_build_v2(
                 assembly,
             )
         }
+        // COSMIC: whole-record JSON blob per variant (COSV id + gene + count).
+        // The coding-mutations file fits in memory; the v1 parser buffers and
+        // sorts, then we bridge each record to a blob and stream it out.
+        "cosmic" => {
+            eprintln!("Building cosmic .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = cosmic::parse_cosmic_vcf(buf_reader, &chrom_map)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &cosmic::cosmic_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
         _ => anyhow::bail!(
             "--format osa2 is currently supported for --source gnomad, onekg (1000g), \
-             topmed, alphamissense, and dbsnp (got '{}'). Other sources build v1 .osa; \
-             omit --format or pass --format osa.",
+             topmed, alphamissense, dbsnp, and cosmic (got '{}'). Other sources build \
+             v1 .osa; omit --format or pass --format osa.",
             source
         ),
     }

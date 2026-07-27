@@ -3,9 +3,30 @@
 //! Extracts somatic mutation data from COSMIC's coding mutations file.
 
 use crate::common::{escape_json, AnnotationRecord};
+use crate::writer_v2::Osa2Metadata;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
+
+/// Standard COSMIC `.osa2` metadata. COSMIC's payload (`id` COSV string +
+/// `gene` + `count`) is stored as a whole-record JSON blob per variant (see
+/// [`crate::writer_v2::raw_json_blob_fields`]): the COSV ID is unique per
+/// variant, so v2's chunk-level zstd of the blob column is the win rather than
+/// a numeric column split.
+pub fn cosmic_osa2_metadata(assembly: &str) -> Osa2Metadata {
+    Osa2Metadata {
+        format_version: 2,
+        name: "COSMIC".into(),
+        version: "latest".into(),
+        assembly: assembly.into(),
+        json_key: "cosmic".into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+        chunk_bits: 20,
+        description: format!("COSMIC somatic mutations for {assembly}"),
+    }
+}
 
 /// Parse a COSMIC VCF (CosmicCodingMuts.vcf) into sorted AnnotationRecords.
 pub fn parse_cosmic_vcf<R: BufRead>(

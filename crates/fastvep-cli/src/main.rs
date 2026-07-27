@@ -217,7 +217,7 @@ enum Commands {
         /// On-disk format: `osa` (v1, default) or `osa2` (v2). The v2 format
         /// is faster to query and smaller at genome scale; supported for
         /// `--source gnomad`, `onekg` (`1000g`), `topmed`, `alphamissense`,
-        /// and `dbsnp`.
+        /// `dbsnp`, and `cosmic`.
         #[arg(long, default_value = "osa")]
         format: String,
 
