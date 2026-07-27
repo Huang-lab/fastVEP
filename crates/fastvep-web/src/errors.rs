@@ -2,6 +2,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
+#[derive(Debug)]
 pub enum AppError {
     Internal(anyhow::Error),
     BadRequest(String),

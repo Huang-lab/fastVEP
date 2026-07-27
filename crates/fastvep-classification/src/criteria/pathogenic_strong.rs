@@ -153,7 +153,7 @@ fn evaluate_ps1(
                 met: true,
                 evaluated: true,
                 summary: format!(
-                    "Same amino acid change (p.{}{}{}>) is pathogenic in ClinVar ({} entries at protein position {})",
+                    "Same amino acid change (p.{}{}{}) is pathogenic in ClinVar ({} entries at protein position {})",
                     ref_aa, prot_pos, alt_aa, matches.len(), prot_pos
                 ),
                 details: serde_json::Value::Object(details),
