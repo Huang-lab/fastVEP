@@ -2659,7 +2659,7 @@ pub fn run_sa_build_v2(
     assembly: &str,
     show_progress: bool,
 ) -> Result<()> {
-    use fastvep_sa::sources::{alphamissense, cosmic, dbsnp, gnomad, onekg, topmed};
+    use fastvep_sa::sources::{alphamissense, clinvar, cosmic, dbsnp, gnomad, onekg, topmed};
 
     let (chrom_list, chrom_map) = standard_chrom_map(assembly);
     let out_path = Path::new(output).with_extension("osa2");
@@ -2785,10 +2785,29 @@ pub fn run_sa_build_v2(
                 assembly,
             )
         }
+        // ClinVar: whole-record JSON blob per variant (significance/phenotype
+        // arrays, review status, population AFs). is_array=true is preserved in
+        // the v2 metadata to match v1 exactly. Buffered+sorted by the v1 parser.
+        "clinvar" => {
+            eprintln!("Building clinvar .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = clinvar::parse_clinvar_vcf(buf_reader, &chrom_map)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &clinvar::clinvar_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
         _ => anyhow::bail!(
             "--format osa2 is currently supported for --source gnomad, onekg (1000g), \
-             topmed, alphamissense, dbsnp, and cosmic (got '{}'). Other sources build \
-             v1 .osa; omit --format or pass --format osa.",
+             topmed, alphamissense, dbsnp, cosmic, and clinvar (got '{}'). Other sources \
+             build v1 .osa; omit --format or pass --format osa.",
             source
         ),
     }

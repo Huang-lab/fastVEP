@@ -4,9 +4,31 @@
 //! review status, disease names, and accession numbers.
 
 use crate::common::{escape_json, AnnotationRecord};
+use crate::writer_v2::Osa2Metadata;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
+
+/// Standard ClinVar `.osa2` metadata. ClinVar's payload is a nested object
+/// (significance/phenotype arrays, review status, population AFs) that can't
+/// be a flat u32 column set, so it is stored as a whole-record JSON blob per
+/// variant (see [`crate::writer_v2::raw_json_blob_fields`]). `is_array` is kept
+/// `true` to match the v1 header exactly, so downstream consumers behave
+/// identically.
+pub fn clinvar_osa2_metadata(assembly: &str) -> Osa2Metadata {
+    Osa2Metadata {
+        format_version: 2,
+        name: "ClinVar".into(),
+        version: "latest".into(),
+        assembly: assembly.into(),
+        json_key: "clinvar".into(),
+        match_by_allele: true,
+        is_array: true,
+        is_positional: false,
+        chunk_bits: 20,
+        description: format!("ClinVar annotations for {assembly}"),
+    }
+}
 
 /// Parse a ClinVar VCF file and produce sorted `AnnotationRecord`s.
 ///
