@@ -191,6 +191,34 @@ pub fn hgvsp_frameshift(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fastvep_genome::mitochondrial_codon_table;
+
+    #[test]
+    fn test_hgvsp_frameshift_mitochondrial_table_differs() {
+        // Same ref/alt translateable sequences, only the codon table differs.
+        // Codon 0 changes (Arg CGT -> Pro CCC, same under both tables), so
+        // the frameshift starts there regardless of table. Codon 1 is TGA:
+        // a stop under the standard table but Trp under the vertebrate
+        // mitochondrial table (NCBI table 2), so the two tables must find
+        // the new stop codon (Ter) at different downstream distances.
+        let ref_translateable = b"CGTCGTCGTCGT"; // Arg Arg Arg Arg
+        let alt_translateable = b"CCCTGAAAATAA"; // Pro TGA(*/W) Lys TAA(*)
+
+        let standard = CodonTable::standard();
+        let mitochondrial = mitochondrial_codon_table();
+
+        let standard_result =
+            hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 0, &standard);
+        let mito_result =
+            hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 0, &mitochondrial);
+
+        // Standard table: TGA is a stop, so the new terminator is 2 codons in.
+        assert_eq!(standard_result, Some("ENSP1:p.Arg1ProfsTer2".to_string()));
+        // Mitochondrial table: TGA reads as Trp, so translation continues
+        // past it to the real stop (TAA) 4 codons in.
+        assert_eq!(mito_result, Some("ENSP1:p.Arg1ProfsTer4".to_string()));
+        assert_ne!(standard_result, mito_result);
+    }
 
     #[test]
     fn test_hgvsp_missense() {
