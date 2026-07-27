@@ -61,10 +61,21 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 - **fastvep-sa / CLI**: `--source revel`, `--source primateai`, and
   `--source dbnsfp` build to v2 `.osa2` too, via the same whole-record-blob
   path (their fixed-decimal `{"score":..}` and composite SIFT/PolyPhen
-  prediction-string payloads ride through byte-for-byte). With these, every
-  allele-level source has a v2 encoder; only the positional scores
-  (PhyloP/GERP/DANN — no ref/alt to Var32-key), gene-level, and custom sources
-  remain v1-only. v1/v2 output parity is verified by test.
+  prediction-string payloads ride through byte-for-byte). v1/v2 output parity
+  is verified by test.
+
+- **fastvep-sa / CLI**: the positional per-base scores `--source phylop`,
+  `gerp`, and `dann` now build to v2 `.osa2` as well. A new
+  `var32::positional_key` keys allele-less records by coordinate alone (the
+  allele-matched Var32 path rejects empty alleles), and the bare-number score
+  is stored as a whole-record blob so output is byte-identical to v1. This is
+  the largest v2 size win of any source: dense per-base coordinates
+  delta-encode to almost nothing, so a `bench_shapes` measurement on
+  realistic-entropy scores puts v2 at ≈0.23× the v1 size (~4.3× smaller).
+  With these, **every allele-level and positional source has a v2 encoder**;
+  only gene-level (`.oga`) and `custom_*` sources remain v1-only. `--format
+  auto` (the default) now builds v2 for all of them. Positional v1/v2 parity —
+  including allele-independent lookup — is verified by test.
 
 - **fastvep-sa**: `bench_shapes` example measures v1 `.osa` vs v2 `.osa2`
   on-disk size across the payload *shapes* fastVEP sources carry (numeric,

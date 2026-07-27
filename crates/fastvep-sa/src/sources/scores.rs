@@ -10,9 +10,34 @@
 //! buffer everything in memory and are retained for tests and small inputs.
 
 use crate::common::AnnotationRecord;
+use crate::writer_v2::Osa2Metadata;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
+
+/// `.osa2` metadata for a positional per-base score source (PhyloP/GERP/DANN).
+///
+/// These match by coordinate alone (`match_by_allele = false`,
+/// `is_positional = true`), so the v2 writer/reader key on position via
+/// `var32::positional_key`. The bare-number score is stored as a whole-record
+/// JSON blob (see [`crate::writer_v2::raw_json_blob_fields`]), so v2 output is
+/// byte-identical to v1 while v2's chunk-level compression of the
+/// delta-keyed positions + score blobs shrinks the database markedly. `json_key`
+/// and `name` mirror the v1 header so v1 and v2 databases are interchangeable.
+pub fn score_osa2_metadata(json_key: &str, assembly: &str) -> Osa2Metadata {
+    Osa2Metadata {
+        format_version: 2,
+        name: json_key.to_uppercase(),
+        version: "latest".into(),
+        assembly: assembly.into(),
+        json_key: json_key.into(),
+        match_by_allele: false,
+        is_array: false,
+        is_positional: true,
+        chunk_bits: 20,
+        description: format!("{} conservation/prediction scores for {}", json_key, assembly),
+    }
+}
 
 /// Stream a tab-separated score file (chrom, pos, score) as `AnnotationRecord`s
 /// without buffering the whole file in memory.

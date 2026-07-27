@@ -93,10 +93,16 @@ build that is ≈4× slower; v2 is also not a size win for very small inputs,
 where its fixed per-chunk overhead dominates. Output is byte-identical between
 the two formats.
 
-Sources with a v2 encoder today: `gnomad`, `onekg` (`1000g`), `topmed`,
-`alphamissense`, `dbsnp`, `cosmic`, `clinvar`, `revel`, `primateai`, `dbnsfp`. The positional scores
-(`phylop`, `gerp`, `dann`), gene-level (`.oga`) sources, and `custom_*`
-inputs build v1 `.osa`/`.osi`/`.oga` regardless of `--format`.
+Every allele-level and positional source has a v2 encoder: `gnomad`, `onekg`
+(`1000g`), `topmed`, `alphamissense`, `dbsnp`, `cosmic`, `clinvar`, `revel`,
+`primateai`, `dbnsfp`, and the positional per-base scores `phylop`, `gerp`,
+`dann`. Only gene-level (`.oga`) sources and `custom_*` inputs build v1
+`.osa`/`.osi`/`.oga` regardless of `--format`.
+
+Positional scores get an especially large v2 win: their per-base coordinates
+delta-encode to almost nothing and the score column compresses well, so a
+dense per-base database is roughly **0.23× the size** of the v1 `.osa`
+(measured via `bench_shapes` on realistic-entropy synthetic scores).
 
 ## Pipe formats
 

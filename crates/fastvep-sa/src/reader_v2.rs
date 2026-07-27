@@ -364,7 +364,11 @@ impl Osa2Reader {
         let chunk_mask = (1u32 << self.metadata.chunk_bits) - 1;
         let within_pos = pos & chunk_mask;
 
-        let idx = if var32::is_long(ref_allele.len(), alt_allele.len()) {
+        let idx = if self.metadata.is_positional {
+            // Positional sources match by coordinate alone: key on position and
+            // ignore the query's alleles, mirroring the writer's positional key.
+            chunk.find_short(var32::positional_key(within_pos))
+        } else if var32::is_long(ref_allele.len(), alt_allele.len()) {
             chunk.find_long(pos, ref_allele, alt_allele)
         } else {
             var32::encode(within_pos, ref_allele, alt_allele)

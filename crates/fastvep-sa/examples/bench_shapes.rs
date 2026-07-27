@@ -33,7 +33,7 @@ use fastvep_sa::index::IndexHeader;
 use fastvep_sa::reader::SaReader;
 use fastvep_sa::reader_v2::Osa2Reader;
 use fastvep_sa::writer::SaWriter;
-use fastvep_sa::writer_v2::{Osa2Metadata, Osa2Record, Osa2Writer};
+use fastvep_sa::writer_v2::{raw_json_blob_fields, Osa2Metadata, Osa2Record, Osa2Writer};
 use std::env;
 use std::path::Path;
 use tempfile::TempDir;
@@ -356,6 +356,126 @@ fn mb(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
 }
 
+/// Positional per-base score text, matching how the v1 score parsers render a
+/// score (up to 4 decimals, trailing zeros trimmed). Both formats store the
+/// identical string so the size comparison is apples-to-apples.
+fn score_text(score: f64) -> String {
+    if score == 0.0 {
+        return "0".into();
+    }
+    let s = format!("{:.4}", score);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    s.to_string()
+}
+
+/// A deterministic per-base "conservation" score in a PhyloP-like range
+/// (~[-4.5, 6.5], 3 decimals). A slow triangle wave gives the spatial
+/// correlation real conservation has, plus per-base pseudo-random jitter so the
+/// score column carries realistic entropy — otherwise an over-smooth synthetic
+/// would flatter v2's compression and overstate the size win.
+fn positional_score(pos: u32) -> f64 {
+    let phase = (pos % 2000) as f64 / 2000.0; // 0..1
+    let tri = if phase < 0.5 { phase * 2.0 } else { 2.0 - phase * 2.0 }; // 0..1..0
+    let base = tri * 10.0 - 4.0;
+    // Knuth multiplicative hash → deterministic per-position jitter in ~[-0.5, 0.5].
+    let h = pos.wrapping_mul(2_654_435_761);
+    let jitter = ((h >> 8) & 0x3FF) as f64 / 1024.0 - 0.5;
+    ((base + jitter) * 1000.0).round() / 1000.0
+}
+
+/// Measure v1 `.osa` vs v2 `.osa2` for a DENSE per-base positional source
+/// (PhyloP/GERP/DANN-shaped): one allele-less score per consecutive coordinate.
+/// This is the case the numeric/blob shapes above don't cover, and the one that
+/// decides whether positional sources are worth a v2 encoder.
+fn bench_positional(n_records: usize) -> Result<()> {
+    let dir = TempDir::new()?;
+    let v1_base = dir.path().join("pos.v1");
+    let v2_path = dir.path().join("pos.osa2");
+
+    // Dense consecutive positions on chr1 (per-base coverage), allele-less.
+    let chrom = "chr1";
+    let chrom_idx = 0u16;
+
+    // --- v1 .osa (positional header, bare-number JSON, empty alleles) ---
+    let mut v1_records: Vec<AnnotationRecord> = Vec::with_capacity(n_records);
+    for i in 0..n_records {
+        let pos = (i + 1) as u32;
+        v1_records.push(AnnotationRecord {
+            chrom_idx,
+            position: pos,
+            ref_allele: String::new(),
+            alt_allele: String::new(),
+            json: score_text(positional_score(pos)),
+        });
+    }
+    let header = IndexHeader {
+        schema_version: SCHEMA_VERSION,
+        json_key: "phylop".into(),
+        name: "phylop".into(),
+        version: "bench".into(),
+        description: "bench".into(),
+        assembly: "GRCh38".into(),
+        match_by_allele: false,
+        is_array: false,
+        is_positional: true,
+    };
+    let mut w = SaWriter::new(header);
+    w.write_to_files(&v1_base, v1_records.into_iter(), &chrom_list())?;
+    let v1_size = std::fs::metadata(v1_base.with_extension("osa"))?.len()
+        + std::fs::metadata(v1_base.with_extension("osa.idx")).map(|m| m.len()).unwrap_or(0);
+
+    // --- v2 .osa2 (positional metadata, whole-record blob = bare number) ---
+    let mut v2_records: Vec<Osa2Record> = Vec::with_capacity(n_records);
+    for i in 0..n_records {
+        let pos = (i + 1) as u32;
+        v2_records.push(Osa2Record {
+            chrom: chrom.to_string(),
+            position: pos,
+            ref_allele: Vec::new(),
+            alt_allele: Vec::new(),
+            values: Vec::new(),
+            json_blob: Some(score_text(positional_score(pos))),
+        });
+    }
+    let metadata = Osa2Metadata {
+        format_version: 2,
+        name: "phylop".into(),
+        version: "bench".into(),
+        assembly: "GRCh38".into(),
+        json_key: "phylop".into(),
+        match_by_allele: false,
+        is_array: false,
+        is_positional: true,
+        chunk_bits: 20,
+        description: "bench".into(),
+    };
+    let writer = Osa2Writer::new(metadata, raw_json_blob_fields());
+    let file = std::fs::File::create(&v2_path)?;
+    writer.write_all(std::io::BufWriter::new(file), &v2_records)?;
+    let v2_size = std::fs::metadata(&v2_path)?.len();
+
+    // Verify equivalence at a sample position before comparing sizes.
+    let v1_reader = SaReader::open(&v1_base.with_extension("osa"))?;
+    let v2_reader = Osa2Reader::open(&v2_path)?;
+    let probe = (n_records / 2 + 1) as u64;
+    let g1 = v1_reader.annotate_position(chrom, probe, "A", "G")?;
+    let g2 = v2_reader.annotate_position(chrom, probe, "A", "G")?;
+    let flag = match (&g1, &g2) {
+        (Some(a), Some(b)) if format!("{a:?}") == format!("{b:?}") => "",
+        _ => "  !! data mismatch",
+    };
+
+    println!(
+        "{:<40} {:>12.1} {:>12.1} {:>9.2}x{}",
+        "positional(PhyloP: per-base score, dense)",
+        mb(v1_size),
+        mb(v2_size),
+        v2_size as f64 / v1_size as f64,
+        flag,
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let n_records = env_usize("SA_BENCH_RECORDS", 2_000_000);
     println!("Records per shape: {}\n", n_records);
@@ -401,6 +521,9 @@ fn main() -> Result<()> {
             flag,
         );
     }
+
+    // Positional per-base source (dense consecutive coordinates, allele-less).
+    bench_positional(n_records)?;
 
     println!(
         "\nv2/v1 < 1.0 means v2 is smaller. Numeric/score shapes pack into u32\n\

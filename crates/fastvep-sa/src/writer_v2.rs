@@ -98,6 +98,7 @@ impl Osa2Writer {
                 chrom,
                 cid,
                 chunk_bits,
+                self.metadata.is_positional,
             )?;
             start = end;
         }
@@ -167,6 +168,7 @@ fn write_chunk_entries<W: Write + Seek>(
     chrom: &str,
     chunk_id: u32,
     chunk_bits: u32,
+    is_positional: bool,
 ) -> Result<()> {
     let chunk_mask = (1u32 << chunk_bits) - 1;
 
@@ -179,7 +181,11 @@ fn write_chunk_entries<W: Write + Seek>(
     for (local_idx, record) in chunk_records.iter().enumerate() {
         let within_chunk_pos = record.position & chunk_mask;
 
-        if var32::is_long(record.ref_allele.len(), record.alt_allele.len()) {
+        if is_positional {
+            // Positional sources match by coordinate alone; key on position
+            // only (alleles are empty) and never take the long-variant path.
+            short_entries.push((var32::positional_key(within_chunk_pos), local_idx));
+        } else if var32::is_long(record.ref_allele.len(), record.alt_allele.len()) {
             // Skip variants whose alleles contain non-ACGT bases. Earlier
             // revisions silently encoded them as runs of 'T', producing index
             // entries that could never be retrieved with their original allele
@@ -290,6 +296,8 @@ pub struct Osa2StreamWriter<W: Write + Seek> {
     fields: Vec<Field>,
     string_tables: Vec<Vec<String>>,
     chunk_bits: u32,
+    /// Positional sources key on coordinate alone (see `write_chunk_entries`).
+    is_positional: bool,
     /// Records accumulated for the chunk currently being filled.
     current: Option<(String, u32, Vec<Osa2Record>)>,
     /// (chrom, chunk_id) runs already flushed, to detect unsorted input.
@@ -308,6 +316,7 @@ impl<W: Write + Seek> Osa2StreamWriter<W> {
             zip,
             options,
             chunk_bits: metadata.chunk_bits,
+            is_positional: metadata.is_positional,
             fields,
             string_tables,
             current: None,
@@ -357,6 +366,7 @@ impl<W: Write + Seek> Osa2StreamWriter<W> {
                 &chrom,
                 cid,
                 self.chunk_bits,
+                self.is_positional,
             )?;
         }
         Ok(())

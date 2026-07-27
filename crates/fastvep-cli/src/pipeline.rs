@@ -2650,9 +2650,9 @@ pub fn run_sa_build(
 /// message — adding a source to v2 means adding it here plus a match arm in
 /// [`run_sa_build_v2`]. Includes the `1000g` alias of `onekg`.
 ///
-/// Positional sources (PhyloP/GERP/DANN) are absent because the Var32 key
-/// scheme cannot represent an allele-less record; gene-level (`.oga`) and
-/// `custom_*` sources are absent because v2 is allele-level only.
+/// Gene-level (`.oga`) and `custom_*` sources are absent because v2 is a
+/// variant-level container. Positional per-base scores (PhyloP/GERP/DANN) ARE
+/// supported — keyed by coordinate via `var32::positional_key`.
 pub const OSA2_SUPPORTED_SOURCES: &[&str] = &[
     "gnomad",
     "onekg",
@@ -2665,6 +2665,9 @@ pub const OSA2_SUPPORTED_SOURCES: &[&str] = &[
     "revel",
     "primateai",
     "dbnsfp",
+    "phylop",
+    "gerp",
+    "dann",
 ];
 
 /// Whether `--format osa2` (and `--format auto`) can build this source to v2.
@@ -2726,7 +2729,8 @@ pub fn run_sa_build_v2(
     show_progress: bool,
 ) -> Result<()> {
     use fastvep_sa::sources::{
-        alphamissense, clinvar, cosmic, dbnsfp, dbsnp, gnomad, onekg, primateai, revel, topmed,
+        alphamissense, clinvar, cosmic, dbnsfp, dbsnp, gnomad, onekg, primateai, revel, scores,
+        topmed,
     };
 
     let (chrom_list, chrom_map) = standard_chrom_map(assembly);
@@ -2884,6 +2888,44 @@ pub fn run_sa_build_v2(
             finish_osa2_build(
                 &out_path,
                 &revel::revel_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // Positional per-base scores (PhyloP/GERP/DANN): allele-less, keyed by
+        // coordinate. Stream the score TSV/wig and store each bare-number score
+        // as a whole-record blob. Genome-wide (~3B positions for PhyloP), so
+        // these must stream — never buffer.
+        "phylop" => {
+            eprintln!("Building phylop .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records =
+                bridge_v1_raw_blobs(iter_phylop_auto(buf_reader, &chrom_map), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &scores::score_osa2_metadata("phylop", assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        "gerp" | "dann" => {
+            eprintln!("Building {source} .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records = bridge_v1_raw_blobs(
+                scores::iter_score_tsv(buf_reader, &chrom_map, false),
+                &chrom_list,
+            );
+            finish_osa2_build(
+                &out_path,
+                &scores::score_osa2_metadata(source, assembly),
                 fastvep_sa::writer_v2::raw_json_blob_fields(),
                 &[],
                 records,
