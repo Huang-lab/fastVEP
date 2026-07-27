@@ -13,8 +13,11 @@ use std::collections::VecDeque;
 use std::io::BufRead;
 
 /// Canonical TOPMed `.osa2` field schema. Aliases match the JSON keys the v1
-/// builder emits (`allAf`, `allAc`, `allAn`) so v1 and v2 databases produce
-/// identical output. AF renders in scientific notation, matching v1.
+/// builder emits (`allAf`, `allAc`, `allAn`) and AF renders in the same
+/// scientific notation. AC/AN are stored exactly; AF is quantized into a u32
+/// column at a fixed absolute resolution (`1 / 2_000_000`), so v1 and v2 agree
+/// for every TOPMed frequency (all above that floor) but AF is not guaranteed
+/// byte-identical for arbitrarily fine values. See gnomAD's `AF_MULTIPLIER`.
 pub fn topmed_osa2_fields() -> Vec<Field> {
     vec![
         Field {

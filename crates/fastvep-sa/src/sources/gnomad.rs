@@ -356,9 +356,14 @@ fn normalize_chrom(chrom: &str) -> String {
 // v2 (.osa2) encoding
 // =============================================================================
 
-/// Multiplier for allele-frequency floats stored as u32 (`stored = af * M`).
-/// 2e6 keeps ~6-7 significant digits across the 0..1 AF range while staying
-/// well under `u32::MAX`.
+/// Multiplier for allele-frequency floats stored as u32 (`stored = (af * M) as u32`).
+/// This gives a fixed *absolute* resolution of `1 / M` = 5e-7 (not a fixed
+/// number of significant digits — precision in relative terms degrades as AF
+/// shrinks), while staying well under `u32::MAX` for any AF in 0..1. The v1
+/// builder formats the raw VCF float, so a v1 and a v2 database agree for every
+/// AF coarser than 5e-7 — which is all of gnomAD except the very rarest v4
+/// singletons (AF ~6e-7 at ~1.6M alleles), where v2 truncates down to the
+/// nearest 5e-7 step and v1 does not. AC/AN/nhomalt are integers and always exact.
 const AF_MULTIPLIER: u32 = 2_000_000;
 
 fn af_field(field: &str, alias: &str, description: &str) -> Field {
@@ -391,8 +396,10 @@ fn count_field(field: &str, alias: &str, description: &str) -> Field {
 /// [`iter_gnomad_osa2`] is parallel to this list, in this exact order: global
 /// AF / AN / AC / nhomalt followed by per-population AF for each entry in
 /// [`POPULATIONS`]. The aliases match the JSON keys the v1 builder emits
-/// (`allAf`, `allAn`, `allAc`, `allHc`, `<pop>Af`) so downstream consumers see
-/// identical output regardless of which format backs the database.
+/// (`allAf`, `allAn`, `allAc`, `allHc`, `<pop>Af`). Counts (AN/AC/nhomalt) are
+/// byte-identical to v1; AFs are quantized to a fixed 5e-7 resolution (see
+/// [`AF_MULTIPLIER`]), so they match v1 for every AF except the rarest v4
+/// singletons below that floor.
 pub fn gnomad_osa2_fields() -> Vec<Field> {
     let mut fields = vec![
         af_field("AF", "allAf", "Global allele frequency"),

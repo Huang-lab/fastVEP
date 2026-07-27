@@ -103,7 +103,13 @@ impl Osa2Writer {
             start = end;
         }
 
-        zip.finish()?;
+        // `ZipWriter::finish` returns the inner writer without flushing it.
+        // When that writer is a `BufWriter`, dropping it flushes but *discards*
+        // any IO error (e.g. a disk that fills on the final write), which would
+        // leave a truncated archive reported as success. Flush explicitly so
+        // the error propagates and the caller's cleanup removes the partial file.
+        let mut inner = zip.finish()?;
+        inner.flush()?;
         Ok(())
     }
 }
@@ -376,7 +382,11 @@ impl<W: Write + Seek> Osa2StreamWriter<W> {
     pub fn finish(mut self) -> Result<()> {
         self.flush_current()?;
         write_string_tables(&mut self.zip, self.options, &self.fields, &self.string_tables)?;
-        self.zip.finish()?;
+        // Flush the inner writer explicitly — `ZipWriter::finish` hands it back
+        // unflushed, and a `BufWriter`'s Drop swallows flush errors, which would
+        // silently leave a truncated `.osa2` on a full disk. See `write_all`.
+        let mut inner = self.zip.finish()?;
+        inner.flush()?;
         Ok(())
     }
 }

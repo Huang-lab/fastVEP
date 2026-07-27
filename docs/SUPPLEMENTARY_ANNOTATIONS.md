@@ -91,7 +91,11 @@ JSON-blob sources) and **faster to query** on the sparse, scattered lookups a
 real VCF produces (≈3.8–4.5× at 10M records). The trade-off is a one-time
 build that is ≈4× slower; v2 is also not a size win for very small inputs,
 where its fixed per-chunk overhead dominates. Output is byte-identical between
-the two formats.
+the two formats for the blob-backed sources (dbSNP, COSMIC, ClinVar, REVEL,
+PrimateAI, dbNSFP, and the positional scores) and for AlphaMissense. For the
+frequency sources (gnomAD, 1000G, TOPMed) the integer counts are exact and
+frequencies match to a fixed 5e-7 resolution — identical in practice except
+for the very rarest gnomAD v4 singletons, whose AF falls below that floor.
 
 Every allele-level and positional source has a v2 encoder: `gnomad`, `onekg`
 (`1000g`), `topmed`, `alphamissense`, `dbsnp`, `cosmic`, `clinvar`, `revel`,

@@ -25,8 +25,12 @@ fn af_field(alias: &str, description: &str) -> Field {
 }
 
 /// Canonical 1000 Genomes `.osa2` field schema. Aliases match the JSON keys
-/// the v1 builder emits (`allAf`, `<pop>Af`) so v1 and v2 databases produce
-/// identical output. Frequencies render in scientific notation, matching v1.
+/// the v1 builder emits (`allAf`, `<pop>Af`) and frequencies render in the same
+/// scientific notation. Note that v2 quantizes each AF into a u32 column at a
+/// fixed absolute resolution (`1 / AF_MULTIPLIER`), whereas v1 formats the raw
+/// VCF float — so the two databases agree for every 1000G frequency (all well
+/// above that resolution floor) but are not guaranteed byte-identical for
+/// arbitrarily fine AFs. See gnomAD's `AF_MULTIPLIER` for the precision detail.
 pub fn onekg_osa2_fields() -> Vec<Field> {
     let mut fields = vec![af_field("allAf", "Global allele frequency")];
     for pop in POPS {
