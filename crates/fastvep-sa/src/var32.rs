@@ -127,6 +127,22 @@ pub fn decode(v: u32) -> (u32, Vec<u8>, Vec<u8>) {
     (pos, ref_allele, alt_allele)
 }
 
+/// Key for a positional (allele-less) record: only the within-chunk position
+/// occupies the high 20 bits, with the ref/alt-length and base fields left
+/// zero. Positional sources (PhyloP/GERP/DANN) match by genomic position
+/// alone, so there is exactly one record per coordinate and this collapses any
+/// query allele to the same key. The keyspace is disjoint from real Var32 keys
+/// only in that positional archives never mix in allele records, so within a
+/// positional `.osa2` these keys stay unique and binary-searchable.
+///
+/// `encode` cannot serve this role: it rejects empty alleles (`is_long`
+/// returns true when either side is empty), which is correct for the
+/// allele-matched path but leaves positional records unencodable without this.
+#[inline]
+pub fn positional_key(within_chunk_pos: u32) -> u32 {
+    (within_chunk_pos & 0xF_FFFF) << 12
+}
+
 /// Extract the within-chunk position from a genomic position.
 #[inline]
 pub fn chunk_position(genomic_pos: u32) -> u32 {
@@ -189,6 +205,20 @@ mod tests {
         assert_eq!(dp, pos);
         assert_eq!(dr, b"ACG");
         assert_eq!(da, b"T");
+    }
+
+    #[test]
+    fn test_positional_key_is_position_only_and_sorts() {
+        // Positional keys depend only on the within-chunk position and preserve
+        // ordering, so binary search on them works like on Var32 keys.
+        let k100 = positional_key(100);
+        let k101 = positional_key(101);
+        assert!(k100 < k101);
+        assert_eq!(k100, positional_key(100), "deterministic");
+        // Low 12 bits (allele fields) are zero.
+        assert_eq!(k100 & 0xFFF, 0);
+        // Recover the position from the high bits.
+        assert_eq!(k100 >> 12, 100);
     }
 
     #[test]

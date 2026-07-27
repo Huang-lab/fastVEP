@@ -4,9 +4,28 @@
 //! Input: TSV with columns chr, pos, ref, alt, primateDL_score.
 
 use crate::common::AnnotationRecord;
+use crate::writer_v2::Osa2Metadata;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
+
+/// Standard PrimateAI `.osa2` metadata. Stored as a whole-record JSON blob
+/// (see [`crate::writer_v2::raw_json_blob_fields`]): the `{"score":..}` payload
+/// rides through byte-for-byte while v2's chunk-level zstd shrinks the database.
+pub fn primateai_osa2_metadata(assembly: &str) -> Osa2Metadata {
+    Osa2Metadata {
+        format_version: 2,
+        name: "PrimateAI".into(),
+        version: "latest".into(),
+        assembly: assembly.into(),
+        json_key: "primateAI".into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+        chunk_bits: 20,
+        description: format!("PrimateAI pathogenicity predictions for {assembly}"),
+    }
+}
 
 /// Parse a PrimateAI TSV file into sorted AnnotationRecords.
 ///

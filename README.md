@@ -11,7 +11,7 @@ fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.
 - **Variant Consequence Prediction** — Classifies variants using 49 [Sequence Ontology](http://www.sequenceontology.org/) terms (missense, frameshift, splice donor, copy_number_change, transcript_ablation, etc.)
 - **Structural Variant Support** — Full SV pipeline: `<DEL>`, `<DUP>`, `<INV>`, `<CNV>`, `<BND>`, `<INS>`, `<STR>` with SV-specific consequence prediction
 - **Supplementary Annotations** — Direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, MitoMap via the native fastSA format (v1: zstd block compression with byte-budgeted block cache; v2: echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding, and LRU caching)
-- **Prediction Scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN conservation and pathogenicity scores; SIFT/PolyPhen via dbNSFP
+- **Prediction Scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN, AlphaMissense conservation and pathogenicity scores; SIFT/PolyPhen via dbNSFP
 - **Gene-Level Annotations** — OMIM phenotypes, gnomAD gene constraint (pLI, LOEUF), ClinGen gene-disease validity
 - **Filter Engine** — Expression-based filtering compatible with VEP's filter_vep syntax
 - **HGVS Nomenclature** — Generates HGVSg, HGVSc, and HGVSp notations with 3' normalization
@@ -84,11 +84,18 @@ fastvep annotate -i tests/test.vcf --gff3 tests/test.gff3 --hgvs --output-format
 ### 4. Build supplementary annotation databases
 
 ```bash
-# Build ClinVar annotation database
+# Supported sources build the smaller, faster v2 `.osa2` format automatically
+# (`--format auto` is the default); pass `--format osa` to force v1 `.osa`.
+
+# Build ClinVar annotation database (writes clinvar.osa2)
 fastvep sa-build --source clinvar --input clinvar.vcf.gz --output clinvar
 
-# Build gnomAD population frequency database
+# Build gnomAD population frequency database (writes gnomad.osa2)
 fastvep sa-build --source gnomad --input gnomad.genomes.v4.vcf.bgz --output gnomad
+
+# Build AlphaMissense pathogenicity predictions (writes alphamissense.osa2).
+# Download AlphaMissense_hg38.tsv.gz from Zenodo record 8208688.
+fastvep sa-build --source alphamissense --input AlphaMissense_hg38.tsv.gz --output alphamissense
 
 # Build PhyloP conservation scores (see docs/ACMG_SETUP.md for how to
 # obtain hg38.phyloP100way.wigFix.gz — UCSC ships it as one file per
@@ -257,7 +264,10 @@ mkdir -p genomes/human_grch38/sa genomes/mouse_grcm39 genomes/zebrafish
 # Human: GFF3 + FASTA + SA databases
 cp data/Homo_sapiens.GRCh38.115.gff3 genomes/human_grch38/
 cp data/Homo_sapiens.GRCh38.dna.primary_assembly.fa* genomes/human_grch38/
-cp sa_databases/*.osa2 genomes/human_grch38/sa/   # ClinVar, gnomAD, etc.
+# Copy every supplementary database, whichever format it built to
+# (.osa2/.osa allele-level, .osi interval, .oga gene-level).
+cp sa_databases/*.osa2 sa_databases/*.osa sa_databases/*.osi sa_databases/*.oga \
+   genomes/human_grch38/sa/ 2>/dev/null   # ClinVar, gnomAD, PhyloP, OMIM, etc.
 
 # Mouse
 wget -O- https://ftp.ensembl.org/pub/release-115/gff3/mus_musculus/Mus_musculus.GRCm39.115.gff3.gz | gunzip > genomes/mouse_grcm39/Mus_musculus.GRCm39.115.gff3
@@ -367,6 +377,7 @@ fastVEP supports direct integration with clinical and population databases throu
 | **SpliceAI** | Allele-specific | Splice site effect predictions (delta scores) | `--source spliceai` |
 | **PrimateAI** | Allele-specific | Primate-based pathogenicity | `--source primateai` |
 | **dbNSFP** | Allele-specific | SIFT/PolyPhen predictions | `--source dbnsfp` |
+| **AlphaMissense** | Allele-specific | Missense pathogenicity score + class | `--source alphamissense` |
 | **OMIM / ClinGen GDV** | Gene-level (`.oga`) | Disease-gene annotations driving PVS1, BS2, PM3, BP2 in ACMG | `--source omim` |
 | **gnomAD constraint** | Gene-level (`.oga`) | gnomAD constraint metrics (pLI, LOEUF) for PVS1, PP2, BP1 | `--source gnomad_genes` |
 | **ClinVar protein index** | Gene-level (`.oga`) | Pathogenic missense by protein position (PS1, PM1, PM5) | `--source clinvar_protein` |
@@ -449,6 +460,7 @@ objects will be heterogeneous.
 | `--assembly` | Genome assembly | `GRCh38` |
 | `--name` | Display + JSON-key name for `custom_*` sources | derived from input filename |
 | `--info-fields` | Comma-separated INFO keys to extract for `custom_vcf` | all INFO keys |
+| `--format` | On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2). `auto` builds the smaller, faster v2 `.osa2` for the sources that support it and v1 `.osa` for the rest — the best format per source, no need to choose. See [Choosing v1 vs v2](docs/SUPPLEMENTARY_ANNOTATIONS.md#choosing-v1-vs-v2---format) for when to override. | `auto` |
 
 ### `fastvep filter`
 

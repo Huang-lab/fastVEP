@@ -7,10 +7,31 @@
 //! tests and small inputs.
 
 use crate::common::{escape_json, AnnotationRecord};
+use crate::writer_v2::Osa2Metadata;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::BufRead;
+
+/// Standard dbSNP `.osa2` metadata. dbSNP's payload (`id` RS string +
+/// optional `globalMaf`) is stored as a whole-record JSON blob per variant
+/// (see [`crate::writer_v2::raw_json_blob_fields`]) — the RS ID is near-unique
+/// per variant, so a numeric/categorical column split can't help, but v2's
+/// chunk-level zstd of the blob column still shrinks the database sharply.
+pub fn dbsnp_osa2_metadata(assembly: &str) -> Osa2Metadata {
+    Osa2Metadata {
+        format_version: 2,
+        name: "dbSNP".into(),
+        version: "latest".into(),
+        assembly: assembly.into(),
+        json_key: "dbsnp".into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+        chunk_bits: 20,
+        description: format!("dbSNP RS IDs for {assembly}"),
+    }
+}
 
 /// Stream a coordinate-sorted dbSNP VCF as `AnnotationRecord`s without
 /// buffering the whole file in memory.

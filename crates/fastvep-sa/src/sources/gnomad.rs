@@ -18,6 +18,8 @@
 //! We pick the scheme by scanning `##INFO=<ID=...>` header lines.
 
 use crate::common::AnnotationRecord;
+use crate::fields::{Field, FieldType};
+use crate::writer_v2::{Osa2Metadata, Osa2Record};
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::BufRead;
@@ -350,6 +352,212 @@ fn normalize_chrom(chrom: &str) -> String {
     }
 }
 
+// =============================================================================
+// v2 (.osa2) encoding
+// =============================================================================
+
+/// Multiplier for allele-frequency floats stored as u32 (`stored = (af * M) as u32`).
+/// This gives a fixed *absolute* resolution of `1 / M` = 5e-7 (not a fixed
+/// number of significant digits — precision in relative terms degrades as AF
+/// shrinks), while staying well under `u32::MAX` for any AF in 0..1. The v1
+/// builder formats the raw VCF float, so a v1 and a v2 database agree for every
+/// AF coarser than 5e-7 — which is all of gnomAD except the very rarest v4
+/// singletons (AF ~6e-7 at ~1.6M alleles), where v2 truncates down to the
+/// nearest 5e-7 step and v1 does not. AC/AN/nhomalt are integers and always exact.
+const AF_MULTIPLIER: u32 = 2_000_000;
+
+fn af_field(field: &str, alias: &str, description: &str) -> Field {
+    Field {
+        field: field.into(),
+        alias: alias.into(),
+        ftype: FieldType::Float,
+        multiplier: AF_MULTIPLIER,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: description.into(),
+    }
+}
+
+fn count_field(field: &str, alias: &str, description: &str) -> Field {
+    Field {
+        field: field.into(),
+        alias: alias.into(),
+        ftype: FieldType::Integer,
+        multiplier: 1,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: description.into(),
+    }
+}
+
+/// Canonical gnomAD v2 (`.osa2`) field schema. The value vector produced by
+/// [`iter_gnomad_osa2`] is parallel to this list, in this exact order: global
+/// AF / AN / AC / nhomalt followed by per-population AF for each entry in
+/// [`POPULATIONS`]. The aliases match the JSON keys the v1 builder emits
+/// (`allAf`, `allAn`, `allAc`, `allHc`, `<pop>Af`). Counts (AN/AC/nhomalt) are
+/// byte-identical to v1; AFs are quantized to a fixed 5e-7 resolution (see
+/// [`AF_MULTIPLIER`]), so they match v1 for every AF except the rarest v4
+/// singletons below that floor.
+pub fn gnomad_osa2_fields() -> Vec<Field> {
+    let mut fields = vec![
+        af_field("AF", "allAf", "Global allele frequency"),
+        count_field("AN", "allAn", "Total allele number"),
+        count_field("AC", "allAc", "Allele count"),
+        count_field("nhomalt", "allHc", "Homozygote count"),
+    ];
+    for pop in POPULATIONS {
+        fields.push(af_field(
+            &format!("AF_{pop}"),
+            &format!("{pop}Af"),
+            &format!("{} allele frequency", pop.to_uppercase()),
+        ));
+    }
+    fields
+}
+
+/// Standard gnomAD `.osa2` metadata. Mirrors the v1 header (`json_key =
+/// "gnomad"`, allele-matched, non-positional) so the annotation pipeline
+/// treats a v1 and v2 gnomAD database identically.
+pub fn gnomad_osa2_metadata(assembly: &str) -> Osa2Metadata {
+    Osa2Metadata {
+        format_version: 2,
+        name: "gnomAD".into(),
+        version: "latest".into(),
+        assembly: assembly.into(),
+        json_key: "gnomad".into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+        chunk_bits: 20,
+        description: format!("gnomAD population frequencies for {assembly}"),
+    }
+}
+
+/// Stream a coordinate-sorted gnomAD VCF as `.osa2` records with parallel u32
+/// value arrays (parallel to [`gnomad_osa2_fields`]), without buffering the
+/// whole file. Reuses the same INFO field-name detection as the v1 path, so
+/// v2/v3/v4/joint releases and hyphen-separated local files are all handled.
+pub fn iter_gnomad_osa2<'a, R: BufRead>(
+    reader: R,
+    chrom_to_idx: &'a HashMap<String, u16>,
+) -> GnomadOsa2Iter<'a, R> {
+    GnomadOsa2Iter {
+        lines: reader.lines(),
+        chrom_to_idx,
+        fields: gnomad_osa2_fields(),
+        pending: VecDeque::new(),
+        info_ids: HashSet::new(),
+        field_names: None,
+    }
+}
+
+pub struct GnomadOsa2Iter<'a, R: BufRead> {
+    lines: std::io::Lines<R>,
+    chrom_to_idx: &'a HashMap<String, u16>,
+    fields: Vec<Field>,
+    pending: VecDeque<Osa2Record>,
+    info_ids: HashSet<String>,
+    field_names: Option<FieldNames>,
+}
+
+impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
+    type Item = Result<Osa2Record>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(record) = self.pending.pop_front() {
+                return Some(Ok(record));
+            }
+
+            let line = match self.lines.next()? {
+                Ok(l) => l,
+                Err(e) => return Some(Err(e).context("Reading gnomAD VCF line")),
+            };
+
+            if line.starts_with('#') {
+                if let Some(id) = parse_info_id(&line) {
+                    self.info_ids.insert(id.to_string());
+                }
+                continue;
+            }
+
+            if self.field_names.is_none() {
+                self.field_names = Some(detect_field_names(&self.info_ids));
+            }
+            let field_names = self.field_names.as_ref().unwrap();
+
+            let cols: Vec<&str> = line.splitn(9, '\t').collect();
+            if cols.len() < 8 {
+                continue;
+            }
+
+            let chrom = normalize_chrom(cols[0]);
+            if !self.chrom_to_idx.contains_key(&chrom) {
+                continue;
+            }
+            let pos: u32 = match cols[1].parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let ref_allele = cols[3].as_bytes().to_vec();
+            let alt_field = cols[4];
+            let info_map = parse_info(cols[7]);
+
+            let all_afs = split_info_values(info_map.get(&field_names.af).map(|s| s.as_str()));
+            // AN is a per-site (Number=1) value; AF/AC/nhomalt are per-allele.
+            let an = all_from(&info_map, &field_names.an);
+            let all_acs = split_info_values(info_map.get(&field_names.ac).map(|s| s.as_str()));
+            let all_nh = split_info_values(info_map.get(&field_names.nhomalt).map(|s| s.as_str()));
+
+            for (ai, alt) in alt_field.split(',').enumerate() {
+                if alt == "." || alt == "*" {
+                    continue;
+                }
+                // Value order MUST match `gnomad_osa2_fields()`.
+                let mut values = Vec::with_capacity(self.fields.len());
+                values.push(enc_float(&self.fields[0], all_afs.get(ai).map(|s| s.as_str())));
+                values.push(enc_int(&self.fields[1], an.first().map(|s| s.as_str())));
+                values.push(enc_int(&self.fields[2], all_acs.get(ai).map(|s| s.as_str())));
+                values.push(enc_int(&self.fields[3], all_nh.get(ai).map(|s| s.as_str())));
+                for (pi, pop) in POPULATIONS.iter().enumerate() {
+                    let key = field_names.pop_key(pop);
+                    let vals = split_info_values(info_map.get(&key).map(|s| s.as_str()));
+                    values.push(enc_float(&self.fields[4 + pi], vals.get(ai).map(|s| s.as_str())));
+                }
+
+                self.pending.push_back(Osa2Record {
+                    chrom: chrom.clone(),
+                    position: pos,
+                    ref_allele: ref_allele.clone(),
+                    alt_allele: alt.as_bytes().to_vec(),
+                    values,
+                    json_blob: None,
+                });
+            }
+        }
+    }
+}
+
+fn all_from(info: &HashMap<String, String>, key: &str) -> Vec<String> {
+    split_info_values(info.get(key).map(|s| s.as_str()))
+}
+
+fn enc_float(field: &Field, raw: Option<&str>) -> u32 {
+    match raw.and_then(|s| s.parse::<f64>().ok()) {
+        Some(f) => field.encode_float(f),
+        None => field.missing_value,
+    }
+}
+
+fn enc_int(field: &Field, raw: Option<&str>) -> u32 {
+    match raw.and_then(|s| s.parse::<i64>().ok()) {
+        Some(i) => field.encode_int(i),
+        None => field.missing_value,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,5 +757,103 @@ chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=not_a_number;AC=garbage;nhomalt=.
         // Missing trailing '>' — refuse to parse rather than guess.
         let line = "##INFO=<ID=AF,Number=A";
         assert_eq!(parse_info_id(line), None);
+    }
+
+    // ---- v2 (.osa2) encoder ----
+
+    fn chr1_map() -> HashMap<String, u16> {
+        let mut m = HashMap::new();
+        m.insert("chr1".to_string(), 0u16);
+        m
+    }
+
+    #[test]
+    fn test_osa2_fields_order_matches_value_layout() {
+        // The iterator indexes `fields[0..4]` for the global stats and
+        // `fields[4 + pi]` per population, so this ordering is load-bearing.
+        let fields = gnomad_osa2_fields();
+        assert_eq!(fields.len(), 4 + POPULATIONS.len());
+        assert_eq!(fields[0].alias, "allAf");
+        assert_eq!(fields[1].alias, "allAn");
+        assert_eq!(fields[2].alias, "allAc");
+        assert_eq!(fields[3].alias, "allHc");
+        for (pi, pop) in POPULATIONS.iter().enumerate() {
+            assert_eq!(fields[4 + pi].alias, format!("{pop}Af"));
+        }
+    }
+
+    #[test]
+    fn test_iter_gnomad_osa2_encodes_values() {
+        let vcf = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"Allele frequency\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"Total allele number\">
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"Allele count\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=150000;AC=150;nhomalt=2;AF_afr=0.002;AF_nfe=0.0005
+chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF=0.01,0.005;AN=140000;AC=1400,700;nhomalt=10,3;AF_eas=0.02,0.01
+";
+        let map = chr1_map();
+        let recs: Vec<Osa2Record> =
+            iter_gnomad_osa2(vcf.as_bytes(), &map).collect::<Result<_>>().unwrap();
+        assert_eq!(recs.len(), 3); // 1 SNV + 2 from the multi-allelic site
+
+        let fields = gnomad_osa2_fields();
+        // First record: AF=0.001 -> 0.001 * 2_000_000 = 2000.
+        assert_eq!(recs[0].position, 10001);
+        assert_eq!(recs[0].values[0], 2000);
+        assert_eq!(recs[0].values[1], 150000); // AN
+        assert_eq!(recs[0].values[2], 150); // AC
+        assert_eq!(recs[0].values[3], 2); // nhomalt
+        // afr AF present, sas AF missing.
+        let afr_idx = 4 + POPULATIONS.iter().position(|p| *p == "afr").unwrap();
+        let sas_idx = 4 + POPULATIONS.iter().position(|p| *p == "sas").unwrap();
+        assert_eq!(recs[0].values[afr_idx], fields[afr_idx].encode_float(0.002));
+        assert_eq!(recs[0].values[sas_idx], u32::MAX); // missing sentinel
+
+        // Multi-allelic second alt picks the second per-allele values.
+        assert_eq!(recs[2].position, 20000);
+        assert_eq!(recs[2].alt_allele, b"A");
+        assert_eq!(recs[2].values[2], 700); // AC second alt
+    }
+
+    #[test]
+    fn test_iter_gnomad_osa2_handles_joint_release() {
+        // v4.1 joint naming must be detected here too (regression parity with
+        // the v1 parser).
+        let vcf = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF_joint,Number=A,Type=Float,Description=\"Joint AF\">
+##INFO=<ID=AN_joint,Number=1,Type=Integer,Description=\"Joint AN\">
+##INFO=<ID=AC_joint,Number=A,Type=Integer,Description=\"Joint AC\">
+##INFO=<ID=AF_joint_nfe,Number=A,Type=Float,Description=\"Joint AF NFE\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t10001\t.\tA\tG\t.\tPASS\tAF_joint=0.001;AN_joint=150000;AC_joint=150;AF_joint_nfe=0.0005
+";
+        let map = chr1_map();
+        let recs: Vec<Osa2Record> =
+            iter_gnomad_osa2(vcf.as_bytes(), &map).collect::<Result<_>>().unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].values[0], 2000); // AF_joint 0.001 encoded
+        assert_eq!(recs[0].values[1], 150000); // AN_joint
+        let nfe_idx = 4 + POPULATIONS.iter().position(|p| *p == "nfe").unwrap();
+        assert_ne!(recs[0].values[nfe_idx], u32::MAX); // nfe populated from joint
+    }
+
+    #[test]
+    fn test_iter_gnomad_osa2_skips_unknown_contigs() {
+        let vcf = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"AF\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr2\t100\t.\tA\tG\t.\tPASS\tAF=0.5
+chr1\t200\t.\tA\tG\t.\tPASS\tAF=0.5
+";
+        let map = chr1_map(); // only chr1 is valid
+        let recs: Vec<Osa2Record> =
+            iter_gnomad_osa2(vcf.as_bytes(), &map).collect::<Result<_>>().unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].chrom, "chr1");
+        assert_eq!(recs[0].position, 200);
     }
 }

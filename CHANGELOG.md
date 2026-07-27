@@ -5,7 +5,105 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+### Added
+
+- **CLI**: `sa-build --format` now defaults to `auto`, which builds the
+  smaller/faster v2 `.osa2` for the sources that support it and v1 `.osa` for
+  the rest — so users get the best format per source without having to know
+  which is which (previously the default was v1, and v2 was opt-in). `--format
+  osa`/`osa2` still force a specific format. The v2-capable source list lives
+  in one place (`OSA2_SUPPORTED_SOURCES` / `source_supports_osa2`) that feeds
+  both the `auto` dispatch and the `osa2` error message, and a new
+  "Choosing v1 vs v2" section in `docs/SUPPLEMENTARY_ANNOTATIONS.md` documents
+  when to override. The `--sa-dir` setup example now copies every SA extension
+  (`.osa2`/`.osa`/`.osi`/`.oga`) instead of only `.osa2`, so v1-only sources
+  (PhyloP, OMIM, …) aren't silently dropped.
+
+- **fastvep-sa / CLI**: `sa-build --format osa2` builds the v2 `.osa2` format
+  for the numeric-payload sources — `--source gnomad`, `onekg` (`1000g`),
+  `topmed`, and `alphamissense`. The v2 format (chunked ZIP, u32 value arrays,
+  Var32 binary search) is smaller at genome scale and faster to query on the
+  sparse, scattered lookups a real VCF generates — `bench_v1_vs_v2` measures
+  v2 query throughput at ~3.8–4.5× v1 at 10M records on a strided workload,
+  with ~33% smaller files (v2 build is a one-time ~4× slower). The gnomAD
+  encoder reuses the v1 INFO field-name detection (v2/v3/v4/joint releases,
+  hyphen-separated locals); 1000G and TOPMed reuse their existing v1 parsers
+  through a generic `osa2_record_from_v1` bridge that re-encodes each record's
+  flat-object JSON into the parallel u32 layout. All v2 builds stream one chunk
+  at a time, so peak memory is bounded by the densest ~1 MB window rather than
+  the whole file, and v1/v2 output parity is verified by test.
+
+- **fastvep-sa / CLI**: new `--source alphamissense` builds AlphaMissense
+  pathogenicity predictions (Cheng et al. 2023; Zenodo 8208688) from the
+  genome-coordinate TSV releases into both `.osa` (v1) and `.osa2` (v2). Each
+  allele carries a pathogenicity score plus a three-level class
+  (`likely_benign` / `ambiguous` / `likely_pathogenic`) — a numeric-plus-small-
+  categorical payload that builds natively into v2 (one u32 score column plus a
+  u32 class-index column against a 3-entry string table), the first v2 source
+  to use categorical string tables. AlphaMissense is first-class in every
+  output: JSON (`alphaMissense`), tab, and VCF (`FV_ALPHAMISSENSE`, format
+  `ALLELE|PATHOGENICITY|CLASS`). The v1 JSON is built through the very same
+  `Field`/`format_value` code the v2 reader reconstructs with, so the two
+  formats emit byte-identical annotations (verified by test).
+
+- **fastvep-sa / CLI**: `--format osa2` now also supports the string/array
+  sources that don't fit the numeric u32 layout — `--source dbsnp`,
+  `--source cosmic`, and `--source clinvar`. Their whole-record JSON is stored
+  as one opaque blob per variant (`raw_json_blob_fields` — a single JsonBlob
+  field with an empty alias that the reader emits verbatim), so v2 output is
+  byte-identical to v1 while v2's chunk-level zstd of the blob column shrinks
+  the database sharply (~0.30× at genome scale per `bench_shapes`). dbSNP
+  streams through the existing v1 parser via a `bridge_v1_raw_blobs` adapter;
+  COSMIC and ClinVar are buffered and sorted by their v1 parsers, then bridged.
+  ClinVar's nested significance/phenotype arrays and its `is_array` metadata
+  survive intact. v1/v2 output parity is verified by test for all three.
+
+- **fastvep-sa / CLI**: `--source revel`, `--source primateai`, and
+  `--source dbnsfp` build to v2 `.osa2` too, via the same whole-record-blob
+  path (their fixed-decimal `{"score":..}` and composite SIFT/PolyPhen
+  prediction-string payloads ride through byte-for-byte). v1/v2 output parity
+  is verified by test.
+
+- **fastvep-sa / CLI**: the positional per-base scores `--source phylop`,
+  `gerp`, and `dann` now build to v2 `.osa2` as well. A new
+  `var32::positional_key` keys allele-less records by coordinate alone (the
+  allele-matched Var32 path rejects empty alleles), and the bare-number score
+  is stored as a whole-record blob so output is byte-identical to v1. This is
+  the largest v2 size win of any source: dense per-base coordinates
+  delta-encode to almost nothing, so a `bench_shapes` measurement on
+  realistic-entropy scores puts v2 at ≈0.23× the v1 size (~4.3× smaller).
+  With these, **every allele-level and positional source has a v2 encoder**;
+  only gene-level (`.oga`) and `custom_*` sources remain v1-only. `--format
+  auto` (the default) now builds v2 for all of them. Positional v1/v2 parity —
+  including allele-independent lookup — is verified by test.
+
+- **fastvep-sa**: `bench_shapes` example measures v1 `.osa` vs v2 `.osa2`
+  on-disk size across the payload *shapes* fastVEP sources carry (numeric,
+  score+categorical, opaque id-string, array/blob). It answers "is v2 smaller
+  for everything?" empirically: **no, not universally** — the answer is shape-
+  and scale-dependent. At 2M records v2 is *larger* for numeric/score payloads
+  (1.07–1.12×, fixed per-chunk/ZIP overhead dominates) but already much smaller
+  for JSON-blob payloads (0.40×). At 10M records v2 is smaller or comparable
+  across *all* shapes: numeric 0.67×, score 0.93×, and the blob shapes
+  (dbSNP-/ClinVar-like) 0.30–0.34× — because v2 zstd-compresses a whole chunk's
+  JSON blobs together, exploiting cross-record redundancy v1's per-block scheme
+  can't. So v2 is a clear size win at genome scale, dramatically so for
+  blob-heavy sources; it is not a win for small inputs.
+
 ### Fixed
+
+- **fastvep-sa**: v2 (`.osa2`) reader re-opened the ZIP file and re-parsed the
+  entire central directory on *every* chunk load, making genome-scale queries
+  hundreds of times slower than v1. The archive is now parsed once at
+  `open()` and reused, restoring the format's intended performance.
+- **fastvep-sa**: v2 (`.osa2`) long variants (indels, ref+alt > 4 bases)
+  returned the wrong values or were unreadable. The writer keyed each
+  `LongVariant` to its input-order position while value columns held only
+  short variants in Var32-sorted order, and `Chunk::is_empty` ignored long
+  variants entirely (long-only chunks were skipped). Value columns now use a
+  combined short-then-long layout with each long variant's slot recorded, and
+  `is_empty` accounts for both. gnomAD is full of indels, so this is required
+  for correct v2 annotation.
 
 - **fastvep-web**: stored XSS via gene/transcript metadata (symbol, IDs,
   HGVS strings, supplementary-annotation values) rendered unescaped into

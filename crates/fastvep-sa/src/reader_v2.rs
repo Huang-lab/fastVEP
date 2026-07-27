@@ -35,8 +35,16 @@ const CHUNK_CACHE_SIZE: usize = 8;
 /// a mutating operation (it reorders the LRU recency list), so concurrent
 /// queries from multiple worker threads cannot share an `UnsafeCell`.
 pub struct Osa2Reader {
-    /// Path to the .osa2 ZIP file (re-opened for each chunk load).
-    zip_path: std::path::PathBuf,
+    /// The ZIP archive, opened once. `zip::ZipArchive::new` parses the entire
+    /// central directory, so re-opening per chunk load (as an earlier revision
+    /// did) re-parsed every entry on every miss — O(entries) per chunk, which
+    /// dominated query time on genome-scale files. Parsed once here and reused.
+    ///
+    /// Behind a `Mutex` because `ZipArchive::by_name` takes `&mut self` (it
+    /// seeks the underlying file). The annotate pipeline already serializes
+    /// each provider behind its own `Mutex<Box<dyn AnnotationProvider>>`, so
+    /// this adds no contention beyond what already exists.
+    archive: Mutex<zip::ZipArchive<File>>,
     metadata: Osa2Metadata,
     sa_metadata: SaMetadata,
     fields: Vec<Field>,
@@ -138,7 +146,7 @@ impl Osa2Reader {
             .expect("CHUNK_CACHE_SIZE is a non-zero compile-time constant");
 
         Ok(Self {
-            zip_path: path.to_path_buf(),
+            archive: Mutex::new(archive),
             metadata,
             sa_metadata,
             fields,
@@ -175,8 +183,14 @@ impl Osa2Reader {
     /// Earlier revisions collapsed both cases together via `Err(_) => …`,
     /// which silently turned data corruption into false-negative lookups.
     fn build_chunk(&self, chrom: &str, chunk_id: u32) -> Result<Chunk> {
-        let file = File::open(&self.zip_path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
+        // Reuse the already-parsed archive. `by_name` seeks the shared file
+        // handle, so hold the lock for the duration of this chunk's reads.
+        // Access to each provider is already serialized by the pipeline, so
+        // this introduces no contention that wasn't there before.
+        let mut archive = self
+            .archive
+            .lock()
+            .map_err(|_| anyhow::anyhow!("osa2 archive mutex poisoned"))?;
         // `chrom` is expected to be canonical (resolved by `resolve_chrom`
         // at the public entry points), so no alias walk is needed here.
         let prefix = format!("fastsa/{}/{}/", chrom, chunk_id);
@@ -350,7 +364,11 @@ impl Osa2Reader {
         let chunk_mask = (1u32 << self.metadata.chunk_bits) - 1;
         let within_pos = pos & chunk_mask;
 
-        let idx = if var32::is_long(ref_allele.len(), alt_allele.len()) {
+        let idx = if self.metadata.is_positional {
+            // Positional sources match by coordinate alone: key on position and
+            // ignore the query's alleles, mirroring the writer's positional key.
+            chunk.find_short(var32::positional_key(within_pos))
+        } else if var32::is_long(ref_allele.len(), alt_allele.len()) {
             chunk.find_long(pos, ref_allele, alt_allele)
         } else {
             var32::encode(within_pos, ref_allele, alt_allele)

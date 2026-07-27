@@ -2510,6 +2510,17 @@ pub fn run_sa_build(
             is_array: false,
             is_positional: false,
         },
+        "alphamissense" => IndexHeader {
+            schema_version: fastvep_sa::common::SCHEMA_VERSION,
+            json_key: "alphaMissense".into(),
+            name: "AlphaMissense".into(),
+            version: "latest".into(),
+            description: format!("AlphaMissense pathogenicity predictions for {}", assembly),
+            assembly: assembly.into(),
+            match_by_allele: true,
+            is_array: false,
+            is_positional: false,
+        },
         "mitomap" => IndexHeader {
             schema_version: fastvep_sa::common::SCHEMA_VERSION,
             json_key: "mitomap".into(),
@@ -2522,7 +2533,7 @@ pub fn run_sa_build(
             is_positional: false,
         },
         _ => anyhow::bail!(
-            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
+            "Unknown source: {}. Supported: clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, alphamissense, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom",
             source
         ),
     };
@@ -2555,6 +2566,12 @@ pub fn run_sa_build(
             return run_streaming_sa_build(
                 input, output, header, &chrom_map, &chrom_list, show_progress,
                 |r, m| fastvep_sa::sources::topmed::iter_topmed_vcf(r, m),
+            );
+        }
+        "alphamissense" => {
+            return run_streaming_sa_build(
+                input, output, header, &chrom_map, &chrom_list, show_progress,
+                |r, m| fastvep_sa::sources::alphamissense::iter_alphamissense_tsv(r, m),
             );
         }
         "phylop" => {
@@ -2626,6 +2643,470 @@ pub fn run_sa_build(
     );
 
     Ok(())
+}
+
+/// The allele-level sources that build to the v2 `.osa2` format. Single source
+/// of truth for the `--format auto` dispatch and the `--format osa2` error
+/// message — adding a source to v2 means adding it here plus a match arm in
+/// [`run_sa_build_v2`]. Includes the `1000g` alias of `onekg`.
+///
+/// Gene-level (`.oga`) and `custom_*` sources are absent because v2 is a
+/// variant-level container. Positional per-base scores (PhyloP/GERP/DANN) ARE
+/// supported — keyed by coordinate via `var32::positional_key`.
+pub const OSA2_SUPPORTED_SOURCES: &[&str] = &[
+    "gnomad",
+    "onekg",
+    "1000g",
+    "topmed",
+    "alphamissense",
+    "dbsnp",
+    "cosmic",
+    "clinvar",
+    "revel",
+    "primateai",
+    "dbnsfp",
+    "phylop",
+    "gerp",
+    "dann",
+];
+
+/// Whether `--format osa2` (and `--format auto`) can build this source to v2.
+pub fn source_supports_osa2(source: &str) -> bool {
+    OSA2_SUPPORTED_SOURCES.contains(&source)
+}
+
+/// Dispatch `sa-build` to the v1 or v2 builder according to `--format`:
+///
+/// * `auto` (the default) — build v2 for sources that support it (smaller and
+///   faster to query at genome scale), v1 for everything else. This gives users
+///   the higher-quality format per source without having to know which is which.
+/// * `osa` / `v1` — force v1 `.osa`.
+/// * `osa2` / `v2` — force v2 `.osa2` (errors if the source has no v2 encoder).
+pub fn run_sa_build_format(
+    format: &str,
+    source: &str,
+    input: &str,
+    output: &str,
+    assembly: &str,
+    name: Option<&str>,
+    info_fields: &[String],
+    show_progress: bool,
+) -> Result<()> {
+    match format {
+        "osa" | "v1" => {
+            run_sa_build(source, input, output, assembly, name, info_fields, show_progress)
+        }
+        "osa2" | "v2" => run_sa_build_v2(source, input, output, assembly, show_progress),
+        "auto" => {
+            if source_supports_osa2(source) {
+                run_sa_build_v2(source, input, output, assembly, show_progress)
+            } else {
+                run_sa_build(source, input, output, assembly, name, info_fields, show_progress)
+            }
+        }
+        other => anyhow::bail!(
+            "Unknown --format '{}': expected 'auto' (default; best format per source), \
+             'osa' (v1), or 'osa2' (v2)",
+            other
+        ),
+    }
+}
+
+/// Build a v2 (`.osa2`) supplementary annotation database.
+///
+/// The v2 format (chunked ZIP, u32 value arrays, Var32 binary search) is
+/// faster to query and smaller on disk at genome scale than v1 `.osa`. It is
+/// wired for the allele-level sources in [`OSA2_SUPPORTED_SOURCES`]: numeric
+/// payloads (gnomAD, 1000 Genomes, TOPMed, AlphaMissense) encode into parallel
+/// u32 columns, while opaque string/array payloads (dbSNP, COSMIC, ClinVar)
+/// are stored as whole-record JSON blobs. Other sources continue to build v1
+/// `.osa` via [`run_sa_build`].
+pub fn run_sa_build_v2(
+    source: &str,
+    input: &str,
+    output: &str,
+    assembly: &str,
+    show_progress: bool,
+) -> Result<()> {
+    use fastvep_sa::sources::{
+        alphamissense, clinvar, cosmic, dbnsfp, dbsnp, gnomad, onekg, primateai, revel, scores,
+        topmed,
+    };
+
+    let (chrom_list, chrom_map) = standard_chrom_map(assembly);
+    let out_path = Path::new(output).with_extension("osa2");
+
+    match source {
+        // gnomAD has a dedicated streaming encoder that avoids the v1 JSON
+        // round-trip.
+        "gnomad" => {
+            eprintln!("Building gnomad .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records = gnomad::iter_gnomad_osa2(buf_reader, &chrom_map);
+            finish_osa2_build(
+                &out_path,
+                &gnomad::gnomad_osa2_metadata(assembly),
+                gnomad::gnomad_osa2_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // 1000 Genomes: the v1 parser buffers + sorts; bridge each record to
+        // the v2 layout and stream it out.
+        "onekg" | "1000g" => {
+            eprintln!("Building onekg .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let fields = onekg::onekg_osa2_fields();
+            // The bridge borrows the schema to re-encode each record; the
+            // writer takes ownership of it. Keep separate copies so both can
+            // live through the streaming loop.
+            let bridge_fields = fields.clone();
+            let mut v1 = onekg::parse_onekg_vcf(buf_reader, &chrom_map)?;
+            v1.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+            let records = bridge_v1_records(v1.into_iter().map(Ok), &chrom_list, &bridge_fields);
+            finish_osa2_build(
+                &out_path,
+                &onekg::onekg_osa2_metadata(assembly),
+                fields,
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // TOPMed has a streaming v1 iterator (the full freeze is ~450M
+        // records); bridge it record-by-record with bounded memory.
+        "topmed" => {
+            eprintln!("Building topmed .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let fields = topmed::topmed_osa2_fields();
+            let bridge_fields = fields.clone();
+            let records = bridge_v1_records(
+                topmed::iter_topmed_vcf(buf_reader, &chrom_map),
+                &chrom_list,
+                &bridge_fields,
+            );
+            finish_osa2_build(
+                &out_path,
+                &topmed::topmed_osa2_metadata(assembly),
+                fields,
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // AlphaMissense: numeric score + a 3-level categorical class. Streams
+        // straight into v2 with a dedicated encoder (the generic v1 bridge
+        // cannot encode categoricals) and a fixed 3-entry string table.
+        "alphamissense" => {
+            eprintln!("Building alphamissense .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records =
+                alphamissense::iter_alphamissense_osa2(buf_reader, &chrom_map, &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &alphamissense::alphamissense_osa2_metadata(assembly),
+                alphamissense::alphamissense_osa2_fields(),
+                &alphamissense::alphamissense_string_tables(),
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // dbSNP: whole-record JSON blob per variant (RS ID + optional MAF).
+        // Streams straight through (the full NCBI release is ~800M records).
+        "dbsnp" => {
+            eprintln!("Building dbsnp .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records =
+                bridge_v1_raw_blobs(dbsnp::iter_dbsnp_vcf(buf_reader, &chrom_map), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &dbsnp::dbsnp_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // COSMIC: whole-record JSON blob per variant (COSV id + gene + count).
+        // The coding-mutations file fits in memory; the v1 parser buffers and
+        // sorts, then we bridge each record to a blob and stream it out.
+        "cosmic" => {
+            eprintln!("Building cosmic .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = cosmic::parse_cosmic_vcf(buf_reader, &chrom_map)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &cosmic::cosmic_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // ClinVar: whole-record JSON blob per variant (significance/phenotype
+        // arrays, review status, population AFs). is_array=true is preserved in
+        // the v2 metadata to match v1 exactly. Buffered+sorted by the v1 parser.
+        "clinvar" => {
+            eprintln!("Building clinvar .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = clinvar::parse_clinvar_vcf(buf_reader, &chrom_map)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &clinvar::clinvar_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // REVEL: single `{"score":..}` object per allele, stored as a
+        // whole-record blob (its fixed-decimal score text rides through
+        // untouched). The v1 parser buffers+sorts the CSV; column 2 is the
+        // GRCh38 position, matching the v1 build path.
+        "revel" => {
+            eprintln!("Building revel .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = revel::parse_revel(buf_reader, &chrom_map, 2)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &revel::revel_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // Positional per-base scores (PhyloP/GERP/DANN): allele-less, keyed by
+        // coordinate. Stream the score TSV/wig and store each bare-number score
+        // as a whole-record blob. Genome-wide (~3B positions for PhyloP), so
+        // these must stream — never buffer.
+        "phylop" => {
+            eprintln!("Building phylop .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records =
+                bridge_v1_raw_blobs(iter_phylop_auto(buf_reader, &chrom_map), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &scores::score_osa2_metadata("phylop", assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        "gerp" | "dann" => {
+            eprintln!("Building {source} .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let records = bridge_v1_raw_blobs(
+                scores::iter_score_tsv(buf_reader, &chrom_map, false),
+                &chrom_list,
+            );
+            finish_osa2_build(
+                &out_path,
+                &scores::score_osa2_metadata(source, assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // dbNSFP: composite SIFT/PolyPhen prediction strings per allele,
+        // whole-record blob. The v1 parser auto-detects columns from the
+        // header, buffers, and sorts; then we bridge to blobs.
+        "dbnsfp" => {
+            eprintln!("Building dbnsfp .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = dbnsfp::parse_dbnsfp(buf_reader, &chrom_map)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &dbnsfp::dbnsfp_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // PrimateAI: single `{"score":..}` object per allele, whole-record blob.
+        "primateai" => {
+            eprintln!("Building primateai .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = primateai::parse_primateai(buf_reader, &chrom_map)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &primateai::primateai_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        _ => anyhow::bail!(
+            "--format osa2 is currently supported for --source {} (got '{}'). Other \
+             sources build v1 .osa; use --format auto (the default) to pick the best \
+             format per source, or --format osa to force v1.",
+            OSA2_SUPPORTED_SOURCES.join(", "),
+            source
+        ),
+    }
+}
+
+/// Adapt an iterator of v1 `AnnotationRecord`s into whole-record-blob
+/// `Osa2Record`s: each record's entire JSON is stored as the blob, so the v2
+/// reader returns exactly the v1 bytes. Used for string/array payloads
+/// (dbSNP, COSMIC, ClinVar) that don't decompose into numeric u32 columns.
+fn bridge_v1_raw_blobs<'a, I>(
+    records: I,
+    chrom_list: &'a [String],
+) -> impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>> + 'a
+where
+    I: Iterator<Item = Result<fastvep_sa::common::AnnotationRecord>> + 'a,
+{
+    records.map(move |r| {
+        let rec = r?;
+        let chrom = chrom_list
+            .get(rec.chrom_idx as usize)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("chrom_idx {} out of range", rec.chrom_idx))?;
+        Ok(fastvep_sa::writer_v2::osa2_raw_blob_from_v1(&rec, chrom))
+    })
+}
+
+/// Adapt an iterator of v1 `AnnotationRecord`s into `Osa2Record`s by
+/// re-encoding each record's flat-object JSON against `fields`. Reuses the
+/// existing, well-tested v1 source parsers as the front end.
+fn bridge_v1_records<'a, I>(
+    records: I,
+    chrom_list: &'a [String],
+    fields: &'a [fastvep_sa::fields::Field],
+) -> impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>> + 'a
+where
+    I: Iterator<Item = Result<fastvep_sa::common::AnnotationRecord>> + 'a,
+{
+    records.map(move |r| {
+        let rec = r?;
+        let chrom = chrom_list
+            .get(rec.chrom_idx as usize)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("chrom_idx {} out of range", rec.chrom_idx))?;
+        fastvep_sa::writer_v2::osa2_record_from_v1(&rec, chrom, fields)
+    })
+}
+
+/// Open a (possibly gzipped) SA input and pair it with a byte-tracking
+/// progress meter, matching the v1 streaming builder's setup.
+fn open_sa_reader_with_meter(
+    input: &str,
+    show_progress: bool,
+) -> Result<(io::BufReader<Box<dyn io::Read>>, crate::progress::ProgressMeter)> {
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Arc;
+
+    let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+    let byte_counter = Arc::new(AtomicU64::new(0));
+    let reader = open_sa_input(input, Some(Arc::clone(&byte_counter)))?;
+    let buf_reader = io::BufReader::new(reader);
+    let meter = if show_progress && file_size > 0 {
+        crate::progress::ProgressMeter::with_progress(true, file_size, byte_counter)
+    } else {
+        crate::progress::ProgressMeter::new(show_progress)
+    };
+    Ok((buf_reader, meter))
+}
+
+/// Stream `records` into `out_path` as a `.osa2` file, then report. Mirrors
+/// the v1 streaming builder's crash-safety contract: on any failure the
+/// partial `.osa2` is removed so no corrupt database is left behind.
+fn finish_osa2_build(
+    out_path: &Path,
+    metadata: &fastvep_sa::writer_v2::Osa2Metadata,
+    fields: Vec<fastvep_sa::fields::Field>,
+    string_tables: &[(usize, Vec<String>)],
+    records: impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>>,
+    mut meter: crate::progress::ProgressMeter,
+    input: &str,
+    assembly: &str,
+) -> Result<()> {
+    let n = match write_osa2_stream(out_path, metadata, fields, string_tables, records, &mut meter) {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = std::fs::remove_file(out_path);
+            return Err(e);
+        }
+    };
+    meter.finish();
+    if n == 0 {
+        eprintln!(
+            "Warning: 0 records parsed from {} — if the input is non-empty, none of its \
+             chromosome names matched assembly '{}'.",
+            input, assembly
+        );
+    }
+    eprintln!(
+        "Wrote: {} ({} records)",
+        out_path.display(),
+        crate::progress::fmt_count(n)
+    );
+    Ok(())
+}
+
+/// Core streaming loop: create the `.osa2` writer, push every record, finish.
+/// Returns the number of records written.
+fn write_osa2_stream(
+    out_path: &Path,
+    metadata: &fastvep_sa::writer_v2::Osa2Metadata,
+    fields: Vec<fastvep_sa::fields::Field>,
+    string_tables: &[(usize, Vec<String>)],
+    records: impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>>,
+    meter: &mut crate::progress::ProgressMeter,
+) -> Result<u64> {
+    use fastvep_sa::writer_v2::Osa2StreamWriter;
+
+    let out_file = std::fs::File::create(out_path)
+        .with_context(|| format!("Creating {}", out_path.display()))?;
+    let mut writer = Osa2StreamWriter::new(BufWriter::new(out_file), metadata, fields)?;
+    for (field_idx, table) in string_tables {
+        writer.set_string_table(*field_idx, table.clone());
+    }
+
+    let mut n = 0u64;
+    for record in records {
+        let record = record?;
+        meter.update();
+        writer.push(record)?;
+        n += 1;
+    }
+    writer.finish()?;
+    Ok(n)
 }
 
 /// Classify a `--source custom` input as either `custom_vcf` or

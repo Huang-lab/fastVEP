@@ -214,6 +214,14 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         info_fields: Vec<String>,
 
+        /// On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2).
+        /// `auto` builds v2 for the sources that support it — smaller and
+        /// faster to query at genome scale — and v1 for the rest, so you get
+        /// the best format per source automatically. Pass `osa` to force v1
+        /// (e.g. for a faster one-time build) or `osa2` to force v2.
+        #[arg(long, default_value = "auto")]
+        format: String,
+
         /// Suppress periodic progress output
         #[arg(long, default_value_t = false)]
         no_progress: bool,
@@ -304,9 +312,11 @@ fn main() -> Result<()> {
             assembly,
             name,
             info_fields,
+            format,
             no_progress,
         } => {
-            pipeline::run_sa_build(
+            pipeline::run_sa_build_format(
+                &format,
                 &source,
                 &input,
                 &output,
@@ -314,7 +324,7 @@ fn main() -> Result<()> {
                 name.as_deref(),
                 &info_fields,
                 !no_progress,
-            )?;
+            )?
         }
         Commands::Filter {
             input,
