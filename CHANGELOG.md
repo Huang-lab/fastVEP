@@ -5,6 +5,8 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-28
+
 ### Added
 
 - **CLI**: `sa-build --format` now defaults to `auto`, which builds the

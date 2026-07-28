@@ -1,0 +1,94 @@
+name: Release
+
+# Build release binaries and publish a GitHub Release when a vX.Y.Z tag is pushed.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write # needed to create the GitHub Release
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build binaries
+        run: cargo build --release --target ${{ matrix.target }} --bin fastvep --bin fastvep-web
+
+      - name: Package tarball
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          STAGE="fastVEP-${VERSION}-${{ matrix.target }}"
+          mkdir "$STAGE"
+          cp "target/${{ matrix.target }}/release/fastvep" "$STAGE/"
+          cp "target/${{ matrix.target }}/release/fastvep-web" "$STAGE/"
+          cp README.md LICENSE.md CHANGELOG.md "$STAGE/"
+          tar -czf "${STAGE}.tar.gz" "$STAGE"
+          shasum -a 256 "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            fastVEP-*.tar.gz
+            fastVEP-*.tar.gz.sha256
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract release notes for this tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Pull the CHANGELOG block between "## [VERSION]" and the next "## [".
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { grab=1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "Release ${GITHUB_REF_NAME}." > release-notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: |
+            dist/fastVEP-*.tar.gz
+            dist/fastVEP-*.tar.gz.sha256
+          fail_on_unmatched_files: true
