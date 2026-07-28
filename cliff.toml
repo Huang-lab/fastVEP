@@ -1,0 +1,69 @@
+# git-cliff configuration for fastVEP
+# https://git-cliff.org/docs/configuration
+#
+# fastVEP keeps a hand-curated CHANGELOG.md (Keep a Changelog style). git-cliff
+# is used to DRAFT the entries for a new release from the conventional commits
+# since the last tag — you then edit the prose before finalizing. Past releases
+# (v0.1.0, v0.2.0, ...) were written by hand and are never regenerated: we run
+# in prepend mode over the unreleased range only.
+
+[changelog]
+# Rendered above the generated entries when writing a fresh file (unused in prepend mode).
+header = """
+# Changelog
+
+All notable changes to fastVEP will be documented in this file. Dates are
+ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
+"""
+
+# One release block. `version` is the tag being cut (or "Unreleased" for a draft).
+body = """
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] — {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor %}\n
+"""
+
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+commit_preprocessors = []
+
+# Map conventional-commit types to Keep-a-Changelog section headings.
+# Order matters: first match wins. The trailing catch-all funnels the many
+# legacy `scope:`-as-type messages (acmg:, cache:, sa-build:, ...) into
+# "Changed" instead of spawning a section per prefix — a human sorts them
+# into Added/Fixed when finalizing.
+commit_parsers = [
+    { body = ".*[Bb]reaking.*", group = "Changed" },
+    { message = "^feat", group = "Added" },
+    { message = "^fix", group = "Fixed" },
+    { message = "^perf", group = "Changed" },
+    { message = "^refactor", group = "Changed" },
+    { message = "^docs", skip = true },
+    { message = "^test", skip = true },
+    { message = "^chore", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^build", skip = true },
+    { message = "^style", skip = true },
+    { message = "^bench", skip = true },
+    { message = "^Merge", skip = true },
+    { message = "^release", skip = true },
+    { message = ".*", group = "Changed" },
+]
+
+protect_breaking_commits = false
+filter_commits = false
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "oldest"
