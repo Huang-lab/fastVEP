@@ -129,6 +129,7 @@ fn handle_request(stream: &mut std::net::TcpStream, ctx: &mut AnnotationContext)
             let status_json = serde_json::json!({
                 "status": "ok",
                 "backend": true,
+                "version": env!("CARGO_PKG_VERSION"),
                 "transcripts": tr_count,
                 "gff3_source": ctx.gff3_source,
                 "has_fasta": ctx.seq_provider.is_some(),

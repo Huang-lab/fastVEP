@@ -694,7 +694,7 @@
   <header>
     <img class="logo" src="/assets/logo.png" alt="fastVEP logo" width="36" height="36">
     <h1><span>fast</span>VEP</h1>
-    <span class="badge">v0.1.0</span>
+    <span class="badge">v0.3.0</span>
     <span class="spacer"></span>
     <div id="stats" style="display:none; font-size:12px; color:var(--text-dim); margin-right:20px; text-align:right">
       <div id="genomeStat"></div>
@@ -1405,6 +1405,9 @@ let hasBackend = null; // null = unknown, true/false after check
 let serverTranscripts = 0; // how many transcripts are loaded on the server
 let serverGenomes = []; // available genomes from --data-dir
 let serverSaSources = []; // loaded SA sources (ClinVar, gnomAD, etc.)
+// Fallback version = the static header badge text (single source of truth);
+// overridden by /api/status when a backend responds.
+let serverVersion = (document.querySelector('.badge')?.textContent || 'v0.3.0').replace(/^v/, '').trim();
 let builtinUploadedToServer = false; // track if we've uploaded the example GFF3
 
 // Detect backend on load, fetch available genomes, ensure transcripts are loaded
@@ -1464,11 +1467,12 @@ async function checkBackend() {
       hasBackend = j.backend === true;
       serverTranscripts = j.transcripts || 0;
       serverSaSources = j.sa_sources || [];
+      if (j.version) serverVersion = j.version;
 
       // Update counters
       if (j.total_genomes !== undefined || j.total_variants !== undefined) {
         document.getElementById('stats').style.display = 'block';
-        document.getElementById('genomeStat').textContent = `Genomes: ${j.total_genomes || 0}`;
+        document.getElementById('genomeStat').textContent = `Genome Analysis Sessions: ${j.total_genomes || 0}`;
         document.getElementById('variantStat').textContent = `Variants: ${j.total_variants || 0}`;
       }
     } else {
@@ -1477,7 +1481,7 @@ async function checkBackend() {
   } catch { hasBackend = false; }
 
   const badge = document.querySelector('.badge');
-  if (badge) badge.textContent = hasBackend ? 'v0.1.0 (server)' : 'v0.1.0 (client)';
+  if (badge) badge.textContent = `v${serverVersion} (${hasBackend ? 'server' : 'client'})`;
 
   if (!hasBackend) return;
 

@@ -32,6 +32,7 @@ genomes/*
 # docs
 *stats.json
 *docx
+*pdf
 # Local benchmark data (downloaded sources, built .osa, intermediate VCFs)
 data/
 
