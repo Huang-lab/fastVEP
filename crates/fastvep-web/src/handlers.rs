@@ -80,6 +80,7 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
         "backend": true,
+        "version": env!("CARGO_PKG_VERSION"),
         "transcripts": transcripts,
         "gff3_source": gff3_source,
         "has_fasta": has_fasta,
