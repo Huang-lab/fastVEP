@@ -41,44 +41,47 @@ def fig1_architecture():
     gs = fig.add_gridspec(1, 2, width_ratios=[1.75, 1], wspace=0.06)
     axA = fig.add_subplot(gs[0]); axB = fig.add_subplot(gs[1])
 
-    # ================= Panel A: crate architecture =================
-    axA.set_xlim(-1.4, 14); axA.set_ylim(1.2, 9); axA.axis('off')
-    bands = [(6.85,7.95,'binaries','#eef2ff'),(5.15,6.25,'libraries','#eef2ff'),
-             (3.35,4.45,'data providers','#ecfdf5'),(1.55,2.65,'core','#fff7ed')]
-    for y0,y1,lbl,col in bands:
-        axA.add_patch(plt.Rectangle((-1.4,y0),15.4,y1-y0,facecolor=col,edgecolor='none',zorder=0))
-        axA.text(-1.28,(y0+y1)/2,lbl,ha='center',va='center',fontsize=8.5,color='#94a3b8',style='italic',rotation=90)
-    def box(x,y,w,label,sub,color,fs=10.5,nt=None):
-        h=0.82
-        axA.add_patch(FancyBboxPatch((x,y),w,h,boxstyle="round,pad=0.12",facecolor=color,edgecolor='#374151',lw=1.3,alpha=0.93,zorder=2))
-        axA.text(x+w/2,y+h/2+0.17,label,ha='center',va='center',fontsize=fs,fontweight='bold',color='white',zorder=3)
-        s = f"{sub}  ·  {nt} tests" if nt is not None else sub
-        if s: axA.text(x+w/2,y+h/2-0.19,s,ha='center',va='center',fontsize=6.8,color='white',alpha=0.93,style='italic',zorder=3)
-    def arr(x1,y1,x2,y2,c='#94a3b8'): axA.annotate('',xy=(x2,y2),xytext=(x1,y1),arrowprops=dict(arrowstyle='->',color=c,lw=1.1,alpha=0.8),zorder=1)
-    axA.text(6.3,8.55,'A. Crate architecture — 12-crate Cargo workspace',ha='center',fontsize=13,fontweight='bold',color='#1f2937')
-    # binaries
-    box(1.0,7.0,4.7,'fastvep-cli','annotate · sa-build · filter · cache',C['cli'],11,tests['cli'])
-    box(7.0,7.0,4.7,'fastvep-web','axum production server',C['cli'],11,tests['web'])
-    # libraries
-    box(-0.35,5.3,2.35,'fastvep-io','VCF / CSQ / JSON',C['mid'],9.5,tests['io'])
-    box(2.1,5.3,2.35,'fastvep-annotate','shared engine',C['mid'],9,tests['annotate'])
-    box(4.6,5.3,2.6,'fastvep-consequence','SNV / indel / SV',C['mid'],8.8,tests['consequence'])
-    box(7.35,5.3,1.75,'fastvep-hgvs','HGVS g/c/p',C['mid'],9,tests['hgvs'])
-    box(9.25,5.3,1.55,'fastvep-filter','filter_vep',C['mid'],8.8,tests['filter'])
-    # providers
-    box(0.6,3.5,3.2,'fastvep-genome','Transcript / Exon / Gene',C['data'],9.5,tests['genome'])
-    box(4.1,3.5,4.1,'fastvep-cache','GFF3 · FASTA mmap · cache',C['data'],9.5,tests['cache'])
-    box(8.5,3.5,3.2,'fastvep-sa','fastSA: ClinVar, gnomAD, ...',C['sa'],9.5,tests['sa'])
-    # core
-    box(3.0,1.7,7.0,'fastvep-core','Consequence (49 SO) · Allele · Impact · VariantType',C['core'],11,tests['core'])
-    # dependency arrows, tier by tier (kept sparse for legibility)
-    arr(3.35,7.0,3.28,6.17); arr(9.35,7.0,3.55,6.17)                   # cli/web -> annotate (shared engine)
-    arr(0.83,5.3,2.2,4.37); arr(5.9,5.3,6.15,4.37); arr(6.1,5.3,3.2,4.37)  # libraries -> providers
-    for x in [2.2,6.15,10.1]: arr(x,3.5,6.5,2.57)                       # providers -> core
+    # ================= Panel A: crate architecture (centered rows) =================
+    axA.set_xlim(0, 14); axA.set_ylim(1.0, 9.0); axA.axis('off')
+    CX, H = 7.0, 0.85
+    tier_y = {'bin':7.0,'lib':5.3,'prov':3.6,'core':1.9}
+    for key,lbl,col in [('bin','binaries','#eef2ff'),('lib','libraries','#eef2ff'),
+                        ('prov','data providers','#ecfdf5'),('core','core','#fff7ed')]:
+        y=tier_y[key]
+        axA.add_patch(plt.Rectangle((0,y-0.14),14,H+0.28,facecolor=col,edgecolor='none',zorder=0))
+        axA.text(0.42,y+H/2,lbl,ha='center',va='center',fontsize=8,color='#9aa3b2',style='italic',rotation=90)
+    def arr(x1,y1,x2,y2,c='#94a3b8'): axA.annotate('',xy=(x2,y2),xytext=(x1,y1),arrowprops=dict(arrowstyle='->',color=c,lw=1.1,alpha=0.85),zorder=1)
+    def row(items, y, gap):
+        total=sum(w for _,_,_,w,_ in items)+gap*(len(items)-1)
+        x=CX-total/2; ctr={}
+        for label,sub,color,w,fs in items:
+            axA.add_patch(FancyBboxPatch((x,y),w,H,boxstyle="round,pad=0.1",facecolor=color,edgecolor='#374151',lw=1.3,alpha=0.93,zorder=2))
+            axA.text(x+w/2,y+H/2+0.17,label,ha='center',va='center',fontsize=fs,fontweight='bold',color='white',zorder=3)
+            axA.text(x+w/2,y+H/2-0.19,sub,ha='center',va='center',fontsize=6.8,color='white',alpha=0.93,style='italic',zorder=3)
+            ctr[label.split('-')[-1]]=x+w/2; x+=w+gap
+        return ctr
+    axA.text(CX,8.7,'A. Crate architecture — 12-crate Cargo workspace',ha='center',fontsize=13,fontweight='bold',color='#1f2937')
+    b=row([('fastvep-cli','annotate · sa-build · filter · cache  ·  76 tests',C['cli'],5.2,11),
+           ('fastvep-web','axum production server  ·  9 tests',C['cli'],5.2,11)], tier_y['bin'], 0.9)
+    l=row([('fastvep-io','file I/O  ·  86 tests',C['mid'],2.4,9.3),
+           ('fastvep-annotate','shared engine  ·  5 tests',C['mid'],2.4,9),
+           ('fastvep-consequence','SNV / indel / SV  ·  27 tests',C['mid'],2.7,8.6),
+           ('fastvep-hgvs','HGVS g/c/p  ·  25 tests',C['mid'],2.1,9),
+           ('fastvep-filter','filter_vep  ·  21 tests',C['mid'],2.0,9)], tier_y['lib'], 0.3)
+    p=row([('fastvep-genome','Transcript / Exon / Gene  ·  18 tests',C['data'],3.4,9.3),
+           ('fastvep-cache','GFF3 · FASTA mmap · cache  ·  54 tests',C['data'],4.0,9),
+           ('fastvep-sa','fastSA · ClinVar, gnomAD  ·  153 tests',C['sa'],3.4,9)], tier_y['prov'], 0.5)
+    c=row([('fastvep-core','Consequence (49 SO) · Allele · Impact · VariantType  ·  20 tests',C['core'],7.6,11)], tier_y['core'], 0)
+    # dependency arrows (downward, tier to tier)
+    yb,yl,yp,yc = tier_y['bin'],tier_y['lib'],tier_y['prov'],tier_y['core']
+    arr(b['cli'], yb, l['annotate']-0.25, yl+H); arr(b['web'], yb, l['annotate']+0.25, yl+H)   # binaries -> shared engine
+    arr(l['io'], yl, p['genome'], yp+H); arr(l['consequence'], yl, p['cache'], yp+H)
+    arr(l['consequence']-0.35, yl, p['genome']+0.5, yp+H)
+    for k in ['genome','cache','sa']: arr(p[k], yp, c['core'], yc+H)                            # providers -> core
 
     # ================= Panel B: annotation data flow =================
-    axB.set_xlim(0,10); axB.set_ylim(0.2,9.6); axB.axis('off')
-    axB.text(5,9.2,'B. Annotation data flow',ha='center',fontsize=13,fontweight='bold',color='#1f2937')
+    axB.set_xlim(0,10); axB.set_ylim(1.0,9.0); axB.axis('off')
+    axB.text(5,8.7,'B. Annotation data flow',ha='center',fontsize=13,fontweight='bold',color='#1f2937')
     stages=[('VCF input','multi-sample · SV · gzip','#64748b'),
             ('Parse & normalize','fastvep-io',C['mid']),
             ('Transcript overlap','fastvep-cache · binary search',C['data']),
@@ -86,7 +89,7 @@ def fig1_architecture():
             ('HGVS g / c / p','fastvep-hgvs',C['mid']),
             ('Supplementary annotation','fastvep-sa · .osa / .osa2',C['sa']),
             ('Output','CSQ (47 fields) · TSV · JSON','#64748b')]
-    n=len(stages); top=8.4; bot=0.9; step=(top-bot)/(n-1)
+    n=len(stages); top=7.95; bot=1.5; step=(top-bot)/(n-1)
     for i,(t,s,col) in enumerate(stages):
         y=top-i*step
         axB.add_patch(FancyBboxPatch((1.1,y-0.34),7.8,0.68,boxstyle="round,pad=0.1",facecolor=col,edgecolor='#374151',lw=1.2,alpha=0.92))
