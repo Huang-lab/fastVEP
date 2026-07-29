@@ -513,7 +513,7 @@ The standard genetic code implementation was validated by testing all 64 codons 
 
 ### 5.5 Availability
 
-fastVEP is open source under the Apache License 2.0. Source code, documentation, and pre-built test data are available at https://github.com/Huang-lab/fastVEP. The tool can be built from source with `cargo build --release` on any platform with a Rust toolchain (Linux, macOS, Windows). A hosted web server for interactive variant annotation is available at https://fastVEP.org.
+fastVEP is open source under the Apache License 2.0. Source code, documentation, and pre-built test data are available at https://github.com/Huang-lab/fastVEP. The tool can be built from source with `cargo build --release` on any platform with a Rust toolchain (Linux, macOS, Windows). A hosted web server for interactive variant annotation is available at https://fastVEP.org; as of July 2026 it had served 2,372 interactive annotation sessions and annotated 19,013 variants.
 
 ---
 

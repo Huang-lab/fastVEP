@@ -4,7 +4,7 @@ A high-performance Variant Effect Predictor written in Rust. fastVEP predicts th
 
 fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.ensembl.org/info/docs/tools/vep/index.html) and [Illumina Nirvana](https://github.com/Illumina/Nirvana), while delivering significantly better performance through Rust's zero-cost abstractions and native parallelism.
 
-**Try it now:** A hosted web server is available at [fastVEP.org](https://fastVEP.org) — paste VCF data and get annotated results instantly, no installation required.
+**Try it now:** A hosted web server is available at [fastVEP.org](https://fastVEP.org) — paste VCF data and get annotated results instantly, no installation required. As of July 2026 it has served **2,372 interactive sessions** and annotated **19,013 variants**.
 
 ## Features
 

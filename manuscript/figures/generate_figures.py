@@ -65,7 +65,6 @@ def fig1_architecture():
     box(4.6,5.3,2.6,'fastvep-consequence','SNV / indel / SV',C['mid'],8.8,tests['consequence'])
     box(7.35,5.3,1.75,'fastvep-hgvs','HGVS g/c/p',C['mid'],9,tests['hgvs'])
     box(9.25,5.3,1.55,'fastvep-filter','filter_vep',C['mid'],8.8,tests['filter'])
-    box(11.0,5.3,2.7,'fastvep-classification','ACMG/AMP',C['core'],7.5,tests['classification'])
     # providers
     box(0.6,3.5,3.2,'fastvep-genome','Transcript / Exon / Gene',C['data'],9.5,tests['genome'])
     box(4.1,3.5,4.1,'fastvep-cache','GFF3 · FASTA mmap · cache',C['data'],9.5,tests['cache'])
@@ -76,7 +75,6 @@ def fig1_architecture():
     arr(3.35,7.0,3.28,6.17); arr(9.35,7.0,3.55,6.17)                   # cli/web -> annotate (shared engine)
     arr(0.83,5.3,2.2,4.37); arr(5.9,5.3,6.15,4.37); arr(6.1,5.3,3.2,4.37)  # libraries -> providers
     for x in [2.2,6.15,10.1]: arr(x,3.5,6.5,2.57)                       # providers -> core
-    arr(12.35,5.3,9.5,2.57, c='#f0c8d4')                               # classification -> core
 
     # ================= Panel B: annotation data flow =================
     axB.set_xlim(0,10); axB.set_ylim(0.2,9.6); axB.axis('off')
