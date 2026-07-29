@@ -576,7 +576,7 @@ tests/                 # Test data: chr1 (OR4F5) and chr17 (BRCA1) VCF + GFF3
 ## Running Tests
 
 ```bash
-cargo test --workspace          # 515 tests
+cargo test --workspace          # 641 tests
 cargo test -p fastvep-consequence  # Consequence prediction tests (incl. SV)
 cargo test -p fastvep-filter       # Filter engine tests
 cargo test -p fastvep-sa           # Supplementary annotation format tests
@@ -596,18 +596,43 @@ Benchmarked on Apple M-series (ARM64), release build with LTO. Median of 3 runs,
 | Mouse (GRCm39, full genome) | 142,626 | 26,062,054 | MGP CAST/EiJ | 338.0s | **77,113 v/s** |
 | Human full WGS (GRCh38) | 508,530 | 4,048,342 | GIAB HG002 | 86.3s | **46,917 v/s** |
 
-### vs. Ensembl VEP v115.1 (head-to-head, GIAB HG002 chr22)
+### vs. Ensembl VEP v115.1 (head-to-head, single-thread, GIAB HG002)
+
+Both tools single-threaded on identical GRCh38 Ensembl 115 GFF3 + FASTA with `--hgvs --symbol --canonical`. fastVEP uses its binary transcript cache; Ensembl VEP runs via Docker (`ensemblorg/ensembl-vep:release_115.1`) in `--gff` mode against a bgzip+tabix-indexed GFF3. VEP's full-genome time is measured per chromosome and summed — a single-process whole-genome run OOMs above ~2.7M variants at the 7.65 GiB Docker default, and the per-chromosome sum keeps VEP's memory bounded (its best case).
+
+**Full human WGS (4,048,342 variants), single-thread:**
+
+| Annotation | fastVEP | Ensembl VEP | Speedup |
+|-----------|---------|-------------|---------|
+| Consequence only | 197.8s | 4,621s (~77 min) | **23.4×** |
+| + ClinVar | 197.4s | 4,803s | **24.3×** |
+| + gnomAD + ClinVar | 218.5s | 4,905s | **22.4×** |
+
+With fastVEP's default multi-threading, the same full WGS completes in **86.3s** (46,917 v/s).
+
+**chr22 scaling, single-thread** — fastVEP carries a fixed ~2.7s binary-cache load, so VEP (which tabix-fetches only overlapping GFF regions) is faster below ~1–2K variants; beyond that fastVEP's per-variant throughput dominates:
 
 | Variants | fastVEP | VEP | Speedup |
 |----------|---------|-----|---------|
-| 1,000 | 0.40s | 1.06s | **2.6x** |
-| 5,000 | 0.47s | 13.9s | **29x** |
-| 10,000 | 0.67s | 30.3s | **45x** |
-| 50,000 | 1.59s | 206.1s | **130x** |
-| 4,048,342 (full WGS) | 86.3s | cannot complete | -- |
+| 1,000 | 2.68s | 0.45s | 0.17× (VEP faster) |
+| 5,000 | 2.86s | 6.29s | 2.2× |
+| 10,000 | 3.25s | 13.41s | 4.1× |
+| 50,284 | 5.09s | 93.95s | **18.5×** |
+
+| Resource | Ensembl VEP | fastVEP |
+|----------|-------------|---------|
 | Peak memory (100K variants) | ~500 MB | **2.8 MB** |
-| Binary size | ~200 MB installed | **3.3 MB** |
+| Binary / install size | ~200 MB installed | **3.3 MB** |
 | Dependencies | Perl 5.22+, DBI, 10+ CPAN modules | **None** |
+
+### Supplementary annotation format (fastSA v2)
+
+The `.osa2` format (echtvar-inspired chunked binary; `--format auto` default) stores real annotation databases compactly, with annotation output **byte-identical** to the v1 `.osa` format (md5-verified):
+
+| Source | v1 (.osa) | v2 (.osa2) | Ratio |
+|--------|-----------|-----------|-------|
+| ClinVar (4.44M records) | 48.1 MB | 38.9 MB | 0.81× |
+| REVEL (chr1, 8.25M records) | 40.5 MB | 19.0 MB | 0.47× |
 
 ## Citation
 

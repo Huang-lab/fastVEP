@@ -24,3 +24,4 @@ start_lost,99
 stop_lost,94
 stop_retained_variant,89
 coding_transcript_variant,39
+coding_sequence_variant,17
