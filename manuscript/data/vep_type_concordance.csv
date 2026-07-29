@@ -1,0 +1,13 @@
+consequence,fastvep,vep
+synonymous_variant,929,929
+missense_variant,737,737
+downstream_gene_variant,314,314
+upstream_gene_variant,120,120
+non_coding_transcript_exon_variant,101,101
+NMD_transcript_variant,88,88
+intron_variant,69,69
+3_prime_UTR_variant,55,55
+splice_region_variant,15,15
+5_prime_UTR_variant,15,15
+non_coding_transcript_variant,6,6
+splice_polypyrimidine_tract_variant,2,2

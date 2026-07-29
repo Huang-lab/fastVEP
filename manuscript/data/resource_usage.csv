@@ -1,6 +1,6 @@
 metric,value,unit
 binary_size,3.3,MB
-startup_time_yeast_7k,3.03,sec
-startup_time_drosophila_35k,57.28,sec
-startup_time_mouse_143k,337.97,sec
-startup_time_human_509k,86.29,sec
+cache_load_yeast_7k,1.4,sec
+cache_load_human_509k,2.6,sec
+peak_memory_100k_variants,2.8,MB
+external_dependencies,0,count
