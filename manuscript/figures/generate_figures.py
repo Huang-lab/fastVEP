@@ -138,7 +138,7 @@ def fig2_comparison():
                  textcoords='offset points', fontsize=7.5, color=C['vep'], ha='left', va='center', fontweight='bold')
     ax1.annotate('fastVEP 1-thread\n198 s', xy=(NGW, fv1t), xytext=(-12, 2),
                  textcoords='offset points', fontsize=7.5, color=C['fast'], ha='right')
-    ax1.annotate('fastVEP multi-thread 86 s', xy=(NGW, fvmt), xytext=(-12, -16),
+    ax1.annotate('fastVEP multi-thread 93 s', xy=(NGW, fvmt), xytext=(-12, -16),
                  textcoords='offset points', fontsize=7.5, color=C['fast'], ha='right', fontweight='bold')
 
     # fastVEP multi-organism points
@@ -184,7 +184,7 @@ def fig2_comparison():
         ax2.text(i + w/2, vp[i]*1.05, f'{vp[i]:.0f}s', ha='center', va='bottom', fontsize=8.5, color=C['vep'], fontweight='bold')
         ax2.text(i, max(vp[i], fv[i])*2.1, f'{sp[i]:.1f}x', ha='center', va='bottom', fontsize=13, fontweight='bold', color='#1f2937')
     ax2.legend(fontsize=9, loc='lower right')
-    ax2.annotate('fastVEP multi-thread: 86 s (all workloads)', xy=(0.02, 0.03), xycoords='axes fraction',
+    ax2.annotate('fastVEP multi-thread (10 cores): 93-105 s', xy=(0.02, 0.03), xycoords='axes fraction',
                  fontsize=8, style='italic', color='#475569')
 
     plt.tight_layout()

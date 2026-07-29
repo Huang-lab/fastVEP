@@ -228,55 +228,27 @@ We first measured how the comparison scales with input size on chromosome 22 (Ta
 
 At genome scale the fixed startup cost is fully amortized and fastVEP's advantage is largest. On the complete GIAB HG002 WGS, fastVEP is 22-24x faster than Ensembl VEP single-threaded, across consequence-only and annotation-augmented workloads (Table 3). A single-process whole-genome VEP run exhausts the default container memory above ~2.7 million variants, because transcript structures accumulate across the genome as annotation proceeds; VEP's genome-wide time was therefore measured per chromosome and summed, which also bounds its resident memory to a single chromosome and represents its best case. Each per-chromosome time is the minimum of two runs, to remove transient system contention (Methods).
 
-**Table 3. Single-threaded head-to-head on the complete GIAB HG002 WGS (4,048,342 variants, GRCh38, 508,530 transcripts).** Supplementary annotations were supplied to fastVEP as native fastSA databases and to Ensembl VEP as `--custom` tabix-indexed VCFs built from identical source data. VEP full-genome times are per-chromosome sums (minimum of two runs).
+**Table 3. Head-to-head on the complete GIAB HG002 WGS (4,048,342 variants, GRCh38, 508,530 transcripts).** Both tools measured on the same Apple M4 system. Supplementary annotations were supplied to fastVEP as native fastSA databases and to Ensembl VEP as `--custom` tabix-indexed VCFs built from identical source data. Ensembl VEP full-genome times are per-chromosome sums (minimum of two runs). fastVEP single-threaded (`RAYON_NUM_THREADS=1`) and multi-threaded (default, 10 cores; best of three runs) times are shown; the speedup column is the like-for-like single-threaded comparison.
 
-| Annotation | fastVEP | fastVEP (v/s) | Ensembl VEP | VEP (v/s) | Speedup |
-|-----------|---------|---------------|-------------|-----------|---------|
-| Consequence only | 197.8s | 20,466 | 4,621s (~77 min) | 876 | 23.4x |
-| + ClinVar | 197.4s | 20,517 | 4,803s | 843 | 24.3x |
-| + gnomAD + ClinVar | 218.5s | 18,527 | 4,905s | 825 | 22.4x |
+| Annotation | fastVEP (1 thread) | fastVEP (10 threads) | Ensembl VEP (1 thread) | Speedup (1-thread) |
+|-----------|--------------------|----------------------|------------------------|--------------------|
+| Consequence only | 197.8s | 93.0s | 4,621s (~77 min) | 23.4x |
+| + ClinVar | 197.4s | 93.4s | 4,803s | 24.3x |
+| + gnomAD + ClinVar | 218.5s | 104.5s | 4,905s | 22.4x |
 
-With its default multi-threaded pipeline, fastVEP annotates the same complete WGS in 86.3 seconds (46,917 variants per second). These results demonstrate that fastVEP annotates a complete clinical WGS in under two minutes -- fast enough for routine integration into clinical sequencing pipelines, where variant annotation has traditionally been a multi-hour step. The practical gap is widest exactly where it matters most for population- and clinical-scale work: the complete human genome.
+With its default multi-threaded pipeline (10 cores), fastVEP annotates the same complete WGS in 93 seconds (43,500 variants per second) on this system -- about 2.1x its single-threaded speed and in line with the 86 seconds recorded for the same genome in the multi-organism throughput benchmark (Table 7). These results demonstrate that fastVEP annotates a complete clinical WGS in under two minutes -- fast enough for routine integration into clinical sequencing pipelines, where variant annotation has traditionally been a multi-hour step. The practical gap is widest exactly where it matters most for population- and clinical-scale work: the complete human genome.
 
 These whole-genome VEP times are **directly measured** (each chromosome run separately and the wall-clock times summed) rather than extrapolated. They supersede an earlier version of this benchmark, which projected VEP's full-genome runtime from chromosome 22 throughput and reported a substantially larger nominal speedup; that projection extrapolated a slower per-variant rate and did not correspond to a like-for-like measured run on an identically indexed gene model. In the present comparison both tools consume the **same bgzip/tabix-indexed** GRCh38 release 115 GFF3 at every scale, and VEP's full-genome result was obtained the only way it completes within the available memory -- per chromosome, then summed -- yielding a conservative, reproducible 22-24x single-threaded advantage for fastVEP.
 
 ### 3.3 Annotation Accuracy Against Ensembl VEP
 
-fastVEP's annotation accuracy was validated by field-level comparison against Ensembl VEP release 115.1 on 173 real human chromosome 22 variants from the VEP example dataset (Table 4, Figure 3). Both tools were run with the same GFF3 annotations and FASTA reference (GRCh38) using equivalent flags (`--hgvs --symbol --canonical`).
+fastVEP's annotation accuracy was validated by field-level comparison against Ensembl VEP release 115.1 on 173 real human chromosome 22 variants from the VEP example dataset (Figure 3). Both tools were run with the same GFF3 annotations and FASTA reference (GRCh38) using equivalent flags (`--hgvs --symbol --canonical`).
 
-**Table 4. Field-level concordance between fastVEP and Ensembl VEP v115.1.** Comparison on 2,340 shared (allele, transcript) pairs from 173 VEP example variants on chromosome 22.
-
-| Annotation Field | Shared Pairs | Matches | Accuracy |
-|-----------------|-------------|---------|----------|
-| Consequence | 2,340 | 2,340 | 100.0% |
-| IMPACT | 2,340 | 2,340 | 100.0% |
-| SYMBOL | 2,340 | 2,340 | 100.0% |
-| Gene | 2,340 | 2,340 | 100.0% |
-| Feature (transcript) | 2,340 | 2,340 | 100.0% |
-| BIOTYPE | 2,340 | 2,340 | 100.0% |
-| EXON | 2,340 | 2,340 | 100.0% |
-| INTRON | 2,340 | 2,340 | 100.0% |
-| HGVSc | 2,340 | 2,340 | 100.0% |
-| HGVSp | 2,340 | 2,340 | 100.0% |
-| cDNA_position | 2,340 | 2,340 | 100.0% |
-| CDS_position | 2,340 | 2,340 | 100.0% |
-| Protein_position | 2,340 | 2,340 | 100.0% |
-| Amino_acids | 2,340 | 2,340 | 100.0% |
-| Codons | 2,340 | 2,340 | 100.0% |
-| DISTANCE | 2,340 | 2,340 | 100.0% |
-| STRAND | 2,340 | 2,340 | 100.0% |
-| FLAGS | 2,340 | 2,340 | 100.0% |
-| CANONICAL | 2,340 | 2,340 | 100.0% |
-| SYMBOL_SOURCE | 2,340 | 2,340 | 100.0% |
-| HGNC_ID | 2,340 | 2,340 | 100.0% |
-| TSL | 2,340 | 2,340 | 100.0% |
-| APPRIS | 2,340 | 2,340 | 100.0% |
-
-All 23 compared annotation fields achieved 100% concordance. fastVEP annotated 35 additional lncRNA transcripts not present in the VEP output (due to different default transcript filtering), but produced no missing transcripts. The consequence type distribution was identical between tools across all 12 consequence types observed in the dataset: missense_variant (737), synonymous_variant (929), intron_variant (69), upstream_gene_variant (120), downstream_gene_variant (314), 3_prime_UTR_variant (55), 5_prime_UTR_variant (15), NMD_transcript_variant (88), non_coding_transcript_exon_variant (101), non_coding_transcript_variant (6), splice_region_variant (15), and splice_polypyrimidine_tract_variant (2).
+All 23 compared annotation fields achieved 100% concordance across 2,340 shared (allele, transcript) pairs (Figure 3A). fastVEP annotated 35 additional lncRNA transcripts not present in the VEP output (due to different default transcript filtering), but produced no missing transcripts. The consequence type distribution was identical between tools across all 12 consequence types observed in the dataset: missense_variant (737), synonymous_variant (929), intron_variant (69), upstream_gene_variant (120), downstream_gene_variant (314), 3_prime_UTR_variant (55), 5_prime_UTR_variant (15), NMD_transcript_variant (88), non_coding_transcript_exon_variant (101), non_coding_transcript_variant (6), splice_region_variant (15), and splice_polypyrimidine_tract_variant (2).
 
 ### 3.4 Resource Efficiency
 
-**Table 5. Resource usage comparison between fastVEP and Ensembl VEP.**
+**Table 4. Resource usage comparison between fastVEP and Ensembl VEP.**
 
 | Metric | Ensembl VEP (Perl) | fastVEP (Rust) | Improvement |
 |--------|-------------------|---------------|-------------|
@@ -290,7 +262,7 @@ fastVEP's binary transcript cache (bincode with gzip compression) enables fast s
 
 ### 3.5 Output Format Performance
 
-**Table 6. Output format comparison for 10,000 GIAB HG002 chromosome 22 variants against full GRCh38 (508,530 transcripts), single-threaded (median of 3 runs).**
+**Table 5. Output format comparison for 10,000 GIAB HG002 chromosome 22 variants against full GRCh38 (508,530 transcripts), single-threaded (median of 3 runs).**
 
 | Format | Time (sec) | Output size |
 |--------|-----------|-------------|
@@ -302,9 +274,9 @@ All three output formats perform similarly: the ~2.6-second binary-cache startup
 
 ### 3.6 Supplementary Annotation Format (fastSA v2)
 
-The v2 `.osa2` format is the default output of `sa-build` for supported sources. To evaluate it on real databases, we built both the v1 `.osa` and v2 `.osa2` representations of ClinVar and REVEL from their standard source files and compared on-disk size, build time, and annotation output (Table 7).
+The v2 `.osa2` format is the default output of `sa-build` for supported sources. To evaluate it on real databases, we built both the v1 `.osa` and v2 `.osa2` representations of ClinVar and REVEL from their standard source files and compared on-disk size, build time, and annotation output (Table 6).
 
-**Table 7. fastSA v1 versus v2 on real annotation databases (GRCh38).**
+**Table 6. fastSA v1 versus v2 on real annotation databases (GRCh38).**
 
 | Source | Records | v1 (.osa) | v2 (.osa2) | Ratio | Build v1 | Build v2 |
 |--------|---------|-----------|-----------|-------|----------|----------|
@@ -315,9 +287,9 @@ The v2 format stores both databases more compactly -- 0.81x (ClinVar) and 0.47x 
 
 ### 3.7 Cross-Organism Annotation
 
-To demonstrate fastVEP's generality, we benchmarked annotation across five model organisms using full Ensembl GFF3 gene models with FASTA reference and HGVS generation (Table 8). All benchmarks used binary transcript cache for startup and report median of 3 runs.
+To demonstrate fastVEP's generality, we benchmarked annotation across five model organisms using full Ensembl GFF3 gene models with FASTA reference and HGVS generation (Table 7). All benchmarks used binary transcript cache for startup and report median of 3 runs.
 
-**Table 8. Cross-organism annotation performance using full Ensembl genome annotations with gold-standard variant call sets.**
+**Table 7. Cross-organism annotation performance using full Ensembl genome annotations with gold-standard variant call sets.**
 
 All benchmarks use full Ensembl release 115 GFF3 gene models, FASTA reference with memory-mapped access, and HGVS generation. Variant sources: Ensembl/SGD variation (yeast), DGRP2 (Drosophila), 1001 Genomes (Arabidopsis), Ensembl/EVA variation (mouse), GIAB HG002 v4.2.1 (human). Median of 3 runs.
 
@@ -333,9 +305,9 @@ fastVEP annotates complete gold-standard variant datasets across all five organi
 
 ### 3.8 Consequence Prediction on Real Variants
 
-fastVEP was applied to the complete GIAB HG002 WGS (4,048,342 variants) annotated against the full Ensembl GRCh38 gene model (508,530 transcripts). The annotation produced 50,109,169 consequence calls across all overlapping transcripts, spanning 26 distinct SO terms (Table 9, Figure 4).
+fastVEP was applied to the complete GIAB HG002 WGS (4,048,342 variants) annotated against the full Ensembl GRCh38 gene model (508,530 transcripts). The annotation produced 50,109,169 consequence calls across all overlapping transcripts, spanning 26 distinct SO terms (Table 8, Figure 4).
 
-**Table 9. Genome-wide consequence distribution across the complete GIAB HG002 WGS (4,048,342 variants; 50,109,169 consequence calls).** Fractions are of total consequence calls.
+**Table 8. Genome-wide consequence distribution across the complete GIAB HG002 WGS (4,048,342 variants; 50,109,169 consequence calls).** Fractions are of total consequence calls.
 
 | Consequence | Count | Fraction |
 |-------------|-------|----------|
@@ -370,9 +342,9 @@ Intronic (57.4%) and non-coding transcript (22.5%) consequences predominate, fol
 
 ### 3.9 Test Suite Coverage
 
-fastVEP's correctness was validated through a comprehensive test suite of 641 tests, all passing (rustc 1.94.1). Table 10 summarizes coverage across the principal functional areas; the counts are representative rather than mutually exclusive, and additional tests cover the I/O, CLI, shared annotation-engine, web-server, and classification crates.
+fastVEP's correctness was validated through a comprehensive test suite of 641 tests, all passing (rustc 1.94.1). Table 9 summarizes coverage across the principal functional areas; the counts are representative rather than mutually exclusive, and additional tests cover the I/O, CLI, shared annotation-engine, web-server, and classification crates.
 
-**Table 10. Test suite coverage.**
+**Table 9. Test suite coverage.**
 
 | Category | Tests | Coverage |
 |----------|-------|----------|
@@ -389,7 +361,7 @@ fastVEP's correctness was validated through a comprehensive test suite of 641 te
 
 ### 3.10 Feature Comparison
 
-**Table 11. Feature comparison between fastVEP, Ensembl VEP, and Illumina Nirvana.**
+**Table 10. Feature comparison between fastVEP, Ensembl VEP, and Illumina Nirvana.**
 
 | Feature | Ensembl VEP | Nirvana | fastVEP |
 |---------|-------------|---------|--------|
@@ -430,7 +402,7 @@ fastVEP's correctness was validated through a comprehensive test suite of 641 te
 
 ### 4.1 Performance Implications
 
-Benchmarks on the GIAB HG002 gold-standard dataset demonstrate that fastVEP annotates a complete human WGS 22-24x faster than Ensembl VEP single-threaded (Table 3), and reaches 46,917 variants per second with its default multi-threaded pipeline. The fixed ~2.6-second binary-cache startup dominates only at small variant counts; as input grows, single-threaded throughput rises to 20,466 variants per second on the full 4.05M-variant WGS, demonstrating efficient amortization of the startup cost.
+Benchmarks on the GIAB HG002 gold-standard dataset demonstrate that fastVEP annotates a complete human WGS 22-24x faster than Ensembl VEP single-threaded (Table 3), and completes the same genome in about 93 seconds (~44,000 variants per second) with its default multi-threaded pipeline. The fixed ~2.6-second binary-cache startup dominates only at small variant counts; as input grows, single-threaded throughput rises to 20,466 variants per second on the full 4.05M-variant WGS, demonstrating efficient amortization of the startup cost.
 
 The practical implications are substantial: annotating 500,000 variants takes roughly 24 seconds with single-threaded fastVEP (about 11 seconds multi-threaded), compared to approximately 9-10 minutes with single-threaded Ensembl VEP. For population-scale studies processing millions of variants, this is the difference between minutes and hours.
 
@@ -459,25 +431,6 @@ Several design decisions in fastVEP's architecture merit discussion:
 **47-field CSQ output.** fastVEP outputs 47 annotation fields in its CSQ format, exceeding VEP's default 30-field output. The additional fields (CANONICAL, CCDS, ENSP, MANE, MANE_SELECT, MANE_PLUS_CLINICAL, SIFT, PolyPhen, AF, CLIN_SIG, SOMATIC, PHENO, PUBMED, HGVS_OFFSET, and regulatory motif fields) provide comprehensive downstream analysis data in a single annotation pass.
 
 **Hybrid web architecture.** The web interface supports both server-side and client-side annotation. When served by the fastVEP binary, annotation requests are processed by the Rust backend, providing identical performance and accuracy to the CLI pipeline. GFF3 files uploaded through the browser are parsed server-side, avoiding the performance limitations of JavaScript parsing for large annotation files. For static deployments (e.g., GitHub Pages), the interface transparently falls back to a client-side JavaScript annotation engine, enabling offline use after page load at the cost of reduced performance and a maintenance burden of mirroring the Rust logic.
-
-### 4.5 Future Directions
-
-Planned developments for fastVEP include:
-
-1. **HGVS input format** for direct variant lookup by nomenclature.
-2. **Plugin system** using Rust traits, potentially with WebAssembly (WASM) support for user-defined plugins.
-3. **Interval tree transcript index** replacing the current augmented binary search, for optimal query performance on genomes with highly overlapping transcript models.
-4. **Cloud/serverless deployment** patterns (e.g., AWS Lambda) for on-demand annotation services.
-5. **Liftover support** for cross-build coordinate conversion.
-
-### 4.6 Limitations
-
-The current version of fastVEP has several limitations:
-
-1. **Input format:** Only VCF input is supported. HGVS, variant ID, SPDI, and region-based input formats are not yet implemented.
-2. **Breakend resolution:** Translocation breakends are annotated individually; paired breakend resolution for gene fusion calling requires both breakend entries to be present and is not yet fully automated.
-3. **Regulatory motif scoring:** While regulatory region overlap detection is implemented, position weight matrix (PWM)-based motif scoring for TF binding site impact assessment is not yet available.
-4. **Real-time database updates:** Supplementary annotation databases (.osa files) are built offline; there is no automatic download/update mechanism for new ClinVar or gnomAD releases.
 
 ---
 
@@ -551,7 +504,7 @@ Zook, J. M., McDaniel, J., Olson, N. D., Wagner, J., Parikh, H., Heaton, H., ...
 
 **Figure 1. fastVEP architecture.** The twelve-crate workspace showing data flow from VCF input through consequence prediction to output formatting. Arrows indicate crate dependencies. The `fastvep-consequence` crate (consequence prediction engine) is the computational core, consuming transcript models from `fastvep-cache` and variant representations from `fastvep-io`. The `fastvep-sa` crate provides supplementary annotation support with direct database integration (ClinVar, gnomAD, dbSNP, COSMIC, prediction scores, gene-level annotations).
 
-**Figure 2. fastVEP vs Ensembl VEP: single-threaded performance comparison.** (A) Wall-clock annotation time (log-log) on the head-to-head chromosome 22 scaling series (1K–50K GIAB HG002 variants, connected markers) for both tools, together with fastVEP multi-organism results (diamonds: yeast 260K, Drosophila 4.4M, Arabidopsis 12.9M, mouse 26M) and the three directly measured whole-genome points at 4.05M variants (Ensembl VEP per-chromosome sum, 4,621 s; fastVEP single-thread, 198 s; fastVEP multi-thread, 86 s, star). fastVEP carries a fixed ~2.6 s binary-cache load, so the two tools cross over between 1,000 and 5,000 variants (shaded), after which fastVEP dominates. (B) Whole-genome single-threaded head-to-head across the three annotation workloads (consequence-only, +ClinVar, +gnomAD+ClinVar), on a log time axis, with per-workload speedups (22.4–24.3x); fastVEP's default multi-threaded time (86 s) applies to all three workloads.
+**Figure 2. fastVEP vs Ensembl VEP: single-threaded performance comparison.** (A) Wall-clock annotation time (log-log) on the head-to-head chromosome 22 scaling series (1K–50K GIAB HG002 variants, connected markers) for both tools, together with fastVEP multi-organism results (diamonds: yeast 260K, Drosophila 4.4M, Arabidopsis 12.9M, mouse 26M) and the three directly measured whole-genome points at 4.05M variants (Ensembl VEP per-chromosome sum, 4,621 s; fastVEP single-thread, 198 s; fastVEP multi-thread, 93 s, star). fastVEP carries a fixed ~2.6 s binary-cache load, so the two tools cross over between 1,000 and 5,000 variants (shaded), after which fastVEP dominates. (B) Whole-genome single-threaded head-to-head across the three annotation workloads (consequence-only, +ClinVar, +gnomAD+ClinVar), on a log time axis, with per-workload speedups (22.4–24.3x); fastVEP's default multi-threaded time (86 s) applies to all three workloads.
 
 **Figure 3. VEP concordance.** (A) Field-level accuracy of fastVEP against Ensembl VEP v115.1 on 2,340 shared transcript-allele pairs from 173 chromosome 22 variants: all 23 compared annotation fields achieve 100% concordance. (B) Consequence calls per Sequence Ontology type (log scale) for fastVEP and Ensembl VEP on the same set; the two tools produce identical call counts across all 12 observed consequence types.
 

@@ -608,7 +608,7 @@ Both tools single-threaded on identical GRCh38 Ensembl 115 GFF3 + FASTA with `--
 | + ClinVar | 197.4s | 4,803s | **24.3×** |
 | + gnomAD + ClinVar | 218.5s | 4,905s | **22.4×** |
 
-With fastVEP's default multi-threading, the same full WGS completes in **86.3s** (46,917 v/s).
+With fastVEP's default multi-threading (10 cores), the same full WGS completes in **93s** (consequence-only) to **104.5s** (+gnomAD+ClinVar) on this system.
 
 **chr22 scaling, single-thread** — fastVEP carries a fixed ~2.7s binary-cache load, so VEP (which tabix-fetches only overlapping GFF regions) is faster below ~1–2K variants; beyond that fastVEP's per-variant throughput dominates:
 
