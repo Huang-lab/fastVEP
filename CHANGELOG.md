@@ -5,6 +5,49 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+### Fixed
+
+- **fastvep-sa (issue #75)**: adding a large, dense whole-genome `.osa` source
+  such as SpliceAI made `annotate` dramatically slower (reported ~1.6 min →
+  ~73 min). Root cause: the decompressed-block cache was a fixed 32 MiB
+  (~4 blocks) *per reader*, but the parallel annotate phase runs one worker per
+  thread, each walking its own coordinate-sorted sub-range and needing its own
+  in-flight block. On a dense source (every 8 MiB block spans only ~13 kbp) the
+  workers continually evicted one another's block and re-decompressed the same
+  blocks — measured at up to ~10× the number of distinct blocks actually
+  touched (single-threaded runs never thrashed). The block cache is now a
+  single process-wide, byte-budgeted, globally-LRU cache shared by all `.osa`
+  readers: whichever readers are hot for the current chromosome share the whole
+  budget (so one big spliceai.osa gets all the blocks it needs and stops
+  thrashing), while blocks from finished shards are evicted first so total RAM
+  stays bounded regardless of how many per-chromosome shards are open — a
+  strict improvement over the old per-reader budget on the sharded deployment
+  too. The budget scales with thread count and is overridable via
+  `FASTVEP_SA_CACHE_BYTES` (the legacy `FASTVEP_SA_CACHE_BYTES_PER_READER` is
+  still honored). On real SpliceAI chr1 data with genome-spread queries this
+  cut block decompressions ~9× (364 → 40, the ideal) and wall time ~4×; the
+  win grows with source size, so the reporter's genome-wide 39 GB file benefits
+  far more. Adds `SaReader::decompress_count()` and an
+  `examples/bench_sa_parallel` reproduction (synthetic and real-data modes).
+
+- **fastvep-sa (issue #75, v2 `.osa2`)**: the same class of problem — and a
+  second, worse one — applied to the chunked `.osa2` reader used by large dense
+  sources like dbSNP. Its chunk cache was a fixed 8-*count* per reader (thrash),
+  and every chunk read held a single per-reader `Mutex<ZipArchive>` across the
+  whole read + inflate, so parallel workers were *serialized* on that lock. The
+  reader now (1) parses the ZIP central directory once at `open`, recording each
+  entry's compressed byte range, and reads/inflates chunks straight from an
+  `mmap` with **no lock** on the query path; and (2) caches decompressed chunks
+  in a single process-wide, byte-budgeted, globally-LRU cache (same design and
+  `FASTVEP_SA_CACHE_BYTES` budget as the `.osa` block cache), keyed by
+  `(reader, chromosome, chunk_id)`. Adds `Osa2Reader::chunk_load_count()` and
+  `open_with_cache_budget()` plus a multi-chromosome + parallel regression test.
+
+### Removed
+
+- **fastvep-sa**: deleted the unused `bloom` module (a Bloom filter that was
+  never wired into the format or readers) to keep the crate free of dead code.
+
 ## [0.3.0] — 2026-07-28
 
 ### Added

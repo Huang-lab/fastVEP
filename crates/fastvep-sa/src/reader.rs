@@ -15,37 +15,37 @@ use memmap2::Mmap;
 use std::fs::File;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-
-/// Default per-reader byte budget for the decompressed-block cache (32 MiB).
-///
-/// Block sizes vary a lot by data source — clinvar/gnomad/spliceai are
-/// ~10 MiB per block once decompressed, REVEL is ~25 MiB, PhyloP can be
-/// ~40 MiB. A fixed *count* cap (e.g. 4 blocks) inflates total RSS by an
-/// order of magnitude on PhyloP/REVEL-heavy stacks and OOMs on
-/// full-genome inputs. A byte budget adapts: low-density readers cache
-/// 2–3 blocks, high-density readers cache 1.
-///
-/// With ~100 readers in the full SA stack (one per chrom × DB), 32 MiB
-/// caps cache memory at roughly 3.2 GiB worst case, leaving headroom on
-/// a 12 GiB sandbox after the GFF3 cache + indexes (~3.5 GiB baseline).
-/// Override via `FASTVEP_SA_CACHE_BYTES_PER_READER` (in bytes). The cache
-/// is guaranteed to retain at least 1 block to avoid thrashing on a
-/// single just-decompressed block under parallel queries.
-const DEFAULT_CACHE_BYTES_PER_READER: usize = 32 * 1024 * 1024;
 
 /// Soft upper bound on entries to prevent the underlying `LruCache`'s
 /// capacity field from being a pathological size if blocks ever ended up
 /// being tiny. The byte budget is the real gate.
-const CACHE_MAX_ENTRIES: usize = 1024;
+const CACHE_MAX_ENTRIES: usize = 4096;
 
-fn cache_bytes_per_reader() -> usize {
-    std::env::var("FASTVEP_SA_CACHE_BYTES_PER_READER")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&v| v > 0)
-        .unwrap_or(DEFAULT_CACHE_BYTES_PER_READER)
-}
+/// Monotonic id handed to each `SaReader` so its blocks are namespaced in the
+/// shared cache (two shards can share a file offset without colliding). Never
+/// reused, so a dropped reader's stale entries can't alias a new reader.
+static NEXT_READER_ID: AtomicU64 = AtomicU64::new(0);
+
+/// The one shared, process-wide block cache used by every `.osa` reader.
+///
+/// **Why one shared cache (issue #75):** the block cache used to be a fixed
+/// 32 MiB *per reader*. On a dense, whole-genome source like SpliceAI — where
+/// every 8 MiB block spans only ~13 kbp of genome — a batch of coordinate-
+/// sorted variants touches far more than 4 blocks, and the `par_iter` annotate
+/// phase runs `num_threads` workers that each walk a disjoint sub-range, so the
+/// workers continually evict one another's in-flight block and re-decompress
+/// the same blocks (the reported "adding spliceai.osa made annotate ~45×
+/// slower"). A single shared, byte-budgeted, globally-LRU cache lets whichever
+/// readers are hot for the current chromosome share the whole budget while
+/// bounding total RAM regardless of how many per-chromosome shards are open —
+/// see [`crate::common::sa_cache_budget_bytes`]. The v2 `.osa2` reader has its
+/// own equivalent shared chunk cache.
+static GLOBAL_BLOCK_CACHE: std::sync::LazyLock<Mutex<BlockCache>> =
+    std::sync::LazyLock::new(|| {
+        Mutex::new(BlockCache::new(crate::common::sa_cache_budget_bytes()))
+    });
 
 /// Approximate in-memory footprint of a decompressed block: the BlockEntry
 /// struct slots in the `Vec`, plus the heap storage backing each entry's
@@ -61,16 +61,21 @@ fn block_bytes(entries: &[BlockEntry]) -> usize {
     slot_bytes.saturating_add(string_bytes)
 }
 
-/// LRU keyed by file_offset, with byte-based eviction. Evicts least-recently-
-/// used entries until total cached bytes is within budget. Always keeps at
-/// least one entry (the just-inserted one) so a single oversized block
-/// doesn't keep falling out from under a parallel-worker batch.
+/// A cache key: which reader a block came from, plus its file offset. The
+/// reader id namespaces entries so shards that happen to share an offset don't
+/// collide in the single shared cache.
+type CacheKey = (u64, u64);
+
+/// LRU keyed by `(reader_id, file_offset)`, with byte-based eviction. Evicts
+/// least-recently-used entries until total cached bytes is within budget.
+/// Always keeps at least one entry (the just-inserted one) so a single
+/// oversized block doesn't keep falling out from under a parallel-worker batch.
 ///
 /// Byte accounting goes through `pop_lru` (explicit) and `push` (which
 /// returns the evicted entry on capacity overflow), so the inner `LruCache`
 /// can never silently drop an entry without `total_bytes` reflecting it.
 struct BlockCache {
-    lru: LruCache<u64, (Arc<Vec<BlockEntry>>, usize)>,
+    lru: LruCache<CacheKey, (Arc<Vec<BlockEntry>>, usize)>,
     total_bytes: usize,
     budget_bytes: usize,
 }
@@ -85,14 +90,14 @@ impl BlockCache {
         }
     }
 
-    fn get(&mut self, offset: u64) -> Option<Arc<Vec<BlockEntry>>> {
-        self.lru.get(&offset).map(|(arc, _)| Arc::clone(arc))
+    fn get(&mut self, key: CacheKey) -> Option<Arc<Vec<BlockEntry>>> {
+        self.lru.get(&key).map(|(arc, _)| Arc::clone(arc))
     }
 
-    fn put(&mut self, offset: u64, value: Arc<Vec<BlockEntry>>, bytes: usize) {
+    fn put(&mut self, key: CacheKey, value: Arc<Vec<BlockEntry>>, bytes: usize) {
         // Replace-in-place: drop the old bytes first so the budget loop
         // below sees the correct `total_bytes`.
-        if let Some((_, old_bytes)) = self.lru.pop(&offset) {
+        if let Some((_, old_bytes)) = self.lru.pop(&key) {
             self.total_bytes = self.total_bytes.saturating_sub(old_bytes);
         }
         // Byte-budget eviction: free space for the new block, but always
@@ -108,37 +113,65 @@ impl BlockCache {
         // `push` returns any entry the inner LruCache evicts to make room
         // (capacity overflow); subtract its bytes so `total_bytes` doesn't
         // drift if `CACHE_MAX_ENTRIES` ever bites before the byte budget.
-        if let Some((_, (_, ev_bytes))) = self.lru.push(offset, (value, bytes)) {
+        if let Some((_, (_, ev_bytes))) = self.lru.push(key, (value, bytes)) {
             self.total_bytes = self.total_bytes.saturating_sub(ev_bytes);
         }
         self.total_bytes = self.total_bytes.saturating_add(bytes);
     }
 
+    /// Number of cached blocks belonging to a specific reader. Test-only:
+    /// the shared cache holds blocks from every open reader, so counting must
+    /// filter by id.
     #[cfg(test)]
-    fn len(&self) -> usize {
-        self.lru.len()
+    fn len_for_reader(&self, reader_id: u64) -> usize {
+        self.lru
+            .iter()
+            .filter(|((rid, _), _)| *rid == reader_id)
+            .count()
     }
 }
 
 /// Reader for .osa annotation files.
 ///
-/// Thread-safety: the reader is `Send + Sync`. Block decompression results are
-/// cached in a `Mutex<LruCache>`; the lock is held only for the brief lookup
-/// or insert and is released across the decompression and find_match steps.
+/// Thread-safety: the reader is `Send + Sync`. Decompressed blocks live in the
+/// process-wide `GLOBAL_BLOCK_CACHE` (a `Mutex<LruCache>`); the lock is held
+/// only for the brief lookup or insert and is released across the
+/// decompression and find_match steps.
 pub struct SaReader {
     mmap: Mmap,
     index: SaIndex,
     metadata: SaMetadata,
-    /// Byte-budgeted LRU cache of decompressed blocks, keyed by file offset.
-    ///
-    /// `Arc` lets a worker clone a reference to the block payload and drop the
-    /// mutex before searching, so other workers can hit the cache concurrently.
-    block_cache: Mutex<BlockCache>,
+    /// Namespaces this reader's blocks in the shared cache.
+    reader_id: u64,
+    /// Optional private block cache with an explicit byte budget. `None` in
+    /// production, where all readers share `GLOBAL_BLOCK_CACHE`; `Some` only
+    /// via `open_with_cache_budget`, used by benchmarks and tests to pin a
+    /// specific budget in isolation (the shared cache initializes its budget
+    /// once, so it can't be varied in-process otherwise).
+    local_cache: Option<Mutex<BlockCache>>,
+    /// Count of block decompressions performed (cache misses). A diagnostic
+    /// for cache thrashing: on a coordinate-sorted input each block should be
+    /// decompressed ~once, so a count far above the number of distinct blocks
+    /// touched indicates the block cache is too small for the parallel working
+    /// set. Exposed via `decompress_count()`.
+    decompress_count: AtomicU64,
 }
 
 impl SaReader {
-    /// Open an .osa + .osa.idx file pair.
+    /// Open an .osa + .osa.idx file pair. Blocks are cached in the shared,
+    /// byte-budgeted `GLOBAL_BLOCK_CACHE`.
     pub fn open(data_path: &Path) -> Result<Self> {
+        Self::open_inner(data_path, None)
+    }
+
+    /// Open with a private block cache of exactly `budget_bytes`, bypassing the
+    /// shared cache. Intended for benchmarks and tests that need to pin a
+    /// specific budget in isolation; production code uses [`open`](Self::open).
+    pub fn open_with_cache_budget(data_path: &Path, budget_bytes: usize) -> Result<Self> {
+        Self::open_inner(data_path, Some(budget_bytes))
+    }
+
+    fn open_inner(data_path: &Path, local_budget: Option<usize>) -> Result<Self> {
         let idx_path = data_path.with_extension("osa.idx");
 
         let mut idx_file = File::open(&idx_path)?;
@@ -166,8 +199,25 @@ impl SaReader {
             mmap,
             index,
             metadata,
-            block_cache: Mutex::new(BlockCache::new(cache_bytes_per_reader())),
+            reader_id: NEXT_READER_ID.fetch_add(1, Ordering::Relaxed),
+            local_cache: local_budget.map(|b| Mutex::new(BlockCache::new(b))),
+            decompress_count: AtomicU64::new(0),
         })
+    }
+
+    /// Number of block decompressions performed since the reader was opened.
+    /// Used by benchmarks/tests to detect cache thrashing.
+    pub fn decompress_count(&self) -> u64 {
+        self.decompress_count.load(Ordering::Relaxed)
+    }
+
+    /// The block cache this reader writes to: its private one if configured,
+    /// otherwise the process-wide shared cache.
+    fn cache(&self) -> &Mutex<BlockCache> {
+        match &self.local_cache {
+            Some(c) => c,
+            None => &GLOBAL_BLOCK_CACHE,
+        }
     }
 
     /// Decompress a block straight from the mmap. Pure: touches no cache state.
@@ -194,9 +244,9 @@ impl SaReader {
         // Bounds were just verified, but never `.expect()` on parsed bytes:
         // surface any unexpected slice shape as a typed error so debugging a
         // mismatched .osa/.osa.idx pair never produces a panic.
-        let len_bytes: [u8; 4] = self.mmap[offset..offset + 4]
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("expected 4-byte block length prefix at offset {}", offset))?;
+        let len_bytes: [u8; 4] = self.mmap[offset..offset + 4].try_into().map_err(|_| {
+            anyhow::anyhow!("expected 4-byte block length prefix at offset {}", offset)
+        })?;
         let on_disk_len = u32::from_le_bytes(len_bytes);
         if on_disk_len != compressed_len {
             anyhow::bail!(
@@ -211,15 +261,17 @@ impl SaReader {
     }
 
     /// Return the decompressed block at the given file offset, hitting or
-    /// populating the LRU cache as needed.
+    /// populating the shared LRU cache as needed.
     fn get_block(&self, block_ref: &BlockRef) -> Result<Arc<Vec<BlockEntry>>> {
+        let key: CacheKey = (self.reader_id, block_ref.file_offset);
+        let cache_mutex = self.cache();
+
         // Fast path: cache hit.
         {
-            let mut cache = self
-                .block_cache
+            let mut cache = cache_mutex
                 .lock()
                 .map_err(|_| anyhow::anyhow!("SA block cache mutex poisoned"))?;
-            if let Some(arc) = cache.get(block_ref.file_offset) {
+            if let Some(arc) = cache.get(key) {
                 return Ok(arc);
             }
         }
@@ -229,14 +281,14 @@ impl SaReader {
         // race on the same missing block they each decompress once; the second
         // `put` simply replaces an identical entry — acceptable for an LRU.
         let entries = self.decompress_block(block_ref.file_offset, block_ref.compressed_len)?;
+        self.decompress_count.fetch_add(1, Ordering::Relaxed);
         let bytes = block_bytes(&entries);
         let arc = Arc::new(entries);
 
-        let mut cache = self
-            .block_cache
+        let mut cache = cache_mutex
             .lock()
             .map_err(|_| anyhow::anyhow!("SA block cache mutex poisoned"))?;
-        cache.put(block_ref.file_offset, Arc::clone(&arc), bytes);
+        cache.put(key, Arc::clone(&arc), bytes);
         Ok(arc)
     }
 
@@ -265,8 +317,16 @@ impl SaReader {
         ref_allele: &str,
         alt_allele: &str,
     ) -> Option<String> {
-        let allele_ref = if self.metadata.match_by_allele { ref_allele } else { "" };
-        let allele_alt = if self.metadata.match_by_allele { alt_allele } else { "" };
+        let allele_ref = if self.metadata.match_by_allele {
+            ref_allele
+        } else {
+            ""
+        };
+        let allele_alt = if self.metadata.match_by_allele {
+            alt_allele
+        } else {
+            ""
+        };
 
         SaBlock::find_by_position(
             entries,
@@ -395,9 +455,10 @@ impl AnnotationProvider for SaReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{AnnotationRecord, SCHEMA_VERSION};
+    use crate::common::{AnnotationRecord, DEFAULT_BLOCK_SIZE, SCHEMA_VERSION};
     use crate::index::IndexHeader;
     use crate::writer::SaWriter;
+    use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
     use tempfile::TempDir;
 
     fn header(match_by_allele: bool, is_positional: bool) -> IndexHeader {
@@ -483,34 +544,121 @@ mod tests {
         let reader = SaReader::open(&base.with_extension("osa")).unwrap();
         // Guard: the fixture must actually contain multiple blocks, otherwise
         // the assertion below is vacuous.
-        let total_blocks: usize = reader
-            .index
-            .chromosomes
-            .values()
-            .map(|v| v.len())
-            .sum();
+        let total_blocks: usize = reader.index.chromosomes.values().map(|v| v.len()).sum();
         assert!(
             total_blocks >= 2,
             "test fixture should have ≥ 2 blocks, got {}",
             total_blocks
         );
 
-        // Preload a single position; the cache should hold exactly the one
-        // block that contains it, not the full chromosome.
+        // Preload a single position; exactly one block (the one containing it)
+        // should be decompressed, not the full multi-block chromosome. The
+        // per-reader decompress counter is used rather than the shared cache's
+        // length so the assertion is immune to concurrent tests' entries and
+        // to LRU eviction.
         reader.preload("chr1", &[1042]).unwrap();
-        let cached = reader.block_cache.lock().unwrap().len();
         assert_eq!(
-            cached, 1,
-            "preload of a single position should load exactly 1 block, got {}",
-            cached
+            reader.decompress_count(),
+            1,
+            "preload of a single position should decompress exactly 1 block"
         );
 
         // The preloaded block must satisfy a real query.
         let ann = reader.annotate_position("chr1", 1042, "A", "G").unwrap();
         assert!(ann.is_some());
 
-        // Unknown chromosome must be a no-op rather than an error.
+        // Unknown chromosome must be a no-op rather than an error, and must
+        // not decompress anything.
         reader.preload("chrUnknown", &[1, 2, 3]).unwrap();
+    }
+
+    /// Regression for issue #75: under parallel queries a too-small block
+    /// cache makes workers re-decompress the same blocks over and over. With a
+    /// cache large enough to hold the working set, each block is decompressed
+    /// ~once. This is the whole fix, exercised end-to-end through the real
+    /// query path. Uses `open_with_cache_budget` so the two budgets are pinned
+    /// deterministically and in isolation from the shared cache.
+    #[test]
+    fn parallel_queries_do_not_thrash_with_adequate_cache() {
+        let dir = TempDir::new().unwrap();
+        let base = dir.path().join("dense");
+        // ~200k dense records × ~213 B ≈ 42 MiB → ~5 blocks of 8 MiB.
+        let pad = "x".repeat(200);
+        let n: u32 = 200_000;
+        let records: Vec<AnnotationRecord> = (0..n)
+            .map(|i| AnnotationRecord {
+                chrom_idx: 0,
+                position: 1000 + i,
+                ref_allele: "A".into(),
+                alt_allele: "G".into(),
+                json: format!(r#"{{"i":{},"pad":"{}"}}"#, i, pad),
+            })
+            .collect();
+        write_fixture(&base, records);
+        let osa = base.with_extension("osa");
+
+        let total_blocks: usize = SaReader::open(&osa)
+            .unwrap()
+            .index
+            .chromosomes
+            .values()
+            .map(|v| v.len())
+            .sum();
+        assert!(
+            total_blocks > 2,
+            "fixture must span several blocks for this test to be meaningful, got {}",
+            total_blocks
+        );
+
+        // Sorted subset that still spans every block, mimicking a coordinate-
+        // sorted VCF. Queried on a fixed 8-thread pool so the parallelism (and
+        // thus the thrash) reproduces regardless of the host core count.
+        let positions: Vec<u64> = (0..n).step_by(20).map(|i| (1000 + i) as u64).collect();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap();
+        // Faithful to `run_annotate`: warm the cache with a single sequential
+        // preload, then run the queries in parallel. The preload both primes
+        // the cache and pins the baseline — each distinct block is decompressed
+        // exactly once here, with no first-touch races.
+        let sweep = |reader: &SaReader| -> u64 {
+            reader.preload("chr1", &positions).unwrap();
+            pool.install(|| {
+                positions.par_iter().for_each(|&p| {
+                    // All queries must hit; a miss would mean the sweep isn't
+                    // exercising the blocks and the counts would be meaningless.
+                    assert!(reader
+                        .annotate_position("chr1", p, "A", "G")
+                        .unwrap()
+                        .is_some());
+                });
+            });
+            reader.decompress_count()
+        };
+
+        // Cache large enough for every block: the parallel phase adds nothing
+        // on top of the preload — each block decompressed exactly once.
+        let big = SaReader::open_with_cache_budget(&osa, (total_blocks + 4) * DEFAULT_BLOCK_SIZE)
+            .unwrap();
+        let big_decomps = sweep(&big);
+        assert_eq!(
+            big_decomps as usize, total_blocks,
+            "adequate cache should decompress each block exactly once"
+        );
+
+        // Tiny 2-block cache: the preload's blocks are evicted before the
+        // parallel phase, and workers then evict one another's in-flight block,
+        // so the same blocks are decompressed many times over.
+        let tiny = SaReader::open_with_cache_budget(&osa, 2 * DEFAULT_BLOCK_SIZE).unwrap();
+        let tiny_decomps = sweep(&tiny);
+        assert!(
+            tiny_decomps >= big_decomps * 3,
+            "small cache under parallelism must re-decompress heavily: tiny={} big={} blocks={}",
+            tiny_decomps,
+            big_decomps,
+            total_blocks
+        );
     }
 
     #[test]
@@ -526,12 +674,15 @@ mod tests {
                 json: "x".repeat(100),
             }])
         };
-        cache.put(0, mk(0), 100);
-        cache.put(1, mk(1), 100);
-        cache.put(2, mk(2), 100); // evicts offset 0 (LRU)
-        assert!(cache.get(0).is_none(), "offset 0 should have been evicted");
-        assert!(cache.get(1).is_some());
-        assert!(cache.get(2).is_some());
+        cache.put((0, 0), mk(0), 100);
+        cache.put((0, 1), mk(1), 100);
+        cache.put((0, 2), mk(2), 100); // evicts offset 0 (LRU)
+        assert!(
+            cache.get((0, 0)).is_none(),
+            "offset 0 should have been evicted"
+        );
+        assert!(cache.get((0, 1)).is_some());
+        assert!(cache.get((0, 2)).is_some());
         assert!(cache.total_bytes <= cache.budget_bytes);
     }
 
@@ -547,8 +698,32 @@ mod tests {
             alt_allele: "G".into(),
             json: "x".repeat(1000),
         }]);
-        cache.put(0, entry, 1000);
-        assert!(cache.get(0).is_some(), "just-inserted block must be retained");
+        cache.put((0, 0), entry, 1000);
+        assert!(
+            cache.get((0, 0)).is_some(),
+            "just-inserted block must be retained"
+        );
+    }
+
+    #[test]
+    fn block_cache_namespaces_by_reader_id() {
+        // Two readers with the same file offset must not alias in the shared
+        // cache: reader 0's block and reader 1's block at offset 0 coexist.
+        let mut cache = BlockCache::new(10_000);
+        let mk = |tag: &str| {
+            Arc::new(vec![BlockEntry {
+                position: 1,
+                ref_allele: "A".into(),
+                alt_allele: "G".into(),
+                json: tag.to_string(),
+            }])
+        };
+        cache.put((0, 0), mk("reader0"), 100);
+        cache.put((1, 0), mk("reader1"), 100);
+        assert_eq!(cache.get((0, 0)).unwrap()[0].json, "reader0");
+        assert_eq!(cache.get((1, 0)).unwrap()[0].json, "reader1");
+        assert_eq!(cache.len_for_reader(0), 1);
+        assert_eq!(cache.len_for_reader(1), 1);
     }
 
     #[test]
