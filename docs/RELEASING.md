@@ -45,6 +45,25 @@ git tag -a v0.4.0 -m "v0.4.0"
 git push && git push --tags
 ```
 
+## After the tag: refresh the conda recipe
+
+`conda/recipe/meta.yaml` pins the release tarball by checksum, so it must be
+bumped once the tag is pushed and GitHub has generated the archive:
+
+```sh
+VERSION=0.4.0
+curl -sL -o /tmp/fastvep.tar.gz \
+  "https://github.com/Huang-lab/fastVEP/archive/refs/tags/v${VERSION}.tar.gz"
+shasum -a 256 /tmp/fastvep.tar.gz
+# → update `version` and `sha256` in conda/recipe/meta.yaml, reset `build.number` to 0
+```
+
+Once fastVEP is accepted into bioconda, the same two values also need updating
+in `bioconda-recipes/recipes/fastvep/meta.yaml` (or left to bioconda's
+autobump bot, which watches GitHub releases and opens the PR for you).
+
+## Notes
+
 `git-cliff` config lives in `cliff.toml`. It is a **drafting aid only** —
 past release sections in `CHANGELOG.md` are written by hand and never
 regenerated. `git describe` (e.g. `v0.3.0-12-gabcdef0`) gives the exact
