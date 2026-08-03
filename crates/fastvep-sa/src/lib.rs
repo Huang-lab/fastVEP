@@ -11,7 +11,6 @@
 //! - **`.oga`** — Gene-level annotations (OMIM, pLI scores, ClinGen)
 
 pub mod block;
-pub mod bloom;
 pub mod chunk;
 pub mod common;
 pub mod custom;

@@ -13,6 +13,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bincode = { workspace = true }
 memmap2 = { workspace = true }
+flate2 = { workspace = true }
 zstd = { workspace = true }
 zip = { workspace = true }
 lru = { workspace = true }
@@ -20,3 +21,4 @@ log = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+rayon = { workspace = true }
