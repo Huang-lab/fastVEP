@@ -27,20 +27,24 @@ and needs no external data.
 
 ## Small test data (lives in-repo, ~40 KB, gitignored exceptions)
 
-These tiny fixtures are tracked in git so `cargo test`, the README quickstart,
-and CI all work without downloading anything:
+These tiny fixtures are tracked in git so the README quickstart and the docs
+walkthroughs work without downloading anything:
 
 | Path | Contents | Used by |
 |------|----------|---------|
-| [`tests/test.vcf`](../tests/test.vcf)               | 12 BRCA1 variants (SNV/indel/splice/UTR/intergenic) | README quickstart, integration tests |
-| [`tests/test.gff3`](../tests/test.gff3)             | BRCA1 region, ~10 transcripts                       | README quickstart, integration tests |
-| [`tests/test.fa`](../tests/test.fa)                 | BRCA1 region FASTA                                  | HGVSp + amino-acid prediction tests |
-| [`tests/test_chr1.vcf`](../tests/test_chr1.vcf)     | A few chr1 variants                                 | smoke tests for chr1-specific code paths |
-| [`tests/test_chr1.gff3`](../tests/test_chr1.gff3)   | chr1 transcript fragment                            | smoke tests for chr1-specific code paths |
+| [`tests/test.vcf`](../tests/test.vcf)               | 12 BRCA1 variants (SNV/indel/splice/UTR/intergenic) | README quickstart, [`docs/ACMG_SETUP.md`](../docs/ACMG_SETUP.md), manual smoke runs |
+| [`tests/test.gff3`](../tests/test.gff3)             | BRCA1 region, ~10 transcripts                       | README quickstart, [`docs/ACMG_SETUP.md`](../docs/ACMG_SETUP.md), manual smoke runs |
+| [`tests/test_chr1.vcf`](../tests/test_chr1.vcf)     | A few chr1 variants                                 | manual smoke runs for chr1-specific code paths |
+| [`tests/test_chr1.gff3`](../tests/test_chr1.gff3)   | chr1 transcript fragment                            | manual smoke runs for chr1-specific code paths |
 
 The `tests/` directory itself is gitignored (large generated artefacts can
 land there during a run); these specific files are force-added with
 `git add -f`. **Do not delete them** without checking what depends on them.
+
+Note: the Rust test suite does *not* read from `tests/` — every `cargo test`
+fixture is either inline in the test source or under
+`crates/*/tests/fixtures/`, so `cargo test` passes on a clone that lacks this
+directory entirely.
 
 ---
 

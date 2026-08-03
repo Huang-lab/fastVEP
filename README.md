@@ -57,13 +57,15 @@ fastvep --version
 
 #### Alternative: build a conda package
 
-Prefer conda? The repo ships a recipe under `conda/recipe/` that builds both `fastvep` and `fastvep-web` into a local conda package (Linux and macOS):
+> fastVEP is **not yet published on bioconda** — `conda install -c bioconda fastvep` will not work. The recipe below is bioconda-shaped and builds locally in the meantime.
+
+The repo ships a recipe under `conda/recipe/` that builds both `fastvep` and `fastvep-web` into a local conda package (Linux and macOS):
 
 ```bash
 # One-time: tools for building conda packages
-conda install -n base -c conda-forge conda-build
+conda install -n base -c conda-forge conda-build cargo-bundle-licenses
 
-# Build the package from the repo root
+# Build the package from the repo root (builds the tagged release tarball)
 conda build conda/recipe
 
 # Install into a fresh environment
@@ -71,6 +73,9 @@ conda create -n fastvep -c local fastvep
 conda activate fastvep
 fastvep --version
 ```
+
+To build your unreleased working tree instead, swap the `url:`/`sha256:` pair in
+[`conda/recipe/meta.yaml`](conda/recipe/meta.yaml) for the commented-out `path: ../..` line.
 
 ### 3. Try it — annotate the included test data
 

@@ -1,30 +1,33 @@
 {% set name = "fastvep" %}
-{% set version = "0.2.0" %}
+{% set version = "0.3.0" %}
 
 package:
   name: {{ name }}
   version: {{ version }}
 
 source:
-  # Build against the working tree in this repo. Run `conda build conda/recipe`
-  # from the repo root.
-  path: ../..
-  # For a future bioconda / conda-forge submission, replace the `path:` entry
-  # above with the tagged release tarball:
+  url: https://github.com/Huang-lab/fastVEP/archive/refs/tags/v{{ version }}.tar.gz
+  sha256: ad82fca322c7e2363d50f554ccf93a8a531a14c11feff0d3b695463c302a2b03
+  # To build unreleased working-tree code instead, comment out the two lines
+  # above and uncomment this (then run `conda build conda/recipe` from the repo
+  # root). Bioconda requires the tagged-tarball form, so leave it as-is when
+  # syncing this recipe to bioconda-recipes.
   #
-  # url: https://github.com/Huang-lab/fastVEP/archive/refs/tags/v{{ version }}.tar.gz
-  # sha256: <fill-in-on-release>
+  # path: ../..
 
 build:
   number: 0
   skip: true  # [win]
+  run_exports:
+    - {{ pin_subpackage(name, max_pin="x.x") }}
 
 requirements:
   build:
-    - {{ compiler('rust') }}
     - {{ compiler('c') }}
+    - {{ compiler('rust') }}
+    - {{ stdlib('c') }}
+    - cargo-bundle-licenses
     - make
-  run:
 
 test:
   commands:
@@ -36,7 +39,9 @@ about:
   home: https://github.com/Huang-lab/fastVEP
   license: Apache-2.0
   license_family: APACHE
-  license_file: LICENSE.md
+  license_file:
+    - LICENSE.md
+    - THIRDPARTY.yml
   summary: A high-performance variant effect predictor with clinical database integration, written in Rust
   description: |
     fastVEP predicts the functional consequences of genomic variants (SNPs,
@@ -46,8 +51,8 @@ about:
     MitoMap). It is inspired by Ensembl VEP and Illumina Nirvana and ships
     both a CLI (`fastvep`) and a production web server (`fastvep-web`).
   dev_url: https://github.com/Huang-lab/fastVEP
-  doc_url: https://github.com/Huang-lab/fastVEP
+  doc_url: https://github.com/Huang-lab/fastVEP/blob/v{{ version }}/README.md
 
 extra:
   recipe-maintainers:
-    - Huang-lab
+    - kuanlinhuang

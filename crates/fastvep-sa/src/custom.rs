@@ -324,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_custom_vcf_number_R_per_allele() {
+    fn test_parse_custom_vcf_number_r_per_allele() {
         // AD is `Number=R` (REF + each ALT). With 2 ALTs we have 3 values
         // and each ALT should pick its own slot (skipping the REF slot).
         let vcf = "#h\nchr1\t100\t.\tA\tG,T\t.\t.\tAD=80,12,8\n";
