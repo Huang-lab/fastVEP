@@ -4,7 +4,6 @@
 //! `run_sa_build` (the same entrypoint the CLI uses), and reads the resulting
 //! database back to confirm the round-trip.
 
-use fastvep_cache::annotation::AnnotationProvider;
 use fastvep_cli::pipeline::{run_annotate, run_sa_build, AnnotateConfig};
 use fastvep_sa::gene::GeneIndex;
 use std::fs::{self, File};
