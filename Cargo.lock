@@ -389,6 +389,7 @@ dependencies = [
  "flate2",
  "rayon",
  "serde_json",
+ "tempfile",
  "tracing",
 ]
 

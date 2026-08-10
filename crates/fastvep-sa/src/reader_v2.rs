@@ -11,6 +11,14 @@
 //! readers (mirror of the `.osa` block cache), so a dense whole-genome source
 //! queried in parallel neither serializes on a lock nor thrashes a too-small
 //! per-reader cache. See [`crate::common::sa_cache_budget_bytes`].
+//!
+//! **Startup cost (issue #78):** `open` reads only the central directory (see
+//! [`crate::zipdir`]) - one contiguous region at the end of the file. Each
+//! entry's *data* offset lives in its local file header, next to the data
+//! itself, so resolving those eagerly meant one random read per entry across
+//! the whole file: a 24-shard gnomAD `--sa-dir` spent 25+ minutes on that
+//! before the first variant was annotated. They are now resolved lazily, on the
+//! first read of each entry, when the page is about to be touched anyway.
 
 use crate::chunk::{delta_decode, Chunk};
 use crate::common::chrom_aliases;
@@ -29,7 +37,7 @@ use std::io::Read;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Hard cap on a per-chunk zstd-decompressed JSON blob (256 MiB). Defends
 /// against zstd bombs in maliciously crafted .osa2 files.
@@ -123,14 +131,33 @@ enum EntryMethod {
     Deflated,
 }
 
-/// Location of one ZIP entry's compressed data within the mmap, resolved once
-/// at `open` so query-time reads never touch the `ZipArchive` (and thus never
-/// take a shared lock).
-#[derive(Clone, Copy)]
+impl EntryMethod {
+    /// Map a raw ZIP method id. Anything else means the `.osa2` was not written
+    /// by this crate's writer and we would silently mis-read it.
+    fn from_id(id: u16, name: &str) -> Result<Self> {
+        match id {
+            0 => Ok(EntryMethod::Stored),
+            8 => Ok(EntryMethod::Deflated),
+            other => anyhow::bail!(
+                "Unsupported ZIP compression method {} for entry '{}' in .osa2",
+                other,
+                name
+            ),
+        }
+    }
+}
+
+/// Location of one ZIP entry's compressed data within the mmap.
+///
+/// `comp_size` and `header_start` come from the central directory at `open`.
+/// `data_start` needs the entry's *local* header, which sits next to the data
+/// and would be a random read per entry at startup (issue #78), so it is filled
+/// in on first read and memoized here.
 struct EntryLoc {
-    data_start: u64,
+    header_start: u64,
     comp_size: u64,
     method: EntryMethod,
+    data_start: OnceLock<u64>,
 }
 
 /// Reader for .osa2 annotation files.
@@ -148,6 +175,9 @@ pub struct Osa2Reader {
     /// Count of chunks built (cache misses) — a thrash diagnostic, exposed via
     /// `chunk_load_count()`.
     chunk_load_count: AtomicU64,
+    /// Count of ZIP local file headers parsed - each one is a random read into
+    /// a potentially multi-GB file. Startup diagnostic for issue #78.
+    header_read_count: AtomicU64,
     metadata: Osa2Metadata,
     sa_metadata: SaMetadata,
     fields: Vec<Field>,
@@ -178,38 +208,66 @@ impl Osa2Reader {
         let file = File::open(path).with_context(|| format!("Opening {}", path.display()))?;
         // SAFETY: the file is opened read-only and the mmap is only read from.
         let mmap = unsafe { Mmap::map(&file)? };
+        drop(file);
 
-        // Parse the central directory once to read the small metadata entries
-        // and to record every entry's compressed byte range for the lock-free
-        // read path. The archive is dropped at the end of this function.
-        let mut archive = zip::ZipArchive::new(file)?;
+        // One sequential pass over the central directory (issue #78): record
+        // each entry's compressed byte range for the lock-free read path and
+        // assign each chromosome directory a dense index. No entry's local
+        // header is touched here - see the module docs.
+        let central = crate::zipdir::parse_central_directory(&mmap)
+            .with_context(|| format!("Reading .osa2 archive index of {}", path.display()))?;
+
+        let mut entries: HashMap<String, EntryLoc> = HashMap::with_capacity(central.len());
+        let mut chrom_index: HashMap<String, u32> = HashMap::new();
+        for entry in central {
+            let method = EntryMethod::from_id(entry.method, &entry.name)?;
+
+            if let Some(rest) = entry.name.strip_prefix("fastsa/") {
+                if let Some((chrom, _)) = rest.split_once('/') {
+                    if !matches!(chrom, "metadata.json" | "config.json" | "strings") {
+                        let next = chrom_index.len() as u32;
+                        chrom_index.entry(chrom.to_string()).or_insert(next);
+                    }
+                }
+            }
+
+            entries.insert(
+                entry.name,
+                EntryLoc {
+                    header_start: entry.header_start,
+                    comp_size: entry.comp_size,
+                    method,
+                    data_start: OnceLock::new(),
+                },
+            );
+        }
+
+        // The prelude entries are the only ones read at open; each costs the
+        // one local-header read that the chunk entries now defer.
+        let header_read_count = AtomicU64::new(0);
+        let read_prelude = |name: &str| -> Result<Option<Vec<u8>>> {
+            read_entry_from(&mmap, &entries, &header_read_count, name)
+        };
 
         let metadata: Osa2Metadata = {
-            let mut entry = archive
-                .by_name("fastsa/metadata.json")
+            let buf = read_prelude("fastsa/metadata.json")?
                 .context("Missing fastsa/metadata.json")?;
-            let mut buf = String::new();
-            entry.read_to_string(&mut buf)?;
-            serde_json::from_str(&buf)?
+            serde_json::from_slice(&buf)?
         };
 
         let fields: Vec<Field> = {
-            let mut entry = archive
-                .by_name("fastsa/config.json")
-                .context("Missing fastsa/config.json")?;
-            let mut buf = String::new();
-            entry.read_to_string(&mut buf)?;
-            serde_json::from_str(&buf)?
+            let buf =
+                read_prelude("fastsa/config.json")?.context("Missing fastsa/config.json")?;
+            serde_json::from_slice(&buf)?
         };
 
         let mut string_tables: Vec<Vec<String>> = fields.iter().map(|_| Vec::new()).collect();
         for (i, field) in fields.iter().enumerate() {
             if field.ftype == FieldType::Categorical {
                 let name = format!("fastsa/strings/{}.txt", field.alias);
-                if let Ok(mut entry) = archive.by_name(&name) {
-                    let mut buf = String::new();
-                    entry.read_to_string(&mut buf)?;
-                    string_tables[i] = buf.lines().map(|l| l.to_string()).collect();
+                if let Some(buf) = read_prelude(&name)? {
+                    let text = String::from_utf8(buf)?;
+                    string_tables[i] = text.lines().map(|l| l.to_string()).collect();
                 }
             }
         }
@@ -224,44 +282,6 @@ impl Osa2Reader {
                 var32::CHUNK_BITS
             );
         }
-
-        // Single pass over the central directory: record each entry's data
-        // range and assign each chromosome directory a dense index.
-        let mut entries = HashMap::with_capacity(archive.len());
-        let mut chrom_index: HashMap<String, u32> = HashMap::new();
-        for i in 0..archive.len() {
-            let zf = archive.by_index(i)?;
-            let name = zf.name().to_string();
-            let method = match zf.compression() {
-                zip::CompressionMethod::Stored => EntryMethod::Stored,
-                zip::CompressionMethod::Deflated => EntryMethod::Deflated,
-                other => anyhow::bail!(
-                    "Unsupported ZIP compression {:?} for entry '{}' in .osa2",
-                    other,
-                    name
-                ),
-            };
-            let data_start = local_data_start(&mmap, zf.header_start())?;
-            let comp_size = zf.compressed_size();
-            entries.insert(
-                name.clone(),
-                EntryLoc {
-                    data_start,
-                    comp_size,
-                    method,
-                },
-            );
-
-            if let Some(rest) = name.strip_prefix("fastsa/") {
-                if let Some((chrom, _)) = rest.split_once('/') {
-                    if !matches!(chrom, "metadata.json" | "config.json" | "strings") {
-                        let next = chrom_index.len() as u32;
-                        chrom_index.entry(chrom.to_string()).or_insert(next);
-                    }
-                }
-            }
-        }
-        drop(archive);
 
         let sa_metadata = SaMetadata {
             name: metadata.name.clone(),
@@ -280,6 +300,7 @@ impl Osa2Reader {
             reader_id: NEXT_READER_ID.fetch_add(1, Ordering::Relaxed),
             local_cache: local_budget.map(|b| Mutex::new(ChunkCache::new(b))),
             chunk_load_count: AtomicU64::new(0),
+            header_read_count,
             metadata,
             sa_metadata,
             fields,
@@ -292,6 +313,19 @@ impl Osa2Reader {
     /// by benchmarks/tests to detect chunk-cache thrashing.
     pub fn chunk_load_count(&self) -> u64 {
         self.chunk_load_count.load(Ordering::Relaxed)
+    }
+
+    /// Number of ZIP entries in the archive. Startup-cost diagnostic (issue
+    /// #78): the open path must stay O(1) random reads in this number.
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Number of ZIP local file headers parsed so far. Each is a random read
+    /// into the file, so a large count at open time is the startup stall of
+    /// issue #78.
+    pub fn header_read_count(&self) -> u64 {
+        self.header_read_count.load(Ordering::Relaxed)
     }
 
     /// The chunk cache this reader writes to: its private one if configured,
@@ -320,27 +354,7 @@ impl Osa2Reader {
     /// `Ok(None)` means the entry is absent (a legitimate "this chunk has no
     /// data for this field"); `Err` means the archive is corrupt/unreadable.
     fn read_entry(&self, name: &str) -> Result<Option<Vec<u8>>> {
-        let Some(loc) = self.entries.get(name) else {
-            return Ok(None);
-        };
-        let start = loc.data_start as usize;
-        let end = start
-            .checked_add(loc.comp_size as usize)
-            .ok_or_else(|| anyhow::anyhow!("entry '{}' data range overflow", name))?;
-        if end > self.mmap.len() {
-            anyhow::bail!("entry '{}' extends beyond .osa2 file", name);
-        }
-        let raw = &self.mmap[start..end];
-        match loc.method {
-            EntryMethod::Stored => Ok(Some(raw.to_vec())),
-            EntryMethod::Deflated => {
-                let mut out = Vec::new();
-                DeflateDecoder::new(raw)
-                    .read_to_end(&mut out)
-                    .with_context(|| format!("inflating ZIP entry '{}'", name))?;
-                Ok(Some(out))
-            }
-        }
+        read_entry_from(&self.mmap, &self.entries, &self.header_read_count, name)
     }
 
     /// Build a chunk by reading its files from the mmap. Pure (no cache access)
@@ -509,26 +523,54 @@ impl Osa2Reader {
     }
 }
 
-/// Compute the start offset of a ZIP entry's data from its local file header,
-/// parsed directly out of the mmap. Robust against the crate's lazily-set
-/// `data_start` (which panics if the entry hasn't been read) and avoids reading
-/// any entry data at open. Local file header layout: 4-byte signature,
-/// 22 bytes of fixed fields, then u16 name length and u16 extra length at
-/// offsets 26/28, followed by name + extra, then the data.
-fn local_data_start(mmap: &Mmap, header_start: u64) -> Result<u64> {
-    let h = header_start as usize;
-    let fixed_end = h
-        .checked_add(30)
-        .ok_or_else(|| anyhow::anyhow!("ZIP local header offset overflow"))?;
-    if fixed_end > mmap.len() {
-        anyhow::bail!("ZIP local header at {} extends beyond file", header_start);
+/// Read and decompress one ZIP entry out of `mmap`.
+///
+/// Free function rather than a method so `open_inner` can use it for the
+/// prelude entries before the reader exists. Resolving `data_start` is where
+/// the entry's local file header is finally touched - once per entry, memoized
+/// in the `OnceLock`, and only for entries that are actually read (issue #78).
+/// A race between two threads on the same entry just parses the same header
+/// twice and stores the same value.
+fn read_entry_from(
+    mmap: &Mmap,
+    entries: &HashMap<String, EntryLoc>,
+    header_read_count: &AtomicU64,
+    name: &str,
+) -> Result<Option<Vec<u8>>> {
+    let Some(loc) = entries.get(name) else {
+        return Ok(None);
+    };
+    let data_start = match loc.data_start.get() {
+        Some(&start) => start,
+        None => {
+            let start = crate::zipdir::local_data_start(mmap, loc.header_start)
+                .with_context(|| format!("locating ZIP entry '{}'", name))?;
+            header_read_count.fetch_add(1, Ordering::Relaxed);
+            let _ = loc.data_start.set(start);
+            start
+        }
+    };
+
+    let start: usize = data_start
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("entry '{}' data offset exceeds usize", name))?;
+    let end = start
+        .checked_add(loc.comp_size as usize)
+        .ok_or_else(|| anyhow::anyhow!("entry '{}' data range overflow", name))?;
+    if end > mmap.len() {
+        anyhow::bail!("entry '{}' extends beyond .osa2 file", name);
     }
-    if &mmap[h..h + 4] != b"PK\x03\x04" {
-        anyhow::bail!("bad ZIP local header signature at {}", header_start);
+    let raw = &mmap[start..end];
+    match loc.method {
+        EntryMethod::Stored => Ok(Some(raw.to_vec())),
+        EntryMethod::Deflated => {
+            let mut out = Vec::new();
+            DeflateDecoder::new(raw)
+                .read_to_end(&mut out)
+                .with_context(|| format!("inflating ZIP entry '{}'", name))?;
+            Ok(Some(out))
+        }
     }
-    let name_len = u16::from_le_bytes([mmap[h + 26], mmap[h + 27]]) as u64;
-    let extra_len = u16::from_le_bytes([mmap[h + 28], mmap[h + 29]]) as u64;
-    Ok(header_start + 30 + name_len + extra_len)
 }
 
 impl AnnotationProvider for Osa2Reader {

@@ -1223,89 +1223,113 @@ fn enrich_compound_het(
     }
 }
 
-/// Load supplementary annotation providers (.osa, .osa2 files) from a directory.
+/// Load supplementary annotation providers (.osa, .osa2, .osi files) from a
+/// directory.
+///
+/// Opening is done in parallel and the results are ordered by path (issue
+/// #78). A per-chromosome deployment puts 200+ shards in one `--sa-dir`, and
+/// opening a shard is latency-bound rather than CPU-bound, so serial opens made
+/// startup scale linearly with shard count for no reason. Sorting by path also
+/// makes the provider order - and therefore the output column order - depend on
+/// the file names rather than on directory iteration order.
 pub fn load_sa_providers(
     sa_dir: &Path,
 ) -> Result<Vec<Mutex<Box<dyn AnnotationProvider>>>> {
     use fastvep_sa::interval::OsiReader;
     use fastvep_sa::reader::SaReader;
     use fastvep_sa::reader_v2::Osa2Reader;
-
-    let mut providers: Vec<Mutex<Box<dyn AnnotationProvider>>> = Vec::new();
+    use rayon::prelude::*;
 
     if !sa_dir.is_dir() {
         tracing::warn!(
             "SA directory does not exist: {} (skipping)",
             sa_dir.display()
         );
-        return Ok(providers);
+        return Ok(Vec::new());
     }
 
-    for entry in std::fs::read_dir(sa_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str());
+    let paths = sorted_paths_with_extensions(sa_dir, &["osa2", "osa", "osi"])?;
 
-        match ext {
-            Some("osa2") => match Osa2Reader::open(&path) {
-                Ok(reader) => {
-                    tracing::info!("Loaded SA v2: {} ({})", reader.name(), path.display());
-                    providers.push(Mutex::new(Box::new(reader)));
+    // A source that fails to open is skipped with a warning, as before; only
+    // the directory walk itself is fatal.
+    let providers: Vec<Mutex<Box<dyn AnnotationProvider>>> = paths
+        .par_iter()
+        .filter_map(|path| {
+            let ext = path.extension().and_then(|e| e.to_str());
+            let opened: Result<(&str, Box<dyn AnnotationProvider>)> = match ext {
+                Some("osa2") => Osa2Reader::open(path).map(|r| ("SA v2", boxed(r))),
+                Some("osa") => SaReader::open(path).map(|r| ("SA", boxed(r))),
+                // Interval-level (.osi) - typically BED-derived custom sources.
+                // Wired up alongside .osa so a directory with mixed file types
+                // "just works" via --sa-dir; the OsiReader exposes the same
+                // AnnotationProvider trait, returning AnnotationValue::Interval.
+                Some("osi") => OsiReader::open(path).map(|r| ("SA interval", boxed(r))),
+                _ => return None,
+            };
+            match opened {
+                Ok((kind, provider)) => {
+                    tracing::info!("Loaded {}: {} ({})", kind, provider.name(), path.display());
+                    Some(Mutex::new(provider))
                 }
                 Err(e) => {
                     tracing::warn!("Could not load {}: {}", path.display(), e);
+                    None
                 }
-            },
-            Some("osa") => match SaReader::open(&path) {
-                Ok(reader) => {
-                    tracing::info!("Loaded SA: {} ({})", reader.name(), path.display());
-                    providers.push(Mutex::new(Box::new(reader)));
-                }
-                Err(e) => {
-                    tracing::warn!("Could not load {}: {}", path.display(), e);
-                }
-            },
-            // Interval-level (.osi) — typically BED-derived custom sources.
-            // Wired up alongside .osa so a directory with mixed file types
-            // "just works" via --sa-dir; the OsiReader exposes the same
-            // AnnotationProvider trait, returning AnnotationValue::Interval.
-            Some("osi") => match OsiReader::open(&path) {
-                Ok(reader) => {
-                    tracing::info!(
-                        "Loaded SA interval: {} ({})",
-                        reader.name(),
-                        path.display()
-                    );
-                    providers.push(Mutex::new(Box::new(reader)));
-                }
-                Err(e) => {
-                    tracing::warn!("Could not load {}: {}", path.display(), e);
-                }
-            },
-            _ => {}
-        }
-    }
+            }
+        })
+        .collect();
 
     Ok(providers)
 }
 
+fn boxed<P: AnnotationProvider + 'static>(provider: P) -> Box<dyn AnnotationProvider> {
+    Box::new(provider)
+}
+
+/// Every file in `dir` whose extension is one of `exts`, sorted by path so the
+/// caller's provider order is reproducible across machines and filesystems.
+///
+/// A failed directory entry is propagated rather than skipped: on a network
+/// `--sa-dir` a transient error would otherwise drop a shard, and the run would
+/// finish successfully with that source's annotations simply missing.
+fn sorted_paths_with_extensions(dir: &Path, exts: &[&str]) -> Result<Vec<std::path::PathBuf>> {
+    let mut paths: Vec<std::path::PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(dir)
+        .with_context(|| format!("Listing annotation directory {}", dir.display()))?
+    {
+        let path = entry
+            .with_context(|| format!("Reading an entry of {}", dir.display()))?
+            .path();
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| exts.contains(&e))
+        {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
 /// Load gene-level annotation providers (.oga files) from a directory.
+///
+/// Same ordering and parallelism contract as [`load_sa_providers`].
 pub fn load_gene_providers(
     sa_dir: &Path,
 ) -> Result<Vec<fastvep_sa::gene::GeneIndex>> {
-    let mut providers = Vec::new();
+    use rayon::prelude::*;
 
     if !sa_dir.is_dir() {
-        return Ok(providers);
+        return Ok(Vec::new());
     }
 
-    for entry in std::fs::read_dir(sa_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str());
+    let paths = sorted_paths_with_extensions(sa_dir, &["oga"])?;
 
-        if ext == Some("oga") {
-            match std::fs::File::open(&path)
+    let providers: Vec<fastvep_sa::gene::GeneIndex> = paths
+        .par_iter()
+        .filter_map(|path| {
+            match std::fs::File::open(path)
                 .map_err(anyhow::Error::from)
                 .and_then(|mut f| fastvep_sa::gene::GeneIndex::read_from(&mut f))
             {
@@ -1316,14 +1340,15 @@ pub fn load_gene_providers(
                         path.display(),
                         index.gene_count()
                     );
-                    providers.push(index);
+                    Some(index)
                 }
                 Err(e) => {
                     tracing::warn!("Could not load {}: {}", path.display(), e);
+                    None
                 }
             }
-        }
-    }
+        })
+        .collect();
 
     Ok(providers)
 }

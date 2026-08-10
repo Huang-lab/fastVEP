@@ -319,11 +319,23 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     // Load supplementary annotation providers from --sa-dir
     // Shared load_sa_providers returns Mutex-wrapped providers; unwrap for batch pipeline
     // (batch pipeline processes variants sequentially per chunk, no concurrent access).
+    // Reported on stderr like the other startup steps: this is the one that
+    // scales with the number of files in --sa-dir, so a slow shared filesystem
+    // shows up here rather than as a silent stall before the progress meter
+    // (issue #78). `tracing` has no subscriber installed in the CLI.
     let sa_providers: Vec<Box<dyn AnnotationProvider>> = if let Some(ref dir) = config.sa_dir {
-        load_sa_providers(Path::new(dir))?
+        let t0 = std::time::Instant::now();
+        let loaded: Vec<Box<dyn AnnotationProvider>> = load_sa_providers(Path::new(dir))?
             .into_iter()
             .map(|m| m.into_inner().unwrap())
-            .collect()
+            .collect();
+        eprintln!(
+            "Loaded {} supplementary annotation source(s) from {} in {:.1}s",
+            loaded.len(),
+            dir,
+            t0.elapsed().as_secs_f64()
+        );
+        loaded
     } else {
         Vec::new()
     };
@@ -364,7 +376,11 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         }
         Vec::new()
     } else if let Some(ref dir) = config.sa_dir {
-        load_gene_providers(Path::new(dir))?
+        let loaded = load_gene_providers(Path::new(dir))?;
+        if !loaded.is_empty() {
+            eprintln!("Loaded {} gene-level annotation source(s) from {}", loaded.len(), dir);
+        }
+        loaded
     } else {
         Vec::new()
     };
