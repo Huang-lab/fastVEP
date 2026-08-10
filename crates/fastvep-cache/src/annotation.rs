@@ -74,28 +74,22 @@ pub trait AnnotationProvider: Send + Sync {
 
     /// Pre-load data for a batch of positions on a chromosome.
     ///
-    /// Called before the parallel annotation phase to decompress and cache
-    /// relevant blocks. The default implementation is a no-op.
-    fn preload(&self, _chrom: &str, _positions: &[u64]) -> Result<()> {
-        Ok(())
-    }
-
-    /// Annotate a batch of variants on the same chromosome in a single call.
+    /// Called once per (provider, chromosome) before the parallel annotation
+    /// phase so the blocks/chunks the batch will touch are decompressed into the
+    /// shared cache up front, on one thread, instead of being raced for by the
+    /// workers. The default implementation is a no-op; the `.osa` and `.osa2`
+    /// readers both override it.
     ///
-    /// Default implementation calls `annotate_position()` in a loop.
-    /// High-performance readers (e.g., Osa2Reader) can override this to
-    /// load chunks once and serve multiple queries.
-    fn annotate_batch(
-        &self,
-        chrom: &str,
-        variants: &[(u64, &str, &str)], // (pos, ref_allele, alt_allele)
-        results: &mut Vec<Option<AnnotationValue>>,
-    ) -> Result<()> {
-        results.clear();
-        results.reserve(variants.len());
-        for &(pos, ref_a, alt_a) in variants {
-            results.push(self.annotate_position(chrom, pos, ref_a, alt_a)?);
-        }
+    /// This is the only bulk entry point. There is deliberately no
+    /// `annotate_batch`: the annotate pipeline cannot form a per-chromosome
+    /// batch of *lookups* because the allele set for a variant is only known
+    /// after consequence prediction, and gnomAD's queries are normalized
+    /// per variant against the reference. A batch method existed here for a
+    /// while as an unused default-implemented stub whose doc claimed the v2
+    /// reader overrode it to "load chunks once and serve multiple queries" -
+    /// nothing called it and nothing overrode it. `preload` is what actually
+    /// delivers the load-once behaviour.
+    fn preload(&self, _chrom: &str, _positions: &[u64]) -> Result<()> {
         Ok(())
     }
 }

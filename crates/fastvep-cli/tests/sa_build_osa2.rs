@@ -56,6 +56,8 @@ fn gnomad_osa2_build_round_trips() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -158,6 +160,8 @@ fn assert_v1_v2_parity(source: &str, vcf: &str, sites: &[(&str, u64, &str, &str)
         input.to_str().unwrap(),
         v2_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -251,6 +255,8 @@ fn alphamissense_osa2_round_trips_score_and_class() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -326,6 +332,8 @@ fn dbsnp_osa2_stores_id_and_maf() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -384,6 +392,8 @@ fn cosmic_osa2_stores_id_gene_count() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -440,6 +450,8 @@ fn clinvar_osa2_preserves_arrays_and_is_array_flag() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -502,6 +514,8 @@ fn revel_osa2_stores_score() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -548,6 +562,8 @@ fn primateai_osa2_stores_score() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -592,6 +608,8 @@ fn dbnsfp_osa2_stores_predictions() {
         input.to_str().unwrap(),
         output.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -640,6 +658,8 @@ fn assert_v1_v2_positional_parity(source: &str, data: &str, sites: &[(&str, u64,
         input.to_str().unwrap(),
         v2_base.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -708,6 +728,8 @@ fn positional_lookup_ignores_alleles() {
         input.to_str().unwrap(),
         out.to_str().unwrap(),
         "GRCh38",
+        None,
+        &[],
         false,
     )
     .unwrap();
@@ -732,31 +754,37 @@ fn osa2_rejects_unsupported_source() {
     fs::write(&input, GNOMAD_VCF).unwrap();
     let output = dir.path().join("out");
 
-    // mitomap has no v2 encoder — forcing --format osa2 must error, not
-    // silently build v1.
-    let err = run_sa_build_v2(
-        "mitomap",
-        input.to_str().unwrap(),
-        output.to_str().unwrap(),
-        "GRCh38",
-        false,
-    )
-    .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("currently supported for --source gnomad"),
-        "expected source-gating error, got: {err}"
-    );
-    assert!(
-        !output.with_extension("osa2").exists(),
-        "no file on rejected build"
-    );
+    // Gene-level (`.oga`) and interval (`.osi`) sources have no v2 form at all —
+    // v2 is a variant-level container. Forcing `--format osa2` on one must
+    // error, not silently build something else.
+    for source in ["omim", "gnomad_genes", "clinvar_protein", "custom_bed"] {
+        let err = run_sa_build_v2(
+            source,
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            "GRCh38",
+            None,
+            &[],
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("currently supported for --source gnomad"),
+            "expected source-gating error for {source}, got: {err}"
+        );
+        assert!(
+            !output.with_extension("osa2").exists(),
+            "no file on rejected build of {source}"
+        );
+    }
 }
 
 #[test]
 fn source_supports_osa2_membership() {
-    // Numeric, blob, and positional sources are v2-capable; gene-level,
-    // MitoMap, SpliceAI, and custom sources are not.
+    // Every variant-level source is v2-capable. The exceptions are structural:
+    // gene-keyed sources build `.oga` and interval-keyed `custom_bed` builds
+    // `.osi`, neither of which v2 (a variant-level container) can represent.
     for s in [
         "gnomad",
         "onekg",
@@ -772,68 +800,488 @@ fn source_supports_osa2_membership() {
         "phylop",
         "gerp",
         "dann",
+        "spliceai",
+        "mitomap",
+        "custom_vcf",
     ] {
         assert!(source_supports_osa2(s), "{s} should support osa2");
     }
-    for s in ["mitomap", "spliceai", "omim", "gnomad_genes", "custom_vcf"] {
+    for s in ["omim", "gnomad_genes", "clinvar_protein", "custom_bed"] {
         assert!(!source_supports_osa2(s), "{s} should NOT support osa2");
     }
 }
 
+// SpliceAI VCF: two-decimal delta scores, signed delta positions, a multi-gene
+// site (two entries for one ALT), a multi-ALT site, and a multi-base ref/alt row
+// to exercise the long-variant (kmer16) path alongside the categorical gene
+// column.
+const SPLICEAI_VCF: &str = "\
+##fileformat=VCFv4.2
+##INFO=<ID=SpliceAI,Number=.,Type=String,Description=\"SpliceAI\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t100\t.\tA\tG\t.\t.\tSpliceAI=G|BRCA1|0.01|0.00|0.85|0.00|5|-28|2|-13
+chr1\t100\t.\tA\tT\t.\t.\tSpliceAI=T|BRCA1|0.00|0.42|0.00|0.07|-3|11|0|4
+chr1\t300\t.\tC\tA\t.\t.\tSpliceAI=A|GENEX|0.55|0.00|0.00|0.00|1|0|0|0,A|GENEY|0.99|0.00|0.00|0.00|2|0|0|0
+chr2\t200\t.\tGATTACA\tG\t.\t.\tSpliceAI=G|TP53|0.00|0.73|0.00|0.00|0|-9|0|0
+";
+
 #[test]
-fn format_auto_picks_v2_for_supported_and_v1_for_others() {
+fn spliceai_v1_v2_output_parity() {
+    // Every field at every site must match between v1 .osa and v2 .osa2 —
+    // the eight numeric columns, the categorical gene, negative delta
+    // positions, and the long (indel-shaped) variant.
+    assert_v1_v2_parity(
+        "spliceai",
+        SPLICEAI_VCF,
+        &[
+            ("chr1", 100, "A", "G"),
+            ("chr1", 100, "A", "T"),
+            ("chr1", 300, "C", "A"), // multi-gene site
+            ("chr2", 200, "GATTACA", "G"), // long variant
+        ],
+    );
+}
+
+#[test]
+fn spliceai_osa2_round_trips_scores_positions_and_gene() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("spliceai.vcf");
+    let output = dir.path().join("spliceai"); // builder appends .osa2
+    fs::write(&input, SPLICEAI_VCF).unwrap();
+
+    run_sa_build_v2(
+        "spliceai",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+
+    let osa2 = output.with_extension("osa2");
+    assert!(osa2.exists(), ".osa2 file should be created");
+    let reader = Osa2Reader::open(&osa2).unwrap();
+    assert_eq!(reader.json_key(), "spliceAI");
+    assert!(reader.metadata().match_by_allele);
+    assert!(!reader.metadata().is_positional);
+
+    let j = json_at(&reader, "chr1", 100, "A", "G").expect("chr1:100 A>G annotated");
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    assert_eq!(v["gene"], "BRCA1", "gene came back from the string table: {j}");
+    assert!((v["dsDg"].as_f64().unwrap() - 0.85).abs() < 1e-6, "{j}");
+    assert!((v["dsAg"].as_f64().unwrap() - 0.01).abs() < 1e-6, "{j}");
+    assert_eq!(v["dpAg"].as_i64(), Some(5), "{j}");
+    // Negative delta positions must survive zigzag encoding.
+    assert_eq!(v["dpAl"].as_i64(), Some(-28), "{j}");
+    assert_eq!(v["dpDl"].as_i64(), Some(-13), "{j}");
+
+    // A second allele at the same position resolves independently.
+    let j = json_at(&reader, "chr1", 100, "A", "T").expect("chr1:100 A>T annotated");
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    assert!((v["dsAl"].as_f64().unwrap() - 0.42).abs() < 1e-6, "{j}");
+    assert_eq!(v["dpAg"].as_i64(), Some(-3), "{j}");
+
+    // Multi-gene site keeps the first entry, matching what v1's reader returns.
+    let j = json_at(&reader, "chr1", 300, "C", "A").expect("chr1:300 C>A annotated");
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    assert_eq!(v["gene"], "GENEX", "first gene of the pair wins: {j}");
+    assert!((v["dsAg"].as_f64().unwrap() - 0.55).abs() < 1e-6, "{j}");
+
+    // Long variant on another chromosome, with its own gene table entry.
+    let j = json_at(&reader, "chr2", 200, "GATTACA", "G").expect("chr2:200 indel annotated");
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    assert_eq!(v["gene"], "TP53", "{j}");
+    assert!((v["dsAl"].as_f64().unwrap() - 0.73).abs() < 1e-6, "{j}");
+    assert_eq!(v["dpAl"].as_i64(), Some(-9), "{j}");
+
+    // A variant that is not in the database misses.
+    assert!(json_at(&reader, "chr1", 100, "A", "C").is_none());
+}
+
+#[test]
+fn spliceai_json_from_both_formats_deserializes_for_the_acmg_classifier() {
+    // Routing SpliceAI's v1 JSON through `format_value` renders the delta
+    // scores in scientific notation (`8.500000e-1`). The ACMG classifier reads
+    // them via `SpliceAiData`, so pin the contract at the seam: both builders'
+    // output must deserialize to the same numbers the input carried.
+    use fastvep_classification::sa_extract::SpliceAiData;
+
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.vcf");
+    fs::write(&input, SPLICEAI_VCF).unwrap();
+    let v1_base = dir.path().join("v1");
+    let v2_base = dir.path().join("v2");
+    run_sa_build(
+        "spliceai",
+        input.to_str().unwrap(),
+        v1_base.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+    run_sa_build_v2(
+        "spliceai",
+        input.to_str().unwrap(),
+        v2_base.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+    let v1 = SaReader::open(&v1_base.with_extension("osa")).unwrap();
+    let v2 = Osa2Reader::open(&v2_base.with_extension("osa2")).unwrap();
+
+    for reader in [&v1 as &dyn AnnotationProvider, &v2 as &dyn AnnotationProvider] {
+        let json = match reader.annotate_position("chr1", 100, "A", "G").unwrap() {
+            Some(AnnotationValue::Json(j)) | Some(AnnotationValue::Positional(j)) => j,
+            other => panic!("expected an annotation, got {other:?}"),
+        };
+        let data: SpliceAiData = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("SpliceAiData must parse {json}: {e}"));
+        assert_eq!(data.gene.as_deref(), Some("BRCA1"), "{json}");
+        assert!((data.ds_dg.unwrap() - 0.85).abs() < 1e-6, "{json}");
+        assert!((data.ds_ag.unwrap() - 0.01).abs() < 1e-6, "{json}");
+        assert_eq!(data.dp_al, Some(-28), "{json}");
+        assert!((data.max_delta_score().unwrap() - 0.85).abs() < 1e-6, "{json}");
+    }
+}
+
+#[test]
+fn spliceai_osa2_is_much_smaller_than_osa() {
+    // The reason SpliceAI was worth converting: eight u32 columns plus a gene
+    // index beat a repeated ~120-byte JSON object per record. Build the same
+    // input both ways and require v2 to win on bytes.
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("spliceai.vcf");
+
+    let mut vcf = String::from(
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+    );
+    for i in 0..20_000u32 {
+        let pos = 1000 + i * 3;
+        let gene = format!("GENE{}", i % 200);
+        vcf.push_str(&format!(
+            "chr1\t{pos}\t.\tA\tG\t.\t.\tSpliceAI=G|{gene}|0.{:02}|0.00|0.{:02}|0.00|{}|-{}|2|-13\n",
+            i % 100,
+            (i / 7) % 100,
+            i % 50,
+            i % 40
+        ));
+    }
+    fs::write(&input, &vcf).unwrap();
+
+    let v1_base = dir.path().join("v1");
+    let v2_base = dir.path().join("v2");
+    run_sa_build(
+        "spliceai",
+        input.to_str().unwrap(),
+        v1_base.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+    run_sa_build_v2(
+        "spliceai",
+        input.to_str().unwrap(),
+        v2_base.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+
+    let v1_bytes = fs::metadata(v1_base.with_extension("osa")).unwrap().len()
+        + fs::metadata(v1_base.with_extension("osa.idx")).unwrap().len();
+    let v2_bytes = fs::metadata(v2_base.with_extension("osa2")).unwrap().len();
+    assert!(
+        v2_bytes < v1_bytes,
+        "v2 should be smaller: v1={v1_bytes} bytes, v2={v2_bytes} bytes"
+    );
+
+    // And the values still round-trip after all that encoding.
+    let reader = Osa2Reader::open(&v2_base.with_extension("osa2")).unwrap();
+    let j = json_at(&reader, "chr1", 1000, "A", "G").expect("first record present");
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    assert_eq!(v["gene"], "GENE0", "{j}");
+    let last_pos = 1000 + 19_999 * 3;
+    let j = json_at(&reader, "chr1", last_pos as u64, "A", "G").expect("last record present");
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    assert_eq!(v["gene"], format!("GENE{}", 19_999 % 200), "{j}");
+}
+
+const MITOMAP_TSV: &str = "\
+Position\tRef\tAlt\tDisease\tStatus
+3243\tA\tG\tMELAS\tConfirmed
+8344\tA\tG\tMERRF\tConfirmed
+8993\tT\tG\tLeigh Disease\tReported
+";
+
+#[test]
+fn mitomap_v1_v2_output_parity() {
+    assert_v1_v2_parity(
+        "mitomap",
+        MITOMAP_TSV,
+        &[
+            ("chrM", 3243, "A", "G"),
+            ("chrM", 8344, "A", "G"),
+            ("chrM", 8993, "T", "G"),
+        ],
+    );
+}
+
+#[test]
+fn mitomap_osa2_round_trips_free_text_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("mitomap.tsv");
+    let output = dir.path().join("mitomap");
+    fs::write(&input, MITOMAP_TSV).unwrap();
+
+    run_sa_build_v2(
+        "mitomap",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+
+    let reader = Osa2Reader::open(&output.with_extension("osa2")).unwrap();
+    assert_eq!(reader.json_key(), "mitomap");
+    let j = json_at(&reader, "chrM", 8993, "T", "G").expect("chrM:8993 annotated");
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    assert_eq!(v["disease"], "Leigh Disease", "{j}");
+    assert_eq!(v["status"], "Reported", "{j}");
+    // MitoMap is keyed on the mitochondrion; every spelling must reach it.
+    for alias in ["chrM", "M", "MT", "chrMT"] {
+        assert!(
+            json_at(&reader, alias, 3243, "A", "G").is_some(),
+            "mito spelling {alias} should resolve"
+        );
+    }
+}
+
+const CUSTOM_VCF: &str = "\
+##fileformat=VCFv4.2
+##INFO=<ID=SCORE,Number=1,Type=Float,Description=\"score\">
+##INFO=<ID=LABEL,Number=1,Type=String,Description=\"label\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t100\t.\tA\tG\t.\t.\tSCORE=1.5;LABEL=alpha
+chr1\t300\t.\tGATTACA\tG\t.\t.\tSCORE=0.25;LABEL=beta
+chr2\t50\t.\tC\tT\t.\t.\tSCORE=9;LABEL=gamma
+";
+
+/// Build the same custom VCF both ways and compare. Not routed through
+/// `assert_v1_v2_parity` because custom sources need `--name` threaded in.
+#[test]
+fn custom_vcf_v1_v2_output_parity() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.vcf");
+    fs::write(&input, CUSTOM_VCF).unwrap();
+    let v1_base = dir.path().join("v1");
+    let v2_base = dir.path().join("v2");
+
+    for (base, format) in [(&v1_base, "osa"), (&v2_base, "osa2")] {
+        run_sa_build_format(
+            format,
+            "custom_vcf",
+            input.to_str().unwrap(),
+            base.to_str().unwrap(),
+            "GRCh38",
+            Some("myset"),
+            &[],
+            false,
+        )
+        .unwrap();
+    }
+
+    let v1 = SaReader::open(&v1_base.with_extension("osa")).unwrap();
+    let v2 = Osa2Reader::open(&v2_base.with_extension("osa2")).unwrap();
+    assert_eq!(v1.json_key(), "myset");
+    assert_eq!(v2.json_key(), "myset", "the user's --name must survive into v2");
+    assert_eq!(v1.name(), v2.name());
+
+    for &(chrom, pos, r, a) in &[
+        ("chr1", 100u64, "A", "G"),
+        ("chr1", 300, "GATTACA", "G"), // long variant
+        ("chr2", 50, "C", "T"),
+    ] {
+        let j1 = match v1.annotate_position(chrom, pos, r, a).unwrap() {
+            Some(AnnotationValue::Json(j)) | Some(AnnotationValue::Positional(j)) => j,
+            other => panic!("v1 missing {chrom}:{pos} {r}>{a}: {other:?}"),
+        };
+        let j2 = match v2.annotate_position(chrom, pos, r, a).unwrap() {
+            Some(AnnotationValue::Json(j)) | Some(AnnotationValue::Positional(j)) => j,
+            other => panic!("v2 missing {chrom}:{pos} {r}>{a}: {other:?}"),
+        };
+        // Whole-record blob encoding, so this is byte-for-byte, not just
+        // numerically equivalent.
+        assert_eq!(j1, j2, "custom_vcf {chrom}:{pos} {r}>{a} must be byte-identical");
+    }
+
+    // Explicit INFO-field selection also survives the v2 path.
+    let sel_base = dir.path().join("sel");
+    run_sa_build_format(
+        "osa2",
+        "custom_vcf",
+        input.to_str().unwrap(),
+        sel_base.to_str().unwrap(),
+        "GRCh38",
+        Some("selected"),
+        &["SCORE".to_string()],
+        false,
+    )
+    .unwrap();
+    let sel = Osa2Reader::open(&sel_base.with_extension("osa2")).unwrap();
+    let j = match sel.annotate_position("chr1", 100, "A", "G").unwrap() {
+        Some(AnnotationValue::Json(j)) | Some(AnnotationValue::Positional(j)) => j,
+        other => panic!("selected build missing chr1:100: {other:?}"),
+    };
+    assert!(j.contains("SCORE"), "requested INFO field missing: {j}");
+    assert!(!j.contains("LABEL"), "unrequested INFO field leaked: {j}");
+}
+
+#[test]
+fn custom_vcf_osa2_sorts_unsorted_input() {
+    // `parse_custom_vcf` preserves file order, and the v2 streaming writer
+    // rejects a reopened chunk outright — so a user VCF that is not coordinate
+    // sorted has to be sorted by the builder, not passed straight through.
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("unsorted.vcf");
+    fs::write(
+        &input,
+        // chr1:100 and chr1:200 share chunk 0; the chr1:9000000 row between them
+        // sits in chunk 8, so streaming this file as-is would *reopen* chunk 0
+        // and the writer would bail. chr2 first, to unsort the chromosomes too.
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+         chr2\t500\t.\tA\tG\t.\t.\tSCORE=3\n\
+         chr1\t100\t.\tA\tG\t.\t.\tSCORE=2\n\
+         chr1\t9000000\t.\tA\tG\t.\t.\tSCORE=1\n\
+         chr1\t200\t.\tA\tG\t.\t.\tSCORE=4\n",
+    )
+    .unwrap();
+    let out = dir.path().join("out");
+    run_sa_build_format(
+        "osa2",
+        "custom_vcf",
+        input.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "GRCh38",
+        Some("unsorted"),
+        &[],
+        false,
+    )
+    .unwrap();
+
+    let reader = Osa2Reader::open(&out.with_extension("osa2")).unwrap();
+    for (chrom, pos) in [("chr1", 100u64), ("chr1", 200), ("chr1", 9_000_000), ("chr2", 500)] {
+        assert!(
+            reader.annotate_position(chrom, pos, "A", "G").unwrap().is_some(),
+            "{chrom}:{pos} should be present despite unsorted input"
+        );
+    }
+}
+
+/// `--format auto` on `source`, returning `(built_osa, built_osa2, built_osi)`.
+fn auto_build_extensions(dir: &std::path::Path, source: &str, input_name: &str, body: &str)
+    -> (bool, bool, bool)
+{
+    let input = dir.join(input_name);
+    fs::write(&input, body).unwrap();
+    let out = dir.join(format!("out_{source}"));
+    run_sa_build_format(
+        "auto",
+        source,
+        input.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+    (
+        out.with_extension("osa").exists(),
+        out.with_extension("osa2").exists(),
+        out.with_extension("osi").exists(),
+    )
+}
+
+#[test]
+fn format_auto_picks_v2_for_every_variant_level_source() {
     let dir = tempfile::tempdir().unwrap();
 
-    // gnomAD supports v2 → auto must produce .osa2 (and not .osa).
-    let gnomad_in = dir.path().join("gnomad.vcf");
-    fs::write(&gnomad_in, GNOMAD_VCF).unwrap();
-    let gnomad_out = dir.path().join("gnomad");
-    run_sa_build_format(
-        "auto",
-        "gnomad",
-        gnomad_in.to_str().unwrap(),
-        gnomad_out.to_str().unwrap(),
-        "GRCh38",
-        None,
-        &[],
-        false,
-    )
-    .unwrap();
-    assert!(
-        gnomad_out.with_extension("osa2").exists(),
-        "auto+gnomad should build .osa2"
-    );
-    assert!(
-        !gnomad_out.with_extension("osa").exists(),
-        "auto+gnomad should not build .osa"
-    );
+    // gnomAD is the reference case: auto builds .osa2 and not .osa.
+    let (osa, osa2, _) = auto_build_extensions(dir.path(), "gnomad", "gnomad.vcf", GNOMAD_VCF);
+    assert!(osa2, "auto+gnomad should build .osa2");
+    assert!(!osa, "auto+gnomad should not build .osa");
 
-    // MitoMap has no v2 encoder → auto must fall back to v1 .osa.
-    let mito_in = dir.path().join("mitomap.vcf");
-    fs::write(
-        &mito_in,
-        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
-         chrMT\t100\t.\tA\tG\t.\t.\tDisease=Test;DiseaseStatus=Confirmed\n",
-    )
-    .unwrap();
-    let mito_out = dir.path().join("mitomap");
-    run_sa_build_format(
-        "auto",
+    // MitoMap and custom_vcf were the last two variant-level sources that auto
+    // fell back to v1 for. They now build v2 too, so an all-defaults --sa-dir is
+    // entirely .osa2.
+    let (osa, osa2, _) = auto_build_extensions(
+        dir.path(),
         "mitomap",
-        mito_in.to_str().unwrap(),
-        mito_out.to_str().unwrap(),
+        "mitomap.tsv",
+        "Position\tRef\tAlt\tDisease\tStatus\n3243\tA\tG\tMELAS\tConfirmed\n",
+    );
+    assert!(osa2, "auto+mitomap should build .osa2");
+    assert!(!osa, "auto+mitomap should not build .osa");
+
+    let (osa, osa2, _) = auto_build_extensions(
+        dir.path(),
+        "custom_vcf",
+        "custom.vcf",
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+         chr1\t100\t.\tA\tG\t.\t.\tSCORE=1.5\n",
+    );
+    assert!(osa2, "auto+custom_vcf should build .osa2");
+    assert!(!osa, "auto+custom_vcf should not build .osa");
+
+    // custom_bed is interval-keyed, so it still builds .osi — v2 has no
+    // interval container. This is a structural exception, not a gap.
+    let (osa, osa2, osi) =
+        auto_build_extensions(dir.path(), "custom_bed", "regions.bed", "chr1\t100\t200\tfoo\n");
+    assert!(osi, "auto+custom_bed should build .osi");
+    assert!(!osa && !osa2, "auto+custom_bed should build neither .osa nor .osa2");
+}
+
+#[test]
+fn format_osa_remains_the_explicit_v1_escape_hatch() {
+    // Every variant-level source now defaults to v2, so `--format osa` is the
+    // only way to reproduce a v1 build. It must still work.
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("gnomad.vcf");
+    fs::write(&input, GNOMAD_VCF).unwrap();
+    let out = dir.path().join("v1_forced");
+    run_sa_build_format(
+        "osa",
+        "gnomad",
+        input.to_str().unwrap(),
+        out.to_str().unwrap(),
         "GRCh38",
         None,
         &[],
         false,
     )
     .unwrap();
+    assert!(out.with_extension("osa").exists(), "--format osa should build .osa");
+    assert!(out.with_extension("osa.idx").exists(), "--format osa should build .osa.idx");
     assert!(
-        mito_out.with_extension("osa").exists(),
-        "auto+mitomap should build .osa"
+        !out.with_extension("osa2").exists(),
+        "--format osa must not build .osa2"
     );
-    assert!(
-        !mito_out.with_extension("osa2").exists(),
-        "auto+mitomap should not build .osa2"
-    );
+    // And it is readable through the v1 reader.
+    let reader = SaReader::open(&out.with_extension("osa")).unwrap();
+    assert_eq!(reader.json_key(), "gnomad");
+    assert!(reader.annotate_position("chr1", 100, "A", "G").unwrap().is_some());
 }

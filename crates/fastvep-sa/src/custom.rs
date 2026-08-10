@@ -4,9 +4,34 @@
 //! that get indexed and queried at annotation time.
 
 use crate::common::AnnotationRecord;
+use crate::writer_v2::Osa2Metadata;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
+
+/// `.osa2` metadata for a user-supplied VCF, keyed by the display/JSON `name`
+/// the user chose.
+///
+/// Custom VCFs carry whatever INFO keys the file happens to have - a
+/// heterogeneous, per-file schema - so there is no fixed column layout to encode
+/// and the record is stored as a whole-record JSON blob (see
+/// [`crate::writer_v2::raw_json_blob_fields`]). v2 still pays off: it zstd's a
+/// whole chunk's records together, exploiting the redundancy between adjacent
+/// records that v1's per-block scheme cannot.
+pub fn custom_vcf_osa2_metadata(name: &str, assembly: &str) -> Osa2Metadata {
+    Osa2Metadata {
+        format_version: 2,
+        name: name.into(),
+        version: "user-supplied".into(),
+        assembly: assembly.into(),
+        json_key: name.into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+        chunk_bits: 20,
+        description: format!("Custom VCF annotations for {assembly}"),
+    }
+}
 
 /// Parse a custom VCF annotation file.
 ///

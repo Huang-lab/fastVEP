@@ -54,7 +54,7 @@ fn v2_reader_resolves_chr_query_against_bare_keyed_archive() {
             position: 10_000 + i * 100,
             ref_allele: b"A".to_vec(),
             alt_allele: b"G".to_vec(),
-            values: vec![i as u32 + 1],
+            values: vec![i + 1],
             json_blob: None,
         })
         .collect();
@@ -94,7 +94,7 @@ fn v2_reader_preload_chr_warms_cache_for_bare_query() {
             position: 10_000 + i * 100,
             ref_allele: b"A".to_vec(),
             alt_allele: b"G".to_vec(),
-            values: vec![i as u32 + 1],
+            values: vec![i + 1],
             json_blob: None,
         })
         .collect();
@@ -108,12 +108,82 @@ fn v2_reader_preload_chr_warms_cache_for_bare_query() {
     // Warm the cache via the chr*-prefixed style.
     reader.preload("chr1", &[10_500u64]).unwrap();
 
-    // Now query with the bare form. If the cache key is not
-    // canonicalized, this would re-decode the chunk — which is the
-    // expensive path the preload is supposed to amortize. The
-    // visible-from-test signal is simply that the bare query still
-    // returns the right annotation; the cache-key coherence is a
-    // structural invariant kept by `resolve_chrom`.
+    // Now query with the bare form. If the cache key is not canonicalized this
+    // re-decodes the chunk, which is exactly the expensive path the preload is
+    // supposed to amortize. `chunk_load_count` makes that observable: the
+    // preload is the only chunk build, and every later query - in either
+    // spelling - must be served from the cache it warmed.
+    let after_preload = reader.chunk_load_count();
+    assert_eq!(after_preload, 1, "preload should build exactly one chunk");
+
     let hit = reader.annotate_position("1", 10_500, "A", "G").unwrap();
     assert!(hit.is_some());
+    for chrom in ["1", "chr1"] {
+        for pos in [10_000u64, 10_500, 11_500] {
+            reader.annotate_position(chrom, pos, "A", "G").unwrap();
+        }
+    }
+    assert_eq!(
+        reader.chunk_load_count(),
+        after_preload,
+        "queries after preload must hit the warmed chunk, not rebuild it"
+    );
+}
+
+#[test]
+fn v2_reader_misses_absent_chromosomes_without_touching_the_chunk_cache() {
+    // `resolve_chrom` used to fall back to the raw query name when no alias
+    // matched, so a query for a contig the archive does not carry still built a
+    // cache key and went looking for a chunk. Returning a miss up front keeps
+    // the shared cache free of keys that can never hit — which matters on a
+    // per-chromosome `--sa-dir`, where every shard is asked about every contig.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v2_absent.osa2");
+
+    let fields = one_int_field();
+    let records: Vec<Osa2Record> = (0..8)
+        .map(|i| Osa2Record {
+            chrom: "chr1".into(),
+            position: 10_000 + i * 100,
+            ref_allele: b"A".to_vec(),
+            alt_allele: b"G".to_vec(),
+            values: vec![i + 1],
+            json_blob: None,
+        })
+        .collect();
+    let writer = Osa2Writer::new(metadata(), fields);
+    writer
+        .write_all(std::fs::File::create(&path).unwrap(), &records)
+        .unwrap();
+
+    let reader = Osa2Reader::open(&path).unwrap();
+
+    // Contigs the shard does not carry: a real one, an alias of a real one that
+    // is still absent, and a nonsense name.
+    for chrom in ["chr2", "2", "chrM", "MT", "not_a_contig", ""] {
+        assert!(
+            reader
+                .annotate_position(chrom, 10_000, "A", "G")
+                .unwrap()
+                .is_none(),
+            "query on absent contig '{chrom}' should miss"
+        );
+        reader.preload(chrom, &[10_000u64]).unwrap();
+    }
+    assert_eq!(
+        reader.chunk_load_count(),
+        0,
+        "absent contigs must not build or key any chunk"
+    );
+
+    // The contig that IS present still works, in either spelling.
+    assert!(reader
+        .annotate_position("chr1", 10_000, "A", "G")
+        .unwrap()
+        .is_some());
+    assert!(reader
+        .annotate_position("1", 10_000, "A", "G")
+        .unwrap()
+        .is_some());
+    assert_eq!(reader.chunk_load_count(), 1);
 }

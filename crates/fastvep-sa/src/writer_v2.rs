@@ -6,7 +6,7 @@
 use crate::chunk::delta_encode;
 use crate::common::AnnotationRecord;
 use crate::fields::{Field, FieldType};
-use crate::kmer16::{self, LongVariant};
+use crate::kmer16::{self, LongVariant, OtherVariant};
 use crate::var32;
 use anyhow::{Context, Result};
 use std::io::{Seek, Write};
@@ -158,14 +158,20 @@ fn write_string_tables<W: Write + Seek>(
 /// into the archive.
 ///
 /// The value/JSON-blob columns are laid out as
-/// `[short variants in Var32-sorted order] ++ [long variants in sorted order]`,
-/// and each `LongVariant.idx` is set to the slot that variant occupies in that
-/// combined layout. This keeps a single value slot per variant that both the
-/// short (`binary_search` position) and long (`LongVariant.idx`) lookup paths
-/// resolve to consistently. An earlier revision set `idx` to the record's
+/// `[short variants in Var32-sorted order] ++ [long variants in sorted order] ++
+/// [non-ACGT variants in sorted order]`, and each `LongVariant.idx` /
+/// `OtherVariant.idx` is set to the slot that variant occupies in that combined
+/// layout. This keeps a single value slot per variant that all three lookup
+/// paths resolve to consistently. An earlier revision set `idx` to the record's
 /// input-order position and only stored short variants in the value columns,
 /// so any chunk mixing short and long variants returned the wrong values for
 /// its indels (and long-only chunks were unreadable).
+///
+/// The third bucket exists because both Var32 and kmer16 are 2 bits per base and
+/// therefore cannot represent `N` or IUPAC codes. Such records used to be
+/// dropped here with a `log::warn!` that the CLI installs no logger to display —
+/// silent data loss on 668 of 4,438,232 real ClinVar records. They are now
+/// stored with their allele bytes verbatim.
 fn write_chunk_entries<W: Write + Seek>(
     zip: &mut zip::ZipWriter<W>,
     options: zip::write::SimpleFileOptions,
@@ -183,6 +189,7 @@ fn write_chunk_entries<W: Write + Seek>(
     // in the combined short-then-long order.
     let mut short_entries: Vec<(u32, usize)> = Vec::new(); // (var32_key, local_idx)
     let mut long_entries: Vec<(LongVariant, usize)> = Vec::new(); // (variant, local_idx)
+    let mut other_entries: Vec<(OtherVariant, usize)> = Vec::new(); // non-ACGT alleles
 
     for (local_idx, record) in chunk_records.iter().enumerate() {
         let within_chunk_pos = record.position & chunk_mask;
@@ -191,56 +198,95 @@ fn write_chunk_entries<W: Write + Seek>(
             // Positional sources match by coordinate alone; key on position
             // only (alleles are empty) and never take the long-variant path.
             short_entries.push((var32::positional_key(within_chunk_pos), local_idx));
-        } else if var32::is_long(record.ref_allele.len(), record.alt_allele.len()) {
-            // Skip variants whose alleles contain non-ACGT bases. Earlier
-            // revisions silently encoded them as runs of 'T', producing index
-            // entries that could never be retrieved with their original allele
-            // string.
-            let Some(sequence) = kmer16::encode_var(&record.ref_allele, &record.alt_allele) else {
-                log::warn!(
-                    "Skipping long variant at {}:{} with non-ACGT allele (ref={:?} alt={:?})",
-                    chrom,
-                    record.position,
-                    String::from_utf8_lossy(&record.ref_allele),
-                    String::from_utf8_lossy(&record.alt_allele),
-                );
-                continue;
-            };
-            long_entries.push((
-                LongVariant { position: record.position, idx: 0, sequence },
+        } else if !kmer16::is_acgt_only(&record.ref_allele, &record.alt_allele) {
+            // `N`/IUPAC alleles: neither 2-bit encoding can represent them, so
+            // they go in the verbatim bucket instead of being dropped.
+            other_entries.push((
+                OtherVariant {
+                    position: record.position,
+                    idx: 0,
+                    ref_allele: record.ref_allele.clone(),
+                    alt_allele: record.alt_allele.clone(),
+                },
                 local_idx,
             ));
+        } else if var32::is_long(record.ref_allele.len(), record.alt_allele.len()) {
+            // ACGT-only by the branch above, so this cannot fail; treat a
+            // failure as the non-ACGT case rather than dropping the record.
+            match kmer16::encode_var(&record.ref_allele, &record.alt_allele) {
+                Some(sequence) => long_entries.push((
+                    LongVariant { position: record.position, idx: 0, sequence },
+                    local_idx,
+                )),
+                None => other_entries.push((
+                    OtherVariant {
+                        position: record.position,
+                        idx: 0,
+                        ref_allele: record.ref_allele.clone(),
+                        alt_allele: record.alt_allele.clone(),
+                    },
+                    local_idx,
+                )),
+            }
         } else if let Some(key) =
             var32::encode(within_chunk_pos, &record.ref_allele, &record.alt_allele)
         {
             short_entries.push((key, local_idx));
         } else {
-            // Short variant that fails Var32 encoding only when it contains a
-            // non-ACGT base; same skip-with-warning policy.
-            log::warn!(
-                "Skipping short variant at {}:{} with non-ACGT allele (ref={:?} alt={:?})",
-                chrom,
-                record.position,
-                String::from_utf8_lossy(&record.ref_allele),
-                String::from_utf8_lossy(&record.alt_allele),
-            );
+            // Same reasoning as the long case: unreachable given the ACGT check,
+            // and filed rather than dropped if it ever is reached.
+            other_entries.push((
+                OtherVariant {
+                    position: record.position,
+                    idx: 0,
+                    ref_allele: record.ref_allele.clone(),
+                    alt_allele: record.alt_allele.clone(),
+                },
+                local_idx,
+            ));
         }
     }
 
-    short_entries.sort_by_key(|(key, _)| *key);
-    long_entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    // Sort by (key, input position), then drop all but the first record of each
+    // duplicate-key run.
+    //
+    // **Why dedup (real-data bug):** several sources carry more than one record
+    // for the same (position, ref, alt) — REVEL has 111,270 such keys on chr22
+    // alone (6.4% of its records), one per transcript/protein change, and
+    // SpliceAI has one per overlapping gene. The v1 reader resolves a position
+    // by scanning forward from its first entry, so it always returns the
+    // *first* such record. A v2 chunk index is a sorted key array resolved by
+    // `binary_search`, which on a run of equal keys returns an arbitrary member
+    // — so v2 could return a different record than v1 for the same query, which
+    // is exactly what a real chr22 annotate run showed on REVEL scores.
+    //
+    // Keeping the first match reproduces v1's observable behaviour exactly and
+    // shrinks the archive, since the dropped records were unreachable through
+    // either reader's API. Sorting by `local_idx` within a key run makes "first"
+    // mean input order, and `dedup_by` keeps the first element of each run.
+    short_entries.sort_by_key(|(key, local_idx)| (*key, *local_idx));
+    short_entries.dedup_by(|a, b| a.0 == b.0);
+    long_entries.sort_by(|(a, ai), (b, bi)| a.cmp(b).then(ai.cmp(bi)));
+    long_entries.dedup_by(|a, b| a.0 == b.0);
+    other_entries.sort_by(|(a, ai), (b, bi)| a.cmp(b).then(ai.cmp(bi)));
+    other_entries.dedup_by(|a, b| a.0 == b.0);
 
     // Value slot layout: short variants first (parallel to the sorted var32
     // key array, so `binary_search` positions map directly), then long
-    // variants. Assign each long variant its slot index.
+    // variants, then the non-ACGT ones. Assign each of the latter two its slot.
     let short_count = short_entries.len();
     for (rank, (lv, _)) in long_entries.iter_mut().enumerate() {
         lv.idx = (short_count + rank) as u32;
+    }
+    let long_count = long_entries.len();
+    for (rank, (ov, _)) in other_entries.iter_mut().enumerate() {
+        ov.idx = (short_count + long_count + rank) as u32;
     }
     let value_order: Vec<usize> = short_entries
         .iter()
         .map(|(_, li)| *li)
         .chain(long_entries.iter().map(|(_, li)| *li))
+        .chain(other_entries.iter().map(|(_, li)| *li))
         .collect();
 
     let var32s: Vec<u32> = short_entries.iter().map(|(k, _)| *k).collect();
@@ -254,6 +300,16 @@ fn write_chunk_entries<W: Write + Seek>(
         let longs: Vec<&LongVariant> = long_entries.iter().map(|(lv, _)| lv).collect();
         zip.start_file(format!("{}too-long.enc", prefix), options)?;
         let data = bincode::serialize(&longs)?;
+        zip.write_all(&data)?;
+    }
+
+    // Only emitted when the chunk actually holds a non-ACGT allele, so archives
+    // for ordinary sources are byte-for-byte what they were before this bucket
+    // existed, and a reader that predates it simply never sees the entry.
+    if !other_entries.is_empty() {
+        let others: Vec<&OtherVariant> = other_entries.iter().map(|(ov, _)| ov).collect();
+        zip.start_file(format!("{}other.enc", prefix), options)?;
+        let data = bincode::serialize(&others)?;
         zip.write_all(&data)?;
     }
 

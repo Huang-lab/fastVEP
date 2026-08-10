@@ -56,6 +56,45 @@ pub fn chrom_aliases(chrom: &str) -> Vec<String> {
     out
 }
 
+/// Invert [`chrom_aliases`] over a known set of contig names: every accepted
+/// spelling mapped to the canonical name actually present in `canonical`.
+///
+/// [`chrom_aliases`] is the right shape for a one-off resolution but the wrong
+/// shape for a hot loop - it allocates a `Vec` of two or three `String`s per
+/// call, and every SA reader used to call it once per queried variant per
+/// source. Building this map once, when a database is opened, turns the
+/// per-query cost into a single hash lookup that borrows the canonical name and
+/// allocates nothing.
+///
+/// Identity wins on collision: if `canonical` contains both `chr1` and `1`
+/// (which no well-formed database does, but a hand-assembled one might), each
+/// maps to itself rather than aliasing onto the other. Beyond that, the first
+/// canonical name to claim an alias keeps it, so the result is deterministic
+/// only if `canonical` is iterated deterministically - pass a sorted or
+/// insertion-ordered sequence when that matters.
+pub fn chrom_alias_map<I, S>(canonical: I) -> HashMap<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let names: Vec<String> = canonical
+        .into_iter()
+        .map(|s| s.as_ref().to_string())
+        .collect();
+    let mut map: HashMap<String, String> = HashMap::with_capacity(names.len() * 3);
+    // Identities first so a real contig name can never be shadowed by another
+    // contig's alias.
+    for name in &names {
+        map.insert(name.clone(), name.clone());
+    }
+    for name in &names {
+        for alias in chrom_aliases(name) {
+            map.entry(alias).or_insert_with(|| name.clone());
+        }
+    }
+    map
+}
+
 /// Heuristic: does this name look like an NCBI RefSeq molecule accession
 /// (`NC_000017.11`, `NW_…`, `NT_…`, `NG_…`)?
 ///
@@ -286,6 +325,51 @@ mod chrom_alias_tests {
         assert_eq!(aliases.len(), 2, "unexpected aliases: {:?}", aliases);
         assert_eq!(aliases[0], "HLA-A*01:01");
         assert_eq!(aliases[1], "chrHLA-A*01:01");
+    }
+
+    #[test]
+    fn alias_map_resolves_every_alias_to_the_canonical_name() {
+        use super::chrom_alias_map;
+
+        let map = chrom_alias_map(["chr1", "chr2", "chrM"]);
+        for (query, want) in [
+            ("chr1", "chr1"),
+            ("1", "chr1"),
+            ("chr2", "chr2"),
+            ("2", "chr2"),
+            ("chrM", "chrM"),
+            ("M", "chrM"),
+            ("MT", "chrM"),
+            ("chrMT", "chrM"),
+        ] {
+            assert_eq!(map.get(query).map(String::as_str), Some(want), "query {query}");
+        }
+        // An absent contig resolves to nothing, so callers miss cleanly rather
+        // than probing the database with a name it does not contain.
+        assert!(!map.contains_key("chr3"));
+        assert!(!map.contains_key("3"));
+    }
+
+    #[test]
+    fn alias_map_agrees_with_chrom_aliases_for_bare_keyed_databases() {
+        use super::chrom_alias_map;
+
+        // The historical SA writer canonicalized to the bare form; a `chr1`
+        // query must still resolve (issue #37).
+        let map = chrom_alias_map(["1", "X", "MT"]);
+        assert_eq!(map.get("chr1").map(String::as_str), Some("1"));
+        assert_eq!(map.get("chrX").map(String::as_str), Some("X"));
+        assert_eq!(map.get("chrM").map(String::as_str), Some("MT"));
+        assert_eq!(map.get("M").map(String::as_str), Some("MT"));
+    }
+
+    #[test]
+    fn alias_map_identity_wins_when_both_spellings_are_present() {
+        use super::chrom_alias_map;
+
+        let map = chrom_alias_map(["chr1", "1"]);
+        assert_eq!(map.get("chr1").map(String::as_str), Some("chr1"));
+        assert_eq!(map.get("1").map(String::as_str), Some("1"));
     }
 
     #[test]

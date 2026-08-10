@@ -30,7 +30,6 @@ use rayon::prelude::*;
 use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 /// Pre-loaded annotation context shared by web and CLI.
 ///
@@ -43,9 +42,15 @@ pub struct AnnotationContext {
     pub gff3_source: Option<String>,
     pub distance: u64,
     pub hgvs: bool,
-    /// Supplementary annotation providers (ClinVar, gnomAD, etc.)
-    /// Wrapped in Mutex because SA readers use internal caches that need &mut.
-    pub sa_providers: Vec<Mutex<Box<dyn AnnotationProvider>>>,
+    /// Supplementary annotation providers (ClinVar, gnomAD, etc.).
+    ///
+    /// Held unwrapped: every `AnnotationProvider` method takes `&self` and the
+    /// trait requires `Send + Sync`, so concurrent lookups need no external
+    /// lock — the readers own the synchronization for their internal caches.
+    /// These used to be `Mutex<Box<dyn AnnotationProvider>>`, which serialized
+    /// every lookup of every provider across concurrent `/annotate` requests
+    /// (and which the CLI pipeline worked around by immediately unwrapping).
+    pub sa_providers: Vec<Box<dyn AnnotationProvider>>,
     /// Gene-level annotation providers (OMIM, gnomAD gene constraints, ClinVar protein index).
     pub gene_providers: Vec<fastvep_sa::gene::GeneIndex>,
     /// ACMG-AMP classification configuration (None = disabled).
@@ -203,10 +208,7 @@ impl AnnotationContext {
     pub fn sa_source_names(&self) -> Vec<String> {
         self.sa_providers
             .iter()
-            .filter_map(|m| {
-                let guard = m.lock().ok()?;
-                Some(guard.name().to_string())
-            })
+            .map(|p| p.name().to_string())
             .collect()
     }
 
@@ -306,6 +308,17 @@ impl AnnotationContext {
             .unwrap_or_default();
 
         let mut variants = vcf_parser.read_all()?;
+
+        // gnomAD stores left-aligned, parsimonious alleles, so its queries are
+        // normalized against the reference (see the SA block below). Whether that
+        // applies depends only on the loaded context, not on the variant, so it
+        // is resolved once here instead of re-scanning every provider for every
+        // variant.
+        let has_gnomad = self.seq_provider.is_some()
+            && self
+                .sa_providers
+                .iter()
+                .any(|sa| sa.json_key() == "gnomad");
 
         for vf in &mut variants {
             let chrom = &vf.position.chromosome;
@@ -645,17 +658,11 @@ impl AnnotationContext {
             if !self.sa_providers.is_empty() {
                 let chrom = &vf.position.chromosome;
                 let ref_str = vf.ref_allele.to_string();
-                // gnomAD stores left-aligned, parsimonious alleles; normalize the
-                // query to its minimal representation so indels (especially in
-                // repeats) match instead of silently missing — which otherwise
-                // makes PM2 misfire on common variants. Only when a reference and
-                // a gnomAD provider are present; applied only to the gnomAD lookup
-                // (every other source keeps the existing query unchanged).
-                let has_gnomad = self.seq_provider.is_some()
-                    && self
-                        .sa_providers
-                        .iter()
-                        .any(|sa| sa.lock().unwrap().json_key() == "gnomad");
+                // Normalize the gnomAD query to its minimal representation so
+                // indels (especially in repeats) match instead of silently
+                // missing — which otherwise makes PM2 misfire on common
+                // variants. Applied only to the gnomAD lookup; every other
+                // source keeps the query unchanged.
                 let mut allele_results: std::collections::HashMap<
                     String,
                     Vec<(String, String)>,
@@ -681,8 +688,7 @@ impl AnnotationContext {
                         };
                         let mut results: Vec<(String, String)> = Vec::new();
                         for sa in &self.sa_providers {
-                            let sa_guard = sa.lock().unwrap();
-                            let (q_pos, q_ref, q_alt) = if sa_guard.json_key() == "gnomad" {
+                            let (q_pos, q_ref, q_alt) = if sa.json_key() == "gnomad" {
                                 match &gnomad_norm {
                                     Some(n) => {
                                         (n.pos, n.ref_allele.as_str(), n.alt_allele.as_str())
@@ -693,7 +699,7 @@ impl AnnotationContext {
                                 (vf.position.start, ref_str.as_str(), alt_str.as_str())
                             };
                             if let Ok(Some(ann)) =
-                                sa_guard.annotate_position(chrom, q_pos, q_ref, q_alt)
+                                sa.annotate_position(chrom, q_pos, q_ref, q_alt)
                             {
                                 let json_str = match ann {
                                     AnnotationValue::Json(j) => j,
@@ -702,7 +708,7 @@ impl AnnotationContext {
                                         format!("[{}]", v.join(","))
                                     }
                                 };
-                                results.push((sa_guard.json_key().to_string(), json_str));
+                                results.push((sa.json_key().to_string(), json_str));
                             }
                         }
                         allele_results.insert(alt_str, results);
@@ -1234,7 +1240,7 @@ fn enrich_compound_het(
 /// the file names rather than on directory iteration order.
 pub fn load_sa_providers(
     sa_dir: &Path,
-) -> Result<Vec<Mutex<Box<dyn AnnotationProvider>>>> {
+) -> Result<Vec<Box<dyn AnnotationProvider>>> {
     use fastvep_sa::interval::OsiReader;
     use fastvep_sa::reader::SaReader;
     use fastvep_sa::reader_v2::Osa2Reader;
@@ -1252,7 +1258,7 @@ pub fn load_sa_providers(
 
     // A source that fails to open is skipped with a warning, as before; only
     // the directory walk itself is fatal.
-    let providers: Vec<Mutex<Box<dyn AnnotationProvider>>> = paths
+    let providers: Vec<Box<dyn AnnotationProvider>> = paths
         .par_iter()
         .filter_map(|path| {
             let ext = path.extension().and_then(|e| e.to_str());
@@ -1269,7 +1275,7 @@ pub fn load_sa_providers(
             match opened {
                 Ok((kind, provider)) => {
                     tracing::info!("Loaded {}: {} ({})", kind, provider.name(), path.display());
-                    Some(Mutex::new(provider))
+                    Some(provider)
                 }
                 Err(e) => {
                     tracing::warn!("Could not load {}: {}", path.display(), e);

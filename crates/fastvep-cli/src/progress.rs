@@ -139,6 +139,24 @@ impl ProgressMeter {
     }
 }
 
+/// Human-readable byte count with a binary-prefix unit (`1.5 GiB`). For
+/// reporting file sizes in build/convert summaries, where an exact byte count is
+/// noise.
+pub fn fmt_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{} {}", bytes, UNITS[0])
+    } else {
+        format!("{:.1} {}", value, UNITS[unit])
+    }
+}
+
 pub fn fmt_count(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
@@ -154,6 +172,21 @@ pub fn fmt_count(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fmt_bytes_scales_and_stops_at_tib() {
+        assert_eq!(fmt_bytes(0), "0 B");
+        assert_eq!(fmt_bytes(512), "512 B");
+        assert_eq!(fmt_bytes(1024), "1.0 KiB");
+        assert_eq!(fmt_bytes(1536), "1.5 KiB");
+        assert_eq!(fmt_bytes(5 * 1024 * 1024), "5.0 MiB");
+        assert_eq!(fmt_bytes(3 * 1024 * 1024 * 1024), "3.0 GiB");
+        assert_eq!(fmt_bytes(2 * 1024_u64.pow(4)), "2.0 TiB");
+        // TiB is the largest unit, so beyond it the number keeps growing rather
+        // than a unit being invented.
+        assert_eq!(fmt_bytes(2048 * 1024_u64.pow(4)), "2048.0 TiB");
+        assert_eq!(fmt_bytes(u64::MAX), "16777216.0 TiB");
+    }
 
     #[test]
     fn fmt_count_commas() {

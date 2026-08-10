@@ -68,7 +68,7 @@ fn providers_are_ordered_by_path() {
     let providers = load_sa_providers(dir.path()).unwrap();
     let keys: Vec<String> = providers
         .iter()
-        .map(|p| p.lock().unwrap().json_key().to_string())
+        .map(|p| p.json_key().to_string())
         .collect();
 
     // Sorted by file name, which is lexicographic - chr1 < chr2 < chr21 < chr9.
@@ -89,7 +89,7 @@ fn an_unopenable_source_is_skipped_not_fatal() {
     let providers = load_sa_providers(dir.path()).unwrap();
     let keys: Vec<String> = providers
         .iter()
-        .map(|p| p.lock().unwrap().json_key().to_string())
+        .map(|p| p.json_key().to_string())
         .collect();
     assert_eq!(keys, vec!["good_a", "good_c"]);
 }
