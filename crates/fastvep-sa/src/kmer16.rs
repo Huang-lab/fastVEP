@@ -39,6 +39,70 @@ impl Ord for LongVariant {
     }
 }
 
+/// A variant whose alleles cannot be 2-bit packed at all, because they contain
+/// a byte outside {A,C,G,T} — `N` runs and IUPAC ambiguity codes, which real
+/// ClinVar carries on ~0.015% of records.
+///
+/// Neither Var32 nor [`LongVariant`] can represent these: both encodings are
+/// 2 bits per base by construction. Rather than dropping them (which is what
+/// the writer used to do, with a `log::warn!` that no CLI logger was installed
+/// to show), a chunk keeps them in a third, small bucket that stores the allele
+/// bytes verbatim and is binary-searched on `(position, ref, alt)`.
+///
+/// Ordering is `(position, ref_allele, alt_allele)` so the writer's sort and the
+/// reader's `binary_search` agree; `idx` is excluded from comparison for the
+/// same reason it is in `LongVariant` — the query side does not know it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OtherVariant {
+    /// Genomic position (full, not within-chunk).
+    pub position: u32,
+    /// Index into the parallel value arrays for this chunk.
+    pub idx: u32,
+    /// REF allele bytes, verbatim.
+    pub ref_allele: Vec<u8>,
+    /// ALT allele bytes, verbatim.
+    pub alt_allele: Vec<u8>,
+}
+
+impl PartialEq for OtherVariant {
+    fn eq(&self, other: &Self) -> bool {
+        self.position == other.position
+            && self.ref_allele == other.ref_allele
+            && self.alt_allele == other.alt_allele
+    }
+}
+
+impl Eq for OtherVariant {}
+
+impl PartialOrd for OtherVariant {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OtherVariant {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.position
+            .cmp(&other.position)
+            .then_with(|| self.ref_allele.cmp(&other.ref_allele))
+            .then_with(|| self.alt_allele.cmp(&other.alt_allele))
+    }
+}
+
+/// Whether both alleles are 2-bit packable, i.e. contain only `ACGTacgt`.
+///
+/// The single predicate both the writer and the reader use to decide whether a
+/// variant belongs in the Var32/kmer16 index or in the verbatim
+/// [`OtherVariant`] bucket. Keeping it in one place is what stops the two sides
+/// from disagreeing about where a variant was filed.
+#[inline]
+pub fn is_acgt_only(ref_allele: &[u8], alt_allele: &[u8]) -> bool {
+    ref_allele
+        .iter()
+        .chain(alt_allele.iter())
+        .all(|b| base_to_bits(*b).is_some())
+}
+
 /// DNA base to 2-bit encoding. Returns `None` for non-ACGT bytes so callers
 /// can surface the problem instead of silently encoding `N`/IUPAC as 'T'.
 #[inline]

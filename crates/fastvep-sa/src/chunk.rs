@@ -4,7 +4,7 @@
 //! Chunks are loaded on demand from .osa2 ZIP archives.
 
 use crate::fields::{Field, FieldType};
-use crate::kmer16::LongVariant;
+use crate::kmer16::{LongVariant, OtherVariant};
 
 /// A loaded genomic chunk (~1MB region) with sorted variant keys and values.
 pub struct Chunk {
@@ -12,6 +12,11 @@ pub struct Chunk {
     pub var32s: Vec<u32>,
     /// Long variants (ref+alt > 4 bases) sorted for binary search.
     pub longs: Vec<LongVariant>,
+    /// Variants whose alleles are not 2-bit packable (contain `N`/IUPAC), kept
+    /// verbatim and sorted for binary search. Almost always empty; real ClinVar
+    /// puts ~0.015% of its records here. Absent from `.osa2` files written
+    /// before this bucket existed, which simply leaves it empty.
+    pub others: Vec<OtherVariant>,
     /// Parallel value arrays, one per non-JsonBlob field in field-config order:
     /// `values[non_jsonblob_position][variant_idx]`. JsonBlob fields do not
     /// contribute a column here (their payloads live in `json_blobs`), so this
@@ -26,19 +31,26 @@ pub struct Chunk {
 impl Chunk {
     /// Create an empty chunk.
     pub fn empty() -> Self {
-        Self { var32s: Vec::new(), longs: Vec::new(), values: Vec::new(), json_blobs: None }
+        Self {
+            var32s: Vec::new(),
+            longs: Vec::new(),
+            others: Vec::new(),
+            values: Vec::new(),
+            json_blobs: None,
+        }
     }
 
-    /// Number of variants in this chunk (short + long).
+    /// Number of variants in this chunk (short + long + non-ACGT).
     pub fn len(&self) -> usize {
-        self.var32s.len() + self.longs.len()
+        self.var32s.len() + self.longs.len() + self.others.len()
     }
 
-    /// A chunk is empty only when it holds neither short nor long variants.
-    /// Long-only chunks (all indels) must not be treated as empty, or every
-    /// lookup against them would miss.
+    /// A chunk is empty only when it holds no variants of any kind. Long-only
+    /// chunks (all indels) must not be treated as empty, or every lookup
+    /// against them would miss — and the same goes for a chunk that happens to
+    /// hold only non-ACGT-allele variants.
     pub fn is_empty(&self) -> bool {
-        self.var32s.is_empty() && self.longs.is_empty()
+        self.var32s.is_empty() && self.longs.is_empty() && self.others.is_empty()
     }
 
     /// Look up a variant by Var32 key. Returns the index into value arrays.
@@ -49,9 +61,8 @@ impl Chunk {
 
     /// Look up a long variant. Returns the index into value arrays.
     ///
-    /// Returns `None` if either allele contains a non-ACGT base: such a
-    /// variant could not have been written into the index without being
-    /// silently corrupted, so we report a miss rather than guessing.
+    /// Returns `None` if either allele contains a non-ACGT base — such a variant
+    /// is filed in `others`, not here; see [`find_other`](Self::find_other).
     pub fn find_long(&self, position: u32, ref_allele: &[u8], alt_allele: &[u8]) -> Option<usize> {
         let sequence = crate::kmer16::encode_var(ref_allele, alt_allele)?;
         let query = LongVariant {
@@ -60,6 +71,28 @@ impl Chunk {
             sequence,
         };
         self.longs.binary_search(&query).ok().map(|i| self.longs[i].idx as usize)
+    }
+
+    /// Look up a variant whose alleles are not 2-bit packable. Returns the index
+    /// into the value arrays.
+    ///
+    /// `others` is empty for every source without `N`/IUPAC alleles and for any
+    /// `.osa2` written before the bucket existed, so this is a length check in
+    /// the overwhelmingly common case.
+    pub fn find_other(&self, position: u32, ref_allele: &[u8], alt_allele: &[u8]) -> Option<usize> {
+        if self.others.is_empty() {
+            return None;
+        }
+        let query = OtherVariant {
+            position,
+            idx: 0,
+            ref_allele: ref_allele.to_vec(),
+            alt_allele: alt_allele.to_vec(),
+        };
+        self.others
+            .binary_search(&query)
+            .ok()
+            .map(|i| self.others[i].idx as usize)
     }
 
     /// Reconstruct a JSON string from parallel value arrays at the given index.

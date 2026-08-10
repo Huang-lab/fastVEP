@@ -89,8 +89,10 @@ fastvep annotate -i tests/test.vcf --gff3 tests/test.gff3 --hgvs --output-format
 ### 4. Build supplementary annotation databases
 
 ```bash
-# Supported sources build the smaller, faster v2 `.osa2` format automatically
-# (`--format auto` is the default); pass `--format osa` to force v1 `.osa`.
+# Every allele-level source builds the smaller, faster v2 `.osa2` format
+# automatically (`--format auto` is the default); pass `--format osa` to force
+# v1 `.osa`. Already have `.osa` files? `fastvep sa-convert` upgrades them in
+# place of a re-download.
 
 # Build ClinVar annotation database (writes clinvar.osa2)
 fastvep sa-build --source clinvar --input clinvar.vcf.gz --output clinvar
@@ -107,8 +109,15 @@ fastvep sa-build --source alphamissense --input AlphaMissense_hg38.tsv.gz --outp
 # chromosome, not a single combined download)
 fastvep sa-build --source phylop --input hg38.phyloP100way.wigFix.gz --output phylop
 
-# Build SpliceAI predictions
+# Build SpliceAI predictions (writes spliceai.osa2). The densest source
+# fastVEP ships against, and the one v2 helps most: its eight delta
+# scores/positions become numeric columns and the gene symbol a string-table
+# index, for 0.14x-0.56x the v1 size depending on how much the scores vary.
 fastvep sa-build --source spliceai --input spliceai_scores.vcf.gz --output spliceai
+
+# Upgrade a v1 database built before .osa2 became the default, without
+# re-downloading the upstream release (writes dbsnp.osa2 alongside it)
+fastvep sa-convert --input sa_databases/dbsnp.osa
 ```
 
 ### 5. Annotate with supplementary databases
@@ -174,7 +183,7 @@ samtools faidx Homo_sapiens.GRCh38.dna.primary_assembly.fa
 
 ### Step 2: Build supplementary annotation databases
 
-Each supplementary database (ClinVar, gnomAD, etc.) is built in **two steps** — *download the source file*, then run `fastvep sa-build` to convert it into the fastSA `.osa` + `.osa.idx` pair. **`sa-build` is a converter, not a downloader; if you skip the download, the resulting `.osa` will be empty and your annotations will silently come back blank.** After each build, check that the `.osa` size matches the expected magnitude (column below); a few-KB `.osa` is the tell that the source file wasn't real.
+Each supplementary database (ClinVar, gnomAD, etc.) is built in **two steps** — *download the source file*, then run `fastvep sa-build` to convert it into a fastSA database (a `.osa2` file by default; a `.osa` + `.osa.idx` pair under `--format osa`). **`sa-build` is a converter, not a downloader; if you skip the download, the resulting database will be empty and your annotations will silently come back blank.** After each build, check that the file size matches the expected magnitude (column below); a few-KB database is the tell that the source file wasn't real.
 
 ```bash
 mkdir -p sa_databases
@@ -461,11 +470,25 @@ objects will be heterogeneous.
 |------|-------------|---------|
 | `--source` | Source type (clinvar, gnomad, dbsnp, cosmic, onekg, topmed, mitomap, phylop, gerp, dann, revel, spliceai, primateai, dbnsfp, omim, gnomad_genes, clinvar_protein, custom_vcf, custom_bed, custom) | *required* |
 | `-i, --input` | Input file (VCF/TSV/wigFix/BED, supports .gz) | *required* |
-| `-o, --output` | Output base path (creates .osa + .osa.idx, or .osi for BED) | *required* |
+| `-o, --output` | Output base path (creates .osa2 by default; .osa + .osa.idx under `--format osa`, .osi for BED, .oga for gene-level sources) | *required* |
 | `--assembly` | Genome assembly | `GRCh38` |
 | `--name` | Display + JSON-key name for `custom_*` sources | derived from input filename |
 | `--info-fields` | Comma-separated INFO keys to extract for `custom_vcf` | all INFO keys |
-| `--format` | On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2). `auto` builds the smaller, faster v2 `.osa2` for the sources that support it and v1 `.osa` for the rest — the best format per source, no need to choose. See [Choosing v1 vs v2](docs/SUPPLEMENTARY_ANNOTATIONS.md#choosing-v1-vs-v2---format) for when to override. | `auto` |
+| `--format` | On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2). Every allele-level source has a v2 encoder, so `auto` builds the smaller, faster `.osa2` for all of them; gene- and interval-level sources have no v2 form and build `.oga`/`.osi` regardless. See [Choosing v1 vs v2](docs/SUPPLEMENTARY_ANNOTATIONS.md#choosing-v1-vs-v2---format) for when to force `osa`. | `auto` |
+
+### `fastvep sa-convert`
+
+Upgrades an existing v1 `.osa` database to v2 `.osa2` without re-downloading and
+re-parsing the upstream source. Preserves the record set, every record's JSON
+payload byte for byte, and the database's identity and matching semantics — see
+[Converting an existing v1 database](docs/SUPPLEMENTARY_ANNOTATIONS.md#converting-an-existing-v1-database-sa-convert)
+for the one caveat about column-oriented sources.
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-i, --input` | Input v1 `.osa` file (its `.osa.idx` must sit alongside it) | *required* |
+| `-o, --output` | Output base path (`.osa2` appended) | input path with the extension replaced |
+| `--no-progress` | Suppress periodic progress output | off |
 
 ### `fastvep filter`
 
@@ -635,8 +658,14 @@ The `.osa2` format (echtvar-inspired chunked binary; `--format auto` default) st
 
 | Source | v1 (.osa) | v2 (.osa2) | Ratio |
 |--------|-----------|-----------|-------|
-| ClinVar (4.44M records) | 48.1 MB | 38.9 MB | 0.81× |
+| ClinVar (4.44M records) | 48.1 MB | 39.0 MB | 0.81× |
 | REVEL (chr1, 8.25M records) | 40.5 MB | 19.0 MB | 0.47× |
+| REVEL (chr22, 1.78M records) | 8.7 MB | 3.8 MB | 0.44× |
+| SpliceAI (chr22, 828K records) | 4.8 MB | 2.7 MB | 0.56× |
+| gnomAD (chr22, 852K records) | 15.4 MB | 12.9 MB | 0.84× |
+| PhyloP (chr22, 852K records) | 3.1 MB | 1.4 MB | 0.45× |
+
+Annotating 308,740 real chr22 variants against all five chr22/ClinVar databases at once (8.3M records total): **12.7 s from the `.osa` set, 8.5 s from the `.osa2` set — 1.50×**, md5-identical output. Every record of all five databases was queried through both readers and compared byte for byte (8,318,903 keys, zero differences).
 
 ## Citation
 

@@ -21,13 +21,13 @@
 //! first read of each entry, when the page is about to be touched anyway.
 
 use crate::chunk::{delta_decode, Chunk};
-use crate::common::chrom_aliases;
 use crate::fields::{Field, FieldType};
-use crate::kmer16::LongVariant;
+use crate::kmer16::{LongVariant, OtherVariant};
 use crate::var32;
 use crate::writer_v2::{read_u32_array, Osa2Metadata};
 use anyhow::{Context, Result};
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, SaMetadata};
+use fastvep_core::chrom_alias_map;
 use flate2::read::DeflateDecoder;
 use lru::LruCache;
 use memmap2::Mmap;
@@ -67,6 +67,15 @@ type ChunkKey = (u64, u64);
 fn chunk_bytes(c: &Chunk) -> usize {
     let v32 = c.var32s.len() * std::mem::size_of::<u32>();
     let longs = c.longs.len() * std::mem::size_of::<LongVariant>();
+    // The non-ACGT bucket carries its allele bytes on the heap, so account for
+    // those too rather than just the struct slots.
+    let others: usize = c
+        .others
+        .iter()
+        .map(|o| {
+            std::mem::size_of::<OtherVariant>() + o.ref_allele.len() + o.alt_allele.len()
+        })
+        .sum();
     let vals: usize = c
         .values
         .iter()
@@ -78,6 +87,7 @@ fn chunk_bytes(c: &Chunk) -> usize {
             .sum()
     });
     v32.saturating_add(longs)
+        .saturating_add(others)
         .saturating_add(vals)
         .saturating_add(blobs)
 }
@@ -183,12 +193,16 @@ pub struct Osa2Reader {
     fields: Vec<Field>,
     /// Categorical string lookup tables per field.
     string_tables: Vec<Vec<String>>,
-    /// On-disk chromosome name → small dense index. Serves two roles:
-    /// `resolve_chrom` uses the keys to canonicalize a query name before any
-    /// cache key is built (issue #37), and the index is folded into the chunk
-    /// cache key so that `chr1`'s chunk 0 and `chr2`'s chunk 0 (same numeric
+    /// On-disk chromosome name → small dense index, folded into the chunk cache
+    /// key so that `chr1`'s chunk 0 and `chr2`'s chunk 0 (same numeric
     /// `chunk_id`) never collide in the shared cache.
     chrom_index: HashMap<String, u32>,
+    /// Every accepted spelling of every chromosome in the archive → the
+    /// canonical on-disk name (issue #37). Built once at open so `resolve_chrom`
+    /// is one hash lookup with no allocation; it previously called
+    /// `chrom_aliases`, which allocates a `Vec<String>`, on every query of every
+    /// variant.
+    chrom_lookup: HashMap<String, String>,
 }
 
 impl Osa2Reader {
@@ -294,6 +308,10 @@ impl Osa2Reader {
             is_positional: metadata.is_positional,
         };
 
+        // Invert the alias rules over the archive's contig set once, so the
+        // per-query path is a single allocation-free hash lookup.
+        let chrom_lookup = chrom_alias_map(chrom_index.keys());
+
         Ok(Self {
             mmap,
             entries,
@@ -306,6 +324,7 @@ impl Osa2Reader {
             fields,
             string_tables,
             chrom_index,
+            chrom_lookup,
         })
     }
 
@@ -338,16 +357,16 @@ impl Osa2Reader {
     }
 
     /// Resolve a query chromosome name (`chr1`, `1`, `chrM`, `MT`, …) to the
-    /// canonical on-disk name present in the archive. Returns the input
-    /// unchanged when no alias matches — callers then naturally miss.
-    fn resolve_chrom(&self, chrom: &str) -> String {
-        if self.chrom_index.contains_key(chrom) {
-            return chrom.to_string();
-        }
-        chrom_aliases(chrom)
-            .into_iter()
-            .find(|alias| self.chrom_index.contains_key(alias))
-            .unwrap_or_else(|| chrom.to_string())
+    /// canonical on-disk name present in the archive, or `None` when the archive
+    /// has no contig by any accepted spelling of that name.
+    ///
+    /// Borrows the canonical name out of `chrom_lookup`, so a query costs one
+    /// hash lookup and no allocation. Callers must treat `None` as a miss rather
+    /// than probing with the raw input: a name the archive does not contain can
+    /// only ever produce an empty chunk, and looking it up anyway would pollute
+    /// the shared chunk cache with a key that never hits.
+    fn resolve_chrom(&self, chrom: &str) -> Option<&str> {
+        self.chrom_lookup.get(chrom).map(String::as_str)
     }
 
     /// Read and decompress one ZIP entry straight from the mmap, with no lock.
@@ -390,7 +409,25 @@ impl Osa2Reader {
             None => Vec::new(),
         };
 
+        // Variants whose alleles are not 2-bit packable (`N`/IUPAC). Absent from
+        // archives written before this bucket existed, and from every chunk that
+        // has none — so the common case is a missing-entry check.
+        let others: Vec<OtherVariant> = match self.read_entry(&format!("{}other.enc", prefix))? {
+            Some(buf) => bincode::deserialize(&buf).map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to deserialize non-ACGT variant block for chunk {}/{}: {}",
+                    chrom,
+                    chunk_id,
+                    e
+                )
+            })?,
+            None => Vec::new(),
+        };
+
         // Parallel value arrays (one per non-JsonBlob field, in field order).
+        // A synthesized all-missing column must span every value slot the chunk
+        // has — short, long, and non-ACGT — not just the short ones.
+        let row_count = var32s.len() + longs.len() + others.len();
         let mut values = Vec::new();
         for field in &self.fields {
             if field.ftype == FieldType::JsonBlob {
@@ -398,7 +435,7 @@ impl Osa2Reader {
             }
             match self.read_entry(&format!("{}{}.bin", prefix, field.alias))? {
                 Some(buf) => values.push(read_u32_array(&buf)?),
-                None => values.push(vec![field.missing_value; var32s.len()]),
+                None => values.push(vec![field.missing_value; row_count]),
             }
         }
 
@@ -425,6 +462,7 @@ impl Osa2Reader {
         Ok(Chunk {
             var32s,
             longs,
+            others,
             values,
             json_blobs,
         })
@@ -472,9 +510,11 @@ impl Osa2Reader {
         ref_allele: &[u8],
         alt_allele: &[u8],
     ) -> Result<Option<String>> {
-        let chrom = self.resolve_chrom(chrom);
+        let Some(chrom) = self.resolve_chrom(chrom) else {
+            return Ok(None);
+        };
         let chunk_id = pos >> self.metadata.chunk_bits;
-        let chunk = self.get_chunk(&chrom, chunk_id)?;
+        let chunk = self.get_chunk(chrom, chunk_id)?;
 
         if chunk.is_empty() {
             return Ok(None);
@@ -487,6 +527,9 @@ impl Osa2Reader {
         let idx = if self.metadata.is_positional {
             // Positional sources match by coordinate alone.
             chunk.find_short(var32::positional_key(within_pos))
+        } else if !crate::kmer16::is_acgt_only(ref_allele, alt_allele) {
+            // Mirrors the writer's bucketing decision, via the same predicate.
+            chunk.find_other(pos, ref_allele, alt_allele)
         } else if var32::is_long(ref_allele.len(), alt_allele.len()) {
             chunk.find_long(pos, ref_allele, alt_allele)
         } else {
@@ -613,8 +656,11 @@ impl AnnotationProvider for Osa2Reader {
             return Ok(());
         }
         // Canonicalize once so preloaded chunks share cache keys with the
-        // `annotate_position` calls that follow.
-        let chrom = self.resolve_chrom(chrom);
+        // `annotate_position` calls that follow. A chromosome the archive does
+        // not carry has nothing to warm.
+        let Some(chrom) = self.resolve_chrom(chrom) else {
+            return Ok(());
+        };
 
         let mut chunk_ids: Vec<u32> = Vec::with_capacity(positions.len());
         for &p in positions {
@@ -627,7 +673,7 @@ impl AnnotationProvider for Osa2Reader {
         chunk_ids.dedup();
 
         for cid in chunk_ids {
-            self.get_chunk(&chrom, cid)?;
+            self.get_chunk(chrom, cid)?;
         }
         Ok(())
     }

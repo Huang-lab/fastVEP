@@ -316,19 +316,15 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         None
     };
 
-    // Load supplementary annotation providers from --sa-dir
-    // Shared load_sa_providers returns Mutex-wrapped providers; unwrap for batch pipeline
-    // (batch pipeline processes variants sequentially per chunk, no concurrent access).
+    // Load supplementary annotation providers from --sa-dir.
+    //
     // Reported on stderr like the other startup steps: this is the one that
     // scales with the number of files in --sa-dir, so a slow shared filesystem
     // shows up here rather than as a silent stall before the progress meter
     // (issue #78). `tracing` has no subscriber installed in the CLI.
     let sa_providers: Vec<Box<dyn AnnotationProvider>> = if let Some(ref dir) = config.sa_dir {
         let t0 = std::time::Instant::now();
-        let loaded: Vec<Box<dyn AnnotationProvider>> = load_sa_providers(Path::new(dir))?
-            .into_iter()
-            .map(|m| m.into_inner().unwrap())
-            .collect();
+        let loaded = load_sa_providers(Path::new(dir))?;
         eprintln!(
             "Loaded {} supplementary annotation source(s) from {} in {:.1}s",
             loaded.len(),
@@ -492,6 +488,12 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         .iter()
         .map(|sa| sa.json_key().to_string())
         .collect();
+    // Whether gnomAD queries get reference-normalized (see the SA attach loop
+    // below) depends only on which providers loaded and whether a FASTA is
+    // present — never on the variant. Resolved once here rather than re-scanning
+    // every provider for every allele of every variant inside the parallel loop.
+    let normalize_gnomad_queries =
+        seq_provider.is_some() && sa_providers.iter().any(|sa| sa.json_key() == "gnomad");
     let gene_json_keys: Vec<String> = gene_providers
         .iter()
         .map(|gp| gp.json_key().to_string())
@@ -1233,9 +1235,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                         // gnomAD's minimal representation — only when a gnomAD
                         // provider and a reference are present, and applied only
                         // to the gnomAD lookup (other sources keep the raw key).
-                        let gnomad_norm = if seq_provider.is_some()
-                            && sa_providers.iter().any(|sa| sa.json_key() == "gnomad")
-                        {
+                        let gnomad_norm = if normalize_gnomad_queries {
                             seq_provider.as_ref().map(|sp| {
                                 fastvep_cache::normalize::normalize_variant(
                                     &**sp,
@@ -2666,9 +2666,17 @@ pub fn run_sa_build(
 /// message — adding a source to v2 means adding it here plus a match arm in
 /// [`run_sa_build_v2`]. Includes the `1000g` alias of `onekg`.
 ///
-/// Gene-level (`.oga`) and `custom_*` sources are absent because v2 is a
-/// variant-level container. Positional per-base scores (PhyloP/GERP/DANN) ARE
-/// supported — keyed by coordinate via `var32::positional_key`.
+/// This is every variant-level source, so `--format auto` builds v2 for all of
+/// them and the v1 `.osa` writer is reachable only via an explicit
+/// `--format osa`. Absent by nature, not by omission:
+///
+/// * gene-level sources (`omim`, `gnomad_genes`, `clinvar_protein`) are keyed by
+///   gene symbol and build `.oga`;
+/// * `custom_bed` is interval-keyed and builds `.osi`.
+///
+/// v2 is a variant-level container, so neither has a v2 form. Positional
+/// per-base scores (PhyloP/GERP/DANN) ARE supported — keyed by coordinate via
+/// `var32::positional_key`.
 pub const OSA2_SUPPORTED_SOURCES: &[&str] = &[
     "gnomad",
     "onekg",
@@ -2684,11 +2692,48 @@ pub const OSA2_SUPPORTED_SOURCES: &[&str] = &[
     "phylop",
     "gerp",
     "dann",
+    "spliceai",
+    "mitomap",
+    "custom_vcf",
 ];
+
+/// The subset of [`OSA2_SUPPORTED_SOURCES`] whose v2 encoder decomposes the
+/// payload into parallel u32 value columns (plus, for some, a categorical string
+/// table). The rest store one whole-record JSON blob per variant, because their
+/// payloads are high-cardinality ID strings or nested arrays that the numeric
+/// layout cannot represent — see [`fastvep_sa::writer_v2::raw_json_blob_fields`].
+///
+/// The distinction matters to `sa-convert`: a `.osa` retains no field schema, so
+/// a conversion can only ever produce the blob encoding. For a source in this
+/// list, rebuilding from upstream yields a materially smaller file and the tool
+/// says so; for the others, converting is equivalent to a rebuild.
+pub const OSA2_DECOMPOSED_SOURCES: &[&str] =
+    &["gnomad", "onekg", "1000g", "topmed", "alphamissense", "spliceai"];
 
 /// Whether `--format osa2` (and `--format auto`) can build this source to v2.
 pub fn source_supports_osa2(source: &str) -> bool {
     OSA2_SUPPORTED_SOURCES.contains(&source)
+}
+
+/// Whether this source's v2 encoder decomposes into numeric columns rather than
+/// storing whole-record JSON blobs. See [`OSA2_DECOMPOSED_SOURCES`].
+pub fn source_has_decomposed_osa2(source: &str) -> bool {
+    OSA2_DECOMPOSED_SOURCES.contains(&source)
+}
+
+/// Recover the `--source` name from a database's `json_key`.
+///
+/// Most sources use their own name as the key, but several camel-case it
+/// (`alphaMissense`, `oneKg`, `primateAI`, `spliceAI`), so the match is
+/// case-insensitive. Returns `None` for a key that is not a built-in source —
+/// notably a `custom_vcf` database, whose key is whatever the user passed to
+/// `--name`.
+pub fn source_from_json_key(json_key: &str) -> Option<&'static str> {
+    let lowered = json_key.to_ascii_lowercase();
+    OSA2_SUPPORTED_SOURCES
+        .iter()
+        .copied()
+        .find(|s| *s == lowered.as_str())
 }
 
 /// Dispatch `sa-build` to the v1 or v2 builder according to `--format`:
@@ -2712,10 +2757,12 @@ pub fn run_sa_build_format(
         "osa" | "v1" => {
             run_sa_build(source, input, output, assembly, name, info_fields, show_progress)
         }
-        "osa2" | "v2" => run_sa_build_v2(source, input, output, assembly, show_progress),
+        "osa2" | "v2" => {
+            run_sa_build_v2(source, input, output, assembly, name, info_fields, show_progress)
+        }
         "auto" => {
             if source_supports_osa2(source) {
-                run_sa_build_v2(source, input, output, assembly, show_progress)
+                run_sa_build_v2(source, input, output, assembly, name, info_fields, show_progress)
             } else {
                 run_sa_build(source, input, output, assembly, name, info_fields, show_progress)
             }
@@ -2742,11 +2789,13 @@ pub fn run_sa_build_v2(
     input: &str,
     output: &str,
     assembly: &str,
+    name: Option<&str>,
+    info_fields: &[String],
     show_progress: bool,
 ) -> Result<()> {
     use fastvep_sa::sources::{
-        alphamissense, clinvar, cosmic, dbnsfp, dbsnp, gnomad, onekg, primateai, revel, scores,
-        topmed,
+        alphamissense, clinvar, cosmic, dbnsfp, dbsnp, gnomad, mitomap, onekg, primateai, revel,
+        scores, spliceai, topmed,
     };
 
     let (chrom_list, chrom_map) = standard_chrom_map(assembly);
@@ -2830,6 +2879,87 @@ pub fn run_sa_build_v2(
                 &alphamissense::alphamissense_osa2_metadata(assembly),
                 alphamissense::alphamissense_osa2_fields(),
                 &alphamissense::alphamissense_string_tables(),
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // SpliceAI: eight numeric columns (four delta scores, four delta
+        // positions) plus a categorical gene symbol. The densest source fastVEP
+        // ships against, so the column layout matters most here; the gene
+        // vocabulary is only known once the input has streamed past, hence the
+        // deferred string table.
+        "spliceai" => {
+            eprintln!("Building spliceai .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let genes = spliceai::GeneInterner::new();
+            let records =
+                spliceai::iter_spliceai_osa2(buf_reader, &chrom_map, &chrom_list, genes.clone());
+            finish_osa2_build_deferred(
+                &out_path,
+                &spliceai::spliceai_osa2_metadata(assembly),
+                spliceai::spliceai_osa2_fields(),
+                records,
+                meter,
+                input,
+                assembly,
+                move || genes.string_tables(),
+            )
+        }
+        // MitoMap: whole-record JSON blob (free-text disease + review status).
+        // A few thousand records; wired to v2 for format uniformity rather than
+        // speed. See `mitomap_osa2_metadata`.
+        "mitomap" => {
+            eprintln!("Building mitomap .osa2: {} -> {}", input, out_path.display());
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let v1 = mitomap::parse_mitomap(buf_reader, &chrom_map)?;
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &mitomap::mitomap_osa2_metadata(assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
+                records,
+                meter,
+                input,
+                assembly,
+            )
+        }
+        // Custom user VCF: whole-record JSON blob, since the INFO schema is
+        // whatever the file carries. Keyed by the user's `--name`.
+        "custom_vcf" => {
+            let resolved_name = resolve_custom_name(name, input);
+            eprintln!(
+                "Building custom_vcf .osa2: {} -> {} (name={}, info_fields={})",
+                input,
+                out_path.display(),
+                resolved_name,
+                if info_fields.is_empty() {
+                    "<all>".to_string()
+                } else {
+                    info_fields.join(",")
+                }
+            );
+            let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
+            let mut v1 = fastvep_sa::custom::parse_custom_vcf(
+                buf_reader,
+                &chrom_map,
+                &resolved_name,
+                info_fields,
+            )?;
+            // `parse_custom_vcf` already returns (chrom_idx, position) order, but
+            // the v2 streaming writer *hard-fails* on a reopened chunk rather
+            // than degrading, so re-establish the ordering at the boundary
+            // instead of depending on a cross-crate invariant. A no-op on
+            // already-sorted input; same belt-and-braces as the onekg arm above.
+            v1.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+            let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
+            finish_osa2_build(
+                &out_path,
+                &fastvep_sa::custom::custom_vcf_osa2_metadata(&resolved_name, assembly),
+                fastvep_sa::writer_v2::raw_json_blob_fields(),
+                &[],
                 records,
                 meter,
                 input,
@@ -3068,11 +3198,46 @@ fn finish_osa2_build(
     fields: Vec<fastvep_sa::fields::Field>,
     string_tables: &[(usize, Vec<String>)],
     records: impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>>,
-    mut meter: crate::progress::ProgressMeter,
+    meter: crate::progress::ProgressMeter,
     input: &str,
     assembly: &str,
 ) -> Result<()> {
-    let n = match write_osa2_stream(out_path, metadata, fields, string_tables, records, &mut meter) {
+    let tables = string_tables.to_vec();
+    finish_osa2_build_deferred(
+        out_path,
+        metadata,
+        fields,
+        records,
+        meter,
+        input,
+        assembly,
+        move || tables,
+    )
+}
+
+/// As [`finish_osa2_build`], but the categorical string tables are produced by
+/// `string_tables` *after* every record has streamed past.
+///
+/// Needed by sources whose categorical vocabulary is only discovered while
+/// reading (SpliceAI's gene symbols), as opposed to a fixed table known up front
+/// (AlphaMissense's three classes). The `.osa2` string table is global to the
+/// archive and written during `finish`, so collecting it during the stream and
+/// handing it over at the end is exactly the ordering the format wants.
+#[allow(clippy::too_many_arguments)]
+fn finish_osa2_build_deferred<F>(
+    out_path: &Path,
+    metadata: &fastvep_sa::writer_v2::Osa2Metadata,
+    fields: Vec<fastvep_sa::fields::Field>,
+    records: impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>>,
+    mut meter: crate::progress::ProgressMeter,
+    input: &str,
+    assembly: &str,
+    string_tables: F,
+) -> Result<()>
+where
+    F: FnOnce() -> Vec<(usize, Vec<String>)>,
+{
+    let n = match write_osa2_stream(out_path, metadata, fields, records, &mut meter, string_tables) {
         Ok(n) => n,
         Err(e) => {
             let _ = std::fs::remove_file(out_path);
@@ -3097,22 +3262,22 @@ fn finish_osa2_build(
 
 /// Core streaming loop: create the `.osa2` writer, push every record, finish.
 /// Returns the number of records written.
-fn write_osa2_stream(
+fn write_osa2_stream<F>(
     out_path: &Path,
     metadata: &fastvep_sa::writer_v2::Osa2Metadata,
     fields: Vec<fastvep_sa::fields::Field>,
-    string_tables: &[(usize, Vec<String>)],
     records: impl Iterator<Item = Result<fastvep_sa::writer_v2::Osa2Record>>,
     meter: &mut crate::progress::ProgressMeter,
-) -> Result<u64> {
+    string_tables: F,
+) -> Result<u64>
+where
+    F: FnOnce() -> Vec<(usize, Vec<String>)>,
+{
     use fastvep_sa::writer_v2::Osa2StreamWriter;
 
     let out_file = std::fs::File::create(out_path)
         .with_context(|| format!("Creating {}", out_path.display()))?;
     let mut writer = Osa2StreamWriter::new(BufWriter::new(out_file), metadata, fields)?;
-    for (field_idx, table) in string_tables {
-        writer.set_string_table(*field_idx, table.clone());
-    }
 
     let mut n = 0u64;
     for record in records {
@@ -3121,8 +3286,166 @@ fn write_osa2_stream(
         writer.push(record)?;
         n += 1;
     }
+    // Resolved after the stream so a source that interns its categorical
+    // vocabulary while reading hands over the completed table. `finish` writes
+    // the tables into the archive, so this still lands before finalization.
+    for (field_idx, table) in string_tables() {
+        writer.set_string_table(field_idx, table);
+    }
     writer.finish()?;
     Ok(n)
+}
+
+/// Transcode an existing v1 `.osa` database into a v2 `.osa2`, in place of
+/// re-downloading and re-parsing the upstream source.
+///
+/// Every variant-level source now builds v2 by default, but a `--sa-dir`
+/// assembled before that change is full of `.osa` files whose upstream releases
+/// may be large (dbSNP, SpliceAI), slow to fetch, or no longer available at the
+/// exact version that was built. Rebuilding from source is not always an option,
+/// so this reads the `.osa` and writes the equivalent `.osa2`.
+///
+/// **What is preserved:** the record set and every record's JSON payload, byte
+/// for byte, plus the database's identity and matching semantics (`json_key`,
+/// `name`, `version`, `description`, `assembly`, `match_by_allele`, `is_array`,
+/// `is_positional`). Queries against the converted file return exactly what the
+/// `.osa` returned.
+///
+/// **What is not:** the records are stored as whole-record JSON blobs, because
+/// that is all a `.osa` retains — it has no field schema to recover a numeric
+/// column layout from. A conversion therefore gets v2's chunked index, its
+/// mmap-and-inflate read path, and its chunk-level zstd, but *not* the parallel
+/// u32 columns that [`OSA2_DECOMPOSED_SOURCES`] build natively. Which encoding
+/// ends up smaller is data-dependent (blob columns zstd well when adjacent
+/// records are similar; value columns win when the payload is genuinely
+/// numeric), so the tool points at the rebuild without promising a size win.
+pub fn run_sa_convert(input: &str, output: &str, show_progress: bool) -> Result<()> {
+    use fastvep_sa::reader::SaReader;
+    use fastvep_sa::writer_v2::{Osa2Metadata, Osa2Record};
+
+    let in_path = Path::new(input);
+    match in_path.extension().and_then(|e| e.to_str()) {
+        Some("osa") => {}
+        Some("osa2") => anyhow::bail!(
+            "{} is already a v2 .osa2 database; nothing to convert.",
+            input
+        ),
+        Some(other @ ("osi" | "oga")) => anyhow::bail!(
+            "sa-convert only converts variant-level .osa databases. '{}' is a .{} file \
+             ({}), and v2 is a variant-level container with no equivalent form — keep \
+             using it as-is.",
+            input,
+            other,
+            if other == "osi" { "interval-level" } else { "gene-level" }
+        ),
+        _ => anyhow::bail!(
+            "sa-convert expects a v1 '.osa' input; got '{}'.",
+            input
+        ),
+    }
+
+    let out_path = Path::new(output).with_extension("osa2");
+    if out_path == in_path {
+        anyhow::bail!("--output would overwrite the input ({})", in_path.display());
+    }
+
+    let reader = SaReader::open(in_path)
+        .with_context(|| format!("Opening v1 database {}", in_path.display()))?;
+    let header = reader.header().clone();
+
+    eprintln!(
+        "Converting {} -> {} (source={}, key={})",
+        in_path.display(),
+        out_path.display(),
+        header.name,
+        header.json_key
+    );
+    match source_from_json_key(&header.json_key) {
+        Some(src) if source_has_decomposed_osa2(src) => eprintln!(
+            "note: '{src}' has a column-oriented v2 encoder. This conversion preserves every \
+             payload exactly, but can only store them as JSON blobs — a .osa retains no field \
+             schema to rebuild the columns from. If you still have the upstream release, \
+             `sa-build --source {src} --format osa2` gives you the column encoding instead; \
+             which of the two is smaller depends on the data, so compare if size matters."
+        ),
+        Some(src) => eprintln!(
+            "note: '{src}' stores whole-record JSON blobs in v2 as well, so this conversion is \
+             equivalent to rebuilding from the upstream release."
+        ),
+        None => {}
+    }
+
+    let metadata = Osa2Metadata {
+        format_version: 2,
+        name: header.name.clone(),
+        version: header.version.clone(),
+        assembly: header.assembly.clone(),
+        json_key: header.json_key.clone(),
+        match_by_allele: header.match_by_allele,
+        is_array: header.is_array,
+        is_positional: header.is_positional,
+        chunk_bits: 20,
+        description: header.description.clone(),
+    };
+
+    // The `.osa` is the progress denominator: `iter_records` walks it once, so
+    // bytes-of-input is a faithful measure of how far along the conversion is.
+    let total = std::fs::metadata(in_path).map(|m| m.len()).unwrap_or(0);
+    let mut meter = if show_progress && total > 0 {
+        crate::progress::ProgressMeter::new(true)
+    } else {
+        crate::progress::ProgressMeter::new(false)
+    };
+
+    let records = reader.iter_records().map(|r| {
+        let (chrom, entry) = r?;
+        Ok(Osa2Record {
+            chrom: chrom.to_string(),
+            position: entry.position,
+            ref_allele: entry.ref_allele.into_bytes(),
+            alt_allele: entry.alt_allele.into_bytes(),
+            values: Vec::new(),
+            json_blob: Some(entry.json),
+        })
+    });
+
+    // Same crash-safety contract as the builders: a partial `.osa2` is removed
+    // so a failed conversion never leaves a corrupt database behind.
+    let n = match write_osa2_stream(
+        &out_path,
+        &metadata,
+        fastvep_sa::writer_v2::raw_json_blob_fields(),
+        records,
+        &mut meter,
+        Vec::new,
+    ) {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = std::fs::remove_file(&out_path);
+            return Err(e);
+        }
+    };
+    meter.finish();
+
+    if n == 0 {
+        eprintln!(
+            "warning: {} contained 0 records; wrote an empty .osa2.",
+            in_path.display()
+        );
+    }
+    let in_bytes = std::fs::metadata(in_path).map(|m| m.len()).unwrap_or(0)
+        + std::fs::metadata(in_path.with_extension("osa.idx"))
+            .map(|m| m.len())
+            .unwrap_or(0);
+    let out_bytes = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+    eprintln!(
+        "Wrote: {} ({} records, {} -> {})",
+        out_path.display(),
+        crate::progress::fmt_count(n),
+        crate::progress::fmt_bytes(in_bytes),
+        crate::progress::fmt_bytes(out_bytes)
+    );
+    Ok(())
 }
 
 /// Classify a `--source custom` input as either `custom_vcf` or

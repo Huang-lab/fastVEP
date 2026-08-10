@@ -227,6 +227,22 @@ enum Commands {
         no_progress: bool,
     },
 
+    /// Convert an existing v1 `.osa` supplementary annotation database to v2 `.osa2`
+    SaConvert {
+        /// Input v1 `.osa` file (its `.osa.idx` must sit alongside it)
+        #[arg(short, long)]
+        input: String,
+
+        /// Output base path (`.osa2` is appended). Defaults to the input path
+        /// with its extension replaced, i.e. `foo.osa` -> `foo.osa2`.
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Suppress periodic progress output
+        #[arg(long, default_value_t = false)]
+        no_progress: bool,
+    },
+
     /// Filter annotated VEP output
     Filter {
         /// Input file (VEP-annotated VCF)
@@ -325,6 +341,21 @@ fn main() -> Result<()> {
                 &info_fields,
                 !no_progress,
             )?
+        }
+        Commands::SaConvert {
+            input,
+            output,
+            no_progress,
+        } => {
+            // Default the output alongside the input: `foo.osa` -> `foo.osa2`.
+            // `run_sa_convert` appends the extension, so hand it the stem.
+            let output = output.unwrap_or_else(|| {
+                std::path::Path::new(&input)
+                    .with_extension("")
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            pipeline::run_sa_convert(&input, &output, !no_progress)?
         }
         Commands::Filter {
             input,

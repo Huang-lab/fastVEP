@@ -6,7 +6,7 @@
 //! same block.
 
 use crate::block::{BlockEntry, SaBlock};
-use crate::common::{chrom_aliases, OSA_MAGIC};
+use crate::common::OSA_MAGIC;
 use crate::index::{BlockRef, SaIndex};
 use anyhow::Result;
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, SaMetadata};
@@ -211,6 +211,37 @@ impl SaReader {
         self.decompress_count.load(Ordering::Relaxed)
     }
 
+    /// Stream every record in the database, in `(chromosome, position)` order.
+    ///
+    /// Chromosomes are visited in sorted name order and each chromosome's blocks
+    /// in index order, so the output is deterministic and already satisfies the
+    /// ordering contract of the v2 `Osa2StreamWriter` - which is what
+    /// `sa-convert` needs to transcode a `.osa` into a `.osa2` without loading
+    /// either side into memory.
+    ///
+    /// Memory is bounded by one decompressed block at a time. Blocks do pass
+    /// through the shared block cache, so a full scan evicts whatever else was
+    /// warm in it; that is the right trade for a one-shot conversion and
+    /// irrelevant to the annotate path, which never calls this.
+    pub fn iter_records(&self) -> SaRecordIter<'_> {
+        let mut chroms: Vec<&String> = self.index.chromosomes.keys().collect();
+        chroms.sort();
+        SaRecordIter {
+            reader: self,
+            chroms,
+            chrom_pos: 0,
+            block_pos: 0,
+            buffered: Vec::new().into_iter(),
+            buffered_chrom: None,
+        }
+    }
+
+    /// The header view of this database, for a consumer that needs to reproduce
+    /// its identity (name, keys, matching semantics) in another format.
+    pub fn header(&self) -> &crate::index::IndexHeader {
+        &self.index.header
+    }
+
     /// The block cache this reader writes to: its private one if configured,
     /// otherwise the process-wide shared cache.
     fn cache(&self) -> &Mutex<BlockCache> {
@@ -339,6 +370,60 @@ impl SaReader {
     }
 }
 
+/// Iterator over every `(chromosome, record)` in a `.osa`, in
+/// `(chromosome, position)` order. Created by [`SaReader::iter_records`].
+pub struct SaRecordIter<'a> {
+    reader: &'a SaReader,
+    /// Chromosome keys in sorted order.
+    chroms: Vec<&'a String>,
+    chrom_pos: usize,
+    /// Index into the current chromosome's block list.
+    block_pos: usize,
+    /// Entries of the block currently being drained.
+    buffered: std::vec::IntoIter<BlockEntry>,
+    /// Which chromosome `buffered` belongs to.
+    buffered_chrom: Option<&'a str>,
+}
+
+impl<'a> Iterator for SaRecordIter<'a> {
+    type Item = Result<(&'a str, BlockEntry)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(entry) = self.buffered.next() {
+                // `buffered_chrom` is always set alongside `buffered`.
+                return Some(Ok((self.buffered_chrom?, entry)));
+            }
+
+            let chrom = *self.chroms.get(self.chrom_pos)?;
+            let blocks = match self.reader.index.chromosomes.get(chrom) {
+                Some(b) => b,
+                None => {
+                    self.chrom_pos += 1;
+                    self.block_pos = 0;
+                    continue;
+                }
+            };
+            let Some(block_ref) = blocks.get(self.block_pos) else {
+                self.chrom_pos += 1;
+                self.block_pos = 0;
+                continue;
+            };
+            self.block_pos += 1;
+
+            match self.reader.get_block(block_ref) {
+                // `get_block` hands back a shared `Arc`, so take a copy of the
+                // entries to drain. One block at a time keeps this bounded.
+                Ok(entries) => {
+                    self.buffered = entries.as_ref().clone().into_iter();
+                    self.buffered_chrom = Some(chrom.as_str());
+                }
+                Err(e) => return Some(Err(e)),
+            }
+        }
+    }
+}
+
 impl AnnotationProvider for SaReader {
     fn name(&self) -> &str {
         &self.metadata.name
@@ -385,14 +470,10 @@ impl AnnotationProvider for SaReader {
             return Ok(());
         }
 
-        // Honor the same chr*/bare/mitochondrial aliases as `find_blocks`
-        // so a preload on `chr1` against an index built with `1` (or vice
-        // versa) still primes the cache instead of silently no-op'ing.
-        let blocks = chrom_aliases(chrom)
-            .iter()
-            .find_map(|alias| self.index.chromosomes.get(alias))
-            .map(|v| v.as_slice());
-        let blocks = match blocks {
+        // Resolve through the index's own alias map, exactly as `find_blocks`
+        // does, so a preload on `chr1` against an index built with `1` (or vice
+        // versa) primes the same cache slots the queries will look in.
+        let blocks = match self.index.blocks_for_chrom(chrom).map(|v| v.as_slice()) {
             Some(b) => b,
             None => {
                 // A chromosome the caller asked about that is not in the
