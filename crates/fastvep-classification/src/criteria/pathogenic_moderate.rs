@@ -1323,17 +1323,22 @@ mod tests {
     }
 
     #[test]
-    fn test_pm1_blocked_when_gene_has_no_established_disease() {
+    fn test_pm1_blocked_when_clingen_curated_the_gene_as_invalid() {
         // The cluster PM1 reads is made of ClinVar assertions in a gene whose
         // disease relationship curation declined to accept. Counting them as
         // evidence of a critical region assumes the conclusion.
         let mut input = hotspot_missense("ARMC9");
-        input.gene_disease_db_loaded = true;
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec![
+                "some proposed disease (ClinGen Disputed/AD, MONDO:0000001)".into(),
+            ]),
+        });
         let r = evaluate_pm1(&input, &AcmgConfig::default());
         assert!(!r.met);
         assert!(!r.evaluated);
         assert!(
-            r.summary.contains("no_established_gene_disease_relationship"),
+            r.summary.contains("no_valid_gene_disease_relationship"),
             "got: {}",
             r.summary
         );
@@ -1342,11 +1347,17 @@ mod tests {
     #[test]
     fn test_pm1_fires_for_a_gene_the_source_lists() {
         let mut input = hotspot_missense("BRCA1");
-        input.gene_disease_db_loaded = true;
         input.omim = Some(OmimData {
             mim_number: Some(0),
             phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
         });
+        assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pm1_survives_for_a_gene_clingen_has_not_curated() {
+        let mut input = hotspot_missense("SPAST");
+        input.omim = None;
         assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
     }
 }

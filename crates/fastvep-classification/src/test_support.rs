@@ -36,9 +36,6 @@ pub(crate) fn minimal_input() -> ClassificationInput {
         gerp: None,
         gene_constraints: None,
         omim: None,
-        // No gene-disease source, so the validity gate is inert by default and
-        // a test opts into it by setting both this and `omim`.
-        gene_disease_db_loaded: false,
         clinvar_protein: None,
         hgvs_c: None,
         predicted_nmd: None,

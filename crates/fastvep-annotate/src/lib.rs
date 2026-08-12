@@ -325,19 +325,7 @@ impl AnnotationContext {
                 .iter()
                 .any(|sa| sa.json_key() == "gnomad");
 
-        // Whether a gene-disease validity source is loaded at all. The
-        // classifier needs this to tell "this gene has no established disease"
-        // from "no file could have said so": a missing `.oga` leaves every
-        // gene's annotation empty, and gating PVS1/PP2/PM1 on that would
-        // suppress them genome-wide.
         let functional_evidence = self.functional_evidence.as_ref();
-
-        let gene_disease_db_loaded = {
-            use fastvep_cache::annotation::GeneAnnotationProvider;
-            self.gene_providers
-                .iter()
-                .any(|gp| gp.json_key() == "omim")
-        };
 
         for vf in &mut variants {
             let chrom = &vf.position.chromosome;
@@ -797,7 +785,6 @@ impl AnnotationContext {
                                     .and_then(|i| functional_by_alt[i].clone()),
                                 &aa.supplementary,
                                 &gene_anns,
-                                gene_disease_db_loaded,
                                 &vf.supplementary_annotations,
                                 trio_genotypes.0.clone(),
                                 trio_genotypes.1.clone(),
@@ -821,7 +808,6 @@ impl AnnotationContext {
                     &mut variants,
                     acmg_cfg,
                     &sample_names,
-                    gene_disease_db_loaded,
                     functional_evidence,
                 );
             }
@@ -1048,7 +1034,6 @@ fn enrich_compound_het(
     variants: &mut [VariationFeature],
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
-    gene_disease_db_loaded: bool,
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
 ) {
     use std::collections::HashMap;
@@ -1255,7 +1240,6 @@ fn enrich_compound_het(
                     .and_then(|i| functional_by_alt[i].clone()),
                 &aa.supplementary,
                 &gene_anns,
-                gene_disease_db_loaded,
                 &vf.supplementary_annotations,
                 trio_genotypes.0,
                 trio_genotypes.1,

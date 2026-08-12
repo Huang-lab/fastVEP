@@ -24,31 +24,35 @@
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
 
-/// A reason the gene has no established disease relationship, and so cannot
-/// support PVS1, PP2 or PM1.
+/// A reason the gene's disease relationship has been curated and found wanting,
+/// and so cannot support PVS1, PP2 or PM1.
 ///
-/// Returns `None` - meaning "proceed" - in three cases that must not be
-/// confused with each other:
+/// **Blocks on positive evidence, never on absence.** ClinGen has curated
+/// roughly 2,400 genes to Definitive/Strong/Moderate, so "not in the file" is
+/// overwhelmingly "nobody has got to it yet" - a statement about ClinGen's
+/// progress, not about the gene. Only a gene ClinGen curated and classified as
+/// Limited, Disputed, Refuted or No Known Disease Relationship carries evidence
+/// that the relationship does not hold.
 ///
-/// 1. the gate is switched off in config;
-/// 2. no gene-disease source was loaded, so the question was never asked;
-/// 3. the source lists this gene, so the relationship is established.
+/// The first version of this gate blocked on absence, and run v10 measured what
+/// that costs: **1,497 truth-pathogenic null variants lost PVS1**, in genes like
+/// SPAST, ABCB11, FLG and LAMB3 that cause disease and simply are not curated
+/// yet. The genes it was meant to catch (RYK, GIGYF2) are absent from ClinGen
+/// too, so absence-blocking was not even selecting for the right thing - it was
+/// selecting for curation coverage.
 pub(crate) fn validity_blocker(
     input: &ClassificationInput,
     config: &AcmgConfig,
 ) -> Option<String> {
-    if !config.require_gene_disease_validity || !input.gene_disease_db_loaded {
+    if !config.require_gene_disease_validity {
         return None;
     }
-    if input
-        .omim
-        .as_ref()
-        .is_some_and(|o| o.has_established_relationship())
-    {
+    let omim = input.omim.as_ref()?;
+    if !omim.has_no_valid_relationship() {
         return None;
     }
     Some(format!(
-        "no_established_gene_disease_relationship: {} is absent from the loaded gene-disease validity source (ClinGen GDV keeps only Definitive/Strong/Moderate), so there is no curated disease for this variant to be pathogenic for",
+        "no_valid_gene_disease_relationship: every ClinGen curation of {} is Limited, Disputed, Refuted or No Known Disease Relationship, so there is no established disease for this variant to be pathogenic for",
         input.gene_symbol.as_deref().unwrap_or("the gene"),
     ))
 }
@@ -132,60 +136,84 @@ mod tests {
         (input, config)
     }
 
-    #[test]
-    fn test_no_source_loaded_never_blocks() {
-        // The whole-genome default. Without this, enabling the gate would
-        // suppress PVS1/PP2/PM1 for every gene in every run that has no .oga.
-        let input = minimal_input();
-        assert!(!input.gene_disease_db_loaded);
-        assert!(validity_blocker(&input, &AcmgConfig::default()).is_none());
-    }
-
-    #[test]
-    fn test_gene_absent_from_a_loaded_source_blocks() {
+    fn with_phenotypes(entries: &[&str]) -> ClassificationInput {
         let mut input = minimal_input();
-        input.gene_disease_db_loaded = true;
-        let reason = validity_blocker(&input, &AcmgConfig::default()).expect("should block");
-        assert!(reason.contains("no_established_gene_disease_relationship"), "got: {reason}");
-        assert!(reason.contains("TEST"), "the reason must name the gene: {reason}");
-    }
-
-    #[test]
-    fn test_gene_present_in_the_source_does_not_block() {
-        let mut input = minimal_input();
-        input.gene_disease_db_loaded = true;
         input.omim = Some(OmimData {
             mim_number: Some(0),
-            phenotypes: Some(vec![
-                "Charcot-Marie-Tooth disease (ClinGen Definitive/AD, MONDO:0013212)".into(),
-            ]),
+            phenotypes: Some(entries.iter().map(|s| s.to_string()).collect()),
         });
+        input
+    }
+
+    #[test]
+    fn test_gene_absent_from_the_source_never_blocks() {
+        // The rule that matters most. ClinGen has curated ~2,400 genes, so a
+        // gene it has not reached says nothing about the gene. Blocking on
+        // absence cost 1,497 truth-pathogenic PVS1 firings in run v10.
+        let input = minimal_input();
+        assert!(input.omim.is_none());
         assert!(validity_blocker(&input, &AcmgConfig::default()).is_none());
     }
 
     #[test]
-    fn test_empty_phenotype_list_is_not_an_established_relationship() {
-        // An .oga record can exist carrying only a mimNumber. That is a row in
-        // a file, not a curated disease.
-        let mut input = minimal_input();
-        input.gene_disease_db_loaded = true;
-        for phenotypes in [None, Some(vec![]), Some(vec!["  ".to_string()])] {
-            input.omim = Some(OmimData { mim_number: Some(0), phenotypes });
+    fn test_established_relationship_does_not_block() {
+        for class in ["Definitive", "Strong", "Moderate"] {
+            let input = with_phenotypes(&[&format!(
+                "a real disease (ClinGen {class}/AD, MONDO:0000002)"
+            )]);
             assert!(
-                validity_blocker(&input, &AcmgConfig::default()).is_some(),
-                "an empty phenotype list must not count as established",
+                validity_blocker(&input, &AcmgConfig::default()).is_none(),
+                "{class} meets the SVI evidence threshold",
             );
         }
     }
 
     #[test]
-    fn test_validity_gate_is_switchable() {
+    fn test_curated_as_weak_or_refuted_blocks() {
+        for class in ["Limited", "Disputed", "Refuted", "No Known Disease Relationship"] {
+            let input = with_phenotypes(&[&format!(
+                "a proposed disease (ClinGen {class}/AD, MONDO:0000001)"
+            )]);
+            let reason = validity_blocker(&input, &AcmgConfig::default())
+                .unwrap_or_else(|| panic!("{class} must block"));
+            assert!(reason.contains("no_valid_gene_disease_relationship"), "got: {reason}");
+            assert!(reason.contains("TEST"), "the reason must name the gene: {reason}");
+        }
+    }
+
+    #[test]
+    fn test_one_established_disease_rescues_a_gene_with_disputed_ones() {
+        // Genes routinely carry several proposed relationships of differing
+        // quality. One that holds is enough for the criteria to apply.
+        let input = with_phenotypes(&[
+            "a proposed disease (ClinGen Disputed/AD, MONDO:0000001)",
+            "a real disease (ClinGen Definitive/AR, MONDO:0000002)",
+        ]);
+        assert!(validity_blocker(&input, &AcmgConfig::default()).is_none());
+    }
+
+    #[test]
+    fn test_omim_entries_without_a_clingen_tag_count_as_established() {
+        // The legacy genemap2 source has no classification tier, so its
+        // phenotypes must not all read as unclassified-and-therefore-weak.
+        let input = with_phenotypes(&["Breast cancer, 114480 (3), Autosomal dominant"]);
+        assert!(validity_blocker(&input, &AcmgConfig::default()).is_none());
+    }
+
+    #[test]
+    fn test_empty_phenotype_list_does_not_block() {
+        // A record carrying only a mimNumber is not a curation finding.
         let mut input = minimal_input();
-        input.gene_disease_db_loaded = true;
-        let config = AcmgConfig {
-            require_gene_disease_validity: false,
-            ..Default::default()
-        };
+        for phenotypes in [None, Some(vec![])] {
+            input.omim = Some(OmimData { mim_number: Some(0), phenotypes });
+            assert!(validity_blocker(&input, &AcmgConfig::default()).is_none());
+        }
+    }
+
+    #[test]
+    fn test_validity_gate_is_switchable() {
+        let input = with_phenotypes(&["x (ClinGen Refuted/AD, MONDO:0000001)"]);
+        let config = AcmgConfig { require_gene_disease_validity: false, ..Default::default() };
         assert!(validity_blocker(&input, &config).is_none());
     }
 

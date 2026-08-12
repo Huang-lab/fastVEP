@@ -152,12 +152,20 @@ use_filtering_af = true                     # Test BA1/BS1 against the filtering
                                             # population-maximum point estimate
 # Both are no-ops against a database built before those columns were extracted.
 
+# ── Combining rules ──
+use_point_system = true                # Score the PATHOGENIC side with the ClinGen SVI point
+                                       # system (Tavtigian 2020) instead of the Richards 2015
+                                       # table. The benign side keeps the 2015 rules either
+                                       # way - see "Which combining rules apply" below for the
+                                       # measurement behind that split.
+
 # ── Gene-level preconditions (require omim.oga / ClinGen GDV) ──
 require_gene_disease_validity = true   # PVS1, PP2 and PM1 report NotEvaluated with
-                                       # `no_established_gene_disease_relationship` for a gene
-                                       # absent from the loaded gene-disease validity source.
-                                       # A no-op when no such source is loaded, since "absent
-                                       # from a file nobody opened" is not evidence.
+                                       # `no_valid_gene_disease_relationship` when EVERY ClinGen
+                                       # curation of the gene is Limited/Disputed/Refuted/No Known
+                                       # Disease Relationship. A gene ClinGen has not curated is
+                                       # unaffected: absence is a fact about curation coverage,
+                                       # not about the gene.
 mechanism_gates_pvs1 = true            # A curated mechanism that excludes loss of function
                                        # ("GOF", "DOMINANT_NEGATIVE") takes PVS1 to
                                        # NotApplicable, instead of mechanism only ever being
@@ -418,6 +426,65 @@ fastVEP's annotation record does not carry transcript length.
 
 **The default stays VEP-identical** so a default run of each tool picks the same transcript, which
 is what the head-to-head concordance numbers rest on. This is a flag, not a behaviour change.
+
+## Gene-disease validity: curated-negative, never absent
+
+`require_gene_disease_validity` blocks PVS1, PP2 and PM1 on **positive evidence against** a
+gene-disease relationship, never on absence from the file.
+
+ClinGen Gene-Disease Validity classifies each proposed gene-disease pair as Definitive, Strong,
+Moderate, Limited, Disputed, Refuted or No Known Disease Relationship. The `.oga` carries all seven,
+and the gate fires only when *every* curation of a gene falls in the bottom four. A gene ClinGen has
+simply not reached is unaffected.
+
+That distinction is not academic. ClinGen has curated roughly 2,400 genes to
+Definitive/Strong/Moderate, so absence is overwhelmingly "nobody got to it yet". The first version
+of this gate blocked on absence, and run v10 measured the cost: **1,497 truth-pathogenic null
+variants lost PVS1**, in genes including SPAST, ABCB11, FLG and LAMB3 - all of which cause disease
+and none of which are in the file. Worse, the genes the gate was written to catch (RYK, GIGYF2) are
+absent from ClinGen too, so blocking on absence was not selecting for gene-disease validity at all.
+It was selecting for curation coverage.
+
+The consequence, stated plainly: fastVEP cannot automatically decline PVS1 for a gene a curator
+believes is not disease-associated unless ClinGen has said so. RYK and GIGYF2 come back as
+false-pathogenic in v11 for exactly this reason. `gene_overrides.<GENE>.disabled_criteria` is the
+manual route.
+
+## Which combining rules apply
+
+Two schemes exist for turning met criteria into a classification, and they are encodings of the
+same Bayesian model: the Richards 2015 combining table, and the ClinGen SVI point system
+(Tavtigian et al. 2020, *Genet Med* 22:1735).
+fastVEP uses **the point system for the pathogenic direction and the 2015 table for the benign
+direction**, which is not a compromise but a measured choice.
+
+Points are 1 / 2 / 4 / 8 for Supporting / Moderate / Strong / Very Strong, summed over met
+pathogenic criteria: `>= 10` Pathogenic, `6..=9` Likely Pathogenic.
+
+**Why points on the pathogenic side.** The table has a documented gap at a lone PVS1. It scores 8
+points, squarely inside Likely Pathogenic, but matches no row of Table 5, so the table returns
+Uncertain Significance. Run v10 put **2,319 truth-pathogenic variants in VUS on `PVS1` and nothing
+else** - nonsense and frameshift variants in haploinsufficient disease genes, which is close to the
+least uncertain thing a classifier sees.
+
+**Why the table on the benign side.** Tavtigian's Likely Benign band opens at `-1`, so a single BP4
+is enough for a benign call, where Richards requires two benign supporting criteria or a strong plus
+a supporting. Measured on the benchmark:
+
+| scheme | pathogenic recall | benign recall | false-benign |
+|---|---:|---:|---:|
+| 2015 table, both sides | 56.8 % | 56.3 % | 1 |
+| full point system | 63.6 % | 71.7 % | **36** |
+| full points, benign floor tightened to −2 | 63.6 % | **45.6 %** | 5 |
+| **points pathogenic + table benign** | **63.6 %** | **56.3 %** | **1** |
+
+The full point system buys 15 pp of benign recall for 36 false-benign calls, and **22 of those 36
+are a lone BP4**. Tightening the band instead removes them but costs more benign recall than the
+table had, because a lone BP4 carries a great many correct benign calls too. Using each scheme where
+it is the safer one takes the pathogenic gain and pays nothing: a missed diagnosis and a variant
+left uncertain are not comparable errors.
+
+Set `use_point_system = false` for the 2015 table on both sides.
 
 ## Required Data Sources
 

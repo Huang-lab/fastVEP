@@ -298,3 +298,36 @@ and earlier were silently annotating as real variants.
 - **v8 current: `output_v8/`** (discordance-review fixes; full outputs +
   `discrepancies_for_md_review.tsv` medical-geneticist review table +
   `README.md`; ClinVar 2026-06-27 refresh check noted in that README)
+
+## v11: SVI point system on the pathogenic side, and B7 corrected
+
+Two changes, both found by mining v10's own discrepancy table rather than from the review list.
+
+| Metric | v10 | **v11** | change |
+|---|---:|---:|---:|
+| Exact match | 61.2 % | **61.4 %** | +0.2 pp |
+| Same-direction | 74.1 % | **75.0 %** | +0.9 pp |
+| Pathogenic recall | 58.5 % | **65.0 %** | +6.5 pp |
+| Likely-pathogenic recall | 37.9 % | **47.9 %** | +10.0 pp |
+| Benign recall | 65.3 % | 65.3 % | — |
+| VUS recall | 97.0 % | 96.9 % | −0.1 pp |
+| **False-benign (missed diagnoses)** | **10** | **10** | **—** |
+| False-pathogenic | 15 | 46 | +31 |
+| Opposite-direction (total) | 25 | 56 | +31 |
+
+**The combining rules.** v10 left 2,319 truth-pathogenic variants in VUS on `PVS1` and nothing else -
+a lone Very Strong criterion, which is 8 points and inside Likely Pathogenic under the ClinGen SVI
+point system, but matches no row of the Richards 2015 table. fastVEP now scores the pathogenic side
+by points and keeps the 2015 table for the benign side; the measurement behind that split is in
+[`docs/ACMG.md`](../../docs/ACMG.md#which-combining-rules-apply).
+
+**B7 corrected.** The gene-disease validity gate blocked on absence from ClinGen GDV, which cost
+1,497 truth-pathogenic PVS1 firings in genes ClinGen has not curated (SPAST, ABCB11, FLG, LAMB3).
+It now blocks only where every ClinGen curation of the gene is Limited/Disputed/Refuted/No Known
+Disease Relationship - positive evidence rather than a gap in coverage.
+
+**Read the error columns separately.** The two directions did not move together. False-benign - a
+missed diagnosis - is unchanged at 10. The whole increase is false-pathogenic, 15 to 46, and it is
+the direct consequence of a lone PVS1 now reaching Likely Pathogenic. The trade is roughly 5,200
+additional correct pathogenic calls for 31 additional false-pathogenic ones, in the direction that
+gets scrutinised rather than filed away.

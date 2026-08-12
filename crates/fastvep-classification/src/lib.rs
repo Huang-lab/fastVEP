@@ -41,7 +41,7 @@ pub fn classify(input: &ClassificationInput, config: &AcmgConfig) -> AcmgResult 
     let counts = EvidenceCounts::from_criteria(&criteria);
 
     // Apply combination rules
-    let (classification, triggered_rule) = combiner::combine(&criteria);
+    let (classification, triggered_rule) = combiner::combine(&criteria, config);
 
     AcmgResult {
         shorthand: classification.shorthand().to_string(),
@@ -89,7 +89,12 @@ mod tests {
         let result = classify(&input, &AcmgConfig::default());
         assert_eq!(result.classification, AcmgClassification::Benign);
         assert_eq!(result.shorthand, "B");
-        assert!(result.triggered_rule.as_deref() == Some("BA1"));
+        // BA1 is standalone benign: -8 points, inside the Benign band on its
+        // own. The rule string names the arithmetic under the point system and
+        // the rule id under the table, so assert on the evidence instead.
+        assert!(result.criteria.iter().any(|c| c.code == "BA1" && c.met));
+        let table = AcmgConfig { use_point_system: false, ..Default::default() };
+        assert_eq!(classify(&input, &table).triggered_rule.as_deref(), Some("BA1"));
     }
 
     #[test]
@@ -224,12 +229,23 @@ mod tests {
             ..Default::default()
         });
 
-        let result = classify(&input, &AcmgConfig::default());
-        // The pathogenic rules engage (PVS1 + PM2_Supporting → PVS+PP → LP via SVI rule)
-        // because PM2_Supporting fires when AF below threshold or absent.
-        // Here AF = 0.02 (above PM2 threshold) so PM2 does NOT fire.
-        // We have just PVS1 (pathogenic) and BS1 (benign, sub-threshold).
-        // Both directions sub-definite → plain VUS, no "Conflicting" label.
+        // AF = 0.02 is above the PM2 bar, so PM2 does not fire; BS1 is not
+        // evaluated because the record carries no AN. That leaves PVS1 alone,
+        // and the two combining schemes genuinely disagree about it.
+        //
+        // Point system (the default): 8 points, inside the Likely Pathogenic
+        // band. A frameshift in a haploinsufficient disease gene is not an
+        // uncertain finding, and run v10 had 2,319 truth-pathogenic variants
+        // sitting in VUS on exactly this signature.
+        assert_eq!(
+            classify(&input, &AcmgConfig::default()).classification,
+            AcmgClassification::LikelyPathogenic
+        );
+
+        // Richards 2015 Table 5: no row matches one Very Strong alone, so the
+        // table returns Uncertain Significance.
+        let table = AcmgConfig { use_point_system: false, ..Default::default() };
+        let result = classify(&input, &table);
         assert_eq!(
             result.classification,
             AcmgClassification::UncertainSignificance

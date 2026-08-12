@@ -13,9 +13,23 @@ but the canonical content is ClinGen GDV.
 OMIM `genemap2.txt` (registration-gated at omim.org) remains supported
 as a legacy alternative. Both populate the same `.oga` schema.
 
-Includes only `Definitive`, `Strong`, `Moderate` ClinGen classifications
-(excludes `Limited`, `Disputed`, `Refuted`, `No Known Disease
-Relationship`) to align with the SVI-recommended evidence threshold.
+Emits **every** ClinGen classification, including the weak and negative ones
+(`Limited`, `Disputed`, `Refuted`, `No Known Disease Relationship`).
+
+That is a change from the original behaviour, which kept only Definitive,
+Strong and Moderate. Dropping the rest made the file unable to distinguish two
+very different states that the classifier needs to tell apart:
+
+  * a gene ClinGen curated and concluded has little or no evidence behind it -
+    positive evidence against a gene-disease relationship, and a good reason
+    not to apply PVS1/PP2/PM1; from
+  * a gene ClinGen has simply not reached yet - which says nothing at all.
+    ClinGen has curated ~2,400 genes to Definitive/Strong/Moderate out of a
+    genome, so absence is overwhelmingly the second case. SPAST, ABCB11 and
+    LAMB3 are all absent, and all three cause disease.
+
+The classifier reads the classification back out of the phenotype string and
+decides; see `OmimData::has_established_relationship`.
 
 Output is tab-separated with 13 columns matching the subset
 `parse_omim_genemap` reads (col 5: MIM number / identifier, col 8:
@@ -29,7 +43,10 @@ import csv
 import sys
 from collections import defaultdict
 
-INCLUDED = {"Definitive", "Strong", "Moderate"}
+# Classifications that count as an established gene-disease relationship, per
+# the SVI-recommended evidence threshold. Everything else is emitted too, but
+# marked, so the classifier can tell "curated as weak" from "not curated".
+ESTABLISHED = {"Definitive", "Strong", "Moderate"}
 
 
 def main():
@@ -53,7 +70,7 @@ def main():
             disease = row[2].strip('"')
             moi = row[4].strip('"')
             cls = row[6].strip('"')
-            if cls not in INCLUDED:
+            if not cls:
                 continue
             # genemap2 phenotype format: "<disease label>, <MIM>, <inheritance>"
             # We don't have OMIM MIM numbers, so use MONDO from row[3].

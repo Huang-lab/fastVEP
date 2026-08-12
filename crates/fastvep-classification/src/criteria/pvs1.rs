@@ -805,14 +805,19 @@ mod tests {
     }
 
     #[test]
-    fn test_pvs1_blocked_when_gene_has_no_established_disease() {
+    fn test_pvs1_blocked_when_clingen_curated_the_gene_as_invalid() {
         let mut input = constrained_frameshift("RYK");
-        input.gene_disease_db_loaded = true; // .oga present, RYK absent from it
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec![
+                "some proposed disease (ClinGen Disputed/AD, MONDO:0000001)".into(),
+            ]),
+        }); // ClinGen curated it and found nothing
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(!r.met);
         assert!(!r.evaluated, "unknown gene-disease validity is not an assessment");
         assert!(
-            r.summary.contains("no_established_gene_disease_relationship"),
+            r.summary.contains("no_valid_gene_disease_relationship"),
             "got: {}",
             r.summary
         );
@@ -823,18 +828,28 @@ mod tests {
         // The back-compat case that makes the gate safe to default on: without
         // an .oga, pLI alone still carries PVS1 exactly as before.
         let input = constrained_frameshift("RYK");
-        assert!(!input.gene_disease_db_loaded);
+        assert!(input.omim.is_none());
         assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);
     }
 
     #[test]
     fn test_pvs1_fires_for_a_gene_the_source_lists() {
         let mut input = constrained_frameshift("BRCA1");
-        input.gene_disease_db_loaded = true;
         input.omim = Some(OmimData {
             mim_number: Some(0),
             phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
         });
+        assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);
+    }
+
+
+    #[test]
+    fn test_pvs1_survives_for_a_gene_clingen_has_not_curated() {
+        // The v10 regression: SPAST, ABCB11, FLG and LAMB3 all cause disease
+        // and are all absent from ClinGen GDV. Blocking on absence cost 1,497
+        // truth-pathogenic PVS1 firings.
+        let mut input = constrained_frameshift("SPAST");
+        input.omim = None;
         assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);
     }
 

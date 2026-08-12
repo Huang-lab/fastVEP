@@ -368,7 +368,7 @@ fn evaluate_pp5(
 mod tests {
     use super::*;
     use crate::test_support::minimal_input;
-    use crate::sa_extract::{GnomadGeneData, RevelData, SpliceAiData};
+    use crate::sa_extract::{GnomadGeneData, RevelData, OmimData, SpliceAiData};
     use fastvep_core::Impact;
 
     fn make_input_with_revel(score: f64) -> ClassificationInput {
@@ -569,17 +569,22 @@ mod tests {
     }
 
     #[test]
-    fn test_pp2_blocked_when_gene_has_no_established_disease() {
+    fn test_pp2_blocked_when_clingen_curated_the_gene_as_invalid() {
         // Missense constraint says the gene tolerates little missense
         // variation. It does not say the gene causes a disease, which is what
-        // PP2 asserts.
+        // PP2 asserts - and here ClinGen looked and found no valid relationship.
         let mut input = constrained_missense("EMG1");
-        input.gene_disease_db_loaded = true;
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec![
+                "some proposed disease (ClinGen Disputed/AD, MONDO:0000001)".into(),
+            ]),
+        });
         let r = evaluate_pp2(&input, &AcmgConfig::default());
         assert!(!r.met);
         assert!(!r.evaluated);
         assert!(
-            r.summary.contains("no_established_gene_disease_relationship"),
+            r.summary.contains("no_valid_gene_disease_relationship"),
             "got: {}",
             r.summary
         );
@@ -588,11 +593,17 @@ mod tests {
     #[test]
     fn test_pp2_fires_for_a_gene_the_source_lists() {
         let mut input = constrained_missense("BRCA1");
-        input.gene_disease_db_loaded = true;
-        input.omim = Some(crate::sa_extract::OmimData {
+        input.omim = Some(OmimData {
             mim_number: Some(0),
             phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
         });
+        assert!(evaluate_pp2(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pp2_survives_for_a_gene_clingen_has_not_curated() {
+        let mut input = constrained_missense("SPAST");
+        input.omim = None;
         assert!(evaluate_pp2(&input, &AcmgConfig::default()).met);
     }
 }

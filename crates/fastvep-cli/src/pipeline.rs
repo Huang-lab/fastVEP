@@ -503,11 +503,6 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         .iter()
         .map(|gp| gp.json_key().to_string())
         .collect();
-    // Whether a gene-disease validity source was loaded at all. The classifier
-    // needs this to tell "this gene has no established disease" from "no file
-    // could have said so": a missing `.oga` leaves every gene's annotation
-    // empty, and gating PVS1/PP2/PM1 on that would suppress them genome-wide.
-    let gene_disease_db_loaded = gene_json_keys.iter().any(|k| k == "omim");
 
     // Curated functional-assay evidence for PS3/BS3. Parsed up front so a
     // malformed row fails before the run starts rather than after an hour of
@@ -1381,7 +1376,6 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                     .and_then(|i| functional_by_alt[i].clone()),
                                 &aa.supplementary,
                                 &gene_anns,
-                                gene_disease_db_loaded,
                                 &vf.supplementary_annotations,
                                 trio_genotypes.0.clone(),
                                 trio_genotypes.1.clone(),
@@ -1409,7 +1403,6 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                     &mut vfs,
                     acmg_cfg,
                     &sample_names,
-                    gene_disease_db_loaded,
                     functional_evidence,
                 );
             }
@@ -1613,14 +1606,26 @@ fn pick_score(tv: &TranscriptVariation, c: PickCriterion) -> u32 {
     }
 }
 
+/// Upper bound on `--pick-order` length: there are eight criteria and
+/// `parse_pick_order` rejects repeats, so no order can be longer.
+const MAX_PICK_CRITERIA: usize = 8;
+
+/// Score a transcript across the configured order.
+///
+/// Returns a fixed-size array rather than a `Vec` because this sits inside
+/// `min_by`, which evaluates the key twice per comparison: a `Vec` here is two
+/// heap allocations for every pair of transcripts considered, on every variant.
+/// Unused slots stay zero and compare equal, which is harmless since every key
+/// in a given comparison is built from the same `order`.
 fn pick_key_with<'a>(
     tv: &'a TranscriptVariation,
     order: &[PickCriterion],
-) -> (Vec<u32>, &'a str) {
-    (
-        order.iter().map(|&c| pick_score(tv, c)).collect(),
-        tv.transcript_id.as_ref(),
-    )
+) -> ([u32; MAX_PICK_CRITERIA], &'a str) {
+    let mut key = [0u32; MAX_PICK_CRITERIA];
+    for (slot, &c) in key.iter_mut().zip(order.iter()) {
+        *slot = pick_score(tv, c);
+    }
+    (key, tv.transcript_id.as_ref())
 }
 
 /// Map an APPRIS tag (`P1`/`principal1`, ..., `A1`/`alternative1`, ...) to a
@@ -1731,7 +1736,6 @@ fn enrich_compound_het_batch(
     variants: &mut [&mut VariationFeature],
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
-    gene_disease_db_loaded: bool,
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
 ) {
     // Collect per-gene variant info
@@ -1908,7 +1912,6 @@ fn enrich_compound_het_batch(
                     .and_then(|i| functional_by_alt[i].clone()),
                 &aa.supplementary,
                 &gene_anns,
-                gene_disease_db_loaded,
                 &vf.supplementary_annotations,
                 trio_genotypes.0,
                 trio_genotypes.1,

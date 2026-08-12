@@ -263,6 +263,20 @@ pub struct AcmgConfig {
     /// annotation databases built before the FAF columns were extracted.
     #[serde(default = "default_true")]
     pub use_filtering_af: bool,
+    /// Combine criteria with the ClinGen SVI point system (Tavtigian 2020)
+    /// instead of the Richards 2015 combining table.
+    ///
+    /// The two are encodings of the same Bayesian model, and where they
+    /// disagree the point system is the SVI's current recommendation and what
+    /// VCEP specifications are written against. The disagreement that matters
+    /// most is a lone PVS1: 8 points, inside the Likely Pathogenic band, but no
+    /// row of Table 5 matches it, so the table returns Uncertain Significance.
+    ///
+    /// Measured on the ClinVar 2-star+ benchmark, run v10 put **2,319
+    /// truth-pathogenic variants in VUS on `PVS1` and nothing else** - nonsense
+    /// and frameshift variants in haploinsufficient disease genes.
+    #[serde(default = "default_true")]
+    pub use_point_system: bool,
     /// Require an established gene-disease relationship before the criteria
     /// that presuppose one - PVS1, PP2 and PM1 - may fire.
     ///
@@ -468,6 +482,7 @@ impl Default for AcmgConfig {
             clinvar_low_penetrance_blocks_benign_frequency: true,
             gnomad_region_flags_block_frequency: true,
             use_filtering_af: true,
+            use_point_system: true,
             require_gene_disease_validity: true,
             mechanism_gates_pvs1: true,
             gene_mechanisms: default_gene_mechanisms(),
@@ -613,6 +628,14 @@ fn default_gene_mechanisms() -> HashMap<String, String> {
         ("RIT1", "GOF"),
         ("SHOC2", "GOF"),
         ("PTPN11", "GOF"),
+        // Primary open-angle glaucoma is caused by mutant myocilin misfolding
+        // and accumulating; whole-gene deletions and null alleles do not cause
+        // it. Surfaced by run v11 as a truncating variant ClinVar calls benign
+        // that had collected full PVS1.
+        ("MYOC", "GOF"),
+        // SCA17 is a CAG/polyglutamine expansion - a gain of function in the
+        // repeat, not loss of the protein. Same run, same shape.
+        ("TBP", "GOF"),
         // ── Dominant negative: also not loss of function ──
         // ClinGen MYH7 specification (Kelly 2018): PVS1 is not applicable,
         // truncating variants are not established as causing HCM.

@@ -361,26 +361,49 @@ pub struct OmimData {
 }
 
 impl OmimData {
-    /// True when the source lists at least one disease for this gene, i.e. the
-    /// gene-disease relationship is established.
+    /// True when at least one listed disease meets the SVI evidence threshold -
+    /// a ClinGen classification of Definitive, Strong or Moderate.
     ///
-    /// The builder does the filtering, not this method: `clingen_gdv_to_oga.py`
-    /// keeps only Definitive, Strong and Moderate ClinGen classifications and
-    /// drops Limited, Disputed, Refuted and No Known Disease Relationship, per
-    /// the ClinGen SVI evidence threshold. So presence in the file *is* the
-    /// established relationship, and a gene curated as Disputed is
-    /// indistinguishable here from one never curated at all - both are absent.
-    /// That is the conservative direction: neither earns PVS1/PP2/PM1.
+    /// The `.oga` carries every classification, including the weak and negative
+    /// ones, because the distinction this method draws is only possible if they
+    /// are present. Reading the classification out of the phenotype string is
+    /// what lets `has_no_valid_relationship` mean "ClinGen looked and found
+    /// little or nothing" rather than "not in the file".
+    ///
+    /// A gene from an OMIM `genemap2` source carries no ClinGen classification
+    /// at all. Those entries count as established: OMIM listing a phenotype is
+    /// the assertion, and the legacy source has no weaker tier to fall back on.
     pub fn has_established_relationship(&self) -> bool {
-        self.phenotypes.as_ref().is_some_and(|p| {
-            p.iter().any(|entry| !entry.trim().is_empty())
+        self.phenotypes.as_ref().is_some_and(|ps| {
+            ps.iter().any(|p| {
+                let t = p.trim();
+                !t.is_empty() && !is_weak_clingen_classification(t)
+            })
         })
     }
 
+    /// True when ClinGen curated this gene and concluded there is little or no
+    /// evidence for any of its proposed disease relationships.
+    ///
+    /// This is positive evidence against a gene-disease relationship, and it is
+    /// what the validity gate blocks on. Absence from the file is *not* this:
+    /// ClinGen has reached roughly 2,400 genes, so a gene it has not curated is
+    /// overwhelmingly one nobody got to yet. Treating absence as this cost 1,497
+    /// pathogenic calls in run v10 - SPAST, ABCB11, FLG and LAMB3 among them.
+    pub fn has_no_valid_relationship(&self) -> bool {
+        self.phenotypes
+            .as_ref()
+            .is_some_and(|ps| !ps.is_empty() && !self.has_established_relationship())
+    }
+
     /// Check if any phenotype suggests autosomal dominant inheritance.
+    ///
+    /// Considers only diseases that met the evidence threshold: the inheritance
+    /// of a relationship ClinGen refuted is not a fact about this gene, and PM2
+    /// and BS2 both branch on it.
     pub fn has_dominant_inheritance(&self) -> bool {
         self.phenotypes.as_ref().is_some_and(|ps| {
-            ps.iter().any(|p| {
+            ps.iter().filter(|p| !is_weak_clingen_classification(p)).any(|p| {
                 let lower = p.to_lowercase();
                 lower.contains("autosomal dominant")
                     || lower.contains("{ad}")
@@ -390,9 +413,12 @@ impl OmimData {
     }
 
     /// Check if any phenotype suggests autosomal recessive inheritance.
+    ///
+    /// Established diseases only, for the same reason as
+    /// [`Self::has_dominant_inheritance`].
     pub fn has_recessive_inheritance(&self) -> bool {
         self.phenotypes.as_ref().is_some_and(|ps| {
-            ps.iter().any(|p| {
+            ps.iter().filter(|p| !is_weak_clingen_classification(p)).any(|p| {
                 let lower = p.to_lowercase();
                 lower.contains("autosomal recessive")
                     || lower.contains("{ar}")
@@ -400,6 +426,22 @@ impl OmimData {
             })
         })
     }
+}
+
+/// True for a ClinGen classification that does not meet the SVI evidence
+/// threshold: `Limited`, `Disputed`, `Refuted`, `No Known Disease
+/// Relationship`. Matched inside the `(ClinGen <Class>/<MOI>, MONDO:...)`
+/// suffix the builder writes.
+fn is_weak_clingen_classification(phenotype: &str) -> bool {
+    let Some(rest) = phenotype.split("(ClinGen ").nth(1) else {
+        // No ClinGen tag: an OMIM genemap2 entry. Counts as established.
+        return false;
+    };
+    let class = rest.split('/').next().unwrap_or("").trim();
+    matches!(
+        class,
+        "Limited" | "Disputed" | "Refuted" | "No Known Disease Relationship"
+    )
 }
 
 /// ClinVar pathogenic variants indexed by protein position (from .oga).
@@ -495,16 +537,6 @@ pub struct ClassificationInput {
     pub gerp: Option<f64>,
     pub gene_constraints: Option<GnomadGeneData>,
     pub omim: Option<OmimData>,
-    /// Whether a gene-disease validity source (`omim.oga`, whose canonical
-    /// content is ClinGen Gene-Disease Validity) was loaded for this run.
-    ///
-    /// This is the difference between "this gene has no established disease
-    /// relationship" and "we never opened a file that could have said so", and
-    /// [`omim`](Self::omim) alone cannot tell them apart - it is `None` in both
-    /// cases. The gene-disease validity gate only fires when this is true, so
-    /// running without the source behaves exactly as fastVEP did before the
-    /// gate existed.
-    pub gene_disease_db_loaded: bool,
     /// ClinVar pathogenic variants at protein positions for this gene (from .oga).
     pub clinvar_protein: Option<ClinvarProteinData>,
     /// HGVS c. notation for the variant (e.g. "c.845G>A"). Used by the BA1
@@ -607,7 +639,6 @@ pub fn extract_classification_input(
     functional_evidence: Option<crate::functional::FunctionalEvidence>,
     allele_supplementary: &[(String, String)],
     gene_annotations: &[&GeneAnnotation],
-    gene_disease_db_loaded: bool,
     variant_supplementary: &[SupplementaryAnnotation],
     proband_genotype: Option<GenotypeInfo>,
     mother_genotype: Option<GenotypeInfo>,
@@ -739,7 +770,6 @@ pub fn extract_classification_input(
         gerp,
         gene_constraints,
         omim,
-        gene_disease_db_loaded,
         clinvar_protein,
         // Threaded from the caller (typically `aa.hgvsc` from the annotation
         // context). When the pipeline doesn't compute HGVS — i.e. the user
