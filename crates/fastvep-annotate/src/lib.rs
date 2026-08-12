@@ -318,6 +318,18 @@ impl AnnotationContext {
                 .iter()
                 .any(|sa| sa.json_key() == "gnomad");
 
+        // Whether a gene-disease validity source is loaded at all. The
+        // classifier needs this to tell "this gene has no established disease"
+        // from "no file could have said so": a missing `.oga` leaves every
+        // gene's annotation empty, and gating PVS1/PP2/PM1 on that would
+        // suppress them genome-wide.
+        let gene_disease_db_loaded = {
+            use fastvep_cache::annotation::GeneAnnotationProvider;
+            self.gene_providers
+                .iter()
+                .any(|gp| gp.json_key() == "omim")
+        };
+
         for vf in &mut variants {
             let chrom = &vf.position.chromosome;
             let query_start = vf.position.start.saturating_sub(self.distance).max(1);
@@ -770,6 +782,7 @@ impl AnnotationContext {
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                                 &aa.supplementary,
                                 &gene_anns,
+                                gene_disease_db_loaded,
                                 &vf.supplementary_annotations,
                                 trio_genotypes.0.clone(),
                                 trio_genotypes.1.clone(),
@@ -789,7 +802,12 @@ impl AnnotationContext {
         // Compound-het enrichment pass: re-evaluate PM3/BP2 with companion variant data
         if let Some(acmg_cfg) = acmg_config {
             if acmg_cfg.trio.is_some() {
-                enrich_compound_het(&mut variants, acmg_cfg, &sample_names);
+                enrich_compound_het(
+                    &mut variants,
+                    acmg_cfg,
+                    &sample_names,
+                    gene_disease_db_loaded,
+                );
             }
         }
 
@@ -1014,6 +1032,7 @@ fn enrich_compound_het(
     variants: &mut [VariationFeature],
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
+    gene_disease_db_loaded: bool,
 ) {
     use std::collections::HashMap;
 
@@ -1214,6 +1233,7 @@ fn enrich_compound_het(
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                 &aa.supplementary,
                 &gene_anns,
+                gene_disease_db_loaded,
                 &vf.supplementary_annotations,
                 trio_genotypes.0,
                 trio_genotypes.1,

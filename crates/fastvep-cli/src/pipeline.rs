@@ -498,6 +498,11 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
         .iter()
         .map(|gp| gp.json_key().to_string())
         .collect();
+    // Whether a gene-disease validity source was loaded at all. The classifier
+    // needs this to tell "this gene has no established disease" from "no file
+    // could have said so": a missing `.oga` leaves every gene's annotation
+    // empty, and gating PVS1/PP2/PM1 on that would suppress them genome-wide.
+    let gene_disease_db_loaded = gene_json_keys.iter().any(|k| k == "omim");
     let owned_vcf_info_ids = output::vcf_owned_info_ids(&sa_json_keys, &gene_json_keys);
     let generated_vcf_headers =
         output::vcf_info_header_lines(&sa_json_keys, &gene_json_keys, output::DEFAULT_CSQ_FIELDS, sa_only);
@@ -1338,6 +1343,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                                 &aa.supplementary,
                                 &gene_anns,
+                                gene_disease_db_loaded,
                                 &vf.supplementary_annotations,
                                 trio_genotypes.0.clone(),
                                 trio_genotypes.1.clone(),
@@ -1361,7 +1367,12 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             if acmg_cfg.trio.is_some() {
                 let mut vfs: Vec<&mut VariationFeature> =
                     batch.iter_mut().map(|(vf, _)| vf).collect();
-                enrich_compound_het_batch(&mut vfs, acmg_cfg, &sample_names);
+                enrich_compound_het_batch(
+                    &mut vfs,
+                    acmg_cfg,
+                    &sample_names,
+                    gene_disease_db_loaded,
+                );
             }
         }
 
@@ -1573,6 +1584,7 @@ fn enrich_compound_het_batch(
     variants: &mut [&mut VariationFeature],
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
+    gene_disease_db_loaded: bool,
 ) {
     // Collect per-gene variant info
     struct VariantGeneInfo {
@@ -1743,6 +1755,7 @@ fn enrich_compound_het_batch(
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                 &aa.supplementary,
                 &gene_anns,
+                gene_disease_db_loaded,
                 &vf.supplementary_annotations,
                 trio_genotypes.0,
                 trio_genotypes.1,

@@ -54,6 +54,12 @@ fn evaluate_pp2(
 
     let (met, evaluated, summary) = if !is_missense {
         (false, true, "Not a missense variant".to_string())
+    } else if let Some(reason) = super::gene_disease::validity_blocker(input, config) {
+        // PP2 claims missense is how *this gene* causes disease. Missense
+        // constraint alone cannot support that: it measures selection against
+        // missense variation, which is present in plenty of genes with no
+        // established disease at all.
+        (false, false, reason)
     } else if let Some(ref gc) = input.gene_constraints {
         if let Some(mis_z) = gc.mis_z {
             details.insert("misZ".into(), serde_json::json!(mis_z));
@@ -537,5 +543,56 @@ mod tests {
         };
         let result = evaluate_pp2(&input, &AcmgConfig::default());
         assert!(!result.met);
+    }
+
+    // ── B7: gene-disease validity gates PP2 ──────────────────────────────
+
+    /// A missense variant in a gene with strong missense constraint: PP2's
+    /// only positive condition is satisfied, so what stops it is the gate.
+    fn constrained_missense(gene: &str) -> ClassificationInput {
+        ClassificationInput {
+            consequences: vec![Consequence::MissenseVariant],
+            impact: Impact::Moderate,
+            gene_symbol: Some(gene.to_string()),
+            gene_constraints: Some(GnomadGeneData {
+                mis_z: Some(4.0),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        }
+    }
+
+    #[test]
+    fn test_pp2_fires_on_constraint_alone_without_a_gene_disease_source() {
+        let input = constrained_missense("EMG1");
+        assert!(evaluate_pp2(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pp2_blocked_when_gene_has_no_established_disease() {
+        // Missense constraint says the gene tolerates little missense
+        // variation. It does not say the gene causes a disease, which is what
+        // PP2 asserts.
+        let mut input = constrained_missense("EMG1");
+        input.gene_disease_db_loaded = true;
+        let r = evaluate_pp2(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated);
+        assert!(
+            r.summary.contains("no_established_gene_disease_relationship"),
+            "got: {}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn test_pp2_fires_for_a_gene_the_source_lists() {
+        let mut input = constrained_missense("BRCA1");
+        input.gene_disease_db_loaded = true;
+        input.omim = Some(crate::sa_extract::OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
+        });
+        assert!(evaluate_pp2(&input, &AcmgConfig::default()).met);
     }
 }

@@ -146,6 +146,17 @@ use_filtering_af = true                     # Test BA1/BS1 against the filtering
                                             # population-maximum point estimate
 # Both are no-ops against a database built before those columns were extracted.
 
+# ── Gene-level preconditions (require omim.oga / ClinGen GDV) ──
+require_gene_disease_validity = true   # PVS1, PP2 and PM1 report NotEvaluated with
+                                       # `no_established_gene_disease_relationship` for a gene
+                                       # absent from the loaded gene-disease validity source.
+                                       # A no-op when no such source is loaded, since "absent
+                                       # from a file nobody opened" is not evidence.
+mechanism_gates_pvs1 = true            # A curated mechanism that excludes loss of function
+                                       # ("GOF", "DOMINANT_NEGATIVE") takes PVS1 to
+                                       # NotApplicable, instead of mechanism only ever being
+                                       # able to switch PVS1 on (Abou Tayoun 2018)
+
 # ── ClinGen SVI behavior ──
 pm2_downgrade_to_supporting = true     # Downgrade PM2 from Moderate to Supporting (SVI)
 bp1_max_pathogenic_missense = 3        # BP1 blocked once the gene has this many pathogenic
@@ -181,7 +192,17 @@ father = "FATHER01"
 min_depth = 10                 # Minimum read depth for reliable genotype
 min_gq = 20                    # Minimum genotype quality
 
+# ── Curated disease mechanisms (shipped table; PCSK9, IFIH1, MYH7, RASopathies, ...) ──
+# Specifying gene_mechanisms in TOML REPLACES the shipped table.
+# Kept separate from gene_overrides precisely so that setting one [gene_overrides.X]
+# block below does not silently discard it.
+[gene_mechanisms]
+PCSK9 = "GOF"          # LoF lowers LDL — the mechanism of an approved drug class
+MYH7 = "DOMINANT_NEGATIVE"   # ClinGen MYH7 spec: PVS1 not applicable
+RYR1 = "LOF_and_GOF"   # MH is GoF, the congenital myopathies are LoF → PVS1 still applies
+
 # ── Gene-specific overrides ──
+# A `mechanism` here wins over the gene_mechanisms table for that gene.
 [gene_overrides.BRCA1]
 mechanism = "LOF"
 bs1_af_threshold = 0.001
@@ -273,7 +294,7 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 | Source | SA Key | Used By | Description |
 |---|---|---|---|
 | **gnomAD Gene Constraints** | `gnomad_genes` | PVS1, PP2, BP1 | pLI, LOEUF, misZ, synZ |
-| **OMIM** | `omim` | PVS1, BS2, PM3, BP2 | Disease associations, inheritance patterns |
+| **ClinGen GDV** (or OMIM) | `omim` | PVS1, PP2, PM1, BS2, PM3, BP2 | Gene-disease validity, disease associations, inheritance patterns |
 | **ClinVar Protein Index** | `clinvar_protein` | PS1, PM1, PM5 | Pathogenic missense by protein position |
 
 ### Optional Sources
@@ -292,7 +313,8 @@ fastvep sa-build --source gnomad_genes -i gnomad.v4.1.constraint_metrics.tsv -o 
 fastvep sa-build --source clinvar_protein -i clinvar.vcf.gz -o sa/clinvar_protein --assembly GRCh38
 ```
 
-When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2, PP2, BS2) degrade gracefully to `evaluated: false` rather than misfiring. See [ACMG_SETUP.md](ACMG_SETUP.md) for download URLs, expected file sizes, and end-to-end verification.
+When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2, PP2, BS2) degrade gracefully to `evaluated: false` rather than misfiring.
+The gene-disease validity gate degrades the other way round, and deliberately: with no `omim.oga` loaded it does not fire at all, because a gene missing from a file nobody opened is not a gene without a disease. Loading the source is therefore what switches the gate on, and PVS1/PP2/PM1 become *stricter* when it is present, not more permissive. See [ACMG_SETUP.md](ACMG_SETUP.md) for download URLs, expected file sizes, and end-to-end verification.
 
 ## Evidence Criteria Reference
 
@@ -300,19 +322,19 @@ When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2
 
 | Code | Strength | Description | Data Source | Automatable |
 |---|---|---|---|---|
-| **PVS1** | Very Strong → Supporting* | Null variant in LOF-intolerant gene; graded per Abou Tayoun 2018 decision tree (NMD prediction, %protein removed, critical region, alt start codon, last exon) | Consequence + pLI/LOEUF/OMIM/ClinGen GDV + transcript context | Yes |
+| **PVS1** | Very Strong → Supporting* | Null variant in LOF-intolerant gene; graded per Abou Tayoun 2018 decision tree (NMD prediction, %protein removed, critical region, alt start codon, last exon). Two gene-level preconditions run first: the gene must have an established gene-disease relationship, and its curated mechanism must not exclude loss of function | Consequence + pLI/LOEUF/ClinGen GDV + curated mechanism + transcript context | Yes |
 | **PS1** | Strong | Same AA change as established pathogenic missense **or** canonical ±1/2 splice predicted to produce same RNA outcome (Walker 2023) | ClinVar protein index + splice catalog | Yes (with .oga) |
 | **PS2** | Strong | De novo with confirmed parents | Trio VCF genotypes | Yes (with trio) |
 | **PS3** | Strong | Functional studies show damaging | External data | No |
 | **PS4** | Strong | Prevalence in affected >> controls | Case-control statistics (NotEvaluated by default; ClinVar review-stars proxy is invalid per SVI, opt in via `use_clinvar_stars_as_ps4_proxy`) | No (Partial in proxy mode) |
-| **PM1** | Moderate | Mutational hotspot / critical domain | ClinVar protein density | Yes (with .oga) |
+| **PM1** | Moderate | Mutational hotspot / critical domain. NotEvaluated where the gene has no established gene-disease relationship: a cluster of assertions in an uncurated gene is not evidence of a critical region | ClinVar protein density + ClinGen GDV | Yes (with .oga) |
 | **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown requires strict absence (AC=0); AR fires at AF ≤ 0.00007 (SVI v1.0). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
 | **PM3** | Supporting → Very Strong* | In trans with pathogenic (recessive); points-based per SVI v1.0 (in-trans/P=1.0pt, in-trans/LP=0.5pt, unphased/P=0.5pt, unphased/LP=0.25pt, hom=0.5pt cap 1.0) | Phased VCF + ClinVar | Yes (with trio) |
 | **PM4** | Moderate | Protein length change (in-frame/stop-loss) | Consequence type | Yes |
 | **PM5** | Moderate | Different pathogenic missense at same residue | ClinVar protein index | Yes (with .oga) |
 | **PM6** | Moderate | Assumed de novo (partial confirmation) | Partial trio VCF | Yes (with trio) |
 | **PP1** | Supporting | Co-segregation in family | Pedigree data | No |
-| **PP2** | Supporting | Missense in constrained gene | Gene misZ score | Yes |
+| **PP2** | Supporting | Missense in constrained gene. NotEvaluated where the gene has no established gene-disease relationship: missense constraint measures tolerance to variation, not that missense is how the gene causes disease | Gene misZ score + ClinGen GDV | Yes |
 | **PP3** | Supporting-Strong | Computational evidence (deleterious) — REVEL **missense-only** (Pejaver 2022) + SpliceAI ≥ 0.2 caps at Supporting (Walker 2023). Ensemble SIFT/PolyPhen/PhyloP/GERP consensus path removed (Pejaver 2022 endorses single calibrated tool only). | REVEL + SpliceAI | Yes |
 | **PP4** | Supporting | Phenotype-specific for single-gene disease | HPO phenotype data | No |
 | **PP5** | Supporting | Reputable source reports pathogenic | ClinVar (disabled by default per SVI) | Partial |

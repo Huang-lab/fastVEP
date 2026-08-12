@@ -43,6 +43,36 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
         );
     };
 
+    // Two gene-level preconditions, both ahead of the constraint test, because
+    // constraint cannot answer either of them. The first asks whether the gene
+    // causes disease at all (B7); the second whether it causes disease by
+    // losing function (B6). A gene can be highly constrained and fail either.
+    if let Some(reason) = super::gene_disease::validity_blocker(input, config) {
+        details.insert("gene_disease_validity".into(), serde_json::json!(false));
+        return mk(
+            "PVS1".to_string(),
+            EvidenceStrength::VeryStrong,
+            false,
+            false,
+            reason,
+            details,
+        );
+    }
+    if let Some(reason) = super::gene_disease::lof_mechanism_blocker(input, config) {
+        details.insert(
+            "mechanism".into(),
+            serde_json::json!(config.effective_mechanism(input.gene_symbol.as_deref())),
+        );
+        return mk(
+            "PVS1".to_string(),
+            EvidenceStrength::VeryStrong,
+            false,
+            true,
+            reason,
+            details,
+        );
+    }
+
     let is_lof_gene = is_lof_intolerant_gene(input, config);
     details.insert("is_lof_gene".into(), serde_json::json!(is_lof_gene));
     if let Some(ref gc) = input.gene_constraints {
@@ -433,14 +463,14 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
         }
     }
 
-    // Check gene-specific override for LOF mechanism
-    if let Some(gene) = input.gene_symbol.as_deref() {
-        if let Some(override_cfg) = config.gene_override(gene) {
-            if let Some(ref mechanism) = override_cfg.mechanism {
-                if mechanism.contains("LOF") {
-                    return true;
-                }
-            }
+    // A curated LOF mechanism enables PVS1 even where constraint does not
+    // reach the threshold. Resolved through `effective_mechanism` so the
+    // shipped table and a user's `gene_overrides` are read the same way here
+    // as in the gain-of-function gate above; otherwise a gene could be
+    // LOF-enabled by one map and GOF-blocked by the other.
+    if let Some(mechanism) = config.effective_mechanism(input.gene_symbol.as_deref()) {
+        if mechanism.to_ascii_uppercase().contains("LOF") {
+            return true;
         }
     }
 
@@ -762,5 +792,95 @@ mod tests {
         input.splice_ai = Some(SpliceAiData { ds_dl: Some(0.0), ..Default::default() });
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(r.met, "coding-null track should still carry PVS1");
+    }
+
+    // ── B7: gene-disease validity ────────────────────────────────────────
+
+    /// A frameshift in a maximally constrained gene: everything PVS1 wants,
+    /// so whatever stops it here is the gate under test and nothing else.
+    fn constrained_frameshift(gene: &str) -> ClassificationInput {
+        let mut input = make_input(vec![Consequence::FrameshiftVariant], lof_gene(), None);
+        input.gene_symbol = Some(gene.to_string());
+        input
+    }
+
+    #[test]
+    fn test_pvs1_blocked_when_gene_has_no_established_disease() {
+        let mut input = constrained_frameshift("RYK");
+        input.gene_disease_db_loaded = true; // .oga present, RYK absent from it
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated, "unknown gene-disease validity is not an assessment");
+        assert!(
+            r.summary.contains("no_established_gene_disease_relationship"),
+            "got: {}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn test_pvs1_unaffected_when_no_gene_disease_source_is_loaded() {
+        // The back-compat case that makes the gate safe to default on: without
+        // an .oga, pLI alone still carries PVS1 exactly as before.
+        let input = constrained_frameshift("RYK");
+        assert!(!input.gene_disease_db_loaded);
+        assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pvs1_fires_for_a_gene_the_source_lists() {
+        let mut input = constrained_frameshift("BRCA1");
+        input.gene_disease_db_loaded = true;
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
+        });
+        assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);
+    }
+
+    // ── B6: disease mechanism ────────────────────────────────────────────
+
+    #[test]
+    fn test_pvs1_blocked_for_a_gain_of_function_gene() {
+        // PCSK9 is the case that shows constraint cannot answer this: it is a
+        // constrained gene where the null allele *lowers* LDL. Its pLI would
+        // carry PVS1 straight through without the mechanism gate.
+        let input = constrained_frameshift("PCSK9");
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.evaluated, "we did assess it; PVS1 is not applicable");
+        assert!(
+            r.summary.contains("mechanism_not_loss_of_function"),
+            "got: {}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn test_pvs1_survives_for_a_gene_with_both_mechanisms() {
+        // RYR1: malignant hyperthermia is gain of function, but the congenital
+        // myopathies are loss of function, so a null allele is still
+        // pathogenic for one of the two diseases.
+        assert!(evaluate_pvs1(&constrained_frameshift("RYR1"), &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_curated_lof_mechanism_enables_pvs1_without_constraint_data() {
+        // The mechanism table has to work in both directions, or adding it
+        // would quietly remove the pre-existing "curated LOF enables PVS1"
+        // path that read `gene_overrides` alone.
+        let mut input = make_input(vec![Consequence::FrameshiftVariant], None, None);
+        input.gene_symbol = Some("MYGENE".to_string());
+        let mut config = AcmgConfig::default();
+        config
+            .gene_mechanisms
+            .insert("MYGENE".to_string(), "LOF".to_string());
+        assert!(evaluate_pvs1(&input, &config).met);
+    }
+
+    #[test]
+    fn test_mechanism_gate_can_be_switched_off() {
+        let config = AcmgConfig { mechanism_gates_pvs1: false, ..Default::default() };
+        assert!(evaluate_pvs1(&constrained_frameshift("PCSK9"), &config).met);
     }
 }

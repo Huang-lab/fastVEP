@@ -361,6 +361,22 @@ pub struct OmimData {
 }
 
 impl OmimData {
+    /// True when the source lists at least one disease for this gene, i.e. the
+    /// gene-disease relationship is established.
+    ///
+    /// The builder does the filtering, not this method: `clingen_gdv_to_oga.py`
+    /// keeps only Definitive, Strong and Moderate ClinGen classifications and
+    /// drops Limited, Disputed, Refuted and No Known Disease Relationship, per
+    /// the ClinGen SVI evidence threshold. So presence in the file *is* the
+    /// established relationship, and a gene curated as Disputed is
+    /// indistinguishable here from one never curated at all - both are absent.
+    /// That is the conservative direction: neither earns PVS1/PP2/PM1.
+    pub fn has_established_relationship(&self) -> bool {
+        self.phenotypes.as_ref().is_some_and(|p| {
+            p.iter().any(|entry| !entry.trim().is_empty())
+        })
+    }
+
     /// Check if any phenotype suggests autosomal dominant inheritance.
     pub fn has_dominant_inheritance(&self) -> bool {
         self.phenotypes.as_ref().is_some_and(|ps| {
@@ -479,6 +495,16 @@ pub struct ClassificationInput {
     pub gerp: Option<f64>,
     pub gene_constraints: Option<GnomadGeneData>,
     pub omim: Option<OmimData>,
+    /// Whether a gene-disease validity source (`omim.oga`, whose canonical
+    /// content is ClinGen Gene-Disease Validity) was loaded for this run.
+    ///
+    /// This is the difference between "this gene has no established disease
+    /// relationship" and "we never opened a file that could have said so", and
+    /// [`omim`](Self::omim) alone cannot tell them apart - it is `None` in both
+    /// cases. The gene-disease validity gate only fires when this is true, so
+    /// running without the source behaves exactly as fastVEP did before the
+    /// gate existed.
+    pub gene_disease_db_loaded: bool,
     /// ClinVar pathogenic variants at protein positions for this gene (from .oga).
     pub clinvar_protein: Option<ClinvarProteinData>,
     /// HGVS c. notation for the variant (e.g. "c.845G>A"). Used by the BA1
@@ -571,6 +597,7 @@ pub fn extract_classification_input(
     is_pure_insertion: Option<bool>,
     allele_supplementary: &[(String, String)],
     gene_annotations: &[&GeneAnnotation],
+    gene_disease_db_loaded: bool,
     variant_supplementary: &[SupplementaryAnnotation],
     proband_genotype: Option<GenotypeInfo>,
     mother_genotype: Option<GenotypeInfo>,
@@ -702,6 +729,7 @@ pub fn extract_classification_input(
         gerp,
         gene_constraints,
         omim,
+        gene_disease_db_loaded,
         clinvar_protein,
         // Threaded from the caller (typically `aa.hgvsc` from the annotation
         // context). When the pipeline doesn't compute HGVS — i.e. the user

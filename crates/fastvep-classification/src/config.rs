@@ -230,6 +230,52 @@ pub struct AcmgConfig {
     /// annotation databases built before the FAF columns were extracted.
     #[serde(default = "default_true")]
     pub use_filtering_af: bool,
+    /// Require an established gene-disease relationship before the criteria
+    /// that presuppose one - PVS1, PP2 and PM1 - may fire.
+    ///
+    /// Every pathogenic criterion is an argument that a variant disrupts a gene
+    /// *in a way that causes a known disease*. PVS1 makes that explicit: Abou
+    /// Tayoun 2018 opens by requiring that loss of function be an established
+    /// mechanism for the gene, which presupposes the gene causes disease at
+    /// all. PP2 and PM1 are the same argument at lower strength - "missense is
+    /// how this gene causes disease", "this residue matters for the disease".
+    /// Applied to a gene with no established relationship, all three assert a
+    /// disease association that nobody has demonstrated.
+    ///
+    /// The gate reads the loaded gene-disease source (ClinGen Gene-Disease
+    /// Validity, filtered to Definitive/Strong/Moderate; or OMIM `genemap2` for
+    /// installations still on the legacy source). A gene absent from it takes
+    /// the three criteria to NotEvaluated with
+    /// `no_established_gene_disease_relationship`, which lands the variant in
+    /// VUS - the honest answer when the gene itself is not established.
+    ///
+    /// **Degrades to a no-op when no gene-disease source is loaded**, since
+    /// "absent from a database that was never opened" is not evidence. Default
+    /// `true`.
+    #[serde(default = "default_true")]
+    pub require_gene_disease_validity: bool,
+    /// Let a curated disease mechanism decide whether PVS1 applies, instead of
+    /// only letting it enable PVS1.
+    ///
+    /// Abou Tayoun 2018 opens the PVS1 decision tree by asking whether loss of
+    /// function is a known mechanism for the gene. fastVEP used to read
+    /// [`GeneOverride::mechanism`] in one direction only - a `"LOF"` statement
+    /// could switch PVS1 on for a gene that gnomAD constraint had not flagged,
+    /// but a gain-of-function statement could not switch it off. With this
+    /// enabled a mechanism that excludes loss of function (`"GOF"`,
+    /// `"DOMINANT_NEGATIVE"`) takes PVS1 to NotApplicable.
+    ///
+    /// Constraint scores cannot substitute for this. A gain-of-function gene
+    /// under strong purifying selection has a high pLI for the same reason a
+    /// haploinsufficient one does, so pLI alone will happily carry PVS1 into a
+    /// gene where a null allele is the harmless outcome - PCSK9 being the
+    /// clearest case, where loss of function lowers LDL and is the mechanism
+    /// of an approved drug class.
+    ///
+    /// Only genes carrying an explicit mechanism statement are affected;
+    /// unknown mechanism is never read as gain of function. Default `true`.
+    #[serde(default = "default_true")]
+    pub mechanism_gates_pvs1: bool,
     /// Optional ceiling on the strength PP3 may reach from computational
     /// evidence alone. `None` (the default) means uncapped.
     ///
@@ -284,6 +330,18 @@ pub struct AcmgConfig {
     #[serde(default = "default_min_an")]
     pub min_an_for_frequency_criteria: u64,
 
+    /// Curated disease mechanism per gene, consulted by PVS1 when the gene has
+    /// no entry in [`Self::gene_overrides`].
+    ///
+    /// Values are `"LOF"`, `"GOF"`, `"DOMINANT_NEGATIVE"` or `"LOF_and_GOF"`,
+    /// matched case-insensitively. This is shipped data rather than user
+    /// policy, which is why it is a separate map: a TOML that sets one
+    /// `[gene_overrides.X]` block would otherwise silently replace the whole
+    /// curated table. `gene_overrides` still wins per gene where both name the
+    /// same one.
+    #[serde(default = "default_gene_mechanisms")]
+    pub gene_mechanisms: HashMap<String, String>,
+
     // ── Gene-specific overrides ──
     #[serde(default)]
     pub gene_overrides: HashMap<String, GeneOverride>,
@@ -309,7 +367,11 @@ pub struct Ba1Exception {
 /// Gene-specific overrides for ACMG-AMP criteria.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneOverride {
-    /// Disease mechanism: "LOF", "GOF", "LOF_and_GOF"
+    /// Disease mechanism: `"LOF"`, `"GOF"`, `"DOMINANT_NEGATIVE"` or
+    /// `"LOF_and_GOF"`, matched case-insensitively. Overrides the curated
+    /// [`AcmgConfig::gene_mechanisms`] entry for this gene. A mechanism that
+    /// excludes loss of function takes PVS1 to NotApplicable; see
+    /// [`AcmgConfig::mechanism_gates_pvs1`].
     pub mechanism: Option<String>,
     /// Override BS1 allele frequency threshold
     pub bs1_af_threshold: Option<f64>,
@@ -373,6 +435,9 @@ impl Default for AcmgConfig {
             clinvar_low_penetrance_blocks_benign_frequency: true,
             gnomad_region_flags_block_frequency: true,
             use_filtering_af: true,
+            require_gene_disease_validity: true,
+            mechanism_gates_pvs1: true,
+            gene_mechanisms: default_gene_mechanisms(),
             pp3_max_strength: None,
             exclude_self_from_clinvar_evidence: true,
             bp1_max_pathogenic_missense: 3,
@@ -404,6 +469,17 @@ impl AcmgConfig {
         self.gene_overrides
             .get(gene)
             .is_some_and(|o| o.disabled_criteria.iter().any(|c| c == criterion_code))
+    }
+
+    /// The disease mechanism to use for a gene: an explicit
+    /// [`GeneOverride::mechanism`] if the user set one, otherwise the curated
+    /// [`Self::gene_mechanisms`] entry, otherwise `None` for "not curated".
+    pub fn effective_mechanism(&self, gene: Option<&str>) -> Option<&str> {
+        let gene = gene?;
+        self.gene_overrides
+            .get(gene)
+            .and_then(|o| o.mechanism.as_deref())
+            .or_else(|| self.gene_mechanisms.get(gene).map(String::as_str))
     }
 
     /// True when the gene's population frequencies are unreliable because of
@@ -461,6 +537,71 @@ fn default_homology_unreliable_genes() -> Vec<String> {
     .map(|s| s.to_string())
     .collect()
 }
+/// Curated disease mechanisms, for the PVS1 question "is loss of function a
+/// known mechanism for this gene?" (Abou Tayoun 2018).
+///
+/// Deliberately small. Every entry is a gene where the mechanism is settled
+/// enough that a ClinGen VCEP specification, or an approved therapy built on
+/// it, depends on the distinction. Genes whose mechanism is merely unstudied
+/// are absent, and absence never blocks PVS1.
+///
+/// The `LOF_and_GOF` entries are inert - they leave PVS1 exactly as it was -
+/// and are listed anyway, because each is a gene someone will reasonably
+/// propose adding as GOF. Recording why they are not is cheaper than
+/// re-litigating them.
+fn default_gene_mechanisms() -> HashMap<String, String> {
+    [
+        // ── Gain of function: a null allele is not the disease mechanism ──
+        // LoF lowers LDL and is protective; it is the mechanism of the
+        // PCSK9-inhibitor drug class. Flagged in the round-2 review.
+        ("PCSK9", "GOF"),
+        // Constitutive MDA5 signalling → Aicardi-Goutières 7 / Singleton-Merten.
+        ("IFIH1", "GOF"),
+        // Recurrent de novo missense (p.Arg87) → DEE65 by altered function.
+        ("CYFIP2", "GOF"),
+        // Cardiac conduction disease with dilated cardiomyopathy.
+        ("TNNI3K", "GOF"),
+        // Inflammasome activation → cryopyrin-associated periodic syndromes.
+        ("NLRP3", "GOF"),
+        // ALS by toxic gain of function; heterozygous null carriers are healthy.
+        ("SOD1", "GOF"),
+        // Prion disease by misfolding; heterozygous nulls are healthy.
+        ("PRNP", "GOF"),
+        // RASopathies: activating missense in the RAS-MAPK cascade. The ClinGen
+        // RASopathy VCEP does not apply PVS1 to these genes.
+        ("HRAS", "GOF"),
+        ("KRAS", "GOF"),
+        ("NRAS", "GOF"),
+        ("BRAF", "GOF"),
+        ("RAF1", "GOF"),
+        ("MAP2K1", "GOF"),
+        ("MAP2K2", "GOF"),
+        ("SOS1", "GOF"),
+        ("RIT1", "GOF"),
+        ("SHOC2", "GOF"),
+        ("PTPN11", "GOF"),
+        // ── Dominant negative: also not loss of function ──
+        // ClinGen MYH7 specification (Kelly 2018): PVS1 is not applicable,
+        // truncating variants are not established as causing HCM.
+        ("MYH7", "DOMINANT_NEGATIVE"),
+        // ── Both mechanisms: PVS1 still applies, listed for the record ──
+        // Malignant hyperthermia is GoF; the congenital myopathies include
+        // recessive LoF.
+        ("RYR1", "LOF_and_GOF"),
+        // Brugada is LoF, LQT3 is GoF.
+        ("SCN5A", "LOF_and_GOF"),
+        // LQT1 is LoF, short-QT/atrial fibrillation is GoF.
+        ("KCNQ1", "LOF_and_GOF"),
+        // McCune-Albright is GoF, pseudohypoparathyroidism is LoF.
+        ("GNAS", "LOF_and_GOF"),
+        // The achondroplasia group is GoF, CATSHL syndrome is LoF.
+        ("FGFR3", "LOF_and_GOF"),
+    ]
+    .iter()
+    .map(|(g, m)| (g.to_string(), m.to_string()))
+    .collect()
+}
+
 fn default_pp3_supporting() -> f64 { 0.644 }
 fn default_pp3_moderate() -> f64 { 0.773 }
 fn default_pp3_strong() -> f64 { 0.932 }
@@ -528,6 +669,41 @@ mod tests {
         assert_eq!(cfg.effective_bs1_threshold(Some("BRCA1")), 0.001);
         assert_eq!(cfg.effective_bs1_threshold(Some("TP53")), 0.01);
         assert_eq!(cfg.effective_bs1_threshold(None), 0.01);
+    }
+
+    #[test]
+    fn test_curated_mechanisms_ship_by_default() {
+        let cfg = AcmgConfig::default();
+        assert_eq!(cfg.effective_mechanism(Some("PCSK9")), Some("GOF"));
+        assert_eq!(cfg.effective_mechanism(Some("MYH7")), Some("DOMINANT_NEGATIVE"));
+        assert_eq!(cfg.effective_mechanism(Some("RYR1")), Some("LOF_and_GOF"));
+        assert_eq!(cfg.effective_mechanism(Some("BRCA1")), None);
+        assert_eq!(cfg.effective_mechanism(None), None);
+        assert!(cfg.require_gene_disease_validity);
+        assert!(cfg.mechanism_gates_pvs1);
+    }
+
+    #[test]
+    fn test_gene_overrides_mechanism_wins_over_the_curated_table() {
+        let cfg: AcmgConfig = toml::from_str(
+            "[gene_overrides.PCSK9]\nmechanism = \"LOF\"\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.effective_mechanism(Some("PCSK9")), Some("LOF"));
+        // ... and the rest of the shipped table survives that override.
+        assert_eq!(cfg.effective_mechanism(Some("MYH7")), Some("DOMINANT_NEGATIVE"));
+    }
+
+    #[test]
+    fn test_gene_mechanisms_table_can_be_replaced_wholesale() {
+        // Documented behaviour in ACMG.md: naming the table in TOML replaces
+        // it, exactly as `homology_unreliable_genes` and `ba1_exceptions` do.
+        let cfg: AcmgConfig = toml::from_str(
+            "[gene_mechanisms]\nMYGENE = \"GOF\"\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.effective_mechanism(Some("MYGENE")), Some("GOF"));
+        assert_eq!(cfg.effective_mechanism(Some("PCSK9")), None);
     }
 
     #[test]
