@@ -151,6 +151,46 @@ when absent, so upgrading fastVEP without rebuilding the annotation database
 cannot change a call. Two switches cover the judgement calls:
 `gnomad_region_flags_block_frequency` and `use_filtering_af`.
 
+## Threshold sweeps
+
+Thresholds in the classifier are guideline values wherever a guideline states one
+(REVEL bands from Pejaver 2022, SpliceAI from Walker 2023, BA1 at 5%). Where no
+guideline states one, the value should come from measurement rather than from
+convention. `sweep_bs2_thresholds.py` runs the full benchmark once per setting
+(78 s each) and reports what each choice costs.
+
+### BS2 prevalence bar (swept 2026-08-12)
+
+| bar | BS2 fires | false-benign | correct benign | marginal cost per false-benign avoided |
+|---|---:|---:|---:|---|
+| 1e-6 | 63,285 | 54 | 139,270 | |
+| 1e-5 (old default) | 51,875 | 45 | 136,014 | 362 |
+| 5e-5 | 42,219 | 41 | 133,949 | 516 |
+| 1e-4 | 37,808 | 40 | 133,407 | 542 |
+| **1e-3 (new default)** | **27,290** | **38** | **132,815** | **296** |
+
+No knee, so the data fixes the exchange rate but not the choice. The bar is a
+maximum credible disease prevalence, so it has to cover the most prevalent
+Mendelian conditions rather than the typical one; hearing loss, alpha-1
+antitrypsin deficiency and familial Mediterranean fever sit near 1 in 1,000. A
+false-benign call is a missed diagnosis and a lost benign call is a VUS, so the
+asymmetry favours the safer bar, and the last step is also the cheapest.
+Reasoning in full in [`docs/ACMG.md`](../../docs/ACMG.md#choosing-the-bs2-prevalence-bar).
+
+Two knobs measured at the same time and found inert:
+
+- `bs2_ad_min_ac`: 5 to 100 removes 45 BS2 firings on pathogenic truth and
+  changes false-benign and opposite-direction counts by **zero**. Firing is not
+  deciding, and an earlier claim here that this was the weakest threshold was
+  based on firing counts and was wrong.
+- `bs2_ar_min_hom`: 1 versus 10 is identical on every metric. Subsumed by the
+  prevalence test; retained only as a floor for configs that lower the bar.
+
+Swept against `sa_db_noclinvar`, which was stable while the gnomAD rebuild ran
+and removes the ClinVar-derived criteria, so the fit is less circular. Absolute
+numbers therefore differ from the v9 table below; the curve is the point. To be
+re-confirmed on v10.
+
 ## Headline metrics per run
 
 |                            |     v1     |     v6     |     v7     |     v8     |  v9 (CI)   |  v9 (LOO)  |

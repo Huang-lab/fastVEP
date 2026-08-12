@@ -569,6 +569,38 @@ mod tests {
     }
 
     #[test]
+    fn test_bs2_prevalence_bar_default_is_the_measured_one() {
+        // The bar was chosen from a sweep of the full ClinVar 2-star+
+        // benchmark, not from convention, and the value is quoted in
+        // docs/ACMG.md and the config doc comment. Changing it silently would
+        // leave those claims wrong, so pin it here: move it deliberately or
+        // not at all.
+        assert_eq!(AcmgConfig::default().bs2_hom_prevalence_threshold, 1e-3);
+    }
+
+    #[test]
+    fn test_bs2_common_mendelian_disorder_is_not_called_tolerant() {
+        // The case the 1e-3 bar exists for. A recessive disorder with a
+        // prevalence near 1 in 1,000 - hearing loss, alpha-1 antitrypsin
+        // deficiency, familial Mediterranean fever in a high-prevalence
+        // population - will genuinely have affected homozygotes in gnomAD.
+        // At 500 homozygotes among 730 K the observation is still consistent
+        // with disease rather than with tolerance, and a 1e-5 bar would have
+        // called it benign evidence.
+        let input = recessive_input(500, 1_460_000);
+        assert!(!evaluate_bs2(&input, &AcmgConfig::default()).met);
+
+        let permissive = AcmgConfig {
+            bs2_hom_prevalence_threshold: 1e-5,
+            ..Default::default()
+        };
+        assert!(
+            evaluate_bs2(&input, &permissive).met,
+            "the old bar is what made this look like tolerance"
+        );
+    }
+
+    #[test]
     fn test_bs2_ar_single_homozygote_in_large_cohort_does_not_fire() {
         // gnomAD v4 scale (730 K individuals). One homozygote is what you
         // expect for a late-onset or reduced-penetrance recessive disorder, so
@@ -580,21 +612,22 @@ mod tests {
 
     #[test]
     fn test_bs2_ar_many_homozygotes_in_large_cohort_fires() {
-        // 30 homozygotes among 730 K individuals puts the 95 % lower bound on
-        // the homozygote frequency above the 1e-5 prevalence bar.
-        let r = evaluate_bs2(&recessive_input(30, 1_460_000), &AcmgConfig::default());
-        assert!(r.met, "30 homozygotes among 730 K individuals should fire BS2");
+        // 1,000 homozygotes among 730 K individuals puts the 95 % lower bound
+        // on their frequency above the 1e-3 prevalence bar, i.e. above the
+        // prevalence of the most common Mendelian disorders.
+        let r = evaluate_bs2(&recessive_input(1_000, 1_460_000), &AcmgConfig::default());
+        assert!(r.met, "1,000 homozygotes among 730 K individuals should fire BS2");
         assert!(r.summary.contains("tolerated in healthy adults"));
     }
 
     #[test]
     fn test_bs2_ar_scales_with_cohort_size() {
         // The same raw count means different things at different cohort sizes.
-        // 3 homozygotes among 2 K individuals is a homozygote frequency far
+        // 3 homozygotes among 500 individuals is a homozygote frequency far
         // above any Mendelian prevalence; 3 among 730 K is not.
-        let small = evaluate_bs2(&recessive_input(3, 4_000), &AcmgConfig::default());
+        let small = evaluate_bs2(&recessive_input(3, 1_000), &AcmgConfig::default());
         let large = evaluate_bs2(&recessive_input(3, 1_460_000), &AcmgConfig::default());
-        assert!(small.met, "3 homozygotes among 2 K individuals should fire BS2");
+        assert!(small.met, "3 homozygotes among 500 individuals should fire BS2");
         assert!(
             !large.met,
             "3 homozygotes among 730 K individuals should not fire BS2"
@@ -660,7 +693,7 @@ mod tests {
         // An autosomal record carries no XY columns, so the individual count
         // must stay AN/2 and the outcome must match the pre-hemizygote
         // behaviour exactly.
-        let with_hom = evaluate_bs2(&recessive_input(30, 1_460_000), &AcmgConfig::default());
+        let with_hom = evaluate_bs2(&recessive_input(1_000, 1_460_000), &AcmgConfig::default());
         assert!(with_hom.met);
         assert!(with_hom.summary.contains("homozygote"));
         assert!(!with_hom.summary.contains("hemizygote"));

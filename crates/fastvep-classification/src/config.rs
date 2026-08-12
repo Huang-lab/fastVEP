@@ -160,8 +160,35 @@ pub struct AcmgConfig {
     /// with a bare count: one homozygote among 730 K individuals and one among
     /// 5 K are very different observations, and Richards 2015 BS2 asks for an
     /// observation "in a healthy adult", not for any observation at all.
-    /// Default 1e-5 (a 1-in-100,000 disorder). Gene-specific prevalence from a
-    /// VCEP specification should override this per gene once that table lands.
+    ///
+    /// **Default 1e-3, chosen from measurement rather than convention.** A
+    /// sweep of the full 673,660-variant ClinVar 2-star+ benchmark
+    /// (`data/benchmark/scripts/sweep_bs2_thresholds.py`) gives:
+    ///
+    /// | bar | false-benign calls | correct benign calls |
+    /// |---|---|---|
+    /// | 1e-6 | 54 | 139,270 |
+    /// | 1e-5 | 45 | 136,014 |
+    /// | 1e-4 | 40 | 133,407 |
+    /// | 1e-3 | 38 | 132,815 |
+    ///
+    /// The curve has no knee, so the data alone does not pick a value; the
+    /// choice rests on what the parameter means and on which error is worse.
+    /// It is a *maximum credible disease prevalence*, so it has to cover the
+    /// most prevalent Mendelian conditions BS2 is applied to, not the typical
+    /// one. Hearing loss, alpha-1 antitrypsin deficiency and familial
+    /// Mediterranean fever in high-prevalence populations all sit near
+    /// 1 in 1,000, and a 1e-5 bar is two orders of magnitude too tight for
+    /// them - which is exactly the failure a medical geneticist raised in the
+    /// round-2 review. A false-benign call is a missed diagnosis, whereas a
+    /// lost benign call becomes a VUS and costs triage effort, so the
+    /// asymmetry favours the safer bar. The step from 1e-4 to 1e-3 is also the
+    /// cheapest on the curve, at 296 correct benign calls per false-benign
+    /// avoided against 542 for the step before it.
+    ///
+    /// Raise or lower it freely: a lab willing to trade the other way sets a
+    /// smaller value, and a gene-specific prevalence from a VCEP
+    /// specification should override it per gene once that table lands.
     #[serde(default = "default_bs2_prevalence")]
     pub bs2_hom_prevalence_threshold: f64,
     /// Genes where population allele frequencies cannot be trusted because
@@ -341,7 +368,7 @@ impl Default for AcmgConfig {
             pm2_absent_when_no_record: true,
             bs2_ad_min_ac: 5,
             bs2_ar_min_hom: 2,
-            bs2_hom_prevalence_threshold: 1e-5,
+            bs2_hom_prevalence_threshold: 1e-3,
             homology_unreliable_genes: default_homology_unreliable_genes(),
             clinvar_low_penetrance_blocks_benign_frequency: true,
             gnomad_region_flags_block_frequency: true,
@@ -411,7 +438,7 @@ fn default_pm2_ad() -> f64 { 0.0 }
 fn default_pm2_ar() -> f64 { 0.00007 }
 fn default_bs2_ad_min_ac() -> u64 { 5 }
 fn default_bs2_ar_min_hom() -> u64 { 2 }
-fn default_bs2_prevalence() -> f64 { 1e-5 }
+fn default_bs2_prevalence() -> f64 { 1e-3 }
 fn default_bp1_max_pathogenic_missense() -> u32 { 3 }
 
 /// Genes whose gnomAD frequencies are unreliable because of paralogue,

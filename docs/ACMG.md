@@ -116,10 +116,17 @@ min_an_for_frequency_criteria = 2000  # BA1/BS1 require AN ≥ this; below → N
 bs2_ar_min_hom = 2                      # Absolute floor on observed individuals with no
                                         # functional copy (homozygotes, plus hemizygotes on
                                         # a non-PAR sex-chromosome site)
-bs2_hom_prevalence_threshold = 1e-5     # BS2 fires only when the 95% lower bound on their
+bs2_hom_prevalence_threshold = 1e-3     # BS2 fires only when the 95% lower bound on their
                                         # frequency exceeds this prevalence bar, so the
                                         # criterion scales with cohort size rather than with
-                                        # a bare count
+                                        # a bare count. Chosen by measurement, not convention
+                                        # - see "Choosing the BS2 prevalence bar" below.
+
+# NOTE: `bs2_ar_min_hom` is a belt-and-braces floor, not an active knob. A sweep of the
+# full benchmark found it inert at the default prevalence bar: values from 1 to 10 give
+# identical false-benign and opposite-direction counts, because the prevalence test
+# subsumes it. It is kept so that a config lowering the prevalence bar still cannot fire
+# BS2 on a single observation.
 
 # ── Genes where population frequencies cannot be trusted (Mandelker 2016, PMID 27228465) ──
 # BA1/BS1/BS2/PM2 all report NotEvaluated for these. Specifying the list in TOML REPLACES
@@ -187,6 +194,57 @@ disabled_criteria = ["BP1"]
 # [gene_overrides.GENE.strength_overrides]
 # PM2 = "Moderate"   # Override strength for specific criteria
 ```
+
+## Choosing the BS2 prevalence bar
+
+`bs2_hom_prevalence_threshold` is the one threshold in the classifier that was set by
+measurement rather than by convention, so it is worth showing the working.
+
+BS2 fires on a recessive or X-linked gene only when the 95% lower confidence bound on the
+frequency of individuals with no functional copy exceeds this bar.
+The bar is therefore a **maximum credible disease prevalence**: the point above which the
+observed null individuals cannot all be explained by the disorder itself.
+
+Sweeping it across the full 673,660-variant ClinVar 2-star+ benchmark
+([`sweep_bs2_thresholds.py`](../data/benchmark/scripts/sweep_bs2_thresholds.py)) gives:
+
+| bar | BS2 fires | false-benign calls | correct benign calls | marginal cost |
+|---|---:|---:|---:|---|
+| 1e-6 | 63,285 | 54 | 139,270 | |
+| 1e-5 | 51,875 | 45 | 136,014 | 362 correct benign lost per false-benign avoided |
+| 5e-5 | 42,219 | 41 | 133,949 | 516 |
+| 1e-4 | 37,808 | 40 | 133,407 | 542 |
+| **1e-3** | **27,290** | **38** | **132,815** | **296** |
+
+Two things follow.
+
+**The data does not pick a value by itself.** The curve is smooth, with no knee, so every
+setting is a defensible point on a trade. What the sweep does establish is the exchange
+rate, and that no setting of this or any other BS2 knob drives false-benign calls below 38;
+BS2 appears in only 9 of the 45 at the old default, so the residual is not a threshold
+problem at all.
+
+**The choice rests on the parameter's meaning and on which error is worse.** As a maximum
+credible prevalence, the bar has to cover the most prevalent Mendelian conditions BS2 is
+applied to, not the typical one. Hearing loss, alpha-1 antitrypsin deficiency and familial
+Mediterranean fever in high-prevalence populations all sit near 1 in 1,000, so a 1e-5 bar is
+two orders of magnitude too tight for exactly the disorders a medical geneticist flagged in
+review. A false-benign call is a missed diagnosis; a lost benign call becomes a VUS and
+costs triage effort. That asymmetry favours the safer bar, and the step to 1e-3 is also the
+cheapest on the curve.
+
+Hence the 1e-3 default. It is a plain config value: a lab that weighs VUS burden more
+heavily sets a smaller one, and a gene-specific prevalence from a VCEP specification should
+override it per gene once that table exists.
+
+Two related knobs were measured at the same time and found inert, which is worth knowing
+before spending effort on them:
+
+- `bs2_ad_min_ac` (dominant branch) barely affects the final call. Raising it from 5 to 100
+  removes 45 BS2 firings on pathogenic truth but changes false-benign and
+  opposite-direction counts by zero. A criterion firing is not a criterion deciding.
+- `bs2_ar_min_hom` is fully subsumed by the prevalence test: 1 versus 10 gives identical
+  results. It is retained only as a floor for configs that lower the prevalence bar.
 
 ## Required Data Sources
 
@@ -267,7 +325,7 @@ When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2
 |---|---|---|---|---|
 | **BA1** | Standalone | AF > 5%, AN ≥ 2,000 (gnomAD v4 SVI March 2024). Tested against the **filtering allele frequency** (95% CI lower bound, max across ancestry groups; Whiffin 2017) where the database provides it, else the population maximum. 9-variant Ghosh 2018 exception list (HFE c.845G>A, MEFV common, BTD c.1330G>C, etc.) blocks BA1 regardless of AF | gnomAD population AFs + FAF + AN + HGVSc | Yes |
 | **BS1** | Strong | Cross-population AF > expected, read from the same statistic as BA1 (filtering AF where available, else population maximum). NotEvaluated for homology-confounded genes, for gnomAD-flagged `segdup`/`lcr` sites, for non-PASS gnomAD records, and for ClinVar low-penetrance / risk alleles | gnomAD per-population AFs + FAF + QC flags + ClinVar terms | Yes |
-| **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR / X-linked counts individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and requires ≥ `bs2_ar_min_hom` of them **and** a 95% lower bound on their frequency above `bs2_hom_prevalence_threshold`, so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two such individuals in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance | gnomAD hom + hemizygote counts + AN + inheritance | Yes |
+| **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR / X-linked counts individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and requires ≥ `bs2_ar_min_hom` of them **and** a 95% lower bound on their frequency above `bs2_hom_prevalence_threshold` (default 1e-3, set by measurement - see [Choosing the BS2 prevalence bar](#choosing-the-bs2-prevalence-bar)), so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two such individuals in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance | gnomAD hom + hemizygote counts + AN + inheritance | Yes |
 | **BS3** | Strong | Functional studies show no damage | External data | No |
 | **BS4** | Strong | Lack of segregation | Pedigree data | No |
 | **BP1** | Supporting | Missense in a gene where primarily truncating variants cause disease. Requires both the constraint signature (high pLI, low misZ) **and** a mutation spectrum without an established missense mechanism (< `bp1_max_pathogenic_missense` pathogenic missense in the ClinVar protein index) | pLI + misZ + ClinVar protein index | Yes |
