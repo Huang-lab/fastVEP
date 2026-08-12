@@ -1030,14 +1030,13 @@ mod tests {
         assert!(!result.met);
     }
 
-    #[test]
-    fn test_pm2_ad_gene_with_one_allele_does_not_fire() {
-        // AD gene + any AC > 0 → not absent → PM2 must not fire under SVI v1.0.
+    /// A dominant-inheritance variant at the given gnomAD allele frequency.
+    fn dominant_at(af: f64, ac: u64) -> ClassificationInput {
         let mut input = make_input(
             vec![Consequence::MissenseVariant],
             Some(GnomadData {
-                all_af: Some(0.000005),
-                all_ac: Some(1),
+                all_af: Some(af),
+                all_ac: Some(ac),
                 ..Default::default()
             }),
         );
@@ -1045,8 +1044,39 @@ mod tests {
             mim_number: None,
             phenotypes: Some(vec!["Some disease, autosomal dominant".to_string()]),
         });
-        let result = evaluate_pm2(&input, &AcmgConfig::default());
-        assert!(!result.met);
+        input
+    }
+
+    #[test]
+    fn test_pm2_ad_gene_singleton_is_extremely_rare_not_present() {
+        // A single allele among gnomAD v4's ~800,000 individuals is what PM2
+        // was asking about when it said "absent from controls" of a cohort an
+        // order of magnitude smaller. Strict absence used to reject this.
+        let result = evaluate_pm2(&dominant_at(0.000005, 1), &AcmgConfig::default());
+        assert!(result.met, "got: {}", result.summary);
+    }
+
+    #[test]
+    fn test_pm2_ad_gene_above_the_bar_still_does_not_fire() {
+        // The bar has to keep rejecting something, or it is not a bar.
+        let result = evaluate_pm2(&dominant_at(0.0005, 400), &AcmgConfig::default());
+        assert!(!result.met, "got: {}", result.summary);
+    }
+
+    #[test]
+    fn test_pm2_ad_default_bar_is_the_measured_one() {
+        // Pinned so the default cannot drift away from the figure the config
+        // doc comment and docs/ACMG.md both quote.
+        assert!((AcmgConfig::default().pm2_ad_af_threshold - 0.00004).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_pm2_strict_absence_remains_available() {
+        // The literal Richards 2015 reading stays one config line away, for a
+        // lab that wants it.
+        let strict = AcmgConfig { pm2_ad_af_threshold: 0.0, ..Default::default() };
+        assert!(!evaluate_pm2(&dominant_at(0.000005, 1), &strict).met);
+        assert!(evaluate_pm2(&dominant_at(0.0, 0), &strict).met);
     }
 
     #[test]

@@ -63,9 +63,22 @@ build_one() {
 export -f build_one
 export ROOT SRC_BASE EXTRACTS SA_DB REGIONS
 
+# gnomAD v4 releases no chrMT file for exomes (mitochondrial calls ship as a
+# separate release with a different schema), so MT is not in this list even
+# though clinvar_2star_regions.bed contains chrMT rows.
 CHROMS=${@:-1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X Y}
 
 # 4-way parallel
 echo "$CHROMS" | tr ' ' '\n' | xargs -n 1 -P 4 bash -c 'build_one "$@"' _
+
+# An earlier v1 run did produce an empty gnomad_chrMT.osa. Nothing above can
+# ever replace it, and the loader accepts .osa and .osa2 side by side, so it
+# would linger as a v1 gnomAD source in a directory this script exists to make
+# v2. Retire it here rather than leaving it to be rediscovered.
+if [ -e "${SA_DB}/gnomad_chrMT.osa" ]; then
+  echo "Removing gnomad_chrMT.osa: gnomAD v4 has no chrMT exomes release to rebuild it from"
+  rm -f "${SA_DB}/gnomad_chrMT.osa" "${SA_DB}/gnomad_chrMT.osa.idx"
+fi
+
 echo "==> All done"
 ls -la "$SA_DB"/gnomad_chr*.osa2 | head -30

@@ -79,7 +79,11 @@ ba1_af_threshold = 0.05        # BA1: benign standalone (>5% in any population)
 bs1_af_threshold = 0.01        # BS1: benign strong (greater than expected for disorder)
 
 # ── PM2 inheritance-aware thresholds (ClinGen SVI v1.0, Sept 2020) ──
-pm2_ad_af_threshold = 0.0      # PM2: AD/unknown — strict absence (AC=0 AND AF=0)
+pm2_ad_af_threshold = 0.00004  # PM2: AD/unknown — "extremely rare", not strictly absent.
+                               # Chosen by measurement and sits inside the range published
+                               # VCEP specs use for dominant genes; see "Choosing the PM2
+                               # bar for dominant genes" below. Set 0.0 for the literal
+                               # Richards 2015 strict-absence reading.
 pm2_ar_af_threshold = 0.00007  # PM2: AR — AF ≤ 0.00007 (0.007%)
 pm2_af_threshold = 0.0001      # Legacy single-threshold field, retained for back-compat
                                # with pre-PR4 configs; not consulted in the default path.
@@ -227,7 +231,7 @@ The bar is therefore a **maximum credible disease prevalence**: the point above 
 observed null individuals cannot all be explained by the disorder itself.
 
 Sweeping it across the full 673,660-variant ClinVar 2-star+ benchmark
-([`sweep_bs2_thresholds.py`](../data/benchmark/scripts/sweep_bs2_thresholds.py)) gives:
+([`sweep_acmg_thresholds.py`](../data/benchmark/scripts/sweep_acmg_thresholds.py)) gives:
 
 | bar | BS2 fires | false-benign calls | correct benign calls | marginal cost |
 |---|---:|---:|---:|---|
@@ -266,6 +270,57 @@ before spending effort on them:
   opposite-direction counts by zero. A criterion firing is not a criterion deciding.
 - `bs2_ar_min_hom` is fully subsumed by the prevalence test: 1 versus 10 gives identical
   results. It is retained only as a floor for configs that lower the prevalence bar.
+
+## Choosing the PM2 bar for dominant genes
+
+Richards 2015 words PM2 as "absent from controls (or at extremely low frequency if
+recessive)", and fastVEP read that literally: `pm2_ad_af_threshold = 0.0`, so a variant in
+a dominant or uncharacterised-inheritance gene failed PM2 if gnomAD had seen it even once.
+
+That reading does not survive the change in denominator.
+The 2015 text was written against ExAC's 60,706 exomes.
+gnomAD v4 carries 730,947 exomes plus 76,215 genomes, so "absent" now means absent from a
+cohort more than twelve times larger, which is a far stricter test than the authors were
+specifying.
+It is also the wrong test: a singleton among 800,000 people **is** the "not seen in the
+general population" that PM2 was asking about.
+
+ClinGen SVI moved the same way, downgrading PM2 to Supporting in 2020 because it had been
+over-weighted, and the VCEP specifications written since give dominant genes explicit
+non-zero bars, clustered between 1e-5 and 1e-4 (the Cardiomyopathy VCEP's MYH7
+specification uses 4e-5; the PTEN VCEP uses 1e-5).
+
+Sweeping the key alone over the ClinVar 2-star+ benchmark:
+
+| bar | pathogenic recall | false-pathogenic calls | benign recall |
+|---|---:|---:|---:|
+| 0 (strict absence) | 37.8 % | 1 | 56.3 % |
+| 1e-6 | 46.2 % | 1 | 56.3 % |
+| 5e-6 | 51.8 % | 2 | 56.3 % |
+| 1e-5 | 54.0 % | 2 | 56.3 % |
+| 2e-5 | 55.7 % | 2 | 56.3 % |
+| **4e-5** | **56.8 %** | **2** | **56.3 %** |
+| 1e-4 | 57.5 % | 2 | 56.3 % |
+| 2e-4 | 57.6 % | 3 | 56.3 % |
+
+Unlike the BS2 curve, this one has a knee.
+Recall climbs 19 points between strict absence and 4e-5 and then flattens; the last 0.8
+points cost a further 2.5-fold loosening.
+Benign recall never moves, PM2 being pathogenic-direction only, which is the sanity check
+that the knob is doing what it claims.
+
+**4e-5** is the choice: it is at the knee, it costs one additional false-pathogenic call
+on the sweep sample, and it sits inside the range VCEPs have actually published for
+dominant genes rather than being a number of our own.
+Going further would buy a fraction of a point while taking us past any published VCEP
+specification.
+
+The literal 2015 reading remains one line away for a lab that wants it
+(`pm2_ad_af_threshold = 0.0`).
+
+**Caveat, the same one that applies to BS2.** ClinVar significance is itself assigned
+partly from gnomAD frequency, so a frequency threshold tuned against ClinVar is partly
+fitted to its own input. The curve's shape is the useful output, not its absolute level.
 
 ## Required Data Sources
 
@@ -328,7 +383,7 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 | **PS3** | Strong | Functional studies show damaging | External data | No |
 | **PS4** | Strong | Prevalence in affected >> controls | Case-control statistics (NotEvaluated by default; ClinVar review-stars proxy is invalid per SVI, opt in via `use_clinvar_stars_as_ps4_proxy`) | No (Partial in proxy mode) |
 | **PM1** | Moderate | Mutational hotspot / critical domain. NotEvaluated where the gene has no established gene-disease relationship: a cluster of assertions in an uncurated gene is not evidence of a critical region | ClinVar protein density + ClinGen GDV | Yes (with .oga) |
-| **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown requires strict absence (AC=0); AR fires at AF ≤ 0.00007 (SVI v1.0). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
+| **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown fires at AF ≤ 0.00004, AR at AF ≤ 0.00007 (SVI v1.0 plus published VCEP practice; see "Choosing the PM2 bar for dominant genes"). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
 | **PM3** | Supporting → Very Strong* | In trans with pathogenic (recessive); points-based per SVI v1.0 (in-trans/P=1.0pt, in-trans/LP=0.5pt, unphased/P=0.5pt, unphased/LP=0.25pt, hom=0.5pt cap 1.0) | Phased VCF + ClinVar | Yes (with trio) |
 | **PM4** | Moderate | Protein length change (in-frame/stop-loss) | Consequence type | Yes |
 | **PM5** | Moderate | Different pathogenic missense at same residue | ClinVar protein index | Yes (with .oga) |

@@ -46,8 +46,41 @@ pub struct AcmgConfig {
     /// TOML configs continue to deserialize.
     #[serde(default = "default_pm2")]
     pub pm2_af_threshold: f64,
-    /// PM2: AF threshold for autosomal-dominant or unknown-inheritance genes
-    /// per ClinGen SVI v1.0 (Sept 2020). Default 0.0 → strict absence (AC = 0).
+    /// PM2: AF threshold for autosomal-dominant or unknown-inheritance genes.
+    /// Default 4e-5, i.e. "extremely rare" rather than strictly absent.
+    ///
+    /// Richards 2015 words PM2 as "absent from controls (or at extremely low
+    /// frequency if recessive)", and fastVEP read that literally: `0.0`, so a
+    /// dominant variant seen even once anywhere in gnomAD failed PM2. That
+    /// reading does not survive the change in denominator. The 2015 text was
+    /// written against ExAC's 60,706 exomes; gnomAD v4 carries 730,947 exomes
+    /// plus 76,215 genomes. "Absent" from a cohort twelve times larger is a
+    /// far stricter test than the authors were specifying, and it is the wrong
+    /// test: a singleton among 800,000 people *is* the "not seen in the general
+    /// population" that PM2 was asking about.
+    ///
+    /// ClinGen SVI moved the same way, downgrading PM2 to Supporting in 2020
+    /// because it had been over-weighted, and the VCEP specifications written
+    /// since then give dominant genes explicit non-zero bars, clustered between
+    /// 1e-5 and 1e-4 (the Cardiomyopathy VCEP's MYH7 specification uses 4e-5;
+    /// the PTEN VCEP uses 1e-5). 4e-5 sits inside that published range rather
+    /// than being a number of our own.
+    ///
+    /// Measured over the ClinVar 2-star+ benchmark, sweeping this key alone:
+    ///
+    /// | bar | pathogenic recall | false-pathogenic | benign recall |
+    /// |---|---:|---:|---:|
+    /// | 0 (strict absence) | 37.8 % | 1 | 56.3 % |
+    /// | 1e-6 | 46.2 % | 1 | 56.3 % |
+    /// | 1e-5 | 54.0 % | 2 | 56.3 % |
+    /// | **4e-5** | **56.8 %** | **2** | **56.3 %** |
+    /// | 1e-4 | 57.5 % | 2 | 56.3 % |
+    /// | 2e-4 | 57.6 % | 3 | 56.3 % |
+    ///
+    /// The curve flattens after 4e-5 - the last 0.8 pp costs a 2.5× loosening -
+    /// and benign recall never moves, PM2 being pathogenic-direction only.
+    /// Going further than 4e-5 would also take us past what any VCEP has
+    /// published for a dominant gene, to buy a fraction of a point.
     #[serde(default = "default_pm2_ad")]
     pub pm2_ad_af_threshold: f64,
     /// PM2: AF threshold for autosomal-recessive genes per ClinGen SVI v1.0
@@ -409,7 +442,7 @@ impl Default for AcmgConfig {
             ba1_af_threshold: 0.05,
             bs1_af_threshold: 0.01,
             pm2_af_threshold: 0.0001,
-            pm2_ad_af_threshold: 0.0,
+            pm2_ad_af_threshold: default_pm2_ad(),
             pm2_ar_af_threshold: 0.00007,
             pp3_revel_supporting: 0.644,
             pp3_revel_moderate: 0.773,
@@ -510,7 +543,7 @@ impl AcmgConfig {
 fn default_ba1() -> f64 { 0.05 }
 fn default_bs1() -> f64 { 0.01 }
 fn default_pm2() -> f64 { 0.0001 }
-fn default_pm2_ad() -> f64 { 0.0 }
+fn default_pm2_ad() -> f64 { 0.00004 }
 fn default_pm2_ar() -> f64 { 0.00007 }
 fn default_bs2_ad_min_ac() -> u64 { 5 }
 fn default_bs2_ar_min_hom() -> u64 { 2 }
