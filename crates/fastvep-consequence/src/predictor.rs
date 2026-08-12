@@ -44,6 +44,10 @@ pub struct PredictionResult {
 }
 
 /// The consequence prediction engine.
+/// A ref/alt pair rendered for display: amino acids (`("T", "M")`) or codons
+/// (`("aCg", "aTg")`). `None` when the change does not produce one.
+pub type DisplayPair = Option<(String, String)>;
+
 pub struct ConsequencePredictor {
     pub upstream_distance: u64,
     pub downstream_distance: u64,
@@ -269,11 +273,10 @@ impl ConsequencePredictor {
             }
             // VEP excludes splice_region_variant when a more specific splice term is present:
             // splice_donor_region_variant or splice_donor_5th_base_variant
-            if !is_donor_5th && !is_donor_region {
-                if splice::is_splice_region(transcript, var_start) {
+            if !is_donor_5th && !is_donor_region
+                && splice::is_splice_region(transcript, var_start) {
                     consequences.push(Consequence::SpliceRegionVariant);
                 }
-            }
         }
 
         // 5. Coding vs non-coding transcript
@@ -372,7 +375,7 @@ impl ConsequencePredictor {
         transcript: &Transcript,
         cds_start: Option<u64>,
         cds_end: Option<u64>,
-    ) -> Option<(Consequence, Option<(String, String)>, Option<(String, String)>)> {
+    ) -> Option<(Consequence, DisplayPair, DisplayPair)> {
         let cds_pos_start = cds_start?;
 
         let ref_len = ref_allele.len();
@@ -395,7 +398,7 @@ impl ConsequencePredictor {
                 }
             } else {
                 let len_diff = (ref_len as i64 - alt_len as i64).unsigned_abs() as usize;
-                if len_diff % 3 != 0 {
+                if !len_diff.is_multiple_of(3) {
                     (Consequence::FrameshiftVariant, true)
                 } else if ref_len > alt_len {
                     (Consequence::InframeDeletion, false)
@@ -544,7 +547,7 @@ impl ConsequencePredictor {
         ref_allele: &Allele,
         alt_allele: &Allele,
         is_frameshift: bool,
-    ) -> (Option<(String, String)>, Option<(String, String)>) {
+    ) -> (DisplayPair, DisplayPair) {
         let translateable_seq = match transcript.translateable_seq.as_ref() {
             Some(s) => s,
             None => return (None, None),
@@ -602,11 +605,11 @@ impl ConsequencePredictor {
             // Build codon display: VEP style with deleted base uppercase
             // ref codon: lowercase bases, uppercase at the deleted position(s)
             let mut ref_codon_display = String::with_capacity(3);
-            for i in 0..3 {
+            for (i, &base) in ref_codon.iter().enumerate() {
                 if i == codon_offset {
-                    ref_codon_display.push((ref_codon[i] as char).to_ascii_uppercase());
+                    ref_codon_display.push((base as char).to_ascii_uppercase());
                 } else {
-                    ref_codon_display.push((ref_codon[i] as char).to_ascii_lowercase());
+                    ref_codon_display.push((base as char).to_ascii_lowercase());
                 }
             }
 
@@ -752,11 +755,7 @@ impl ConsequencePredictor {
                     for (i, &b) in alt_region.iter().enumerate() {
                         let is_original = if i < ins_offset_in_codon {
                             true
-                        } else if i >= ins_offset_in_codon + bases.len() {
-                            true
-                        } else {
-                            false
-                        };
+                        } else { i >= ins_offset_in_codon + bases.len() };
                         if is_original {
                             alt_codon_display.push((b as char).to_lowercase().next().unwrap());
                         } else {

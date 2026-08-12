@@ -104,7 +104,7 @@ fn evaluate_pm1(
         // neighbours counted here. Counting it makes PM1 partly self-derived
         // (and inflates any ClinVar-based benchmark), so discount it.
         let self_contribution = if config.exclude_self_from_clinvar_evidence
-            && input.clinvar.as_ref().map_or(false, |c| c.has_pathogenic())
+            && input.clinvar.as_ref().is_some_and(|c| c.has_pathogenic())
         {
             1
         } else {
@@ -222,11 +222,11 @@ fn evaluate_pm2(
     let is_recessive = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_recessive_inheritance());
+        .is_some_and(|o| o.has_recessive_inheritance());
     let is_dominant = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_dominant_inheritance());
+        .is_some_and(|o| o.has_dominant_inheritance());
 
     let (threshold, inheritance_basis): (f64, &'static str) = if let Some(t) = gene_specific_threshold {
         (t, "gene_override")
@@ -252,7 +252,7 @@ fn evaluate_pm2(
         // (e.g. AR 0.00007), require AF present and ≤ threshold.
         if threshold == 0.0 {
             match (gnomad.all_ac, gnomad.all_af) {
-                (Some(0), Some(af)) if af == 0.0 => (
+                (Some(0), Some(0.0)) => (
                     true,
                     true,
                     format!(
@@ -410,7 +410,7 @@ fn evaluate_pm3(
     let is_recessive = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_recessive_inheritance());
+        .is_some_and(|o| o.has_recessive_inheritance());
     details.insert("is_recessive_gene".into(), serde_json::json!(is_recessive));
 
     if !is_recessive {
@@ -425,8 +425,8 @@ fn evaluate_pm3(
     }
 
     let proband = input.proband_genotype.as_ref();
-    let proband_het = proband.map_or(false, |g| g.is_het);
-    let proband_hom_alt = proband.map_or(false, |g| g.is_hom_alt);
+    let proband_het = proband.is_some_and(|g| g.is_het);
+    let proband_hom_alt = proband.is_some_and(|g| g.is_hom_alt);
     details.insert("proband_het".into(), serde_json::json!(proband_het));
     details.insert("proband_hom_alt".into(), serde_json::json!(proband_hom_alt));
 
@@ -745,7 +745,7 @@ fn evaluate_pm6(
     if both_parents_configured && both_parents_present {
         let mother_qc = input.mother_genotype.as_ref().unwrap().passes_quality(min_dp, min_gq);
         let father_qc = input.father_genotype.as_ref().unwrap().passes_quality(min_dp, min_gq);
-        let proband_qc = input.proband_genotype.as_ref().map_or(false, |g| g.passes_quality(min_dp, min_gq));
+        let proband_qc = input.proband_genotype.as_ref().is_some_and(|g| g.passes_quality(min_dp, min_gq));
         if mother_qc && father_qc && proband_qc {
             // Full trio with good quality: PS2 applies instead
             return EvidenceCriterion {
@@ -925,8 +925,10 @@ mod tests {
         // strict-coverage stance: PM2 NotEvaluated when no record present.
         // Use this when the loaded gnomAD .osa covers only some input
         // regions and you want PM2 silenced outside that coverage.
-        let mut cfg = AcmgConfig::default();
-        cfg.pm2_absent_when_no_record = false;
+        let cfg = AcmgConfig {
+            pm2_absent_when_no_record: false,
+            ..Default::default()
+        };
         let input = make_input(vec![Consequence::MissenseVariant], None);
         let result = evaluate_pm2(&input, &cfg);
         assert!(!result.met);
@@ -1078,8 +1080,10 @@ mod tests {
     fn test_pm2_not_downgraded() {
         // When the SVI downgrade is disabled, PM2 fires at Moderate strength
         // — but still requires real gnomAD data confirming absence (AC=0).
-        let mut config = AcmgConfig::default();
-        config.pm2_downgrade_to_supporting = false;
+        let config = AcmgConfig {
+            pm2_downgrade_to_supporting: false,
+            ..Default::default()
+        };
         let input = make_input(
             vec![Consequence::MissenseVariant],
             Some(GnomadData {

@@ -116,7 +116,6 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
 
     // Determine start/end and normalize alleles
     let mut start = pos;
-    let end;
     let mut ref_allele_str = ref_str.to_string();
     let mut alt_allele_strs: Vec<String> = raw_alts.iter().map(|s| s.to_string()).collect();
 
@@ -190,12 +189,12 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     }
 
     // Calculate end position
-    if ref_allele_str == "-" {
+    let end = if ref_allele_str == "-" {
         // Insertion: end = start - 1 (zero-length interval in Ensembl convention)
-        end = start - 1;
+        start - 1
     } else {
-        end = start + ref_allele_str.len() as u64 - 1;
-    }
+        start + ref_allele_str.len() as u64 - 1
+    };
 
     // Build allele string: "REF/ALT1/ALT2"
     let allele_string = if is_non_variant {

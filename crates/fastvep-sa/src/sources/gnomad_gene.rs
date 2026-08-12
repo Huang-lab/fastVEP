@@ -167,17 +167,15 @@ impl GnomadGeneCols {
 
     fn max_idx(&self) -> usize {
         let mut m = self.gene;
-        for opt in [
+        for i in [
             self.canonical,
             self.mane_select,
             self.pli,
             self.loeuf,
             self.mis_z,
             self.syn_z,
-        ] {
-            if let Some(i) = opt {
-                m = m.max(i);
-            }
+        ].into_iter().flatten() {
+            m = m.max(i);
         }
         m
     }

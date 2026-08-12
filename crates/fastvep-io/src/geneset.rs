@@ -22,6 +22,9 @@ pub struct GeneSet {
 
 impl GeneSet {
     /// Build a `GeneSet` from an iterator of identifier strings.
+    // Inherent constructor taking `IntoIterator<Item = impl AsRef<str>>`, which
+    // `std::iter::FromIterator` cannot express without a concrete item type.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_iter<I, S>(iter: I) -> Self
     where
         I: IntoIterator<Item = S>,

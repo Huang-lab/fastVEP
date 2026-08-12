@@ -227,7 +227,7 @@ fn test_osa2_writer_reader_round_trip() {
                 alt_allele: b"G".to_vec(),
                 values: vec![
                     fields[0].encode_float(af), // AF
-                    (i + 1) as u32,             // AC
+                    (i + 1),               // AC
                 ],
                 json_blob: None,
             }
@@ -314,7 +314,7 @@ fn test_osa2_preload() {
             position: 1000 + i * 10,
             ref_allele: b"C".to_vec(),
             alt_allele: b"T".to_vec(),
-            values: vec![i as u32 + 1],
+            values: vec![i + 1],
             json_blob: None,
         })
         .collect();

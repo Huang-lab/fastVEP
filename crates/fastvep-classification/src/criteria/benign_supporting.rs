@@ -90,8 +90,8 @@ fn evaluate_bp1(
     } else if let Some(ref gc) = input.gene_constraints {
         let pli_high = gc
             .pli
-            .map_or(false, |p| p >= config.pli_lof_intolerant);
-        let misz_low = gc.mis_z.map_or(false, |z| z < 2.0);
+            .is_some_and(|p| p >= config.pli_lof_intolerant);
+        let misz_low = gc.mis_z.is_some_and(|z| z < 2.0);
 
         if let Some(pli) = gc.pli {
             details.insert("pLI".into(), serde_json::json!(pli));
@@ -166,7 +166,7 @@ fn evaluate_bp2(
     let is_dominant = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_dominant_inheritance());
+        .is_some_and(|o| o.has_dominant_inheritance());
     details.insert("is_dominant_gene".into(), serde_json::json!(is_dominant));
 
     // Check for in-cis with pathogenic (any inheritance pattern)
@@ -657,10 +657,8 @@ fn evaluate_bp7(
     // - Synonymous: traditional BP7 target.
     // - Intronic: Walker 2023 extension, but only outside the standard splice
     //   region (donor-side offset ≥ 7, acceptor-side offset ≤ -21).
-    let intronic_eligible = match (is_intronic, input.intronic_offset) {
-        (true, Some(off)) if off >= 7 || off <= -21 => true,
-        _ => false,
-    };
+    let intronic_eligible =
+        matches!((is_intronic, input.intronic_offset), (true, Some(off)) if off >= 7 || off <= -21);
     if let Some(off) = input.intronic_offset {
         details.insert("intronic_offset".into(), serde_json::json!(off));
     }

@@ -160,7 +160,7 @@ fn evaluate_ps1(
         // from the single index entry `331:G>S:Pathogenic`, which is that
         // variant. Require a second, independent nucleotide change in that case.
         let self_in_index = config.exclude_self_from_clinvar_evidence
-            && input.clinvar.as_ref().map_or(false, |c| c.has_pathogenic());
+            && input.clinvar.as_ref().is_some_and(|c| c.has_pathogenic());
         let required_matches: u32 = if self_in_index { 2 } else { 1 };
         if self_in_index {
             details.insert("self_excluded_from_count".into(), serde_json::json!(true));
@@ -512,8 +512,10 @@ mod tests {
     fn test_ps4_proxy_path_when_opted_in() {
         // Backward-comparable: setting use_clinvar_stars_as_ps4_proxy=true
         // restores the previous proxy behavior.
-        let mut config = AcmgConfig::default();
-        config.use_clinvar_stars_as_ps4_proxy = true;
+        let config = AcmgConfig {
+            use_clinvar_stars_as_ps4_proxy: true,
+            ..Default::default()
+        };
         let input = make_input(Some(ClinvarData {
             significance: Some(vec!["Pathogenic".to_string()]),
             review_status: Some("reviewed_by_expert_panel".to_string()),
@@ -526,8 +528,10 @@ mod tests {
 
     #[test]
     fn test_ps4_proxy_single_submitter_not_enough() {
-        let mut config = AcmgConfig::default();
-        config.use_clinvar_stars_as_ps4_proxy = true;
+        let config = AcmgConfig {
+            use_clinvar_stars_as_ps4_proxy: true,
+            ..Default::default()
+        };
         let input = make_input(Some(ClinvarData {
             significance: Some(vec!["Pathogenic".to_string()]),
             review_status: Some("criteria_provided,_single_submitter".to_string()),
@@ -627,8 +631,10 @@ mod tests {
     fn test_ps1_self_exclusion_can_be_disabled() {
         let mut input = make_input(Some(clinvar_pathogenic()));
         input.clinvar_protein = Some(protein_index(1));
-        let mut cfg = AcmgConfig::default();
-        cfg.exclude_self_from_clinvar_evidence = false;
+        let cfg = AcmgConfig {
+            exclude_self_from_clinvar_evidence: false,
+            ..Default::default()
+        };
         let r = evaluate_ps1(&input, &cfg);
         assert!(r.met, "ClinVar-informed mode keeps the legacy behaviour");
     }

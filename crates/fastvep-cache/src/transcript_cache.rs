@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(&*loaded[0].stable_id, "ENST00000001");
         assert_eq!(&**loaded[0].gene.symbol.as_ref().unwrap(), "TEST");
         assert_eq!(loaded[0].spliced_seq.as_deref(), Some("ACGTACGT"));
-        assert_eq!(loaded[0].canonical, true);
+        assert!(loaded[0].canonical);
         assert_eq!(loaded[0].tsl, Some(1));
     }
 

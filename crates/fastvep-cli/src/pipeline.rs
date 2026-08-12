@@ -512,7 +512,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             // Pass through original VCF headers
             for header_line in vcf_parser.header_lines() {
                 if let Some(info_id) = output::vcf_info_header_id(header_line) {
-                    if owned_vcf_info_ids.iter().any(|owned| *owned == info_id) {
+                    if owned_vcf_info_ids.contains(&info_id) {
                         continue;
                     }
                 }
@@ -1521,20 +1521,20 @@ fn extract_trio_genotypes_cli(
     let proband_gt = samples
         .iter()
         .find(|s| s.name == trio.proband)
-        .map(|s| sample_data_to_genotype_info_cli(s));
+        .map(sample_data_to_genotype_info_cli);
 
     let mother_gt = trio.mother.as_ref().and_then(|name| {
         samples
             .iter()
             .find(|s| &s.name == name)
-            .map(|s| sample_data_to_genotype_info_cli(s))
+            .map(sample_data_to_genotype_info_cli)
     });
 
     let father_gt = trio.father.as_ref().and_then(|name| {
         samples
             .iter()
             .find(|s| &s.name == name)
-            .map(|s| sample_data_to_genotype_info_cli(s))
+            .map(sample_data_to_genotype_info_cli)
     });
 
     (proband_gt, mother_gt, father_gt)
@@ -1545,11 +1545,11 @@ fn sample_data_to_genotype_info_cli(
     sample: &fastvep_io::sample::SampleData,
 ) -> fastvep_classification::GenotypeInfo {
     let gt = sample.genotype.as_ref();
-    let is_het = gt.map_or(false, |g| g.is_het());
-    let is_hom_ref = gt.map_or(false, |g| g.is_hom_ref());
-    let is_hom_alt = gt.map_or(false, |g| g.is_hom_alt());
-    let is_missing = gt.map_or(true, |g| g.is_missing());
-    let is_phased = gt.map_or(false, |g| g.phased);
+    let is_het = gt.is_some_and(|g| g.is_het());
+    let is_hom_ref = gt.is_some_and(|g| g.is_hom_ref());
+    let is_hom_alt = gt.is_some_and(|g| g.is_hom_alt());
+    let is_missing = gt.is_none_or(|g| g.is_missing());
+    let is_phased = gt.is_some_and(|g| g.phased);
 
     let alt_allele_index = gt.and_then(|g| {
         g.alleles.iter().filter_map(|a| *a).find(|&a| a > 0)
@@ -1624,8 +1624,8 @@ fn enrich_compound_het_batch(
                         (p_acc || p, lp_acc || lp)
                     });
 
-                let proband_het = proband_gt.as_ref().map_or(false, |g| g.is_het);
-                let is_phased = proband_gt.as_ref().map_or(false, |g| g.is_phased);
+                let proband_het = proband_gt.as_ref().is_some_and(|g| g.is_het);
+                let is_phased = proband_gt.as_ref().is_some_and(|g| g.is_phased);
                 let proband_alleles = if let Some(ref vcf_fields) = vf.vcf_fields {
                     if !vcf_fields.rest.is_empty() && !sample_names.is_empty() {
                         let format_str = &vcf_fields.rest[0];
@@ -1671,7 +1671,7 @@ fn enrich_compound_het_batch(
         }
     }
 
-    for (_gene, gene_infos) in &gene_variants {
+    for gene_infos in gene_variants.values() {
         let het_variants: Vec<&VariantGeneInfo> =
             gene_infos.iter().filter(|v| v.proband_het).collect();
         if het_variants.len() < 2 {
@@ -1692,11 +1692,11 @@ fn enrich_compound_het_batch(
                             let info_alt_on_first = info
                                 .proband_alleles
                                 .first()
-                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                                .is_some_and(|a| a.is_some_and(|v| v > 0));
                             let other_alt_on_first = other
                                 .proband_alleles
                                 .first()
-                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                                .is_some_and(|a| a.is_some_and(|v| v > 0));
                             Some(info_alt_on_first != other_alt_on_first)
                         } else {
                             None
@@ -2303,11 +2303,10 @@ where
         crate::progress::ProgressMeter::new(show_progress)
     };
 
-    let records = make_iter(buf_reader, chrom_map).map(|record| {
+    let records = make_iter(buf_reader, chrom_map).inspect(|record| {
         if record.is_ok() {
             meter.update();
         }
-        record
     });
 
     // The streaming writer creates and fills the .osa incrementally, so a
@@ -2442,7 +2441,7 @@ pub fn run_sa_build(
             IndexHeader {
                 schema_version: fastvep_sa::common::SCHEMA_VERSION,
                 json_key: json_key.into(),
-                name: source.to_uppercase().into(),
+                name: source.to_uppercase(),
                 version: "latest".into(),
                 description: format!("{} conservation/prediction scores for {}", source, assembly),
                 assembly: assembly.into(),
@@ -2595,7 +2594,7 @@ pub fn run_sa_build(
         "phylop" => {
             return run_streaming_sa_build(
                 input, output, header, &chrom_map, &chrom_list, show_progress,
-                |r, m| iter_phylop_auto(r, m),
+                iter_phylop_auto,
             );
         }
         "gerp" | "dann" => {
@@ -2745,6 +2744,10 @@ pub fn source_from_json_key(json_key: &str) -> Option<&'static str> {
 ///   the higher-quality format per source without having to know which is which.
 /// * `osa` / `v1` — force v1 `.osa`.
 /// * `osa2` / `v2` — force v2 `.osa2` (errors if the source has no v2 encoder).
+// Each argument is an independent coordinate, allele or flag with no
+// natural grouping; bundling them into a struct would only move the
+// argument list to the call site.
+#[allow(clippy::too_many_arguments)]
 pub fn run_sa_build_format(
     format: &str,
     source: &str,
@@ -3194,6 +3197,10 @@ fn open_sa_reader_with_meter(
 /// Stream `records` into `out_path` as a `.osa2` file, then report. Mirrors
 /// the v1 streaming builder's crash-safety contract: on any failure the
 /// partial `.osa2` is removed so no corrupt database is left behind.
+// Each argument is an independent coordinate, buffer or flag with no
+// natural grouping; bundling them would only move the list to the
+// call site.
+#[allow(clippy::too_many_arguments)]
 fn finish_osa2_build(
     out_path: &Path,
     metadata: &fastvep_sa::writer_v2::Osa2Metadata,
@@ -3639,14 +3646,13 @@ fn run_custom_bed_build(
 /// Build a gene-level annotation database (`.oga`) from a source file.
 ///
 /// Supports three gene-level sources used by the ACMG-AMP classifier:
-/// - `omim`            — disease-gene annotations in genemap2 layout
-///                       (13-col TSV): ClinGen Gene-Disease Validity
-///                       (preferred per ClinGen SVI / Abou Tayoun
-///                       2018) or OMIM `genemap2.txt` (legacy). Drives
-///                       PVS1, BS2, PM3, BP2.
-/// - `gnomad_genes`    — gnomAD constraint metrics TSV (PVS1, PP2, BP1)
-/// - `clinvar_protein` — ClinVar VCF, extracts pathogenic missense by
-///                       protein position (PS1, PM1, PM5)
+/// - `omim` - disease-gene annotations in genemap2 layout (13-col TSV):
+///   ClinGen Gene-Disease Validity (preferred per ClinGen SVI / Abou
+///   Tayoun 2018) or OMIM `genemap2.txt` (legacy). Drives PVS1, BS2,
+///   PM3, BP2.
+/// - `gnomad_genes` - gnomAD constraint metrics TSV (PVS1, PP2, BP1)
+/// - `clinvar_protein` - ClinVar VCF, extracts pathogenic missense by
+///   protein position (PS1, PM1, PM5)
 ///
 /// The output is `<output>.oga`. The runtime loader at
 /// `fastvep_annotate::load_gene_providers` picks up any `.oga` file in
@@ -3727,6 +3733,9 @@ mod pick_tests {
     use fastvep_core::{Allele, Impact, Strand};
     use std::sync::Arc;
 
+    // Each argument is an independent coordinate or flag with no natural
+    // grouping; bundling them would only move the list to the call site.
+    #[allow(clippy::too_many_arguments)]
     fn make_tv(
         transcript_id: &str,
         canonical: bool,

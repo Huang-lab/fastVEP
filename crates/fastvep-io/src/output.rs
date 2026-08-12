@@ -2111,12 +2111,12 @@ mod tests {
         let lines = format_tab_line(&vf, &specs, false);
         assert_eq!(lines.len(), 2);
         assert!(
-            lines[0].split('\t').last().unwrap().starts_with("G|Pathogenic|"),
+            lines[0].split('\t').next_back().unwrap().starts_with("G|Pathogenic|"),
             "first row should carry the ALT-G clinvar value: {}",
             lines[0]
         );
         assert!(
-            lines[1].split('\t').last().unwrap().starts_with("T|Benign|"),
+            lines[1].split('\t').next_back().unwrap().starts_with("T|Benign|"),
             "second row should carry the ALT-T clinvar value: {}",
             lines[1]
         );

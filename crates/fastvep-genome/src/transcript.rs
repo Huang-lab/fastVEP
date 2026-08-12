@@ -508,16 +508,16 @@ mod tests {
                     // Put ATG at offset 50 (genomic 1050)
                     seq[50] = b'A'; seq[51] = b'T'; seq[52] = b'G';
                     // Fill rest of CDS with GCT (Ala)
-                    for i in 53..len {
-                        seq[i] = b"GCT"[(i - 53) % 3];
+                    for (i, base) in seq.iter_mut().enumerate().skip(53) {
+                        *base = b"GCT"[(i - 53) % 3];
                     }
                     Ok(seq)
                 }
                 2000 => {
                     // Exon 2: 2000-2300 (301 bases), all CDS
                     let mut seq = vec![b'A'; len];
-                    for i in 0..len {
-                        seq[i] = b"AAG"[i % 3]; // Lys
+                    for (i, base) in seq.iter_mut().enumerate() {
+                        *base = b"AAG"[i % 3]; // Lys
                     }
                     Ok(seq)
                 }
@@ -525,8 +525,8 @@ mod tests {
                     // Exon 3: 4000-5000 (1001 bases)
                     let mut seq = vec![b'N'; len];
                     // CDS: first 501 bases (4000-4500)
-                    for i in 0..501 {
-                        seq[i] = b"GGT"[i % 3]; // Gly
+                    for (i, base) in seq.iter_mut().enumerate().take(501) {
+                        *base = b"GGT"[i % 3]; // Gly
                     }
                     Ok(seq)
                 }

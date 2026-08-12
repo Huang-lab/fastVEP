@@ -127,6 +127,10 @@ pub enum Allele {
 
 impl Allele {
     /// Create an allele from a string representation.
+    // Inherent constructor, deliberately infallible: an unrecognised input
+    // maps to a catch-all variant rather than an error, so the fallible
+    // `std::str::FromStr` contract does not fit.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "-" => Allele::Deletion,

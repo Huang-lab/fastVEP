@@ -4,8 +4,8 @@ use crate::types::{AcmgClassification, EvidenceCounts, EvidenceCriterion};
 ///
 /// Returns the classification and the name of the triggered rule.
 ///
-/// Rules: pathogenic (8 combinations) and benign (BA1 / >=2 BS / BS+BP /
-/// >=2 BP) are evaluated independently. If both directions reach a
+/// Rules: pathogenic (8 combinations) and benign (BA1, `>=2` BS, BS+BP,
+/// `>=2` BP) are evaluated independently. If both directions reach a
 /// definite call (P/LP and B/LB), the result is VUS (Conflicting).
 /// Otherwise the directional call wins.
 ///

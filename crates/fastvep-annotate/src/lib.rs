@@ -143,8 +143,8 @@ impl AnnotationContext {
         if let Some(ref sp) = seq_provider {
             let built = AtomicUsize::new(0);
             transcripts.par_iter_mut().for_each(|tr| {
-                if tr.is_coding() && tr.spliced_seq.is_none() {
-                    if tr
+                if tr.is_coding() && tr.spliced_seq.is_none()
+                    && tr
                         .build_sequences(|chrom, start, end| {
                             sp.fetch_sequence(chrom, start, end)
                                 .map_err(|e| e.to_string())
@@ -153,7 +153,6 @@ impl AnnotationContext {
                     {
                         built.fetch_add(1, Ordering::Relaxed);
                     }
-                }
             });
             let built = built.load(Ordering::Relaxed);
             tracing::info!("Built sequences for {} coding transcripts", built);
@@ -245,8 +244,8 @@ impl AnnotationContext {
         if let Some(ref sp) = self.seq_provider {
             let mut built = 0usize;
             for tr in &mut transcripts {
-                if tr.is_coding() && tr.spliced_seq.is_none() {
-                    if tr
+                if tr.is_coding() && tr.spliced_seq.is_none()
+                    && tr
                         .build_sequences(|chrom, start, end| {
                             sp.fetch_sequence(chrom, start, end)
                                 .map_err(|e| e.to_string())
@@ -255,7 +254,6 @@ impl AnnotationContext {
                     {
                         built += 1;
                     }
-                }
             }
             if built > 0 {
                 tracing::info!("Built sequences for {} coding transcripts", built);
@@ -959,20 +957,20 @@ fn extract_trio_genotypes(
     let proband_gt = samples
         .iter()
         .find(|s| s.name == trio.proband)
-        .map(|s| sample_data_to_genotype_info(s));
+        .map(sample_data_to_genotype_info);
 
     let mother_gt = trio.mother.as_ref().and_then(|name| {
         samples
             .iter()
             .find(|s| &s.name == name)
-            .map(|s| sample_data_to_genotype_info(s))
+            .map(sample_data_to_genotype_info)
     });
 
     let father_gt = trio.father.as_ref().and_then(|name| {
         samples
             .iter()
             .find(|s| &s.name == name)
-            .map(|s| sample_data_to_genotype_info(s))
+            .map(sample_data_to_genotype_info)
     });
 
     (proband_gt, mother_gt, father_gt)
@@ -983,11 +981,11 @@ fn sample_data_to_genotype_info(
     sample: &fastvep_io::sample::SampleData,
 ) -> fastvep_classification::GenotypeInfo {
     let gt = sample.genotype.as_ref();
-    let is_het = gt.map_or(false, |g| g.is_het());
-    let is_hom_ref = gt.map_or(false, |g| g.is_hom_ref());
-    let is_hom_alt = gt.map_or(false, |g| g.is_hom_alt());
-    let is_missing = gt.map_or(true, |g| g.is_missing());
-    let is_phased = gt.map_or(false, |g| g.phased);
+    let is_het = gt.is_some_and(|g| g.is_het());
+    let is_hom_ref = gt.is_some_and(|g| g.is_hom_ref());
+    let is_hom_alt = gt.is_some_and(|g| g.is_hom_alt());
+    let is_missing = gt.is_none_or(|g| g.is_missing());
+    let is_phased = gt.is_some_and(|g| g.phased);
 
     // Determine which alt allele index is carried
     let alt_allele_index = gt.and_then(|g| {
@@ -995,7 +993,6 @@ fn sample_data_to_genotype_info(
             .iter()
             .filter_map(|a| *a)
             .find(|&a| a > 0)
-            .map(|a| a)
     });
 
     fastvep_classification::GenotypeInfo {
@@ -1052,12 +1049,12 @@ fn enrich_compound_het(
                     .as_ref()
                     .and_then(|v| v.get("criteria"))
                     .and_then(|c| c.as_array())
-                    .map_or(false, |criteria| {
+                    .is_some_and(|criteria| {
                         // Check if this variant has ClinVar pathogenic data
                         criteria.iter().any(|c| {
                             c.get("code")
                                 .and_then(|v| v.as_str())
-                                .map_or(false, |code| code == "PP5" || code == "PS4")
+                                .is_some_and(|code| code == "PP5" || code == "PS4")
                                 && c.get("met")
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(false)
@@ -1089,8 +1086,8 @@ fn enrich_compound_het(
                         (p_acc || p, lp_acc || lp)
                     });
 
-                let proband_het = proband_gt.as_ref().map_or(false, |g| g.is_het);
-                let is_phased = proband_gt.as_ref().map_or(false, |g| g.is_phased);
+                let proband_het = proband_gt.as_ref().is_some_and(|g| g.is_het);
+                let is_phased = proband_gt.as_ref().is_some_and(|g| g.is_phased);
                 let proband_alleles = if let Some(ref vcf_fields) = vf.vcf_fields {
                     if !vcf_fields.rest.is_empty() && !sample_names.is_empty() {
                         let format_str = &vcf_fields.rest[0];
@@ -1137,7 +1134,7 @@ fn enrich_compound_het(
     }
 
     // For each gene with multiple het variants, build companion relationships and re-classify
-    for (_gene, gene_infos) in &gene_variants {
+    for gene_infos in gene_variants.values() {
         let het_variants: Vec<&VariantGeneInfo> =
             gene_infos.iter().filter(|v| v.proband_het).collect();
         if het_variants.len() < 2 {
@@ -1164,11 +1161,11 @@ fn enrich_compound_het(
                             let info_alt_on_first = info
                                 .proband_alleles
                                 .first()
-                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                                .is_some_and(|a| a.is_some_and(|v| v > 0));
                             let other_alt_on_first = other
                                 .proband_alleles
                                 .first()
-                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                                .is_some_and(|a| a.is_some_and(|v| v > 0));
                             // If alt alleles are on different haplotypes, they're in trans
                             Some(info_alt_on_first != other_alt_on_first)
                         } else {

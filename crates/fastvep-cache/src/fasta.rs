@@ -46,7 +46,7 @@ impl FastaReader {
                 // An empty header would silently produce an unnamed sequence
                 // that downstream lookups can never match; surface it
                 // explicitly so the caller knows the file is malformed.
-                let name = line[1..]
+                let name = line.strip_prefix('>').unwrap_or(line)
                     .split_whitespace()
                     .next()
                     .filter(|s| !s.is_empty())

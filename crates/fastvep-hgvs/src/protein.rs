@@ -167,12 +167,12 @@ pub fn hgvsp_frameshift(
         .count();
     let mostly_unresolved = unresolved_count > 5;
     if !mostly_unresolved {
-        for i in first_changed_offset..alt_peptide.len() {
-            if alt_peptide[i] == b'*' {
-                stop_dist = Some(i - first_changed_offset + 1);
+        for (offset, &aa) in alt_peptide.iter().enumerate().skip(first_changed_offset) {
+            if aa == b'*' {
+                stop_dist = Some(offset - first_changed_offset + 1);
                 break;
             }
-            if alt_peptide[i] == b'X' {
+            if aa == b'X' {
                 hit_unresolved = true;
             }
         }

@@ -140,13 +140,13 @@ impl VariationFeature {
 
     /// Check if this is a deletion.
     pub fn is_deletion(&self) -> bool {
-        self.alt_alleles.iter().any(|a| *a == Allele::Deletion)
+        self.alt_alleles.contains(&Allele::Deletion)
     }
 
     /// Check if this is an indel.
     pub fn is_indel(&self) -> bool {
         self.ref_allele == Allele::Deletion
-            || self.alt_alleles.iter().any(|a| *a == Allele::Deletion)
+            || self.alt_alleles.contains(&Allele::Deletion)
             || self.alt_alleles.iter().any(|a| a.len() != self.ref_allele.len())
     }
 }

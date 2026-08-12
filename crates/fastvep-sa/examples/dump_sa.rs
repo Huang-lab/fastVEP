@@ -63,7 +63,7 @@ fn dump_with_index(path: &PathBuf, idx_path: &PathBuf, max_records: Option<u64>)
                     chrom, entry.position, entry.ref_allele, entry.alt_allele, entry.json
                 );
                 printed += 1;
-                if max_records.map_or(false, |m| printed >= m) {
+                if max_records.is_some_and(|m| printed >= m) {
                     break 'outer;
                 }
             }
@@ -99,7 +99,7 @@ fn dump_sequential(path: &PathBuf, max_records: Option<u64>) -> Result<()> {
                 entry.position, entry.ref_allele, entry.alt_allele, entry.json
             );
             printed += 1;
-            if max_records.map_or(false, |m| printed >= m) {
+            if max_records.is_some_and(|m| printed >= m) {
                 return Ok(());
             }
         }

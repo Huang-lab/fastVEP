@@ -77,7 +77,7 @@ pub fn evaluate_all_criteria(
 }
 
 fn is_disabled(gene: Option<&str>, code: &str, config: &AcmgConfig) -> bool {
-    gene.map_or(false, |g| config.is_criterion_disabled(g, code))
+    gene.is_some_and(|g| config.is_criterion_disabled(g, code))
 }
 
 /// Suppress double-counted evidence per ClinGen SVI guidance.

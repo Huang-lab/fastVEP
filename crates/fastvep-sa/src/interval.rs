@@ -532,7 +532,7 @@ mod tests {
 
         let reader = OsiReader::open(&path).unwrap();
         assert_eq!(reader.json_key(), "myregions");
-        assert_eq!(reader.metadata().is_positional, true);
+        assert!(reader.metadata().is_positional);
 
         // Position inside both intervals → returns both JSONs.
         let val = reader.annotate_position("chr1", 175, "", "").unwrap();

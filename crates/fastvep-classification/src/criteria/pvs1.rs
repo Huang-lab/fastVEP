@@ -132,9 +132,9 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
                 details.insert("spliceai_max_ds".into(), serde_json::json!(ds));
             }
             let contradicted_by_spliceai =
-                spliceai_max.map_or(false, |ds| ds <= config.spliceai_benign);
+                spliceai_max.is_some_and(|ds| ds <= config.spliceai_benign);
             let unsupported_insertion = input.is_pure_insertion == Some(true)
-                && !spliceai_max.map_or(false, |ds| ds >= config.spliceai_pathogenic);
+                && !spliceai_max.is_some_and(|ds| ds >= config.spliceai_pathogenic);
 
             if contradicted_by_spliceai || unsupported_insertion {
                 let reason = if contradicted_by_spliceai {
@@ -425,10 +425,10 @@ fn mk(
 fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> bool {
     // Check gene constraint scores
     if let Some(ref gc) = input.gene_constraints {
-        if gc.pli.map_or(false, |p| p >= config.pli_lof_intolerant) {
+        if gc.pli.is_some_and(|p| p >= config.pli_lof_intolerant) {
             return true;
         }
-        if gc.loeuf.map_or(false, |l| l <= config.loeuf_lof_intolerant) {
+        if gc.loeuf.is_some_and(|l| l <= config.loeuf_lof_intolerant) {
             return true;
         }
     }
@@ -454,7 +454,7 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
         if omim
             .phenotypes
             .as_ref()
-            .map_or(false, |p| !p.is_empty())
+            .is_some_and(|p| !p.is_empty())
         {
             return true;
         }

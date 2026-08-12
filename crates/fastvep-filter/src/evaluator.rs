@@ -46,19 +46,19 @@ pub fn evaluate(expr: &FilterExpr, ctx: &FilterContext) -> bool {
         }
         FilterExpr::Lt { field, value } => {
             let actual = ctx.get(field);
-            actual.parse::<f64>().map_or(false, |a| a < *value)
+            actual.parse::<f64>().is_ok_and(|a| a < *value)
         }
         FilterExpr::Gt { field, value } => {
             let actual = ctx.get(field);
-            actual.parse::<f64>().map_or(false, |a| a > *value)
+            actual.parse::<f64>().is_ok_and(|a| a > *value)
         }
         FilterExpr::Le { field, value } => {
             let actual = ctx.get(field);
-            actual.parse::<f64>().map_or(false, |a| a <= *value)
+            actual.parse::<f64>().is_ok_and(|a| a <= *value)
         }
         FilterExpr::Ge { field, value } => {
             let actual = ctx.get(field);
-            actual.parse::<f64>().map_or(false, |a| a >= *value)
+            actual.parse::<f64>().is_ok_and(|a| a >= *value)
         }
         FilterExpr::In { field, values } => {
             let actual = ctx.get(field);

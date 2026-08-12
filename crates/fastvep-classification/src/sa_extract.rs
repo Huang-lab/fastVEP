@@ -187,7 +187,7 @@ pub struct ClinvarData {
 impl ClinvarData {
     /// Check if any significance term contains a pathogenic classification.
     pub fn has_pathogenic(&self) -> bool {
-        self.significance.as_ref().map_or(false, |sigs| {
+        self.significance.as_ref().is_some_and(|sigs| {
             sigs.iter().any(|s| {
                 let lower = s.to_lowercase();
                 lower.contains("pathogenic") && !lower.contains("conflicting")
@@ -197,7 +197,7 @@ impl ClinvarData {
 
     /// Check if any significance term contains a benign classification.
     pub fn has_benign(&self) -> bool {
-        self.significance.as_ref().map_or(false, |sigs| {
+        self.significance.as_ref().is_some_and(|sigs| {
             sigs.iter().any(|s| {
                 let lower = s.to_lowercase();
                 lower.contains("benign") && !lower.contains("conflicting")
@@ -363,7 +363,7 @@ pub struct OmimData {
 impl OmimData {
     /// Check if any phenotype suggests autosomal dominant inheritance.
     pub fn has_dominant_inheritance(&self) -> bool {
-        self.phenotypes.as_ref().map_or(false, |ps| {
+        self.phenotypes.as_ref().is_some_and(|ps| {
             ps.iter().any(|p| {
                 let lower = p.to_lowercase();
                 lower.contains("autosomal dominant")
@@ -375,7 +375,7 @@ impl OmimData {
 
     /// Check if any phenotype suggests autosomal recessive inheritance.
     pub fn has_recessive_inheritance(&self) -> bool {
-        self.phenotypes.as_ref().map_or(false, |ps| {
+        self.phenotypes.as_ref().is_some_and(|ps| {
             ps.iter().any(|p| {
                 let lower = p.to_lowercase();
                 lower.contains("autosomal recessive")
@@ -433,8 +433,8 @@ pub struct GenotypeInfo {
 impl GenotypeInfo {
     /// Returns true if genotype passes depth and quality thresholds.
     pub fn passes_quality(&self, min_depth: u32, min_gq: u32) -> bool {
-        let depth_ok = self.depth.map_or(false, |d| d >= min_depth);
-        let gq_ok = self.quality.map_or(false, |q| q >= min_gq);
+        let depth_ok = self.depth.is_some_and(|d| d >= min_depth);
+        let gq_ok = self.quality.is_some_and(|q| q >= min_gq);
         depth_ok && gq_ok
     }
 

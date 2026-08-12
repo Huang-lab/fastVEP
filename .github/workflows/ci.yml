@@ -17,5 +17,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check every target (libs, bins, tests)
         run: cargo check --workspace --all-targets
+      # The workspace is clippy-clean; `-D warnings` keeps it that way. A lint
+      # that is wrong for a given site is silenced there with an `#[allow]` and
+      # a one-line reason, so the signal here stays worth reading.
+      - name: Lint (clippy, warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run all tests (unit + integration)
         run: cargo test --workspace

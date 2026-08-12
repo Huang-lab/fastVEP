@@ -199,11 +199,11 @@ fn evaluate_bs2(
     let is_dominant = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_dominant_inheritance());
+        .is_some_and(|o| o.has_dominant_inheritance());
     let is_recessive = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_recessive_inheritance());
+        .is_some_and(|o| o.has_recessive_inheritance());
     details.insert("omim_dominant".into(), serde_json::json!(is_dominant));
     details.insert("omim_recessive".into(), serde_json::json!(is_recessive));
 
@@ -533,8 +533,10 @@ mod tests {
     fn test_bs2_ad_gene_min_ac_configurable() {
         // Config knob lets a stricter VCEP raise the threshold.
         use crate::sa_extract::OmimData;
-        let mut cfg = AcmgConfig::default();
-        cfg.bs2_ad_min_ac = 20;
+        let cfg = AcmgConfig {
+            bs2_ad_min_ac: 20,
+            ..Default::default()
+        };
         let input = make_input_omim(
             Some(GnomadData {
                 all_ac: Some(7),

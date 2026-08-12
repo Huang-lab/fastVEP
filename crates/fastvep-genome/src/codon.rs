@@ -169,7 +169,7 @@ pub fn format_codon_window(ref_window: &[u8], alt_window: &[u8]) -> (String, Str
     let mut ref_display = String::with_capacity(n);
     let mut alt_display = String::with_capacity(n);
     for i in 0..n {
-        if ref_window[i].to_ascii_uppercase() != alt_window[i].to_ascii_uppercase() {
+        if !ref_window[i].eq_ignore_ascii_case(&alt_window[i]) {
             ref_display.push((ref_window[i] as char).to_ascii_uppercase());
             alt_display.push((alt_window[i] as char).to_ascii_uppercase());
         } else {

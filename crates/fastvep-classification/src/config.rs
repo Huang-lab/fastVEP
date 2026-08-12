@@ -136,10 +136,11 @@ pub struct AcmgConfig {
     /// dominant or X-linked-dominant gene from heterozygous gnomAD
     /// observations alone. Singleton / doubleton observations of a
     /// novel allele in a 100K-cohort are not sufficient evidence that
-    /// the variant is tolerated in healthy adults — Richards 2015 BS2
-    /// requires "observed in unaffected adult". For recessive genes,
-    /// BS2 still requires `≥1 homozygous observation` (`gnomad.all_hc
-    /// > 0`) regardless of this threshold. Default `5` mirrors common
+    /// the variant is tolerated in healthy adults - Richards 2015 BS2
+    /// requires "observed in unaffected adult". Recessive and X-linked
+    /// genes take the separate null-individual test instead, governed by
+    /// [`Self::bs2_ar_min_hom`] and
+    /// [`Self::bs2_hom_prevalence_threshold`]. Default `5` mirrors common
     /// ClinGen VCEP practice (e.g. Hereditary Cancer / Lynch).
     #[serde(default = "default_bs2_ad_min_ac")]
     pub bs2_ad_min_ac: u64,
@@ -362,7 +363,7 @@ impl AcmgConfig {
     pub fn is_criterion_disabled(&self, gene: &str, criterion_code: &str) -> bool {
         self.gene_overrides
             .get(gene)
-            .map_or(false, |o| o.disabled_criteria.iter().any(|c| c == criterion_code))
+            .is_some_and(|o| o.disabled_criteria.iter().any(|c| c == criterion_code))
     }
 
     /// True when the gene's population frequencies are unreliable because of
