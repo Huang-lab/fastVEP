@@ -203,6 +203,18 @@ pub struct AcmgConfig {
     /// annotation databases built before the FAF columns were extracted.
     #[serde(default = "default_true")]
     pub use_filtering_af: bool,
+    /// Optional ceiling on the strength PP3 may reach from computational
+    /// evidence alone. `None` (the default) means uncapped.
+    ///
+    /// Pejaver 2022 is a ClinGen SVI product and explicitly calibrates
+    /// REVEL >= 0.932 to Strong, so capping by default would put fastVEP
+    /// outside the guideline. The round-2 medical-genetics review holds the
+    /// stricter view that a predictor should not reach Strong on its own, and
+    /// several VCEP specifications agree. This knob lets a lab following that
+    /// convention configure it (`pp3_max_strength = "Moderate"`) instead of
+    /// patching the classifier.
+    #[serde(default)]
+    pub pp3_max_strength: Option<EvidenceStrength>,
     /// Exclude the variant being classified from the ClinVar-derived evidence
     /// that PS1 and PM1 read. PS1 means "same amino acid change as a
     /// *previously established* pathogenic variant, regardless of the
@@ -334,6 +346,7 @@ impl Default for AcmgConfig {
             clinvar_low_penetrance_blocks_benign_frequency: true,
             gnomad_region_flags_block_frequency: true,
             use_filtering_af: true,
+            pp3_max_strength: None,
             exclude_self_from_clinvar_evidence: true,
             bp1_max_pathogenic_missense: 3,
             use_pp5_bp6: false,

@@ -230,6 +230,27 @@ fn evaluate_pp3(
         (false, EvidenceStrength::Supporting, "none")
     };
 
+    // Optional cap on how far computational evidence alone may be graded.
+    //
+    // The default is uncapped, because Pejaver 2022 is a ClinGen SVI product
+    // and explicitly calibrates REVEL >= 0.932 to Strong; overriding that by
+    // default would put us outside the guideline. The round-2 medical-genetics
+    // review nonetheless holds the stricter view that a predictor should not
+    // reach Strong on its own (raised on KMT2C), and several VCEPs specify the
+    // same. This lets a lab following that convention configure it rather than
+    // patch the classifier.
+    let uncapped_strength = strength;
+    let strength = match config.pp3_max_strength {
+        Some(cap) if met && strength > cap => cap,
+        _ => strength,
+    };
+    if strength != uncapped_strength {
+        details.insert(
+            "pp3_strength_capped_from".into(),
+            serde_json::json!(uncapped_strength.as_str()),
+        );
+    }
+
     let evaluated = (is_missense && input.revel.is_some()) || input.splice_ai.is_some();
 
     details.insert("pp3_source".into(), serde_json::json!(source));
@@ -353,6 +374,46 @@ mod tests {
             }),
             ..minimal_input()
         }
+    }
+
+    #[test]
+    fn test_pp3_max_strength_caps_revel_strong() {
+        // The round-2 review's stricter convention: a predictor should not
+        // reach Strong on its own. Off by default, since Pejaver 2022
+        // calibrates REVEL >= 0.932 to Strong.
+        let input = make_input_with_revel(0.95);
+        let config = AcmgConfig {
+            pp3_max_strength: Some(EvidenceStrength::Moderate),
+            ..Default::default()
+        };
+        let result = evaluate_pp3(&input, &config);
+        assert!(result.met);
+        assert_eq!(result.strength, EvidenceStrength::Moderate);
+        assert_eq!(
+            result.details.get("pp3_strength_capped_from").and_then(|v| v.as_str()),
+            Some("Strong")
+        );
+    }
+
+    #[test]
+    fn test_pp3_max_strength_does_not_promote() {
+        // A cap is a ceiling, never a floor: evidence that only reached
+        // Supporting must not be raised to the cap.
+        let input = make_input_with_revel(0.70);
+        let config = AcmgConfig {
+            pp3_max_strength: Some(EvidenceStrength::Strong),
+            ..Default::default()
+        };
+        let result = evaluate_pp3(&input, &config);
+        assert_eq!(result.strength, EvidenceStrength::Supporting);
+        assert!(result.details.get("pp3_strength_capped_from").is_none());
+    }
+
+    #[test]
+    fn test_pp3_uncapped_by_default() {
+        let input = make_input_with_revel(0.95);
+        let result = evaluate_pp3(&input, &AcmgConfig::default());
+        assert_eq!(result.strength, EvidenceStrength::Strong);
     }
 
     #[test]

@@ -148,6 +148,12 @@ exclude_self_from_clinvar_evidence = true   # PS1/PM1 discount the variant's own
                                             # record. Set false for a ClinVar-informed run.
 clinvar_low_penetrance_blocks_benign_frequency = true  # BS1/BS2 NotEvaluated when ClinVar
                                             # labels the variant low-penetrance / risk allele
+# pp3_max_strength = "Moderate"        # Optional ceiling on PP3 from computational
+                                       # evidence alone. Unset (uncapped) by default:
+                                       # Pejaver 2022 calibrates REVEL >= 0.932 to
+                                       # Strong. Set it if your lab follows the
+                                       # stricter "a predictor alone never reaches
+                                       # Strong" convention.
 use_pp5_bp6 = false                    # Enable PP5/BP6 (disabled by default per SVI)
 use_clinvar_stars_as_ps4_proxy = false # Opt back into the legacy ClinVar-stars PS4 proxy
                                        # (true PS4 needs case-control statistics, so off by default)
