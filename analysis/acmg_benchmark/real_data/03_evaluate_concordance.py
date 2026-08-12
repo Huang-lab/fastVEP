@@ -21,6 +21,11 @@ Outputs (under --out)
   discrepancies.tsv                  opposite-direction calls (top 10k)
 """
 
+# PEP 604 (`str | None`) and PEP 585 (`list[str]`) annotations are used below.
+# Both are runtime syntax errors before Python 3.10, and macOS still ships 3.9
+# as `python3`, so this makes the annotations lazy and the script portable.
+from __future__ import annotations
+
 import argparse
 import csv
 import gzip

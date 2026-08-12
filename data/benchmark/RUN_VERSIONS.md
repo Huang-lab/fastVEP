@@ -104,13 +104,35 @@ v3 was a partial run (PhyloP+SpliceAI loaded but bugs still latent);
 its results are functionally indistinguishable from v2 and were
 overwritten before being preserved.
 
-## v10: gnomAD v4 QC, hemizygote and filtering-AF columns (Tier B)
+## v10: gnomAD v4 QC columns, the gene-level gates, and two measured thresholds
 
-v10 is a **data-layer** run, not a criteria-logic run. The gnomAD builder had
-never captured nine fields the ACMG frequency criteria need, so B2, B3 and B5
-of the round-2 review plan were blocked on a re-extraction rather than on any
-classification work. Write-up in
+v10 closes every item of the round-2 medical-genetics review except B1, which
+needs a curated table rather than code. Write-up in
 [`docs/ACMG_EXPERT_REVIEW_ROUND2.md`](../../docs/ACMG_EXPERT_REVIEW_ROUND2.md).
+
+### Headline
+
+Against v9 leave-one-out, the like-for-like mode (both exclude the variant's own
+ClinVar record):
+
+| Metric | v9 (LOO) | **v10** | change |
+|---|---:|---:|---:|
+| Exact match | 59.9 % | **61.2 %** | +1.3 pp |
+| Same-direction | 71.0 % | **74.1 %** | +3.1 pp |
+| **Opposite-direction** | **46** | **25** | **−46 %** |
+| Pathogenic recall | 48.1 % | **58.5 %** | +10.4 pp |
+| Benign recall | 57.2 % | **65.3 %** | +8.1 pp |
+| VUS recall | 97.3 % | 97.0 % | −0.3 pp |
+| NoCall | 382 | 382 | — |
+
+Every headline metric improved except VUS recall, by 0.3 pp.
+
+### What is in it
+
+The data layer (B2, B3, B5) plus the gene-level gates (B6, B7), the curated
+functional-evidence input (B8), the two Tier C leftovers (C5, C6), and two
+thresholds moved from convention to measurement (BS2 prevalence, PM2 for
+dominant genes).
 
 ### New gnomAD columns
 

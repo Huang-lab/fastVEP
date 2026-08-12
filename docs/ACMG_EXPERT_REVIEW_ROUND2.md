@@ -1,13 +1,20 @@
 # ACMG Expert Review, Round 2: Findings, Implementation, and Results
 
-> **Status: Tier A, Tier C and B4 are implemented and benchmarked (run v9).**
-> Opposite-direction calls against ClinVar 2-star+ dropped from **122 to 41**
-> (ClinVar-informed mode) at a cost of 0.6 pp of same-direction agreement.
-> A separate leave-one-out mode removes the ClinVar self-reference that PS1 and
-> PM1 were relying on; see section 8. Results, per-criterion deltas and the
-> regenerated 46-row review spreadsheet are in
-> [`data/benchmark/output_v9/`](../data/benchmark/output_v9/README.md).
-> Tier B items B1, B2, B3, B5, B6, B7 and B8 remain open.
+> **Status: every item in this document is implemented except B1, which needs
+> curation rather than code.**
+> Tier A, Tier C and B4 landed in run v9; B2, B3, B5, B6, B7, B8, C5 and C6
+> landed after it and are measured in run v10.
+> The v9 figures below stand as the record of what the criteria fixes alone
+> bought: opposite-direction calls against ClinVar 2-star+ dropped from **122 to
+> 41** (ClinVar-informed) at a cost of 0.6 pp of same-direction agreement, with a
+> leave-one-out mode removing the ClinVar self-reference PS1 and PM1 relied on
+> (section 8).
+> Two thresholds that had been set by convention are now set by measurement -
+> the BS2 prevalence bar and the PM2 bar for dominant genes - and both sweeps are
+> recorded in [`ACMG.md`](ACMG.md).
+> **B1 (prevalence-aware per-gene-disease thresholds) is the one thing still
+> open, and it is a curation task**: the code hooks exist and are waiting for the
+> table.
 
 
 Source: `discordant 122.xlsx` (122 opposite-direction calls from the v8 ClinVar 2-star+ benchmark) plus the reviewer's covering email.
@@ -184,13 +191,19 @@ This is the reviewer's central point about hearing loss, alpha-1 antitrypsin def
 - **Guideline:** Abou Tayoun 2018 requires that loss of function be an established mechanism for the gene before PVS1 is applied.
 - **Now:** [pvs1.rs:369](../crates/fastvep-classification/src/criteria/pvs1.rs#L369) reads `GeneOverride.mechanism` only to *enable* PVS1; a gene declared GOF is never blocked, and the default table is empty. In practice PVS1 fires on any null variant in a constrained gene.
 - **Change:** make mechanism authoritative. If mechanism is GOF-only, PVS1 is NotApplicable. Ship a curated default table sourced from ClinGen VCEP specifications and GDV mechanism statements.
-- **Impact:** PCSK9 x2, CYFIP2, IFIH1 x2, TNNI3K, and the RYR1 malignant-hyperthermia case.
+- **Status: done.** A mechanism that excludes loss of function (`GOF`, `DOMINANT_NEGATIVE`) takes PVS1 to NotApplicable. The curated table ships in its own `gene_mechanisms` map rather than inside `gene_overrides`, so a TOML setting one `[gene_overrides.X]` block does not silently discard it. Constraint cannot substitute for this: a gain-of-function gene under purifying selection has a high pLI for the same reason a haploinsufficient one does, which is how PCSK9 - where the null allele lowers LDL and is the mechanism of an approved drug class - was collecting PVS1.
+- **Measured** over 12,844 ClinVar variants in the flagged genes: PVS1 blocked in PCSK9 23, IFIH1 20, TNNI3K 11, CYFIP2 4, MYH7 89. Controls hold - BRCA1 keeps all 2,571 PVS1 firings.
+- **One correction.** RYR1 is *not* a case for this gate. Malignant hyperthermia is gain of function but the congenital myopathies are loss of function, so a null allele is still pathogenic for one of the two. It is curated `LOF_and_GOF` and PVS1 still applies to it; all 89 firings survive. Genes with both mechanisms are listed in the table anyway, because each is one somebody will reasonably propose adding as GOF.
+- **Impact:** PCSK9 x2, CYFIP2, IFIH1 x2, TNNI3K.
 
 ### B7. Gene-disease validity gate
 
 - **Guideline:** every pathogenic criterion presupposes an established gene-disease relationship. We already load ClinGen GDV (Definitive/Strong/Moderate only) into `omim.oga`.
 - **Change:** enforce it. PVS1, PP2 and PM1 require a GDV entry for the gene; without one, report VUS with `no_established_gene_disease_relationship`.
-- **Impact:** RYK ("gene is not associated with disease"), GIGYF2 (susceptibility locus only), EMG1, ARMC9, ORAI1.
+- **Status: done.** All three now report NotEvaluated with that reason for a gene absent from the loaded source. The gate degrades the opposite way from every other one here, deliberately: with no `omim.oga` loaded it does not fire at all, because a gene missing from a file nobody opened is not a gene without a disease. `ClassificationInput` carries `gene_disease_db_loaded` for exactly that distinction - `omim` being `None` cannot tell the two apart, and gating on it would suppress PVS1/PP2/PM1 genome-wide.
+- **Correction to the impact list above.** Only RYK and GIGYF2 are actually absent from ClinGen GDV. EMG1, ARMC9 and ORAI1 all have entries, so B7 cannot be what fixes them; whatever is wrong with those rows is something else. Measured blocks: RYK 1, GIGYF2 2.
+- **Cost:** 0.7 pp of pathogenic recall on a 1-in-10 benchmark sample, with benign recall and opposite-direction calls unchanged. The gate is narrow by construction.
+- **Impact:** RYK ("gene is not associated with disease"), GIGYF2 (susceptibility locus only).
 
 ### B8. Functional evidence input that supersedes computational predictions
 
@@ -199,12 +212,14 @@ This answers her last email paragraph.
 - **Guideline:** the SVI's ordering is explicit. Functional evidence (PS3/BS3) is stronger than computational prediction, and PP3/BP4/BP7 should not be used to argue against sound experimental data.
 - **Now:** PS3 and BS3 are hard-coded NotEvaluated.
 - **Change:** add `--functional-evidence <TSV>` mapping variant key to PS3/BS3 with strength and PMID. When an entry is present, PS3/BS3 fire at the stated strength and BP4/BP7/PP3 are suppressed for that variant with `superseded_by_functional_evidence`.
+- **Status: done.** `--functional-evidence <TSV>` takes `chrom, pos, ref, alt, criterion, strength, pmid, note`, keyed on the record's original VCF coordinates rather than fastVEP's normalised alleles, because the file is written by a human reading a VCF. Strength is a column, not a constant: Brnich 2020 grades assay strength on validity, controls and dynamic range, so a curator who has read the paper can say Supporting. Malformed rows are hard errors naming the line, parsed before the run starts, and a file asserting both PS3 and BS3 for one variant is rejected rather than resolved by whichever line came last.
+- **Verified end-to-end** on the OCA2 case: `before call=B (BA1+BS2+BP4+BP7)` → `after call=VUS (PS3 PMID 26637981 + BA1 + BS2, BP4 and BP7 superseded)`.
 - **Impact:** OCA2 c.1503A>G (synonymous with published splice-defect data, where we fired BP7 and BP4), C2 (exon-skipping functional data).
 - **Note:** fastVEP will not mine literature. It will consume curated evidence, which is how every VCEP pipeline works.
 
 ## 5. Tier C: annotation bugs found while reproducing
 
-Correctness bugs independent of ACMG. **C1 through C4 are fixed in v9**; C5 and C6 are not.
+Correctness bugs independent of ACMG. **C1 through C4 are fixed in v9; C5 and C6 after it.**
 
 | # | Bug | Evidence | Affected rows |
 |---|---|---|---|
@@ -212,8 +227,8 @@ Correctness bugs independent of ACMG. **C1 through C4 are fixed in v9**; C5 and 
 | C2 | Multi-nucleotide substitutions spanning or offset from a codon boundary are translated in the wrong frame, producing spurious `stop_gained`. | MUTYH `GC>AT` gives `CTg/TAg`; the correct c.1164_1165delinsAT is synonymous. HPS4 `GA>CT` gives `tCC/tGA`; the correct c.1060_1061delTCinsAG is p.(Ser354=). | 2, plus unknown tail |
 | C3 | An insertion or duplication at a canonical splice site that re-inserts the identical base(s) still calls `splice_acceptor_variant` and earns PVS1. The dinucleotide is unchanged. | PTEN c.802-2dupA, BRIP1 c.2258-2dup, DSP c.939+3_939+6dup. | 3-4 |
 | C4 | `intronic_offset` is not populated for indels, so PVS1's canonical ±1/±2 gate never engages for deletions and insertions spanning a splice boundary. | ATM `GTAATC>G` got PVS1 with SpliceAI 0.00. | 5 (ATM x2, BRCA2, MSH6 x2) |
-| C5 | Transcript picking lands on a non-coding consequence for homologous loci and for genes where MANE says otherwise. | CYP21A2 and STRC rows come out as `downstream_gene_variant`; KIAA0586 as `upstream_gene_variant` where the reviewer says MANE gives 5'UTR. | 8-9 |
-| C6 | The review-table exporter passes `ALT=.` through verbatim, which is what prompted her "does dot mean del?" question. Should emit the ClinVar HGVS. | `04_build_md_review_table.py` | 5 |
+| C5 | **Fixed, and the cause was not what this table assumed.** fastVEP implements VEP's default `--pick_order` faithfully, and in that order consequence severity (`rank`) is the *last* tier, below mane_select/canonical/appris/tsl/biotype/ccds. So a MANE transcript the variant merely neighbours outranks a non-MANE one it disrupts. Stock VEP makes the same choice. Fixed by supporting VEP's `--pick-order` flag rather than by changing the default, which stays VEP-identical. | CYP21A2 rows came out on **C4B**, STRC-region rows on **TIMM9**. With `--pick-order rank,...` over 300 variants in these regions: C4B 43→0, TIMM9 32→2, CYP21A2 34→77. | 8-9 |
+| C6 | **Fixed.** The export now carries a `variant` column holding ClinVar's own genomic HGVS, so no row has to be identified by interpreting the join key, and a reference-agreement row gets a review_question saying what `ALT=.` is and that its presence is a bug to report rather than a call to review. `ref`/`alt` stay verbatim as the join back to the VCF. | `04_build_md_review_table.py` | 5 |
 
 ## 6. What we will not do, and why
 
@@ -234,7 +249,10 @@ Order followed, roughly by value per unit of work (steps 1 to 4 are done):
 2. **Tier A criteria fixes** (A1, A2, A3, A4 part 1, A5, A7). Pure classification-crate changes with unit tests; resolved 78 of the 122. *Done, run v9.*
 3. **B3, B4, B5** (gnomAD QC fields, homology list, hemizygotes). Data-layer additions to the gnomAD builder. *Done; B4 landed in v9, B3 and B5 in v10.*
 4. **B2** (FAF95). *Done, v10.* Turned out to be the same data-layer pass as B3/B5, so it was folded into it rather than run separately.
-5. **B6/B7** (mechanism and validity gates), then **B1** (prevalence-aware thresholds) and **B8** (functional evidence). Largest, and worth doing after the cheaper fixes have cleared the noise.
+5. **B6/B7** (mechanism and validity gates) and **B8** (functional evidence). *Done, v10.* Along the way, **C5** and **C6**, and the PM2 threshold below.
+6. **B1** (prevalence-aware per-gene-disease thresholds). Still open, and the only remaining item. It is a curation task, not an engineering one.
+
+**One thing the rebuild exposed that nobody had asked about.** The v10 gnomAD database has far better coverage than the April v1 build - 50.0 % of chr15 pathogenic variants carry a gnomAD record against 21.5 % on a not-yet-rebuilt chromosome - so many variants stopped looking "absent" and PM2 collapsed. The cause was `pm2_ad_af_threshold = 0.0`, a literal reading of Richards 2015's "absent from controls" that does not survive the change in denominator: the 2015 text was written against ExAC's 60,706 exomes, and a singleton among gnomAD v4's 800,000 people is exactly the "not seen in the general population" PM2 asks about. Now 4e-5, from a sweep and inside published VCEP practice, worth 19 points of pathogenic recall. Better data met a threshold that was never right.
 
 Steps 3 and 4 required re-extracting gnomAD v4.1 exomes to pick up nine columns the
 builder had never captured: the FILTER verdict, the `lcr` / `segdup` / `non_par`
@@ -244,7 +262,42 @@ upgrading fastVEP without rebuilding the annotation database cannot change a cal
 
 **Methodology point worth raising with the reviewer.** A7 exposes a circularity we should be honest about in the manuscript. PS1, PM5 and PM1 are all computed from a ClinVar-derived index that currently includes the variant being classified, and A6 would add another ClinVar-derived gate. Any of these makes ClinVar concordance a partly self-fulfilling metric. Proposal: run the benchmark in two modes, a "leave-one-variant-out" mode with self-matches excluded (the honest number), and a "ClinVar-informed" mode matching what a lab pipeline would actually do, and report both.
 
-## 8. Results (run v9)
+## 8. Results (run v10)
+
+Full ClinVar 2-star+ rerun, 673,660 variants, against the rebuilt 24-chromosome
+gnomAD v4.1 `.osa2` database. Compared against v9 leave-one-out, which is the
+like-for-like mode (both exclude the variant's own ClinVar record).
+
+| Metric | v9 (leave-one-out) | **v10** | change |
+|---|---:|---:|---:|
+| Exact match | 59.9 % | **61.2 %** | +1.3 pp |
+| Same-direction | 71.0 % | **74.1 %** | +3.1 pp |
+| **Opposite-direction** | **46** | **25** | **−46 %** |
+| Pathogenic recall | 48.1 % | **58.5 %** | +10.4 pp |
+| Benign recall | 57.2 % | **65.3 %** | +8.1 pp |
+| VUS recall | 97.3 % | 97.0 % | −0.3 pp |
+| Likely-benign recall | 45.5 % | 45.7 % | +0.2 pp |
+| NoCall | 382 | 382 | — |
+
+Every headline metric improved except VUS recall, which gave up 0.3 pp. Read it
+as three separate effects:
+
+- **Better data.** The gnomAD rebuild raised record coverage sharply (50.0 % of
+  chr15 pathogenic variants carry a record, against 21.5 % on the old build), and
+  B2's filtering allele frequency and B3's QC gating made what is there more
+  trustworthy. Most of the benign-recall gain is here.
+- **A threshold the better data exposed.** PM2's strict-absence rule collapsed
+  once more variants had records; moving it to 4e-5 is most of the
+  pathogenic-recall gain. This was not a planned item and would not have been
+  found without the rebuild.
+- **The gates.** B6 and B7 cost about 0.7 pp of pathogenic recall on their own,
+  and are the main contributor to halving opposite-direction calls: the PVS1
+  firings they removed were the confidently-wrong ones.
+
+25 opposite-direction calls out of 673,660, from 122 at the start of this review
+round.
+
+## 8b. Results (run v9, retained for the record)
 
 Full ClinVar 2-star+ rerun, 673,660 variants, same annotation stack as v8 apart
 from a `clinvar_protein.oga` rebuild that adds the distinct-nucleotide-change
@@ -295,12 +348,30 @@ TXNL4A) is the prevalence-aware-threshold work in B1.
 
 ### What is implemented
 
-Tier A in full (A1 through A7), Tier C annotation bugs C1 through C4, and B4
-(the homology gene list). C5 (transcript picking at homologous loci) and C6
-(review-table export) are not done. Tier B items needing a gnomAD rebuild
-(B2 filtering allele frequency, B3 QC flags, B5 hemizygotes) or a new curated
-table (B1 prevalence, B6 mechanism, B7 gene-disease validity, B8 functional
-evidence) are open.
+As of run v10: **everything in this document except B1.**
+
+| | Item | Landed |
+|---|---|---|
+| A1-A7 | Criteria fixes straight from the guideline text | v9 |
+| C1-C4 | Annotation bugs (`ALT=.`, MNV frame, splice dup, indel offsets) | v9 |
+| B4 | Homologous / segmental-duplication gene list | v9 |
+| B2 | Filtering allele frequency for BA1/BS1 | v10 |
+| B3 | gnomAD FILTER / region-flag gating of BA1/BS1/BS2/PM2 | v10 |
+| B5 | Hemizygote-aware BS2 on non-PAR sex chromosomes | v10 |
+| B6 | Disease mechanism gates PVS1 | v10 |
+| B7 | Gene-disease validity gates PVS1/PP2/PM1 | v10 |
+| B8 | `--functional-evidence` supplying PS3/BS3 | v10 |
+| C5 | Configurable `--pick-order` | v10 |
+| C6 | Legible review-table export | v10 |
+| **B1** | **Prevalence-aware per-gene-disease thresholds** | **open** |
+
+B1 is open because it needs a curated table, not code: the `disorders` config
+scaffold, the per-gene threshold hook and the gene-level `.oga` loader are all
+in place waiting for it.
+
+Two thresholds also moved from convention to measurement, which was not in the
+original plan: the BS2 prevalence bar (1e-5 → 1e-3) and the PM2 bar for dominant
+genes (strict absence → 4e-5). Both sweeps are in [`ACMG.md`](ACMG.md).
 
 ## 9. Answers received, and what they changed
 
@@ -311,5 +382,15 @@ evidence) are open.
 
 ## 10. Still open
 
-1. What prevalence bar should the default BS2 homozygote test use for genes with no VCEP specification? The current 1e-5 (a 1-in-100,000 disorder) is deliberately conservative and is the single knob with the largest effect on benign recall.
-2. Her call on the 8 rows where both ClinVar and fastVEP are wrong, so they can be held as a small expert-adjudicated test set independent of ClinVar.
+Only two things, and neither is code.
+
+1. **B1, the per-gene-disease attribute table.** Prevalence, penetrance class, onset class and any published VCEP BA1/BS1 thresholds, keyed by gene and MONDO ID. Everything that consumes it exists; nothing can generate it. This is the item that would resolve the residual benign discordances (GJB2, C2, C9, TXNL4A) that no global threshold can.
+2. **Her call on the 8 rows where both ClinVar and fastVEP are wrong**, so they can be held as a small expert-adjudicated test set independent of ClinVar.
+
+What is *no longer* open, and why:
+
+- **The BS2 prevalence bar** was question 1 here. Answered by measurement rather than by asking: swept across the full benchmark and set to 1e-3, the prevalence of the most common Mendelian disorders, which covers the hearing-loss / alpha-1 antitrypsin / familial Mediterranean fever cases in her point 2 without needing the per-gene table. See [`ACMG.md`](ACMG.md#choosing-the-bs2-prevalence-bar).
+- **The PM2 bar for dominant genes** was not a question anyone had asked, and turned out to matter more. fastVEP read Richards 2015's "absent from controls" as literal absence, which is 19 points of pathogenic recall against gnomAD v4's 800,000 individuals. Now 4e-5, from the sweep and inside published VCEP practice. See [`ACMG.md`](ACMG.md#choosing-the-pm2-bar-for-dominant-genes).
+
+Both are configurable, and both sweeps are reproducible with
+[`sweep_acmg_thresholds.py`](../data/benchmark/scripts/sweep_acmg_thresholds.py).
