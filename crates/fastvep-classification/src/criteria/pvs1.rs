@@ -104,6 +104,73 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
                 }
             }
         }
+
+        // Splice-prediction consistency gate (Walker 2023, ClinGen SVI
+        // Splicing Subgroup). PVS1's canonical track assumes the ±1/±2
+        // dinucleotide is destroyed. Two situations break that assumption and
+        // both showed up in the medical-genetics review:
+        //
+        //  1. SpliceAI is confidently benign (≤ `spliceai_benign`). A genuine
+        //     canonical ±1/±2 change is the easiest call SpliceAI makes, so a
+        //     score of ~0 means the positional call is wrong - typically an
+        //     indel that merely overlaps the region, or a repeat-context
+        //     deletion with an ambiguous alignment. ATM c.?  `GTAATC>G`
+        //     (SpliceAI 0.00) and KMT2C `C>CT` (0.05) are both ClinVar
+        //     benign/likely-benign and both collected PVS1 this way.
+        //  2. The variant is a pure insertion or duplication. Inserting bases
+        //     beside, or even inside, the dinucleotide does not necessarily
+        //     destroy it: `PTEN c.802-2dupA` and `BRIP1 c.2258-2dup` add the
+        //     base the acceptor already carries, so the intron still ends AG.
+        //     Without positive splice evidence (SpliceAI ≥ `spliceai_pathogenic`)
+        //     PVS1 must not fire on those.
+        //
+        // In both cases a coding-null consequence on the same allele still
+        // carries PVS1 through its own track, so re-grade rather than discard.
+        if matches!(kind, NullKind::CanonicalSplice) {
+            let spliceai_max = input.splice_ai.as_ref().and_then(|s| s.max_delta_score());
+            if let Some(ds) = spliceai_max {
+                details.insert("spliceai_max_ds".into(), serde_json::json!(ds));
+            }
+            let contradicted_by_spliceai =
+                spliceai_max.map_or(false, |ds| ds <= config.spliceai_benign);
+            let unsupported_insertion = input.is_pure_insertion == Some(true)
+                && !spliceai_max.map_or(false, |ds| ds >= config.spliceai_pathogenic);
+
+            if contradicted_by_spliceai || unsupported_insertion {
+                let reason = if contradicted_by_spliceai {
+                    format!(
+                        "SpliceAI max_ds={:.2} ≤ {:.2} contradicts loss of the canonical ±1/±2 site",
+                        spliceai_max.unwrap_or(0.0),
+                        config.spliceai_benign
+                    )
+                } else {
+                    "pure insertion/duplication at the canonical site may leave the ±1/±2 dinucleotide intact, and no positive SpliceAI support is available".to_string()
+                };
+                match NullKind::detect_non_splice(&input.consequences) {
+                    Some(coding_null) => {
+                        details.insert(
+                            "splice_evidence_regraded_to".into(),
+                            serde_json::json!(coding_null.label()),
+                        );
+                        kind = coding_null;
+                    }
+                    None => {
+                        details.insert(
+                            "splice_evidence_conflict".into(),
+                            serde_json::json!(reason.clone()),
+                        );
+                        return mk(
+                            "PVS1".to_string(),
+                            EvidenceStrength::VeryStrong,
+                            false,
+                            true,
+                            format!("PVS1 splice track not applicable: {} (defer to PP3/BP4)", reason),
+                            details,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     let (strength, summary) = match kind {
@@ -399,7 +466,7 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sa_extract::{GnomadGeneData, OmimData};
+    use crate::sa_extract::{GnomadGeneData, OmimData, SpliceAiData};
     use fastvep_core::Impact;
 
     fn make_input(consequences: Vec<Consequence>, gene_constraints: Option<GnomadGeneData>, omim: Option<OmimData>) -> ClassificationInput {
@@ -428,6 +495,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -657,5 +725,66 @@ mod tests {
         assert!(r.met);
         assert_eq!(r.strength, EvidenceStrength::VeryStrong);
         assert_eq!(r.code, "PVS1");
+    }
+
+    fn lof_gene() -> Option<GnomadGeneData> {
+        Some(GnomadGeneData { pli: Some(1.0), loeuf: Some(0.03), ..Default::default() })
+    }
+
+    #[test]
+    fn test_pvs1_splice_dropped_when_spliceai_contradicts() {
+        // A genuine canonical +-1/+-2 change is the easiest call SpliceAI
+        // makes. A score of ~0 means the positional call is wrong -- typically
+        // an indel overlapping the region, or a repeat-context deletion with an
+        // ambiguous alignment. ATM GTAATC>G (SpliceAI 0.00) is ClinVar
+        // likely-benign and was collecting PVS1 this way.
+        let mut input = make_input(vec![Consequence::SpliceDonorVariant], lof_gene(), None);
+        input.splice_ai = Some(SpliceAiData { ds_dl: Some(0.0), ..Default::default() });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.summary.contains("contradicts"));
+    }
+
+    #[test]
+    fn test_pvs1_splice_kept_when_spliceai_supports() {
+        let mut input = make_input(vec![Consequence::SpliceDonorVariant], lof_gene(), None);
+        input.splice_ai = Some(SpliceAiData { ds_dl: Some(0.95), ..Default::default() });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_pvs1_splice_dropped_for_unsupported_insertion() {
+        // PTEN c.802-2dupA and BRIP1 c.2258-2dup add the base the acceptor
+        // already carries, so the intron still ends AG. Without positive
+        // SpliceAI support PVS1 must not fire.
+        let mut input = make_input(vec![Consequence::SpliceAcceptorVariant], lof_gene(), None);
+        input.is_pure_insertion = Some(true);
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.summary.contains("insertion"));
+    }
+
+    #[test]
+    fn test_pvs1_splice_insertion_kept_with_spliceai_support() {
+        let mut input = make_input(vec![Consequence::SpliceAcceptorVariant], lof_gene(), None);
+        input.is_pure_insertion = Some(true);
+        input.splice_ai = Some(SpliceAiData { ds_al: Some(0.99), ..Default::default() });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_pvs1_splice_conflict_regrades_to_coding_null() {
+        // An indel that both overlaps the splice site and deletes coding
+        // sequence still carries PVS1 through the frameshift track.
+        let mut input = make_input(
+            vec![Consequence::SpliceDonorVariant, Consequence::FrameshiftVariant],
+            lof_gene(),
+            None,
+        );
+        input.splice_ai = Some(SpliceAiData { ds_dl: Some(0.0), ..Default::default() });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met, "coding-null track should still carry PVS1");
     }
 }

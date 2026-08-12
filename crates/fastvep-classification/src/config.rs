@@ -143,6 +143,57 @@ pub struct AcmgConfig {
     /// ClinGen VCEP practice (e.g. Hereditary Cancer / Lynch).
     #[serde(default = "default_bs2_ad_min_ac")]
     pub bs2_ad_min_ac: u64,
+    /// Absolute floor on homozygous observations before BS2 can fire on a
+    /// recessive (or unknown-inheritance) gene. A single homozygote is not
+    /// evidence of tolerance: 20 of the 52 BS2 misfires in the round-2
+    /// medical-genetics review had exactly one, and 6 had two. Default 2.
+    #[serde(default = "default_bs2_ar_min_hom")]
+    pub bs2_ar_min_hom: u64,
+    /// Maximum disease prevalence, as a fraction of individuals, that BS2's
+    /// homozygote test is asked to rule out. BS2 fires only when the 95 %
+    /// lower confidence bound on the homozygote frequency in gnomAD exceeds
+    /// this value, i.e. when there are demonstrably more homozygotes than the
+    /// disorder itself could account for.
+    ///
+    /// This is what makes the criterion scale with cohort size rather than
+    /// with a bare count: one homozygote among 730 K individuals and one among
+    /// 5 K are very different observations, and Richards 2015 BS2 asks for an
+    /// observation "in a healthy adult", not for any observation at all.
+    /// Default 1e-5 (a 1-in-100,000 disorder). Gene-specific prevalence from a
+    /// VCEP specification should override this per gene once that table lands.
+    #[serde(default = "default_bs2_prevalence")]
+    pub bs2_hom_prevalence_threshold: f64,
+    /// Genes where population allele frequencies cannot be trusted because
+    /// paralogues, pseudogenes or segmental duplications cause systematic
+    /// mismapping (Mandelker et al. 2016, PMID 27228465). BA1, BS1, BS2 and
+    /// PM2 are all reported NotEvaluated for these genes rather than fired on
+    /// unreliable counts.
+    #[serde(default = "default_homology_unreliable_genes")]
+    pub homology_unreliable_genes: Vec<String>,
+    /// Suppress BS1/BS2 when ClinVar (2 stars or better) labels the variant
+    /// with a low-penetrance or risk-allele term. Such a variant is outside
+    /// BS2's "full penetrance expected at an early age" precondition by
+    /// definition, and its population frequency is expected to be high.
+    ///
+    /// This gate reads ClinVar, so it must be disabled when measuring
+    /// concordance against ClinVar itself. Default `true`.
+    #[serde(default = "default_true")]
+    pub clinvar_low_penetrance_blocks_benign_frequency: bool,
+    /// Exclude the variant being classified from the ClinVar-derived evidence
+    /// that PS1 and PM1 read. PS1 means "same amino acid change as a
+    /// *previously established* pathogenic variant, regardless of the
+    /// nucleotide change"; matching a variant against its own ClinVar record
+    /// is circular and inflates any ClinVar-based benchmark. When the variant
+    /// itself is ClinVar pathogenic/likely-pathogenic, its own entry is
+    /// discounted from the protein-index match count. Default `true`.
+    #[serde(default = "default_true")]
+    pub exclude_self_from_clinvar_evidence: bool,
+    /// Maximum number of pathogenic/likely-pathogenic missense variants a gene
+    /// may have in the ClinVar protein index before BP1 is ruled out. At or
+    /// above this count, missense is an established disease mechanism for the
+    /// gene and BP1 cannot apply. Default 3.
+    #[serde(default = "default_bp1_max_pathogenic_missense")]
+    pub bp1_max_pathogenic_missense: u32,
     /// Enable PP5/BP6 criteria (disabled by default per ClinGen SVI)
     #[serde(default)]
     pub use_pp5_bp6: bool,
@@ -253,6 +304,12 @@ impl Default for AcmgConfig {
             pm2_downgrade_to_supporting: true,
             pm2_absent_when_no_record: true,
             bs2_ad_min_ac: 5,
+            bs2_ar_min_hom: 2,
+            bs2_hom_prevalence_threshold: 1e-5,
+            homology_unreliable_genes: default_homology_unreliable_genes(),
+            clinvar_low_penetrance_blocks_benign_frequency: true,
+            exclude_self_from_clinvar_evidence: true,
+            bp1_max_pathogenic_missense: 3,
             use_pp5_bp6: false,
             ba1_exceptions: default_ba1_exceptions(),
             use_clinvar_stars_as_ps4_proxy: false,
@@ -283,6 +340,18 @@ impl AcmgConfig {
             .map_or(false, |o| o.disabled_criteria.iter().any(|c| c == criterion_code))
     }
 
+    /// True when the gene's population frequencies are unreliable because of
+    /// paralogue / pseudogene / segmental-duplication mismapping.
+    pub fn is_homology_unreliable(&self, gene: Option<&str>) -> bool {
+        match gene {
+            Some(g) => self
+                .homology_unreliable_genes
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(g)),
+            None => false,
+        }
+    }
+
     /// Get effective BS1 threshold for a gene (gene-specific or default).
     pub fn effective_bs1_threshold(&self, gene: Option<&str>) -> f64 {
         gene.and_then(|g| {
@@ -302,6 +371,30 @@ fn default_pm2() -> f64 { 0.0001 }
 fn default_pm2_ad() -> f64 { 0.0 }
 fn default_pm2_ar() -> f64 { 0.00007 }
 fn default_bs2_ad_min_ac() -> u64 { 5 }
+fn default_bs2_ar_min_hom() -> u64 { 2 }
+fn default_bs2_prevalence() -> f64 { 1e-5 }
+fn default_bp1_max_pathogenic_missense() -> u32 { 3 }
+
+/// Genes whose gnomAD frequencies are unreliable because of paralogue,
+/// pseudogene or segmental-duplication mismapping (Mandelker et al. 2016,
+/// PMID 27228465, "Navigating highly homologous genes in a molecular
+/// diagnostic setting"). The reviewer flagged CYP21A2 and STRC directly in
+/// the round-2 review and cited this reference; HBA1/HBA2 rows in the same
+/// file have the same problem. Users may replace the list via TOML.
+fn default_homology_unreliable_genes() -> Vec<String> {
+    [
+        // Reviewer-flagged in the round-2 discordance review.
+        "CYP21A2", "STRC", "HBA1", "HBA2",
+        // Canonical members of the Mandelker 2016 set that also appear in
+        // clinical panels and carry a pseudogene or near-identical paralogue.
+        "SMN1", "SMN2", "PMS2", "NEB", "OTOA", "GBA", "IKBKG", "CFC1", "NCF1",
+        "TTN", "CYP11B1", "CYP11B2", "HBB", "HBD", "SBDS", "FCGR3A", "FCGR3B",
+        "CR1", "C4A", "C4B", "TUBB8", "MOCS1", "OPN1LW", "OPN1MW", "GTF2I",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
 fn default_pp3_supporting() -> f64 { 0.644 }
 fn default_pp3_moderate() -> f64 { 0.773 }
 fn default_pp3_strong() -> f64 { 0.932 }

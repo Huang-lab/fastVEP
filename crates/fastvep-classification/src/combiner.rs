@@ -25,6 +25,48 @@ pub fn combine(criteria: &[EvidenceCriterion]) -> (AcmgClassification, Option<St
     let pathogenic_call = compute_pathogenic_call(pvs, ps, pm, pp);
     let benign_call = compute_benign_call(ba, bs, bp);
 
+    // Richards 2015: "If a variant does not fulfil criteria using either of
+    // these sets, or the evidence for benign and pathogenic is conflicting,
+    // the variant defaults to uncertain significance." The rule below catches
+    // the case where one direction reaches a definite call while the other
+    // holds evidence at Strong or above without itself reaching a call.
+    //
+    // That asymmetry produced most of the false-benign calls in the round-2
+    // medical-genetics review: a met PS1 (Strong) plus two benign supporting
+    // criteria was reported Likely Benign, with the Strong pathogenic evidence
+    // silently discarded. 36 of the 78 such rows carried a met PS1 or PVS1.
+    let strong_pathogenic_present = pvs >= 1 || ps >= 1;
+    let strong_benign_present = ba >= 1 || bs >= 1;
+
+    if let Some((cls, rule)) = &benign_call {
+        if is_definite(*cls) && strong_pathogenic_present && pathogenic_call.is_none() {
+            return (
+                AcmgClassification::UncertainSignificance,
+                Some(format!(
+                    "Conflicting evidence: benign rules → {} ({}), but {} pathogenic criteri{} at Strong or above also met",
+                    cls.shorthand(),
+                    rule,
+                    pvs + ps,
+                    if pvs + ps == 1 { "on is" } else { "a are" }
+                )),
+            );
+        }
+    }
+    if let Some((cls, rule)) = &pathogenic_call {
+        if is_definite(*cls) && strong_benign_present && benign_call.is_none() {
+            return (
+                AcmgClassification::UncertainSignificance,
+                Some(format!(
+                    "Conflicting evidence: pathogenic rules → {} ({}), but {} benign criteri{} at Strong or above also met",
+                    cls.shorthand(),
+                    rule,
+                    ba + bs,
+                    if ba + bs == 1 { "on is" } else { "a are" }
+                )),
+            );
+        }
+    }
+
     match (pathogenic_call, benign_call) {
         // Both directions reach a definite call → conflict.
         (Some((p_cls, p_rule)), Some((b_cls, b_rule)))
@@ -461,5 +503,63 @@ mod tests {
         let (cls, rule) = combine(&criteria);
         assert_eq!(cls, AcmgClassification::UncertainSignificance);
         assert!(rule.is_none());
+    }
+
+    // ── Asymmetric conflict guard (Richards 2015) ──
+
+    #[test]
+    fn test_strong_pathogenic_blocks_likely_benign_call() {
+        // PS1 (Strong) alongside two BP criteria used to be reported Likely
+        // Benign with the Strong pathogenic evidence silently discarded. 36 of
+        // the 78 false-benign rows in the round-2 medical-genetics review had
+        // exactly this shape.
+        let criteria = vec![
+            met("PS1", Pathogenic, Strong),
+            met("BP1", Benign, Supporting),
+            met("BP4", Benign, Supporting),
+        ];
+        let (cls, rule) = combine(&criteria);
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+        assert!(rule.unwrap().contains("Conflicting evidence"));
+    }
+
+    #[test]
+    fn test_very_strong_pathogenic_blocks_benign_call() {
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            met("BS1", Benign, Strong),
+            met("BS2", Benign, Strong),
+        ];
+        let (cls, _) = combine(&criteria);
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+    }
+
+    #[test]
+    fn test_strong_benign_blocks_likely_pathogenic_call() {
+        // Mirror direction: a met BS1 alongside PM+PP evidence that reaches LP.
+        let criteria = vec![
+            met("PM1", Pathogenic, Moderate),
+            met("PM2", Pathogenic, Moderate),
+            met("PP2", Pathogenic, Supporting),
+            met("PP3", Pathogenic, Supporting),
+            met("BS1", Benign, Strong),
+        ];
+        let (cls, rule) = combine(&criteria);
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+        assert!(rule.unwrap().contains("Conflicting evidence"));
+    }
+
+    #[test]
+    fn test_supporting_benign_alone_does_not_block_pathogenic_call() {
+        // The guard is deliberately limited to Strong-or-above opposing
+        // evidence. A lone BP against a PVS1 is ordinary noise, not a conflict,
+        // and must not turn every pathogenic call into VUS.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            met("PM2", Pathogenic, Moderate),
+            met("BP3", Benign, Supporting),
+        ];
+        let (cls, _) = combine(&criteria);
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
     }
 }

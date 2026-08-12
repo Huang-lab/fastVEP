@@ -27,7 +27,7 @@ pub fn evaluate_all(
 ///    the same RNA outcome).
 fn evaluate_ps1(
     input: &ClassificationInput,
-    _config: &AcmgConfig,
+    config: &AcmgConfig,
 ) -> EvidenceCriterion {
     let is_missense = input
         .consequences
@@ -142,9 +142,32 @@ fn evaluate_ps1(
             .filter(|v| v.pos == prot_pos && v.alt_aa == alt_aa && v.sig.to_lowercase().contains("pathogenic"))
             .collect();
 
-        details.insert("matching_pathogenic_count".into(), serde_json::json!(matches.len()));
+        // Count distinct *nucleotide* changes, not index entries: the index
+        // dedups by amino-acid change, so two different codons producing the
+        // same substitution collapse into one entry carrying `n = 2`.
+        let distinct_nucleotide_changes: u32 = matches.iter().map(|v| v.n.max(1)).sum();
+        details.insert(
+            "matching_pathogenic_count".into(),
+            serde_json::json!(distinct_nucleotide_changes),
+        );
 
-        if !matches.is_empty() {
+        // PS1 is "same amino acid change as a **previously established**
+        // pathogenic variant, regardless of the nucleotide change". The
+        // protein index is keyed on (position, alt AA) and is built from
+        // ClinVar, so when the variant being classified is itself ClinVar
+        // pathogenic/likely-pathogenic, one of these matches IS this variant.
+        // Firing PS1 off its own record is circular: ENG c.991G>A got PS1
+        // from the single index entry `331:G>S:Pathogenic`, which is that
+        // variant. Require a second, independent nucleotide change in that case.
+        let self_in_index = config.exclude_self_from_clinvar_evidence
+            && input.clinvar.as_ref().map_or(false, |c| c.has_pathogenic());
+        let required_matches: u32 = if self_in_index { 2 } else { 1 };
+        if self_in_index {
+            details.insert("self_excluded_from_count".into(), serde_json::json!(true));
+            details.insert("required_matches".into(), serde_json::json!(required_matches));
+        }
+
+        if distinct_nucleotide_changes >= required_matches {
             return EvidenceCriterion {
                 code: "PS1".to_string(),
                 direction: EvidenceDirection::Pathogenic,
@@ -153,8 +176,9 @@ fn evaluate_ps1(
                 met: true,
                 evaluated: true,
                 summary: format!(
-                    "Same amino acid change (p.{}{}{}) is pathogenic in ClinVar ({} entries at protein position {})",
-                    ref_aa, prot_pos, alt_aa, matches.len(), prot_pos
+                    "Same amino acid change (p.{}{}{}) is pathogenic in ClinVar ({} independent entries at protein position {}{})",
+                    ref_aa, prot_pos, alt_aa, distinct_nucleotide_changes, prot_pos,
+                    if self_in_index { ", this variant's own record excluded" } else { "" }
                 ),
                 details: serde_json::Value::Object(details),
             };
@@ -168,8 +192,9 @@ fn evaluate_ps1(
             met: false,
             evaluated: true,
             summary: format!(
-                "No pathogenic ClinVar variant with same AA change at position {}",
-                prot_pos
+                "No independently-established pathogenic ClinVar variant with the same AA change at position {} ({} match(es), {} required{})",
+                prot_pos, distinct_nucleotide_changes, required_matches,
+                if self_in_index { "; this variant's own ClinVar record does not count toward PS1" } else { "" }
             ),
             details: serde_json::Value::Object(details),
         }
@@ -481,6 +506,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -563,5 +589,70 @@ mod tests {
         let result = evaluate_ps1(&input, &AcmgConfig::default());
         assert!(!result.evaluated);
         assert!(!result.met);
+    }
+
+    fn protein_index(n: u32) -> crate::sa_extract::ClinvarProteinData {
+        crate::sa_extract::ClinvarProteinData {
+            protein_variants: vec![crate::sa_extract::ClinvarProteinVariant {
+                pos: 175,
+                ref_aa: "R".into(),
+                alt_aa: "H".into(),
+                sig: "Pathogenic".into(),
+                n,
+            }],
+        }
+    }
+
+    fn clinvar_pathogenic() -> ClinvarData {
+        ClinvarData {
+            significance: Some(vec!["Pathogenic".into()]),
+            review_status: Some("criteria_provided,_multiple_submitters,_no_conflicts".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_ps1_does_not_fire_on_its_own_clinvar_record() {
+        // The protein index is built from ClinVar. When the variant being
+        // classified is itself ClinVar pathogenic and only one nucleotide
+        // change produces this residue substitution, the single matching entry
+        // IS this variant. Firing PS1 off it is circular: ENG c.991G>A did
+        // exactly that off `331:G>S:Pathogenic`.
+        let mut input = make_input(Some(clinvar_pathogenic()));
+        input.clinvar_protein = Some(protein_index(1));
+        let r = evaluate_ps1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.evaluated);
+    }
+
+    #[test]
+    fn test_ps1_fires_when_a_second_nucleotide_change_exists() {
+        // Two distinct codons producing p.Arg175His: one of them is this
+        // variant, the other is genuine independent evidence, which is exactly
+        // what PS1 means by "regardless of the nucleotide change".
+        let mut input = make_input(Some(clinvar_pathogenic()));
+        input.clinvar_protein = Some(protein_index(2));
+        let r = evaluate_ps1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_ps1_fires_for_novel_variant_against_single_precedent() {
+        // A variant with no pathogenic ClinVar record of its own is not in the
+        // index, so a single precedent is independent evidence.
+        let mut input = make_input(None);
+        input.clinvar_protein = Some(protein_index(1));
+        let r = evaluate_ps1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_ps1_self_exclusion_can_be_disabled() {
+        let mut input = make_input(Some(clinvar_pathogenic()));
+        input.clinvar_protein = Some(protein_index(1));
+        let mut cfg = AcmgConfig::default();
+        cfg.exclude_self_from_clinvar_evidence = false;
+        let r = evaluate_ps1(&input, &cfg);
+        assert!(r.met, "ClinVar-informed mode keeps the legacy behaviour");
     }
 }

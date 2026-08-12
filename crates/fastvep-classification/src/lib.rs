@@ -17,7 +17,8 @@ pub mod types;
 
 pub use config::{AcmgConfig, TrioConfig};
 pub use sa_extract::{
-    extract_classification_input, ClassificationInput, CompanionVariant, GenotypeInfo,
+    extract_classification_input, is_pure_insertion, ClassificationInput, CompanionVariant,
+    GenotypeInfo,
 };
 pub use types::{AcmgClassification, AcmgResult, EvidenceCounts, EvidenceCriterion};
 
@@ -84,6 +85,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,

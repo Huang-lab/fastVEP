@@ -112,8 +112,27 @@ pm1_hotspot_min_pathogenic = 3 # Minimum pathogenic variants in window to call h
 # ── gnomAD v4 AN minimum (ClinGen SVI March 2024) ──
 min_an_for_frequency_criteria = 2000  # BA1/BS1 require AN ≥ this; below → NotEvaluated
 
+# ── BS2 homozygote test (Richards 2015 "full penetrance ... at an early age") ──
+bs2_ar_min_hom = 2                      # Absolute floor on homozygous observations
+bs2_hom_prevalence_threshold = 1e-5     # BS2 fires only when the 95% lower bound on the
+                                        # homozygote frequency exceeds this prevalence bar,
+                                        # so the criterion scales with cohort size rather
+                                        # than with a bare count
+
+# ── Genes where population frequencies cannot be trusted (Mandelker 2016, PMID 27228465) ──
+# BA1/BS1/BS2/PM2 all report NotEvaluated for these. Specifying the list in TOML REPLACES
+# the built-in one (CYP21A2, STRC, HBA1/2, SMN1/2, PMS2, NEB, OTOA, GBA, ...).
+# homology_unreliable_genes = ["CYP21A2", "STRC"]
+
 # ── ClinGen SVI behavior ──
 pm2_downgrade_to_supporting = true     # Downgrade PM2 from Moderate to Supporting (SVI)
+bp1_max_pathogenic_missense = 3        # BP1 blocked once the gene has this many pathogenic
+                                       # missense variants in ClinVar (missense is then an
+                                       # established mechanism, whatever the constraint says)
+exclude_self_from_clinvar_evidence = true   # PS1/PM1 discount the variant's own ClinVar
+                                            # record. Set false for a ClinVar-informed run.
+clinvar_low_penetrance_blocks_benign_frequency = true  # BS1/BS2 NotEvaluated when ClinVar
+                                            # labels the variant low-penetrance / risk allele
 use_pp5_bp6 = false                    # Enable PP5/BP6 (disabled by default per SVI)
 use_clinvar_stars_as_ps4_proxy = false # Opt back into the legacy ClinVar-stars PS4 proxy
                                        # (true PS4 needs case-control statistics, so off by default)
@@ -226,14 +245,14 @@ When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2
 | Code | Strength | Description | Data Source | Automatable |
 |---|---|---|---|---|
 | **BA1** | Standalone | AF > 5% in any population, AN ≥ 2,000 (gnomAD v4 SVI March 2024); 9-variant Ghosh 2018 exception list (HFE c.845G>A, MEFV common, BTD c.1330G>C, etc.) blocks BA1 regardless of AF | gnomAD population AFs + AN + HGVSc | Yes |
-| **BS1** | Strong | Max-population AF > expected (mirrors BA1 max-pop logic per SVI; pre-fix used cohort-wide AF and missed population-specific commons) | gnomAD per-population AFs | Yes |
-| **BS2** | Strong | Observed in healthy adult — AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`, ClinGen VCEP convention); AR requires ≥1 homozygote | gnomAD hom count + OMIM inheritance | Yes |
+| **BS1** | Strong | Max-population AF > expected (mirrors BA1 max-pop logic per SVI). NotEvaluated for homology-confounded genes and for ClinVar low-penetrance / risk alleles | gnomAD per-population AFs + ClinVar terms | Yes |
+| **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR requires ≥ `bs2_ar_min_hom` homozygotes **and** a 95% lower bound on the homozygote frequency above `bs2_hom_prevalence_threshold`, so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two homozygotes in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance | gnomAD hom count + AN + inheritance | Yes |
 | **BS3** | Strong | Functional studies show no damage | External data | No |
 | **BS4** | Strong | Lack of segregation | Pedigree data | No |
-| **BP1** | Supporting | Missense in LOF-only gene | pLI + misZ | Yes |
+| **BP1** | Supporting | Missense in a gene where primarily truncating variants cause disease. Requires both the constraint signature (high pLI, low misZ) **and** a mutation spectrum without an established missense mechanism (< `bp1_max_pathogenic_missense` pathogenic missense in the ClinVar protein index) | pLI + misZ + ClinVar protein index | Yes |
 | **BP2** | Supporting | In trans/cis with pathogenic | Phased VCF + ClinVar | Yes (with trio) |
 | **BP3** | Supporting | In-frame indel in repeat region | Consequence + RepeatMasker | Yes (with .osi) |
-| **BP4** | Supporting-Very Strong | Computational evidence (benign) — REVEL **missense-only** with Very Strong band at ≤ 0.003 (Pejaver 2022) + SpliceAI ≤ 0.1 → Supporting (Walker 2023). BP4-splice gated to non-PVS1-territory consequences (frameshifts and canonical splice can't claim BP4-splice). | REVEL + SpliceAI | Yes |
+| **BP4** | Supporting-Very Strong | Computational evidence (benign) - REVEL **missense-only** with Very Strong band at ≤ 0.003 (Pejaver 2022) + SpliceAI ≤ 0.1 → Supporting (Walker 2023). BP4-splice is withheld from PVS1-territory consequences, from deep-exonic missense, and from in-frame indels / stop-lost / protein-altering variants, for which no calibrated benign predictor exists. | REVEL + SpliceAI | Yes |
 | **BP5** | Supporting | Alternate molecular basis in case | Case-level analysis | No |
 | **BP6** | Supporting | Reputable source reports benign | ClinVar (disabled by default per SVI) | Partial |
 | **BP7** | Supporting | Synonymous + no splice impact + not conserved. Per Walker 2023: must NOT fire for synonymous at first base / last 3 bases of an exon (`at_exon_edge`); extends to deep-intronic offsets ≥ 7 (donor) or ≤ -21 (acceptor). | Consequence + SpliceAI + PhyloP + exon position | Yes |
@@ -297,6 +316,7 @@ After per-criterion evaluation, a reconciliation pass suppresses computational e
 
 | Trigger | Action | Reference |
 |---|---|---|
+| PVS1 fires + PM1 fires | Suppress PM1 | Abou Tayoun 2018 (PVS1 already counts loss of the region; PM1 is residue-level evidence for missense) |
 | PVS1 fires + PP3 driven by SpliceAI | Suppress PP3 | Walker 2023 (PVS1 already counts splice signal) |
 | PS1 fires + PP3 driven by REVEL (missense) | Suppress PP3 | Pejaver 2022 (PS1 covers residue) |
 | PM5 fires + PP3 driven by REVEL (missense) | Suppress PP3 | Pejaver 2022 (PM5 covers residue) |

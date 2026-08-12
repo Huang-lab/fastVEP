@@ -45,6 +45,56 @@ explicit Definitive/Strong/Moderate filtering.)
 | **PM2 gnomAD query left-aligned + ClinVar-AF backstop** (#50) |      |      |      |      |      |      |  ✅  |
 | **Opposite-direction discrepancies never truncated** (03 cap fix) |      |      |      |      |      |      |  ✅  |
 
+## v9: round-2 medical-genetics review
+
+v9 responds to the second review round (`discordant 122.xlsx` plus the
+reviewer's covering email). Every change traces to a specific point she raised.
+Full write-up in [`../../docs/ACMG_EXPERT_REVIEW_ROUND2.md`](../../docs/ACMG_EXPERT_REVIEW_ROUND2.md);
+run-specific notes in [`output_v9/README.md`](output_v9/README.md).
+
+The SA stack is unchanged except for a rebuild of `clinvar_protein.oga`, which
+now carries `n` per entry: the number of distinct nucleotide changes producing
+that amino-acid change. PS1 needs it to tell an independent precedent from the
+variant's own ClinVar record.
+
+### Annotation bugs (found while reproducing her cases)
+
+| Bug | Evidence |
+|---|---|
+| `ALT=.` parsed as a real allele | ClinVar reference-agreement records produced `T/.` amino acids, `cgA/cg.` codons and full Likely Pathogenic calls. 382 records. |
+| MNV/delins translated in the wrong codon frame | A change straddling a codon boundary dropped the bases past the first codon, and reverse-strand alt bases were complemented without being reversed. MUTYH `GC>AT` and HPS4 `GA>CT` were reported `stop_gained`; both are synonymous. |
+| PVS1 fired on splice-site indels that leave the dinucleotide intact | `PTEN c.802-2dupA` and `BRIP1 c.2258-2dup` insert the base the acceptor already carries. ATM `GTAATC>G` had SpliceAI 0.00. |
+
+### Criteria changes
+
+| Change | Criterion firings (v8 → v9) |
+|---|---|
+| BP1 blocked when the gene has an established pathogenic-missense spectrum | 22,567 → 6,471 |
+| BS2 homozygote test scaled to cohort size (95 % lower bound vs a prevalence bar, floor of 2) | 101,853 → 67,615 |
+| PM1 restricted to missense/in-frame and suppressed under PVS1 | 41,845 → 23,323 |
+| BP4 not applied to in-frame indels / stop-lost / protein-altering | included above |
+| BA1/BS1/BS2/PM2 NotEvaluated for homology-confounded genes (PMID 27228465) | included above |
+| BS1/BS2 NotEvaluated for ClinVar low-penetrance / risk alleles | included above |
+| Strong-or-above evidence on one side blocks a definite call on the other | combiner rule |
+| PS1 requires an independent nucleotide change | 23,022 → 1,274 |
+
+### The v9 honesty correction
+
+`clinvar_protein.oga` is built from ClinVar and contained the variant being
+classified, so PS1 was matching each variant against its own ClinVar record.
+**94 % of v8's PS1 firings were self-matches** (23,022 → 1,274 once excluded).
+PM1's hotspot count had the same problem, with the variant contributing one of
+the three pathogenic neighbours it needed.
+
+Reported both ways so the effect is visible:
+
+- **Criteria fixes alone** (v8 → v9 CI): same-direction 73.6 % → 73.0 %, opposite-direction **122 → 41 (−66 %)**. The reviewer's feedback costs 0.6 pp of same-direction agreement and removes two-thirds of the contradictions.
+- **Removing the self-reference** (v9 CI → v9 LOO): same-direction 73.0 % → 71.0 %, Pathogenic recall 60.8 % → 48.1 %. That 2 pp is the part of v8's number that was self-fulfilling.
+
+Any ClinVar-derived evidence path makes ClinVar concordance partly circular.
+Publish the leave-one-out number as the headline and the ClinVar-informed number
+as the "what a lab pipeline actually does" comparison.
+
 The SA stack is unchanged from v7. v8 adds only the three ACMG
 criterion-execution fixes from the medical-genetics discordance review
 (merged in #50) plus a concordance-script fix so the review export is
@@ -56,18 +106,23 @@ overwritten before being preserved.
 
 ## Headline metrics per run
 
-|                            |     v1     |     v6     |     v7     |     v8     |  Δ v7→v8  |
-|----------------------------|-----------:|-----------:|-----------:|-----------:|----------:|
-| Same-direction concordance |   54.7 %   |   70.3 %   |   70.8 %   | **73.6 %** |**+2.8 pp**|
-| Exact match                |   52.7 %   |   56.8 %   |   58.7 %   | **61.3 %** |**+2.6 pp**|
-| Opposite direction         |   0.005 %  |   0.05 %   |  0.046 %   | **0.018 %**| **−61 %** |
-| NoCall                     |   0.0 %    |   0.0 %    |   0.0 %    |   0.0 %    | —         |
-| **Pathogenic recall**      |   **15.7 %** | 20.6 %   |   63.8 %   | **64.0 %** |**+48 pp** |
-| **Likely_pathogenic recall** | **20.9 %** | 26.7 %   |   51.8 %   | **52.0 %** |**+31 pp** |
-| VUS recall                 |   96.6 %   |   92.6 %   |   91.5 %   |   92.0 %   | -5 pp     |
-| **Likely_benign recall**   |   **3.2 %**|   42.4 %   |   42.4 %   | **42.7 %** |**+39 pp** |
-| Benign recall              |   33.2 %   |   58.0 %   |   58.0 %   | **59.0 %** |**+26 pp** |
-| **Benign exact-match (B→B)** | 48,282 | 48,996 | 48,996 | **63,481** |**+15,199** |
+|                            |     v1     |     v6     |     v7     |     v8     |  v9 (CI)   |  v9 (LOO)  |
+|----------------------------|-----------:|-----------:|-----------:|-----------:|-----------:|-----------:|
+| Same-direction concordance |   54.7 %   |   70.3 %   |   70.8 %   |   73.6 %   |   73.0 %   | **71.0 %** |
+| Exact match                |   52.7 %   |   56.8 %   |   58.7 %   |   61.3 %   |   60.7 %   | **59.9 %** |
+| Opposite direction (count) |     36     |    338     |    311     |    122     |   **41**   |   **46**   |
+| NoCall                     |   0.0 %    |   0.0 %    |   0.0 %    |   0.0 %    |   0.1 %    |   0.1 %    |
+| Pathogenic recall          |   15.7 %   |   20.6 %   |   63.8 %   |   63.3 %   |   60.8 %   |   48.1 %   |
+| Likely_pathogenic recall   |   20.9 %   |   26.7 %   |   51.8 %   |   62.5 %   |   55.5 %   |   31.1 %   |
+| VUS recall                 |   96.6 %   |   92.6 %   |   91.5 %   |   94.2 %   | **97.3 %** | **97.3 %** |
+| Likely_benign recall       |    3.2 %   |   42.4 %   |   42.4 %   |   48.4 %   |   45.5 %   |   45.5 %   |
+| Benign recall              |   33.2 %   |   58.0 %   |   58.0 %   |   61.8 %   |   57.2 %   |   57.2 %   |
+
+**v9 is reported in two modes.** `v9 (CI)` is ClinVar-informed and directly
+comparable to v8; `v9 (LOO)` is leave-one-out, where PS1 and PM1 discount the
+variant's own ClinVar record. See "The v9 honesty correction" below. The v9
+NoCall column is the 382 ClinVar reference-agreement records (`ALT=.`) that v8
+and earlier were silently annotating as real variants.
 
 ## Driver of each lift
 

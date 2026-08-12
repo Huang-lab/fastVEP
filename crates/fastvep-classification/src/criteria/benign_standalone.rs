@@ -20,6 +20,22 @@ pub fn evaluate_ba1(
         serde_json::json!(config.ba1_af_threshold),
     );
 
+    // Frequencies from a homology-confounded gene (or for a variant ClinVar
+    // labels low-penetrance) cannot support a standalone benign call either.
+    if let Some(reason) = super::benign_strong::frequency_evidence_blocker(input, config) {
+        details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
+        return EvidenceCriterion {
+            code: "BA1".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Standalone,
+            default_strength: EvidenceStrength::Standalone,
+            met: false,
+            evaluated: false,
+            summary: format!("BA1 not evaluated: {}", reason),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
     // Detect whether this allele is on the BA1 exception list. We can only
     // match when both gene_symbol and hgvs_c are populated.
     let exception_match: Option<&Ba1Exception> =
@@ -185,6 +201,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -227,6 +244,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -271,6 +289,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -312,6 +331,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -352,6 +372,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -396,6 +417,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -441,6 +463,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,

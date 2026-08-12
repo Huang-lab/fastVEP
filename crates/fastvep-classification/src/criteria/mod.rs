@@ -139,6 +139,22 @@ fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
         }
     }
 
+    // Rule 0: PVS1 + PM1 - a null variant already carries the strongest
+    // possible statement about the region it destroys, so adding residue-level
+    // hotspot evidence on top double-counts. The round-2 medical-genetics
+    // review raised this directly on CBS, MSH6 and RYR1: "PM1 is called with
+    // PVS1? Where is the evidence for PM1 coming?". Applied before the PP3
+    // rules because it does not depend on PP3 firing.
+    if pvs1_met && pm1_met {
+        if let Some(pm1_i) = pm1_idx {
+            suppress(
+                &mut criteria[pm1_i],
+                "Suppressed: PVS1 already counts the loss of this region; PM1 residue-level hotspot evidence would double-count (Abou Tayoun 2018).",
+            );
+            pm1_met = false;
+        }
+    }
+
     let Some(pp3_i) = pp3_idx else {
         // No PP3 firing — nothing to reconcile on the pathogenic computational side.
         return;

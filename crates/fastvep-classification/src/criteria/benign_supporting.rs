@@ -26,7 +26,21 @@ pub fn evaluate_all(
 /// BP1: Missense variant in a gene for which primarily truncating variants are known
 /// to cause disease.
 ///
-/// Approximated: gene has high pLI (LOF-intolerant) but low missense Z (missense-tolerant).
+/// Two conditions, both required (Richards 2015):
+///
+/// 1. **Constraint signature** - the gene is LOF-intolerant (high pLI) but
+///    tolerant of missense variation (low missense Z).
+/// 2. **Mutation spectrum** - missense is not an established disease mechanism
+///    for the gene. Checked positively against the ClinVar protein index,
+///    which holds only missense entries: a gene with
+///    `bp1_max_pathogenic_missense` or more pathogenic/likely-pathogenic
+///    missense records does have a missense mechanism, and BP1 cannot apply
+///    to it no matter what the constraint metrics say.
+///
+/// Condition 2 was missing before the round-2 medical-genetics review, which
+/// found BP1 firing on ENG, CFH, FGFR3, APC, ANKRD11, PKD1 and a dozen more
+/// genes whose spectrum plainly includes pathogenic missense. Constraint
+/// metrics describe population tolerance, not disease mechanism.
 fn evaluate_bp1(
     input: &ClassificationInput,
     config: &AcmgConfig,
@@ -38,6 +52,38 @@ fn evaluate_bp1(
 
     let mut details = serde_json::Map::new();
     details.insert("is_missense".into(), serde_json::json!(is_missense));
+
+    // Mutation-spectrum veto. The ClinVar protein index carries missense
+    // entries only (the builder drops nonsense and synonymous), so a
+    // pathogenic entry is direct evidence of a missense mechanism.
+    if is_missense {
+        if let Some(ref cpd) = input.clinvar_protein {
+            let pathogenic_missense = cpd
+                .protein_variants
+                .iter()
+                .filter(|v| v.sig.to_lowercase().contains("pathogenic"))
+                .count();
+            details.insert(
+                "gene_pathogenic_missense_count".into(),
+                serde_json::json!(pathogenic_missense),
+            );
+            if pathogenic_missense >= config.bp1_max_pathogenic_missense as usize {
+                return EvidenceCriterion {
+                    code: "BP1".to_string(),
+                    direction: EvidenceDirection::Benign,
+                    strength: EvidenceStrength::Supporting,
+                    default_strength: EvidenceStrength::Supporting,
+                    met: false,
+                    evaluated: true,
+                    summary: format!(
+                        "Gene has {} pathogenic/likely-pathogenic missense variants in ClinVar; missense is an established mechanism, so BP1 does not apply (threshold {})",
+                        pathogenic_missense, config.bp1_max_pathogenic_missense
+                    ),
+                    details: serde_json::Value::Object(details),
+                };
+            }
+        }
+    }
 
     let (met, evaluated, summary) = if !is_missense {
         (false, true, "Not a missense variant".to_string())
@@ -393,7 +439,32 @@ fn evaluate_bp4(
         )
     });
     let missense_outside_splice_region = is_missense && !overlaps_splice_region;
-    let splice_supporting = if is_pvs1_territory {
+    // No predictor calibrated for benign evidence exists for in-frame indels,
+    // stop-lost, or other protein-altering changes. Their predicted effect is
+    // the protein change, and SpliceAI saying "no splice impact" is not
+    // evidence that the protein change is tolerated. Before this gate an
+    // in-frame deletion with SpliceAI 0.00 collected BP4 Supporting and, with
+    // BS2, reached Likely Benign on genuinely pathogenic variants (AFG2A,
+    // RSPH9, AMHR2, OCA2, CYP24A1 in the round-2 review). A variant that also
+    // overlaps a splice region stays splice-assessable.
+    let is_uncalibrated_coding = input.consequences.iter().any(|c| {
+        matches!(
+            c,
+            Consequence::InframeInsertion
+                | Consequence::InframeDeletion
+                | Consequence::StopLost
+                | Consequence::ProteinAlteringVariant
+        )
+    }) && !overlaps_splice_region;
+    let splice_supporting = if is_uncalibrated_coding {
+        details.insert(
+            "splice_skipped_reason".into(),
+            serde_json::json!(
+                "BP4 does not apply to in-frame indels, stop-lost or protein-altering variants: no calibrated benign predictor exists for them (Pejaver 2022 covers missense, Walker 2023 covers splice-assessable variants)"
+            ),
+        );
+        false
+    } else if is_pvs1_territory {
         details.insert(
             "splice_skipped_reason".into(),
             serde_json::json!(
@@ -699,7 +770,9 @@ fn evaluate_bp7(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sa_extract::{GnomadGeneData, RevelData, SpliceAiData};
+    use crate::sa_extract::{
+        ClinvarProteinData, ClinvarProteinVariant, GnomadGeneData, RevelData, SpliceAiData,
+    };
     use fastvep_core::Impact;
 
     fn make_input(
@@ -737,6 +810,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
@@ -1040,6 +1114,112 @@ mod tests {
             }),
         );
         let result = evaluate_bp1(&input, &AcmgConfig::default());
+        assert!(result.met);
+    }
+
+    fn bp1_gene_constraints() -> GnomadGeneData {
+        // LOF-intolerant, missense-tolerant: the constraint signature BP1 wants.
+        GnomadGeneData {
+            pli: Some(0.99),
+            mis_z: Some(1.0),
+            ..Default::default()
+        }
+    }
+
+    fn clinvar_protein_with_pathogenic_missense(n: usize) -> ClinvarProteinData {
+        ClinvarProteinData {
+            protein_variants: (0..n)
+                .map(|i| ClinvarProteinVariant {
+                    pos: 100 + i as u64,
+                    ref_aa: "G".into(),
+                    alt_aa: "S".into(),
+                    sig: "Pathogenic".into(),
+                    n: 1,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn test_bp1_blocked_when_gene_has_pathogenic_missense_spectrum() {
+        // ENG, CFH, FGFR3, APC and a dozen others have the BP1 constraint
+        // signature but a mutation spectrum that plainly includes pathogenic
+        // missense. BP1 must not fire on them: constraint metrics describe
+        // population tolerance, not disease mechanism.
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            None,
+            None,
+            None,
+            Some(bp1_gene_constraints()),
+        );
+        input.clinvar_protein = Some(clinvar_protein_with_pathogenic_missense(12));
+        let result = evaluate_bp1(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(result.evaluated);
+        assert!(result.summary.contains("missense is an established mechanism"));
+    }
+
+    #[test]
+    fn test_bp1_still_fires_when_gene_has_no_pathogenic_missense() {
+        // A truly truncating-only gene: constraint signature plus an empty
+        // pathogenic-missense spectrum.
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            None,
+            None,
+            None,
+            Some(bp1_gene_constraints()),
+        );
+        input.clinvar_protein = Some(ClinvarProteinData {
+            protein_variants: vec![],
+        });
+        let result = evaluate_bp1(&input, &AcmgConfig::default());
+        assert!(result.met);
+    }
+
+    #[test]
+    fn test_bp4_not_applied_to_inframe_deletion() {
+        // No calibrated benign predictor exists for in-frame indels, so a
+        // SpliceAI score of 0 is not benign evidence for one. Before this gate
+        // in-frame deletions collected BP4 Supporting and reached Likely
+        // Benign alongside BS2 on genuinely pathogenic variants.
+        let input = make_input(
+            vec![Consequence::InframeDeletion],
+            None,
+            Some(0.0),
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(result
+            .details
+            .get("splice_skipped_reason")
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("in-frame"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn test_bp4_not_applied_to_stop_lost() {
+        let input = make_input(vec![Consequence::StopLost], None, Some(0.0), None, None);
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(!result.met);
+    }
+
+    #[test]
+    fn test_bp4_inframe_in_splice_region_still_assessable() {
+        // An in-frame indel that also overlaps a splice region is genuinely
+        // splice-assessable, so Walker 2023 BP4-splice still applies.
+        let input = make_input(
+            vec![Consequence::InframeDeletion, Consequence::SpliceRegionVariant],
+            None,
+            Some(0.0),
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
         assert!(result.met);
     }
 

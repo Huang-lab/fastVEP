@@ -208,9 +208,20 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         )
     };
 
-    // Convert to Allele enums
+    // Convert to Allele enums.
+    //
+    // A non-variant ALT (`.`, `<NON_REF>`, `<*>`) asserts that no alternate
+    // allele was called at this site. ClinVar's VCF uses `ALT=.` for
+    // reference-agreement records. Left as `Allele::Sequence(b".")` these
+    // flow into the consequence caller as a one-base substitution and
+    // produce nonsense (`T/.` amino acids, `cgA/cg.` codons) plus a full
+    // ACMG call. Map them to `Allele::Missing`, which the predictor skips.
     let ref_allele = Allele::from_str(&ref_allele_str);
-    let alt_alleles: Vec<Allele> = alt_allele_strs.iter().map(|s| Allele::from_str(s)).collect();
+    let alt_alleles: Vec<Allele> = if is_non_variant {
+        alt_allele_strs.iter().map(|_| Allele::Missing).collect()
+    } else {
+        alt_allele_strs.iter().map(|s| Allele::from_str(s)).collect()
+    };
 
     let variation_name = if id == "." { None } else { Some(id.to_string()) };
 
@@ -436,10 +447,28 @@ mod tests {
 
     #[test]
     fn test_parse_non_variant() {
+        // `ALT=.` asserts no alternate allele was called. It must land as
+        // `Allele::Missing` rather than the literal one-base sequence ".",
+        // which the consequence caller would otherwise translate as a real
+        // substitution (ClinVar reference-agreement records were coming out
+        // as splice_acceptor_variant with `cgA/cg.` codons).
         let line = "1\t100\t.\tA\t.\t.\tPASS\t.";
         let vf = parse_vcf_line(line).unwrap();
         assert_eq!(vf.allele_string, "A");
-        assert!(vf.alt_alleles.is_empty() || vf.alt_alleles[0] == Allele::from_str("."));
+        assert!(vf.alt_alleles.iter().all(|a| *a == Allele::Missing));
+    }
+
+    #[test]
+    fn test_parse_non_ref_symbolic_is_missing() {
+        for alt in ["<NON_REF>", "<*>"] {
+            let line = format!("1\t100\t.\tA\t{}\t.\tPASS\t.", alt);
+            let vf = parse_vcf_line(&line).unwrap();
+            assert!(
+                vf.alt_alleles.iter().all(|a| *a == Allele::Missing),
+                "ALT={} should parse to Allele::Missing",
+                alt
+            );
+        }
     }
 
     #[test]

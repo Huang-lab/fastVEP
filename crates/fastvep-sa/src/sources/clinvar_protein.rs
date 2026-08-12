@@ -15,6 +15,12 @@ struct ProteinVariant {
     ref_aa: String,
     alt_aa: String,
     sig: String,
+    /// The nucleotide-level change that produced this amino-acid change, e.g.
+    /// `c.5074G>C`. Several distinct nucleotide changes can produce the same
+    /// residue substitution, and PS1 is defined precisely on that distinction
+    /// ("same amino acid change ... regardless of the nucleotide change").
+    /// Empty when the source did not expose a c. token.
+    cdna: String,
 }
 
 /// Serialize one gene's protein variants into a `GeneRecord`.
@@ -24,12 +30,22 @@ struct ProteinVariant {
 /// array order (and thus the on-disk `.oga` bytes) would vary run-to-run for
 /// identical input, breaking build reproducibility/diffing. Shared by both the
 /// VCF and variant_summary parse paths so the two stay byte-for-byte identical.
+///
+/// Each entry also carries `n`, the number of *distinct nucleotide changes*
+/// that produce this amino-acid change. PS1 needs it: an entry with `n = 1`
+/// backed only by the variant being classified is that variant's own record,
+/// not independent evidence, and firing PS1 off it is circular. `n` is omitted
+/// when it is 1 so older `.oga` files (which default it to 1) stay compatible.
 fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecord {
-    let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
+    use std::collections::BTreeSet;
+    let mut unique: HashMap<(u64, String, String), (String, BTreeSet<String>)> = HashMap::new();
     for v in variants {
-        unique
+        let e = unique
             .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
-            .or_insert_with(|| v.sig.clone());
+            .or_insert_with(|| (v.sig.clone(), BTreeSet::new()));
+        if !v.cdna.is_empty() {
+            e.1.insert(v.cdna.clone());
+        }
     }
 
     let mut unique: Vec<_> = unique.into_iter().collect();
@@ -39,10 +55,12 @@ fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecor
 
     let variant_jsons: Vec<String> = unique
         .iter()
-        .map(|((pos, ref_aa, alt_aa), sig)| {
+        .map(|((pos, ref_aa, alt_aa), (sig, cdnas))| {
+            let n = cdnas.len().max(1);
+            let n_field = if n > 1 { format!(r#","n":{}"#, n) } else { String::new() };
             format!(
-                r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
-                pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig)
+                r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"{}}}"#,
+                pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig), n_field
             )
         })
         .collect();
@@ -176,6 +194,10 @@ where
                     ref_aa: pv.1,
                     alt_aa: pv.2,
                     sig: sig_clean,
+                    // The VCF path has no c. token (CLNHGVS is genomic), so
+                    // distinct nucleotide changes cannot be counted here.
+                    // variant_summary is the preferred source and does carry it.
+                    cdna: String::new(),
                 });
         }
     }
@@ -239,6 +261,11 @@ where
         } else {
             "Pathogenic".to_string()
         };
+        // The nucleotide change, e.g. `c.5074G>C` from
+        // `NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)`. variant_summary lists
+        // one row per assembly, so deduping on this also collapses the
+        // GRCh37/GRCh38 duplicate rows for the same allele.
+        let cdna = extract_cdna_token(name);
 
         // GeneSymbol may be a semicolon-delimited list; split and emit per gene.
         for g in gene.split(';').map(str::trim).filter(|g| !g.is_empty()) {
@@ -250,6 +277,7 @@ where
                     ref_aa: pv.1.clone(),
                     alt_aa: pv.2.clone(),
                     sig: sig_clean.clone(),
+                    cdna: cdna.clone(),
                 });
         }
     }
@@ -260,6 +288,18 @@ where
         .collect();
     records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
     Ok(records)
+}
+
+/// Pull the `c.` token out of a variant_summary `Name` value like
+/// `NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)`. Returns an empty string when
+/// there is no `c.` token to key on.
+fn extract_cdna_token(name: &str) -> String {
+    let Some(idx) = name.find(":c.") else {
+        return String::new();
+    };
+    let rest = &name[idx + 1..];
+    let end = rest.find(' ').unwrap_or(rest.len());
+    rest[..end].to_string()
 }
 
 /// Pull a `(pos, ref, alt)` protein change from a Name string like

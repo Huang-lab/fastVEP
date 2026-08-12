@@ -1,5 +1,5 @@
 use fastvep_core::{Allele, Consequence, GenomicPosition, Impact, Strand};
-use fastvep_genome::codon::format_codon_change;
+use fastvep_genome::codon::format_codon_window;
 use fastvep_genome::{is_mitochondrial, mitochondrial_codon_table, CodonTable, Transcript};
 use std::sync::Arc;
 
@@ -143,6 +143,31 @@ impl ConsequencePredictor {
         transcript: &Transcript,
         _ref_seq: Option<&[u8]>,
     ) -> AlleleConsequenceResult {
+        // `Allele::Missing` covers the VCF placeholder alleles that assert no
+        // alternate sequence at this site: `*` (spanning upstream deletion)
+        // and the non-variant forms `.` / `<NON_REF>` / `<*>` that the VCF
+        // reader maps here. There is no alternate sequence to translate, so
+        // emitting any consequence for them is meaningless. VEP likewise
+        // gives `*` no consequence.
+        if *alt_allele == Allele::Missing {
+            return AlleleConsequenceResult {
+                allele: alt_allele.clone(),
+                consequences: Vec::new(),
+                impact: Impact::Modifier,
+                cdna_start: None,
+                cdna_end: None,
+                cds_start: None,
+                cds_end: None,
+                protein_start: None,
+                protein_end: None,
+                amino_acids: None,
+                codons: None,
+                exon: None,
+                intron: None,
+                distance: None,
+            };
+        }
+
         let var_start = position.start;
         let var_end = position.end;
         let tr_start = transcript.start;
@@ -398,64 +423,105 @@ impl ConsequencePredictor {
             return Some((consequence, aa_pair, codon_pair));
         }
 
-        // Same length substitution (SNV or MNV)
+        // Same length substitution (SNV or MNV).
+        //
+        // A multi-nucleotide substitution is NOT a sequence of independent
+        // single-base changes: it must be translated as one block, over every
+        // codon it touches. Two things go wrong if it is treated as a
+        // single-codon edit anchored at `cds_pos_start`:
+        //
+        //  1. A change straddling a codon boundary loses the bases that fall
+        //     past the first codon (MUTYH c.1164_1165delinsAT was reported as
+        //     `CTg/TAg` -> stop_gained when the real change is synonymous).
+        //  2. On the reverse strand `cds_pos_start` is the CDS coordinate of
+        //     the *last* changed base, and the alt bases arrive in genomic
+        //     order, so they must be reverse-complemented, not merely
+        //     complemented in place (HPS4 c.1060_1061delTCinsAG was reported
+        //     as `tCC/tGA` -> stop_gained when the real change is p.Ser354=).
         if let Some(ref translateable_seq) = transcript.translateable_seq {
             let seq_bytes = translateable_seq.as_bytes();
 
-            // Get the codon containing this CDS position
-            let codon_number = ((cds_pos_start - 1) / 3) as usize;
-            let codon_offset = ((cds_pos_start - 1) % 3) as usize;
-            let codon_start = codon_number * 3;
+            // Alt bases in transcript orientation.
+            let alt_bases_cds: Vec<u8> = match alt_allele {
+                Allele::Sequence(bases) => match transcript.strand {
+                    Strand::Forward => bases.clone(),
+                    Strand::Reverse => bases.iter().rev().map(|&b| complement(b)).collect(),
+                },
+                _ => Vec::new(),
+            };
 
-            if codon_start + 3 <= seq_bytes.len() {
-                let ref_codon = [seq_bytes[codon_start], seq_bytes[codon_start + 1], seq_bytes[codon_start + 2]];
-                let mut alt_codon = ref_codon;
+            // CDS coordinate of the first changed base in transcript
+            // orientation. On the reverse strand the genomic start maps to the
+            // higher CDS coordinate, so take the lower of the two ends.
+            let cds_lo = match cds_end {
+                Some(ce) => cds_pos_start.min(ce),
+                None => cds_pos_start,
+            };
 
-                // Apply the substitution
-                if let Allele::Sequence(alt_bases) = alt_allele {
-                    for (i, &base) in alt_bases.iter().enumerate() {
-                        let pos = codon_offset + i;
-                        if pos < 3 {
-                            alt_codon[pos] = match transcript.strand {
-                                Strand::Forward => base,
-                                Strand::Reverse => complement(base),
-                            };
+            let n = alt_bases_cds.len();
+            if n > 0 && cds_lo >= 1 {
+                let first_changed = (cds_lo - 1) as usize;
+                let last_changed = first_changed + n - 1;
+                let win_start = (first_changed / 3) * 3;
+                let win_end = (last_changed / 3 + 1) * 3;
+
+                if win_end <= seq_bytes.len() {
+                    let ref_window = seq_bytes[win_start..win_end].to_vec();
+                    let mut alt_window = ref_window.clone();
+                    for (i, &base) in alt_bases_cds.iter().enumerate() {
+                        alt_window[first_changed - win_start + i] = base;
+                    }
+
+                    let table = self.codon_table_for(transcript);
+                    let mut ref_aas = String::new();
+                    let mut alt_aas = String::new();
+                    for c in (0..ref_window.len()).step_by(3) {
+                        let r: [u8; 3] = [ref_window[c], ref_window[c + 1], ref_window[c + 2]];
+                        let a: [u8; 3] = [alt_window[c], alt_window[c + 1], alt_window[c + 2]];
+                        ref_aas.push(table.translate(&r) as char);
+                        alt_aas.push(table.translate(&a) as char);
+                    }
+
+                    let (ref_codon_str, alt_codon_str) =
+                        format_codon_window(&ref_window, &alt_window);
+                    let codon_pair = Some((ref_codon_str, alt_codon_str));
+                    let aa_pair = Some((ref_aas.clone(), alt_aas.clone()));
+
+                    // Start codon is the first codon of the window only when
+                    // the window begins at CDS position 1.
+                    if win_start == 0 {
+                        let first_alt: [u8; 3] = [alt_window[0], alt_window[1], alt_window[2]];
+                        if !CodonTable::is_start(&first_alt) {
+                            return Some((Consequence::StartLost, aa_pair, codon_pair));
                         }
                     }
-                }
 
-                let ref_aa = self.codon_table_for(transcript).translate(&ref_codon);
-                let alt_aa = self.codon_table_for(transcript).translate(&alt_codon);
-
-                let (ref_codon_str, alt_codon_str) = format_codon_change(&ref_codon, &alt_codon);
-
-                let ref_aa_str = String::from(ref_aa as char);
-                let alt_aa_str = String::from(alt_aa as char);
-
-                let codon_pair = Some((ref_codon_str, alt_codon_str));
-                let aa_pair = Some((ref_aa_str.clone(), alt_aa_str.clone()));
-
-                // Check if this affects the start codon
-                if codon_number == 0 && !CodonTable::is_start(&alt_codon) {
-                    return Some((Consequence::StartLost, aa_pair, codon_pair));
-                }
-
-                // Determine consequence type
-                if ref_aa == alt_aa {
-                    if ref_aa == b'*' {
-                        return Some((Consequence::StopRetainedVariant, aa_pair, codon_pair));
+                    if ref_aas == alt_aas {
+                        if ref_aas.contains('*') {
+                            return Some((Consequence::StopRetainedVariant, aa_pair, codon_pair));
+                        }
+                        return Some((Consequence::SynonymousVariant, aa_pair, codon_pair));
                     }
-                    return Some((Consequence::SynonymousVariant, aa_pair, codon_pair));
-                }
 
-                if alt_aa == b'*' {
-                    return Some((Consequence::StopGained, aa_pair, codon_pair));
-                }
-                if ref_aa == b'*' {
-                    return Some((Consequence::StopLost, aa_pair, codon_pair));
-                }
+                    // A stop introduced anywhere in the window is stop_gained;
+                    // a reference stop that the change removes is stop_lost.
+                    let gained_stop = ref_aas
+                        .chars()
+                        .zip(alt_aas.chars())
+                        .any(|(r, a)| a == '*' && r != '*');
+                    if gained_stop {
+                        return Some((Consequence::StopGained, aa_pair, codon_pair));
+                    }
+                    let lost_stop = ref_aas
+                        .chars()
+                        .zip(alt_aas.chars())
+                        .any(|(r, a)| r == '*' && a != '*');
+                    if lost_stop {
+                        return Some((Consequence::StopLost, aa_pair, codon_pair));
+                    }
 
-                return Some((Consequence::MissenseVariant, aa_pair, codon_pair));
+                    return Some((Consequence::MissenseVariant, aa_pair, codon_pair));
+                }
             }
         }
 

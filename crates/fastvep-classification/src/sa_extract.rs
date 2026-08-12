@@ -100,6 +100,28 @@ impl ClinvarData {
             .reduce(f64::max)
     }
 
+    /// The ClinVar significance term marking this variant as low-penetrance or
+    /// as a risk allele, if any. ClinVar's controlled vocabulary carries
+    /// `Pathogenic, low penetrance`, `Likely pathogenic, low penetrance`,
+    /// `Established risk allele`, `Likely risk allele` and `risk factor`.
+    ///
+    /// Such a variant is expected to be frequent in the population and is
+    /// outside BS2's "full penetrance expected at an early age" precondition,
+    /// so the frequency-based benign criteria must not fire on it. SERPINA1
+    /// PI*Z (1,236 gnomAD homozygotes) and the F2 3'UTR risk allele were both
+    /// called Benign this way in the round-2 review.
+    pub fn low_penetrance_term(&self) -> Option<String> {
+        let sigs = self.significance.as_ref()?;
+        sigs.iter()
+            .find(|s| {
+                let lower = s.to_lowercase().replace('_', " ");
+                lower.contains("low penetrance")
+                    || lower.contains("risk allele")
+                    || lower.contains("risk factor")
+            })
+            .cloned()
+    }
+
     /// Returns the review star level (0-4).
     pub fn review_stars(&self) -> u8 {
         match self.review_status.as_deref() {
@@ -264,6 +286,18 @@ pub struct ClinvarProteinVariant {
     #[serde(rename = "altAa")]
     pub alt_aa: String,
     pub sig: String,
+    /// Number of distinct nucleotide changes in ClinVar that produce this
+    /// amino-acid change. PS1 is defined on exactly this distinction ("same
+    /// amino acid change ... regardless of the nucleotide change"), so an
+    /// entry with `n == 1` backed only by the variant under classification is
+    /// that variant's own record rather than independent evidence. Older
+    /// `.oga` files omit the field and default to 1.
+    #[serde(default = "default_variant_count")]
+    pub n: u32,
+}
+
+fn default_variant_count() -> u32 {
+    1
 }
 
 /// Genotype information for a sample at a specific variant.
@@ -365,6 +399,13 @@ pub struct ClassificationInput {
     pub same_splice_position_pathogenic: Option<bool>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
+    /// True when the variant is a pure insertion or duplication (VCF REF is a
+    /// single anchor base that the ALT extends). Used by PVS1's canonical
+    /// splice track: an insertion adjacent to, or inside, the ±1/±2
+    /// dinucleotide does not necessarily destroy it. `c.802-2dupA` inserts the
+    /// same base the acceptor already has, so the intron still ends in AG.
+    /// `None` when the pipeline did not supply allele shape.
+    pub is_pure_insertion: Option<bool>,
     /// Whether the variant sits at the first base or last 3 bases of an exon
     /// (the canonical splice region). Per Walker 2023 (ClinGen SVI Splicing
     /// Subgroup), BP7 must NOT fire for synonymous variants at these positions
@@ -389,6 +430,15 @@ pub struct ClassificationInput {
     pub companion_variants: Vec<CompanionVariant>,
 }
 
+/// True when the reference allele is the empty/"-" allele, i.e. the variant is
+/// a pure insertion or duplication. PVS1's canonical splice track consults this
+/// because inserting bases beside the ±1/±2 dinucleotide does not necessarily
+/// destroy it (a duplication of the acceptor's own base leaves the intron still
+/// ending in AG).
+pub fn is_pure_insertion(ref_allele: &fastvep_core::Allele) -> Option<bool> {
+    Some(*ref_allele == fastvep_core::Allele::Deletion)
+}
+
 /// Extract classification input from pipeline annotation data.
 ///
 /// Parses the pre-serialized JSON strings from supplementary annotations into typed structs.
@@ -402,6 +452,7 @@ pub fn extract_classification_input(
     protein_position: Option<u64>,
     hgvs_c: Option<&str>,
     exon: Option<(u32, u32)>,
+    is_pure_insertion: Option<bool>,
     allele_supplementary: &[(String, String)],
     gene_annotations: &[&GeneAnnotation],
     variant_supplementary: &[SupplementaryAnnotation],
@@ -554,6 +605,7 @@ pub fn extract_classification_input(
         alt_start_codon_distance: None,
         same_splice_position_pathogenic: None,
         in_repeat_region,
+        is_pure_insertion,
         // BP7 exon-edge / deep-intronic signals (Walker 2023). `intronic_offset`
         // is derived above; `at_exon_edge` awaits exon-coordinate plumbing and
         // stays None (BP7 exon-edge exclusion falls back to legacy behavior).

@@ -34,6 +34,37 @@ fn evaluate_pm1(
     details.insert("hotspot_window".into(), serde_json::json!(window));
     details.insert("hotspot_threshold".into(), serde_json::json!(threshold));
 
+    // PM1 is residue-level evidence: a hotspot or critical domain argues that
+    // *this* amino-acid substitution matters. It is defined for missense and
+    // in-frame changes. Applied to a frameshift or nonsense variant it adds
+    // nothing PVS1 does not already carry, and the round-2 review flagged
+    // exactly that stacking on CBS, MSH6 and RYR1 ("PM1 is called with PVS1?
+    // Where is the evidence for PM1 coming?"). The PVS1 co-occurrence case is
+    // additionally suppressed in the reconciliation pass.
+    let pm1_eligible_consequence = input.consequences.iter().any(|c| {
+        matches!(
+            c,
+            Consequence::MissenseVariant
+                | Consequence::InframeInsertion
+                | Consequence::InframeDeletion
+                | Consequence::ProteinAlteringVariant
+                | Consequence::StopLost
+                | Consequence::StartLost
+        )
+    });
+    if !pm1_eligible_consequence {
+        return EvidenceCriterion {
+            code: "PM1".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: true,
+            summary: "PM1 applies to missense and in-frame changes; residue-level hotspot evidence does not apply to this consequence".to_string(),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
     let prot_pos = match input.protein_position {
         Some(pos) => pos,
         None => {
@@ -62,13 +93,30 @@ fn evaluate_pm1(
         // variants are still ≥90 % posterior probability of
         // pathogenicity per the Tavtigian Bayesian framework — the
         // hotspot signal is robust to LP/P aggregation.
-        let nearby_pathogenic: usize = cpd
+        let raw_nearby: usize = cpd
             .protein_variants
             .iter()
             .filter(|v| v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("pathogenic"))
             .count();
 
+        // The index is built from ClinVar, so when the variant being
+        // classified is itself ClinVar pathogenic its own record is one of the
+        // neighbours counted here. Counting it makes PM1 partly self-derived
+        // (and inflates any ClinVar-based benchmark), so discount it.
+        let self_contribution = if config.exclude_self_from_clinvar_evidence
+            && input.clinvar.as_ref().map_or(false, |c| c.has_pathogenic())
+        {
+            1
+        } else {
+            0
+        };
+        let nearby_pathogenic = raw_nearby.saturating_sub(self_contribution);
+
         details.insert("nearby_pathogenic_count".into(), serde_json::json!(nearby_pathogenic));
+        if self_contribution > 0 {
+            details.insert("self_excluded_from_count".into(), serde_json::json!(true));
+            details.insert("nearby_pathogenic_raw".into(), serde_json::json!(raw_nearby));
+        }
 
         let met = nearby_pathogenic >= threshold as usize;
         let summary = if met {
@@ -123,6 +171,29 @@ fn evaluate_pm2(
     input: &ClassificationInput,
     config: &AcmgConfig,
 ) -> EvidenceCriterion {
+    // "Absent from population databases" is only evidence when the database
+    // could have seen the variant. In a homology-confounded gene reads pile up
+    // on the paralogue and rare alleles go missing, so absence there says
+    // nothing (Mandelker 2016). Same code path as BA1/BS1/BS2 so a gene is
+    // never trusted for one frequency criterion and distrusted for another.
+    if config.is_homology_unreliable(input.gene_symbol.as_deref()) {
+        let mut details = serde_json::Map::new();
+        details.insert("frequency_blocked".into(), serde_json::json!(true));
+        return EvidenceCriterion {
+            code: if config.pm2_downgrade_to_supporting { "PM2_Supporting".to_string() } else { "PM2".to_string() },
+            direction: EvidenceDirection::Pathogenic,
+            strength: if config.pm2_downgrade_to_supporting { EvidenceStrength::Supporting } else { EvidenceStrength::Moderate },
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: false,
+            summary: format!(
+                "PM2 not evaluated: gene {} has paralogue/pseudogene homology that makes population frequencies unreliable (Mandelker 2016, PMID 27228465)",
+                input.gene_symbol.as_deref().unwrap_or("?")
+            ),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
     let strength = if config.pm2_downgrade_to_supporting {
         EvidenceStrength::Supporting
     } else {
@@ -827,6 +898,7 @@ mod tests {
             alt_start_codon_distance: None,
             same_splice_position_pathogenic: None,
             in_repeat_region: None,
+            is_pure_insertion: None,
             at_exon_edge: None,
             intronic_offset: None,
             proband_genotype: None,
