@@ -104,6 +104,53 @@ v3 was a partial run (PhyloP+SpliceAI loaded but bugs still latent);
 its results are functionally indistinguishable from v2 and were
 overwritten before being preserved.
 
+## v10: gnomAD v4 QC, hemizygote and filtering-AF columns (Tier B)
+
+v10 is a **data-layer** run, not a criteria-logic run. The gnomAD builder had
+never captured nine fields the ACMG frequency criteria need, so B2, B3 and B5
+of the round-2 review plan were blocked on a re-extraction rather than on any
+classification work. Write-up in
+[`docs/ACMG_EXPERT_REVIEW_ROUND2.md`](../../docs/ACMG_EXPERT_REVIEW_ROUND2.md).
+
+### New gnomAD columns
+
+| Column | Source | Used by |
+|---|---|---|
+| `filterAc0`, `filterVqsr`, `filterInbreeding` | VCF FILTER | BA1/BS1/BS2/PM2 report NotEvaluated on a non-PASS record |
+| `lcr`, `segdup` | INFO flags | same, per site rather than per gene |
+| `nonPar` | INFO flag | required to read `AC_XY` as hemizygotes |
+| `allAcXY`, `allAnXY` | `AC_XY`, `AN_XY` | BS2 counts hemizygotes |
+| `faf95`, `faf95Max` | `faf95`, `fafmax_faf95_max` | BA1/BS1 test the filtering AF |
+
+The database is rebuilt as `.osa2`, which is **smaller than the v1 `.osa` it
+replaces even with the nine extra columns**: chr22 is 9.3 MB against 16.2 MB for
+852,255 records.
+
+`nhomalt_XY` was in the plan and is deliberately **not** extracted. gnomAD calls
+XY samples haploid outside the PAR and so never records one as homozygous:
+across all 6,955 non-PAR chrX records in the IDS region it is zero, including at
+a site with 109,916 XY carriers. `AC_XY` is the hemizygote count.
+
+### Criteria changes
+
+- BA1/BS1/BS2/PM2 share one precondition gate (`criteria::frequency_gate`)
+  rather than repeating it. A record gnomAD itself rejected, or a site it flags
+  `segdup`/`lcr`, blocks all four: when a frequency cannot be believed, neither
+  its presence nor its absence is evidence.
+- BS2 counts individuals with no functional copy - homozygotes plus, on a
+  non-PAR sex-chromosome site, hemizygotes. Cohort size becomes
+  `(AN - AN_XY)/2 + AN_XY`, which is exactly `AN/2` with no XY columns, so
+  autosomal results are unchanged.
+- BA1/BS1 test the filtering allele frequency (Whiffin 2017) rather than a point
+  estimate, from a shared helper so the two cannot disagree.
+
+### Backward compatibility
+
+Every new field is optional and every gate degrades to its previous behaviour
+when absent, so upgrading fastVEP without rebuilding the annotation database
+cannot change a call. Two switches cover the judgement calls:
+`gnomad_region_flags_block_frequency` and `use_filtering_af`.
+
 ## Headline metrics per run
 
 |                            |     v1     |     v6     |     v7     |     v8     |  v9 (CI)   |  v9 (LOO)  |

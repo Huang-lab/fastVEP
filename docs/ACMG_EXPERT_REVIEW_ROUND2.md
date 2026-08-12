@@ -151,13 +151,16 @@ This is the reviewer's central point about hearing loss, alpha-1 antitrypsin def
 
 - **Guideline:** ClinGen SVI recommends the filtering allele frequency (FAF95, `grpmax`) for BA1/BS1 rather than a point estimate, precisely because a founder allele in a small subpopulation produces an unreliable maximum.
 - **Now:** the gnomAD `.osa` builder captures `AF`/`AC`/`AN`/`nhomalt` plus per-population `AF` only. There is no per-population AN, so we cannot require a minimum sample size behind the population maximum, and we cannot compute FAF.
-- **Change:** capture `faf95_max`/`fafmax_faf95_max` and per-population AN/AC; use FAF95 for BA1/BS1 when available and require a per-population AN floor otherwise.
+- **Change:** capture `faf95` and `fafmax_faf95_max`; use them for BA1/BS1 when available, falling back to the population maximum otherwise.
+- **Status: done.** Both columns are extracted, and BA1/BS1 read them through one shared helper so they cannot disagree about how frequent a variant is. Per-population AN was considered and dropped: the FAF already folds sample size into the estimate, so ten extra dense columns would buy nothing the FAF does not already give.
+- **Honest scope.** This fixes the *small-sample* half of the founder problem: a frequency inflated by thin sampling in one group no longer reaches BA1/BS1. It does not fix a founder allele that really is common in a well-sampled population, whose FAF is high too. Only the curated Ghosh 2018 exception list keeps BA1 off those, so ACADS / RSPH9 / C9 / OCA2 need B1 or an exception-list entry, not B2.
 - **Impact:** the founder-variant caution she raised (ACADS in Ashkenazi, RSPH9 in Middle Eastern, C9 in East Asian, OCA2 in African American).
 
 ### B3. gnomAD quality-control awareness
 
 - **Now:** we ingest gnomAD sites without recording `FILTER` or the region flags. A variant that fails gnomAD QC looks identical to a clean one, and a variant absent because of a QC drop earns PM2 as though it were genuinely absent.
-- **Change:** capture `FILTER` (`AC0`, `AS_VQSR`), the `lcr`/`segdup`/`nonpar`/`monoallelic` flags, and mean coverage. When the site is not PASS or sits in a low-confidence region, mark BA1/BS1/BS2 **and PM2** NotEvaluated with a reason rather than firing.
+- **Change:** capture `FILTER` (`AC0`, `AS_VQSR`, `InbreedingCoeff`) and the `lcr` / `segdup` / `non_par` flags. When the site is not PASS or sits in a low-confidence region, mark BA1/BS1/BS2 **and PM2** NotEvaluated with a reason rather than firing.
+- **Status: done.** All four criteria now share one gate (`criteria::frequency_gate`) instead of repeating their preconditions, which is also what makes the PM2 half true: absence is only evidence when the database could have seen the variant. Verified end-to-end on chr22:17084998 C>T, an `AC0` record that previously earned PM2_Supporting for being "absent from gnomAD" at a site gnomAD explicitly could not call.
 - **Impact:** her "fails QC in gnomAD" notes on KMT2C x2, MTR, NOTCH2, TNNI3K, GIGYF2, and the CBS 68 bp insertion where she warns that large insertions map poorly.
 
 ### B4. Homologous / segmental-duplication gene list
@@ -170,7 +173,9 @@ This is the reviewer's central point about hearing loss, alpha-1 antitrypsin def
 
 - **Guideline:** BS2's own text includes "X-linked (hemizygous)".
 - **Now:** `GnomadData` has no hemizygote field at all, so an X-linked variant can never earn BS2 from hemizygous observations.
-- **Change:** capture `nhomalt_XY`/`AC_XY`/`AN_XY`; apply a hemizygote threshold for XL genes.
+- **Change:** capture the XY-stratified counts and count hemizygotes towards BS2.
+- **Status: done.** BS2 now counts individuals with no functional copy - homozygotes plus, on a non-PAR sex-chromosome site, hemizygotes - and the cohort size becomes `(AN - AN_XY)/2 + AN_XY`, which is exactly `AN/2` when there are no XY columns, so autosomal results are unchanged.
+- **One correction to the plan above.** `nhomalt_XY` is *not* extracted, because it carries no information. gnomAD calls XY samples haploid outside the PAR and so never records one as homozygous: across all 6,955 non-PAR chrX records in the IDS region it is zero, including at a site with 109,916 XY carriers. Inside the PAR those samples are diploid and the global `nhomalt` already counts them. `AC_XY` is the hemizygote count. This is why the FMR1 and IDS rows looked as though gnomAD had never seen a null individual.
 - **Impact:** FMR1 (210 hemizygotes) and IDS (429 hemizygotes), both of which we called Likely Pathogenic.
 
 ### B6. Disease mechanism (loss of function vs gain of function) gates PVS1
@@ -222,13 +227,19 @@ Correctness bugs independent of ACMG. **C1 through C4 are fixed in v9**; C5 and 
 
 ## 7. Sequencing, and one methodology point
 
-Order followed, roughly by value per unit of work (steps 1 and 2 are done):
+Order followed, roughly by value per unit of work (steps 1 to 4 are done):
 
-1. **Tier C bugs** (C1, C2, C3, C4). Self-contained, testable, and they poison everything downstream.
-2. **Tier A criteria fixes** (A1, A2, A3, A4 part 1, A5, A7). Pure classification-crate changes with unit tests; resolves 60 of the 122 in simulation.
-3. **B3, B4, B5** (gnomAD QC fields, homology list, hemizygotes). Data-layer additions to the `.osa` builder, mechanical.
-4. **B2** (FAF95), then **B6/B7** (mechanism and validity gates).
-5. **B1** (prevalence-aware thresholds) and **B8** (functional evidence). Largest, and worth doing after the cheaper fixes have cleared the noise.
+1. **Tier C bugs** (C1, C2, C3, C4). Self-contained, testable, and they poison everything downstream. *Done, run v9.*
+2. **Tier A criteria fixes** (A1, A2, A3, A4 part 1, A5, A7). Pure classification-crate changes with unit tests; resolved 78 of the 122. *Done, run v9.*
+3. **B3, B4, B5** (gnomAD QC fields, homology list, hemizygotes). Data-layer additions to the gnomAD builder. *Done; B4 landed in v9, B3 and B5 in v10.*
+4. **B2** (FAF95). *Done, v10.* Turned out to be the same data-layer pass as B3/B5, so it was folded into it rather than run separately.
+5. **B6/B7** (mechanism and validity gates), then **B1** (prevalence-aware thresholds) and **B8** (functional evidence). Largest, and worth doing after the cheaper fixes have cleared the noise.
+
+Steps 3 and 4 required re-extracting gnomAD v4.1 exomes to pick up nine columns the
+builder had never captured: the FILTER verdict, the `lcr` / `segdup` / `non_par`
+region flags, `AC_XY` / `AN_XY`, and `faf95` / `fafmax_faf95_max`. Every one is
+optional on read, and each gate degrades to its previous behaviour when absent, so
+upgrading fastVEP without rebuilding the annotation database cannot change a call.
 
 **Methodology point worth raising with the reviewer.** A7 exposes a circularity we should be honest about in the manuscript. PS1, PM5 and PM1 are all computed from a ClinVar-derived index that currently includes the variant being classified, and A6 would add another ClinVar-derived gate. Any of these makes ClinVar concordance a partly self-fulfilling metric. Proposal: run the benchmark in two modes, a "leave-one-variant-out" mode with self-matches excluded (the honest number), and a "ClinVar-informed" mode matching what a lab pipeline would actually do, and report both.
 
