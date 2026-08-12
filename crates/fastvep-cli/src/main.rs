@@ -103,6 +103,15 @@ enum Commands {
         #[arg(long)]
         acmg_config: Option<String>,
 
+        /// Order of criteria used by --pick, VEP's `--pick_order` syntax.
+        ///
+        /// Default: mane_select,mane_plus_clinical,canonical,appris,tsl,biotype,ccds,rank
+        /// (identical to VEP, where transcript status outranks consequence severity).
+        /// For clinical reporting put `rank` first, so a variant that disrupts a
+        /// transcript is never reported as merely neighbouring a MANE one.
+        #[arg(long)]
+        pick_order: Option<String>,
+
         /// Path to a curated functional-evidence TSV supplying PS3/BS3.
         ///
         /// Columns: chrom, pos, ref, alt, criterion (PS3|BS3), strength, pmid, note.
@@ -296,6 +305,7 @@ fn main() -> Result<()> {
             sa_only,
             acmg,
             acmg_config,
+            pick_order,
             functional_evidence,
             proband,
             mother,
@@ -320,6 +330,7 @@ fn main() -> Result<()> {
                 sa_only,
                 acmg,
                 acmg_config,
+                pick_order,
                 functional_evidence,
                 proband,
                 mother,

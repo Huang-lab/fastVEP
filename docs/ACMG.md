@@ -66,6 +66,7 @@ fastvep annotate \
 | `--acmg` | Enable ACMG-AMP classification | disabled |
 | `--acmg-config <FILE>` | Path to TOML configuration file for custom thresholds | built-in defaults |
 | `--functional-evidence <FILE>` | Curated functional-assay TSV supplying PS3/BS3 | none |
+| `--pick-order <LIST>` | Criteria order used by `--pick`, VEP `--pick_order` syntax | VEP's default |
 | `--proband <SAMPLE>` | Proband sample name in multi-sample VCF (enables PS2/PM6 de novo detection) | none |
 | `--mother <SAMPLE>` | Mother sample name for trio analysis | none |
 | `--father <SAMPLE>` | Father sample name for trio analysis | none |
@@ -370,6 +371,53 @@ after    call=VUS   PS3 (PMID 26637981) + BA1 + BS2, BP4 and BP7 superseded
 
 Without an entry, PS3 and BS3 stay `evaluated: false` - no assertion in either direction, which is
 the honest answer when nobody has run the assay.
+
+## Which transcript `--pick` reports
+
+`--pick` reduces a variant to one consequence block, and which one it keeps is decided by
+`--pick-order`.
+The default is VEP's, exactly:
+
+```text
+mane_select,mane_plus_clinical,canonical,appris,tsl,biotype,ccds,rank
+```
+
+Note where `rank` - consequence severity - sits: **last**.
+Transcript status outranks how badly the variant damages the transcript.
+At a locus where genes overlap, that produces a result which is correct VEP behaviour and wrong
+clinical reporting, and the round-2 review caught it: CYP21A2 variants were reported on **C4B** as
+`downstream_gene_variant`, and STRC-region variants on **TIMM9** as `upstream_gene_variant`, because
+the neighbouring gene's MANE transcript outranked the disrupted non-MANE one.
+Stock VEP makes the same choice; this is not a fastVEP deviation.
+
+For clinical reporting, put `rank` first:
+
+```bash
+fastvep annotate ... --pick \
+  --pick-order rank,mane_select,mane_plus_clinical,canonical,appris,tsl,biotype,ccds
+```
+
+Measured over 300 ClinVar variants in the CYP21A2 / STRC / KIAA0586 regions, the gene `--pick`
+reports:
+
+| gene reported | VEP default order | `rank` first |
+|---|---:|---:|
+| KIAA0586 | 187 | 217 |
+| CYP21A2 | 34 | 77 |
+| C4B (neighbour) | 43 | 0 |
+| TIMM9 (neighbour) | 32 | 2 |
+| TNXB | 4 | 4 |
+
+Severity first, then the same tie-breaks as before, so equal-consequence choices still resolve to
+MANE - the ordering changes which question is asked first, not which transcripts are eligible.
+
+Criteria you leave out are not consulted at all rather than appended, so `--pick-order rank` really
+does mean "severity, then transcript ID". Unknown or repeated criteria are rejected at startup with
+the offending name. `length` (VEP's final tie-break) is rejected rather than silently ignored:
+fastVEP's annotation record does not carry transcript length.
+
+**The default stays VEP-identical** so a default run of each tool picks the same transcript, which
+is what the head-to-head concordance numbers rest on. This is a flag, not a behaviour change.
 
 ## Required Data Sources
 

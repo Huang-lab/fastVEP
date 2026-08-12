@@ -73,6 +73,9 @@ pub struct AnnotateConfig {
     pub acmg: bool,
     /// Path to ACMG configuration file (TOML).
     pub acmg_config: Option<String>,
+    /// Order of criteria used by `--pick`, in VEP's `--pick_order` syntax.
+    /// `None` uses VEP's default order.
+    pub pick_order: Option<String>,
     /// Path to a curated functional-evidence TSV supplying PS3/BS3.
     pub functional_evidence: Option<String>,
     /// Proband sample name for trio analysis.
@@ -509,6 +512,17 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     // Curated functional-assay evidence for PS3/BS3. Parsed up front so a
     // malformed row fails before the run starts rather than after an hour of
     // annotation, and so the error names the offending line.
+    // Resolved before annotation so a bad --pick-order fails immediately with
+    // the offending criterion named, rather than after the run.
+    let pick_order = match config.pick_order.as_deref() {
+        Some(spec) => {
+            let order = parse_pick_order(spec)?;
+            eprintln!("Using --pick order: {}", spec);
+            order
+        }
+        None => DEFAULT_PICK_ORDER.to_vec(),
+    };
+
     let functional_index = match config.functional_evidence.as_deref() {
         Some(path) => {
             let idx = fastvep_classification::FunctionalEvidenceIndex::from_file(Path::new(path))
@@ -1212,7 +1226,9 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             // produce correct output but would waste the most expensive work
             // (ACMG classification) on transcripts that get thrown away.
             if config.pick && !sa_only && vf.transcript_variations.len() > 1 {
-                if let Some(idx) = pick_best_transcript_idx(&vf.transcript_variations) {
+                if let Some(idx) =
+                    pick_best_transcript_idx_with(&vf.transcript_variations, &pick_order)
+                {
                     vf.transcript_variations =
                         vec![vf.transcript_variations.swap_remove(idx)];
                 }
@@ -1470,31 +1486,139 @@ use fastvep_annotate::{
     three_prime_shift_intronic, zip_positions,
 };
 
-/// Index of the best transcript variation under VEP's default `--pick_order`
-/// hierarchy: mane_select, mane_plus_clinical, canonical, appris, tsl, biotype
-/// (protein_coding preferred), ccds, then most-severe consequence rank, with
-/// transcript_id alphabetical order as a final deterministic tie-breaker.
-fn pick_best_transcript_idx(tvs: &[TranscriptVariation]) -> Option<usize> {
-    (0..tvs.len()).min_by(|&a, &b| pick_key(&tvs[a]).cmp(&pick_key(&tvs[b])))
+/// One tier of the `--pick-order` hierarchy, in VEP's vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickCriterion {
+    ManeSelect,
+    ManePlusClinical,
+    Canonical,
+    Appris,
+    Tsl,
+    Biotype,
+    Ccds,
+    Rank,
 }
 
-fn pick_key(tv: &TranscriptVariation) -> (bool, bool, bool, u8, u8, u8, bool, u32, &str) {
-    let most_severe_rank = tv
-        .allele_annotations
-        .iter()
-        .flat_map(|aa| aa.consequences.iter())
-        .map(|c| c.rank())
-        .min()
-        .unwrap_or(u32::MAX);
+/// VEP's default `--pick_order`, which fastVEP matches exactly so that a
+/// default run of each tool picks the same transcript.
+///
+/// Note where `Rank` sits: **last**. Transcript status outranks consequence
+/// severity, so at a locus where a MANE transcript of one gene merely
+/// neighbours the variant while a non-MANE transcript of another is disrupted
+/// by it, both tools report the neighbour. That is correct VEP behaviour and
+/// wrong clinical reporting - see `--pick-order` in docs/ACMG.md.
+pub const DEFAULT_PICK_ORDER: &[PickCriterion] = &[
+    PickCriterion::ManeSelect,
+    PickCriterion::ManePlusClinical,
+    PickCriterion::Canonical,
+    PickCriterion::Appris,
+    PickCriterion::Tsl,
+    PickCriterion::Biotype,
+    PickCriterion::Ccds,
+    PickCriterion::Rank,
+];
+
+/// Parse a VEP-style `--pick_order` string, e.g. `rank,mane_select,canonical`.
+pub fn parse_pick_order(spec: &str) -> Result<Vec<PickCriterion>> {
+    let mut out = Vec::new();
+    for raw in spec.split(',') {
+        let name = raw.trim().to_ascii_lowercase();
+        if name.is_empty() {
+            continue;
+        }
+        let c = match name.as_str() {
+            "mane_select" | "mane" => PickCriterion::ManeSelect,
+            "mane_plus_clinical" => PickCriterion::ManePlusClinical,
+            "canonical" => PickCriterion::Canonical,
+            "appris" => PickCriterion::Appris,
+            "tsl" => PickCriterion::Tsl,
+            "biotype" => PickCriterion::Biotype,
+            "ccds" => PickCriterion::Ccds,
+            "rank" => PickCriterion::Rank,
+            "length" => {
+                // VEP's final tie-break. fastVEP's TranscriptVariation does not
+                // carry transcript length, so honouring it would mean silently
+                // doing nothing - worse than saying so.
+                return Err(anyhow::anyhow!(
+                    "--pick-order: 'length' is not supported; transcript length is not carried on \
+                     the annotation record. Ties beyond the criteria you list are broken by \
+                     transcript ID, which is deterministic."
+                ));
+            }
+            other => {
+                return Err(anyhow::anyhow!(
+                    "--pick-order: unknown criterion {:?}. Valid: mane_select, mane_plus_clinical, \
+                     canonical, appris, tsl, biotype, ccds, rank",
+                    other
+                ))
+            }
+        };
+        if out.contains(&c) {
+            return Err(anyhow::anyhow!(
+                "--pick-order: {:?} listed more than once",
+                name
+            ));
+        }
+        out.push(c);
+    }
+    if out.is_empty() {
+        return Err(anyhow::anyhow!("--pick-order: no criteria given"));
+    }
+    Ok(out)
+}
+
+/// Index of the best transcript variation under the given `--pick-order`
+/// hierarchy, with transcript_id alphabetical order as a final deterministic
+/// tie-breaker.
+///
+/// Criteria omitted from `order` are not consulted at all, which is what lets
+/// a caller drop a tier rather than only reorder it.
+fn pick_best_transcript_idx_with(
+    tvs: &[TranscriptVariation],
+    order: &[PickCriterion],
+) -> Option<usize> {
+    (0..tvs.len()).min_by(|&a, &b| {
+        pick_key_with(&tvs[a], order).cmp(&pick_key_with(&tvs[b], order))
+    })
+}
+
+/// Index of the best transcript variation under VEP's default `--pick_order`.
+///
+/// The production path resolves the order from `--pick-order` and calls
+/// [`pick_best_transcript_idx_with`] directly; this is the tests' shorthand for
+/// "what a default run does", which is the property most of them assert.
+#[cfg(test)]
+fn pick_best_transcript_idx(tvs: &[TranscriptVariation]) -> Option<usize> {
+    pick_best_transcript_idx_with(tvs, DEFAULT_PICK_ORDER)
+}
+
+/// Score one transcript on one criterion. Lower is better, uniformly, so the
+/// tiers compose by plain lexicographic comparison however they are ordered.
+fn pick_score(tv: &TranscriptVariation, c: PickCriterion) -> u32 {
+    match c {
+        PickCriterion::ManeSelect => tv.mane_select.is_none() as u32,
+        PickCriterion::ManePlusClinical => tv.mane_plus_clinical.is_none() as u32,
+        PickCriterion::Canonical => !tv.canonical as u32,
+        PickCriterion::Appris => appris_rank(tv.appris.as_deref()) as u32,
+        PickCriterion::Tsl => tv.tsl.unwrap_or(u8::MAX) as u32,
+        PickCriterion::Biotype => u32::from(tv.biotype.as_ref() != "protein_coding"),
+        PickCriterion::Ccds => tv.ccds.is_none() as u32,
+        PickCriterion::Rank => tv
+            .allele_annotations
+            .iter()
+            .flat_map(|aa| aa.consequences.iter())
+            .map(|c| c.rank())
+            .min()
+            .unwrap_or(u32::MAX),
+    }
+}
+
+fn pick_key_with<'a>(
+    tv: &'a TranscriptVariation,
+    order: &[PickCriterion],
+) -> (Vec<u32>, &'a str) {
     (
-        tv.mane_select.is_none(),
-        tv.mane_plus_clinical.is_none(),
-        !tv.canonical,
-        appris_rank(tv.appris.as_deref()),
-        tv.tsl.unwrap_or(u8::MAX),
-        if tv.biotype.as_ref() == "protein_coding" { 0 } else { 1 },
-        tv.ccds.is_none(),
-        most_severe_rank,
+        order.iter().map(|&c| pick_score(tv, c)).collect(),
         tv.transcript_id.as_ref(),
     )
 }
@@ -3983,6 +4107,101 @@ mod pick_tests {
     fn pick_returns_none_for_empty_input() {
         let tvs: Vec<TranscriptVariation> = vec![];
         assert_eq!(pick_best_transcript_idx(&tvs), None);
+    }
+
+    // ── C5: configurable --pick-order ────────────────────────────────────
+
+    #[test]
+    fn pick_order_default_matches_vep_and_prefers_status_over_severity() {
+        // The behaviour the round-2 review flagged, pinned as a fact rather
+        // than left implicit: under VEP's default order a MANE transcript the
+        // variant merely neighbours outranks a non-MANE one it disrupts.
+        // CYP21A2 variants coming out on C4B `downstream_gene_variant`, and
+        // STRC-region ones on TIMM9 `upstream_gene_variant`, are this rule.
+        let tvs = vec![
+            make_tv("TX_DISRUPTED", false, "protein_coding",
+                vec![Consequence::StartLost],
+                None, None, None, None, None),
+            make_tv("TX_MANE_NEIGHBOUR", false, "protein_coding",
+                vec![Consequence::UpstreamGeneVariant],
+                Some("TX_MANE_NEIGHBOUR.1"), None, None, None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_order_with_rank_first_reports_the_disrupted_transcript() {
+        // The clinical order. This is what makes the CYP21A2 and KIAA0586
+        // rows report the gene the variant actually hits.
+        let tvs = vec![
+            make_tv("TX_DISRUPTED", false, "protein_coding",
+                vec![Consequence::StartLost],
+                None, None, None, None, None),
+            make_tv("TX_MANE_NEIGHBOUR", false, "protein_coding",
+                vec![Consequence::UpstreamGeneVariant],
+                Some("TX_MANE_NEIGHBOUR.1"), None, None, None, None),
+        ];
+        let order = parse_pick_order("rank,mane_select,canonical").unwrap();
+        assert_eq!(pick_best_transcript_idx_with(&tvs, &order), Some(0));
+    }
+
+    #[test]
+    fn pick_order_still_breaks_ties_by_the_later_criteria() {
+        // Equal severity must fall through to MANE, or putting rank first
+        // would turn every same-consequence choice into a transcript-ID sort.
+        let tvs = vec![
+            make_tv("TX_PLAIN", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+            make_tv("TX_MANE", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                Some("TX_MANE.1"), None, None, None, None),
+        ];
+        let order = parse_pick_order("rank,mane_select,canonical").unwrap();
+        assert_eq!(pick_best_transcript_idx_with(&tvs, &order), Some(1));
+    }
+
+    #[test]
+    fn pick_order_parses_the_vep_default_spelling() {
+        let order = parse_pick_order(
+            "mane_select,mane_plus_clinical,canonical,appris,tsl,biotype,ccds,rank",
+        )
+        .unwrap();
+        assert_eq!(order, DEFAULT_PICK_ORDER.to_vec());
+    }
+
+    #[test]
+    fn pick_order_omitted_criteria_are_not_consulted() {
+        // Listing a subset drops the rest rather than appending them, which is
+        // what lets a caller say "severity, then MANE, and nothing else".
+        let tvs = vec![
+            make_tv("TX_A", true, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+            make_tv("TX_B", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+        ];
+        // Canonical would pick index 0; with only `rank` the tie falls to the
+        // transcript-ID tie-break, which is TX_A anyway - so use ccds to show
+        // an omitted criterion really is ignored.
+        let order = parse_pick_order("rank").unwrap();
+        assert_eq!(pick_best_transcript_idx_with(&tvs, &order), Some(0));
+        let order = parse_pick_order("canonical,rank").unwrap();
+        assert_eq!(pick_best_transcript_idx_with(&tvs, &order), Some(0));
+    }
+
+    #[test]
+    fn pick_order_rejects_bad_input_rather_than_guessing() {
+        for (spec, expect) in [
+            ("rank,notacriterion", "unknown criterion"),
+            ("rank,rank", "more than once"),
+            ("", "no criteria"),
+            ("rank,length", "not supported"),
+        ] {
+            let err = parse_pick_order(spec).expect_err("must reject").to_string();
+            assert!(err.contains(expect), "{spec:?} gave {err:?}, wanted {expect:?}");
+        }
     }
 }
 
