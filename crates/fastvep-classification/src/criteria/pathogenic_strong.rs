@@ -378,21 +378,23 @@ fn evaluate_ps2(
     }
 }
 
-/// PS3: Well-established in vitro or in vivo functional studies.
+/// PS3: Well-established in vitro or in vivo functional studies show a
+/// damaging effect.
+///
+/// Not computable from variant data, and fastVEP will not try: it reads a
+/// curated `--functional-evidence` file. Without one, PS3 stays NotEvaluated.
+/// See [`crate::functional`] for the file format and for why an entry also
+/// suppresses the computational criteria.
 fn evaluate_ps3(
-    _input: &ClassificationInput,
+    input: &ClassificationInput,
     _config: &AcmgConfig,
 ) -> EvidenceCriterion {
-    EvidenceCriterion {
-        code: "PS3".to_string(),
-        direction: EvidenceDirection::Pathogenic,
-        strength: EvidenceStrength::Strong,
-        default_strength: EvidenceStrength::Strong,
-        met: false,
-        evaluated: false,
-        summary: "Requires curated functional study evidence (in vitro/in vivo assays) — not automatable from variant data".to_string(),
-        details: serde_json::Value::Null,
-    }
+    super::functional_criterion(
+        input,
+        crate::functional::FunctionalCriterion::Ps3,
+        EvidenceDirection::Pathogenic,
+        "Requires curated functional study evidence (in vitro/in vivo assays) — supply one with --functional-evidence",
+    )
 }
 
 /// PS4: Prevalence of the variant in affected individuals is significantly

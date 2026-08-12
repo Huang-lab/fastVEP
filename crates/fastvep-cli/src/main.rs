@@ -12,6 +12,11 @@ struct Cli {
     command: Commands,
 }
 
+// `Annotate` carries every CLI flag inline, so it is far larger than the other
+// variants. That is the shape clap's derive wants, and exactly one of these is
+// ever constructed, at startup, so the size difference costs nothing worth
+// boxing a field to avoid.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Commands {
     /// Annotate variants with predicted consequences
@@ -97,6 +102,14 @@ enum Commands {
         /// Path to ACMG configuration file (TOML) for custom thresholds
         #[arg(long)]
         acmg_config: Option<String>,
+
+        /// Path to a curated functional-evidence TSV supplying PS3/BS3.
+        ///
+        /// Columns: chrom, pos, ref, alt, criterion (PS3|BS3), strength, pmid, note.
+        /// An entry also suppresses PP3/BP4/BP7 for that variant, since ClinGen SVI
+        /// ranks experimental evidence above computational prediction.
+        #[arg(long)]
+        functional_evidence: Option<String>,
 
         /// Proband sample name for trio analysis (enables de novo / compound-het detection)
         #[arg(long)]
@@ -283,6 +296,7 @@ fn main() -> Result<()> {
             sa_only,
             acmg,
             acmg_config,
+            functional_evidence,
             proband,
             mother,
             father,
@@ -306,6 +320,7 @@ fn main() -> Result<()> {
                 sa_only,
                 acmg,
                 acmg_config,
+                functional_evidence,
                 proband,
                 mother,
                 father,

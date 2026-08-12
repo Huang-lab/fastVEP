@@ -157,6 +157,43 @@ fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
         }
     }
 
+    // Rule 0b: curated functional evidence outranks every computational
+    // prediction. The ClinGen SVI ordering is explicit - a well-established
+    // assay is stronger evidence than a predictor, and PP3/BP4/BP7 must not be
+    // used to argue against sound experimental data. The round-2 review's OCA2
+    // c.1503A>G is the case: a synonymous variant with published splice-defect
+    // data, where fastVEP fired BP7 and BP4 and called it benign.
+    //
+    // Both directions of prediction are suppressed by evidence in either
+    // direction. That is deliberate. Where an assay says "damaging" and REVEL
+    // says "benign", the predictor is not a dissenting vote to be counted, it
+    // is superseded; and the reverse holds just as strongly.
+    if criteria.iter().any(|c| c.met && (c.code == "PS3" || c.code == "BS3")) {
+        let evidence = criteria
+            .iter()
+            .find(|c| c.met && (c.code == "PS3" || c.code == "BS3"))
+            .map(|c| c.code.clone())
+            .unwrap_or_default();
+        let reason = format!(
+            "Superseded by functional evidence: {} rests on a curated assay, and ClinGen SVI ranks experimental evidence above computational prediction.",
+            evidence
+        );
+        let mut suppressed_pp3 = false;
+        for c in criteria.iter_mut() {
+            if !c.met {
+                continue;
+            }
+            if c.code.starts_with("PP3") || c.code.starts_with("BP4") || c.code.starts_with("BP7") {
+                suppress(c, &reason);
+                suppressed_pp3 |= c.code.starts_with("PP3");
+            }
+        }
+        // PP3 is gone, so every rule below it has nothing left to reconcile.
+        if suppressed_pp3 {
+            return;
+        }
+    }
+
     let Some(pp3_i) = pp3_idx else {
         // No PP3 firing — nothing to reconcile on the pathogenic computational side.
         return;
@@ -209,6 +246,77 @@ fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
     }
 }
 
+/// Build PS3 or BS3 from the run's curated functional evidence, if it names
+/// this variant.
+///
+/// Shared by both because they are the same lookup in opposite directions, and
+/// because the strength has to come from the file in both cases: Brnich 2020
+/// treats assay strength as a judgement about the assay, not a constant.
+fn functional_criterion(
+    input: &ClassificationInput,
+    want: crate::functional::FunctionalCriterion,
+    direction: crate::types::EvidenceDirection,
+    absent_summary: &str,
+) -> EvidenceCriterion {
+    let code = want.code().to_string();
+    let entry = input
+        .functional_evidence
+        .as_ref()
+        .filter(|e| e.criterion == want);
+
+    let Some(entry) = entry else {
+        return EvidenceCriterion {
+            code,
+            direction,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: false,
+            summary: absent_summary.to_string(),
+            details: serde_json::Value::Null,
+        };
+    };
+
+    let mut details = serde_json::Map::new();
+    details.insert("source".into(), serde_json::json!("curated functional evidence"));
+    details.insert("strength".into(), serde_json::json!(entry.strength.as_str()));
+    if let Some(ref pmid) = entry.pmid {
+        details.insert("pmid".into(), serde_json::json!(pmid));
+    }
+    if let Some(ref note) = entry.note {
+        details.insert("note".into(), serde_json::json!(note));
+    }
+
+    // Cite the source in the summary itself. A curator reading a report should
+    // not have to open the details blob to find out which paper this rests on.
+    let mut summary = format!(
+        "Curated functional evidence: {} at {} strength",
+        if want == crate::functional::FunctionalCriterion::Ps3 {
+            "assay shows a damaging effect"
+        } else {
+            "assay shows no damaging effect"
+        },
+        entry.strength.as_str(),
+    );
+    if let Some(ref pmid) = entry.pmid {
+        summary.push_str(&format!(" (PMID {})", pmid));
+    }
+    if let Some(ref note) = entry.note {
+        summary.push_str(&format!(": {}", note));
+    }
+
+    EvidenceCriterion {
+        code,
+        direction,
+        strength: entry.strength,
+        default_strength: EvidenceStrength::Strong,
+        met: true,
+        evaluated: true,
+        summary,
+        details: serde_json::Value::Object(details),
+    }
+}
+
 fn suppress(c: &mut EvidenceCriterion, reason: &str) {
     c.met = false;
     c.summary = format!("{} (was {})", reason, c.summary);
@@ -224,7 +332,9 @@ fn suppress(c: &mut EvidenceCriterion, reason: &str) {
 #[cfg(test)]
 mod reconcile_tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::types::{EvidenceDirection, EvidenceStrength};
+    use fastvep_core::Consequence;
 
     fn met(code: &str, dir: EvidenceDirection, strength: EvidenceStrength) -> EvidenceCriterion {
         EvidenceCriterion {
@@ -237,6 +347,10 @@ mod reconcile_tests {
             summary: String::new(),
             details: serde_json::Value::Object(serde_json::Map::new()),
         }
+    }
+
+    fn not_met(code: &str, dir: EvidenceDirection, strength: EvidenceStrength) -> EvidenceCriterion {
+        EvidenceCriterion { met: false, ..met(code, dir, strength) }
     }
 
     fn pp3_with_source(strength: EvidenceStrength, source: &str) -> EvidenceCriterion {
@@ -392,5 +506,147 @@ mod reconcile_tests {
         ];
         reconcile_evidence(&mut criteria);
         assert!(!find(&criteria, "PM1").met, "graded PM1 should be capped under PP3_Strong");
+    }
+
+    // ── B8: curated functional evidence ──────────────────────────────────
+
+    #[test]
+    fn functional_evidence_supersedes_every_predictor() {
+        // The SVI ordering: PP3/BP4/BP7 must not be used to argue against
+        // sound experimental data. OCA2 c.1503A>G is the case - a synonymous
+        // variant with published splice-defect data, where fastVEP was firing
+        // BP7 and BP4 and calling it benign.
+        let mut criteria = vec![
+            met("PS3", EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+            pp3_with_source(EvidenceStrength::Strong, "revel_missense"),
+            met("BP4", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+            met("BP7", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+            met("PM2_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting),
+        ];
+        reconcile_evidence(&mut criteria);
+
+        assert!(find(&criteria, "PS3").met, "the evidence itself must survive");
+        for code in ["PP3", "BP4", "BP7"] {
+            let c = find(&criteria, code);
+            assert!(!c.met, "{code} should be superseded");
+            assert!(c.summary.contains("Superseded by functional evidence"), "got: {}", c.summary);
+        }
+        assert!(
+            find(&criteria, "PM2_Supporting").met,
+            "only the computational predictors are superseded, not the frequency evidence",
+        );
+    }
+
+    #[test]
+    fn benign_functional_evidence_also_supersedes_pathogenic_prediction() {
+        // Symmetry matters: an assay showing no damaging effect outranks a
+        // high REVEL exactly as a damaging assay outranks a low one.
+        let mut criteria = vec![
+            met("BS3", EvidenceDirection::Benign, EvidenceStrength::Strong),
+            pp3_with_source(EvidenceStrength::Strong, "revel_missense"),
+        ];
+        reconcile_evidence(&mut criteria);
+        assert!(find(&criteria, "BS3").met);
+        assert!(!find(&criteria, "PP3").met);
+    }
+
+    #[test]
+    fn predictors_stand_when_there_is_no_functional_evidence() {
+        // A PS3 that was evaluated but not met must not suppress anything.
+        let mut criteria = vec![
+            not_met("PS3", EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+            met("BP4", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+        ];
+        reconcile_evidence(&mut criteria);
+        assert!(find(&criteria, "BP4").met);
+    }
+
+    /// The shared implementation behind PS3 and BS3. `pathogenic_strong` and
+    /// `benign_strong` each wrap it in a one-liner, so exercising it here
+    /// covers both.
+    fn ps3(input: &ClassificationInput) -> EvidenceCriterion {
+        functional_criterion(
+            input,
+            crate::functional::FunctionalCriterion::Ps3,
+            EvidenceDirection::Pathogenic,
+            "Requires curated functional study evidence (in vitro/in vivo assays) — supply one with --functional-evidence",
+        )
+    }
+
+    fn bs3(input: &ClassificationInput) -> EvidenceCriterion {
+        functional_criterion(
+            input,
+            crate::functional::FunctionalCriterion::Bs3,
+            EvidenceDirection::Benign,
+            "Requires curated functional study evidence showing no damaging effect — supply one with --functional-evidence",
+        )
+    }
+
+    fn with_functional(
+        criterion: crate::functional::FunctionalCriterion,
+        strength: EvidenceStrength,
+    ) -> ClassificationInput {
+        let mut input = minimal_input();
+        input.consequences = vec![Consequence::MissenseVariant];
+        input.functional_evidence = Some(crate::functional::FunctionalEvidence {
+            criterion,
+            strength,
+            pmid: Some("29625052".to_string()),
+            note: Some("minigene shows exon skipping".to_string()),
+        });
+        input
+    }
+
+    #[test]
+    fn test_functional_criteria_are_not_evaluated_without_a_file() {
+        // The honest default: no curated evidence means no assertion either
+        // way, not an absence of effect.
+        let input = minimal_input();
+        for c in [
+            ps3(&input),
+            bs3(&input),
+        ] {
+            assert!(!c.met);
+            assert!(!c.evaluated);
+            assert!(c.summary.contains("--functional-evidence"), "got: {}", c.summary);
+        }
+    }
+
+    #[test]
+    fn test_ps3_fires_from_curated_evidence_and_cites_it() {
+        let input = with_functional(
+            crate::functional::FunctionalCriterion::Ps3,
+            EvidenceStrength::Strong,
+        );
+        let c = ps3(&input);
+        assert!(c.met && c.evaluated);
+        assert_eq!(c.strength, EvidenceStrength::Strong);
+        assert!(c.summary.contains("PMID 29625052"), "got: {}", c.summary);
+        assert!(c.summary.contains("exon skipping"), "got: {}", c.summary);
+    }
+
+    #[test]
+    fn test_curator_assigned_strength_is_honoured() {
+        // Brnich 2020: a weak assay supports weak evidence. The file says so
+        // and the criterion has to carry it, or the strength column is a lie.
+        let input = with_functional(
+            crate::functional::FunctionalCriterion::Ps3,
+            EvidenceStrength::Supporting,
+        );
+        let c = ps3(&input);
+        assert!(c.met);
+        assert_eq!(c.strength, EvidenceStrength::Supporting);
+        assert_eq!(c.default_strength, EvidenceStrength::Strong);
+    }
+
+    #[test]
+    fn test_bs3_evidence_does_not_fire_ps3() {
+        // The two criteria read the same field and must not be confused.
+        let input = with_functional(
+            crate::functional::FunctionalCriterion::Bs3,
+            EvidenceStrength::Strong,
+        );
+        assert!(!ps3(&input).met);
+        assert!(bs3(&input).met);
     }
 }

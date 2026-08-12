@@ -65,6 +65,7 @@ fastvep annotate \
 |---|---|---|
 | `--acmg` | Enable ACMG-AMP classification | disabled |
 | `--acmg-config <FILE>` | Path to TOML configuration file for custom thresholds | built-in defaults |
+| `--functional-evidence <FILE>` | Curated functional-assay TSV supplying PS3/BS3 | none |
 | `--proband <SAMPLE>` | Proband sample name in multi-sample VCF (enables PS2/PM6 de novo detection) | none |
 | `--mother <SAMPLE>` | Mother sample name for trio analysis | none |
 | `--father <SAMPLE>` | Father sample name for trio analysis | none |
@@ -322,6 +323,54 @@ The literal 2015 reading remains one line away for a lab that wants it
 partly from gnomAD frequency, so a frequency threshold tuned against ClinVar is partly
 fitted to its own input. The curve's shape is the useful output, not its absolute level.
 
+## Functional evidence (PS3 / BS3)
+
+PS3 and BS3 are the two criteria fastVEP cannot compute.
+They ask whether a well-established in vitro or in vivo assay showed the variant to damage, or not damage, gene function - a question answered in a paper, not a database.
+fastVEP will not mine literature for them: a wrong PMID in a clinical report is worse than no evidence at all.
+What it will do is consume a curated file, which is how every VCEP pipeline works.
+
+```bash
+fastvep annotate ... --acmg --functional-evidence functional.tsv
+```
+
+The file is a TSV keyed by genomic coordinate:
+
+```text
+#chrom  pos       ref  alt  criterion  strength    pmid      note
+chr15   88855485  A    G    PS3        Strong      29625052  minigene shows exon skipping
+2       47478343  G    A    BS3        Supporting  31391288  normal MMR activity in vitro
+```
+
+`chrom` may carry a `chr` prefix or not, and coordinates are the ones in your VCF rather than
+fastVEP's normalised alleles, so an entry can be copied straight off the record it describes.
+`strength`, `pmid` and `note` are optional; `strength` defaults to Strong.
+Blank lines and `#` comments are skipped, so the header above is valid input.
+Every other malformed row is a hard error naming the line, because a typo that silently dropped a
+row would surface as a variant mysteriously missing its PS3 rather than as a message.
+
+**Strength is a curator's judgement, not a constant.** Brnich et al. 2020 (the ClinGen SVI
+functional-evidence recommendation) grades assay strength on validity, controls and dynamic range,
+so the column exists for a curator who has read the paper to say Supporting where the assay only
+supports Supporting.
+
+**An entry outranks the predictors.** The SVI ordering is explicit: functional evidence is stronger
+than computational prediction, and PP3/BP4/BP7 must not be used to argue against sound experimental
+data. So a PS3 or BS3 entry also suppresses PP3, BP4 and BP7 for that variant, each with
+`Superseded by functional evidence` in its summary. This runs in both directions - an assay showing
+no damaging effect outranks a high REVEL exactly as a damaging assay outranks a low one.
+
+The round-2 review's OCA2 case is what this is for. Before, a synonymous OCA2 variant with published
+splice-defect data collected BP7 and BP4 from a SpliceAI score of 0.00 and came out Benign:
+
+```text
+before   call=B     BA1 + BS2 + BP4 + BP7
+after    call=VUS   PS3 (PMID 26637981) + BA1 + BS2, BP4 and BP7 superseded
+```
+
+Without an entry, PS3 and BS3 stay `evaluated: false` - no assertion in either direction, which is
+the honest answer when nobody has run the assay.
+
 ## Required Data Sources
 
 ACMG classification draws on multiple supplementary annotation (SA) sources. Place `.osa`/`.osa2` (allele-level) and `.oga` (gene-level) files in the SA directory:
@@ -380,7 +429,7 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 | **PVS1** | Very Strong → Supporting* | Null variant in LOF-intolerant gene; graded per Abou Tayoun 2018 decision tree (NMD prediction, %protein removed, critical region, alt start codon, last exon). Two gene-level preconditions run first: the gene must have an established gene-disease relationship, and its curated mechanism must not exclude loss of function | Consequence + pLI/LOEUF/ClinGen GDV + curated mechanism + transcript context | Yes |
 | **PS1** | Strong | Same AA change as established pathogenic missense **or** canonical ±1/2 splice predicted to produce same RNA outcome (Walker 2023) | ClinVar protein index + splice catalog | Yes (with .oga) |
 | **PS2** | Strong | De novo with confirmed parents | Trio VCF genotypes | Yes (with trio) |
-| **PS3** | Strong | Functional studies show damaging | External data | No |
+| **PS3** | Strong | Functional studies show damaging. Read from `--functional-evidence`; suppresses PP3/BP4/BP7 for that variant (SVI ranks experimental evidence above prediction) | Curated TSV | Yes (with file) |
 | **PS4** | Strong | Prevalence in affected >> controls | Case-control statistics (NotEvaluated by default; ClinVar review-stars proxy is invalid per SVI, opt in via `use_clinvar_stars_as_ps4_proxy`) | No (Partial in proxy mode) |
 | **PM1** | Moderate | Mutational hotspot / critical domain. NotEvaluated where the gene has no established gene-disease relationship: a cluster of assertions in an uncurated gene is not evidence of a critical region | ClinVar protein density + ClinGen GDV | Yes (with .oga) |
 | **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown fires at AF ≤ 0.00004, AR at AF ≤ 0.00007 (SVI v1.0 plus published VCEP practice; see "Choosing the PM2 bar for dominant genes"). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
@@ -403,7 +452,7 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 | **BA1** | Standalone | AF > 5%, AN ≥ 2,000 (gnomAD v4 SVI March 2024). Tested against the **filtering allele frequency** (95% CI lower bound, max across ancestry groups; Whiffin 2017) where the database provides it, else the population maximum. 9-variant Ghosh 2018 exception list (HFE c.845G>A, MEFV common, BTD c.1330G>C, etc.) blocks BA1 regardless of AF | gnomAD population AFs + FAF + AN + HGVSc | Yes |
 | **BS1** | Strong | Cross-population AF > expected, read from the same statistic as BA1 (filtering AF where available, else population maximum). NotEvaluated for homology-confounded genes, for gnomAD-flagged `segdup`/`lcr` sites, for non-PASS gnomAD records, and for ClinVar low-penetrance / risk alleles | gnomAD per-population AFs + FAF + QC flags + ClinVar terms | Yes |
 | **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR / X-linked counts individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and requires ≥ `bs2_ar_min_hom` of them **and** a 95% lower bound on their frequency above `bs2_hom_prevalence_threshold` (default 1e-3, set by measurement - see [Choosing the BS2 prevalence bar](#choosing-the-bs2-prevalence-bar)), so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two such individuals in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance | gnomAD hom + hemizygote counts + AN + inheritance | Yes |
-| **BS3** | Strong | Functional studies show no damage | External data | No |
+| **BS3** | Strong | Functional studies show no damage. Read from `--functional-evidence`; suppresses PP3/BP4/BP7 for that variant | Curated TSV | Yes (with file) |
 | **BS4** | Strong | Lack of segregation | Pedigree data | No |
 | **BP1** | Supporting | Missense in a gene where primarily truncating variants cause disease. Requires both the constraint signature (high pLI, low misZ) **and** a mutation spectrum without an established missense mechanism (< `bp1_max_pathogenic_missense` pathogenic missense in the ClinVar protein index) | pLI + misZ + ClinVar protein index | Yes |
 | **BP2** | Supporting | In trans/cis with pathogenic | Phased VCF + ClinVar | Yes (with trio) |

@@ -55,5 +55,6 @@ pub(crate) fn minimal_input() -> ClassificationInput {
         mother_genotype: None,
         father_genotype: None,
         companion_variants: vec![],
+        functional_evidence: None,
     }
 }

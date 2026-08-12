@@ -55,6 +55,12 @@ pub struct AnnotationContext {
     pub gene_providers: Vec<fastvep_sa::gene::GeneIndex>,
     /// ACMG-AMP classification configuration (None = disabled).
     pub acmg_config: Option<fastvep_classification::AcmgConfig>,
+    /// Curated functional-assay evidence supplying PS3/BS3 (None = not provided).
+    ///
+    /// PS3 and BS3 are the two criteria that cannot be computed from variant
+    /// data. Without this the classifier reports them NotEvaluated, which is
+    /// the honest answer rather than a silent absence of evidence.
+    pub functional_evidence: Option<fastvep_classification::FunctionalEvidenceIndex>,
 }
 
 impl AnnotationContext {
@@ -187,6 +193,7 @@ impl AnnotationContext {
         };
 
         Ok(Self {
+            functional_evidence: None,
             transcript_provider,
             seq_provider,
             predictor,
@@ -323,6 +330,8 @@ impl AnnotationContext {
         // from "no file could have said so": a missing `.oga` leaves every
         // gene's annotation empty, and gating PVS1/PP2/PM1 on that would
         // suppress them genome-wide.
+        let functional_evidence = self.functional_evidence.as_ref();
+
         let gene_disease_db_loaded = {
             use fastvep_cache::annotation::GeneAnnotationProvider;
             self.gene_providers
@@ -761,6 +770,8 @@ impl AnnotationContext {
                 // Parse sample genotypes if trio config is present
                 let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, &sample_names);
 
+                let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+
                 for tv in &mut vf.transcript_variations {
                     let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
                     let gene_anns: Vec<&fastvep_core::GeneAnnotation> =
@@ -780,6 +791,10 @@ impl AnnotationContext {
                                 aa.hgvsc.as_deref(),
                                 aa.exon,
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
+                                vf.alt_alleles
+                                    .iter()
+                                    .position(|a| *a == aa.allele)
+                                    .and_then(|i| functional_by_alt[i].clone()),
                                 &aa.supplementary,
                                 &gene_anns,
                                 gene_disease_db_loaded,
@@ -807,6 +822,7 @@ impl AnnotationContext {
                     acmg_cfg,
                     &sample_names,
                     gene_disease_db_loaded,
+                    functional_evidence,
                 );
             }
         }
@@ -1033,6 +1049,7 @@ fn enrich_compound_het(
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
     gene_disease_db_loaded: bool,
+    functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
 ) {
     use std::collections::HashMap;
 
@@ -1218,6 +1235,7 @@ fn enrich_compound_het(
                 .iter()
                 .filter(|ga| ga.gene_symbol == gene_sym)
                 .collect();
+            let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
 
             let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, sample_names);
 
@@ -1231,6 +1249,10 @@ fn enrich_compound_het(
                 aa.hgvsc.as_deref(),
                 aa.exon,
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
+                vf.alt_alleles
+                    .iter()
+                    .position(|a| *a == aa.allele)
+                    .and_then(|i| functional_by_alt[i].clone()),
                 &aa.supplementary,
                 &gene_anns,
                 gene_disease_db_loaded,
@@ -1376,6 +1398,34 @@ pub fn load_gene_providers(
         .collect();
 
     Ok(providers)
+}
+
+/// Curated functional evidence for each ALT allele of a record, if the run was
+/// given a `--functional-evidence` file that names them.
+///
+/// Resolved for the whole record at once, before the mutable walk over
+/// `transcript_variations` begins, because that walk borrows the record and a
+/// per-allele lookup inside it would need the record again.
+///
+/// Keyed on the record's original VCF coordinates rather than fastVEP's
+/// normalised alleles: the curated file is written by a human reading a VCF, so
+/// that is the form the entry will be in. The result is positional, one slot
+/// per ALT, so one allele's curated result is never applied to its neighbours.
+fn resolve_functional_by_alt(
+    index: Option<&fastvep_classification::FunctionalEvidenceIndex>,
+    vf: &VariationFeature,
+) -> Vec<Option<fastvep_classification::FunctionalEvidence>> {
+    let empty = || vec![None; vf.alt_alleles.len()];
+    let (Some(index), Some(vcf)) = (index, vf.vcf_fields.as_ref()) else {
+        return empty();
+    };
+    (0..vf.alt_alleles.len())
+        .map(|i| {
+            index
+                .for_vcf_allele(&vcf.chrom, vcf.pos, &vcf.ref_allele, &vcf.alt, i)
+                .cloned()
+        })
+        .collect()
 }
 
 #[cfg(test)]

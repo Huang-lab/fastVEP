@@ -570,6 +570,15 @@ pub struct ClassificationInput {
     pub father_genotype: Option<GenotypeInfo>,
     /// Other variants in the same gene that the proband carries (for compound-het)
     pub companion_variants: Vec<CompanionVariant>,
+    /// Curated functional-assay result for this variant, if the run was given a
+    /// `--functional-evidence` file that lists it.
+    ///
+    /// Resolved by the caller rather than here, because the lookup is by
+    /// genomic coordinate and this function is handed a transcript-level view
+    /// that has no coordinates in it. Keeping the file I/O and the coordinate
+    /// matching in the pipeline also leaves the classifier consuming typed
+    /// evidence, the same as every other criterion.
+    pub functional_evidence: Option<crate::functional::FunctionalEvidence>,
 }
 
 /// True when the reference allele is the empty/"-" allele, i.e. the variant is
@@ -595,6 +604,7 @@ pub fn extract_classification_input(
     hgvs_c: Option<&str>,
     exon: Option<(u32, u32)>,
     is_pure_insertion: Option<bool>,
+    functional_evidence: Option<crate::functional::FunctionalEvidence>,
     allele_supplementary: &[(String, String)],
     gene_annotations: &[&GeneAnnotation],
     gene_disease_db_loaded: bool,
@@ -759,6 +769,7 @@ pub fn extract_classification_input(
         mother_genotype,
         father_genotype,
         companion_variants,
+        functional_evidence,
     }
 }
 

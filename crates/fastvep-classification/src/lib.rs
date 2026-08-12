@@ -12,12 +12,14 @@
 pub mod combiner;
 pub mod config;
 pub mod criteria;
+pub mod functional;
 pub mod sa_extract;
 #[cfg(test)]
 mod test_support;
 pub mod types;
 
 pub use config::{AcmgConfig, TrioConfig};
+pub use functional::{FunctionalCriterion, FunctionalEvidence, FunctionalEvidenceIndex};
 pub use sa_extract::{
     extract_classification_input, is_pure_insertion, ClassificationInput, CompanionVariant,
     GenotypeInfo,

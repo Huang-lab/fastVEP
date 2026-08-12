@@ -346,21 +346,21 @@ fn evaluate_bs2(
     }
 }
 
-/// BS3: Well-established in vitro or in vivo functional studies show no damaging effect.
+/// BS3: Well-established in vitro or in vivo functional studies show no
+/// damaging effect.
+///
+/// The benign-direction twin of PS3, read from the same curated
+/// `--functional-evidence` file. See [`crate::functional`].
 fn evaluate_bs3(
-    _input: &ClassificationInput,
+    input: &ClassificationInput,
     _config: &AcmgConfig,
 ) -> EvidenceCriterion {
-    EvidenceCriterion {
-        code: "BS3".to_string(),
-        direction: EvidenceDirection::Benign,
-        strength: EvidenceStrength::Strong,
-        default_strength: EvidenceStrength::Strong,
-        met: false,
-        evaluated: false,
-        summary: "Requires curated functional study evidence showing no damaging effect — not automatable from variant data".to_string(),
-        details: serde_json::Value::Null,
-    }
+    super::functional_criterion(
+        input,
+        crate::functional::FunctionalCriterion::Bs3,
+        EvidenceDirection::Benign,
+        "Requires curated functional study evidence showing no damaging effect — supply one with --functional-evidence",
+    )
 }
 
 /// BS4: Lack of segregation in affected members of a family.
