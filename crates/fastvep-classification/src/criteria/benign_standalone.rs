@@ -22,7 +22,7 @@ pub fn evaluate_ba1(
 
     // Frequencies from a homology-confounded gene (or for a variant ClinVar
     // labels low-penetrance) cannot support a standalone benign call either.
-    if let Some(reason) = super::benign_strong::frequency_evidence_blocker(input, config) {
+    if let Some(reason) = super::frequency_gate::benign_blocker(input, config) {
         details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
         return EvidenceCriterion {
             code: "BA1".to_string(),
@@ -112,9 +112,13 @@ pub fn evaluate_ba1(
                 };
             }
         }
-        let max_af = gnomad.max_pop_af();
-        if let Some(af) = max_af {
+        let test_af = super::frequency_gate::benign_test_af(gnomad, config);
+        if let Some((af, af_label)) = test_af {
             details.insert("max_pop_af".into(), serde_json::json!(af));
+            details.insert("af_statistic".into(), serde_json::json!(af_label));
+            if let Some(point) = gnomad.max_pop_af() {
+                details.insert("max_pop_point_af".into(), serde_json::json!(point));
+            }
 
             // Add per-population breakdown for transparency
             let mut pop_afs = serde_json::Map::new();
@@ -132,16 +136,16 @@ pub fn evaluate_ba1(
                 (
                     true,
                     format!(
-                        "Common variant: max population AF={:.4} exceeds {:.2} threshold",
-                        af, config.ba1_af_threshold
+                        "Common variant: {}={:.4} exceeds {:.2} threshold",
+                        af_label, af, config.ba1_af_threshold
                     ),
                 )
             } else {
                 (
                     false,
                     format!(
-                        "Max population AF={:.6} does not exceed {:.2} threshold",
-                        af, config.ba1_af_threshold
+                        "{}={:.6} does not exceed {:.2} threshold",
+                        af_label, af, config.ba1_af_threshold
                     ),
                 )
             }
@@ -167,47 +171,22 @@ pub fn evaluate_ba1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::GnomadData;
 
     #[test]
     fn test_ba1_common_variant() {
         let input = ClassificationInput {
-            consequences: vec![],
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: None,
             is_canonical: false,
-            amino_acids: None,
-            protein_position: None,
             gnomad: Some(GnomadData {
                 all_af: Some(0.10),
                 afr_af: Some(0.15),
                 all_an: Some(100_000),
                 ..Default::default()
             }),
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(result.met);
@@ -217,40 +196,14 @@ mod tests {
     #[test]
     fn test_ba1_rare_variant() {
         let input = ClassificationInput {
-            consequences: vec![],
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: None,
             is_canonical: false,
-            amino_acids: None,
-            protein_position: None,
             gnomad: Some(GnomadData {
                 all_af: Some(0.001),
                 ..Default::default()
             }),
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(!result.met);
@@ -261,41 +214,15 @@ mod tests {
         // HFE c.845G>A (p.Cys282Tyr) — hereditary hemochromatosis. ~10% AF in
         // European populations but pathogenic. Per Ghosh 2018, BA1 must NOT fire.
         let input = ClassificationInput {
-            consequences: vec![],
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: Some("HFE".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
             gnomad: Some(GnomadData {
                 all_af: Some(0.06),
                 nfe_af: Some(0.10),
                 ..Default::default()
             }),
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
             hgvs_c: Some("c.845G>A".to_string()),
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(!result.met, "BA1 must not fire for HFE c.845G>A (Ghosh 2018 exception)");
@@ -307,37 +234,11 @@ mod tests {
     fn test_ba1_exception_match_is_case_insensitive() {
         // Pipeline may emit "C.845G>a" or other casing — match must still work.
         let input = ClassificationInput {
-            consequences: vec![],
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: Some("hfe".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
             gnomad: Some(GnomadData { all_af: Some(0.10), ..Default::default() }),
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
             hgvs_c: Some("C.845G>A".to_string()),
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(!result.met);
@@ -348,37 +249,11 @@ mod tests {
         // Same gene (HFE) but a different c. notation NOT on the exception
         // list → BA1 still fires at high AF.
         let input = ClassificationInput {
-            consequences: vec![],
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: Some("HFE".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
             gnomad: Some(GnomadData { all_af: Some(0.10), all_an: Some(100_000), ..Default::default() }),
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
             hgvs_c: Some("c.999A>T".to_string()),
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(result.met);
@@ -389,41 +264,15 @@ mod tests {
         // PR10 (gnomAD v4 guidance): AN below 2000 → NotEvaluated, not Benign,
         // even at high AF — the frequency estimate is unreliable.
         let input = ClassificationInput {
-            consequences: vec![],
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: None,
             is_canonical: false,
-            amino_acids: None,
-            protein_position: None,
             gnomad: Some(GnomadData {
                 all_af: Some(0.10),
                 all_an: Some(500), // way below 2000
                 ..Default::default()
             }),
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(!result.met);
@@ -434,42 +283,16 @@ mod tests {
     #[test]
     fn test_ba1_one_pop_above_threshold() {
         let input = ClassificationInput {
-            consequences: vec![],
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: None,
             is_canonical: false,
-            amino_acids: None,
-            protein_position: None,
             gnomad: Some(GnomadData {
                 all_af: Some(0.02),
                 eas_af: Some(0.06), // Only EAS above 5%
                 all_an: Some(100_000),
                 ..Default::default()
             }),
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(result.met);

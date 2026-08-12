@@ -1,3 +1,4 @@
+pub(crate) mod frequency_gate;
 pub mod pvs1;
 pub mod pathogenic_strong;
 pub mod pathogenic_moderate;

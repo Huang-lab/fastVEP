@@ -31,6 +31,152 @@ const POPULATIONS: &[&str] = &[
     "afr", "amr", "asj", "eas", "fin", "mid", "nfe", "oth", "remaining", "sas",
 ];
 
+// =============================================================================
+// Extended quality-control and stratified columns
+// =============================================================================
+//
+// Everything below is additive: a database built before these columns existed
+// simply does not carry the keys, and every consumer treats an absent key the
+// same way it behaved before the columns were introduced. Both the v1 JSON
+// builder and the v2 u32 encoder walk the same descriptor tables, in the same
+// order, so the two output formats cannot drift apart.
+
+/// gnomAD FILTER-column entries, as (VCF filter name, output alias, description).
+///
+/// A record carrying any of these is not a trustworthy basis for benign
+/// frequency evidence: `AC0` means every genotype backing the call was filtered
+/// out, `AS_VQSR` that the site failed the variant-quality model, and
+/// `InbreedingCoeff` that the genotypes are distributed in a way real
+/// population data is not. Stored as one flag per filter rather than a single
+/// "not PASS" bit so a reviewer reading the annotation can see *which* filter
+/// fired.
+const FILTER_FLAGS: &[(&str, &str, &str)] = &[
+    ("AC0", "filterAc0", "FILTER=AC0: allele count is zero after filtering out low-confidence genotypes"),
+    ("AS_VQSR", "filterVqsr", "FILTER=AS_VQSR: site failed allele-specific VQSR thresholds"),
+    ("InbreedingCoeff", "filterInbreeding", "FILTER=InbreedingCoeff: inbreeding coefficient < -0.3"),
+];
+
+/// Region-quality INFO flags, as (INFO key, output alias, description).
+///
+/// `lcr` and `segdup` mark the low-complexity and segmentally-duplicated
+/// regions where short-read allele frequencies are systematically unreliable.
+/// This is the same concern as the hand-curated homologous-gene list
+/// (Mandelker 2016, PMID 27228465), but resolved per site rather than per gene.
+/// `non_par` is required to interpret the XY-stratified counts: only outside a
+/// pseudoautosomal region is an XY sample hemizygous.
+const INFO_FLAGS: &[(&str, &str, &str)] = &[
+    ("lcr", "lcr", "Variant falls within a low-complexity region"),
+    ("segdup", "segdup", "Variant falls within a segmental duplication"),
+    ("non_par", "nonPar", "Sex-chromosome variant falls outside a pseudoautosomal region"),
+];
+
+/// Per-allele (`Number=A`) XY-stratified counts.
+///
+/// On the non-PAR regions of chrX and chrY, gnomAD calls XY samples haploid, so
+/// `AC_XY` is the count of hemizygous individuals. That is the observation ACMG
+/// BS2 asks for on an X-linked gene, and it is invisible in `nhomalt`.
+///
+/// `nhomalt_XY` is deliberately *not* extracted. Because those calls are
+/// haploid, gnomAD never records an XY sample as homozygous: across all 6,955
+/// non-PAR chrX records in the IDS region it is zero, including at a site with
+/// 109,916 XY carriers. Inside the PAR, XY samples are diploid and the global
+/// `nhomalt` already counts them. The field therefore has no reading under
+/// which it adds information.
+const XY_ALLELE_INTS: &[(&str, &str, &str)] = &[(
+    "AC_XY",
+    "allAcXY",
+    "Alternate allele count in XY samples (hemizygous individuals outside the PAR)",
+)];
+
+/// Per-site (`Number=1`) XY-stratified counts.
+const XY_SITE_INTS: &[(&str, &str, &str)] = &[(
+    "AN_XY",
+    "allAnXY",
+    "Total allele number in XY samples",
+)];
+
+/// Filtering allele frequencies (Whiffin 2017, PMID 28518168).
+///
+/// The FAF is the lower bound of the 95 % confidence interval on the allele
+/// frequency, computed per genetic-ancestry group. `fafmax_faf95_max` is the
+/// maximum across groups, which is the statistic ACMG BA1/BS1 actually want:
+/// it is robust to a founder variant that is common in one population and
+/// absent elsewhere, and to a frequency estimated from very few alleles. Both
+/// failure modes were raised in the round-2 medical-genetics review.
+const FAF_FLOATS: &[(&str, &str, &str)] = &[
+    ("faf95", "faf95", "Filtering allele frequency (95% CI lower bound), all samples"),
+    (
+        "fafmax_faf95_max",
+        "faf95Max",
+        "Maximum filtering allele frequency (95% CI lower bound) across genetic-ancestry groups",
+    ),
+];
+
+/// A decoded value for one extended column, before it is rendered into either
+/// output format.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ExtValue {
+    Int(Option<i64>),
+    Float(Option<f64>),
+    Flag(bool),
+}
+
+/// Extract every extended column for one alternate allele, in schema order.
+///
+/// Shared by both encoders so the v1 `.osa` JSON and the v2 `.osa2` columns are
+/// populated from exactly the same logic. Must stay in the same order as
+/// [`extended_fields`]; `test_extended_fields_match_extended_values` enforces it.
+fn extended_values(
+    info_map: &HashMap<String, String>,
+    filter_column: &str,
+    allele_idx: usize,
+) -> Vec<(&'static str, ExtValue)> {
+    let mut out = Vec::with_capacity(
+        XY_ALLELE_INTS.len()
+            + XY_SITE_INTS.len()
+            + FAF_FLOATS.len()
+            + INFO_FLAGS.len()
+            + FILTER_FLAGS.len(),
+    );
+
+    for (key, alias, _) in XY_ALLELE_INTS {
+        let vals = split_info_values(info_map.get(*key).map(|s| s.as_str()));
+        out.push((
+            *alias,
+            ExtValue::Int(vals.get(allele_idx).and_then(|s| s.parse::<i64>().ok())),
+        ));
+    }
+    for (key, alias, _) in XY_SITE_INTS {
+        let vals = split_info_values(info_map.get(*key).map(|s| s.as_str()));
+        out.push((
+            *alias,
+            ExtValue::Int(vals.first().and_then(|s| s.parse::<i64>().ok())),
+        ));
+    }
+    for (key, alias, _) in FAF_FLOATS {
+        let vals = split_info_values(info_map.get(*key).map(|s| s.as_str()));
+        out.push((
+            *alias,
+            ExtValue::Float(vals.get(allele_idx).and_then(|s| s.parse::<f64>().ok())),
+        ));
+    }
+    for (key, alias, _) in INFO_FLAGS {
+        out.push((*alias, ExtValue::Flag(info_map.contains_key(*key))));
+    }
+    for (name, alias, _) in FILTER_FLAGS {
+        out.push((*alias, ExtValue::Flag(filter_has(filter_column, name))));
+    }
+
+    out
+}
+
+/// Whether the VCF FILTER column lists `name`.
+///
+/// FILTER is a semicolon-separated list, or `PASS` / `.` when nothing fired.
+fn filter_has(filter_column: &str, name: &str) -> bool {
+    filter_column.split(';').any(|f| f == name)
+}
+
 /// INFO field names for a particular gnomAD release flavor.
 ///
 /// Built from the VCF header so we use whatever names the upstream file
@@ -236,6 +382,7 @@ impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
 
             let ref_allele = fields[3].to_string();
             let alt_field = fields[4];
+            let filter_column = fields[6];
             let info = fields[7];
 
             let info_map = parse_info(info);
@@ -251,11 +398,14 @@ impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
                     continue;
                 }
                 let json = build_gnomad_json(
-                    all_afs.get(i).map(|s| s.as_str()),
-                    all_ans.first().map(|s| s.as_str()),
-                    all_acs.get(i).map(|s| s.as_str()),
-                    all_nhomalt.get(i).map(|s| s.as_str()),
+                    GlobalCounts {
+                        af: all_afs.get(i).map(|s| s.as_str()),
+                        an: all_ans.first().map(|s| s.as_str()),
+                        ac: all_acs.get(i).map(|s| s.as_str()),
+                        nhomalt: all_nhomalt.get(i).map(|s| s.as_str()),
+                    },
                     &info_map,
+                    filter_column,
                     i,
                     field_names,
                 );
@@ -271,15 +421,24 @@ impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
     }
 }
 
+/// The global AF/AN/AC/nhomalt for one alternate allele, already sliced out of
+/// the INFO column by the caller. Bundled so they are split once per VCF line
+/// rather than once per alternate allele.
+struct GlobalCounts<'a> {
+    af: Option<&'a str>,
+    an: Option<&'a str>,
+    ac: Option<&'a str>,
+    nhomalt: Option<&'a str>,
+}
+
 fn build_gnomad_json(
-    af: Option<&str>,
-    an: Option<&str>,
-    ac: Option<&str>,
-    nhomalt: Option<&str>,
+    counts: GlobalCounts<'_>,
     info_map: &HashMap<String, String>,
+    filter_column: &str,
     allele_idx: usize,
     field_names: &FieldNames,
 ) -> String {
+    let GlobalCounts { af, an, ac, nhomalt } = counts;
     let mut parts = Vec::new();
 
     if let Some(af_str) = af {
@@ -324,14 +483,39 @@ fn build_gnomad_json(
         }
     }
 
+    // Extended QC / stratified columns. Absent values and unset flags are
+    // omitted entirely, so a site with nothing to report costs no bytes and an
+    // older consumer that does not know these keys is unaffected.
+    for (alias, value) in extended_values(info_map, filter_column, allele_idx) {
+        match value {
+            ExtValue::Int(Some(n)) => parts.push(format!("\"{}\":{}", alias, n)),
+            ExtValue::Float(Some(f)) if f.is_finite() => {
+                parts.push(format!("\"{}\":{:.6e}", alias, f))
+            }
+            ExtValue::Flag(true) => parts.push(format!("\"{}\":true", alias)),
+            _ => {}
+        }
+    }
+
     format!("{{{}}}", parts.join(","))
 }
 
+/// Parse a VCF INFO column into a key -> value map.
+///
+/// Bare flags (`Number=0` entries such as `segdup`, which appear with no `=`)
+/// are stored with an empty value, so `contains_key` answers "is this flag
+/// set?" while `get` on a valued key is unaffected.
 fn parse_info(info: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for pair in info.split(';') {
-        if let Some((key, value)) = pair.split_once('=') {
-            map.insert(key.to_string(), value.to_string());
+        match pair.split_once('=') {
+            Some((key, value)) => {
+                map.insert(key.to_string(), value.to_string());
+            }
+            None if !pair.is_empty() && pair != "." => {
+                map.insert(pair.to_string(), String::new());
+            }
+            None => {}
         }
     }
     map
@@ -392,6 +576,54 @@ fn count_field(field: &str, alias: &str, description: &str) -> Field {
     }
 }
 
+/// A boolean column. `missing_value` is deliberately *not* `u32::MAX`: a flag
+/// has no missing state, only set (1) or unset (0), and leaving the sentinel at
+/// `u32::MAX` would make every unset flag decode as `null` rather than `false`.
+fn flag_field(field: &str, alias: &str, description: &str) -> Field {
+    Field {
+        field: field.into(),
+        alias: alias.into(),
+        ftype: FieldType::Flag,
+        multiplier: 1,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: description.into(),
+    }
+}
+
+/// The extended QC / stratified columns, in the order [`extended_values`]
+/// produces them.
+fn extended_fields() -> Vec<Field> {
+    let mut fields = Vec::new();
+    for (key, alias, desc) in XY_ALLELE_INTS {
+        fields.push(count_field(key, alias, desc));
+    }
+    for (key, alias, desc) in XY_SITE_INTS {
+        fields.push(count_field(key, alias, desc));
+    }
+    for (key, alias, desc) in FAF_FLOATS {
+        fields.push(af_field(key, alias, desc));
+    }
+    for (key, alias, desc) in INFO_FLAGS {
+        fields.push(flag_field(key, alias, desc));
+    }
+    for (key, alias, desc) in FILTER_FLAGS {
+        fields.push(flag_field(key, alias, desc));
+    }
+    fields
+}
+
+/// Encode one extended column's value into its u32 slot.
+fn encode_ext(field: &Field, value: ExtValue) -> u32 {
+    match value {
+        ExtValue::Int(Some(n)) => field.encode_int(n),
+        ExtValue::Float(Some(f)) => field.encode_float(f),
+        ExtValue::Int(None) | ExtValue::Float(None) => field.missing_value,
+        ExtValue::Flag(b) => u32::from(b),
+    }
+}
+
 /// Canonical gnomAD v2 (`.osa2`) field schema. The value vector produced by
 /// [`iter_gnomad_osa2`] is parallel to this list, in this exact order: global
 /// AF / AN / AC / nhomalt followed by per-population AF for each entry in
@@ -414,7 +646,13 @@ pub fn gnomad_osa2_fields() -> Vec<Field> {
             &format!("{} allele frequency", pop.to_uppercase()),
         ));
     }
+    fields.extend(extended_fields());
     fields
+}
+
+/// Index of the first extended column in [`gnomad_osa2_fields`].
+fn extended_offset() -> usize {
+    4 + POPULATIONS.len()
 }
 
 /// Standard gnomAD `.osa2` metadata. Mirrors the v1 header (`json_key =
@@ -503,6 +741,7 @@ impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
             };
             let ref_allele = cols[3].as_bytes().to_vec();
             let alt_field = cols[4];
+            let filter_column = cols[6];
             let info_map = parse_info(cols[7]);
 
             let all_afs = split_info_values(info_map.get(&field_names.af).map(|s| s.as_str()));
@@ -525,6 +764,12 @@ impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
                     let key = field_names.pop_key(pop);
                     let vals = split_info_values(info_map.get(&key).map(|s| s.as_str()));
                     values.push(enc_float(&self.fields[4 + pi], vals.get(ai).map(|s| s.as_str())));
+                }
+                let ext_off = extended_offset();
+                for (ei, (_, value)) in
+                    extended_values(&info_map, filter_column, ai).into_iter().enumerate()
+                {
+                    values.push(encode_ext(&self.fields[ext_off + ei], value));
                 }
 
                 self.pending.push_back(Osa2Record {
@@ -772,7 +1017,7 @@ chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=not_a_number;AC=garbage;nhomalt=.
         // The iterator indexes `fields[0..4]` for the global stats and
         // `fields[4 + pi]` per population, so this ordering is load-bearing.
         let fields = gnomad_osa2_fields();
-        assert_eq!(fields.len(), 4 + POPULATIONS.len());
+        assert_eq!(fields.len(), 4 + POPULATIONS.len() + extended_fields().len());
         assert_eq!(fields[0].alias, "allAf");
         assert_eq!(fields[1].alias, "allAn");
         assert_eq!(fields[2].alias, "allAc");
@@ -838,6 +1083,113 @@ chr1\t10001\t.\tA\tG\t.\tPASS\tAF_joint=0.001;AN_joint=150000;AC_joint=150;AF_jo
         assert_eq!(recs[0].values[1], 150000); // AN_joint
         let nfe_idx = 4 + POPULATIONS.iter().position(|p| *p == "nfe").unwrap();
         assert_ne!(recs[0].values[nfe_idx], u32::MAX); // nfe populated from joint
+    }
+
+    // ---- extended QC / stratified columns ----
+
+    /// A chrX non-PAR record with the full set of extended fields populated:
+    /// failed VQSR, inside a segdup, hemizygous counts, and both FAFs.
+    const CHRX_VCF: &str = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"AF\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"AN\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t500\t.\tA\tG\t.\tAS_VQSR;InbreedingCoeff\tAF=0.2;AN=1000;AC=200;nhomalt=20;segdup;lcr
+chr1\t600\t.\tA\tG\t.\tPASS\tAF=0.2;AN=1000;AC=200;nhomalt=20;non_par;AC_XY=37;AN_XY=400;nhomalt_XY=5;faf95=1.7e-01;fafmax_faf95_max=2.4e-01
+";
+
+    #[test]
+    fn test_extended_fields_match_extended_values() {
+        // The v1 JSON builder and the v2 u32 encoder both walk these two lists
+        // positionally. If they ever fall out of order, every extended column
+        // in a v2 database silently holds another column's value.
+        let fields = extended_fields();
+        let values = extended_values(&HashMap::new(), "PASS", 0);
+        assert_eq!(fields.len(), values.len());
+        for (f, (alias, _)) in fields.iter().zip(values.iter()) {
+            assert_eq!(&f.alias, alias, "extended schema and extraction diverged");
+        }
+        // And the offset the v2 encoder uses must land on the first of them.
+        let all = gnomad_osa2_fields();
+        assert_eq!(all[extended_offset()].alias, fields[0].alias);
+        assert_eq!(all.len(), extended_offset() + fields.len());
+    }
+
+    #[test]
+    fn test_v1_json_carries_filter_and_region_flags() {
+        let map = chr1_map();
+        let records = parse_gnomad_vcf(CHRX_VCF.as_bytes(), &map).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&records[0].json).unwrap();
+        assert_eq!(v.get("filterVqsr").and_then(|x| x.as_bool()), Some(true));
+        assert_eq!(v.get("filterInbreeding").and_then(|x| x.as_bool()), Some(true));
+        assert_eq!(v.get("segdup").and_then(|x| x.as_bool()), Some(true));
+        assert_eq!(v.get("lcr").and_then(|x| x.as_bool()), Some(true));
+        // Unset flags are omitted rather than written as false.
+        assert!(v.get("filterAc0").is_none());
+        assert!(v.get("nonPar").is_none());
+    }
+
+    #[test]
+    fn test_v1_json_carries_xy_counts_and_faf() {
+        let map = chr1_map();
+        let records = parse_gnomad_vcf(CHRX_VCF.as_bytes(), &map).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&records[1].json).unwrap();
+        assert_eq!(v.get("allAcXY").and_then(|x| x.as_i64()), Some(37));
+        assert_eq!(v.get("allAnXY").and_then(|x| x.as_i64()), Some(400));
+        assert_eq!(v.get("nonPar").and_then(|x| x.as_bool()), Some(true));
+        let faf_max = v.get("faf95Max").and_then(|x| x.as_f64()).unwrap();
+        assert!((faf_max - 0.24).abs() < 1e-6, "faf95Max was {faf_max}");
+    }
+
+    #[test]
+    fn test_osa2_encodes_extended_columns() {
+        let map = chr1_map();
+        let recs: Vec<Osa2Record> = iter_gnomad_osa2(CHRX_VCF.as_bytes(), &map)
+            .collect::<Result<_>>()
+            .unwrap();
+        let fields = gnomad_osa2_fields();
+        let idx = |alias: &str| fields.iter().position(|f| f.alias == alias).unwrap();
+
+        // Flags are 0/1, never the u32::MAX missing sentinel, so an unset flag
+        // decodes as `false` rather than `null`.
+        assert_eq!(recs[0].values[idx("filterVqsr")], 1);
+        assert_eq!(recs[0].values[idx("filterAc0")], 0);
+        assert_eq!(recs[0].values[idx("segdup")], 1);
+
+        // Absent integers keep the missing sentinel so they decode as null.
+        assert_eq!(recs[0].values[idx("allAcXY")], u32::MAX);
+
+        assert_eq!(recs[1].values[idx("allAcXY")], 37);
+        assert_eq!(recs[1].values[idx("allAnXY")], 400);
+        assert_eq!(recs[1].values[idx("nonPar")], 1);
+        assert_eq!(
+            recs[1].values[idx("faf95Max")],
+            fields[idx("faf95Max")].encode_float(0.24)
+        );
+    }
+
+    #[test]
+    fn test_filter_has_matches_whole_entries_only() {
+        // A substring match would make "AS_VQSR" also match a hypothetical
+        // "AS_VQSR_2", and "PASS" must never look like a failed filter.
+        assert!(filter_has("AC0;AS_VQSR", "AC0"));
+        assert!(filter_has("AC0;AS_VQSR", "AS_VQSR"));
+        assert!(!filter_has("AC0;AS_VQSR", "InbreedingCoeff"));
+        assert!(!filter_has("PASS", "AC0"));
+        assert!(!filter_has(".", "AC0"));
+        assert!(!filter_has("AS_VQSR_2", "AS_VQSR"));
+    }
+
+    #[test]
+    fn test_parse_info_records_bare_flags_without_disturbing_valued_keys() {
+        let info = parse_info("AF=0.1;segdup;AN=100;.;lcr");
+        assert_eq!(info.get("AF").map(|s| s.as_str()), Some("0.1"));
+        assert_eq!(info.get("AN").map(|s| s.as_str()), Some("100"));
+        assert!(info.contains_key("segdup"));
+        assert!(info.contains_key("lcr"));
+        assert!(!info.contains_key("non_par"));
+        // The "." placeholder is not a flag.
+        assert!(!info.contains_key("."));
     }
 
     #[test]

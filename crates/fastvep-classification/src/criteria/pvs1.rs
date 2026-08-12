@@ -466,6 +466,7 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::{GnomadGeneData, OmimData, SpliceAiData};
     use fastvep_core::Impact;
 
@@ -474,34 +475,9 @@ mod tests {
             consequences,
             impact: Impact::High,
             gene_symbol: Some("BRCA1".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
             gene_constraints,
             omim,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 

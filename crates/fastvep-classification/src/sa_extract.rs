@@ -33,6 +33,45 @@ pub struct GnomadData {
     pub remaining_af: Option<f64>,
     #[serde(rename = "sasAf")]
     pub sas_af: Option<f64>,
+
+    // ── Extended QC / stratified fields ──
+    //
+    // Every field below is absent from databases built before the gnomAD
+    // builder emitted it. `None` / `false` therefore has to mean "this
+    // database cannot answer the question", and every consumer must fall back
+    // to the behaviour it had before the field existed. Do not read an absent
+    // flag as an assertion that the site is clean.
+    /// FILTER=AC0: allele count is zero once low-confidence genotypes are removed.
+    #[serde(rename = "filterAc0", default)]
+    pub filter_ac0: bool,
+    /// FILTER=AS_VQSR: the site failed the allele-specific variant-quality model.
+    #[serde(rename = "filterVqsr", default)]
+    pub filter_vqsr: bool,
+    /// FILTER=InbreedingCoeff: genotypes are distributed unlike real population data.
+    #[serde(rename = "filterInbreeding", default)]
+    pub filter_inbreeding: bool,
+    /// The site falls in a low-complexity region.
+    #[serde(rename = "lcr", default)]
+    pub lcr: bool,
+    /// The site falls in a segmental duplication.
+    #[serde(rename = "segdup", default)]
+    pub segdup: bool,
+    /// A sex-chromosome site outside a pseudoautosomal region, where XY samples
+    /// are hemizygous and `all_ac_xy` is a count of individuals.
+    #[serde(rename = "nonPar", default)]
+    pub non_par: bool,
+    /// Alternate allele count in XY samples.
+    #[serde(rename = "allAcXY")]
+    pub all_ac_xy: Option<u64>,
+    /// Total allele number in XY samples.
+    #[serde(rename = "allAnXY")]
+    pub all_an_xy: Option<u64>,
+    /// Filtering allele frequency across all samples (Whiffin 2017).
+    #[serde(rename = "faf95")]
+    pub faf95: Option<f64>,
+    /// Maximum filtering allele frequency across genetic-ancestry groups.
+    #[serde(rename = "faf95Max")]
+    pub faf95_max: Option<f64>,
 }
 
 impl GnomadData {
@@ -46,6 +85,83 @@ impl GnomadData {
         .into_iter()
         .flatten()
         .reduce(f64::max)
+    }
+
+    /// The name of any FILTER entry that fired on this record, or `None` when
+    /// the record passed (or the database predates these fields).
+    ///
+    /// A non-PASS gnomAD record is not evidence about a real population
+    /// frequency, so benign frequency criteria must not be evaluated on one.
+    pub fn failed_filter(&self) -> Option<&'static str> {
+        if self.filter_ac0 {
+            Some("AC0")
+        } else if self.filter_vqsr {
+            Some("AS_VQSR")
+        } else if self.filter_inbreeding {
+            Some("InbreedingCoeff")
+        } else {
+            None
+        }
+    }
+
+    /// The name of any region flag marking this site as one where short-read
+    /// allele frequencies are systematically unreliable.
+    ///
+    /// This is the per-site form of the curated homologous-gene list
+    /// (Mandelker 2016, PMID 27228465): a segmental duplication is exactly the
+    /// context in which reads from a paralogue mismap onto the gene of
+    /// interest and inflate its apparent frequency.
+    pub fn unreliable_region(&self) -> Option<&'static str> {
+        if self.segdup {
+            Some("segmental duplication")
+        } else if self.lcr {
+            Some("low-complexity region")
+        } else {
+            None
+        }
+    }
+
+    /// Number of hemizygous individuals observed, for a non-PAR sex-chromosome
+    /// site.
+    ///
+    /// Outside the pseudoautosomal regions an XY sample carries a single X (or
+    /// Y) allele, so `AC_XY` counts individuals, not chromosomes. `None` for
+    /// autosomes, for PAR sites, and for databases built before the XY columns
+    /// existed. Returning `None` rather than 0 keeps "we cannot tell" distinct
+    /// from "we looked and there are none".
+    pub fn hemizygote_count(&self) -> Option<u64> {
+        if self.non_par {
+            self.all_ac_xy
+        } else {
+            None
+        }
+    }
+
+    /// Number of XY individuals surveyed at a non-PAR sex-chromosome site.
+    pub fn hemizygote_individuals(&self) -> Option<u64> {
+        if self.non_par {
+            self.all_an_xy
+        } else {
+            None
+        }
+    }
+
+    /// The filtering allele frequency to test benign frequency criteria
+    /// against: the maximum across genetic-ancestry groups where available,
+    /// falling back to the global FAF.
+    ///
+    /// The FAF is the lower bound of the 95 % confidence interval on the
+    /// frequency (Whiffin 2017, PMID 28518168), so it is robust both to a
+    /// founder variant that is common in one population and rare elsewhere,
+    /// and to a frequency estimated from very few alleles. Both were raised in
+    /// the round-2 medical-genetics review. `None` when the database predates
+    /// these columns, in which case callers fall back to the point estimate.
+    pub fn filtering_af(&self) -> Option<f64> {
+        match (self.faf95_max, self.faf95) {
+            (Some(m), Some(g)) => Some(m.max(g)),
+            (Some(m), None) => Some(m),
+            (None, g) => g,
+        }
     }
 }
 

@@ -340,6 +340,7 @@ fn evaluate_pp5(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::{GnomadGeneData, RevelData, SpliceAiData};
     use fastvep_core::Impact;
 
@@ -347,37 +348,10 @@ mod tests {
         ClassificationInput {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
             revel: Some(RevelData {
                 score: Some(score),
             }),
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 
@@ -421,13 +395,6 @@ mod tests {
         let input = ClassificationInput {
             consequences: vec![Consequence::SpliceRegionVariant],
             impact: Impact::Low,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
             splice_ai: Some(SpliceAiData {
                 ds_ag: Some(0.01),
                 ds_al: Some(0.95),
@@ -435,27 +402,7 @@ mod tests {
                 ds_dl: Some(0.01),
                 ..Default::default()
             }),
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_pp3(&input, &AcmgConfig::default());
         assert!(result.met);
@@ -487,35 +434,9 @@ mod tests {
         let mut input = ClassificationInput {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
             phylop: Some(5.0),
             gerp: Some(5.0),
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
-            at_exon_edge: None,
-            intronic_offset: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
+            ..minimal_input()
         };
         // Synthesize a dbNSFP entry with deleterious SIFT + damaging PolyPhen
         // by going through the same JSON path the evaluator uses.
@@ -532,38 +453,11 @@ mod tests {
         let input = ClassificationInput {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
             gene_constraints: Some(GnomadGeneData {
                 mis_z: Some(4.5),
                 ..Default::default()
             }),
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_pp2(&input, &AcmgConfig::default());
         assert!(result.met);
@@ -574,38 +468,11 @@ mod tests {
         let input = ClassificationInput {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
             gene_constraints: Some(GnomadGeneData {
                 mis_z: Some(1.5),
                 ..Default::default()
             }),
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_pp2(&input, &AcmgConfig::default());
         assert!(!result.met);

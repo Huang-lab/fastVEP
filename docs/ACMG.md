@@ -112,17 +112,32 @@ pm1_hotspot_min_pathogenic = 3 # Minimum pathogenic variants in window to call h
 # ── gnomAD v4 AN minimum (ClinGen SVI March 2024) ──
 min_an_for_frequency_criteria = 2000  # BA1/BS1 require AN ≥ this; below → NotEvaluated
 
-# ── BS2 homozygote test (Richards 2015 "full penetrance ... at an early age") ──
-bs2_ar_min_hom = 2                      # Absolute floor on homozygous observations
-bs2_hom_prevalence_threshold = 1e-5     # BS2 fires only when the 95% lower bound on the
-                                        # homozygote frequency exceeds this prevalence bar,
-                                        # so the criterion scales with cohort size rather
-                                        # than with a bare count
+# ── BS2 null-individual test (Richards 2015 "full penetrance ... at an early age") ──
+bs2_ar_min_hom = 2                      # Absolute floor on observed individuals with no
+                                        # functional copy (homozygotes, plus hemizygotes on
+                                        # a non-PAR sex-chromosome site)
+bs2_hom_prevalence_threshold = 1e-5     # BS2 fires only when the 95% lower bound on their
+                                        # frequency exceeds this prevalence bar, so the
+                                        # criterion scales with cohort size rather than with
+                                        # a bare count
 
 # ── Genes where population frequencies cannot be trusted (Mandelker 2016, PMID 27228465) ──
 # BA1/BS1/BS2/PM2 all report NotEvaluated for these. Specifying the list in TOML REPLACES
 # the built-in one (CYP21A2, STRC, HBA1/2, SMN1/2, PMS2, NEB, OTOA, GBA, ...).
 # homology_unreliable_genes = ["CYP21A2", "STRC"]
+
+# ── gnomAD record quality (requires a database built with the v4 QC columns) ──
+gnomad_region_flags_block_frequency = true  # A site gnomAD flags `segdup` or `lcr` reports
+                                            # NotEvaluated for BA1/BS1/BS2/PM2: the per-site
+                                            # form of the homologous-gene list above. gnomAD's
+                                            # own FILTER verdict (AC0 / AS_VQSR /
+                                            # InbreedingCoeff) is never ignored and is not
+                                            # covered by this switch.
+use_filtering_af = true                     # Test BA1/BS1 against the filtering allele
+                                            # frequency (95% CI lower bound, max across
+                                            # ancestry groups; Whiffin 2017) rather than the
+                                            # population-maximum point estimate
+# Both are no-ops against a database built before those columns were extracted.
 
 # ── ClinGen SVI behavior ──
 pm2_downgrade_to_supporting = true     # Downgrade PM2 from Moderate to Supporting (SVI)
@@ -227,7 +242,7 @@ When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2
 | **PS3** | Strong | Functional studies show damaging | External data | No |
 | **PS4** | Strong | Prevalence in affected >> controls | Case-control statistics (NotEvaluated by default; ClinVar review-stars proxy is invalid per SVI, opt in via `use_clinvar_stars_as_ps4_proxy`) | No (Partial in proxy mode) |
 | **PM1** | Moderate | Mutational hotspot / critical domain | ClinVar protein density | Yes (with .oga) |
-| **PM2** | Supporting* | Absent/rare in population databases — inheritance-aware: AD/unknown requires strict absence (AC=0); AR fires at AF ≤ 0.00007 (SVI v1.0) | gnomAD AF + OMIM inheritance | Yes |
+| **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown requires strict absence (AC=0); AR fires at AF ≤ 0.00007 (SVI v1.0). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
 | **PM3** | Supporting → Very Strong* | In trans with pathogenic (recessive); points-based per SVI v1.0 (in-trans/P=1.0pt, in-trans/LP=0.5pt, unphased/P=0.5pt, unphased/LP=0.25pt, hom=0.5pt cap 1.0) | Phased VCF + ClinVar | Yes (with trio) |
 | **PM4** | Moderate | Protein length change (in-frame/stop-loss) | Consequence type | Yes |
 | **PM5** | Moderate | Different pathogenic missense at same residue | ClinVar protein index | Yes (with .oga) |
@@ -244,9 +259,9 @@ When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2
 
 | Code | Strength | Description | Data Source | Automatable |
 |---|---|---|---|---|
-| **BA1** | Standalone | AF > 5% in any population, AN ≥ 2,000 (gnomAD v4 SVI March 2024); 9-variant Ghosh 2018 exception list (HFE c.845G>A, MEFV common, BTD c.1330G>C, etc.) blocks BA1 regardless of AF | gnomAD population AFs + AN + HGVSc | Yes |
-| **BS1** | Strong | Max-population AF > expected (mirrors BA1 max-pop logic per SVI). NotEvaluated for homology-confounded genes and for ClinVar low-penetrance / risk alleles | gnomAD per-population AFs + ClinVar terms | Yes |
-| **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR requires ≥ `bs2_ar_min_hom` homozygotes **and** a 95% lower bound on the homozygote frequency above `bs2_hom_prevalence_threshold`, so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two homozygotes in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance | gnomAD hom count + AN + inheritance | Yes |
+| **BA1** | Standalone | AF > 5%, AN ≥ 2,000 (gnomAD v4 SVI March 2024). Tested against the **filtering allele frequency** (95% CI lower bound, max across ancestry groups; Whiffin 2017) where the database provides it, else the population maximum. 9-variant Ghosh 2018 exception list (HFE c.845G>A, MEFV common, BTD c.1330G>C, etc.) blocks BA1 regardless of AF | gnomAD population AFs + FAF + AN + HGVSc | Yes |
+| **BS1** | Strong | Cross-population AF > expected, read from the same statistic as BA1 (filtering AF where available, else population maximum). NotEvaluated for homology-confounded genes, for gnomAD-flagged `segdup`/`lcr` sites, for non-PASS gnomAD records, and for ClinVar low-penetrance / risk alleles | gnomAD per-population AFs + FAF + QC flags + ClinVar terms | Yes |
+| **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR / X-linked counts individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and requires ≥ `bs2_ar_min_hom` of them **and** a 95% lower bound on their frequency above `bs2_hom_prevalence_threshold`, so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two such individuals in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance | gnomAD hom + hemizygote counts + AN + inheritance | Yes |
 | **BS3** | Strong | Functional studies show no damage | External data | No |
 | **BS4** | Strong | Lack of segregation | Pedigree data | No |
 | **BP1** | Supporting | Missense in a gene where primarily truncating variants cause disease. Requires both the constraint signature (high pLI, low misZ) **and** a mutation spectrum without an established missense mechanism (< `bp1_max_pathogenic_missense` pathogenic missense in the ClinVar protein index) | pLI + misZ + ClinVar protein index | Yes |

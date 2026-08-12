@@ -13,6 +13,8 @@ pub mod combiner;
 pub mod config;
 pub mod criteria;
 pub mod sa_extract;
+#[cfg(test)]
+mod test_support;
 pub mod types;
 
 pub use config::{AcmgConfig, TrioConfig};
@@ -51,6 +53,7 @@ pub fn classify(input: &ClassificationInput, config: &AcmgConfig) -> AcmgResult 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::*;
     use fastvep_core::{Consequence, Impact};
 
@@ -64,34 +67,7 @@ mod tests {
             consequences,
             impact,
             gene_symbol: Some(gene_symbol.to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 

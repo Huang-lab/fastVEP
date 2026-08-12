@@ -477,6 +477,7 @@ fn evaluate_ps4(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::ClinvarData;
     use fastvep_core::{Consequence, Impact};
 
@@ -485,34 +486,10 @@ mod tests {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
             gene_symbol: Some("TP53".to_string()),
-            is_canonical: true,
             amino_acids: Some(("R".to_string(), "H".to_string())),
             protein_position: Some(175),
-            gnomad: None,
             clinvar,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 

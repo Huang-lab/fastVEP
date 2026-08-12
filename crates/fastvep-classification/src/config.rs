@@ -179,6 +179,29 @@ pub struct AcmgConfig {
     /// concordance against ClinVar itself. Default `true`.
     #[serde(default = "default_true")]
     pub clinvar_low_penetrance_blocks_benign_frequency: bool,
+    /// Treat gnomAD's `segdup` and `lcr` region flags as making a site's
+    /// allele frequency unusable, in either direction.
+    ///
+    /// This is the per-site form of [`Self::homology_unreliable_genes`]: a
+    /// segmental duplication is exactly the context in which reads from a
+    /// paralogue mismap onto the gene of interest and inflate its apparent
+    /// frequency. It is the more aggressive of the two, since it fires on
+    /// individual sites inside otherwise well-behaved genes, so it is
+    /// switchable. gnomAD's own FILTER verdict is not covered by this flag and
+    /// is never ignored. Default `true`; a no-op against annotation databases
+    /// built before the flags were extracted.
+    #[serde(default = "default_true")]
+    pub gnomad_region_flags_block_frequency: bool,
+    /// Test BA1 and BS1 against gnomAD's filtering allele frequency (the 95 %
+    /// CI lower bound, maximised over genetic-ancestry groups) rather than the
+    /// population-maximum point estimate.
+    ///
+    /// This is the ClinGen/Whiffin 2017 recommendation: a point estimate makes
+    /// a frequency measured from a few hundred alleles look as solid as one
+    /// measured from hundreds of thousands. Default `true`; a no-op against
+    /// annotation databases built before the FAF columns were extracted.
+    #[serde(default = "default_true")]
+    pub use_filtering_af: bool,
     /// Exclude the variant being classified from the ClinVar-derived evidence
     /// that PS1 and PM1 read. PS1 means "same amino acid change as a
     /// *previously established* pathogenic variant, regardless of the
@@ -308,6 +331,8 @@ impl Default for AcmgConfig {
             bs2_hom_prevalence_threshold: 1e-5,
             homology_unreliable_genes: default_homology_unreliable_genes(),
             clinvar_low_penetrance_blocks_benign_frequency: true,
+            gnomad_region_flags_block_frequency: true,
+            use_filtering_af: true,
             exclude_self_from_clinvar_evidence: true,
             bp1_max_pathogenic_missense: 3,
             use_pp5_bp6: false,

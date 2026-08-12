@@ -172,13 +172,14 @@ fn evaluate_pm2(
     config: &AcmgConfig,
 ) -> EvidenceCriterion {
     // "Absent from population databases" is only evidence when the database
-    // could have seen the variant. In a homology-confounded gene reads pile up
-    // on the paralogue and rare alleles go missing, so absence there says
-    // nothing (Mandelker 2016). Same code path as BA1/BS1/BS2 so a gene is
-    // never trusted for one frequency criterion and distrusted for another.
-    if config.is_homology_unreliable(input.gene_symbol.as_deref()) {
+    // could have seen the variant. Where reads pile up on a paralogue, or
+    // gnomAD itself rejected the site, both a frequency and the absence of a
+    // frequency are artefacts. This is the same gate BA1/BS1/BS2 apply, so a
+    // site is never trusted for one frequency criterion and distrusted for
+    // another - only the benign-direction preconditions differ.
+    if let Some(reason) = super::frequency_gate::data_blocker(input, config) {
         let mut details = serde_json::Map::new();
-        details.insert("frequency_blocked".into(), serde_json::json!(true));
+        details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
         return EvidenceCriterion {
             code: if config.pm2_downgrade_to_supporting { "PM2_Supporting".to_string() } else { "PM2".to_string() },
             direction: EvidenceDirection::Pathogenic,
@@ -186,10 +187,7 @@ fn evaluate_pm2(
             default_strength: EvidenceStrength::Moderate,
             met: false,
             evaluated: false,
-            summary: format!(
-                "PM2 not evaluated: gene {} has paralogue/pseudogene homology that makes population frequencies unreliable (Mandelker 2016, PMID 27228465)",
-                input.gene_symbol.as_deref().unwrap_or("?")
-            ),
+            summary: format!("PM2 not evaluated: {}", reason),
             details: serde_json::Value::Object(details),
         };
     }
@@ -866,6 +864,7 @@ fn evaluate_pm6(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::{ClinvarData, GnomadData, OmimData};
     use fastvep_core::Impact;
 
@@ -876,35 +875,8 @@ mod tests {
         ClassificationInput {
             consequences,
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
             gnomad,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 

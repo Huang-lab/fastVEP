@@ -770,6 +770,7 @@ fn evaluate_bp7(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::{
         ClinvarProteinData, ClinvarProteinVariant, GnomadGeneData, RevelData, SpliceAiData,
     };
@@ -785,38 +786,14 @@ mod tests {
         ClassificationInput {
             consequences,
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
             revel: revel_score.map(|s| RevelData { score: Some(s) }),
             splice_ai: splice_ai_max_ds.map(|ds| SpliceAiData {
                 ds_al: Some(ds),
                 ..Default::default()
             }),
-            dbnsfp: None,
             phylop,
-            gerp: None,
             gene_constraints,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            is_pure_insertion: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 
