@@ -1446,7 +1446,11 @@ pub fn load_gene_providers(
 /// [`VariationFeature::query_alleles`] and hands them to the classifier, which
 /// owns the rule. `None` whenever the allele has no coordinate to look up, which
 /// is the same "cannot tell" the classifier returns for an unloaded index.
-fn splice_ps1_evidence(
+///
+/// Public, and deliberately: `fastvep-cli` runs the same classification over
+/// the same annotations by a different path, and a second copy of this adapter
+/// there is how one of the two paths ends up quietly not applying a criterion.
+pub fn splice_ps1_evidence(
     aa: &AlleleAnnotation,
     gene_anns: &[&fastvep_core::GeneAnnotation],
     query_alleles: &[(String, u64, String, String)],

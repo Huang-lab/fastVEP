@@ -259,9 +259,20 @@ bs1_af_threshold = 0.001
 mechanism = "LOF_and_GOF"
 disabled_criteria = ["BP1"]
 
-# [gene_overrides.GENE.strength_overrides]
-# PM2 = "Moderate"   # Override strength for specific criteria
+# Cap or raise a criterion for one gene, which is what a VCEP specification
+# routinely does. Keyed by the base code (`PP3` catches PP3_Strong and
+# PP3_Moderate too) or by an exact graded code, exact winning. A restrengthed
+# criterion is renamed to match, so `PP3_Strong` capped to Supporting is
+# reported as `PP3`, never as a code and a strength that disagree.
+[gene_overrides.MYH7.strength_overrides]
+PP3 = "Moderate"
 ```
+
+Every key above is checked on load. An unrecognised one is an error, not a
+shrug: a file like this exists precisely to depart from the defaults, and a
+misspelling that silently returns them tells the reader nothing. This
+classifier has shipped three separate criteria that never fired, and each was
+invisible for want of exactly that objection.
 
 ## Choosing the BS2 prevalence bar
 

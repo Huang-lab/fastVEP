@@ -359,10 +359,9 @@ impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
                 continue;
             }
 
-            if self.field_names.is_none() {
-                self.field_names = Some(detect_field_names(&self.info_ids));
-            }
-            let field_names = self.field_names.as_ref().unwrap();
+            let field_names = self
+                .field_names
+                .get_or_insert_with(|| detect_field_names(&self.info_ids));
 
             let fields: Vec<&str> = line.splitn(9, '\t').collect();
             if fields.len() < 8 {
@@ -721,10 +720,9 @@ impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
                 continue;
             }
 
-            if self.field_names.is_none() {
-                self.field_names = Some(detect_field_names(&self.info_ids));
-            }
-            let field_names = self.field_names.as_ref().unwrap();
+            let field_names = self
+                .field_names
+                .get_or_insert_with(|| detect_field_names(&self.info_ids));
 
             let cols: Vec<&str> = line.splitn(9, '\t').collect();
             if cols.len() < 8 {

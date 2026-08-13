@@ -5,6 +5,7 @@ use crate::types::EvidenceStrength;
 
 /// Trio configuration for de novo and compound heterozygote analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrioConfig {
     /// Sample name of the proband (required)
     pub proband: String,
@@ -28,7 +29,13 @@ fn default_min_gq() -> u32 {
 }
 
 /// Configuration for ACMG-AMP classification thresholds and behavior.
+// Reject unknown keys rather than ignoring them. A misspelled threshold in a
+// lab's TOML is otherwise silent, and the file is read precisely by people who
+// need to depart from the defaults and have no other signal that they did not.
+// This classifier has shipped three separate criteria that never fired; every
+// one was invisible because nothing objected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AcmgConfig {
     // ── Frequency thresholds ──
     /// BA1: allele frequency threshold for standalone benign (default: 0.05)
@@ -528,6 +535,7 @@ pub struct AcmgConfig {
 /// variant can also be spelled two valid ways - ACAD9's `c.-44_-41dupTAAG` is
 /// fastVEP's `c.-45_-44insTAAG`. A coordinate has neither problem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ba1Exception {
     pub gene: String,
     /// HGVS c. notation, e.g. "c.845G>A".
@@ -632,6 +640,7 @@ impl Ba1Exception {
 
 /// Gene-specific overrides for ACMG-AMP criteria.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GeneOverride {
     /// Disease mechanism: `"LOF"`, `"GOF"`, `"DOMINANT_NEGATIVE"` or
     /// `"LOF_and_GOF"`, matched case-insensitively. Overrides the curated
@@ -668,6 +677,7 @@ pub struct GeneOverride {
 
 /// Per-disorder override values within a multi-disorder gene.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DisorderOverride {
     /// Inheritance for this disorder ("AD", "AR", or "AD_AR").
     pub inheritance: Option<String>,
@@ -750,6 +760,26 @@ impl AcmgConfig {
         self.gene_overrides
             .get(gene)
             .is_some_and(|o| o.disabled_criteria.iter().any(|c| c == criterion_code))
+    }
+
+    /// The strength this gene's override assigns to a criterion, if any.
+    ///
+    /// Matched against the full code first and the base code second, so a
+    /// specification that caps every PP3 for its gene writes `PP3` and one
+    /// that means only the elevated form writes `PP3_Strong`. The base code is
+    /// everything before the first `_`, which is how graded codes are built
+    /// (`PP3_Moderate`, `PVS1_Strong`, `PS1_Supporting`).
+    pub fn criterion_strength_override(
+        &self,
+        gene: Option<&str>,
+        criterion_code: &str,
+    ) -> Option<EvidenceStrength> {
+        let overrides = &self.gene_overrides.get(gene?)?.strength_overrides;
+        let base = criterion_code.split('_').next().unwrap_or(criterion_code);
+        overrides
+            .get(criterion_code)
+            .or_else(|| overrides.get(base))
+            .copied()
     }
 
     /// The disease mechanism to use for a gene: an explicit
@@ -1071,6 +1101,23 @@ ba1_af_threshold = 8.3e-5
         // its own BA1.
         assert_eq!(cfg.effective_bs1_threshold(Some("CDKL5")), 0.005);
         assert_eq!(cfg.effective_ba1_threshold(Some("TP53")), 0.05);
+    }
+
+    #[test]
+    fn test_a_misspelled_key_is_an_error_not_a_shrug() {
+        // The whole point of a config file is departing from the defaults. A
+        // user who misspells a key and gets the defaults back has been told
+        // nothing, and this classifier has already shipped three criteria that
+        // never fired for want of exactly that signal.
+        for toml in [
+            "bs1_af_thresold = 0.001",                       // transposed letters
+            "[gene_overrides.BRCA1]\nba1_threshold = 0.01",  // wrong field name
+            "[[ba1_exceptions]]\ngene = \"HFE\"\nhgvs_c = \"c.845G>A\"\nblock = [\"BS1\"]",
+            "[trio]\nproband = \"P\"\nmin_dpeth = 20",
+        ] {
+            let parsed = toml::from_str::<AcmgConfig>(toml);
+            assert!(parsed.is_err(), "expected a rejection, got a silent default: {}", toml);
+        }
     }
 
     #[test]

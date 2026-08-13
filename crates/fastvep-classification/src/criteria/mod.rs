@@ -29,50 +29,39 @@ pub fn evaluate_all_criteria(
     let mut criteria = Vec::with_capacity(28);
 
     // Pathogenic Very Strong
-    let pvs1 = pvs1::evaluate_pvs1(input, config);
-    if !is_disabled(gene, &pvs1.code, config) {
-        criteria.push(pvs1);
-    }
+    push_with_overrides(&mut criteria, pvs1::evaluate_pvs1(input, config), gene, config);
 
     // Pathogenic Strong
     for c in pathogenic_strong::evaluate_all(input, config) {
-        if !is_disabled(gene, &c.code, config) {
-            criteria.push(c);
-        }
+        push_with_overrides(&mut criteria, c, gene, config);
     }
 
     // Pathogenic Moderate
     for c in pathogenic_moderate::evaluate_all(input, config) {
-        if !is_disabled(gene, &c.code, config) {
-            criteria.push(c);
-        }
+        push_with_overrides(&mut criteria, c, gene, config);
     }
 
     // Pathogenic Supporting
     for c in pathogenic_supporting::evaluate_all(input, config) {
-        if !is_disabled(gene, &c.code, config) {
-            criteria.push(c);
-        }
+        push_with_overrides(&mut criteria, c, gene, config);
     }
 
     // Benign Standalone
-    let ba1 = benign_standalone::evaluate_ba1(input, config);
-    if !is_disabled(gene, &ba1.code, config) {
-        criteria.push(ba1);
-    }
+    push_with_overrides(
+        &mut criteria,
+        benign_standalone::evaluate_ba1(input, config),
+        gene,
+        config,
+    );
 
     // Benign Strong
     for c in benign_strong::evaluate_all(input, config) {
-        if !is_disabled(gene, &c.code, config) {
-            criteria.push(c);
-        }
+        push_with_overrides(&mut criteria, c, gene, config);
     }
 
     // Benign Supporting
     for c in benign_supporting::evaluate_all(input, config) {
-        if !is_disabled(gene, &c.code, config) {
-            criteria.push(c);
-        }
+        push_with_overrides(&mut criteria, c, gene, config);
     }
 
     reconcile_evidence(&mut criteria);
@@ -80,8 +69,52 @@ pub fn evaluate_all_criteria(
     criteria
 }
 
-fn is_disabled(gene: Option<&str>, code: &str, config: &AcmgConfig) -> bool {
-    gene.is_some_and(|g| config.is_criterion_disabled(g, code))
+/// Apply this gene's configured overrides to one criterion, then keep it.
+///
+/// Two overrides, both per gene, both from `[gene_overrides.GENE]`:
+/// `disabled_criteria` drops the criterion entirely, and `strength_overrides`
+/// restrengths it. Both exist because a VCEP specification routinely departs
+/// from the global default for one gene - the Hearing Loss panel caps PP3, the
+/// PTEN panel does not use BP1 - and patching the classifier for each is not a
+/// workable way to follow published guidance.
+///
+/// A restrengthed criterion is renamed to match, because a code carrying one
+/// strength and a `strength` field carrying another is the kind of
+/// contradiction downstream consumers cannot resolve. The base code is
+/// everything before the first `_`, and the graded suffix is dropped entirely
+/// when the new strength is the criterion's own default: `PP3_Strong` capped to
+/// Supporting becomes `PP3`, not `PP3_Supporting`.
+fn push_with_overrides(
+    criteria: &mut Vec<EvidenceCriterion>,
+    mut c: EvidenceCriterion,
+    gene: Option<&str>,
+    config: &AcmgConfig,
+) {
+    if gene.is_some_and(|g| config.is_criterion_disabled(g, &c.code)) {
+        return;
+    }
+    // Only a criterion that fired carries a strength worth changing. Applying
+    // the override to the rest would stamp the note onto every criterion this
+    // gene declined, which is noise rather than information.
+    if let Some(strength) = config.criterion_strength_override(gene, &c.code) {
+        if c.met && strength != c.strength {
+            let base = c.code.split('_').next().unwrap_or(&c.code).to_string();
+            c.summary = format!(
+                "{} [strength set to {} by the {} gene override, was {}]",
+                c.summary,
+                strength.as_str(),
+                gene.unwrap_or("?"),
+                c.strength.as_str(),
+            );
+            c.code = if strength == c.default_strength {
+                base
+            } else {
+                format!("{}_{}", base, strength.as_str())
+            };
+            c.strength = strength;
+        }
+    }
+    criteria.push(c);
 }
 
 /// Suppress double-counted evidence per ClinGen SVI guidance.
@@ -388,6 +421,117 @@ mod reconcile_tests {
     use crate::test_support::minimal_input;
     use crate::types::{EvidenceDirection, EvidenceStrength};
     use fastvep_core::Consequence;
+
+    // ── Per-gene overrides ──
+
+    /// A gene override that caps PP3, which is what several VCEP
+    /// specifications do and what the round-2 review asked for.
+    fn config_capping_pp3(gene: &str, strength: EvidenceStrength) -> AcmgConfig {
+        let mut config = AcmgConfig::default();
+        let mut strength_overrides = std::collections::HashMap::new();
+        strength_overrides.insert("PP3".to_string(), strength);
+        config.gene_overrides.insert(
+            gene.to_string(),
+            crate::config::GeneOverride {
+                mechanism: None,
+                ba1_af_threshold: None,
+                bs1_af_threshold: None,
+                pm2_af_threshold: None,
+                disabled_criteria: vec![],
+                strength_overrides,
+                disorders: std::collections::HashMap::new(),
+            },
+        );
+        config
+    }
+
+    fn pp3_at(strength: EvidenceStrength) -> EvidenceCriterion {
+        let mut c = met("PP3_Strong", EvidenceDirection::Pathogenic, strength);
+        c.default_strength = EvidenceStrength::Supporting;
+        c.summary = "REVEL 0.98".to_string();
+        c
+    }
+
+    #[test]
+    fn test_a_gene_strength_override_restrengths_and_renames() {
+        let config = config_capping_pp3("MYH7", EvidenceStrength::Moderate);
+        let mut out = Vec::new();
+        push_with_overrides(&mut out, pp3_at(EvidenceStrength::Strong), Some("MYH7"), &config);
+        assert_eq!(out[0].strength, EvidenceStrength::Moderate);
+        assert_eq!(out[0].code, "PP3_Moderate", "the code must not contradict the strength");
+        assert!(out[0].summary.contains("was Strong"), "{}", out[0].summary);
+    }
+
+    #[test]
+    fn test_capping_to_the_default_strength_drops_the_graded_suffix() {
+        // PP3's default is Supporting, and bare `PP3` is how that is spelled.
+        let config = config_capping_pp3("MYH7", EvidenceStrength::Supporting);
+        let mut out = Vec::new();
+        push_with_overrides(&mut out, pp3_at(EvidenceStrength::Strong), Some("MYH7"), &config);
+        assert_eq!(out[0].code, "PP3");
+        assert_eq!(out[0].strength, EvidenceStrength::Supporting);
+    }
+
+    #[test]
+    fn test_a_gene_override_does_not_reach_other_genes() {
+        let config = config_capping_pp3("MYH7", EvidenceStrength::Moderate);
+        let mut out = Vec::new();
+        push_with_overrides(&mut out, pp3_at(EvidenceStrength::Strong), Some("BRCA1"), &config);
+        assert_eq!(out[0].code, "PP3_Strong");
+        assert_eq!(out[0].strength, EvidenceStrength::Strong);
+    }
+
+    #[test]
+    fn test_a_criterion_that_did_not_fire_is_left_alone() {
+        // Restrengthing a declined criterion changes nothing and would stamp a
+        // note onto every code this gene did not meet.
+        let config = config_capping_pp3("MYH7", EvidenceStrength::Moderate);
+        let mut declined = pp3_at(EvidenceStrength::Strong);
+        declined.met = false;
+        let mut out = Vec::new();
+        push_with_overrides(&mut out, declined, Some("MYH7"), &config);
+        assert_eq!(out[0].code, "PP3_Strong");
+        assert_eq!(out[0].summary, "REVEL 0.98");
+    }
+
+    #[test]
+    fn test_an_exact_graded_code_beats_the_base_code() {
+        let mut config = config_capping_pp3("MYH7", EvidenceStrength::Moderate);
+        config
+            .gene_overrides
+            .get_mut("MYH7")
+            .unwrap()
+            .strength_overrides
+            .insert("PP3_Strong".to_string(), EvidenceStrength::Supporting);
+        let mut out = Vec::new();
+        push_with_overrides(&mut out, pp3_at(EvidenceStrength::Strong), Some("MYH7"), &config);
+        assert_eq!(out[0].code, "PP3");
+    }
+
+    #[test]
+    fn test_disabled_criteria_still_drop_the_criterion() {
+        let mut config = AcmgConfig::default();
+        config.gene_overrides.insert(
+            "PTEN".to_string(),
+            crate::config::GeneOverride {
+                mechanism: None,
+                ba1_af_threshold: None,
+                bs1_af_threshold: None,
+                pm2_af_threshold: None,
+                disabled_criteria: vec!["BP1".to_string()],
+                strength_overrides: std::collections::HashMap::new(),
+                disorders: std::collections::HashMap::new(),
+            },
+        );
+        let mut out = Vec::new();
+        push_with_overrides(
+            &mut out,
+            met("BP1", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+            Some("PTEN"),
+            &config,
+        );
+        assert!(out.is_empty());
+    }
 
     fn met(code: &str, dir: EvidenceDirection, strength: EvidenceStrength) -> EvidenceCriterion {
         EvidenceCriterion {

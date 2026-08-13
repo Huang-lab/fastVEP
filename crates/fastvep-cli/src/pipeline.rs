@@ -1399,7 +1399,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                                 aa.protein_length,
                                 aa.escapes_nmd,
                                 repeat_db_loaded,
-                                splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
+                                fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                                 alt_idx.and_then(|i| query_alleles.get(i)).map(|(_, pos, r, a)| {
                                     (vf.position.chromosome.to_string(), *pos, r.clone(), a.clone())
                                 }),
@@ -1943,7 +1943,7 @@ fn enrich_compound_het_batch(
                 aa.protein_length,
                 aa.escapes_nmd,
                 repeat_db_loaded,
-                splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
+                fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                 alt_idx.and_then(|i| query_alleles.get(i)).map(|(_, pos, r, a)| {
                     (vf.position.chromosome.to_string(), *pos, r.clone(), a.clone())
                 }),
@@ -1965,28 +1965,6 @@ fn enrich_compound_het_batch(
     }
 }
 
-/// Whether PS1's splice path has a comparison variant for this allele.
-///
-/// A thin adapter: it pairs the allele with its VCF-form coordinates from
-/// [`VariationFeature::query_alleles`] and hands them to the classifier, which
-/// owns the rule. `None` whenever the allele has no coordinate to look up, which
-/// is the same "cannot tell" the classifier returns for an unloaded index.
-fn splice_ps1_evidence(
-    aa: &AlleleAnnotation,
-    gene_anns: &[&fastvep_core::GeneAnnotation],
-    query_alleles: &[(String, u64, String, String)],
-    alt_idx: Option<usize>,
-) -> Option<bool> {
-    let (_, pos, ref_allele, alt) = query_alleles.get(alt_idx?)?;
-    fastvep_classification::same_splice_position_pathogenic(
-        &aa.consequences,
-        gene_anns,
-        aa.hgvsc.as_deref(),
-        *pos,
-        ref_allele,
-        alt,
-    )
-}
 
 fn write_vcf_line(writer: &mut impl Write, vf: &VariationFeature, sa_only: bool) -> Result<()> {
     if let Some(ref fields) = vf.vcf_fields {
