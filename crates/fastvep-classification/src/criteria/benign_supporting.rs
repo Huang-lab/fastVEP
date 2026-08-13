@@ -55,7 +55,10 @@ fn evaluate_bp1(
 
     // Mutation-spectrum veto. The ClinVar protein index carries missense
     // entries only (the builder drops nonsense and synonymous), so a
-    // pathogenic entry is direct evidence of a missense mechanism.
+    // pathogenic entry is direct evidence of a missense mechanism. The index
+    // also carries benign missense for PM1's sake; those are deliberately not
+    // counted here, because BP1 asks what *causes disease* in this gene and a
+    // benign missense record says nothing about that either way.
     if is_missense {
         if let Some(ref cpd) = input.clinvar_protein {
             let pathogenic_missense = cpd
@@ -633,6 +636,12 @@ fn evaluate_bp6(
 ///    acceptor-side `offset ≤ -21` — when SpliceAI shows no impact and the
 ///    position is not highly conserved.
 ///
+/// The extension also carries a far boundary, which Walker 2023 does not state
+/// and which is set here by measurement rather than assertion: see
+/// [`AcmgConfig::bp7_max_intron_offset`]. Past it the only evidence BP7 has is
+/// a SpliceAI score in the pseudoexon-activation regime where SpliceAI is
+/// least sensitive, and the measured exchange rate collapses accordingly.
+///
 /// When the pipeline does not populate `at_exon_edge` / `intronic_offset`
 /// (current default), behavior reverts to the legacy synonymous-only rule
 /// for backward compatibility.
@@ -656,15 +665,26 @@ fn evaluate_bp7(
     // Determine whether this variant type qualifies for BP7 at all.
     // - Synonymous: traditional BP7 target.
     // - Intronic: Walker 2023 extension, but only outside the standard splice
-    //   region (donor-side offset ≥ 7, acceptor-side offset ≤ -21).
-    let intronic_eligible =
-        matches!((is_intronic, input.intronic_offset), (true, Some(off)) if off >= 7 || off <= -21);
+    //   region (donor-side offset ≥ 7, acceptor-side offset ≤ -21) and inside
+    //   the measured far boundary (`bp7_max_intron_offset`).
+    let too_deep = matches!(
+        (is_intronic, input.intronic_offset),
+        (true, Some(off)) if off.unsigned_abs() > config.bp7_max_intron_offset
+    );
+    let intronic_eligible = !too_deep
+        && matches!((is_intronic, input.intronic_offset), (true, Some(off)) if off >= 7 || off <= -21);
     if let Some(off) = input.intronic_offset {
         details.insert("intronic_offset".into(), serde_json::json!(off));
     }
 
     if !is_synonymous && !intronic_eligible {
-        let summary = if is_intronic && input.intronic_offset.is_none() {
+        let summary = if too_deep {
+            format!(
+                "Intronic variant {} nt into the intron, past BP7's far boundary of {} nt; out there the criterion rests on SpliceAI in the pseudoexon-activation regime where it is least sensitive",
+                input.intronic_offset.unwrap_or(0).unsigned_abs(),
+                config.bp7_max_intron_offset,
+            )
+        } else if is_intronic && input.intronic_offset.is_none() {
             "Intronic variant but offset from splice site not provided; BP7 requires intronic_offset to extend beyond synonymous (Walker 2023)".to_string()
         } else if is_intronic {
             format!(
@@ -706,16 +726,41 @@ fn evaluate_bp7(
         details.insert("at_exon_edge".into(), serde_json::json!(edge));
     }
 
-    // Check SpliceAI: no predicted splice impact
-    let no_splice_impact = if let Some(ref splice) = input.splice_ai {
-        let max_ds = splice.max_delta_score().unwrap_or(0.0);
-        details.insert("spliceai_max_ds".into(), serde_json::json!(max_ds));
-        max_ds < config.spliceai_pathogenic
-    } else {
-        // If no SpliceAI data, we conservatively assume no impact
+    // BP7 rests on a splice prediction, in Richards 2015's own wording:
+    // "splicing prediction algorithms predict no impact". A missing prediction
+    // is not a prediction of no impact, and treating it as one is how a benign
+    // criterion fires on evidence that was never gathered.
+    //
+    // SpliceAI here is distilled from gnomAD's INFO fields, so any position
+    // gnomAD never called carries no score at all, and the previous code read
+    // that silence as "predicted no impact".
+    //
+    // Worth recording what this did *not* fix, since it was the reason the
+    // change was written. It was meant to explain v13's 36 deep-intronic
+    // false-benign calls (PCDH15, NPHP1, CERKL, POLR3A, DST), and it does not:
+    // all 36 have SpliceAI scores, reading 0.00 to 0.14. Their cause is that
+    // SpliceAI is genuinely insensitive to pseudoexon activation, which is
+    // what `bp7_max_intron_offset` addresses instead. This gate is still
+    // correct - it just turned out to be about a different set of variants.
+    let Some(max_ds) = input
+        .splice_ai
+        .as_ref()
+        .and_then(|s| s.max_delta_score())
+    else {
         details.insert("spliceai_max_ds".into(), serde_json::Value::Null);
-        true
+        return EvidenceCriterion {
+            code: "BP7".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Supporting,
+            default_strength: EvidenceStrength::Supporting,
+            met: false,
+            evaluated: false,
+            summary: "BP7 not evaluated: no SpliceAI prediction for this position, and BP7 requires a prediction of no splice impact rather than the absence of one".to_string(),
+            details: serde_json::Value::Object(details),
+        };
     };
+    details.insert("spliceai_max_ds".into(), serde_json::json!(max_ds));
+    let no_splice_impact = max_ds < config.spliceai_pathogenic;
 
     // Check PhyloP: not highly conserved
     let not_conserved = if let Some(phylop) = input.phylop {
@@ -727,9 +772,7 @@ fn evaluate_bp7(
         false
     };
 
-    let splice_ai_available = input.splice_ai.is_some();
-    let phylop_available = input.phylop.is_some();
-    let evaluated = splice_ai_available || phylop_available;
+    let evaluated = true;
     let met = (is_synonymous || intronic_eligible) && no_splice_impact && not_conserved;
 
     let context = if is_synonymous {
@@ -742,7 +785,7 @@ fn evaluate_bp7(
         format!(
             "{} with no predicted splice impact (SpliceAI max_ds={:.2}) and not conserved (PhyloP={:.2})",
             context,
-            input.splice_ai.as_ref().and_then(|s| s.max_delta_score()).unwrap_or(0.0),
+            max_ds,
             input.phylop.unwrap_or(0.0)
         )
     } else if !no_splice_impact {
@@ -1004,6 +1047,64 @@ mod tests {
     }
 
     #[test]
+    fn test_bp7_stops_at_the_far_boundary() {
+        // Past `bp7_max_intron_offset` the evidence base runs out: SpliceAI is
+        // at its least sensitive for pseudoexon activation, which is the main
+        // way a variant this deep is pathogenic at all.
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.02),
+            Some(0.4),
+            None,
+        );
+        let config = AcmgConfig::default();
+        input.intronic_offset = Some(300);
+        assert!(evaluate_bp7(&input, &config).met, "at the boundary BP7 still applies");
+
+        input.intronic_offset = Some(301);
+        let result = evaluate_bp7(&input, &config);
+        assert!(!result.met);
+        assert!(result.evaluated, "declined on the merits, not left unexamined");
+        assert!(result.summary.contains("far boundary"));
+
+        // Symmetric on the acceptor side.
+        input.intronic_offset = Some(-2559); // PCDH15 c.4368-2559, ClinVar Pathogenic
+        assert!(!evaluate_bp7(&input, &config).met);
+    }
+
+    #[test]
+    fn test_bp7_far_boundary_can_be_removed() {
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.02),
+            Some(0.4),
+            None,
+        );
+        input.intronic_offset = Some(29_738);
+        let config = AcmgConfig {
+            bp7_max_intron_offset: u64::MAX,
+            ..AcmgConfig::default()
+        };
+        assert!(evaluate_bp7(&input, &config).met);
+    }
+
+    #[test]
+    fn test_bp7_far_boundary_does_not_touch_synonymous() {
+        // The bound is on the Walker 2023 intronic extension. A synonymous
+        // variant is exonic and has no intronic offset to exceed.
+        let input = make_input(
+            vec![Consequence::SynonymousVariant],
+            None,
+            Some(0.05),
+            Some(0.5),
+            None,
+        );
+        assert!(evaluate_bp7(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
     fn test_bp7_deep_intronic_acceptor_side_fires() {
         // Acceptor-side: offset ≤ -21 qualifies per Walker 2023.
         let mut input = make_input(
@@ -1016,6 +1117,31 @@ mod tests {
         input.intronic_offset = Some(-25);
         let result = evaluate_bp7(&input, &AcmgConfig::default());
         assert!(result.met);
+    }
+
+    #[test]
+    fn test_bp7_requires_a_splice_prediction_to_exist() {
+        // The failure mode this guards: a deep-intronic variant absent from
+        // gnomAD carries no SpliceAI score, and that is the shape of a
+        // pseudoexon-activating pathogenic variant. Reading "no score" as "no
+        // impact" called 36 ClinVar Pathogenic variants Likely Benign in v13.
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            None, // no SpliceAI
+            Some(0.4), // deep intron, unconserved
+            None,
+        );
+        input.intronic_offset = Some(15);
+        let r = evaluate_bp7(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated, "absent data is not an assessment");
+        assert!(r.summary.contains("no SpliceAI prediction"), "got: {}", r.summary);
+
+        // A synonymous variant is held to the same requirement: Richards 2015
+        // words BP7 as "splicing prediction algorithms predict no impact".
+        let syn = make_input(vec![Consequence::SynonymousVariant], None, None, Some(0.2), None);
+        assert!(!evaluate_bp7(&syn, &AcmgConfig::default()).met);
     }
 
     #[test]
@@ -1112,6 +1238,7 @@ mod tests {
                     n: 1,
                 })
                 .collect(),
+            benign_indexed: true,
         }
     }
 
@@ -1148,6 +1275,7 @@ mod tests {
         );
         input.clinvar_protein = Some(ClinvarProteinData {
             protein_variants: vec![],
+            benign_indexed: true,
         });
         let result = evaluate_bp1(&input, &AcmgConfig::default());
         assert!(result.met);

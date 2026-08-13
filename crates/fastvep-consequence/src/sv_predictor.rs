@@ -145,6 +145,8 @@ fn predict_sv_for_transcript(
             exon: None,
             intron: None,
             distance,
+            protein_length: None,
+            escapes_nmd: None,
         };
     }
 
@@ -179,6 +181,10 @@ fn predict_sv_for_transcript(
         exon: None,
         intron: None,
         distance: None,
+        // A structural variant has no single position for the 50-nt rule to
+        // measure, and PVS1's whole-gene-deletion track does not consult it.
+        protein_length: transcript.peptide_length(),
+        escapes_nmd: None,
     }
 }
 

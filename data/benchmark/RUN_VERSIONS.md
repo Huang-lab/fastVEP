@@ -295,9 +295,13 @@ and earlier were silently annotating as real variants.
   `output_v1/README.md` (raw outputs were overwritten; matrix
   reconstructed from documentation)
 - v7: `output_v7/` (previous baseline — full outputs + figures + raw VCF.gz)
-- **v8 current: `output_v8/`** (discordance-review fixes; full outputs +
+- v8: `output_v8/` (discordance-review fixes; full outputs +
   `discrepancies_for_md_review.tsv` medical-geneticist review table +
   `README.md`; ClinVar 2026-06-27 refresh check noted in that README)
+- **v14 current: `output_v14/`**, produced by `run_full_benchmark_v14.sh`.
+  v14 is the first run whose `clinvar_protein.oga` indexes benign as well as
+  pathogenic missense; a run against an older index is still valid but PM1's
+  benign-variation half is inert in it.
 
 ## v11: SVI point system on the pathogenic side, and B7 corrected
 
@@ -357,13 +361,91 @@ missed diagnoses, roughly 1,200 to 1. A good trade by the same exchange-rate rea
 BS2 prevalence bar, but a trade, and a sample of that size cannot resolve a four-count difference.
 Recorded here because the sample result was quoted before it was confirmed.
 
-## Progression, v9 to v12
+## v13: `--acmg` did not imply `--hgvs`, and the PVS1 tree got its missing inputs
 
-| Metric | v9 | v10 | v11 | v12 |
-|---|---:|---:|---:|---:|
-| Exact match | 59.9 % | 61.2 % | 61.4 % | **61.8 %** |
-| Same-direction | 71.0 % | 74.1 % | 75.0 % | **76.0 %** |
-| Pathogenic recall | 48.1 % | 58.5 % | 65.0 % | **65.0 %** |
-| Benign recall | 57.2 % | 65.3 % | 65.3 % | **68.4 %** |
-| False-benign | 18 | 10 | 10 | 14 |
-| False-pathogenic | 28 | 15 | 46 | 45 |
+The largest single item is a plumbing bug rather than a criterion.
+
+**`--acmg` now turns HGVS on.**
+Three criteria read HGVS `c.` notation rather than raw coordinates: PVS1's canonical ±1/±2 splice gate, BP7's Walker 2023 intronic extension, and BA1's Ghosh 2018 exception list, which is keyed by `c.` string.
+Without `--hgvs` all three saw an empty string and quietly fell back to weaker behaviour, and no benchmark run from v9 to v12 passed the flag.
+The library path was unaffected - `AnnotationContext` already defaults `hgvs: true` - so this was a CLI-only gap, which is why it survived four review rounds.
+The output field list is unchanged either way; HGVSc and HGVSp were always in the CSQ header and were simply empty.
+
+**The PVS1 decision tree now has real inputs.**
+`protein_truncation_pct` is derived from the CDS position and the transcript's peptide length, and `in_critical_region` from ClinVar pathogenic entries downstream of the truncation point.
+Before this, every graded branch that needed a magnitude fell through to a single fallback.
+PVS1 grading on truth-pathogenic variants went from `PVS1_Moderate` 3,528 / `PVS1_Strong` 0 to `PVS1_Moderate` 359 / `PVS1_Strong` 2,826.
+
+**BP7 no longer treats a missing SpliceAI score as a prediction of no impact.**
+Richards 2015 asks that "splicing prediction algorithms predict no impact"; the absence of a prediction is not one.
+This is correct in principle and it changed nothing measurable, which is worth recording: the deep-intronic false-benign calls it was meant to explain all *have* SpliceAI scores, reading 0.00 to 0.14.
+That diagnosis was wrong and the real cause is in v14 below.
+
+| Metric | v12 | **v13** |
+|---|---:|---:|
+| Exact match | 61.8 % | **62.7 %** |
+| Same-direction | 76.0 % | **77.6 %** |
+| Benign recall | 68.4 % | **71.6 %** |
+| Likely-benign recall | 46.8 % | **51.8 %** |
+| Pathogenic recall | 65.0 % | 65.0 % |
+| False-benign | 14 | **50** |
+| False-pathogenic | 45 | 44 |
+
+**Read the false-benign column.** The whole benign-side gain is BP7's intronic extension switching on for the first time, and so is the whole cost: 44,803 additional correct BP7 firings on benign-truth variants against 36 additional missed diagnoses, every one of them deep-intronic.
+That ratio is fine in aggregate and terrible in the tail, which is what v14 addresses.
+
+Two changes shipped in v13 but off by default, both because measurement said so:
+
+- **`pvs1_nmd_50nt_rule`.** The exact 50-nucleotide NMD rule Abou Tayoun 2018 states, rather than the last-exon proxy. On a 4,000-variant sample it moved 58 calls from Likely Pathogenic to VUS - 54 of them ClinVar Pathogenic - so it gives up roughly 825 correct pathogenic calls to correct one false-pathogenic. Shipped, documented, default `false`.
+- **A tempering rule for lone PVS1 where gnomAD frequency was withheld as unreliable.** Implemented, measured, and **deleted**: 307 correct pathogenic calls lost against 7 corrected. The premise was wrong - `AC0` and `AS_VQSR` are the normal state of a genuinely rare pathogenic variant, not a mismapping marker.
+
+## v14: a far boundary for BP7, and the other half of PM1
+
+Two changes, both taking a criterion from half-implemented to complete. Strictly dominant: 18 opposite-direction calls fixed, none introduced.
+
+**BP7's intronic extension gets a far boundary at 300 nt** (`bp7_max_intron_offset`).
+Walker 2023 gives the extension a near boundary (donor +7, acceptor -21) and no far one, which is coherent for a curator working one variant at a time and not for a pipeline applying it to every intronic position in the genome.
+Out in the deep intron the only evidence BP7 has is a SpliceAI score in the pseudoexon-activation regime where SpliceAI is weakest - and pseudoexon activation is essentially the only way a deep-intronic variant is pathogenic.
+On all 36 deep-intronic ClinVar-pathogenic variants v13 called benign, SpliceAI is present and reads 0.00 to 0.14: the criterion is not missing its evidence out there, it is being misled by it.
+The boundary is set by sweep, at the knee where the marginal cost jumps from 31 correct benign calls per diagnosis recovered to 155; the table is in [`docs/ACMG.md`](../../docs/ACMG.md#choosing-bp7s-far-boundary).
+The same sweep answers the question the bound raises - whether to keep Walker's extension at all - and the answer is yes: turning it off drops missed diagnoses to 14 but gives up 3.8 pp of benign recall, about 570 correct benign calls per diagnosis, which is stricter than either BS1 or BS2 is held to here.
+
+**PM1 now tests both halves of its own definition.**
+Richards 2015 asks for a mutational hot spot or critical domain "without benign variation", and fastVEP counted only the pathogenic half - because `clinvar_protein.oga` only ever indexed pathogenic missense.
+The index now carries both directions, marked with `benignIndexed` so an older file is skipped rather than read as "no benign variation here", and a residue ClinVar asserts in both directions is dropped as conflicting.
+The same leave-one-out that PS1 uses applies: a variant ClinVar calls benign is not allowed to be its own benign neighbour.
+Controls hold - TP53 p.Arg248 keeps PM1 on 23 pathogenic and 0 benign neighbours - while MSH2 p.Gly315Val loses it and falls to VUS, which is the reviewer's cspec GN137 point ("PM1 doesn't apply for MSH2").
+
+| Metric | v13 | **v14** |
+|---|---:|---:|
+| Exact match | 62.7 % | 62.7 % |
+| Same-direction | 77.6 % | 77.5 % |
+| **False-benign** | **50** | **33** |
+| False-pathogenic | 44 | **43** |
+| **Opposite-direction (total)** | **94** | **76** |
+| Pathogenic recall | 65.0 % | 64.6 % |
+| Benign recall | 71.6 % | 71.5 % |
+| VUS recall | 96.7 % | **96.8 %** |
+
+**What each change cost.**
+The BP7 boundary is close to free: 17 missed diagnoses recovered for 530 correct benign calls, 0.1 pp of benign recall.
+PM1's benign half is not: it removes 1,523 PM1 firings on truth-pathogenic variants and costs 0.4 pp of pathogenic recall, buying one false-pathogenic call and a criterion that matches its own definition.
+That is a deliberate choice of correctness over the headline number, and it is the only change in four rounds where those two point in opposite directions.
+
+**One thing the reviewer's rows did *not* get fixed by this.**
+The PM1 change resolves MSH2, but not CHD7 or PTCH1, where the objection was gene-level ("variants are spread out in the gene", "no clear hotspots for PTCH1") rather than about benign variation in a ±5-residue window.
+Both still have 3 pathogenic and 0 benign neighbours there. A gene-level hotspot-density test would be needed, and no guideline text asks for one.
+
+## Progression, v9 to v14
+
+| Metric | v9 | v10 | v11 | v12 | v13 | v14 |
+|---|---:|---:|---:|---:|---:|---:|
+| Exact match | 59.9 % | 61.2 % | 61.4 % | 61.8 % | 62.7 % | **62.7 %** |
+| Same-direction | 71.0 % | 74.1 % | 75.0 % | 76.0 % | 77.6 % | **77.5 %** |
+| Pathogenic recall | 48.1 % | 58.5 % | 65.0 % | 65.0 % | 65.0 % | **64.6 %** |
+| Benign recall | 57.2 % | 65.3 % | 65.3 % | 68.4 % | 71.6 % | **71.5 %** |
+| False-benign | 18 | 10 | 10 | 14 | 50 | **33** |
+| False-pathogenic | 28 | 15 | 46 | 45 | 44 | **43** |
+
+The v9-to-v12 columns are quoted from their own sections above; v13 and v14 are computed
+from `concordance_matrix.csv` on the same definitions.

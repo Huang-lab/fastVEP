@@ -126,6 +126,53 @@ impl Transcript {
         (cds_pos - 1) / 3 + 1
     }
 
+    /// Length of the full-length peptide in residues, excluding the stop codon.
+    ///
+    /// Prefers the translated peptide when sequences have been built, and
+    /// otherwise derives it from the coding cDNA span, so the value is
+    /// available whether or not the run was given a FASTA. `None` for
+    /// non-coding transcripts.
+    pub fn peptide_length(&self) -> Option<u64> {
+        if let Some(pep) = self.peptide.as_deref() {
+            let residues = pep.trim_end_matches('*').chars().count() as u64;
+            if residues > 0 {
+                return Some(residues);
+            }
+        }
+        let cds_len = self.cdna_coding_end?.checked_sub(self.cdna_coding_start?)? + 1
+            + self.codon_table_start_phase;
+        // A complete CDS ends in a stop codon, which is not a residue.
+        (cds_len / 3).checked_sub(1).filter(|n| *n > 0)
+    }
+
+    /// Whether a premature termination codon at `cdna_pos` (1-based cDNA
+    /// coordinate) is predicted to escape nonsense-mediated decay.
+    ///
+    /// This is the 50-nucleotide rule the ClinGen SVI's PVS1 decision tree
+    /// runs on (Abou Tayoun 2018, Hum Mutat 39:1517): the surveillance complex
+    /// is deposited at exon-exon junctions, so decay is triggered only when the
+    /// PTC sits more than 50 nt upstream of the *final* junction. A PTC in the
+    /// last exon, in the last 50 nt of the penultimate exon, or in a
+    /// single-exon transcript therefore escapes.
+    ///
+    /// Returns `None` when the transcript has no exon structure to measure
+    /// against, which the caller must treat as "unknown" rather than "escapes".
+    pub fn escapes_nmd(&self, cdna_pos: u64) -> Option<bool> {
+        let sorted = self.sorted_exons();
+        let last = sorted.last()?;
+        if sorted.len() < 2 {
+            // No junction anywhere in the transcript, so nothing marks the
+            // message for decay however early the PTC falls.
+            return Some(true);
+        }
+        let last_exon_len = last.end.checked_sub(last.start)? + 1;
+        // cDNA coordinate of the final base before the last exon-exon junction.
+        let last_junction = self.cdna_length().checked_sub(last_exon_len)?;
+        // Escape window is the 50 bases ending at the junction, plus everything
+        // downstream of it.
+        Some(cdna_pos + 50 > last_junction)
+    }
+
     /// Build spliced_seq, translateable_seq, and peptide from a FASTA reference.
     ///
     /// The `fetch_seq` closure takes (chrom, start, end) using 1-based inclusive
@@ -447,6 +494,63 @@ mod tests {
     fn test_is_coding() {
         let tr = make_test_transcript();
         assert!(tr.is_coding());
+    }
+
+    #[test]
+    fn test_peptide_length_from_coding_span() {
+        // cDNA coding span 51..=952 is 902 bases; the trailing stop codon is
+        // not a residue, so 902 / 3 - 1 = 299.
+        assert_eq!(make_test_transcript().peptide_length(), Some(299));
+    }
+
+    #[test]
+    fn test_peptide_length_prefers_the_translated_peptide() {
+        let mut tr = make_test_transcript();
+        tr.peptide = Some("MKVLA*".to_string());
+        assert_eq!(tr.peptide_length(), Some(5), "the stop codon is not a residue");
+    }
+
+    #[test]
+    fn test_peptide_length_is_none_for_noncoding() {
+        let mut tr = make_test_transcript();
+        tr.translation = None;
+        tr.cdna_coding_start = None;
+        tr.cdna_coding_end = None;
+        assert_eq!(tr.peptide_length(), None);
+    }
+
+    #[test]
+    fn test_escapes_nmd_50nt_rule() {
+        // Exons are 201 + 301 + 1001 = 1503 cDNA bases, so the final
+        // exon-exon junction sits at cDNA position 502.
+        let tr = make_test_transcript();
+        assert_eq!(tr.escapes_nmd(452), Some(false), "51 nt upstream of the junction decays");
+        assert_eq!(tr.escapes_nmd(453), Some(true), "50 nt upstream is the escape window");
+        assert_eq!(tr.escapes_nmd(502), Some(true), "the junction itself escapes");
+        assert_eq!(tr.escapes_nmd(900), Some(true), "the last exon escapes");
+        assert_eq!(tr.escapes_nmd(10), Some(false), "far upstream decays");
+    }
+
+    #[test]
+    fn test_escapes_nmd_single_exon_transcript() {
+        // With no exon-exon junction the surveillance complex is never
+        // deposited, so no PTC triggers decay however early it falls.
+        let mut tr = make_test_transcript();
+        tr.exons.truncate(1);
+        assert_eq!(tr.escapes_nmd(10), Some(true));
+    }
+
+    #[test]
+    fn test_escapes_nmd_on_the_reverse_strand() {
+        // Transcript order is reversed, so the last exon is the 1000..=1200
+        // one (201 bases) and the junction lands at 1503 - 201 = 1302.
+        let mut tr = make_test_transcript();
+        tr.strand = Strand::Reverse;
+        for e in &mut tr.exons {
+            e.strand = Strand::Reverse;
+        }
+        assert_eq!(tr.escapes_nmd(1252), Some(false));
+        assert_eq!(tr.escapes_nmd(1253), Some(true));
     }
 
     #[test]

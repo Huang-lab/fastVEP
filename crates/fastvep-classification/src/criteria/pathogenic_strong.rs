@@ -583,6 +583,7 @@ mod tests {
                 sig: "Pathogenic".into(),
                 n,
             }],
+            benign_indexed: true,
         }
     }
 

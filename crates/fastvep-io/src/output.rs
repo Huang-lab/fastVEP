@@ -1789,6 +1789,8 @@ mod tests {
                     exon: None,
                     intron: None,
                     distance: None,
+                    protein_length: None,
+                    escapes_nmd: None,
                     hgvsc: None,
                     hgvsp: None,
                     hgvsg: None,

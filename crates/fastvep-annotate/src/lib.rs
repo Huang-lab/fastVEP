@@ -374,6 +374,8 @@ impl AnnotationContext {
                                 exon: ac.exon,
                                 intron: ac.intron,
                                 distance: ac.distance,
+                                protein_length: ac.protein_length,
+                                escapes_nmd: ac.escapes_nmd,
                                 hgvsc: None,
                                 hgvsp: None,
                                 hgvsg: None,
@@ -778,6 +780,8 @@ impl AnnotationContext {
                                 aa.protein_position.map(|(s, _)| s),
                                 aa.hgvsc.as_deref(),
                                 aa.exon,
+                                aa.protein_length,
+                                aa.escapes_nmd,
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                                 vf.alt_alleles
                                     .iter()
@@ -839,6 +843,8 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
                 exon: None,
                 intron: None,
                 distance: None,
+                protein_length: None,
+                escapes_nmd: None,
                 hgvsc: None,
                 hgvsp: None,
                 hgvsg: None,
@@ -885,6 +891,8 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 exon: None,
                 intron: None,
                 distance: None,
+                protein_length: None,
+                escapes_nmd: None,
                 hgvsc: None,
                 hgvsp: None,
                 hgvsg: None,
@@ -1233,6 +1241,8 @@ fn enrich_compound_het(
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
                 aa.exon,
+                aa.protein_length,
+                aa.escapes_nmd,
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                 vf.alt_alleles
                     .iter()

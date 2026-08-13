@@ -34,6 +34,19 @@ pub struct AlleleConsequenceResult {
     pub exon: Option<(u32, u32)>,
     pub intron: Option<(u32, u32)>,
     pub distance: Option<i64>,
+    /// Full-length peptide of this transcript, in residues. `None` for
+    /// non-coding transcripts.
+    pub protein_length: Option<u64>,
+    /// Whether a premature termination codon at this position is predicted to
+    /// escape nonsense-mediated decay (the 50-nt rule; see
+    /// [`Transcript::escapes_nmd`]). Populated for exonic positions in coding
+    /// transcripts; `None` when the variant is intronic or the transcript has
+    /// no usable exon structure.
+    ///
+    /// For a frameshift the true stop codon lies somewhat downstream of the
+    /// variant; the variant's own position is used as the stand-in, which is
+    /// the approximation the published PVS1 implementations make.
+    pub escapes_nmd: Option<bool>,
 }
 
 /// Full prediction result for a variant.
@@ -169,6 +182,8 @@ impl ConsequencePredictor {
                 exon: None,
                 intron: None,
                 distance: None,
+                protein_length: None,
+                escapes_nmd: None,
             };
         }
 
@@ -230,6 +245,8 @@ impl ConsequencePredictor {
                 amino_acids: None, codons: None,
                 exon: None, intron: None,
                 distance,
+                protein_length: None,
+                escapes_nmd: None,
             };
         }
 
@@ -354,6 +371,16 @@ impl ConsequencePredictor {
 
         let impact = Consequence::worst_impact(&consequences).unwrap_or(Impact::Modifier);
 
+        // PVS1 decision-tree inputs (Abou Tayoun 2018). Both are properties of
+        // the transcript and the position, so they are derived here where the
+        // exon structure is in hand rather than re-derived downstream.
+        let protein_length = transcript.is_coding().then(|| transcript.peptide_length()).flatten();
+        let escapes_nmd = if transcript.is_coding() {
+            cdna_start.and_then(|p| transcript.escapes_nmd(p))
+        } else {
+            None
+        };
+
         AlleleConsequenceResult {
             allele: alt_allele.clone(),
             consequences,
@@ -364,6 +391,8 @@ impl ConsequencePredictor {
             amino_acids, codons,
             exon: exon_info, intron: intron_info,
             distance,
+            protein_length,
+            escapes_nmd,
         }
     }
 

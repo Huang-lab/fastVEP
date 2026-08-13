@@ -54,7 +54,7 @@ PATHOGENIC_CALLS = {"P", "LP"}
 # one key also shows the knock-on effect on the criteria it interacts with.
 TRACKED_CRITERIA = (
     "PVS1", "PS1", "PM1", "PM2", "PM2_Supporting", "PP2", "PP3",
-    "BA1", "BS1", "BS2", "BP1", "BP4",
+    "BA1", "BS1", "BS2", "BP1", "BP4", "BP7",
 )
 
 
@@ -145,12 +145,25 @@ def score(vcf_path):
 
 
 def parse_sweep(spec):
-    """`key=v1,v2,v3` -> (key, [float, ...])."""
+    """`key=v1,v2,v3` -> (key, [(literal, float), ...]).
+
+    Each value is carried as the caller wrote it as well as parsed. The literal
+    is what goes into the generated TOML, so the caller's own notation decides
+    the TOML type: `300` is an integer and deserializes into a `u64` field like
+    `bp7_max_intron_offset`, while `0.0` is a float and deserializes into an
+    `f64` field like `pm2_ad_af_threshold`. Rendering everything from the
+    parsed float instead would emit `300.0` and fail every integer-typed key.
+    The parsed value is used only for labels and for the JSON summary.
+    """
     key, _, values = spec.partition("=")
     if not key or not values:
         raise argparse.ArgumentTypeError(
             f"--sweep must look like key=v1,v2,v3 (got {spec!r})")
-    return key.strip(), [float(v) for v in values.split(",")]
+    literals = [v.strip() for v in values.split(",")]
+    try:
+        return key.strip(), [(lit, float(lit)) for lit in literals]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"--sweep value is not a number: {exc}") from exc
 
 
 def pct(num, den):
@@ -176,10 +189,10 @@ def main():
 
     results = []
     for key, values in args.sweep:
-        for value in values:
-            label = f"{key}={value:g}"
+        for literal, value in values:
+            label = f"{key}={literal}"
             with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as cf:
-                cf.write(f"{key} = {value}\n")
+                cf.write(f"{key} = {literal}\n")
                 cfg = cf.name
             out_vcf = os.path.join(
                 args.out_dir, "sweep_" + label.replace("=", "_") + ".vcf")

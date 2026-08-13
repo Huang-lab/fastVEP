@@ -103,6 +103,13 @@ bp4_revel_very_strong = 0.003  # BP4 Very Strong (only REVEL reaches this band)
 spliceai_pathogenic = 0.2      # PP3 Supporting cap (SpliceAI alone never reaches Strong)
 spliceai_benign = 0.1          # BP4 Supporting threshold; 0.1–0.2 is uninformative
 
+# ── BP7's intronic extension (Walker 2023) ──
+# Near boundary is Walker's: donor +7, acceptor -21. The far boundary is not in the
+# paper and is set by measurement - see "Choosing BP7's far boundary" below.
+# Both ends of the range are meaningful: a value below 7 turns the intronic extension
+# off entirely, and one larger than any intron (1_000_000) restores it unbounded.
+bp7_max_intron_offset = 300    # nucleotides from the nearest exon edge
+
 # ── Conservation thresholds ──
 phylop_conserved = 2.0         # PhyloP score above which position is "conserved"
 
@@ -112,8 +119,13 @@ loeuf_lof_intolerant = 0.35    # LOEUF upper bound for LOF-intolerant gene
 pp2_misz_threshold = 3.09      # Missense Z-score threshold for PP2
 
 # ── PM1 hotspot detection ──
+# Richards 2015 asks for a hot spot or critical domain "without benign variation", so
+# both halves are tested. The benign half needs a clinvar_protein.oga built after benign
+# assertions were indexed; against an older file it is skipped rather than assumed.
 pm1_hotspot_window = 5         # Window size (amino acid positions) for hotspot scan
 pm1_hotspot_min_pathogenic = 3 # Minimum pathogenic variants in window to call hotspot
+pm1_max_benign_in_window = 0   # Benign/likely-benign ClinVar missense tolerated in the
+                               # same window before it stops counting as a hotspot
 
 # ── gnomAD v4 AN minimum (ClinGen SVI March 2024) ──
 min_an_for_frequency_criteria = 2000  # BA1/BS1 require AN ≥ this; below → NotEvaluated
@@ -332,6 +344,75 @@ The literal 2015 reading remains one line away for a lab that wants it
 partly from gnomAD frequency, so a frequency threshold tuned against ClinVar is partly
 fitted to its own input. The curve's shape is the useful output, not its absolute level.
 
+## Choosing BP7's far boundary
+
+Walker 2023 extends BP7 from synonymous variants to intronic ones and gives that extension
+a **near** boundary: donor-side `+7`, acceptor-side `-21`.
+It gives no far boundary, and that is coherent for the SVI, whose recommendations are
+written for a curator applying BP7 to one variant in a gene they know.
+An automated pipeline applies it to every intronic position in the genome, and the two
+situations are not the same.
+
+Out in the deep intron the only evidence BP7 has left is a SpliceAI score, in precisely the
+regime where SpliceAI is weakest.
+A deep-intronic variant is pathogenic almost exclusively by activating a pseudoexon, and
+pseudoexon activation is SpliceAI's documented blind spot.
+This is not a hypothesis about our data: on all 36 deep-intronic ClinVar-pathogenic
+variants that v13 called benign, SpliceAI is present and reads between 0.00 and 0.14.
+The criterion is not missing its evidence out there - it is being actively misled by it.
+
+So the far boundary is set by measurement
+([`sweep_acmg_thresholds.py`](../data/benchmark/scripts/sweep_acmg_thresholds.py), full
+673,660-variant benchmark, this key swept alone):
+
+| `bp7_max_intron_offset` | correct benign calls | missed diagnoses | opposite-direction | marginal cost |
+|---|---:|---:|---:|---|
+| 50 | 176,132 | 25 | 69 | 248 correct benign per diagnosis recovered |
+| 100 | 177,122 | 29 | 73 | 204 |
+| 200 | 177,735 | 32 | 76 | 155 |
+| **300** | **177,890** | **33** | **77** | **40** |
+| 500 | 177,930 | 34 | 78 | 26 |
+| 1000 | 177,981 | 36 | 80 | 31 |
+| unbounded | 178,420 | 50 | 94 | - |
+
+Pathogenic recall is unchanged at every setting; this knob moves only the benign side.
+
+**Is the extension worth having at all?** That is the question the table above cannot answer,
+because none of its rows turn the extension off. Run separately on the current stack:
+
+| setting | benign recall | missed diagnoses | opposite-direction |
+|---|---:|---:|---:|
+| extension off (`0`) | 58.7 % | 14 | 57 |
+| near-splice only (`20`) | 61.4 % | 20 | 63 |
+| **default (`300`)** | **62.5 %** | **33** | **76** |
+
+Switching the extension off is the most conservative option available and it is *not* what
+fastVEP ships, deliberately.
+Going from off to 300 buys 3.8 pp of benign recall - about 10,800 correct benign calls -
+for 19 missed diagnoses, roughly **570 correct benign calls per diagnosis**.
+That sits between the two frequency trades this classifier already makes (BS2's prevalence
+bar at ~296, BS1's threshold at ~1,200), so declining Walker's extension would mean holding
+it to a stricter standard than the criteria beside it.
+A lab that wants the conservative setting has it in one line: `bp7_max_intron_offset = 0`.
+
+Read the last column, not the first two.
+Bounding the extension at 300 recovers 17 of its 50 missed diagnoses for 530 correct benign
+calls, about **31 correct benign calls per diagnosis**.
+Tightening past 300 costs 155, then 204, then 248 per diagnosis - a five- to eight-fold
+step, and the knee is unambiguous.
+
+For scale against a trade this classifier already makes: the BS2 prevalence bar above gives
+up roughly **296** correct benign calls per false-benign call avoided, and the BS1 bar about
+**1,200**.
+By the project's own established exchange rate, every diagnosis recovered down to 300 is
+cheap, and every one below it is not.
+
+Both ends of the range stay meaningful, so there is no sentinel value:
+`bp7_max_intron_offset = 0` turns the intronic extension off entirely (nothing can be below
+Walker's near boundary of 7), and `1_000_000` restores it unbounded.
+The bound applies only to the intronic extension; a synonymous variant is exonic and is
+unaffected.
+
 ## Functional evidence (PS3 / BS3)
 
 PS3 and BS3 are the two criteria fastVEP cannot compute.
@@ -514,7 +595,7 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 |---|---|---|---|
 | **gnomAD Gene Constraints** | `gnomad_genes` | PVS1, PP2, BP1 | pLI, LOEUF, misZ, synZ |
 | **ClinGen GDV** (or OMIM) | `omim` | PVS1, PP2, PM1, BS2, PM3, BP2 | Gene-disease validity, disease associations, inheritance patterns |
-| **ClinVar Protein Index** | `clinvar_protein` | PS1, PM1, PM5 | Pathogenic missense by protein position |
+| **ClinVar Protein Index** | `clinvar_protein` | PS1, PM1, PM5, BP1 | Classified missense by protein position, both directions: pathogenic entries drive PS1/PM5/PM1's hotspot count, benign entries drive PM1's "without benign variation" test |
 
 ### Optional Sources
 
@@ -533,6 +614,8 @@ fastvep sa-build --source clinvar_protein -i clinvar.vcf.gz -o sa/clinvar_protei
 ```
 
 When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2, PP2, BS2) degrade gracefully to `evaluated: false` rather than misfiring.
+`clinvar_protein.oga` files built before benign assertions were indexed stay readable, and PM1 skips its benign-variation half against them rather than reading a structurally empty count as "no benign variation here": the record carries `benignIndexed` to tell the two apart.
+Rebuilding the source is what switches that half on.
 The gene-disease validity gate degrades the other way round, and deliberately: with no `omim.oga` loaded it does not fire at all, because a gene missing from a file nobody opened is not a gene without a disease. Loading the source is therefore what switches the gate on, and PVS1/PP2/PM1 become *stricter* when it is present, not more permissive. See [ACMG_SETUP.md](ACMG_SETUP.md) for download URLs, expected file sizes, and end-to-end verification.
 
 ## Evidence Criteria Reference
@@ -546,7 +629,7 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 | **PS2** | Strong | De novo with confirmed parents | Trio VCF genotypes | Yes (with trio) |
 | **PS3** | Strong | Functional studies show damaging. Read from `--functional-evidence`; suppresses PP3/BP4/BP7 for that variant (SVI ranks experimental evidence above prediction) | Curated TSV | Yes (with file) |
 | **PS4** | Strong | Prevalence in affected >> controls | Case-control statistics (NotEvaluated by default; ClinVar review-stars proxy is invalid per SVI, opt in via `use_clinvar_stars_as_ps4_proxy`) | No (Partial in proxy mode) |
-| **PM1** | Moderate | Mutational hotspot / critical domain. NotEvaluated where the gene has no established gene-disease relationship: a cluster of assertions in an uncurated gene is not evidence of a critical region | ClinVar protein density + ClinGen GDV | Yes (with .oga) |
+| **PM1** | Moderate | Mutational hotspot / critical domain **without benign variation** - both halves of Richards 2015's wording are tested, so a window that also holds benign ClinVar missense does not count. NotEvaluated where the gene has no established gene-disease relationship: a cluster of assertions in an uncurated gene is not evidence of a critical region | ClinVar protein density (both directions) + ClinGen GDV | Yes (with .oga) |
 | **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown fires at AF ≤ 0.00004, AR at AF ≤ 0.00007 (SVI v1.0 plus published VCEP practice; see "Choosing the PM2 bar for dominant genes"). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
 | **PM3** | Supporting → Very Strong* | In trans with pathogenic (recessive); points-based per SVI v1.0 (in-trans/P=1.0pt, in-trans/LP=0.5pt, unphased/P=0.5pt, unphased/LP=0.25pt, hom=0.5pt cap 1.0) | Phased VCF + ClinVar | Yes (with trio) |
 | **PM4** | Moderate | Protein length change (in-frame/stop-loss) | Consequence type | Yes |
@@ -608,6 +691,24 @@ PVS1 is graded by a decision tree over null-variant context. The output code car
 | Start-loss with no corroborating evidence | Supporting (`PVS1_Supporting`) |
 
 When the pipeline does not populate the tree signals (`predicted_nmd`, `protein_truncation_pct`, `is_last_exon`, `in_critical_region`, `alt_start_codon_distance`), PVS1 falls back to legacy Very Strong for any null variant in a LOF-intolerant gene. The graded result is exposed in `details` for transparency.
+
+Two branches remain unreachable because their signals have no plumbing yet: `alt_start_codon_distance` (start-loss) and `same_splice_position_pathogenic` (PS1's splice track). Start-loss therefore always lands at `PVS1_Supporting`.
+
+#### Which NMD prediction the tree runs on
+
+Abou Tayoun 2018 predicts nonsense-mediated decay with the **50-nucleotide rule**: a premature termination codon triggers decay only when it sits more than 50 nt upstream of the final exon-exon junction.
+fastVEP can compute that exactly, and also carries the coarser **last-exon proxy** it has always used.
+The two disagree in one place - a PTC in the 3' end of the penultimate exon, where the proxy claims decay and the measurement finds escape.
+
+`pvs1_nmd_50nt_rule` chooses between them, and it defaults to `false` (the proxy) on a measurement rather than a preference.
+
+On a 4,000-variant sample of PVS1-carrying ClinVar 2-star records, switching the exact rule on moved 58 calls from Likely Pathogenic to Uncertain: **54 of them ClinVar calls Pathogenic**, 4 Uncertain, none Benign.
+Extrapolated to the full PVS1 population that is roughly 825 correct pathogenic calls given up to correct a single false-pathogenic one.
+
+Nothing in that trade is a defect in either the rule or the tree.
+A PTC 20 nt before the last junction really does escape decay, and Abou Tayoun really does grade an NMD-escaping truncation in a critical region at `PVS1_Strong` - 4 points, and Uncertain on its own.
+ClinVar's curators call those variants Pathogenic because they also had segregation, case and functional evidence that no annotator can compute.
+So enabling the flag makes fastVEP more faithful to the guideline and less concordant with ClinVar at the same time, and the choice belongs to the user rather than to a default.
 
 ### PM3 Strength Grading (SVI v1.0 Points)
 

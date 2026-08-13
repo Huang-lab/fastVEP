@@ -17,12 +17,20 @@ use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 /// - **PVS1_Supporting**: <10% protein removed in non-critical region;
 ///   start-loss without strong corroborating evidence.
 ///
-/// The decision tree depends on optional fields populated by the pipeline:
-/// `predicted_nmd`, `protein_truncation_pct`, `is_last_exon`,
-/// `in_critical_region`, `alt_start_codon_distance`. When these are not
-/// available, PVS1 falls back to the legacy binary rule (full Very Strong
-/// when a null variant fires in a LOF-intolerant gene), preserving
-/// backward compatibility for pipelines that haven't been updated yet.
+/// The decision tree runs on optional fields the pipeline derives from the
+/// transcript: `predicted_nmd` / `nmd_escape_50nt`, `protein_truncation_pct`,
+/// `is_last_exon`, `in_critical_region`, `alt_start_codon_distance`. When a
+/// field is absent the tree falls back to the legacy binary rule (full Very
+/// Strong for a null variant in a LOF-intolerant gene), so a pipeline that
+/// does not populate them behaves exactly as before.
+///
+/// Two of the tree's branches are still unreachable: `alt_start_codon_distance`
+/// (start-loss) and `same_splice_position_pathogenic` (PS1's splice track) have
+/// no plumbing yet, so start-loss stays at PVS1_Supporting.
+///
+/// Which NMD prediction feeds the tree is a configuration choice - see
+/// [`AcmgConfig::pvs1_nmd_50nt_rule`], which documents the measured trade
+/// between guideline faithfulness and ClinVar concordance.
 pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
@@ -203,9 +211,24 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
         }
     }
 
+    // Which NMD prediction the tree runs on. The exact 50-nt rule is the one
+    // Abou Tayoun 2018 states; the last-exon proxy is what fastVEP has always
+    // used and stays the default because the exact rule trades ClinVar
+    // pathogenic recall for faithfulness - see `pvs1_nmd_50nt_rule`.
+    let predicted_nmd = if config.pvs1_nmd_50nt_rule {
+        input
+            .nmd_escape_50nt
+            .map(|escapes| !escapes)
+            .or(input.predicted_nmd)
+    } else {
+        input.predicted_nmd
+    };
+
     let (strength, summary) = match kind {
-        NullKind::NonsenseOrFrameshift => grade_nonsense_frameshift(input, &mut details),
-        NullKind::CanonicalSplice => grade_canonical_splice(input, &mut details),
+        NullKind::NonsenseOrFrameshift => {
+            grade_nonsense_frameshift(input, predicted_nmd, &mut details)
+        }
+        NullKind::CanonicalSplice => grade_canonical_splice(input, predicted_nmd, &mut details),
         NullKind::StartLost => grade_start_lost(input, &mut details),
         NullKind::WholeGeneDeletion => (
             EvidenceStrength::VeryStrong,
@@ -308,9 +331,10 @@ impl NullKind {
 
 fn grade_nonsense_frameshift(
     input: &ClassificationInput,
+    predicted_nmd: Option<bool>,
     details: &mut serde_json::Map<String, serde_json::Value>,
 ) -> (EvidenceStrength, String) {
-    if let Some(nmd) = input.predicted_nmd {
+    if let Some(nmd) = predicted_nmd {
         details.insert("predicted_nmd".into(), serde_json::json!(nmd));
         if nmd {
             return (
@@ -365,9 +389,10 @@ fn grade_nonsense_frameshift(
 
 fn grade_canonical_splice(
     input: &ClassificationInput,
+    predicted_nmd: Option<bool>,
     details: &mut serde_json::Map<String, serde_json::Value>,
 ) -> (EvidenceStrength, String) {
-    if let Some(nmd) = input.predicted_nmd {
+    if let Some(nmd) = predicted_nmd {
         details.insert("predicted_nmd".into(), serde_json::json!(nmd));
         if nmd {
             return (
@@ -405,6 +430,14 @@ fn grade_start_lost(
             details.insert("alt_start_codon_distance_invalid".into(), serde_json::json!(true));
         } else {
             let d_codons = d as u64;
+            // Note the field is being borrowed for a different question here.
+            // The pipeline derives `in_critical_region` as "ClinVar has a
+            // pathogenic variant *downstream* of the truncation", which is what
+            // the nonsense/frameshift track needs; the start-loss track wants
+            // "pathogenic variant upstream of the alternative start". The two
+            // only coincide because a start-loss truncates from residue 1. This
+            // branch is unreachable today (`alt_start_codon_distance` has no
+            // plumbing) and the signal must be split before it becomes live.
             if d_codons <= 100 && input.in_critical_region == Some(true) {
                 return (
                     EvidenceStrength::Moderate,
@@ -891,6 +924,62 @@ mod tests {
             .gene_mechanisms
             .insert("MYGENE".to_string(), "LOF".to_string());
         assert!(evaluate_pvs1(&input, &config).met);
+    }
+
+    // ── The 50-nt NMD rule, and what switching it on costs ───────────────
+
+    /// A PTC in the last 50 nt of the penultimate exon: the one place the two
+    /// NMD signals disagree. MSH6 `c.3978dup` is the real case - exon 9 of 10,
+    /// eight bases from the junction, 2.6 % of the protein removed, and a
+    /// region ClinVar has pathogenic variants in.
+    fn penultimate_exon_escape() -> ClassificationInput {
+        let mut input = make_input(vec![Consequence::FrameshiftVariant], lof_gene(), None);
+        input.is_last_exon = Some(false);
+        input.predicted_nmd = Some(true); // last-exon proxy: "will decay"
+        input.nmd_escape_50nt = Some(true); // measured: escapes
+        input.in_critical_region = Some(true);
+        input.protein_truncation_pct = Some(0.026);
+        input
+    }
+
+    #[test]
+    fn test_50nt_rule_off_by_default_keeps_very_strong() {
+        let r = evaluate_pvs1(&penultimate_exon_escape(), &AcmgConfig::default());
+        assert_eq!(r.code, "PVS1");
+        assert_eq!(r.strength, EvidenceStrength::VeryStrong);
+    }
+
+    #[test]
+    fn test_50nt_rule_on_grades_the_escape_down() {
+        let config = AcmgConfig { pvs1_nmd_50nt_rule: true, ..Default::default() };
+        let r = evaluate_pvs1(&penultimate_exon_escape(), &config);
+        assert_eq!(r.code, "PVS1_Strong", "Abou Tayoun: NMD escape in a critical region");
+        assert_eq!(r.strength, EvidenceStrength::Strong);
+    }
+
+    #[test]
+    fn test_50nt_rule_falls_back_to_the_proxy_when_unmeasured() {
+        // Intronic variants have no cDNA coordinate, so the measurement is
+        // absent and the proxy must still answer.
+        let mut input = penultimate_exon_escape();
+        input.nmd_escape_50nt = None;
+        let config = AcmgConfig { pvs1_nmd_50nt_rule: true, ..Default::default() };
+        assert_eq!(evaluate_pvs1(&input, &config).strength, EvidenceStrength::VeryStrong);
+    }
+
+    #[test]
+    fn test_50nt_rule_does_not_disturb_a_mid_gene_ptc() {
+        // The overwhelming majority of null variants: both signals agree that
+        // the message decays, so the flag changes nothing either way.
+        let mut input = make_input(vec![Consequence::StopGained], lof_gene(), None);
+        input.is_last_exon = Some(false);
+        input.predicted_nmd = Some(true);
+        input.nmd_escape_50nt = Some(false);
+        for on in [false, true] {
+            let config = AcmgConfig { pvs1_nmd_50nt_rule: on, ..Default::default() };
+            let r = evaluate_pvs1(&input, &config);
+            assert_eq!(r.code, "PVS1", "flag={on}");
+        }
     }
 
     #[test]

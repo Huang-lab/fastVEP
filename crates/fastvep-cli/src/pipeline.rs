@@ -96,8 +96,19 @@ pub struct AnnotateConfig {
     pub show_progress: bool,
 }
 
-pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
+pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     eprintln!("Annotating: {} -> {}", config.input, config.output);
+    // Several ACMG criteria read HGVS c. notation rather than raw coordinates:
+    // PVS1's canonical ±1/±2 splice gate and BP7's deep-intronic extension both
+    // need the intronic offset, and BA1's Ghosh 2018 exception list is keyed by
+    // `c.` string. Without `--hgvs` those signals are silently absent and the
+    // criteria quietly fall back to weaker behaviour, so `--acmg` turns HGVS on
+    // rather than degrading. The output field list is unchanged either way -
+    // HGVSc/HGVSp are always in the CSQ header and were simply empty before.
+    if config.acmg && !config.hgvs && !config.sa_only {
+        config.hgvs = true;
+    }
+    let config = config;
     let sa_only = config.sa_only;
     if sa_only {
         if config.sa_dir.is_none() {
@@ -753,6 +764,8 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                             exon: ac.exon,
                             intron: ac.intron,
                             distance: ac.distance,
+                            protein_length: ac.protein_length,
+                            escapes_nmd: ac.escapes_nmd,
                             hgvsc: None,
                             hgvsp: None,
                             hgvsg: None,
@@ -1369,6 +1382,8 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                 aa.protein_position.map(|(s, _)| s),
                                 aa.hgvsc.as_deref(),
                                 aa.exon,
+                                aa.protein_length,
+                                aa.escapes_nmd,
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                                 vf.alt_alleles
                                     .iter()
@@ -1905,6 +1920,8 @@ fn enrich_compound_het_batch(
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
                 aa.exon,
+                aa.protein_length,
+                aa.escapes_nmd,
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                 vf.alt_alleles
                     .iter()
@@ -3933,6 +3950,8 @@ mod pick_tests {
                 exon: None,
                 intron: None,
                 distance: None,
+                protein_length: None,
+                escapes_nmd: None,
                 hgvsc: None,
                 hgvsp: None,
                 hgvsg: None,

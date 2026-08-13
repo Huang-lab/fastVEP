@@ -444,14 +444,22 @@ fn is_weak_clingen_classification(phenotype: &str) -> bool {
     )
 }
 
-/// ClinVar pathogenic variants indexed by protein position (from .oga).
+/// ClinVar variants indexed by protein position (from .oga).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ClinvarProteinData {
     #[serde(rename = "proteinVariants")]
     pub protein_variants: Vec<ClinvarProteinVariant>,
+    /// Whether the index that produced this record carries benign as well as
+    /// pathogenic assertions. PM1's "without benign variation" test needs the
+    /// distinction: in an index built before this field existed, the absence of
+    /// benign entries is a property of the builder, not of the gene, and
+    /// reading it as "no benign variation here" would fire PM1 on exactly the
+    /// evidence the criterion asks us to rule out.
+    #[serde(rename = "benignIndexed", default)]
+    pub benign_indexed: bool,
 }
 
-/// A single ClinVar pathogenic variant at a protein position.
+/// A single classified ClinVar variant at a protein position.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClinvarProteinVariant {
     pub pos: u64,
@@ -552,9 +560,23 @@ pub struct ClassificationInput {
     // LOF-intolerant gene). The pipeline (fastvep-cli) computes these from
     // cached transcript exon coordinates + ClinVar protein index.
     /// True if the predicted premature termination is expected to undergo
-    /// nonsense-mediated decay (NOT in 3'-most exon AND NOT in last 50 nt
-    /// of penultimate exon).
+    /// nonsense-mediated decay, judged by the last-exon proxy: a PTC escapes
+    /// only in the 3'-most exon.
+    ///
+    /// This is the coarser of the two NMD signals. It misses the escape window
+    /// at the 3' end of the penultimate exon, and so reports "will decay" for
+    /// PTCs that will not. [`Self::nmd_escape_50nt`] measures that properly;
+    /// which of the two PVS1 consults is
+    /// [`AcmgConfig::pvs1_nmd_50nt_rule`](crate::config::AcmgConfig::pvs1_nmd_50nt_rule).
     pub predicted_nmd: Option<bool>,
+    /// Whether the PTC escapes nonsense-mediated decay under the exact 50-nt
+    /// rule (Abou Tayoun 2018): escape in the last exon, in the last 50 nt of
+    /// the penultimate exon, or in a single-exon transcript.
+    ///
+    /// `None` when the pipeline could not measure it - an intronic variant with
+    /// no cDNA coordinate, a non-coding transcript, or a caller that does not
+    /// populate the field. PVS1 then falls back to [`Self::predicted_nmd`].
+    pub nmd_escape_50nt: Option<bool>,
     /// Fraction of the protein removed by the variant (0.0–1.0).
     pub protein_truncation_pct: Option<f64>,
     /// True if the variant lies in the 3'-most (last) exon.
@@ -635,6 +657,8 @@ pub fn extract_classification_input(
     protein_position: Option<u64>,
     hgvs_c: Option<&str>,
     exon: Option<(u32, u32)>,
+    protein_length: Option<u64>,
+    escapes_nmd: Option<bool>,
     is_pure_insertion: Option<bool>,
     functional_evidence: Option<crate::functional::FunctionalEvidence>,
     allele_supplementary: &[(String, String)],
@@ -716,7 +740,7 @@ pub fn extract_classification_input(
     // Parse gene-level annotations
     let mut gene_constraints = None;
     let mut omim = None;
-    let mut clinvar_protein = None;
+    let mut clinvar_protein: Option<ClinvarProteinData> = None;
     for ga in gene_annotations {
         match ga.json_key.as_str() {
             "gnomad_genes" | "gnomad_gene" => {
@@ -748,11 +772,35 @@ pub fn extract_classification_input(
     // `intronic_offset`: distance from the nearest exon boundary, parsed from
     // the HGVS `+N`/`-N` token. None for purely exonic variants.
     let intronic_offset = hgvs_c.and_then(parse_intronic_offset);
-    // `predicted_nmd`: conservative proxy — a premature termination escapes NMD
-    // only in the last exon. (The penultimate-exon last-50nt escape window is
-    // not modeled here; such PTCs stay NMD-competent, i.e. conservative toward
-    // keeping PVS1 at Very Strong.) Only consulted by PVS1 for null variants.
+    // Both NMD signals are carried, and PVS1 picks between them per config.
+    // The last-exon proxy is the historical one; the 50-nt measurement is the
+    // rule Abou Tayoun 2018 actually states. They disagree only for a PTC in
+    // the 3' end of the penultimate exon, where the proxy claims decay and the
+    // measurement finds escape.
     let predicted_nmd = is_last_exon.map(|last| !last);
+
+    // `protein_truncation_pct`: the fraction of the peptide the truncation
+    // removes, counting the first lost residue. The tree branches at 10%.
+    let protein_truncation_pct = match (protein_position, protein_length) {
+        (Some(pos), Some(len)) if len > 0 && pos <= len => {
+            Some((len - pos + 1) as f64 / len as f64)
+        }
+        _ => None,
+    };
+
+    // `in_critical_region`: the tree asks whether the removed portion of the
+    // protein is known to matter. The .oga ClinVar protein index answers it
+    // directly - a pathogenic variant at a residue downstream of the truncation
+    // point is positive evidence that the lost region is functional. Left
+    // `None` when the gene has no index entry, so absence of the file never
+    // reads as "the region is unimportant".
+    let in_critical_region = match (protein_position, clinvar_protein.as_ref()) {
+        (Some(pos), Some(idx)) => Some(idx.protein_variants.iter().any(|v| {
+            let sig = v.sig.to_ascii_lowercase();
+            v.pos > pos && sig.contains("pathogenic") && !sig.contains("conflicting")
+        })),
+        _ => None,
+    };
 
     ClassificationInput {
         consequences: consequences.to_vec(),
@@ -776,16 +824,15 @@ pub fn extract_classification_input(
         // didn't pass `--hgvs` — this stays `None` and BA1 falls back to its
         // default behavior (no exception-list lookup).
         hgvs_c: hgvs_c.map(|s| s.to_string()),
-        // PVS1 decision-tree signals. `is_last_exon` / `predicted_nmd` /
-        // `intronic_offset` are now derived above from the exon rank/total and
-        // HGVS c. notation the pipeline already produces. The remaining finer
-        // signals (truncation %, critical region, alt-start distance, PS1
-        // splice catalog) await dedicated plumbing; until then PVS1 uses the
-        // conservative defaults (last-exon → Moderate, else legacy fallback).
+        // PVS1 decision-tree signals, all derived above. `alt_start_codon_distance`
+        // (start-loss track) and `same_splice_position_pathogenic` (PS1's splice
+        // track) still await dedicated plumbing and stay `None`, so those two
+        // branches keep their conservative defaults.
         predicted_nmd,
-        protein_truncation_pct: None,
+        nmd_escape_50nt: escapes_nmd,
+        protein_truncation_pct,
         is_last_exon,
-        in_critical_region: None,
+        in_critical_region,
         alt_start_codon_distance: None,
         same_splice_position_pathogenic: None,
         in_repeat_region,
@@ -1006,5 +1053,103 @@ mod tests {
         // UTR position sign must not be mistaken for an offset.
         assert_eq!(parse_intronic_offset("c.-23+1G>A"), Some(1));
         assert_eq!(parse_intronic_offset("c.-23-1G>A"), Some(-1));
+    }
+
+    /// Build a `ClassificationInput` through the real entry point, varying only
+    /// the PVS1 tree inputs. Everything else is inert.
+    fn extract(
+        protein_position: Option<u64>,
+        protein_length: Option<u64>,
+        escapes_nmd: Option<bool>,
+        exon: Option<(u32, u32)>,
+        clinvar_protein_json: Option<&str>,
+    ) -> ClassificationInput {
+        let gene_anns: Vec<GeneAnnotation> = clinvar_protein_json
+            .map(|j| {
+                vec![GeneAnnotation {
+                    gene_symbol: "TEST".to_string(),
+                    json_key: "clinvar_protein".to_string(),
+                    json_string: j.to_string(),
+                }]
+            })
+            .unwrap_or_default();
+        let refs: Vec<&GeneAnnotation> = gene_anns.iter().collect();
+        extract_classification_input(
+            &[Consequence::StopGained],
+            Impact::High,
+            Some("TEST"),
+            true,
+            None,
+            protein_position,
+            None,
+            exon,
+            protein_length,
+            escapes_nmd,
+            None,
+            None,
+            &[],
+            &refs,
+            &[],
+            None,
+            None,
+            None,
+            vec![],
+        )
+    }
+
+    #[test]
+    fn test_both_nmd_signals_are_carried_separately() {
+        // Exon 3 of 10 reads as NMD-competent under the last-exon proxy, while
+        // the measured 50-nt rule found the position inside the escape window
+        // at the end of the penultimate exon. Both are reported; PVS1 picks
+        // between them per `pvs1_nmd_50nt_rule`, so neither may overwrite the
+        // other here.
+        let input = extract(None, None, Some(true), Some((3, 10)), None);
+        assert_eq!(input.predicted_nmd, Some(true), "last-exon proxy");
+        assert_eq!(input.nmd_escape_50nt, Some(true), "measured 50-nt rule");
+        assert_eq!(input.is_last_exon, Some(false));
+    }
+
+    #[test]
+    fn test_predicted_nmd_is_the_last_exon_proxy() {
+        assert_eq!(extract(None, None, None, Some((10, 10)), None).predicted_nmd, Some(false));
+        assert_eq!(extract(None, None, None, Some((3, 10)), None).predicted_nmd, Some(true));
+        assert_eq!(extract(None, None, None, None, None).predicted_nmd, None);
+    }
+
+    #[test]
+    fn test_protein_truncation_pct_counts_the_first_lost_residue() {
+        // Truncating at residue 91 of 100 removes residues 91..=100, i.e. 10 %.
+        let input = extract(Some(91), Some(100), None, None, None);
+        assert_eq!(input.protein_truncation_pct, Some(0.10));
+        // Out-of-range or absent inputs produce no claim rather than a wrong one.
+        assert_eq!(extract(Some(101), Some(100), None, None, None).protein_truncation_pct, None);
+        assert_eq!(extract(Some(50), None, None, None, None).protein_truncation_pct, None);
+    }
+
+    #[test]
+    fn test_in_critical_region_reads_downstream_clinvar_pathogenic_variants() {
+        let idx = r#"{"proteinVariants":[
+            {"pos":900,"refAa":"R","altAa":"Q","sig":"Pathogenic","n":2},
+            {"pos":100,"refAa":"A","altAa":"T","sig":"Pathogenic","n":2}
+        ]}"#;
+        // Truncating at 500 loses residue 900, which ClinVar calls pathogenic.
+        assert_eq!(extract(Some(500), None, None, None, Some(idx)).in_critical_region, Some(true));
+        // Truncating at 950 loses nothing ClinVar has an entry for.
+        assert_eq!(extract(Some(950), None, None, None, Some(idx)).in_critical_region, Some(false));
+    }
+
+    #[test]
+    fn test_in_critical_region_is_unknown_without_an_index() {
+        // Absence of the .oga must never read as "the lost region is unimportant".
+        assert_eq!(extract(Some(500), None, None, None, None).in_critical_region, None);
+    }
+
+    #[test]
+    fn test_in_critical_region_ignores_conflicting_clinvar_entries() {
+        let idx = r#"{"proteinVariants":[
+            {"pos":900,"refAa":"R","altAa":"Q","sig":"Conflicting_interpretations_of_pathogenicity","n":1}
+        ]}"#;
+        assert_eq!(extract(Some(500), None, None, None, Some(idx)).in_critical_region, Some(false));
     }
 }

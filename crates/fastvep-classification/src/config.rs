@@ -354,6 +354,36 @@ pub struct AcmgConfig {
     /// unknown mechanism is never read as gain of function. Default `true`.
     #[serde(default = "default_true")]
     pub mechanism_gates_pvs1: bool,
+    /// Use the measured 50-nucleotide rule for PVS1's NMD prediction instead of
+    /// the last-exon proxy. Default `false`, and the reason is a measurement
+    /// rather than a preference.
+    ///
+    /// Abou Tayoun 2018 predicts nonsense-mediated decay by asking whether the
+    /// premature termination codon sits more than 50 nt upstream of the final
+    /// exon-exon junction. fastVEP can now answer that exactly
+    /// ([`Transcript::escapes_nmd`]); before, it approximated it with "is the
+    /// variant in the last exon?", which misses the escape window at the 3' end
+    /// of the penultimate exon and so keeps those PTCs at full Very Strong.
+    ///
+    /// Turning the exact rule on is the guideline-faithful setting, and it is
+    /// off by default because of what it costs against ClinVar. On a
+    /// 4,000-variant sample of PVS1-carrying 2-star records it moved 58 calls
+    /// from Likely Pathogenic to Uncertain: **54 of them ClinVar calls
+    /// Pathogenic**, 4 Uncertain, and none Benign. Extrapolated to the full
+    /// PVS1 population that is roughly 825 correct pathogenic calls given up to
+    /// correct a single false-pathogenic one.
+    ///
+    /// The trade is not a defect in either the rule or the tree - both give the
+    /// right answer. A PTC 20 nt before the last junction really does escape
+    /// decay, and Abou Tayoun really does grade an NMD-escaping truncation in a
+    /// critical region at PVS1_Strong, which is 4 points and Uncertain on its
+    /// own. ClinVar's curators call those variants Pathogenic because they also
+    /// had segregation, case and functional evidence that no annotator can
+    /// compute. Enabling this makes fastVEP more faithful to the guideline and
+    /// less concordant with ClinVar at the same time, so the choice is the
+    /// user's rather than a default.
+    #[serde(default)]
+    pub pvs1_nmd_50nt_rule: bool,
     /// Optional ceiling on the strength PP3 may reach from computational
     /// evidence alone. `None` (the default) means uncapped.
     ///
@@ -381,6 +411,64 @@ pub struct AcmgConfig {
     /// gene and BP1 cannot apply. Default 3.
     #[serde(default = "default_bp1_max_pathogenic_missense")]
     pub bp1_max_pathogenic_missense: u32,
+    /// Far boundary, in nucleotides from the nearest exon edge, of BP7's
+    /// intronic extension. Default 300.
+    ///
+    /// Both ends of the range are meaningful, so no sentinel is needed: a value
+    /// below Walker's near boundary of 7 turns the intronic extension off
+    /// entirely, and one larger than any human intron restores it unbounded.
+    ///
+    /// Walker 2023 gives BP7's intronic extension a *near* boundary (donor
+    /// `+7`, acceptor `-21`) and states no far one. That is consistent for the
+    /// SVI, whose recommendations are written for a curator applying BP7 to a
+    /// single variant in a gene they know. An automated pipeline applies it to
+    /// every intronic position in the genome, and out in the deep intron the
+    /// only evidence BP7 has left is a SpliceAI score in the regime where
+    /// SpliceAI is weakest: pseudoexon activation, which is also the dominant
+    /// mechanism by which a deep-intronic variant is pathogenic at all.
+    ///
+    /// So the far boundary is set by measurement. Over the full ClinVar
+    /// 2-star-or-better set, the extension's exchange rate - correct benign
+    /// firings per missed diagnosis - collapses with intron depth:
+    ///
+    /// | bound | correct benign calls | missed diagnoses | marginal cost |
+    /// |---|---:|---:|---|
+    /// | 50 | 176,132 | 25 | 248 correct benign per diagnosis recovered |
+    /// | 100 | 177,122 | 29 | 204 |
+    /// | 200 | 177,735 | 32 | 155 |
+    /// | **300** | **177,890** | **33** | **40** |
+    /// | 500 | 177,930 | 34 | 26 |
+    /// | 1000 | 177,981 | 36 | 31 |
+    /// | unbounded | 178,420 | 50 | - |
+    ///
+    /// 300 is the knee. Bounding an unbounded extension at 300 recovers 17 of
+    /// its 50 missed diagnoses for 530 correct benign calls, about 31 each;
+    /// tightening further costs 155 and then 204 and then 248 per diagnosis.
+    /// For scale, the BS2 prevalence bar this classifier already ships trades
+    /// ~296 correct benign calls per missed diagnosis avoided, so everything
+    /// down to 300 is cheap by the project's own standard and everything below
+    /// it is not. The sweep is reproducible with `sweep_acmg_thresholds.py
+    /// --sweep "bp7_max_intron_offset=..."` and is recorded in `docs/ACMG.md`.
+    ///
+    /// This bounds only the Walker 2023 intronic extension. A synonymous
+    /// variant is exonic and is unaffected.
+    #[serde(default = "default_bp7_max_intron_offset")]
+    pub bp7_max_intron_offset: u64,
+    /// How many benign or likely-benign ClinVar missense variants may sit in
+    /// PM1's window before the window stops counting as a hotspot. Default 0,
+    /// which is Richards 2015 read literally: PM1 wants a mutational hot spot
+    /// or critical domain "without benign variation".
+    ///
+    /// The knob exists because "without benign variation" is a judgement in
+    /// practice - a single benign submission at the edge of a well-established
+    /// active site does not dissolve the domain - and a lab following a VCEP
+    /// specification that tolerates one or two can say so here. The default
+    /// stays at the literal reading.
+    ///
+    /// Has no effect against a `clinvar_protein.oga` built before benign
+    /// assertions were indexed; see [`ClinvarProteinData::benign_indexed`].
+    #[serde(default)]
+    pub pm1_max_benign_in_window: u32,
     /// Enable PP5/BP6 criteria (disabled by default per ClinGen SVI)
     #[serde(default)]
     pub use_pp5_bp6: bool,
@@ -516,10 +604,13 @@ impl Default for AcmgConfig {
             use_point_system: true,
             require_gene_disease_validity: true,
             mechanism_gates_pvs1: true,
+            pvs1_nmd_50nt_rule: false,
             gene_mechanisms: default_gene_mechanisms(),
             pp3_max_strength: None,
             exclude_self_from_clinvar_evidence: true,
             bp1_max_pathogenic_missense: 3,
+            bp7_max_intron_offset: default_bp7_max_intron_offset(),
+            pm1_max_benign_in_window: 0,
             use_pp5_bp6: false,
             ba1_exceptions: default_ba1_exceptions(),
             use_clinvar_stars_as_ps4_proxy: false,
@@ -595,6 +686,7 @@ fn default_bs2_ad_min_ac() -> u64 { 5 }
 fn default_bs2_ar_min_hom() -> u64 { 2 }
 fn default_bs2_prevalence() -> f64 { 1e-3 }
 fn default_bp1_max_pathogenic_missense() -> u32 { 3 }
+fn default_bp7_max_intron_offset() -> u64 { 300 }
 
 /// Genes whose gnomAD frequencies are unreliable because of paralogue,
 /// pseudogene or segmental-duplication mismapping (Mandelker et al. 2016,

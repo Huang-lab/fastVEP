@@ -90,6 +90,12 @@ pub struct AlleleAnnotation {
     pub exon: Option<(u32, u32)>,
     pub intron: Option<(u32, u32)>,
     pub distance: Option<i64>,
+    /// Full-length peptide of the transcript, in residues. `None` for
+    /// non-coding transcripts.
+    pub protein_length: Option<u64>,
+    /// Whether a premature termination codon here is predicted to escape
+    /// nonsense-mediated decay (the 50-nt rule). `None` when unknown.
+    pub escapes_nmd: Option<bool>,
     pub hgvsc: Option<String>,
     pub hgvsp: Option<String>,
     pub hgvsg: Option<String>,

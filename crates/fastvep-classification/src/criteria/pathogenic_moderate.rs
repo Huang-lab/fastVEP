@@ -137,8 +137,64 @@ fn evaluate_pm1(
             details.insert("nearby_pathogenic_raw".into(), serde_json::json!(raw_nearby));
         }
 
-        let met = nearby_pathogenic >= threshold as usize;
-        let summary = if met {
+        // The other half of PM1's definition. Richards 2015 asks for a hotspot
+        // or critical domain "**without benign variation**", and fastVEP counted
+        // only the pathogenic half for as long as the index carried only that
+        // half. A window that also holds benign missense is not a region where
+        // any substitution is damaging - it is a region ClinVar has looked at
+        // from both sides.
+        //
+        // Measured on the reviewer's rows: this resolves MSH2 p.Gly315Val (3
+        // pathogenic and 5 benign neighbours; the MSH2 VCEP specification
+        // cspec GN137 excludes PM1 for the gene outright) and leaves TP53
+        // p.Arg248 alone (23 pathogenic, 0 benign). It does *not* resolve her
+        // CHD7 and PTCH1 rows, where the objection was that the gene has no
+        // hotspots at all rather than that this window has benign variation;
+        // both still show 3 pathogenic and 0 benign neighbours here.
+        //
+        // Only applied when the index actually carries benign assertions.
+        // Against an older `.oga` the count is structurally zero and testing it
+        // would silently pass every window.
+        //
+        // Leave-one-out applies here for the same reason it applies to the
+        // pathogenic count: the index is ClinVar, so a variant ClinVar calls
+        // benign is one of its own benign neighbours, and letting it veto PM1
+        // is that variant's ClinVar label deciding its own classification.
+        let benign_tested = cpd.benign_indexed;
+        let nearby_benign: usize = if benign_tested {
+            let raw = cpd
+                .protein_variants
+                .iter()
+                .filter(|v| v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("benign"))
+                .count();
+            let self_benign = if config.exclude_self_from_clinvar_evidence
+                && input.clinvar.as_ref().is_some_and(|c| c.has_benign())
+            {
+                1
+            } else {
+                0
+            };
+            raw.saturating_sub(self_benign)
+        } else {
+            0
+        };
+        if benign_tested {
+            details.insert("nearby_benign_count".into(), serde_json::json!(nearby_benign));
+            details.insert(
+                "max_benign_in_window".into(),
+                serde_json::json!(config.pm1_max_benign_in_window),
+            );
+        }
+        let benign_variation = benign_tested
+            && nearby_benign > config.pm1_max_benign_in_window as usize;
+
+        let met = nearby_pathogenic >= threshold as usize && !benign_variation;
+        let summary = if benign_variation {
+            format!(
+                "Not a hotspot: {} pathogenic variants within ±{} AA of position {}, but the same window carries {} benign/likely-benign missense variants in ClinVar; PM1 requires a region without benign variation (Richards 2015)",
+                nearby_pathogenic, window, prot_pos, nearby_benign
+            )
+        } else if met {
             format!(
                 "Mutational hotspot: {} pathogenic variants within ±{} AA of position {} (threshold: {})",
                 nearby_pathogenic, window, prot_pos, threshold
@@ -1312,7 +1368,10 @@ mod tests {
             gene_symbol: Some(gene.to_string()),
             protein_position: Some(100),
             amino_acids: Some(("A".into(), "T".into())),
-            clinvar_protein: Some(ClinvarProteinData { protein_variants: neighbours }),
+            clinvar_protein: Some(ClinvarProteinData {
+                protein_variants: neighbours,
+                benign_indexed: true,
+            }),
             ..minimal_input()
         }
     }
@@ -1358,6 +1417,107 @@ mod tests {
     fn test_pm1_survives_for_a_gene_clingen_has_not_curated() {
         let mut input = hotspot_missense("SPAST");
         input.omim = None;
+        assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
+    }
+
+    // ── PM1's "without benign variation" half ────────────────────────────
+
+    /// Add `n` benign missense entries inside PM1's window.
+    fn with_benign_neighbours(mut input: ClassificationInput, n: u64) -> ClassificationInput {
+        use crate::sa_extract::ClinvarProteinVariant;
+        let cpd = input.clinvar_protein.as_mut().expect("helper builds one");
+        for i in 0..n {
+            cpd.protein_variants.push(ClinvarProteinVariant {
+                pos: 100 + i,
+                ref_aa: "A".into(),
+                alt_aa: "G".into(),
+                sig: if i % 2 == 0 { "Benign".into() } else { "Likely_benign".into() },
+                n: 1,
+            });
+        }
+        input
+    }
+
+    #[test]
+    fn test_pm1_does_not_fire_where_clinvar_has_benign_variation() {
+        // Richards 2015 asks for a hot spot "without benign variation". The
+        // pathogenic cluster is untouched; what changes is that the same window
+        // has been looked at from the other side too.
+        let input = with_benign_neighbours(hotspot_missense("CHD7"), 1);
+        let r = evaluate_pm1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.evaluated, "declined on the evidence, not for lack of it");
+        assert!(r.summary.contains("without benign variation"), "got: {}", r.summary);
+    }
+
+    #[test]
+    fn test_pm1_benign_tolerance_is_configurable() {
+        let input = with_benign_neighbours(hotspot_missense("CHD7"), 2);
+        let tolerant = AcmgConfig {
+            pm1_max_benign_in_window: 2,
+            ..AcmgConfig::default()
+        };
+        assert!(evaluate_pm1(&input, &tolerant).met);
+        let strict = AcmgConfig {
+            pm1_max_benign_in_window: 1,
+            ..AcmgConfig::default()
+        };
+        assert!(!evaluate_pm1(&input, &strict).met);
+    }
+
+    #[test]
+    fn test_pm1_benign_test_is_skipped_for_an_index_without_benign_entries() {
+        // An older `.oga` has no benign entries because the builder never wrote
+        // them, not because the gene has none. Testing anyway would pass every
+        // window and read as evidence that was never gathered.
+        let mut input = hotspot_missense("CHD7");
+        input.clinvar_protein.as_mut().unwrap().benign_indexed = false;
+        let r = evaluate_pm1(&input, &AcmgConfig::default());
+        assert!(r.met);
+        assert!(
+            r.details.get("nearby_benign_count").is_none(),
+            "must not report a count it could not measure"
+        );
+    }
+
+    #[test]
+    fn test_pm1_benign_test_excludes_the_variants_own_clinvar_record() {
+        // The index is ClinVar. A variant ClinVar calls benign is one of its
+        // own benign neighbours, and letting that veto PM1 would be the
+        // variant's ClinVar label deciding its own classification - the same
+        // circularity the self-match exclusion removed from PS1.
+        use crate::sa_extract::ClinvarData;
+        let mut input = with_benign_neighbours(hotspot_missense("CHD7"), 1);
+        input.clinvar = Some(ClinvarData {
+            significance: Some(vec!["Benign".into()]),
+            ..Default::default()
+        });
+        assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
+
+        let circular = AcmgConfig {
+            exclude_self_from_clinvar_evidence: false,
+            ..AcmgConfig::default()
+        };
+        assert!(!evaluate_pm1(&input, &circular).met);
+    }
+
+    #[test]
+    fn test_pm1_ignores_benign_variation_outside_the_window() {
+        use crate::sa_extract::ClinvarProteinVariant;
+        let mut input = hotspot_missense("CHD7");
+        let window = AcmgConfig::default().pm1_hotspot_window;
+        input
+            .clinvar_protein
+            .as_mut()
+            .unwrap()
+            .protein_variants
+            .push(ClinvarProteinVariant {
+                pos: 100 + window + 1,
+                ref_aa: "A".into(),
+                alt_aa: "G".into(),
+                sig: "Benign".into(),
+                n: 1,
+            });
         assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
     }
 }

@@ -1,14 +1,52 @@
 //! ClinVar protein-position index builder for .oga files.
 //!
-//! Parses ClinVar VCF to extract protein-level data for pathogenic/likely-pathogenic
-//! missense variants, enabling PS1, PM5, and PM1 (hotspot) ACMG criteria evaluation.
+//! Parses ClinVar VCF to extract protein-level data for classified missense
+//! variants, enabling PS1, PM5, and PM1 (hotspot) ACMG criteria evaluation.
+//!
+//! Both directions of assertion are indexed. The pathogenic entries are what
+//! PS1, PM5 and PM1's hotspot count read. The benign ones exist for the second
+//! half of PM1's own definition - Richards 2015 asks for a hotspot or critical
+//! domain "**without benign variation**" - which cannot be tested from an index
+//! that only ever recorded one direction. `benignIndexed` marks a file built this
+//! way, so a classifier reading an older index can tell "no benign variation
+//! here" apart from "this file never carried any".
 
 use crate::common::{escape_json, GeneRecord};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
 
-/// A pathogenic missense variant at a specific protein position.
+/// How ClinVar classifies a missense variant, reduced to the four terms the
+/// index carries. Conflicting and uncertain records are not indexed at all:
+/// they are evidence of disagreement, not of either direction.
+fn normalise_significance(clnsig_lower: &str) -> Option<&'static str> {
+    if clnsig_lower.contains("conflicting") {
+        return None;
+    }
+    let pathogenic = clnsig_lower.contains("pathogenic");
+    let benign = clnsig_lower.contains("benign");
+    // "Likely_pathogenic" contains neither "benign" nor a conflict marker, but
+    // a term asserting both directions at once is not usable evidence.
+    match (pathogenic, benign) {
+        (true, false) if clnsig_lower.contains("likely") => Some("Likely_pathogenic"),
+        (true, false) => Some("Pathogenic"),
+        (false, true) if clnsig_lower.contains("likely") => Some("Likely_benign"),
+        (false, true) => Some("Benign"),
+        _ => None,
+    }
+}
+
+/// Sentinel used while deduplicating, never written to disk: marks a residue
+/// substitution that ClinVar asserts in both directions.
+const CONFLICTED: &str = "";
+
+/// Whether an indexed significance term is a benign assertion. The four terms
+/// the index carries are closed, so this is a total function over them.
+fn is_benign(sig: &str) -> bool {
+    sig.eq_ignore_ascii_case("Benign") || sig.eq_ignore_ascii_case("Likely_benign")
+}
+
+/// A classified missense variant at a specific protein position.
 #[derive(Debug, Clone)]
 struct ProteinVariant {
     pos: u64,
@@ -43,10 +81,19 @@ fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecor
         let e = unique
             .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
             .or_insert_with(|| (v.sig.clone(), BTreeSet::new()));
+        // Distinct alleles producing the same residue substitution can carry
+        // assertions in opposite directions. That is a conflict at the level
+        // this index is keyed on, so it is dropped for the same reason a
+        // `Conflicting_interpretations` record is: it supports neither side.
+        // Marked rather than removed here so a later record cannot resurrect it.
+        if is_benign(&e.0) != is_benign(&v.sig) {
+            e.0 = CONFLICTED.to_string();
+        }
         if !v.cdna.is_empty() {
             e.1.insert(v.cdna.clone());
         }
     }
+    unique.retain(|_, (sig, _)| sig != CONFLICTED);
 
     let mut unique: Vec<_> = unique.into_iter().collect();
     unique.sort_by(|((pos_a, ref_a, alt_a), _), ((pos_b, ref_b, alt_b), _)| {
@@ -67,13 +114,16 @@ fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecor
 
     GeneRecord {
         gene_symbol: gene,
-        json: format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(",")),
+        json: format!(
+            r#"{{"benignIndexed":true,"proteinVariants":[{}]}}"#,
+            variant_jsons.join(",")
+        ),
     }
 }
 
 /// Parse a ClinVar source (VCF or variant_summary.txt.gz) and produce
-/// gene-level records of pathogenic/likely-pathogenic missense variants
-/// indexed by protein position. Auto-detects format from the header line:
+/// gene-level records of classified missense variants indexed by protein
+/// position. Auto-detects format from the header line:
 ///
 /// - **VCF (`clinvar.vcf.gz`)**: header begins with `#`. Per-record protein
 ///   change is rarely available in the VCF (ClinVar's MC field is just an SO
@@ -85,7 +135,7 @@ fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecor
 ///   extracted from the parenthesised `p.` block.
 ///
 /// Output JSON per gene:
-/// `{"proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"Pathogenic"}, ...]}`
+/// `{"benignIndexed":true,"proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"Pathogenic"}, ...]}`
 pub fn parse_clinvar_protein_vcf<R: BufRead>(reader: R) -> Result<Vec<GeneRecord>> {
     // Buffer the first line to detect format. Both formats start with `#`,
     // but the variant_summary header begins with `#AlleleID\t...`.
@@ -106,7 +156,7 @@ fn parse_clinvar_vcf_inner<I>(lines: I) -> Result<Vec<GeneRecord>>
 where
     I: Iterator<Item = std::io::Result<String>>,
 {
-    // Collect pathogenic missense variants per gene
+    // Collect classified missense variants per gene, both directions.
     let mut gene_variants: HashMap<String, Vec<ProteinVariant>> = HashMap::new();
 
     for line in lines {
@@ -123,14 +173,13 @@ where
         let info = fields[7];
         let info_map = parse_info(info);
 
-        // Only process pathogenic/likely-pathogenic variants
         let clnsig = match info_map.get("CLNSIG") {
             Some(sig) => sig.to_lowercase(),
             None => continue,
         };
-        if !clnsig.contains("pathogenic") || clnsig.contains("conflicting") {
+        let Some(sig_clean) = normalise_significance(&clnsig) else {
             continue;
-        }
+        };
 
         // Check molecular consequence for missense
         let mc = info_map.get("MC").map(|s| s.as_str()).unwrap_or("");
@@ -180,12 +229,7 @@ where
         }
 
         if let Some(pv) = protein_variant {
-            let sig_clean = if clnsig.contains("likely") {
-                "Likely_pathogenic".to_string()
-            } else {
-                "Pathogenic".to_string()
-            };
-
+            let sig_clean = sig_clean.to_string();
             gene_variants
                 .entry(gene_symbol)
                 .or_default()
@@ -242,9 +286,9 @@ where
             continue;
         }
         let sig = cols[i_sig].to_lowercase();
-        if !sig.contains("pathogenic") || sig.contains("conflicting") {
+        let Some(sig_clean) = normalise_significance(&sig) else {
             continue;
-        }
+        };
         let gene = cols[i_gene].trim();
         if gene.is_empty() || gene == "-" {
             continue;
@@ -256,11 +300,7 @@ where
             None => continue,
         };
 
-        let sig_clean = if sig.contains("likely") {
-            "Likely_pathogenic".to_string()
-        } else {
-            "Pathogenic".to_string()
-        };
+        let sig_clean = sig_clean.to_string();
         // The nucleotide change, e.g. `c.5074G>C` from
         // `NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)`. variant_summary lists
         // one row per assembly, so deduping on this also collapses the
@@ -491,8 +531,8 @@ mod tests {
 3\tsingle nucleotide variant\tNM_000218.3(KCNQ1):c.123C>T (p.=)\t3784\tKCNQ1\tHGNC:6294\tBenign\t0\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000011.10\t11\t1\t1\tC\tT\t11p15.5-p15.4\tcriteria provided, single submitter\t1\t-\t-\t-\t1\t3\t1\tC\tT\t-\t-\t-\t-\t-\t-
 ";
         let records = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
-        // Two genes (BRCA1, TP53) — KCNQ1 entry is silent (p.=) and benign so
-        // both gates skip it.
+        // Two genes (BRCA1, TP53) - the KCNQ1 entry is silent (`p.=`), so it
+        // has no residue substitution to index in either direction.
         assert_eq!(records.len(), 2);
         let brca1 = records.iter().find(|r| r.gene_symbol == "BRCA1").unwrap();
         assert!(brca1.json.contains("\"pos\":1692"));
@@ -536,5 +576,66 @@ mod tests {
             "proteinVariants must be sorted by position: {}",
             tp53.json
         );
+    }
+
+    /// One variant_summary row, parameterised on the fields these tests vary.
+    fn summary_rows(rows: &[(&str, &str, &str)]) -> String {
+        let header = "#AlleleID\tType\tName\tGeneID\tGeneSymbol\tHGNC_ID\tClinicalSignificance\tClinSigSimple\tLastEvaluated\tRS# (dbSNP)\tnsv/esv (dbVar)\tRCVaccession\tPhenotypeIDS\tPhenotypeList\tOrigin\tOriginSimple\tAssembly\tChromosomeAccession\tChromosome\tStart\tStop\tReferenceAllele\tAlternateAllele\tCytogenetic\tReviewStatus\tNumberSubmitters\tGuidelines\tTestedInGTR\tOtherIDs\tSubmitterCategories\tVariationID\tPositionVCF\tReferenceAlleleVCF\tAlternateAlleleVCF\tSomaticClinicalImpact\tSomaticClinicalImpactLastEvaluated\tReviewStatusClinicalImpact\tOncogenicity\tOncogenicityLastEvaluated\tReviewStatusOncogenicity";
+        let mut out = vec![header.to_string()];
+        for (i, (cdna, protein, sig)) in rows.iter().enumerate() {
+            out.push(format!(
+                "{i}\tsingle nucleotide variant\tNM_000546.6(TP53):{cdna} ({protein})\t7157\tTP53\tHGNC:11998\t{sig}\t1\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000017.11\t17\t1\t1\tG\tA\t17p13.1\tcriteria provided, multiple submitters, no conflicts\t5\t-\t-\t-\t1\t{i}\t1\tG\tA\t-\t-\t-\t-\t-\t-"
+            ));
+        }
+        out.join("\n") + "\n"
+    }
+
+    #[test]
+    fn test_index_carries_both_directions() {
+        // PM1's "without benign variation" half cannot be tested from an index
+        // that only ever recorded pathogenic assertions.
+        let data = summary_rows(&[
+            ("c.524G>A", "p.Arg175His", "Pathogenic"),
+            ("c.733G>A", "p.Gly245Ser", "Likely pathogenic"),
+            ("c.404G>A", "p.Cys135Tyr", "Benign"),
+            ("c.817C>T", "p.Arg273Cys", "Likely benign"),
+        ]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
+        let tp53 = &records[0];
+        assert!(tp53.json.contains(r#""benignIndexed":true"#));
+        for sig in ["Pathogenic", "Likely_pathogenic", "Benign", "Likely_benign"] {
+            assert!(
+                tp53.json.contains(&format!(r#""sig":"{sig}""#)),
+                "missing {sig} in {}",
+                tp53.json
+            );
+        }
+    }
+
+    #[test]
+    fn test_index_drops_uncertain_and_conflicting_records() {
+        let data = summary_rows(&[
+            ("c.524G>A", "p.Arg175His", "Uncertain significance"),
+            ("c.733G>A", "p.Gly245Ser", "Conflicting classifications of pathogenicity"),
+        ]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
+        assert!(records.is_empty(), "got {records:?}");
+    }
+
+    #[test]
+    fn test_a_residue_asserted_both_ways_is_dropped() {
+        // Two distinct alleles produce the same substitution and ClinVar
+        // classifies them oppositely. That is a conflict at the level this
+        // index is keyed on, and it supports neither PM1's hotspot count nor
+        // its benign-variation test.
+        let data = summary_rows(&[
+            ("c.524G>A", "p.Arg175His", "Pathogenic"),
+            ("c.524G>C", "p.Arg175His", "Benign"),
+            ("c.733G>A", "p.Gly245Ser", "Pathogenic"),
+        ]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
+        let tp53 = &records[0];
+        assert!(!tp53.json.contains(r#""pos":175"#), "got {}", tp53.json);
+        assert!(tp53.json.contains(r#""pos":245"#), "got {}", tp53.json);
     }
 }

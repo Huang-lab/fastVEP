@@ -3,11 +3,11 @@
 Thank you - this was the most useful round yet.
 Every one of your six points is now implemented, and each is measured against the full ClinVar 2-star-or-better set (673,660 variants) rather than argued about.
 
-**Where your 122 rows stand now:** 89 of them are no longer discordant.
+**Where your 122 rows stand now:** 90 of them are no longer discordant.
 They are VUS, which is the honest automated answer when the deciding evidence is case-level, literature-level or gene-level.
-33 remain, and they are the subject of the last section.
+32 remain, and they are the subject of the last section.
 
-Overall, against the full ClinVar 2-star-or-better set: pathogenic recall went from 48 % to **65 %**, benign recall from 57 % to **68 %**, and same-direction agreement from 71 % to **76 %**.
+Overall, against the full ClinVar 2-star-or-better set: pathogenic recall went from 48 % to **65 %**, benign recall from 57 % to **72 %**, and same-direction agreement from 71 % to **78 %**.
 
 The attached workbook is **your own annotated file** with four columns appended on the right (`fastvep_now_class`, `fastvep_now_criteria`, `changed_since_review`, `what_changed`).
 Your notes, highlighting and row order are untouched, so you can read across each row you already worked on.
@@ -92,7 +92,11 @@ fastVEP will not mine literature itself - a wrong PMID in a clinical report is w
 
 ## Where the remaining 32 rows sit, and what would move them
 
-Of your 122, 89 are resolved. The 33 that remain fall into three groups, and only one of them is ours to fix.
+Of your 122, 90 are resolved. The 32 that remain fall into three groups, and only one of them is ours to fix.
+
+One row moved since this reply was first drafted, and it is worth naming because it came from your own citation. **MSH2 p.Gly315Val** no longer earns PM1. You pointed at cspec GN137, which excludes PM1 for MSH2, and the underlying reason turned out to be general: Richards 2015 asks for a hot spot or critical domain "**without benign variation**", and fastVEP was only ever counting the pathogenic half, because our ClinVar protein index only ever recorded pathogenic missense. It now records both directions. That window has 3 pathogenic and 5 benign missense variants in ClinVar, so it is not a hot spot, and the call drops from Likely Pathogenic to VUS. TP53 p.Arg248 (23 pathogenic, 0 benign) is untouched, which is the control.
+
+This does **not** resolve your CHD7 and PTCH1 rows, and it is worth being precise about why. Your objection there was gene-level - "CHD7 variants are spread out in the gene", "no clear hotspots for PTCH1" - and both windows genuinely have 3 pathogenic and 0 benign neighbours. Answering that needs a test of whether a local cluster is denser than the gene's own background, which no guideline text specifies. It stays open.
 
 **Gene-disease validity (RYK, GIGYF2, EMG1, ORAI1, ARMC9, NPHP4, KCNJ16, ALMS1).** You judged several of these genes not disease-associated, or associated only as susceptibility loci. We implemented a gate for exactly this, reading ClinGen Gene-Disease Validity - and then found it could not act on your cases, because **ClinGen has not curated these genes at all**. The gate now fires only where ClinGen has curated a gene and classified every proposed relationship as Limited, Disputed, Refuted or No Known Disease Relationship, because an earlier version that blocked on *absence* from ClinGen cost 1,497 correct pathogenic calls in genes like SPAST, ABCB11 and LAMB3 that simply have not been curated yet. If you are willing to state these gene-level judgements, we will ship them.
 

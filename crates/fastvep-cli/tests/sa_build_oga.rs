@@ -146,14 +146,15 @@ fn sa_build_clinvar_protein_writes_oga_with_records() {
     let input = tmp.path().join("clinvar.vcf");
     let output = tmp.path().join("clinvar_protein");
 
-    // Minimal ClinVar VCF: two pathogenic missense entries with protein
-    // change in CLNHGVS, one rejected (Benign).
+    // Minimal ClinVar VCF: missense entries in both directions, plus one
+    // uncertain record that belongs in neither.
     let fixture = "\
 ##fileformat=VCFv4.1
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
 17\t7676154\t12345\tG\tA\t.\t.\tCLNSIG=Pathogenic;MC=SO:0001583|missense_variant;GENEINFO=TP53:7157;CLNHGVS=NP_000537.3:p.Arg175His
 17\t7676156\t12346\tT\tC\t.\t.\tCLNSIG=Likely_pathogenic;MC=SO:0001583|missense_variant;GENEINFO=TP53:7157;CLNHGVS=NP_000537.3:p.Arg248Trp
 17\t7676160\t12347\tG\tA\t.\t.\tCLNSIG=Benign;MC=SO:0001583|missense_variant;GENEINFO=TP53:7157;CLNHGVS=NP_000537.3:p.Pro72Leu
+17\t7676170\t12348\tC\tT\t.\t.\tCLNSIG=Uncertain_significance;MC=SO:0001583|missense_variant;GENEINFO=TP53:7157;CLNHGVS=NP_000537.3:p.Gly105Ser
 ";
     File::create(&input)
         .unwrap()
@@ -177,7 +178,10 @@ fn sa_build_clinvar_protein_writes_oga_with_records() {
 
     let tp53 = index.get("TP53").expect("TP53 should be present");
     let json = tp53.first().unwrap();
-    // The two pathogenic entries should make it through; the Benign one shouldn't.
+    // Both directions are indexed: the pathogenic entries are what PS1, PM5
+    // and PM1's hotspot count read, and the benign one is what PM1's "without
+    // benign variation" test needs. The uncertain record supports neither and
+    // is dropped.
     assert!(
         json.contains("\"pos\":175"),
         "should include p.Arg175His: {}",
@@ -189,8 +193,18 @@ fn sa_build_clinvar_protein_writes_oga_with_records() {
         json
     );
     assert!(
-        !json.contains("\"pos\":72"),
-        "Benign p.Pro72Leu must NOT be in index: {}",
+        json.contains("\"pos\":72") && json.contains("\"sig\":\"Benign\""),
+        "should include Benign p.Pro72Leu for PM1's benign-variation test: {}",
+        json
+    );
+    assert!(
+        !json.contains("\"pos\":105"),
+        "Uncertain_significance p.Gly105Ser must NOT be in index: {}",
+        json
+    );
+    assert!(
+        json.contains("\"benignIndexed\":true"),
+        "must mark itself as carrying benign assertions: {}",
         json
     );
 }

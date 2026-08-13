@@ -39,6 +39,7 @@ pub(crate) fn minimal_input() -> ClassificationInput {
         clinvar_protein: None,
         hgvs_c: None,
         predicted_nmd: None,
+        nmd_escape_50nt: None,
         protein_truncation_pct: None,
         is_last_exon: None,
         in_critical_region: None,
