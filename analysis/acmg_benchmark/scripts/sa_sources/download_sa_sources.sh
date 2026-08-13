@@ -6,7 +6,7 @@
 # After this script finishes, run the per-source build helpers in this
 # directory:
 #   - fastvep sa-build --source clinvar ...          (clinvar.osa)
-#   - fastvep sa-build --source clinvar_protein ...  (clinvar_protein.oga)
+#   - fastvep sa-build --source clinvar_protein ...  (clinvar_protein.oga; use variant_summary.txt.gz)
 #   - fastvep sa-build --source gnomad_gene ...      (gnomad_genes.oga)
 #   - fastvep sa-build --source revel ...            (per-chrom revel_chrN.osa)
 #   - build_gnomad_per_chrom.sh                      (per-chrom gnomad_chrN.osa)
@@ -85,7 +85,9 @@ echo "Downloading into $DEST"
 echo "== ClinVar =="
 # ClinVar variant VCF on GRCh38 — drives clinvar.osa (per-allele clinical significance)
 download "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz"          "clinvar.vcf.gz"
-# ClinVar variant_summary.txt.gz — drives clinvar_protein.oga (per-protein-position pathogenic catalog for PS1/PM1/PM5)
+# ClinVar variant_summary.txt.gz - drives clinvar_protein.oga, which carries two indices:
+# classified missense by protein position (PS1 missense path, PM1, PM5) and canonical
+# splice-dinucleotide variants by genomic position (PS1 splice path, Walker 2023).
 download "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz" "variant_summary.txt.gz"
 
 echo ""
@@ -122,8 +124,11 @@ download "https://search.clinicalgenome.org/kb/gene-validity/download" \
 
 echo ""
 echo -e "${GREEN}Done.${NC} Next steps:"
-echo "  1) Build clinvar/clinvar_protein/revel/gnomad_genes .osa/.oga via:"
+echo "  1) Build clinvar/revel/gnomad_genes .osa/.oga via:"
 echo "       fastvep sa-build --source <name> -i <path> -o <prefix>"
+echo "  1b) ClinVar gene index (PS1 protein + splice paths, PM1, PM5) - note the input:"
+echo "       fastvep sa-build --source clinvar_protein -i $DEST/variant_summary.txt.gz -o $ROOT/data/benchmark/sa_db/clinvar_protein"
+echo "      clinvar.vcf.gz also parses but carries no HGVS c. token, so it yields no splice index."
 echo "  2) Per-chrom gnomAD exomes:  bash $SCRIPT_DIR/build_gnomad_per_chrom.sh"
 echo "  3) SpliceAI + PhyloP (distilled from gnomAD):"
 echo "       bash $SCRIPT_DIR/build_spliceai_phylop.sh"

@@ -220,7 +220,7 @@ in a repeat.
 |---|---|---|---|
 | OMIM `genemap2.txt` | `omim` | `omim` | PVS1, BS2, PM3, BP2 |
 | gnomAD gene constraints | `gnomad_genes` | `gnomad_genes` | PVS1, PP2, BP1 |
-| ClinVar protein index | `clinvar_protein` | `clinvar_protein` | PS1, PM1, PM5 |
+| ClinVar gene index | `clinvar_protein` | `clinvar_protein` | PS1, PM1, PM5 |
 
 The classifier degrades gracefully when these are absent — every criterion that depends on a missing `.oga` is marked `evaluated: false` rather than firing — so it's fine to start with allele-level sources only and layer these in later.
 
@@ -256,25 +256,25 @@ fastvep sa-build --source gnomad_genes -i gnomad.v4.1.constraint_metrics.tsv -o 
 #   sa_databases/gnomad_genes.oga (~4–6 MB)
 ```
 
-### ClinVar protein index
+### ClinVar gene index
 
-Used by PS1 (same-AA pathogenic match), PM5 (different-AA at same position), PM1 (hotspot density).
+Used by PS1 (same-AA pathogenic match, and the splice path's same-dinucleotide match), PM5 (different-AA at same position), PM1 (hotspot density and its benign-variation test).
 
-`clinvar_protein` extracts a different view (pathogenic missense indexed by protein position) and writes a separate `.oga`. It accepts **either** input:
+`clinvar_protein` extracts a different view of ClinVar and writes a separate `.oga` holding two indices: classified missense keyed by protein position, and canonical splice-dinucleotide variants keyed by genomic position.
 
-- the **`clinvar.vcf.gz`** you already downloaded for `clinvar.osa` (reuse it — no extra download), or
-- ClinVar's **`variant_summary.txt.gz`** (richer HGVS/protein columns; this is what the benchmark uses):
-  `curl -LO https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz`
+**Build it from `variant_summary.txt.gz`.** Both inputs parse, but the allele VCF is much the weaker source: ClinVar's VCF carries neither a protein change for most records (its `MC` field is a bare SO term and `CLNHGVS` is genomic) nor an HGVS `c.` token at all, so it yields few protein entries and no splice index whatsoever.
 
 ```bash
-# From the allele VCF (simplest):
-fastvep sa-build --source clinvar_protein -i clinvar.vcf.gz -o sa_databases/clinvar_protein --assembly GRCh38
-# ...or from variant_summary.txt.gz (same command, either file works):
-# fastvep sa-build --source clinvar_protein -i variant_summary.txt.gz -o sa_databases/clinvar_protein --assembly GRCh38
+curl -LO https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz
+
+fastvep sa-build --source clinvar_protein \
+  -i variant_summary.txt.gz -o sa_databases/clinvar_protein --assembly GRCh38
 
 # Expected output:
-#   sa_databases/clinvar_protein.oga (~4–5 MB)
+#   sa_databases/clinvar_protein.oga (~18 MB, ~15,700 genes; ~11 s to build)
 ```
+
+`--assembly` selects which `variant_summary` rows feed the splice index, and is stamped into every gene record. Protein positions are assembly-independent and come from all rows; genomic splice positions are not.
 
 ### Verifying gene-level annotations
 

@@ -1371,6 +1371,7 @@ mod tests {
             clinvar_protein: Some(ClinvarProteinData {
                 protein_variants: neighbours,
                 benign_indexed: true,
+            ..Default::default()
             }),
             ..minimal_input()
         }

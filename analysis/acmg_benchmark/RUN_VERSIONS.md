@@ -477,6 +477,77 @@ impact, fixed in v13.
 Verified that the fix changes messaging only: re-running v15 with and without it produces
 byte-identical concordance matrices.
 
+## v16: PS1's splice path, and the pile-up at nine points
+
+PS1's splice track (Walker 2023, PMID 37352859) had never fired.
+`same_splice_position_pathogenic` was a field nothing populated, so every canonical ±1/2 splice variant got `evaluated: false` on PS1.
+Unlike BP3 in v15, the missing piece was not a download: the evidence is ClinVar, which the benchmark has always loaded.
+What was missing was an index keyed the way the criterion asks.
+
+`clinvar_protein.oga` now carries a second index alongside the protein one: every ClinVar (Likely) Pathogenic variant whose HGVS `c.` token puts it on a canonical splice dinucleotide, keyed by genomic position and carrying its REF/ALT and signed offset.
+The file grew 13.4 MB to 17.9 MB and still builds in 11 s from the same `variant_summary.txt.gz`.
+
+**This is the largest single move any criterion has produced in this series.**
+
+| Metric | v15 | **v16** |
+|---|---:|---:|
+| Exact match | 62.67 % | **63.11 %** |
+| Pathogenic exact | 0.17 % | **4.38 %** |
+| Likely-pathogenic exact | 47.17 % | 44.23 % |
+| Same-direction | 77.50 % | 77.50 % |
+| Pathogenic recall | 64.61 % | 64.61 % |
+| Benign recall | 71.49 % | 71.49 % |
+| False-benign | 33 | 33 |
+| False-pathogenic | 43 | 43 |
+| Opposite-direction | 76 | 76 |
+
+Nothing on the benign side moved by a single variant, and no new opposite-direction call appeared.
+The entire effect is 3,793 variants moving `Likely_pathogenic` to `Pathogenic`, and the signature table shows the mechanism exactly:
+
+```
+-3793  PM2_Supporting+PVS1
++3793  PM2_Supporting+PS1_Supporting+PVS1
+```
+
+PVS1 is 8 Tavtigian points and PM2_Supporting is 1.
+Nine points is Likely pathogenic; Pathogenic needs ten.
+Half the ClinVar 2-star+ pathogenic set was sitting on exactly that signature, one point short, which is why adding a Supporting criterion to a subset of it moved 3,793 calls.
+
+Of those 3,793, **3,363 are true Pathogenic** (a gain), 411 are true Likely_pathogenic and 19 are true VUS (both losses, both same-direction).
+That is 7.8 right moves for every wrong one.
+The 411 are worth stating plainly rather than hiding in the net: on those, ClinVar's submitters landed on LP and fastVEP now says P, and the disagreement is exactly whether Walker 2023's PS1 code was applied.
+
+Across the whole set PS1's splice path fires 4,776 times, of which 4,719 (98.8 %) are on pathogenic-side truth and 11 are on benign-side truth.
+
+### What was implemented, and what was deliberately not
+
+Table 3 of Walker 2023 grades PS1 for splicing on two axes: where the comparison variant sits relative to the variant under assessment, and what PVS1 code the variant already carries.
+Only the rows where the table's own prerequisite holds by construction are implemented.
+
+That prerequisite is that "the predicted event of the VUA must precisely match the predicted event of the comparison (Likely) Pathogenic variant".
+Two variants on the *same canonical dinucleotide* abolish the same donor or acceptor, so it holds automatically.
+For a comparison variant elsewhere in the splice motif it does not, and no index can settle it - those rows stay with curators.
+
+Three restrictions follow from the table and from the subgroup's [published response to feedback](https://clinicalgenome.org/docs/clingen-svi-splicing-subgroup-response-to-feedback/) (22 March 2024):
+
+- **The comparison variant must be `Pathogenic`, not `Likely_pathogenic`.** Table 3 reads `N/A` in the LP column for a canonical-dinucleotide variant under assessment. The subgroup's reason (item 7c): "since it is so easy for a ±1,2 dinucleotide variant to reach likely pathogenic, we placed constraints on using these variants as reference to make sure there actually was clinical evidence informing that pathogenic classification". Whether an LP call rests on real clinical evidence is a curator's judgement.
+- **The strength is Supporting, not Strong.** Table 3 row 3. The reduction exists "to prevent overweighting of the VUA compared to the original (Likely) Pathogenic comparison variant". Row 5 raises it to full PS1 when the variant's own PVS1 was downgraded, which is implemented in `reconcile_evidence` and **fired zero times on this dataset** - a downgraded PVS1 and a catalogued same-dinucleotide neighbour did not co-occur once in 673,660 variants.
+- **The variant's own ClinVar record never counts.** The index carries REF/ALT, so the self entry is identified exactly rather than guessed at, which is why this does not consult `exclude_self_from_clinvar_evidence` - that knob exists for the protein index, which cannot tell which entry is the variant being classified. Verified end to end on two variants that are the only catalogued Pathogenic allele on their dinucleotide, CYB5A c.130-2A>G and DARS2 c.492+2T>C: both report "the ClinVar splice index holds no other Pathogenic variant on this dinucleotide" rather than firing off themselves.
+
+447 of the 4,776 firings are on canonical splice variants carrying no PVS1 at all - a gene with no established LOF mechanism, typically.
+Table 3 has no row for those, so they keep the conservative Supporting.
+
+Combining PS1 with PVS1 is not double counting here, and the subgroup says so directly (item 7b): "if there is a relevant pathogenic variant with the same predicted impact as the variant under assessment, then you can use PS1 as well as PVS1(RNA)".
+
+### Two smaller things the work changed
+
+The splice index is keyed by *genomic* position, where the protein index is assembly-independent.
+The builder therefore filters `variant_summary` to one assembly (`--assembly`, default GRCh38, which the flag already carried and the builder previously ignored) and stamps the name into every gene record, so a call's provenance is visible rather than assumed.
+
+A gene whose only classified variants are canonical splice ones has no residue substitution to index, and used to fall out of `clinvar_protein.oga` entirely.
+It now gets a record with an empty `proteinVariants`.
+That is a real behaviour change beyond PS1: `in_critical_region` for such a gene goes from "cannot tell" to "no downstream pathogenic variant indexed", which moved exactly one variant from `PVS1_Moderate` to `PVS1_Supporting`.
+
 ## Progression, v9 to v14
 
 | Metric | v9 | v10 | v11 | v12 | v13 | v14 |

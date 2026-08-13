@@ -424,6 +424,78 @@ Walker's near boundary of 7), and `1_000_000` restores it unbounded.
 The bound applies only to the intronic extension; a synonymous variant is exonic and is
 unaffected.
 
+## PS1 for splicing
+
+Richards 2015 defines PS1 on the protein: the same amino acid change as a previously established pathogenic variant.
+Walker 2023 (ClinGen SVI Splicing Subgroup, PMID 37352859) extends it to splicing, where "the same change" means the same predicted RNA event rather than the same residue.
+fastVEP implements the part of that extension an index can settle on its own.
+
+### The rule as implemented
+
+A canonical ±1/2 splice variant gets PS1 when **another** ClinVar `Pathogenic` variant sits on the **same canonical dinucleotide**.
+Both variants abolish the same donor or acceptor, so Table 3's prerequisite - that the two predicted RNA events "precisely match" - holds by construction rather than by assumption.
+
+The strength follows Table 3, and is graded on the PVS1 code the variant already carries:
+
+| Baseline PVS1 on the variant | PS1 code |
+|---|---|
+| `PVS1` (Very Strong) | `PS1_Supporting` |
+| `PVS1_Strong` / `_Moderate` / `_Supporting` | `PS1` (Strong) |
+| No PVS1 at all | `PS1_Supporting` (no row of Table 3 covers this; the conservative one stands) |
+
+The reduction under a full-strength PVS1 exists "to prevent overweighting of the VUA compared to the original (Likely) Pathogenic comparison variant".
+It is applied in the reconciliation pass, because criteria are evaluated independently and PVS1's graded outcome is not visible to PS1 itself.
+
+Combining PS1 with PVS1 is sanctioned rather than double counting.
+The subgroup's [response to feedback](https://clinicalgenome.org/docs/clingen-svi-splicing-subgroup-response-to-feedback/) (22 March 2024, item 7b) is explicit: "if there is a relevant pathogenic variant with the same predicted impact as the variant under assessment, then you can use PS1 as well as PVS1(RNA)".
+
+### Three restrictions, and why each is there
+
+**The comparison variant must be `Pathogenic`, not `Likely_pathogenic`.**
+Table 3 reads `N/A` in the LP column for a canonical-dinucleotide variant under assessment.
+Item 7c of the same response document gives the reason: "since it is so easy for a ±1,2 dinucleotide variant to reach likely pathogenic, we placed constraints on using these variants as reference to make sure there actually was clinical evidence informing that pathogenic classification".
+Whether an LP call rests on real clinical evidence is a curator's judgement, not something an index can answer, so LP entries are indexed but never fire.
+
+**The comparison variant must be on the same dinucleotide, not merely in the same splice motif.**
+Table 3 does cover a comparison variant elsewhere in the donor or acceptor motif, and does cover variants under assessment outside the canonical dinucleotide.
+Neither is implemented, because for those the prerequisite has to be *established* - a variant at -3 may produce a different aberration from one at -1 - and establishing it needs a per-variant SpliceAI comparison the index does not carry.
+Those rows are left to curators.
+
+**The variant's own ClinVar record never counts.**
+A comparison variant is by definition another variant, and the index is built from ClinVar, so a variant that is itself ClinVar Pathogenic will find its own entry.
+The splice index carries REF and ALT, so the self entry is matched exactly rather than guessed at; this is why the splice path does not consult `exclude_self_from_clinvar_evidence`, which exists for the protein index precisely because that one *cannot* tell which entry is the variant being classified.
+
+### The data it reads
+
+`clinvar_protein.oga` carries the index, alongside the protein one it has always had:
+
+```json
+{"benignIndexed": true,
+ "proteinVariants": [...],
+ "spliceIndexed": true,
+ "spliceAssembly": "GRCh38",
+ "splicePositions": [{"pos": 7676000, "ref": "A", "alt": "G", "off": -2, "sig": "Pathogenic"}]}
+```
+
+It is built from `variant_summary.txt.gz`, whose `Name` column carries the HGVS `c.` token that identifies a `±1`/`±2` position, and whose `PositionVCF` / `ReferenceAlleleVCF` / `AlternateAlleleVCF` columns give the coordinate to match a call against.
+Rebuild with:
+
+```bash
+fastvep sa-build --source clinvar_protein \
+  -i variant_summary.txt.gz -o <sa-dir>/clinvar_protein
+```
+
+Two consequences of keying on genomic position rather than protein position are worth knowing.
+The index is **assembly-specific**, so the builder filters to one assembly (`--assembly`, default GRCh38) and stamps the name into every gene record.
+And `spliceIndexed` is what separates "this gene has no catalogued comparison variant" from "this file was built before the splice pass existed" - on an older file PS1 reports `evaluated: false` rather than a negative call.
+
+### What it moved
+
+On the 673,660-variant ClinVar 2-star+ benchmark, PS1's splice path fires 4,776 times, 98.8 % of them on pathogenic-side truth, and lifts the exact-match rate from 62.67 % to 63.11 % without moving a single benign-side call or adding an opposite-direction error.
+The whole effect is 3,793 variants going from Likely pathogenic to Pathogenic, of which 3,363 are true Pathogenic.
+The mechanism is arithmetic: `PVS1` (8 points) + `PM2_Supporting` (1) is 9, one short of the 10 that Pathogenic requires, and a large fraction of the pathogenic set was sitting on exactly that signature.
+Full numbers in [`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md).
+
 ## Functional evidence (PS3 / BS3)
 
 PS3 and BS3 are the two criteria fastVEP cannot compute.
@@ -606,7 +678,7 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 |---|---|---|---|
 | **gnomAD Gene Constraints** | `gnomad_genes` | PVS1, PP2, BP1 | pLI, LOEUF, misZ, synZ |
 | **ClinGen GDV** (or OMIM) | `omim` | PVS1, PP2, PM1, BS2, PM3, BP2 | Gene-disease validity, disease associations, inheritance patterns |
-| **ClinVar Protein Index** | `clinvar_protein` | PS1, PM1, PM5, BP1 | Classified missense by protein position, both directions: pathogenic entries drive PS1/PM5/PM1's hotspot count, benign entries drive PM1's "without benign variation" test |
+| **ClinVar gene index** | `clinvar_protein` | PS1, PM1, PM5, BP1 | Two indices in one file. Classified missense by protein position, both directions: pathogenic entries drive PS1's missense path, PM5 and PM1's hotspot count, benign entries drive PM1's "without benign variation" test. Plus canonical splice-dinucleotide variants by genomic position, driving [PS1's splice path](#ps1-for-splicing) |
 
 ### Optional Sources
 
@@ -662,12 +734,14 @@ as the answer.
 ```bash
 fastvep sa-build --source omim -i genemap2.txt -o sa/omim --assembly GRCh38
 fastvep sa-build --source gnomad_genes -i gnomad.v4.1.constraint_metrics.tsv -o sa/gnomad_genes --assembly GRCh38
-fastvep sa-build --source clinvar_protein -i clinvar.vcf.gz -o sa/clinvar_protein --assembly GRCh38
+fastvep sa-build --source clinvar_protein -i variant_summary.txt.gz -o sa/clinvar_protein --assembly GRCh38
 ```
 
 When a `.oga` is missing, dependent criteria (PVS1, PS1, PM1, PM5, PM3, BP1, BP2, PP2, BS2) degrade gracefully to `evaluated: false` rather than misfiring.
 `clinvar_protein.oga` files built before benign assertions were indexed stay readable, and PM1 skips its benign-variation half against them rather than reading a structurally empty count as "no benign variation here": the record carries `benignIndexed` to tell the two apart.
-Rebuilding the source is what switches that half on.
+`spliceIndexed` does the same job for PS1's splice path.
+Rebuilding the source is what switches either half on.
+Prefer `variant_summary.txt.gz` over `clinvar.vcf.gz` as the input: the VCF exposes neither a protein change for most records nor an HGVS `c.` token at all, so it yields very few protein entries and no splice index whatsoever.
 The gene-disease validity gate degrades the other way round, and deliberately: with no `omim.oga` loaded it does not fire at all, because a gene missing from a file nobody opened is not a gene without a disease. Loading the source is therefore what switches the gate on, and PVS1/PP2/PM1 become *stricter* when it is present, not more permissive. See [ACMG_SETUP.md](ACMG_SETUP.md) for download URLs, expected file sizes, and end-to-end verification.
 
 ## Evidence Criteria Reference
@@ -744,7 +818,7 @@ PVS1 is graded by a decision tree over null-variant context. The output code car
 
 When the pipeline does not populate the tree signals (`predicted_nmd`, `protein_truncation_pct`, `is_last_exon`, `in_critical_region`, `alt_start_codon_distance`), PVS1 falls back to legacy Very Strong for any null variant in a LOF-intolerant gene. The graded result is exposed in `details` for transparency.
 
-Two branches remain unreachable because their signals have no plumbing yet: `alt_start_codon_distance` (start-loss) and `same_splice_position_pathogenic` (PS1's splice track). Start-loss therefore always lands at `PVS1_Supporting`.
+One branch remains unreachable because its signal has no plumbing yet: `alt_start_codon_distance` (start-loss), which therefore always lands at `PVS1_Supporting`.
 
 #### Which NMD prediction the tree runs on
 
@@ -979,7 +1053,7 @@ Output (JSON / VCF CSQ / TSV)
 3. **PP4** (phenotype specificity): Requires patient HPO phenotype terms
 4. **BP5** (alternate molecular basis): Requires case-level multi-gene analysis
 5. **PS4** is `NotEvaluated` by default — true PS4 needs case-control statistics; the legacy ClinVar-stars proxy is invalid per SVI. Opt back in via `use_clinvar_stars_as_ps4_proxy = true` for backward-comparable benchmarks.
-6. **PS1 splice-RNA path** requires the pipeline to populate `same_splice_position_pathogenic`, which nothing does yet, so PS1 on a canonical splice variant is `evaluated: false`. This is a plumbing gap rather than a missing data source: the evidence it needs is ClinVar pathogenic variants at the same splice position, and ClinVar is already loaded - it wants a position-keyed splice index built the way `clinvar_protein.oga` is. (PS1/PM5/PM1's protein-position half is satisfied whenever that `.oga` is loaded, which the documented setup does.)
+6. **PS1's splice path covers only the same canonical dinucleotide.** Walker 2023 Table 3 also allows a comparison variant elsewhere in the same splice motif, and allows PS1 on variants *outside* the canonical dinucleotide. Neither is implemented, because both need the table's prerequisite - that the two variants' predicted RNA events "precisely match" - to be established rather than assumed. See [PS1 for splicing](#ps1-for-splicing). Requires a `clinvar_protein.oga` built by a version that carries `spliceIndexed`; older files make PS1 report `evaluated: false` on canonical splice variants rather than assuming no comparison exists.
 7. **PVS1 grading** uses Abou Tayoun 2018 signals (`predicted_nmd`, `protein_truncation_pct`, `is_last_exon`, `in_critical_region`, `alt_start_codon_distance`). When the pipeline cannot derive these for a transcript, PVS1 falls back to legacy Very Strong on any null variant in an LOF-intolerant gene.
 8. **BP7 exon-edge / deep-intronic extension** uses optional `at_exon_edge` / `intronic_offset` fields. When unset, BP7 falls back to the legacy synonymous-only rule.
 9. **BP3** requires a RepeatMasker interval `.osi`. Build it from the UCSC track - see [Building the RepeatMasker track](#building-the-repeatmasker-track-bp3). Without one BP3 reports `evaluated: false` rather than assuming a variant is not in a repeat.

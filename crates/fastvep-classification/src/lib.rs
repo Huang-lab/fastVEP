@@ -21,8 +21,8 @@ pub mod types;
 pub use config::{AcmgConfig, TrioConfig};
 pub use functional::{FunctionalCriterion, FunctionalEvidence, FunctionalEvidenceIndex};
 pub use sa_extract::{
-    extract_classification_input, is_pure_insertion, ClassificationInput, CompanionVariant,
-    GenotypeInfo,
+    extract_classification_input, is_pure_insertion, same_splice_position_pathogenic,
+    ClassificationInput, CompanionVariant, GenotypeInfo,
 };
 pub use types::{AcmgClassification, AcmgResult, EvidenceCounts, EvidenceCriterion};
 

@@ -782,6 +782,11 @@ impl AnnotationContext {
                 let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, &sample_names);
 
                 let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+                // Resolved here rather than inside the classifier: the ClinVar
+                // splice index is keyed by genomic coordinate, and
+                // `extract_classification_input` is handed a transcript-level
+                // view that carries none.
+                let query_alleles = vf.query_alleles();
 
                 for tv in &mut vf.transcript_variations {
                     let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
@@ -791,6 +796,7 @@ impl AnnotationContext {
                             .filter(|ga| ga.gene_symbol == gene_sym)
                             .collect();
                     for aa in &mut tv.allele_annotations {
+                        let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
                         let input =
                             fastvep_classification::extract_classification_input(
                                 &aa.consequences,
@@ -803,12 +809,10 @@ impl AnnotationContext {
                                 aa.exon,
                                 aa.protein_length,
                                 aa.escapes_nmd,
-                repeat_db_loaded,
+                                repeat_db_loaded,
+                                splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
-                                vf.alt_alleles
-                                    .iter()
-                                    .position(|a| *a == aa.allele)
-                                    .and_then(|i| functional_by_alt[i].clone()),
+                                alt_idx.and_then(|i| functional_by_alt[i].clone()),
                                 &aa.supplementary,
                                 &gene_anns,
                                 &vf.supplementary_annotations,
@@ -1253,6 +1257,8 @@ fn enrich_compound_het(
                 .filter(|ga| ga.gene_symbol == gene_sym)
                 .collect();
             let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+            let query_alleles = vf.query_alleles();
+            let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
 
             let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, sample_names);
 
@@ -1268,11 +1274,9 @@ fn enrich_compound_het(
                 aa.protein_length,
                 aa.escapes_nmd,
                 repeat_db_loaded,
+                splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
-                vf.alt_alleles
-                    .iter()
-                    .position(|a| *a == aa.allele)
-                    .and_then(|i| functional_by_alt[i].clone()),
+                alt_idx.and_then(|i| functional_by_alt[i].clone()),
                 &aa.supplementary,
                 &gene_anns,
                 &vf.supplementary_annotations,
@@ -1430,6 +1434,29 @@ pub fn load_gene_providers(
 /// normalised alleles: the curated file is written by a human reading a VCF, so
 /// that is the form the entry will be in. The result is positional, one slot
 /// per ALT, so one allele's curated result is never applied to its neighbours.
+/// Whether PS1's splice path has a comparison variant for this allele.
+///
+/// A thin adapter: it pairs the allele with its VCF-form coordinates from
+/// [`VariationFeature::query_alleles`] and hands them to the classifier, which
+/// owns the rule. `None` whenever the allele has no coordinate to look up, which
+/// is the same "cannot tell" the classifier returns for an unloaded index.
+fn splice_ps1_evidence(
+    aa: &AlleleAnnotation,
+    gene_anns: &[&fastvep_core::GeneAnnotation],
+    query_alleles: &[(String, u64, String, String)],
+    alt_idx: Option<usize>,
+) -> Option<bool> {
+    let (_, pos, ref_allele, alt) = query_alleles.get(alt_idx?)?;
+    fastvep_classification::same_splice_position_pathogenic(
+        &aa.consequences,
+        gene_anns,
+        aa.hgvsc.as_deref(),
+        *pos,
+        ref_allele,
+        alt,
+    )
+}
+
 fn resolve_functional_by_alt(
     index: Option<&fastvep_classification::FunctionalEvidenceIndex>,
     vf: &VariationFeature,

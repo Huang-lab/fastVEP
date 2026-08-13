@@ -1,4 +1,5 @@
 use fastvep_core::{GeneAnnotation, SupplementaryAnnotation};
+use fastvep_core::{is_canonical_dinucleotide_offset, parse_intronic_offset};
 use fastvep_core::{Consequence, Impact};
 use serde::Deserialize;
 
@@ -457,6 +458,149 @@ pub struct ClinvarProteinData {
     /// evidence the criterion asks us to rule out.
     #[serde(rename = "benignIndexed", default)]
     pub benign_indexed: bool,
+    /// Whether the index that produced this record carries the canonical
+    /// splice-site variants PS1's splice path reads. Same three-state reason as
+    /// [`Self::benign_indexed`]: in a file built before the splice pass existed,
+    /// an empty [`Self::splice_positions`] says nothing about the gene, so PS1
+    /// must report "no data" rather than "no match".
+    #[serde(rename = "spliceIndexed", default)]
+    pub splice_indexed: bool,
+    /// Reference assembly the [`Self::splice_positions`] coordinates are on.
+    /// Protein positions are assembly-independent; genomic ones are not, and
+    /// silently comparing GRCh38 index positions against GRCh37 calls would
+    /// match the wrong sites. Surfaced in PS1's `details` so the build a call
+    /// rests on is visible in the output.
+    #[serde(rename = "spliceAssembly", default)]
+    pub splice_assembly: Option<String>,
+    /// Classified ClinVar variants on a canonical splice dinucleotide of this
+    /// gene, keyed by genomic position.
+    #[serde(rename = "splicePositions", default)]
+    pub splice_positions: Vec<ClinvarSpliceVariant>,
+}
+
+/// A single classified ClinVar variant sitting on a canonical splice
+/// dinucleotide (`+1`, `+2`, `-1` or `-2`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClinvarSpliceVariant {
+    /// 1-based genomic position, on the assembly named by
+    /// [`ClinvarProteinData::splice_assembly`].
+    pub pos: u64,
+    #[serde(rename = "ref")]
+    pub ref_allele: String,
+    pub alt: String,
+    /// Signed intronic offset, one of `+1`, `+2`, `-1`, `-2`.
+    pub off: i64,
+    /// `Pathogenic` or `Likely_pathogenic`.
+    pub sig: String,
+}
+
+/// Whether a ClinVar `Pathogenic` variant *other than this one* sits on the
+/// same canonical splice dinucleotide - PS1's splice path (Walker 2023, ClinGen
+/// SVI Splicing Subgroup, PMID 37352859, Table 3).
+///
+/// Returns `None` when the question cannot be asked: the variant is not a
+/// canonical ±1/2 splice variant, no `clinvar_protein` gene record is loaded,
+/// or the record predates the splice pass. `Some(false)` is a real answer -
+/// the index was consulted and holds no qualifying comparison variant.
+///
+/// Three deliberate restrictions, each straight out of Table 3:
+///
+/// - **Comparison variant must be `Pathogenic`, not `Likely_pathogenic`.**
+///   Table 3's rows for a canonical-dinucleotide variant under assessment read
+///   `N/A` in the LP column. The subgroup's published response to feedback
+///   (22 March 2024, item 7c) gives the reason: "since it is so easy for a
+///   ±1,2 dinucleotide variant to reach likely pathogenic, we placed
+///   constraints on using these variants as reference to make sure there
+///   actually was clinical evidence informing that pathogenic classification".
+///   Whether an LP call rests on real clinical evidence is a curator's
+///   judgement, not something an index can answer.
+/// - **Comparison variant must be within the *same* canonical dinucleotide.**
+///   Table 3's prerequisite is that the predicted RNA event of the two variants
+///   "precisely match". Two variants on the same dinucleotide abolish the same
+///   donor or acceptor, so that holds by construction. It does not hold for a
+///   comparison variant elsewhere in the splice motif, which is why the rows
+///   covering those are left to curators rather than implemented here.
+/// - **The variant's own ClinVar record never counts.** A comparison variant is
+///   by definition another variant. This is exact here - the index carries
+///   ref/alt, so the self entry is identified rather than guessed - which is why
+///   it does not consult
+///   [`AcmgConfig::exclude_self_from_clinvar_evidence`](crate::config::AcmgConfig::exclude_self_from_clinvar_evidence);
+///   that knob exists for the protein index, which cannot tell which entry is
+///   the variant being classified.
+///
+/// The resulting strength is *not* Strong. See
+/// [`crate::criteria`] for the PVS1-dependent grading Table 3 specifies.
+pub fn same_splice_position_pathogenic(
+    consequences: &[Consequence],
+    gene_annotations: &[&GeneAnnotation],
+    hgvs_c: Option<&str>,
+    pos: u64,
+    ref_allele: &str,
+    alt_allele: &str,
+) -> Option<bool> {
+    let is_canonical_splice = consequences.iter().any(|c| {
+        matches!(
+            c,
+            Consequence::SpliceAcceptorVariant | Consequence::SpliceDonorVariant
+        )
+    });
+    if !is_canonical_splice {
+        return None;
+    }
+
+    let cpd: ClinvarProteinData = gene_annotations
+        .iter()
+        .find(|ga| ga.json_key == "clinvar_protein")
+        .and_then(|ga| serde_json::from_str(&ga.json_string).ok())?;
+    if !cpd.splice_indexed {
+        return None;
+    }
+
+    let own_offset = hgvs_c.and_then(parse_intronic_offset);
+    let met = cpd.splice_positions.iter().any(|v| {
+        v.sig.eq_ignore_ascii_case("Pathogenic")
+            && !is_same_allele(v, pos, ref_allele, alt_allele)
+            && same_canonical_dinucleotide(pos, own_offset, v.pos, v.off)
+    });
+    Some(met)
+}
+
+/// Whether an index entry is the variant being classified.
+fn is_same_allele(v: &ClinvarSpliceVariant, pos: u64, ref_allele: &str, alt_allele: &str) -> bool {
+    v.pos == pos
+        && v.ref_allele.eq_ignore_ascii_case(ref_allele)
+        && v.alt.eq_ignore_ascii_case(alt_allele)
+}
+
+/// Whether two canonical splice-site variants sit on the same donor or acceptor
+/// dinucleotide.
+///
+/// Same genomic position settles it outright. Otherwise the two bases of a
+/// dinucleotide are genomically adjacent - on either strand, `+1` and `+2` are
+/// neighbours, as are `-1` and `-2` - and the offsets must agree in sign, which
+/// keeps a donor from pairing with an acceptor. Introns are far longer than the
+/// 4 bp that would be needed for a donor and an acceptor dinucleotide to be
+/// adjacent, so the sign test is a guard rather than the load-bearing part.
+///
+/// Without the variant's own offset (no HGVS on the call) only the
+/// same-position case can be decided, and the function conservatively declines
+/// the adjacent one.
+fn same_canonical_dinucleotide(
+    vua_pos: u64,
+    vua_offset: Option<i64>,
+    cmp_pos: u64,
+    cmp_offset: i64,
+) -> bool {
+    if !is_canonical_dinucleotide_offset(cmp_offset) {
+        return false;
+    }
+    if vua_pos == cmp_pos {
+        return true;
+    }
+    let Some(off) = vua_offset.filter(|o| is_canonical_dinucleotide_offset(*o)) else {
+        return false;
+    };
+    vua_pos.abs_diff(cmp_pos) == 1 && off.signum() == cmp_offset.signum()
 }
 
 /// A single classified ClinVar variant at a protein position.
@@ -587,11 +731,12 @@ pub struct ClassificationInput {
     /// Distance (in codons) to the next downstream Met for start-loss
     /// variants. None if no alternative start codon exists.
     pub alt_start_codon_distance: Option<i64>,
-    /// PS1 splice path (Walker 2023): set to true when this canonical ±1/2
-    /// splice variant matches a known pathogenic splice variant predicted to
-    /// produce the same RNA outcome (e.g. same intron, same direction of
-    /// splice loss). The pipeline computes this from a position-indexed
-    /// ClinVar splice catalog. None when the data isn't available.
+    /// PS1 splice path (Walker 2023): true when a ClinVar `Pathogenic` variant
+    /// other than this one sits on the same canonical splice dinucleotide, and
+    /// so is predicted to abolish the same donor or acceptor. `None` when the
+    /// question could not be asked. Computed by the caller from the ClinVar
+    /// splice index - see [`same_splice_position_pathogenic`], whose doc
+    /// comment carries the Table 3 reasoning.
     pub same_splice_position_pathogenic: Option<bool>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
@@ -660,6 +805,7 @@ pub fn extract_classification_input(
     protein_length: Option<u64>,
     escapes_nmd: Option<bool>,
     repeat_db_loaded: bool,
+    same_splice_position_pathogenic: Option<bool>,
     is_pure_insertion: Option<bool>,
     functional_evidence: Option<crate::functional::FunctionalEvidence>,
     allele_supplementary: &[(String, String)],
@@ -839,17 +985,20 @@ pub fn extract_classification_input(
         // didn't pass `--hgvs` — this stays `None` and BA1 falls back to its
         // default behavior (no exception-list lookup).
         hgvs_c: hgvs_c.map(|s| s.to_string()),
-        // PVS1 decision-tree signals, all derived above. `alt_start_codon_distance`
-        // (start-loss track) and `same_splice_position_pathogenic` (PS1's splice
-        // track) still await dedicated plumbing and stay `None`, so those two
-        // branches keep their conservative defaults.
+        // PVS1 decision-tree signals, all derived above.
+        // `alt_start_codon_distance` (start-loss track) still awaits dedicated
+        // plumbing and stays `None`, so that branch keeps its conservative
+        // default. `same_splice_position_pathogenic` is resolved by the caller,
+        // because the ClinVar splice index is keyed by genomic coordinate and
+        // this function is handed a transcript-level view with no coordinates
+        // in it - the same division of labour as `functional_evidence`.
         predicted_nmd,
         nmd_escape_50nt: escapes_nmd,
         protein_truncation_pct,
         is_last_exon,
         in_critical_region,
         alt_start_codon_distance: None,
-        same_splice_position_pathogenic: None,
+        same_splice_position_pathogenic,
         in_repeat_region,
         is_pure_insertion,
         // BP7 exon-edge / deep-intronic signals (Walker 2023). `intronic_offset`
@@ -863,47 +1012,6 @@ pub fn extract_classification_input(
         companion_variants,
         functional_evidence,
     }
-}
-
-/// Extract the intronic offset (distance from the nearest exon boundary) from
-/// an HGVS c./n. string.
-///
-/// The offset is the HGVS `+N` / `-N` token that *follows* the CDS position
-/// number, so it is always immediately preceded by a digit. That distinguishes
-/// it from the leading sign of a UTR position (`c.-23…`, where the `-` is
-/// preceded by `.`) and from transcript-version dots (`ENST….7:c.…`). For range
-/// variants (e.g. `c.4001+12_4001+15del`) the endpoint nearest the boundary
-/// (smallest |offset|) is returned. Returns `None` for purely exonic variants
-/// (no such token) — e.g. `c.5098G>C`, `c.*1411T>A`.
-fn parse_intronic_offset(hgvs_c: &str) -> Option<i64> {
-    let bytes = hgvs_c.as_bytes();
-    let mut best: Option<i64> = None;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if (b == b'+' || b == b'-') && i > 0 && bytes[i - 1].is_ascii_digit() {
-            let sign = if b == b'-' { -1i64 } else { 1i64 };
-            let mut j = i + 1;
-            let mut val: i64 = 0;
-            let mut any = false;
-            while j < bytes.len() && bytes[j].is_ascii_digit() {
-                val = val.saturating_mul(10).saturating_add((bytes[j] - b'0') as i64);
-                any = true;
-                j += 1;
-            }
-            if any {
-                let off = sign * val;
-                best = Some(match best {
-                    Some(prev) if prev.abs() <= off.abs() => prev,
-                    _ => off,
-                });
-            }
-            i = j;
-        } else {
-            i += 1;
-        }
-    }
-    best
 }
 
 #[cfg(test)]
@@ -1051,25 +1159,6 @@ mod tests {
         assert_eq!(c.max_pop_af(), Some(0.0113));
     }
 
-    #[test]
-    fn test_parse_intronic_offset() {
-        // Exonic substitution / UTR → no offset.
-        assert_eq!(parse_intronic_offset("ENST00000272371.7:c.5098G>C"), None);
-        assert_eq!(parse_intronic_offset("c.*1411T>A"), None);
-        // Canonical splice positions.
-        assert_eq!(parse_intronic_offset("c.964+1G>A"), Some(1));
-        assert_eq!(parse_intronic_offset("ENST00000378156.9:c.2818-2A>."), Some(-2));
-        // Deep-intronic single position.
-        assert_eq!(parse_intronic_offset("c.4001+12_4001+15del"), Some(12));
-        assert_eq!(parse_intronic_offset("n.162-24414C>T"), Some(-24414));
-        // Range spanning the boundary → nearest endpoint (smallest |offset|).
-        assert_eq!(parse_intronic_offset("c.366-1_366+2dup"), Some(-1));
-        assert_eq!(parse_intronic_offset("c.541-30_541-2dup"), Some(-2));
-        // UTR position sign must not be mistaken for an offset.
-        assert_eq!(parse_intronic_offset("c.-23+1G>A"), Some(1));
-        assert_eq!(parse_intronic_offset("c.-23-1G>A"), Some(-1));
-    }
-
     /// Build a `ClassificationInput` through the real entry point, varying only
     /// the PVS1 tree inputs. Everything else is inert.
     fn extract(
@@ -1101,6 +1190,7 @@ mod tests {
             protein_length,
             escapes_nmd,
             false, // repeat_db_loaded: no interval source in these unit tests
+            None,  // same_splice_position_pathogenic: resolved by the caller
             None,
             None,
             &[],
@@ -1167,5 +1257,115 @@ mod tests {
             {"pos":900,"refAa":"R","altAa":"Q","sig":"Conflicting_interpretations_of_pathogenicity","n":1}
         ]}"#;
         assert_eq!(extract(Some(500), None, None, None, Some(idx)).in_critical_region, Some(false));
+    }
+
+    // ── PS1 splice path (Walker 2023 Table 3) ────────────────────────────
+
+    /// A gene record carrying the splice index, with `rows` as the raw JSON of
+    /// `splicePositions`.
+    fn splice_index(rows: &str) -> GeneAnnotation {
+        GeneAnnotation {
+            gene_symbol: "TEST".to_string(),
+            json_key: "clinvar_protein".to_string(),
+            json_string: format!(
+                r#"{{"benignIndexed":true,"proteinVariants":[],"spliceIndexed":true,"spliceAssembly":"GRCh38","splicePositions":[{rows}]}}"#
+            ),
+        }
+    }
+
+    fn splice_ps1(index: Option<&GeneAnnotation>, hgvs: Option<&str>, pos: u64, r: &str, a: &str) -> Option<bool> {
+        let anns: Vec<&GeneAnnotation> = index.into_iter().collect();
+        same_splice_position_pathogenic(
+            &[Consequence::SpliceAcceptorVariant],
+            &anns,
+            hgvs,
+            pos,
+            r,
+            a,
+        )
+    }
+
+    #[test]
+    fn test_ps1_splice_fires_on_a_different_allele_at_the_same_position() {
+        let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#);
+        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"), Some(true));
+    }
+
+    #[test]
+    fn test_ps1_splice_never_fires_off_the_variants_own_record() {
+        // The index is built from ClinVar, so a variant that is itself ClinVar
+        // Pathogenic finds its own entry. A comparison variant is by
+        // definition another variant, and firing off yourself is circular.
+        let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#);
+        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>G"), 100, "A", "G"), Some(false));
+    }
+
+    #[test]
+    fn test_ps1_splice_reaches_the_other_base_of_the_same_dinucleotide() {
+        // c.376-1 and c.376-2 are the two bases of one acceptor, genomically
+        // adjacent on either strand.
+        let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#);
+        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"), Some(true));
+    }
+
+    #[test]
+    fn test_ps1_splice_does_not_cross_from_a_donor_to_an_acceptor() {
+        // Opposite-signed offsets are different splice sites even if the
+        // coordinates were somehow adjacent.
+        let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":1,"sig":"Pathogenic"}"#);
+        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"), Some(false));
+    }
+
+    #[test]
+    fn test_ps1_splice_rejects_a_likely_pathogenic_comparison() {
+        // Table 3 reads N/A in the LP column for a canonical-dinucleotide
+        // variant under assessment: an LP call at a ±1,2 position is too easy
+        // to reach for its clinical evidence to be borrowable unchecked.
+        let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Likely_pathogenic"}"#);
+        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"), Some(false));
+    }
+
+    #[test]
+    fn test_ps1_splice_without_an_index_is_unknown_not_absent() {
+        assert_eq!(splice_ps1(None, Some("c.376-2A>T"), 100, "A", "T"), None);
+
+        // A record built before the splice pass carries no `spliceIndexed`,
+        // and its silence says nothing about the gene.
+        let old = GeneAnnotation {
+            gene_symbol: "TEST".to_string(),
+            json_key: "clinvar_protein".to_string(),
+            json_string: r#"{"benignIndexed":true,"proteinVariants":[]}"#.to_string(),
+        };
+        assert_eq!(splice_ps1(Some(&old), Some("c.376-2A>T"), 100, "A", "T"), None);
+    }
+
+    #[test]
+    fn test_ps1_splice_declines_a_non_canonical_variant() {
+        let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#);
+        let anns = vec![&idx];
+        assert_eq!(
+            same_splice_position_pathogenic(
+                &[Consequence::MissenseVariant],
+                &anns,
+                Some("c.524G>A"),
+                100,
+                "A",
+                "T"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_ps1_splice_without_hgvs_still_matches_the_same_position() {
+        // No HGVS means no offset for the variant being classified, so the
+        // adjacent base cannot be reasoned about - but the same position is
+        // the same dinucleotide whatever the offset is.
+        let idx = splice_index(
+            r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"},
+               {"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#,
+        );
+        assert_eq!(splice_ps1(Some(&idx), None, 100, "A", "T"), Some(true));
+        assert_eq!(splice_ps1(Some(&idx), None, 102, "C", "T"), Some(false));
     }
 }

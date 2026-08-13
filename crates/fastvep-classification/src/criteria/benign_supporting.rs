@@ -1268,6 +1268,7 @@ mod tests {
                 })
                 .collect(),
             benign_indexed: true,
+            ..Default::default()
         }
     }
 
@@ -1305,6 +1306,7 @@ mod tests {
         input.clinvar_protein = Some(ClinvarProteinData {
             protein_variants: vec![],
             benign_indexed: true,
+            ..Default::default()
         });
         let result = evaluate_bp1(&input, &AcmgConfig::default());
         assert!(result.met);

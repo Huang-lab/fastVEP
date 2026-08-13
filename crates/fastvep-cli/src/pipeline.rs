@@ -1259,7 +1259,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             // supplementary databases attach to every record that matches.
             if !sa_providers.is_empty() {
                 let chrom = &vf.position.chromosome;
-                let sa_queries = supplementary_query_alleles(vf);
+                let sa_queries = vf.query_alleles();
                 let mut allele_results: HashMap<String, Vec<(String, String)>> =
                     HashMap::new();
                 for tv in &vf.transcript_variations {
@@ -1371,6 +1371,11 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                 let trio_genotypes = extract_trio_genotypes_cli(vf, acmg_cfg, &sample_names);
 
                 let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+                // Resolved here rather than inside the classifier: the ClinVar
+                // splice index is keyed by genomic coordinate, and
+                // `extract_classification_input` is handed a transcript-level
+                // view that carries none.
+                let query_alleles = vf.query_alleles();
 
                 for tv in &mut vf.transcript_variations {
                     let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
@@ -1380,6 +1385,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                             .filter(|ga| ga.gene_symbol == gene_sym)
                             .collect();
                     for aa in &mut tv.allele_annotations {
+                        let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
                         let input =
                             fastvep_classification::extract_classification_input(
                                 &aa.consequences,
@@ -1392,12 +1398,10 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                                 aa.exon,
                                 aa.protein_length,
                                 aa.escapes_nmd,
-                repeat_db_loaded,
+                                repeat_db_loaded,
+                                splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
-                                vf.alt_alleles
-                                    .iter()
-                                    .position(|a| *a == aa.allele)
-                                    .and_then(|i| functional_by_alt[i].clone()),
+                                alt_idx.and_then(|i| functional_by_alt[i].clone()),
                                 &aa.supplementary,
                                 &gene_anns,
                                 &vf.supplementary_annotations,
@@ -1919,6 +1923,8 @@ fn enrich_compound_het_batch(
                 .filter(|ga| ga.gene_symbol == gene_sym)
                 .collect();
             let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+            let query_alleles = vf.query_alleles();
+            let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
 
             let trio_genotypes = extract_trio_genotypes_cli(vf, acmg_cfg, sample_names);
 
@@ -1934,11 +1940,9 @@ fn enrich_compound_het_batch(
                 aa.protein_length,
                 aa.escapes_nmd,
                 repeat_db_loaded,
+                splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
-                vf.alt_alleles
-                    .iter()
-                    .position(|a| *a == aa.allele)
-                    .and_then(|i| functional_by_alt[i].clone()),
+                alt_idx.and_then(|i| functional_by_alt[i].clone()),
                 &aa.supplementary,
                 &gene_anns,
                 &vf.supplementary_annotations,
@@ -1955,40 +1959,27 @@ fn enrich_compound_het_batch(
     }
 }
 
-fn supplementary_query_alleles(vf: &VariationFeature) -> Vec<(String, u64, String, String)> {
-    if let Some(vcf) = &vf.vcf_fields {
-        let uploaded_alts: Vec<&str> = vcf.alt.split(',').collect();
-        return vf
-            .alt_alleles
-            .iter()
-            .enumerate()
-            .map(|(idx, allele)| {
-                let allele_string = allele.to_string();
-                (
-                    allele_string.clone(),
-                    vcf.pos,
-                    vcf.ref_allele.clone(),
-                    uploaded_alts
-                        .get(idx)
-                        .copied()
-                        .unwrap_or(&allele_string)
-                        .to_string(),
-                )
-            })
-            .collect();
-    }
-
-    vf.alt_alleles
-        .iter()
-        .map(|allele| {
-            (
-                allele.to_string(),
-                vf.position.start,
-                vf.ref_allele.to_string(),
-                allele.to_string(),
-            )
-        })
-        .collect()
+/// Whether PS1's splice path has a comparison variant for this allele.
+///
+/// A thin adapter: it pairs the allele with its VCF-form coordinates from
+/// [`VariationFeature::query_alleles`] and hands them to the classifier, which
+/// owns the rule. `None` whenever the allele has no coordinate to look up, which
+/// is the same "cannot tell" the classifier returns for an unloaded index.
+fn splice_ps1_evidence(
+    aa: &AlleleAnnotation,
+    gene_anns: &[&fastvep_core::GeneAnnotation],
+    query_alleles: &[(String, u64, String, String)],
+    alt_idx: Option<usize>,
+) -> Option<bool> {
+    let (_, pos, ref_allele, alt) = query_alleles.get(alt_idx?)?;
+    fastvep_classification::same_splice_position_pathogenic(
+        &aa.consequences,
+        gene_anns,
+        aa.hgvsc.as_deref(),
+        *pos,
+        ref_allele,
+        alt,
+    )
 }
 
 fn write_vcf_line(writer: &mut impl Write, vf: &VariationFeature, sa_only: bool) -> Result<()> {
@@ -3856,7 +3847,7 @@ fn run_custom_bed_build(
 /// `fastvep_annotate::load_gene_providers` picks up any `.oga` file in
 /// `--sa-dir` and routes records to the classifier by `json_key`
 /// (`omim`, `gnomad_genes`, `clinvar_protein`).
-pub fn run_oga_build(source: &str, input: &str, output: &str, _assembly: &str) -> Result<()> {
+pub fn run_oga_build(source: &str, input: &str, output: &str, assembly: &str) -> Result<()> {
     use fastvep_sa::common::SCHEMA_VERSION;
     use fastvep_sa::gene::{GeneHeader, GeneIndex};
 
@@ -3889,7 +3880,7 @@ pub fn run_oga_build(source: &str, input: &str, output: &str, _assembly: &str) -
             fastvep_sa::sources::gnomad_gene::parse_gnomad_gene_scores(buf_reader)?
         }
         "clinvar_protein" => {
-            fastvep_sa::sources::clinvar_protein::parse_clinvar_protein_vcf(buf_reader)?
+            fastvep_sa::sources::clinvar_protein::parse_clinvar_protein_vcf(buf_reader, assembly)?
         }
         _ => unreachable!(),
     };
@@ -3901,7 +3892,7 @@ pub fn run_oga_build(source: &str, input: &str, output: &str, _assembly: &str) -
         json_key: json_key.into(),
         name: name.into(),
         version: "latest".into(),
-        assembly: _assembly.into(),
+        assembly: assembly.into(),
     };
 
     let mut index = GeneIndex::new(header);

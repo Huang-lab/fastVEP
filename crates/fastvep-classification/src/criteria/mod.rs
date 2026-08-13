@@ -108,7 +108,18 @@ fn is_disabled(gene: Option<&str>, code: &str, config: &AcmgConfig) -> bool {
 ///    elevated to Strong (the only case where the combined points exceed 4),
 ///    PM1 is suppressed. PP3 at Moderate or Supporting + PM1 stays within the
 ///    cap and both fire.
+///
+/// It also applies one *upgrade*, which is not suppression but needs the same
+/// cross-criterion view:
+///
+/// 5. **PS1 (splice) graded against PVS1** - Walker 2023 Table 3 sets PS1's
+///    strength for a canonical-dinucleotide variant from the PVS1 code the
+///    variant already carries: `PS1_Supporting` under a full-strength PVS1, and
+///    full `PS1` under a downgraded one, so that a variant whose null evidence
+///    was reduced is not also denied the borrowed clinical evidence.
 fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
+    grade_ps1_splice_against_pvs1(criteria);
+
     // Collect the firing state of each criterion of interest before we mutate
     // anything. Using indices avoids borrow issues with mutable iteration.
     let mut pvs1_met = false;
@@ -314,6 +325,45 @@ fn functional_criterion(
         evaluated: true,
         summary,
         details: serde_json::Value::Object(details),
+    }
+}
+
+/// Apply Walker 2023 Table 3's PVS1-dependent grading of PS1's splice path.
+///
+/// The splice evaluator emits the conservative `PS1_Supporting` row, which is
+/// correct whenever PVS1 stands at full Very Strong. Table 3's fifth row raises
+/// it to full `PS1` when the variant's PVS1 was itself downgraded - the
+/// reduction exists only to stop the variant under assessment out-scoring the
+/// pathogenic variant it borrows evidence from, and a downgraded PVS1 leaves
+/// room for it.
+///
+/// A variant with no PVS1 at all (a gene with no established LOF mechanism, say)
+/// falls under no row of Table 3, and keeps the Supporting default.
+fn grade_ps1_splice_against_pvs1(criteria: &mut [EvidenceCriterion]) {
+    let pvs1_strength = criteria
+        .iter()
+        .find(|c| c.met && (c.code == "PVS1" || c.code.starts_with("PVS1_")))
+        .map(|c| c.strength);
+    let Some(pvs1_strength) = pvs1_strength else {
+        return;
+    };
+    if pvs1_strength >= EvidenceStrength::VeryStrong {
+        return;
+    }
+    for c in criteria.iter_mut() {
+        let is_splice_ps1 = c.met
+            && c.code.starts_with("PS1")
+            && c.details.get("ps1_path").and_then(|v| v.as_str()) == Some("splice_rna_match");
+        if !is_splice_ps1 {
+            continue;
+        }
+        c.code = "PS1".to_string();
+        c.strength = EvidenceStrength::Strong;
+        c.summary = format!(
+            "{}; raised to Strong because PVS1 is downgraded to {} on this variant (Walker 2023 Table 3)",
+            c.summary,
+            pvs1_strength.as_str()
+        );
     }
 }
 
@@ -648,5 +698,73 @@ mod reconcile_tests {
         );
         assert!(!ps3(&input).met);
         assert!(bs3(&input).met);
+    }
+
+    // ── Walker 2023 Table 3: PS1's splice path graded against PVS1 ───────
+
+    fn splice_ps1_supporting() -> EvidenceCriterion {
+        let mut c = met("PS1_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting);
+        c.details = serde_json::json!({"ps1_path": "splice_rna_match"});
+        c
+    }
+
+    #[test]
+    fn test_splice_ps1_stays_supporting_under_a_full_strength_pvs1() {
+        let mut criteria = vec![
+            met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
+            splice_ps1_supporting(),
+        ];
+        grade_ps1_splice_against_pvs1(&mut criteria);
+        assert_eq!(criteria[1].code, "PS1_Supporting");
+        assert_eq!(criteria[1].strength, EvidenceStrength::Supporting);
+    }
+
+    #[test]
+    fn test_splice_ps1_rises_to_strong_under_a_downgraded_pvs1() {
+        for downgraded in [
+            EvidenceStrength::Strong,
+            EvidenceStrength::Moderate,
+            EvidenceStrength::Supporting,
+        ] {
+            let mut criteria = vec![
+                met(
+                    &format!("PVS1_{}", downgraded.as_str()),
+                    EvidenceDirection::Pathogenic,
+                    downgraded,
+                ),
+                splice_ps1_supporting(),
+            ];
+            grade_ps1_splice_against_pvs1(&mut criteria);
+            assert_eq!(criteria[1].code, "PS1", "PVS1_{:?}", downgraded);
+            assert_eq!(criteria[1].strength, EvidenceStrength::Strong, "PVS1_{:?}", downgraded);
+        }
+    }
+
+    #[test]
+    fn test_splice_ps1_stays_supporting_with_no_pvs1_at_all() {
+        // No row of Table 3 covers a canonical splice variant carrying no PVS1
+        // (a gene with no established LOF mechanism, say), so the conservative
+        // strength stands.
+        let mut criteria = vec![
+            not_met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
+            splice_ps1_supporting(),
+        ];
+        grade_ps1_splice_against_pvs1(&mut criteria);
+        assert_eq!(criteria[1].code, "PS1_Supporting");
+    }
+
+    #[test]
+    fn test_missense_ps1_is_untouched_by_the_splice_grading() {
+        // The missense path is Richards 2015 PS1 at full Strong and has
+        // nothing to do with Table 3.
+        let mut ps1 = met("PS1", EvidenceDirection::Pathogenic, EvidenceStrength::Strong);
+        ps1.details = serde_json::json!({"ps1_path": "missense_aa_match"});
+        let mut criteria = vec![
+            met("PVS1_Moderate", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            ps1,
+        ];
+        grade_ps1_splice_against_pvs1(&mut criteria);
+        assert_eq!(criteria[1].strength, EvidenceStrength::Strong);
+        assert!(criteria[1].summary.is_empty(), "{}", criteria[1].summary);
     }
 }

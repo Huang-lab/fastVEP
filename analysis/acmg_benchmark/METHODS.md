@@ -264,7 +264,7 @@ opposite-direction calls).
 | Source | Build | Records |
 |--------|-------|---------|
 | ClinVar (.osa) | `fastvep sa-build --source clinvar` from `clinvar.vcf.gz` | 4,402,501 |
-| ClinVar protein (.oga) | `--source clinvar_protein` from `variant_summary.txt.gz` | 4,554 genes |
+| ClinVar gene index (.oga) | `--source clinvar_protein` from `variant_summary.txt.gz` | 15,665 genes (protein + canonical-splice indices) |
 | gnomAD v4.1 exomes (.osa, per-chrom) | tabix-extracted to ClinVar 2-star+ regions (24,350 merged ranges, `bedtools merge -d 5000`), `--source gnomad` per chrom (chr1..22, X, Y, MT) | 25 × .osa |
 | gnomAD v4.1 gene constraints (.oga) | `--source gnomad_gene` from `gnomad.v4.1.constraint_metrics.tsv` | 18,173 genes |
 | REVEL v1.3 (.osa, per-chrom) | per-chromosome split from `revel-v1.3_all_chromosomes.zip` to bound RAM | 24 × .osa |

@@ -21,10 +21,32 @@ pub fn evaluate_all(
 /// Two paths:
 /// 1. **Missense (Richards 2015)** — uses the ClinVar protein-position index
 ///    to check if pathogenic variants with the same amino acid change exist.
-/// 2. **Splice (Walker 2023, ClinGen SVI Splicing Subgroup)** — for canonical
-///    ±1/2 splice variants, fires when `same_splice_position_pathogenic` is
-///    true (a known pathogenic splice variant at the same position produces
-///    the same RNA outcome).
+/// 2. **Splice (Walker 2023, ClinGen SVI Splicing Subgroup, PMID 37352859)** -
+///    for canonical ±1/2 splice variants, fires when
+///    `same_splice_position_pathogenic` is true: another ClinVar `Pathogenic`
+///    variant sits on the same canonical dinucleotide and so abolishes the same
+///    donor or acceptor.
+///
+/// The splice path is deliberately *not* Strong. Table 3 of Walker 2023 grades
+/// PS1 for a canonical-dinucleotide variant under assessment on the strength of
+/// the PVS1 code it already carries:
+///
+/// | Baseline PVS1 on the variant | Comparison variant | PS1 code |
+/// | --- | --- | --- |
+/// | PVS1 (Very Strong) | same canonical dinucleotide, Pathogenic | `PS1_Supporting` |
+/// | PVS1_Strong / _Moderate / _Supporting | same canonical dinucleotide, Pathogenic | `PS1` (Strong) |
+///
+/// The reduction exists "to prevent overweighting of the VUA compared to the
+/// original (Likely) Pathogenic comparison variant". This function emits the
+/// conservative `PS1_Supporting` row, because criteria are evaluated
+/// independently and PVS1's graded outcome is not visible here; the upgrade to
+/// full `PS1` is applied in
+/// [`reconcile_evidence`](crate::criteria) once PVS1's strength is known.
+///
+/// Combining PS1 with PVS1 is explicitly sanctioned rather than double
+/// counting: the subgroup's response to feedback (22 March 2024, item 7b) reads
+/// "if there is a relevant pathogenic variant with the same predicted impact as
+/// the variant under assessment, then you can use PS1 as well as PVS1(RNA)".
 fn evaluate_ps1(
     input: &ClassificationInput,
     config: &AcmgConfig,
@@ -54,13 +76,13 @@ fn evaluate_ps1(
             Some(true) => {
                 details.insert("ps1_path".into(), serde_json::json!("splice_rna_match"));
                 return EvidenceCriterion {
-                    code: "PS1".to_string(),
+                    code: "PS1_Supporting".to_string(),
                     direction: EvidenceDirection::Pathogenic,
-                    strength: EvidenceStrength::Strong,
+                    strength: EvidenceStrength::Supporting,
                     default_strength: EvidenceStrength::Strong,
                     met: true,
                     evaluated: true,
-                    summary: "Canonical ±1/2 splice variant predicted to produce the same RNA outcome as a known pathogenic splice variant (Walker 2023)".to_string(),
+                    summary: "A different ClinVar Pathogenic variant abolishes the same canonical splice dinucleotide, so both are predicted to produce the same RNA outcome (Walker 2023 Table 3; Supporting while PVS1 stands at full strength)".to_string(),
                     details: serde_json::Value::Object(details),
                 };
             }
@@ -72,7 +94,7 @@ fn evaluate_ps1(
                     default_strength: EvidenceStrength::Strong,
                     met: false,
                     evaluated: true,
-                    summary: "Canonical splice variant; no known same-position pathogenic splice match (Walker 2023 PS1 splice path does not fire)".to_string(),
+                    summary: "Canonical splice variant; the ClinVar splice index holds no other Pathogenic variant on this dinucleotide (Walker 2023 PS1 splice path does not fire)".to_string(),
                     details: serde_json::Value::Object(details),
                 };
             }
@@ -87,7 +109,7 @@ fn evaluate_ps1(
                     default_strength: EvidenceStrength::Strong,
                     met: false,
                     evaluated: false,
-                    summary: "Canonical splice variant; PS1 splice catalog (same_splice_position_pathogenic) not populated by pipeline".to_string(),
+                    summary: "Canonical splice variant; ClinVar splice index not loaded (rebuild clinvar_protein.oga from variant_summary.txt.gz to populate it)".to_string(),
                     details: serde_json::Value::Object(details),
                 };
             }
@@ -545,14 +567,19 @@ mod tests {
 
     #[test]
     fn test_ps1_splice_path_with_pathogenic_match() {
-        // Walker 2023: canonical splice variant matching a known pathogenic
-        // splice variant at the same position fires PS1 (Strong).
+        // Walker 2023 Table 3, row 3: a canonical-dinucleotide variant with a
+        // Pathogenic comparison variant on the same dinucleotide gets
+        // PS1_Supporting, not PS1. Anything stronger would let the variant
+        // under assessment out-score the variant it borrows evidence from.
         let mut input = make_input(None);
         input.consequences = vec![Consequence::SpliceDonorVariant];
         input.same_splice_position_pathogenic = Some(true);
         let r = evaluate_ps1(&input, &AcmgConfig::default());
         assert!(r.met);
-        assert_eq!(r.strength, EvidenceStrength::Strong);
+        assert_eq!(r.strength, EvidenceStrength::Supporting);
+        assert_eq!(r.code, "PS1_Supporting");
+        // Row 5's upgrade is applied by reconcile_evidence, which sees PVS1.
+        assert_eq!(r.details["ps1_path"], "splice_rna_match");
     }
 
     #[test]
@@ -584,6 +611,7 @@ mod tests {
                 n,
             }],
             benign_indexed: true,
+            ..Default::default()
         }
     }
 
