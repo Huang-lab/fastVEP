@@ -921,7 +921,7 @@ fn format_allele_projection_for_aa(
                     "Skipping non-JSON supplementary payload for key='{}': {} (payload snippet: {})",
                     spec.json_key,
                     e,
-                    &json_str.chars().take(80).collect::<String>(),
+                    json_str.chars().take(80).collect::<String>(),
                 );
                 continue;
             }

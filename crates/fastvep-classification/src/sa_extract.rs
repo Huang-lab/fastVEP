@@ -866,30 +866,22 @@ pub fn extract_classification_input(
     let mut gerp = None;
     for (key, json_str) in allele_supplementary {
         match key.as_str() {
-            "phylop" | "phyloP" => {
-                if phylop.is_none() {
-                    phylop = json_str.trim_matches('"').parse::<f64>().ok();
-                }
+            "phylop" | "phyloP" if phylop.is_none() => {
+                phylop = json_str.trim_matches('"').parse::<f64>().ok();
             }
-            "gerp" | "GERP" => {
-                if gerp.is_none() {
-                    gerp = json_str.trim_matches('"').parse::<f64>().ok();
-                }
+            "gerp" | "GERP" if gerp.is_none() => {
+                gerp = json_str.trim_matches('"').parse::<f64>().ok();
             }
             _ => {}
         }
     }
     for sa in variant_supplementary {
         match sa.json_key.as_str() {
-            "phylop" | "phyloP" => {
-                if phylop.is_none() {
-                    phylop = sa.json_string.trim_matches('"').parse::<f64>().ok();
-                }
+            "phylop" | "phyloP" if phylop.is_none() => {
+                phylop = sa.json_string.trim_matches('"').parse::<f64>().ok();
             }
-            "gerp" | "GERP" => {
-                if gerp.is_none() {
-                    gerp = sa.json_string.trim_matches('"').parse::<f64>().ok();
-                }
+            "gerp" | "GERP" if gerp.is_none() => {
+                gerp = sa.json_string.trim_matches('"').parse::<f64>().ok();
             }
             _ => {}
         }

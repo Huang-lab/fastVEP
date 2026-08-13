@@ -71,7 +71,7 @@ fn build_shard(path: &Path, chrom: &str, length: u32, n: usize) -> Result<u64> {
     let mut writer = Osa2StreamWriter::new(file, &metadata, fields.clone())?;
 
     let step = (length as u64 / n.max(1) as u64).max(1);
-    let alts = [b'C', b'G', b'T', b'A'];
+    let alts = *b"CGTA";
     for j in 0..n {
         let pos = (1 + j as u64 * step).min(length as u64) as u32;
         let values: Vec<u32> = (0..n_fields)
@@ -163,7 +163,7 @@ fn main() -> Result<()> {
     for (i, r) in readers.iter().enumerate() {
         let (chrom, length) = HUMAN_CHROMS[i];
         let step = (length as u64 / per_chrom.max(1) as u64).max(1);
-        let alts = [b'C', b'G', b'T', b'A'];
+        let alts = *b"CGTA";
         for j in [0usize, per_chrom / 2, per_chrom.saturating_sub(1)] {
             let pos = (1 + j as u64 * step).min(length as u64);
             let alt = (alts[j % alts.len()] as char).to_string();

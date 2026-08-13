@@ -542,11 +542,8 @@ fn extract_protein_from_mc(mc_part: &str) -> Option<(u64, String, String)> {
 /// Parse a protein HGVS expression like "p.Arg175His" or "p.R175H"
 /// Returns (position, ref_aa, alt_aa) using single-letter codes.
 fn parse_protein_hgvs(hgvs: &str) -> Option<(u64, String, String)> {
-    let p_str = if let Some(idx) = hgvs.find("p.") {
-        &hgvs[idx + 2..]
-    } else {
-        return None;
-    };
+    let idx = hgvs.find("p.")?;
+    let p_str = &hgvs[idx + 2..];
 
     // Try three-letter codes first: "Arg175His"
     if let Some(result) = parse_three_letter_protein(p_str) {

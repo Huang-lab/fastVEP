@@ -179,7 +179,7 @@ pub fn decode_var(sequence: &[u32]) -> Result<(Vec<u8>, Vec<u8>)> {
         );
     }
 
-    let bases_decode = [b'A', b'C', b'G', b'T'];
+    let bases_decode = *b"ACGT";
     let mut all_bases = Vec::with_capacity(total);
 
     let mut count = 0;

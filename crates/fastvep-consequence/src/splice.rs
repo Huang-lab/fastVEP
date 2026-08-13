@@ -267,7 +267,7 @@ fn sorted_exons(transcript: &Transcript) -> Vec<&fastvep_genome::Exon> {
     let mut exons: Vec<&fastvep_genome::Exon> = transcript.exons.iter().collect();
     match transcript.strand {
         Strand::Forward => exons.sort_by_key(|e| e.start),
-        Strand::Reverse => exons.sort_by(|a, b| b.start.cmp(&a.start)),
+        Strand::Reverse => exons.sort_by_key(|e| std::cmp::Reverse(e.start)),
     }
     exons
 }

@@ -46,7 +46,7 @@ const BASE_ENC: [u8; 256] = {
 };
 
 /// 2-bit encoding back to DNA base.
-const BASE_DEC: [u8; 4] = [b'A', b'C', b'G', b'T'];
+const BASE_DEC: [u8; 4] = *b"ACGT";
 
 /// Returns true if the variant is too long for Var32 encoding.
 #[inline]
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_all_single_base_combinations() {
-        let bases = [b'A', b'C', b'G', b'T'];
+        let bases = *b"ACGT";
         for &r in &bases {
             for &a in &bases {
                 let pos = 100;

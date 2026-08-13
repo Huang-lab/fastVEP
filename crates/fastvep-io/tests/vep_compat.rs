@@ -397,7 +397,7 @@ fn test_all_64_codons_translate() {
     use fastvep_genome::CodonTable;
 
     let table = CodonTable::standard();
-    let bases = [b'A', b'C', b'G', b'T'];
+    let bases = *b"ACGT";
 
     let mut count = 0;
     for &b1 in &bases {

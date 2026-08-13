@@ -523,7 +523,7 @@ fn parse_gff3_lines(
         // Sort exons by position
         match gff_tr.strand {
             Strand::Forward => tr_exons.sort_by_key(|e| e.start),
-            Strand::Reverse => tr_exons.sort_by(|a, b| b.start.cmp(&a.start)),
+            Strand::Reverse => tr_exons.sort_by_key(|e| std::cmp::Reverse(e.start)),
         }
 
         // Assign ranks if not set
