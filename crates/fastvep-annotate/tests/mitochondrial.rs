@@ -111,7 +111,10 @@ fn mt_tga_reads_as_tryptophan_not_stop() {
     let fasta = ">MT\nATGTGGAAATAA\n";
     let mut transcript = mt_transcript(1, 12, 12);
     build_sequences_from_fasta(&mut transcript, fasta);
-    assert_eq!(transcript.translateable_seq.as_deref(), Some("ATGTGGAAATAA"));
+    assert_eq!(
+        transcript.translateable_seq.as_deref(),
+        Some("ATGTGGAAATAA")
+    );
     // Peptide translation (Transcript::build_sequences) must also use the
     // mitochondrial table: MTAK* would be wrong; the correct read is M W K *.
     assert_eq!(transcript.peptide.as_deref(), Some("MWK*"));
@@ -164,11 +167,11 @@ fn mt_origin_spanning_allele_produces_stop_gained() {
     seq[16565] = b'A'; // pos 16566
     seq[16566] = b'T'; // pos 16567
     seq[16567] = b'G'; // pos 16568
-    // Codon 2 (protein pos 2), genomic 16569, then wraps to 1, 2: "CGA".
+                       // Codon 2 (protein pos 2), genomic 16569, then wraps to 1, 2: "CGA".
     seq[16568] = b'C'; // pos 16569 (last base of the contig)
     seq[0] = b'G'; // pos 1 (wrapped)
     seq[1] = b'A'; // pos 2 (wrapped)
-    // Codon 3 (protein pos 3), wrapped genomic 3, 4, 5: "AAA" (Lys).
+                   // Codon 3 (protein pos 3), wrapped genomic 3, 4, 5: "AAA" (Lys).
     seq[2] = b'A';
     seq[3] = b'A';
     seq[4] = b'A';

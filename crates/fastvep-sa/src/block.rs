@@ -40,7 +40,8 @@ impl SaBlock {
 
     /// Try to add an entry. Returns `false` if the block is full (entry not added).
     pub fn add(&mut self, entry: BlockEntry) -> bool {
-        let entry_size = 4 + 2 + entry.ref_allele.len() + 2 + entry.alt_allele.len() + 4 + entry.json.len();
+        let entry_size =
+            4 + 2 + entry.ref_allele.len() + 2 + entry.alt_allele.len() + 4 + entry.json.len();
         if !self.entries.is_empty() && self.uncompressed_size + entry_size > self.max_size {
             return false;
         }

@@ -72,9 +72,7 @@ fn chunk_bytes(c: &Chunk) -> usize {
     let others: usize = c
         .others
         .iter()
-        .map(|o| {
-            std::mem::size_of::<OtherVariant>() + o.ref_allele.len() + o.alt_allele.len()
-        })
+        .map(|o| std::mem::size_of::<OtherVariant>() + o.ref_allele.len() + o.alt_allele.len())
         .sum();
     let vals: usize = c
         .values
@@ -264,14 +262,13 @@ impl Osa2Reader {
         };
 
         let metadata: Osa2Metadata = {
-            let buf = read_prelude("fastsa/metadata.json")?
-                .context("Missing fastsa/metadata.json")?;
+            let buf =
+                read_prelude("fastsa/metadata.json")?.context("Missing fastsa/metadata.json")?;
             serde_json::from_slice(&buf)?
         };
 
         let fields: Vec<Field> = {
-            let buf =
-                read_prelude("fastsa/config.json")?.context("Missing fastsa/config.json")?;
+            let buf = read_prelude("fastsa/config.json")?.context("Missing fastsa/config.json")?;
             serde_json::from_slice(&buf)?
         };
 

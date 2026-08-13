@@ -69,7 +69,10 @@ fn send_json(stream: &mut std::net::TcpStream, status: u16, body: &str) -> Resul
          Connection: close\r\n\
          \r\n\
          {}",
-        status, status_text, body.len(), body
+        status,
+        status_text,
+        body.len(),
+        body
     );
     stream.write_all(response.as_bytes())?;
     Ok(())
@@ -94,7 +97,11 @@ fn handle_request(stream: &mut std::net::TcpStream, ctx: &mut AnnotationContext)
         }
         let lower = line.to_ascii_lowercase();
         if lower.starts_with("content-length:") {
-            content_length = lower.trim_start_matches("content-length:").trim().parse().unwrap_or(0);
+            content_length = lower
+                .trim_start_matches("content-length:")
+                .trim()
+                .parse()
+                .unwrap_or(0);
         }
     }
 
@@ -163,8 +170,8 @@ fn handle_request(stream: &mut std::net::TcpStream, ctx: &mut AnnotationContext)
             reader.read_exact(&mut body)?;
             let body_str = String::from_utf8_lossy(&body);
 
-            let request: serde_json::Value = serde_json::from_str(&body_str)
-                .unwrap_or(serde_json::json!({}));
+            let request: serde_json::Value =
+                serde_json::from_str(&body_str).unwrap_or(serde_json::json!({}));
             let vcf_text = request["vcf"].as_str().unwrap_or("");
             let pick = request["pick"].as_bool().unwrap_or(false);
 

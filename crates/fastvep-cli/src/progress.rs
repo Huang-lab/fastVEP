@@ -1,7 +1,7 @@
 use std::io::{self, Read};
 use std::sync::{
-    Arc,
     atomic::{AtomicU64, Ordering},
+    Arc,
 };
 use std::time::Instant;
 
@@ -94,12 +94,20 @@ impl ProgressMeter {
         }
 
         let elapsed_min = self.start.elapsed().as_secs_f64() / 60.0;
-        let rpm = if elapsed_min > 0.0 { self.records as f64 / elapsed_min } else { 0.0 };
+        let rpm = if elapsed_min > 0.0 {
+            self.records as f64 / elapsed_min
+        } else {
+            0.0
+        };
 
         if let Some(ref counter) = self.bytes_read {
             let done_frac = counter.load(Ordering::Relaxed) as f64 / self.total_bytes as f64;
             let pct = done_frac * 100.0;
-            let eta_min = if done_frac > 0.0 { elapsed_min * (1.0 / done_frac - 1.0) } else { 0.0 };
+            let eta_min = if done_frac > 0.0 {
+                elapsed_min * (1.0 / done_frac - 1.0)
+            } else {
+                0.0
+            };
             eprintln!(
                 "INFO  ProgressMeter -  {:>13.1}   {:>20}   {:>14.1}   {:>6.1}%   {:>9.1}",
                 elapsed_min,

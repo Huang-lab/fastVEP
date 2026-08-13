@@ -139,9 +139,7 @@ impl EvidenceCounts {
                 (EvidenceDirection::Benign, EvidenceStrength::Standalone) => {
                     counts.benign_standalone += 1
                 }
-                (EvidenceDirection::Benign, EvidenceStrength::Strong) => {
-                    counts.benign_strong += 1
-                }
+                (EvidenceDirection::Benign, EvidenceStrength::Strong) => counts.benign_strong += 1,
                 (EvidenceDirection::Benign, EvidenceStrength::Supporting) => {
                     counts.benign_supporting += 1
                 }

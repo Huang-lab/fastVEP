@@ -134,9 +134,9 @@ impl FunctionalEvidenceIndex {
                 ));
             }
 
-            let pos: u64 = at(1)
-                .parse()
-                .map_err(|_| format!("line {}: position {:?} is not a number", lineno + 1, at(1)))?;
+            let pos: u64 = at(1).parse().map_err(|_| {
+                format!("line {}: position {:?} is not a number", lineno + 1, at(1))
+            })?;
 
             let criterion = match at(4).to_ascii_uppercase().as_str() {
                 "PS3" => FunctionalCriterion::Ps3,
@@ -226,7 +226,13 @@ impl FunctionalEvidenceIndex {
     }
 
     /// Look up one variant. `chrom` may carry a `chr` prefix or not.
-    pub fn get(&self, chrom: &str, pos: u64, reference: &str, alt: &str) -> Option<&FunctionalEvidence> {
+    pub fn get(
+        &self,
+        chrom: &str,
+        pos: u64,
+        reference: &str,
+        alt: &str,
+    ) -> Option<&FunctionalEvidence> {
         self.entries.get(&(
             normalize_chrom(chrom),
             pos,
@@ -284,8 +290,14 @@ mod tests {
     #[test]
     fn test_strength_defaults_to_strong_and_is_optional() {
         let idx = parse("1\t10\tA\tT\tPS3\n1\t20\tA\tT\tBS3\t.\n").unwrap();
-        assert_eq!(idx.get("1", 10, "A", "T").unwrap().strength, EvidenceStrength::Strong);
-        assert_eq!(idx.get("1", 20, "A", "T").unwrap().strength, EvidenceStrength::Strong);
+        assert_eq!(
+            idx.get("1", 10, "A", "T").unwrap().strength,
+            EvidenceStrength::Strong
+        );
+        assert_eq!(
+            idx.get("1", 20, "A", "T").unwrap().strength,
+            EvidenceStrength::Strong
+        );
     }
 
     #[test]
@@ -293,7 +305,10 @@ mod tests {
         // Brnich 2020: assay strength is a judgement about the assay, so a
         // curator must be able to say Supporting.
         let idx = parse("1\t10\tA\tT\tPS3\tModerate\n").unwrap();
-        assert_eq!(idx.get("1", 10, "A", "T").unwrap().strength, EvidenceStrength::Moderate);
+        assert_eq!(
+            idx.get("1", 10, "A", "T").unwrap().strength,
+            EvidenceStrength::Moderate
+        );
     }
 
     #[test]
@@ -305,7 +320,10 @@ mod tests {
             ("1\t10\tA\tT\tPS3\tVeryWeak\n", "unknown strength"),
         ] {
             let err = parse(bad).expect_err("must reject");
-            assert!(err.contains(expect), "{bad:?} gave {err:?}, wanted {expect:?}");
+            assert!(
+                err.contains(expect),
+                "{bad:?} gave {err:?}, wanted {expect:?}"
+            );
         }
     }
 

@@ -133,8 +133,13 @@ mod tests {
         let records = parse_omim_genemap(data.as_bytes()).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].gene_symbol, "BRCA1");
-        assert!(!records[0].json.contains("mimNumber"), "non-numeric MIM must be omitted: {}", records[0].json);
+        assert!(
+            !records[0].json.contains("mimNumber"),
+            "non-numeric MIM must be omitted: {}",
+            records[0].json
+        );
         // The emitted JSON must be parseable.
-        let _: serde_json::Value = serde_json::from_str(&records[0].json).expect("record must be valid JSON");
+        let _: serde_json::Value =
+            serde_json::from_str(&records[0].json).expect("record must be valid JSON");
     }
 }

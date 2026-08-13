@@ -65,24 +65,18 @@ pub fn evaluate(expr: &FilterExpr, ctx: &FilterContext) -> bool {
             // The actual value might be a single value or ampersand-separated list
             // (VEP uses & to separate multiple consequences)
             let actual_parts: Vec<&str> = actual.split('&').collect();
-            actual_parts.iter().any(|a| {
-                values.iter().any(|v| a.eq_ignore_ascii_case(v))
-            })
+            actual_parts
+                .iter()
+                .any(|a| values.iter().any(|v| a.eq_ignore_ascii_case(v)))
         }
         FilterExpr::Match { field, pattern } => {
             let actual = ctx.get(field);
             // Simple glob-style matching (contains check for basic use)
             actual.contains(pattern)
         }
-        FilterExpr::And(left, right) => {
-            evaluate(left, ctx) && evaluate(right, ctx)
-        }
-        FilterExpr::Or(left, right) => {
-            evaluate(left, ctx) || evaluate(right, ctx)
-        }
-        FilterExpr::Not(inner) => {
-            !evaluate(inner, ctx)
-        }
+        FilterExpr::And(left, right) => evaluate(left, ctx) && evaluate(right, ctx),
+        FilterExpr::Or(left, right) => evaluate(left, ctx) || evaluate(right, ctx),
+        FilterExpr::Not(inner) => !evaluate(inner, ctx),
     }
 }
 
@@ -127,19 +121,35 @@ mod tests {
             field: "Consequence".into(),
             values: vec!["missense_variant".into(), "stop_gained".into()],
         };
-        assert!(evaluate(&expr, &ctx(&[("Consequence", "missense_variant&splice_region_variant")])));
-        assert!(!evaluate(&expr, &ctx(&[("Consequence", "synonymous_variant")])));
+        assert!(evaluate(
+            &expr,
+            &ctx(&[("Consequence", "missense_variant&splice_region_variant")])
+        ));
+        assert!(!evaluate(
+            &expr,
+            &ctx(&[("Consequence", "synonymous_variant")])
+        ));
     }
 
     #[test]
     fn test_and_or_not() {
         let expr = FilterExpr::And(
-            Box::new(FilterExpr::Eq { field: "IMPACT".into(), value: "HIGH".into() }),
-            Box::new(FilterExpr::Not(
-                Box::new(FilterExpr::Eq { field: "CANONICAL".into(), value: "NO".into() }),
-            )),
+            Box::new(FilterExpr::Eq {
+                field: "IMPACT".into(),
+                value: "HIGH".into(),
+            }),
+            Box::new(FilterExpr::Not(Box::new(FilterExpr::Eq {
+                field: "CANONICAL".into(),
+                value: "NO".into(),
+            }))),
         );
-        assert!(evaluate(&expr, &ctx(&[("IMPACT", "HIGH"), ("CANONICAL", "YES")])));
-        assert!(!evaluate(&expr, &ctx(&[("IMPACT", "HIGH"), ("CANONICAL", "NO")])));
+        assert!(evaluate(
+            &expr,
+            &ctx(&[("IMPACT", "HIGH"), ("CANONICAL", "YES")])
+        ));
+        assert!(!evaluate(
+            &expr,
+            &ctx(&[("IMPACT", "HIGH"), ("CANONICAL", "NO")])
+        ));
     }
 }

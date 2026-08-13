@@ -37,16 +37,28 @@ pub fn parse_mitomap<R: BufRead>(
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records = Vec::new();
-    let mt_idx = chrom_to_idx.get("chrM").or_else(|| chrom_to_idx.get("chrMT"));
-    let chrom_idx = match mt_idx { Some(&i) => i, None => return Ok(records) };
+    let mt_idx = chrom_to_idx
+        .get("chrM")
+        .or_else(|| chrom_to_idx.get("chrMT"));
+    let chrom_idx = match mt_idx {
+        Some(&i) => i,
+        None => return Ok(records),
+    };
 
     for line in reader.lines() {
         let line = line.context("Reading MitoMap")?;
-        if line.starts_with('#') || line.starts_with("Position") || line.is_empty() { continue; }
+        if line.starts_with('#') || line.starts_with("Position") || line.is_empty() {
+            continue;
+        }
         let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 4 { continue; }
+        if fields.len() < 4 {
+            continue;
+        }
 
-        let pos: u32 = match fields[0].trim().parse() { Ok(p) => p, Err(_) => continue };
+        let pos: u32 = match fields[0].trim().parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
         let ref_allele = fields[1].trim().to_string();
         let alt_allele = fields[2].trim().to_string();
         let disease = fields.get(3).unwrap_or(&"").trim();
@@ -63,8 +75,10 @@ pub fn parse_mitomap<R: BufRead>(
         }
 
         records.push(AnnotationRecord {
-            chrom_idx, position: pos,
-            ref_allele, alt_allele,
+            chrom_idx,
+            position: pos,
+            ref_allele,
+            alt_allele,
             json: format!("{{{}}}", parts.join(",")),
         });
     }

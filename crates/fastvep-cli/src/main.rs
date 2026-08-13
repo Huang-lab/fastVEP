@@ -341,8 +341,20 @@ fn main() -> Result<()> {
                 show_progress: !no_progress,
             })?;
         }
-        Commands::Cache { gff3, fasta, synonyms, output, no_progress } => {
-            pipeline::run_cache_build(&gff3, fasta.as_deref(), synonyms.as_deref(), &output, !no_progress)?;
+        Commands::Cache {
+            gff3,
+            fasta,
+            synonyms,
+            output,
+            no_progress,
+        } => {
+            pipeline::run_cache_build(
+                &gff3,
+                fasta.as_deref(),
+                synonyms.as_deref(),
+                &output,
+                !no_progress,
+            )?;
         }
         Commands::Web { port, gff3, fasta } => {
             webserver::run_server(port, gff3, fasta)?;
@@ -356,18 +368,16 @@ fn main() -> Result<()> {
             info_fields,
             format,
             no_progress,
-        } => {
-            pipeline::run_sa_build_format(
-                &format,
-                &source,
-                &input,
-                &output,
-                &assembly,
-                name.as_deref(),
-                &info_fields,
-                !no_progress,
-            )?
-        }
+        } => pipeline::run_sa_build_format(
+            &format,
+            &source,
+            &input,
+            &output,
+            &assembly,
+            name.as_deref(),
+            &info_fields,
+            !no_progress,
+        )?,
         Commands::SaConvert {
             input,
             output,

@@ -197,7 +197,12 @@ impl IntervalIndex {
     ///
     /// `chrom` may be given in any accepted spelling; it is resolved against the
     /// index's own contig set via [`resolve_chrom`](Self::resolve_chrom).
-    pub fn find_overlapping(&self, chrom: &str, query_start: u32, query_end: u32) -> Vec<OverlapResult> {
+    pub fn find_overlapping(
+        &self,
+        chrom: &str,
+        query_start: u32,
+        query_end: u32,
+    ) -> Vec<OverlapResult> {
         let Some(chrom) = self.resolve_chrom(chrom) else {
             return Vec::new();
         };
@@ -318,10 +323,7 @@ impl OsiReader {
         let metadata = SaMetadata {
             name: index.header.name.clone(),
             version: index.header.version.clone(),
-            description: format!(
-                "Interval annotation database from {}",
-                path.display()
-            ),
+            description: format!("Interval annotation database from {}", path.display()),
             assembly: index.header.assembly.clone(),
             json_key: index.header.json_key.clone(),
             // Intervals are inherently positional — overlap doesn't care
@@ -435,8 +437,18 @@ mod tests {
         };
         let mut index = IntervalIndex::new(header);
         // Intentionally out of order:
-        index.add(IntervalRecord { chrom: "chr1".into(), start: 500, end: 700, json: "{\"id\":\"B\"}".into() });
-        index.add(IntervalRecord { chrom: "chr1".into(), start: 100, end: 200, json: "{\"id\":\"A\"}".into() });
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 500,
+            end: 700,
+            json: "{\"id\":\"B\"}".into(),
+        });
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 100,
+            end: 200,
+            json: "{\"id\":\"A\"}".into(),
+        });
         // Skip index.sort() so the on-disk layout is unsorted.
 
         let mut buf = Vec::new();
@@ -556,11 +568,7 @@ mod tests {
 
     /// Reference implementation: the pre-optimization full scan. Any
     /// divergence between this and `find_overlapping` is a correctness bug.
-    fn brute_force(
-        intervals: &[StoredInterval],
-        query_start: u32,
-        query_end: u32,
-    ) -> Vec<String> {
+    fn brute_force(intervals: &[StoredInterval], query_start: u32, query_end: u32) -> Vec<String> {
         intervals
             .iter()
             .filter(|iv| iv.start <= query_end && iv.end >= query_start)
@@ -597,7 +605,7 @@ mod tests {
         for i in 0..600u32 {
             let start = (next_rand(&mut state) % 10_000) as u32;
             let len = match i % 7 {
-                0 => 0,                                      // point interval
+                0 => 0,                                              // point interval
                 1 => 5_000 + (next_rand(&mut state) % 4_000) as u32, // long reacher
                 _ => (next_rand(&mut state) % 50) as u32,
             };
@@ -631,7 +639,13 @@ mod tests {
                 .into_iter()
                 .map(|h| h.json)
                 .collect();
-            assert_eq!(got, brute_force(&intervals, a, b), "range {}..{} diverged", a, b);
+            assert_eq!(
+                got,
+                brute_force(&intervals, a, b),
+                "range {}..{} diverged",
+                a,
+                b
+            );
         }
     }
 
@@ -661,7 +675,11 @@ mod tests {
             hi,
             hi - lo
         );
-        assert!(lo > 99_000, "lower bound should skip the whole prefix, got {}", lo);
+        assert!(
+            lo > 99_000,
+            "lower bound should skip the whole prefix, got {}",
+            lo
+        );
 
         // And it still finds the right interval.
         let hits = index.find_overlapping("chr1", 999_000, 999_000);
@@ -675,12 +693,31 @@ mod tests {
         // window must widen to the whole prefix rather than silently trusting
         // a stale array and missing overlaps.
         let mut index = IntervalIndex::new(test_header());
-        index.add(IntervalRecord { chrom: "chr1".into(), start: 10, end: 20, json: "{\"id\":\"a\"}".into() });
-        index.add(IntervalRecord { chrom: "chr1".into(), start: 30, end: 40, json: "{\"id\":\"b\"}".into() });
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 10,
+            end: 20,
+            json: "{\"id\":\"a\"}".into(),
+        });
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 30,
+            end: 40,
+            json: "{\"id\":\"b\"}".into(),
+        });
         index.sort();
-        assert_eq!(index.candidate_window("chr1", 35, 35).0, 1, "maxima should bound a fresh index");
+        assert_eq!(
+            index.candidate_window("chr1", 35, 35).0,
+            1,
+            "maxima should bound a fresh index"
+        );
 
-        index.add(IntervalRecord { chrom: "chr1".into(), start: 50, end: 60, json: "{\"id\":\"c\"}".into() });
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 50,
+            end: 60,
+            json: "{\"id\":\"c\"}".into(),
+        });
         assert_eq!(
             index.candidate_window("chr1", 35, 35).0,
             0,
@@ -702,8 +739,16 @@ mod tests {
         intervals.insert(
             "chr1".into(),
             vec![
-                StoredInterval { start: 100, end: 200, json: "{\"id\":\"a\"}".into() },
-                StoredInterval { start: 150, end: 400, json: "{\"id\":\"b\"}".into() },
+                StoredInterval {
+                    start: 100,
+                    end: 200,
+                    json: "{\"id\":\"a\"}".into(),
+                },
+                StoredInterval {
+                    start: 150,
+                    end: 400,
+                    json: "{\"id\":\"b\"}".into(),
+                },
             ],
         );
         let legacy = (test_header(), intervals);
@@ -731,8 +776,18 @@ mod tests {
         // The alias map replaced a per-query `chrom_aliases` call; the accepted
         // spellings must be exactly the same set as before.
         let mut index = IntervalIndex::new(test_header());
-        index.add(IntervalRecord { chrom: "chrM".into(), start: 100, end: 200, json: "{}".into() });
-        index.add(IntervalRecord { chrom: "1".into(), start: 10, end: 20, json: "{}".into() });
+        index.add(IntervalRecord {
+            chrom: "chrM".into(),
+            start: 100,
+            end: 200,
+            json: "{}".into(),
+        });
+        index.add(IntervalRecord {
+            chrom: "1".into(),
+            start: 10,
+            end: 20,
+            json: "{}".into(),
+        });
         index.sort();
 
         for alias in ["chrM", "M", "MT", "chrMT"] {
@@ -756,7 +811,12 @@ mod tests {
         // but never sorted still resolves spellings (it falls back to the wide
         // scan window, which `candidate_window`'s own test covers).
         let mut index = IntervalIndex::new(test_header());
-        index.add(IntervalRecord { chrom: "chr1".into(), start: 10, end: 20, json: "{}".into() });
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 10,
+            end: 20,
+            json: "{}".into(),
+        });
         assert_eq!(index.resolve_chrom("1"), Some("chr1"));
         assert_eq!(index.find_overlapping("1", 15, 15).len(), 1);
     }
@@ -766,7 +826,12 @@ mod tests {
         // Guards the on-disk format explicitly: the bytes `write_to` emits must
         // equal magic + version + len + bincode((header, intervals)).
         let mut index = IntervalIndex::new(test_header());
-        index.add(IntervalRecord { chrom: "chr1".into(), start: 5, end: 9, json: "{}".into() });
+        index.add(IntervalRecord {
+            chrom: "chr1".into(),
+            start: 5,
+            end: 9,
+            json: "{}".into(),
+        });
         index.sort();
 
         let mut actual = Vec::new();

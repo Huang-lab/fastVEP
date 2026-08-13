@@ -266,7 +266,9 @@ fn determine_sv_overlap_consequences(
 
 /// Check if the SV interval overlaps any exon's coding region.
 fn hits_coding_region(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bool {
-    if let (Some(cds_start), Some(cds_end)) = (transcript.coding_region_start, transcript.coding_region_end) {
+    if let (Some(cds_start), Some(cds_end)) =
+        (transcript.coding_region_start, transcript.coding_region_end)
+    {
         let coding_start = cds_start.min(cds_end);
         let coding_end = cds_start.max(cds_end);
         sv_start <= coding_end && sv_end >= coding_start
@@ -374,9 +376,14 @@ mod tests {
     fn test_deletion_completely_contains_transcript() {
         let tx = make_coding_transcript(5000, 6000);
         let results = predict_sv_consequences(
-            "chr1", 4000, 7000, VariantType::CopyNumberLoss,
+            "chr1",
+            4000,
+            7000,
+            VariantType::CopyNumberLoss,
             &[Allele::Symbolic("<DEL>".into())],
-            &[&tx], 5000, 5000,
+            &[&tx],
+            5000,
+            5000,
         );
 
         assert_eq!(results.len(), 1);
@@ -388,9 +395,14 @@ mod tests {
     fn test_deletion_partial_overlap() {
         let tx = make_coding_transcript(5000, 6000);
         let results = predict_sv_consequences(
-            "chr1", 5300, 5800, VariantType::CopyNumberLoss,
+            "chr1",
+            5300,
+            5800,
+            VariantType::CopyNumberLoss,
             &[Allele::Symbolic("<DEL>".into())],
-            &[&tx], 5000, 5000,
+            &[&tx],
+            5000,
+            5000,
         );
 
         assert_eq!(results.len(), 1);
@@ -403,9 +415,14 @@ mod tests {
     fn test_duplication_completely_contains() {
         let tx = make_coding_transcript(5000, 6000);
         let results = predict_sv_consequences(
-            "chr1", 4000, 7000, VariantType::TandemDuplication,
+            "chr1",
+            4000,
+            7000,
+            VariantType::TandemDuplication,
             &[Allele::Symbolic("<DUP>".into())],
-            &[&tx], 5000, 5000,
+            &[&tx],
+            5000,
+            5000,
         );
 
         let cons = &results[0].allele_consequences[0].consequences;
@@ -416,9 +433,14 @@ mod tests {
     fn test_sv_no_overlap_upstream() {
         let tx = make_coding_transcript(10000, 11000);
         let results = predict_sv_consequences(
-            "chr1", 5000, 6000, VariantType::CopyNumberLoss,
+            "chr1",
+            5000,
+            6000,
+            VariantType::CopyNumberLoss,
             &[Allele::Symbolic("<DEL>".into())],
-            &[&tx], 5000, 5000,
+            &[&tx],
+            5000,
+            5000,
         );
 
         let cons = &results[0].allele_consequences[0].consequences;

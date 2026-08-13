@@ -611,11 +611,23 @@ impl Ba1Exception {
         hgvs_c: Option<&str>,
         coordinates: Option<(&str, u64, &str, &str)>,
     ) -> bool {
-        if let (Some((chrom, pos, ref_allele, alt)), Some(e_chrom), Some(e_pos), Some(e_ref), Some(e_alt)) =
-            (coordinates, self.chrom.as_deref(), self.pos, self.ref_allele.as_deref(), self.alt.as_deref())
-        {
+        if let (
+            Some((chrom, pos, ref_allele, alt)),
+            Some(e_chrom),
+            Some(e_pos),
+            Some(e_ref),
+            Some(e_alt),
+        ) = (
+            coordinates,
+            self.chrom.as_deref(),
+            self.pos,
+            self.ref_allele.as_deref(),
+            self.alt.as_deref(),
+        ) {
             if self.assembly.eq_ignore_ascii_case("GRCh38")
-                && e_chrom.trim_start_matches("chr").eq_ignore_ascii_case(chrom.trim_start_matches("chr"))
+                && e_chrom
+                    .trim_start_matches("chr")
+                    .eq_ignore_ascii_case(chrom.trim_start_matches("chr"))
                 && e_pos == pos
                 && e_ref.eq_ignore_ascii_case(ref_allele)
                 && e_alt.eq_ignore_ascii_case(alt)
@@ -823,37 +835,48 @@ impl AcmgConfig {
 
     /// Get effective BA1 threshold for a gene (gene-specific or default).
     pub fn effective_ba1_threshold(&self, gene: Option<&str>) -> f64 {
-        gene.and_then(|g| {
-            self.gene_overrides
-                .get(g)
-                .and_then(|o| o.ba1_af_threshold)
-        })
-        .unwrap_or(self.ba1_af_threshold)
+        gene.and_then(|g| self.gene_overrides.get(g).and_then(|o| o.ba1_af_threshold))
+            .unwrap_or(self.ba1_af_threshold)
     }
 
     /// Get effective BS1 threshold for a gene (gene-specific or default).
     pub fn effective_bs1_threshold(&self, gene: Option<&str>) -> f64 {
-        gene.and_then(|g| {
-            self.gene_overrides
-                .get(g)
-                .and_then(|o| o.bs1_af_threshold)
-        })
-        .unwrap_or(self.bs1_af_threshold)
+        gene.and_then(|g| self.gene_overrides.get(g).and_then(|o| o.bs1_af_threshold))
+            .unwrap_or(self.bs1_af_threshold)
     }
-
 }
 
 // Default value functions for serde
-fn default_ba1() -> f64 { 0.05 }
-fn default_bs1() -> f64 { 0.005 }
-fn default_pm2() -> f64 { 0.0001 }
-fn default_pm2_ad() -> f64 { 0.00004 }
-fn default_pm2_ar() -> f64 { 0.00007 }
-fn default_bs2_ad_min_ac() -> u64 { 5 }
-fn default_bs2_ar_min_hom() -> u64 { 2 }
-fn default_bs2_prevalence() -> f64 { 1e-3 }
-fn default_bp1_max_pathogenic_missense() -> u32 { 3 }
-fn default_bp7_max_intron_offset() -> u64 { 300 }
+fn default_ba1() -> f64 {
+    0.05
+}
+fn default_bs1() -> f64 {
+    0.005
+}
+fn default_pm2() -> f64 {
+    0.0001
+}
+fn default_pm2_ad() -> f64 {
+    0.00004
+}
+fn default_pm2_ar() -> f64 {
+    0.00007
+}
+fn default_bs2_ad_min_ac() -> u64 {
+    5
+}
+fn default_bs2_ar_min_hom() -> u64 {
+    2
+}
+fn default_bs2_prevalence() -> f64 {
+    1e-3
+}
+fn default_bp1_max_pathogenic_missense() -> u32 {
+    3
+}
+fn default_bp7_max_intron_offset() -> u64 {
+    300
+}
 
 /// Genes whose gnomAD frequencies are unreliable because of paralogue,
 /// pseudogene or segmental-duplication mismapping (Mandelker et al. 2016,
@@ -867,9 +890,9 @@ fn default_homology_unreliable_genes() -> Vec<String> {
         "CYP21A2", "STRC", "HBA1", "HBA2",
         // Canonical members of the Mandelker 2016 set that also appear in
         // clinical panels and carry a pseudogene or near-identical paralogue.
-        "SMN1", "SMN2", "PMS2", "NEB", "OTOA", "GBA", "IKBKG", "CFC1", "NCF1",
-        "TTN", "CYP11B1", "CYP11B2", "HBB", "HBD", "SBDS", "FCGR3A", "FCGR3B",
-        "CR1", "C4A", "C4B", "TUBB8", "MOCS1", "OPN1LW", "OPN1MW", "GTF2I",
+        "SMN1", "SMN2", "PMS2", "NEB", "OTOA", "GBA", "IKBKG", "CFC1", "NCF1", "TTN", "CYP11B1",
+        "CYP11B2", "HBB", "HBD", "SBDS", "FCGR3A", "FCGR3B", "CR1", "C4A", "C4B", "TUBB8", "MOCS1",
+        "OPN1LW", "OPN1MW", "GTF2I",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -948,23 +971,57 @@ fn default_gene_mechanisms() -> HashMap<String, String> {
     .collect()
 }
 
-fn default_pp3_supporting() -> f64 { 0.644 }
-fn default_pp3_moderate() -> f64 { 0.773 }
-fn default_pp3_strong() -> f64 { 0.932 }
-fn default_bp4_supporting() -> f64 { 0.290 }
-fn default_bp4_moderate() -> f64 { 0.183 }
-fn default_bp4_strong() -> f64 { 0.016 }
-fn default_bp4_very_strong() -> f64 { 0.003 }
-fn default_spliceai_pathogenic() -> f64 { 0.2 }
-fn default_spliceai_benign() -> f64 { 0.1 }
-fn default_phylop() -> f64 { 2.0 }
-fn default_pli() -> f64 { 0.9 }
-fn default_loeuf() -> f64 { 0.35 }
-fn default_misz() -> f64 { 3.09 }
-fn default_pm1_window() -> u64 { 5 }
-fn default_pm1_threshold() -> u32 { 3 }
-fn default_true() -> bool { true }
-fn default_min_an() -> u64 { 2000 }
+fn default_pp3_supporting() -> f64 {
+    0.644
+}
+fn default_pp3_moderate() -> f64 {
+    0.773
+}
+fn default_pp3_strong() -> f64 {
+    0.932
+}
+fn default_bp4_supporting() -> f64 {
+    0.290
+}
+fn default_bp4_moderate() -> f64 {
+    0.183
+}
+fn default_bp4_strong() -> f64 {
+    0.016
+}
+fn default_bp4_very_strong() -> f64 {
+    0.003
+}
+fn default_spliceai_pathogenic() -> f64 {
+    0.2
+}
+fn default_spliceai_benign() -> f64 {
+    0.1
+}
+fn default_phylop() -> f64 {
+    2.0
+}
+fn default_pli() -> f64 {
+    0.9
+}
+fn default_loeuf() -> f64 {
+    0.35
+}
+fn default_misz() -> f64 {
+    3.09
+}
+fn default_pm1_window() -> u64 {
+    5
+}
+fn default_pm1_threshold() -> u32 {
+    3
+}
+fn default_true() -> bool {
+    true
+}
+fn default_min_an() -> u64 {
+    2000
+}
 
 /// Default BA1 exception list (Ghosh et al. 2018, Hum Mutat — 9 variants).
 /// The ClinGen SVI BA1 exception list (Ghosh 2018, PMID 30311378, Table 1).
@@ -982,7 +1039,14 @@ fn default_min_an() -> u64 { 2000 }
 /// reports `c.1270G>C` on the Ensembl canonical transcript, and ACAD9's
 /// `c.-44_-41dupTAAG` is the same variant fastVEP spells `c.-45_-44insTAAG`.
 fn default_ba1_exceptions() -> Vec<Ba1Exception> {
-    let mk = |gene: &str, hgvs: &str, clinvar_id: &str, chrom: &str, pos: u64, r: &str, a: &str, reason: &str| {
+    let mk = |gene: &str,
+              hgvs: &str,
+              clinvar_id: &str,
+              chrom: &str,
+              pos: u64,
+              r: &str,
+              a: &str,
+              reason: &str| {
         Ba1Exception {
             gene: gene.to_string(),
             hgvs_c: hgvs.to_string(),
@@ -996,16 +1060,17 @@ fn default_ba1_exceptions() -> Vec<Ba1Exception> {
             blocks: default_exception_blocks(),
         }
     };
-    let hypomorph = |gene: &str, hgvs: &str, chrom: &str, pos: u64, r: &str, a: &str, reason: &str| {
-        Ba1Exception {
-            blocks: vec!["BA1".into(), "BS1".into(), "BS2".into()],
-            // No ClinVar variation ID: these entries are curated from the
-            // mechanism, not lifted from a published table, so there is no
-            // source row to point at.
-            clinvar_id: None,
-            ..mk(gene, hgvs, "", chrom, pos, r, a, reason)
-        }
-    };
+    let hypomorph =
+        |gene: &str, hgvs: &str, chrom: &str, pos: u64, r: &str, a: &str, reason: &str| {
+            Ba1Exception {
+                blocks: vec!["BA1".into(), "BS1".into(), "BS2".into()],
+                // No ClinVar variation ID: these entries are curated from the
+                // mechanism, not lifted from a published table, so there is no
+                // source row to point at.
+                clinvar_id: None,
+                ..mk(gene, hgvs, "", chrom, pos, r, a, reason)
+            }
+        };
     let mut entries = vec![
         mk("ACAD9", "c.-44_-41dupTAAG", "1018", "3", 128_879_647, "C", "CTAAG",
            "Ghosh 2018 BA1 exception (VUS); 12.6 % in African/African American"),
@@ -1110,13 +1175,17 @@ ba1_af_threshold = 8.3e-5
         // nothing, and this classifier has already shipped three criteria that
         // never fired for want of exactly that signal.
         for toml in [
-            "bs1_af_thresold = 0.001",                       // transposed letters
-            "[gene_overrides.BRCA1]\nba1_threshold = 0.01",  // wrong field name
+            "bs1_af_thresold = 0.001",                      // transposed letters
+            "[gene_overrides.BRCA1]\nba1_threshold = 0.01", // wrong field name
             "[[ba1_exceptions]]\ngene = \"HFE\"\nhgvs_c = \"c.845G>A\"\nblock = [\"BS1\"]",
             "[trio]\nproband = \"P\"\nmin_dpeth = 20",
         ] {
             let parsed = toml::from_str::<AcmgConfig>(toml);
-            assert!(parsed.is_err(), "expected a rejection, got a silent default: {}", toml);
+            assert!(
+                parsed.is_err(),
+                "expected a rejection, got a silent default: {}",
+                toml
+            );
         }
     }
 
@@ -1166,7 +1235,10 @@ ba1_af_threshold = 8.3e-5
     fn test_curated_mechanisms_ship_by_default() {
         let cfg = AcmgConfig::default();
         assert_eq!(cfg.effective_mechanism(Some("PCSK9")), Some("GOF"));
-        assert_eq!(cfg.effective_mechanism(Some("MYH7")), Some("DOMINANT_NEGATIVE"));
+        assert_eq!(
+            cfg.effective_mechanism(Some("MYH7")),
+            Some("DOMINANT_NEGATIVE")
+        );
         assert_eq!(cfg.effective_mechanism(Some("RYR1")), Some("LOF_and_GOF"));
         assert_eq!(cfg.effective_mechanism(Some("BRCA1")), None);
         assert_eq!(cfg.effective_mechanism(None), None);
@@ -1176,23 +1248,21 @@ ba1_af_threshold = 8.3e-5
 
     #[test]
     fn test_gene_overrides_mechanism_wins_over_the_curated_table() {
-        let cfg: AcmgConfig = toml::from_str(
-            "[gene_overrides.PCSK9]\nmechanism = \"LOF\"\n",
-        )
-        .unwrap();
+        let cfg: AcmgConfig =
+            toml::from_str("[gene_overrides.PCSK9]\nmechanism = \"LOF\"\n").unwrap();
         assert_eq!(cfg.effective_mechanism(Some("PCSK9")), Some("LOF"));
         // ... and the rest of the shipped table survives that override.
-        assert_eq!(cfg.effective_mechanism(Some("MYH7")), Some("DOMINANT_NEGATIVE"));
+        assert_eq!(
+            cfg.effective_mechanism(Some("MYH7")),
+            Some("DOMINANT_NEGATIVE")
+        );
     }
 
     #[test]
     fn test_gene_mechanisms_table_can_be_replaced_wholesale() {
         // Documented behaviour in ACMG.md: naming the table in TOML replaces
         // it, exactly as `homology_unreliable_genes` and `ba1_exceptions` do.
-        let cfg: AcmgConfig = toml::from_str(
-            "[gene_mechanisms]\nMYGENE = \"GOF\"\n",
-        )
-        .unwrap();
+        let cfg: AcmgConfig = toml::from_str("[gene_mechanisms]\nMYGENE = \"GOF\"\n").unwrap();
         assert_eq!(cfg.effective_mechanism(Some("MYGENE")), Some("GOF"));
         assert_eq!(cfg.effective_mechanism(Some("PCSK9")), None);
     }

@@ -140,10 +140,7 @@ impl GnomadGeneCols {
         let fields: Vec<&str> = header.split('\t').collect();
         let find = |needles: &[&str]| {
             for n in needles {
-                if let Some(i) = fields
-                    .iter()
-                    .position(|f| f.eq_ignore_ascii_case(n))
-                {
+                if let Some(i) = fields.iter().position(|f| f.eq_ignore_ascii_case(n)) {
                     return Some(i);
                 }
             }
@@ -174,7 +171,10 @@ impl GnomadGeneCols {
             self.loeuf,
             self.mis_z,
             self.syn_z,
-        ].into_iter().flatten() {
+        ]
+        .into_iter()
+        .flatten()
+        {
             m = m.max(i);
         }
         m

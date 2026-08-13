@@ -35,7 +35,10 @@ pub fn score_osa2_metadata(json_key: &str, assembly: &str) -> Osa2Metadata {
         is_array: false,
         is_positional: true,
         chunk_bits: 20,
-        description: format!("{} conservation/prediction scores for {}", json_key, assembly),
+        description: format!(
+            "{} conservation/prediction scores for {}",
+            json_key, assembly
+        ),
     }
 }
 
@@ -54,7 +57,11 @@ pub fn iter_score_tsv<R: BufRead>(
     chrom_to_idx: &HashMap<String, u16>,
     zero_based: bool,
 ) -> ScoreTsvIter<'_, R> {
-    ScoreTsvIter { lines: reader.lines(), chrom_to_idx, zero_based }
+    ScoreTsvIter {
+        lines: reader.lines(),
+        chrom_to_idx,
+        zero_based,
+    }
 }
 
 pub struct ScoreTsvIter<'a, R: BufRead> {
@@ -94,7 +101,11 @@ impl<R: BufRead> Iterator for ScoreTsvIter<'_, R> {
 
             let pos: u32 = match pos_str.parse::<u32>() {
                 Ok(p) => {
-                    if self.zero_based { p + 1 } else { p }
+                    if self.zero_based {
+                        p + 1
+                    } else {
+                        p
+                    }
                 }
                 Err(_) => continue,
             };
@@ -126,7 +137,11 @@ pub fn parse_score_tsv<R: BufRead>(
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records: Vec<_> =
         iter_score_tsv(reader, chrom_to_idx, zero_based).collect::<Result<_>>()?;
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
@@ -144,8 +159,17 @@ pub fn parse_score_tsv<R: BufRead>(
 /// The input must already be sorted by chromosome (all standard UCSC
 /// per-chromosome releases are; concatenating them in chromosome order
 /// preserves this).
-pub fn iter_wigfix<R: BufRead>(reader: R, chrom_to_idx: &HashMap<String, u16>) -> WigFixIter<'_, R> {
-    WigFixIter { lines: reader.lines(), chrom_to_idx, current_chrom_idx: None, current_pos: 0, step: 1 }
+pub fn iter_wigfix<R: BufRead>(
+    reader: R,
+    chrom_to_idx: &HashMap<String, u16>,
+) -> WigFixIter<'_, R> {
+    WigFixIter {
+        lines: reader.lines(),
+        chrom_to_idx,
+        current_chrom_idx: None,
+        current_pos: 0,
+        step: 1,
+    }
 }
 
 pub struct WigFixIter<'a, R: BufRead> {
@@ -183,7 +207,10 @@ impl<R: BufRead> Iterator for WigFixIter<'_, R> {
                     }
                 }
 
-                self.current_chrom_idx = chrom.as_ref().and_then(|c| self.chrom_to_idx.get(c)).copied();
+                self.current_chrom_idx = chrom
+                    .as_ref()
+                    .and_then(|c| self.chrom_to_idx.get(c))
+                    .copied();
                 self.current_pos = start.unwrap_or(1);
                 continue;
             }
@@ -219,7 +246,11 @@ pub fn parse_wigfix<R: BufRead>(
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records: Vec<_> = iter_wigfix(reader, chrom_to_idx).collect::<Result<_>>()?;
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 

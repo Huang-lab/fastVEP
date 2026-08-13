@@ -207,7 +207,12 @@ fn a_wrong_non_acgt_allele_still_misses() {
     // Right allele shape, wrong position.
     assert!(json_of(reader.annotate_position("chr1", 999, "A", "N").unwrap()).is_none());
     // A non-ACGT query against a position holding only ACGT records.
-    assert!(json_of(reader.annotate_position("chr1", 202, "GATTACN", "G").unwrap()).is_none());
+    assert!(json_of(
+        reader
+            .annotate_position("chr1", 202, "GATTACN", "G")
+            .unwrap()
+    )
+    .is_none());
     // And the ACGT record at a position that also holds a non-ACGT one is
     // unaffected by the bucket's presence.
     assert!(json_of(reader.annotate_position("chr1", 100, "A", "G").unwrap()).is_some());

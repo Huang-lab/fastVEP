@@ -94,7 +94,10 @@ fn pathogenic_call_by_points(
     } else {
         return None;
     };
-    Some((cls, format!("{} pathogenic points (Tavtigian 2020)", points)))
+    Some((
+        cls,
+        format!("{} pathogenic points (Tavtigian 2020)", points),
+    ))
 }
 
 /// The Richards 2015 combining table on both sides. The tests use it directly
@@ -344,7 +347,12 @@ fn site_level_frequency_veto(criteria: &[EvidenceCriterion]) -> Option<String> {
         .iter()
         .filter(|c| !c.evaluated && matches!(c.code.as_str(), "BA1" | "BS1" | "BS2"))
         .find_map(|c| {
-            let flag = |key| c.details.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+            let flag = |key| {
+                c.details
+                    .get(key)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            };
             let vetoed = flag(crate::criteria::FREQUENCY_BLOCKED_SITE_LEVEL)
                 && flag(crate::criteria::FREQUENCY_BLOCKED_WOULD_BE_BENIGN);
             vetoed.then(|| {
@@ -353,8 +361,15 @@ fn site_level_frequency_veto(criteria: &[EvidenceCriterion]) -> Option<String> {
                     .get("frequency_blocked")
                     .and_then(|v| v.as_str())
                     .unwrap_or("population frequency unusable at this site");
-                match c.details.get("frequency_blocked_af").and_then(|v| v.as_f64()) {
-                    Some(af) => format!("{} - and the frequency it suppressed, {:.3e}, would itself have met {}", reason, af, c.code),
+                match c
+                    .details
+                    .get("frequency_blocked_af")
+                    .and_then(|v| v.as_f64())
+                {
+                    Some(af) => format!(
+                        "{} - and the frequency it suppressed, {:.3e}, would itself have met {}",
+                        reason, af, c.code
+                    ),
                     None => reason.to_string(),
                 }
             })
@@ -517,10 +532,7 @@ mod tests {
 
     #[test]
     fn test_two_bs_benign() {
-        let criteria = vec![
-            met("BS1", Benign, Strong),
-            met("BS2", Benign, Strong),
-        ];
+        let criteria = vec![met("BS1", Benign, Strong), met("BS2", Benign, Strong)];
         let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Benign);
         assert_eq!(rule.unwrap(), ">=2 BS");
@@ -679,10 +691,7 @@ mod tests {
 
     #[test]
     fn test_bs_plus_bp_likely_benign() {
-        let criteria = vec![
-            met("BS1", Benign, Strong),
-            met("BP7", Benign, Supporting),
-        ];
+        let criteria = vec![met("BS1", Benign, Strong), met("BP7", Benign, Supporting)];
         let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyBenign);
         assert_eq!(rule.unwrap(), "BS + BP");
@@ -836,7 +845,11 @@ mod tests {
     fn lone_pvs1_is_likely_pathogenic_under_points_and_vus_under_the_table() {
         // The disagreement that motivated the change. 2,319 truth-pathogenic
         // variants sat in VUS on exactly this signature in run v10.
-        let criteria = vec![met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong)];
+        let criteria = vec![met(
+            "PVS1",
+            EvidenceDirection::Pathogenic,
+            EvidenceStrength::VeryStrong,
+        )];
         assert_eq!(points_of(&criteria).0, AcmgClassification::LikelyPathogenic);
         assert_eq!(
             combine_by_table(&criteria).0,
@@ -848,11 +861,23 @@ mod tests {
     fn ten_points_reaches_pathogenic() {
         // PVS1 (8) + PM2_Supporting (1) = 9 → LP; add a Moderate → 11 → P.
         let mut criteria = vec![
-            met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
-            met("PM2_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting),
+            met(
+                "PVS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::VeryStrong,
+            ),
+            met(
+                "PM2_Supporting",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Supporting,
+            ),
         ];
         assert_eq!(points_of(&criteria).0, AcmgClassification::LikelyPathogenic);
-        criteria.push(met("PM1", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate));
+        criteria.push(met(
+            "PM1",
+            EvidenceDirection::Pathogenic,
+            EvidenceStrength::Moderate,
+        ));
         assert_eq!(points_of(&criteria).0, AcmgClassification::Pathogenic);
     }
 
@@ -860,23 +885,53 @@ mod tests {
     fn five_pathogenic_points_stay_uncertain() {
         // PM1 (2) + PM5 (2) + PM2_Supporting (1) = 5, one short of the band.
         let criteria = vec![
-            met("PM1", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
-            met("PM5", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
-            met("PM2_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting),
+            met(
+                "PM1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Moderate,
+            ),
+            met(
+                "PM5",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Moderate,
+            ),
+            met(
+                "PM2_Supporting",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Supporting,
+            ),
         ];
-        assert_eq!(points_of(&criteria).0, AcmgClassification::UncertainSignificance);
+        assert_eq!(
+            points_of(&criteria).0,
+            AcmgClassification::UncertainSignificance
+        );
     }
 
     #[test]
     fn the_benign_side_keeps_the_2015_table_under_points() {
         // The measured reason for the split: Tavtigian's Likely Benign band
         // opens at -1, so a lone BP4 would be a benign call. It must not be.
-        let criteria = vec![met("BP4", EvidenceDirection::Benign, EvidenceStrength::Supporting)];
-        assert_eq!(points_of(&criteria).0, AcmgClassification::UncertainSignificance);
+        let criteria = vec![met(
+            "BP4",
+            EvidenceDirection::Benign,
+            EvidenceStrength::Supporting,
+        )];
+        assert_eq!(
+            points_of(&criteria).0,
+            AcmgClassification::UncertainSignificance
+        );
         // Two supporting benign criteria do reach Likely Benign, as Richards says.
         let criteria = vec![
-            met("BP4", EvidenceDirection::Benign, EvidenceStrength::Supporting),
-            met("BP7", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+            met(
+                "BP4",
+                EvidenceDirection::Benign,
+                EvidenceStrength::Supporting,
+            ),
+            met(
+                "BP7",
+                EvidenceDirection::Benign,
+                EvidenceStrength::Supporting,
+            ),
         ];
         assert_eq!(points_of(&criteria).0, AcmgClassification::LikelyBenign);
     }
@@ -886,8 +941,16 @@ mod tests {
         // A lone PVS1 now reaches LP on the pathogenic side, so the guard that
         // sends definite-vs-definite to VUS has to keep working over it.
         let criteria = vec![
-            met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
-            met("BA1", EvidenceDirection::Benign, EvidenceStrength::Standalone),
+            met(
+                "PVS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::VeryStrong,
+            ),
+            met(
+                "BA1",
+                EvidenceDirection::Benign,
+                EvidenceStrength::Standalone,
+            ),
         ];
         let (cls, rule) = points_of(&criteria);
         assert_eq!(cls, AcmgClassification::UncertainSignificance);
@@ -898,9 +961,20 @@ mod tests {
     fn graded_subcodes_score_at_their_effective_strength() {
         // PVS1_Moderate is 2 points, not 8 — the grading has to reach the sum.
         let criteria = vec![
-            met("PVS1_Moderate", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
-            met("PM2_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting),
+            met(
+                "PVS1_Moderate",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Moderate,
+            ),
+            met(
+                "PM2_Supporting",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Supporting,
+            ),
         ];
-        assert_eq!(points_of(&criteria).0, AcmgClassification::UncertainSignificance);
+        assert_eq!(
+            points_of(&criteria).0,
+            AcmgClassification::UncertainSignificance
+        );
     }
 }

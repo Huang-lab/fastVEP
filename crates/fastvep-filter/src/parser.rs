@@ -168,7 +168,9 @@ fn consume_number(tokens: &[Token], pos: &mut usize) -> Result<f64> {
     }
     let num = match &tokens[*pos] {
         Token::Number(n) => *n,
-        Token::Value(v) => v.parse::<f64>().map_err(|_| anyhow::anyhow!("Expected number, got '{}'", v))?,
+        Token::Value(v) => v
+            .parse::<f64>()
+            .map_err(|_| anyhow::anyhow!("Expected number, got '{}'", v))?,
         other => bail!("Expected number, got {:?}", other),
     };
     *pos += 1;

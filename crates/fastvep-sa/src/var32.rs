@@ -51,7 +51,11 @@ const BASE_DEC: [u8; 4] = *b"ACGT";
 /// Returns true if the variant is too long for Var32 encoding.
 #[inline]
 pub fn is_long(ref_len: usize, alt_len: usize) -> bool {
-    ref_len + alt_len > MAX_COMBINED_LEN || ref_len == 0 || alt_len == 0 || ref_len > 4 || alt_len > 4
+    ref_len + alt_len > MAX_COMBINED_LEN
+        || ref_len == 0
+        || alt_len == 0
+        || ref_len > 4
+        || alt_len > 4
 }
 
 /// Encode a variant into a compact 32-bit representation.
@@ -237,7 +241,7 @@ mod tests {
         let v2 = encode(200, b"A", b"G").unwrap();
         let v3 = encode(100, b"A", b"T").unwrap();
         assert!(v1 < v2); // position 100 < 200
-        // Same position: sorted by allele encoding
+                          // Same position: sorted by allele encoding
         assert!(v1 != v3);
     }
 
@@ -248,7 +252,9 @@ mod tests {
         // historic bug where decoding the 4th base used a stale shift.
         for rlen in 1..=4usize {
             for alen in 1..=4usize {
-                if rlen + alen > MAX_COMBINED_LEN { continue; }
+                if rlen + alen > MAX_COMBINED_LEN {
+                    continue;
+                }
                 let r: Vec<u8> = (0..rlen).map(|i| BASE_DEC[i % 4]).collect();
                 let a: Vec<u8> = (0..alen).map(|i| BASE_DEC[(i + 1) % 4]).collect();
                 let encoded = encode(7, &r, &a)
@@ -271,7 +277,7 @@ mod tests {
         assert!(encode(0, b"a", b"x").is_none()); // arbitrary letter
         assert!(encode(0, &[0u8], b"A").is_none()); // null byte
         assert!(encode(0, &[0xC3, 0xA9], b"A").is_none()); // multi-byte UTF-8
-        // Valid ACGT (mixed case) still works.
+                                                           // Valid ACGT (mixed case) still works.
         assert!(encode(0, b"a", b"G").is_some());
         assert!(encode(0, b"Ac", b"gT").is_some());
     }

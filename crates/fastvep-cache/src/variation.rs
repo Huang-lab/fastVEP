@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use noodles_bgzf as bgzf;
-use noodles_core::Position;
 use noodles_core::region::Interval;
+use noodles_core::Position;
 use noodles_csi::binning_index::BinningIndex;
 use noodles_tabix as tabix;
 use std::collections::HashMap;
@@ -132,14 +132,13 @@ impl VariationTabixReader {
 
         // Build query interval (noodles Position is 1-based, non-zero)
         // VEP cache uses 1-based coordinates already
-        let pos_start = Position::try_from(start as usize)
-            .context("Invalid start position")?;
-        let pos_end = Position::try_from(end as usize)
-            .context("Invalid end position")?;
+        let pos_start = Position::try_from(start as usize).context("Invalid start position")?;
+        let pos_end = Position::try_from(end as usize).context("Invalid end position")?;
         let query_interval: Interval = (pos_start..=pos_end).into();
 
         // Get chunks from index
-        let chunks = index.query(ref_id, query_interval)
+        let chunks = index
+            .query(ref_id, query_interval)
             .context("Tabix query failed")?;
 
         if chunks.is_empty() {
@@ -265,10 +264,22 @@ impl VariationTabixReader {
 
         // Collect population frequency columns
         let known_non_freq = [
-            "chr", "variation_name", "failed", "somatic", "start", "end",
-            "allele_string", "strand", "minor_allele", "minor_allele_freq",
-            "clin_sig", "phenotype_or_disease", "pubmed",
-            "clin_sig_allele", "clinical_impact", "var_synonyms",
+            "chr",
+            "variation_name",
+            "failed",
+            "somatic",
+            "start",
+            "end",
+            "allele_string",
+            "strand",
+            "minor_allele",
+            "minor_allele_freq",
+            "clin_sig",
+            "phenotype_or_disease",
+            "pubmed",
+            "clin_sig_allele",
+            "clinical_impact",
+            "var_synonyms",
         ];
         let mut frequencies = HashMap::new();
         for (col_name, value) in &col_map {
@@ -345,7 +356,10 @@ fn complement_base(b: u8) -> u8 {
 
 /// Reverse-complement a DNA string.
 fn reverse_complement(seq: &str) -> String {
-    seq.bytes().rev().map(|b| complement_base(b) as char).collect()
+    seq.bytes()
+        .rev()
+        .map(|b| complement_base(b) as char)
+        .collect()
 }
 
 /// Check if a variant's alleles match a known variant record, accounting for
@@ -543,11 +557,8 @@ mod tests {
             .map(String::from)
             .collect();
 
-        let reader = VariationTabixReader::new(
-            Path::new("/tmp/fake"),
-            &cols,
-            &["21".to_string()],
-        ).unwrap();
+        let reader =
+            VariationTabixReader::new(Path::new("/tmp/fake"), &cols, &["21".to_string()]).unwrap();
 
         let line = "21\trs559462325\t.\t.\t8522406\t.\tG/A\t.\tA\t0.0002\t.\t.\t.\tA:0\tA:0\tA:0.001\tA:0\tA:0\t.\t.";
         let record = reader.parse_line(line).unwrap();
@@ -573,8 +584,10 @@ mod tests {
     fn test_tabix_query_real_data() {
         // Use real VEP cache test data
         let cache_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
-            .parent().unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
             .join("test_data/vep_cache/homo_sapiens/84_GRCh38");
 
         if !cache_dir.join("info.txt").exists() {
@@ -584,15 +597,16 @@ mod tests {
 
         let info = crate::info::CacheInfo::from_file(&cache_dir.join("info.txt")).unwrap();
 
-        let reader = VariationTabixReader::new(
-            &cache_dir,
-            &info.variation_cols,
-            &info.valid_chromosomes,
-        ).unwrap();
+        let reader =
+            VariationTabixReader::new(&cache_dir, &info.variation_cols, &info.valid_chromosomes)
+                .unwrap();
 
         // Query for a known variant: rs879182429 at chr21:8013350
         let records = reader.query("21", 8013350, 8013350).unwrap();
-        assert!(!records.is_empty(), "Expected at least one record at 21:8013350");
+        assert!(
+            !records.is_empty(),
+            "Expected at least one record at 21:8013350"
+        );
 
         let rs = records.iter().find(|r| r.variation_name == "rs879182429");
         assert!(rs.is_some(), "Expected rs879182429 in results");

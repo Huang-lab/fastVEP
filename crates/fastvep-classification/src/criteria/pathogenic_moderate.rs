@@ -5,10 +5,7 @@ use crate::sa_extract::ClassificationInput;
 use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 
 /// Evaluate all pathogenic moderate criteria: PM1, PM2, PM3, PM4, PM5, PM6.
-pub fn evaluate_all(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> Vec<EvidenceCriterion> {
+pub fn evaluate_all(input: &ClassificationInput, config: &AcmgConfig) -> Vec<EvidenceCriterion> {
     vec![
         evaluate_pm1(input, config),
         evaluate_pm2(input, config),
@@ -24,10 +21,7 @@ pub fn evaluate_all(
 /// Approximated using ClinVar pathogenic variant density as a hotspot proxy:
 /// if >=N pathogenic variants exist within ±W amino acid positions, the region
 /// is considered a hotspot.
-fn evaluate_pm1(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_pm1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
     let window = config.pm1_hotspot_window;
     let threshold = config.pm1_hotspot_min_pathogenic;
@@ -115,7 +109,9 @@ fn evaluate_pm1(
         let raw_nearby: usize = cpd
             .protein_variants
             .iter()
-            .filter(|v| v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("pathogenic"))
+            .filter(|v| {
+                v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("pathogenic")
+            })
             .count();
 
         // The index is built from ClinVar, so when the variant being
@@ -131,10 +127,16 @@ fn evaluate_pm1(
         };
         let nearby_pathogenic = raw_nearby.saturating_sub(self_contribution);
 
-        details.insert("nearby_pathogenic_count".into(), serde_json::json!(nearby_pathogenic));
+        details.insert(
+            "nearby_pathogenic_count".into(),
+            serde_json::json!(nearby_pathogenic),
+        );
         if self_contribution > 0 {
             details.insert("self_excluded_from_count".into(), serde_json::json!(true));
-            details.insert("nearby_pathogenic_raw".into(), serde_json::json!(raw_nearby));
+            details.insert(
+                "nearby_pathogenic_raw".into(),
+                serde_json::json!(raw_nearby),
+            );
         }
 
         // The other half of PM1's definition. Richards 2015 asks for a hotspot
@@ -165,7 +167,9 @@ fn evaluate_pm1(
             let raw = cpd
                 .protein_variants
                 .iter()
-                .filter(|v| v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("benign"))
+                .filter(|v| {
+                    v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("benign")
+                })
                 .count();
             let self_benign = if config.exclude_self_from_clinvar_evidence
                 && input.clinvar.as_ref().is_some_and(|c| c.has_benign())
@@ -179,14 +183,17 @@ fn evaluate_pm1(
             0
         };
         if benign_tested {
-            details.insert("nearby_benign_count".into(), serde_json::json!(nearby_benign));
+            details.insert(
+                "nearby_benign_count".into(),
+                serde_json::json!(nearby_benign),
+            );
             details.insert(
                 "max_benign_in_window".into(),
                 serde_json::json!(config.pm1_max_benign_in_window),
             );
         }
-        let benign_variation = benign_tested
-            && nearby_benign > config.pm1_max_benign_in_window as usize;
+        let benign_variation =
+            benign_tested && nearby_benign > config.pm1_max_benign_in_window as usize;
 
         let met = nearby_pathogenic >= threshold as usize && !benign_variation;
         let summary = if benign_variation {
@@ -224,7 +231,8 @@ fn evaluate_pm1(
             default_strength: EvidenceStrength::Moderate,
             met: false,
             evaluated: false,
-            summary: "ClinVar protein-position index not available for hotspot analysis".to_string(),
+            summary: "ClinVar protein-position index not available for hotspot analysis"
+                .to_string(),
             details: serde_json::Value::Object(details),
         }
     }
@@ -242,10 +250,7 @@ fn evaluate_pm1(
 /// Inheritance is inferred from OMIM phenotypes (`OmimData::has_recessive_inheritance` /
 /// `has_dominant_inheritance`). When a per-gene `pm2_af_threshold` override is
 /// configured, that value wins regardless of inheritance.
-fn evaluate_pm2(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_pm2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     // "Absent from population databases" is only evidence when the database
     // could have seen the variant. Where reads pile up on a paralogue, or
     // gnomAD itself rejected the site, both a frequency and the absence of a
@@ -256,9 +261,17 @@ fn evaluate_pm2(
         let mut details = serde_json::Map::new();
         blocker.record(&mut details);
         return EvidenceCriterion {
-            code: if config.pm2_downgrade_to_supporting { "PM2_Supporting".to_string() } else { "PM2".to_string() },
+            code: if config.pm2_downgrade_to_supporting {
+                "PM2_Supporting".to_string()
+            } else {
+                "PM2".to_string()
+            },
             direction: EvidenceDirection::Pathogenic,
-            strength: if config.pm2_downgrade_to_supporting { EvidenceStrength::Supporting } else { EvidenceStrength::Moderate },
+            strength: if config.pm2_downgrade_to_supporting {
+                EvidenceStrength::Supporting
+            } else {
+                EvidenceStrength::Moderate
+            },
             default_strength: EvidenceStrength::Moderate,
             met: false,
             evaluated: false,
@@ -303,17 +316,21 @@ fn evaluate_pm2(
         .as_ref()
         .is_some_and(|o| o.has_dominant_inheritance());
 
-    let (threshold, inheritance_basis): (f64, &'static str) = if let Some(t) = gene_specific_threshold {
-        (t, "gene_override")
-    } else if is_recessive && !is_dominant {
-        (config.pm2_ar_af_threshold, "AR")
-    } else {
-        (config.pm2_ad_af_threshold, "AD_or_unknown")
-    };
+    let (threshold, inheritance_basis): (f64, &'static str) =
+        if let Some(t) = gene_specific_threshold {
+            (t, "gene_override")
+        } else if is_recessive && !is_dominant {
+            (config.pm2_ar_af_threshold, "AR")
+        } else {
+            (config.pm2_ad_af_threshold, "AD_or_unknown")
+        };
 
     let mut details = serde_json::Map::new();
     details.insert("af_threshold".into(), serde_json::json!(threshold));
-    details.insert("inheritance_basis".into(), serde_json::json!(inheritance_basis));
+    details.insert(
+        "inheritance_basis".into(),
+        serde_json::json!(inheritance_basis),
+    );
     details.insert("is_recessive".into(), serde_json::json!(is_recessive));
     details.insert("is_dominant".into(), serde_json::json!(is_dominant));
 
@@ -433,7 +450,8 @@ fn evaluate_pm2(
         (
             false,
             false,
-            "PM2 not evaluated: no gnomAD annotation present (pm2_absent_when_no_record disabled).".to_string(),
+            "PM2 not evaluated: no gnomAD annotation present (pm2_absent_when_no_record disabled)."
+                .to_string(),
         )
     };
 
@@ -475,10 +493,7 @@ fn evaluate_pm2(
 ///
 /// Companions in cis with a pathogenic variant are excluded (those count
 /// toward BP2 instead). Requires AR inheritance from OMIM.
-fn evaluate_pm3(
-    input: &ClassificationInput,
-    _config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_pm3(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
     // Recessive inheritance gate.
@@ -494,7 +509,8 @@ fn evaluate_pm3(
             EvidenceStrength::Moderate,
             false,
             true,
-            "Gene does not have autosomal recessive inheritance (PM3 requires recessive disorder)".to_string(),
+            "Gene does not have autosomal recessive inheritance (PM3 requires recessive disorder)"
+                .to_string(),
             details,
         );
     }
@@ -512,9 +528,11 @@ fn evaluate_pm3(
             false,
             proband.is_some(),
             if proband.is_some() {
-                "Proband is neither het nor hom-alt for this variant (PM3 requires presence)".to_string()
+                "Proband is neither het nor hom-alt for this variant (PM3 requires presence)"
+                    .to_string()
             } else {
-                "Proband genotype not available; PM3 requires trio VCF for compound-het analysis".to_string()
+                "Proband genotype not available; PM3 requires trio VCF for compound-het analysis"
+                    .to_string()
             },
             details,
         );
@@ -544,7 +562,11 @@ fn evaluate_pm3(
             continue;
         }
         let confirmed_trans = cv.is_in_trans == Some(true);
-        let pts = match (confirmed_trans, cv.is_clinvar_pathogenic, cv.is_clinvar_likely_pathogenic) {
+        let pts = match (
+            confirmed_trans,
+            cv.is_clinvar_pathogenic,
+            cv.is_clinvar_likely_pathogenic,
+        ) {
             (true, true, _) => 1.0,
             (true, _, true) => 0.5,
             (false, true, _) => 0.5,
@@ -554,7 +576,11 @@ fn evaluate_pm3(
         if pts == 0.0 {
             continue;
         }
-        let label = match (confirmed_trans, cv.is_clinvar_pathogenic, cv.is_clinvar_likely_pathogenic) {
+        let label = match (
+            confirmed_trans,
+            cv.is_clinvar_pathogenic,
+            cv.is_clinvar_likely_pathogenic,
+        ) {
             (true, true, _) => "trans+P",
             (true, _, true) => "trans+LP",
             (false, true, _) => "unphased+P",
@@ -623,10 +649,7 @@ fn mk_pm3(
 
 /// PM4: Protein length changes due to in-frame deletions/insertions in non-repeat region,
 /// or stop-loss variants.
-fn evaluate_pm4(
-    input: &ClassificationInput,
-    _config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_pm4(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     let is_length_change = input.consequences.iter().any(|c| {
         matches!(
             c,
@@ -675,10 +698,7 @@ fn evaluate_pm4(
 ///
 /// Uses the ClinVar protein-position index to check if pathogenic variants
 /// with a DIFFERENT amino acid change exist at the same protein position.
-fn evaluate_pm5(
-    input: &ClassificationInput,
-    _config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_pm5(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     let is_missense = input
         .consequences
         .iter()
@@ -740,7 +760,10 @@ fn evaluate_pm5(
         );
 
         if !different_aa_matches.is_empty() {
-            let other_aas: Vec<&str> = different_aa_matches.iter().map(|v| v.alt_aa.as_str()).collect();
+            let other_aas: Vec<&str> = different_aa_matches
+                .iter()
+                .map(|v| v.alt_aa.as_str())
+                .collect();
             details.insert("other_pathogenic_aas".into(), serde_json::json!(other_aas));
 
             return EvidenceCriterion {
@@ -788,10 +811,7 @@ fn evaluate_pm5(
 /// Fires when the proband carries the variant and only partial parental data is available
 /// (one parent specified or one parent fails quality), and the available parent(s) are hom_ref.
 /// PS2 and PM6 are mutually exclusive: if full trio data passes quality, PS2 takes priority.
-fn evaluate_pm6(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_pm6(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
     let trio = match &config.trio {
@@ -804,7 +824,9 @@ fn evaluate_pm6(
                 default_strength: EvidenceStrength::Moderate,
                 met: false,
                 evaluated: false,
-                summary: "Requires trio VCF with at least one parent to assess assumed de novo status".to_string(),
+                summary:
+                    "Requires trio VCF with at least one parent to assess assumed de novo status"
+                        .to_string(),
                 details: serde_json::Value::Null,
             };
         }
@@ -818,9 +840,20 @@ fn evaluate_pm6(
     let min_gq = trio.min_gq;
 
     if both_parents_configured && both_parents_present {
-        let mother_qc = input.mother_genotype.as_ref().unwrap().passes_quality(min_dp, min_gq);
-        let father_qc = input.father_genotype.as_ref().unwrap().passes_quality(min_dp, min_gq);
-        let proband_qc = input.proband_genotype.as_ref().is_some_and(|g| g.passes_quality(min_dp, min_gq));
+        let mother_qc = input
+            .mother_genotype
+            .as_ref()
+            .unwrap()
+            .passes_quality(min_dp, min_gq);
+        let father_qc = input
+            .father_genotype
+            .as_ref()
+            .unwrap()
+            .passes_quality(min_dp, min_gq);
+        let proband_qc = input
+            .proband_genotype
+            .as_ref()
+            .is_some_and(|g| g.passes_quality(min_dp, min_gq));
         if mother_qc && father_qc && proband_qc {
             // Full trio with good quality: PS2 applies instead
             return EvidenceCriterion {
@@ -830,7 +863,9 @@ fn evaluate_pm6(
                 default_strength: EvidenceStrength::Moderate,
                 met: false,
                 evaluated: true,
-                summary: "Both parents available with sufficient quality; PS2 applies instead of PM6".to_string(),
+                summary:
+                    "Both parents available with sufficient quality; PS2 applies instead of PM6"
+                        .to_string(),
                 details: serde_json::Value::Null,
             };
         }
@@ -874,7 +909,10 @@ fn evaluate_pm6(
     if let Some(ref mother_gt) = input.mother_genotype {
         if mother_gt.passes_quality(min_dp, min_gq) {
             available_parents_count += 1;
-            details.insert("mother_hom_ref".into(), serde_json::json!(mother_gt.is_hom_ref));
+            details.insert(
+                "mother_hom_ref".into(),
+                serde_json::json!(mother_gt.is_hom_ref),
+            );
             if mother_gt.is_hom_ref {
                 available_parents_ref += 1;
             }
@@ -886,7 +924,10 @@ fn evaluate_pm6(
     if let Some(ref father_gt) = input.father_genotype {
         if father_gt.passes_quality(min_dp, min_gq) {
             available_parents_count += 1;
-            details.insert("father_hom_ref".into(), serde_json::json!(father_gt.is_hom_ref));
+            details.insert(
+                "father_hom_ref".into(),
+                serde_json::json!(father_gt.is_hom_ref),
+            );
             if father_gt.is_hom_ref {
                 available_parents_ref += 1;
             }
@@ -895,8 +936,14 @@ fn evaluate_pm6(
         }
     }
 
-    details.insert("available_parents_passing_qc".into(), serde_json::json!(available_parents_count));
-    details.insert("available_parents_hom_ref".into(), serde_json::json!(available_parents_ref));
+    details.insert(
+        "available_parents_passing_qc".into(),
+        serde_json::json!(available_parents_count),
+    );
+    details.insert(
+        "available_parents_hom_ref".into(),
+        serde_json::json!(available_parents_ref),
+    );
 
     if available_parents_count == 0 {
         return EvidenceCriterion {
@@ -920,7 +967,8 @@ fn evaluate_pm6(
     } else {
         format!(
             "Not assumed de novo: {} of {} available parent(s) carry the variant",
-            available_parents_count - available_parents_ref, available_parents_count
+            available_parents_count - available_parents_ref,
+            available_parents_count
         )
     };
 
@@ -939,8 +987,8 @@ fn evaluate_pm6(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::minimal_input;
     use crate::sa_extract::{ClinvarData, GnomadData, OmimData};
+    use crate::test_support::minimal_input;
     use fastvep_core::Impact;
 
     fn make_input(
@@ -1130,7 +1178,10 @@ mod tests {
     fn test_pm2_strict_absence_remains_available() {
         // The literal Richards 2015 reading stays one config line away, for a
         // lab that wants it.
-        let strict = AcmgConfig { pm2_ad_af_threshold: 0.0, ..Default::default() };
+        let strict = AcmgConfig {
+            pm2_ad_af_threshold: 0.0,
+            ..Default::default()
+        };
         assert!(!evaluate_pm2(&dominant_at(0.000005, 1), &strict).met);
         assert!(evaluate_pm2(&dominant_at(0.0, 0), &strict).met);
     }
@@ -1372,7 +1423,7 @@ mod tests {
             clinvar_protein: Some(ClinvarProteinData {
                 protein_variants: neighbours,
                 benign_indexed: true,
-            ..Default::default()
+                ..Default::default()
             }),
             ..minimal_input()
         }
@@ -1410,7 +1461,9 @@ mod tests {
         let mut input = hotspot_missense("BRCA1");
         input.omim = Some(OmimData {
             mim_number: Some(0),
-            phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
+            phenotypes: Some(vec![
+                "hereditary breast cancer (ClinGen Definitive/AD)".into()
+            ]),
         });
         assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
     }
@@ -1433,7 +1486,11 @@ mod tests {
                 pos: 100 + i,
                 ref_aa: "A".into(),
                 alt_aa: "G".into(),
-                sig: if i % 2 == 0 { "Benign".into() } else { "Likely_benign".into() },
+                sig: if i % 2 == 0 {
+                    "Benign".into()
+                } else {
+                    "Likely_benign".into()
+                },
                 n: 1,
             });
         }
@@ -1449,7 +1506,11 @@ mod tests {
         let r = evaluate_pm1(&input, &AcmgConfig::default());
         assert!(!r.met);
         assert!(r.evaluated, "declined on the evidence, not for lack of it");
-        assert!(r.summary.contains("without benign variation"), "got: {}", r.summary);
+        assert!(
+            r.summary.contains("without benign variation"),
+            "got: {}",
+            r.summary
+        );
     }
 
     #[test]

@@ -88,8 +88,26 @@ fn streaming_build_detects_gzip_by_magic_bytes_not_extension() {
 
     let out_plain = tmp.path().join("plain_db");
     let out_gz = tmp.path().join("gz_db");
-    run_sa_build("gnomad", plain.to_str().unwrap(), out_plain.to_str().unwrap(), "GRCh38", None, &[], false).unwrap();
-    run_sa_build("gnomad", misnamed.to_str().unwrap(), out_gz.to_str().unwrap(), "GRCh38", None, &[], false).unwrap();
+    run_sa_build(
+        "gnomad",
+        plain.to_str().unwrap(),
+        out_plain.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
+    run_sa_build(
+        "gnomad",
+        misnamed.to_str().unwrap(),
+        out_gz.to_str().unwrap(),
+        "GRCh38",
+        None,
+        &[],
+        false,
+    )
+    .unwrap();
 
     // Magic-byte detection must transparently decompress the misnamed gzip, so
     // both builds produce byte-identical databases. Before the fix the gzip
@@ -144,7 +162,9 @@ fixedStep chrom=chr2 start=50 step=1
         .unwrap()
         .expect("position 101 on chr1 should have a phyloP score");
     match hit {
-        AnnotationValue::Positional(v) => assert!(v.contains("0.75"), "unexpected phyloP value: {v}"),
+        AnnotationValue::Positional(v) => {
+            assert!(v.contains("0.75"), "unexpected phyloP value: {v}")
+        }
         other => panic!("expected a positional phyloP value, got {other:?}"),
     }
     assert!(
@@ -179,7 +199,9 @@ chr1\t200\t-0.5
         .unwrap()
         .expect("position 100 on chr1 should have a GERP score");
     match hit {
-        AnnotationValue::Positional(v) => assert!(v.contains("1.234"), "unexpected GERP value: {v}"),
+        AnnotationValue::Positional(v) => {
+            assert!(v.contains("1.234"), "unexpected GERP value: {v}")
+        }
         other => panic!("expected a positional GERP value, got {other:?}"),
     }
 }

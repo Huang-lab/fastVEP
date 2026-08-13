@@ -163,7 +163,11 @@ fn concurrent_first_touch_is_consistent() {
 
     let hits: usize = (0..64u32)
         .into_par_iter()
-        .flat_map(|c| (0..4u32).into_par_iter().map(move |k| ((c << 12) + 10 + k) as u64))
+        .flat_map(|c| {
+            (0..4u32)
+                .into_par_iter()
+                .map(move |k| ((c << 12) + 10 + k) as u64)
+        })
         .map(|position| {
             reader
                 .annotate_position("chr1", position, "A", "G")

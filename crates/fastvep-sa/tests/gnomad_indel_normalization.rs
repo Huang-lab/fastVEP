@@ -74,7 +74,10 @@ fn gnomad_repeat_indel_matches_after_normalization() {
     // Normalize the raw query to gnomAD's minimal/left-aligned representation,
     // then query again — now it matches and we recover the real AF.
     let n = normalize_variant(&StrRef, "chr2", 5, "CTAAC", "C");
-    assert_eq!((n.pos, n.ref_allele.as_str(), n.alt_allele.as_str()), (1, "GTAAC", "G"));
+    assert_eq!(
+        (n.pos, n.ref_allele.as_str(), n.alt_allele.as_str()),
+        (1, "GTAAC", "G")
+    );
 
     let hit = reader
         .annotate_position("chr2", n.pos, &n.ref_allele, &n.alt_allele)

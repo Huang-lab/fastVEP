@@ -5,7 +5,13 @@ use fastvep_core::Allele;
 /// Format: chromosome:g.positionREF>ALT (for SNVs)
 ///         chromosome:g.start_enddelREF (for deletions)
 ///         chromosome:g.pos_pos+1insALT (for insertions)
-pub fn hgvsg(chrom: &str, start: u64, end: u64, ref_allele: &Allele, alt_allele: &Allele) -> String {
+pub fn hgvsg(
+    chrom: &str,
+    start: u64,
+    end: u64,
+    ref_allele: &Allele,
+    alt_allele: &Allele,
+) -> String {
     let prefix = format!("{}:g.", chrom);
 
     match (ref_allele, alt_allele) {
@@ -15,10 +21,7 @@ pub fn hgvsg(chrom: &str, start: u64, end: u64, ref_allele: &Allele, alt_allele:
         {
             format!(
                 "{}{}{}>{}",
-                prefix,
-                start,
-                ref_bases[0] as char,
-                alt_bases[0] as char
+                prefix, start, ref_bases[0] as char, alt_bases[0] as char
             )
         }
         // Deletion
@@ -82,7 +85,9 @@ mod tests {
     #[test]
     fn test_hgvsg_snv() {
         let result = hgvsg(
-            "chr1", 12345, 12345,
+            "chr1",
+            12345,
+            12345,
             &Allele::Sequence(b"A".to_vec()),
             &Allele::Sequence(b"G".to_vec()),
         );
@@ -92,7 +97,9 @@ mod tests {
     #[test]
     fn test_hgvsg_deletion_single() {
         let result = hgvsg(
-            "chr1", 100, 100,
+            "chr1",
+            100,
+            100,
             &Allele::Sequence(b"A".to_vec()),
             &Allele::Deletion,
         );
@@ -102,7 +109,9 @@ mod tests {
     #[test]
     fn test_hgvsg_deletion_multi() {
         let result = hgvsg(
-            "chr1", 100, 102,
+            "chr1",
+            100,
+            102,
             &Allele::Sequence(b"ACG".to_vec()),
             &Allele::Deletion,
         );
@@ -112,7 +121,9 @@ mod tests {
     #[test]
     fn test_hgvsg_insertion() {
         let result = hgvsg(
-            "chr1", 101, 100, // insertion: start > end in Ensembl coords
+            "chr1",
+            101,
+            100, // insertion: start > end in Ensembl coords
             &Allele::Deletion,
             &Allele::Sequence(b"TCG".to_vec()),
         );
@@ -122,7 +133,9 @@ mod tests {
     #[test]
     fn test_hgvsg_mnv() {
         let result = hgvsg(
-            "chr1", 100, 101,
+            "chr1",
+            100,
+            101,
             &Allele::Sequence(b"AC".to_vec()),
             &Allele::Sequence(b"GT".to_vec()),
         );

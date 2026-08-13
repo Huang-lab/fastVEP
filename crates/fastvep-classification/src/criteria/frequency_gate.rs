@@ -46,11 +46,17 @@ pub(crate) struct FrequencyBlocker {
 
 impl FrequencyBlocker {
     fn gene_level(reason: String) -> Self {
-        Self { reason, site_level: false }
+        Self {
+            reason,
+            site_level: false,
+        }
     }
 
     fn site_level(reason: String) -> Self {
-        Self { reason, site_level: true }
+        Self {
+            reason,
+            site_level: true,
+        }
     }
 
     /// Record this blocker in a criterion's `details`, under the two keys the
@@ -87,11 +93,18 @@ pub(crate) fn note_withheld_benign_frequency(
     threshold: f64,
     details: &mut serde_json::Map<String, serde_json::Value>,
 ) {
-    let Some((af, _)) = input.gnomad.as_ref().and_then(|g| benign_test_af(g, config)) else {
+    let Some((af, _)) = input
+        .gnomad
+        .as_ref()
+        .and_then(|g| benign_test_af(g, config))
+    else {
         return;
     };
     if af > threshold {
-        details.insert(FREQUENCY_BLOCKED_WOULD_BE_BENIGN.into(), serde_json::json!(true));
+        details.insert(
+            FREQUENCY_BLOCKED_WOULD_BE_BENIGN.into(),
+            serde_json::json!(true),
+        );
         details.insert("frequency_blocked_af".into(), serde_json::json!(af));
     }
 }
@@ -243,7 +256,10 @@ pub(crate) fn benign_test_af(
 ) -> Option<(f64, &'static str)> {
     if config.use_filtering_af {
         if let Some(faf) = gnomad.filtering_af() {
-            return Some((faf, "filtering AF (95% CI lower bound, max across ancestry groups)"));
+            return Some((
+                faf,
+                "filtering AF (95% CI lower bound, max across ancestry groups)",
+            ));
         }
     }
     gnomad.max_pop_af().map(|af| (af, "max population AF"))
@@ -273,9 +289,18 @@ mod tests {
     #[test]
     fn test_failed_filter_blocks_in_both_directions() {
         for gnomad in [
-            GnomadData { filter_ac0: true, ..Default::default() },
-            GnomadData { filter_vqsr: true, ..Default::default() },
-            GnomadData { filter_inbreeding: true, ..Default::default() },
+            GnomadData {
+                filter_ac0: true,
+                ..Default::default()
+            },
+            GnomadData {
+                filter_vqsr: true,
+                ..Default::default()
+            },
+            GnomadData {
+                filter_inbreeding: true,
+                ..Default::default()
+            },
         ] {
             let input = input_with(gnomad);
             let blocker = data_blocker(&input, &AcmgConfig::default())
@@ -292,18 +317,27 @@ mod tests {
     fn test_segdup_and_lcr_block_when_enabled() {
         for (gnomad, expected) in [
             (
-                GnomadData { segdup: true, ..Default::default() },
+                GnomadData {
+                    segdup: true,
+                    ..Default::default()
+                },
                 "segmental duplication",
             ),
             (
-                GnomadData { lcr: true, ..Default::default() },
+                GnomadData {
+                    lcr: true,
+                    ..Default::default()
+                },
                 "low-complexity region",
             ),
         ] {
             let input = input_with(gnomad);
             let blocker = data_blocker(&input, &AcmgConfig::default()).expect("should block");
             assert!(blocker.reason.contains(expected), "got: {}", blocker.reason);
-            assert!(blocker.site_level, "a region flag is a verdict on this site's reads");
+            assert!(
+                blocker.site_level,
+                "a region flag is a verdict on this site's reads"
+            );
         }
     }
 
@@ -316,10 +350,16 @@ mod tests {
         input.gene_symbol = Some("PMS2".to_string());
         let config = AcmgConfig::default();
         if let Some(blocker) = data_blocker(&input, &config) {
-            assert!(!blocker.site_level, "curated homology is a gene-level claim");
+            assert!(
+                !blocker.site_level,
+                "curated homology is a gene-level claim"
+            );
         }
 
-        let mut input = input_with(GnomadData { all_af: Some(0.01), ..Default::default() });
+        let mut input = input_with(GnomadData {
+            all_af: Some(0.01),
+            ..Default::default()
+        });
         input.clinvar = Some(crate::sa_extract::ClinvarData {
             significance: Some(vec!["Pathogenic,_low_penetrance".to_string()]),
             review_status: Some("criteria_provided,_multiple_submitters,_no_conflicts".to_string()),
@@ -334,7 +374,10 @@ mod tests {
 
     #[test]
     fn test_region_flags_can_be_disabled() {
-        let input = input_with(GnomadData { segdup: true, ..Default::default() });
+        let input = input_with(GnomadData {
+            segdup: true,
+            ..Default::default()
+        });
         let config = AcmgConfig {
             gnomad_region_flags_block_frequency: false,
             ..Default::default()
@@ -342,7 +385,10 @@ mod tests {
         assert!(data_blocker(&input, &config).is_none());
         // The FILTER gate is not covered by that switch: a record gnomAD
         // itself rejected is never usable.
-        let input = input_with(GnomadData { filter_ac0: true, ..Default::default() });
+        let input = input_with(GnomadData {
+            filter_ac0: true,
+            ..Default::default()
+        });
         assert!(data_blocker(&input, &config).is_some());
     }
 

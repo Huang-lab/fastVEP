@@ -275,9 +275,7 @@ impl Consequence {
             "splice_region_variant" => Some(Self::SpliceRegionVariant),
             "splice_donor_5th_base_variant" => Some(Self::SpliceDonorFifthBaseVariant),
             "splice_donor_region_variant" => Some(Self::SpliceDonorRegionVariant),
-            "splice_polypyrimidine_tract_variant" => {
-                Some(Self::SplicePolypyrimidineTractVariant)
-            }
+            "splice_polypyrimidine_tract_variant" => Some(Self::SplicePolypyrimidineTractVariant),
             "incomplete_terminal_codon_variant" => Some(Self::IncompleteTerminalCodonVariant),
             "start_retained_variant" => Some(Self::StartRetainedVariant),
             "stop_retained_variant" => Some(Self::StopRetainedVariant),
@@ -394,6 +392,9 @@ mod tests {
             Consequence::MissenseVariant,
             Consequence::SynonymousVariant,
         ];
-        assert_eq!(Consequence::most_severe(&cs), Some(Consequence::MissenseVariant));
+        assert_eq!(
+            Consequence::most_severe(&cs),
+            Some(Consequence::MissenseVariant)
+        );
     }
 }

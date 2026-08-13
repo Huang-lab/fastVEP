@@ -10,50 +10,90 @@ impl CodonTable {
     pub fn standard() -> Self {
         let codons = [
             // Phe
-            (b"TTT", b'F'), (b"TTC", b'F'),
+            (b"TTT", b'F'),
+            (b"TTC", b'F'),
             // Leu
-            (b"TTA", b'L'), (b"TTG", b'L'), (b"CTT", b'L'), (b"CTC", b'L'),
-            (b"CTA", b'L'), (b"CTG", b'L'),
+            (b"TTA", b'L'),
+            (b"TTG", b'L'),
+            (b"CTT", b'L'),
+            (b"CTC", b'L'),
+            (b"CTA", b'L'),
+            (b"CTG", b'L'),
             // Ile
-            (b"ATT", b'I'), (b"ATC", b'I'), (b"ATA", b'I'),
+            (b"ATT", b'I'),
+            (b"ATC", b'I'),
+            (b"ATA", b'I'),
             // Met (start)
             (b"ATG", b'M'),
             // Val
-            (b"GTT", b'V'), (b"GTC", b'V'), (b"GTA", b'V'), (b"GTG", b'V'),
+            (b"GTT", b'V'),
+            (b"GTC", b'V'),
+            (b"GTA", b'V'),
+            (b"GTG", b'V'),
             // Ser
-            (b"TCT", b'S'), (b"TCC", b'S'), (b"TCA", b'S'), (b"TCG", b'S'),
-            (b"AGT", b'S'), (b"AGC", b'S'),
+            (b"TCT", b'S'),
+            (b"TCC", b'S'),
+            (b"TCA", b'S'),
+            (b"TCG", b'S'),
+            (b"AGT", b'S'),
+            (b"AGC", b'S'),
             // Pro
-            (b"CCT", b'P'), (b"CCC", b'P'), (b"CCA", b'P'), (b"CCG", b'P'),
+            (b"CCT", b'P'),
+            (b"CCC", b'P'),
+            (b"CCA", b'P'),
+            (b"CCG", b'P'),
             // Thr
-            (b"ACT", b'T'), (b"ACC", b'T'), (b"ACA", b'T'), (b"ACG", b'T'),
+            (b"ACT", b'T'),
+            (b"ACC", b'T'),
+            (b"ACA", b'T'),
+            (b"ACG", b'T'),
             // Ala
-            (b"GCT", b'A'), (b"GCC", b'A'), (b"GCA", b'A'), (b"GCG", b'A'),
+            (b"GCT", b'A'),
+            (b"GCC", b'A'),
+            (b"GCA", b'A'),
+            (b"GCG", b'A'),
             // Tyr
-            (b"TAT", b'Y'), (b"TAC", b'Y'),
+            (b"TAT", b'Y'),
+            (b"TAC", b'Y'),
             // Stop
-            (b"TAA", b'*'), (b"TAG", b'*'), (b"TGA", b'*'),
+            (b"TAA", b'*'),
+            (b"TAG", b'*'),
+            (b"TGA", b'*'),
             // His
-            (b"CAT", b'H'), (b"CAC", b'H'),
+            (b"CAT", b'H'),
+            (b"CAC", b'H'),
             // Gln
-            (b"CAA", b'Q'), (b"CAG", b'Q'),
+            (b"CAA", b'Q'),
+            (b"CAG", b'Q'),
             // Asn
-            (b"AAT", b'N'), (b"AAC", b'N'),
+            (b"AAT", b'N'),
+            (b"AAC", b'N'),
             // Lys
-            (b"AAA", b'K'), (b"AAG", b'K'),
+            (b"AAA", b'K'),
+            (b"AAG", b'K'),
             // Asp
-            (b"GAT", b'D'), (b"GAC", b'D'),
+            (b"GAT", b'D'),
+            (b"GAC", b'D'),
             // Glu
-            (b"GAA", b'E'), (b"GAG", b'E'),
+            (b"GAA", b'E'),
+            (b"GAG", b'E'),
             // Cys
-            (b"TGT", b'C'), (b"TGC", b'C'),
+            (b"TGT", b'C'),
+            (b"TGC", b'C'),
             // Trp
             (b"TGG", b'W'),
             // Arg
-            (b"CGT", b'R'), (b"CGC", b'R'), (b"CGA", b'R'), (b"CGG", b'R'),
-            (b"AGA", b'R'), (b"AGG", b'R'),
+            (b"CGT", b'R'),
+            (b"CGC", b'R'),
+            (b"CGA", b'R'),
+            (b"CGG", b'R'),
+            (b"AGA", b'R'),
+            (b"AGG", b'R'),
             // Gly
-            (b"GGT", b'G'), (b"GGC", b'G'), (b"GGA", b'G'), (b"GGG", b'G'),
+            (b"GGT", b'G'),
+            (b"GGC", b'G'),
+            (b"GGA", b'G'),
+            (b"GGG", b'G'),
         ];
 
         let mut table = HashMap::with_capacity(64);

@@ -74,12 +74,12 @@ pub fn parse_clinvar_vcf<R: BufRead>(
         let clndn = info_map.get("CLNDN").cloned().unwrap_or_default();
         let clnacc = info_map.get("CLNVC").cloned(); // variant class
         let clnid = info_map.get("CLNVCSO").cloned(); // SO accession
-        // ClinVar-distributed population allele frequencies (ExAC / 1000G / ESP).
-        // Used as a frequency backstop by PM2 when gnomAD has no record. Reject
-        // non-finite values: `f64::from_str` accepts "inf"/"nan", whose Display
-        // form is invalid JSON and would poison the entire record's JSON string
-        // (silently dropping its ClinVar annotation). Real ClinVar AFs are
-        // always finite decimals, so this only guards against malformed input.
+                                                      // ClinVar-distributed population allele frequencies (ExAC / 1000G / ESP).
+                                                      // Used as a frequency backstop by PM2 when gnomAD has no record. Reject
+                                                      // non-finite values: `f64::from_str` accepts "inf"/"nan", whose Display
+                                                      // form is invalid JSON and would poison the entire record's JSON string
+                                                      // (silently dropping its ClinVar annotation). Real ClinVar AFs are
+                                                      // always finite decimals, so this only guards against malformed input.
         let parse_af = |k: &str| {
             info_map
                 .get(k)
@@ -118,7 +118,11 @@ pub fn parse_clinvar_vcf<R: BufRead>(
     }
 
     // Sort by (chrom_idx, position) as required by SaWriter
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
 
     Ok(records)
 }
@@ -145,10 +149,7 @@ fn build_clinvar_json(
     }
 
     if !clnrevstat.is_empty() {
-        parts.push(format!(
-            "\"reviewStatus\":\"{}\"",
-            escape_json(clnrevstat)
-        ));
+        parts.push(format!("\"reviewStatus\":\"{}\"", escape_json(clnrevstat)));
     }
 
     if !clndn.is_empty() && clndn != "not_provided" {

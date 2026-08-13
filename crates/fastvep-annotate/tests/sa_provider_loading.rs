@@ -66,10 +66,7 @@ fn providers_are_ordered_by_path() {
     }
 
     let providers = load_sa_providers(dir.path()).unwrap();
-    let keys: Vec<String> = providers
-        .iter()
-        .map(|p| p.json_key().to_string())
-        .collect();
+    let keys: Vec<String> = providers.iter().map(|p| p.json_key().to_string()).collect();
 
     // Sorted by file name, which is lexicographic - chr1 < chr2 < chr21 < chr9.
     assert_eq!(keys, vec!["k1", "k2", "k21", "k9"]);
@@ -87,10 +84,7 @@ fn an_unopenable_source_is_skipped_not_fatal() {
     std::fs::write(dir.path().join("notes.txt"), b"ignore me").unwrap();
 
     let providers = load_sa_providers(dir.path()).unwrap();
-    let keys: Vec<String> = providers
-        .iter()
-        .map(|p| p.json_key().to_string())
-        .collect();
+    let keys: Vec<String> = providers.iter().map(|p| p.json_key().to_string()).collect();
     assert_eq!(keys, vec!["good_a", "good_c"]);
 }
 

@@ -5,10 +5,7 @@ use crate::sa_extract::ClassificationInput;
 use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 
 /// Evaluate all benign supporting criteria: BP1, BP2, BP3, BP4, BP5, BP6, BP7.
-pub fn evaluate_all(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> Vec<EvidenceCriterion> {
+pub fn evaluate_all(input: &ClassificationInput, config: &AcmgConfig) -> Vec<EvidenceCriterion> {
     let mut criteria = vec![
         evaluate_bp1(input, config),
         evaluate_bp2(input, config),
@@ -41,10 +38,7 @@ pub fn evaluate_all(
 /// found BP1 firing on ENG, CFH, FGFR3, APC, ANKRD11, PKD1 and a dozen more
 /// genes whose spectrum plainly includes pathogenic missense. Constraint
 /// metrics describe population tolerance, not disease mechanism.
-fn evaluate_bp1(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_bp1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let is_missense = input
         .consequences
         .iter()
@@ -91,9 +85,7 @@ fn evaluate_bp1(
     let (met, evaluated, summary) = if !is_missense {
         (false, true, "Not a missense variant".to_string())
     } else if let Some(ref gc) = input.gene_constraints {
-        let pli_high = gc
-            .pli
-            .is_some_and(|p| p >= config.pli_lof_intolerant);
+        let pli_high = gc.pli.is_some_and(|p| p >= config.pli_lof_intolerant);
         let misz_low = gc.mis_z.is_some_and(|z| z < 2.0);
 
         if let Some(pli) = gc.pli {
@@ -126,7 +118,11 @@ fn evaluate_bp1(
             )
         }
     } else {
-        (false, false, "No gene constraint data available".to_string())
+        (
+            false,
+            false,
+            "No gene constraint data available".to_string(),
+        )
     };
 
     EvidenceCriterion {
@@ -147,10 +143,7 @@ fn evaluate_bp1(
 /// Two triggers:
 /// 1. Dominant disorders: variant is in trans with a ClinVar pathogenic variant (phased).
 /// 2. Any inheritance: variant is in cis with a ClinVar pathogenic variant (phased).
-fn evaluate_bp2(
-    input: &ClassificationInput,
-    _config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_bp2(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
     if input.companion_variants.is_empty() {
@@ -186,8 +179,14 @@ fn evaluate_bp2(
         .filter(|cv| cv.is_clinvar_pathogenic && cv.is_in_trans == Some(true))
         .collect();
 
-    details.insert("in_cis_pathogenic_count".into(), serde_json::json!(in_cis_pathogenic.len()));
-    details.insert("in_trans_pathogenic_count".into(), serde_json::json!(in_trans_pathogenic.len()));
+    details.insert(
+        "in_cis_pathogenic_count".into(),
+        serde_json::json!(in_cis_pathogenic.len()),
+    );
+    details.insert(
+        "in_trans_pathogenic_count".into(),
+        serde_json::json!(in_trans_pathogenic.len()),
+    );
 
     // Collect HGVSc for reporting
     let cis_ids: Vec<String> = in_cis_pathogenic
@@ -248,7 +247,8 @@ fn evaluate_bp2(
     let summary = if has_phased_data {
         "Phased companion variants do not meet BP2 criteria".to_string()
     } else {
-        "Companion variants are unphased; BP2 requires phased data to determine cis/trans".to_string()
+        "Companion variants are unphased; BP2 requires phased data to determine cis/trans"
+            .to_string()
     };
 
     EvidenceCriterion {
@@ -266,10 +266,7 @@ fn evaluate_bp2(
 /// BP3: In-frame deletions/insertions in a repetitive region without a known function.
 ///
 /// Uses RepeatMasker interval annotations when available.
-fn evaluate_bp3(
-    input: &ClassificationInput,
-    _config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_bp3(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     let is_inframe_indel = input.consequences.iter().any(|c| {
         matches!(
             c,
@@ -306,7 +303,8 @@ fn evaluate_bp3(
         }
     } else {
         let summary = if is_inframe_indel {
-            "In-frame indel detected, but repeat region data not available (load RepeatMasker .osi)".to_string()
+            "In-frame indel detected, but repeat region data not available (load RepeatMasker .osi)"
+                .to_string()
         } else {
             "Not an in-frame insertion or deletion".to_string()
         };
@@ -337,10 +335,7 @@ fn evaluate_bp3(
 /// Per Walker 2023 (ClinGen SVI Splicing Subgroup): SpliceAI ≤ 0.1 yields BP4
 /// at Supporting strength when a SpliceAI score is available (scores between
 /// 0.1 and 0.2 are uninformative).
-fn evaluate_bp4(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_bp4(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
     let mut evidence_lines: Vec<String> = Vec::new();
 
@@ -505,10 +500,7 @@ fn evaluate_bp4(
     // Resolve final strength. REVEL (missense, already strength-graded) takes
     // precedence over splice. If both fire, prefer the stronger.
     let (met, strength) = match (revel_met, splice_supporting) {
-        (true, _) => (
-            true,
-            revel_strength.unwrap_or(EvidenceStrength::Supporting),
-        ),
+        (true, _) => (true, revel_strength.unwrap_or(EvidenceStrength::Supporting)),
         (false, true) => (true, EvidenceStrength::Supporting),
         (false, false) => (false, EvidenceStrength::Supporting),
     };
@@ -549,10 +541,7 @@ fn evaluate_bp4(
 }
 
 /// BP5: Variant found in a case with an alternate molecular basis for disease.
-fn evaluate_bp5(
-    _input: &ClassificationInput,
-    _config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_bp5(_input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     EvidenceCriterion {
         code: "BP5".to_string(),
         direction: EvidenceDirection::Benign,
@@ -569,14 +558,13 @@ fn evaluate_bp5(
 ///
 /// Note: ClinGen SVI recommends against using BP6 without reviewing underlying evidence.
 /// Disabled by default (config.use_pp5_bp6 = false).
-fn evaluate_bp6(
-    input: &ClassificationInput,
-    _config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_bp6(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
     details.insert(
         "svi_note".into(),
-        serde_json::json!("ClinGen SVI recommends against using BP6 without reviewing underlying evidence"),
+        serde_json::json!(
+            "ClinGen SVI recommends against using BP6 without reviewing underlying evidence"
+        ),
     );
 
     let (met, evaluated, summary) = if let Some(ref clinvar) = input.clinvar {
@@ -645,10 +633,7 @@ fn evaluate_bp6(
 /// When the pipeline does not populate `at_exon_edge` / `intronic_offset`
 /// (current default), behavior reverts to the legacy synonymous-only rule
 /// for backward compatibility.
-fn evaluate_bp7(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_bp7(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let is_synonymous = input
         .consequences
         .iter()
@@ -742,11 +727,7 @@ fn evaluate_bp7(
     // SpliceAI is genuinely insensitive to pseudoexon activation, which is
     // what `bp7_max_intron_offset` addresses instead. This gate is still
     // correct - it just turned out to be about a different set of variants.
-    let Some(max_ds) = input
-        .splice_ai
-        .as_ref()
-        .and_then(|s| s.max_delta_score())
-    else {
+    let Some(max_ds) = input.splice_ai.as_ref().and_then(|s| s.max_delta_score()) else {
         details.insert("spliceai_max_ds".into(), serde_json::Value::Null);
         return EvidenceCriterion {
             code: "BP7".to_string(),
@@ -811,10 +792,10 @@ fn evaluate_bp7(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::minimal_input;
     use crate::sa_extract::{
         ClinvarProteinData, ClinvarProteinVariant, GnomadGeneData, RevelData, SpliceAiData,
     };
+    use crate::test_support::minimal_input;
     use fastvep_core::Impact;
 
     fn make_input(
@@ -970,7 +951,10 @@ mod tests {
         // A missense that ALSO overlaps a splice region is splice-assessable, so
         // a low SpliceAI score still yields BP4 Supporting (Walker 2023).
         let input = make_input(
-            vec![Consequence::MissenseVariant, Consequence::SpliceRegionVariant],
+            vec![
+                Consequence::MissenseVariant,
+                Consequence::SpliceRegionVariant,
+            ],
             None,
             Some(0.0),
             None,
@@ -1061,13 +1045,21 @@ mod tests {
         let unknown = evaluate_bp3(&input, &config);
         assert!(!unknown.met);
         assert!(!unknown.evaluated, "no database: BP3 has nothing to say");
-        assert!(unknown.summary.contains("not available"), "got: {}", unknown.summary);
+        assert!(
+            unknown.summary.contains("not available"),
+            "got: {}",
+            unknown.summary
+        );
 
         input.in_repeat_region = Some(false);
         let looked = evaluate_bp3(&input, &config);
         assert!(!looked.met);
         assert!(looked.evaluated, "database loaded: BP3 looked and declined");
-        assert!(looked.summary.contains("not in a repetitive region"), "got: {}", looked.summary);
+        assert!(
+            looked.summary.contains("not in a repetitive region"),
+            "got: {}",
+            looked.summary
+        );
 
         input.in_repeat_region = Some(true);
         let hit = evaluate_bp3(&input, &config);
@@ -1089,12 +1081,18 @@ mod tests {
         );
         let config = AcmgConfig::default();
         input.intronic_offset = Some(300);
-        assert!(evaluate_bp7(&input, &config).met, "at the boundary BP7 still applies");
+        assert!(
+            evaluate_bp7(&input, &config).met,
+            "at the boundary BP7 still applies"
+        );
 
         input.intronic_offset = Some(301);
         let result = evaluate_bp7(&input, &config);
         assert!(!result.met);
-        assert!(result.evaluated, "declined on the merits, not left unexamined");
+        assert!(
+            result.evaluated,
+            "declined on the merits, not left unexamined"
+        );
         assert!(result.summary.contains("far boundary"));
 
         // Symmetric on the acceptor side.
@@ -1157,7 +1155,7 @@ mod tests {
         let mut input = make_input(
             vec![Consequence::IntronVariant],
             None,
-            None, // no SpliceAI
+            None,      // no SpliceAI
             Some(0.4), // deep intron, unconserved
             None,
         );
@@ -1165,11 +1163,21 @@ mod tests {
         let r = evaluate_bp7(&input, &AcmgConfig::default());
         assert!(!r.met);
         assert!(!r.evaluated, "absent data is not an assessment");
-        assert!(r.summary.contains("no SpliceAI prediction"), "got: {}", r.summary);
+        assert!(
+            r.summary.contains("no SpliceAI prediction"),
+            "got: {}",
+            r.summary
+        );
 
         // A synonymous variant is held to the same requirement: Richards 2015
         // words BP7 as "splicing prediction algorithms predict no impact".
-        let syn = make_input(vec![Consequence::SynonymousVariant], None, None, Some(0.2), None);
+        let syn = make_input(
+            vec![Consequence::SynonymousVariant],
+            None,
+            None,
+            Some(0.2),
+            None,
+        );
         assert!(!evaluate_bp7(&syn, &AcmgConfig::default()).met);
     }
 
@@ -1289,7 +1297,9 @@ mod tests {
         let result = evaluate_bp1(&input, &AcmgConfig::default());
         assert!(!result.met);
         assert!(result.evaluated);
-        assert!(result.summary.contains("missense is an established mechanism"));
+        assert!(result
+            .summary
+            .contains("missense is an established mechanism"));
     }
 
     #[test]
@@ -1347,7 +1357,10 @@ mod tests {
         // An in-frame indel that also overlaps a splice region is genuinely
         // splice-assessable, so Walker 2023 BP4-splice still applies.
         let input = make_input(
-            vec![Consequence::InframeDeletion, Consequence::SpliceRegionVariant],
+            vec![
+                Consequence::InframeDeletion,
+                Consequence::SpliceRegionVariant,
+            ],
             None,
             Some(0.0),
             None,

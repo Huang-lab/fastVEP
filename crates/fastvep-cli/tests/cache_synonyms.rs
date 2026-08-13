@@ -28,7 +28,10 @@ const FASTA: &str = ">17\nACGTACGTACGTACGTACGTACGTACGTAC\n";
 const SYNONYMS: &str = "17\tchr17\tNC_000017.11\n";
 
 fn write(path: &Path, contents: &str) {
-    File::create(path).unwrap().write_all(contents.as_bytes()).unwrap();
+    File::create(path)
+        .unwrap()
+        .write_all(contents.as_bytes())
+        .unwrap();
 }
 
 #[test]
@@ -54,11 +57,23 @@ fn merged_cache_with_synonyms_canonicalizes_to_fasta_names() {
     .expect("merged cache build should succeed with a synonyms file");
 
     let transcripts = fastvep_cache::transcript_cache::load_cache(&out).unwrap();
-    assert_eq!(transcripts.len(), 2, "both sources should contribute a transcript");
+    assert_eq!(
+        transcripts.len(),
+        2,
+        "both sources should contribute a transcript"
+    );
     for tr in &transcripts {
         // (b) every transcript canonicalized to the FASTA contig name.
-        assert_eq!(&*tr.chromosome, "17", "transcript {} not canonicalized", tr.stable_id);
-        assert_eq!(&*tr.gene.chromosome, "17", "gene of {} not canonicalized", tr.stable_id);
+        assert_eq!(
+            &*tr.chromosome, "17",
+            "transcript {} not canonicalized",
+            tr.stable_id
+        );
+        assert_eq!(
+            &*tr.gene.chromosome, "17",
+            "gene of {} not canonicalized",
+            tr.stable_id
+        );
         // (c) coding sequences were built for both sources.
         assert!(
             tr.spliced_seq.is_some(),
@@ -91,8 +106,14 @@ fn refseq_unresolved_without_synonyms_but_build_still_succeeds() {
     .expect("build should not fail just because one contig is unresolved");
 
     let transcripts = fastvep_cache::transcript_cache::load_cache(&out).unwrap();
-    let ens_tr = transcripts.iter().find(|t| &*t.stable_id == "ENST1").unwrap();
-    let rs_tr = transcripts.iter().find(|t| &*t.stable_id == "RST1").unwrap();
+    let ens_tr = transcripts
+        .iter()
+        .find(|t| &*t.stable_id == "ENST1")
+        .unwrap();
+    let rs_tr = transcripts
+        .iter()
+        .find(|t| &*t.stable_id == "RST1")
+        .unwrap();
     // Ensembl transcript resolves and gets a sequence.
     assert_eq!(&*ens_tr.chromosome, "17");
     assert!(ens_tr.spliced_seq.is_some());

@@ -29,7 +29,9 @@ pub fn parse_intronic_offset(hgvs_c: &str) -> Option<i64> {
             let mut val: i64 = 0;
             let mut any = false;
             while j < bytes.len() && bytes[j].is_ascii_digit() {
-                val = val.saturating_mul(10).saturating_add((bytes[j] - b'0') as i64);
+                val = val
+                    .saturating_mul(10)
+                    .saturating_add((bytes[j] - b'0') as i64);
                 any = true;
                 j += 1;
             }
@@ -65,7 +67,10 @@ mod tests {
         assert_eq!(parse_intronic_offset("c.*1411T>A"), None);
         // Canonical splice positions.
         assert_eq!(parse_intronic_offset("c.964+1G>A"), Some(1));
-        assert_eq!(parse_intronic_offset("ENST00000378156.9:c.2818-2A>."), Some(-2));
+        assert_eq!(
+            parse_intronic_offset("ENST00000378156.9:c.2818-2A>."),
+            Some(-2)
+        );
         // Deep intronic.
         assert_eq!(parse_intronic_offset("c.4001+12_4001+15del"), Some(12));
         assert_eq!(parse_intronic_offset("n.162-24414C>T"), Some(-24414));

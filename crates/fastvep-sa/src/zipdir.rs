@@ -80,7 +80,10 @@ fn read_u64(buf: &[u8], at: usize) -> Result<u64> {
 /// rules out a stray signature inside compressed data.
 fn find_eocd(mmap: &[u8]) -> Result<usize> {
     if mmap.len() < EOCD_FIXED_LEN {
-        bail!("file is too small to be a ZIP archive ({} bytes)", mmap.len());
+        bail!(
+            "file is too small to be a ZIP archive ({} bytes)",
+            mmap.len()
+        );
     }
     let max_back = (u16::MAX as usize + EOCD_FIXED_LEN).min(mmap.len());
     let search_start = mmap.len() - max_back;
@@ -160,7 +163,10 @@ fn find_zip64_eocd(mmap: &[u8], eocd: usize) -> Result<Option<usize>> {
         .try_into()
         .map_err(|_| anyhow::anyhow!("ZIP64 EOCD offset {} exceeds usize", z64))?;
     if z64 >= mmap.len() || read_u32(mmap, z64)? != ZIP64_EOCD_SIG {
-        bail!("ZIP64 end-of-central-directory record not found at offset {}", z64);
+        bail!(
+            "ZIP64 end-of-central-directory record not found at offset {}",
+            z64
+        );
     }
     Ok(Some(z64))
 }
@@ -185,7 +191,10 @@ fn central_directory_range(mmap: &[u8], loc: &CentralDirectoryLocator) -> Result
         };
         match start.checked_add(size) {
             Some(end) if end <= mmap.len() => {
-                size == 0 || read_u32(mmap, start).map(|s| s == CENTRAL_HEADER_SIG).unwrap_or(false)
+                size == 0
+                    || read_u32(mmap, start)
+                        .map(|s| s == CENTRAL_HEADER_SIG)
+                        .unwrap_or(false)
             }
             _ => false,
         }
@@ -227,7 +236,10 @@ pub(crate) fn parse_central_directory(mmap: &[u8]) -> Result<Vec<CentralEntry>> 
     let mut at = 0usize;
     while at + CENTRAL_HEADER_FIXED_LEN <= cd.len() {
         if read_u32(cd, at)? != CENTRAL_HEADER_SIG {
-            bail!("bad central-directory record signature at offset {}", start + at);
+            bail!(
+                "bad central-directory record signature at offset {}",
+                start + at
+            );
         }
         let method = read_u16(cd, at + 10)?;
         let comp_size32 = read_u32(cd, at + 20)?;
@@ -241,7 +253,10 @@ pub(crate) fn parse_central_directory(mmap: &[u8]) -> Result<Vec<CentralEntry>> 
         let extra_at = name_at + name_len;
         let record_end = extra_at + extra_len + comment_len;
         if record_end > cd.len() {
-            bail!("central-directory record at offset {} is truncated", start + at);
+            bail!(
+                "central-directory record at offset {} is truncated",
+                start + at
+            );
         }
 
         let name = std::str::from_utf8(&cd[name_at..extra_at])
@@ -401,8 +416,18 @@ mod tests {
         for (i, entry) in parsed.iter().enumerate() {
             let zf = archive.by_index(i).unwrap();
             assert_eq!(entry.name, zf.name(), "name at {}", i);
-            assert_eq!(entry.comp_size, zf.compressed_size(), "comp_size of {}", entry.name);
-            assert_eq!(entry.header_start, zf.header_start(), "header_start of {}", entry.name);
+            assert_eq!(
+                entry.comp_size,
+                zf.compressed_size(),
+                "comp_size of {}",
+                entry.name
+            );
+            assert_eq!(
+                entry.header_start,
+                zf.header_start(),
+                "header_start of {}",
+                entry.name
+            );
             let expected_method = match zf.compression() {
                 zip::CompressionMethod::Stored => 0u16,
                 zip::CompressionMethod::Deflated => 8u16,
@@ -453,8 +478,11 @@ mod tests {
         {
             let mut zw = zip::ZipWriter::new(Cursor::new(&mut buf));
             zw.set_comment("a comment that follows the EOCD record");
-            zw.start_file("fastsa/metadata.json", zip::write::SimpleFileOptions::default())
-                .unwrap();
+            zw.start_file(
+                "fastsa/metadata.json",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
             zw.write_all(b"{}").unwrap();
             zw.finish().unwrap();
         }
@@ -526,8 +554,7 @@ mod tests {
             f
         };
         // Sizes fit in 32 bits; only the header offset is a sentinel.
-        let (comp_size, header_start) =
-            resolve_zip64(&field, 7, 11, U32_SENTINEL).unwrap();
+        let (comp_size, header_start) = resolve_zip64(&field, 7, 11, U32_SENTINEL).unwrap();
         assert_eq!(comp_size, 11);
         assert_eq!(header_start, 0x1_0000_0000);
     }
@@ -537,8 +564,7 @@ mod tests {
     fn zip64_extra_field_of_minimal_length_holds_only_the_overflowed_value() {
         let mut field = vec![0x01, 0x00, 8, 0x00];
         field.extend_from_slice(&0x2_0000_0000u64.to_le_bytes());
-        let (comp_size, header_start) =
-            resolve_zip64(&field, 7, 11, U32_SENTINEL).unwrap();
+        let (comp_size, header_start) = resolve_zip64(&field, 7, 11, U32_SENTINEL).unwrap();
         assert_eq!(comp_size, 11);
         assert_eq!(header_start, 0x2_0000_0000);
     }
@@ -563,12 +589,17 @@ mod tests {
         let size = read_u32(&buf, eocd + 12).unwrap();
         buf[eocd + 12..eocd + 16].copy_from_slice(&(size / 2).to_le_bytes());
         let err = parse_central_directory(&buf).unwrap_err().to_string();
-        assert!(err.contains("declares 3 entries") || err.contains("trailing bytes"), "{err}");
+        assert!(
+            err.contains("declares 3 entries") || err.contains("trailing bytes"),
+            "{err}"
+        );
     }
 
     #[test]
     fn rejects_a_non_zip_file() {
-        let err = parse_central_directory(&[0u8; 512]).unwrap_err().to_string();
+        let err = parse_central_directory(&[0u8; 512])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("no end-of-central-directory"), "{}", err);
     }
 

@@ -18,8 +18,8 @@ const CACHE_MAGIC_V1: &[u8; 8] = b"FSTVEP01";
 
 /// Save transcripts to a binary cache file (bincode + zstd).
 pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
-    let file = File::create(path)
-        .with_context(|| format!("Creating cache file: {}", path.display()))?;
+    let file =
+        File::create(path).with_context(|| format!("Creating cache file: {}", path.display()))?;
     let writer = BufWriter::new(file);
     // zstd level 1: fast compression, still much better decompression than gzip
     let mut zst = zstd::Encoder::new(writer, 1)?;
@@ -39,15 +39,16 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
 /// Load transcripts from a binary cache file.
 /// Supports both zstd (v2) and legacy gzip (v1) formats.
 pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
-    let file = File::open(path)
-        .with_context(|| format!("Opening cache file: {}", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("Opening cache file: {}", path.display()))?;
     let mut reader = BufReader::new(file);
 
     // Peek at the first bytes to detect format.
     // zstd frames start with 0x28B52FFD; gzip starts with 0x1F8B.
     use std::io::Read;
     let mut peek = [0u8; 4];
-    reader.read_exact(&mut peek)
+    reader
+        .read_exact(&mut peek)
         .with_context(|| "Reading cache header")?;
 
     // Rewind so the decompressor sees the full stream
@@ -156,17 +157,15 @@ mod tests {
             start: 1000,
             end: 5000,
             strand: Strand::Forward,
-            exons: vec![
-                Exon {
-                    stable_id: "ENSE001".into(),
-                    start: 1000,
-                    end: 1200,
-                    strand: Strand::Forward,
-                    phase: 0,
-                    end_phase: -1,
-                    rank: 1,
-                },
-            ],
+            exons: vec![Exon {
+                stable_id: "ENSE001".into(),
+                start: 1000,
+                end: 1200,
+                strand: Strand::Forward,
+                phase: 0,
+                end_phase: -1,
+                rank: 1,
+            }],
             translation: None,
             cdna_coding_start: Some(1),
             cdna_coding_end: Some(200),

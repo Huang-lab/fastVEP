@@ -29,12 +29,12 @@ pub fn hgvsp(
 
     if alt_aa == b'*' {
         // Stop gained
-        return Some(format!("{}{}{}{}",prefix, ref_aa3, protein_pos, alt_aa3));
+        return Some(format!("{}{}{}{}", prefix, ref_aa3, protein_pos, alt_aa3));
     }
 
     if ref_aa == b'*' {
         // Stop lost - extension
-        return Some(format!("{}{}{}ext*?",prefix, alt_aa3, protein_pos));
+        return Some(format!("{}{}{}ext*?", prefix, alt_aa3, protein_pos));
     }
 
     // Missense
@@ -161,7 +161,8 @@ pub fn hgvsp_frameshift(
     // If the sequence contains unresolved (X) amino acids, use Ter? to indicate uncertainty.
     let mut stop_dist = None;
     let mut hit_unresolved = false;
-    let unresolved_count = alt_peptide[first_changed_offset..].iter()
+    let unresolved_count = alt_peptide[first_changed_offset..]
+        .iter()
         .take(10)
         .filter(|&&aa| aa == b'X')
         .count();
@@ -181,13 +182,22 @@ pub fn hgvsp_frameshift(
     }
 
     if let Some(d) = stop_dist {
-        Some(format!("{}{}{}{}fsTer{}", prefix, ref_aa3, first_changed_pos, alt_aa3, d))
+        Some(format!(
+            "{}{}{}{}fsTer{}",
+            prefix, ref_aa3, first_changed_pos, alt_aa3, d
+        ))
     } else if hit_unresolved || mostly_unresolved {
         // Sequence has unresolved regions - can't determine stop position
-        Some(format!("{}{}{}{}fsTer?", prefix, ref_aa3, first_changed_pos, alt_aa3))
+        Some(format!(
+            "{}{}{}{}fsTer?",
+            prefix, ref_aa3, first_changed_pos, alt_aa3
+        ))
     } else {
         // No stop found and sequence is clean - true extension
-        Some(format!("{}{}{}{}fsTer?", prefix, ref_aa3, first_changed_pos, alt_aa3))
+        Some(format!(
+            "{}{}{}{}fsTer?",
+            prefix, ref_aa3, first_changed_pos, alt_aa3
+        ))
     }
 }
 
@@ -212,8 +222,13 @@ mod tests {
 
         let standard_result =
             hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 0, &standard);
-        let mito_result =
-            hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 0, &mitochondrial);
+        let mito_result = hgvsp_frameshift(
+            "ENSP1",
+            ref_translateable,
+            alt_translateable,
+            0,
+            &mitochondrial,
+        );
 
         // Standard table: TGA is a stop, so the new terminator is 2 codons in.
         assert_eq!(standard_result, Some("ENSP1:p.Arg1ProfsTer2".to_string()));
@@ -235,8 +250,7 @@ mod tests {
         let alt_translateable = b"CC"; // only 2 bases -- shorter than ref_start (3)
 
         let standard = CodonTable::standard();
-        let result =
-            hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 1, &standard);
+        let result = hgvsp_frameshift("ENSP1", ref_translateable, alt_translateable, 1, &standard);
         assert_eq!(result, None);
     }
 
@@ -270,7 +284,10 @@ mod tests {
     fn test_hgvsp_inframe_delins() {
         // in-frame deletion-insertion
         let r = hgvsp_inframe_deletion("ENSP00000001", 2173, "NL", "K");
-        assert_eq!(r, Some("ENSP00000001:p.Asn2173_Leu2174delinsLys".to_string()));
+        assert_eq!(
+            r,
+            Some("ENSP00000001:p.Asn2173_Leu2174delinsLys".to_string())
+        );
     }
 
     #[test]

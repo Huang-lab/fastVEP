@@ -44,7 +44,9 @@ fn format_csq_entry_into(
             "Allele" => escape_csq_str(&aa.allele.to_string(), buf),
             "Consequence" => {
                 for (j, c) in aa.consequences.iter().enumerate() {
-                    if j > 0 { buf.push('&'); }
+                    if j > 0 {
+                        buf.push('&');
+                    }
                     buf.push_str(c.so_term());
                 }
             }
@@ -88,7 +90,9 @@ fn format_csq_entry_into(
             }
             "Existing_variation" => {
                 for (j, ev) in aa.existing_variation.iter().enumerate() {
-                    if j > 0 { buf.push('&'); }
+                    if j > 0 {
+                        buf.push('&');
+                    }
                     escape_csq_str(ev, buf);
                 }
             }
@@ -109,14 +113,22 @@ fn format_csq_entry_into(
                     let _ = write!(buf, "{}", d);
                 }
             }
-            "STRAND" => { let _ = write!(buf, "{}", tv.strand.as_int()); }
+            "STRAND" => {
+                let _ = write!(buf, "{}", tv.strand.as_int());
+            }
             "FLAGS" => {
                 for (j, f) in tv.flags.iter().enumerate() {
-                    if j > 0 { buf.push('&'); }
+                    if j > 0 {
+                        buf.push('&');
+                    }
                     buf.push_str(f);
                 }
             }
-            "CANONICAL" => { if tv.canonical { buf.push_str("YES"); } }
+            "CANONICAL" => {
+                if tv.canonical {
+                    buf.push_str("YES");
+                }
+            }
             "SYMBOL_SOURCE" => escape_csq_str(tv.symbol_source.as_deref().unwrap_or_default(), buf),
             "HGNC_ID" => escape_csq_str(tv.hgnc_id.as_deref().unwrap_or_default(), buf),
             "MANE" => {
@@ -127,17 +139,28 @@ fn format_csq_entry_into(
                 }
             }
             "MANE_SELECT" => escape_csq_str(tv.mane_select.as_deref().unwrap_or_default(), buf),
-            "MANE_PLUS_CLINICAL" => escape_csq_str(tv.mane_plus_clinical.as_deref().unwrap_or_default(), buf),
-            "TSL" => { if let Some(t) = tv.tsl { let _ = write!(buf, "{}", t); } }
+            "MANE_PLUS_CLINICAL" => {
+                escape_csq_str(tv.mane_plus_clinical.as_deref().unwrap_or_default(), buf)
+            }
+            "TSL" => {
+                if let Some(t) = tv.tsl {
+                    let _ = write!(buf, "{}", t);
+                }
+            }
             "APPRIS" => escape_csq_str(tv.appris.as_deref().unwrap_or_default(), buf),
             "CCDS" => escape_csq_str(tv.ccds.as_deref().unwrap_or_default(), buf),
-            "GENCODE_PRIMARY" => { if tv.gencode_primary { buf.push_str("YES"); } }
+            "GENCODE_PRIMARY" => {
+                if tv.gencode_primary {
+                    buf.push_str("YES");
+                }
+            }
             "ENSP" => escape_csq_str(tv.protein_id.as_deref().unwrap_or_default(), buf),
             "SIFT" => escape_csq_str(aa.sift.as_deref().unwrap_or_default(), buf),
             "PolyPhen" => escape_csq_str(aa.polyphen.as_deref().unwrap_or_default(), buf),
             "AF" => {
                 if let Some(f) = vf.existing_variants.iter().find_map(|kv| {
-                    kv.frequencies.get("gnomAD")
+                    kv.frequencies
+                        .get("gnomAD")
                         .or_else(|| kv.frequencies.get("gnomADe"))
                         .or_else(|| kv.frequencies.get("minor_allele_freq"))
                 }) {
@@ -145,19 +168,35 @@ fn format_csq_entry_into(
                 }
             }
             "CLIN_SIG" => {
-                if let Some(cs) = vf.existing_variants.iter()
+                if let Some(cs) = vf
+                    .existing_variants
+                    .iter()
                     .find_map(|kv| kv.clinical_significance.as_deref())
                 {
                     escape_csq_str(cs, buf);
                 }
             }
-            "SOMATIC" => { if vf.existing_variants.iter().any(|kv| kv.somatic) { buf.push('1'); } }
-            "PHENO" => { if vf.existing_variants.iter().any(|kv| kv.phenotype_or_disease) { buf.push('1'); } }
+            "SOMATIC" => {
+                if vf.existing_variants.iter().any(|kv| kv.somatic) {
+                    buf.push('1');
+                }
+            }
+            "PHENO" => {
+                if vf
+                    .existing_variants
+                    .iter()
+                    .any(|kv| kv.phenotype_or_disease)
+                {
+                    buf.push('1');
+                }
+            }
             "PUBMED" => {
                 let mut first_pub = true;
                 for kv in &vf.existing_variants {
                     for p in &kv.pubmed {
-                        if !first_pub { buf.push('&'); }
+                        if !first_pub {
+                            buf.push('&');
+                        }
                         first_pub = false;
                         buf.push_str(p);
                     }
@@ -183,7 +222,9 @@ fn format_csq_entry_into(
                         for c in criteria {
                             if c.get("met").and_then(|v| v.as_bool()).unwrap_or(false) {
                                 if let Some(code) = c.get("code").and_then(|v| v.as_str()) {
-                                    if !first { buf.push('&'); }
+                                    if !first {
+                                        buf.push('&');
+                                    }
                                     first = false;
                                     buf.push_str(code);
                                 }
@@ -222,8 +263,12 @@ fn escape_csq_value(value: &str) -> String {
 
 fn write_position_range(pos: Option<(u64, u64)>, buf: &mut String) {
     match pos {
-        Some((start, end)) if start == end => { let _ = write!(buf, "{}", start); }
-        Some((start, end)) => { let _ = write!(buf, "{}-{}", start, end); }
+        Some((start, end)) if start == end => {
+            let _ = write!(buf, "{}", start);
+        }
+        Some((start, end)) => {
+            let _ = write!(buf, "{}-{}", start, end);
+        }
         None => {}
     }
 }
@@ -363,7 +408,11 @@ const ONEKG_FIELDS: &[(&str, &str)] = &[
     ("EUR_AF", "eurAf"),
     ("SAS_AF", "sasAf"),
 ];
-const TOPMED_FIELDS: &[(&str, &str)] = &[("ALL_AF", "allAf"), ("ALL_AC", "allAc"), ("ALL_AN", "allAn")];
+const TOPMED_FIELDS: &[(&str, &str)] = &[
+    ("ALL_AF", "allAf"),
+    ("ALL_AC", "allAc"),
+    ("ALL_AN", "allAn"),
+];
 const MITOMAP_FIELDS: &[(&str, &str)] = &[("DISEASE", "disease"), ("STATUS", "status")];
 const SCORE_FIELDS: &[(&str, &str)] = &[("SCORE", "")];
 const SCORE_OBJECT_FIELDS: &[(&str, &str)] = &[("SCORE", "score")];
@@ -604,7 +653,11 @@ impl LoadedSupplementarySpecs {
             })
             .collect();
         let column_count = spliceai as usize + per_spec.iter().filter(|b| **b).count();
-        Self { spliceai, per_spec, column_count }
+        Self {
+            spliceai,
+            per_spec,
+            column_count,
+        }
     }
 
     /// Number of extra tab columns this lookup will produce (including
@@ -777,7 +830,11 @@ fn format_spliceai_projection(vf: &VariationFeature) -> Option<String> {
             }
         }
     }
-    if values.is_empty() { None } else { Some(values.join(",")) }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
 }
 
 fn format_spliceai_entry(allele: &str, json_str: &str) -> Option<String> {
@@ -837,7 +894,11 @@ fn format_allele_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> 
             }
         }
     }
-    if values.is_empty() { None } else { Some(values.join(",")) }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
 }
 
 /// `GeneIndex::annotate_gene` returns either a single JSON object for a gene
@@ -868,7 +929,11 @@ fn format_gene_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> Op
             parts.push(escape_vcf_subfield(&ga.gene_symbol));
             if let Some(obj) = object.as_object() {
                 for (_, json_key) in spec.fields {
-                    parts.push(obj.get(*json_key).map(json_value_to_vcf).unwrap_or_default());
+                    parts.push(
+                        obj.get(*json_key)
+                            .map(json_value_to_vcf)
+                            .unwrap_or_default(),
+                    );
                 }
             }
             let value = parts.join("|");
@@ -877,7 +942,11 @@ fn format_gene_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> Op
             }
         }
     }
-    if values.is_empty() { None } else { Some(values.join(",")) }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
 }
 
 fn format_spliceai_for_allele(vf: &VariationFeature, aa: &AlleleAnnotation) -> Option<String> {
@@ -894,7 +963,11 @@ fn format_spliceai_for_allele(vf: &VariationFeature, aa: &AlleleAnnotation) -> O
             }
         }
     }
-    if values.is_empty() { None } else { Some(values.join(",")) }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
 }
 
 fn format_allele_projection_for_aa(
@@ -928,7 +1001,11 @@ fn format_allele_projection_for_aa(
         };
         let entries = match spec.kind {
             VcfProjectionKind::AlleleScalar => {
-                vec![format!("{}|{}", escape_vcf_subfield(&allele), json_value_to_vcf(&parsed))]
+                vec![format!(
+                    "{}|{}",
+                    escape_vcf_subfield(&allele),
+                    json_value_to_vcf(&parsed)
+                )]
             }
             _ => format_object_projection_entries(&allele, &parsed, spec.fields),
         };
@@ -938,7 +1015,11 @@ fn format_allele_projection_for_aa(
             }
         }
     }
-    if values.is_empty() { None } else { Some(values.join(",")) }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
 }
 
 fn format_gene_projection_for_tv(
@@ -970,7 +1051,11 @@ fn format_gene_projection_for_tv(
             parts.push(escape_vcf_subfield(&ga.gene_symbol));
             if let Some(obj) = object.as_object() {
                 for (_, json_key) in spec.fields {
-                    parts.push(obj.get(*json_key).map(json_value_to_vcf).unwrap_or_default());
+                    parts.push(
+                        obj.get(*json_key)
+                            .map(json_value_to_vcf)
+                            .unwrap_or_default(),
+                    );
                 }
             }
             let value = parts.join("|");
@@ -979,7 +1064,11 @@ fn format_gene_projection_for_tv(
             }
         }
     }
-    if values.is_empty() { None } else { Some(values.join(",")) }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
 }
 
 fn format_clinvar_protein_projection_for_tv(
@@ -1013,7 +1102,11 @@ fn format_clinvar_protein_projection_for_tv(
             values.push(value);
         }
     }
-    if values.is_empty() { None } else { Some(values.join(",")) }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
 }
 
 /// Pull every `proteinVariants[*]` entry out of a ClinVar-protein JSON
@@ -1030,7 +1123,9 @@ fn collect_clinvar_protein_variants(parsed: &Value) -> String {
             let ref_aa = v.get("refAa").map(json_leaf_to_string)?;
             let alt_aa = v.get("altAa").map(json_leaf_to_string)?;
             let sig = v.get("sig").map(json_leaf_to_string).unwrap_or_default();
-            Some(escape_vcf_subfield(&format!("{pos}:{ref_aa}>{alt_aa}:{sig}")))
+            Some(escape_vcf_subfield(&format!(
+                "{pos}:{ref_aa}>{alt_aa}:{sig}"
+            )))
         })
         .collect::<Vec<_>>()
         .join("&")
@@ -1058,7 +1153,11 @@ fn format_clinvar_protein_projection(
             values.push(value);
         }
     }
-    if values.is_empty() { None } else { Some(values.join(",")) }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
 }
 
 fn format_object_projection_entries(
@@ -1080,7 +1179,11 @@ fn format_object_projection_entries(
                 if json_key.is_empty() {
                     parts.push(json_value_to_vcf(value));
                 } else {
-                    parts.push(obj.get(*json_key).map(json_value_to_vcf).unwrap_or_default());
+                    parts.push(
+                        obj.get(*json_key)
+                            .map(json_value_to_vcf)
+                            .unwrap_or_default(),
+                    );
                 }
             }
             Some(parts.join("|"))
@@ -1229,7 +1332,9 @@ pub fn format_tab_line_with(
                     parts.push(r.clone());
                 }
                 if extra_count > 0 {
-                    parts.extend(format_supplementary_tab_columns_for_allele(vf, tv, aa, specs));
+                    parts.extend(format_supplementary_tab_columns_for_allele(
+                        vf, tv, aa, specs,
+                    ));
                 }
                 if let Some(cls) = opts.qc_class {
                     parts.push(cls.to_string());
@@ -1280,7 +1385,10 @@ pub fn format_tab_line_with(
                 .join(",");
 
             let impact_str = aa.impact.as_str().to_string();
-            let distance_str = aa.distance.map(|d| d.to_string()).unwrap_or("-".to_string());
+            let distance_str = aa
+                .distance
+                .map(|d| d.to_string())
+                .unwrap_or("-".to_string());
             let strand_str = format!("{}", tv.strand.as_int());
             let flags_str = if tv.canonical { "canonical" } else { "-" };
 
@@ -1321,7 +1429,9 @@ pub fn format_tab_line_with(
             parts.push(flags_str.to_string());
 
             if extra_count > 0 {
-                parts.extend(format_supplementary_tab_columns_for_allele(vf, tv, aa, specs));
+                parts.extend(format_supplementary_tab_columns_for_allele(
+                    vf, tv, aa, specs,
+                ));
             }
 
             if let Some(cls) = opts.qc_class {
@@ -1376,13 +1486,22 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
         "seq_region_name".into(),
         serde_json::Value::String(vf.position.chromosome.clone()),
     );
-    obj.insert("start".into(), serde_json::Value::Number(vf.position.start.into()));
-    obj.insert("end".into(), serde_json::Value::Number(vf.position.end.into()));
+    obj.insert(
+        "start".into(),
+        serde_json::Value::Number(vf.position.start.into()),
+    );
+    obj.insert(
+        "end".into(),
+        serde_json::Value::Number(vf.position.end.into()),
+    );
     obj.insert(
         "allele_string".into(),
         serde_json::Value::String(vf.allele_string.clone()),
     );
-    obj.insert("strand".into(), serde_json::Value::Number(vf.position.strand.as_int().into()));
+    obj.insert(
+        "strand".into(),
+        serde_json::Value::Number(vf.position.strand.as_int().into()),
+    );
 
     if sa_only {
         let alleles: Vec<serde_json::Value> = vf
@@ -1491,7 +1610,10 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                     tc.insert("mane_select".into(), serde_json::Value::String(ms.clone()));
                 }
                 if let Some(ref mpc) = tv.mane_plus_clinical {
-                    tc.insert("mane_plus_clinical".into(), serde_json::Value::String(mpc.clone()));
+                    tc.insert(
+                        "mane_plus_clinical".into(),
+                        serde_json::Value::String(mpc.clone()),
+                    );
                 }
                 if let Some(t) = tv.tsl {
                     tc.insert("tsl".into(), serde_json::Value::Number(t.into()));
@@ -1503,7 +1625,10 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                     tc.insert("ccds".into(), serde_json::Value::String(c.clone()));
                 }
                 if tv.gencode_primary {
-                    tc.insert("gencode_primary".into(), serde_json::Value::Number(1.into()));
+                    tc.insert(
+                        "gencode_primary".into(),
+                        serde_json::Value::Number(1.into()),
+                    );
                 }
                 if let Some(ref pid) = tv.protein_id {
                     tc.insert("protein_id".into(), serde_json::Value::String(pid.clone()));
@@ -1521,20 +1646,28 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                     tc.insert("protein_end".into(), serde_json::Value::Number(e.into()));
                 }
                 if let Some(ref aas) = aa.amino_acids {
-                    tc.insert("amino_acids".into(),
-                        serde_json::Value::String(format!("{}/{}", aas.0, aas.1)));
+                    tc.insert(
+                        "amino_acids".into(),
+                        serde_json::Value::String(format!("{}/{}", aas.0, aas.1)),
+                    );
                 }
                 if let Some(ref cdns) = aa.codons {
-                    tc.insert("codons".into(),
-                        serde_json::Value::String(format!("{}/{}", cdns.0, cdns.1)));
+                    tc.insert(
+                        "codons".into(),
+                        serde_json::Value::String(format!("{}/{}", cdns.0, cdns.1)),
+                    );
                 }
                 if let Some((n, t)) = aa.exon {
-                    tc.insert("exon".into(),
-                        serde_json::Value::String(format!("{}/{}", n, t)));
+                    tc.insert(
+                        "exon".into(),
+                        serde_json::Value::String(format!("{}/{}", n, t)),
+                    );
                 }
                 if let Some((n, t)) = aa.intron {
-                    tc.insert("intron".into(),
-                        serde_json::Value::String(format!("{}/{}", n, t)));
+                    tc.insert(
+                        "intron".into(),
+                        serde_json::Value::String(format!("{}/{}", n, t)),
+                    );
                 }
                 if let Some(ref h) = aa.hgvsg {
                     tc.insert("hgvsg".into(), serde_json::Value::String(h.clone()));
@@ -1619,9 +1752,18 @@ pub fn format_nirvana_json(vf: &VariationFeature) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
 
     // Position section
-    obj.insert("chromosome".into(), serde_json::Value::String(vf.position.chromosome.clone()));
-    obj.insert("position".into(), serde_json::Value::Number(vf.position.start.into()));
-    obj.insert("end".into(), serde_json::Value::Number(vf.position.end.into()));
+    obj.insert(
+        "chromosome".into(),
+        serde_json::Value::String(vf.position.chromosome.clone()),
+    );
+    obj.insert(
+        "position".into(),
+        serde_json::Value::Number(vf.position.start.into()),
+    );
+    obj.insert(
+        "end".into(),
+        serde_json::Value::Number(vf.position.end.into()),
+    );
 
     let ref_str = vf.ref_allele.to_string();
     obj.insert("refAllele".into(), serde_json::Value::String(ref_str));
@@ -1634,7 +1776,10 @@ pub fn format_nirvana_json(vf: &VariationFeature) -> serde_json::Value {
     obj.insert("altAlleles".into(), serde_json::Value::Array(alt_strs));
 
     if vf.variant_type != fastvep_core::VariantType::Unknown {
-        obj.insert("variantType".into(), serde_json::Value::String(format!("{:?}", vf.variant_type)));
+        obj.insert(
+            "variantType".into(),
+            serde_json::Value::String(format!("{:?}", vf.variant_type)),
+        );
     }
 
     // Variants section: one per alt allele with all transcript consequences
@@ -1642,7 +1787,10 @@ pub fn format_nirvana_json(vf: &VariationFeature) -> serde_json::Value {
     for alt in &vf.alt_alleles {
         let alt_str = alt.to_string();
         let mut var_obj = serde_json::Map::new();
-        var_obj.insert("altAllele".into(), serde_json::Value::String(alt_str.clone()));
+        var_obj.insert(
+            "altAllele".into(),
+            serde_json::Value::String(alt_str.clone()),
+        );
 
         // Collect transcript consequences for this allele
         let mut transcripts = Vec::new();
@@ -1650,27 +1798,73 @@ pub fn format_nirvana_json(vf: &VariationFeature) -> serde_json::Value {
             for aa in &tv.allele_annotations {
                 if aa.allele.to_string() == alt_str {
                     let mut tc = serde_json::Map::new();
-                    tc.insert("transcriptId".into(), serde_json::Value::String(tv.transcript_id.to_string()));
-                    tc.insert("geneId".into(), serde_json::Value::String(tv.gene_id.to_string()));
+                    tc.insert(
+                        "transcriptId".into(),
+                        serde_json::Value::String(tv.transcript_id.to_string()),
+                    );
+                    tc.insert(
+                        "geneId".into(),
+                        serde_json::Value::String(tv.gene_id.to_string()),
+                    );
                     if let Some(ref sym) = tv.gene_symbol {
-                        tc.insert("geneSymbol".into(), serde_json::Value::String(sym.to_string()));
+                        tc.insert(
+                            "geneSymbol".into(),
+                            serde_json::Value::String(sym.to_string()),
+                        );
                     }
-                    tc.insert("biotype".into(), serde_json::Value::String(tv.biotype.to_string()));
-                    tc.insert("consequences".into(), serde_json::Value::Array(
-                        aa.consequences.iter().map(|c| serde_json::Value::String(c.so_term().to_string())).collect()
-                    ));
-                    tc.insert("impact".into(), serde_json::Value::String(aa.impact.as_str().to_string()));
-                    if tv.canonical { tc.insert("isCanonical".into(), serde_json::Value::Bool(true)); }
-                    if let Some(ref ms) = tv.mane_select { tc.insert("maneSelect".into(), serde_json::Value::String(ms.clone())); }
-                    if let Some(ref mpc) = tv.mane_plus_clinical { tc.insert("manePlusClinical".into(), serde_json::Value::String(mpc.clone())); }
-                    if let Some(t) = tv.tsl { tc.insert("tsl".into(), serde_json::Value::Number(t.into())); }
-                    if let Some(ref a) = tv.appris { tc.insert("appris".into(), serde_json::Value::String(a.clone())); }
-                    if let Some(ref c) = tv.ccds { tc.insert("ccds".into(), serde_json::Value::String(c.clone())); }
-                    if tv.gencode_primary { tc.insert("isGencodePrimary".into(), serde_json::Value::Bool(true)); }
-                    if let Some(ref pid) = tv.protein_id { tc.insert("proteinId".into(), serde_json::Value::String(pid.clone())); }
-                    if let Some(ref h) = aa.hgvsg { tc.insert("hgvsg".into(), serde_json::Value::String(h.clone())); }
-                    if let Some(ref h) = aa.hgvsc { tc.insert("hgvsc".into(), serde_json::Value::String(h.clone())); }
-                    if let Some(ref h) = aa.hgvsp { tc.insert("hgvsp".into(), serde_json::Value::String(h.clone())); }
+                    tc.insert(
+                        "biotype".into(),
+                        serde_json::Value::String(tv.biotype.to_string()),
+                    );
+                    tc.insert(
+                        "consequences".into(),
+                        serde_json::Value::Array(
+                            aa.consequences
+                                .iter()
+                                .map(|c| serde_json::Value::String(c.so_term().to_string()))
+                                .collect(),
+                        ),
+                    );
+                    tc.insert(
+                        "impact".into(),
+                        serde_json::Value::String(aa.impact.as_str().to_string()),
+                    );
+                    if tv.canonical {
+                        tc.insert("isCanonical".into(), serde_json::Value::Bool(true));
+                    }
+                    if let Some(ref ms) = tv.mane_select {
+                        tc.insert("maneSelect".into(), serde_json::Value::String(ms.clone()));
+                    }
+                    if let Some(ref mpc) = tv.mane_plus_clinical {
+                        tc.insert(
+                            "manePlusClinical".into(),
+                            serde_json::Value::String(mpc.clone()),
+                        );
+                    }
+                    if let Some(t) = tv.tsl {
+                        tc.insert("tsl".into(), serde_json::Value::Number(t.into()));
+                    }
+                    if let Some(ref a) = tv.appris {
+                        tc.insert("appris".into(), serde_json::Value::String(a.clone()));
+                    }
+                    if let Some(ref c) = tv.ccds {
+                        tc.insert("ccds".into(), serde_json::Value::String(c.clone()));
+                    }
+                    if tv.gencode_primary {
+                        tc.insert("isGencodePrimary".into(), serde_json::Value::Bool(true));
+                    }
+                    if let Some(ref pid) = tv.protein_id {
+                        tc.insert("proteinId".into(), serde_json::Value::String(pid.clone()));
+                    }
+                    if let Some(ref h) = aa.hgvsg {
+                        tc.insert("hgvsg".into(), serde_json::Value::String(h.clone()));
+                    }
+                    if let Some(ref h) = aa.hgvsc {
+                        tc.insert("hgvsc".into(), serde_json::Value::String(h.clone()));
+                    }
+                    if let Some(ref h) = aa.hgvsp {
+                        tc.insert("hgvsp".into(), serde_json::Value::String(h.clone()));
+                    }
 
                     // Per-allele supplementary annotations
                     for (key, json_str) in &aa.supplementary {
@@ -1871,7 +2065,10 @@ mod tests {
             "FV_GNOMAD_GENE",
             "FV_CLINVAR_PROTEIN",
         ] {
-            assert!(ids.contains(&expected), "missing projection {expected}: {projections:?}");
+            assert!(
+                ids.contains(&expected),
+                "missing projection {expected}: {projections:?}"
+            );
         }
 
         let info = projections
@@ -1879,9 +2076,18 @@ mod tests {
             .map(|(id, value)| format!("{id}={value}"))
             .collect::<Vec<_>>()
             .join(";");
-        assert!(!info.contains('{'), "VCF INFO must not contain JSON objects: {info}");
-        assert!(!info.contains('}'), "VCF INFO must not contain JSON objects: {info}");
-        assert!(!info.contains('"'), "VCF INFO must not contain JSON quotes: {info}");
+        assert!(
+            !info.contains('{'),
+            "VCF INFO must not contain JSON objects: {info}"
+        );
+        assert!(
+            !info.contains('}'),
+            "VCF INFO must not contain JSON objects: {info}"
+        );
+        assert!(
+            !info.contains('"'),
+            "VCF INFO must not contain JSON quotes: {info}"
+        );
         assert!(info.contains("SpliceAI=G|GENE%7C1|0.01|0.00|0.85|0.00|5|-28|2|-13"));
         assert!(info.contains("FV_CLINVAR=G|Pathogenic&Likely_pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast%2Ccancer&Ovarian%7Ccancer|SNV|SO%3A0001483"));
         assert!(info.contains("FV_PHYLOP=G|3.14"));
@@ -1895,11 +2101,8 @@ mod tests {
     fn vcf_info_replaces_existing_fastvep_owned_fields() {
         let vf = projection_test_variant();
         let csq = "G|missense_variant|MODERATE";
-        let info = format_vcf_info_fields(
-            "DP=12;CSQ=old;SpliceAI=old;FV_CLINVAR=old;KEEP=1",
-            &vf,
-            csq,
-        );
+        let info =
+            format_vcf_info_fields("DP=12;CSQ=old;SpliceAI=old;FV_CLINVAR=old;KEEP=1", &vf, csq);
 
         assert!(info.contains("DP=12"));
         assert!(info.contains("KEEP=1"));
@@ -1931,7 +2134,11 @@ mod tests {
     }
 
     fn all_supplementary_gene_keys() -> Vec<String> {
-        vec!["omim".into(), "gnomad_genes".into(), "clinvar_protein".into()]
+        vec![
+            "omim".into(),
+            "gnomad_genes".into(),
+            "clinvar_protein".into(),
+        ]
     }
 
     #[test]
@@ -1961,7 +2168,10 @@ mod tests {
             "FV_GNOMAD_GENE",
             "FV_CLINVAR_PROTEIN",
         ] {
-            assert!(cols.contains(&expected), "missing column {expected}: {cols:?}");
+            assert!(
+                cols.contains(&expected),
+                "missing column {expected}: {cols:?}"
+            );
         }
     }
 
@@ -1997,13 +2207,14 @@ mod tests {
         );
 
         let vcf_projections: std::collections::HashMap<String, String> =
-            format_supplementary_vcf_info(&vf)
-                .into_iter()
-                .collect();
+            format_supplementary_vcf_info(&vf).into_iter().collect();
 
         for (i, info_id) in extra_cols.iter().enumerate() {
             let tab_value = cols[17 + i];
-            let expected = vcf_projections.get(*info_id).cloned().unwrap_or_else(|| "-".into());
+            let expected = vcf_projections
+                .get(*info_id)
+                .cloned()
+                .unwrap_or_else(|| "-".into());
             assert_eq!(
                 tab_value, expected,
                 "tab column {info_id} should equal VCF INFO value"
@@ -2012,7 +2223,10 @@ mod tests {
 
         assert!(!row.contains('{'), "tab row must not contain JSON: {row}");
         assert!(!row.contains('}'), "tab row must not contain JSON: {row}");
-        assert!(!row.contains('"'), "tab row must not contain JSON quotes: {row}");
+        assert!(
+            !row.contains('"'),
+            "tab row must not contain JSON quotes: {row}"
+        );
     }
 
     #[test]
@@ -2025,10 +2239,8 @@ mod tests {
         }
         vf.gene_annotations.clear();
 
-        let specs = LoadedSupplementarySpecs::new(
-            &["clinvar".to_string(), "dbnsfp".to_string()],
-            &[],
-        );
+        let specs =
+            LoadedSupplementarySpecs::new(&["clinvar".to_string(), "dbnsfp".to_string()], &[]);
         let lines = format_tab_line(&vf, &specs, false);
         let cols: Vec<&str> = lines[0].split('\t').collect();
         assert_eq!(cols.len(), 17 + 2);
@@ -2062,9 +2274,17 @@ mod tests {
         let specs = LoadedSupplementarySpecs::new(&sa_keys, &gene_keys);
 
         let lines = format_tab_line(&vf, &specs, false);
-        assert_eq!(lines.len(), 1, "single alt allele yields one intergenic row");
+        assert_eq!(
+            lines.len(),
+            1,
+            "single alt allele yields one intergenic row"
+        );
         let cols: Vec<&str> = lines[0].split('\t').collect();
-        assert_eq!(cols.len(), 17 + 3, "intergenic row must include FV_* columns");
+        assert_eq!(
+            cols.len(),
+            17 + 3,
+            "intergenic row must include FV_* columns"
+        );
         assert_eq!(cols[6], "intergenic_variant");
         // All FV_* columns should be `-` for an intergenic row.
         for tail in &cols[17..] {
@@ -2113,12 +2333,20 @@ mod tests {
         let lines = format_tab_line(&vf, &specs, false);
         assert_eq!(lines.len(), 2);
         assert!(
-            lines[0].split('\t').next_back().unwrap().starts_with("G|Pathogenic|"),
+            lines[0]
+                .split('\t')
+                .next_back()
+                .unwrap()
+                .starts_with("G|Pathogenic|"),
             "first row should carry the ALT-G clinvar value: {}",
             lines[0]
         );
         assert!(
-            lines[1].split('\t').next_back().unwrap().starts_with("T|Benign|"),
+            lines[1]
+                .split('\t')
+                .next_back()
+                .unwrap()
+                .starts_with("T|Benign|"),
             "second row should carry the ALT-T clinvar value: {}",
             lines[1]
         );
@@ -2224,10 +2452,8 @@ mod tests {
             }
         }
         vf.gene_annotations.clear();
-        let specs = LoadedSupplementarySpecs::new(
-            &["clinvar".to_string(), "dbnsfp".to_string()],
-            &[],
-        );
+        let specs =
+            LoadedSupplementarySpecs::new(&["clinvar".to_string(), "dbnsfp".to_string()], &[]);
         let lines = format_tab_line(&vf, &specs, false);
         let row = &lines[0];
         assert!(!row.contains('{'), "malformed JSON must not leak: {row}");
