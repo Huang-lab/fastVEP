@@ -16,6 +16,7 @@ Appended columns:
 
 Usage:
   05_append_current_calls.py <reviewed.xlsx> <out.xlsx> [--sheet Sheet1]
+                            [--acmg-config <file.toml>]
 """
 
 from __future__ import annotations
@@ -93,7 +94,7 @@ def read_rows(ws, header):
     return rows
 
 
-def annotate(rows, workdir):
+def annotate(rows, workdir, acmg_config=None):
     """Run the current binary over exactly these variants, in this order."""
     vcf = os.path.join(workdir, "reviewed.vcf")
     with open(vcf, "w") as f:
@@ -116,7 +117,8 @@ def annotate(rows, workdir):
             "--fasta", os.path.join(ROOT, "test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa"),
             "--sa-dir", os.path.join(ROOT, "data/benchmark/sa_db"),
             "--acmg", "--pick", "--hgvs", "--output-format", "json",
-        ],
+        ]
+        + (["--acmg-config", acmg_config] if acmg_config else []),
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     doc = json.load(open(out))
@@ -198,6 +200,12 @@ def explain(then_class, then_criteria, now_class, now_criteria, all_criteria):
     for code, summary, met, _ in all_criteria:
         if not met and "Superseded by functional evidence" in (summary or ""):
             gates.append(f"{code} superseded by functional evidence")
+    # The BA1 exception list reports `evaluated: true` - it is a conclusion,
+    # not an inability to conclude - so it needs its own branch rather than the
+    # withheld-criteria loop above.
+    for code, summary, met, _ in all_criteria:
+        if not met and "BA1 exception list" in (summary or ""):
+            gates.append(f"{code} blocked: ClinGen BA1 exception list (Ghosh 2018)")
     parts.extend(dict.fromkeys(gates))
 
     if "PVS1" in after and not (after - {"PVS1"}) and status != "unchanged":
@@ -211,6 +219,12 @@ def main():
     ap.add_argument("reviewed")
     ap.add_argument("out")
     ap.add_argument("--sheet", default=None, help="defaults to the first sheet")
+    ap.add_argument(
+        "--acmg-config",
+        default=None,
+        help="optional --acmg-config TOML, to show what a candidate configuration "
+             "would do to the reviewed rows (e.g. the published VCEP frequency bars)",
+    )
     args = ap.parse_args()
 
     wb = load_workbook(args.reviewed)
@@ -220,7 +234,7 @@ def main():
 
     rows = read_rows(ws, header)
     with tempfile.TemporaryDirectory() as workdir:
-        recs = annotate(rows, workdir)
+        recs = annotate(rows, workdir, args.acmg_config)
 
     # Style the appended headers so it is obvious which columns are new.
     fill = PatternFill("solid", fgColor="1F6F43")

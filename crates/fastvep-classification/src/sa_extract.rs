@@ -740,6 +740,16 @@ pub struct ClassificationInput {
     pub same_splice_position_pathogenic: Option<bool>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
+    /// The variant's VCF-form position as `(chrom, pos, ref, alt)`, on the
+    /// build the run is annotating against.
+    ///
+    /// Most criteria reason about a transcript-level view and need no
+    /// coordinate. BA1's exception list does: it is a list of specific
+    /// variants, and an HGVS `c.` token only identifies one relative to the
+    /// transcript it was written for. `None` when the caller did not supply
+    /// one, in which case the exception list falls back to matching on
+    /// gene plus HGVS.
+    pub variant_coordinates: Option<(String, u64, String, String)>,
     /// True when the variant is a pure insertion or duplication (VCF REF is a
     /// single anchor base that the ALT extends). Used by PVS1's canonical
     /// splice track: an insertion adjacent to, or inside, the ±1/±2
@@ -806,6 +816,7 @@ pub fn extract_classification_input(
     escapes_nmd: Option<bool>,
     repeat_db_loaded: bool,
     same_splice_position_pathogenic: Option<bool>,
+    variant_coordinates: Option<(String, u64, String, String)>,
     is_pure_insertion: Option<bool>,
     functional_evidence: Option<crate::functional::FunctionalEvidence>,
     allele_supplementary: &[(String, String)],
@@ -999,6 +1010,7 @@ pub fn extract_classification_input(
         in_critical_region,
         alt_start_codon_distance: None,
         same_splice_position_pathogenic,
+        variant_coordinates,
         in_repeat_region,
         is_pure_insertion,
         // BP7 exon-edge / deep-intronic signals (Walker 2023). `intronic_offset`
@@ -1191,6 +1203,7 @@ mod tests {
             escapes_nmd,
             false, // repeat_db_loaded: no interval source in these unit tests
             None,  // same_splice_position_pathogenic: resolved by the caller
+            None,  // variant_coordinates: these unit tests are transcript-level
             None,
             None,
             &[],

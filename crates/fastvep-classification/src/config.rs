@@ -518,16 +518,93 @@ pub struct AcmgConfig {
     pub trio: Option<TrioConfig>,
 }
 
-/// One entry on the BA1 exception list. A variant is exempt from BA1 when its
-/// `(gene_symbol, hgvs_c)` matches an entry, regardless of allele frequency.
+/// One entry on the BA1 exception list. A variant is exempt from BA1 when it
+/// matches an entry, regardless of allele frequency.
+///
+/// Matching is by genomic coordinate first and HGVS second, and the order
+/// matters. An HGVS `c.` token is only meaningful against the transcript it was
+/// written for: Ghosh 2018 lists BTD `c.1330G>C` on NM_000060.4, and fastVEP
+/// reports the same variant as `c.1270G>C` on ENST00000643237.3. The same
+/// variant can also be spelled two valid ways - ACAD9's `c.-44_-41dupTAAG` is
+/// fastVEP's `c.-45_-44insTAAG`. A coordinate has neither problem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ba1Exception {
     pub gene: String,
-    /// HGVS c. notation, e.g. "c.845G>A". Compared case-insensitively.
+    /// HGVS c. notation, e.g. "c.845G>A".
+    ///
+    /// Compared case-insensitively, and against the part of the call's HGVS
+    /// after the last `:` - the pipeline emits `ENST00000357618.10:c.845G>A`,
+    /// so a whole-string comparison against a bare `c.` token never matches.
     pub hgvs_c: String,
-    /// Optional human-readable reason — surfaced in the criterion `summary`.
+    /// Optional human-readable reason - surfaced in the criterion `summary`.
     #[serde(default)]
     pub reason: Option<String>,
+    /// Chromosome, without a `chr` prefix. Set together with the other three
+    /// coordinate fields or not at all.
+    #[serde(default)]
+    pub chrom: Option<String>,
+    /// 1-based VCF position on [`Self::assembly`].
+    #[serde(default)]
+    pub pos: Option<u64>,
+    /// VCF-form reference allele.
+    #[serde(default, rename = "ref")]
+    pub ref_allele: Option<String>,
+    /// VCF-form alternate allele.
+    #[serde(default)]
+    pub alt: Option<String>,
+    /// Assembly the coordinate is on. Defaults to GRCh38; an entry on another
+    /// build is matched by HGVS only, because comparing its position against a
+    /// GRCh38 call would silently exempt the wrong variant.
+    #[serde(default = "default_exception_assembly")]
+    pub assembly: String,
+    /// ClinVar variation ID, for provenance. Not used for matching - fastVEP's
+    /// `clinvar.osa` does not carry the ID - but it is what makes an entry
+    /// checkable against the source table.
+    #[serde(default)]
+    pub clinvar_id: Option<String>,
+}
+
+fn default_exception_assembly() -> String {
+    "GRCh38".to_string()
+}
+
+/// The part of an HGVS expression after the last `:`, which is the `c.` token
+/// itself. Returns the whole string when there is no prefix.
+fn hgvs_suffix(hgvs: &str) -> &str {
+    hgvs.rsplit(':').next().unwrap_or(hgvs)
+}
+
+impl Ba1Exception {
+    /// Whether this entry exempts the variant described by the arguments.
+    ///
+    /// `coordinates` is `(chrom, pos, ref, alt)` in VCF form on GRCh38, or
+    /// `None` when the caller could not supply one.
+    pub fn matches(
+        &self,
+        gene: Option<&str>,
+        hgvs_c: Option<&str>,
+        coordinates: Option<(&str, u64, &str, &str)>,
+    ) -> bool {
+        if let (Some((chrom, pos, ref_allele, alt)), Some(e_chrom), Some(e_pos), Some(e_ref), Some(e_alt)) =
+            (coordinates, self.chrom.as_deref(), self.pos, self.ref_allele.as_deref(), self.alt.as_deref())
+        {
+            if self.assembly.eq_ignore_ascii_case("GRCh38")
+                && e_chrom.trim_start_matches("chr").eq_ignore_ascii_case(chrom.trim_start_matches("chr"))
+                && e_pos == pos
+                && e_ref.eq_ignore_ascii_case(ref_allele)
+                && e_alt.eq_ignore_ascii_case(alt)
+            {
+                return true;
+            }
+        }
+        match (gene, hgvs_c) {
+            (Some(g), Some(h)) => {
+                self.gene.eq_ignore_ascii_case(g)
+                    && hgvs_suffix(&self.hgvs_c).eq_ignore_ascii_case(hgvs_suffix(h))
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Gene-specific overrides for ACMG-AMP criteria.
@@ -821,22 +898,53 @@ fn default_true() -> bool { true }
 fn default_min_an() -> u64 { 2000 }
 
 /// Default BA1 exception list (Ghosh et al. 2018, Hum Mutat — 9 variants).
+/// The ClinGen SVI BA1 exception list (Ghosh 2018, PMID 30311378, Table 1).
+///
+/// Nine variants that sit above 5 % in at least one population and must not be
+/// called standalone-benign on that basis. Some are outright pathogenic (HFE
+/// C282Y, GJB2 p.Val37Ile, BTD p.Asp444His); the rest are common in one
+/// ancestry group for reasons that have nothing to do with being harmless.
+///
+/// Coordinates are GRCh38, lifted from the GRCh37 positions in the paper's
+/// Table 1 via the ClinVar variation IDs it also lists, which are carried here
+/// so any entry can be checked against the source. Matching prefers the
+/// coordinate precisely because two of these nine cannot be matched on their
+/// published HGVS: BTD's `c.1330G>C` is NM_000060.4 numbering and fastVEP
+/// reports `c.1270G>C` on the Ensembl canonical transcript, and ACAD9's
+/// `c.-44_-41dupTAAG` is the same variant fastVEP spells `c.-45_-44insTAAG`.
 fn default_ba1_exceptions() -> Vec<Ba1Exception> {
-    let mk = |gene: &str, hgvs: &str, reason: &str| Ba1Exception {
-        gene: gene.to_string(),
-        hgvs_c: hgvs.to_string(),
-        reason: Some(reason.to_string()),
+    let mk = |gene: &str, hgvs: &str, clinvar_id: &str, chrom: &str, pos: u64, r: &str, a: &str, reason: &str| {
+        Ba1Exception {
+            gene: gene.to_string(),
+            hgvs_c: hgvs.to_string(),
+            reason: Some(reason.to_string()),
+            chrom: Some(chrom.to_string()),
+            pos: Some(pos),
+            ref_allele: Some(r.to_string()),
+            alt: Some(a.to_string()),
+            assembly: default_exception_assembly(),
+            clinvar_id: Some(clinvar_id.to_string()),
+        }
     };
     vec![
-        mk("ACAD9", "c.-44_-41dupTAAG", "Ghosh 2018 BA1 exception (VUS)"),
-        mk("GJB2", "c.109G>A", "Ghosh 2018 BA1 exception (Pathogenic) — DFNB1 hearing loss"),
-        mk("HFE", "c.187C>G", "Ghosh 2018 BA1 exception (Pathogenic) — hereditary hemochromatosis"),
-        mk("HFE", "c.845G>A", "Ghosh 2018 BA1 exception (Pathogenic) — hereditary hemochromatosis (p.Cys282Tyr)"),
-        mk("MEFV", "c.1105C>T", "Ghosh 2018 BA1 exception (VUS)"),
-        mk("MEFV", "c.1223G>A", "Ghosh 2018 BA1 exception (VUS)"),
-        mk("PIBF1", "c.1214G>A", "Ghosh 2018 BA1 exception (VUS)"),
-        mk("ACADS", "c.511C>T", "Ghosh 2018 BA1 exception (VUS)"),
-        mk("BTD", "c.1330G>C", "Ghosh 2018 BA1 exception (Pathogenic) — biotinidase deficiency"),
+        mk("ACAD9", "c.-44_-41dupTAAG", "1018", "3", 128_879_647, "C", "CTAAG",
+           "Ghosh 2018 BA1 exception (VUS); 12.6 % in African/African American"),
+        mk("GJB2", "c.109G>A", "17023", "13", 20_189_473, "C", "T",
+           "Ghosh 2018 BA1 exception (Pathogenic, p.Val37Ile); 7.2 % in East Asian, autosomal recessive deafness"),
+        mk("HFE", "c.187C>G", "10", "6", 26_090_951, "C", "G",
+           "Ghosh 2018 BA1 exception (Pathogenic, p.His63Asp); 13.7 % in non-Finnish European, hereditary hemochromatosis"),
+        mk("HFE", "c.845G>A", "9", "6", 26_092_913, "G", "A",
+           "Ghosh 2018 BA1 exception (Pathogenic, p.Cys282Tyr); 5.1 % in non-Finnish European, hereditary hemochromatosis"),
+        mk("MEFV", "c.1105C>T", "2551", "16", 3_249_586, "G", "A",
+           "Ghosh 2018 BA1 exception (VUS, p.Pro369Ser); 7.2 % in East Asian, familial Mediterranean fever"),
+        mk("MEFV", "c.1223G>A", "2552", "16", 3_249_468, "C", "T",
+           "Ghosh 2018 BA1 exception (VUS, p.Arg408Gln); 5.4 % in East Asian, familial Mediterranean fever"),
+        mk("PIBF1", "c.1214G>A", "217689", "13", 72_835_359, "G", "A",
+           "Ghosh 2018 BA1 exception (VUS, p.Arg405Gln); 9.9 % in Latino, Joubert syndrome"),
+        mk("ACADS", "c.511C>T", "3830", "12", 120_737_875, "C", "T",
+           "Ghosh 2018 BA1 exception (VUS, p.Arg171Trp); 6.6 % in Finnish only, SCAD deficiency"),
+        mk("BTD", "c.1330G>C", "1900", "3", 15_645_186, "G", "C",
+           "Ghosh 2018 BA1 exception (Pathogenic, p.Asp444His); 5.4 % in Finnish only, biotinidase deficiency"),
     ]
 }
 

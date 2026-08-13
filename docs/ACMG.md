@@ -1062,7 +1062,8 @@ Output (JSON / VCF CSQ / TSV)
 12. **Multi-disorder genes** (SVI July 2025): the per-disorder override schema (`gene_overrides[GENE].disorders[DISORDER]`) is in place and the generated VCEP table populates it, but the active-disorder selection mechanism is informational scaffolding pending a follow-up PR - the gene-level values are what the classifier reads.
 13. **The frequency dead zone between PM2 and BS1.** See below - this is the largest known gap on the frequency side and it is open by decision, not oversight.
 14. **Penetrance is unsourced.** BS2's precondition is "full penetrance expected at an early age" and no public resource publishes penetrance per gene-disorder pair. Prevalence, onset and inheritance are covered; see [Per-gene frequency bars](#per-gene-frequency-bars-clingen-vcep-specifications).
-15. **Published VCEP bars are applied without their founder-variant exceptions.** The exclusions are prose in the specification text, and `ba1_exceptions` carries no panel-specific entries, which is why the generated threshold table is opt-in rather than a default.
+15. **Published VCEP bars are applied without their founder-variant exceptions.** The exclusions are prose in the specification text, and `ba1_exceptions` carries no panel-specific entries beyond Ghosh 2018's nine, which is why the generated threshold table is opt-in rather than a default.
+16. **The ClinVar-concordance benchmark cannot validate the BA1 exception list.** Seven of Ghosh 2018's nine variants are `Conflicting classifications` in ClinVar and carry no consensus truth label, so they are not in the truth set; the criterion exists for exactly the population a consensus benchmark discards. It is covered by an end-to-end test over all nine instead. Any future exception entries need the same treatment.
 
 ## The frequency dead zone between PM2 and BS1
 

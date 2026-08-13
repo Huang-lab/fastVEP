@@ -623,6 +623,49 @@ Two guards earned their place during development, and both stay:
 - **`0.1%` parsed as `0.1`, not `0.001`.** Python's regex alternation is leftmost-first, not longest-match, so a decimal alternative placed before the percentage alternative swallowed the digits and dropped the `%`. A thousand-fold error, in the benign direction, silent. The ordering in `NUMBER` is now load-bearing and commented as such.
 - **BA1 ≥ BS1 ≥ PM2 is checked per gene, and a violation drops the gene.** This is what caught PM2 bars of 2 % read out of "the most frequent pathogenic variant accounts for no more than 2% of..." across eight cardiomyopathy genes, and BA1 bars of 4 and 6 read out of superscript exponents. Both are blocked upstream now; the check stays for the next mis-parse, which will be one nobody predicted.
 
+## v18: the BA1 exception list had never fired, and the benchmark cannot see it
+
+The reviewer supplied Table 1 of Ghosh 2018 (PMID 30311378), the ClinGen SVI list of nine variants that must not be called standalone-benign on frequency.
+All nine were already shipped as defaults, cited to the right paper.
+
+**Not one of them had ever matched.**
+
+The matcher compared the full HGVS string the pipeline emits, `ENST00000357618.10:c.187C>G`, against the bare `c.187C>G` the list holds.
+The unit tests passed because they fed the matcher bare `c.` tokens the pipeline does not produce - the same defect shape as `--acmg` not implying `--hgvs` in v13, and BP3's never-built database in v15.
+Four of the nine were being called Benign on frequency alone:
+
+| Variant | Was | Now |
+|---|---|---|
+| HFE c.187C>G (p.His63Asp) | Benign | VUS |
+| MEFV c.1105C>T (p.Pro369Ser) | Benign | VUS |
+| PIBF1 c.1214G>A (p.Arg405Gln) | Benign | Likely benign |
+| ACAD9 c.-44_-41dupTAAG | Benign | Likely benign |
+
+Entries are now keyed on **genomic coordinate**, with HGVS as a fallback and the ClinVar variation IDs carried for provenance.
+Coordinate matching is not belt-and-braces here, it is required: two of the nine cannot be matched on their published HGVS at all.
+BTD is `c.1330G>C` on NM_000060.4 and `c.1270G>C` on the Ensembl canonical, and ACAD9's `c.-44_-41dupTAAG` is the same variant fastVEP spells `c.-45_-44insTAAG`.
+
+### The benchmark is structurally blind to this
+
+| Metric | v16 | **v18** |
+|---|---:|---:|
+| Every cell of the concordance matrix | | **identical** |
+
+Not one call changed across 673,660 variants, and that is the explanation for how a dead list survived this long rather than a disappointing result.
+
+Seven of the nine are `Conflicting classifications of pathogenicity` in ClinVar, so they carry no consensus label and never enter the truth set.
+Of the two that are scored - GJB2 p.Val37Ile and ACADS p.Arg171Trp - neither call moves.
+The exception list exists precisely for variants where expert opinion is divided, or where a variant is common *and* pathogenic, which is exactly the population a consensus-truth benchmark discards.
+
+**No aggregate metric computed against ClinVar consensus can validate this criterion.** Only case review can, which is why the nine are now covered by an end-to-end test that annotates all of them through the real binary rather than by a unit test over synthetic inputs.
+
+### What the reviewer's own rows show
+
+Her review flagged GJB2, ACADS, MEFV and BTD - and in every case a *different allele* from the one Ghosh lists.
+The mechanism now works and is empty of the entries her cases need.
+There is a second reason it is thin for founder alleles: BA1 and BS1 test gnomAD's **grpmax** filtering allele frequency, and gnomAD deliberately excludes the Finnish, Ashkenazi and remaining groups from grpmax because they are bottlenecked.
+A Finnish or Ashkenazi founder allele is therefore invisible to that statistic by construction, which is why Ghosh had to list ACADS and BTD by hand - both annotated in the source table as ">5 % MAF only in Finnish".
+
 ## Progression, v9 to v14
 
 | Metric | v9 | v10 | v11 | v12 | v13 | v14 |

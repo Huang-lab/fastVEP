@@ -20,32 +20,27 @@ pub fn evaluate_ba1(
     let mut details = serde_json::Map::new();
     details.insert("af_threshold".into(), serde_json::json!(threshold));
 
-    // Frequencies from a homology-confounded gene (or for a variant ClinVar
-    // labels low-penetrance) cannot support a standalone benign call either.
-    if let Some(reason) = super::frequency_gate::benign_blocker(input, config) {
-        details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
-        return EvidenceCriterion {
-            code: "BA1".to_string(),
-            direction: EvidenceDirection::Benign,
-            strength: EvidenceStrength::Standalone,
-            default_strength: EvidenceStrength::Standalone,
-            met: false,
-            evaluated: false,
-            summary: format!("BA1 not evaluated: {}", reason),
-            details: serde_json::Value::Object(details),
-        };
-    }
-
-    // Detect whether this allele is on the BA1 exception list. We can only
-    // match when both gene_symbol and hgvs_c are populated.
-    let exception_match: Option<&Ba1Exception> =
-        match (input.gene_symbol.as_deref(), input.hgvs_c.as_deref()) {
-            (Some(g), Some(h)) => config
-                .ba1_exceptions
-                .iter()
-                .find(|e| e.gene.eq_ignore_ascii_case(g) && e.hgvs_c.eq_ignore_ascii_case(h)),
-            _ => None,
-        };
+    // Detect whether this allele is on the BA1 exception list. Coordinate
+    // first, HGVS second - see `Ba1Exception::matches` for why the order is
+    // load-bearing rather than a preference.
+    //
+    // Checked ahead of the generic frequency gate below, which would otherwise
+    // answer first for these variants and give a vaguer reason. Both block
+    // BA1, but "on the ClinGen exception list" is the citable one, and it is
+    // an evaluated conclusion rather than an inability to evaluate. HFE
+    // c.845G>A reaches both: ClinVar labels it low-penetrance *and* Ghosh 2018
+    // lists it.
+    let coordinates = input
+        .variant_coordinates
+        .as_ref()
+        .map(|(chrom, pos, r, a)| (chrom.as_str(), *pos, r.as_str(), a.as_str()));
+    let exception_match: Option<&Ba1Exception> = config.ba1_exceptions.iter().find(|e| {
+        e.matches(
+            input.gene_symbol.as_deref(),
+            input.hgvs_c.as_deref(),
+            coordinates,
+        )
+    });
 
     if let Some(exc) = exception_match {
         details.insert("ba1_exception_match".into(), serde_json::json!(true));
@@ -62,11 +57,27 @@ pub fn evaluate_ba1(
             met: false,
             evaluated: true,
             summary: format!(
-                "{} {} is on the ClinGen BA1 exception list — BA1 cannot fire ({})",
+                "{} {} is on the ClinGen BA1 exception list, so BA1 cannot fire ({})",
                 exc.gene,
                 exc.hgvs_c,
                 exc.reason.as_deref().unwrap_or("Ghosh 2018")
             ),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    // Frequencies from a homology-confounded gene (or for a variant ClinVar
+    // labels low-penetrance) cannot support a standalone benign call either.
+    if let Some(reason) = super::frequency_gate::benign_blocker(input, config) {
+        details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
+        return EvidenceCriterion {
+            code: "BA1".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Standalone,
+            default_strength: EvidenceStrength::Standalone,
+            met: false,
+            evaluated: false,
+            summary: format!("BA1 not evaluated: {}", reason),
             details: serde_json::Value::Object(details),
         };
     }
@@ -345,6 +356,102 @@ mod tests {
         let cfg = with_gene_ba1("ABCA4", 0.163);
         assert!(!evaluate_ba1(&at_frequency("ABCA4", 0.10), &cfg).met);
         assert!(evaluate_ba1(&at_frequency("ABCA4", 0.20), &cfg).met);
+    }
+
+    /// Every variant on the Ghosh 2018 list, in the form the pipeline actually
+    /// emits: `ENST00000357618.10:c.845G>A`, not a bare `c.845G>A`.
+    ///
+    /// This is the test that was missing. The exception matcher compared the
+    /// whole HGVS string, the unit tests fed it bare `c.` tokens the pipeline
+    /// never produces, and the list shipped inert - BA1 fired on ACAD9, HFE
+    /// p.His63Asp, MEFV p.Pro369Ser and PIBF1 regardless, calling all four
+    /// Benign. Verified end to end afterwards, not just here.
+    #[test]
+    fn test_every_ghosh_2018_exception_blocks_ba1_in_pipeline_form() {
+        // (gene, transcript-prefixed HGVS as fastVEP emits it, chrom, pos, ref, alt)
+        let cases = [
+            ("ACAD9", "ENST00000308982.12:c.-45_-44insTAAG", "3", 128_879_647, "C", "CTAAG"),
+            ("GJB2", "ENST00000382848.5:c.109G>A", "13", 20_189_473, "C", "T"),
+            ("HFE", "ENST00000357618.10:c.187C>G", "6", 26_090_951, "C", "G"),
+            ("HFE", "ENST00000357618.10:c.845G>A", "6", 26_092_913, "G", "A"),
+            ("MEFV", "ENST00000219596.6:c.1105C>T", "16", 3_249_586, "G", "A"),
+            ("MEFV", "ENST00000219596.6:c.1223G>A", "16", 3_249_468, "C", "T"),
+            ("PIBF1", "ENST00000326291.11:c.1214G>A", "13", 72_835_359, "G", "A"),
+            ("ACADS", "ENST00000242592.9:c.511C>T", "12", 120_737_875, "C", "T"),
+            // BTD is the one no HGVS match can reach: Ghosh lists c.1330G>C on
+            // NM_000060.4, fastVEP reports c.1270G>C on the Ensembl canonical.
+            ("BTD", "ENST00000643237.3:c.1270G>C", "3", 15_645_186, "G", "C"),
+        ];
+        let cfg = AcmgConfig::default();
+        for (gene, hgvs, chrom, pos, ref_allele, alt) in cases {
+            let input = ClassificationInput {
+                impact: fastvep_core::Impact::Modifier,
+                gene_symbol: Some(gene.to_string()),
+                hgvs_c: Some(hgvs.to_string()),
+                variant_coordinates: Some((
+                    chrom.to_string(),
+                    pos,
+                    ref_allele.to_string(),
+                    alt.to_string(),
+                )),
+                gnomad: Some(GnomadData {
+                    all_af: Some(0.20),
+                    all_an: Some(100_000),
+                    faf95_max: Some(0.20),
+                    ..Default::default()
+                }),
+                ..minimal_input()
+            };
+            let result = evaluate_ba1(&input, &cfg);
+            assert!(!result.met, "{gene} {hgvs}: BA1 fired despite Ghosh 2018");
+            assert!(
+                result.summary.contains("exception list"),
+                "{gene} {hgvs}: blocked, but not by the exception list: {}",
+                result.summary
+            );
+        }
+    }
+
+    #[test]
+    fn test_ba1_exception_matches_on_coordinate_when_hgvs_cannot() {
+        // BTD again, with no HGVS at all. The coordinate is what identifies
+        // the variant; a c. token identifies it only relative to a transcript.
+        let input = ClassificationInput {
+            impact: fastvep_core::Impact::Modifier,
+            gene_symbol: Some("BTD".to_string()),
+            hgvs_c: None,
+            variant_coordinates: Some(("chr3".to_string(), 15_645_186, "G".to_string(), "C".to_string())),
+            gnomad: Some(GnomadData {
+                all_af: Some(0.20),
+                all_an: Some(100_000),
+                faf95_max: Some(0.20),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        };
+        let result = evaluate_ba1(&input, &AcmgConfig::default());
+        assert!(!result.met, "{}", result.summary);
+        assert!(result.summary.contains("exception list"), "{}", result.summary);
+    }
+
+    #[test]
+    fn test_ba1_exception_does_not_match_a_neighbouring_variant() {
+        // One base away, same gene: not the listed variant, and BA1 must fire.
+        let input = ClassificationInput {
+            impact: fastvep_core::Impact::Modifier,
+            gene_symbol: Some("BTD".to_string()),
+            hgvs_c: Some("ENST00000643237.3:c.1271G>C".to_string()),
+            variant_coordinates: Some(("3".to_string(), 15_645_187, "G".to_string(), "C".to_string())),
+            gnomad: Some(GnomadData {
+                all_af: Some(0.20),
+                all_an: Some(100_000),
+                faf95_max: Some(0.20),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        };
+        let result = evaluate_ba1(&input, &AcmgConfig::default());
+        assert!(result.met, "{}", result.summary);
     }
 
     #[test]

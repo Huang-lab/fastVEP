@@ -811,6 +811,9 @@ impl AnnotationContext {
                                 aa.escapes_nmd,
                                 repeat_db_loaded,
                                 splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
+                                alt_idx.and_then(|i| query_alleles.get(i)).map(|(_, pos, r, a)| {
+                                    (vf.position.chromosome.to_string(), *pos, r.clone(), a.clone())
+                                }),
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                                 alt_idx.and_then(|i| functional_by_alt[i].clone()),
                                 &aa.supplementary,
@@ -1275,6 +1278,9 @@ fn enrich_compound_het(
                 aa.escapes_nmd,
                 repeat_db_loaded,
                 splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
+                alt_idx.and_then(|i| query_alleles.get(i)).map(|(_, pos, r, a)| {
+                    (vf.position.chromosome.to_string(), *pos, r.clone(), a.clone())
+                }),
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                 alt_idx.and_then(|i| functional_by_alt[i].clone()),
                 &aa.supplementary,

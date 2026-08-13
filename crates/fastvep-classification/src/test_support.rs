@@ -45,6 +45,7 @@ pub(crate) fn minimal_input() -> ClassificationInput {
         in_critical_region: None,
         alt_start_codon_distance: None,
         same_splice_position_pathogenic: None,
+        variant_coordinates: None,
         in_repeat_region: None,
         is_pure_insertion: None,
         at_exon_edge: None,
