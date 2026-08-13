@@ -15,6 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Install the toolchain rather than inheriting whatever the runner image
+      # ships. `rust-toolchain.toml` names the same channel, so a developer's
+      # local `cargo clippy` and this job resolve to one compiler instead of
+      # drifting apart until a lint gap shows up as a surprise red build.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Check every target (libs, bins, tests)
         run: cargo check --workspace --all-targets
       # The workspace is clippy-clean; `-D warnings` keeps it that way. A lint

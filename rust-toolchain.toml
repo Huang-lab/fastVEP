@@ -1,0 +1,17 @@
+# Pin the toolchain to the channel CI uses, so a local check means what it says.
+#
+# CI runs `cargo clippy -- -D warnings` and gates on it. Before this file, CI
+# took whatever Rust the `ubuntu-latest` image happened to ship and a developer
+# took whatever they last installed, so the two drifted apart silently. That is
+# not hypothetical: a branch passed clippy locally on 1.94 and failed CI on
+# 1.97 over ten lints that only exist in the gap, none of which the author
+# could have seen.
+#
+# `stable` rather than a fixed version on purpose. Pinning an exact release
+# makes the gate reproducible and then stale, and the failure mode is a
+# toolchain bump nobody does until it is a large one. Tracking stable means the
+# lint set moves in small steps, and it moves for CI and for the developer at
+# the same time.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]
