@@ -510,6 +510,14 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // every provider for every allele of every variant inside the parallel loop.
     let normalize_gnomad_queries =
         seq_provider.is_some() && sa_providers.iter().any(|sa| sa.json_key() == "gnomad");
+    // BP3 must tell "this variant is not in a repeat" from "no repeat database
+    // was loaded". An interval source only yields an annotation on a hit, so
+    // those two are indistinguishable downstream unless the loaded-source list
+    // is consulted here. Same matching the classifier uses to find the track.
+    let repeat_db_loaded = sa_providers.iter().any(|sa| {
+        let k = sa.json_key().to_lowercase();
+        k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
+    });
     let gene_json_keys: Vec<String> = gene_providers
         .iter()
         .map(|gp| gp.json_key().to_string())
@@ -1384,6 +1392,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                                 aa.exon,
                                 aa.protein_length,
                                 aa.escapes_nmd,
+                repeat_db_loaded,
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                                 vf.alt_alleles
                                     .iter()
@@ -1419,6 +1428,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                     acmg_cfg,
                     &sample_names,
                     functional_evidence,
+                    repeat_db_loaded,
                 );
             }
         }
@@ -1752,6 +1762,7 @@ fn enrich_compound_het_batch(
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
+    repeat_db_loaded: bool,
 ) {
     // Collect per-gene variant info
     struct VariantGeneInfo {
@@ -1922,6 +1933,7 @@ fn enrich_compound_het_batch(
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
+                repeat_db_loaded,
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                 vf.alt_alleles
                     .iter()

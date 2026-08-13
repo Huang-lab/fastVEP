@@ -612,7 +612,48 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 
 | Source | SA Key | Used By | Description |
 |---|---|---|---|
-| **RepeatMasker** | `repeatmasker` | BP3 | Repeat region intervals (`.osi` format) |
+| **RepeatMasker** | `repeatmasker` | BP3 | Repeat region intervals (`.osi`). Built from the UCSC track - see [Building the RepeatMasker track](#building-the-repeatmasker-track-bp3) |
+
+### Building the RepeatMasker track (BP3)
+
+BP3 is "in-frame deletions/insertions in a repetitive region without a known
+function" (Richards 2015), and it reads a positional interval database. The
+source is the UCSC RepeatMasker track, public and unregistered:
+
+```bash
+curl -O https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/rmsk.txt.gz
+python3 analysis/acmg_benchmark/scripts/sa_sources/repeatmasker_to_bed.py rmsk.txt.gz > repeatmasker.bed
+fastvep sa-build --source custom_bed --name repeatmasker \
+    -i repeatmasker.bed -o sa_databases/repeatmasker
+```
+
+`--name repeatmasker` is not cosmetic. The classifier finds the track by looking
+for a supplementary key containing `repeat`, so a database built under another
+name loads successfully and is then silently ignored.
+
+5.3 M intervals on the primary assembly, about 240 MB as `.osi`. All repeat
+classes are emitted, which is the literal reading of "repetitive region"; the
+class is carried in the BED name column, because an in-frame indel inside a
+simple tandem repeat and one inside an exonized Alu are not equally good
+arguments for benignity and the distinction is invisible if it is dropped.
+
+**What it is worth.** Measured over the full ClinVar 2-star-or-better set, BP3
+fires on 1,307 variants, split 688 on benign-truth against 56 on
+pathogenic-truth - directionally right, roughly 12:1. Its effect on the headline
+is nil: benign recall moves 71.47 % to 71.49 %, and every error count is
+unchanged. That is the expected behaviour of a lone Supporting criterion, which
+cannot reach a classification by itself. BP3 earns its place by being visible to
+a curator reading the evidence, not by moving an aggregate.
+
+**Three states, not two.** An interval source only produces an annotation when
+the position falls inside an interval, so "not in a repeat" and "no database
+loaded" arrive at the classifier identically. The pipeline therefore tells the
+classifier whether a repeat source was loaded at all, and BP3 reports
+`evaluated: true, met: false` for an in-frame indel that was checked and found
+outside a repeat, against `evaluated: false` when there was nothing to check
+against. Without that distinction BP3 answered every in-frame indel outside a
+repeat with "load RepeatMasker .osi", which reads as a setup error rather than
+as the answer.
 
 ### Gene-level (.oga) sources
 
@@ -938,10 +979,10 @@ Output (JSON / VCF CSQ / TSV)
 3. **PP4** (phenotype specificity): Requires patient HPO phenotype terms
 4. **BP5** (alternate molecular basis): Requires case-level multi-gene analysis
 5. **PS4** is `NotEvaluated` by default — true PS4 needs case-control statistics; the legacy ClinVar-stars proxy is invalid per SVI. Opt back in via `use_clinvar_stars_as_ps4_proxy = true` for backward-comparable benchmarks.
-6. **PS1/PM5/PM1** require the ClinVar protein index `.oga` file to be built and loaded. PS1 splice-RNA path requires the pipeline to populate `same_splice_position_pathogenic`; without it, splice PS1 is `evaluated: false`.
+6. **PS1 splice-RNA path** requires the pipeline to populate `same_splice_position_pathogenic`, which nothing does yet, so PS1 on a canonical splice variant is `evaluated: false`. This is a plumbing gap rather than a missing data source: the evidence it needs is ClinVar pathogenic variants at the same splice position, and ClinVar is already loaded - it wants a position-keyed splice index built the way `clinvar_protein.oga` is. (PS1/PM5/PM1's protein-position half is satisfied whenever that `.oga` is loaded, which the documented setup does.)
 7. **PVS1 grading** uses Abou Tayoun 2018 signals (`predicted_nmd`, `protein_truncation_pct`, `is_last_exon`, `in_critical_region`, `alt_start_codon_distance`). When the pipeline cannot derive these for a transcript, PVS1 falls back to legacy Very Strong on any null variant in an LOF-intolerant gene.
 8. **BP7 exon-edge / deep-intronic extension** uses optional `at_exon_edge` / `intronic_offset` fields. When unset, BP7 falls back to the legacy synonymous-only rule.
-9. **BP3** requires RepeatMasker interval `.osi` file to be built and loaded
+9. **BP3** requires a RepeatMasker interval `.osi`. Build it from the UCSC track - see [Building the RepeatMasker track](#building-the-repeatmasker-track-bp3). Without one BP3 reports `evaluated: false` rather than assuming a variant is not in a repeat.
 10. **PS2/PM6/PM3/BP2** require a multi-sample VCF with trio sample names configured
 11. Compound heterozygote detection (PM3/BP2) works per-batch in the CLI; variants in different batches within the same gene may not be cross-referenced
 12. **Multi-disorder genes** (SVI July 2025): the per-disorder override schema (`gene_overrides[GENE].disorders[DISORDER]`) is in place but the active-disorder selection mechanism is informational scaffolding pending a follow-up PR.

@@ -436,6 +436,47 @@ That is a deliberate choice of correctness over the headline number, and it is t
 The PM1 change resolves MSH2, but not CHD7 or PTCH1, where the objection was gene-level ("variants are spread out in the gene", "no clear hotspots for PTCH1") rather than about benign variation in a ±5-residue window.
 Both still have 3 pathogenic and 0 benign neighbours there. A gene-level hotspot-density test would be needed, and no guideline text asks for one.
 
+## v15: BP3 switched on
+
+BP3 has been implemented since v1 and inert since v1, for want of a data file. It reads a
+positional interval database and none was ever built.
+
+The source is the UCSC RepeatMasker track - public, no registration, 155 MB - converted by
+[`repeatmasker_to_bed.py`](scripts/sa_sources/repeatmasker_to_bed.py) and built as
+`custom_bed --name repeatmasker`. 5.3 M primary-assembly intervals, ~240 MB as `.osi`.
+`download_sa_sources.sh` now fetches it alongside everything else.
+
+**What it bought: essentially nothing on the headline, and that is the honest headline.**
+
+| Metric | v14 | **v15** |
+|---|---:|---:|
+| Exact match | 62.67 % | 62.67 % |
+| Same-direction | 77.50 % | 77.50 % |
+| Benign recall | 71.47 % | **71.49 %** |
+| Likely-benign recall | 51.57 % | **51.58 %** |
+| False-benign | 33 | 33 |
+| False-pathogenic | 43 | 43 |
+| Opposite-direction | 76 | 76 |
+
+BP3 fires on 1,307 variants, split 688 on benign-truth against 56 on pathogenic-truth -
+directionally correct at roughly 12:1. It moves benign recall by 0.02 pp and changes no
+error count at all, which is what a lone Supporting criterion should do: at 1 point it
+cannot reach a classification by itself, and the combining rules require it to be joined by
+other benign evidence. The value is that a curator reading the evidence now sees the repeat
+context, not that the aggregate moved.
+
+**A defect the data exposed.** An interval source only produces an annotation when the
+position falls inside an interval, so "this variant is not in a repeat" and "no repeat
+database is loaded" reached the classifier identically. BP3 therefore answered *every*
+in-frame indel outside a repeat with "repeat region data not available (load RepeatMasker
+.osi)" - a setup error, where the truth was that it had looked and found nothing. The
+pipeline now tells the classifier whether a repeat source is loaded, so the three states are
+distinct. Same bug class as BP7 reading a missing SpliceAI score as a prediction of no
+impact, fixed in v13.
+
+Verified that the fix changes messaging only: re-running v15 with and without it produces
+byte-identical concordance matrices.
+
 ## Progression, v9 to v14
 
 | Metric | v9 | v10 | v11 | v12 | v13 | v14 |

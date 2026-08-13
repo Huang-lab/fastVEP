@@ -53,9 +53,17 @@ FASTVEP="${FASTVEP:-$ROOT/target/release/fastvep}"
 OUT_DIR="${OUT_DIR:-$ROOT/data/benchmark/output_$VERSION}"
 
 # An extra --acmg-config, to run a variant of the same version.
+#
+# Expanded below as ${CONFIG_ARGS[@]+...} rather than plain "${CONFIG_ARGS[@]}":
+# under `set -u`, bash 3.2 - which is what macOS ships - treats an empty array
+# as an unbound variable and aborts. An `if` rather than `[ ... ] && ...` for
+# the same class of reason: a failing test as the last command in an && list
+# is a `set -e` trap.
 ACMG_CONFIG="${ACMG_CONFIG:-}"
 CONFIG_ARGS=()
-[ -n "$ACMG_CONFIG" ] && CONFIG_ARGS=(--acmg-config "$ACMG_CONFIG")
+if [ -n "$ACMG_CONFIG" ]; then
+  CONFIG_ARGS=(--acmg-config "$ACMG_CONFIG")
+fi
 
 for f in "$INPUT" "$TRUTH" "$GFF3" "$FASTA" "$FASTVEP"; do
   [ -e "$f" ] || { echo "missing required input: $f" >&2; exit 1; }
@@ -75,7 +83,7 @@ if [ ! -s "$VCFGZ" ]; then
     --fasta "$FASTA" \
     --sa-dir "$SA_DIR" \
     --acmg --pick \
-    "${CONFIG_ARGS[@]}" \
+    ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} \
     --output-format vcf \
     | bgzip -c > "$VCFGZ"
   T1=$(date +%s)

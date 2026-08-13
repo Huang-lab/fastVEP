@@ -1047,6 +1047,35 @@ mod tests {
     }
 
     #[test]
+    fn test_bp3_distinguishes_no_repeat_from_no_database() {
+        // An interval source only yields an annotation on a hit, so "not in a
+        // repeat" and "no repeat database loaded" arrive here identically
+        // unless the extractor was told which. Before that distinction existed
+        // BP3 answered every in-frame indel outside a repeat with "load
+        // RepeatMasker .osi", which reads as a setup error rather than an
+        // answer.
+        let mut input = make_input(vec![Consequence::InframeDeletion], None, None, None, None);
+        let config = AcmgConfig::default();
+
+        input.in_repeat_region = None;
+        let unknown = evaluate_bp3(&input, &config);
+        assert!(!unknown.met);
+        assert!(!unknown.evaluated, "no database: BP3 has nothing to say");
+        assert!(unknown.summary.contains("not available"), "got: {}", unknown.summary);
+
+        input.in_repeat_region = Some(false);
+        let looked = evaluate_bp3(&input, &config);
+        assert!(!looked.met);
+        assert!(looked.evaluated, "database loaded: BP3 looked and declined");
+        assert!(looked.summary.contains("not in a repetitive region"), "got: {}", looked.summary);
+
+        input.in_repeat_region = Some(true);
+        let hit = evaluate_bp3(&input, &config);
+        assert!(hit.met);
+        assert!(hit.evaluated);
+    }
+
+    #[test]
     fn test_bp7_stops_at_the_far_boundary() {
         // Past `bp7_max_intron_offset` the evidence base runs out: SpliceAI is
         // at its least sensitive for pseudoexon activation, which is the main

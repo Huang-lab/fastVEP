@@ -659,6 +659,7 @@ pub fn extract_classification_input(
     exon: Option<(u32, u32)>,
     protein_length: Option<u64>,
     escapes_nmd: Option<bool>,
+    repeat_db_loaded: bool,
     is_pure_insertion: Option<bool>,
     functional_evidence: Option<crate::functional::FunctionalEvidence>,
     allele_supplementary: &[(String, String)],
@@ -756,13 +757,27 @@ pub fn extract_classification_input(
         }
     }
 
-    // Check if variant overlaps a repeat region (from interval SA)
+    // Whether the variant overlaps a repeat region, from an interval `.osi`.
+    //
+    // Three-state on purpose. An interval source only yields an annotation when
+    // the position falls inside an interval, so a miss and an unloaded database
+    // look identical from `allele_supplementary` alone - which is why the
+    // caller has to say whether a repeat source was loaded at all. Without that
+    // distinction BP3 reported "repeat region data not available (load
+    // RepeatMasker .osi)" for every in-frame indel that simply was not in a
+    // repeat, which reads as a setup error rather than as the answer.
+    //
+    // `None` still means "cannot tell", and BP3 declines to evaluate on it.
     let in_repeat_region = {
-        let has_repeat = allele_supplementary.iter().any(|(key, _)| {
+        let hit = allele_supplementary.iter().any(|(key, _)| {
             let k = key.to_lowercase();
             k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
         });
-        if has_repeat { Some(true) } else { None }
+        match (hit, repeat_db_loaded) {
+            (true, _) => Some(true),
+            (false, true) => Some(false),
+            (false, false) => None,
+        }
     };
 
     // ── PVS1 / BP7 decision-tree signals derived from data the pipeline
@@ -1085,6 +1100,7 @@ mod tests {
             exon,
             protein_length,
             escapes_nmd,
+            false, // repeat_db_loaded: no interval source in these unit tests
             None,
             None,
             &[],

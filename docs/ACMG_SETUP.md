@@ -193,6 +193,25 @@ fastvep sa-build --source phylop -i hg38.phyloP100way.wigFix.gz -o phylop --asse
 fastvep sa-build --source gerp -i gerp_scores.tsv -o gerp --assembly GRCh38
 ```
 
+### RepeatMasker - repeat intervals (BP3)
+
+Drives BP3 (in-frame indel in a repetitive region). Public, no registration.
+
+```bash
+curl -O https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/rmsk.txt.gz
+python3 analysis/acmg_benchmark/scripts/sa_sources/repeatmasker_to_bed.py \
+    rmsk.txt.gz > repeatmasker.bed
+fastvep sa-build --source custom_bed --name repeatmasker \
+    -i repeatmasker.bed -o sa_databases/repeatmasker
+```
+
+`--name repeatmasker` is required, not cosmetic: the classifier locates the
+track by searching for a supplementary key containing `repeat`, so any other
+name loads and is then ignored. 5.3 M primary-assembly intervals, ~240 MB.
+
+Without it BP3 reports `evaluated: false` rather than assuming a variant is not
+in a repeat.
+
 ## Gene-level sources (`.oga`)
 
 `fastvep sa-build` supports three gene-level sources. The output is a `.oga` file (gene-keyed annotation index); place it in the same `--sa-dir` as your `.osa` files and the runtime will pick it up automatically.

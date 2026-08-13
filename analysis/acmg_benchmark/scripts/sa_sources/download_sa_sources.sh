@@ -104,6 +104,15 @@ download "https://rothsj06.dmz.hpc.mssm.edu/revel-v1.3_all_chromosomes.zip" \
     "revel-v1.3_all_chromosomes.zip"
 
 echo ""
+echo "== RepeatMasker (UCSC) =="
+# Drives BP3, "in-frame deletions/insertions in a repetitive region". Convert
+# with repeatmasker_to_bed.py, then build as custom_bed --name repeatmasker;
+# the name matters, because the classifier finds the track by looking for a key
+# containing "repeat".
+download "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/rmsk.txt.gz" \
+    "rmsk.txt.gz"
+
+echo ""
 echo "== ClinGen Gene-Disease Validity =="
 # Used as PVS1 disease-gene fallback (preferred over OMIM per Abou Tayoun 2018).
 # Note: returns a redirect to a presigned S3 URL; the CSV is hand-saved as
@@ -118,6 +127,9 @@ echo "       fastvep sa-build --source <name> -i <path> -o <prefix>"
 echo "  2) Per-chrom gnomAD exomes:  bash $SCRIPT_DIR/build_gnomad_per_chrom.sh"
 echo "  3) SpliceAI + PhyloP (distilled from gnomAD):"
 echo "       bash $SCRIPT_DIR/build_spliceai_phylop.sh"
-echo "  4) ClinGen GDV -> omim.oga:"
+echo "  4) RepeatMasker -> repeatmasker.osi (BP3):"
+echo "       python3 $SCRIPT_DIR/repeatmasker_to_bed.py $DEST/rmsk.txt.gz > $DEST/repeatmasker.bed"
+echo "       fastvep sa-build --source custom_bed --name repeatmasker -i $DEST/repeatmasker.bed -o $ROOT/data/benchmark/sa_db/repeatmasker"
+echo "  5) ClinGen GDV -> omim.oga:"
 echo "       python3 $SCRIPT_DIR/clingen_gdv_to_oga.py < $DEST/clingen_gene_validity.csv > $DEST/clingen_gdv.tsv"
 echo "       fastvep sa-build --source omim -i $DEST/clingen_gdv.tsv -o $ROOT/data/benchmark/sa_db/omim"

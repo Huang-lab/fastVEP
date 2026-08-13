@@ -210,6 +210,24 @@ impl AnnotationContext {
         self.transcript_provider.transcript_count()
     }
 
+    /// Whether a repeat-interval source (RepeatMasker or equivalent) is loaded.
+    ///
+    /// BP3 needs this to tell "this variant is not in a repeat" from "no repeat
+    /// database was loaded". An interval source only produces an annotation on
+    /// a hit, so those two are indistinguishable from the annotation list alone,
+    /// and reading a miss as the latter makes BP3 report a setup error on every
+    /// in-frame indel outside a repeat.
+    ///
+    /// Matched on the same substrings the classifier uses to find the track, so
+    /// a source named such that this returns `true` is exactly a source BP3 will
+    /// actually read.
+    pub fn repeat_db_loaded(&self) -> bool {
+        self.sa_providers.iter().any(|p| {
+            let k = p.json_key().to_lowercase();
+            k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
+        })
+    }
+
     /// Names of loaded supplementary annotation sources.
     pub fn sa_source_names(&self) -> Vec<String> {
         self.sa_providers
@@ -302,6 +320,9 @@ impl AnnotationContext {
         pick: bool,
         acmg_config: Option<&fastvep_classification::AcmgConfig>,
     ) -> Result<Vec<serde_json::Value>> {
+        // Computed once: BP3 must distinguish "not in a repeat" from "no repeat
+        // database loaded", and only the context knows which sources are open.
+        let repeat_db_loaded = self.repeat_db_loaded();
         let mut vcf_parser = VcfParser::new(vcf_text.as_bytes())?;
 
         // Extract sample names from VCF #CHROM header
@@ -782,6 +803,7 @@ impl AnnotationContext {
                                 aa.exon,
                                 aa.protein_length,
                                 aa.escapes_nmd,
+                repeat_db_loaded,
                                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                                 vf.alt_alleles
                                     .iter()
@@ -813,6 +835,7 @@ impl AnnotationContext {
                     acmg_cfg,
                     &sample_names,
                     functional_evidence,
+                    repeat_db_loaded,
                 );
             }
         }
@@ -1043,6 +1066,7 @@ fn enrich_compound_het(
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
+    repeat_db_loaded: bool,
 ) {
     use std::collections::HashMap;
 
@@ -1243,6 +1267,7 @@ fn enrich_compound_het(
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
+                repeat_db_loaded,
                 fastvep_classification::is_pure_insertion(&vf.ref_allele),
                 vf.alt_alleles
                     .iter()
