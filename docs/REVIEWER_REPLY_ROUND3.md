@@ -122,4 +122,6 @@ The default is now **0.5 %**. Confirmed on the full set that is +3.1 points of b
 
 Not a list this time - a single decision.
 
-**For a dominant, early-onset disorder with no published VCEP threshold, what heterozygote frequency in gnomAD should be enough to call BS1?** Your MTR, KMT2C, CHD7 and PTCH1 notes all turn on this, and a defensible default would resolve that whole group. If you would rather give it per disease than as a global number, that is the gene-disease table from point 2, and we will build to whatever shape you can produce.
+**For a dominant, early-onset disorder with no published VCEP threshold, what heterozygote frequency in gnomAD should be enough to call BS1?**
+
+This is the same gap written up as [the frequency dead zone](ACMG.md#the-frequency-dead-zone-between-pm2-and-bs1): between PM2's bar (4e-5) and BS1's (5e-3) there is a two-order-of-magnitude band where fastVEP offers no frequency evidence in either direction, and your CHD7 and PTCH1 rows sit in it. Your MTR, KMT2C, CHD7 and PTCH1 notes all turn on this, and a defensible default would resolve that whole group. If you would rather give it per disease than as a global number, that is the gene-disease table from point 2, and we will build to whatever shape you can produce.

@@ -945,6 +945,43 @@ Output (JSON / VCF CSQ / TSV)
 10. **PS2/PM6/PM3/BP2** require a multi-sample VCF with trio sample names configured
 11. Compound heterozygote detection (PM3/BP2) works per-batch in the CLI; variants in different batches within the same gene may not be cross-referenced
 12. **Multi-disorder genes** (SVI July 2025): the per-disorder override schema (`gene_overrides[GENE].disorders[DISORDER]`) is in place but the active-disorder selection mechanism is informational scaffolding pending a follow-up PR.
+13. **The frequency dead zone between PM2 and BS1.** See below - this is the largest known gap on the frequency side and it is open by decision, not oversight.
+
+## The frequency dead zone between PM2 and BS1
+
+Both frequency bars are set by measurement, and between them is a range where fastVEP
+returns no frequency evidence in either direction.
+
+For a dominant or uncharacterised-inheritance gene, PM2 requires a filtering allele
+frequency below `pm2_ad_af_threshold` (4e-5) and BS1 fires above `bs1_af_threshold` (5e-3).
+A variant sitting between those - roughly 1 in 25,000 to 1 in 200 - is too common to be
+"extremely rare" and not common enough to be "greater than expected for disorder", so
+neither criterion applies and the variant carries no frequency evidence at all. That band is
+about two orders of magnitude wide and it is not a narrow edge case: it is where a great
+many uncertain missense variants in dominant genes land.
+
+The gap is real in both directions but it hurts most on the benign side. A variant at 1e-3
+in a dominant, early-onset, fully penetrant condition is almost certainly too common to
+cause it, and fastVEP says nothing. The reviewer's CHD7 (30 heterozygotes) and PTCH1 (15)
+rows are exactly this shape, and neither is resolved at any *global* BS1 threshold that does
+not also cost missed diagnoses elsewhere - the sweep in
+[Choosing the BS2 prevalence bar](#choosing-the-bs2-prevalence-bar) shows the same behaviour
+for its own bar.
+
+**Why it is not closed by moving a number.** Narrowing the band means lowering BS1, and the
+BS1 sweep recorded in [`bs1_af_threshold`](../crates/fastvep-classification/src/config.rs)
+shows the cost climbing steeply below 0.5 %: past 0.05 % the missed-diagnosis count roughly
+triples. A single global value cannot be right for both a dominant early-onset condition and
+a common recessive one, which is what Richards 2015's actual wording - "greater than
+expected **for disorder**" - has been asking for all along.
+
+**What would close it** is B1, the per-gene-disease attribute table: prevalence, penetrance
+class, onset class and any published VCEP BA1/BS1 threshold, keyed by gene and MONDO ID.
+Whiffin 2017 gives the formula; the `disorders` config scaffold, the per-gene threshold hook
+and the `.oga` gene-level loader are all in place waiting for it. Until that table exists,
+the dead zone is the honest state of the frequency evidence rather than something a better
+global number can fix, and this section exists so that is on the record rather than in
+somebody's memory.
 
 ## References
 
