@@ -1059,8 +1059,10 @@ Output (JSON / VCF CSQ / TSV)
 9. **BP3** requires a RepeatMasker interval `.osi`. Build it from the UCSC track - see [Building the RepeatMasker track](#building-the-repeatmasker-track-bp3). Without one BP3 reports `evaluated: false` rather than assuming a variant is not in a repeat.
 10. **PS2/PM6/PM3/BP2** require a multi-sample VCF with trio sample names configured
 11. Compound heterozygote detection (PM3/BP2) works per-batch in the CLI; variants in different batches within the same gene may not be cross-referenced
-12. **Multi-disorder genes** (SVI July 2025): the per-disorder override schema (`gene_overrides[GENE].disorders[DISORDER]`) is in place but the active-disorder selection mechanism is informational scaffolding pending a follow-up PR.
+12. **Multi-disorder genes** (SVI July 2025): the per-disorder override schema (`gene_overrides[GENE].disorders[DISORDER]`) is in place and the generated VCEP table populates it, but the active-disorder selection mechanism is informational scaffolding pending a follow-up PR - the gene-level values are what the classifier reads.
 13. **The frequency dead zone between PM2 and BS1.** See below - this is the largest known gap on the frequency side and it is open by decision, not oversight.
+14. **Penetrance is unsourced.** BS2's precondition is "full penetrance expected at an early age" and no public resource publishes penetrance per gene-disorder pair. Prevalence, onset and inheritance are covered; see [Per-gene frequency bars](#per-gene-frequency-bars-clingen-vcep-specifications).
+15. **Published VCEP bars are applied without their founder-variant exceptions.** The exclusions are prose in the specification text, and `ba1_exceptions` carries no panel-specific entries, which is why the generated threshold table is opt-in rather than a default.
 
 ## The frequency dead zone between PM2 and BS1
 
@@ -1090,13 +1092,50 @@ triples. A single global value cannot be right for both a dominant early-onset c
 a common recessive one, which is what Richards 2015's actual wording - "greater than
 expected **for disorder**" - has been asking for all along.
 
-**What would close it** is B1, the per-gene-disease attribute table: prevalence, penetrance
-class, onset class and any published VCEP BA1/BS1 threshold, keyed by gene and MONDO ID.
-Whiffin 2017 gives the formula; the `disorders` config scaffold, the per-gene threshold hook
-and the `.oga` gene-level loader are all in place waiting for it. Until that table exists,
-the dead zone is the honest state of the frequency evidence rather than something a better
-global number can fix, and this section exists so that is on the record rather than in
-somebody's memory.
+**What would close it** is a per-gene-disease attribute table: prevalence, penetrance class,
+onset class and any published VCEP BA1/BS1 threshold, keyed by gene and disorder. Whiffin
+2017 gives the formula. Most of that table now exists - see
+[Per-gene frequency bars](#per-gene-frequency-bars-clingen-vcep-specifications) - and what
+remains missing is penetrance, which nothing publishes in machine-readable form.
+
+## Per-gene frequency bars (ClinGen VCEP specifications)
+
+Where a ClinGen Variant Curation Expert Panel has published a BA1, BS1 or PM2 bar for a gene,
+it outranks fastVEP's global default. The panel has looked up that disorder's prevalence,
+penetrance and allelic heterogeneity; a number measured across all genes cannot.
+
+`gene_overrides` carries them, one per gene:
+
+```toml
+[gene_overrides.ABCA4]
+ba1_af_threshold = 0.163      # the ABCA4 VCEP's published bar, 3x looser than the default
+bs1_af_threshold = 0.0163
+pm2_af_threshold = 0.0001
+```
+
+A generated table of 304 bars across 117 genes ships at
+[`analysis/acmg_benchmark/data/vcep_thresholds.toml`](../analysis/acmg_benchmark/data/vcep_thresholds.toml),
+read out of the [ClinGen CSpec Registry](https://cspec.genome.network/cspec/ui/svi/) by
+[`build_vcep_thresholds.py`](../analysis/acmg_benchmark/scripts/build_vcep_thresholds.py).
+Load it with `--acmg-config`. Alongside it is an audit table carrying the verbatim sentence
+every number was read out of, and every rejection with its reason.
+
+**It is opt-in, and that is deliberate.** On the ClinVar 2-star+ benchmark it buys 2,028 more
+correct Benign calls and lifts exact match by 0.26 pp, at a cost of four new false-benign
+calls. Two of those four are founder variants - ANO5 and CAPN3, both limb-girdle muscular
+dystrophy - that the panels explicitly excluded, in prose the generator cannot read. 32 of
+the 286 usable bars carry a caveat of that shape. `ba1_exceptions` is the right home for
+them and is currently empty of panel-specific entries, so a tightened bar today is applied
+without the exclusions that were published with it. Filling that list is what has to come
+before these bars become a default.
+
+The wider attribute table -
+[`gene_disease_attributes.tsv`](../analysis/acmg_benchmark/data/gene_disease_attributes.tsv),
+6,857 gene-disorder pairs - carries inheritance (96 % coverage), earliest age of onset
+(91 %) and prevalence class (85 %) from Orphanet. **Penetrance is 0 % and is emitted blank**,
+because no public resource publishes it per gene-disorder pair in machine-readable form. It
+is the field BS2's "full penetrance expected at an early age" precondition most wants, and
+closing it needs a clinician rather than a download.
 
 ## References
 

@@ -38,6 +38,8 @@ python3 generate_figures.py
 | `01_extract_clinvar_2star.py` | Filter ClinVar `clinvar.vcf.gz` → 2-star+ truth VCF + parallel TSV |
 | `03_evaluate_concordance.py`  | Stream the bgzipped VCF output of `fastvep annotate --acmg` and emit concordance matrix / per-chrom / per-consequence / per-criterion CSVs |
 | `generate_figures.py`         | Read the v7 outputs at `data/benchmark/output_v7/` and emit 6 PDF + PNG panels (incl. v1 vs v7 comparisons) |
+| `build_vcep_thresholds.py`    | Read published ClinGen VCEP BA1/BS1/PM2 bars out of the CSpec Registry API into `../data/vcep_thresholds.toml`, plus an audit table carrying the source sentence behind every number and the reason behind every rejection |
+| `build_gene_disease_attributes.py` | Join Orphanet prevalence, age of onset and inheritance to those bars into `../data/gene_disease_attributes.tsv`, one row per gene-disorder pair |
 
 ## Data sources
 
@@ -51,6 +53,8 @@ python3 generate_figures.py
 | gnomAD v4.1 exomes per-chrom VCF | **PM2 / BA1 / BS1 / BS2** + (distilled) PhyloP & SpliceAI | ~12 GB raw / chrom |
 | REVEL `revel-v1.3_all_chromosomes.zip` | **PP3 / BP4 missense** | 637 MB |
 | ClinGen Gene-Disease Validity CSV | PVS1 disease-gene fallback (preferred per Abou Tayoun 2018; OMIM `genemap2.txt` accepted as legacy) | 1 MB |
+| ClinGen CSpec Registry (JSON-LD API) | published per-gene **BA1 / BS1 / PM2** bars | 10 MB, fetched |
+| Orphanet `en_product6` / `en_product9_prev` / `en_product9_ages` | disorder prevalence, onset and inheritance per gene | 46 MB |
 
 The classifier degrades gracefully — criteria with missing inputs are
 marked `evaluated: false` rather than firing on noisy data.

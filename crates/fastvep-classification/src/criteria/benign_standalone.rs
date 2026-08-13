@@ -14,11 +14,11 @@ pub fn evaluate_ba1(
     input: &ClassificationInput,
     config: &AcmgConfig,
 ) -> EvidenceCriterion {
+    // Per-gene where a VCEP has published one, global otherwise.
+    let threshold = config.effective_ba1_threshold(input.gene_symbol.as_deref());
+
     let mut details = serde_json::Map::new();
-    details.insert(
-        "af_threshold".into(),
-        serde_json::json!(config.ba1_af_threshold),
-    );
+    details.insert("af_threshold".into(), serde_json::json!(threshold));
 
     // Frequencies from a homology-confounded gene (or for a variant ClinVar
     // labels low-penetrance) cannot support a standalone benign call either.
@@ -132,20 +132,20 @@ pub fn evaluate_ba1(
             if let Some(v) = gnomad.sas_af { pop_afs.insert("sas".into(), serde_json::json!(v)); }
             details.insert("population_afs".into(), serde_json::Value::Object(pop_afs));
 
-            if af > config.ba1_af_threshold {
+            if af > threshold {
                 (
                     true,
                     format!(
-                        "Common variant: {}={:.4} exceeds {:.2} threshold",
-                        af_label, af, config.ba1_af_threshold
+                        "Common variant: {}={:.3e} exceeds the {:.2e} threshold",
+                        af_label, af, threshold
                     ),
                 )
             } else {
                 (
                     false,
                     format!(
-                        "{}={:.6} does not exceed {:.2} threshold",
-                        af_label, af, config.ba1_af_threshold
+                        "{}={:.3e} does not exceed the {:.2e} threshold",
+                        af_label, af, threshold
                     ),
                 )
             }
@@ -296,5 +296,65 @@ mod tests {
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(result.met);
+    }
+
+    /// A gnomAD record at `af`, in `gene`.
+    fn at_frequency(gene: &str, af: f64) -> ClassificationInput {
+        ClassificationInput {
+            impact: fastvep_core::Impact::Modifier,
+            gene_symbol: Some(gene.to_string()),
+            gnomad: Some(GnomadData {
+                all_af: Some(af),
+                all_an: Some(100_000),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        }
+    }
+
+    fn with_gene_ba1(gene: &str, threshold: f64) -> AcmgConfig {
+        let mut cfg = AcmgConfig::default();
+        cfg.gene_overrides.insert(
+            gene.to_string(),
+            crate::config::GeneOverride {
+                mechanism: None,
+                ba1_af_threshold: Some(threshold),
+                bs1_af_threshold: None,
+                pm2_af_threshold: None,
+                disabled_criteria: vec![],
+                strength_overrides: std::collections::HashMap::new(),
+                disorders: std::collections::HashMap::new(),
+            },
+        );
+        cfg
+    }
+
+    #[test]
+    fn test_ba1_uses_a_published_per_gene_bar_in_both_directions() {
+        // CDKL5's published bar is 8.3e-5, six hundred times tighter than the
+        // 0.05 default: a variant at 1e-4 is common for that disorder and not
+        // remotely common in general.
+        let cfg = with_gene_ba1("CDKL5", 8.3e-5);
+        assert!(evaluate_ba1(&at_frequency("CDKL5", 1e-4), &cfg).met);
+        assert!(!evaluate_ba1(&at_frequency("CDKL5", 5e-5), &cfg).met);
+        // A gene the table says nothing about keeps the global bar.
+        assert!(!evaluate_ba1(&at_frequency("TP53", 1e-4), &cfg).met);
+
+        // ABCA4's runs the other way: 0.163, three times looser than default,
+        // so 10 % is not standalone-benign evidence there.
+        let cfg = with_gene_ba1("ABCA4", 0.163);
+        assert!(!evaluate_ba1(&at_frequency("ABCA4", 0.10), &cfg).met);
+        assert!(evaluate_ba1(&at_frequency("ABCA4", 0.20), &cfg).met);
+    }
+
+    #[test]
+    fn test_ba1_reports_tight_thresholds_readably() {
+        // The summary used to format both numbers with `{:.2}`, which prints a
+        // bar of 8.3e-5 as "0.00" - fine while every bar was 0.05, actively
+        // misleading once per-gene bars arrived.
+        let cfg = with_gene_ba1("CDKL5", 8.3e-5);
+        let summary = evaluate_ba1(&at_frequency("CDKL5", 1e-4), &cfg).summary;
+        assert!(summary.contains("8.30e-5"), "{summary}");
+        assert!(!summary.contains("0.00 "), "{summary}");
     }
 }

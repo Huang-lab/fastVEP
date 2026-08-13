@@ -548,6 +548,81 @@ A gene whose only classified variants are canonical splice ones has no residue s
 It now gets a record with an empty `proteinVariants`.
 That is a real behaviour change beyond PS1: `in_critical_region` for such a gene goes from "cannot tell" to "no downstream pathogenic variant indexed", which moved exactly one variant from `PVS1_Moderate` to `PVS1_Supporting`.
 
+## v17: published VCEP frequency bars, and why they do not ship on by default
+
+fastVEP's BA1, BS1 and PM2 bars are single global numbers, measured across all genes.
+A ClinGen Variant Curation Expert Panel has done what a global measurement cannot: looked up one disorder's prevalence, penetrance and allelic heterogeneity, and derived a bar for one gene.
+Where a panel has published one it outranks anything measured across everything.
+
+[`build_vcep_thresholds.py`](scripts/build_vcep_thresholds.py) reads them out of the [CSpec Registry](https://cspec.genome.network/cspec/ui/svi/)'s JSON-LD API and emits [`data/vcep_thresholds.toml`](data/vcep_thresholds.toml), loadable with `--acmg-config`.
+117 genes, 304 bars.
+It also emits [`data/vcep_thresholds_audit.tsv`](data/vcep_thresholds_audit.tsv), which carries the verbatim sentence every number was read out of, plus every rejection and its reason, so the parse can be checked rather than trusted.
+
+`GeneOverride` gained `ba1_af_threshold`, which it had been missing: it could express a per-gene BS1 and PM2 but not a per-gene BA1, and BA1 is where most of the published specification lives.
+
+**The result is a good trade that is not yet a safe default.**
+
+| Metric | v16 | **v17** |
+|---|---:|---:|
+| Exact match | 63.11 % | **63.37 %** |
+| Benign recall | 71.49 % | **72.19 %** |
+| Pathogenic recall | 64.61 % | 64.60 % |
+| False-benign | 33 | 37 |
+| False-pathogenic | 43 | **42** |
+| Opposite-direction | 76 | 79 |
+
+2,028 more true-Benign variants are called Benign, and 1,780 more calls land exactly right.
+The cost is four new false-benign calls, all four of them a *tightened* VCEP bar firing BA1 on a variant ClinVar calls pathogenic:
+
+| Variant | Gene | Truth | VCEP BA1 | fastVEP default |
+|---|---|---|---:|---:|
+| 1:173914872 A>T | SERPINC1 | Pathogenic | 0.002 | 0.05 |
+| 11:22262138 G>A | ANO5 | Pathogenic | 0.003 | 0.05 |
+| 15:42403721 C>G | CAPN3 | Pathogenic | 0.005 | 0.05 |
+| 20:44413714 C>T | HNF4A | Likely pathogenic | 0.0001 | 0.05 |
+
+### The half of the specification that is not machine-readable
+
+**Two of those four genes carry a founder-variant caveat in the very sentence the bar was read from.** ANO5 and CAPN3 are both limb-girdle muscular dystrophy genes with well-known common founder alleles, and the panels wrote the exclusion into the rule text.
+32 of the 286 usable bars, across 18 genes, say something like "and variant is excluded as founder pathogenic variant" - MLH1, MSH2, MSH6, PMS2, BRCA1, BRCA2, TP53, LDLR, GALT, five sarcoglycans, DYSF, FOXN1, RMRP, ANO5, CAPN3.
+
+fastVEP has the mechanism for that already: `ba1_exceptions`, the Ghosh 2018 list.
+What it does not have is the exception *contents*, because the panels publish them as prose and, in several cases, as an appendix behind a link.
+Applying a tightened bar without its exceptions is applying half a specification, and the half left out is the half that protects pathogenic founder variants.
+
+The other two are different and worth separating.
+SERPINC1 and HNF4A carry no caveat: their bar and ClinVar's classification simply disagree, and HNF4A/MODY1 is a textbook reduced-penetrance disorder where a genuinely pathogenic allele is genuinely common.
+`clinvar_low_penetrance_blocks_benign_frequency` exists for exactly this and did not catch it, because ClinVar does not carry a low-penetrance term on that record.
+
+**So the table ships as an opt-in file rather than as a default.** Turning it on is one flag and buys 2,028 correct benign calls for four missed pathogenic ones - a ratio of about 500:1, far better than BP7's far-boundary trade. But three of those four are avoidable rather than intrinsic, and the right order of work is exceptions first, default second.
+
+### The gene-disease attribute table
+
+[`build_gene_disease_attributes.py`](scripts/build_gene_disease_attributes.py) assembles the rest of B1 from Orphanet, joined to the VCEP bars: [`data/gene_disease_attributes.tsv`](data/gene_disease_attributes.tsv), 6,857 gene-disorder pairs across 4,199 genes.
+
+| Field | Coverage | Source |
+|---|---:|---|
+| Inheritance | 96.2 % | Orphanet `en_product9_ages` |
+| Age of onset (earliest recorded) | 91.4 % | Orphanet `en_product9_ages` |
+| Prevalence class | 84.8 % | Orphanet `en_product9_prev` |
+| Prevalence as a numeric upper bound | 61.8 % | derived from the class |
+| Published BA1 / BS1 / PM2 | 4.5 % / 4.2 % / 2.7 % | ClinGen CSpec |
+| **Penetrance** | **0 %** | **not sourced anywhere** |
+
+Penetrance is the field BS2 most wants - its precondition is "full penetrance expected at an early age" - and no public resource publishes it per gene-disorder pair in machine-readable form.
+It is emitted blank rather than guessed at.
+The same goes for allelic contribution and genetic heterogeneity, the other two inputs to a Whiffin 2017 maximum-credible-AF calculation: VCEPs compute them per gene and publish only the resulting bar.
+
+### What the extractor refuses to do
+
+304 bars parsed; 107 criterion entries were rejected rather than guessed at, each with its reason in the audit table: 37 PM2 rules that specify absence rather than a bar, 27 that state separate bars for dominant and recessive disease (which one per-gene number cannot hold), 21 with no inequality attached to a frequency, 13 whose exponent was a superscript that did not survive markup stripping, 4 genuinely contradictory, 2 outside any believable range, 3 marked Not Applicable by the panel.
+Three genes are dropped because two panels state different bars for them, and `gene_overrides` is keyed by gene alone.
+
+Two guards earned their place during development, and both stay:
+
+- **`0.1%` parsed as `0.1`, not `0.001`.** Python's regex alternation is leftmost-first, not longest-match, so a decimal alternative placed before the percentage alternative swallowed the digits and dropped the `%`. A thousand-fold error, in the benign direction, silent. The ordering in `NUMBER` is now load-bearing and commented as such.
+- **BA1 ≥ BS1 ≥ PM2 is checked per gene, and a violation drops the gene.** This is what caught PM2 bars of 2 % read out of "the most frequent pathogenic variant accounts for no more than 2% of..." across eight cardiomyopathy genes, and BA1 bars of 4 and 6 read out of superscript exponents. Both are blocked upstream now; the check stays for the next mis-parse, which will be one nobody predicted.
+
 ## Progression, v9 to v14
 
 | Metric | v9 | v10 | v11 | v12 | v13 | v14 |

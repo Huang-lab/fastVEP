@@ -539,6 +539,14 @@ pub struct GeneOverride {
     /// excludes loss of function takes PVS1 to NotApplicable; see
     /// [`AcmgConfig::mechanism_gates_pvs1`].
     pub mechanism: Option<String>,
+    /// Override the BA1 standalone-benign allele frequency threshold.
+    ///
+    /// Where a ClinGen VCEP has published a bar for this gene it outranks the
+    /// global default, which is measured across all genes and cannot know the
+    /// disorder's prevalence, penetrance or allelic heterogeneity. Published
+    /// bars run in both directions: ABCA4's is 0.163, three times looser than
+    /// the 0.05 default, and CDKL5's is 8.3e-5, six hundred times tighter.
+    pub ba1_af_threshold: Option<f64>,
     /// Override BS1 allele frequency threshold
     pub bs1_af_threshold: Option<f64>,
     /// Override PM2 allele frequency threshold
@@ -563,6 +571,9 @@ pub struct GeneOverride {
 pub struct DisorderOverride {
     /// Inheritance for this disorder ("AD", "AR", or "AD_AR").
     pub inheritance: Option<String>,
+    /// Override BA1 AF threshold for this disorder.
+    #[serde(default)]
+    pub ba1_af_threshold: Option<f64>,
     /// Override BS1 AF threshold for this disorder.
     pub bs1_af_threshold: Option<f64>,
     /// Override PM2 AF threshold for this disorder.
@@ -662,6 +673,16 @@ impl AcmgConfig {
                 .any(|h| h.eq_ignore_ascii_case(g)),
             None => false,
         }
+    }
+
+    /// Get effective BA1 threshold for a gene (gene-specific or default).
+    pub fn effective_ba1_threshold(&self, gene: Option<&str>) -> f64 {
+        gene.and_then(|g| {
+            self.gene_overrides
+                .get(g)
+                .and_then(|o| o.ba1_af_threshold)
+        })
+        .unwrap_or(self.ba1_af_threshold)
     }
 
     /// Get effective BS1 threshold for a gene (gene-specific or default).
@@ -838,6 +859,7 @@ mod tests {
             "BRCA1".to_string(),
             GeneOverride {
                 mechanism: Some("LOF".to_string()),
+                ba1_af_threshold: None,
                 bs1_af_threshold: Some(0.001),
                 pm2_af_threshold: None,
                 disabled_criteria: vec![],
@@ -849,6 +871,74 @@ mod tests {
         // Genes without an override fall back to the measured default.
         assert_eq!(cfg.effective_bs1_threshold(Some("TP53")), 0.005);
         assert_eq!(cfg.effective_bs1_threshold(None), 0.005);
+    }
+
+    #[test]
+    fn test_vcep_frequency_bars_load_from_toml_in_both_directions() {
+        // Both real, both from the ClinGen CSpec Registry: ABCA4's published
+        // BA1 is three times *looser* than fastVEP's global default and CDKL5's
+        // is six hundred times tighter. A per-gene BA1 has to express both, and
+        // an unknown key here would be silently dropped by serde - which is why
+        // this asserts the values took effect rather than that the file parsed.
+        let toml = r#"
+[gene_overrides.ABCA4]
+ba1_af_threshold = 0.163
+bs1_af_threshold = 0.0163
+pm2_af_threshold = 0.0001
+
+[gene_overrides.CDKL5]
+ba1_af_threshold = 8.3e-5
+"#;
+        let cfg: AcmgConfig = toml::from_str(toml).expect("VCEP threshold TOML must parse");
+        assert_eq!(cfg.effective_ba1_threshold(Some("ABCA4")), 0.163);
+        assert_eq!(cfg.effective_bs1_threshold(Some("ABCA4")), 0.0163);
+        assert_eq!(cfg.effective_ba1_threshold(Some("CDKL5")), 8.3e-5);
+        // CDKL5 sets no BS1, so it keeps the global bar rather than inheriting
+        // its own BA1.
+        assert_eq!(cfg.effective_bs1_threshold(Some("CDKL5")), 0.005);
+        assert_eq!(cfg.effective_ba1_threshold(Some("TP53")), 0.05);
+    }
+
+    #[test]
+    fn test_the_shipped_vcep_threshold_table_parses() {
+        // The generated table is the artefact this whole path exists for, and
+        // a TOML that no longer deserializes would otherwise only be noticed at
+        // a user's command line.
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../analysis/acmg_benchmark/data/vcep_thresholds.toml"
+        );
+        let Ok(text) = std::fs::read_to_string(path) else {
+            // Not present in a packaged crate; nothing to check.
+            return;
+        };
+        let cfg: AcmgConfig =
+            toml::from_str(&text).expect("generated VCEP threshold table must parse");
+        assert!(
+            cfg.gene_overrides.len() > 50,
+            "expected the full table, got {} genes",
+            cfg.gene_overrides.len()
+        );
+        for (gene, over) in &cfg.gene_overrides {
+            for (label, value) in [
+                ("BA1", over.ba1_af_threshold),
+                ("BS1", over.bs1_af_threshold),
+                ("PM2", over.pm2_af_threshold),
+            ] {
+                if let Some(v) = value {
+                    assert!(
+                        (0.0..=0.5).contains(&v),
+                        "{gene} {label} = {v} is not an allele frequency"
+                    );
+                }
+            }
+            if let (Some(ba1), Some(bs1)) = (over.ba1_af_threshold, over.bs1_af_threshold) {
+                assert!(ba1 >= bs1, "{gene}: BA1 {ba1} below BS1 {bs1}");
+            }
+            if let (Some(bs1), Some(pm2)) = (over.bs1_af_threshold, over.pm2_af_threshold) {
+                assert!(bs1 >= pm2, "{gene}: BS1 {bs1} below PM2 {pm2}");
+            }
+        }
     }
 
     #[test]

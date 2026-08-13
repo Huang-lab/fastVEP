@@ -118,6 +118,7 @@ mod tests {
     fn gene_override(mechanism: &str) -> GeneOverride {
         GeneOverride {
             mechanism: Some(mechanism.to_string()),
+            ba1_af_threshold: None,
             bs1_af_threshold: None,
             pm2_af_threshold: None,
             disabled_criteria: vec![],

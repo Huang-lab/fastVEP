@@ -1,0 +1,1140 @@
+# ClinGen VCEP frequency thresholds, per gene.
+#
+# GENERATED FILE - do not edit by hand.
+# Regenerate with analysis/acmg_benchmark/scripts/build_vcep_thresholds.py
+#
+# Every value below is a published ClinGen Variant Curation Expert Panel
+# specification of BA1, BS1 or PM2 for that gene, read from the CSpec
+# Registry. Where a VCEP has set a bar it outranks fastVEP's global
+# default, which is measured across all genes and cannot know a specific
+# disorder's prevalence or penetrance.
+#
+# Load with:  fastvep annotate --acmg --acmg-config <this file>
+#
+# What is NOT here, and why:
+#  - genes whose specification states no numeric bar for a criterion, or
+#    states it in prose this generator will not guess at;
+#  - genes curated by two panels that disagree, since `gene_overrides` is
+#    keyed by gene alone and picking one would be arbitrary;
+#  - prevalence, penetrance and age of onset, which no VCEP publishes in
+#    machine-readable form. Those remain a curation gap.
+#
+# The `disorders` blocks are informational: they record which MONDO
+# disorders the thresholds were specified for, and their inheritance.
+# fastVEP has no active-disorder selection yet, so the gene-level values
+# are what the classifier reads.
+
+# ABCA4 Variant Curation Expert Panel  (GN164, Released)
+# REVIEW: BA1 is looser than the 0.05 default
+# REVIEW: BS1 is looser than the 0.005 default
+[gene_overrides.ABCA4]
+ba1_af_threshold = 0.163
+bs1_af_threshold = 0.0163
+pm2_af_threshold = 0.0001
+[gene_overrides.ABCA4.disorders."MONDO:0800406"]
+inheritance = "AR"
+bs1_af_threshold = 0.0163
+pm2_af_threshold = 0.0001
+
+# Peroxisomal Disorders Variant Curation Expert Panel  (GN105, Released)
+# REVIEW: BA1 is 294x tighter than the 0.05 default
+# REVIEW: BS1 is 294x tighter than the 0.005 default
+[gene_overrides.ABCD1]
+ba1_af_threshold = 0.00017
+bs1_af_threshold = 1.7e-05
+pm2_af_threshold = 1.7e-06
+[gene_overrides.ABCD1.disorders."MONDO:0018544"]
+inheritance = "AR"
+bs1_af_threshold = 1.7e-05
+pm2_af_threshold = 1.7e-06
+
+# ACADVL Variant Curation Expert Panel (GN021, Released)
+[gene_overrides.ACADVL]
+ba1_af_threshold = 0.007
+bs1_af_threshold = 0.0035
+[gene_overrides.ACADVL.disorders."MONDO:0008723"]
+inheritance = "AR"
+bs1_af_threshold = 0.0035
+
+# Cardiomyopathy Variant Curation Expert Panel (GN101, Released)
+[gene_overrides.ACTC1]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.ACTC1.disorders."MONDO:0005045"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+
+# Hereditary Hemorrhagic Telangiectasia Variant Curation Expert Panel (GN135, Released)
+[gene_overrides.ACVRL1]
+ba1_af_threshold = 0.01
+bs1_af_threshold = 0.002
+pm2_af_threshold = 4e-05
+[gene_overrides.ACVRL1.disorders."MONDO:0010880"]
+inheritance = "AD"
+bs1_af_threshold = 0.002
+pm2_af_threshold = 4e-05
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN114, Released)
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.ADA]
+ba1_af_threshold = 0.00721
+bs1_af_threshold = 0.00161
+pm2_af_threshold = 0.0001742
+[gene_overrides.ADA.disorders."MONDO:0007064"]
+inheritance = "AR"
+bs1_af_threshold = 0.00161
+pm2_af_threshold = 0.0001742
+
+# Leber Congenital Amaurosis/early onset Retinal Dystrophy Variant Curation Expert Panel (GN208, Released)
+[gene_overrides.AIPL1]
+ba1_af_threshold = 0.0057
+[gene_overrides.AIPL1.disorders."MONDO:0100438"]
+inheritance = "AR"
+
+# Brain Malformations Variant Curation Expert Panel (GN018, Released)
+[gene_overrides.AKT3]
+ba1_af_threshold = 0.000926
+bs1_af_threshold = 0.000185
+[gene_overrides.AKT3.disorders."MONDO:0016054"]
+bs1_af_threshold = 0.000185
+
+# Limb Girdle Muscular Dystrophy Variant Curation Expert Panel (GN188, Released)
+[gene_overrides.ANO5]
+ba1_af_threshold = 0.003
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+[gene_overrides.ANO5.disorders."MONDO:0015152"]
+inheritance = "AR"
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+
+# InSiGHT Hereditary Colorectal Cancer/Polyposis Variant Curation Expert Panel (GN089, Released)
+# REVIEW: BS1 is 500x tighter than the 0.005 default
+[gene_overrides.APC]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 1e-05
+[gene_overrides.APC.disorders."MONDO:0021056"]
+bs1_af_threshold = 1e-05
+
+# Hereditary Breast, Ovarian and Pancreatic Cancer Variant Curation Expert Panel (GN020, Released)
+[gene_overrides.ATM]
+ba1_af_threshold = 0.005
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 1e-05
+[gene_overrides.ATM.disorders."MONDO:0700270"]
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 1e-05
+[gene_overrides.ATM.disorders."MONDO:0008840"]
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 1e-05
+[gene_overrides.ATM.disorders."MONDO:0018266"]
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 1e-05
+
+# Pulmonary Hypertension Variant Curation Expert Panel (GN125, Released)
+[gene_overrides.BMPR2]
+ba1_af_threshold = 0.01
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+[gene_overrides.BMPR2.disorders."MONDO:0015924"]
+inheritance = "AD"
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+
+# RASopathy Variant Curation Expert Panel (GN049, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.BRAF]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.BRAF.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# ENIGMA BRCA1 and BRCA2 Variant Curation Expert Panel (GN092, Released)
+[gene_overrides.BRCA1]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+[gene_overrides.BRCA1.disorders."MONDO:0700268"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+
+# ENIGMA BRCA1 and BRCA2 Variant Curation Expert Panel (GN097, Released)
+[gene_overrides.BRCA2]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+[gene_overrides.BRCA2.disorders."MONDO:0700269"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+
+# Limb Girdle Muscular Dystrophy Variant Curation Expert Panel (GN187, Released)
+[gene_overrides.CAPN3]
+ba1_af_threshold = 0.003
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+[gene_overrides.CAPN3.disorders."MONDO:0015152"]
+inheritance = "AR"
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+
+# Gastric Cancer Variant Curation Expert Panel (GN007, Released)
+[gene_overrides.CDH1]
+ba1_af_threshold = 0.002
+bs1_af_threshold = 0.001
+[gene_overrides.CDH1.disorders."MONDO:0007648"]
+bs1_af_threshold = 0.001
+
+# Rett and Angelman-like Disorders Variant Curation Expert Panel (GN034, Released)
+# REVIEW: BS1 is 602x tighter than the 0.005 default
+[gene_overrides.CDKL5]
+bs1_af_threshold = 8.3e-06
+[gene_overrides.CDKL5.disorders."MONDO:0100039"]
+inheritance = "AR"
+bs1_af_threshold = 8.3e-06
+
+# Leber Congenital Amaurosis/early onset Retinal Dystrophy Variant Curation Expert Panel (GN226, Released)
+[gene_overrides.CEP290]
+ba1_af_threshold = 0.016
+[gene_overrides.CEP290.disorders."MONDO:0100451"]
+inheritance = "AR"
+
+# Glaucoma Variant Curation Expert Panel (GN104, Released)
+# REVIEW: BS1 is looser than the 0.005 default
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.CYP1B1]
+ba1_af_threshold = 0.05
+bs1_af_threshold = 0.01
+pm2_af_threshold = 0.0005
+[gene_overrides.CYP1B1.disorders."MONDO:0800472"]
+inheritance = "AR"
+bs1_af_threshold = 0.01
+pm2_af_threshold = 0.0005
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN116, Released)
+[gene_overrides.DCLRE1C]
+ba1_af_threshold = 0.00346
+bs1_af_threshold = 0.00078
+pm2_af_threshold = 3.266e-05
+[gene_overrides.DCLRE1C.disorders."MONDO:0011225"]
+inheritance = "AR"
+bs1_af_threshold = 0.00078
+pm2_af_threshold = 3.266e-05
+
+# DICER1 and miRNA-Processing Gene Variant Curation Expert Panel (GN024, Released)
+[gene_overrides.DICER1]
+ba1_af_threshold = 0.003
+bs1_af_threshold = 0.0003
+pm2_af_threshold = 5e-06
+[gene_overrides.DICER1.disorders."MONDO:0100216"]
+inheritance = "AD"
+bs1_af_threshold = 0.0003
+pm2_af_threshold = 5e-06
+
+# Limb Girdle Muscular Dystrophy Variant Curation Expert Panel (GN180, Released)
+[gene_overrides.DYSF]
+ba1_af_threshold = 0.003
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+[gene_overrides.DYSF.disorders."MONDO:0015152"]
+inheritance = "AR"
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+
+# Hereditary Hemorrhagic Telangiectasia Variant Curation Expert Panel (GN136, Released)
+[gene_overrides.ENG]
+ba1_af_threshold = 0.01
+bs1_af_threshold = 0.002
+pm2_af_threshold = 4e-05
+[gene_overrides.ENG.disorders."MONDO:0008535"]
+inheritance = "AD"
+bs1_af_threshold = 0.002
+pm2_af_threshold = 4e-05
+
+# Mitochondrial Diseases Variant Curation Expert Panel (GN014, Released)
+[gene_overrides.ETHE1]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0002
+pm2_af_threshold = 2e-05
+[gene_overrides.ETHE1.disorders."MONDO:0011229"]
+bs1_af_threshold = 0.0002
+pm2_af_threshold = 2e-05
+
+# Coagulation Factor Deficiency Variant Curation Expert Panel (GN071, Released)
+# REVIEW: BA1 is 150x tighter than the 0.05 default
+# REVIEW: BS1 is 150x tighter than the 0.005 default
+[gene_overrides.F8]
+ba1_af_threshold = 0.000333
+bs1_af_threshold = 3.33e-05
+[gene_overrides.F8.disorders."MONDO:0010602"]
+inheritance = "AR"
+bs1_af_threshold = 3.33e-05
+
+# Coagulation Factor Deficiency Variant Curation Expert Panel (GN080, Released)
+# REVIEW: BA1 is 899x tighter than the 0.05 default
+# REVIEW: BS1 is 899x tighter than the 0.005 default
+[gene_overrides.F9]
+ba1_af_threshold = 5.56e-05
+bs1_af_threshold = 5.56e-06
+[gene_overrides.F9.disorders."MONDO:0010604"]
+inheritance = "AR"
+bs1_af_threshold = 5.56e-06
+
+# FBN1 Variant Curation Expert Panel (GN022, Released)
+# REVIEW: BS1 is 100x tighter than the 0.005 default
+[gene_overrides.FBN1]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 5e-05
+pm2_af_threshold = 5e-06
+[gene_overrides.FBN1.disorders."MONDO:0007947"]
+bs1_af_threshold = 5e-05
+pm2_af_threshold = 5e-06
+
+# Rett and Angelman-like Disorders Variant Curation Expert Panel (GN035, Released)
+# REVIEW: BA1 is 602x tighter than the 0.05 default
+# REVIEW: BS1 is 602x tighter than the 0.005 default
+[gene_overrides.FOXG1]
+ba1_af_threshold = 8.3e-05
+bs1_af_threshold = 8.3e-06
+[gene_overrides.FOXG1.disorders."MONDO:0100040"]
+inheritance = "AD"
+bs1_af_threshold = 8.3e-06
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN113, Released)
+[gene_overrides.FOXN1]
+ba1_af_threshold = 0.00447
+bs1_af_threshold = 0.00141
+pm2_af_threshold = 2.412e-05
+[gene_overrides.FOXN1.disorders."MONDO:0011132"]
+inheritance = "AD_AR"
+bs1_af_threshold = 0.00141
+pm2_af_threshold = 2.412e-05
+
+# Lysosomal Diseases Variant Curation Expert Panel (GN010, Released)
+[gene_overrides.GAA]
+ba1_af_threshold = 0.01
+bs1_af_threshold = 0.005
+[gene_overrides.GAA.disorders."MONDO:0009290"]
+bs1_af_threshold = 0.005
+
+# Galactosemia Variant Curation Expert Panel  (GN158, Released)
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.GALT]
+ba1_af_threshold = 0.01
+bs1_af_threshold = 0.005
+pm2_af_threshold = 0.0005
+[gene_overrides.GALT.disorders."MONDO:0018116"]
+inheritance = "AR"
+bs1_af_threshold = 0.005
+pm2_af_threshold = 0.0005
+
+# Cerebral Creatine Deficiency Syndromes Variant Curation Expert Panel (GN026, Released)
+[gene_overrides.GAMT]
+ba1_af_threshold = 0.003
+bs1_af_threshold = 0.001
+[gene_overrides.GAMT.disorders."MONDO:0012999"]
+bs1_af_threshold = 0.001
+
+# Cerebral Creatine Deficiency Syndromes Variant Curation Expert Panel (GN025, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.GATM]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.0001
+[gene_overrides.GATM.disorders."MONDO:0012996"]
+inheritance = "AR"
+bs1_af_threshold = 0.0001
+
+# Monogenic Diabetes Variant Curation Expert Panel (GN086, Released)
+# REVIEW: BA1 is 500x tighter than the 0.05 default
+[gene_overrides.GCK]
+ba1_af_threshold = 0.0001
+pm2_af_threshold = 3e-06
+[gene_overrides.GCK.disorders."MONDO:0015967"]
+inheritance = "AD_AR"
+pm2_af_threshold = 3e-06
+
+# Leukodystrophy and Leukoencephalopathy Variant Curation Expert Panel (GN157, Released)
+# REVIEW: BA1 is 500x tighter than the 0.05 default
+# REVIEW: BS1 is 500x tighter than the 0.005 default
+[gene_overrides.GFAP]
+ba1_af_threshold = 0.0001
+bs1_af_threshold = 1e-05
+[gene_overrides.GFAP.disorders."MONDO:0008752"]
+inheritance = "AD"
+bs1_af_threshold = 1e-05
+
+# Platelet Disorders Variant Curation Expert Panel (GN079, Released)
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.GP1BA]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 0.0001114
+[gene_overrides.GP1BA.disorders."MONDO:0009276"]
+inheritance = "AR"
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 0.0001114
+
+# Platelet Disorders Variant Curation Expert Panel (GN082, Released)
+[gene_overrides.GP1BB]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 6.517e-05
+[gene_overrides.GP1BB.disorders."MONDO:0009276"]
+inheritance = "AR"
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 6.517e-05
+
+# Platelet Disorders Variant Curation Expert Panel (GN083, Released)
+[gene_overrides.GP9]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0007
+pm2_af_threshold = 3.29e-05
+[gene_overrides.GP9.disorders."MONDO:0009276"]
+inheritance = "AR"
+bs1_af_threshold = 0.0007
+pm2_af_threshold = 3.29e-05
+
+# Leber Congenital Amaurosis/early onset Retinal Dystrophy Variant Curation Expert Panel (GN167, Released)
+[gene_overrides.GUCY2D]
+ba1_af_threshold = 0.016
+[gene_overrides.GUCY2D.disorders."MONDO:0100453"]
+inheritance = "AR"
+
+# Hemoglobinopathy Variant Curation Expert Panel (GN173, Released)
+[gene_overrides.HBA2]
+ba1_af_threshold = 0.005
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+[gene_overrides.HBA2.disorders."MONDO:0100562"]
+inheritance = "AR"
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+
+# Hemoglobinopathy Variant Curation Expert Panel (GN170, Released)
+[gene_overrides.HBB]
+ba1_af_threshold = 0.005
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+[gene_overrides.HBB.disorders."MONDO:0013517"]
+inheritance = "AR"
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+
+# Monogenic Diabetes Variant Curation Expert Panel (GN017, Released)
+# REVIEW: BA1 is 500x tighter than the 0.05 default
+# REVIEW: BS1 is 152x tighter than the 0.005 default
+[gene_overrides.HNF1A]
+ba1_af_threshold = 0.0001
+bs1_af_threshold = 3.3e-05
+pm2_af_threshold = 3e-06
+[gene_overrides.HNF1A.disorders."MONDO:0015967"]
+bs1_af_threshold = 3.3e-05
+pm2_af_threshold = 3e-06
+
+# Monogenic Diabetes Variant Curation Expert Panel (GN085, Released)
+# REVIEW: BA1 is 500x tighter than the 0.05 default
+# REVIEW: BS1 is 152x tighter than the 0.005 default
+[gene_overrides.HNF4A]
+ba1_af_threshold = 0.0001
+bs1_af_threshold = 3.3e-05
+pm2_af_threshold = 3e-06
+[gene_overrides.HNF4A.disorders."MONDO:0015967"]
+inheritance = "AD"
+bs1_af_threshold = 3.3e-05
+pm2_af_threshold = 3e-06
+
+# RASopathy Variant Curation Expert Panel (GN046, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.HRAS]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.HRAS.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Lysosomal Diseases Variant Curation Expert Panel (GN091, Released)
+[gene_overrides.IDUA]
+ba1_af_threshold = 0.005
+bs1_af_threshold = 0.0025
+[gene_overrides.IDUA.disorders."MONDO:0001586"]
+inheritance = "AR"
+bs1_af_threshold = 0.0025
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN129, Released)
+[gene_overrides.IL2RG]
+ba1_af_threshold = 0.0111
+bs1_af_threshold = 0.00249
+[gene_overrides.IL2RG.disorders."MONDO:0010315"]
+inheritance = "AR"
+bs1_af_threshold = 0.00249
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN119, Released)
+[gene_overrides.IL7R]
+ba1_af_threshold = 0.00566
+bs1_af_threshold = 0.00126
+pm2_af_threshold = 4.129e-05
+[gene_overrides.IL7R.disorders."MONDO:0012163"]
+inheritance = "AR"
+bs1_af_threshold = 0.00126
+pm2_af_threshold = 4.129e-05
+
+# Platelet Disorders Variant Curation Expert Panel (GN011, Released)
+[gene_overrides.ITGA2B]
+ba1_af_threshold = 0.0024
+bs1_af_threshold = 0.00158
+[gene_overrides.ITGA2B.disorders."MONDO:0100326"]
+bs1_af_threshold = 0.00158
+
+# Platelet Disorders Variant Curation Expert Panel (GN011, Released)
+[gene_overrides.ITGB3]
+ba1_af_threshold = 0.0024
+bs1_af_threshold = 0.00158
+[gene_overrides.ITGB3.disorders."MONDO:0100326"]
+bs1_af_threshold = 0.00158
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN121, Released)
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.JAK3]
+ba1_af_threshold = 0.00447
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.000115
+[gene_overrides.JAK3.disorders."MONDO:0010938"]
+inheritance = "AR"
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.000115
+
+# Potassium Channel Arrhythmia Variant Curation Expert Panel (GN112, Released)
+[gene_overrides.KCNQ1]
+ba1_af_threshold = 0.05
+[gene_overrides.KCNQ1.disorders."MONDO:0100316"]
+
+# RASopathy Variant Curation Expert Panel (GN044, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.KRAS]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.KRAS.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Familial Hypercholesterolemia Variant Curation Expert Panel (GN013, Released)
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.LDLR]
+ba1_af_threshold = 0.005
+bs1_af_threshold = 0.002
+pm2_af_threshold = 0.0002
+[gene_overrides.LDLR.disorders."MONDO:0007750"]
+bs1_af_threshold = 0.002
+pm2_af_threshold = 0.0002
+
+# RASopathy Variant Curation Expert Panel (GN094, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.LZTR1]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+pm2_af_threshold = 2.5e-05
+[gene_overrides.LZTR1.disorders."MONDO:0021060"]
+bs1_af_threshold = 0.00025
+pm2_af_threshold = 2.5e-05
+
+# RASopathy Variant Curation Expert Panel (GN045, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.MAP2K1]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.MAP2K1.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# RASopathy Variant Curation Expert Panel (GN048, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.MAP2K2]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.MAP2K2.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Rett and Angelman-like Disorders Variant Curation Expert Panel (GN036, Released)
+# REVIEW: BA1 is 602x tighter than the 0.05 default
+# REVIEW: BS1 is 602x tighter than the 0.005 default
+[gene_overrides.MECP2]
+ba1_af_threshold = 8.3e-05
+bs1_af_threshold = 8.3e-06
+[gene_overrides.MECP2.disorders."MONDO:0010726"]
+inheritance = "AR"
+bs1_af_threshold = 8.3e-06
+
+# InSiGHT Hereditary Colorectal Cancer/Polyposis Variant Curation Expert Panel (GN115, Released)
+[gene_overrides.MLH1]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 2e-05
+[gene_overrides.MLH1.disorders."MONDO:0012249"]
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 2e-05
+[gene_overrides.MLH1.disorders."MONDO:0010159"]
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 2e-05
+
+# RASopathy Variant Curation Expert Panel (GN087, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.MRAS]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.MRAS.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# InSiGHT Hereditary Colorectal Cancer/Polyposis Variant Curation Expert Panel (GN137, Released)
+[gene_overrides.MSH2]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 2e-05
+[gene_overrides.MSH2.disorders."MONDO:0007356"]
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 2e-05
+[gene_overrides.MSH2.disorders."MONDO:0010159"]
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 2e-05
+
+# InSiGHT Hereditary Colorectal Cancer/Polyposis Variant Curation Expert Panel (GN138, Released)
+[gene_overrides.MSH6]
+ba1_af_threshold = 0.0022
+bs1_af_threshold = 0.00022
+pm2_af_threshold = 2e-05
+[gene_overrides.MSH6.disorders."MONDO:0005835"]
+bs1_af_threshold = 0.00022
+pm2_af_threshold = 2e-05
+[gene_overrides.MSH6.disorders."MONDO:0010159"]
+bs1_af_threshold = 0.00022
+pm2_af_threshold = 2e-05
+
+# Congenital Myopathies Variant Curation Expert Panel (GN149, Released)
+# REVIEW: BA1 is 3125x tighter than the 0.05 default
+# REVIEW: BS1 is 3125x tighter than the 0.005 default
+[gene_overrides.MTM1]
+ba1_af_threshold = 1.6e-05
+bs1_af_threshold = 1.6e-06
+[gene_overrides.MTM1.disorders."MONDO:0018947"]
+inheritance = "AR"
+bs1_af_threshold = 1.6e-06
+
+# Brain Malformations Variant Curation Expert Panel (GN018, Released)
+[gene_overrides.MTOR]
+ba1_af_threshold = 0.000926
+bs1_af_threshold = 0.000185
+[gene_overrides.MTOR.disorders."MONDO:0016054"]
+bs1_af_threshold = 0.000185
+
+# Cardiomyopathy Variant Curation Expert Panel (GN095, Released)
+[gene_overrides.MYBPC3]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0002
+pm2_af_threshold = 4e-05
+[gene_overrides.MYBPC3.disorders."MONDO:0005045"]
+inheritance = "AD"
+bs1_af_threshold = 0.0002
+pm2_af_threshold = 4e-05
+
+# Cardiomyopathy Variant Curation Expert Panel (GN002, Released)
+[gene_overrides.MYH7]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.MYH7.disorders."MONDO:0005021"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.MYH7.disorders."MONDO:0005045"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+
+# Cardiomyopathy Variant Curation Expert Panel (GN102, Released)
+[gene_overrides.MYL2]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.MYL2.disorders."MONDO:0005045"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+
+# Cardiomyopathy Variant Curation Expert Panel (GN103, Released)
+[gene_overrides.MYL3]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.MYL3.disorders."MONDO:0005045"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+
+# Hearing Loss Variant Curation Expert Panel (GN023, Released)
+[gene_overrides.MYO15A]
+ba1_af_threshold = 0.005
+pm2_af_threshold = 7e-05
+[gene_overrides.MYO15A.disorders."MONDO:0019497"]
+pm2_af_threshold = 7e-05
+
+# Glaucoma Variant Curation Expert Panel (GN019, Released)
+[gene_overrides.MYOC]
+ba1_af_threshold = 0.01
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+[gene_overrides.MYOC.disorders."MONDO:0005338"]
+inheritance = "AD"
+bs1_af_threshold = 0.001
+pm2_af_threshold = 0.0001
+
+# Congenital Myopathies Variant Curation Expert Panel (GN146, Released)
+[gene_overrides.NEB]
+ba1_af_threshold = 0.00559
+bs1_af_threshold = 0.000237
+pm2_af_threshold = 5.59e-05
+[gene_overrides.NEB.disorders."MONDO:0018958"]
+inheritance = "AR"
+bs1_af_threshold = 0.000237
+pm2_af_threshold = 5.59e-05
+
+# RASopathy Variant Curation Expert Panel (GN039, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.NRAS]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.NRAS.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Urea Cycle Disorders Variant Curation Expert Panel (GN156, Released)
+[gene_overrides.OTC]
+ba1_af_threshold = 0.01
+bs1_af_threshold = 0.002
+pm2_af_threshold = 1.5e-05
+[gene_overrides.OTC.disorders."MONDO:0010703"]
+inheritance = "AR"
+bs1_af_threshold = 0.002
+pm2_af_threshold = 1.5e-05
+
+# Hearing Loss Variant Curation Expert Panel (GN023, Released)
+[gene_overrides.OTOF]
+ba1_af_threshold = 0.005
+pm2_af_threshold = 7e-05
+[gene_overrides.OTOF.disorders."MONDO:0019497"]
+pm2_af_threshold = 7e-05
+
+# Phenylketonuria Variant Curation Expert Panel (GN006, Released)
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.PAH]
+ba1_af_threshold = 0.015
+bs1_af_threshold = 0.002
+pm2_af_threshold = 0.0002
+[gene_overrides.PAH.disorders."MONDO:0009861"]
+bs1_af_threshold = 0.002
+pm2_af_threshold = 0.0002
+
+# Hereditary Breast, Ovarian and Pancreatic Cancer Variant Curation Expert Panel (GN077, Released)
+[gene_overrides.PALB2]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+[gene_overrides.PALB2.disorders."MONDO:0700272"]
+bs1_af_threshold = 0.0001
+[gene_overrides.PALB2.disorders."MONDO:0012565"]
+bs1_af_threshold = 0.0001
+
+# Mitochondrial Diseases Variant Curation Expert Panel (GN014, Released)
+[gene_overrides.PDHA1]
+ba1_af_threshold = 0.00092
+bs1_af_threshold = 9.2e-05
+pm2_af_threshold = 9.2e-06
+[gene_overrides.PDHA1.disorders."MONDO:0019169"]
+bs1_af_threshold = 9.2e-05
+pm2_af_threshold = 9.2e-06
+
+# Brain Malformations Variant Curation Expert Panel (GN018, Released)
+[gene_overrides.PIK3CA]
+ba1_af_threshold = 0.000926
+bs1_af_threshold = 0.000185
+[gene_overrides.PIK3CA.disorders."MONDO:0016054"]
+bs1_af_threshold = 0.000185
+
+# Antibody Deficiencies Variant Curation Expert Panel (GN141, Released)
+[gene_overrides.PIK3CD]
+ba1_af_threshold = 0.00316
+bs1_af_threshold = 0.000316
+pm2_af_threshold = 1.32e-06
+[gene_overrides.PIK3CD.disorders."MONDO:0014222"]
+inheritance = "AD"
+bs1_af_threshold = 0.000316
+pm2_af_threshold = 1.32e-06
+
+# Antibody Deficiencies Variant Curation Expert Panel (GN160, Released)
+[gene_overrides.PIK3R1]
+ba1_af_threshold = 0.00316
+bs1_af_threshold = 0.000316
+pm2_af_threshold = 1.32e-06
+[gene_overrides.PIK3R1.disorders."MONDO:1060136"]
+inheritance = "AD"
+bs1_af_threshold = 0.000316
+pm2_af_threshold = 1.32e-06
+
+# Brain Malformations Variant Curation Expert Panel (GN018, Released)
+[gene_overrides.PIK3R2]
+ba1_af_threshold = 0.000926
+bs1_af_threshold = 0.000185
+[gene_overrides.PIK3R2.disorders."MONDO:0016054"]
+bs1_af_threshold = 0.000185
+
+# InSiGHT Hereditary Colorectal Cancer/Polyposis Variant Curation Expert Panel (GN139, Released)
+[gene_overrides.PMS2]
+ba1_af_threshold = 0.0028
+bs1_af_threshold = 0.00028
+pm2_af_threshold = 2e-05
+[gene_overrides.PMS2.disorders."MONDO:0013699"]
+bs1_af_threshold = 0.00028
+pm2_af_threshold = 2e-05
+[gene_overrides.PMS2.disorders."MONDO:0010159"]
+bs1_af_threshold = 0.00028
+pm2_af_threshold = 2e-05
+
+# Mitochondrial Diseases Variant Curation Expert Panel (GN014, Released)
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.POLG]
+ba1_af_threshold = 0.01
+bs1_af_threshold = 0.005
+pm2_af_threshold = 0.0005
+[gene_overrides.POLG.disorders."MONDO:0044970"]
+bs1_af_threshold = 0.005
+pm2_af_threshold = 0.0005
+
+# RASopathy Variant Curation Expert Panel (GN128, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.PPP1CB]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.PPP1CB.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# PTEN Variant Curation Expert Panel (GN003, Released)
+[gene_overrides.PTEN]
+ba1_af_threshold = 0.00056
+[gene_overrides.PTEN.disorders."MONDO:0017623"]
+inheritance = "AD"
+
+# RASopathy Variant Curation Expert Panel (GN043, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.PTPN11]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.PTPN11.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# RASopathy Variant Curation Expert Panel (GN040, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.RAF1]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.RAF1.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN123, Released)
+# REVIEW: PM2 is looser than the 0.0001 default
+[gene_overrides.RAG1]
+ba1_af_threshold = 0.00872
+bs1_af_threshold = 0.00195
+pm2_af_threshold = 0.000102
+[gene_overrides.RAG1.disorders."MONDO:0000572"]
+inheritance = "AR"
+bs1_af_threshold = 0.00195
+pm2_af_threshold = 0.000102
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN124, Released)
+[gene_overrides.RAG2]
+ba1_af_threshold = 0.00872
+bs1_af_threshold = 0.00195
+pm2_af_threshold = 5.88e-05
+[gene_overrides.RAG2.disorders."MONDO:0000573"]
+inheritance = "AR"
+bs1_af_threshold = 0.00195
+pm2_af_threshold = 5.88e-05
+
+# RASopathy Variant Curation Expert Panel (GN047, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.RIT1]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.RIT1.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Severe Combined Immunodeficiency Disease  Variant Curation Expert Panel (GN088, Released)
+[gene_overrides.RMRP]
+ba1_af_threshold = 0.004
+bs1_af_threshold = 0.00089
+pm2_af_threshold = 4.47e-05
+[gene_overrides.RMRP.disorders."MONDO:0009595"]
+inheritance = "AR"
+bs1_af_threshold = 0.00089
+pm2_af_threshold = 4.47e-05
+
+# X-linked Inherited Retinal Disease Variant Curation Expert Panel (GN106, Released)
+[gene_overrides.RPGR]
+ba1_af_threshold = 0.05
+[gene_overrides.RPGR.disorders."MONDO:0100437"]
+inheritance = "AR"
+
+# RASopathy Variant Curation Expert Panel (GN127, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.RRAS2]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.RRAS2.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Myeloid Malignancy Variant Curation Expert Panel (GN008, Released)
+[gene_overrides.RUNX1]
+ba1_af_threshold = 0.0015
+pm2_af_threshold = 5e-05
+[gene_overrides.RUNX1.disorders."MONDO:0011071"]
+inheritance = "AD"
+pm2_af_threshold = 5e-05
+
+# Epilepsy Sodium Channel Variant Curation Expert Panel (GN067, Released)
+# REVIEW: BA1 is 250x tighter than the 0.05 default
+# REVIEW: BS1 is 1250x tighter than the 0.005 default
+[gene_overrides.SCN1A]
+ba1_af_threshold = 0.0002
+bs1_af_threshold = 4e-06
+[gene_overrides.SCN1A.disorders."MONDO:0100135"]
+inheritance = "AD"
+bs1_af_threshold = 4e-06
+[gene_overrides.SCN1A.disorders."MONDO:0018214"]
+inheritance = "AD"
+bs1_af_threshold = 4e-06
+[gene_overrides.SCN1A.disorders."MONDO:0100062"]
+inheritance = "AD"
+bs1_af_threshold = 4e-06
+
+# Epilepsy Sodium Channel Variant Curation Expert Panel (GN076, Released)
+[gene_overrides.SCN1B]
+ba1_af_threshold = 0.003
+bs1_af_threshold = 0.0001
+[gene_overrides.SCN1B.disorders."MONDO:0018214"]
+bs1_af_threshold = 0.0001
+[gene_overrides.SCN1B.disorders."MONDO:0100062"]
+bs1_af_threshold = 0.0001
+
+# Epilepsy Sodium Channel Variant Curation Expert Panel (GN068, Released)
+# REVIEW: BA1 is 500x tighter than the 0.05 default
+# REVIEW: BS1 is 2500x tighter than the 0.005 default
+[gene_overrides.SCN2A]
+ba1_af_threshold = 0.0001
+bs1_af_threshold = 2e-06
+[gene_overrides.SCN2A.disorders."MONDO:0100038"]
+inheritance = "AD"
+bs1_af_threshold = 2e-06
+
+# Epilepsy Sodium Channel Variant Curation Expert Panel (GN069, Released)
+# REVIEW: BA1 is 500x tighter than the 0.05 default
+# REVIEW: BS1 is 2500x tighter than the 0.005 default
+[gene_overrides.SCN3A]
+ba1_af_threshold = 0.0001
+bs1_af_threshold = 2e-06
+[gene_overrides.SCN3A.disorders."MONDO:0100062"]
+inheritance = "AD"
+bs1_af_threshold = 2e-06
+
+# Epilepsy Sodium Channel Variant Curation Expert Panel (GN070, Released)
+# REVIEW: BA1 is 500x tighter than the 0.05 default
+# REVIEW: BS1 is 2500x tighter than the 0.005 default
+[gene_overrides.SCN8A]
+ba1_af_threshold = 0.0001
+bs1_af_threshold = 2e-06
+[gene_overrides.SCN8A.disorders."MONDO:0100038"]
+inheritance = "AD"
+bs1_af_threshold = 2e-06
+
+# Thrombosis Variant Curation Expert Panel  (GN084, Released)
+[gene_overrides.SERPINC1]
+ba1_af_threshold = 0.002
+bs1_af_threshold = 0.0002
+pm2_af_threshold = 2e-05
+[gene_overrides.SERPINC1.disorders."MONDO:0013144"]
+inheritance = "AD"
+bs1_af_threshold = 0.0002
+pm2_af_threshold = 2e-05
+
+# Limb Girdle Muscular Dystrophy Variant Curation Expert Panel (GN189, Released)
+[gene_overrides.SGCA]
+ba1_af_threshold = 0.002
+bs1_af_threshold = 0.0009
+pm2_af_threshold = 9e-05
+[gene_overrides.SGCA.disorders."MONDO:0015152"]
+inheritance = "AR"
+bs1_af_threshold = 0.0009
+pm2_af_threshold = 9e-05
+
+# Limb Girdle Muscular Dystrophy Variant Curation Expert Panel (GN184, Released)
+[gene_overrides.SGCB]
+ba1_af_threshold = 0.002
+bs1_af_threshold = 0.0009
+pm2_af_threshold = 9e-05
+[gene_overrides.SGCB.disorders."MONDO:0015152"]
+inheritance = "AR"
+bs1_af_threshold = 0.0009
+pm2_af_threshold = 9e-05
+
+# Limb Girdle Muscular Dystrophy Variant Curation Expert Panel (GN186, Released)
+[gene_overrides.SGCD]
+ba1_af_threshold = 0.002
+bs1_af_threshold = 0.0009
+pm2_af_threshold = 9e-05
+[gene_overrides.SGCD.disorders."MONDO:0015152"]
+inheritance = "AR"
+bs1_af_threshold = 0.0009
+pm2_af_threshold = 9e-05
+
+# Limb Girdle Muscular Dystrophy Variant Curation Expert Panel (GN185, Released)
+[gene_overrides.SGCG]
+ba1_af_threshold = 0.002
+bs1_af_threshold = 0.0009
+pm2_af_threshold = 9e-05
+[gene_overrides.SGCG.disorders."MONDO:0015152"]
+inheritance = "AR"
+bs1_af_threshold = 0.0009
+pm2_af_threshold = 9e-05
+
+# RASopathy Variant Curation Expert Panel (GN038, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.SHOC2]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.SHOC2.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Mitochondrial Diseases Variant Curation Expert Panel (GN014, Released)
+[gene_overrides.SLC19A3]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 5e-05
+[gene_overrides.SLC19A3.disorders."MONDO:0011841"]
+bs1_af_threshold = 0.0005
+pm2_af_threshold = 5e-05
+
+# Cerebral Creatine Deficiency Syndromes Variant Curation Expert Panel (GN027, Released)
+[gene_overrides.SLC6A8]
+ba1_af_threshold = 0.002
+bs1_af_threshold = 0.0002
+pm2_af_threshold = 2e-05
+[gene_overrides.SLC6A8.disorders."MONDO:0010305"]
+inheritance = "AR"
+bs1_af_threshold = 0.0002
+pm2_af_threshold = 2e-05
+
+# Rett and Angelman-like Disorders Variant Curation Expert Panel (GN033, Released)
+# REVIEW: BA1 is 602x tighter than the 0.05 default
+# REVIEW: BS1 is 602x tighter than the 0.005 default
+[gene_overrides.SLC9A6]
+ba1_af_threshold = 8.3e-05
+bs1_af_threshold = 8.3e-06
+[gene_overrides.SLC9A6.disorders."MONDO:0010278"]
+inheritance = "AR"
+bs1_af_threshold = 8.3e-06
+
+# RASopathy Variant Curation Expert Panel (GN041, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.SOS1]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.SOS1.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# RASopathy Variant Curation Expert Panel (GN042, Released)
+# REVIEW: BA1 is 100x tighter than the 0.05 default
+[gene_overrides.SOS2]
+ba1_af_threshold = 0.0005
+bs1_af_threshold = 0.00025
+[gene_overrides.SOS2.disorders."MONDO:0021060"]
+inheritance = "AD"
+bs1_af_threshold = 0.00025
+
+# Rett and Angelman-like Disorders Variant Curation Expert Panel (GN032, Released)
+# REVIEW: BS1 is 602x tighter than the 0.005 default
+[gene_overrides.TCF4]
+bs1_af_threshold = 8.3e-06
+[gene_overrides.TCF4.disorders."MONDO:0012589"]
+inheritance = "AD"
+bs1_af_threshold = 8.3e-06
+
+# Cardiomyopathy Variant Curation Expert Panel (GN098, Released)
+[gene_overrides.TNNI3]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.TNNI3.disorders."MONDO:0005045"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+
+# Cardiomyopathy Variant Curation Expert Panel (GN099, Released)
+[gene_overrides.TNNT2]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.TNNT2.disorders."MONDO:0005045"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.TNNT2.disorders."MONDO:0005021"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+
+# TP53 Variant Curation Expert Panel (GN009, Released)
+[gene_overrides.TP53]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0003
+pm2_af_threshold = 3e-05
+[gene_overrides.TP53.disorders."MONDO:0018875"]
+inheritance = "AD"
+bs1_af_threshold = 0.0003
+pm2_af_threshold = 3e-05
+
+# Cardiomyopathy Variant Curation Expert Panel (GN100, Released)
+[gene_overrides.TPM1]
+ba1_af_threshold = 0.001
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+[gene_overrides.TPM1.disorders."MONDO:0005045"]
+inheritance = "AD"
+bs1_af_threshold = 0.0001
+pm2_af_threshold = 4e-05
+
+# Rett and Angelman-like Disorders Variant Curation Expert Panel (GN037, Released)
+# REVIEW: BA1 is 602x tighter than the 0.05 default
+# REVIEW: BS1 is 602x tighter than the 0.005 default
+[gene_overrides.UBE3A]
+ba1_af_threshold = 8.3e-05
+bs1_af_threshold = 8.3e-06
+[gene_overrides.UBE3A.disorders."MONDO:0007113"]
+inheritance = "AD"
+bs1_af_threshold = 8.3e-06
+
+# VHL Variant Curation Expert Panel (GN078, Released)
+# REVIEW: BA1 is 321x tighter than the 0.05 default
+# REVIEW: BS1 is 321x tighter than the 0.005 default
+[gene_overrides.VHL]
+ba1_af_threshold = 0.000156
+bs1_af_threshold = 1.56e-05
+pm2_af_threshold = 1.56e-06
+[gene_overrides.VHL.disorders."MONDO:0008667"]
+inheritance = "AD"
+bs1_af_threshold = 1.56e-05
+pm2_af_threshold = 1.56e-06

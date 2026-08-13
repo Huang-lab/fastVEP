@@ -1156,6 +1156,7 @@ mod tests {
             "TEST".to_string(),
             crate::config::GeneOverride {
                 mechanism: None,
+                ba1_af_threshold: None,
                 bs1_af_threshold: None,
                 pm2_af_threshold: Some(0.001),
                 disabled_criteria: vec![],
