@@ -101,7 +101,10 @@ impl IndexedTranscriptProvider {
             }
             suffix_max_end.insert(Arc::clone(chrom), sme);
         }
-        Self { by_chrom, suffix_max_end }
+        Self {
+            by_chrom,
+            suffix_max_end,
+        }
     }
 
     pub fn transcript_count(&self) -> usize {
@@ -115,9 +118,11 @@ impl IndexedTranscriptProvider {
         if let Some((k, _)) = self.by_chrom.get_key_value(chrom) {
             return Some(k.as_ref());
         }
-        chrom_aliases(chrom)
-            .into_iter()
-            .find_map(|alias| self.by_chrom.get_key_value(alias.as_str()).map(|(k, _)| k.as_ref()))
+        chrom_aliases(chrom).into_iter().find_map(|alias| {
+            self.by_chrom
+                .get_key_value(alias.as_str())
+                .map(|(k, _)| k.as_ref())
+        })
     }
 }
 
@@ -213,9 +218,13 @@ impl FastaSequenceProvider {
 
 impl SequenceProvider for FastaSequenceProvider {
     fn fetch_sequence(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<u8>> {
-        fetch_circular(chrom, start, end, self.reader.sequence_length(chrom), |c, s, e| {
-            self.reader.fetch(c, s, e)
-        })
+        fetch_circular(
+            chrom,
+            start,
+            end,
+            self.reader.sequence_length(chrom),
+            |c, s, e| self.reader.fetch(c, s, e),
+        )
     }
 }
 
@@ -233,9 +242,13 @@ impl MmapFastaSequenceProvider {
 
 impl SequenceProvider for MmapFastaSequenceProvider {
     fn fetch_sequence(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<u8>> {
-        fetch_circular(chrom, start, end, self.reader.sequence_length(chrom), |c, s, e| {
-            self.reader.fetch(c, s, e)
-        })
+        fetch_circular(
+            chrom,
+            start,
+            end,
+            self.reader.sequence_length(chrom),
+            |c, s, e| self.reader.fetch(c, s, e),
+        )
     }
 }
 
@@ -305,9 +318,9 @@ impl VariationProvider for TabixVariationProvider {
             }
 
             // Check allele match
-            if let Some(matched_alt) = variation::match_alleles(
-                ref_allele, alt_allele, start, end, record,
-            ) {
+            if let Some(matched_alt) =
+                variation::match_alleles(ref_allele, alt_allele, start, end, record)
+            {
                 // Extract per-allele frequencies for the matched allele
                 let mut freqs = HashMap::new();
                 for (pop, freq_str) in &record.frequencies {
@@ -317,7 +330,8 @@ impl VariationProvider for TabixVariationProvider {
                 }
 
                 // Also include MAF if minor_allele matches
-                if let (Some(ref ma), Some(maf)) = (&record.minor_allele, record.minor_allele_freq) {
+                if let (Some(ref ma), Some(maf)) = (&record.minor_allele, record.minor_allele_freq)
+                {
                     if ma.eq_ignore_ascii_case(&matched_alt) {
                         freqs.entry("minor_allele_freq".into()).or_insert(maf);
                     }

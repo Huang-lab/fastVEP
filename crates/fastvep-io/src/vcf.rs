@@ -121,9 +121,7 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
 
     // Check if any alt makes this an indel
     let is_indel = alt_allele_strs.iter().any(|alt| {
-        alt.starts_with('D')
-            || alt.starts_with('I')
-            || alt.len() != ref_allele_str.len()
+        alt.starts_with('D') || alt.starts_with('I') || alt.len() != ref_allele_str.len()
     });
 
     let is_non_variant = alt_str == "." || alt_str == "<NON_REF>" || alt_str == "<*>";
@@ -137,7 +135,12 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         if alt_allele_strs.len() > 1 {
             // Multi-allelic indel: strip shared first base only if ALL non-star alleles share it
             let non_star: Vec<&str> = std::iter::once(ref_allele_str.as_str())
-                .chain(alt_allele_strs.iter().filter(|a| !a.contains('*')).map(|s| s.as_str()))
+                .chain(
+                    alt_allele_strs
+                        .iter()
+                        .filter(|a| !a.contains('*'))
+                        .map(|s| s.as_str()),
+                )
                 .collect();
 
             let all_share_first = non_star.len() > 1
@@ -200,11 +203,7 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     let allele_string = if is_non_variant {
         ref_allele_str.clone()
     } else {
-        format!(
-            "{}/{}",
-            ref_allele_str,
-            alt_allele_strs.join("/")
-        )
+        format!("{}/{}", ref_allele_str, alt_allele_strs.join("/"))
     };
 
     // Convert to Allele enums.
@@ -219,10 +218,17 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     let alt_alleles: Vec<Allele> = if is_non_variant {
         alt_allele_strs.iter().map(|_| Allele::Missing).collect()
     } else {
-        alt_allele_strs.iter().map(|s| Allele::from_str(s)).collect()
+        alt_allele_strs
+            .iter()
+            .map(|s| Allele::from_str(s))
+            .collect()
     };
 
-    let variation_name = if id == "." { None } else { Some(id.to_string()) };
+    let variation_name = if id == "." {
+        None
+    } else {
+        Some(id.to_string())
+    };
 
     let vcf_fields = VcfFields {
         chrom: chrom.to_string(),
@@ -239,12 +245,8 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     // Parse SV-related INFO fields for structural variants
     let (sv_end, sv_len, variant_type) = if has_symbolic {
         let info_map = parse_info_field(info);
-        let sv_end = info_map
-            .get("END")
-            .and_then(|v| v.parse::<u64>().ok());
-        let sv_len = info_map
-            .get("SVLEN")
-            .and_then(|v| v.parse::<i64>().ok());
+        let sv_end = info_map.get("END").and_then(|v| v.parse::<u64>().ok());
+        let sv_len = info_map.get("SVLEN").and_then(|v| v.parse::<i64>().ok());
         let svtype = info_map.get("SVTYPE").map(|s| s.as_str());
 
         let vtype = classify_sv_type(svtype, &alt_allele_strs);
@@ -311,9 +313,13 @@ fn classify_sv_type(svtype: Option<&str>, alts: &[String]) -> VariantType {
         s if s.starts_with("CN") => {
             // <CN0>, <CN1> = loss; <CN3>, <CN4> = gain
             if let Ok(cn) = s.trim_start_matches("CN").parse::<u32>() {
-                if cn < 2 { VariantType::CopyNumberLoss }
-                else if cn > 2 { VariantType::CopyNumberGain }
-                else { VariantType::CopyNumberVariation }
+                if cn < 2 {
+                    VariantType::CopyNumberLoss
+                } else if cn > 2 {
+                    VariantType::CopyNumberGain
+                } else {
+                    VariantType::CopyNumberVariation
+                }
             } else {
                 VariantType::CopyNumberVariation
             }

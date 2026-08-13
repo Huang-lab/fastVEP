@@ -163,17 +163,28 @@ fn serialize_gene_record(
 
     let mut unique: Vec<_> = unique.into_iter().collect();
     unique.sort_by(|((pos_a, ref_a, alt_a), _), ((pos_b, ref_b, alt_b), _)| {
-        pos_a.cmp(pos_b).then(ref_a.cmp(ref_b)).then(alt_a.cmp(alt_b))
+        pos_a
+            .cmp(pos_b)
+            .then(ref_a.cmp(ref_b))
+            .then(alt_a.cmp(alt_b))
     });
 
     let variant_jsons: Vec<String> = unique
         .iter()
         .map(|((pos, ref_aa, alt_aa), (sig, cdnas))| {
             let n = cdnas.len().max(1);
-            let n_field = if n > 1 { format!(r#","n":{}"#, n) } else { String::new() };
+            let n_field = if n > 1 {
+                format!(r#","n":{}"#, n)
+            } else {
+                String::new()
+            };
             format!(
                 r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"{}}}"#,
-                pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig), n_field
+                pos,
+                escape_json(ref_aa),
+                escape_json(alt_aa),
+                escape_json(sig),
+                n_field
             )
         })
         .collect();
@@ -355,15 +366,24 @@ where
 ///    feed the protein index; genomic splice positions are not, so only rows on
 ///    the requested build feed the splice index
 ///  - `PositionVCF`, `ReferenceAlleleVCF`, `AlternateAlleleVCF` - splice index only
-fn parse_variant_summary_inner<I>(header: String, lines: I, assembly: &str) -> Result<Vec<GeneRecord>>
+fn parse_variant_summary_inner<I>(
+    header: String,
+    lines: I,
+    assembly: &str,
+) -> Result<Vec<GeneRecord>>
 where
     I: Iterator<Item = std::io::Result<String>>,
 {
     let header_fields: Vec<&str> = header.trim_start_matches('#').split('\t').collect();
-    let find = |needle: &str| header_fields.iter().position(|f| f.eq_ignore_ascii_case(needle));
+    let find = |needle: &str| {
+        header_fields
+            .iter()
+            .position(|f| f.eq_ignore_ascii_case(needle))
+    };
     let i_name = find("Name").context("variant_summary missing Name column")?;
     let i_gene = find("GeneSymbol").context("variant_summary missing GeneSymbol column")?;
-    let i_sig = find("ClinicalSignificance").context("variant_summary missing ClinicalSignificance column")?;
+    let i_sig = find("ClinicalSignificance")
+        .context("variant_summary missing ClinicalSignificance column")?;
 
     // The four columns the splice index needs. All optional: a `variant_summary`
     // predating any of them still builds a usable protein index, and the splice
@@ -405,7 +425,10 @@ where
         // dropped by the `p.` check below.
         if let Some(sv) = parse_splice_variant(name, sig_clean, &cols, splice_cols, assembly) {
             for g in gene.split(';').map(str::trim).filter(|g| !g.is_empty()) {
-                gene_splice.entry(g.to_string()).or_default().push(sv.clone());
+                gene_splice
+                    .entry(g.to_string())
+                    .or_default()
+                    .push(sv.clone());
             }
         }
 
@@ -440,7 +463,12 @@ where
     // Union of both key sets: a gene can have canonical splice variants and no
     // classified missense (or the reverse), and either way it needs a record.
     let mut genes: Vec<String> = gene_variants.keys().cloned().collect();
-    genes.extend(gene_splice.keys().filter(|g| !gene_variants.contains_key(*g)).cloned());
+    genes.extend(
+        gene_splice
+            .keys()
+            .filter(|g| !gene_variants.contains_key(*g))
+            .cloned(),
+    );
     genes.sort();
 
     let empty_protein: Vec<ProteinVariant> = Vec::new();
@@ -449,9 +477,12 @@ where
         .into_iter()
         .map(|gene| {
             let protein = gene_variants.get(&gene).unwrap_or(&empty_protein);
-            let splice = splice_cols
-                .is_some()
-                .then(|| (assembly, gene_splice.get(&gene).unwrap_or(&empty_splice).as_slice()));
+            let splice = splice_cols.is_some().then(|| {
+                (
+                    assembly,
+                    gene_splice.get(&gene).unwrap_or(&empty_splice).as_slice(),
+                )
+            });
             serialize_gene_record(gene.clone(), protein, splice)
         })
         .collect();
@@ -555,7 +586,10 @@ fn parse_protein_hgvs(hgvs: &str) -> Option<(u64, String, String)> {
         let first = p_str.chars().next()?;
         if first.is_ascii_uppercase() {
             // Extract digits
-            let digits: String = p_str[1..].chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = p_str[1..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
             if let Ok(pos) = digits.parse::<u64>() {
                 let rest = &p_str[1 + digits.len()..];
                 if let Some(alt_aa) = rest.chars().next() {
@@ -573,11 +607,29 @@ fn parse_protein_hgvs(hgvs: &str) -> Option<(u64, String, String)> {
 /// Parse three-letter amino acid protein change like "Arg175His"
 fn parse_three_letter_protein(s: &str) -> Option<(u64, String, String)> {
     let aa_map: HashMap<&str, &str> = [
-        ("Ala", "A"), ("Arg", "R"), ("Asn", "N"), ("Asp", "D"), ("Cys", "C"),
-        ("Gln", "Q"), ("Glu", "E"), ("Gly", "G"), ("His", "H"), ("Ile", "I"),
-        ("Leu", "L"), ("Lys", "K"), ("Met", "M"), ("Phe", "F"), ("Pro", "P"),
-        ("Ser", "S"), ("Thr", "T"), ("Trp", "W"), ("Tyr", "Y"), ("Val", "V"),
-        ("Sec", "U"), ("Pyl", "O"), ("Ter", "*"),
+        ("Ala", "A"),
+        ("Arg", "R"),
+        ("Asn", "N"),
+        ("Asp", "D"),
+        ("Cys", "C"),
+        ("Gln", "Q"),
+        ("Glu", "E"),
+        ("Gly", "G"),
+        ("His", "H"),
+        ("Ile", "I"),
+        ("Leu", "L"),
+        ("Lys", "K"),
+        ("Met", "M"),
+        ("Phe", "F"),
+        ("Pro", "P"),
+        ("Ser", "S"),
+        ("Thr", "T"),
+        ("Trp", "W"),
+        ("Tyr", "Y"),
+        ("Val", "V"),
+        ("Sec", "U"),
+        ("Pyl", "O"),
+        ("Ter", "*"),
     ]
     .iter()
     .copied()
@@ -721,7 +773,12 @@ mod tests {
         let header = "#AlleleID\tType\tName\tGeneID\tGeneSymbol\tHGNC_ID\tClinicalSignificance\tClinSigSimple\tLastEvaluated\tRS# (dbSNP)\tnsv/esv (dbVar)\tRCVaccession\tPhenotypeIDS\tPhenotypeList\tOrigin\tOriginSimple\tAssembly\tChromosomeAccession\tChromosome\tStart\tStop\tReferenceAllele\tAlternateAllele\tCytogenetic\tReviewStatus\tNumberSubmitters\tGuidelines\tTestedInGTR\tOtherIDs\tSubmitterCategories\tVariationID\tPositionVCF\tReferenceAlleleVCF\tAlternateAlleleVCF\tSomaticClinicalImpact\tSomaticClinicalImpactLastEvaluated\tReviewStatusClinicalImpact\tOncogenicity\tOncogenicityLastEvaluated\tReviewStatusOncogenicity";
         let mut rows = vec![header.to_string()];
         // Deliberately out of position order in the input.
-        for (variation_id, pos_aa) in [(1, "p.Arg175His"), (2, "p.Gly245Ser"), (3, "p.Cys135Tyr"), (4, "p.Arg273Cys")] {
+        for (variation_id, pos_aa) in [
+            (1, "p.Arg175His"),
+            (2, "p.Gly245Ser"),
+            (3, "p.Cys135Tyr"),
+            (4, "p.Arg273Cys"),
+        ] {
             rows.push(format!(
                 "{vid}\tsingle nucleotide variant\tNM_000546.6(TP53):c.1A>T ({pos_aa})\t7157\tTP53\tHGNC:11998\tPathogenic\t1\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000017.11\t17\t1\t1\tG\tA\t17p13.1\tcriteria provided, multiple submitters, no conflicts\t5\t-\t-\t-\t1\t{vid}\t1\tG\tA\t-\t-\t-\t-\t-\t-",
                 vid = variation_id,
@@ -787,7 +844,11 @@ mod tests {
     fn test_index_drops_uncertain_and_conflicting_records() {
         let data = summary_rows(&[
             ("c.524G>A", "p.Arg175His", "Uncertain significance"),
-            ("c.733G>A", "p.Gly245Ser", "Conflicting classifications of pathogenicity"),
+            (
+                "c.733G>A",
+                "p.Gly245Ser",
+                "Conflicting classifications of pathogenicity",
+            ),
         ]);
         let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
         assert!(records.is_empty(), "got {records:?}");
@@ -810,12 +871,27 @@ mod tests {
     fn test_splice_index_records_canonical_dinucleotide_variants() {
         let data = splice_rows(&[
             ("c.376-2A>G", "Pathogenic", "GRCh38", "7676000", "A", "G"),
-            ("c.376-1G>A", "Likely pathogenic", "GRCh38", "7676001", "G", "A"),
+            (
+                "c.376-1G>A",
+                "Likely pathogenic",
+                "GRCh38",
+                "7676001",
+                "G",
+                "A",
+            ),
         ]);
         let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
         let tp53 = &records[0];
-        assert!(tp53.json.contains(r#""spliceIndexed":true"#), "{}", tp53.json);
-        assert!(tp53.json.contains(r#""spliceAssembly":"GRCh38""#), "{}", tp53.json);
+        assert!(
+            tp53.json.contains(r#""spliceIndexed":true"#),
+            "{}",
+            tp53.json
+        );
+        assert!(
+            tp53.json.contains(r#""spliceAssembly":"GRCh38""#),
+            "{}",
+            tp53.json
+        );
         assert!(
             tp53.json
                 .contains(r#"{"pos":7676000,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#),
@@ -823,8 +899,9 @@ mod tests {
             tp53.json
         );
         assert!(
-            tp53.json
-                .contains(r#"{"pos":7676001,"ref":"G","alt":"A","off":-1,"sig":"Likely_pathogenic"}"#),
+            tp53.json.contains(
+                r#"{"pos":7676001,"ref":"G","alt":"A","off":-1,"sig":"Likely_pathogenic"}"#
+            ),
             "{}",
             tp53.json
         );
@@ -868,8 +945,16 @@ mod tests {
 ";
         let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
         assert_eq!(records.len(), 1);
-        assert!(!records[0].json.contains("spliceIndexed"), "{}", records[0].json);
-        assert!(!records[0].json.contains("splicePositions"), "{}", records[0].json);
+        assert!(
+            !records[0].json.contains("spliceIndexed"),
+            "{}",
+            records[0].json
+        );
+        assert!(
+            !records[0].json.contains("splicePositions"),
+            "{}",
+            records[0].json
+        );
     }
 
     #[test]
@@ -880,8 +965,16 @@ mod tests {
         let data = splice_rows(&[("c.376-2A>G", "Pathogenic", "GRCh38", "7676000", "A", "G")]);
         let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
         assert_eq!(records.len(), 1);
-        assert!(records[0].json.contains(r#""proteinVariants":[]"#), "{}", records[0].json);
-        assert!(records[0].json.contains(r#""pos":7676000"#), "{}", records[0].json);
+        assert!(
+            records[0].json.contains(r#""proteinVariants":[]"#),
+            "{}",
+            records[0].json
+        );
+        assert!(
+            records[0].json.contains(r#""pos":7676000"#),
+            "{}",
+            records[0].json
+        );
     }
 
     #[test]
@@ -900,7 +993,10 @@ mod tests {
             json.find(r#""pos":7676020"#).unwrap(),
             json.find(r#""pos":7676030"#).unwrap(),
         );
-        assert!(a < b && b < c, "splicePositions must be sorted by position: {json}");
+        assert!(
+            a < b && b < c,
+            "splicePositions must be sorted by position: {json}"
+        );
     }
 
     #[test]
@@ -910,21 +1006,40 @@ mod tests {
         // to survive the dedup regardless of row order.
         for rows in [
             [
-                ("c.376-2A>G", "Likely pathogenic", "GRCh38", "7676000", "A", "G"),
+                (
+                    "c.376-2A>G",
+                    "Likely pathogenic",
+                    "GRCh38",
+                    "7676000",
+                    "A",
+                    "G",
+                ),
                 ("c.376-2A>G", "Pathogenic", "GRCh38", "7676000", "A", "G"),
             ],
             [
                 ("c.376-2A>G", "Pathogenic", "GRCh38", "7676000", "A", "G"),
-                ("c.376-2A>G", "Likely pathogenic", "GRCh38", "7676000", "A", "G"),
+                (
+                    "c.376-2A>G",
+                    "Likely pathogenic",
+                    "GRCh38",
+                    "7676000",
+                    "A",
+                    "G",
+                ),
             ],
         ] {
-            let records = parse_clinvar_protein_vcf(splice_rows(&rows).as_bytes(), "GRCh38").unwrap();
+            let records =
+                parse_clinvar_protein_vcf(splice_rows(&rows).as_bytes(), "GRCh38").unwrap();
             assert!(
                 records[0].json.contains(r#""off":-2,"sig":"Pathogenic""#),
                 "{}",
                 records[0].json
             );
-            assert!(!records[0].json.contains("Likely_pathogenic"), "{}", records[0].json);
+            assert!(
+                !records[0].json.contains("Likely_pathogenic"),
+                "{}",
+                records[0].json
+            );
         }
     }
 

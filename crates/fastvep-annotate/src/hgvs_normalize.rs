@@ -197,52 +197,46 @@ pub fn three_prime_shift_intronic(
             let mut e = end;
 
             match strand {
-                fastvep_core::Strand::Forward => {
-                    loop {
-                        let next_pos = e + 1;
-                        if next_pos > intron_genomic_end {
-                            break;
-                        }
-                        let next_base = match seq_provider.fetch_sequence(chrom, next_pos, next_pos)
-                        {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        let first_base = match seq_provider.fetch_sequence(chrom, s, s) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        if next_base == first_base {
-                            s += 1;
-                            e += 1;
-                        } else {
-                            break;
-                        }
+                fastvep_core::Strand::Forward => loop {
+                    let next_pos = e + 1;
+                    if next_pos > intron_genomic_end {
+                        break;
                     }
-                }
-                fastvep_core::Strand::Reverse => {
-                    loop {
-                        if s == 0 || s - 1 < intron_genomic_start {
-                            break;
-                        }
-                        let prev_pos = s - 1;
-                        let prev_base =
-                            match seq_provider.fetch_sequence(chrom, prev_pos, prev_pos) {
-                                Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                                _ => break,
-                            };
-                        let last_base = match seq_provider.fetch_sequence(chrom, e, e) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        if prev_base == last_base {
-                            s -= 1;
-                            e -= 1;
-                        } else {
-                            break;
-                        }
+                    let next_base = match seq_provider.fetch_sequence(chrom, next_pos, next_pos) {
+                        Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                        _ => break,
+                    };
+                    let first_base = match seq_provider.fetch_sequence(chrom, s, s) {
+                        Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                        _ => break,
+                    };
+                    if next_base == first_base {
+                        s += 1;
+                        e += 1;
+                    } else {
+                        break;
                     }
-                }
+                },
+                fastvep_core::Strand::Reverse => loop {
+                    if s == 0 || s - 1 < intron_genomic_start {
+                        break;
+                    }
+                    let prev_pos = s - 1;
+                    let prev_base = match seq_provider.fetch_sequence(chrom, prev_pos, prev_pos) {
+                        Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                        _ => break,
+                    };
+                    let last_base = match seq_provider.fetch_sequence(chrom, e, e) {
+                        Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                        _ => break,
+                    };
+                    if prev_base == last_base {
+                        s -= 1;
+                        e -= 1;
+                    } else {
+                        break;
+                    }
+                },
             }
             (s, e)
         }
@@ -250,8 +244,7 @@ pub fn three_prime_shift_intronic(
         (Allele::Deletion, Allele::Sequence(ins_bases)) if !ins_bases.is_empty() => {
             let ins_len = ins_bases.len();
             let mut pos = start;
-            let genomic_ins: Vec<u8> =
-                ins_bases.iter().map(|b| b.to_ascii_uppercase()).collect();
+            let genomic_ins: Vec<u8> = ins_bases.iter().map(|b| b.to_ascii_uppercase()).collect();
 
             match strand {
                 fastvep_core::Strand::Forward => {
@@ -260,11 +253,10 @@ pub fn three_prime_shift_intronic(
                         if pos > intron_genomic_end {
                             break;
                         }
-                        let check_base =
-                            match seq_provider.fetch_sequence(chrom, pos, pos) {
-                                Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                                _ => break,
-                            };
+                        let check_base = match seq_provider.fetch_sequence(chrom, pos, pos) {
+                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                            _ => break,
+                        };
                         let idx = (shift_count as usize) % ins_len;
                         if check_base == genomic_ins[idx] {
                             pos += 1;

@@ -13,8 +13,8 @@
 
 use fastvep_cache::annotation::AnnotationProvider;
 use fastvep_sa::common::AnnotationRecord;
-use fastvep_sa::index::IndexHeader;
 use fastvep_sa::fields::{Field, FieldType};
+use fastvep_sa::index::IndexHeader;
 use fastvep_sa::interval::{IntervalHeader, IntervalIndex};
 use fastvep_sa::reader::SaReader;
 use fastvep_sa::reader_v2::Osa2Reader;
@@ -187,10 +187,16 @@ fn resolving_a_chromosome_allocates_nothing_on_any_reader() {
         // build the alias Vec before discovering the miss.
         let allocs = allocations_during(|| {
             for _ in 0..1_000 {
-                assert!(reader.annotate_position("2", 10_000, "A", "G").unwrap().is_none());
+                assert!(reader
+                    .annotate_position("2", 10_000, "A", "G")
+                    .unwrap()
+                    .is_none());
             }
         });
-        assert_eq!(allocs, 0, "{name}: aliased absent-contig queries allocated {allocs} times");
+        assert_eq!(
+            allocs, 0,
+            "{name}: aliased absent-contig queries allocated {allocs} times"
+        );
 
         // A hit necessarily allocates (it returns an owned JSON String), but
         // resolving via an alias must cost the same as the canonical spelling.
@@ -204,7 +210,10 @@ fn resolving_a_chromosome_allocates_nothing_on_any_reader() {
         });
         let aliased = allocations_during(|| {
             for _ in 0..1_000 {
-                assert!(reader.annotate_position("1", 10_000, "A", "G").unwrap().is_some());
+                assert!(reader
+                    .annotate_position("1", 10_000, "A", "G")
+                    .unwrap()
+                    .is_some());
             }
         });
         assert_eq!(

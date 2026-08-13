@@ -273,7 +273,8 @@ impl<R: BufRead> Iterator for AlphaMissenseV2Iter<'_, R> {
             };
             let values = vec![
                 self.fields[SCORE_FIELD].encode_float(row.score),
-                row.class_idx.unwrap_or(self.fields[CLASS_FIELD].missing_value),
+                row.class_idx
+                    .unwrap_or(self.fields[CLASS_FIELD].missing_value),
             ];
             return Some(Ok(Osa2Record {
                 chrom,
@@ -297,7 +298,11 @@ pub fn parse_alphamissense<R: BufRead>(
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records: Vec<_> =
         iter_alphamissense_tsv(reader, chrom_to_idx).collect::<Result<_>>()?;
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
@@ -333,10 +338,26 @@ chr1\t69095\tT\tC\thg38\tQ8NH21\tENST00000335137.4\tF2L\t0.4500\tambiguous
     fn v1_json_carries_score_and_class() {
         let recs = parse_alphamissense(SAMPLE.as_bytes(), &chrom_map()).unwrap();
         // Score is emitted in scientific notation (shared float formatting).
-        assert!(recs[0].json.contains("\"amPathogenicity\":"), "{}", recs[0].json);
-        assert!(recs[0].json.contains("\"amClass\":\"likely_benign\""), "{}", recs[0].json);
-        assert!(recs[1].json.contains("\"amClass\":\"likely_pathogenic\""), "{}", recs[1].json);
-        assert!(recs[2].json.contains("\"amClass\":\"ambiguous\""), "{}", recs[2].json);
+        assert!(
+            recs[0].json.contains("\"amPathogenicity\":"),
+            "{}",
+            recs[0].json
+        );
+        assert!(
+            recs[0].json.contains("\"amClass\":\"likely_benign\""),
+            "{}",
+            recs[0].json
+        );
+        assert!(
+            recs[1].json.contains("\"amClass\":\"likely_pathogenic\""),
+            "{}",
+            recs[1].json
+        );
+        assert!(
+            recs[2].json.contains("\"amClass\":\"ambiguous\""),
+            "{}",
+            recs[2].json
+        );
     }
 
     #[test]
@@ -347,7 +368,10 @@ chr1\t69095\tT\tC\thg38\tQ8NH21\tENST00000335137.4\tF2L\t0.4500\tambiguous
             .unwrap();
         assert_eq!(recs.len(), 3);
         let fields = alphamissense_osa2_fields();
-        assert_eq!(recs[0].values[SCORE_FIELD], fields[SCORE_FIELD].encode_float(0.2937));
+        assert_eq!(
+            recs[0].values[SCORE_FIELD],
+            fields[SCORE_FIELD].encode_float(0.2937)
+        );
         assert_eq!(recs[0].values[CLASS_FIELD], 0); // likely_benign
         assert_eq!(recs[1].values[CLASS_FIELD], 2); // likely_pathogenic
         assert_eq!(recs[2].values[CLASS_FIELD], 1); // ambiguous
@@ -368,10 +392,7 @@ chr1\t69095\tT\tC\thg38\tQ8NH21\tENST00000335137.4\tF2L\t0.4500\tambiguous
         for (r1, r2) in v1.iter().zip(v2.iter()) {
             let score = format_value(&fields[SCORE_FIELD], r2.values[SCORE_FIELD], None);
             let class = format_value(&fields[CLASS_FIELD], r2.values[CLASS_FIELD], Some(&table));
-            let expected = format!(
-                "{{\"amPathogenicity\":{},\"amClass\":{}}}",
-                score, class
-            );
+            let expected = format!("{{\"amPathogenicity\":{},\"amClass\":{}}}", score, class);
             assert_eq!(r1.json, expected);
         }
     }

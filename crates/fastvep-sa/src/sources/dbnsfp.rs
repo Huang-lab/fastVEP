@@ -94,7 +94,11 @@ pub fn parse_dbnsfp<R: BufRead>(
                 if let Ok(s) = score.parse::<f64>() {
                     let pred = cols.sift_pred.and_then(|i| {
                         let p = fields[i].split(';').next()?;
-                        if p == "." { None } else { Some(p) }
+                        if p == "." {
+                            None
+                        } else {
+                            Some(p)
+                        }
                     });
                     let pred_str = match pred {
                         Some("D") => "deleterious",
@@ -118,7 +122,11 @@ pub fn parse_dbnsfp<R: BufRead>(
                 if let Ok(s) = score.parse::<f64>() {
                     let pred = cols.polyphen_pred.and_then(|i| {
                         let p = fields[i].split(';').next()?;
-                        if p == "." { None } else { Some(p) }
+                        if p == "." {
+                            None
+                        } else {
+                            Some(p)
+                        }
                     });
                     let pred_str = match pred {
                         Some("D") => "probably_damaging",
@@ -148,7 +156,11 @@ pub fn parse_dbnsfp<R: BufRead>(
         });
     }
 
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
@@ -187,7 +199,15 @@ impl DbNsfpColumns {
 
     fn max_idx(&self) -> usize {
         let mut m = self.alt;
-        for i in [self.sift_score, self.sift_pred, self.polyphen_score, self.polyphen_pred].into_iter().flatten() {
+        for i in [
+            self.sift_score,
+            self.sift_pred,
+            self.polyphen_score,
+            self.polyphen_pred,
+        ]
+        .into_iter()
+        .flatten()
+        {
             m = m.max(i);
         }
         m

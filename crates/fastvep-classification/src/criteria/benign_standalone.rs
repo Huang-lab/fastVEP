@@ -10,10 +10,7 @@ use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 /// p.Cys282Tyr — hereditary hemochromatosis; F5 / GJB2 founder alleles).
 /// The exception list is configurable via `config.ba1_exceptions` so VCEPs
 /// can extend it.
-pub fn evaluate_ba1(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+pub fn evaluate_ba1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     // Per-gene where a VCEP has published one, global otherwise.
     let threshold = config.effective_ba1_threshold(input.gene_symbol.as_deref());
 
@@ -56,7 +53,10 @@ pub fn evaluate_ba1(
     if let Some(blocker) = super::frequency_gate::benign_blocker(input, config) {
         blocker.record(&mut details);
         super::frequency_gate::note_withheld_benign_frequency(
-            input, config, threshold, &mut details,
+            input,
+            config,
+            threshold,
+            &mut details,
         );
         return EvidenceCriterion {
             code: "BA1".to_string(),
@@ -121,14 +121,30 @@ pub fn evaluate_ba1(
 
             // Add per-population breakdown for transparency
             let mut pop_afs = serde_json::Map::new();
-            if let Some(v) = gnomad.all_af { pop_afs.insert("all".into(), serde_json::json!(v)); }
-            if let Some(v) = gnomad.afr_af { pop_afs.insert("afr".into(), serde_json::json!(v)); }
-            if let Some(v) = gnomad.nfe_af { pop_afs.insert("nfe".into(), serde_json::json!(v)); }
-            if let Some(v) = gnomad.eas_af { pop_afs.insert("eas".into(), serde_json::json!(v)); }
-            if let Some(v) = gnomad.amr_af { pop_afs.insert("amr".into(), serde_json::json!(v)); }
-            if let Some(v) = gnomad.asj_af { pop_afs.insert("asj".into(), serde_json::json!(v)); }
-            if let Some(v) = gnomad.fin_af { pop_afs.insert("fin".into(), serde_json::json!(v)); }
-            if let Some(v) = gnomad.sas_af { pop_afs.insert("sas".into(), serde_json::json!(v)); }
+            if let Some(v) = gnomad.all_af {
+                pop_afs.insert("all".into(), serde_json::json!(v));
+            }
+            if let Some(v) = gnomad.afr_af {
+                pop_afs.insert("afr".into(), serde_json::json!(v));
+            }
+            if let Some(v) = gnomad.nfe_af {
+                pop_afs.insert("nfe".into(), serde_json::json!(v));
+            }
+            if let Some(v) = gnomad.eas_af {
+                pop_afs.insert("eas".into(), serde_json::json!(v));
+            }
+            if let Some(v) = gnomad.amr_af {
+                pop_afs.insert("amr".into(), serde_json::json!(v));
+            }
+            if let Some(v) = gnomad.asj_af {
+                pop_afs.insert("asj".into(), serde_json::json!(v));
+            }
+            if let Some(v) = gnomad.fin_af {
+                pop_afs.insert("fin".into(), serde_json::json!(v));
+            }
+            if let Some(v) = gnomad.sas_af {
+                pop_afs.insert("sas".into(), serde_json::json!(v));
+            }
             details.insert("population_afs".into(), serde_json::Value::Object(pop_afs));
 
             if af > threshold {
@@ -149,10 +165,16 @@ pub fn evaluate_ba1(
                 )
             }
         } else {
-            (false, "gnomAD data present but no allele frequency values".to_string())
+            (
+                false,
+                "gnomAD data present but no allele frequency values".to_string(),
+            )
         }
     } else {
-        (false, "No gnomAD population frequency data available".to_string())
+        (
+            false,
+            "No gnomAD population frequency data available".to_string(),
+        )
     };
 
     EvidenceCriterion {
@@ -170,8 +192,8 @@ pub fn evaluate_ba1(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::minimal_input;
     use crate::sa_extract::GnomadData;
+    use crate::test_support::minimal_input;
 
     #[test]
     fn test_ba1_common_variant() {
@@ -224,7 +246,10 @@ mod tests {
             ..minimal_input()
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
-        assert!(!result.met, "BA1 must not fire for HFE c.845G>A (Ghosh 2018 exception)");
+        assert!(
+            !result.met,
+            "BA1 must not fire for HFE c.845G>A (Ghosh 2018 exception)"
+        );
         assert!(result.evaluated);
         assert!(result.summary.contains("exception"));
     }
@@ -235,7 +260,10 @@ mod tests {
         let input = ClassificationInput {
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: Some("hfe".to_string()),
-            gnomad: Some(GnomadData { all_af: Some(0.10), ..Default::default() }),
+            gnomad: Some(GnomadData {
+                all_af: Some(0.10),
+                ..Default::default()
+            }),
             hgvs_c: Some("C.845G>A".to_string()),
             ..minimal_input()
         };
@@ -250,7 +278,11 @@ mod tests {
         let input = ClassificationInput {
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: Some("HFE".to_string()),
-            gnomad: Some(GnomadData { all_af: Some(0.10), all_an: Some(100_000), ..Default::default() }),
+            gnomad: Some(GnomadData {
+                all_af: Some(0.10),
+                all_an: Some(100_000),
+                ..Default::default()
+            }),
             hgvs_c: Some("c.999A>T".to_string()),
             ..minimal_input()
         };
@@ -358,17 +390,80 @@ mod tests {
     fn test_every_ghosh_2018_exception_blocks_ba1_in_pipeline_form() {
         // (gene, transcript-prefixed HGVS as fastVEP emits it, chrom, pos, ref, alt)
         let cases = [
-            ("ACAD9", "ENST00000308982.12:c.-45_-44insTAAG", "3", 128_879_647, "C", "CTAAG"),
-            ("GJB2", "ENST00000382848.5:c.109G>A", "13", 20_189_473, "C", "T"),
-            ("HFE", "ENST00000357618.10:c.187C>G", "6", 26_090_951, "C", "G"),
-            ("HFE", "ENST00000357618.10:c.845G>A", "6", 26_092_913, "G", "A"),
-            ("MEFV", "ENST00000219596.6:c.1105C>T", "16", 3_249_586, "G", "A"),
-            ("MEFV", "ENST00000219596.6:c.1223G>A", "16", 3_249_468, "C", "T"),
-            ("PIBF1", "ENST00000326291.11:c.1214G>A", "13", 72_835_359, "G", "A"),
-            ("ACADS", "ENST00000242592.9:c.511C>T", "12", 120_737_875, "C", "T"),
+            (
+                "ACAD9",
+                "ENST00000308982.12:c.-45_-44insTAAG",
+                "3",
+                128_879_647,
+                "C",
+                "CTAAG",
+            ),
+            (
+                "GJB2",
+                "ENST00000382848.5:c.109G>A",
+                "13",
+                20_189_473,
+                "C",
+                "T",
+            ),
+            (
+                "HFE",
+                "ENST00000357618.10:c.187C>G",
+                "6",
+                26_090_951,
+                "C",
+                "G",
+            ),
+            (
+                "HFE",
+                "ENST00000357618.10:c.845G>A",
+                "6",
+                26_092_913,
+                "G",
+                "A",
+            ),
+            (
+                "MEFV",
+                "ENST00000219596.6:c.1105C>T",
+                "16",
+                3_249_586,
+                "G",
+                "A",
+            ),
+            (
+                "MEFV",
+                "ENST00000219596.6:c.1223G>A",
+                "16",
+                3_249_468,
+                "C",
+                "T",
+            ),
+            (
+                "PIBF1",
+                "ENST00000326291.11:c.1214G>A",
+                "13",
+                72_835_359,
+                "G",
+                "A",
+            ),
+            (
+                "ACADS",
+                "ENST00000242592.9:c.511C>T",
+                "12",
+                120_737_875,
+                "C",
+                "T",
+            ),
             // BTD is the one no HGVS match can reach: Ghosh lists c.1330G>C on
             // NM_000060.4, fastVEP reports c.1270G>C on the Ensembl canonical.
-            ("BTD", "ENST00000643237.3:c.1270G>C", "3", 15_645_186, "G", "C"),
+            (
+                "BTD",
+                "ENST00000643237.3:c.1270G>C",
+                "3",
+                15_645_186,
+                "G",
+                "C",
+            ),
         ];
         let cfg = AcmgConfig::default();
         for (gene, hgvs, chrom, pos, ref_allele, alt) in cases {
@@ -408,7 +503,12 @@ mod tests {
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: Some("BTD".to_string()),
             hgvs_c: None,
-            variant_coordinates: Some(("chr3".to_string(), 15_645_186, "G".to_string(), "C".to_string())),
+            variant_coordinates: Some((
+                "chr3".to_string(),
+                15_645_186,
+                "G".to_string(),
+                "C".to_string(),
+            )),
             gnomad: Some(GnomadData {
                 all_af: Some(0.20),
                 all_an: Some(100_000),
@@ -419,7 +519,11 @@ mod tests {
         };
         let result = evaluate_ba1(&input, &AcmgConfig::default());
         assert!(!result.met, "{}", result.summary);
-        assert!(result.summary.contains("exception list"), "{}", result.summary);
+        assert!(
+            result.summary.contains("exception list"),
+            "{}",
+            result.summary
+        );
     }
 
     #[test]
@@ -429,7 +533,12 @@ mod tests {
             impact: fastvep_core::Impact::Modifier,
             gene_symbol: Some("BTD".to_string()),
             hgvs_c: Some("ENST00000643237.3:c.1271G>C".to_string()),
-            variant_coordinates: Some(("3".to_string(), 15_645_187, "G".to_string(), "C".to_string())),
+            variant_coordinates: Some((
+                "3".to_string(),
+                15_645_187,
+                "G".to_string(),
+                "C".to_string(),
+            )),
             gnomad: Some(GnomadData {
                 all_af: Some(0.20),
                 all_an: Some(100_000),

@@ -48,9 +48,15 @@ pub struct Field {
     pub description: String,
 }
 
-fn default_multiplier() -> u32 { 1 }
-fn default_missing() -> u32 { u32::MAX }
-fn default_missing_string() -> String { ".".into() }
+fn default_multiplier() -> u32 {
+    1
+}
+fn default_missing() -> u32 {
+    u32::MAX
+}
+fn default_missing_string() -> String {
+    ".".into()
+}
 
 impl Field {
     /// Encode a float value as a u32 using this field's multiplier.
@@ -109,7 +115,11 @@ impl Field {
             stored as f64
         };
         let m = self.multiplier as f64;
-        if m == 0.0 { raw } else { raw / m }
+        if m == 0.0 {
+            raw
+        } else {
+            raw / m
+        }
     }
 
     /// Encode an integer value, optionally with zigzag.
@@ -166,8 +176,11 @@ pub fn format_value(field: &Field, stored: u32, strings: Option<&[String]>) -> S
     match field.ftype {
         FieldType::Float => {
             let val = field.decode_float(stored);
-            if val.abs() < 1e-10 { "0".into() }
-            else { format!("{:.6e}", val) }
+            if val.abs() < 1e-10 {
+                "0".into()
+            } else {
+                format!("{:.6e}", val)
+            }
         }
         FieldType::Integer => {
             let val = field.decode_int(stored);
@@ -186,7 +199,11 @@ pub fn format_value(field: &Field, stored: u32, strings: Option<&[String]>) -> S
             }
         }
         FieldType::Flag => {
-            if stored != 0 { "true".into() } else { "false".into() }
+            if stored != 0 {
+                "true".into()
+            } else {
+                "false".into()
+            }
         }
         FieldType::JsonBlob => {
             // JsonBlob values are stored separately, not in u32 arrays
@@ -202,9 +219,14 @@ mod tests {
     #[test]
     fn test_float_round_trip() {
         let field = Field {
-            field: "AF".into(), alias: "af".into(), ftype: FieldType::Float,
-            multiplier: 2_000_000, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: String::new(),
+            field: "AF".into(),
+            alias: "af".into(),
+            ftype: FieldType::Float,
+            multiplier: 2_000_000,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: String::new(),
         };
         let original = 0.001234;
         let stored = field.encode_float(original);
@@ -215,9 +237,14 @@ mod tests {
     #[test]
     fn test_zigzag_float() {
         let field = Field {
-            field: "score".into(), alias: "score".into(), ftype: FieldType::Float,
-            multiplier: 10_000, zigzag: true, missing_value: u32::MAX,
-            missing_string: ".".into(), description: String::new(),
+            field: "score".into(),
+            alias: "score".into(),
+            ftype: FieldType::Float,
+            multiplier: 10_000,
+            zigzag: true,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: String::new(),
         };
         let original = -2.5;
         let stored = field.encode_float(original);
@@ -228,9 +255,14 @@ mod tests {
     #[test]
     fn test_missing_value() {
         let field = Field {
-            field: "AF".into(), alias: "af".into(), ftype: FieldType::Float,
-            multiplier: 2_000_000, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: String::new(),
+            field: "AF".into(),
+            alias: "af".into(),
+            ftype: FieldType::Float,
+            multiplier: 2_000_000,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: String::new(),
         };
         assert!(field.decode_float(u32::MAX).is_nan());
         assert_eq!(format_value(&field, u32::MAX, None), "null");
@@ -239,9 +271,14 @@ mod tests {
     #[test]
     fn test_encode_nan_and_inf_become_missing() {
         let field = Field {
-            field: "AF".into(), alias: "af".into(), ftype: FieldType::Float,
-            multiplier: 2_000_000, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: String::new(),
+            field: "AF".into(),
+            alias: "af".into(),
+            ftype: FieldType::Float,
+            multiplier: 2_000_000,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: String::new(),
         };
         assert_eq!(field.encode_float(f64::NAN), u32::MAX);
         assert_eq!(field.encode_float(f64::INFINITY), u32::MAX);
@@ -255,9 +292,14 @@ mod tests {
         // containing a quote or backslash must not break out of the emitted
         // JSON string.
         let field = Field {
-            field: "cat".into(), alias: "cat".into(), ftype: FieldType::Categorical,
-            multiplier: 1, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: String::new(),
+            field: "cat".into(),
+            alias: "cat".into(),
+            ftype: FieldType::Categorical,
+            multiplier: 1,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: String::new(),
         };
         let strings = vec!["evil\"quote\\backslash".to_string()];
         let json_fragment = format_value(&field, 0, Some(&strings));
@@ -275,21 +317,35 @@ mod tests {
         // Without bounds, value * multiplier may saturate to u32::MAX and
         // collide with the default missing sentinel.
         let field = Field {
-            field: "x".into(), alias: "x".into(), ftype: FieldType::Float,
-            multiplier: 2_000_000, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: String::new(),
+            field: "x".into(),
+            alias: "x".into(),
+            ftype: FieldType::Float,
+            multiplier: 2_000_000,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: String::new(),
         };
         let encoded = field.encode_float(1e30);
-        assert_ne!(encoded, u32::MAX, "saturation must not collide with missing");
+        assert_ne!(
+            encoded,
+            u32::MAX,
+            "saturation must not collide with missing"
+        );
         assert!(encoded < u32::MAX);
     }
 
     #[test]
     fn test_encode_int_negative_without_zigzag_treated_missing() {
         let field = Field {
-            field: "n".into(), alias: "n".into(), ftype: FieldType::Integer,
-            multiplier: 1, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: String::new(),
+            field: "n".into(),
+            alias: "n".into(),
+            ftype: FieldType::Integer,
+            multiplier: 1,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: String::new(),
         };
         assert_eq!(field.encode_int(-5), u32::MAX);
         assert_eq!(field.encode_int(0), 0);
@@ -299,9 +355,14 @@ mod tests {
     #[test]
     fn test_categorical() {
         let field = Field {
-            field: "sig".into(), alias: "sig".into(), ftype: FieldType::Categorical,
-            multiplier: 1, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: String::new(),
+            field: "sig".into(),
+            alias: "sig".into(),
+            ftype: FieldType::Categorical,
+            multiplier: 1,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: String::new(),
         };
         let strings = vec!["Benign".to_string(), "Pathogenic".to_string()];
         assert_eq!(format_value(&field, 0, Some(&strings)), "\"Benign\"");

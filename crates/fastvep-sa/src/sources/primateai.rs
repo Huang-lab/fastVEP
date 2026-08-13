@@ -77,7 +77,11 @@ pub fn parse_primateai<R: BufRead>(
         });
     }
 
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 

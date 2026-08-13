@@ -21,19 +21,34 @@ use std::io::BufRead;
 pub fn topmed_osa2_fields() -> Vec<Field> {
     vec![
         Field {
-            field: "allAf".into(), alias: "allAf".into(), ftype: FieldType::Float,
-            multiplier: 2_000_000, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: "Global allele frequency".into(),
+            field: "allAf".into(),
+            alias: "allAf".into(),
+            ftype: FieldType::Float,
+            multiplier: 2_000_000,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: "Global allele frequency".into(),
         },
         Field {
-            field: "allAc".into(), alias: "allAc".into(), ftype: FieldType::Integer,
-            multiplier: 1, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: "Allele count".into(),
+            field: "allAc".into(),
+            alias: "allAc".into(),
+            ftype: FieldType::Integer,
+            multiplier: 1,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: "Allele count".into(),
         },
         Field {
-            field: "allAn".into(), alias: "allAn".into(), ftype: FieldType::Integer,
-            multiplier: 1, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: "Total allele number".into(),
+            field: "allAn".into(),
+            alias: "allAn".into(),
+            ftype: FieldType::Integer,
+            multiplier: 1,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: "Total allele number".into(),
         },
     ]
 }
@@ -161,7 +176,11 @@ pub fn parse_topmed_vcf<R: BufRead>(
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records: Vec<_> = iter_topmed_vcf(reader, chrom_to_idx).collect::<Result<_>>()?;
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 

@@ -468,7 +468,11 @@ fn annotate_vcf_replaces_existing_fastvep_info() {
     .unwrap();
 
     let annotated = fs::read_to_string(output_vcf).unwrap();
-    assert_eq!(annotated.matches("##INFO=<ID=CSQ,").count(), 1, "{annotated}");
+    assert_eq!(
+        annotated.matches("##INFO=<ID=CSQ,").count(),
+        1,
+        "{annotated}"
+    );
     assert_eq!(
         annotated.matches("##INFO=<ID=SpliceAI,").count(),
         1,
@@ -628,10 +632,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
     );
 
     // At least one data row carries a populated FV_CLINVAR value at position 25000.
-    let data_rows: Vec<&str> = annotated
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .collect();
+    let data_rows: Vec<&str> = annotated.lines().filter(|l| !l.starts_with('#')).collect();
     assert!(!data_rows.is_empty(), "tab output must contain data rows");
     let pos25k = data_rows
         .iter()
@@ -653,8 +654,16 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
     );
 
     // Sanity: no raw JSON leaked into the tab file.
-    assert!(!annotated.contains('{'), "tab output must not contain raw JSON:\n{}", annotated);
-    assert!(!annotated.contains('}'), "tab output must not contain raw JSON:\n{}", annotated);
+    assert!(
+        !annotated.contains('{'),
+        "tab output must not contain raw JSON:\n{}",
+        annotated
+    );
+    assert!(
+        !annotated.contains('}'),
+        "tab output must not contain raw JSON:\n{}",
+        annotated
+    );
 }
 
 /// Build a minimal ClinVar SA database in a temp dir and return its path.
@@ -801,7 +810,12 @@ fn sa_only_tab_emits_minimal_columns() {
     assert!(!data_rows.is_empty(), "expected sa-only tab data rows");
     for row in &data_rows {
         let cols: Vec<&str> = row.split('\t').collect();
-        assert_eq!(cols.len(), 4, "sa-only tab row must have 4 columns: {}", row);
+        assert_eq!(
+            cols.len(),
+            4,
+            "sa-only tab row must have 4 columns: {}",
+            row
+        );
     }
     let pos25k = data_rows
         .iter()
@@ -889,7 +903,10 @@ fn sa_only_json_omits_transcript_consequences() {
         .as_array()
         .expect("clinvar.significance should be an array");
     assert_eq!(
-        significance.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+        significance
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>(),
         vec!["Pathogenic"],
         "clinvar.significance should be exactly [\"Pathogenic\"]: {}",
         clinvar
@@ -904,7 +921,10 @@ fn sa_only_json_omits_transcript_consequences() {
         .as_array()
         .expect("clinvar.phenotypes should be an array");
     assert_eq!(
-        phenotypes.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+        phenotypes
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>(),
         vec!["Breast_cancer"],
         "clinvar.phenotypes mismatch: {}",
         clinvar
@@ -1020,7 +1040,12 @@ fn sa_only_multi_allelic_emits_per_alt_rows_with_independent_sa_columns() {
         .lines()
         .filter(|l| !l.starts_with('#') && l.contains("1:30000\t"))
         .collect();
-    assert_eq!(rows_30k.len(), 2, "expected one row per ALT, got: {:?}", rows_30k);
+    assert_eq!(
+        rows_30k.len(),
+        2,
+        "expected one row per ALT, got: {:?}",
+        rows_30k
+    );
 
     let mut t_row = None;
     let mut a_row = None;
@@ -1165,10 +1190,18 @@ fn sa_only_strips_csq_when_in_middle_of_info_field() {
         .lines()
         .find(|l| !l.starts_with('#'))
         .expect("expected a data row");
-    assert!(!row.contains("CSQ=stale"), "stale CSQ in middle not stripped: {}", row);
+    assert!(
+        !row.contains("CSQ=stale"),
+        "stale CSQ in middle not stripped: {}",
+        row
+    );
     assert!(row.contains("AC=1"), "AC must be preserved: {}", row);
     assert!(row.contains("AF=0.5"), "AF must be preserved: {}", row);
-    assert!(row.contains("FV_CLINVAR="), "FV_CLINVAR must still be added: {}", row);
+    assert!(
+        row.contains("FV_CLINVAR="),
+        "FV_CLINVAR must still be added: {}",
+        row
+    );
 }
 
 #[test]
@@ -1483,4 +1516,3 @@ min_dp = 8
         row_30k
     );
 }
-

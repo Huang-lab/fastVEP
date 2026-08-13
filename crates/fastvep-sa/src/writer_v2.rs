@@ -50,7 +50,11 @@ pub struct Osa2Writer {
 impl Osa2Writer {
     pub fn new(metadata: Osa2Metadata, fields: Vec<Field>) -> Self {
         let string_tables = fields.iter().map(|_| Vec::new()).collect();
-        Self { metadata, fields, string_tables }
+        Self {
+            metadata,
+            fields,
+            string_tables,
+        }
     }
 
     /// Set the string table for a categorical field.
@@ -64,11 +68,7 @@ impl Osa2Writer {
     ///
     /// Records MUST be sorted by (chrom, position) so that all records for a
     /// given (chrom, chunk) are contiguous.
-    pub fn write_all<W: Write + Seek>(
-        &self,
-        writer: W,
-        records: &[Osa2Record],
-    ) -> Result<()> {
+    pub fn write_all<W: Write + Seek>(&self, writer: W, records: &[Osa2Record]) -> Result<()> {
         let mut zip = zip::ZipWriter::new(writer);
         let options = default_options();
 
@@ -219,7 +219,11 @@ fn write_chunk_entries<W: Write + Seek>(
             // failure as the non-ACGT case rather than dropping the record.
             match kmer16::encode_var(&record.ref_allele, &record.alt_allele) {
                 Some(sequence) => long_entries.push((
-                    LongVariant { position: record.position, idx: 0, sequence },
+                    LongVariant {
+                        position: record.position,
+                        idx: 0,
+                        sequence,
+                    },
                     local_idx,
                 )),
                 None => other_entries.push((
@@ -325,7 +329,13 @@ fn write_chunk_entries<W: Write + Seek>(
         }
         let values: Vec<u32> = value_order
             .iter()
-            .map(|&li| chunk_records[li].values.get(fi).copied().unwrap_or(field.missing_value))
+            .map(|&li| {
+                chunk_records[li]
+                    .values
+                    .get(fi)
+                    .copied()
+                    .unwrap_or(field.missing_value)
+            })
             .collect();
         zip.start_file(format!("{}{}.bin", prefix, field.alias), options)?;
         write_u32_array(zip, &values)?;
@@ -441,7 +451,12 @@ impl<W: Write + Seek> Osa2StreamWriter<W> {
     /// Flush the final chunk, write string tables, and finalize the archive.
     pub fn finish(mut self) -> Result<()> {
         self.flush_current()?;
-        write_string_tables(&mut self.zip, self.options, &self.fields, &self.string_tables)?;
+        write_string_tables(
+            &mut self.zip,
+            self.options,
+            &self.fields,
+            &self.string_tables,
+        )?;
         // Flush the inner writer explicitly — `ZipWriter::finish` hands it back
         // unflushed, and a `BufWriter`'s Drop swallows flush errors, which would
         // silently leave a truncated `.osa2` on a full disk. See `write_all`.

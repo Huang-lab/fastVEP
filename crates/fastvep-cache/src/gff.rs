@@ -29,9 +29,10 @@ pub fn parse_gff3<R: Read>(reader: R) -> Result<Vec<Transcript>> {
 /// indistinguishable from a single-source one.
 pub fn parse_gff3_with_source<R: Read>(reader: R, source: &str) -> Result<Vec<Transcript>> {
     let buf = BufReader::new(reader);
-    let lines = buf.lines().enumerate().map(|(i, line)| {
-        line.map_err(|e| anyhow::anyhow!("Reading GFF3 line {}: {}", i + 1, e))
-    });
+    let lines = buf
+        .lines()
+        .enumerate()
+        .map(|(i, line)| line.map_err(|e| anyhow::anyhow!("Reading GFF3 line {}: {}", i + 1, e)));
     let mut trs = parse_gff3_lines(lines)?;
     for tr in &mut trs {
         tr.source = Some(source.to_string());
@@ -68,19 +69,20 @@ fn parse_gff3_indexed_inner(
     regions: &[(String, u64, u64)],
 ) -> Result<Vec<Transcript>> {
     use noodles_bgzf as bgzf;
-    use noodles_core::Position;
     use noodles_core::region::Interval;
+    use noodles_core::Position;
     use noodles_csi::binning_index::BinningIndex;
     use noodles_tabix as tabix;
-
 
     let tbi_path = format!("{}.tbi", gff3_gz_path.display());
     let index = tabix::fs::read(&tbi_path)
         .map_err(|e| anyhow::anyhow!("Reading tabix index {}: {}", tbi_path, e))?;
 
-    let header = index.header()
+    let header = index
+        .header()
         .ok_or_else(|| anyhow::anyhow!("Missing tabix header"))?;
-    let ref_names: Vec<String> = header.reference_sequence_names()
+    let ref_names: Vec<String> = header
+        .reference_sequence_names()
         .iter()
         .map(|n| n.to_string())
         .collect();
@@ -90,25 +92,22 @@ fn parse_gff3_indexed_inner(
 
     for (chrom, start, end) in regions {
         // Find reference ID, trying with/without "chr" prefix
-        let ref_id = ref_names.iter().position(|n| n == chrom)
-            .or_else(|| {
-                if chrom.starts_with("chr") {
-                    ref_names.iter().position(|n| n == &chrom[3..])
-                } else {
-                    let with_chr = format!("chr{}", chrom);
-                    ref_names.iter().position(|n| *n == with_chr)
-                }
-            });
+        let ref_id = ref_names.iter().position(|n| n == chrom).or_else(|| {
+            if chrom.starts_with("chr") {
+                ref_names.iter().position(|n| n == &chrom[3..])
+            } else {
+                let with_chr = format!("chr{}", chrom);
+                ref_names.iter().position(|n| *n == with_chr)
+            }
+        });
 
         let ref_id = match ref_id {
             Some(id) => id,
             None => continue,
         };
 
-        let pos_start = Position::try_from((*start).max(1) as usize)
-            .unwrap_or(Position::MIN);
-        let pos_end = Position::try_from(*end as usize)
-            .unwrap_or(Position::MIN);
+        let pos_start = Position::try_from((*start).max(1) as usize).unwrap_or(Position::MIN);
+        let pos_end = Position::try_from(*end as usize).unwrap_or(Position::MIN);
         let query_interval: Interval = (pos_start..=pos_end).into();
 
         let chunks = match index.query(ref_id, query_interval) {
@@ -126,11 +125,15 @@ fn parse_gff3_indexed_inner(
             loop {
                 line.clear();
                 let bytes = reader.read_line(&mut line)?;
-                if bytes == 0 { break; }
+                if bytes == 0 {
+                    break;
+                }
 
                 let trimmed = line.trim();
                 if trimmed.is_empty() || trimmed.starts_with('#') {
-                    if reader.virtual_position() >= chunk.end() { break; }
+                    if reader.virtual_position() >= chunk.end() {
+                        break;
+                    }
                     continue;
                 }
 
@@ -145,7 +148,9 @@ fn parse_gff3_indexed_inner(
                     all_lines.push(trimmed.to_string());
                 }
 
-                if reader.virtual_position() >= chunk.end() { break; }
+                if reader.virtual_position() >= chunk.end() {
+                    break;
+                }
             }
         }
     }
@@ -159,9 +164,7 @@ fn parse_gff3_indexed_inner(
 /// builds Transcript models. Each item is either a raw line or a typed IO
 /// error from the underlying reader; the latter aborts parsing immediately
 /// rather than being silently treated as an empty line.
-fn parse_gff3_lines(
-    lines: impl Iterator<Item = Result<String>>,
-) -> Result<Vec<Transcript>> {
+fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<Transcript>> {
     let mut genes: HashMap<String, GffGene> = HashMap::new();
     let mut transcripts: HashMap<String, GffTranscript> = HashMap::new();
     let mut exons: Vec<GffExon> = Vec::new();
@@ -224,10 +227,11 @@ fn parse_gff3_lines(
                     .cloned()
                     .unwrap_or_default();
                 // Strip "gene:" prefix if present (Ensembl GFF3)
-                let gene_id = gene_id.strip_prefix("gene:").unwrap_or(&gene_id).to_string();
-                let symbol = attrs.get("Name")
-                    .or_else(|| attrs.get("gene"))
-                    .cloned();
+                let gene_id = gene_id
+                    .strip_prefix("gene:")
+                    .unwrap_or(&gene_id)
+                    .to_string();
+                let symbol = attrs.get("Name").or_else(|| attrs.get("gene")).cloned();
                 let biotype = attrs
                     .get("biotype")
                     .or_else(|| attrs.get("gene_biotype"))
@@ -254,9 +258,21 @@ fn parse_gff3_lines(
                     },
                 );
             }
-            "mRNA" | "transcript" | "lnc_RNA" | "miRNA" | "snRNA" | "snoRNA" | "rRNA"
-            | "ncRNA" | "tRNA" | "scRNA" | "V_gene_segment" | "D_gene_segment"
-            | "J_gene_segment" | "C_gene_segment" | "NMD_transcript_variant"
+            "mRNA"
+            | "transcript"
+            | "lnc_RNA"
+            | "miRNA"
+            | "snRNA"
+            | "snoRNA"
+            | "rRNA"
+            | "ncRNA"
+            | "tRNA"
+            | "scRNA"
+            | "V_gene_segment"
+            | "D_gene_segment"
+            | "J_gene_segment"
+            | "C_gene_segment"
+            | "NMD_transcript_variant"
             | "pseudogenic_transcript" => {
                 let transcript_id = attrs
                     .get("ID")
@@ -267,10 +283,7 @@ fn parse_gff3_lines(
                     .strip_prefix("transcript:")
                     .unwrap_or(&transcript_id)
                     .to_string();
-                let parent = attrs
-                    .get("Parent")
-                    .cloned()
-                    .unwrap_or_default();
+                let parent = attrs.get("Parent").cloned().unwrap_or_default();
                 let parent = parent.strip_prefix("gene:").unwrap_or(&parent).to_string();
                 let biotype = attrs
                     .get("biotype")
@@ -296,9 +309,9 @@ fn parse_gff3_lines(
                 let ccds = attrs.get("ccdsid").cloned();
 
                 // Parse TSL: "1 (assigned to previous version 2)" → 1
-                let tsl: Option<u8> = attrs.get("transcript_support_level").and_then(|v| {
-                    v.split_whitespace().next().and_then(|n| n.parse().ok())
-                });
+                let tsl: Option<u8> = attrs
+                    .get("transcript_support_level")
+                    .and_then(|v| v.split_whitespace().next().and_then(|n| n.parse().ok()));
 
                 transcripts.insert(
                     transcript_id.clone(),
@@ -332,7 +345,10 @@ fn parse_gff3_lines(
                     .or_else(|| attrs.get("exon_id"))
                     .cloned()
                     .unwrap_or_default();
-                let exon_id = exon_id.strip_prefix("exon:").unwrap_or(&exon_id).to_string();
+                let exon_id = exon_id
+                    .strip_prefix("exon:")
+                    .unwrap_or(&exon_id)
+                    .to_string();
                 let rank: u32 = attrs
                     .get("rank")
                     .or_else(|| attrs.get("exon_number"))
@@ -370,7 +386,8 @@ fn parse_gff3_lines(
                     })
                     .unwrap_or_default();
 
-                let protein_version: Option<u32> = attrs.get("version").and_then(|v| v.parse().ok());
+                let protein_version: Option<u32> =
+                    attrs.get("version").and_then(|v| v.parse().ok());
 
                 cds_features.push(GffCds {
                     parent_transcript: parent,
@@ -442,13 +459,14 @@ fn parse_gff3_lines(
     // Create implicit exons for CDS features under implicit transcripts
     // that have no corresponding exon (bacterial genomes where CDS = exon)
     {
-        let exon_parents: std::collections::HashSet<&str> = exons
-            .iter()
-            .map(|e| e.parent_transcript.as_str())
-            .collect();
+        let exon_parents: std::collections::HashSet<&str> =
+            exons.iter().map(|e| e.parent_transcript.as_str()).collect();
         let implicit_exons: Vec<GffExon> = cds_features
             .iter()
-            .filter(|cds| cds.parent_transcript.ends_with("_t1") && !exon_parents.contains(cds.parent_transcript.as_str()))
+            .filter(|cds| {
+                cds.parent_transcript.ends_with("_t1")
+                    && !exon_parents.contains(cds.parent_transcript.as_str())
+            })
             .map(|cds| GffExon {
                 id: format!("exon_{}_{}_{}", cds.parent_transcript, cds.start, cds.end),
                 parent_transcript: cds.parent_transcript.clone(),
@@ -466,11 +484,17 @@ fn parse_gff3_lines(
     // This replaces the O(T*E) nested scan in the assembly loop.
     let mut exons_by_tx: HashMap<String, Vec<GffExon>> = HashMap::new();
     for exon in exons {
-        exons_by_tx.entry(exon.parent_transcript.clone()).or_default().push(exon);
+        exons_by_tx
+            .entry(exon.parent_transcript.clone())
+            .or_default()
+            .push(exon);
     }
     let mut cds_by_tx: HashMap<String, Vec<GffCds>> = HashMap::new();
     for cds in cds_features {
-        cds_by_tx.entry(cds.parent_transcript.clone()).or_default().push(cds);
+        cds_by_tx
+            .entry(cds.parent_transcript.clone())
+            .or_default()
+            .push(cds);
     }
 
     // Build transcripts
@@ -545,8 +569,16 @@ fn parse_gff3_lines(
         // "missing" bases, effectively shifting cdna_coding_start earlier.
         let first_cds_ensembl_phase: u64 = if !tr_cds.is_empty() {
             let gff_phase = match gff_tr.strand {
-                Strand::Forward => tr_cds.iter().min_by_key(|c| c.start).map(|c| c.phase).unwrap_or(0),
-                Strand::Reverse => tr_cds.iter().max_by_key(|c| c.end).map(|c| c.phase).unwrap_or(0),
+                Strand::Forward => tr_cds
+                    .iter()
+                    .min_by_key(|c| c.start)
+                    .map(|c| c.phase)
+                    .unwrap_or(0),
+                Strand::Reverse => tr_cds
+                    .iter()
+                    .max_by_key(|c| c.end)
+                    .map(|c| c.phase)
+                    .unwrap_or(0),
             };
             match gff_phase {
                 1 => 2,
@@ -625,18 +657,30 @@ fn parse_gff3_lines(
                 let exon_len = exon.end - exon.start + 1;
                 match gff_tr.strand {
                     Strand::Forward => {
-                        if cs.is_none() && tl.genomic_start >= exon.start && tl.genomic_start <= exon.end {
+                        if cs.is_none()
+                            && tl.genomic_start >= exon.start
+                            && tl.genomic_start <= exon.end
+                        {
                             cs = Some(cdna_pos + (tl.genomic_start - exon.start) + 1);
                         }
-                        if ce.is_none() && tl.genomic_end >= exon.start && tl.genomic_end <= exon.end {
+                        if ce.is_none()
+                            && tl.genomic_end >= exon.start
+                            && tl.genomic_end <= exon.end
+                        {
                             ce = Some(cdna_pos + (tl.genomic_end - exon.start) + 1);
                         }
                     }
                     Strand::Reverse => {
-                        if cs.is_none() && tl.genomic_end >= exon.start && tl.genomic_end <= exon.end {
+                        if cs.is_none()
+                            && tl.genomic_end >= exon.start
+                            && tl.genomic_end <= exon.end
+                        {
                             cs = Some(cdna_pos + (exon.end - tl.genomic_end) + 1);
                         }
-                        if ce.is_none() && tl.genomic_start >= exon.start && tl.genomic_start <= exon.end {
+                        if ce.is_none()
+                            && tl.genomic_start >= exon.start
+                            && tl.genomic_start <= exon.end
+                        {
                             ce = Some(cdna_pos + (exon.end - tl.genomic_start) + 1);
                         }
                     }
@@ -692,11 +736,7 @@ fn parse_gff3_lines(
             appris: None,
             ccds: gff_tr.ccds.clone(),
             protein_id: tr_cds.first().map(|c| c.protein_id.clone()),
-            protein_version: if !tr_cds.is_empty() {
-                Some(1)
-            } else {
-                None
-            },
+            protein_version: if !tr_cds.is_empty() { Some(1) } else { None },
             swissprot: vec![],
             trembl: vec![],
             uniparc: vec![],
@@ -895,7 +935,10 @@ chr1\tensembl\texon\t6000\t9000\t.\t-\t.\tID=exon:ENSE00000002;Parent=transcript
         assert_eq!(transcripts.len(), 2);
 
         // MANE Select transcript
-        let ms = transcripts.iter().find(|t| &*t.stable_id == "ENST00000001").unwrap();
+        let ms = transcripts
+            .iter()
+            .find(|t| &*t.stable_id == "ENST00000001")
+            .unwrap();
         assert!(ms.canonical);
         assert_eq!(ms.mane_select.as_deref(), Some("ENST00000001.7"));
         assert!(ms.mane_plus_clinical.is_none());
@@ -904,7 +947,10 @@ chr1\tensembl\texon\t6000\t9000\t.\t-\t.\tID=exon:ENSE00000002;Parent=transcript
         assert_eq!(ms.tsl, Some(1));
 
         // MANE Plus Clinical transcript
-        let mpc = transcripts.iter().find(|t| &*t.stable_id == "ENST00000002").unwrap();
+        let mpc = transcripts
+            .iter()
+            .find(|t| &*t.stable_id == "ENST00000002")
+            .unwrap();
         assert!(!mpc.canonical);
         assert!(mpc.mane_select.is_none());
         assert_eq!(mpc.mane_plus_clinical.as_deref(), Some("ENST00000002.3"));
@@ -965,8 +1011,7 @@ chr1\tensembl\tCDS\t1050\t1200\t.\t+\t0\tID=CDS:P1;Parent=transcript:TX3";
         // The merged-cache path relies on per-file source tagging — without
         // it, transcripts from Ensembl and RefSeq runs are indistinguishable
         // in the SOURCE column.
-        let transcripts =
-            parse_gff3_with_source(sample_gff3().as_bytes(), "RefSeq").unwrap();
+        let transcripts = parse_gff3_with_source(sample_gff3().as_bytes(), "RefSeq").unwrap();
         assert!(!transcripts.is_empty());
         for tr in &transcripts {
             assert_eq!(tr.source.as_deref(), Some("RefSeq"));

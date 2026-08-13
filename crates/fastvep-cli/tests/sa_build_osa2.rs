@@ -836,7 +836,7 @@ fn spliceai_v1_v2_output_parity() {
         &[
             ("chr1", 100, "A", "G"),
             ("chr1", 100, "A", "T"),
-            ("chr1", 300, "C", "A"), // multi-gene site
+            ("chr1", 300, "C", "A"),       // multi-gene site
             ("chr2", 200, "GATTACA", "G"), // long variant
         ],
     );
@@ -869,7 +869,10 @@ fn spliceai_osa2_round_trips_scores_positions_and_gene() {
 
     let j = json_at(&reader, "chr1", 100, "A", "G").expect("chr1:100 A>G annotated");
     let v: serde_json::Value = serde_json::from_str(&j).unwrap();
-    assert_eq!(v["gene"], "BRCA1", "gene came back from the string table: {j}");
+    assert_eq!(
+        v["gene"], "BRCA1",
+        "gene came back from the string table: {j}"
+    );
     assert!((v["dsDg"].as_f64().unwrap() - 0.85).abs() < 1e-6, "{j}");
     assert!((v["dsAg"].as_f64().unwrap() - 0.01).abs() < 1e-6, "{j}");
     assert_eq!(v["dpAg"].as_i64(), Some(5), "{j}");
@@ -936,7 +939,10 @@ fn spliceai_json_from_both_formats_deserializes_for_the_acmg_classifier() {
     let v1 = SaReader::open(&v1_base.with_extension("osa")).unwrap();
     let v2 = Osa2Reader::open(&v2_base.with_extension("osa2")).unwrap();
 
-    for reader in [&v1 as &dyn AnnotationProvider, &v2 as &dyn AnnotationProvider] {
+    for reader in [
+        &v1 as &dyn AnnotationProvider,
+        &v2 as &dyn AnnotationProvider,
+    ] {
         let json = match reader.annotate_position("chr1", 100, "A", "G").unwrap() {
             Some(AnnotationValue::Json(j)) | Some(AnnotationValue::Positional(j)) => j,
             other => panic!("expected an annotation, got {other:?}"),
@@ -947,7 +953,10 @@ fn spliceai_json_from_both_formats_deserializes_for_the_acmg_classifier() {
         assert!((data.ds_dg.unwrap() - 0.85).abs() < 1e-6, "{json}");
         assert!((data.ds_ag.unwrap() - 0.01).abs() < 1e-6, "{json}");
         assert_eq!(data.dp_al, Some(-28), "{json}");
-        assert!((data.max_delta_score().unwrap() - 0.85).abs() < 1e-6, "{json}");
+        assert!(
+            (data.max_delta_score().unwrap() - 0.85).abs() < 1e-6,
+            "{json}"
+        );
     }
 }
 
@@ -959,9 +968,8 @@ fn spliceai_osa2_is_much_smaller_than_osa() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("spliceai.vcf");
 
-    let mut vcf = String::from(
-        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
-    );
+    let mut vcf =
+        String::from("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
     for i in 0..20_000u32 {
         let pos = 1000 + i * 3;
         let gene = format!("GENE{}", i % 200);
@@ -999,7 +1007,9 @@ fn spliceai_osa2_is_much_smaller_than_osa() {
     .unwrap();
 
     let v1_bytes = fs::metadata(v1_base.with_extension("osa")).unwrap().len()
-        + fs::metadata(v1_base.with_extension("osa.idx")).unwrap().len();
+        + fs::metadata(v1_base.with_extension("osa.idx"))
+            .unwrap()
+            .len();
     let v2_bytes = fs::metadata(v2_base.with_extension("osa2")).unwrap().len();
     assert!(
         v2_bytes < v1_bytes,
@@ -1107,7 +1117,11 @@ fn custom_vcf_v1_v2_output_parity() {
     let v1 = SaReader::open(&v1_base.with_extension("osa")).unwrap();
     let v2 = Osa2Reader::open(&v2_base.with_extension("osa2")).unwrap();
     assert_eq!(v1.json_key(), "myset");
-    assert_eq!(v2.json_key(), "myset", "the user's --name must survive into v2");
+    assert_eq!(
+        v2.json_key(),
+        "myset",
+        "the user's --name must survive into v2"
+    );
     assert_eq!(v1.name(), v2.name());
 
     for &(chrom, pos, r, a) in &[
@@ -1125,7 +1139,10 @@ fn custom_vcf_v1_v2_output_parity() {
         };
         // Whole-record blob encoding, so this is byte-for-byte, not just
         // numerically equivalent.
-        assert_eq!(j1, j2, "custom_vcf {chrom}:{pos} {r}>{a} must be byte-identical");
+        assert_eq!(
+            j1, j2,
+            "custom_vcf {chrom}:{pos} {r}>{a} must be byte-identical"
+        );
     }
 
     // Explicit INFO-field selection also survives the v2 path.
@@ -1183,18 +1200,29 @@ fn custom_vcf_osa2_sorts_unsorted_input() {
     .unwrap();
 
     let reader = Osa2Reader::open(&out.with_extension("osa2")).unwrap();
-    for (chrom, pos) in [("chr1", 100u64), ("chr1", 200), ("chr1", 9_000_000), ("chr2", 500)] {
+    for (chrom, pos) in [
+        ("chr1", 100u64),
+        ("chr1", 200),
+        ("chr1", 9_000_000),
+        ("chr2", 500),
+    ] {
         assert!(
-            reader.annotate_position(chrom, pos, "A", "G").unwrap().is_some(),
+            reader
+                .annotate_position(chrom, pos, "A", "G")
+                .unwrap()
+                .is_some(),
             "{chrom}:{pos} should be present despite unsorted input"
         );
     }
 }
 
 /// `--format auto` on `source`, returning `(built_osa, built_osa2, built_osi)`.
-fn auto_build_extensions(dir: &std::path::Path, source: &str, input_name: &str, body: &str)
-    -> (bool, bool, bool)
-{
+fn auto_build_extensions(
+    dir: &std::path::Path,
+    source: &str,
+    input_name: &str,
+    body: &str,
+) -> (bool, bool, bool) {
     let input = dir.join(input_name);
     fs::write(&input, body).unwrap();
     let out = dir.join(format!("out_{source}"));
@@ -1249,10 +1277,17 @@ fn format_auto_picks_v2_for_every_variant_level_source() {
 
     // custom_bed is interval-keyed, so it still builds .osi — v2 has no
     // interval container. This is a structural exception, not a gap.
-    let (osa, osa2, osi) =
-        auto_build_extensions(dir.path(), "custom_bed", "regions.bed", "chr1\t100\t200\tfoo\n");
+    let (osa, osa2, osi) = auto_build_extensions(
+        dir.path(),
+        "custom_bed",
+        "regions.bed",
+        "chr1\t100\t200\tfoo\n",
+    );
     assert!(osi, "auto+custom_bed should build .osi");
-    assert!(!osa && !osa2, "auto+custom_bed should build neither .osa nor .osa2");
+    assert!(
+        !osa && !osa2,
+        "auto+custom_bed should build neither .osa nor .osa2"
+    );
 }
 
 #[test]
@@ -1274,8 +1309,14 @@ fn format_osa_remains_the_explicit_v1_escape_hatch() {
         false,
     )
     .unwrap();
-    assert!(out.with_extension("osa").exists(), "--format osa should build .osa");
-    assert!(out.with_extension("osa.idx").exists(), "--format osa should build .osa.idx");
+    assert!(
+        out.with_extension("osa").exists(),
+        "--format osa should build .osa"
+    );
+    assert!(
+        out.with_extension("osa.idx").exists(),
+        "--format osa should build .osa.idx"
+    );
     assert!(
         !out.with_extension("osa2").exists(),
         "--format osa must not build .osa2"
@@ -1283,5 +1324,8 @@ fn format_osa_remains_the_explicit_v1_escape_hatch() {
     // And it is readable through the v1 reader.
     let reader = SaReader::open(&out.with_extension("osa")).unwrap();
     assert_eq!(reader.json_key(), "gnomad");
-    assert!(reader.annotate_position("chr1", 100, "A", "G").unwrap().is_some());
+    assert!(reader
+        .annotate_position("chr1", 100, "A", "G")
+        .unwrap()
+        .is_some());
 }

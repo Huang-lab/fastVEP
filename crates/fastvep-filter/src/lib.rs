@@ -22,9 +22,9 @@
 //! - `match` / `~`: regex match
 //! - `and`, `or`, `not`: logical operators
 
+mod evaluator;
 mod lexer;
 mod parser;
-mod evaluator;
 
 pub use evaluator::FilterContext;
 pub use parser::FilterExpr;
@@ -99,7 +99,8 @@ mod tests {
 
     #[test]
     fn test_in_operator() {
-        let f = Filter::parse("Consequence in missense_variant,stop_gained,frameshift_variant").unwrap();
+        let f = Filter::parse("Consequence in missense_variant,stop_gained,frameshift_variant")
+            .unwrap();
         assert!(f.matches(&ctx(&[("Consequence", "missense_variant")])));
         assert!(f.matches(&ctx(&[("Consequence", "stop_gained")])));
         assert!(!f.matches(&ctx(&[("Consequence", "synonymous_variant")])));

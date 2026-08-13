@@ -56,11 +56,17 @@ const HUMAN_CHROMS: &[(u16, &str, u32)] = &[
 ];
 
 fn env_usize(name: &str, default: usize) -> usize {
-    env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 fn env_f64(name: &str, default: f64) -> f64 {
-    env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 fn chrom_map() -> Vec<String> {
@@ -128,7 +134,11 @@ fn build_v1(path: &Path, sites: &[SiteData]) -> Result<u64> {
             ),
         })
         .collect();
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
 
     let header = IndexHeader {
         schema_version: SCHEMA_VERSION,
@@ -149,19 +159,34 @@ fn build_v1(path: &Path, sites: &[SiteData]) -> Result<u64> {
 fn v2_fields() -> Vec<Field> {
     vec![
         Field {
-            field: "AF".into(), alias: "allAf".into(), ftype: FieldType::Float,
-            multiplier: 1_000_000, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: "Global allele frequency".into(),
+            field: "AF".into(),
+            alias: "allAf".into(),
+            ftype: FieldType::Float,
+            multiplier: 1_000_000,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: "Global allele frequency".into(),
         },
         Field {
-            field: "AN".into(), alias: "allAn".into(), ftype: FieldType::Integer,
-            multiplier: 1, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: "Total allele number".into(),
+            field: "AN".into(),
+            alias: "allAn".into(),
+            ftype: FieldType::Integer,
+            multiplier: 1,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: "Total allele number".into(),
         },
         Field {
-            field: "AC".into(), alias: "allAc".into(), ftype: FieldType::Integer,
-            multiplier: 1, zigzag: false, missing_value: u32::MAX,
-            missing_string: ".".into(), description: "Allele count".into(),
+            field: "AC".into(),
+            alias: "allAc".into(),
+            ftype: FieldType::Integer,
+            multiplier: 1,
+            zigzag: false,
+            missing_value: u32::MAX,
+            missing_string: ".".into(),
+            description: "Allele count".into(),
         },
     ]
 }
@@ -206,7 +231,11 @@ fn build_v2(path: &Path, sites: &[SiteData]) -> Result<u64> {
 /// Sorted query positions across the genome, mimicking a normal VCF input.
 /// `hit_rate` controls how many land on an annotated site vs. a definite miss
 /// (offset by +1 bp, which no synthetic record occupies given the spacing).
-fn build_workload(sites: &[SiteData], n_variants: usize, hit_rate: f64) -> Vec<(&'static str, u64)> {
+fn build_workload(
+    sites: &[SiteData],
+    n_variants: usize,
+    hit_rate: f64,
+) -> Vec<(&'static str, u64)> {
     if sites.is_empty() {
         return Vec::new();
     }
@@ -220,7 +249,11 @@ fn build_workload(sites: &[SiteData], n_variants: usize, hit_rate: f64) -> Vec<(
         // Deterministic hit/miss split: first `hit_rate` share of each 100
         // queries hit, the rest are shifted to a guaranteed-empty position.
         let is_hit = ((n % 100) as f64) < hit_rate * 100.0;
-        let pos = if is_hit { s.position as u64 } else { s.position as u64 + 1 };
+        let pos = if is_hit {
+            s.position as u64
+        } else {
+            s.position as u64 + 1
+        };
         out.push((s.chrom, pos));
         i += stride;
         n += 1;
@@ -239,7 +272,8 @@ fn run_workload(
     let mut hits = 0u64;
     let mut total = 0u64;
     for chunk in workload.chunks(batch_size) {
-        let mut by_chrom: std::collections::HashMap<&str, Vec<u64>> = std::collections::HashMap::new();
+        let mut by_chrom: std::collections::HashMap<&str, Vec<u64>> =
+            std::collections::HashMap::new();
         for (chrom, pos) in chunk {
             by_chrom.entry(chrom).or_default().push(*pos);
         }
@@ -280,7 +314,11 @@ fn main() -> Result<()> {
     println!("Generating {} synthetic sites...", n_records);
     let sites = build_sites(n_records);
     let workload = build_workload(&sites, n_variants, hit_rate);
-    println!("  {} sites, {} query positions\n", sites.len(), workload.len());
+    println!(
+        "  {} sites, {} query positions\n",
+        sites.len(),
+        workload.len()
+    );
 
     // --- Build ---
     let v1_base = base.with_extension("v1");
@@ -312,11 +350,17 @@ fn main() -> Result<()> {
     println!("QUERY (preload + per-(transcript,allele))");
     println!(
         "  v1 (.osa) : {:.2}s  {:.0} q/s  ({} hits / {} queries)",
-        v1_t, v1_total as f64 / v1_t, v1_hits, v1_total
+        v1_t,
+        v1_total as f64 / v1_t,
+        v1_hits,
+        v1_total
     );
     println!(
         "  v2 (.osa2): {:.2}s  {:.0} q/s  ({} hits / {} queries)",
-        v2_t, v2_total as f64 / v2_t, v2_hits, v2_total
+        v2_t,
+        v2_total as f64 / v2_t,
+        v2_hits,
+        v2_total
     );
     println!("  -> v2 query throughput is {:.2}x v1\n", v1_t / v2_t);
 
@@ -327,7 +371,10 @@ fn main() -> Result<()> {
             v1_hits, v2_hits
         );
     } else {
-        println!("OK: both formats returned {} hits (equivalent lookups)", v1_hits);
+        println!(
+            "OK: both formats returned {} hits (equivalent lookups)",
+            v1_hits
+        );
     }
 
     Ok(())

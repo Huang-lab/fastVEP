@@ -67,14 +67,18 @@ fn v2_reader_resolves_chr_query_against_bare_keyed_archive() {
     let reader = Osa2Reader::open(&path).unwrap();
 
     // chr*-prefixed query hits a bare-keyed archive.
-    let hit = reader
-        .annotate_position("chr1", 10_500, "A", "G")
-        .unwrap();
-    assert!(hit.is_some(), "chr1 query must resolve against bare archive");
+    let hit = reader.annotate_position("chr1", 10_500, "A", "G").unwrap();
+    assert!(
+        hit.is_some(),
+        "chr1 query must resolve against bare archive"
+    );
 
     // And the bare form still works.
     let hit = reader.annotate_position("1", 10_500, "A", "G").unwrap();
-    assert!(hit.is_some(), "bare query must resolve against bare archive");
+    assert!(
+        hit.is_some(),
+        "bare query must resolve against bare archive"
+    );
 }
 
 #[test]

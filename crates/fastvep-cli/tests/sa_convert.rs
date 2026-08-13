@@ -42,12 +42,23 @@ fn build_and_convert(
     .unwrap();
 
     let osa = base.with_extension("osa");
-    assert!(osa.exists(), "v1 build should have produced {}", osa.display());
+    assert!(
+        osa.exists(),
+        "v1 build should have produced {}",
+        osa.display()
+    );
     run_sa_convert(osa.to_str().unwrap(), base.to_str().unwrap(), false).unwrap();
 
     let osa2 = base.with_extension("osa2");
-    assert!(osa2.exists(), "conversion should have produced {}", osa2.display());
-    (SaReader::open(&osa).unwrap(), Osa2Reader::open(&osa2).unwrap())
+    assert!(
+        osa2.exists(),
+        "conversion should have produced {}",
+        osa2.display()
+    );
+    (
+        SaReader::open(&osa).unwrap(),
+        Osa2Reader::open(&osa2).unwrap(),
+    )
 }
 
 const CLINVAR_VCF: &str = "\
@@ -122,7 +133,10 @@ fn conversion_preserves_positional_matching() {
     let dir = tempfile::tempdir().unwrap();
     let (v1, v2) = build_and_convert(dir.path(), "phylop", PHYLOP_WIG, "phylop.wig");
 
-    assert!(v2.metadata().is_positional, "positional flag must survive conversion");
+    assert!(
+        v2.metadata().is_positional,
+        "positional flag must survive conversion"
+    );
     assert!(!v2.metadata().match_by_allele);
 
     for pos in [100u64, 101, 102] {
@@ -168,7 +182,10 @@ fn conversion_covers_every_record_not_just_the_queried_ones() {
         checked += 1;
     }
     assert_eq!(checked, expected.len());
-    assert_eq!(checked, 8_000, "sanity: the fixture should span many blocks");
+    assert_eq!(
+        checked, 8_000,
+        "sanity: the fixture should span many blocks"
+    );
 }
 
 #[test]
@@ -178,8 +195,12 @@ fn rejects_inputs_that_have_no_v2_form() {
     // Already v2.
     let osa2 = dir.path().join("already.osa2");
     fs::write(&osa2, b"whatever").unwrap();
-    let err = run_sa_convert(osa2.to_str().unwrap(), dir.path().join("o").to_str().unwrap(), false)
-        .unwrap_err();
+    let err = run_sa_convert(
+        osa2.to_str().unwrap(),
+        dir.path().join("o").to_str().unwrap(),
+        false,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("already a v2"), "got: {err}");
 
     // Interval- and gene-level databases: v2 is a variant-level container, so
@@ -188,9 +209,12 @@ fn rejects_inputs_that_have_no_v2_form() {
     for (ext, expected) in [("osi", "interval-level"), ("oga", "gene-level")] {
         let path = dir.path().join(format!("db.{ext}"));
         fs::write(&path, b"whatever").unwrap();
-        let err =
-            run_sa_convert(path.to_str().unwrap(), dir.path().join("o").to_str().unwrap(), false)
-                .unwrap_err();
+        let err = run_sa_convert(
+            path.to_str().unwrap(),
+            dir.path().join("o").to_str().unwrap(),
+            false,
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains(expected) && err.to_string().contains("variant-level"),
             "expected a {ext}-specific message, got: {err}"
@@ -200,8 +224,12 @@ fn rejects_inputs_that_have_no_v2_form() {
     // Anything else.
     let other = dir.path().join("notes.txt");
     fs::write(&other, b"whatever").unwrap();
-    let err = run_sa_convert(other.to_str().unwrap(), dir.path().join("o").to_str().unwrap(), false)
-        .unwrap_err();
+    let err = run_sa_convert(
+        other.to_str().unwrap(),
+        dir.path().join("o").to_str().unwrap(),
+        false,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("expects a v1"), "got: {err}");
 }
 
@@ -255,7 +283,10 @@ fn a_failed_conversion_leaves_no_partial_output() {
 
     let out_base = dir.path().join("converted");
     let result = run_sa_convert(osa.to_str().unwrap(), out_base.to_str().unwrap(), false);
-    assert!(result.is_err(), "a truncated .osa must not convert successfully");
+    assert!(
+        result.is_err(),
+        "a truncated .osa must not convert successfully"
+    );
     assert!(
         !out_base.with_extension("osa2").exists(),
         "no partial .osa2 may be left behind"

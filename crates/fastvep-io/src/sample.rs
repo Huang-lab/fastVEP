@@ -29,7 +29,9 @@ impl Genotype {
     /// Returns true if homozygous alternate (all non-missing alleles same, > 0).
     pub fn is_hom_alt(&self) -> bool {
         let present: Vec<u32> = self.alleles.iter().filter_map(|a| *a).collect();
-        !present.is_empty() && present.iter().all(|a| *a > 0) && present.iter().min() == present.iter().max()
+        !present.is_empty()
+            && present.iter().all(|a| *a > 0)
+            && present.iter().min() == present.iter().max()
     }
 
     /// Returns true if all alleles are missing.
@@ -39,11 +41,17 @@ impl Genotype {
 
     /// Short string representation: "het", "hom_ref", "hom_alt", "missing".
     pub fn class(&self) -> &'static str {
-        if self.is_missing() { "missing" }
-        else if self.is_hom_ref() { "hom_ref" }
-        else if self.is_hom_alt() { "hom_alt" }
-        else if self.is_het() { "het" }
-        else { "other" }
+        if self.is_missing() {
+            "missing"
+        } else if self.is_hom_ref() {
+            "hom_ref"
+        } else if self.is_hom_alt() {
+            "hom_alt"
+        } else if self.is_het() {
+            "het"
+        } else {
+            "other"
+        }
     }
 }
 
@@ -98,11 +106,7 @@ pub fn parse_samples(
             let quality = raw_fields.get("GQ").and_then(|v| v.parse().ok());
             let allele_depths = raw_fields
                 .get("AD")
-                .map(|v| {
-                    v.split(',')
-                        .filter_map(|s| s.parse().ok())
-                        .collect()
-                })
+                .map(|v| v.split(',').filter_map(|s| s.parse().ok()).collect())
                 .unwrap_or_default();
 
             SampleData {

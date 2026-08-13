@@ -96,7 +96,11 @@ pub fn parse_cosmic_vcf<R: BufRead>(
         }
     }
 
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
@@ -111,7 +115,11 @@ fn parse_info(info: &str) -> HashMap<String, String> {
 }
 
 fn normalize_chrom(chrom: &str) -> String {
-    if chrom.starts_with("chr") { chrom.to_string() } else { format!("chr{}", chrom) }
+    if chrom.starts_with("chr") {
+        chrom.to_string()
+    } else {
+        format!("chr{}", chrom)
+    }
 }
 
 #[cfg(test)]

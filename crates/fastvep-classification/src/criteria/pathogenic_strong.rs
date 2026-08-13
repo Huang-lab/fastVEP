@@ -3,10 +3,7 @@ use crate::sa_extract::ClassificationInput;
 use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 
 /// Evaluate all pathogenic strong criteria: PS1, PS2, PS3, PS4.
-pub fn evaluate_all(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> Vec<EvidenceCriterion> {
+pub fn evaluate_all(input: &ClassificationInput, config: &AcmgConfig) -> Vec<EvidenceCriterion> {
     vec![
         evaluate_ps1(input, config),
         evaluate_ps2(input, config),
@@ -47,10 +44,7 @@ pub fn evaluate_all(
 /// counting: the subgroup's response to feedback (22 March 2024, item 7b) reads
 /// "if there is a relevant pathogenic variant with the same predicted impact as
 /// the variant under assessment, then you can use PS1 as well as PVS1(RNA)".
-fn evaluate_ps1(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_ps1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let is_missense = input
         .consequences
         .iter()
@@ -161,7 +155,11 @@ fn evaluate_ps1(
         let matches: Vec<&crate::sa_extract::ClinvarProteinVariant> = cpd
             .protein_variants
             .iter()
-            .filter(|v| v.pos == prot_pos && v.alt_aa == alt_aa && v.sig.to_lowercase().contains("pathogenic"))
+            .filter(|v| {
+                v.pos == prot_pos
+                    && v.alt_aa == alt_aa
+                    && v.sig.to_lowercase().contains("pathogenic")
+            })
             .collect();
 
         // Count distinct *nucleotide* changes, not index entries: the index
@@ -186,7 +184,10 @@ fn evaluate_ps1(
         let required_matches: u32 = if self_in_index { 2 } else { 1 };
         if self_in_index {
             details.insert("self_excluded_from_count".into(), serde_json::json!(true));
-            details.insert("required_matches".into(), serde_json::json!(required_matches));
+            details.insert(
+                "required_matches".into(),
+                serde_json::json!(required_matches),
+            );
         }
 
         if distinct_nucleotide_changes >= required_matches {
@@ -238,10 +239,7 @@ fn evaluate_ps1(
 ///
 /// Requires trio VCF with both parents. Proband carries the variant, both parents are
 /// homozygous reference, and all three pass depth/quality thresholds.
-fn evaluate_ps2(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_ps2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
     let trio = match &config.trio {
@@ -326,9 +324,18 @@ fn evaluate_ps2(
     let min_gq = trio.min_gq;
     details.insert("min_depth".into(), serde_json::json!(min_dp));
     details.insert("min_gq".into(), serde_json::json!(min_gq));
-    details.insert("proband_carries_variant".into(), serde_json::json!(proband_gt.carries_variant()));
-    details.insert("mother_hom_ref".into(), serde_json::json!(mother_gt.is_hom_ref));
-    details.insert("father_hom_ref".into(), serde_json::json!(father_gt.is_hom_ref));
+    details.insert(
+        "proband_carries_variant".into(),
+        serde_json::json!(proband_gt.carries_variant()),
+    );
+    details.insert(
+        "mother_hom_ref".into(),
+        serde_json::json!(mother_gt.is_hom_ref),
+    );
+    details.insert(
+        "father_hom_ref".into(),
+        serde_json::json!(father_gt.is_hom_ref),
+    );
     details.insert("proband_depth".into(), serde_json::json!(proband_gt.depth));
     details.insert("mother_depth".into(), serde_json::json!(mother_gt.depth));
     details.insert("father_depth".into(), serde_json::json!(father_gt.depth));
@@ -358,9 +365,15 @@ fn evaluate_ps2(
 
     if !proband_qc || !mother_qc || !father_qc {
         let mut fail_reasons = Vec::new();
-        if !proband_qc { fail_reasons.push("proband"); }
-        if !mother_qc { fail_reasons.push("mother"); }
-        if !father_qc { fail_reasons.push("father"); }
+        if !proband_qc {
+            fail_reasons.push("proband");
+        }
+        if !mother_qc {
+            fail_reasons.push("mother");
+        }
+        if !father_qc {
+            fail_reasons.push("father");
+        }
         return EvidenceCriterion {
             code: "PS2".to_string(),
             direction: EvidenceDirection::Pathogenic,
@@ -370,7 +383,9 @@ fn evaluate_ps2(
             evaluated: true,
             summary: format!(
                 "Genotype quality insufficient for {}: requires DP>={} and GQ>={}",
-                fail_reasons.join(", "), min_dp, min_gq
+                fail_reasons.join(", "),
+                min_dp,
+                min_gq
             ),
             details: serde_json::Value::Object(details),
         };
@@ -383,8 +398,12 @@ fn evaluate_ps2(
         "De novo variant: proband carries variant, both parents homozygous reference, all pass quality thresholds".to_string()
     } else {
         let mut reasons = Vec::new();
-        if !mother_ref { reasons.push("mother is not hom_ref"); }
-        if !father_ref { reasons.push("father is not hom_ref"); }
+        if !mother_ref {
+            reasons.push("mother is not hom_ref");
+        }
+        if !father_ref {
+            reasons.push("father is not hom_ref");
+        }
         format!("Not de novo: {}", reasons.join(", "))
     };
 
@@ -407,10 +426,7 @@ fn evaluate_ps2(
 /// curated `--functional-evidence` file. Without one, PS3 stays NotEvaluated.
 /// See [`crate::functional`] for the file format and for why an entry also
 /// suppresses the computational criteria.
-fn evaluate_ps3(
-    input: &ClassificationInput,
-    _config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_ps3(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     super::functional_criterion(
         input,
         crate::functional::FunctionalCriterion::Ps3,
@@ -433,10 +449,7 @@ fn evaluate_ps3(
 /// Set `config.use_clinvar_stars_as_ps4_proxy = true` to opt back into
 /// the old proxy behavior — primarily for benchmarks against historical
 /// fastVEP runs.
-fn evaluate_ps4(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> EvidenceCriterion {
+fn evaluate_ps4(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
     if !config.use_clinvar_stars_as_ps4_proxy {
@@ -453,7 +466,9 @@ fn evaluate_ps4(
             default_strength: EvidenceStrength::Strong,
             met: false,
             evaluated: false,
-            summary: "PS4 requires case-control statistics; not automatable from variant-level data".to_string(),
+            summary:
+                "PS4 requires case-control statistics; not automatable from variant-level data"
+                    .to_string(),
             details: serde_json::Value::Object(details),
         };
     }
@@ -461,7 +476,10 @@ fn evaluate_ps4(
     let (met, summary) = if let Some(ref clinvar) = input.clinvar {
         let stars = clinvar.review_stars();
         let is_pathogenic = clinvar.has_pathogenic();
-        details.insert("clinvar_pathogenic".into(), serde_json::json!(is_pathogenic));
+        details.insert(
+            "clinvar_pathogenic".into(),
+            serde_json::json!(is_pathogenic),
+        );
         details.insert("review_stars".into(), serde_json::json!(stars));
 
         if is_pathogenic && stars >= 3 {
@@ -501,8 +519,8 @@ fn evaluate_ps4(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::minimal_input;
     use crate::sa_extract::ClinvarData;
+    use crate::test_support::minimal_input;
     use fastvep_core::{Consequence, Impact};
 
     fn make_input(clinvar: Option<ClinvarData>) -> ClassificationInput {

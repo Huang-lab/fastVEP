@@ -1,6 +1,6 @@
-use fastvep_core::{GeneAnnotation, SupplementaryAnnotation};
 use fastvep_core::{is_canonical_dinucleotide_offset, parse_intronic_offset};
 use fastvep_core::{Consequence, Impact};
+use fastvep_core::{GeneAnnotation, SupplementaryAnnotation};
 use serde::Deserialize;
 
 /// gnomAD population frequency data.
@@ -80,8 +80,17 @@ impl GnomadData {
     /// gnomAD v2.1 codes (`oth`) and v4.1 codes (`mid`, `remaining`).
     pub fn max_pop_af(&self) -> Option<f64> {
         [
-            self.all_af, self.afr_af, self.nfe_af, self.eas_af, self.amr_af, self.asj_af,
-            self.fin_af, self.mid_af, self.oth_af, self.remaining_af, self.sas_af,
+            self.all_af,
+            self.afr_af,
+            self.nfe_af,
+            self.eas_af,
+            self.amr_af,
+            self.asj_af,
+            self.fin_af,
+            self.mid_af,
+            self.oth_af,
+            self.remaining_af,
+            self.sas_af,
         ]
         .into_iter()
         .flatten()
@@ -252,7 +261,8 @@ impl ClinvarData {
             Some(s) if s.contains("multiple_submitters") || s.contains("multiple submitters") => 2,
             Some(s)
                 if (s.contains("criteria_provided") || s.contains("criteria provided"))
-                    && !s.contains("no_assertion") && !s.contains("no assertion") =>
+                    && !s.contains("no_assertion")
+                    && !s.contains("no assertion") =>
             {
                 1
             }
@@ -321,17 +331,16 @@ impl DbNsfpData {
 
     /// Parse PolyPhen prediction from format "probably_damaging(0.998)".
     pub fn parse_polyphen(&self) -> Option<PredictionResult> {
-        self.polyphen.as_ref().and_then(|s| parse_prediction_string(s))
+        self.polyphen
+            .as_ref()
+            .and_then(|s| parse_prediction_string(s))
     }
 }
 
 fn parse_prediction_string(s: &str) -> Option<PredictionResult> {
     if let Some(paren_pos) = s.find('(') {
         let prediction = s[..paren_pos].to_string();
-        let score = s[paren_pos + 1..]
-            .trim_end_matches(')')
-            .parse::<f64>()
-            .ok();
+        let score = s[paren_pos + 1..].trim_end_matches(')').parse::<f64>().ok();
         Some(PredictionResult { prediction, score })
     } else {
         Some(PredictionResult {
@@ -404,12 +413,14 @@ impl OmimData {
     /// and BS2 both branch on it.
     pub fn has_dominant_inheritance(&self) -> bool {
         self.phenotypes.as_ref().is_some_and(|ps| {
-            ps.iter().filter(|p| !is_weak_clingen_classification(p)).any(|p| {
-                let lower = p.to_lowercase();
-                lower.contains("autosomal dominant")
-                    || lower.contains("{ad}")
-                    || (lower.contains("dominant") && !lower.contains("recessive"))
-            })
+            ps.iter()
+                .filter(|p| !is_weak_clingen_classification(p))
+                .any(|p| {
+                    let lower = p.to_lowercase();
+                    lower.contains("autosomal dominant")
+                        || lower.contains("{ad}")
+                        || (lower.contains("dominant") && !lower.contains("recessive"))
+                })
         })
     }
 
@@ -419,12 +430,14 @@ impl OmimData {
     /// [`Self::has_dominant_inheritance`].
     pub fn has_recessive_inheritance(&self) -> bool {
         self.phenotypes.as_ref().is_some_and(|ps| {
-            ps.iter().filter(|p| !is_weak_clingen_classification(p)).any(|p| {
-                let lower = p.to_lowercase();
-                lower.contains("autosomal recessive")
-                    || lower.contains("{ar}")
-                    || (lower.contains("recessive") && !lower.contains("dominant"))
-            })
+            ps.iter()
+                .filter(|p| !is_weak_clingen_classification(p))
+                .any(|p| {
+                    let lower = p.to_lowercase();
+                    lower.contains("autosomal recessive")
+                        || lower.contains("{ar}")
+                        || (lower.contains("recessive") && !lower.contains("dominant"))
+                })
         })
     }
 }
@@ -1062,7 +1075,7 @@ mod tests {
     fn test_clinvar_conflicting_not_pathogenic() {
         let c = ClinvarData {
             significance: Some(vec![
-                "Conflicting_interpretations_of_pathogenicity".to_string(),
+                "Conflicting_interpretations_of_pathogenicity".to_string()
             ]),
             ..Default::default()
         };
@@ -1223,8 +1236,14 @@ mod tests {
 
     #[test]
     fn test_predicted_nmd_is_the_last_exon_proxy() {
-        assert_eq!(extract(None, None, None, Some((10, 10)), None).predicted_nmd, Some(false));
-        assert_eq!(extract(None, None, None, Some((3, 10)), None).predicted_nmd, Some(true));
+        assert_eq!(
+            extract(None, None, None, Some((10, 10)), None).predicted_nmd,
+            Some(false)
+        );
+        assert_eq!(
+            extract(None, None, None, Some((3, 10)), None).predicted_nmd,
+            Some(true)
+        );
         assert_eq!(extract(None, None, None, None, None).predicted_nmd, None);
     }
 
@@ -1234,8 +1253,14 @@ mod tests {
         let input = extract(Some(91), Some(100), None, None, None);
         assert_eq!(input.protein_truncation_pct, Some(0.10));
         // Out-of-range or absent inputs produce no claim rather than a wrong one.
-        assert_eq!(extract(Some(101), Some(100), None, None, None).protein_truncation_pct, None);
-        assert_eq!(extract(Some(50), None, None, None, None).protein_truncation_pct, None);
+        assert_eq!(
+            extract(Some(101), Some(100), None, None, None).protein_truncation_pct,
+            None
+        );
+        assert_eq!(
+            extract(Some(50), None, None, None, None).protein_truncation_pct,
+            None
+        );
     }
 
     #[test]
@@ -1245,15 +1270,24 @@ mod tests {
             {"pos":100,"refAa":"A","altAa":"T","sig":"Pathogenic","n":2}
         ]}"#;
         // Truncating at 500 loses residue 900, which ClinVar calls pathogenic.
-        assert_eq!(extract(Some(500), None, None, None, Some(idx)).in_critical_region, Some(true));
+        assert_eq!(
+            extract(Some(500), None, None, None, Some(idx)).in_critical_region,
+            Some(true)
+        );
         // Truncating at 950 loses nothing ClinVar has an entry for.
-        assert_eq!(extract(Some(950), None, None, None, Some(idx)).in_critical_region, Some(false));
+        assert_eq!(
+            extract(Some(950), None, None, None, Some(idx)).in_critical_region,
+            Some(false)
+        );
     }
 
     #[test]
     fn test_in_critical_region_is_unknown_without_an_index() {
         // Absence of the .oga must never read as "the lost region is unimportant".
-        assert_eq!(extract(Some(500), None, None, None, None).in_critical_region, None);
+        assert_eq!(
+            extract(Some(500), None, None, None, None).in_critical_region,
+            None
+        );
     }
 
     #[test]
@@ -1261,7 +1295,10 @@ mod tests {
         let idx = r#"{"proteinVariants":[
             {"pos":900,"refAa":"R","altAa":"Q","sig":"Conflicting_interpretations_of_pathogenicity","n":1}
         ]}"#;
-        assert_eq!(extract(Some(500), None, None, None, Some(idx)).in_critical_region, Some(false));
+        assert_eq!(
+            extract(Some(500), None, None, None, Some(idx)).in_critical_region,
+            Some(false)
+        );
     }
 
     // ── PS1 splice path (Walker 2023 Table 3) ────────────────────────────
@@ -1278,7 +1315,13 @@ mod tests {
         }
     }
 
-    fn splice_ps1(index: Option<&GeneAnnotation>, hgvs: Option<&str>, pos: u64, r: &str, a: &str) -> Option<bool> {
+    fn splice_ps1(
+        index: Option<&GeneAnnotation>,
+        hgvs: Option<&str>,
+        pos: u64,
+        r: &str,
+        a: &str,
+    ) -> Option<bool> {
         let anns: Vec<&GeneAnnotation> = index.into_iter().collect();
         same_splice_position_pathogenic(
             &[Consequence::SpliceAcceptorVariant],
@@ -1293,7 +1336,10 @@ mod tests {
     #[test]
     fn test_ps1_splice_fires_on_a_different_allele_at_the_same_position() {
         let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#);
-        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"), Some(true));
+        assert_eq!(
+            splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"),
+            Some(true)
+        );
     }
 
     #[test]
@@ -1302,7 +1348,10 @@ mod tests {
         // Pathogenic finds its own entry. A comparison variant is by
         // definition another variant, and firing off yourself is circular.
         let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#);
-        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>G"), 100, "A", "G"), Some(false));
+        assert_eq!(
+            splice_ps1(Some(&idx), Some("c.376-2A>G"), 100, "A", "G"),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1310,7 +1359,10 @@ mod tests {
         // c.376-1 and c.376-2 are the two bases of one acceptor, genomically
         // adjacent on either strand.
         let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#);
-        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"), Some(true));
+        assert_eq!(
+            splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"),
+            Some(true)
+        );
     }
 
     #[test]
@@ -1318,7 +1370,10 @@ mod tests {
         // Opposite-signed offsets are different splice sites even if the
         // coordinates were somehow adjacent.
         let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":1,"sig":"Pathogenic"}"#);
-        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"), Some(false));
+        assert_eq!(
+            splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1326,8 +1381,12 @@ mod tests {
         // Table 3 reads N/A in the LP column for a canonical-dinucleotide
         // variant under assessment: an LP call at a ±1,2 position is too easy
         // to reach for its clinical evidence to be borrowable unchecked.
-        let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Likely_pathogenic"}"#);
-        assert_eq!(splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"), Some(false));
+        let idx =
+            splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Likely_pathogenic"}"#);
+        assert_eq!(
+            splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1341,7 +1400,10 @@ mod tests {
             json_key: "clinvar_protein".to_string(),
             json_string: r#"{"benignIndexed":true,"proteinVariants":[]}"#.to_string(),
         };
-        assert_eq!(splice_ps1(Some(&old), Some("c.376-2A>T"), 100, "A", "T"), None);
+        assert_eq!(
+            splice_ps1(Some(&old), Some("c.376-2A>T"), 100, "A", "T"),
+            None
+        );
     }
 
     #[test]

@@ -1,15 +1,13 @@
 pub(crate) mod frequency_gate;
-pub(crate) use frequency_gate::{
-    FREQUENCY_BLOCKED_SITE_LEVEL, FREQUENCY_BLOCKED_WOULD_BE_BENIGN,
-};
-pub(crate) mod gene_disease;
-pub mod pvs1;
-pub mod pathogenic_strong;
-pub mod pathogenic_moderate;
-pub mod pathogenic_supporting;
+pub(crate) use frequency_gate::{FREQUENCY_BLOCKED_SITE_LEVEL, FREQUENCY_BLOCKED_WOULD_BE_BENIGN};
 pub mod benign_standalone;
 pub mod benign_strong;
 pub mod benign_supporting;
+pub(crate) mod gene_disease;
+pub mod pathogenic_moderate;
+pub mod pathogenic_strong;
+pub mod pathogenic_supporting;
+pub mod pvs1;
 
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
@@ -29,7 +27,12 @@ pub fn evaluate_all_criteria(
     let mut criteria = Vec::with_capacity(28);
 
     // Pathogenic Very Strong
-    push_with_overrides(&mut criteria, pvs1::evaluate_pvs1(input, config), gene, config);
+    push_with_overrides(
+        &mut criteria,
+        pvs1::evaluate_pvs1(input, config),
+        gene,
+        config,
+    );
 
     // Pathogenic Strong
     for c in pathogenic_strong::evaluate_all(input, config) {
@@ -215,7 +218,10 @@ fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
     // direction. That is deliberate. Where an assay says "damaging" and REVEL
     // says "benign", the predictor is not a dissenting vote to be counted, it
     // is superseded; and the reverse holds just as strongly.
-    if criteria.iter().any(|c| c.met && (c.code == "PS3" || c.code == "BS3")) {
+    if criteria
+        .iter()
+        .any(|c| c.met && (c.code == "PS3" || c.code == "BS3"))
+    {
         let evidence = criteria
             .iter()
             .find(|c| c.met && (c.code == "PS3" || c.code == "BS3"))
@@ -325,8 +331,14 @@ fn functional_criterion(
     };
 
     let mut details = serde_json::Map::new();
-    details.insert("source".into(), serde_json::json!("curated functional evidence"));
-    details.insert("strength".into(), serde_json::json!(entry.strength.as_str()));
+    details.insert(
+        "source".into(),
+        serde_json::json!("curated functional evidence"),
+    );
+    details.insert(
+        "strength".into(),
+        serde_json::json!(entry.strength.as_str()),
+    );
     if let Some(ref pmid) = entry.pmid {
         details.insert("pmid".into(), serde_json::json!(pmid));
     }
@@ -456,9 +468,17 @@ mod reconcile_tests {
     fn test_a_gene_strength_override_restrengths_and_renames() {
         let config = config_capping_pp3("MYH7", EvidenceStrength::Moderate);
         let mut out = Vec::new();
-        push_with_overrides(&mut out, pp3_at(EvidenceStrength::Strong), Some("MYH7"), &config);
+        push_with_overrides(
+            &mut out,
+            pp3_at(EvidenceStrength::Strong),
+            Some("MYH7"),
+            &config,
+        );
         assert_eq!(out[0].strength, EvidenceStrength::Moderate);
-        assert_eq!(out[0].code, "PP3_Moderate", "the code must not contradict the strength");
+        assert_eq!(
+            out[0].code, "PP3_Moderate",
+            "the code must not contradict the strength"
+        );
         assert!(out[0].summary.contains("was Strong"), "{}", out[0].summary);
     }
 
@@ -467,7 +487,12 @@ mod reconcile_tests {
         // PP3's default is Supporting, and bare `PP3` is how that is spelled.
         let config = config_capping_pp3("MYH7", EvidenceStrength::Supporting);
         let mut out = Vec::new();
-        push_with_overrides(&mut out, pp3_at(EvidenceStrength::Strong), Some("MYH7"), &config);
+        push_with_overrides(
+            &mut out,
+            pp3_at(EvidenceStrength::Strong),
+            Some("MYH7"),
+            &config,
+        );
         assert_eq!(out[0].code, "PP3");
         assert_eq!(out[0].strength, EvidenceStrength::Supporting);
     }
@@ -476,7 +501,12 @@ mod reconcile_tests {
     fn test_a_gene_override_does_not_reach_other_genes() {
         let config = config_capping_pp3("MYH7", EvidenceStrength::Moderate);
         let mut out = Vec::new();
-        push_with_overrides(&mut out, pp3_at(EvidenceStrength::Strong), Some("BRCA1"), &config);
+        push_with_overrides(
+            &mut out,
+            pp3_at(EvidenceStrength::Strong),
+            Some("BRCA1"),
+            &config,
+        );
         assert_eq!(out[0].code, "PP3_Strong");
         assert_eq!(out[0].strength, EvidenceStrength::Strong);
     }
@@ -504,7 +534,12 @@ mod reconcile_tests {
             .strength_overrides
             .insert("PP3_Strong".to_string(), EvidenceStrength::Supporting);
         let mut out = Vec::new();
-        push_with_overrides(&mut out, pp3_at(EvidenceStrength::Strong), Some("MYH7"), &config);
+        push_with_overrides(
+            &mut out,
+            pp3_at(EvidenceStrength::Strong),
+            Some("MYH7"),
+            &config,
+        );
         assert_eq!(out[0].code, "PP3");
     }
 
@@ -526,7 +561,11 @@ mod reconcile_tests {
         let mut out = Vec::new();
         push_with_overrides(
             &mut out,
-            met("BP1", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+            met(
+                "BP1",
+                EvidenceDirection::Benign,
+                EvidenceStrength::Supporting,
+            ),
             Some("PTEN"),
             &config,
         );
@@ -546,8 +585,15 @@ mod reconcile_tests {
         }
     }
 
-    fn not_met(code: &str, dir: EvidenceDirection, strength: EvidenceStrength) -> EvidenceCriterion {
-        EvidenceCriterion { met: false, ..met(code, dir, strength) }
+    fn not_met(
+        code: &str,
+        dir: EvidenceDirection,
+        strength: EvidenceStrength,
+    ) -> EvidenceCriterion {
+        EvidenceCriterion {
+            met: false,
+            ..met(code, dir, strength)
+        }
     }
 
     fn pp3_with_source(strength: EvidenceStrength, source: &str) -> EvidenceCriterion {
@@ -582,12 +628,19 @@ mod reconcile_tests {
         // Walker 2023: PVS1 already counts the splicing signal; PP3 from
         // SpliceAI must not double-count.
         let mut criteria = vec![
-            met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
+            met(
+                "PVS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::VeryStrong,
+            ),
             pp3_with_source(EvidenceStrength::Supporting, "spliceai"),
         ];
         reconcile_evidence(&mut criteria);
         assert!(find(&criteria, "PVS1").met, "PVS1 should remain met");
-        assert!(!find(&criteria, "PP3").met, "PP3(splice) should be suppressed");
+        assert!(
+            !find(&criteria, "PP3").met,
+            "PP3(splice) should be suppressed"
+        );
     }
 
     #[test]
@@ -595,11 +648,18 @@ mod reconcile_tests {
         // PP3 driven by REVEL (missense) is unrelated to splicing — PVS1 firing
         // for some other null variant in the same call must not suppress it.
         let mut criteria = vec![
-            met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
+            met(
+                "PVS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::VeryStrong,
+            ),
             pp3_with_source(EvidenceStrength::Strong, "revel_missense"),
         ];
         reconcile_evidence(&mut criteria);
-        assert!(find(&criteria, "PP3").met, "PP3(REVEL) should not be suppressed by PVS1");
+        assert!(
+            find(&criteria, "PP3").met,
+            "PP3(REVEL) should not be suppressed by PVS1"
+        );
     }
 
     #[test]
@@ -607,34 +667,55 @@ mod reconcile_tests {
         // Pejaver 2022: PS1 already covers the residue-level pathogenicity
         // that REVEL captures.
         let mut criteria = vec![
-            met("PS1", EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+            met(
+                "PS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Strong,
+            ),
             pp3_with_source(EvidenceStrength::Strong, "revel_missense"),
         ];
         reconcile_evidence(&mut criteria);
         assert!(find(&criteria, "PS1").met);
-        assert!(!find(&criteria, "PP3").met, "PP3(REVEL) should be suppressed by PS1");
+        assert!(
+            !find(&criteria, "PP3").met,
+            "PP3(REVEL) should be suppressed by PS1"
+        );
     }
 
     #[test]
     fn pm5_plus_pp3_revel_suppresses_pp3() {
         let mut criteria = vec![
-            met("PM5", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            met(
+                "PM5",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Moderate,
+            ),
             pp3_with_source(EvidenceStrength::Moderate, "revel_missense"),
         ];
         reconcile_evidence(&mut criteria);
         assert!(find(&criteria, "PM5").met);
-        assert!(!find(&criteria, "PP3").met, "PP3(REVEL) should be suppressed by PM5");
+        assert!(
+            !find(&criteria, "PP3").met,
+            "PP3(REVEL) should be suppressed by PM5"
+        );
     }
 
     #[test]
     fn ps1_does_not_suppress_pp3_splice() {
         // PS1 is missense; if PP3 came from SpliceAI it's a different signal.
         let mut criteria = vec![
-            met("PS1", EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+            met(
+                "PS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Strong,
+            ),
             pp3_with_source(EvidenceStrength::Supporting, "spliceai"),
         ];
         reconcile_evidence(&mut criteria);
-        assert!(find(&criteria, "PP3").met, "PP3(splice) should not be suppressed by PS1");
+        assert!(
+            find(&criteria, "PP3").met,
+            "PP3(splice) should not be suppressed by PS1"
+        );
     }
 
     #[test]
@@ -643,11 +724,18 @@ mod reconcile_tests {
         // PP3_Strong (4) + PM1 (2) = 6 > 4 → drop PM1.
         let mut criteria = vec![
             pp3_with_source(EvidenceStrength::Strong, "revel_missense"),
-            met("PM1", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            met(
+                "PM1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Moderate,
+            ),
         ];
         reconcile_evidence(&mut criteria);
         assert!(find(&criteria, "PP3").met, "PP3_Strong should remain met");
-        assert!(!find(&criteria, "PM1").met, "PM1 should be suppressed under PP3_Strong cap");
+        assert!(
+            !find(&criteria, "PM1").met,
+            "PM1 should be suppressed under PP3_Strong cap"
+        );
     }
 
     #[test]
@@ -655,7 +743,11 @@ mod reconcile_tests {
         // PP3_Moderate (2) + PM1 (2) = 4 → at the Strong cap, both can stand.
         let mut criteria = vec![
             pp3_with_source(EvidenceStrength::Moderate, "revel_missense"),
-            met("PM1", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            met(
+                "PM1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Moderate,
+            ),
         ];
         reconcile_evidence(&mut criteria);
         assert!(find(&criteria, "PP3").met);
@@ -667,7 +759,11 @@ mod reconcile_tests {
         // PP3 (1) + PM1 (2) = 3 < 4 → both stand.
         let mut criteria = vec![
             pp3_with_source(EvidenceStrength::Supporting, "revel_missense"),
-            met("PM1", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            met(
+                "PM1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Moderate,
+            ),
         ];
         reconcile_evidence(&mut criteria);
         assert!(find(&criteria, "PP3").met);
@@ -682,7 +778,11 @@ mod reconcile_tests {
         // matching so PVS1_* + PP3(splice) still drops PP3 (Walker 2023).
         for graded_code in ["PVS1_Strong", "PVS1_Moderate", "PVS1_Supporting"] {
             let mut criteria = vec![
-                met(graded_code, EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+                met(
+                    graded_code,
+                    EvidenceDirection::Pathogenic,
+                    EvidenceStrength::Strong,
+                ),
                 pp3_with_source(EvidenceStrength::Supporting, "spliceai"),
             ];
             reconcile_evidence(&mut criteria);
@@ -699,10 +799,17 @@ mod reconcile_tests {
         // Same regression guard for PM1 graded codes (if ever introduced).
         let mut criteria = vec![
             pp3_with_source(EvidenceStrength::Strong, "revel_missense"),
-            met("PM1_Strong", EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+            met(
+                "PM1_Strong",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Strong,
+            ),
         ];
         reconcile_evidence(&mut criteria);
-        assert!(!find(&criteria, "PM1").met, "graded PM1 should be capped under PP3_Strong");
+        assert!(
+            !find(&criteria, "PM1").met,
+            "graded PM1 should be capped under PP3_Strong"
+        );
     }
 
     // ── B8: curated functional evidence ──────────────────────────────────
@@ -714,19 +821,42 @@ mod reconcile_tests {
         // variant with published splice-defect data, where fastVEP was firing
         // BP7 and BP4 and calling it benign.
         let mut criteria = vec![
-            met("PS3", EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
+            met(
+                "PS3",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Strong,
+            ),
             pp3_with_source(EvidenceStrength::Strong, "revel_missense"),
-            met("BP4", EvidenceDirection::Benign, EvidenceStrength::Supporting),
-            met("BP7", EvidenceDirection::Benign, EvidenceStrength::Supporting),
-            met("PM2_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting),
+            met(
+                "BP4",
+                EvidenceDirection::Benign,
+                EvidenceStrength::Supporting,
+            ),
+            met(
+                "BP7",
+                EvidenceDirection::Benign,
+                EvidenceStrength::Supporting,
+            ),
+            met(
+                "PM2_Supporting",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Supporting,
+            ),
         ];
         reconcile_evidence(&mut criteria);
 
-        assert!(find(&criteria, "PS3").met, "the evidence itself must survive");
+        assert!(
+            find(&criteria, "PS3").met,
+            "the evidence itself must survive"
+        );
         for code in ["PP3", "BP4", "BP7"] {
             let c = find(&criteria, code);
             assert!(!c.met, "{code} should be superseded");
-            assert!(c.summary.contains("Superseded by functional evidence"), "got: {}", c.summary);
+            assert!(
+                c.summary.contains("Superseded by functional evidence"),
+                "got: {}",
+                c.summary
+            );
         }
         assert!(
             find(&criteria, "PM2_Supporting").met,
@@ -751,8 +881,16 @@ mod reconcile_tests {
     fn predictors_stand_when_there_is_no_functional_evidence() {
         // A PS3 that was evaluated but not met must not suppress anything.
         let mut criteria = vec![
-            not_met("PS3", EvidenceDirection::Pathogenic, EvidenceStrength::Strong),
-            met("BP4", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+            not_met(
+                "PS3",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Strong,
+            ),
+            met(
+                "BP4",
+                EvidenceDirection::Benign,
+                EvidenceStrength::Supporting,
+            ),
         ];
         reconcile_evidence(&mut criteria);
         assert!(find(&criteria, "BP4").met);
@@ -799,13 +937,14 @@ mod reconcile_tests {
         // The honest default: no curated evidence means no assertion either
         // way, not an absence of effect.
         let input = minimal_input();
-        for c in [
-            ps3(&input),
-            bs3(&input),
-        ] {
+        for c in [ps3(&input), bs3(&input)] {
             assert!(!c.met);
             assert!(!c.evaluated);
-            assert!(c.summary.contains("--functional-evidence"), "got: {}", c.summary);
+            assert!(
+                c.summary.contains("--functional-evidence"),
+                "got: {}",
+                c.summary
+            );
         }
     }
 
@@ -850,7 +989,11 @@ mod reconcile_tests {
     // ── Walker 2023 Table 3: PS1's splice path graded against PVS1 ───────
 
     fn splice_ps1_supporting() -> EvidenceCriterion {
-        let mut c = met("PS1_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting);
+        let mut c = met(
+            "PS1_Supporting",
+            EvidenceDirection::Pathogenic,
+            EvidenceStrength::Supporting,
+        );
         c.details = serde_json::json!({"ps1_path": "splice_rna_match"});
         c
     }
@@ -858,7 +1001,11 @@ mod reconcile_tests {
     #[test]
     fn test_splice_ps1_stays_supporting_under_a_full_strength_pvs1() {
         let mut criteria = vec![
-            met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
+            met(
+                "PVS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::VeryStrong,
+            ),
             splice_ps1_supporting(),
         ];
         grade_ps1_splice_against_pvs1(&mut criteria);
@@ -883,7 +1030,12 @@ mod reconcile_tests {
             ];
             grade_ps1_splice_against_pvs1(&mut criteria);
             assert_eq!(criteria[1].code, "PS1", "PVS1_{:?}", downgraded);
-            assert_eq!(criteria[1].strength, EvidenceStrength::Strong, "PVS1_{:?}", downgraded);
+            assert_eq!(
+                criteria[1].strength,
+                EvidenceStrength::Strong,
+                "PVS1_{:?}",
+                downgraded
+            );
         }
     }
 
@@ -893,7 +1045,11 @@ mod reconcile_tests {
         // (a gene with no established LOF mechanism, say), so the conservative
         // strength stands.
         let mut criteria = vec![
-            not_met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
+            not_met(
+                "PVS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::VeryStrong,
+            ),
             splice_ps1_supporting(),
         ];
         grade_ps1_splice_against_pvs1(&mut criteria);
@@ -904,10 +1060,18 @@ mod reconcile_tests {
     fn test_missense_ps1_is_untouched_by_the_splice_grading() {
         // The missense path is Richards 2015 PS1 at full Strong and has
         // nothing to do with Table 3.
-        let mut ps1 = met("PS1", EvidenceDirection::Pathogenic, EvidenceStrength::Strong);
+        let mut ps1 = met(
+            "PS1",
+            EvidenceDirection::Pathogenic,
+            EvidenceStrength::Strong,
+        );
         ps1.details = serde_json::json!({"ps1_path": "missense_aa_match"});
         let mut criteria = vec![
-            met("PVS1_Moderate", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            met(
+                "PVS1_Moderate",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Moderate,
+            ),
             ps1,
         ];
         grade_ps1_splice_against_pvs1(&mut criteria);

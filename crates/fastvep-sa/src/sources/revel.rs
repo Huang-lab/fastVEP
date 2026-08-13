@@ -70,8 +70,7 @@ pub fn parse_revel<R: BufRead>(
             Err(_) => continue,
         };
 
-        let json = format!(r#"{{"score":{:.4}}}"#, score)
-            .replace(".0000}", ".0}");
+        let json = format!(r#"{{"score":{:.4}}}"#, score).replace(".0000}", ".0}");
 
         records.push(AnnotationRecord {
             chrom_idx,
@@ -82,7 +81,11 @@ pub fn parse_revel<R: BufRead>(
         });
     }
 
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 

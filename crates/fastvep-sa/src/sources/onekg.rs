@@ -7,9 +7,7 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::io::BufRead;
 
-const POPS: &[&str] = &[
-    "AFR", "AMR", "EAS", "EUR", "SAS",
-];
+const POPS: &[&str] = &["AFR", "AMR", "EAS", "EUR", "SAS"];
 
 fn af_field(alias: &str, description: &str) -> Field {
     Field {
@@ -69,14 +67,24 @@ pub fn parse_onekg_vcf<R: BufRead>(
 
     for line in reader.lines() {
         let line = line.context("Reading 1000G VCF")?;
-        if line.starts_with('#') { continue; }
+        if line.starts_with('#') {
+            continue;
+        }
 
         let fields: Vec<&str> = line.splitn(9, '\t').collect();
-        if fields.len() < 8 { continue; }
+        if fields.len() < 8 {
+            continue;
+        }
 
         let chrom = normalize_chrom(fields[0]);
-        let chrom_idx = match chrom_to_idx.get(&chrom) { Some(&i) => i, None => continue };
-        let pos: u32 = match fields[1].parse() { Ok(p) => p, Err(_) => continue };
+        let chrom_idx = match chrom_to_idx.get(&chrom) {
+            Some(&i) => i,
+            None => continue,
+        };
+        let pos: u32 = match fields[1].parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
         let ref_allele = fields[3].to_string();
         let alt_field = fields[4];
         let info = fields[7];
@@ -86,7 +94,9 @@ pub fn parse_onekg_vcf<R: BufRead>(
         let all_afs = split_vals(info_map.get("AF").map(|s| s.as_str()));
 
         for (i, alt) in alts.iter().enumerate() {
-            if *alt == "." || *alt == "*" { continue; }
+            if *alt == "." || *alt == "*" {
+                continue;
+            }
 
             let mut parts = Vec::new();
             if let Some(af) = all_afs.get(i).and_then(|s| s.parse::<f64>().ok()) {
@@ -101,28 +111,45 @@ pub fn parse_onekg_vcf<R: BufRead>(
                     }
                 }
             }
-            if parts.is_empty() { continue; }
+            if parts.is_empty() {
+                continue;
+            }
             records.push(AnnotationRecord {
-                chrom_idx, position: pos,
-                ref_allele: ref_allele.clone(), alt_allele: alt.to_string(),
+                chrom_idx,
+                position: pos,
+                ref_allele: ref_allele.clone(),
+                alt_allele: alt.to_string(),
                 json: format!("{{{}}}", parts.join(",")),
             });
         }
     }
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
 fn parse_info(info: &str) -> HashMap<String, String> {
     let mut m = HashMap::new();
-    for p in info.split(';') { if let Some((k, v)) = p.split_once('=') { m.insert(k.into(), v.into()); } }
+    for p in info.split(';') {
+        if let Some((k, v)) = p.split_once('=') {
+            m.insert(k.into(), v.into());
+        }
+    }
     m
 }
 fn split_vals(v: Option<&str>) -> Vec<String> {
-    v.map(|s| s.split(',').map(|x| x.to_string()).collect()).unwrap_or_default()
+    v.map(|s| s.split(',').map(|x| x.to_string()).collect())
+        .unwrap_or_default()
 }
 fn normalize_chrom(c: &str) -> String {
-    if c.starts_with("chr") { c.to_string() } else { format!("chr{}", c) }
+    if c.starts_with("chr") {
+        c.to_string()
+    } else {
+        format!("chr{}", c)
+    }
 }
 
 #[cfg(test)]
@@ -149,9 +176,18 @@ mod tests {
         let o = crate::writer_v2::osa2_record_from_v1(&recs[0], "chr1".into(), &fields).unwrap();
 
         let idx = |alias: &str| fields.iter().position(|f| f.alias == alias).unwrap();
-        assert_eq!(o.values[idx("allAf")], fields[idx("allAf")].encode_float(0.15));
-        assert_eq!(o.values[idx("afrAf")], fields[idx("afrAf")].encode_float(0.20));
-        assert_eq!(o.values[idx("eurAf")], fields[idx("eurAf")].encode_float(0.10));
+        assert_eq!(
+            o.values[idx("allAf")],
+            fields[idx("allAf")].encode_float(0.15)
+        );
+        assert_eq!(
+            o.values[idx("afrAf")],
+            fields[idx("afrAf")].encode_float(0.20)
+        );
+        assert_eq!(
+            o.values[idx("eurAf")],
+            fields[idx("eurAf")].encode_float(0.10)
+        );
         // Populations absent from the record encode as the missing sentinel.
         assert_eq!(o.values[idx("amrAf")], u32::MAX);
         assert_eq!(o.values[idx("sasAf")], u32::MAX);

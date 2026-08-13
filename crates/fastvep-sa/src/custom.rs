@@ -127,8 +127,7 @@ pub fn parse_custom_vcf<R: BufRead>(
             }
             // `serde_json::to_string` on a `Map<String, Value>` produces
             // a well-formed JSON object string.
-            let json = serde_json::to_string(&obj)
-                .unwrap_or_else(|_| "{}".to_string());
+            let json = serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string());
 
             records.push(AnnotationRecord {
                 chrom_idx,
@@ -140,7 +139,11 @@ pub fn parse_custom_vcf<R: BufRead>(
         }
     }
 
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
@@ -284,7 +287,11 @@ fn parse_info(info: &str) -> BTreeMap<String, String> {
 }
 
 fn normalize_chrom(chrom: &str) -> String {
-    if chrom.starts_with("chr") { chrom.to_string() } else { format!("chr{}", chrom) }
+    if chrom.starts_with("chr") {
+        chrom.to_string()
+    } else {
+        format!("chr{}", chrom)
+    }
 }
 
 #[cfg(test)]
@@ -303,10 +310,7 @@ mod tests {
         assert!(recs[0].json.contains("MY_SCORE"));
 
         // Specific fields
-        let recs = parse_custom_vcf(
-            vcf.as_bytes(), &m, "test",
-            &["MY_SCORE".to_string()],
-        ).unwrap();
+        let recs = parse_custom_vcf(vcf.as_bytes(), &m, "test", &["MY_SCORE".to_string()]).unwrap();
         assert!(recs[0].json.contains("MY_SCORE"));
         assert!(!recs[0].json.contains("MY_FLAG"));
     }
@@ -422,7 +426,10 @@ mod tests {
         let recs = parse_custom_vcf(vcf.as_bytes(), &m, "t", &[]).unwrap();
         assert_eq!(recs.len(), 1);
         let val: serde_json::Value = serde_json::from_str(&recs[0].json).unwrap();
-        assert_eq!(val["CAT"], "foo,bar", "biallelic 2-value field must stay intact");
+        assert_eq!(
+            val["CAT"], "foo,bar",
+            "biallelic 2-value field must stay intact"
+        );
     }
 
     #[test]

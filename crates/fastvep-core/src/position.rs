@@ -135,9 +135,7 @@ impl Allele {
         match s {
             "-" => Allele::Deletion,
             "*" => Allele::Missing,
-            _ if s.starts_with('<') && s.ends_with('>') => {
-                Allele::Symbolic(s.to_string())
-            }
+            _ if s.starts_with('<') && s.ends_with('>') => Allele::Symbolic(s.to_string()),
             _ => Allele::Sequence(s.as_bytes().to_vec()),
         }
     }
@@ -202,10 +200,7 @@ mod tests {
     fn test_allele_from_str() {
         assert_eq!(Allele::from_str("-"), Allele::Deletion);
         assert_eq!(Allele::from_str("*"), Allele::Missing);
-        assert_eq!(
-            Allele::from_str("ACGT"),
-            Allele::Sequence(b"ACGT".to_vec())
-        );
+        assert_eq!(Allele::from_str("ACGT"), Allele::Sequence(b"ACGT".to_vec()));
     }
 
     #[test]

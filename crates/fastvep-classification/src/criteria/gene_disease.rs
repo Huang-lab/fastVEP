@@ -40,10 +40,7 @@ use crate::sa_extract::ClassificationInput;
 /// yet. The genes it was meant to catch (RYK, GIGYF2) are absent from ClinGen
 /// too, so absence-blocking was not even selecting for the right thing - it was
 /// selecting for curation coverage.
-pub(crate) fn validity_blocker(
-    input: &ClassificationInput,
-    config: &AcmgConfig,
-) -> Option<String> {
+pub(crate) fn validity_blocker(input: &ClassificationInput, config: &AcmgConfig) -> Option<String> {
     if !config.require_gene_disease_validity {
         return None;
     }
@@ -171,14 +168,25 @@ mod tests {
 
     #[test]
     fn test_curated_as_weak_or_refuted_blocks() {
-        for class in ["Limited", "Disputed", "Refuted", "No Known Disease Relationship"] {
+        for class in [
+            "Limited",
+            "Disputed",
+            "Refuted",
+            "No Known Disease Relationship",
+        ] {
             let input = with_phenotypes(&[&format!(
                 "a proposed disease (ClinGen {class}/AD, MONDO:0000001)"
             )]);
             let reason = validity_blocker(&input, &AcmgConfig::default())
                 .unwrap_or_else(|| panic!("{class} must block"));
-            assert!(reason.contains("no_valid_gene_disease_relationship"), "got: {reason}");
-            assert!(reason.contains("TEST"), "the reason must name the gene: {reason}");
+            assert!(
+                reason.contains("no_valid_gene_disease_relationship"),
+                "got: {reason}"
+            );
+            assert!(
+                reason.contains("TEST"),
+                "the reason must name the gene: {reason}"
+            );
         }
     }
 
@@ -206,7 +214,10 @@ mod tests {
         // A record carrying only a mimNumber is not a curation finding.
         let mut input = minimal_input();
         for phenotypes in [None, Some(vec![])] {
-            input.omim = Some(OmimData { mim_number: Some(0), phenotypes });
+            input.omim = Some(OmimData {
+                mim_number: Some(0),
+                phenotypes,
+            });
             assert!(validity_blocker(&input, &AcmgConfig::default()).is_none());
         }
     }
@@ -214,7 +225,10 @@ mod tests {
     #[test]
     fn test_validity_gate_is_switchable() {
         let input = with_phenotypes(&["x (ClinGen Refuted/AD, MONDO:0000001)"]);
-        let config = AcmgConfig { require_gene_disease_validity: false, ..Default::default() };
+        let config = AcmgConfig {
+            require_gene_disease_validity: false,
+            ..Default::default()
+        };
         assert!(validity_blocker(&input, &config).is_none());
     }
 
@@ -222,7 +236,10 @@ mod tests {
     fn test_gof_only_mechanism_blocks_pvs1() {
         let (input, config) = with_mechanism("PCSK9", "GOF");
         let reason = lof_mechanism_blocker(&input, &config).expect("GOF-only must block");
-        assert!(reason.contains("mechanism_not_loss_of_function"), "got: {reason}");
+        assert!(
+            reason.contains("mechanism_not_loss_of_function"),
+            "got: {reason}"
+        );
         assert!(reason.contains("PCSK9"));
     }
 
@@ -303,10 +320,8 @@ mod tests {
         // The reason the curated mechanisms live in their own map: a TOML that
         // sets a single [gene_overrides.X] block replaces `gene_overrides`
         // wholesale, and would take the shipped table with it.
-        let config: AcmgConfig = toml::from_str(
-            "[gene_overrides.BRCA1]\nmechanism = \"LOF\"\n",
-        )
-        .expect("config must parse");
+        let config: AcmgConfig = toml::from_str("[gene_overrides.BRCA1]\nmechanism = \"LOF\"\n")
+            .expect("config must parse");
         let mut input = minimal_input();
         input.gene_symbol = Some("PCSK9".to_string());
         assert!(lof_mechanism_blocker(&input, &config).is_some());

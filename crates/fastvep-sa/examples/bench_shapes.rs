@@ -65,7 +65,10 @@ const HUMAN_CHROMS: &[(u16, &str, u32)] = &[
 ];
 
 fn env_usize(name: &str, default: usize) -> usize {
-    env::var(name).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 fn chrom_list() -> Vec<String> {
@@ -96,7 +99,11 @@ fn build_sites(n_records: usize) -> Vec<Site> {
         let step = (*length as u64 / share as u64).max(1);
         for j in 0..share {
             let pos = (1 + j as u64 * step).min(*length as u64) as u32;
-            sites.push(Site { chrom_idx: *chrom_idx, chrom: name, position: pos });
+            sites.push(Site {
+                chrom_idx: *chrom_idx,
+                chrom: name,
+                position: pos,
+            });
         }
     }
     sites
@@ -137,9 +144,15 @@ impl Numeric {
     }
 }
 impl Shape for Numeric {
-    fn name(&self) -> &'static str { "numeric   (gnomAD: AF+AN+AC)" }
-    fn json_key(&self) -> &'static str { "gnomad" }
-    fn v2_fields(&self) -> Vec<Field> { self.fields.clone() }
+    fn name(&self) -> &'static str {
+        "numeric   (gnomAD: AF+AN+AC)"
+    }
+    fn json_key(&self) -> &'static str {
+        "gnomad"
+    }
+    fn v2_fields(&self) -> Vec<Field> {
+        self.fields.clone()
+    }
     fn v1_json(&self, s: &Site) -> String {
         let af = ((s.position as u64 % 100_000) as f64) / 1_000_000.0;
         let an = 150_000i64;
@@ -180,19 +193,31 @@ impl Score {
     }
 }
 impl Shape for Score {
-    fn name(&self) -> &'static str { "score     (AlphaMissense: score+class)" }
-    fn json_key(&self) -> &'static str { "alphaMissense" }
-    fn v2_fields(&self) -> Vec<Field> { self.fields.clone() }
+    fn name(&self) -> &'static str {
+        "score     (AlphaMissense: score+class)"
+    }
+    fn json_key(&self) -> &'static str {
+        "alphaMissense"
+    }
+    fn v2_fields(&self) -> Vec<Field> {
+        self.fields.clone()
+    }
     fn v2_string_tables(&self) -> Vec<(usize, Vec<String>)> {
         vec![(1, AM_CLASSES.iter().map(|s| s.to_string()).collect())]
     }
     fn v1_json(&self, s: &Site) -> String {
         let score = Self::score_of(s);
         let class = AM_CLASSES[Self::class_of(s) as usize];
-        format!(r#"{{"amPathogenicity":{:.6e},"amClass":"{}"}}"#, score, class)
+        format!(
+            r#"{{"amPathogenicity":{:.6e},"amClass":"{}"}}"#,
+            score, class
+        )
     }
     fn v2_values(&self, s: &Site) -> Vec<u32> {
-        vec![self.fields[0].encode_float(Self::score_of(s)), Self::class_of(s)]
+        vec![
+            self.fields[0].encode_float(Self::score_of(s)),
+            Self::class_of(s),
+        ]
     }
 }
 
@@ -202,20 +227,37 @@ struct IdString {
 }
 impl IdString {
     fn new() -> Self {
-        Self { fields: vec![blob_field("dbsnp")] }
+        Self {
+            fields: vec![blob_field("dbsnp")],
+        }
     }
     fn blob(s: &Site) -> String {
         // One opaque, near-unique identifier per variant, as dbSNP carries.
-        format!(r#"{{"rsId":"rs{}"}}"#, (s.chrom_idx as u64) * 1_000_000_000 + s.position as u64)
+        format!(
+            r#"{{"rsId":"rs{}"}}"#,
+            (s.chrom_idx as u64) * 1_000_000_000 + s.position as u64
+        )
     }
 }
 impl Shape for IdString {
-    fn name(&self) -> &'static str { "id_string (dbSNP: rsID blob)" }
-    fn json_key(&self) -> &'static str { "dbsnp" }
-    fn v2_fields(&self) -> Vec<Field> { self.fields.clone() }
-    fn v1_json(&self, s: &Site) -> String { Self::blob(s) }
-    fn v2_values(&self, _s: &Site) -> Vec<u32> { Vec::new() }
-    fn v2_blob(&self, s: &Site) -> Option<String> { Some(Self::blob(s)) }
+    fn name(&self) -> &'static str {
+        "id_string (dbSNP: rsID blob)"
+    }
+    fn json_key(&self) -> &'static str {
+        "dbsnp"
+    }
+    fn v2_fields(&self) -> Vec<Field> {
+        self.fields.clone()
+    }
+    fn v1_json(&self, s: &Site) -> String {
+        Self::blob(s)
+    }
+    fn v2_values(&self, _s: &Site) -> Vec<u32> {
+        Vec::new()
+    }
+    fn v2_blob(&self, s: &Site) -> Option<String> {
+        Some(Self::blob(s))
+    }
 }
 
 // --- array_blob (ClinVar-like) ---------------------------------------------
@@ -224,7 +266,9 @@ struct ArrayBlob {
 }
 impl ArrayBlob {
     fn new() -> Self {
-        Self { fields: vec![blob_field("clinvar")] }
+        Self {
+            fields: vec![blob_field("clinvar")],
+        }
     }
     fn blob(s: &Site) -> String {
         // A multi-field record with arrays, as ClinVar carries.
@@ -243,41 +287,75 @@ impl ArrayBlob {
     }
 }
 impl Shape for ArrayBlob {
-    fn name(&self) -> &'static str { "array_blob(ClinVar: sig array + fields)" }
-    fn json_key(&self) -> &'static str { "clinvar" }
-    fn is_array(&self) -> bool { true }
-    fn v2_fields(&self) -> Vec<Field> { self.fields.clone() }
-    fn v1_json(&self, s: &Site) -> String { Self::blob(s) }
-    fn v2_values(&self, _s: &Site) -> Vec<u32> { Vec::new() }
-    fn v2_blob(&self, s: &Site) -> Option<String> { Some(Self::blob(s)) }
+    fn name(&self) -> &'static str {
+        "array_blob(ClinVar: sig array + fields)"
+    }
+    fn json_key(&self) -> &'static str {
+        "clinvar"
+    }
+    fn is_array(&self) -> bool {
+        true
+    }
+    fn v2_fields(&self) -> Vec<Field> {
+        self.fields.clone()
+    }
+    fn v1_json(&self, s: &Site) -> String {
+        Self::blob(s)
+    }
+    fn v2_values(&self, _s: &Site) -> Vec<u32> {
+        Vec::new()
+    }
+    fn v2_blob(&self, s: &Site) -> Option<String> {
+        Some(Self::blob(s))
+    }
 }
 
 fn float_field(field: &str, alias: &str, multiplier: u32) -> Field {
     Field {
-        field: field.into(), alias: alias.into(), ftype: FieldType::Float,
-        multiplier, zigzag: false, missing_value: u32::MAX,
-        missing_string: ".".into(), description: String::new(),
+        field: field.into(),
+        alias: alias.into(),
+        ftype: FieldType::Float,
+        multiplier,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: String::new(),
     }
 }
 fn int_field(field: &str, alias: &str) -> Field {
     Field {
-        field: field.into(), alias: alias.into(), ftype: FieldType::Integer,
-        multiplier: 1, zigzag: false, missing_value: u32::MAX,
-        missing_string: ".".into(), description: String::new(),
+        field: field.into(),
+        alias: alias.into(),
+        ftype: FieldType::Integer,
+        multiplier: 1,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: String::new(),
     }
 }
 fn categorical_field(field: &str, alias: &str) -> Field {
     Field {
-        field: field.into(), alias: alias.into(), ftype: FieldType::Categorical,
-        multiplier: 1, zigzag: false, missing_value: u32::MAX,
-        missing_string: ".".into(), description: String::new(),
+        field: field.into(),
+        alias: alias.into(),
+        ftype: FieldType::Categorical,
+        multiplier: 1,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: String::new(),
     }
 }
 fn blob_field(alias: &str) -> Field {
     Field {
-        field: alias.into(), alias: alias.into(), ftype: FieldType::JsonBlob,
-        multiplier: 1, zigzag: false, missing_value: u32::MAX,
-        missing_string: ".".into(), description: String::new(),
+        field: alias.into(),
+        alias: alias.into(),
+        ftype: FieldType::JsonBlob,
+        multiplier: 1,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: String::new(),
     }
 }
 
@@ -292,7 +370,11 @@ fn build_v1(path: &Path, sites: &[Site], shape: &dyn Shape) -> Result<u64> {
             json: shape.v1_json(s),
         })
         .collect();
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
 
     let header = IndexHeader {
         schema_version: SCHEMA_VERSION,
@@ -375,7 +457,11 @@ fn score_text(score: f64) -> String {
 /// would flatter v2's compression and overstate the size win.
 fn positional_score(pos: u32) -> f64 {
     let phase = (pos % 2000) as f64 / 2000.0; // 0..1
-    let tri = if phase < 0.5 { phase * 2.0 } else { 2.0 - phase * 2.0 }; // 0..1..0
+    let tri = if phase < 0.5 {
+        phase * 2.0
+    } else {
+        2.0 - phase * 2.0
+    }; // 0..1..0
     let base = tri * 10.0 - 4.0;
     // Knuth multiplicative hash → deterministic per-position jitter in ~[-0.5, 0.5].
     let h = pos.wrapping_mul(2_654_435_761);
@@ -422,7 +508,9 @@ fn bench_positional(n_records: usize) -> Result<()> {
     let mut w = SaWriter::new(header);
     w.write_to_files(&v1_base, v1_records.into_iter(), &chrom_list())?;
     let v1_size = std::fs::metadata(v1_base.with_extension("osa"))?.len()
-        + std::fs::metadata(v1_base.with_extension("osa.idx")).map(|m| m.len()).unwrap_or(0);
+        + std::fs::metadata(v1_base.with_extension("osa.idx"))
+            .map(|m| m.len())
+            .unwrap_or(0);
 
     // --- v2 .osa2 (positional metadata, whole-record blob = bare number) ---
     let mut v2_records: Vec<Osa2Record> = Vec::with_capacity(n_records);
@@ -488,7 +576,10 @@ fn main() -> Result<()> {
         Box::new(ArrayBlob::new()),
     ];
 
-    println!("{:<40} {:>12} {:>12} {:>10}", "shape", "v1 MB", "v2 MB", "v2/v1");
+    println!(
+        "{:<40} {:>12} {:>12} {:>10}",
+        "shape", "v1 MB", "v2 MB", "v2/v1"
+    );
     println!("{}", "-".repeat(76));
 
     for shape in &shapes {
@@ -510,7 +601,11 @@ fn main() -> Result<()> {
         let got_v2 = v2_reader
             .annotate_position(sample.chrom, sample.position as u64, "A", "G")?
             .is_some();
-        let flag = if got_v1 != got_v2 { "  !! data mismatch" } else { "" };
+        let flag = if got_v1 != got_v2 {
+            "  !! data mismatch"
+        } else {
+            ""
+        };
 
         println!(
             "{:<40} {:>12.1} {:>12.1} {:>9.2}x{}",

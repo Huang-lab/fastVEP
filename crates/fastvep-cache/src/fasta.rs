@@ -46,15 +46,15 @@ impl FastaReader {
                 // An empty header would silently produce an unnamed sequence
                 // that downstream lookups can never match; surface it
                 // explicitly so the caller knows the file is malformed.
-                let name = line.strip_prefix('>').unwrap_or(line)
+                let name = line
+                    .strip_prefix('>')
+                    .unwrap_or(line)
                     .split_whitespace()
                     .next()
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "FASTA contains a `>` line with no sequence identifier"
-                        )
+                        anyhow::anyhow!("FASTA contains a `>` line with no sequence identifier")
                     })?;
                 current_name = Some(name);
                 current_seq.clear();
@@ -138,17 +138,22 @@ impl MmapFastaReader {
         let fai_contents = std::fs::read_to_string(&fai_path)
             .with_context(|| format!("Reading FASTA index: {}", fai_path))?;
         let index = parse_fai(&fai_contents)?;
-        let name_to_idx: HashMap<String, usize> = index.iter()
+        let name_to_idx: HashMap<String, usize> = index
+            .iter()
             .enumerate()
             .map(|(i, e)| (e.name.clone(), i))
             .collect();
 
         let file = std::fs::File::open(fasta_path)
             .with_context(|| format!("Opening FASTA: {}", fasta_path.display()))?;
-        let mmap = unsafe { memmap2::Mmap::map(&file) }
-            .with_context(|| "Memory-mapping FASTA file")?;
+        let mmap =
+            unsafe { memmap2::Mmap::map(&file) }.with_context(|| "Memory-mapping FASTA file")?;
 
-        Ok(Self { mmap, index, name_to_idx })
+        Ok(Self {
+            mmap,
+            index,
+            name_to_idx,
+        })
     }
 
     #[inline]
@@ -173,7 +178,12 @@ impl MmapFastaReader {
         let end_0 = end.min(entry.length).saturating_sub(1);
 
         if start_0 >= entry.length {
-            anyhow::bail!("Start {} exceeds length {} for {}", start, entry.length, chrom);
+            anyhow::bail!(
+                "Start {} exceeds length {} for {}",
+                start,
+                entry.length,
+                chrom
+            );
         }
 
         let bases_needed = (end_0 - start_0 + 1) as usize;

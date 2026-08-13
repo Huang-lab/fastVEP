@@ -252,8 +252,16 @@ mod tests {
 
     #[test]
     fn test_equality_ignores_idx() {
-        let a = LongVariant { position: 100, idx: 0, sequence: encode_var(b"ACGTAC", b"T").unwrap() };
-        let b = LongVariant { position: 100, idx: 999, sequence: encode_var(b"ACGTAC", b"T").unwrap() };
+        let a = LongVariant {
+            position: 100,
+            idx: 0,
+            sequence: encode_var(b"ACGTAC", b"T").unwrap(),
+        };
+        let b = LongVariant {
+            position: 100,
+            idx: 999,
+            sequence: encode_var(b"ACGTAC", b"T").unwrap(),
+        };
         assert_eq!(a, b); // idx is ignored in PartialEq
     }
 

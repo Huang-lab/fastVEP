@@ -117,6 +117,9 @@ source_assembly\tGRCh38.p14";
         assert_eq!(info.variation_cols[0], "variation_name");
         assert_eq!(info.valid_chromosomes.len(), 25);
         assert_eq!(info.valid_chromosomes[0], "1");
-        assert_eq!(info.version_data.get("source_gencode").unwrap(), "GENCODE 46");
+        assert_eq!(
+            info.version_data.get("source_gencode").unwrap(),
+            "GENCODE 46"
+        );
     }
 }

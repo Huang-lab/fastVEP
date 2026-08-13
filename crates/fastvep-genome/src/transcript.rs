@@ -139,7 +139,8 @@ impl Transcript {
                 return Some(residues);
             }
         }
-        let cds_len = self.cdna_coding_end?.checked_sub(self.cdna_coding_start?)? + 1
+        let cds_len = self.cdna_coding_end?.checked_sub(self.cdna_coding_start?)?
+            + 1
             + self.codon_table_start_phase;
         // A complete CDS ends in a stop codon, which is not a residue.
         (cds_len / 3).checked_sub(1).filter(|n| *n > 0)
@@ -507,7 +508,11 @@ mod tests {
     fn test_peptide_length_prefers_the_translated_peptide() {
         let mut tr = make_test_transcript();
         tr.peptide = Some("MKVLA*".to_string());
-        assert_eq!(tr.peptide_length(), Some(5), "the stop codon is not a residue");
+        assert_eq!(
+            tr.peptide_length(),
+            Some(5),
+            "the stop codon is not a residue"
+        );
     }
 
     #[test]
@@ -524,9 +529,21 @@ mod tests {
         // Exons are 201 + 301 + 1001 = 1503 cDNA bases, so the final
         // exon-exon junction sits at cDNA position 502.
         let tr = make_test_transcript();
-        assert_eq!(tr.escapes_nmd(452), Some(false), "51 nt upstream of the junction decays");
-        assert_eq!(tr.escapes_nmd(453), Some(true), "50 nt upstream is the escape window");
-        assert_eq!(tr.escapes_nmd(502), Some(true), "the junction itself escapes");
+        assert_eq!(
+            tr.escapes_nmd(452),
+            Some(false),
+            "51 nt upstream of the junction decays"
+        );
+        assert_eq!(
+            tr.escapes_nmd(453),
+            Some(true),
+            "50 nt upstream is the escape window"
+        );
+        assert_eq!(
+            tr.escapes_nmd(502),
+            Some(true),
+            "the junction itself escapes"
+        );
         assert_eq!(tr.escapes_nmd(900), Some(true), "the last exon escapes");
         assert_eq!(tr.escapes_nmd(10), Some(false), "far upstream decays");
     }
@@ -610,7 +627,9 @@ mod tests {
                     // UTR: first 50 bases, CDS starts at offset 50
                     let mut seq = vec![b'N'; len];
                     // Put ATG at offset 50 (genomic 1050)
-                    seq[50] = b'A'; seq[51] = b'T'; seq[52] = b'G';
+                    seq[50] = b'A';
+                    seq[51] = b'T';
+                    seq[52] = b'G';
                     // Fill rest of CDS with GCT (Ala)
                     for (i, base) in seq.iter_mut().enumerate().skip(53) {
                         *base = b"GCT"[(i - 53) % 3];
@@ -645,15 +664,24 @@ mod tests {
 
         let ts = tr.translateable_seq.as_ref().unwrap();
         // translateable_seq should start with ATG
-        assert!(ts.starts_with("ATG"), "translateable_seq starts with: {}", &ts[..6]);
+        assert!(
+            ts.starts_with("ATG"),
+            "translateable_seq starts with: {}",
+            &ts[..6]
+        );
         // Length should be cdna_coding_end - cdna_coding_start + 1 = 952 - 51 + 1 = 902
         // Actually: cdna_coding_end = 952 in the test fixture
-        let expected_len = (tr.cdna_coding_end.unwrap() - tr.cdna_coding_start.unwrap() + 1) as usize;
+        let expected_len =
+            (tr.cdna_coding_end.unwrap() - tr.cdna_coding_start.unwrap() + 1) as usize;
         // Wait, the slice is [cs-1..ce] which is ce - (cs-1) = ce - cs + 1 items
         assert_eq!(ts.len(), expected_len);
 
         let peptide = tr.peptide.as_ref().unwrap();
         // Peptide should start with M (Met)
-        assert!(peptide.starts_with('M'), "peptide starts with: {}", &peptide[..1]);
+        assert!(
+            peptide.starts_with('M'),
+            "peptide starts with: {}",
+            &peptide[..1]
+        );
     }
 }

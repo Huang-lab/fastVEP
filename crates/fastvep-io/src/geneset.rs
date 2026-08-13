@@ -45,8 +45,8 @@ impl GeneSet {
     /// from spreadsheets work directly.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let file = File::open(path)
-            .with_context(|| format!("Opening gene list: {}", path.display()))?;
+        let file =
+            File::open(path).with_context(|| format!("Opening gene list: {}", path.display()))?;
         let reader = BufReader::new(file);
         let mut members = HashSet::new();
         for line in reader.lines() {

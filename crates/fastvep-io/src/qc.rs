@@ -316,8 +316,14 @@ mod tests {
             max_fs = 60.0
             "#,
         );
-        assert_eq!(rules.classify(&InfoView::new("FS=30.0", None), "PASS"), "GOOD");
-        assert_eq!(rules.classify(&InfoView::new("FS=65.0", None), "PASS"), "FAIL_QC");
+        assert_eq!(
+            rules.classify(&InfoView::new("FS=30.0", None), "PASS"),
+            "GOOD"
+        );
+        assert_eq!(
+            rules.classify(&InfoView::new("FS=65.0", None), "PASS"),
+            "FAIL_QC"
+        );
     }
 
     #[test]
@@ -330,7 +336,10 @@ mod tests {
             "#,
         );
         // No DP in INFO → cannot prove threshold passed.
-        assert_eq!(rules.classify(&InfoView::new("AF=0.5", None), "PASS"), "FAIL_QC");
+        assert_eq!(
+            rules.classify(&InfoView::new("AF=0.5", None), "PASS"),
+            "FAIL_QC"
+        );
     }
 
     #[test]

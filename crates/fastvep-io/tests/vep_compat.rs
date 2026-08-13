@@ -227,9 +227,21 @@ fn test_vep_indel_variety() {
     // Various indel types from test_not_ordered.vcf
     let test_cases = vec![
         // (line, expected_start, expected_allele_string)
-        ("21\t30000016\trs202173120\tT\tTCA\t.\t.\t.", 30000017, "-/CA"),
-        ("21\t30000018\trs144102269\tA\tAAT\t.\t.\t.", 30000019, "-/AT"),
-        ("21\t30000020\trs35748481\tG\tGAT\t.\t.\t.", 30000021, "-/AT"),
+        (
+            "21\t30000016\trs202173120\tT\tTCA\t.\t.\t.",
+            30000017,
+            "-/CA",
+        ),
+        (
+            "21\t30000018\trs144102269\tA\tAAT\t.\t.\t.",
+            30000019,
+            "-/AT",
+        ),
+        (
+            "21\t30000020\trs35748481\tG\tGAT\t.\t.\t.",
+            30000021,
+            "-/AT",
+        ),
         ("21\t30000105\trs34988396\tC\tCC\t.\t.\t.", 30000106, "-/C"),
     ];
 
@@ -237,11 +249,13 @@ fn test_vep_indel_variety() {
         let vf = parse_vcf_line(line).unwrap();
         assert_eq!(
             vf.position.start, expected_start,
-            "Failed for: {} — got start={}", line, vf.position.start
+            "Failed for: {} — got start={}",
+            line, vf.position.start
         );
         assert_eq!(
             vf.allele_string, expected_alleles,
-            "Failed for: {} — got alleles={}", line, vf.allele_string
+            "Failed for: {} — got alleles={}",
+            line, vf.allele_string
         );
     }
 }
@@ -324,7 +338,13 @@ fn test_all_consequence_types_have_valid_so_terms() {
     for c in &all {
         let term = c.so_term();
         let parsed = Consequence::from_so_term(term);
-        assert_eq!(parsed, Some(*c), "SO term round-trip failed for {:?} ({})", c, term);
+        assert_eq!(
+            parsed,
+            Some(*c),
+            "SO term round-trip failed for {:?} ({})",
+            c,
+            term
+        );
     }
 
     // Verify strict ordering by rank
@@ -332,7 +352,10 @@ fn test_all_consequence_types_have_valid_so_terms() {
         assert!(
             all[i].rank() < all[i + 1].rank(),
             "{:?} (rank {}) should be more severe than {:?} (rank {})",
-            all[i], all[i].rank(), all[i + 1], all[i + 1].rank()
+            all[i],
+            all[i].rank(),
+            all[i + 1],
+            all[i + 1].rank()
         );
     }
 }
@@ -405,7 +428,12 @@ fn test_all_64_codons_translate() {
             for &b3 in &bases {
                 let codon = [b1, b2, b3];
                 let aa = table.translate(&codon);
-                assert_ne!(aa, b'X', "Codon {:?} should translate", std::str::from_utf8(&codon));
+                assert_ne!(
+                    aa,
+                    b'X',
+                    "Codon {:?} should translate",
+                    std::str::from_utf8(&codon)
+                );
                 count += 1;
             }
         }
@@ -631,32 +659,60 @@ fn test_csq_frameshift_codon_format() {
 #[test]
 fn test_csq_header_includes_new_fields() {
     let header = output::csq_header_line(output::DEFAULT_CSQ_FIELDS);
-    assert!(header.contains("REF_ALLELE"), "Header should include REF_ALLELE");
-    assert!(header.contains("UPLOADED_ALLELE"), "Header should include UPLOADED_ALLELE");
+    assert!(
+        header.contains("REF_ALLELE"),
+        "Header should include REF_ALLELE"
+    );
+    assert!(
+        header.contains("UPLOADED_ALLELE"),
+        "Header should include UPLOADED_ALLELE"
+    );
     assert!(header.contains("FLAGS"), "Header should include FLAGS");
-    assert!(header.contains("SYMBOL_SOURCE"), "Header should include SYMBOL_SOURCE");
+    assert!(
+        header.contains("SYMBOL_SOURCE"),
+        "Header should include SYMBOL_SOURCE"
+    );
     assert!(header.contains("HGNC_ID"), "Header should include HGNC_ID");
-    assert!(header.contains("MANE|MANE_SELECT"), "Header should include MANE fields");
+    assert!(
+        header.contains("MANE|MANE_SELECT"),
+        "Header should include MANE fields"
+    );
     assert!(header.contains("TSL"), "Header should include TSL");
     assert!(header.contains("APPRIS"), "Header should include APPRIS");
-    assert!(header.contains("TRANSCRIPTION_FACTORS"), "Header should end with TRANSCRIPTION_FACTORS");
-    assert!(header.contains("CANONICAL"), "Header should include CANONICAL");
+    assert!(
+        header.contains("TRANSCRIPTION_FACTORS"),
+        "Header should end with TRANSCRIPTION_FACTORS"
+    );
+    assert!(
+        header.contains("CANONICAL"),
+        "Header should include CANONICAL"
+    );
     assert!(header.contains("CCDS"), "Header should include CCDS");
     assert!(header.contains("ENSP"), "Header should include ENSP");
     assert!(header.contains("SOURCE"), "Header should include SOURCE");
-    assert!(header.contains("HGVS_OFFSET"), "Header should include HGVS_OFFSET");
+    assert!(
+        header.contains("HGVS_OFFSET"),
+        "Header should include HGVS_OFFSET"
+    );
 }
 
 #[test]
 fn test_csq_field_count_matches_vep() {
     // Extended field set includes all VEP fields plus CANONICAL, CCDS, ENSP, SOURCE, HGVS_OFFSET
-    assert_eq!(output::DEFAULT_CSQ_FIELDS.len(), 49, "DEFAULT_CSQ_FIELDS should have 49 fields");
+    assert_eq!(
+        output::DEFAULT_CSQ_FIELDS.len(),
+        49,
+        "DEFAULT_CSQ_FIELDS should have 49 fields"
+    );
 
     // Verify formatting produces 49 pipe-delimited values
     let vf = mock_vf_missense();
     let csq = output::format_csq(&vf, output::DEFAULT_CSQ_FIELDS);
     let field_count = csq.split('|').count();
-    assert_eq!(field_count, 49, "CSQ output should have 49 pipe-delimited fields");
+    assert_eq!(
+        field_count, 49,
+        "CSQ output should have 49 pipe-delimited fields"
+    );
 }
 
 #[test]
@@ -671,64 +727,75 @@ fn test_csq_missense_full_42_field_match() {
 
     // VEP expected values (all 49 fields)
     let expected: Vec<&str> = vec![
-        "C",                                  // 0:  Allele
-        "missense_variant",                   // 1:  Consequence
-        "MODERATE",                           // 2:  IMPACT
-        "OR4F5",                              // 3:  SYMBOL
-        "ENSG00000186092",                    // 4:  Gene
-        "Transcript",                         // 5:  Feature_type
-        "ENST00000641515.2",                  // 6:  Feature
-        "protein_coding",                     // 7:  BIOTYPE
-        "2/3",                                // 8:  EXON
-        "",                                   // 9:  INTRON
-        "",                                   // 10: HGVSc
-        "",                                   // 11: HGVSp
-        "64",                                 // 12: cDNA_position
-        "4",                                  // 13: CDS_position
-        "2",                                  // 14: Protein_position
-        "K/Q",                                // 15: Amino_acids
-        "Aag/Cag",                            // 16: Codons
-        "",                                   // 17: Existing_variation
-        "A",                                  // 18: REF_ALLELE
-        "A/C",                                // 19: UPLOADED_ALLELE
-        "",                                   // 20: DISTANCE
-        "1",                                  // 21: STRAND
-        "",                                   // 22: FLAGS
-        "",                                   // 23: CANONICAL
-        "HGNC",                               // 24: SYMBOL_SOURCE
-        "HGNC:14825",                         // 25: HGNC_ID
-        "MANE_Select",                        // 26: MANE
-        "NM_001005484.2",                     // 27: MANE_SELECT
-        "",                                   // 28: MANE_PLUS_CLINICAL
-        "",                                   // 29: TSL
-        "P1",                                 // 30: APPRIS
-        "",                                   // 31: CCDS
-        "",                                   // 32: ENSP
-        "",                                   // 33: SOURCE
-        "",                                   // 34: HGVS_OFFSET
-        "tolerated_low_confidence(0.06)",     // 35: SIFT
-        "benign(0)",                          // 36: PolyPhen
-        "",                                   // 37: AF
-        "",                                   // 38: CLIN_SIG
-        "",                                   // 39: SOMATIC
-        "",                                   // 40: PHENO
-        "",                                   // 41: PUBMED
-        "",                                   // 42: MOTIF_NAME
-        "",                                   // 43: MOTIF_POS
-        "",                                   // 44: HIGH_INF_POS
-        "",                                   // 45: MOTIF_SCORE_CHANGE
-        "",                                   // 46: TRANSCRIPTION_FACTORS
-        "",                                   // 47: ACMG (empty when --acmg not run)
-        "",                                   // 48: ACMG_CRITERIA
+        "C",                              // 0:  Allele
+        "missense_variant",               // 1:  Consequence
+        "MODERATE",                       // 2:  IMPACT
+        "OR4F5",                          // 3:  SYMBOL
+        "ENSG00000186092",                // 4:  Gene
+        "Transcript",                     // 5:  Feature_type
+        "ENST00000641515.2",              // 6:  Feature
+        "protein_coding",                 // 7:  BIOTYPE
+        "2/3",                            // 8:  EXON
+        "",                               // 9:  INTRON
+        "",                               // 10: HGVSc
+        "",                               // 11: HGVSp
+        "64",                             // 12: cDNA_position
+        "4",                              // 13: CDS_position
+        "2",                              // 14: Protein_position
+        "K/Q",                            // 15: Amino_acids
+        "Aag/Cag",                        // 16: Codons
+        "",                               // 17: Existing_variation
+        "A",                              // 18: REF_ALLELE
+        "A/C",                            // 19: UPLOADED_ALLELE
+        "",                               // 20: DISTANCE
+        "1",                              // 21: STRAND
+        "",                               // 22: FLAGS
+        "",                               // 23: CANONICAL
+        "HGNC",                           // 24: SYMBOL_SOURCE
+        "HGNC:14825",                     // 25: HGNC_ID
+        "MANE_Select",                    // 26: MANE
+        "NM_001005484.2",                 // 27: MANE_SELECT
+        "",                               // 28: MANE_PLUS_CLINICAL
+        "",                               // 29: TSL
+        "P1",                             // 30: APPRIS
+        "",                               // 31: CCDS
+        "",                               // 32: ENSP
+        "",                               // 33: SOURCE
+        "",                               // 34: HGVS_OFFSET
+        "tolerated_low_confidence(0.06)", // 35: SIFT
+        "benign(0)",                      // 36: PolyPhen
+        "",                               // 37: AF
+        "",                               // 38: CLIN_SIG
+        "",                               // 39: SOMATIC
+        "",                               // 40: PHENO
+        "",                               // 41: PUBMED
+        "",                               // 42: MOTIF_NAME
+        "",                               // 43: MOTIF_POS
+        "",                               // 44: HIGH_INF_POS
+        "",                               // 45: MOTIF_SCORE_CHANGE
+        "",                               // 46: TRANSCRIPTION_FACTORS
+        "",                               // 47: ACMG (empty when --acmg not run)
+        "",                               // 48: ACMG_CRITERIA
     ];
 
-    assert_eq!(fields.len(), expected.len(),
-        "Field count mismatch: got {}, expected {}", fields.len(), expected.len());
+    assert_eq!(
+        fields.len(),
+        expected.len(),
+        "Field count mismatch: got {}, expected {}",
+        fields.len(),
+        expected.len()
+    );
 
     for (i, (got, exp)) in fields.iter().zip(expected.iter()).enumerate() {
-        assert_eq!(got, exp,
+        assert_eq!(
+            got,
+            exp,
             "Field {} ({}) mismatch: got {:?}, expected {:?}",
-            i, output::DEFAULT_CSQ_FIELDS[i], got, exp);
+            i,
+            output::DEFAULT_CSQ_FIELDS[i],
+            got,
+            exp
+        );
     }
 }
 
@@ -804,64 +871,75 @@ fn test_csq_frameshift_full_42_field_match() {
     // -|frameshift_variant|HIGH|CHL1|ENSG00000134121|Transcript|ENST00000421198.5|
     // protein_coding|3/5||||258|5|2|E/X|gAg/gg||A|A/-||1|cds_end_NF|HGNC|HGNC:1939||||4|||||||||||||
     let expected: Vec<&str> = vec![
-        "-",                    // 0:  Allele
-        "frameshift_variant",   // 1:  Consequence
-        "HIGH",                 // 2:  IMPACT
-        "CHL1",                 // 3:  SYMBOL
-        "ENSG00000134121",      // 4:  Gene
-        "Transcript",           // 5:  Feature_type
-        "ENST00000421198.5",    // 6:  Feature
-        "protein_coding",       // 7:  BIOTYPE
-        "3/5",                  // 8:  EXON
-        "",                     // 9:  INTRON
-        "",                     // 10: HGVSc
-        "",                     // 11: HGVSp
-        "258",                  // 12: cDNA_position
-        "5",                    // 13: CDS_position
-        "2",                    // 14: Protein_position
-        "E/X",                  // 15: Amino_acids
-        "gAg/gg",               // 16: Codons
-        "",                     // 17: Existing_variation
-        "A",                    // 18: REF_ALLELE
-        "A/-",                  // 19: UPLOADED_ALLELE
-        "",                     // 20: DISTANCE
-        "1",                    // 21: STRAND
-        "cds_end_NF",           // 22: FLAGS
-        "",                     // 23: CANONICAL
-        "HGNC",                 // 24: SYMBOL_SOURCE
-        "HGNC:1939",            // 25: HGNC_ID
-        "",                     // 26: MANE
-        "",                     // 27: MANE_SELECT
-        "",                     // 28: MANE_PLUS_CLINICAL
-        "4",                    // 29: TSL
-        "",                     // 30: APPRIS
-        "",                     // 31: CCDS
-        "",                     // 32: ENSP
-        "",                     // 33: SOURCE
-        "",                     // 34: HGVS_OFFSET
-        "",                     // 35: SIFT
-        "",                     // 36: PolyPhen
-        "",                     // 37: AF
-        "",                     // 38: CLIN_SIG
-        "",                     // 39: SOMATIC
-        "",                     // 40: PHENO
-        "",                     // 41: PUBMED
-        "",                     // 42: MOTIF_NAME
-        "",                     // 43: MOTIF_POS
-        "",                     // 44: HIGH_INF_POS
-        "",                     // 45: MOTIF_SCORE_CHANGE
-        "",                     // 46: TRANSCRIPTION_FACTORS
-        "",                     // 47: ACMG
-        "",                     // 48: ACMG_CRITERIA
+        "-",                  // 0:  Allele
+        "frameshift_variant", // 1:  Consequence
+        "HIGH",               // 2:  IMPACT
+        "CHL1",               // 3:  SYMBOL
+        "ENSG00000134121",    // 4:  Gene
+        "Transcript",         // 5:  Feature_type
+        "ENST00000421198.5",  // 6:  Feature
+        "protein_coding",     // 7:  BIOTYPE
+        "3/5",                // 8:  EXON
+        "",                   // 9:  INTRON
+        "",                   // 10: HGVSc
+        "",                   // 11: HGVSp
+        "258",                // 12: cDNA_position
+        "5",                  // 13: CDS_position
+        "2",                  // 14: Protein_position
+        "E/X",                // 15: Amino_acids
+        "gAg/gg",             // 16: Codons
+        "",                   // 17: Existing_variation
+        "A",                  // 18: REF_ALLELE
+        "A/-",                // 19: UPLOADED_ALLELE
+        "",                   // 20: DISTANCE
+        "1",                  // 21: STRAND
+        "cds_end_NF",         // 22: FLAGS
+        "",                   // 23: CANONICAL
+        "HGNC",               // 24: SYMBOL_SOURCE
+        "HGNC:1939",          // 25: HGNC_ID
+        "",                   // 26: MANE
+        "",                   // 27: MANE_SELECT
+        "",                   // 28: MANE_PLUS_CLINICAL
+        "4",                  // 29: TSL
+        "",                   // 30: APPRIS
+        "",                   // 31: CCDS
+        "",                   // 32: ENSP
+        "",                   // 33: SOURCE
+        "",                   // 34: HGVS_OFFSET
+        "",                   // 35: SIFT
+        "",                   // 36: PolyPhen
+        "",                   // 37: AF
+        "",                   // 38: CLIN_SIG
+        "",                   // 39: SOMATIC
+        "",                   // 40: PHENO
+        "",                   // 41: PUBMED
+        "",                   // 42: MOTIF_NAME
+        "",                   // 43: MOTIF_POS
+        "",                   // 44: HIGH_INF_POS
+        "",                   // 45: MOTIF_SCORE_CHANGE
+        "",                   // 46: TRANSCRIPTION_FACTORS
+        "",                   // 47: ACMG
+        "",                   // 48: ACMG_CRITERIA
     ];
 
-    assert_eq!(fields.len(), expected.len(),
-        "Field count mismatch: got {}, expected {}", fields.len(), expected.len());
+    assert_eq!(
+        fields.len(),
+        expected.len(),
+        "Field count mismatch: got {}, expected {}",
+        fields.len(),
+        expected.len()
+    );
 
     for (i, (got, exp)) in fields.iter().zip(expected.iter()).enumerate() {
-        assert_eq!(got, exp,
+        assert_eq!(
+            got,
+            exp,
             "Field {} ({}) mismatch: got {:?}, expected {:?}",
-            i, output::DEFAULT_CSQ_FIELDS[i], got, exp);
+            i,
+            output::DEFAULT_CSQ_FIELDS[i],
+            got,
+            exp
+        );
     }
 }
 
@@ -950,11 +1028,11 @@ fn test_csq_downstream_variant_match() {
     assert_eq!(fields[24], "HGNC");
     assert_eq!(fields[25], "HGNC:31276");
     // All annotation fields should be empty for downstream variant
-    assert_eq!(fields[8], "");   // EXON
-    assert_eq!(fields[12], "");  // cDNA_position
-    assert_eq!(fields[13], "");  // CDS_position
-    assert_eq!(fields[15], "");  // Amino_acids
-    assert_eq!(fields[16], "");  // Codons
+    assert_eq!(fields[8], ""); // EXON
+    assert_eq!(fields[12], ""); // cDNA_position
+    assert_eq!(fields[13], ""); // CDS_position
+    assert_eq!(fields[15], ""); // Amino_acids
+    assert_eq!(fields[16], ""); // Codons
 }
 
 #[test]
@@ -1035,15 +1113,15 @@ fn test_csq_intron_variant_match() {
     assert_eq!(fields[2], "MODIFIER");
     assert_eq!(fields[3], "ACP1");
     assert_eq!(fields[7], "protein_coding");
-    assert_eq!(fields[8], "");     // EXON empty for intron
-    assert_eq!(fields[9], "1/5");  // INTRON
+    assert_eq!(fields[8], ""); // EXON empty for intron
+    assert_eq!(fields[9], "1/5"); // INTRON
     assert_eq!(fields[18], "C");
     assert_eq!(fields[19], "C/T");
     assert_eq!(fields[21], "1");
-    assert_eq!(fields[24], "HGNC");     // SYMBOL_SOURCE (shifted +1)
+    assert_eq!(fields[24], "HGNC"); // SYMBOL_SOURCE (shifted +1)
     assert_eq!(fields[25], "HGNC:122");
     assert_eq!(fields[26], "MANE_Select");
     assert_eq!(fields[27], "NM_004300.4");
-    assert_eq!(fields[29], "1");   // TSL (shifted +1)
-    assert_eq!(fields[30], "P3");  // APPRIS (shifted +1)
+    assert_eq!(fields[29], "1"); // TSL (shifted +1)
+    assert_eq!(fields[30], "P3"); // APPRIS (shifted +1)
 }

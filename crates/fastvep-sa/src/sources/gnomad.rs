@@ -28,7 +28,16 @@ use std::io::BufRead;
 /// gnomAD v2.1 codes (`oth`) and the v4.1 codes (`mid`, `remaining`); a
 /// missing key is silently skipped per VCF, so listing all is harmless.
 const POPULATIONS: &[&str] = &[
-    "afr", "amr", "asj", "eas", "fin", "mid", "nfe", "oth", "remaining", "sas",
+    "afr",
+    "amr",
+    "asj",
+    "eas",
+    "fin",
+    "mid",
+    "nfe",
+    "oth",
+    "remaining",
+    "sas",
 ];
 
 // =============================================================================
@@ -51,9 +60,21 @@ const POPULATIONS: &[&str] = &[
 /// "not PASS" bit so a reviewer reading the annotation can see *which* filter
 /// fired.
 const FILTER_FLAGS: &[(&str, &str, &str)] = &[
-    ("AC0", "filterAc0", "FILTER=AC0: allele count is zero after filtering out low-confidence genotypes"),
-    ("AS_VQSR", "filterVqsr", "FILTER=AS_VQSR: site failed allele-specific VQSR thresholds"),
-    ("InbreedingCoeff", "filterInbreeding", "FILTER=InbreedingCoeff: inbreeding coefficient < -0.3"),
+    (
+        "AC0",
+        "filterAc0",
+        "FILTER=AC0: allele count is zero after filtering out low-confidence genotypes",
+    ),
+    (
+        "AS_VQSR",
+        "filterVqsr",
+        "FILTER=AS_VQSR: site failed allele-specific VQSR thresholds",
+    ),
+    (
+        "InbreedingCoeff",
+        "filterInbreeding",
+        "FILTER=InbreedingCoeff: inbreeding coefficient < -0.3",
+    ),
 ];
 
 /// Region-quality INFO flags, as (INFO key, output alias, description).
@@ -66,8 +87,16 @@ const FILTER_FLAGS: &[(&str, &str, &str)] = &[
 /// pseudoautosomal region is an XY sample hemizygous.
 const INFO_FLAGS: &[(&str, &str, &str)] = &[
     ("lcr", "lcr", "Variant falls within a low-complexity region"),
-    ("segdup", "segdup", "Variant falls within a segmental duplication"),
-    ("non_par", "nonPar", "Sex-chromosome variant falls outside a pseudoautosomal region"),
+    (
+        "segdup",
+        "segdup",
+        "Variant falls within a segmental duplication",
+    ),
+    (
+        "non_par",
+        "nonPar",
+        "Sex-chromosome variant falls outside a pseudoautosomal region",
+    ),
 ];
 
 /// Per-allele (`Number=A`) XY-stratified counts.
@@ -89,11 +118,8 @@ const XY_ALLELE_INTS: &[(&str, &str, &str)] = &[(
 )];
 
 /// Per-site (`Number=1`) XY-stratified counts.
-const XY_SITE_INTS: &[(&str, &str, &str)] = &[(
-    "AN_XY",
-    "allAnXY",
-    "Total allele number in XY samples",
-)];
+const XY_SITE_INTS: &[(&str, &str, &str)] =
+    &[("AN_XY", "allAnXY", "Total allele number in XY samples")];
 
 /// Filtering allele frequencies (Whiffin 2017, PMID 28518168).
 ///
@@ -104,7 +130,11 @@ const XY_SITE_INTS: &[(&str, &str, &str)] = &[(
 /// absent elsewhere, and to a frequency estimated from very few alleles. Both
 /// failure modes were raised in the round-2 medical-genetics review.
 const FAF_FLOATS: &[(&str, &str, &str)] = &[
-    ("faf95", "faf95", "Filtering allele frequency (95% CI lower bound), all samples"),
+    (
+        "faf95",
+        "faf95",
+        "Filtering allele frequency (95% CI lower bound), all samples",
+    ),
     (
         "fafmax_faf95_max",
         "faf95Max",
@@ -307,7 +337,11 @@ pub fn parse_gnomad_vcf<R: BufRead>(
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records: Vec<_> = iter_gnomad_vcf(reader, chrom_to_idx).collect::<Result<_>>()?;
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
@@ -437,7 +471,12 @@ fn build_gnomad_json(
     allele_idx: usize,
     field_names: &FieldNames,
 ) -> String {
-    let GlobalCounts { af, an, ac, nhomalt } = counts;
+    let GlobalCounts {
+        af,
+        an,
+        ac,
+        nhomalt,
+    } = counts;
     let mut parts = Vec::new();
 
     if let Some(af_str) = af {
@@ -754,18 +793,28 @@ impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
                 }
                 // Value order MUST match `gnomad_osa2_fields()`.
                 let mut values = Vec::with_capacity(self.fields.len());
-                values.push(enc_float(&self.fields[0], all_afs.get(ai).map(|s| s.as_str())));
+                values.push(enc_float(
+                    &self.fields[0],
+                    all_afs.get(ai).map(|s| s.as_str()),
+                ));
                 values.push(enc_int(&self.fields[1], an.first().map(|s| s.as_str())));
-                values.push(enc_int(&self.fields[2], all_acs.get(ai).map(|s| s.as_str())));
+                values.push(enc_int(
+                    &self.fields[2],
+                    all_acs.get(ai).map(|s| s.as_str()),
+                ));
                 values.push(enc_int(&self.fields[3], all_nh.get(ai).map(|s| s.as_str())));
                 for (pi, pop) in POPULATIONS.iter().enumerate() {
                     let key = field_names.pop_key(pop);
                     let vals = split_info_values(info_map.get(&key).map(|s| s.as_str()));
-                    values.push(enc_float(&self.fields[4 + pi], vals.get(ai).map(|s| s.as_str())));
+                    values.push(enc_float(
+                        &self.fields[4 + pi],
+                        vals.get(ai).map(|s| s.as_str()),
+                    ));
                 }
                 let ext_off = extended_offset();
-                for (ei, (_, value)) in
-                    extended_values(&info_map, filter_column, ai).into_iter().enumerate()
+                for (ei, (_, value)) in extended_values(&info_map, filter_column, ai)
+                    .into_iter()
+                    .enumerate()
                 {
                     values.push(encode_ext(&self.fields[ext_off + ei], value));
                 }
@@ -978,8 +1027,7 @@ chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=not_a_number;AC=garbage;nhomalt=.
     #[test]
     fn test_parse_info_id_reordered_with_quoted_comma() {
         // Description quoted string contains commas — must not split inside it.
-        let line =
-            "##INFO=<Number=A,Type=Float,Description=\"AF, joint, multi-pop\",ID=AF_joint>";
+        let line = "##INFO=<Number=A,Type=Float,Description=\"AF, joint, multi-pop\",ID=AF_joint>";
         assert_eq!(parse_info_id(line), Some("AF_joint"));
     }
 
@@ -1015,7 +1063,10 @@ chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=not_a_number;AC=garbage;nhomalt=.
         // The iterator indexes `fields[0..4]` for the global stats and
         // `fields[4 + pi]` per population, so this ordering is load-bearing.
         let fields = gnomad_osa2_fields();
-        assert_eq!(fields.len(), 4 + POPULATIONS.len() + extended_fields().len());
+        assert_eq!(
+            fields.len(),
+            4 + POPULATIONS.len() + extended_fields().len()
+        );
         assert_eq!(fields[0].alias, "allAf");
         assert_eq!(fields[1].alias, "allAn");
         assert_eq!(fields[2].alias, "allAc");
@@ -1037,8 +1088,9 @@ chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=150000;AC=150;nhomalt=2;AF_afr=0.002;
 chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF=0.01,0.005;AN=140000;AC=1400,700;nhomalt=10,3;AF_eas=0.02,0.01
 ";
         let map = chr1_map();
-        let recs: Vec<Osa2Record> =
-            iter_gnomad_osa2(vcf.as_bytes(), &map).collect::<Result<_>>().unwrap();
+        let recs: Vec<Osa2Record> = iter_gnomad_osa2(vcf.as_bytes(), &map)
+            .collect::<Result<_>>()
+            .unwrap();
         assert_eq!(recs.len(), 3); // 1 SNV + 2 from the multi-allelic site
 
         let fields = gnomad_osa2_fields();
@@ -1048,7 +1100,7 @@ chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF=0.01,0.005;AN=140000;AC=1400,700;nhomalt=10,
         assert_eq!(recs[0].values[1], 150000); // AN
         assert_eq!(recs[0].values[2], 150); // AC
         assert_eq!(recs[0].values[3], 2); // nhomalt
-        // afr AF present, sas AF missing.
+                                          // afr AF present, sas AF missing.
         let afr_idx = 4 + POPULATIONS.iter().position(|p| *p == "afr").unwrap();
         let sas_idx = 4 + POPULATIONS.iter().position(|p| *p == "sas").unwrap();
         assert_eq!(recs[0].values[afr_idx], fields[afr_idx].encode_float(0.002));
@@ -1074,8 +1126,9 @@ chr1\t20000\t.\tC\tT,A\t.\tPASS\tAF=0.01,0.005;AN=140000;AC=1400,700;nhomalt=10,
 chr1\t10001\t.\tA\tG\t.\tPASS\tAF_joint=0.001;AN_joint=150000;AC_joint=150;AF_joint_nfe=0.0005
 ";
         let map = chr1_map();
-        let recs: Vec<Osa2Record> =
-            iter_gnomad_osa2(vcf.as_bytes(), &map).collect::<Result<_>>().unwrap();
+        let recs: Vec<Osa2Record> = iter_gnomad_osa2(vcf.as_bytes(), &map)
+            .collect::<Result<_>>()
+            .unwrap();
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].values[0], 2000); // AF_joint 0.001 encoded
         assert_eq!(recs[0].values[1], 150000); // AN_joint
@@ -1119,7 +1172,10 @@ chr1\t600\t.\tA\tG\t.\tPASS\tAF=0.2;AN=1000;AC=200;nhomalt=20;non_par;AC_XY=37;A
         let records = parse_gnomad_vcf(CHRX_VCF.as_bytes(), &map).unwrap();
         let v: serde_json::Value = serde_json::from_str(&records[0].json).unwrap();
         assert_eq!(v.get("filterVqsr").and_then(|x| x.as_bool()), Some(true));
-        assert_eq!(v.get("filterInbreeding").and_then(|x| x.as_bool()), Some(true));
+        assert_eq!(
+            v.get("filterInbreeding").and_then(|x| x.as_bool()),
+            Some(true)
+        );
         assert_eq!(v.get("segdup").and_then(|x| x.as_bool()), Some(true));
         assert_eq!(v.get("lcr").and_then(|x| x.as_bool()), Some(true));
         // Unset flags are omitted rather than written as false.
@@ -1200,8 +1256,9 @@ chr2\t100\t.\tA\tG\t.\tPASS\tAF=0.5
 chr1\t200\t.\tA\tG\t.\tPASS\tAF=0.5
 ";
         let map = chr1_map(); // only chr1 is valid
-        let recs: Vec<Osa2Record> =
-            iter_gnomad_osa2(vcf.as_bytes(), &map).collect::<Result<_>>().unwrap();
+        let recs: Vec<Osa2Record> = iter_gnomad_osa2(vcf.as_bytes(), &map)
+            .collect::<Result<_>>()
+            .unwrap();
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].chrom, "chr1");
         assert_eq!(recs[0].position, 200);

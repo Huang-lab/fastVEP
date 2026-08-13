@@ -145,7 +145,11 @@ pub fn parse_dbsnp_vcf<R: BufRead>(
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records: Vec<_> = iter_dbsnp_vcf(reader, chrom_to_idx).collect::<Result<_>>()?;
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
@@ -215,10 +219,18 @@ mod tests {
         assert_eq!(records.len(), 2);
 
         let c = records.iter().find(|r| r.alt_allele == "C").unwrap();
-        assert!(c.json.contains("8.000000e-2"), "C should get CAF index 1 (0.08): {}", c.json);
+        assert!(
+            c.json.contains("8.000000e-2"),
+            "C should get CAF index 1 (0.08): {}",
+            c.json
+        );
 
         let t = records.iter().find(|r| r.alt_allele == "T").unwrap();
-        assert!(t.json.contains("2.000000e-2"), "T should get CAF index 2 (0.02), not C's frequency: {}", t.json);
+        assert!(
+            t.json.contains("2.000000e-2"),
+            "T should get CAF index 2 (0.02), not C's frequency: {}",
+            t.json
+        );
     }
 
     #[test]

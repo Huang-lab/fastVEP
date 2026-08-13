@@ -20,44 +20,44 @@ use fastvep_genome::Transcript;
 
 /// Check if a genomic position is in a splice donor site (first 2 intronic bases at 5' of intron).
 pub fn is_splice_donor(transcript: &Transcript, genomic_pos: u64) -> bool {
-    for_each_intron_boundary(transcript, |donor_start, donor_end, _acc_start, _acc_end| {
-        genomic_pos >= donor_start && genomic_pos <= donor_end
-    })
+    for_each_intron_boundary(
+        transcript,
+        |donor_start, donor_end, _acc_start, _acc_end| {
+            genomic_pos >= donor_start && genomic_pos <= donor_end
+        },
+    )
 }
 
 /// Check if a genomic position is in a splice acceptor site (last 2 intronic bases at 3' of intron).
 pub fn is_splice_acceptor(transcript: &Transcript, genomic_pos: u64) -> bool {
-    for_each_intron_boundary(transcript, |_donor_start, _donor_end, acc_start, acc_end| {
-        genomic_pos >= acc_start && genomic_pos <= acc_end
-    })
+    for_each_intron_boundary(
+        transcript,
+        |_donor_start, _donor_end, acc_start, acc_end| {
+            genomic_pos >= acc_start && genomic_pos <= acc_end
+        },
+    )
 }
 
 /// Check if position is the 5th base of the donor site.
 pub fn is_splice_donor_5th_base(transcript: &Transcript, genomic_pos: u64) -> bool {
-    for_each_intron_boundary_extended(
-        transcript,
-        |intron_start, intron_end, is_donor_at_start| {
-            if is_donor_at_start {
-                genomic_pos == intron_start + 4
-            } else {
-                genomic_pos == intron_end - 4
-            }
-        },
-    )
+    for_each_intron_boundary_extended(transcript, |intron_start, intron_end, is_donor_at_start| {
+        if is_donor_at_start {
+            genomic_pos == intron_start + 4
+        } else {
+            genomic_pos == intron_end - 4
+        }
+    })
 }
 
 /// Check if position is in the splice donor region (positions 3-6 of intron).
 pub fn is_splice_donor_region(transcript: &Transcript, genomic_pos: u64) -> bool {
-    for_each_intron_boundary_extended(
-        transcript,
-        |intron_start, intron_end, is_donor_at_start| {
-            if is_donor_at_start {
-                genomic_pos >= intron_start + 2 && genomic_pos <= intron_start + 5
-            } else {
-                genomic_pos >= intron_end - 5 && genomic_pos <= intron_end - 2
-            }
-        },
-    )
+    for_each_intron_boundary_extended(transcript, |intron_start, intron_end, is_donor_at_start| {
+        if is_donor_at_start {
+            genomic_pos >= intron_start + 2 && genomic_pos <= intron_start + 5
+        } else {
+            genomic_pos >= intron_end - 5 && genomic_pos <= intron_end - 2
+        }
+    })
 }
 
 /// Check if position is in the splice polypyrimidine tract (3-17 bases from acceptor).
@@ -66,21 +66,22 @@ pub fn is_splice_donor_region(transcript: &Transcript, genomic_pos: u64) -> bool
 /// (i.e., 3 to 17 bases from the 3' end of the intron), matching the Ensembl definition
 /// of acceptor -3 to acceptor -17.
 pub fn is_splice_polypyrimidine_tract(transcript: &Transcript, genomic_pos: u64) -> bool {
-    for_each_intron_boundary_extended(
-        transcript,
-        |intron_start, intron_end, is_donor_at_start| {
-            // Polypyrimidine tract is near the acceptor end
-            if is_donor_at_start {
-                // Acceptor is at intron_end
-                let acc_region_start = if intron_end >= 16 { intron_end - 16 } else { intron_start };
-                genomic_pos >= acc_region_start && genomic_pos <= intron_end.saturating_sub(2)
+    for_each_intron_boundary_extended(transcript, |intron_start, intron_end, is_donor_at_start| {
+        // Polypyrimidine tract is near the acceptor end
+        if is_donor_at_start {
+            // Acceptor is at intron_end
+            let acc_region_start = if intron_end >= 16 {
+                intron_end - 16
             } else {
-                // Acceptor is at intron_start
-                let acc_region_end = (intron_start + 16).min(intron_end);
-                genomic_pos >= intron_start + 2 && genomic_pos <= acc_region_end
-            }
-        },
-    )
+                intron_start
+            };
+            genomic_pos >= acc_region_start && genomic_pos <= intron_end.saturating_sub(2)
+        } else {
+            // Acceptor is at intron_start
+            let acc_region_end = (intron_start + 16).min(intron_end);
+            genomic_pos >= intron_start + 2 && genomic_pos <= acc_region_end
+        }
+    })
 }
 
 /// Check if position is in a splice region (3-8 bases into intron from either end,
@@ -150,7 +151,11 @@ pub fn is_splice_region(transcript: &Transcript, genomic_pos: u64) -> bool {
         match transcript.strand {
             Strand::Forward => {
                 // Donor exon end
-                let region_start = if donor_exon.end >= 2 { donor_exon.end - 2 } else { donor_exon.start };
+                let region_start = if donor_exon.end >= 2 {
+                    donor_exon.end - 2
+                } else {
+                    donor_exon.start
+                };
                 if genomic_pos >= region_start && genomic_pos <= donor_exon.end {
                     return true;
                 }
@@ -167,7 +172,11 @@ pub fn is_splice_region(transcript: &Transcript, genomic_pos: u64) -> bool {
                     return true;
                 }
                 // Acceptor exon end (higher genomic coord for reverse strand acceptor)
-                let region_start = if acceptor_exon.end >= 2 { acceptor_exon.end - 2 } else { acceptor_exon.start };
+                let region_start = if acceptor_exon.end >= 2 {
+                    acceptor_exon.end - 2
+                } else {
+                    acceptor_exon.start
+                };
                 if genomic_pos >= region_start && genomic_pos <= acceptor_exon.end {
                     return true;
                 }
@@ -212,11 +221,19 @@ where
             Strand::Forward => (
                 intron_start,
                 (intron_start + 1).min(intron_end),
-                if intron_end >= 1 { intron_end - 1 } else { intron_start },
+                if intron_end >= 1 {
+                    intron_end - 1
+                } else {
+                    intron_start
+                },
                 intron_end,
             ),
             Strand::Reverse => (
-                if intron_end >= 1 { intron_end - 1 } else { intron_start },
+                if intron_end >= 1 {
+                    intron_end - 1
+                } else {
+                    intron_start
+                },
                 intron_end,
                 intron_start,
                 (intron_start + 1).min(intron_end),
@@ -299,19 +316,57 @@ mod tests {
             end: 2300,
             strand: Strand::Forward,
             exons: vec![
-                Exon { stable_id: "E1".into(), start: 1000, end: 1200, strand: Strand::Forward, phase: 0, end_phase: 0, rank: 1 },
-                Exon { stable_id: "E2".into(), start: 2000, end: 2300, strand: Strand::Forward, phase: 0, end_phase: 0, rank: 2 },
+                Exon {
+                    stable_id: "E1".into(),
+                    start: 1000,
+                    end: 1200,
+                    strand: Strand::Forward,
+                    phase: 0,
+                    end_phase: 0,
+                    rank: 1,
+                },
+                Exon {
+                    stable_id: "E2".into(),
+                    start: 2000,
+                    end: 2300,
+                    strand: Strand::Forward,
+                    phase: 0,
+                    end_phase: 0,
+                    rank: 2,
+                },
             ],
-            translation: Some(Translation { stable_id: "P1".into(), genomic_start: 1000, genomic_end: 2300, start_exon_rank: 1, start_exon_offset: 0, end_exon_rank: 2, end_exon_offset: 300 }),
+            translation: Some(Translation {
+                stable_id: "P1".into(),
+                genomic_start: 1000,
+                genomic_end: 2300,
+                start_exon_rank: 1,
+                start_exon_offset: 0,
+                end_exon_rank: 2,
+                end_exon_offset: 300,
+            }),
             cdna_coding_start: Some(1),
             cdna_coding_end: Some(502),
             coding_region_start: Some(1000),
             coding_region_end: Some(2300),
-            spliced_seq: None, translateable_seq: None, peptide: None,
-            canonical: false, mane_select: None, mane_plus_clinical: None,
-            tsl: None, appris: None, ccds: None, protein_id: None, protein_version: None,
-            swissprot: vec![], trembl: vec![], uniparc: vec![],
-            refseq_id: None, source: None, gencode_primary: false, flags: vec![], codon_table_start_phase: 0,
+            spliced_seq: None,
+            translateable_seq: None,
+            peptide: None,
+            canonical: false,
+            mane_select: None,
+            mane_plus_clinical: None,
+            tsl: None,
+            appris: None,
+            ccds: None,
+            protein_id: None,
+            protein_version: None,
+            swissprot: vec![],
+            trembl: vec![],
+            uniparc: vec![],
+            refseq_id: None,
+            source: None,
+            gencode_primary: false,
+            flags: vec![],
+            codon_table_start_phase: 0,
         }
     }
 
@@ -363,7 +418,12 @@ mod tests {
         // Check boundaries
         for pos in 1980..=2000 {
             let in_ppt = is_splice_polypyrimidine_tract(&tr, pos);
-            eprintln!("  pos {} (dist from end = {}): ppt={}", pos, 1999u64.saturating_sub(pos), in_ppt);
+            eprintln!(
+                "  pos {} (dist from end = {}): ppt={}",
+                pos,
+                1999u64.saturating_sub(pos),
+                in_ppt
+            );
         }
 
         // Distance 17 from intron_end(1999) = 1982 = intron_end - 17
@@ -371,10 +431,22 @@ mod tests {
         // But VEP measures from exon boundary (2000):
         //   dist 17 from exon = 2000-17 = 1983 = intron_end - 16
         //   dist 3 from exon = 2000-3 = 1997 = intron_end - 2
-        assert!(is_splice_polypyrimidine_tract(&tr, 1983), "pos 1983 (dist 17 from exon) should be PPT");
-        assert!(is_splice_polypyrimidine_tract(&tr, 1997), "pos 1997 (dist 3 from exon) should be PPT");
-        assert!(!is_splice_polypyrimidine_tract(&tr, 1982), "pos 1982 (dist 18 from exon) should NOT be PPT");
-        assert!(!is_splice_polypyrimidine_tract(&tr, 1998), "pos 1998 (dist 2 from exon) should NOT be PPT - it's the acceptor site");
+        assert!(
+            is_splice_polypyrimidine_tract(&tr, 1983),
+            "pos 1983 (dist 17 from exon) should be PPT"
+        );
+        assert!(
+            is_splice_polypyrimidine_tract(&tr, 1997),
+            "pos 1997 (dist 3 from exon) should be PPT"
+        );
+        assert!(
+            !is_splice_polypyrimidine_tract(&tr, 1982),
+            "pos 1982 (dist 18 from exon) should NOT be PPT"
+        );
+        assert!(
+            !is_splice_polypyrimidine_tract(&tr, 1998),
+            "pos 1998 (dist 2 from exon) should NOT be PPT - it's the acceptor site"
+        );
     }
 
     fn make_reverse_transcript() -> Transcript {
@@ -403,19 +475,57 @@ mod tests {
             end: 2300,
             strand: Strand::Reverse,
             exons: vec![
-                Exon { stable_id: "E1".into(), start: 2000, end: 2300, strand: Strand::Reverse, phase: 0, end_phase: 0, rank: 1 },
-                Exon { stable_id: "E2".into(), start: 1000, end: 1200, strand: Strand::Reverse, phase: 0, end_phase: 0, rank: 2 },
+                Exon {
+                    stable_id: "E1".into(),
+                    start: 2000,
+                    end: 2300,
+                    strand: Strand::Reverse,
+                    phase: 0,
+                    end_phase: 0,
+                    rank: 1,
+                },
+                Exon {
+                    stable_id: "E2".into(),
+                    start: 1000,
+                    end: 1200,
+                    strand: Strand::Reverse,
+                    phase: 0,
+                    end_phase: 0,
+                    rank: 2,
+                },
             ],
-            translation: Some(Translation { stable_id: "P1".into(), genomic_start: 1000, genomic_end: 2300, start_exon_rank: 1, start_exon_offset: 0, end_exon_rank: 2, end_exon_offset: 200 }),
+            translation: Some(Translation {
+                stable_id: "P1".into(),
+                genomic_start: 1000,
+                genomic_end: 2300,
+                start_exon_rank: 1,
+                start_exon_offset: 0,
+                end_exon_rank: 2,
+                end_exon_offset: 200,
+            }),
             cdna_coding_start: Some(1),
             cdna_coding_end: Some(502),
             coding_region_start: Some(1000),
             coding_region_end: Some(2300),
-            spliced_seq: None, translateable_seq: None, peptide: None,
-            canonical: false, mane_select: None, mane_plus_clinical: None,
-            tsl: None, appris: None, ccds: None, protein_id: None, protein_version: None,
-            swissprot: vec![], trembl: vec![], uniparc: vec![],
-            refseq_id: None, source: None, gencode_primary: false, flags: vec![], codon_table_start_phase: 0,
+            spliced_seq: None,
+            translateable_seq: None,
+            peptide: None,
+            canonical: false,
+            mane_select: None,
+            mane_plus_clinical: None,
+            tsl: None,
+            appris: None,
+            ccds: None,
+            protein_id: None,
+            protein_version: None,
+            swissprot: vec![],
+            trembl: vec![],
+            uniparc: vec![],
+            refseq_id: None,
+            source: None,
+            gencode_primary: false,
+            flags: vec![],
+            codon_table_start_phase: 0,
         }
     }
 
@@ -430,16 +540,33 @@ mod tests {
 
         for pos in 1199..=1220 {
             let in_ppt = is_splice_polypyrimidine_tract(&tr, pos);
-            eprintln!("  REV pos {} (dist from intron_start=1201: {}): ppt={}", pos, pos as i64 - 1201, in_ppt);
+            eprintln!(
+                "  REV pos {} (dist from intron_start=1201: {}): ppt={}",
+                pos,
+                pos as i64 - 1201,
+                in_ppt
+            );
         }
 
         // c.X-17 = 17 bases from exon boundary = 1200+17 = 1217 = intron_start + 16
-        assert!(is_splice_polypyrimidine_tract(&tr, 1217), "pos 1217 (c.X-17, dist 16 from intron_start) should be PPT");
+        assert!(
+            is_splice_polypyrimidine_tract(&tr, 1217),
+            "pos 1217 (c.X-17, dist 16 from intron_start) should be PPT"
+        );
         // c.X-3 = 3 bases from exon boundary = 1200+3 = 1203 = intron_start + 2
-        assert!(is_splice_polypyrimidine_tract(&tr, 1203), "pos 1203 (c.X-3, dist 2 from intron_start) should be PPT");
+        assert!(
+            is_splice_polypyrimidine_tract(&tr, 1203),
+            "pos 1203 (c.X-3, dist 2 from intron_start) should be PPT"
+        );
         // c.X-18 = 18 bases = 1218 = intron_start + 17
-        assert!(!is_splice_polypyrimidine_tract(&tr, 1218), "pos 1218 (c.X-18) should NOT be PPT");
+        assert!(
+            !is_splice_polypyrimidine_tract(&tr, 1218),
+            "pos 1218 (c.X-18) should NOT be PPT"
+        );
         // c.X-2 = 2 bases = 1202 = intron_start + 1 (acceptor site)
-        assert!(!is_splice_polypyrimidine_tract(&tr, 1202), "pos 1202 (c.X-2, acceptor site) should NOT be PPT");
+        assert!(
+            !is_splice_polypyrimidine_tract(&tr, 1202),
+            "pos 1202 (c.X-2, acceptor site) should NOT be PPT"
+        );
     }
 }

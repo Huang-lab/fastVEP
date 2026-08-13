@@ -4,18 +4,18 @@ use anyhow::{bail, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    Field(String),     // Field name (e.g., IMPACT, AF, Consequence)
-    Value(String),     // String value (e.g., HIGH, missense_variant)
-    Number(f64),       // Numeric value
+    Field(String), // Field name (e.g., IMPACT, AF, Consequence)
+    Value(String), // String value (e.g., HIGH, missense_variant)
+    Number(f64),   // Numeric value
     // Comparison operators
-    Is,                // is, =, eq
-    Ne,                // !=, ne
-    Lt,                // <
-    Gt,                // >
-    Le,                // <=
-    Ge,                // >=
-    In,                // in
-    Match,             // match, ~
+    Is,    // is, =, eq
+    Ne,    // !=, ne
+    Lt,    // <
+    Gt,    // >
+    Le,    // <=
+    Ge,    // >=
+    In,    // in
+    Match, // match, ~
     // Logical operators
     And,
     Or,
@@ -159,8 +159,14 @@ fn consume_word(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
 fn is_value_position(tokens: &[Token]) -> bool {
     matches!(
         tokens.last(),
-        Some(Token::Is) | Some(Token::Ne) | Some(Token::Lt) | Some(Token::Gt)
-            | Some(Token::Le) | Some(Token::Ge) | Some(Token::In) | Some(Token::Match)
+        Some(Token::Is)
+            | Some(Token::Ne)
+            | Some(Token::Lt)
+            | Some(Token::Gt)
+            | Some(Token::Le)
+            | Some(Token::Ge)
+            | Some(Token::In)
+            | Some(Token::Match)
     )
 }
 
@@ -171,21 +177,23 @@ mod tests {
     #[test]
     fn test_simple_tokens() {
         let tokens = tokenize("IMPACT is HIGH").unwrap();
-        assert_eq!(tokens, vec![
-            Token::Field("IMPACT".into()),
-            Token::Is,
-            Token::Value("HIGH".into()),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Field("IMPACT".into()),
+                Token::Is,
+                Token::Value("HIGH".into()),
+            ]
+        );
     }
 
     #[test]
     fn test_numeric_comparison() {
         let tokens = tokenize("AF < 0.01").unwrap();
-        assert_eq!(tokens, vec![
-            Token::Field("AF".into()),
-            Token::Lt,
-            Token::Number(0.01),
-        ]);
+        assert_eq!(
+            tokens,
+            vec![Token::Field("AF".into()), Token::Lt, Token::Number(0.01),]
+        );
     }
 
     #[test]
@@ -202,6 +210,9 @@ mod tests {
         let tokens = tokenize("Consequence in missense_variant,stop_gained").unwrap();
         assert_eq!(tokens[0], Token::Field("Consequence".into()));
         assert_eq!(tokens[1], Token::In);
-        assert_eq!(tokens[2], Token::Value("missense_variant,stop_gained".into()));
+        assert_eq!(
+            tokens[2],
+            Token::Value("missense_variant,stop_gained".into())
+        );
     }
 }

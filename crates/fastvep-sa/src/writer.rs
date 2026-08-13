@@ -174,8 +174,12 @@ impl SaWriter {
         let data_path = base_path.with_extension("osa");
         let idx_path = base_path.with_extension("osa.idx");
 
-        let data_file = std::fs::File::create(&data_path)
-            .with_context(|| format!("Creating output file {} (does the output directory exist?)", data_path.display()))?;
+        let data_file = std::fs::File::create(&data_path).with_context(|| {
+            format!(
+                "Creating output file {} (does the output directory exist?)",
+                data_path.display()
+            )
+        })?;
         let mut data_writer = BufWriter::new(data_file);
         self.write_all(&mut data_writer, records, chrom_map)?;
         data_writer.flush()?;
@@ -199,8 +203,12 @@ impl SaWriter {
         let data_path = base_path.with_extension("osa");
         let idx_path = base_path.with_extension("osa.idx");
 
-        let data_file = std::fs::File::create(&data_path)
-            .with_context(|| format!("Creating output file {} (does the output directory exist?)", data_path.display()))?;
+        let data_file = std::fs::File::create(&data_path).with_context(|| {
+            format!(
+                "Creating output file {} (does the output directory exist?)",
+                data_path.display()
+            )
+        })?;
         let mut data_writer = BufWriter::new(data_file);
         self.write_all_results(&mut data_writer, records, chrom_map)?;
         data_writer.flush()?;

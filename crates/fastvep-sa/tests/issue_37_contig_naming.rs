@@ -119,11 +119,7 @@ fn mitochondrial_aliases_round_trip() {
         let base = dir.path().join(format!("mito_{}", stored_as));
         let mut writer = SaWriter::new(gnomad_header());
         writer
-            .write_to_files(
-                &base,
-                records.clone().into_iter(),
-                &[stored_as.to_string()],
-            )
+            .write_to_files(&base, records.clone().into_iter(), &[stored_as.to_string()])
             .unwrap();
         let reader = SaReader::open(&base.with_extension("osa")).unwrap();
 

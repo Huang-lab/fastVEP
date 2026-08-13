@@ -227,7 +227,7 @@ fn test_osa2_writer_reader_round_trip() {
                 alt_allele: b"G".to_vec(),
                 values: vec![
                     fields[0].encode_float(af), // AF
-                    (i + 1),               // AC
+                    (i + 1),                    // AC
                 ],
                 json_blob: None,
             }

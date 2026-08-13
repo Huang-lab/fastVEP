@@ -190,7 +190,11 @@ pub fn parse_spliceai_vcf<R: BufRead>(
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records: Vec<_> = iter_spliceai_vcf(reader, chrom_to_idx).collect::<Result<_>>()?;
-    records.sort_by(|a, b| a.chrom_idx.cmp(&b.chrom_idx).then(a.position.cmp(&b.position)));
+    records.sort_by(|a, b| {
+        a.chrom_idx
+            .cmp(&b.chrom_idx)
+            .then(a.position.cmp(&b.position))
+    });
     Ok(records)
 }
 
@@ -545,10 +549,14 @@ mod tests {
     #[test]
     fn v2_records_encode_scores_positions_and_gene_index() {
         let genes = GeneInterner::new();
-        let recs: Vec<_> =
-            iter_spliceai_osa2(SAMPLE.as_bytes(), &chrom_map(), &chrom_list(), genes.clone())
-                .collect::<Result<_>>()
-                .unwrap();
+        let recs: Vec<_> = iter_spliceai_osa2(
+            SAMPLE.as_bytes(),
+            &chrom_map(),
+            &chrom_list(),
+            genes.clone(),
+        )
+        .collect::<Result<_>>()
+        .unwrap();
         assert_eq!(recs.len(), 3);
 
         let fields = spliceai_osa2_fields();
@@ -563,7 +571,10 @@ mod tests {
         assert_eq!(recs[2].values[DS_AG], fields[DS_AG].encode_float(0.50));
 
         // Two distinct symbols across the sample, interned in first-seen order.
-        assert_eq!(genes.table(), vec!["GENE1".to_string(), "GENE2".to_string()]);
+        assert_eq!(
+            genes.table(),
+            vec!["GENE1".to_string(), "GENE2".to_string()]
+        );
         assert_eq!(recs[0].values[GENE_FIELD], 0);
         assert_eq!(recs[1].values[GENE_FIELD], 1);
         assert_eq!(recs[2].values[GENE_FIELD], 1);
@@ -577,10 +588,14 @@ mod tests {
         // encoded columns and the global gene table.
         let genes = GeneInterner::new();
         let v1 = parse_spliceai_vcf(SAMPLE.as_bytes(), &chrom_map()).unwrap();
-        let v2: Vec<_> =
-            iter_spliceai_osa2(SAMPLE.as_bytes(), &chrom_map(), &chrom_list(), genes.clone())
-                .collect::<Result<_>>()
-                .unwrap();
+        let v2: Vec<_> = iter_spliceai_osa2(
+            SAMPLE.as_bytes(),
+            &chrom_map(),
+            &chrom_list(),
+            genes.clone(),
+        )
+        .collect::<Result<_>>()
+        .unwrap();
         let fields = spliceai_osa2_fields();
         let table = genes.table();
 
@@ -660,10 +675,14 @@ mod tests {
 1\t300\t.\tA\tG\t.\t.\tSpliceAI=G|GENE1|0.01|0.00|0.00|0.00|1|2|3|4
 ";
         let v1 = parse_spliceai_vcf(vcf.as_bytes(), &chrom_map()).unwrap();
-        let v2: Vec<_> =
-            iter_spliceai_osa2(vcf.as_bytes(), &chrom_map(), &chrom_list(), GeneInterner::new())
-                .collect::<Result<_>>()
-                .unwrap();
+        let v2: Vec<_> = iter_spliceai_osa2(
+            vcf.as_bytes(),
+            &chrom_map(),
+            &chrom_list(),
+            GeneInterner::new(),
+        )
+        .collect::<Result<_>>()
+        .unwrap();
         assert_eq!(v1.len(), 1);
         assert_eq!(v2.len(), 1);
         assert_eq!(v1[0].position, 300);
