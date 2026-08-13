@@ -45,8 +45,28 @@ fn evaluate_bs1(
     let mut details = serde_json::Map::new();
     details.insert("af_threshold".into(), serde_json::json!(threshold));
 
-    if let Some(reason) = benign_blocker(input, config) {
-        details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
+    // Checked ahead of the generic frequency gate, which would otherwise answer
+    // first and give a vaguer reason. "On the curated exception list" is an
+    // evaluated conclusion with a citation, not an inability to evaluate.
+    if let Some(exc) = super::frequency_gate::curated_exception(input, config, "BS1") {
+        let summary = super::frequency_gate::record_exception("BS1", exc, &mut details);
+        return EvidenceCriterion {
+            code: "BS1".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: true,
+            summary,
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    if let Some(blocker) = benign_blocker(input, config) {
+        blocker.record(&mut details);
+        super::frequency_gate::note_withheld_benign_frequency(
+            input, config, threshold, &mut details,
+        );
         return EvidenceCriterion {
             code: "BS1".to_string(),
             direction: EvidenceDirection::Benign,
@@ -54,7 +74,7 @@ fn evaluate_bs1(
             default_strength: EvidenceStrength::Strong,
             met: false,
             evaluated: false,
-            summary: format!("BS1 not evaluated: {}", reason),
+            summary: format!("BS1 not evaluated: {}", blocker.reason),
             details: serde_json::Value::Object(details),
         };
     }
@@ -113,13 +133,24 @@ fn evaluate_bs1(
         details.insert("gnomad_max_pop_af".into(), serde_json::json!(test_af));
         details.insert("af_statistic".into(), serde_json::json!(af_label));
 
-        // BS1 should not fire if BA1 would fire (BA1 takes precedence)
-        if test_af > config.ba1_af_threshold {
+        // BS1 does not fire where BA1 already covers the frequency. The bar
+        // read here is the gene's own, not the global default: a gene whose
+        // VCEP publishes a looser BA1 - ABCA4's is 0.163 - would otherwise
+        // have BS1 stand down at 0.06 while BA1 declines too, leaving a common
+        // variant with no frequency evidence in either direction.
+        //
+        // A curated BA1 exception does not reopen BS1. Ghosh 2018's nine are
+        // removed from BA1 because they are frequent *and* not benign, and
+        // collecting Strong benign evidence on HFE p.Cys282Tyr instead of
+        // Standalone benign evidence would miss the point of the list. An
+        // entry that means to leave BS1 available says so through `blocks`.
+        let ba1_bar = config.effective_ba1_threshold(input.gene_symbol.as_deref());
+        if test_af > ba1_bar {
             (
                 false,
                 format!(
-                    "BA1 takes precedence ({}={:.4} > BA1 threshold {:.2})",
-                    af_label, test_af, config.ba1_af_threshold
+                    "BA1 takes precedence ({}={:.4} > BA1 threshold {:.2e})",
+                    af_label, test_af, ba1_bar
                 ),
             )
         } else if test_af > threshold {
@@ -182,8 +213,24 @@ fn evaluate_bs2(
 ) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
-    if let Some(reason) = benign_blocker(input, config) {
-        details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
+    // A hypomorphic allele is expected to be seen homozygous in unaffected
+    // people - that is the disease model, not evidence against it.
+    if let Some(exc) = super::frequency_gate::curated_exception(input, config, "BS2") {
+        let summary = super::frequency_gate::record_exception("BS2", exc, &mut details);
+        return EvidenceCriterion {
+            code: "BS2".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: true,
+            summary,
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    if let Some(blocker) = benign_blocker(input, config) {
+        blocker.record(&mut details);
         return EvidenceCriterion {
             code: "BS2".to_string(),
             direction: EvidenceDirection::Benign,
@@ -191,7 +238,7 @@ fn evaluate_bs2(
             default_strength: EvidenceStrength::Strong,
             met: false,
             evaluated: false,
-            summary: format!("BS2 not evaluated: {}", reason),
+            summary: format!("BS2 not evaluated: {}", blocker.reason),
             details: serde_json::Value::Object(details),
         };
     }
@@ -391,6 +438,98 @@ mod tests {
             gnomad,
             ..minimal_input()
         }
+    }
+
+    /// The three shipped hypomorphic alleles, in the form the pipeline
+    /// actually produces: a transcript-prefixed HGVS and a coordinate. Each is
+    /// frequent enough and homozygous often enough that BS1 and BS2 would both
+    /// fire without the exception, and each is pathogenic in trans with a null
+    /// allele.
+    #[test]
+    fn test_hypomorphic_alleles_block_bs1_and_bs2_in_pipeline_form() {
+        let cases = [
+            ("GAA", "ENST00000302262.8:c.-32-13T>G", "17", 80_104_542u64, "T", "G", 5.4e-3, 23u64),
+            ("CFTR", "ENST00000003084.11:c.1210-11T>G", "7", 117_548_630, "T", "G", 9.8e-3, 27),
+            ("SPTA1", "ENST00000643759.2:c.4339-99C>T", "1", 158_643_524, "G", "A", 6.6e-3, 40),
+        ];
+        let config = AcmgConfig::default();
+        for (gene, hgvs, chrom, pos, r, a, af, hc) in cases {
+            let input = ClassificationInput {
+                gene_symbol: Some(gene.to_string()),
+                hgvs_c: Some(hgvs.to_string()),
+                variant_coordinates: Some((chrom.to_string(), pos, r.to_string(), a.to_string())),
+                gnomad: Some(GnomadData {
+                    all_af: Some(af),
+                    all_an: Some(1_400_000),
+                    all_hc: Some(hc),
+                    faf95_max: Some(af),
+                    ..Default::default()
+                }),
+                ..minimal_input()
+            };
+            let bs1 = evaluate_bs1(&input, &config);
+            assert!(!bs1.met, "{} BS1 must not fire: {}", gene, bs1.summary);
+            assert!(bs1.evaluated, "{} BS1 is a conclusion, not a gap", gene);
+            assert!(bs1.summary.contains("exception list"), "{}", bs1.summary);
+
+            let bs2 = evaluate_bs2(&input, &config);
+            assert!(!bs2.met, "{} BS2 must not fire: {}", gene, bs2.summary);
+            assert!(bs2.summary.contains("exception list"), "{}", bs2.summary);
+        }
+    }
+
+    #[test]
+    fn test_a_ba1_only_exception_does_not_reach_bs1() {
+        // Ghosh's entries are scoped to BA1 by `blocks`, so BS1 evaluates
+        // normally on them. Below the BA1 bar, where BA1's precedence rule is
+        // not in the way, that means BS1 fires.
+        let input = ClassificationInput {
+            gene_symbol: Some("GJB2".to_string()),
+            hgvs_c: Some("ENST00000382844.2:c.109G>A".to_string()),
+            variant_coordinates: Some(("13".to_string(), 20_189_473, "C".to_string(), "T".to_string())),
+            gnomad: Some(GnomadData {
+                all_af: Some(0.02),
+                all_an: Some(1_400_000),
+                faf95_max: Some(0.02),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        };
+        let bs1 = evaluate_bs1(&input, &AcmgConfig::default());
+        assert!(bs1.met, "{}", bs1.summary);
+    }
+
+    #[test]
+    fn test_bs1_defers_to_the_genes_own_ba1_bar() {
+        // ABCA4's published BA1 is 0.163, three times looser than the global
+        // 0.05. At 0.06 the old global comparison stood BS1 down while BA1
+        // also declined, so a 6 % allele collected no frequency evidence at
+        // all. Against the gene's own bar, BS1 fires.
+        let mut config = AcmgConfig::default();
+        config.gene_overrides.insert(
+            "ABCA4".to_string(),
+            crate::config::GeneOverride {
+                mechanism: None,
+                ba1_af_threshold: Some(0.163),
+                bs1_af_threshold: Some(0.0163),
+                pm2_af_threshold: None,
+                disabled_criteria: vec![],
+                strength_overrides: std::collections::HashMap::new(),
+                disorders: std::collections::HashMap::new(),
+            },
+        );
+        let input = ClassificationInput {
+            gene_symbol: Some("ABCA4".to_string()),
+            gnomad: Some(GnomadData {
+                all_af: Some(0.06),
+                all_an: Some(1_400_000),
+                faf95_max: Some(0.06),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        };
+        let bs1 = evaluate_bs1(&input, &config);
+        assert!(bs1.met, "{}", bs1.summary);
     }
 
     #[test]

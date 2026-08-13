@@ -562,6 +562,24 @@ pub struct Ba1Exception {
     /// checkable against the source table.
     #[serde(default)]
     pub clinvar_id: Option<String>,
+    /// Which frequency criteria this entry blocks. Defaults to `["BA1"]`,
+    /// which is the scope Ghosh 2018 wrote for.
+    ///
+    /// BS1 and BS2 need the same treatment for a different class of allele, and
+    /// the round-5 medical-genetics review is what named it: a hypomorphic
+    /// variant whose mechanism *requires* a second, rarer allele in trans. GAA
+    /// `c.-32-13T>G`, CFTR `c.1210-11T>G` and SPTA1 `c.4339-99C>T` are all
+    /// common, all seen homozygous in unaffected people, and all pathogenic in
+    /// trans with a null allele. Their frequency is not evidence against
+    /// pathogenicity - it is what the disease model predicts - so BS1 must not
+    /// read it, and homozygotes must not be read as tolerance by BS2. None of
+    /// the three reaches 5 %, so a BA1-only list never touches them.
+    #[serde(default = "default_exception_blocks")]
+    pub blocks: Vec<String>,
+}
+
+fn default_exception_blocks() -> Vec<String> {
+    vec!["BA1".to_string()]
 }
 
 fn default_exception_assembly() -> String {
@@ -604,6 +622,11 @@ impl Ba1Exception {
             }
             _ => false,
         }
+    }
+
+    /// Whether this entry covers the named criterion, e.g. `"BS1"`.
+    pub fn blocks_criterion(&self, code: &str) -> bool {
+        self.blocks.iter().any(|c| c.eq_ignore_ascii_case(code))
     }
 }
 
@@ -750,6 +773,22 @@ impl AcmgConfig {
                 .any(|h| h.eq_ignore_ascii_case(g)),
             None => false,
         }
+    }
+
+    /// The curated exception, if any, that forbids the named frequency
+    /// criterion from firing on this variant.
+    ///
+    /// `coordinates` is `(chrom, pos, ref, alt)` in VCF form on GRCh38.
+    pub fn frequency_exception(
+        &self,
+        code: &str,
+        gene: Option<&str>,
+        hgvs_c: Option<&str>,
+        coordinates: Option<(&str, u64, &str, &str)>,
+    ) -> Option<&Ba1Exception> {
+        self.ba1_exceptions
+            .iter()
+            .find(|e| e.blocks_criterion(code) && e.matches(gene, hgvs_c, coordinates))
     }
 
     /// Get effective BA1 threshold for a gene (gene-specific or default).
@@ -924,9 +963,20 @@ fn default_ba1_exceptions() -> Vec<Ba1Exception> {
             alt: Some(a.to_string()),
             assembly: default_exception_assembly(),
             clinvar_id: Some(clinvar_id.to_string()),
+            blocks: default_exception_blocks(),
         }
     };
-    vec![
+    let hypomorph = |gene: &str, hgvs: &str, chrom: &str, pos: u64, r: &str, a: &str, reason: &str| {
+        Ba1Exception {
+            blocks: vec!["BA1".into(), "BS1".into(), "BS2".into()],
+            // No ClinVar variation ID: these entries are curated from the
+            // mechanism, not lifted from a published table, so there is no
+            // source row to point at.
+            clinvar_id: None,
+            ..mk(gene, hgvs, "", chrom, pos, r, a, reason)
+        }
+    };
+    let mut entries = vec![
         mk("ACAD9", "c.-44_-41dupTAAG", "1018", "3", 128_879_647, "C", "CTAAG",
            "Ghosh 2018 BA1 exception (VUS); 12.6 % in African/African American"),
         mk("GJB2", "c.109G>A", "17023", "13", 20_189_473, "C", "T",
@@ -945,7 +995,23 @@ fn default_ba1_exceptions() -> Vec<Ba1Exception> {
            "Ghosh 2018 BA1 exception (VUS, p.Arg171Trp); 6.6 % in Finnish only, SCAD deficiency"),
         mk("BTD", "c.1330G>C", "1900", "3", 15_645_186, "G", "C",
            "Ghosh 2018 BA1 exception (Pathogenic, p.Asp444His); 5.4 % in Finnish only, biotinidase deficiency"),
-    ]
+    ];
+
+    // Hypomorphic alleles, raised by the round-5 medical-genetics review. Each
+    // is common, each is seen homozygous in unaffected people, and each causes
+    // disease only in trans with a null allele on the other chromosome - so
+    // neither its frequency (BS1) nor its homozygotes (BS2) are evidence
+    // against pathogenicity. All three sit well under 5 %, which is why the
+    // BA1-only Ghosh list does not reach them.
+    entries.extend([
+        hypomorph("GAA", "c.-32-13T>G", "17", 80_104_542, "T", "G",
+            "leaky splice allele of late-onset Pompe disease, pathogenic in trans with a null GAA allele; ClinVar expert-panel Pathogenic at gnomAD AF 5.4e-3 with 23 homozygotes"),
+        hypomorph("CFTR", "c.1210-11T>G", "7", 117_548_630, "T", "G",
+            "the 5T poly-pyrimidine tract allele; reduced exon 10 inclusion causes CBAVD or CF in trans with a CF-causing variant, and is tolerated homozygous; gnomAD AF 9.8e-3 with 27 homozygotes"),
+        hypomorph("SPTA1", "c.4339-99C>T", "1", 158_643_524, "G", "A",
+            "the alpha-LELY allele; reduces alpha-spectrin output and causes elliptocytosis only in trans with an SPTA1 mutation, benign homozygous; gnomAD AF 6.6e-3 with 40 homozygotes"),
+    ]);
+    entries
 }
 
 #[cfg(test)]

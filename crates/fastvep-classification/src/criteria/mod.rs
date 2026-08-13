@@ -1,4 +1,7 @@
 pub(crate) mod frequency_gate;
+pub(crate) use frequency_gate::{
+    FREQUENCY_BLOCKED_SITE_LEVEL, FREQUENCY_BLOCKED_WOULD_BE_BENIGN,
+};
 pub(crate) mod gene_disease;
 pub mod pvs1;
 pub mod pathogenic_strong;

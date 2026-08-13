@@ -202,13 +202,34 @@ use_pp5_bp6 = false                    # Enable PP5/BP6 (disabled by default per
 use_clinvar_stars_as_ps4_proxy = false # Opt back into the legacy ClinVar-stars PS4 proxy
                                        # (true PS4 needs case-control statistics, so off by default)
 
-# ── BA1 exception list (Ghosh 2018, 9 known-pathogenic high-AF variants) ──
-# Specifying ba1_exceptions in TOML REPLACES the default 9-variant list.
-# Include the defaults plus your additions if you want to retain them.
+# ── Curated frequency-exception list ──
+# Ships with Ghosh 2018's nine BA1 exceptions plus three hypomorphic alleles.
+# Specifying ba1_exceptions in TOML REPLACES the whole shipped list; include
+# the defaults alongside your additions if you want to keep them.
+#
+# `blocks` names which frequency criteria the entry suppresses. It defaults to
+# ["BA1"], which is the scope Ghosh 2018 wrote for. Widen it for an allele whose
+# frequency is what the disease model predicts rather than evidence against it:
+# a hypomorph that causes disease only in trans with a rarer null allele is
+# expected to be common AND expected to be seen homozygous in unaffected people,
+# so BS1 and BS2 have to be blocked too.
+#
+# Matching is by coordinate first and HGVS second. A `c.` token identifies a
+# variant only relative to the transcript it was written for.
 [[ba1_exceptions]]
 gene = "HFE"
 hgvs_c = "c.845G>A"
-reason = "p.Cys282Tyr — hereditary hemochromatosis"
+reason = "p.Cys282Tyr - hereditary hemochromatosis"
+
+[[ba1_exceptions]]
+gene = "GAA"
+hgvs_c = "c.-32-13T>G"
+chrom = "17"
+pos = 80104542
+ref = "T"
+alt = "G"
+blocks = ["BA1", "BS1", "BS2"]
+reason = "leaky splice allele of late-onset Pompe disease, pathogenic in trans with a null allele"
 
 # ── Trio analysis ──
 [trio]
@@ -773,9 +794,9 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 
 | Code | Strength | Description | Data Source | Automatable |
 |---|---|---|---|---|
-| **BA1** | Standalone | AF > 5%, AN ≥ 2,000 (gnomAD v4 SVI March 2024). Tested against the **filtering allele frequency** (95% CI lower bound, max across ancestry groups; Whiffin 2017) where the database provides it, else the population maximum. 9-variant Ghosh 2018 exception list (HFE c.845G>A, MEFV common, BTD c.1330G>C, etc.) blocks BA1 regardless of AF | gnomAD population AFs + FAF + AN + HGVSc | Yes |
-| **BS1** | Strong | Cross-population AF > expected, read from the same statistic as BA1 (filtering AF where available, else population maximum). NotEvaluated for homology-confounded genes, for gnomAD-flagged `segdup`/`lcr` sites, for non-PASS gnomAD records, and for ClinVar low-penetrance / risk alleles | gnomAD per-population AFs + FAF + QC flags + ClinVar terms | Yes |
-| **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR / X-linked counts individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and requires ≥ `bs2_ar_min_hom` of them **and** a 95% lower bound on their frequency above `bs2_hom_prevalence_threshold` (default 1e-3, set by measurement - see [Choosing the BS2 prevalence bar](#choosing-the-bs2-prevalence-bar)), so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two such individuals in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance | gnomAD hom + hemizygote counts + AN + inheritance | Yes |
+| **BA1** | Standalone | AF > 5%, AN ≥ 2,000 (gnomAD v4 SVI March 2024). Tested against the **filtering allele frequency** (95% CI lower bound, max across ancestry groups; Whiffin 2017) where the database provides it, else the population maximum. The curated exception list blocks BA1 regardless of AF - Ghosh 2018's nine plus three hypomorphic alleles; see [Curated frequency-exception list](#curated-frequency-exception-list) | gnomAD population AFs + FAF + AN + HGVSc | Yes |
+| **BS1** | Strong | Cross-population AF > expected, read from the same statistic as BA1 (filtering AF where available, else population maximum). NotEvaluated for homology-confounded genes, for gnomAD-flagged `segdup`/`lcr` sites, for non-PASS gnomAD records, and for ClinVar low-penetrance / risk alleles. Stands down where the gene's own BA1 bar already covers the frequency. Blocked outright by a curated exception whose `blocks` names BS1 | gnomAD per-population AFs + FAF + QC flags + ClinVar terms | Yes |
+| **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR / X-linked counts individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and requires ≥ `bs2_ar_min_hom` of them **and** a 95% lower bound on their frequency above `bs2_hom_prevalence_threshold` (default 1e-3, set by measurement - see [Choosing the BS2 prevalence bar](#choosing-the-bs2-prevalence-bar)), so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two such individuals in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance Blocked outright by a curated exception whose `blocks` names BS2, which is how a hypomorphic allele's unaffected homozygotes are kept from reading as tolerance | gnomAD hom + hemizygote counts + AN + inheritance | Yes |
 | **BS3** | Strong | Functional studies show no damage. Read from `--functional-evidence`; suppresses PP3/BP4/BP7 for that variant | Curated TSV | Yes (with file) |
 | **BS4** | Strong | Lack of segregation | Pedigree data | No |
 | **BP1** | Supporting | Missense in a gene where primarily truncating variants cause disease. Requires both the constraint signature (high pLI, low misZ) **and** a mutation spectrum without an established missense mechanism (< `bp1_max_pathogenic_missense` pathogenic missense in the ClinVar protein index) | pLI + misZ + ClinVar protein index | Yes |
@@ -1064,6 +1085,8 @@ Output (JSON / VCF CSQ / TSV)
 14. **Penetrance is unsourced.** BS2's precondition is "full penetrance expected at an early age" and no public resource publishes penetrance per gene-disorder pair. Prevalence, onset and inheritance are covered; see [Per-gene frequency bars](#per-gene-frequency-bars-clingen-vcep-specifications).
 15. **Published VCEP bars are applied without their founder-variant exceptions.** The exclusions are prose in the specification text, and `ba1_exceptions` carries no panel-specific entries beyond Ghosh 2018's nine, which is why the generated threshold table is opt-in rather than a default.
 16. **The ClinVar-concordance benchmark cannot validate the BA1 exception list.** Seven of Ghosh 2018's nine variants are `Conflicting classifications` in ClinVar and carry no consensus truth label, so they are not in the truth set; the criterion exists for exactly the population a consensus benchmark discards. It is covered by an end-to-end test over all nine instead. Any future exception entries need the same treatment.
+17. **The hypomorphic-allele list is three entries long.** GAA `c.-32-13T>G`, CFTR `c.1210-11T>G` and SPTA1 `c.4339-99C>T` ship with `blocks = ["BA1", "BS1", "BS2"]`, because an allele that causes disease only in trans with a rarer null is expected to be common and expected to be tolerated homozygous. The mechanism is general and the list is not; it grows by curation only. See [The curated frequency-exception list](#curated-frequency-exception-list).
+18. **A variant at a site where the population data is vetoed cannot reach Likely pathogenic alone.** Where gnomAD's FILTER or a low-complexity / segmental-duplication flag makes the frequency unusable, BA1, BS1, BS2 and PM2 are all withheld while PVS1 - read from the same alignments - is not, so a lone PVS1 call would rest on a one-sided ledger. Such calls are reported Uncertain with the veto named. The rule applies only when the suppressed frequency would itself have met BA1 or BS1; applying it to every flagged site cost 2,630 correct pathogenic calls to remove 18 wrong ones.
 
 ## The frequency dead zone between PM2 and BS1
 
@@ -1137,6 +1160,39 @@ The wider attribute table -
 because no public resource publishes it per gene-disorder pair in machine-readable form. It
 is the field BS2's "full penetrance expected at an early age" precondition most wants, and
 closing it needs a clinician rather than a download.
+
+## Curated frequency-exception list
+
+A per-gene bar answers "how common is too common in this gene".
+It cannot answer "this particular allele's frequency is not evidence about it at all", and
+two classes of allele need exactly that answer.
+
+**Common and pathogenic.** Ghosh 2018 (PMID 30311378) lists nine variants that sit above 5 %
+in at least one population and must not be called standalone-benign on that basis. All nine
+ship as defaults with `blocks = ["BA1"]`, the scope the paper wrote for.
+
+**Common because the disease model says so.** A hypomorphic allele that causes disease only
+in trans with a rarer null allele is *expected* to be frequent, and is *expected* to be seen
+homozygous in unaffected people. Reading either as evidence against pathogenicity inverts
+the mechanism, so an entry of this kind sets `blocks = ["BA1", "BS1", "BS2"]`. Three ship as
+defaults, all raised by the round-5 medical-genetics review:
+
+| Variant | gnomAD AF | Homozygotes | Mechanism |
+|---|---:|---:|---|
+| GAA `c.-32-13T>G` | 5.4e-3 | 23 | leaky splicing; late-onset Pompe in trans with a null allele |
+| CFTR `c.1210-11T>G` | 9.8e-3 | 27 | the 5T poly-pyrimidine tract; CBAVD or CF in trans with a CF-causing variant |
+| SPTA1 `c.4339-99C>T` | 6.6e-3 | 40 | alpha-LELY; elliptocytosis in trans with an SPTA1 mutation |
+
+None of the three reaches 5 %, which is why a BA1-only list never touched them, and none
+reaches Likely pathogenic even with the exception applied - the deciding evidence is PM3,
+the second allele in trans, which no annotator computes from a single variant.
+
+Matching is by genomic coordinate first and HGVS second, and the order is load-bearing
+rather than a preference: a `c.` token identifies a variant only relative to the transcript
+it was written for, and two of Ghosh's nine cannot be matched on their published HGVS at all.
+
+The list grows by curation. There is no automated route to it, and an entry without a stated
+mechanism is not one worth adding.
 
 ## References
 

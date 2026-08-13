@@ -666,6 +666,66 @@ The mechanism now works and is empty of the entries her cases need.
 There is a second reason it is thin for founder alleles: BA1 and BS1 test gnomAD's **grpmax** filtering allele frequency, and gnomAD deliberately excludes the Finnish, Ashkenazi and remaining groups from grpmax because they are bottlenecked.
 A Finnish or Ashkenazi founder allele is therefore invisible to that statistic by construction, which is why Ghosh had to list ACADS and BTD by hand - both annotated in the source table as ">5 % MAF only in Finnish".
 
+## v19: a data-quality veto that closed only the benign half of the ledger
+
+The round-5 medical-genetics review is about frequency evidence: which disorders it may be applied to, and which alleles it may be applied to.
+Working through the 76 opposite-direction calls to answer that turned up a defect nobody had named, in 21 of the 76.
+
+When gnomAD rejects a site - its own FILTER, a low-complexity tract, a segmental duplication - the classifier withholds BA1, BS1, BS2 **and** PM2.
+That is even-handed in intention and badly one-sided in effect.
+The benign side loses up to Standalone plus two Strong criteria; the pathogenic side loses one Supporting; and everything left standing, PVS1 above all, is read from the very alignments just declared untrustworthy and is kept at full strength.
+
+The result was a class of confident calls made with the benign half of the ledger closed by the pipeline itself:
+
+| Variant | gnomAD | Veto | ClinVar | fastVEP v18 |
+|---|---:|---|---|---|
+| RAI1 `c.840del` | AF 0.326, **48,739 hom** | low-complexity region | Benign | Likely pathogenic |
+| RAI1 `c.837_838del` | AF 0.387, 10,183 hom | low-complexity region | Benign | Likely pathogenic |
+| GIGYF2 `c.3630_3631insG` | AF 0.120, 1,775 hom | low-complexity region | Benign | Likely pathogenic |
+| ANAPC1 `c.1393C>T` | AF 0.282 | gnomAD FILTER=AS_VQSR | Benign | Likely pathogenic |
+| DIAPH1 `c.3149-1G>T` | AF 0.071 | gnomAD FILTER=AS_VQSR | Likely benign | Likely pathogenic |
+
+A lone Likely pathogenic call now becomes Uncertain when the frequency criteria were withheld for a **site-level** reason, with the veto named in the summary.
+Two distinctions in that sentence are load-bearing and both were established by measurement.
+
+**Site-level, not gene-level.** A gnomAD FILTER or a region flag says the alignments here are wrong, which undermines the frameshift call as much as the frequency.
+Curated homology (Mandelker 2016) and a ClinVar low-penetrance label say something narrower - that the *frequency* is confounded - and leave the consequence call intact.
+
+**Only where the suppressed frequency mattered.** Vetoing on the site flag alone cost 2,630 correct pathogenic calls to remove 18 wrong ones, because most flagged sites carry a frequency far too low to have supported any benign criterion, so withholding it cost the benign side nothing.
+Requiring that the suppressed frequency would itself have met BA1 or BS1 keeps the rule on the variants it was written for: **14 wrong calls removed for 6 correct ones**.
+
+## v20: the exception list reaches BS1 and BS2, for hypomorphic alleles
+
+The reviewer's sharpest round-5 point is a class the frequency criteria are structurally wrong about rather than a threshold that needs tuning.
+Where a variant causes disease only in trans with a rarer null allele, its being common is what the disease model *predicts*, and its homozygotes being unaffected is also what the model predicts.
+Reading either as evidence against pathogenicity inverts the mechanism.
+
+`Ba1Exception` now carries a `blocks` field naming which frequency criteria an entry suppresses, defaulting to `["BA1"]`, which is the scope Ghosh 2018 wrote for.
+Three hypomorphic alleles ship with `blocks = ["BA1", "BS1", "BS2"]`, all three taken from the discordance table under review:
+
+| Variant | gnomAD AF | Hom | v19 | **v20** |
+|---|---:|---:|---|---|
+| GAA `c.-32-13T>G`, late-onset Pompe | 5.4e-3 | 23 | Likely benign | **VUS** |
+| CFTR `c.1210-11T>G`, the 5T allele | 9.8e-3 | 27 | Likely benign | **VUS** |
+| SPTA1 `c.4339-99C>T`, alpha-LELY | 6.6e-3 | 40 | Likely benign | **VUS** |
+
+None reaches 5 %, which is why a BA1-only list never touched them.
+None reaches Likely pathogenic either, and should not: the deciding evidence is PM3, the second allele in trans, which no annotator computes from a single variant.
+
+A smaller hole closed on the way. BS1 stands down where BA1 already covers the frequency, but it compared against the global 5 % default rather than `effective_ba1_threshold(gene)`, so in a gene with a looser published bar - ABCA4's BA1 is 0.163 - a 6 % allele collected no frequency evidence in either direction.
+
+### v18 to v20
+
+| Metric | v18 | v19 | **v20** |
+|---|---:|---:|---:|
+| Exact match | 63.1 % | 63.1 % | **63.1 %** |
+| Same-direction | 77.5 % | 77.5 % | **77.5 %** |
+| Opposite-direction | 76 | 62 | **59** |
+| Called pathogenic, truth benign | 43 | 29 | **29** |
+| Called benign, truth pathogenic | 33 | 33 | **30** |
+
+Seventeen opposite-direction errors removed with the headline rates unmoved, which is what a fix to a specific defect should look like.
+
 ## Progression, v9 to v14
 
 | Metric | v9 | v10 | v11 | v12 | v13 | v14 |

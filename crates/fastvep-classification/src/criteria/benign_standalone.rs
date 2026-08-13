@@ -30,25 +30,15 @@ pub fn evaluate_ba1(
     // an evaluated conclusion rather than an inability to evaluate. HFE
     // c.845G>A reaches both: ClinVar labels it low-penetrance *and* Ghosh 2018
     // lists it.
-    let coordinates = input
-        .variant_coordinates
-        .as_ref()
-        .map(|(chrom, pos, r, a)| (chrom.as_str(), *pos, r.as_str(), a.as_str()));
-    let exception_match: Option<&Ba1Exception> = config.ba1_exceptions.iter().find(|e| {
-        e.matches(
-            input.gene_symbol.as_deref(),
-            input.hgvs_c.as_deref(),
-            coordinates,
-        )
-    });
+    let exception_match: Option<&Ba1Exception> =
+        super::frequency_gate::curated_exception(input, config, "BA1");
 
     if let Some(exc) = exception_match {
-        details.insert("ba1_exception_match".into(), serde_json::json!(true));
-        details.insert("ba1_exception_gene".into(), serde_json::json!(exc.gene));
-        details.insert("ba1_exception_hgvs_c".into(), serde_json::json!(exc.hgvs_c));
-        if let Some(reason) = &exc.reason {
-            details.insert("ba1_exception_reason".into(), serde_json::json!(reason));
-        }
+        // Same wording for all three frequency criteria. It says "curated"
+        // rather than "ClinGen" because the list is no longer only Ghosh
+        // 2018's nine: the hypomorphic entries are curated from the disease
+        // mechanism and have no published table behind them.
+        let summary = super::frequency_gate::record_exception("BA1", exc, &mut details);
         return EvidenceCriterion {
             code: "BA1".to_string(),
             direction: EvidenceDirection::Benign,
@@ -56,20 +46,18 @@ pub fn evaluate_ba1(
             default_strength: EvidenceStrength::Standalone,
             met: false,
             evaluated: true,
-            summary: format!(
-                "{} {} is on the ClinGen BA1 exception list, so BA1 cannot fire ({})",
-                exc.gene,
-                exc.hgvs_c,
-                exc.reason.as_deref().unwrap_or("Ghosh 2018")
-            ),
+            summary,
             details: serde_json::Value::Object(details),
         };
     }
 
     // Frequencies from a homology-confounded gene (or for a variant ClinVar
     // labels low-penetrance) cannot support a standalone benign call either.
-    if let Some(reason) = super::frequency_gate::benign_blocker(input, config) {
-        details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
+    if let Some(blocker) = super::frequency_gate::benign_blocker(input, config) {
+        blocker.record(&mut details);
+        super::frequency_gate::note_withheld_benign_frequency(
+            input, config, threshold, &mut details,
+        );
         return EvidenceCriterion {
             code: "BA1".to_string(),
             direction: EvidenceDirection::Benign,
@@ -77,7 +65,7 @@ pub fn evaluate_ba1(
             default_strength: EvidenceStrength::Standalone,
             met: false,
             evaluated: false,
-            summary: format!("BA1 not evaluated: {}", reason),
+            summary: format!("BA1 not evaluated: {}", blocker.reason),
             details: serde_json::Value::Object(details),
         };
     }

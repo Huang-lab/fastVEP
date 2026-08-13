@@ -252,9 +252,9 @@ fn evaluate_pm2(
     // frequency are artefacts. This is the same gate BA1/BS1/BS2 apply, so a
     // site is never trusted for one frequency criterion and distrusted for
     // another - only the benign-direction preconditions differ.
-    if let Some(reason) = super::frequency_gate::data_blocker(input, config) {
+    if let Some(blocker) = super::frequency_gate::data_blocker(input, config) {
         let mut details = serde_json::Map::new();
-        details.insert("frequency_blocked".into(), serde_json::json!(reason.clone()));
+        blocker.record(&mut details);
         return EvidenceCriterion {
             code: if config.pm2_downgrade_to_supporting { "PM2_Supporting".to_string() } else { "PM2".to_string() },
             direction: EvidenceDirection::Pathogenic,
@@ -262,7 +262,7 @@ fn evaluate_pm2(
             default_strength: EvidenceStrength::Moderate,
             met: false,
             evaluated: false,
-            summary: format!("PM2 not evaluated: {}", reason),
+            summary: format!("PM2 not evaluated: {}", blocker.reason),
             details: serde_json::Value::Object(details),
         };
     }

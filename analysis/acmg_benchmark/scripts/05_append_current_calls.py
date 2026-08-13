@@ -200,12 +200,13 @@ def explain(then_class, then_criteria, now_class, now_criteria, all_criteria):
     for code, summary, met, _ in all_criteria:
         if not met and "Superseded by functional evidence" in (summary or ""):
             gates.append(f"{code} superseded by functional evidence")
-    # The BA1 exception list reports `evaluated: true` - it is a conclusion,
-    # not an inability to conclude - so it needs its own branch rather than the
-    # withheld-criteria loop above.
+    # The curated exception list reports `evaluated: true` - it is a
+    # conclusion, not an inability to conclude - so it needs its own branch
+    # rather than the withheld-criteria loop above. It now covers BS1 and BS2
+    # as well as BA1, for hypomorphic alleles.
     for code, summary, met, _ in all_criteria:
-        if not met and "BA1 exception list" in (summary or ""):
-            gates.append(f"{code} blocked: ClinGen BA1 exception list (Ghosh 2018)")
+        if not met and "frequency-exception list" in (summary or ""):
+            gates.append(f"{code} blocked: curated frequency-exception list")
     parts.extend(dict.fromkeys(gates))
 
     if "PVS1" in after and not (after - {"PVS1"}) and status != "unchanged":

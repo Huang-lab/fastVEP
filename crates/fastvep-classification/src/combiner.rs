@@ -166,6 +166,23 @@ fn combine_inner(
         }
     }
 
+    // A Likely Pathogenic call standing on read-derived evidence, at a site
+    // where the reads were declared unreliable, is not a Likely Pathogenic
+    // call. See [`site_level_frequency_veto`].
+    if let Some((AcmgClassification::LikelyPathogenic, rule)) = &pathogenic_call {
+        if benign_call.is_none() {
+            if let Some(reason) = site_level_frequency_veto(criteria) {
+                return (
+                    AcmgClassification::UncertainSignificance,
+                    Some(format!(
+                        "Pathogenic rules → LP ({}), but the population-frequency criteria could not be evaluated at all: {}. The same reads carry the consequence call, so the evidence is one-sided rather than complete",
+                        rule, reason
+                    )),
+                );
+            }
+        }
+    }
+
     match (pathogenic_call, benign_call) {
         // Both directions reach a definite call → conflict.
         (Some((p_cls, p_rule)), Some((b_cls, b_rule)))
@@ -290,6 +307,60 @@ fn compute_benign_call(ba: u8, bs: u8, bp: u8) -> Option<(AcmgClassification, St
     None
 }
 
+/// The reason the population-frequency criteria were withheld, when the reason
+/// was a verdict on this site's short-read data *and* the frequency it
+/// suppressed would have carried benign evidence. `None` otherwise.
+///
+/// Why a lone Likely Pathogenic call cannot survive that pair of conditions.
+/// When gnomAD rejects a site - its own FILTER, a low-complexity tract, a
+/// segmental duplication - the classifier withholds BA1, BS1, BS2 *and* PM2,
+/// which is symmetric in intention and badly asymmetric in effect. The benign
+/// side loses up to Standalone plus two Strong criteria; the pathogenic side
+/// loses one Supporting. Everything that remains - PVS1 above all - is read
+/// from the same alignments that were just declared untrustworthy, and is kept
+/// at full strength.
+///
+/// The result is a class of confident calls made with the benign half of the
+/// ledger closed by the pipeline itself. In the ClinVar 2-star+ benchmark it
+/// produced, among others, RAI1 `c.840del` - 48,739 gnomAD homozygotes, inside
+/// a low-complexity tract, ClinVar Benign - reported Likely Pathogenic on PVS1
+/// alone, and 17 more of the same shape. Uncertain, with the veto named in the
+/// summary, is the honest output: a Very Strong pathogenic criterion and a
+/// population observation we have refused to read is not a resolved variant.
+///
+/// Both conditions are load-bearing, and the second was added after measuring
+/// the first on its own. Vetoing on the site flag alone demoted 2,630 correct
+/// pathogenic calls to Uncertain to remove 18 wrong ones, because most flagged
+/// sites carry a frequency far too low to have supported any benign criterion -
+/// withholding it cost the benign side nothing. Requiring that the suppressed
+/// frequency would actually have met BA1 or BS1 keeps the rule on the variants
+/// it was written for.
+///
+/// Scoped to Likely Pathogenic because that band is where PVS1's 8 points land
+/// unaided. A call reaching Pathogenic has 10 points from evidence that does
+/// not all come from one pileup, and the veto is not what is holding it up.
+fn site_level_frequency_veto(criteria: &[EvidenceCriterion]) -> Option<String> {
+    criteria
+        .iter()
+        .filter(|c| !c.evaluated && matches!(c.code.as_str(), "BA1" | "BS1" | "BS2"))
+        .find_map(|c| {
+            let flag = |key| c.details.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+            let vetoed = flag(crate::criteria::FREQUENCY_BLOCKED_SITE_LEVEL)
+                && flag(crate::criteria::FREQUENCY_BLOCKED_WOULD_BE_BENIGN);
+            vetoed.then(|| {
+                let reason = c
+                    .details
+                    .get("frequency_blocked")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("population frequency unusable at this site");
+                match c.details.get("frequency_blocked_af").and_then(|v| v.as_f64()) {
+                    Some(af) => format!("{} - and the frequency it suppressed, {:.3e}, would itself have met {}", reason, af, c.code),
+                    None => reason.to_string(),
+                }
+            })
+        })
+}
+
 /// A "definite" call is one that reaches P/LP or B/LB — anything strong
 /// enough that mixing it with the opposite direction warrants a Conflicting
 /// label rather than letting the stronger side win.
@@ -340,6 +411,99 @@ mod tests {
 
     use EvidenceDirection::*;
     use EvidenceStrength::*;
+
+    /// A frequency criterion the classifier declined to evaluate, carrying the
+    /// detail keys the frequency gate writes when it blocks.
+    fn vetoed(code: &str, strength: EvidenceStrength, site_level: bool) -> EvidenceCriterion {
+        vetoed_with(code, strength, site_level, true)
+    }
+
+    fn vetoed_with(
+        code: &str,
+        strength: EvidenceStrength,
+        site_level: bool,
+        would_be_benign: bool,
+    ) -> EvidenceCriterion {
+        let mut c = make_criterion(code, EvidenceDirection::Benign, strength, false);
+        c.evaluated = false;
+        c.details = serde_json::json!({
+            "frequency_blocked": "gnomAD flags this site as falling in a low-complexity region, where short-read allele frequencies are systematically unreliable",
+            crate::criteria::FREQUENCY_BLOCKED_SITE_LEVEL: site_level,
+            crate::criteria::FREQUENCY_BLOCKED_WOULD_BE_BENIGN: would_be_benign,
+            "frequency_blocked_af": 0.326,
+        });
+        c
+    }
+
+    // ── One-sided evidence from a site-level frequency veto ──
+
+    #[test]
+    fn test_lone_pvs1_is_uncertain_when_the_site_data_was_vetoed() {
+        // RAI1 c.840del in the benchmark: 48,739 gnomAD homozygotes inside a
+        // low-complexity tract, so BA1/BS1/BS2 and PM2 are all withheld and
+        // PVS1's 8 points stand unopposed.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            vetoed("BA1", Standalone, true),
+            vetoed("BS1", Strong, true),
+            vetoed("BS2", Strong, true),
+        ];
+        let (cls, rule) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+        assert!(rule.unwrap().contains("one-sided"));
+    }
+
+    #[test]
+    fn test_a_gene_level_veto_leaves_the_pathogenic_call_alone() {
+        // Curated homology says the frequency is confounded by a paralogue.
+        // It says nothing about whether this frameshift call is real, so the
+        // Likely Pathogenic call stands.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            vetoed("BA1", Standalone, false),
+            vetoed("BS1", Strong, false),
+        ];
+        let (cls, _) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
+    }
+
+    #[test]
+    fn test_a_veto_does_not_touch_a_call_that_reaches_pathogenic() {
+        // 10 points from evidence that is not all one pileup.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            met("PS1", Pathogenic, Strong),
+            vetoed("BA1", Standalone, true),
+        ];
+        let (cls, _) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::Pathogenic);
+    }
+
+    #[test]
+    fn test_a_veto_over_a_frequency_too_low_to_matter_changes_nothing() {
+        // The common case: a site fails gnomAD's FILTER with a handful of
+        // carriers. Withholding that frequency cost the benign side nothing,
+        // so there is no asymmetry to correct.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            vetoed_with("BA1", Standalone, true, false),
+            vetoed_with("BS1", Strong, true, false),
+        ];
+        let (cls, _) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
+    }
+
+    #[test]
+    fn test_an_assessed_frequency_criterion_is_not_a_veto() {
+        // BA1 evaluated and simply not met is the ordinary case, and must not
+        // be read as a withheld criterion.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            not_met("BA1", Benign, Standalone),
+        ];
+        let (cls, _) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
+    }
 
     // ── Benign Rules ──
 

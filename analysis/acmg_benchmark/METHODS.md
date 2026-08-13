@@ -49,7 +49,7 @@ that drove each call in `details.pp3_source` / `details.ps1_path` /
 
 | Criterion | Strength | Description | Data Source / Notes |
 |-----------|----------|-------------|---------------------|
-| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population AF, with **AN ≥ 2000** minimum (gnomAD v4 / SVI March 2024). Honors the **9-variant Ghosh 2018 BA1 exception list** |
+| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population AF, with **AN ≥ 2000** minimum (gnomAD v4 / SVI March 2024). Honors the **curated frequency-exception list** - Ghosh 2018's nine plus three hypomorphic alleles, the latter blocking BS1 and BS2 as well |
 | BS1 | Strong | Greater than expected frequency | gnomAD **max-population AF** (mirrors BA1; was cohort `all_af` pre-v7); gene-specific or default 0.01; same AN minimum as BA1 |
 | BS2 | Strong | Observed in healthy adults | gnomAD homozygote count + ClinGen GDV inheritance (or OMIM legacy). For AD-only genes: AC ≥ 5 (default; configurable via `bs2_ad_min_ac`). |
 | BS3 | Strong | Functional studies — no damage | Not automatable — NotEvaluated |
@@ -586,7 +586,7 @@ pm2_downgrade_to_supporting = true
 use_pp5_bp6 = false
 use_clinvar_stars_as_ps4_proxy = false
 
-# BA1 exception list — defaults to the 9-variant Ghosh 2018 set;
+# Curated frequency-exception list - defaults to Ghosh 2018's nine plus three hypomorphs;
 # users can extend or replace via TOML.
 [[ba1_exceptions]]
 gene = "HFE"

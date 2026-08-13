@@ -24,20 +24,135 @@
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
 
+/// Why a frequency criterion could not be assessed, and whether the reason is a
+/// statement about *this site's short-read data* or about something else.
+///
+/// The distinction is what [`crate::combiner`] needs to decide whether a
+/// pathogenic call resting on read-derived evidence is still safe. A gnomAD
+/// FILTER, a low-complexity tract and a segmental duplication all say the same
+/// thing: alignments here are unreliable. That undermines the frameshift or
+/// canonical-splice call PVS1 rests on just as much as it undermines the allele
+/// frequency, because both are read from the same pileup. A curated
+/// homology-gene entry or a ClinVar low-penetrance label says something
+/// narrower - that *the frequency* is confounded - and leaves the consequence
+/// call alone.
+pub(crate) struct FrequencyBlocker {
+    pub reason: String,
+    /// `true` for the read-level vetoes (gnomAD FILTER, low-complexity or
+    /// segmental-duplication flags); `false` for gene-level homology curation
+    /// and the ClinVar low-penetrance precondition.
+    pub site_level: bool,
+}
+
+impl FrequencyBlocker {
+    fn gene_level(reason: String) -> Self {
+        Self { reason, site_level: false }
+    }
+
+    fn site_level(reason: String) -> Self {
+        Self { reason, site_level: true }
+    }
+
+    /// Record this blocker in a criterion's `details`, under the two keys the
+    /// combiner and the review tooling read.
+    pub(crate) fn record(&self, details: &mut serde_json::Map<String, serde_json::Value>) {
+        details.insert("frequency_blocked".into(), serde_json::json!(self.reason));
+        details.insert(
+            FREQUENCY_BLOCKED_SITE_LEVEL.into(),
+            serde_json::json!(self.site_level),
+        );
+    }
+}
+
+/// Detail key carrying [`FrequencyBlocker::site_level`]. Named here so the
+/// combiner reads the same string the criteria write.
+pub(crate) const FREQUENCY_BLOCKED_SITE_LEVEL: &str = "frequency_blocked_site_level";
+
+/// Detail key set by [`note_withheld_benign_frequency`].
+pub(crate) const FREQUENCY_BLOCKED_WOULD_BE_BENIGN: &str = "frequency_blocked_would_be_benign";
+
+/// Record whether the frequency the classifier just refused to believe would
+/// have carried benign evidence had it been believed.
+///
+/// Refusing to read a frequency is only *materially* one-sided when there was
+/// something in it to read. A site that fails gnomAD's FILTER with two carriers
+/// costs the benign side nothing when it is withheld; the same veto over an
+/// allele seen in a third of the population withholds BA1. The combiner needs
+/// to tell those apart, because demoting every call at every flagged site would
+/// cost thousands of correct pathogenic calls to avoid a few dozen wrong ones -
+/// measured on the ClinVar 2-star+ set, 2,630 against 18.
+pub(crate) fn note_withheld_benign_frequency(
+    input: &ClassificationInput,
+    config: &AcmgConfig,
+    threshold: f64,
+    details: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    let Some((af, _)) = input.gnomad.as_ref().and_then(|g| benign_test_af(g, config)) else {
+        return;
+    };
+    if af > threshold {
+        details.insert(FREQUENCY_BLOCKED_WOULD_BE_BENIGN.into(), serde_json::json!(true));
+        details.insert("frequency_blocked_af".into(), serde_json::json!(af));
+    }
+}
+
+/// The curated exception forbidding `code` on this variant, if any.
+///
+/// Coordinate first, HGVS second - see [`crate::config::Ba1Exception::matches`]
+/// for why that order is load-bearing rather than a preference.
+pub(crate) fn curated_exception<'a>(
+    input: &ClassificationInput,
+    config: &'a AcmgConfig,
+    code: &str,
+) -> Option<&'a crate::config::Ba1Exception> {
+    let coordinates = input
+        .variant_coordinates
+        .as_ref()
+        .map(|(chrom, pos, r, a)| (chrom.as_str(), *pos, r.as_str(), a.as_str()));
+    config.frequency_exception(
+        code,
+        input.gene_symbol.as_deref(),
+        input.hgvs_c.as_deref(),
+        coordinates,
+    )
+}
+
+/// Record a curated exception in a criterion's `details` and return the
+/// summary line for it.
+pub(crate) fn record_exception(
+    code: &str,
+    exc: &crate::config::Ba1Exception,
+    details: &mut serde_json::Map<String, serde_json::Value>,
+) -> String {
+    details.insert("exception_match".into(), serde_json::json!(true));
+    details.insert("exception_gene".into(), serde_json::json!(exc.gene));
+    details.insert("exception_hgvs_c".into(), serde_json::json!(exc.hgvs_c));
+    if let Some(reason) = &exc.reason {
+        details.insert("exception_reason".into(), serde_json::json!(reason));
+    }
+    format!(
+        "{} {} is on the curated frequency-exception list, so {} cannot fire ({})",
+        exc.gene,
+        exc.hgvs_c,
+        code,
+        exc.reason.as_deref().unwrap_or("no reason recorded"),
+    )
+}
+
 /// A reason the population-frequency record for this variant cannot support
 /// any inference, in either direction.
 pub(crate) fn data_blocker(
     input: &ClassificationInput,
     config: &AcmgConfig,
-) -> Option<String> {
+) -> Option<FrequencyBlocker> {
     // Curated gene-level homology. Reads from a paralogue or pseudogene mismap
     // onto the gene of interest, so both the frequency and the absence of a
     // frequency are artefacts (Mandelker 2016, PMID 27228465).
     if config.is_homology_unreliable(input.gene_symbol.as_deref()) {
-        return Some(format!(
+        return Some(FrequencyBlocker::gene_level(format!(
             "gene {} has paralogue/pseudogene homology that makes population frequencies unreliable (Mandelker 2016, PMID 27228465)",
             input.gene_symbol.as_deref().unwrap_or("?")
-        ));
+        )));
     }
 
     let gnomad = input.gnomad.as_ref()?;
@@ -48,10 +163,10 @@ pub(crate) fn data_blocker(
     // and InbreedingCoeff that the genotypes are distributed unlike real
     // population data.
     if let Some(filter) = gnomad.failed_filter() {
-        return Some(format!(
+        return Some(FrequencyBlocker::site_level(format!(
             "gnomAD FILTER={}; the record failed gnomAD's own quality control and is not a measurement of a population frequency",
             filter
-        ));
+        )));
     }
 
     // Per-site homology, the same concern as the curated gene list but
@@ -60,10 +175,10 @@ pub(crate) fn data_blocker(
     // otherwise well-behaved genes.
     if config.gnomad_region_flags_block_frequency {
         if let Some(region) = gnomad.unreliable_region() {
-            return Some(format!(
+            return Some(FrequencyBlocker::site_level(format!(
                 "gnomAD flags this site as falling in a {}, where short-read allele frequencies are systematically unreliable",
                 region
-            ));
+            )));
         }
     }
 
@@ -75,9 +190,9 @@ pub(crate) fn data_blocker(
 pub(crate) fn benign_blocker(
     input: &ClassificationInput,
     config: &AcmgConfig,
-) -> Option<String> {
-    if let Some(reason) = data_blocker(input, config) {
-        return Some(reason);
+) -> Option<FrequencyBlocker> {
+    if let Some(blocker) = data_blocker(input, config) {
+        return Some(blocker);
     }
 
     // Richards 2015 conditions BS1/BS2 on a disorder with full penetrance
@@ -89,11 +204,11 @@ pub(crate) fn benign_blocker(
         if let Some(ref cv) = input.clinvar {
             if cv.review_stars() >= 2 {
                 if let Some(term) = cv.low_penetrance_term() {
-                    return Some(format!(
+                    return Some(FrequencyBlocker::gene_level(format!(
                         "ClinVar ({} stars) reports this variant as \"{}\"; a low-penetrance or risk allele is expected to be frequent and is outside BS2's full-penetrance precondition",
                         cv.review_stars(),
                         term
-                    ));
+                    )));
                 }
             }
         }
@@ -163,9 +278,13 @@ mod tests {
             GnomadData { filter_inbreeding: true, ..Default::default() },
         ] {
             let input = input_with(gnomad);
-            let reason = data_blocker(&input, &AcmgConfig::default());
-            assert!(reason.is_some(), "a non-PASS gnomAD record must block");
-            assert!(reason.unwrap().contains("FILTER="));
+            let blocker = data_blocker(&input, &AcmgConfig::default())
+                .expect("a non-PASS gnomAD record must block");
+            assert!(blocker.reason.contains("FILTER="));
+            assert!(
+                blocker.site_level,
+                "gnomAD's own FILTER is a verdict on this site's reads"
+            );
         }
     }
 
@@ -182,9 +301,35 @@ mod tests {
             ),
         ] {
             let input = input_with(gnomad);
-            let reason = data_blocker(&input, &AcmgConfig::default()).expect("should block");
-            assert!(reason.contains(expected), "got: {reason}");
+            let blocker = data_blocker(&input, &AcmgConfig::default()).expect("should block");
+            assert!(blocker.reason.contains(expected), "got: {}", blocker.reason);
+            assert!(blocker.site_level, "a region flag is a verdict on this site's reads");
         }
+    }
+
+    #[test]
+    fn test_gene_level_vetoes_are_not_site_level() {
+        // Both of these say the *frequency* is confounded. Neither says the
+        // alignment at this position is wrong, so neither may be used to
+        // discount a consequence call.
+        let mut input = minimal_input();
+        input.gene_symbol = Some("PMS2".to_string());
+        let config = AcmgConfig::default();
+        if let Some(blocker) = data_blocker(&input, &config) {
+            assert!(!blocker.site_level, "curated homology is a gene-level claim");
+        }
+
+        let mut input = input_with(GnomadData { all_af: Some(0.01), ..Default::default() });
+        input.clinvar = Some(crate::sa_extract::ClinvarData {
+            significance: Some(vec!["Pathogenic,_low_penetrance".to_string()]),
+            review_status: Some("criteria_provided,_multiple_submitters,_no_conflicts".to_string()),
+            ..Default::default()
+        });
+        let blocker = benign_blocker(&input, &config).expect("low penetrance must block");
+        assert!(
+            !blocker.site_level,
+            "a low-penetrance label says the frequency is expected, not that the reads are wrong"
+        );
     }
 
     #[test]
