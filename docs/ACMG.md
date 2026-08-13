@@ -378,22 +378,33 @@ So the far boundary is set by measurement
 Pathogenic recall is unchanged at every setting; this knob moves only the benign side.
 
 **Is the extension worth having at all?** That is the question the table above cannot answer,
-because none of its rows turn the extension off. Run separately on the current stack:
+because none of its rows turn the extension off. Scored separately, on the same concordance
+definitions the benchmark's other tables use:
 
-| setting | benign recall | missed diagnoses | opposite-direction |
-|---|---:|---:|---:|
-| extension off (`0`) | 58.7 % | 14 | 57 |
-| near-splice only (`20`) | 61.4 % | 20 | 63 |
-| **default (`300`)** | **62.5 %** | **33** | **76** |
+| | extension off (`0`) | **default (`300`)** |
+|---|---:|---:|
+| Exact match | 61.8 % | **62.7 %** |
+| Same-direction | 75.9 % | **77.5 %** |
+| Benign recall | 68.4 % | **71.5 %** |
+| Likely-benign recall | 46.8 % | **51.6 %** |
+| Pathogenic recall | 64.6 % | 64.6 % |
+| **False-benign (missed diagnoses)** | **14** | 33 |
+| False-pathogenic | 43 | 43 |
+| **Opposite-direction (total)** | **57** | 76 |
 
-Switching the extension off is the most conservative option available and it is *not* what
-fastVEP ships, deliberately.
-Going from off to 300 buys 3.8 pp of benign recall - about 10,800 correct benign calls -
+Neither column dominates, and which one is "better" depends on the metric.
+Off minimises hard errors; on maximises agreement.
+Going from off to 300 buys 3.1 pp of benign recall - about 10,800 correct benign calls -
 for 19 missed diagnoses, roughly **570 correct benign calls per diagnosis**.
 That sits between the two frequency trades this classifier already makes (BS2's prevalence
-bar at ~296, BS1's threshold at ~1,200), so declining Walker's extension would mean holding
-it to a stricter standard than the criteria beside it.
-A lab that wants the conservative setting has it in one line: `bp7_max_intron_offset = 0`.
+bar at ~296, BS1's threshold at ~1,200), so declining the extension would mean holding it to
+a stricter standard than the criteria beside it.
+
+The deciding argument is not the exchange rate, though, it is provenance: Walker 2023 is a
+published ClinGen SVI recommendation, and switching it off entirely is a deviation from
+guidance while bounding it at a measured knee is not.
+So 300 ships, and a lab that wants the conservative setting has it in one line:
+`bp7_max_intron_offset = 0`.
 
 Read the last column, not the first two.
 Bounding the extension at 300 recovers 17 of its 50 missed diagnoses for 530 correct benign

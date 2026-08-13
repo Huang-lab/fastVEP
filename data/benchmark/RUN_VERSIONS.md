@@ -449,3 +449,57 @@ Both still have 3 pathogenic and 0 benign neighbours there. A gene-level hotspot
 
 The v9-to-v12 columns are quoted from their own sections above; v13 and v14 are computed
 from `concordance_matrix.csv` on the same definitions.
+
+### Is v12 better than v14?
+
+On opposite-direction calls alone, yes: 59 against 76. That column is worth reading before
+concluding anything from it, because the difference is not really between versions.
+
+Everything separating them is one criterion, BP7's Walker 2023 intronic extension, which v12
+was not running at all - it was inert because `--acmg` did not imply `--hgvs`. Setting
+`bp7_max_intron_offset = 0` on v14's code turns it back off, and that configuration beats
+v12 on every error count while keeping the rest of v13 and v14:
+
+| Metric | v12 | v14 | v14, BP7 extension off |
+|---|---:|---:|---:|
+| Exact match | 61.8 % | **62.7 %** | 61.8 % |
+| Same-direction | 76.0 % | **77.5 %** | 75.9 % |
+| Benign recall | 68.4 % | **71.5 %** | 68.4 % |
+| Pathogenic recall | **65.0 %** | 64.6 % | 64.6 % |
+| False-benign | **14** | 33 | **14** |
+| False-pathogenic | 45 | 43 | **43** |
+| Opposite-direction | 59 | 76 | **57** |
+
+So the question is not which run to prefer but whether to apply an SVI recommendation the
+tool had never actually been running. The trade and the reasoning are in
+[`docs/ACMG.md`](../../docs/ACMG.md#choosing-bp7s-far-boundary); the short version is that
+it costs 19 missed diagnoses for ~10,800 correct benign calls, and that switching a
+published recommendation off entirely is a deviation from guidance in a way that bounding it
+at a measured knee is not.
+
+### What the medical-geneticist review can and cannot settle
+
+Her 122 adjudicated rows cannot arbitrate between v12, v13 and v14. Scored against her own
+call on the 74 rows where she stated one, all three versions are **identical**: 7 agree, 56
+where fastVEP now says VUS, 11 opposite. Not one row moved between them. Every difference
+between these versions is in variants she never saw - 53 % of v12's error set, 70 % of
+v13's and 64 % of v14's have been reviewed by nobody.
+
+The directionality is worth recording because it points at what would help next:
+
+| v14 against her call, 74 adjudicated rows | n |
+|---|---:|
+| fastVEP VUS, she called it pathogenic | 46 |
+| fastVEP VUS, she called it benign | 9 |
+| fastVEP over-calls pathogenic | 8 |
+| Agree | 7 |
+| fastVEP over-calls benign | 3 |
+| She called VUS, fastVEP definite | 1 |
+
+Among hard errors we over-call pathogenic about 3:1, though 3 of those 8 are the CBS rows
+where her colour coding (ClinVar's Benign is correct) contradicts her own note ("not sure
+why it is called as Benign in ClinVar ... this insertion is a well studied one"), so read
+that as 5 to 8. Among soft errors the ratio runs 5:1 the other way: 46 variants she would
+call pathogenic where fastVEP defers to VUS. That gap is not a threshold problem - her notes
+cite segregation, in-trans phase and functional data that no annotator computes - which is
+why B1 and further adjudication, not further tuning, are what move it.
