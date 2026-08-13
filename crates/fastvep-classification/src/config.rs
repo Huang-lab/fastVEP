@@ -227,7 +227,7 @@ pub struct AcmgConfig {
     ///
     /// **Default 1e-3, chosen from measurement rather than convention.** A
     /// sweep of the full 673,660-variant ClinVar 2-star+ benchmark
-    /// (`data/benchmark/scripts/sweep_bs2_thresholds.py`) gives:
+    /// (`analysis/acmg_benchmark/scripts/sweep_acmg_thresholds.py`) gives:
     ///
     /// | bar | false-benign calls | correct benign calls |
     /// |---|---|---|

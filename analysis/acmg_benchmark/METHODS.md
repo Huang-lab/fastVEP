@@ -238,7 +238,7 @@ The benchmark runs `fastvep annotate --acmg --pick` end-to-end on every
 ClinVar 2-star+ GRCh38 SNV / small indel and compares the issued ACMG
 classification against the ClinVar review-panel call.
 
-Concrete pipeline (`data/benchmark/run_full_benchmark.sh`):
+Concrete pipeline (`analysis/acmg_benchmark/scripts/run_benchmark.sh`):
 
 1. **Input**: ClinVar VCF filtered to review_status ≥ 2 stars
    (`criteria_provided,_multiple_submitters,_no_conflicts` and stricter)
@@ -247,7 +247,7 @@ Concrete pipeline (`data/benchmark/run_full_benchmark.sh`):
 2. **Annotation**: GFF3 + FASTA cache + supplementary annotation
    directory (`--sa-dir`) loaded once; all 673,660 variants annotated
    with `--acmg --pick` to a single JSON file.
-3. **Concordance** (`analysis/acmg_benchmark/real_data/03_evaluate_concordance.py`):
+3. **Concordance** (`analysis/acmg_benchmark/scripts/03_evaluate_concordance.py`):
    stream-parses the JSON via `ijson` (memory-bounded — output is ~24 GB
    pretty-printed), keys each variant on `(chrom, pos, ref, alt)`,
    reads the picked transcript's `acmg.classification`, and fills a
@@ -301,7 +301,7 @@ ships only the basic VEP columns and `json` is verbose.
 
 Generate by running:
 ```bash
-python3 analysis/acmg_benchmark/real_data/generate_figures.py
+python3 analysis/acmg_benchmark/scripts/generate_figures.py
 ```
 
 Outputs (`data/benchmark/output_v7/figures/`, PNG + PDF):

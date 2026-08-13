@@ -68,7 +68,7 @@ fastvep sa-build --source clinvar -i clinvar.vcf.gz -o clinvar --assembly GRCh38
 #   sa_databases/clinvar.osa.idx  (a few KB)
 ```
 
-> **Tip:** to grab every ACMG source in one shot (ClinVar, gnomAD constraints, REVEL, ClinGen GDV) with integrity + md5 checks and auto-refresh of any truncated file, use [`data/benchmark/sa_sources/download_sa_sources.sh`](../data/benchmark/sa_sources/download_sa_sources.sh). Re-running it re-downloads only corrupt/missing files; `FORCE=1 bash download_sa_sources.sh` re-downloads everything.
+> **Tip:** to grab every ACMG source in one shot (ClinVar, gnomAD constraints, REVEL, ClinGen GDV) with integrity + md5 checks and auto-refresh of any truncated file, use [`analysis/acmg_benchmark/scripts/sa_sources/download_sa_sources.sh`](../analysis/acmg_benchmark/scripts/sa_sources/download_sa_sources.sh). Re-running it re-downloads only corrupt/missing files; `FORCE=1 bash download_sa_sources.sh` re-downloads everything.
 
 ### gnomAD — population allele frequencies
 

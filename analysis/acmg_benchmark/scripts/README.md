@@ -17,7 +17,7 @@ python3 01_extract_clinvar_2star.py \
     ../../../data/benchmark/
 
 # 2. Build the SA databases (one-time per source).
-#    See data/benchmark/sa_sources/ for the build scripts:
+#    See sa_sources/ for the build scripts:
 #      - build_gnomad_per_chrom.sh                (gnomAD v4 exomes per chrom)
 #      - build_spliceai_phylop.sh                 (distilled from gnomAD INFO)
 #      - clingen_gdv_to_oga.py                    (ClinGen Gene-Disease Validity)
@@ -25,7 +25,7 @@ python3 01_extract_clinvar_2star.py \
 #    REVEL / gnomAD gene constraints.
 
 # 3. Annotate + score concordance
-bash ../../../data/benchmark/run_full_benchmark.sh
+bash run_benchmark.sh v1
 
 # 4. Render figures
 python3 generate_figures.py
@@ -104,4 +104,4 @@ unit tests had not caught. Each is fixed with a regression test.
    NoCall). Fix: `vep_allele(ref, alt)` strips the leading common
    prefix.
 
-See `data/benchmark/RUN_VERSIONS.md` for the per-run impact of each fix.
+See [`../RUN_VERSIONS.md`](../RUN_VERSIONS.md) for the per-run impact of each fix.

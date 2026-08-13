@@ -253,7 +253,7 @@ The bar is therefore a **maximum credible disease prevalence**: the point above 
 observed null individuals cannot all be explained by the disorder itself.
 
 Sweeping it across the full 673,660-variant ClinVar 2-star+ benchmark
-([`sweep_acmg_thresholds.py`](../data/benchmark/scripts/sweep_acmg_thresholds.py)) gives:
+([`sweep_acmg_thresholds.py`](../analysis/acmg_benchmark/scripts/sweep_acmg_thresholds.py)) gives:
 
 | bar | BS2 fires | false-benign calls | correct benign calls | marginal cost |
 |---|---:|---:|---:|---|
@@ -362,7 +362,7 @@ variants that v13 called benign, SpliceAI is present and reads between 0.00 and 
 The criterion is not missing its evidence out there - it is being actively misled by it.
 
 So the far boundary is set by measurement
-([`sweep_acmg_thresholds.py`](../data/benchmark/scripts/sweep_acmg_thresholds.py), full
+([`sweep_acmg_thresholds.py`](../analysis/acmg_benchmark/scripts/sweep_acmg_thresholds.py), full
 673,660-variant benchmark, this key swept alone):
 
 | `bp7_max_intron_offset` | correct benign calls | missed diagnoses | opposite-direction | marginal cost |

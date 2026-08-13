@@ -393,4 +393,4 @@ What is *no longer* open, and why:
 - **The PM2 bar for dominant genes** was not a question anyone had asked, and turned out to matter more. fastVEP read Richards 2015's "absent from controls" as literal absence, which is 19 points of pathogenic recall against gnomAD v4's 800,000 individuals. Now 4e-5, from the sweep and inside published VCEP practice. See [`ACMG.md`](ACMG.md#choosing-the-pm2-bar-for-dominant-genes).
 
 Both are configurable, and both sweeps are reproducible with
-[`sweep_acmg_thresholds.py`](../data/benchmark/scripts/sweep_acmg_thresholds.py).
+[`sweep_acmg_thresholds.py`](../analysis/acmg_benchmark/scripts/sweep_acmg_thresholds.py).

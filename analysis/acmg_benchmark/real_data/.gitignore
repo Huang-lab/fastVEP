@@ -1,5 +1,0 @@
-# Local benchmark inputs (regenerate via 01_extract_clinvar_2star.py)
-clinvar_2star.vcf
-clinvar_2star_truth.tsv
-*.fastvep.json
-*.json

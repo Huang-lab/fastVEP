@@ -18,6 +18,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+
+# Downloads land in the data tree, never beside the script. This file is
+# tracked; the ~30 GB it fetches must not be.
+DEST="${DEST:-$ROOT/data/benchmark/sa_sources}"
 
 # FORCE=1 re-downloads every file even if a valid copy already exists.
 FORCE="${FORCE:-0}"
@@ -73,7 +78,9 @@ download() {
     fi
 }
 
-cd "$SCRIPT_DIR"
+mkdir -p "$DEST"
+cd "$DEST"
+echo "Downloading into $DEST"
 
 echo "== ClinVar =="
 # ClinVar variant VCF on GRCh38 — drives clinvar.osa (per-allele clinical significance)
@@ -112,5 +119,5 @@ echo "  2) Per-chrom gnomAD exomes:  bash $SCRIPT_DIR/build_gnomad_per_chrom.sh"
 echo "  3) SpliceAI + PhyloP (distilled from gnomAD):"
 echo "       bash $SCRIPT_DIR/build_spliceai_phylop.sh"
 echo "  4) ClinGen GDV -> omim.oga:"
-echo "       python3 $SCRIPT_DIR/clingen_gdv_to_oga.py < clingen_gene_validity.csv > clingen_gdv.tsv"
-echo "       fastvep sa-build --source omim -i clingen_gdv.tsv -o ../sa_db/omim"
+echo "       python3 $SCRIPT_DIR/clingen_gdv_to_oga.py < $DEST/clingen_gene_validity.csv > $DEST/clingen_gdv.tsv"
+echo "       fastvep sa-build --source omim -i $DEST/clingen_gdv.tsv -o $ROOT/data/benchmark/sa_db/omim"
