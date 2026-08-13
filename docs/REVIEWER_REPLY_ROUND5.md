@@ -1,12 +1,14 @@
 # Reply to the round-5 review: frequency evidence, hypomorphs, and functional data
 
-Three attachments.
+One attachment, **`discordant_59_round5.xlsx`**.
 
-- **`strong_discordant_round5.xlsx`** - every current opposite-direction call, 59 rows, with your round-4 ruling carried across on the 13 you coloured.
-- **`new_for_review_round5.xlsx`** - the 46 of those that carry no ruling from you yet. This is the ask.
-- **`discordant_122_round5.xlsx`** - your own annotated file with the current call appended, so nothing you wrote has to be re-located.
+It holds only the calls still discordant: 59 rows where fastVEP commits to a direction ClinVar contradicts.
+Everything you resolved has dropped out by construction, because it is no longer discordant.
+Every note and ruling you have made across rounds 2, 3 and 4 is carried onto the row it belongs to, one column per round, so nothing has to be re-located.
+Rounds 3 and 4 carried your round-2 text forward rather than adding to it, so those columns are near-identical; they are kept separate anyway rather than merged on your behalf.
 
-Both new tables have six judgement columns, two of which exist because of your comments below: one for *why* a frequency criterion should not apply to a given disorder, and one for a PMID that settles the case.
+35 of the 59 you have never seen, 11 you saw without ruling on, 13 carry your ruling.
+Six judgement columns are blank on the right, two of which exist because of your comments below: one for *why* a frequency criterion should not apply to a given disorder, and one for a PMID that settles the case.
 
 One framing point before the substance, because it changes what we are optimising.
 We agree that discordance with ClinVar is not itself a defect.
@@ -58,7 +60,7 @@ There is now a gene-disease attribute table covering 6,857 gene-disease pairs fr
 **Penetrance is populated for 0 %**, because no public structured source states it.
 So an automated "is this disorder fully penetrant by early adulthood" test cannot be built from public data, and the Richards 2015 precondition on BS1 and BS2 is exactly that question.
 
-**What we need:** the rule you would apply, at whatever granularity is natural to you. Per gene, per disorder, or a general principle we can encode. `BS1_BS2_NOT_APPLICABLE_WHY` in the attached tables is where individual cases can go.
+**What we need:** the rule you would apply, at whatever granularity is natural to you. Per gene, per disorder, or a general principle we can encode. `BS1_BS2_NOT_APPLICABLE_WHY` in the attached table is where individual cases can go.
 
 ## 3. "BS2 applied for AR diseases where gnomAD had a single or a few homozygotes"
 
@@ -196,5 +198,5 @@ The 11 still opposite are: PTEN (intronic PVS1, our bug, still open), OCA2 (need
 1. **The hypomorph list.** Point 5's mechanism is real and holds three entries, all found in your own table. Name the rest.
 2. **The founder-allele list.** Same mechanism, same shape, and grpmax means curation is the only route.
 3. **Your rule for point 2**, at whatever granularity is natural: which disorders take frequency evidence off the table entirely, and which just want a different bar.
-4. **The 46 rows in `new_for_review_round5.xlsx`.** These have never been adjudicated. Even a direction and one line each would give us an expert test set independent of ClinVar, which is worth more to us than the ClinVar comparison.
+4. **The 46 unruled rows in the attachment.** These have never been adjudicated. Even a direction and one line each would give us an expert test set independent of ClinVar, which is worth more to us than the ClinVar comparison.
 5. **Two narrow rulings:** BP4 on an in-frame indel that overlaps a splice site (point 1), and whether a public functional-evidence source is clinically acceptable as a seed (point 6).
