@@ -1,0 +1,12 @@
+# Commits that changed formatting only, and should not be attributed authorship
+# by `git blame`.
+#
+# GitHub honours this file automatically. Locally, opt in once with:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Only add a commit here if it changed no behaviour. A commit listed by mistake
+# hides real authorship, which is worse than the noise it was meant to remove.
+
+# style: rustfmt the workspace
+39b0681a1100818e8b54dca747388a3eac143129
