@@ -72,9 +72,10 @@ Thresholds, criteria and the reasoning behind every value set by measurement are
 documented in [`docs/ACMG.md`](../../docs/ACMG.md), not here.
 This directory measures the classifier; it does not define it.
 
-The expert-review rounds that drove most of the criteria changes are in
-[`docs/ACMG_EXPERT_REVIEW_ROUND2.md`](../../docs/ACMG_EXPERT_REVIEW_ROUND2.md) and
-[`docs/REVIEWER_REPLY_ROUND3.md`](../../docs/REVIEWER_REPLY_ROUND3.md).
+The medical-genetics review that drove most of the criteria changes is in
+[`docs/ACMG_EXPERT_REVIEW_ROUND2.md`](../../docs/ACMG_EXPERT_REVIEW_ROUND2.md).
+What each subsequent run did about it is in
+[`RUN_VERSIONS.md`](RUN_VERSIONS.md); the runs between reviews are ours, not hers.
 
 ## Curated tables in `data/`
 
