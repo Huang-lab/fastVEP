@@ -208,11 +208,11 @@ impl SaBlock {
         let start = entries.partition_point(|e| e.position < position);
 
         // Linear scan among entries at the same position (usually just 1-3)
-        for i in start..entries.len() {
-            if entries[i].position != position {
+        for (i, entry) in entries.iter().enumerate().skip(start) {
+            if entry.position != position {
                 break;
             }
-            if entries[i].ref_allele == ref_allele && entries[i].alt_allele == alt_allele {
+            if entry.ref_allele == ref_allele && entry.alt_allele == alt_allele {
                 return Some(i);
             }
         }

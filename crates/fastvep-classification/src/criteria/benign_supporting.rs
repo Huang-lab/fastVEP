@@ -26,7 +26,21 @@ pub fn evaluate_all(
 /// BP1: Missense variant in a gene for which primarily truncating variants are known
 /// to cause disease.
 ///
-/// Approximated: gene has high pLI (LOF-intolerant) but low missense Z (missense-tolerant).
+/// Two conditions, both required (Richards 2015):
+///
+/// 1. **Constraint signature** - the gene is LOF-intolerant (high pLI) but
+///    tolerant of missense variation (low missense Z).
+/// 2. **Mutation spectrum** - missense is not an established disease mechanism
+///    for the gene. Checked positively against the ClinVar protein index,
+///    which holds only missense entries: a gene with
+///    `bp1_max_pathogenic_missense` or more pathogenic/likely-pathogenic
+///    missense records does have a missense mechanism, and BP1 cannot apply
+///    to it no matter what the constraint metrics say.
+///
+/// Condition 2 was missing before the round-2 medical-genetics review, which
+/// found BP1 firing on ENG, CFH, FGFR3, APC, ANKRD11, PKD1 and a dozen more
+/// genes whose spectrum plainly includes pathogenic missense. Constraint
+/// metrics describe population tolerance, not disease mechanism.
 fn evaluate_bp1(
     input: &ClassificationInput,
     config: &AcmgConfig,
@@ -39,13 +53,48 @@ fn evaluate_bp1(
     let mut details = serde_json::Map::new();
     details.insert("is_missense".into(), serde_json::json!(is_missense));
 
+    // Mutation-spectrum veto. The ClinVar protein index carries missense
+    // entries only (the builder drops nonsense and synonymous), so a
+    // pathogenic entry is direct evidence of a missense mechanism. The index
+    // also carries benign missense for PM1's sake; those are deliberately not
+    // counted here, because BP1 asks what *causes disease* in this gene and a
+    // benign missense record says nothing about that either way.
+    if is_missense {
+        if let Some(ref cpd) = input.clinvar_protein {
+            let pathogenic_missense = cpd
+                .protein_variants
+                .iter()
+                .filter(|v| v.sig.to_lowercase().contains("pathogenic"))
+                .count();
+            details.insert(
+                "gene_pathogenic_missense_count".into(),
+                serde_json::json!(pathogenic_missense),
+            );
+            if pathogenic_missense >= config.bp1_max_pathogenic_missense as usize {
+                return EvidenceCriterion {
+                    code: "BP1".to_string(),
+                    direction: EvidenceDirection::Benign,
+                    strength: EvidenceStrength::Supporting,
+                    default_strength: EvidenceStrength::Supporting,
+                    met: false,
+                    evaluated: true,
+                    summary: format!(
+                        "Gene has {} pathogenic/likely-pathogenic missense variants in ClinVar; missense is an established mechanism, so BP1 does not apply (threshold {})",
+                        pathogenic_missense, config.bp1_max_pathogenic_missense
+                    ),
+                    details: serde_json::Value::Object(details),
+                };
+            }
+        }
+    }
+
     let (met, evaluated, summary) = if !is_missense {
         (false, true, "Not a missense variant".to_string())
     } else if let Some(ref gc) = input.gene_constraints {
         let pli_high = gc
             .pli
-            .map_or(false, |p| p >= config.pli_lof_intolerant);
-        let misz_low = gc.mis_z.map_or(false, |z| z < 2.0);
+            .is_some_and(|p| p >= config.pli_lof_intolerant);
+        let misz_low = gc.mis_z.is_some_and(|z| z < 2.0);
 
         if let Some(pli) = gc.pli {
             details.insert("pLI".into(), serde_json::json!(pli));
@@ -120,7 +169,7 @@ fn evaluate_bp2(
     let is_dominant = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_dominant_inheritance());
+        .is_some_and(|o| o.has_dominant_inheritance());
     details.insert("is_dominant_gene".into(), serde_json::json!(is_dominant));
 
     // Check for in-cis with pathogenic (any inheritance pattern)
@@ -393,7 +442,32 @@ fn evaluate_bp4(
         )
     });
     let missense_outside_splice_region = is_missense && !overlaps_splice_region;
-    let splice_supporting = if is_pvs1_territory {
+    // No predictor calibrated for benign evidence exists for in-frame indels,
+    // stop-lost, or other protein-altering changes. Their predicted effect is
+    // the protein change, and SpliceAI saying "no splice impact" is not
+    // evidence that the protein change is tolerated. Before this gate an
+    // in-frame deletion with SpliceAI 0.00 collected BP4 Supporting and, with
+    // BS2, reached Likely Benign on genuinely pathogenic variants (AFG2A,
+    // RSPH9, AMHR2, OCA2, CYP24A1 in the round-2 review). A variant that also
+    // overlaps a splice region stays splice-assessable.
+    let is_uncalibrated_coding = input.consequences.iter().any(|c| {
+        matches!(
+            c,
+            Consequence::InframeInsertion
+                | Consequence::InframeDeletion
+                | Consequence::StopLost
+                | Consequence::ProteinAlteringVariant
+        )
+    }) && !overlaps_splice_region;
+    let splice_supporting = if is_uncalibrated_coding {
+        details.insert(
+            "splice_skipped_reason".into(),
+            serde_json::json!(
+                "BP4 does not apply to in-frame indels, stop-lost or protein-altering variants: no calibrated benign predictor exists for them (Pejaver 2022 covers missense, Walker 2023 covers splice-assessable variants)"
+            ),
+        );
+        false
+    } else if is_pvs1_territory {
         details.insert(
             "splice_skipped_reason".into(),
             serde_json::json!(
@@ -562,6 +636,12 @@ fn evaluate_bp6(
 ///    acceptor-side `offset ≤ -21` — when SpliceAI shows no impact and the
 ///    position is not highly conserved.
 ///
+/// The extension also carries a far boundary, which Walker 2023 does not state
+/// and which is set here by measurement rather than assertion: see
+/// [`AcmgConfig::bp7_max_intron_offset`]. Past it the only evidence BP7 has is
+/// a SpliceAI score in the pseudoexon-activation regime where SpliceAI is
+/// least sensitive, and the measured exchange rate collapses accordingly.
+///
 /// When the pipeline does not populate `at_exon_edge` / `intronic_offset`
 /// (current default), behavior reverts to the legacy synonymous-only rule
 /// for backward compatibility.
@@ -585,17 +665,26 @@ fn evaluate_bp7(
     // Determine whether this variant type qualifies for BP7 at all.
     // - Synonymous: traditional BP7 target.
     // - Intronic: Walker 2023 extension, but only outside the standard splice
-    //   region (donor-side offset ≥ 7, acceptor-side offset ≤ -21).
-    let intronic_eligible = match (is_intronic, input.intronic_offset) {
-        (true, Some(off)) if off >= 7 || off <= -21 => true,
-        _ => false,
-    };
+    //   region (donor-side offset ≥ 7, acceptor-side offset ≤ -21) and inside
+    //   the measured far boundary (`bp7_max_intron_offset`).
+    let too_deep = matches!(
+        (is_intronic, input.intronic_offset),
+        (true, Some(off)) if off.unsigned_abs() > config.bp7_max_intron_offset
+    );
+    let intronic_eligible = !too_deep
+        && matches!((is_intronic, input.intronic_offset), (true, Some(off)) if off >= 7 || off <= -21);
     if let Some(off) = input.intronic_offset {
         details.insert("intronic_offset".into(), serde_json::json!(off));
     }
 
     if !is_synonymous && !intronic_eligible {
-        let summary = if is_intronic && input.intronic_offset.is_none() {
+        let summary = if too_deep {
+            format!(
+                "Intronic variant {} nt into the intron, past BP7's far boundary of {} nt; out there the criterion rests on SpliceAI in the pseudoexon-activation regime where it is least sensitive",
+                input.intronic_offset.unwrap_or(0).unsigned_abs(),
+                config.bp7_max_intron_offset,
+            )
+        } else if is_intronic && input.intronic_offset.is_none() {
             "Intronic variant but offset from splice site not provided; BP7 requires intronic_offset to extend beyond synonymous (Walker 2023)".to_string()
         } else if is_intronic {
             format!(
@@ -637,16 +726,41 @@ fn evaluate_bp7(
         details.insert("at_exon_edge".into(), serde_json::json!(edge));
     }
 
-    // Check SpliceAI: no predicted splice impact
-    let no_splice_impact = if let Some(ref splice) = input.splice_ai {
-        let max_ds = splice.max_delta_score().unwrap_or(0.0);
-        details.insert("spliceai_max_ds".into(), serde_json::json!(max_ds));
-        max_ds < config.spliceai_pathogenic
-    } else {
-        // If no SpliceAI data, we conservatively assume no impact
+    // BP7 rests on a splice prediction, in Richards 2015's own wording:
+    // "splicing prediction algorithms predict no impact". A missing prediction
+    // is not a prediction of no impact, and treating it as one is how a benign
+    // criterion fires on evidence that was never gathered.
+    //
+    // SpliceAI here is distilled from gnomAD's INFO fields, so any position
+    // gnomAD never called carries no score at all, and the previous code read
+    // that silence as "predicted no impact".
+    //
+    // Worth recording what this did *not* fix, since it was the reason the
+    // change was written. It was meant to explain v13's 36 deep-intronic
+    // false-benign calls (PCDH15, NPHP1, CERKL, POLR3A, DST), and it does not:
+    // all 36 have SpliceAI scores, reading 0.00 to 0.14. Their cause is that
+    // SpliceAI is genuinely insensitive to pseudoexon activation, which is
+    // what `bp7_max_intron_offset` addresses instead. This gate is still
+    // correct - it just turned out to be about a different set of variants.
+    let Some(max_ds) = input
+        .splice_ai
+        .as_ref()
+        .and_then(|s| s.max_delta_score())
+    else {
         details.insert("spliceai_max_ds".into(), serde_json::Value::Null);
-        true
+        return EvidenceCriterion {
+            code: "BP7".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Supporting,
+            default_strength: EvidenceStrength::Supporting,
+            met: false,
+            evaluated: false,
+            summary: "BP7 not evaluated: no SpliceAI prediction for this position, and BP7 requires a prediction of no splice impact rather than the absence of one".to_string(),
+            details: serde_json::Value::Object(details),
+        };
     };
+    details.insert("spliceai_max_ds".into(), serde_json::json!(max_ds));
+    let no_splice_impact = max_ds < config.spliceai_pathogenic;
 
     // Check PhyloP: not highly conserved
     let not_conserved = if let Some(phylop) = input.phylop {
@@ -658,9 +772,7 @@ fn evaluate_bp7(
         false
     };
 
-    let splice_ai_available = input.splice_ai.is_some();
-    let phylop_available = input.phylop.is_some();
-    let evaluated = splice_ai_available || phylop_available;
+    let evaluated = true;
     let met = (is_synonymous || intronic_eligible) && no_splice_impact && not_conserved;
 
     let context = if is_synonymous {
@@ -673,7 +785,7 @@ fn evaluate_bp7(
         format!(
             "{} with no predicted splice impact (SpliceAI max_ds={:.2}) and not conserved (PhyloP={:.2})",
             context,
-            input.splice_ai.as_ref().and_then(|s| s.max_delta_score()).unwrap_or(0.0),
+            max_ds,
             input.phylop.unwrap_or(0.0)
         )
     } else if !no_splice_impact {
@@ -699,7 +811,10 @@ fn evaluate_bp7(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sa_extract::{GnomadGeneData, RevelData, SpliceAiData};
+    use crate::test_support::minimal_input;
+    use crate::sa_extract::{
+        ClinvarProteinData, ClinvarProteinVariant, GnomadGeneData, RevelData, SpliceAiData,
+    };
     use fastvep_core::Impact;
 
     fn make_input(
@@ -712,37 +827,14 @@ mod tests {
         ClassificationInput {
             consequences,
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
             revel: revel_score.map(|s| RevelData { score: Some(s) }),
             splice_ai: splice_ai_max_ds.map(|ds| SpliceAiData {
                 ds_al: Some(ds),
                 ..Default::default()
             }),
-            dbnsfp: None,
             phylop,
-            gerp: None,
             gene_constraints,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 
@@ -955,6 +1047,93 @@ mod tests {
     }
 
     #[test]
+    fn test_bp3_distinguishes_no_repeat_from_no_database() {
+        // An interval source only yields an annotation on a hit, so "not in a
+        // repeat" and "no repeat database loaded" arrive here identically
+        // unless the extractor was told which. Before that distinction existed
+        // BP3 answered every in-frame indel outside a repeat with "load
+        // RepeatMasker .osi", which reads as a setup error rather than an
+        // answer.
+        let mut input = make_input(vec![Consequence::InframeDeletion], None, None, None, None);
+        let config = AcmgConfig::default();
+
+        input.in_repeat_region = None;
+        let unknown = evaluate_bp3(&input, &config);
+        assert!(!unknown.met);
+        assert!(!unknown.evaluated, "no database: BP3 has nothing to say");
+        assert!(unknown.summary.contains("not available"), "got: {}", unknown.summary);
+
+        input.in_repeat_region = Some(false);
+        let looked = evaluate_bp3(&input, &config);
+        assert!(!looked.met);
+        assert!(looked.evaluated, "database loaded: BP3 looked and declined");
+        assert!(looked.summary.contains("not in a repetitive region"), "got: {}", looked.summary);
+
+        input.in_repeat_region = Some(true);
+        let hit = evaluate_bp3(&input, &config);
+        assert!(hit.met);
+        assert!(hit.evaluated);
+    }
+
+    #[test]
+    fn test_bp7_stops_at_the_far_boundary() {
+        // Past `bp7_max_intron_offset` the evidence base runs out: SpliceAI is
+        // at its least sensitive for pseudoexon activation, which is the main
+        // way a variant this deep is pathogenic at all.
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.02),
+            Some(0.4),
+            None,
+        );
+        let config = AcmgConfig::default();
+        input.intronic_offset = Some(300);
+        assert!(evaluate_bp7(&input, &config).met, "at the boundary BP7 still applies");
+
+        input.intronic_offset = Some(301);
+        let result = evaluate_bp7(&input, &config);
+        assert!(!result.met);
+        assert!(result.evaluated, "declined on the merits, not left unexamined");
+        assert!(result.summary.contains("far boundary"));
+
+        // Symmetric on the acceptor side.
+        input.intronic_offset = Some(-2559); // PCDH15 c.4368-2559, ClinVar Pathogenic
+        assert!(!evaluate_bp7(&input, &config).met);
+    }
+
+    #[test]
+    fn test_bp7_far_boundary_can_be_removed() {
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            Some(0.02),
+            Some(0.4),
+            None,
+        );
+        input.intronic_offset = Some(29_738);
+        let config = AcmgConfig {
+            bp7_max_intron_offset: u64::MAX,
+            ..AcmgConfig::default()
+        };
+        assert!(evaluate_bp7(&input, &config).met);
+    }
+
+    #[test]
+    fn test_bp7_far_boundary_does_not_touch_synonymous() {
+        // The bound is on the Walker 2023 intronic extension. A synonymous
+        // variant is exonic and has no intronic offset to exceed.
+        let input = make_input(
+            vec![Consequence::SynonymousVariant],
+            None,
+            Some(0.05),
+            Some(0.5),
+            None,
+        );
+        assert!(evaluate_bp7(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
     fn test_bp7_deep_intronic_acceptor_side_fires() {
         // Acceptor-side: offset ≤ -21 qualifies per Walker 2023.
         let mut input = make_input(
@@ -967,6 +1146,31 @@ mod tests {
         input.intronic_offset = Some(-25);
         let result = evaluate_bp7(&input, &AcmgConfig::default());
         assert!(result.met);
+    }
+
+    #[test]
+    fn test_bp7_requires_a_splice_prediction_to_exist() {
+        // The failure mode this guards: a deep-intronic variant absent from
+        // gnomAD carries no SpliceAI score, and that is the shape of a
+        // pseudoexon-activating pathogenic variant. Reading "no score" as "no
+        // impact" called 36 ClinVar Pathogenic variants Likely Benign in v13.
+        let mut input = make_input(
+            vec![Consequence::IntronVariant],
+            None,
+            None, // no SpliceAI
+            Some(0.4), // deep intron, unconserved
+            None,
+        );
+        input.intronic_offset = Some(15);
+        let r = evaluate_bp7(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated, "absent data is not an assessment");
+        assert!(r.summary.contains("no SpliceAI prediction"), "got: {}", r.summary);
+
+        // A synonymous variant is held to the same requirement: Richards 2015
+        // words BP7 as "splicing prediction algorithms predict no impact".
+        let syn = make_input(vec![Consequence::SynonymousVariant], None, None, Some(0.2), None);
+        assert!(!evaluate_bp7(&syn, &AcmgConfig::default()).met);
     }
 
     #[test]
@@ -1040,6 +1244,116 @@ mod tests {
             }),
         );
         let result = evaluate_bp1(&input, &AcmgConfig::default());
+        assert!(result.met);
+    }
+
+    fn bp1_gene_constraints() -> GnomadGeneData {
+        // LOF-intolerant, missense-tolerant: the constraint signature BP1 wants.
+        GnomadGeneData {
+            pli: Some(0.99),
+            mis_z: Some(1.0),
+            ..Default::default()
+        }
+    }
+
+    fn clinvar_protein_with_pathogenic_missense(n: usize) -> ClinvarProteinData {
+        ClinvarProteinData {
+            protein_variants: (0..n)
+                .map(|i| ClinvarProteinVariant {
+                    pos: 100 + i as u64,
+                    ref_aa: "G".into(),
+                    alt_aa: "S".into(),
+                    sig: "Pathogenic".into(),
+                    n: 1,
+                })
+                .collect(),
+            benign_indexed: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_bp1_blocked_when_gene_has_pathogenic_missense_spectrum() {
+        // ENG, CFH, FGFR3, APC and a dozen others have the BP1 constraint
+        // signature but a mutation spectrum that plainly includes pathogenic
+        // missense. BP1 must not fire on them: constraint metrics describe
+        // population tolerance, not disease mechanism.
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            None,
+            None,
+            None,
+            Some(bp1_gene_constraints()),
+        );
+        input.clinvar_protein = Some(clinvar_protein_with_pathogenic_missense(12));
+        let result = evaluate_bp1(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(result.evaluated);
+        assert!(result.summary.contains("missense is an established mechanism"));
+    }
+
+    #[test]
+    fn test_bp1_still_fires_when_gene_has_no_pathogenic_missense() {
+        // A truly truncating-only gene: constraint signature plus an empty
+        // pathogenic-missense spectrum.
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            None,
+            None,
+            None,
+            Some(bp1_gene_constraints()),
+        );
+        input.clinvar_protein = Some(ClinvarProteinData {
+            protein_variants: vec![],
+            benign_indexed: true,
+            ..Default::default()
+        });
+        let result = evaluate_bp1(&input, &AcmgConfig::default());
+        assert!(result.met);
+    }
+
+    #[test]
+    fn test_bp4_not_applied_to_inframe_deletion() {
+        // No calibrated benign predictor exists for in-frame indels, so a
+        // SpliceAI score of 0 is not benign evidence for one. Before this gate
+        // in-frame deletions collected BP4 Supporting and reached Likely
+        // Benign alongside BS2 on genuinely pathogenic variants.
+        let input = make_input(
+            vec![Consequence::InframeDeletion],
+            None,
+            Some(0.0),
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(!result.met);
+        assert!(result
+            .details
+            .get("splice_skipped_reason")
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("in-frame"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn test_bp4_not_applied_to_stop_lost() {
+        let input = make_input(vec![Consequence::StopLost], None, Some(0.0), None, None);
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
+        assert!(!result.met);
+    }
+
+    #[test]
+    fn test_bp4_inframe_in_splice_region_still_assessable() {
+        // An in-frame indel that also overlaps a splice region is genuinely
+        // splice-assessable, so Walker 2023 BP4-splice still applies.
+        let input = make_input(
+            vec![Consequence::InframeDeletion, Consequence::SpliceRegionVariant],
+            None,
+            Some(0.0),
+            None,
+            None,
+        );
+        let result = evaluate_bp4(&input, &AcmgConfig::default());
         assert!(result.met);
     }
 

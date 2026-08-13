@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 # Default paths resolve relative to the repo root (this file lives at
-# <repo>/analysis/acmg_benchmark/real_data/01_extract_clinvar_2star.py).
+# <repo>/analysis/acmg_benchmark/scripts/01_extract_clinvar_2star.py).
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CLNVAR_VCF = Path(sys.argv[1] if len(sys.argv) > 1 else
                   REPO_ROOT / "data/benchmark/sa_sources/clinvar.vcf.gz")

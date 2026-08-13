@@ -67,7 +67,7 @@ before a fresh build.
 | Source | Status | Records | Path |
 |--------|--------|---------|------|
 | `clinvar.osa` | ✅ | 4,438,232 | `sa_db/clinvar.osa` (rebuilt from 2026-06-27 release) |
-| `clinvar_protein.oga` | ✅ | 4,554 genes | `sa_db/clinvar_protein.oga` |
+| `clinvar_protein.oga` | ✅ | 15,665 genes | `sa_db/clinvar_protein.oga` |
 | `gnomad_genes.oga` | ✅ | 18,173 genes | `sa_db/gnomad_genes.oga` |
 | `omim.oga` (ClinGen GDV) | ✅ | 2,419 genes | `sa_db/omim.oga` |
 | `revel_chr1..22,X,Y.osa` | ✅ | 24 chrom files | `sa_db/revel_chr*.osa` |

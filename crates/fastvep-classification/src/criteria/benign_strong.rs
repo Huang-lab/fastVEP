@@ -1,3 +1,4 @@
+use super::frequency_gate::benign_blocker;
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
 use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
@@ -15,6 +16,25 @@ pub fn evaluate_all(
     ]
 }
 
+/// 95 % lower confidence bound on a Poisson rate that produced `observed`
+/// events, via the chi-square relation `lower = 0.5 * chi2_{0.05, 2k}`.
+/// Tabulated for the small counts that matter here and approximated with the
+/// Wilson-Hilferty expansion above the table.
+fn poisson_lower_95(observed: u64) -> f64 {
+    const TABLE: [f64; 21] = [
+        0.0, 0.0513, 0.3554, 0.8177, 1.3663, 1.9702, 2.6130, 3.2853, 3.9808,
+        4.6952, 5.4254, 6.1690, 6.9242, 7.6896, 8.4639, 9.2463, 10.0360,
+        10.8324, 11.6350, 12.4432, 13.2547,
+    ];
+    if (observed as usize) < TABLE.len() {
+        return TABLE[observed as usize];
+    }
+    let k = observed as f64;
+    // Wilson-Hilferty: lower ≈ k * (1 - 1/(9k) - 1.645/(3*sqrt(k)))^3
+    let term = 1.0 - 1.0 / (9.0 * k) - 1.645 / (3.0 * k.sqrt());
+    (k * term * term * term).max(0.0)
+}
+
 /// BS1: Allele frequency is greater than expected for disorder.
 fn evaluate_bs1(
     input: &ClassificationInput,
@@ -24,6 +44,40 @@ fn evaluate_bs1(
 
     let mut details = serde_json::Map::new();
     details.insert("af_threshold".into(), serde_json::json!(threshold));
+
+    // Checked ahead of the generic frequency gate, which would otherwise answer
+    // first and give a vaguer reason. "On the curated exception list" is an
+    // evaluated conclusion with a citation, not an inability to evaluate.
+    if let Some(exc) = super::frequency_gate::curated_exception(input, config, "BS1") {
+        let summary = super::frequency_gate::record_exception("BS1", exc, &mut details);
+        return EvidenceCriterion {
+            code: "BS1".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: true,
+            summary,
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    if let Some(blocker) = benign_blocker(input, config) {
+        blocker.record(&mut details);
+        super::frequency_gate::note_withheld_benign_frequency(
+            input, config, threshold, &mut details,
+        );
+        return EvidenceCriterion {
+            code: "BS1".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: false,
+            summary: format!("BS1 not evaluated: {}", blocker.reason),
+            details: serde_json::Value::Object(details),
+        };
+    }
 
     let (met, summary) = if let Some(ref gnomad) = input.gnomad {
         // ClinGen SVI gnomAD v4 guidance (March 2024): require minimum AN
@@ -64,40 +118,55 @@ fn evaluate_bs1(
                 };
             }
         }
-        // ClinGen SVI guidance applies BS1 against the **max-population
-        // AF** (mirroring BA1), not the cohort-wide allAf. Using the
-        // cohort AF would let a 5% variant in a single subpopulation slip
-        // under a 1 % BS1 threshold whenever the global cohort happens
-        // to dilute it. METHODS.md aligns: "max population AF" for both
-        // BA1 and BS1.
-        let max_pop_af = gnomad.max_pop_af().unwrap_or(0.0);
+        // ClinGen SVI guidance applies BS1 across populations rather than to
+        // the cohort-wide allAf: using the cohort AF would let a 5 % variant in
+        // a single subpopulation slip under a 1 % BS1 threshold whenever the
+        // global cohort happens to dilute it. `benign_test_af` supplies that
+        // cross-population number - the filtering AF where the database
+        // provides one, otherwise the population maximum - and BA1 reads the
+        // same helper, so the two cannot disagree about how frequent the
+        // variant is.
+        let (test_af, af_label) = super::frequency_gate::benign_test_af(gnomad, config)
+            .unwrap_or((0.0, "max population AF"));
         let cohort_af = gnomad.all_af.unwrap_or(0.0);
         details.insert("gnomad_allAf".into(), serde_json::json!(cohort_af));
-        details.insert("gnomad_max_pop_af".into(), serde_json::json!(max_pop_af));
+        details.insert("gnomad_max_pop_af".into(), serde_json::json!(test_af));
+        details.insert("af_statistic".into(), serde_json::json!(af_label));
 
-        // BS1 should not fire if BA1 would fire (BA1 takes precedence)
-        if max_pop_af > config.ba1_af_threshold {
+        // BS1 does not fire where BA1 already covers the frequency. The bar
+        // read here is the gene's own, not the global default: a gene whose
+        // VCEP publishes a looser BA1 - ABCA4's is 0.163 - would otherwise
+        // have BS1 stand down at 0.06 while BA1 declines too, leaving a common
+        // variant with no frequency evidence in either direction.
+        //
+        // A curated BA1 exception does not reopen BS1. Ghosh 2018's nine are
+        // removed from BA1 because they are frequent *and* not benign, and
+        // collecting Strong benign evidence on HFE p.Cys282Tyr instead of
+        // Standalone benign evidence would miss the point of the list. An
+        // entry that means to leave BS1 available says so through `blocks`.
+        let ba1_bar = config.effective_ba1_threshold(input.gene_symbol.as_deref());
+        if test_af > ba1_bar {
             (
                 false,
                 format!(
-                    "BA1 takes precedence (max pop AF={:.4} > BA1 threshold {:.2})",
-                    max_pop_af, config.ba1_af_threshold
+                    "BA1 takes precedence ({}={:.4} > BA1 threshold {:.2e})",
+                    af_label, test_af, ba1_bar
                 ),
             )
-        } else if max_pop_af > threshold {
+        } else if test_af > threshold {
             (
                 true,
                 format!(
-                    "Max-pop AF ({:.6}) exceeds expected for disorder (threshold={:.4})",
-                    max_pop_af, threshold
+                    "{} ({:.6}) exceeds expected for disorder (threshold={:.4})",
+                    af_label, test_af, threshold
                 ),
             )
         } else {
             (
                 false,
                 format!(
-                    "Max-pop AF ({:.6}) within expected range (threshold={:.4})",
-                    max_pop_af, threshold
+                    "{} ({:.6}) within expected range (threshold={:.4})",
+                    af_label, test_af, threshold
                 ),
             )
         }
@@ -121,7 +190,14 @@ fn evaluate_bs1(
 /// dominant (heterozygous), or X-linked (hemizygous) disorder with full
 /// penetrance expected at an early age (Richards 2015).
 ///
-/// - **Recessive** (or unknown inheritance): require ≥1 homozygote in gnomAD.
+/// - **Recessive / X-linked** (or unknown inheritance): count the individuals
+///   with no functional copy - homozygotes plus, on a non-PAR sex-chromosome
+///   site, hemizygotes - and require both an absolute floor of
+///   `bs2_ar_min_hom` and a 95 % lower bound on their frequency above
+///   `bs2_hom_prevalence_threshold`. The criterion therefore scales with the
+///   size of the cohort behind the observation: one homozygote among gnomAD's
+///   730 K individuals is what a late-onset or reduced-penetrance disorder
+///   looks like, not evidence of tolerance.
 /// - **Dominant**: require AC ≥ `bs2_ad_min_ac` (default 5) — Richards 2015
 ///   says "observed in unaffected adult", which is not the same as a single
 ///   carrier of a novel allele in a 100K cohort. Singletons / doubletons
@@ -137,14 +213,44 @@ fn evaluate_bs2(
 ) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
+    // A hypomorphic allele is expected to be seen homozygous in unaffected
+    // people - that is the disease model, not evidence against it.
+    if let Some(exc) = super::frequency_gate::curated_exception(input, config, "BS2") {
+        let summary = super::frequency_gate::record_exception("BS2", exc, &mut details);
+        return EvidenceCriterion {
+            code: "BS2".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: true,
+            summary,
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    if let Some(blocker) = benign_blocker(input, config) {
+        blocker.record(&mut details);
+        return EvidenceCriterion {
+            code: "BS2".to_string(),
+            direction: EvidenceDirection::Benign,
+            strength: EvidenceStrength::Strong,
+            default_strength: EvidenceStrength::Strong,
+            met: false,
+            evaluated: false,
+            summary: format!("BS2 not evaluated: {}", blocker.reason),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
     let is_dominant = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_dominant_inheritance());
+        .is_some_and(|o| o.has_dominant_inheritance());
     let is_recessive = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_recessive_inheritance());
+        .is_some_and(|o| o.has_recessive_inheritance());
     details.insert("omim_dominant".into(), serde_json::json!(is_dominant));
     details.insert("omim_recessive".into(), serde_json::json!(is_recessive));
 
@@ -155,6 +261,22 @@ fn evaluate_bs2(
         details.insert("gnomad_allHc".into(), serde_json::json!(hc));
         details.insert("gnomad_allAn".into(), serde_json::json!(an));
         details.insert("gnomad_allAc".into(), serde_json::json!(ac));
+
+        // Hemizygous observations, available only for a non-PAR sex-chromosome
+        // site in a database built with the XY columns. Everywhere else these
+        // are 0 and every expression below collapses to the autosomal form.
+        let hemizygotes = gnomad.hemizygote_count().unwrap_or(0);
+        let hemizygote_an = gnomad.hemizygote_individuals().unwrap_or(0);
+        if hemizygotes > 0 || hemizygote_an > 0 {
+            details.insert("gnomad_hemizygotes".into(), serde_json::json!(hemizygotes));
+            details.insert("gnomad_xy_individuals".into(), serde_json::json!(hemizygote_an));
+        }
+
+        // Individuals surveyed. XX samples contribute two alleles each and XY
+        // samples on a non-PAR site contribute one, so the cohort size is
+        // `(AN - AN_XY) / 2 + AN_XY`. With no XY data this is exactly `AN / 2`,
+        // the autosomal count used before hemizygotes were extracted.
+        let individuals = (an.saturating_sub(hemizygote_an) / 2 + hemizygote_an).max(1);
 
         if is_dominant && !is_recessive && ac >= config.bs2_ad_min_ac {
             // For AD-only genes: ≥`bs2_ad_min_ac` heterozygote observations
@@ -168,19 +290,77 @@ fn evaluate_bs2(
                     config.bs2_ad_min_ac, ac
                 ),
             )
-        } else if hc > 0 {
-            // Recessive / X-linked / unknown inheritance: ≥1 homozygote is
-            // BS2 evidence regardless of inheritance label (a homozygous
-            // healthy adult disproves recessive lethality and challenges
-            // dominant haploinsufficiency-or-not).
-            (
-                true,
-                true,
-                format!(
-                    "Observed as homozygous in gnomAD ({} homozygotes), suggesting tolerated in healthy adults",
-                    hc
-                ),
-            )
+        } else if hc + hemizygotes > 0 {
+            // Recessive / X-linked / unknown inheritance. Richards 2015 asks
+            // for observation "in a healthy adult ... with full penetrance
+            // expected at an early age", so the question is not "is there a
+            // homozygote?" but "are there more individuals lacking a working
+            // copy than the disorder itself could account for?". Compare the
+            // 95 % lower bound on their frequency against the maximum credible
+            // disease prevalence: that makes the criterion scale with the size
+            // of the cohort behind the observation, which is what a single
+            // homozygote in gnomAD v4 (730 K individuals) fails.
+            //
+            // Homozygotes and hemizygotes are counted together because they are
+            // the same observation genetically: an individual with no
+            // functional allele. Richards 2015 lists both. gnomAD calls XY
+            // samples haploid outside the pseudoautosomal regions, so an
+            // X-linked hemizygote appears in `AC_XY` and in *neither*
+            // `nhomalt` nor `nhomalt_XY` - which is why X-linked genes
+            // (FMR1, IDS in the round-2 review) previously looked as though
+            // gnomAD had never seen a null individual.
+            let null_individuals = hc + hemizygotes;
+            let freq_lower_95 = poisson_lower_95(null_individuals) / individuals as f64;
+            details.insert("gnomad_individuals".into(), serde_json::json!(individuals));
+            details.insert("null_individuals".into(), serde_json::json!(null_individuals));
+            details.insert(
+                "hom_freq_lower_95".into(),
+                serde_json::json!(freq_lower_95),
+            );
+            details.insert(
+                "prevalence_threshold".into(),
+                serde_json::json!(config.bs2_hom_prevalence_threshold),
+            );
+            details.insert("bs2_ar_min_hom".into(), serde_json::json!(config.bs2_ar_min_hom));
+
+            // Describe what was actually counted, so a reviewer can tell an
+            // X-linked hemizygous observation from an autosomal homozygous one.
+            let observed = if hemizygotes > 0 && hc > 0 {
+                format!("{} homozygote(s) and {} hemizygote(s)", hc, hemizygotes)
+            } else if hemizygotes > 0 {
+                format!("{} hemizygote(s)", hemizygotes)
+            } else {
+                format!("{} homozygote(s)", hc)
+            };
+
+            if null_individuals < config.bs2_ar_min_hom {
+                (
+                    false,
+                    true,
+                    format!(
+                        "{} in gnomAD is below the floor of {}; too few to establish tolerance in healthy adults",
+                        observed, config.bs2_ar_min_hom
+                    ),
+                )
+            } else if freq_lower_95 > config.bs2_hom_prevalence_threshold {
+                (
+                    true,
+                    true,
+                    format!(
+                        "{} among {} gnomAD individuals (95% lower bound on their frequency {:.2e} exceeds the {:.0e} prevalence bar), so complete loss of this allele is tolerated in healthy adults",
+                        observed, individuals, freq_lower_95, config.bs2_hom_prevalence_threshold
+                    ),
+                )
+            } else {
+                (
+                    false,
+                    true,
+                    format!(
+                        "{} among {} gnomAD individuals gives a 95% lower bound of {:.2e}, which does not exceed the {:.0e} prevalence bar; consistent with a late-onset, reduced-penetrance or variably expressive disorder rather than tolerance",
+                        observed, individuals, freq_lower_95, config.bs2_hom_prevalence_threshold
+                    ),
+                )
+            }
         } else if is_dominant && !is_recessive {
             (
                 false,
@@ -213,21 +393,21 @@ fn evaluate_bs2(
     }
 }
 
-/// BS3: Well-established in vitro or in vivo functional studies show no damaging effect.
+/// BS3: Well-established in vitro or in vivo functional studies show no
+/// damaging effect.
+///
+/// The benign-direction twin of PS3, read from the same curated
+/// `--functional-evidence` file. See [`crate::functional`].
 fn evaluate_bs3(
-    _input: &ClassificationInput,
+    input: &ClassificationInput,
     _config: &AcmgConfig,
 ) -> EvidenceCriterion {
-    EvidenceCriterion {
-        code: "BS3".to_string(),
-        direction: EvidenceDirection::Benign,
-        strength: EvidenceStrength::Strong,
-        default_strength: EvidenceStrength::Strong,
-        met: false,
-        evaluated: false,
-        summary: "Requires curated functional study evidence showing no damaging effect — not automatable from variant data".to_string(),
-        details: serde_json::Value::Null,
-    }
+    super::functional_criterion(
+        input,
+        crate::functional::FunctionalCriterion::Bs3,
+        EvidenceDirection::Benign,
+        "Requires curated functional study evidence showing no damaging effect — supply one with --functional-evidence",
+    )
 }
 
 /// BS4: Lack of segregation in affected members of a family.
@@ -250,42 +430,106 @@ fn evaluate_bs4(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::GnomadData;
-    use fastvep_core::Impact;
 
     fn make_input(gnomad: Option<GnomadData>) -> ClassificationInput {
         ClassificationInput {
-            consequences: vec![],
-            impact: Impact::Modifier,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
             gnomad,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
+    }
+
+    /// The three shipped hypomorphic alleles, in the form the pipeline
+    /// actually produces: a transcript-prefixed HGVS and a coordinate. Each is
+    /// frequent enough and homozygous often enough that BS1 and BS2 would both
+    /// fire without the exception, and each is pathogenic in trans with a null
+    /// allele.
+    #[test]
+    fn test_hypomorphic_alleles_block_bs1_and_bs2_in_pipeline_form() {
+        let cases = [
+            ("GAA", "ENST00000302262.8:c.-32-13T>G", "17", 80_104_542u64, "T", "G", 5.4e-3, 23u64),
+            ("CFTR", "ENST00000003084.11:c.1210-11T>G", "7", 117_548_630, "T", "G", 9.8e-3, 27),
+            ("SPTA1", "ENST00000643759.2:c.4339-99C>T", "1", 158_643_524, "G", "A", 6.6e-3, 40),
+        ];
+        let config = AcmgConfig::default();
+        for (gene, hgvs, chrom, pos, r, a, af, hc) in cases {
+            let input = ClassificationInput {
+                gene_symbol: Some(gene.to_string()),
+                hgvs_c: Some(hgvs.to_string()),
+                variant_coordinates: Some((chrom.to_string(), pos, r.to_string(), a.to_string())),
+                gnomad: Some(GnomadData {
+                    all_af: Some(af),
+                    all_an: Some(1_400_000),
+                    all_hc: Some(hc),
+                    faf95_max: Some(af),
+                    ..Default::default()
+                }),
+                ..minimal_input()
+            };
+            let bs1 = evaluate_bs1(&input, &config);
+            assert!(!bs1.met, "{} BS1 must not fire: {}", gene, bs1.summary);
+            assert!(bs1.evaluated, "{} BS1 is a conclusion, not a gap", gene);
+            assert!(bs1.summary.contains("exception list"), "{}", bs1.summary);
+
+            let bs2 = evaluate_bs2(&input, &config);
+            assert!(!bs2.met, "{} BS2 must not fire: {}", gene, bs2.summary);
+            assert!(bs2.summary.contains("exception list"), "{}", bs2.summary);
+        }
+    }
+
+    #[test]
+    fn test_a_ba1_only_exception_does_not_reach_bs1() {
+        // Ghosh's entries are scoped to BA1 by `blocks`, so BS1 evaluates
+        // normally on them. Below the BA1 bar, where BA1's precedence rule is
+        // not in the way, that means BS1 fires.
+        let input = ClassificationInput {
+            gene_symbol: Some("GJB2".to_string()),
+            hgvs_c: Some("ENST00000382844.2:c.109G>A".to_string()),
+            variant_coordinates: Some(("13".to_string(), 20_189_473, "C".to_string(), "T".to_string())),
+            gnomad: Some(GnomadData {
+                all_af: Some(0.02),
+                all_an: Some(1_400_000),
+                faf95_max: Some(0.02),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        };
+        let bs1 = evaluate_bs1(&input, &AcmgConfig::default());
+        assert!(bs1.met, "{}", bs1.summary);
+    }
+
+    #[test]
+    fn test_bs1_defers_to_the_genes_own_ba1_bar() {
+        // ABCA4's published BA1 is 0.163, three times looser than the global
+        // 0.05. At 0.06 the old global comparison stood BS1 down while BA1
+        // also declined, so a 6 % allele collected no frequency evidence at
+        // all. Against the gene's own bar, BS1 fires.
+        let mut config = AcmgConfig::default();
+        config.gene_overrides.insert(
+            "ABCA4".to_string(),
+            crate::config::GeneOverride {
+                mechanism: None,
+                ba1_af_threshold: Some(0.163),
+                bs1_af_threshold: Some(0.0163),
+                pm2_af_threshold: None,
+                disabled_criteria: vec![],
+                strength_overrides: std::collections::HashMap::new(),
+                disorders: std::collections::HashMap::new(),
+            },
+        );
+        let input = ClassificationInput {
+            gene_symbol: Some("ABCA4".to_string()),
+            gnomad: Some(GnomadData {
+                all_af: Some(0.06),
+                all_an: Some(1_400_000),
+                faf95_max: Some(0.06),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        };
+        let bs1 = evaluate_bs1(&input, &config);
+        assert!(bs1.met, "{}", bs1.summary);
     }
 
     #[test]
@@ -428,8 +672,10 @@ mod tests {
     fn test_bs2_ad_gene_min_ac_configurable() {
         // Config knob lets a stricter VCEP raise the threshold.
         use crate::sa_extract::OmimData;
-        let mut cfg = AcmgConfig::default();
-        cfg.bs2_ad_min_ac = 20;
+        let cfg = AcmgConfig {
+            bs2_ad_min_ac: 20,
+            ..Default::default()
+        };
         let input = make_input_omim(
             Some(GnomadData {
                 all_ac: Some(7),
@@ -445,24 +691,181 @@ mod tests {
         assert!(!r.met, "AC=7 < raised threshold 20 should not fire");
     }
 
-    #[test]
-    fn test_bs2_ar_gene_homozygote_fires_regardless_of_ac() {
-        // Recessive: ≥1 hom is BS2 evidence even when AC is low.
+    fn recessive_input(hc: u64, an: u64) -> ClassificationInput {
         use crate::sa_extract::OmimData;
-        let input = make_input_omim(
+        make_input_omim(
             Some(GnomadData {
-                all_ac: Some(2),
-                all_hc: Some(1),
+                all_ac: Some(hc * 2 + 10),
+                all_hc: Some(hc),
+                all_an: Some(an),
                 ..Default::default()
             }),
             Some(OmimData {
                 mim_number: None,
                 phenotypes: Some(vec!["recessive disorder".into()]),
             }),
+        )
+    }
+
+    #[test]
+    fn test_bs2_prevalence_bar_default_is_the_measured_one() {
+        // The bar was chosen from a sweep of the full ClinVar 2-star+
+        // benchmark, not from convention, and the value is quoted in
+        // docs/ACMG.md and the config doc comment. Changing it silently would
+        // leave those claims wrong, so pin it here: move it deliberately or
+        // not at all.
+        assert_eq!(AcmgConfig::default().bs2_hom_prevalence_threshold, 1e-3);
+    }
+
+    #[test]
+    fn test_bs2_common_mendelian_disorder_is_not_called_tolerant() {
+        // The case the 1e-3 bar exists for. A recessive disorder with a
+        // prevalence near 1 in 1,000 - hearing loss, alpha-1 antitrypsin
+        // deficiency, familial Mediterranean fever in a high-prevalence
+        // population - will genuinely have affected homozygotes in gnomAD.
+        // At 500 homozygotes among 730 K the observation is still consistent
+        // with disease rather than with tolerance, and a 1e-5 bar would have
+        // called it benign evidence.
+        let input = recessive_input(500, 1_460_000);
+        assert!(!evaluate_bs2(&input, &AcmgConfig::default()).met);
+
+        let permissive = AcmgConfig {
+            bs2_hom_prevalence_threshold: 1e-5,
+            ..Default::default()
+        };
+        assert!(
+            evaluate_bs2(&input, &permissive).met,
+            "the old bar is what made this look like tolerance"
         );
+    }
+
+    #[test]
+    fn test_bs2_ar_single_homozygote_in_large_cohort_does_not_fire() {
+        // gnomAD v4 scale (730 K individuals). One homozygote is what you
+        // expect for a late-onset or reduced-penetrance recessive disorder, so
+        // it must not be read as tolerance. This was the single largest source
+        // of false-benign calls in the round-2 medical-genetics review.
+        let r = evaluate_bs2(&recessive_input(1, 1_460_000), &AcmgConfig::default());
+        assert!(!r.met, "1 homozygote among 730 K individuals must not fire BS2");
+    }
+
+    #[test]
+    fn test_bs2_ar_many_homozygotes_in_large_cohort_fires() {
+        // 1,000 homozygotes among 730 K individuals puts the 95 % lower bound
+        // on their frequency above the 1e-3 prevalence bar, i.e. above the
+        // prevalence of the most common Mendelian disorders.
+        let r = evaluate_bs2(&recessive_input(1_000, 1_460_000), &AcmgConfig::default());
+        assert!(r.met, "1,000 homozygotes among 730 K individuals should fire BS2");
+        assert!(r.summary.contains("tolerated in healthy adults"));
+    }
+
+    #[test]
+    fn test_bs2_ar_scales_with_cohort_size() {
+        // The same raw count means different things at different cohort sizes.
+        // 3 homozygotes among 500 individuals is a homozygote frequency far
+        // above any Mendelian prevalence; 3 among 730 K is not.
+        let small = evaluate_bs2(&recessive_input(3, 1_000), &AcmgConfig::default());
+        let large = evaluate_bs2(&recessive_input(3, 1_460_000), &AcmgConfig::default());
+        assert!(small.met, "3 homozygotes among 500 individuals should fire BS2");
+        assert!(
+            !large.met,
+            "3 homozygotes among 730 K individuals should not fire BS2"
+        );
+    }
+
+    /// A non-PAR chrX site: `hemizygotes` XY carriers among `an_xy` XY samples,
+    /// with no XX homozygotes. Modelled on the real gnomAD v4.1 IDS-region
+    /// records, where AN_XY runs about a third of AN.
+    fn x_linked_input(hemizygotes: u64, an: u64, an_xy: u64) -> ClassificationInput {
+        use crate::sa_extract::OmimData;
+        make_input_omim(
+            Some(GnomadData {
+                all_ac: Some(hemizygotes + 10),
+                all_hc: Some(0),
+                all_an: Some(an),
+                non_par: true,
+                all_ac_xy: Some(hemizygotes),
+                all_an_xy: Some(an_xy),
+                ..Default::default()
+            }),
+            Some(OmimData {
+                mim_number: None,
+                phenotypes: Some(vec!["X-linked recessive disorder".into()]),
+            }),
+        )
+    }
+
+    #[test]
+    fn test_bs2_counts_hemizygotes_on_x() {
+        // gnomAD calls XY samples haploid outside the PAR, so a hemizygote is
+        // recorded in AC_XY and in neither nhomalt nor nhomalt_XY. Before this,
+        // an X-linked gene with thousands of hemizygous carriers looked to BS2
+        // as though gnomAD had never seen a null individual, which is why FMR1
+        // and IDS were flagged in the round-2 medical-genetics review.
+        let r = evaluate_bs2(&x_linked_input(1275, 1_039_980, 327_798), &AcmgConfig::default());
+        assert!(r.met, "1275 hemizygotes among 327 K XY samples should fire BS2");
+        assert!(r.summary.contains("hemizygote"), "got: {}", r.summary);
+    }
+
+    #[test]
+    fn test_bs2_single_hemizygote_does_not_fire() {
+        // The cohort-scaling test applies to hemizygotes exactly as it does to
+        // homozygotes: one observation in a large cohort is what a late-onset
+        // or reduced-penetrance disorder looks like.
+        let r = evaluate_bs2(&x_linked_input(1, 1_039_980, 327_798), &AcmgConfig::default());
+        assert!(!r.met);
+    }
+
+    #[test]
+    fn test_bs2_par_site_does_not_read_xy_counts_as_hemizygotes() {
+        // Inside a pseudoautosomal region XY samples are diploid, so AC_XY is
+        // an allele count and not a count of null individuals. Without the
+        // non_par flag those carriers must not be counted.
+        let mut input = x_linked_input(1275, 1_039_980, 327_798);
+        input.gnomad.as_mut().unwrap().non_par = false;
         let r = evaluate_bs2(&input, &AcmgConfig::default());
-        assert!(r.met, "AR + 1 hom should fire BS2");
-        assert!(r.summary.contains("homozygous"));
+        assert!(!r.met, "AC_XY must only count as hemizygotes outside the PAR");
+    }
+
+    #[test]
+    fn test_bs2_autosomal_result_unchanged_by_hemizygote_support() {
+        // An autosomal record carries no XY columns, so the individual count
+        // must stay AN/2 and the outcome must match the pre-hemizygote
+        // behaviour exactly.
+        let with_hom = evaluate_bs2(&recessive_input(1_000, 1_460_000), &AcmgConfig::default());
+        assert!(with_hom.met);
+        assert!(with_hom.summary.contains("homozygote"));
+        assert!(!with_hom.summary.contains("hemizygote"));
+    }
+
+    #[test]
+    fn test_bs2_homology_gene_not_evaluated() {
+        // CYP21A2 frequencies are confounded by CYP21A1P (Mandelker 2016).
+        let mut input = recessive_input(30, 1_460_000);
+        input.gene_symbol = Some("CYP21A2".to_string());
+        let r = evaluate_bs2(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated, "BS2 should be NotEvaluated, not a negative call");
+        assert!(r.summary.contains("homology"));
+    }
+
+    #[test]
+    fn test_bs1_low_penetrance_clinvar_term_not_evaluated() {
+        use crate::sa_extract::ClinvarData;
+        let mut input = make_input(Some(GnomadData {
+            all_af: Some(0.037),
+            all_an: Some(1_460_000),
+            ..Default::default()
+        }));
+        input.clinvar = Some(ClinvarData {
+            significance: Some(vec!["Pathogenic,_low_penetrance".into()]),
+            review_status: Some("criteria_provided,_multiple_submitters,_no_conflicts".into()),
+            ..Default::default()
+        });
+        let r = evaluate_bs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated);
+        assert!(r.summary.contains("low_penetrance") || r.summary.contains("low penetrance"));
     }
 
     // ── BS1 (max-pop AF) ──
@@ -481,6 +884,72 @@ mod tests {
         }));
         let r = evaluate_bs1(&input, &AcmgConfig::default());
         assert!(r.met, "max-pop AF should drive BS1, not cohort AF");
-        assert!(r.summary.contains("Max-pop"));
+        assert!(r.summary.contains("max population AF"), "got: {}", r.summary);
+    }
+
+    // ── BS1 against the filtering allele frequency (Whiffin 2017) ──
+
+    #[test]
+    fn test_bs1_prefers_filtering_af_over_point_estimate() {
+        // A 3 % point estimate in one group crosses the 1 % BS1 bar, but a
+        // filtering AF of 0.2 % says that estimate rests on very few alleles.
+        // Testing the point estimate is what turns thin sampling in one
+        // population into a benign call.
+        let input = make_input(Some(GnomadData {
+            all_af: Some(0.0004),
+            mid_af: Some(0.03),
+            all_an: Some(2_000_000),
+            faf95_max: Some(0.002),
+            ..Default::default()
+        }));
+        let r = evaluate_bs1(&input, &AcmgConfig::default());
+        assert!(!r.met, "BS1 must not fire on a point estimate the FAF contradicts");
+        assert!(r.summary.contains("filtering AF"), "got: {}", r.summary);
+    }
+
+    #[test]
+    fn test_bs1_fires_when_filtering_af_is_itself_high() {
+        // A genuinely common allele: the CI lower bound is still above the bar.
+        let input = make_input(Some(GnomadData {
+            all_af: Some(0.03),
+            mid_af: Some(0.03),
+            all_an: Some(2_000_000),
+            faf95_max: Some(0.028),
+            ..Default::default()
+        }));
+        let r = evaluate_bs1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_bs1_falls_back_to_point_af_without_faf_columns() {
+        // An annotation database built before the FAF columns existed must
+        // behave exactly as it did before.
+        let input = make_input(Some(GnomadData {
+            all_af: Some(0.001),
+            eas_af: Some(0.05),
+            all_an: Some(2_000_000),
+            ..Default::default()
+        }));
+        let r = evaluate_bs1(&input, &AcmgConfig::default());
+        assert!(r.met);
+        assert!(r.summary.contains("max population AF"));
+    }
+
+    #[test]
+    fn test_filtering_af_can_be_disabled() {
+        let input = make_input(Some(GnomadData {
+            all_af: Some(0.0004),
+            mid_af: Some(0.03),
+            all_an: Some(2_000_000),
+            faf95_max: Some(0.002),
+            ..Default::default()
+        }));
+        let config = AcmgConfig {
+            use_filtering_af: false,
+            ..Default::default()
+        };
+        let r = evaluate_bs1(&input, &config);
+        assert!(r.met, "with the FAF disabled BS1 reverts to the point estimate");
     }
 }

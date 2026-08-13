@@ -55,6 +55,12 @@ pub struct AnnotationContext {
     pub gene_providers: Vec<fastvep_sa::gene::GeneIndex>,
     /// ACMG-AMP classification configuration (None = disabled).
     pub acmg_config: Option<fastvep_classification::AcmgConfig>,
+    /// Curated functional-assay evidence supplying PS3/BS3 (None = not provided).
+    ///
+    /// PS3 and BS3 are the two criteria that cannot be computed from variant
+    /// data. Without this the classifier reports them NotEvaluated, which is
+    /// the honest answer rather than a silent absence of evidence.
+    pub functional_evidence: Option<fastvep_classification::FunctionalEvidenceIndex>,
 }
 
 impl AnnotationContext {
@@ -143,8 +149,8 @@ impl AnnotationContext {
         if let Some(ref sp) = seq_provider {
             let built = AtomicUsize::new(0);
             transcripts.par_iter_mut().for_each(|tr| {
-                if tr.is_coding() && tr.spliced_seq.is_none() {
-                    if tr
+                if tr.is_coding() && tr.spliced_seq.is_none()
+                    && tr
                         .build_sequences(|chrom, start, end| {
                             sp.fetch_sequence(chrom, start, end)
                                 .map_err(|e| e.to_string())
@@ -153,7 +159,6 @@ impl AnnotationContext {
                     {
                         built.fetch_add(1, Ordering::Relaxed);
                     }
-                }
             });
             let built = built.load(Ordering::Relaxed);
             tracing::info!("Built sequences for {} coding transcripts", built);
@@ -188,6 +193,7 @@ impl AnnotationContext {
         };
 
         Ok(Self {
+            functional_evidence: None,
             transcript_provider,
             seq_provider,
             predictor,
@@ -202,6 +208,24 @@ impl AnnotationContext {
 
     pub fn transcript_count(&self) -> usize {
         self.transcript_provider.transcript_count()
+    }
+
+    /// Whether a repeat-interval source (RepeatMasker or equivalent) is loaded.
+    ///
+    /// BP3 needs this to tell "this variant is not in a repeat" from "no repeat
+    /// database was loaded". An interval source only produces an annotation on
+    /// a hit, so those two are indistinguishable from the annotation list alone,
+    /// and reading a miss as the latter makes BP3 report a setup error on every
+    /// in-frame indel outside a repeat.
+    ///
+    /// Matched on the same substrings the classifier uses to find the track, so
+    /// a source named such that this returns `true` is exactly a source BP3 will
+    /// actually read.
+    pub fn repeat_db_loaded(&self) -> bool {
+        self.sa_providers.iter().any(|p| {
+            let k = p.json_key().to_lowercase();
+            k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
+        })
     }
 
     /// Names of loaded supplementary annotation sources.
@@ -245,8 +269,8 @@ impl AnnotationContext {
         if let Some(ref sp) = self.seq_provider {
             let mut built = 0usize;
             for tr in &mut transcripts {
-                if tr.is_coding() && tr.spliced_seq.is_none() {
-                    if tr
+                if tr.is_coding() && tr.spliced_seq.is_none()
+                    && tr
                         .build_sequences(|chrom, start, end| {
                             sp.fetch_sequence(chrom, start, end)
                                 .map_err(|e| e.to_string())
@@ -255,7 +279,6 @@ impl AnnotationContext {
                     {
                         built += 1;
                     }
-                }
             }
             if built > 0 {
                 tracing::info!("Built sequences for {} coding transcripts", built);
@@ -297,6 +320,9 @@ impl AnnotationContext {
         pick: bool,
         acmg_config: Option<&fastvep_classification::AcmgConfig>,
     ) -> Result<Vec<serde_json::Value>> {
+        // Computed once: BP3 must distinguish "not in a repeat" from "no repeat
+        // database loaded", and only the context knows which sources are open.
+        let repeat_db_loaded = self.repeat_db_loaded();
         let mut vcf_parser = VcfParser::new(vcf_text.as_bytes())?;
 
         // Extract sample names from VCF #CHROM header
@@ -319,6 +345,8 @@ impl AnnotationContext {
                 .sa_providers
                 .iter()
                 .any(|sa| sa.json_key() == "gnomad");
+
+        let functional_evidence = self.functional_evidence.as_ref();
 
         for vf in &mut variants {
             let chrom = &vf.position.chromosome;
@@ -367,6 +395,8 @@ impl AnnotationContext {
                                 exon: ac.exon,
                                 intron: ac.intron,
                                 distance: ac.distance,
+                                protein_length: ac.protein_length,
+                                escapes_nmd: ac.escapes_nmd,
                                 hgvsc: None,
                                 hgvsp: None,
                                 hgvsg: None,
@@ -751,6 +781,13 @@ impl AnnotationContext {
                 // Parse sample genotypes if trio config is present
                 let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, &sample_names);
 
+                let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+                // Resolved here rather than inside the classifier: the ClinVar
+                // splice index is keyed by genomic coordinate, and
+                // `extract_classification_input` is handed a transcript-level
+                // view that carries none.
+                let query_alleles = vf.query_alleles();
+
                 for tv in &mut vf.transcript_variations {
                     let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
                     let gene_anns: Vec<&fastvep_core::GeneAnnotation> =
@@ -759,6 +796,7 @@ impl AnnotationContext {
                             .filter(|ga| ga.gene_symbol == gene_sym)
                             .collect();
                     for aa in &mut tv.allele_annotations {
+                        let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
                         let input =
                             fastvep_classification::extract_classification_input(
                                 &aa.consequences,
@@ -769,6 +807,15 @@ impl AnnotationContext {
                                 aa.protein_position.map(|(s, _)| s),
                                 aa.hgvsc.as_deref(),
                                 aa.exon,
+                                aa.protein_length,
+                                aa.escapes_nmd,
+                                repeat_db_loaded,
+                                splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
+                                alt_idx.and_then(|i| query_alleles.get(i)).map(|(_, pos, r, a)| {
+                                    (vf.position.chromosome.to_string(), *pos, r.clone(), a.clone())
+                                }),
+                                fastvep_classification::is_pure_insertion(&vf.ref_allele),
+                                alt_idx.and_then(|i| functional_by_alt[i].clone()),
                                 &aa.supplementary,
                                 &gene_anns,
                                 &vf.supplementary_annotations,
@@ -790,7 +837,13 @@ impl AnnotationContext {
         // Compound-het enrichment pass: re-evaluate PM3/BP2 with companion variant data
         if let Some(acmg_cfg) = acmg_config {
             if acmg_cfg.trio.is_some() {
-                enrich_compound_het(&mut variants, acmg_cfg, &sample_names);
+                enrich_compound_het(
+                    &mut variants,
+                    acmg_cfg,
+                    &sample_names,
+                    functional_evidence,
+                    repeat_db_loaded,
+                );
             }
         }
 
@@ -820,6 +873,8 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
                 exon: None,
                 intron: None,
                 distance: None,
+                protein_length: None,
+                escapes_nmd: None,
                 hgvsc: None,
                 hgvsp: None,
                 hgvsg: None,
@@ -866,6 +921,8 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 exon: None,
                 intron: None,
                 distance: None,
+                protein_length: None,
+                escapes_nmd: None,
                 hgvsc: None,
                 hgvsp: None,
                 hgvsg: None,
@@ -958,20 +1015,20 @@ fn extract_trio_genotypes(
     let proband_gt = samples
         .iter()
         .find(|s| s.name == trio.proband)
-        .map(|s| sample_data_to_genotype_info(s));
+        .map(sample_data_to_genotype_info);
 
     let mother_gt = trio.mother.as_ref().and_then(|name| {
         samples
             .iter()
             .find(|s| &s.name == name)
-            .map(|s| sample_data_to_genotype_info(s))
+            .map(sample_data_to_genotype_info)
     });
 
     let father_gt = trio.father.as_ref().and_then(|name| {
         samples
             .iter()
             .find(|s| &s.name == name)
-            .map(|s| sample_data_to_genotype_info(s))
+            .map(sample_data_to_genotype_info)
     });
 
     (proband_gt, mother_gt, father_gt)
@@ -982,11 +1039,11 @@ fn sample_data_to_genotype_info(
     sample: &fastvep_io::sample::SampleData,
 ) -> fastvep_classification::GenotypeInfo {
     let gt = sample.genotype.as_ref();
-    let is_het = gt.map_or(false, |g| g.is_het());
-    let is_hom_ref = gt.map_or(false, |g| g.is_hom_ref());
-    let is_hom_alt = gt.map_or(false, |g| g.is_hom_alt());
-    let is_missing = gt.map_or(true, |g| g.is_missing());
-    let is_phased = gt.map_or(false, |g| g.phased);
+    let is_het = gt.is_some_and(|g| g.is_het());
+    let is_hom_ref = gt.is_some_and(|g| g.is_hom_ref());
+    let is_hom_alt = gt.is_some_and(|g| g.is_hom_alt());
+    let is_missing = gt.is_none_or(|g| g.is_missing());
+    let is_phased = gt.is_some_and(|g| g.phased);
 
     // Determine which alt allele index is carried
     let alt_allele_index = gt.and_then(|g| {
@@ -994,7 +1051,6 @@ fn sample_data_to_genotype_info(
             .iter()
             .filter_map(|a| *a)
             .find(|&a| a > 0)
-            .map(|a| a)
     });
 
     fastvep_classification::GenotypeInfo {
@@ -1016,6 +1072,8 @@ fn enrich_compound_het(
     variants: &mut [VariationFeature],
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
+    functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
+    repeat_db_loaded: bool,
 ) {
     use std::collections::HashMap;
 
@@ -1051,12 +1109,12 @@ fn enrich_compound_het(
                     .as_ref()
                     .and_then(|v| v.get("criteria"))
                     .and_then(|c| c.as_array())
-                    .map_or(false, |criteria| {
+                    .is_some_and(|criteria| {
                         // Check if this variant has ClinVar pathogenic data
                         criteria.iter().any(|c| {
                             c.get("code")
                                 .and_then(|v| v.as_str())
-                                .map_or(false, |code| code == "PP5" || code == "PS4")
+                                .is_some_and(|code| code == "PP5" || code == "PS4")
                                 && c.get("met")
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(false)
@@ -1088,8 +1146,8 @@ fn enrich_compound_het(
                         (p_acc || p, lp_acc || lp)
                     });
 
-                let proband_het = proband_gt.as_ref().map_or(false, |g| g.is_het);
-                let is_phased = proband_gt.as_ref().map_or(false, |g| g.is_phased);
+                let proband_het = proband_gt.as_ref().is_some_and(|g| g.is_het);
+                let is_phased = proband_gt.as_ref().is_some_and(|g| g.is_phased);
                 let proband_alleles = if let Some(ref vcf_fields) = vf.vcf_fields {
                     if !vcf_fields.rest.is_empty() && !sample_names.is_empty() {
                         let format_str = &vcf_fields.rest[0];
@@ -1136,7 +1194,7 @@ fn enrich_compound_het(
     }
 
     // For each gene with multiple het variants, build companion relationships and re-classify
-    for (_gene, gene_infos) in &gene_variants {
+    for gene_infos in gene_variants.values() {
         let het_variants: Vec<&VariantGeneInfo> =
             gene_infos.iter().filter(|v| v.proband_het).collect();
         if het_variants.len() < 2 {
@@ -1163,11 +1221,11 @@ fn enrich_compound_het(
                             let info_alt_on_first = info
                                 .proband_alleles
                                 .first()
-                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                                .is_some_and(|a| a.is_some_and(|v| v > 0));
                             let other_alt_on_first = other
                                 .proband_alleles
                                 .first()
-                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                                .is_some_and(|a| a.is_some_and(|v| v > 0));
                             // If alt alleles are on different haplotypes, they're in trans
                             Some(info_alt_on_first != other_alt_on_first)
                         } else {
@@ -1201,6 +1259,9 @@ fn enrich_compound_het(
                 .iter()
                 .filter(|ga| ga.gene_symbol == gene_sym)
                 .collect();
+            let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+            let query_alleles = vf.query_alleles();
+            let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
 
             let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, sample_names);
 
@@ -1213,6 +1274,15 @@ fn enrich_compound_het(
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
                 aa.exon,
+                aa.protein_length,
+                aa.escapes_nmd,
+                repeat_db_loaded,
+                splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
+                alt_idx.and_then(|i| query_alleles.get(i)).map(|(_, pos, r, a)| {
+                    (vf.position.chromosome.to_string(), *pos, r.clone(), a.clone())
+                }),
+                fastvep_classification::is_pure_insertion(&vf.ref_allele),
+                alt_idx.and_then(|i| functional_by_alt[i].clone()),
                 &aa.supplementary,
                 &gene_anns,
                 &vf.supplementary_annotations,
@@ -1357,6 +1427,61 @@ pub fn load_gene_providers(
         .collect();
 
     Ok(providers)
+}
+
+/// Curated functional evidence for each ALT allele of a record, if the run was
+/// given a `--functional-evidence` file that names them.
+///
+/// Resolved for the whole record at once, before the mutable walk over
+/// `transcript_variations` begins, because that walk borrows the record and a
+/// per-allele lookup inside it would need the record again.
+///
+/// Keyed on the record's original VCF coordinates rather than fastVEP's
+/// normalised alleles: the curated file is written by a human reading a VCF, so
+/// that is the form the entry will be in. The result is positional, one slot
+/// per ALT, so one allele's curated result is never applied to its neighbours.
+/// Whether PS1's splice path has a comparison variant for this allele.
+///
+/// A thin adapter: it pairs the allele with its VCF-form coordinates from
+/// [`VariationFeature::query_alleles`] and hands them to the classifier, which
+/// owns the rule. `None` whenever the allele has no coordinate to look up, which
+/// is the same "cannot tell" the classifier returns for an unloaded index.
+///
+/// Public, and deliberately: `fastvep-cli` runs the same classification over
+/// the same annotations by a different path, and a second copy of this adapter
+/// there is how one of the two paths ends up quietly not applying a criterion.
+pub fn splice_ps1_evidence(
+    aa: &AlleleAnnotation,
+    gene_anns: &[&fastvep_core::GeneAnnotation],
+    query_alleles: &[(String, u64, String, String)],
+    alt_idx: Option<usize>,
+) -> Option<bool> {
+    let (_, pos, ref_allele, alt) = query_alleles.get(alt_idx?)?;
+    fastvep_classification::same_splice_position_pathogenic(
+        &aa.consequences,
+        gene_anns,
+        aa.hgvsc.as_deref(),
+        *pos,
+        ref_allele,
+        alt,
+    )
+}
+
+fn resolve_functional_by_alt(
+    index: Option<&fastvep_classification::FunctionalEvidenceIndex>,
+    vf: &VariationFeature,
+) -> Vec<Option<fastvep_classification::FunctionalEvidence>> {
+    let empty = || vec![None; vf.alt_alleles.len()];
+    let (Some(index), Some(vcf)) = (index, vf.vcf_fields.as_ref()) else {
+        return empty();
+    };
+    (0..vf.alt_alleles.len())
+        .map(|i| {
+            index
+                .for_vcf_allele(&vcf.chrom, vcf.pos, &vcf.ref_allele, &vcf.alt, i)
+                .cloned()
+        })
+        .collect()
 }
 
 #[cfg(test)]

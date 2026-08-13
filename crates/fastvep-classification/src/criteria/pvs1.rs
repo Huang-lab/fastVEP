@@ -17,12 +17,20 @@ use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 /// - **PVS1_Supporting**: <10% protein removed in non-critical region;
 ///   start-loss without strong corroborating evidence.
 ///
-/// The decision tree depends on optional fields populated by the pipeline:
-/// `predicted_nmd`, `protein_truncation_pct`, `is_last_exon`,
-/// `in_critical_region`, `alt_start_codon_distance`. When these are not
-/// available, PVS1 falls back to the legacy binary rule (full Very Strong
-/// when a null variant fires in a LOF-intolerant gene), preserving
-/// backward compatibility for pipelines that haven't been updated yet.
+/// The decision tree runs on optional fields the pipeline derives from the
+/// transcript: `predicted_nmd` / `nmd_escape_50nt`, `protein_truncation_pct`,
+/// `is_last_exon`, `in_critical_region`, `alt_start_codon_distance`. When a
+/// field is absent the tree falls back to the legacy binary rule (full Very
+/// Strong for a null variant in a LOF-intolerant gene), so a pipeline that
+/// does not populate them behaves exactly as before.
+///
+/// Two of the tree's branches are still unreachable: `alt_start_codon_distance`
+/// (start-loss) and `same_splice_position_pathogenic` (PS1's splice track) have
+/// no plumbing yet, so start-loss stays at PVS1_Supporting.
+///
+/// Which NMD prediction feeds the tree is a configuration choice - see
+/// [`AcmgConfig::pvs1_nmd_50nt_rule`], which documents the measured trade
+/// between guideline faithfulness and ClinVar concordance.
 pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
@@ -42,6 +50,36 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
             details,
         );
     };
+
+    // Two gene-level preconditions, both ahead of the constraint test, because
+    // constraint cannot answer either of them. The first asks whether the gene
+    // causes disease at all (B7); the second whether it causes disease by
+    // losing function (B6). A gene can be highly constrained and fail either.
+    if let Some(reason) = super::gene_disease::validity_blocker(input, config) {
+        details.insert("gene_disease_validity".into(), serde_json::json!(false));
+        return mk(
+            "PVS1".to_string(),
+            EvidenceStrength::VeryStrong,
+            false,
+            false,
+            reason,
+            details,
+        );
+    }
+    if let Some(reason) = super::gene_disease::lof_mechanism_blocker(input, config) {
+        details.insert(
+            "mechanism".into(),
+            serde_json::json!(config.effective_mechanism(input.gene_symbol.as_deref())),
+        );
+        return mk(
+            "PVS1".to_string(),
+            EvidenceStrength::VeryStrong,
+            false,
+            true,
+            reason,
+            details,
+        );
+    }
 
     let is_lof_gene = is_lof_intolerant_gene(input, config);
     details.insert("is_lof_gene".into(), serde_json::json!(is_lof_gene));
@@ -104,11 +142,93 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
                 }
             }
         }
+
+        // Splice-prediction consistency gate (Walker 2023, ClinGen SVI
+        // Splicing Subgroup). PVS1's canonical track assumes the ±1/±2
+        // dinucleotide is destroyed. Two situations break that assumption and
+        // both showed up in the medical-genetics review:
+        //
+        //  1. SpliceAI is confidently benign (≤ `spliceai_benign`). A genuine
+        //     canonical ±1/±2 change is the easiest call SpliceAI makes, so a
+        //     score of ~0 means the positional call is wrong - typically an
+        //     indel that merely overlaps the region, or a repeat-context
+        //     deletion with an ambiguous alignment. ATM c.?  `GTAATC>G`
+        //     (SpliceAI 0.00) and KMT2C `C>CT` (0.05) are both ClinVar
+        //     benign/likely-benign and both collected PVS1 this way.
+        //  2. The variant is a pure insertion or duplication. Inserting bases
+        //     beside, or even inside, the dinucleotide does not necessarily
+        //     destroy it: `PTEN c.802-2dupA` and `BRIP1 c.2258-2dup` add the
+        //     base the acceptor already carries, so the intron still ends AG.
+        //     Without positive splice evidence (SpliceAI ≥ `spliceai_pathogenic`)
+        //     PVS1 must not fire on those.
+        //
+        // In both cases a coding-null consequence on the same allele still
+        // carries PVS1 through its own track, so re-grade rather than discard.
+        if matches!(kind, NullKind::CanonicalSplice) {
+            let spliceai_max = input.splice_ai.as_ref().and_then(|s| s.max_delta_score());
+            if let Some(ds) = spliceai_max {
+                details.insert("spliceai_max_ds".into(), serde_json::json!(ds));
+            }
+            let contradicted_by_spliceai =
+                spliceai_max.is_some_and(|ds| ds <= config.spliceai_benign);
+            let unsupported_insertion = input.is_pure_insertion == Some(true)
+                && !spliceai_max.is_some_and(|ds| ds >= config.spliceai_pathogenic);
+
+            if contradicted_by_spliceai || unsupported_insertion {
+                let reason = if contradicted_by_spliceai {
+                    format!(
+                        "SpliceAI max_ds={:.2} ≤ {:.2} contradicts loss of the canonical ±1/±2 site",
+                        spliceai_max.unwrap_or(0.0),
+                        config.spliceai_benign
+                    )
+                } else {
+                    "pure insertion/duplication at the canonical site may leave the ±1/±2 dinucleotide intact, and no positive SpliceAI support is available".to_string()
+                };
+                match NullKind::detect_non_splice(&input.consequences) {
+                    Some(coding_null) => {
+                        details.insert(
+                            "splice_evidence_regraded_to".into(),
+                            serde_json::json!(coding_null.label()),
+                        );
+                        kind = coding_null;
+                    }
+                    None => {
+                        details.insert(
+                            "splice_evidence_conflict".into(),
+                            serde_json::json!(reason.clone()),
+                        );
+                        return mk(
+                            "PVS1".to_string(),
+                            EvidenceStrength::VeryStrong,
+                            false,
+                            true,
+                            format!("PVS1 splice track not applicable: {} (defer to PP3/BP4)", reason),
+                            details,
+                        );
+                    }
+                }
+            }
+        }
     }
 
+    // Which NMD prediction the tree runs on. The exact 50-nt rule is the one
+    // Abou Tayoun 2018 states; the last-exon proxy is what fastVEP has always
+    // used and stays the default because the exact rule trades ClinVar
+    // pathogenic recall for faithfulness - see `pvs1_nmd_50nt_rule`.
+    let predicted_nmd = if config.pvs1_nmd_50nt_rule {
+        input
+            .nmd_escape_50nt
+            .map(|escapes| !escapes)
+            .or(input.predicted_nmd)
+    } else {
+        input.predicted_nmd
+    };
+
     let (strength, summary) = match kind {
-        NullKind::NonsenseOrFrameshift => grade_nonsense_frameshift(input, &mut details),
-        NullKind::CanonicalSplice => grade_canonical_splice(input, &mut details),
+        NullKind::NonsenseOrFrameshift => {
+            grade_nonsense_frameshift(input, predicted_nmd, &mut details)
+        }
+        NullKind::CanonicalSplice => grade_canonical_splice(input, predicted_nmd, &mut details),
         NullKind::StartLost => grade_start_lost(input, &mut details),
         NullKind::WholeGeneDeletion => (
             EvidenceStrength::VeryStrong,
@@ -211,9 +331,10 @@ impl NullKind {
 
 fn grade_nonsense_frameshift(
     input: &ClassificationInput,
+    predicted_nmd: Option<bool>,
     details: &mut serde_json::Map<String, serde_json::Value>,
 ) -> (EvidenceStrength, String) {
-    if let Some(nmd) = input.predicted_nmd {
+    if let Some(nmd) = predicted_nmd {
         details.insert("predicted_nmd".into(), serde_json::json!(nmd));
         if nmd {
             return (
@@ -268,9 +389,10 @@ fn grade_nonsense_frameshift(
 
 fn grade_canonical_splice(
     input: &ClassificationInput,
+    predicted_nmd: Option<bool>,
     details: &mut serde_json::Map<String, serde_json::Value>,
 ) -> (EvidenceStrength, String) {
-    if let Some(nmd) = input.predicted_nmd {
+    if let Some(nmd) = predicted_nmd {
         details.insert("predicted_nmd".into(), serde_json::json!(nmd));
         if nmd {
             return (
@@ -308,6 +430,14 @@ fn grade_start_lost(
             details.insert("alt_start_codon_distance_invalid".into(), serde_json::json!(true));
         } else {
             let d_codons = d as u64;
+            // Note the field is being borrowed for a different question here.
+            // The pipeline derives `in_critical_region` as "ClinVar has a
+            // pathogenic variant *downstream* of the truncation", which is what
+            // the nonsense/frameshift track needs; the start-loss track wants
+            // "pathogenic variant upstream of the alternative start". The two
+            // only coincide because a start-loss truncates from residue 1. This
+            // branch is unreachable today (`alt_start_codon_distance` has no
+            // plumbing) and the signal must be split before it becomes live.
             if d_codons <= 100 && input.in_critical_region == Some(true) {
                 return (
                     EvidenceStrength::Moderate,
@@ -358,22 +488,22 @@ fn mk(
 fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> bool {
     // Check gene constraint scores
     if let Some(ref gc) = input.gene_constraints {
-        if gc.pli.map_or(false, |p| p >= config.pli_lof_intolerant) {
+        if gc.pli.is_some_and(|p| p >= config.pli_lof_intolerant) {
             return true;
         }
-        if gc.loeuf.map_or(false, |l| l <= config.loeuf_lof_intolerant) {
+        if gc.loeuf.is_some_and(|l| l <= config.loeuf_lof_intolerant) {
             return true;
         }
     }
 
-    // Check gene-specific override for LOF mechanism
-    if let Some(gene) = input.gene_symbol.as_deref() {
-        if let Some(override_cfg) = config.gene_override(gene) {
-            if let Some(ref mechanism) = override_cfg.mechanism {
-                if mechanism.contains("LOF") {
-                    return true;
-                }
-            }
+    // A curated LOF mechanism enables PVS1 even where constraint does not
+    // reach the threshold. Resolved through `effective_mechanism` so the
+    // shipped table and a user's `gene_overrides` are read the same way here
+    // as in the gain-of-function gate above; otherwise a gene could be
+    // LOF-enabled by one map and GOF-blocked by the other.
+    if let Some(mechanism) = config.effective_mechanism(input.gene_symbol.as_deref()) {
+        if mechanism.to_ascii_uppercase().contains("LOF") {
+            return true;
         }
     }
 
@@ -387,7 +517,7 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
         if omim
             .phenotypes
             .as_ref()
-            .map_or(false, |p| !p.is_empty())
+            .is_some_and(|p| !p.is_empty())
         {
             return true;
         }
@@ -399,7 +529,8 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sa_extract::{GnomadGeneData, OmimData};
+    use crate::test_support::minimal_input;
+    use crate::sa_extract::{GnomadGeneData, OmimData, SpliceAiData};
     use fastvep_core::Impact;
 
     fn make_input(consequences: Vec<Consequence>, gene_constraints: Option<GnomadGeneData>, omim: Option<OmimData>) -> ClassificationInput {
@@ -407,33 +538,9 @@ mod tests {
             consequences,
             impact: Impact::High,
             gene_symbol: Some("BRCA1".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
             gene_constraints,
             omim,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 
@@ -657,5 +764,227 @@ mod tests {
         assert!(r.met);
         assert_eq!(r.strength, EvidenceStrength::VeryStrong);
         assert_eq!(r.code, "PVS1");
+    }
+
+    fn lof_gene() -> Option<GnomadGeneData> {
+        Some(GnomadGeneData { pli: Some(1.0), loeuf: Some(0.03), ..Default::default() })
+    }
+
+    #[test]
+    fn test_pvs1_splice_dropped_when_spliceai_contradicts() {
+        // A genuine canonical +-1/+-2 change is the easiest call SpliceAI
+        // makes. A score of ~0 means the positional call is wrong -- typically
+        // an indel overlapping the region, or a repeat-context deletion with an
+        // ambiguous alignment. ATM GTAATC>G (SpliceAI 0.00) is ClinVar
+        // likely-benign and was collecting PVS1 this way.
+        let mut input = make_input(vec![Consequence::SpliceDonorVariant], lof_gene(), None);
+        input.splice_ai = Some(SpliceAiData { ds_dl: Some(0.0), ..Default::default() });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.summary.contains("contradicts"));
+    }
+
+    #[test]
+    fn test_pvs1_splice_kept_when_spliceai_supports() {
+        let mut input = make_input(vec![Consequence::SpliceDonorVariant], lof_gene(), None);
+        input.splice_ai = Some(SpliceAiData { ds_dl: Some(0.95), ..Default::default() });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_pvs1_splice_dropped_for_unsupported_insertion() {
+        // PTEN c.802-2dupA and BRIP1 c.2258-2dup add the base the acceptor
+        // already carries, so the intron still ends AG. Without positive
+        // SpliceAI support PVS1 must not fire.
+        let mut input = make_input(vec![Consequence::SpliceAcceptorVariant], lof_gene(), None);
+        input.is_pure_insertion = Some(true);
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.summary.contains("insertion"));
+    }
+
+    #[test]
+    fn test_pvs1_splice_insertion_kept_with_spliceai_support() {
+        let mut input = make_input(vec![Consequence::SpliceAcceptorVariant], lof_gene(), None);
+        input.is_pure_insertion = Some(true);
+        input.splice_ai = Some(SpliceAiData { ds_al: Some(0.99), ..Default::default() });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_pvs1_splice_conflict_regrades_to_coding_null() {
+        // An indel that both overlaps the splice site and deletes coding
+        // sequence still carries PVS1 through the frameshift track.
+        let mut input = make_input(
+            vec![Consequence::SpliceDonorVariant, Consequence::FrameshiftVariant],
+            lof_gene(),
+            None,
+        );
+        input.splice_ai = Some(SpliceAiData { ds_dl: Some(0.0), ..Default::default() });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(r.met, "coding-null track should still carry PVS1");
+    }
+
+    // ── B7: gene-disease validity ────────────────────────────────────────
+
+    /// A frameshift in a maximally constrained gene: everything PVS1 wants,
+    /// so whatever stops it here is the gate under test and nothing else.
+    fn constrained_frameshift(gene: &str) -> ClassificationInput {
+        let mut input = make_input(vec![Consequence::FrameshiftVariant], lof_gene(), None);
+        input.gene_symbol = Some(gene.to_string());
+        input
+    }
+
+    #[test]
+    fn test_pvs1_blocked_when_clingen_curated_the_gene_as_invalid() {
+        let mut input = constrained_frameshift("RYK");
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec![
+                "some proposed disease (ClinGen Disputed/AD, MONDO:0000001)".into(),
+            ]),
+        }); // ClinGen curated it and found nothing
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated, "unknown gene-disease validity is not an assessment");
+        assert!(
+            r.summary.contains("no_valid_gene_disease_relationship"),
+            "got: {}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn test_pvs1_unaffected_when_no_gene_disease_source_is_loaded() {
+        // The back-compat case that makes the gate safe to default on: without
+        // an .oga, pLI alone still carries PVS1 exactly as before.
+        let input = constrained_frameshift("RYK");
+        assert!(input.omim.is_none());
+        assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pvs1_fires_for_a_gene_the_source_lists() {
+        let mut input = constrained_frameshift("BRCA1");
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
+        });
+        assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);
+    }
+
+
+    #[test]
+    fn test_pvs1_survives_for_a_gene_clingen_has_not_curated() {
+        // The v10 regression: SPAST, ABCB11, FLG and LAMB3 all cause disease
+        // and are all absent from ClinGen GDV. Blocking on absence cost 1,497
+        // truth-pathogenic PVS1 firings.
+        let mut input = constrained_frameshift("SPAST");
+        input.omim = None;
+        assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);
+    }
+
+    // ── B6: disease mechanism ────────────────────────────────────────────
+
+    #[test]
+    fn test_pvs1_blocked_for_a_gain_of_function_gene() {
+        // PCSK9 is the case that shows constraint cannot answer this: it is a
+        // constrained gene where the null allele *lowers* LDL. Its pLI would
+        // carry PVS1 straight through without the mechanism gate.
+        let input = constrained_frameshift("PCSK9");
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.evaluated, "we did assess it; PVS1 is not applicable");
+        assert!(
+            r.summary.contains("mechanism_not_loss_of_function"),
+            "got: {}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn test_pvs1_survives_for_a_gene_with_both_mechanisms() {
+        // RYR1: malignant hyperthermia is gain of function, but the congenital
+        // myopathies are loss of function, so a null allele is still
+        // pathogenic for one of the two diseases.
+        assert!(evaluate_pvs1(&constrained_frameshift("RYR1"), &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_curated_lof_mechanism_enables_pvs1_without_constraint_data() {
+        // The mechanism table has to work in both directions, or adding it
+        // would quietly remove the pre-existing "curated LOF enables PVS1"
+        // path that read `gene_overrides` alone.
+        let mut input = make_input(vec![Consequence::FrameshiftVariant], None, None);
+        input.gene_symbol = Some("MYGENE".to_string());
+        let mut config = AcmgConfig::default();
+        config
+            .gene_mechanisms
+            .insert("MYGENE".to_string(), "LOF".to_string());
+        assert!(evaluate_pvs1(&input, &config).met);
+    }
+
+    // ── The 50-nt NMD rule, and what switching it on costs ───────────────
+
+    /// A PTC in the last 50 nt of the penultimate exon: the one place the two
+    /// NMD signals disagree. MSH6 `c.3978dup` is the real case - exon 9 of 10,
+    /// eight bases from the junction, 2.6 % of the protein removed, and a
+    /// region ClinVar has pathogenic variants in.
+    fn penultimate_exon_escape() -> ClassificationInput {
+        let mut input = make_input(vec![Consequence::FrameshiftVariant], lof_gene(), None);
+        input.is_last_exon = Some(false);
+        input.predicted_nmd = Some(true); // last-exon proxy: "will decay"
+        input.nmd_escape_50nt = Some(true); // measured: escapes
+        input.in_critical_region = Some(true);
+        input.protein_truncation_pct = Some(0.026);
+        input
+    }
+
+    #[test]
+    fn test_50nt_rule_off_by_default_keeps_very_strong() {
+        let r = evaluate_pvs1(&penultimate_exon_escape(), &AcmgConfig::default());
+        assert_eq!(r.code, "PVS1");
+        assert_eq!(r.strength, EvidenceStrength::VeryStrong);
+    }
+
+    #[test]
+    fn test_50nt_rule_on_grades_the_escape_down() {
+        let config = AcmgConfig { pvs1_nmd_50nt_rule: true, ..Default::default() };
+        let r = evaluate_pvs1(&penultimate_exon_escape(), &config);
+        assert_eq!(r.code, "PVS1_Strong", "Abou Tayoun: NMD escape in a critical region");
+        assert_eq!(r.strength, EvidenceStrength::Strong);
+    }
+
+    #[test]
+    fn test_50nt_rule_falls_back_to_the_proxy_when_unmeasured() {
+        // Intronic variants have no cDNA coordinate, so the measurement is
+        // absent and the proxy must still answer.
+        let mut input = penultimate_exon_escape();
+        input.nmd_escape_50nt = None;
+        let config = AcmgConfig { pvs1_nmd_50nt_rule: true, ..Default::default() };
+        assert_eq!(evaluate_pvs1(&input, &config).strength, EvidenceStrength::VeryStrong);
+    }
+
+    #[test]
+    fn test_50nt_rule_does_not_disturb_a_mid_gene_ptc() {
+        // The overwhelming majority of null variants: both signals agree that
+        // the message decays, so the flag changes nothing either way.
+        let mut input = make_input(vec![Consequence::StopGained], lof_gene(), None);
+        input.is_last_exon = Some(false);
+        input.predicted_nmd = Some(true);
+        input.nmd_escape_50nt = Some(false);
+        for on in [false, true] {
+            let config = AcmgConfig { pvs1_nmd_50nt_rule: on, ..Default::default() };
+            let r = evaluate_pvs1(&input, &config);
+            assert_eq!(r.code, "PVS1", "flag={on}");
+        }
+    }
+
+    #[test]
+    fn test_mechanism_gate_can_be_switched_off() {
+        let config = AcmgConfig { mechanism_gates_pvs1: false, ..Default::default() };
+        assert!(evaluate_pvs1(&constrained_frameshift("PCSK9"), &config).met);
     }
 }

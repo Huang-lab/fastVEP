@@ -21,7 +21,7 @@ use fastvep_sa::index::IndexHeader;
 use fastvep_sa::reader::SaReader;
 use fastvep_sa::writer::SaWriter;
 use std::env;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Instant;
 use tempfile::TempDir;
 
@@ -62,7 +62,7 @@ fn chrom_map() -> Vec<String> {
     HUMAN_CHROMS.iter().map(|(_, n, _)| n.to_string()).collect()
 }
 
-fn build_synthetic_osa(path: &PathBuf, n_records: usize) -> Result<u64> {
+fn build_synthetic_osa(path: &Path, n_records: usize) -> Result<u64> {
     // Distribute records across chromosomes weighted by length.
     let total_len: u64 = HUMAN_CHROMS.iter().map(|(_, _, l)| *l as u64).sum();
     let mut records = Vec::with_capacity(n_records);

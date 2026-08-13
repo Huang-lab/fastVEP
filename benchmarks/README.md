@@ -15,7 +15,7 @@ bash benchmarks/check_urls.sh acmg      # ACMG concordance only
 | Benchmark | Question it answers | Runner | Inputs | Outputs |
 |-----------|---------------------|--------|--------|---------|
 | **1. Speed** (multi-organism)        | How fast is annotation across genome sizes? | [`benchmarks/run_benchmark.sh`](run_benchmark.sh)                                               | [`test_data/organisms/<org>/`](../test_data/organisms/) (~30 GB)                  | [`benchmarks/output/benchmark_results.csv`](output/benchmark_results.csv) |
-| **2. ACMG concordance** (clinical)   | How well does `--acmg` agree with curated ClinVar 2-star+ calls? | [`data/benchmark/run_full_benchmark.sh`](../data/benchmark/run_full_benchmark.sh)               | [`data/benchmark/`](../data/benchmark/) (~30 GB SA dbs + sources)                 | [`data/benchmark/output_v7/`](../data/benchmark/output_v7/) |
+| **2. ACMG concordance** (clinical)   | How well does `--acmg` agree with curated ClinVar 2-star+ calls? | [`analysis/acmg_benchmark/scripts/run_benchmark.sh`](../analysis/acmg_benchmark/scripts/run_benchmark.sh)               | [`data/benchmark/`](../data/benchmark/) (~30 GB SA dbs + sources)                 | [`analysis/acmg_benchmark/results/v7/`](../analysis/acmg_benchmark/results/v7/) |
 | **3. VEP validation** (correctness)  | Does fastVEP agree with Ensembl VEP on the same input? | [`validation/run_validation.sh`](../validation/run_validation.sh)                                | [`validation/human/`](../validation/human/), [`validation/mouse/`](../validation/mouse/) | [`validation/results/`](../validation/results/) |
 
 A fourth, narrower benchmark — the synthetic `.osa` reader microbench
@@ -100,35 +100,35 @@ are the source of truth.
 **What it does.** Annotates every ClinVar 2-star+ variant (~674 K SNV/small indels) with
 `fastvep annotate --acmg --pick`, then scores per-class concordance
 against the ClinVar review-panel call. The current state of the art is in
-[`data/benchmark/output_v7/`](../data/benchmark/output_v7/) — **70.8 % same-direction
+[`analysis/acmg_benchmark/results/v7/`](../analysis/acmg_benchmark/results/v7/) - **70.8 % same-direction
 concordance, 0.0 % opposite-direction**.
 
 **Run it:**
 
 ```bash
 # 1. Download SA source files (~1.4 GB)
-bash data/benchmark/sa_sources/download_sa_sources.sh
+bash analysis/acmg_benchmark/scripts/sa_sources/download_sa_sources.sh
 
 # 2. Build the supplementary annotation .osa / .oga databases
-#    (see scripts in data/benchmark/sa_sources/ — `build_gnomad_per_chrom.sh`,
+#    (see scripts in analysis/acmg_benchmark/scripts/sa_sources/ - `build_gnomad_per_chrom.sh`,
 #    `build_spliceai_phylop.sh`, and `fastvep sa-build` for the rest).
 
 # 3. Generate the ClinVar 2-star+ truth set
-python3 analysis/acmg_benchmark/real_data/01_extract_clinvar_2star.py \
+python3 analysis/acmg_benchmark/scripts/01_extract_clinvar_2star.py \
     data/benchmark/sa_sources/clinvar.vcf.gz \
     data/benchmark/
 
 # 4. Annotate + score concordance
-bash data/benchmark/run_full_benchmark.sh
+bash analysis/acmg_benchmark/scripts/run_benchmark.sh v1
 
 # 5. (optional) Regenerate the manuscript figures
-python3 analysis/acmg_benchmark/real_data/generate_figures.py
+python3 analysis/acmg_benchmark/scripts/generate_figures.py
 ```
 
 ### Real benchmark inputs (sources, URLs)
 
 All URLs verified working. Downloaded by
-[`data/benchmark/sa_sources/download_sa_sources.sh`](../data/benchmark/sa_sources/download_sa_sources.sh).
+[`analysis/acmg_benchmark/scripts/sa_sources/download_sa_sources.sh`](../analysis/acmg_benchmark/scripts/sa_sources/download_sa_sources.sh).
 
 | Source | Drives | Size | URL |
 |--------|--------|-----:|-----|
@@ -137,8 +137,8 @@ All URLs verified working. Downloaded by
 | gnomAD v4.1 exomes per-chrom VCFs         | `gnomad_chrN.osa` (PM2/BA1/BS1/BS2) — tabix-extracted to ClinVar 2-star+ regions | ~12 GB raw / chrom (only the ClinVar regions are kept) | [storage.googleapis.com/.../gnomad.exomes.v4.1.sites.chr22.vcf.bgz](https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/exomes/gnomad.exomes.v4.1.sites.chr22.vcf.bgz) (one per chrom) |
 | gnomAD v4.1 constraint TSV                | `gnomad_genes.oga` (pLI/LOEUF/misZ for PVS1/PP2/BP1)              | 95 MB  | [storage.googleapis.com/.../gnomad.v4.1.constraint_metrics.tsv](https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/constraint/gnomad.v4.1.constraint_metrics.tsv) |
 | REVEL v1.3 all chromosomes                | per-chrom `revel_chrN.osa` (PP3/BP4 missense)                     | 637 MB | [rothsj06.dmz.hpc.mssm.edu/.../revel-v1.3_all_chromosomes.zip](https://rothsj06.dmz.hpc.mssm.edu/revel-v1.3_all_chromosomes.zip) |
-| SpliceAI scores                           | per-chrom `spliceai_chrN.osa` (PP3/BP4/BP7 splice)                | 0 (distilled from gnomAD v4 `INFO/spliceai_ds_max`) | — see [`build_spliceai_phylop.sh`](../data/benchmark/sa_sources/build_spliceai_phylop.sh) |
-| PhyloP (Zoonomia 241-mammal)              | per-chrom `phylop_chrN.osa` (BP7 conservation gate)               | 0 (distilled from gnomAD v4 `INFO/phylop`) | — see [`build_spliceai_phylop.sh`](../data/benchmark/sa_sources/build_spliceai_phylop.sh) |
+| SpliceAI scores                           | per-chrom `spliceai_chrN.osa` (PP3/BP4/BP7 splice)                | 0 (distilled from gnomAD v4 `INFO/spliceai_ds_max`) | - see [`build_spliceai_phylop.sh`](../analysis/acmg_benchmark/scripts/sa_sources/build_spliceai_phylop.sh) |
+| PhyloP (Zoonomia 241-mammal)              | per-chrom `phylop_chrN.osa` (BP7 conservation gate)               | 0 (distilled from gnomAD v4 `INFO/phylop`) | - see [`build_spliceai_phylop.sh`](../analysis/acmg_benchmark/scripts/sa_sources/build_spliceai_phylop.sh) |
 | ClinGen Gene-Disease Validity (CSV)       | `omim.oga` (PVS1 disease-gene fallback)                           | 1 MB   | [search.clinicalgenome.org/kb/gene-validity/download](https://search.clinicalgenome.org/kb/gene-validity/download) |
 
 OMIM `genemap2.txt` is **also** accepted (registration-gated at
@@ -147,10 +147,10 @@ v7 run used. Both populate the same `omim` json_key in the `.oga` schema.
 
 ### Reading the output
 
-- [`data/benchmark/STATUS.md`](../data/benchmark/STATUS.md) — on-disk inventory (what's downloaded, what's built)
-- [`data/benchmark/RUN_VERSIONS.md`](../data/benchmark/RUN_VERSIONS.md) — v1 → v7 delta (per-run SA stack + code-fix diff)
+- [`analysis/acmg_benchmark/STATUS.md`](../analysis/acmg_benchmark/STATUS.md) - on-disk inventory (what's downloaded, what's built)
+- [`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md) - v1 → v7 delta (per-run SA stack + code-fix diff)
 - [`analysis/acmg_benchmark/METHODS.md`](../analysis/acmg_benchmark/METHODS.md) — full methodology & per-criterion implementation
-- [`data/benchmark/output_v7/`](../data/benchmark/output_v7/) — current concordance matrix, criterion fire rates, figures
+- [`analysis/acmg_benchmark/results/v7/`](../analysis/acmg_benchmark/results/v7/) - current concordance matrix, criterion fire rates, figures
 
 ---
 

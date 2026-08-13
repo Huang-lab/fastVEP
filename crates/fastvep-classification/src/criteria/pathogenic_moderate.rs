@@ -34,6 +34,56 @@ fn evaluate_pm1(
     details.insert("hotspot_window".into(), serde_json::json!(window));
     details.insert("hotspot_threshold".into(), serde_json::json!(threshold));
 
+    // PM1 is residue-level evidence: a hotspot or critical domain argues that
+    // *this* amino-acid substitution matters. It is defined for missense and
+    // in-frame changes. Applied to a frameshift or nonsense variant it adds
+    // nothing PVS1 does not already carry, and the round-2 review flagged
+    // exactly that stacking on CBS, MSH6 and RYR1 ("PM1 is called with PVS1?
+    // Where is the evidence for PM1 coming?"). The PVS1 co-occurrence case is
+    // additionally suppressed in the reconciliation pass.
+    let pm1_eligible_consequence = input.consequences.iter().any(|c| {
+        matches!(
+            c,
+            Consequence::MissenseVariant
+                | Consequence::InframeInsertion
+                | Consequence::InframeDeletion
+                | Consequence::ProteinAlteringVariant
+                | Consequence::StopLost
+                | Consequence::StartLost
+        )
+    });
+    if !pm1_eligible_consequence {
+        return EvidenceCriterion {
+            code: "PM1".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: true,
+            summary: "PM1 applies to missense and in-frame changes; residue-level hotspot evidence does not apply to this consequence".to_string(),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
+    // PM1 reads a cluster of pathogenic variants as marking a critical region.
+    // Where the gene has no established disease relationship there is no
+    // disease for that cluster to be critical to, and the ClinVar entries
+    // behind it are exactly the assertions the validity curation declined to
+    // accept. Checked after the consequence test so that a frameshift still
+    // gets the more specific "wrong consequence for PM1" answer.
+    if let Some(reason) = super::gene_disease::validity_blocker(input, config) {
+        return EvidenceCriterion {
+            code: "PM1".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: false,
+            summary: reason,
+            details: serde_json::Value::Object(details),
+        };
+    }
+
     let prot_pos = match input.protein_position {
         Some(pos) => pos,
         None => {
@@ -62,16 +112,89 @@ fn evaluate_pm1(
         // variants are still ≥90 % posterior probability of
         // pathogenicity per the Tavtigian Bayesian framework — the
         // hotspot signal is robust to LP/P aggregation.
-        let nearby_pathogenic: usize = cpd
+        let raw_nearby: usize = cpd
             .protein_variants
             .iter()
             .filter(|v| v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("pathogenic"))
             .count();
 
-        details.insert("nearby_pathogenic_count".into(), serde_json::json!(nearby_pathogenic));
+        // The index is built from ClinVar, so when the variant being
+        // classified is itself ClinVar pathogenic its own record is one of the
+        // neighbours counted here. Counting it makes PM1 partly self-derived
+        // (and inflates any ClinVar-based benchmark), so discount it.
+        let self_contribution = if config.exclude_self_from_clinvar_evidence
+            && input.clinvar.as_ref().is_some_and(|c| c.has_pathogenic())
+        {
+            1
+        } else {
+            0
+        };
+        let nearby_pathogenic = raw_nearby.saturating_sub(self_contribution);
 
-        let met = nearby_pathogenic >= threshold as usize;
-        let summary = if met {
+        details.insert("nearby_pathogenic_count".into(), serde_json::json!(nearby_pathogenic));
+        if self_contribution > 0 {
+            details.insert("self_excluded_from_count".into(), serde_json::json!(true));
+            details.insert("nearby_pathogenic_raw".into(), serde_json::json!(raw_nearby));
+        }
+
+        // The other half of PM1's definition. Richards 2015 asks for a hotspot
+        // or critical domain "**without benign variation**", and fastVEP counted
+        // only the pathogenic half for as long as the index carried only that
+        // half. A window that also holds benign missense is not a region where
+        // any substitution is damaging - it is a region ClinVar has looked at
+        // from both sides.
+        //
+        // Measured on the reviewer's rows: this resolves MSH2 p.Gly315Val (3
+        // pathogenic and 5 benign neighbours; the MSH2 VCEP specification
+        // cspec GN137 excludes PM1 for the gene outright) and leaves TP53
+        // p.Arg248 alone (23 pathogenic, 0 benign). It does *not* resolve her
+        // CHD7 and PTCH1 rows, where the objection was that the gene has no
+        // hotspots at all rather than that this window has benign variation;
+        // both still show 3 pathogenic and 0 benign neighbours here.
+        //
+        // Only applied when the index actually carries benign assertions.
+        // Against an older `.oga` the count is structurally zero and testing it
+        // would silently pass every window.
+        //
+        // Leave-one-out applies here for the same reason it applies to the
+        // pathogenic count: the index is ClinVar, so a variant ClinVar calls
+        // benign is one of its own benign neighbours, and letting it veto PM1
+        // is that variant's ClinVar label deciding its own classification.
+        let benign_tested = cpd.benign_indexed;
+        let nearby_benign: usize = if benign_tested {
+            let raw = cpd
+                .protein_variants
+                .iter()
+                .filter(|v| v.pos >= low && v.pos <= high && v.sig.to_lowercase().contains("benign"))
+                .count();
+            let self_benign = if config.exclude_self_from_clinvar_evidence
+                && input.clinvar.as_ref().is_some_and(|c| c.has_benign())
+            {
+                1
+            } else {
+                0
+            };
+            raw.saturating_sub(self_benign)
+        } else {
+            0
+        };
+        if benign_tested {
+            details.insert("nearby_benign_count".into(), serde_json::json!(nearby_benign));
+            details.insert(
+                "max_benign_in_window".into(),
+                serde_json::json!(config.pm1_max_benign_in_window),
+            );
+        }
+        let benign_variation = benign_tested
+            && nearby_benign > config.pm1_max_benign_in_window as usize;
+
+        let met = nearby_pathogenic >= threshold as usize && !benign_variation;
+        let summary = if benign_variation {
+            format!(
+                "Not a hotspot: {} pathogenic variants within ±{} AA of position {}, but the same window carries {} benign/likely-benign missense variants in ClinVar; PM1 requires a region without benign variation (Richards 2015)",
+                nearby_pathogenic, window, prot_pos, nearby_benign
+            )
+        } else if met {
             format!(
                 "Mutational hotspot: {} pathogenic variants within ±{} AA of position {} (threshold: {})",
                 nearby_pathogenic, window, prot_pos, threshold
@@ -123,6 +246,27 @@ fn evaluate_pm2(
     input: &ClassificationInput,
     config: &AcmgConfig,
 ) -> EvidenceCriterion {
+    // "Absent from population databases" is only evidence when the database
+    // could have seen the variant. Where reads pile up on a paralogue, or
+    // gnomAD itself rejected the site, both a frequency and the absence of a
+    // frequency are artefacts. This is the same gate BA1/BS1/BS2 apply, so a
+    // site is never trusted for one frequency criterion and distrusted for
+    // another - only the benign-direction preconditions differ.
+    if let Some(blocker) = super::frequency_gate::data_blocker(input, config) {
+        let mut details = serde_json::Map::new();
+        blocker.record(&mut details);
+        return EvidenceCriterion {
+            code: if config.pm2_downgrade_to_supporting { "PM2_Supporting".to_string() } else { "PM2".to_string() },
+            direction: EvidenceDirection::Pathogenic,
+            strength: if config.pm2_downgrade_to_supporting { EvidenceStrength::Supporting } else { EvidenceStrength::Moderate },
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: false,
+            summary: format!("PM2 not evaluated: {}", blocker.reason),
+            details: serde_json::Value::Object(details),
+        };
+    }
+
     let strength = if config.pm2_downgrade_to_supporting {
         EvidenceStrength::Supporting
     } else {
@@ -153,11 +297,11 @@ fn evaluate_pm2(
     let is_recessive = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_recessive_inheritance());
+        .is_some_and(|o| o.has_recessive_inheritance());
     let is_dominant = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_dominant_inheritance());
+        .is_some_and(|o| o.has_dominant_inheritance());
 
     let (threshold, inheritance_basis): (f64, &'static str) = if let Some(t) = gene_specific_threshold {
         (t, "gene_override")
@@ -183,7 +327,7 @@ fn evaluate_pm2(
         // (e.g. AR 0.00007), require AF present and ≤ threshold.
         if threshold == 0.0 {
             match (gnomad.all_ac, gnomad.all_af) {
-                (Some(0), Some(af)) if af == 0.0 => (
+                (Some(0), Some(0.0)) => (
                     true,
                     true,
                     format!(
@@ -341,7 +485,7 @@ fn evaluate_pm3(
     let is_recessive = input
         .omim
         .as_ref()
-        .map_or(false, |o| o.has_recessive_inheritance());
+        .is_some_and(|o| o.has_recessive_inheritance());
     details.insert("is_recessive_gene".into(), serde_json::json!(is_recessive));
 
     if !is_recessive {
@@ -356,8 +500,8 @@ fn evaluate_pm3(
     }
 
     let proband = input.proband_genotype.as_ref();
-    let proband_het = proband.map_or(false, |g| g.is_het);
-    let proband_hom_alt = proband.map_or(false, |g| g.is_hom_alt);
+    let proband_het = proband.is_some_and(|g| g.is_het);
+    let proband_hom_alt = proband.is_some_and(|g| g.is_hom_alt);
     details.insert("proband_het".into(), serde_json::json!(proband_het));
     details.insert("proband_hom_alt".into(), serde_json::json!(proband_hom_alt));
 
@@ -676,7 +820,7 @@ fn evaluate_pm6(
     if both_parents_configured && both_parents_present {
         let mother_qc = input.mother_genotype.as_ref().unwrap().passes_quality(min_dp, min_gq);
         let father_qc = input.father_genotype.as_ref().unwrap().passes_quality(min_dp, min_gq);
-        let proband_qc = input.proband_genotype.as_ref().map_or(false, |g| g.passes_quality(min_dp, min_gq));
+        let proband_qc = input.proband_genotype.as_ref().is_some_and(|g| g.passes_quality(min_dp, min_gq));
         if mother_qc && father_qc && proband_qc {
             // Full trio with good quality: PS2 applies instead
             return EvidenceCriterion {
@@ -795,6 +939,7 @@ fn evaluate_pm6(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::{ClinvarData, GnomadData, OmimData};
     use fastvep_core::Impact;
 
@@ -805,34 +950,8 @@ mod tests {
         ClassificationInput {
             consequences,
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
             gnomad,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 
@@ -881,8 +1000,10 @@ mod tests {
         // strict-coverage stance: PM2 NotEvaluated when no record present.
         // Use this when the loaded gnomAD .osa covers only some input
         // regions and you want PM2 silenced outside that coverage.
-        let mut cfg = AcmgConfig::default();
-        cfg.pm2_absent_when_no_record = false;
+        let cfg = AcmgConfig {
+            pm2_absent_when_no_record: false,
+            ..Default::default()
+        };
         let input = make_input(vec![Consequence::MissenseVariant], None);
         let result = evaluate_pm2(&input, &cfg);
         assert!(!result.met);
@@ -965,14 +1086,13 @@ mod tests {
         assert!(!result.met);
     }
 
-    #[test]
-    fn test_pm2_ad_gene_with_one_allele_does_not_fire() {
-        // AD gene + any AC > 0 → not absent → PM2 must not fire under SVI v1.0.
+    /// A dominant-inheritance variant at the given gnomAD allele frequency.
+    fn dominant_at(af: f64, ac: u64) -> ClassificationInput {
         let mut input = make_input(
             vec![Consequence::MissenseVariant],
             Some(GnomadData {
-                all_af: Some(0.000005),
-                all_ac: Some(1),
+                all_af: Some(af),
+                all_ac: Some(ac),
                 ..Default::default()
             }),
         );
@@ -980,8 +1100,39 @@ mod tests {
             mim_number: None,
             phenotypes: Some(vec!["Some disease, autosomal dominant".to_string()]),
         });
-        let result = evaluate_pm2(&input, &AcmgConfig::default());
-        assert!(!result.met);
+        input
+    }
+
+    #[test]
+    fn test_pm2_ad_gene_singleton_is_extremely_rare_not_present() {
+        // A single allele among gnomAD v4's ~800,000 individuals is what PM2
+        // was asking about when it said "absent from controls" of a cohort an
+        // order of magnitude smaller. Strict absence used to reject this.
+        let result = evaluate_pm2(&dominant_at(0.000005, 1), &AcmgConfig::default());
+        assert!(result.met, "got: {}", result.summary);
+    }
+
+    #[test]
+    fn test_pm2_ad_gene_above_the_bar_still_does_not_fire() {
+        // The bar has to keep rejecting something, or it is not a bar.
+        let result = evaluate_pm2(&dominant_at(0.0005, 400), &AcmgConfig::default());
+        assert!(!result.met, "got: {}", result.summary);
+    }
+
+    #[test]
+    fn test_pm2_ad_default_bar_is_the_measured_one() {
+        // Pinned so the default cannot drift away from the figure the config
+        // doc comment and docs/ACMG.md both quote.
+        assert!((AcmgConfig::default().pm2_ad_af_threshold - 0.00004).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_pm2_strict_absence_remains_available() {
+        // The literal Richards 2015 reading stays one config line away, for a
+        // lab that wants it.
+        let strict = AcmgConfig { pm2_ad_af_threshold: 0.0, ..Default::default() };
+        assert!(!evaluate_pm2(&dominant_at(0.000005, 1), &strict).met);
+        assert!(evaluate_pm2(&dominant_at(0.0, 0), &strict).met);
     }
 
     #[test]
@@ -1005,6 +1156,7 @@ mod tests {
             "TEST".to_string(),
             crate::config::GeneOverride {
                 mechanism: None,
+                ba1_af_threshold: None,
                 bs1_af_threshold: None,
                 pm2_af_threshold: Some(0.001),
                 disabled_criteria: vec![],
@@ -1034,8 +1186,10 @@ mod tests {
     fn test_pm2_not_downgraded() {
         // When the SVI downgrade is disabled, PM2 fires at Moderate strength
         // — but still requires real gnomAD data confirming absence (AC=0).
-        let mut config = AcmgConfig::default();
-        config.pm2_downgrade_to_supporting = false;
+        let config = AcmgConfig {
+            pm2_downgrade_to_supporting: false,
+            ..Default::default()
+        };
         let input = make_input(
             vec![Consequence::MissenseVariant],
             Some(GnomadData {
@@ -1192,5 +1346,180 @@ mod tests {
         let r = evaluate_pm3(&input, &AcmgConfig::default());
         assert_eq!(r.strength, EvidenceStrength::VeryStrong);
         assert_eq!(r.code, "PM3_Very_Strong");
+    }
+
+    // ── B7: gene-disease validity gates PM1 ──────────────────────────────
+
+    /// A missense variant sitting in a dense cluster of ClinVar pathogenic
+    /// variants: PM1's hotspot condition is satisfied outright.
+    fn hotspot_missense(gene: &str) -> ClassificationInput {
+        use crate::sa_extract::{ClinvarProteinData, ClinvarProteinVariant};
+        let neighbours = (1..=4)
+            .map(|i| ClinvarProteinVariant {
+                pos: 100 + i,
+                ref_aa: "A".into(),
+                alt_aa: "V".into(),
+                sig: "Pathogenic".into(),
+                n: 2,
+            })
+            .collect();
+        ClassificationInput {
+            consequences: vec![Consequence::MissenseVariant],
+            impact: Impact::Moderate,
+            gene_symbol: Some(gene.to_string()),
+            protein_position: Some(100),
+            amino_acids: Some(("A".into(), "T".into())),
+            clinvar_protein: Some(ClinvarProteinData {
+                protein_variants: neighbours,
+                benign_indexed: true,
+            ..Default::default()
+            }),
+            ..minimal_input()
+        }
+    }
+
+    #[test]
+    fn test_pm1_fires_on_a_hotspot_without_a_gene_disease_source() {
+        assert!(evaluate_pm1(&hotspot_missense("ARMC9"), &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pm1_blocked_when_clingen_curated_the_gene_as_invalid() {
+        // The cluster PM1 reads is made of ClinVar assertions in a gene whose
+        // disease relationship curation declined to accept. Counting them as
+        // evidence of a critical region assumes the conclusion.
+        let mut input = hotspot_missense("ARMC9");
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec![
+                "some proposed disease (ClinGen Disputed/AD, MONDO:0000001)".into(),
+            ]),
+        });
+        let r = evaluate_pm1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated);
+        assert!(
+            r.summary.contains("no_valid_gene_disease_relationship"),
+            "got: {}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn test_pm1_fires_for_a_gene_the_source_lists() {
+        let mut input = hotspot_missense("BRCA1");
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
+        });
+        assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pm1_survives_for_a_gene_clingen_has_not_curated() {
+        let mut input = hotspot_missense("SPAST");
+        input.omim = None;
+        assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
+    }
+
+    // ── PM1's "without benign variation" half ────────────────────────────
+
+    /// Add `n` benign missense entries inside PM1's window.
+    fn with_benign_neighbours(mut input: ClassificationInput, n: u64) -> ClassificationInput {
+        use crate::sa_extract::ClinvarProteinVariant;
+        let cpd = input.clinvar_protein.as_mut().expect("helper builds one");
+        for i in 0..n {
+            cpd.protein_variants.push(ClinvarProteinVariant {
+                pos: 100 + i,
+                ref_aa: "A".into(),
+                alt_aa: "G".into(),
+                sig: if i % 2 == 0 { "Benign".into() } else { "Likely_benign".into() },
+                n: 1,
+            });
+        }
+        input
+    }
+
+    #[test]
+    fn test_pm1_does_not_fire_where_clinvar_has_benign_variation() {
+        // Richards 2015 asks for a hot spot "without benign variation". The
+        // pathogenic cluster is untouched; what changes is that the same window
+        // has been looked at from the other side too.
+        let input = with_benign_neighbours(hotspot_missense("CHD7"), 1);
+        let r = evaluate_pm1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.evaluated, "declined on the evidence, not for lack of it");
+        assert!(r.summary.contains("without benign variation"), "got: {}", r.summary);
+    }
+
+    #[test]
+    fn test_pm1_benign_tolerance_is_configurable() {
+        let input = with_benign_neighbours(hotspot_missense("CHD7"), 2);
+        let tolerant = AcmgConfig {
+            pm1_max_benign_in_window: 2,
+            ..AcmgConfig::default()
+        };
+        assert!(evaluate_pm1(&input, &tolerant).met);
+        let strict = AcmgConfig {
+            pm1_max_benign_in_window: 1,
+            ..AcmgConfig::default()
+        };
+        assert!(!evaluate_pm1(&input, &strict).met);
+    }
+
+    #[test]
+    fn test_pm1_benign_test_is_skipped_for_an_index_without_benign_entries() {
+        // An older `.oga` has no benign entries because the builder never wrote
+        // them, not because the gene has none. Testing anyway would pass every
+        // window and read as evidence that was never gathered.
+        let mut input = hotspot_missense("CHD7");
+        input.clinvar_protein.as_mut().unwrap().benign_indexed = false;
+        let r = evaluate_pm1(&input, &AcmgConfig::default());
+        assert!(r.met);
+        assert!(
+            r.details.get("nearby_benign_count").is_none(),
+            "must not report a count it could not measure"
+        );
+    }
+
+    #[test]
+    fn test_pm1_benign_test_excludes_the_variants_own_clinvar_record() {
+        // The index is ClinVar. A variant ClinVar calls benign is one of its
+        // own benign neighbours, and letting that veto PM1 would be the
+        // variant's ClinVar label deciding its own classification - the same
+        // circularity the self-match exclusion removed from PS1.
+        use crate::sa_extract::ClinvarData;
+        let mut input = with_benign_neighbours(hotspot_missense("CHD7"), 1);
+        input.clinvar = Some(ClinvarData {
+            significance: Some(vec!["Benign".into()]),
+            ..Default::default()
+        });
+        assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
+
+        let circular = AcmgConfig {
+            exclude_self_from_clinvar_evidence: false,
+            ..AcmgConfig::default()
+        };
+        assert!(!evaluate_pm1(&input, &circular).met);
+    }
+
+    #[test]
+    fn test_pm1_ignores_benign_variation_outside_the_window() {
+        use crate::sa_extract::ClinvarProteinVariant;
+        let mut input = hotspot_missense("CHD7");
+        let window = AcmgConfig::default().pm1_hotspot_window;
+        input
+            .clinvar_protein
+            .as_mut()
+            .unwrap()
+            .protein_variants
+            .push(ClinvarProteinVariant {
+                pos: 100 + window + 1,
+                ref_aa: "A".into(),
+                alt_aa: "G".into(),
+                sig: "Benign".into(),
+                n: 1,
+            });
+        assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
     }
 }

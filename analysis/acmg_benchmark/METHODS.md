@@ -49,7 +49,7 @@ that drove each call in `details.pp3_source` / `details.ps1_path` /
 
 | Criterion | Strength | Description | Data Source / Notes |
 |-----------|----------|-------------|---------------------|
-| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population AF, with **AN ≥ 2000** minimum (gnomAD v4 / SVI March 2024). Honors the **9-variant Ghosh 2018 BA1 exception list** |
+| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population AF, with **AN ≥ 2000** minimum (gnomAD v4 / SVI March 2024). Honors the **curated frequency-exception list** - Ghosh 2018's nine plus three hypomorphic alleles, the latter blocking BS1 and BS2 as well |
 | BS1 | Strong | Greater than expected frequency | gnomAD **max-population AF** (mirrors BA1; was cohort `all_af` pre-v7); gene-specific or default 0.01; same AN minimum as BA1 |
 | BS2 | Strong | Observed in healthy adults | gnomAD homozygote count + ClinGen GDV inheritance (or OMIM legacy). For AD-only genes: AC ≥ 5 (default; configurable via `bs2_ad_min_ac`). |
 | BS3 | Strong | Functional studies — no damage | Not automatable — NotEvaluated |
@@ -238,7 +238,7 @@ The benchmark runs `fastvep annotate --acmg --pick` end-to-end on every
 ClinVar 2-star+ GRCh38 SNV / small indel and compares the issued ACMG
 classification against the ClinVar review-panel call.
 
-Concrete pipeline (`data/benchmark/run_full_benchmark.sh`):
+Concrete pipeline (`analysis/acmg_benchmark/scripts/run_benchmark.sh`):
 
 1. **Input**: ClinVar VCF filtered to review_status ≥ 2 stars
    (`criteria_provided,_multiple_submitters,_no_conflicts` and stricter)
@@ -247,7 +247,7 @@ Concrete pipeline (`data/benchmark/run_full_benchmark.sh`):
 2. **Annotation**: GFF3 + FASTA cache + supplementary annotation
    directory (`--sa-dir`) loaded once; all 673,660 variants annotated
    with `--acmg --pick` to a single JSON file.
-3. **Concordance** (`analysis/acmg_benchmark/real_data/03_evaluate_concordance.py`):
+3. **Concordance** (`analysis/acmg_benchmark/scripts/03_evaluate_concordance.py`):
    stream-parses the JSON via `ijson` (memory-bounded — output is ~24 GB
    pretty-printed), keys each variant on `(chrom, pos, ref, alt)`,
    reads the picked transcript's `acmg.classification`, and fills a
@@ -264,7 +264,7 @@ opposite-direction calls).
 | Source | Build | Records |
 |--------|-------|---------|
 | ClinVar (.osa) | `fastvep sa-build --source clinvar` from `clinvar.vcf.gz` | 4,402,501 |
-| ClinVar protein (.oga) | `--source clinvar_protein` from `variant_summary.txt.gz` | 4,554 genes |
+| ClinVar gene index (.oga) | `--source clinvar_protein` from `variant_summary.txt.gz` | 15,665 genes (protein + canonical-splice indices) |
 | gnomAD v4.1 exomes (.osa, per-chrom) | tabix-extracted to ClinVar 2-star+ regions (24,350 merged ranges, `bedtools merge -d 5000`), `--source gnomad` per chrom (chr1..22, X, Y, MT) | 25 × .osa |
 | gnomAD v4.1 gene constraints (.oga) | `--source gnomad_gene` from `gnomad.v4.1.constraint_metrics.tsv` | 18,173 genes |
 | REVEL v1.3 (.osa, per-chrom) | per-chromosome split from `revel-v1.3_all_chromosomes.zip` to bound RAM | 24 × .osa |
@@ -301,7 +301,7 @@ ships only the basic VEP columns and `json` is verbose.
 
 Generate by running:
 ```bash
-python3 analysis/acmg_benchmark/real_data/generate_figures.py
+python3 analysis/acmg_benchmark/scripts/generate_figures.py
 ```
 
 Outputs (`data/benchmark/output_v7/figures/`, PNG + PDF):
@@ -586,7 +586,7 @@ pm2_downgrade_to_supporting = true
 use_pp5_bp6 = false
 use_clinvar_stars_as_ps4_proxy = false
 
-# BA1 exception list — defaults to the 9-variant Ghosh 2018 set;
+# Curated frequency-exception list - defaults to Ghosh 2018's nine plus three hypomorphs;
 # users can extend or replace via TOML.
 [[ba1_exceptions]]
 gene = "HFE"

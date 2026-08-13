@@ -54,6 +54,12 @@ fn evaluate_pp2(
 
     let (met, evaluated, summary) = if !is_missense {
         (false, true, "Not a missense variant".to_string())
+    } else if let Some(reason) = super::gene_disease::validity_blocker(input, config) {
+        // PP2 claims missense is how *this gene* causes disease. Missense
+        // constraint alone cannot support that: it measures selection against
+        // missense variation, which is present in plenty of genes with no
+        // established disease at all.
+        (false, false, reason)
     } else if let Some(ref gc) = input.gene_constraints {
         if let Some(mis_z) = gc.mis_z {
             details.insert("misZ".into(), serde_json::json!(mis_z));
@@ -230,6 +236,27 @@ fn evaluate_pp3(
         (false, EvidenceStrength::Supporting, "none")
     };
 
+    // Optional cap on how far computational evidence alone may be graded.
+    //
+    // The default is uncapped, because Pejaver 2022 is a ClinGen SVI product
+    // and explicitly calibrates REVEL >= 0.932 to Strong; overriding that by
+    // default would put us outside the guideline. The round-2 medical-genetics
+    // review nonetheless holds the stricter view that a predictor should not
+    // reach Strong on its own (raised on KMT2C), and several VCEPs specify the
+    // same. This lets a lab following that convention configure it rather than
+    // patch the classifier.
+    let uncapped_strength = strength;
+    let strength = match config.pp3_max_strength {
+        Some(cap) if met && strength > cap => cap,
+        _ => strength,
+    };
+    if strength != uncapped_strength {
+        details.insert(
+            "pp3_strength_capped_from".into(),
+            serde_json::json!(uncapped_strength.as_str()),
+        );
+    }
+
     let evaluated = (is_missense && input.revel.is_some()) || input.splice_ai.is_some();
 
     details.insert("pp3_source".into(), serde_json::json!(source));
@@ -340,44 +367,59 @@ fn evaluate_pp5(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sa_extract::{GnomadGeneData, RevelData, SpliceAiData};
+    use crate::test_support::minimal_input;
+    use crate::sa_extract::{GnomadGeneData, RevelData, OmimData, SpliceAiData};
     use fastvep_core::Impact;
 
     fn make_input_with_revel(score: f64) -> ClassificationInput {
         ClassificationInput {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
             revel: Some(RevelData {
                 score: Some(score),
             }),
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
+    }
+
+    #[test]
+    fn test_pp3_max_strength_caps_revel_strong() {
+        // The round-2 review's stricter convention: a predictor should not
+        // reach Strong on its own. Off by default, since Pejaver 2022
+        // calibrates REVEL >= 0.932 to Strong.
+        let input = make_input_with_revel(0.95);
+        let config = AcmgConfig {
+            pp3_max_strength: Some(EvidenceStrength::Moderate),
+            ..Default::default()
+        };
+        let result = evaluate_pp3(&input, &config);
+        assert!(result.met);
+        assert_eq!(result.strength, EvidenceStrength::Moderate);
+        assert_eq!(
+            result.details.get("pp3_strength_capped_from").and_then(|v| v.as_str()),
+            Some("Strong")
+        );
+    }
+
+    #[test]
+    fn test_pp3_max_strength_does_not_promote() {
+        // A cap is a ceiling, never a floor: evidence that only reached
+        // Supporting must not be raised to the cap.
+        let input = make_input_with_revel(0.70);
+        let config = AcmgConfig {
+            pp3_max_strength: Some(EvidenceStrength::Strong),
+            ..Default::default()
+        };
+        let result = evaluate_pp3(&input, &config);
+        assert_eq!(result.strength, EvidenceStrength::Supporting);
+        assert!(result.details.get("pp3_strength_capped_from").is_none());
+    }
+
+    #[test]
+    fn test_pp3_uncapped_by_default() {
+        let input = make_input_with_revel(0.95);
+        let result = evaluate_pp3(&input, &AcmgConfig::default());
+        assert_eq!(result.strength, EvidenceStrength::Strong);
     }
 
     #[test]
@@ -420,13 +462,6 @@ mod tests {
         let input = ClassificationInput {
             consequences: vec![Consequence::SpliceRegionVariant],
             impact: Impact::Low,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
             splice_ai: Some(SpliceAiData {
                 ds_ag: Some(0.01),
                 ds_al: Some(0.95),
@@ -434,26 +469,7 @@ mod tests {
                 ds_dl: Some(0.01),
                 ..Default::default()
             }),
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_pp3(&input, &AcmgConfig::default());
         assert!(result.met);
@@ -485,34 +501,9 @@ mod tests {
         let mut input = ClassificationInput {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
             phylop: Some(5.0),
             gerp: Some(5.0),
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            in_repeat_region: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
-            at_exon_edge: None,
-            intronic_offset: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
+            ..minimal_input()
         };
         // Synthesize a dbNSFP entry with deleterious SIFT + damaging PolyPhen
         // by going through the same JSON path the evaluator uses.
@@ -529,37 +520,11 @@ mod tests {
         let input = ClassificationInput {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
             gene_constraints: Some(GnomadGeneData {
                 mis_z: Some(4.5),
                 ..Default::default()
             }),
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_pp2(&input, &AcmgConfig::default());
         assert!(result.met);
@@ -570,39 +535,75 @@ mod tests {
         let input = ClassificationInput {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
-            gene_symbol: Some("TEST".to_string()),
-            is_canonical: true,
-            amino_acids: None,
-            protein_position: None,
-            gnomad: None,
-            clinvar: None,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
             gene_constraints: Some(GnomadGeneData {
                 mis_z: Some(1.5),
                 ..Default::default()
             }),
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         };
         let result = evaluate_pp2(&input, &AcmgConfig::default());
         assert!(!result.met);
+    }
+
+    // ── B7: gene-disease validity gates PP2 ──────────────────────────────
+
+    /// A missense variant in a gene with strong missense constraint: PP2's
+    /// only positive condition is satisfied, so what stops it is the gate.
+    fn constrained_missense(gene: &str) -> ClassificationInput {
+        ClassificationInput {
+            consequences: vec![Consequence::MissenseVariant],
+            impact: Impact::Moderate,
+            gene_symbol: Some(gene.to_string()),
+            gene_constraints: Some(GnomadGeneData {
+                mis_z: Some(4.0),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        }
+    }
+
+    #[test]
+    fn test_pp2_fires_on_constraint_alone_without_a_gene_disease_source() {
+        let input = constrained_missense("EMG1");
+        assert!(evaluate_pp2(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pp2_blocked_when_clingen_curated_the_gene_as_invalid() {
+        // Missense constraint says the gene tolerates little missense
+        // variation. It does not say the gene causes a disease, which is what
+        // PP2 asserts - and here ClinGen looked and found no valid relationship.
+        let mut input = constrained_missense("EMG1");
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec![
+                "some proposed disease (ClinGen Disputed/AD, MONDO:0000001)".into(),
+            ]),
+        });
+        let r = evaluate_pp2(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(!r.evaluated);
+        assert!(
+            r.summary.contains("no_valid_gene_disease_relationship"),
+            "got: {}",
+            r.summary
+        );
+    }
+
+    #[test]
+    fn test_pp2_fires_for_a_gene_the_source_lists() {
+        let mut input = constrained_missense("BRCA1");
+        input.omim = Some(OmimData {
+            mim_number: Some(0),
+            phenotypes: Some(vec!["hereditary breast cancer (ClinGen Definitive/AD)".into()]),
+        });
+        assert!(evaluate_pp2(&input, &AcmgConfig::default()).met);
+    }
+
+    #[test]
+    fn test_pp2_survives_for_a_gene_clingen_has_not_curated() {
+        let mut input = constrained_missense("SPAST");
+        input.omim = None;
+        assert!(evaluate_pp2(&input, &AcmgConfig::default()).met);
     }
 }

@@ -21,13 +21,35 @@ pub fn evaluate_all(
 /// Two paths:
 /// 1. **Missense (Richards 2015)** — uses the ClinVar protein-position index
 ///    to check if pathogenic variants with the same amino acid change exist.
-/// 2. **Splice (Walker 2023, ClinGen SVI Splicing Subgroup)** — for canonical
-///    ±1/2 splice variants, fires when `same_splice_position_pathogenic` is
-///    true (a known pathogenic splice variant at the same position produces
-///    the same RNA outcome).
+/// 2. **Splice (Walker 2023, ClinGen SVI Splicing Subgroup, PMID 37352859)** -
+///    for canonical ±1/2 splice variants, fires when
+///    `same_splice_position_pathogenic` is true: another ClinVar `Pathogenic`
+///    variant sits on the same canonical dinucleotide and so abolishes the same
+///    donor or acceptor.
+///
+/// The splice path is deliberately *not* Strong. Table 3 of Walker 2023 grades
+/// PS1 for a canonical-dinucleotide variant under assessment on the strength of
+/// the PVS1 code it already carries:
+///
+/// | Baseline PVS1 on the variant | Comparison variant | PS1 code |
+/// | --- | --- | --- |
+/// | PVS1 (Very Strong) | same canonical dinucleotide, Pathogenic | `PS1_Supporting` |
+/// | PVS1_Strong / _Moderate / _Supporting | same canonical dinucleotide, Pathogenic | `PS1` (Strong) |
+///
+/// The reduction exists "to prevent overweighting of the VUA compared to the
+/// original (Likely) Pathogenic comparison variant". This function emits the
+/// conservative `PS1_Supporting` row, because criteria are evaluated
+/// independently and PVS1's graded outcome is not visible here; the upgrade to
+/// full `PS1` is applied in
+/// [`reconcile_evidence`](crate::criteria) once PVS1's strength is known.
+///
+/// Combining PS1 with PVS1 is explicitly sanctioned rather than double
+/// counting: the subgroup's response to feedback (22 March 2024, item 7b) reads
+/// "if there is a relevant pathogenic variant with the same predicted impact as
+/// the variant under assessment, then you can use PS1 as well as PVS1(RNA)".
 fn evaluate_ps1(
     input: &ClassificationInput,
-    _config: &AcmgConfig,
+    config: &AcmgConfig,
 ) -> EvidenceCriterion {
     let is_missense = input
         .consequences
@@ -54,13 +76,13 @@ fn evaluate_ps1(
             Some(true) => {
                 details.insert("ps1_path".into(), serde_json::json!("splice_rna_match"));
                 return EvidenceCriterion {
-                    code: "PS1".to_string(),
+                    code: "PS1_Supporting".to_string(),
                     direction: EvidenceDirection::Pathogenic,
-                    strength: EvidenceStrength::Strong,
+                    strength: EvidenceStrength::Supporting,
                     default_strength: EvidenceStrength::Strong,
                     met: true,
                     evaluated: true,
-                    summary: "Canonical ±1/2 splice variant predicted to produce the same RNA outcome as a known pathogenic splice variant (Walker 2023)".to_string(),
+                    summary: "A different ClinVar Pathogenic variant abolishes the same canonical splice dinucleotide, so both are predicted to produce the same RNA outcome (Walker 2023 Table 3; Supporting while PVS1 stands at full strength)".to_string(),
                     details: serde_json::Value::Object(details),
                 };
             }
@@ -72,7 +94,7 @@ fn evaluate_ps1(
                     default_strength: EvidenceStrength::Strong,
                     met: false,
                     evaluated: true,
-                    summary: "Canonical splice variant; no known same-position pathogenic splice match (Walker 2023 PS1 splice path does not fire)".to_string(),
+                    summary: "Canonical splice variant; the ClinVar splice index holds no other Pathogenic variant on this dinucleotide (Walker 2023 PS1 splice path does not fire)".to_string(),
                     details: serde_json::Value::Object(details),
                 };
             }
@@ -87,7 +109,7 @@ fn evaluate_ps1(
                     default_strength: EvidenceStrength::Strong,
                     met: false,
                     evaluated: false,
-                    summary: "Canonical splice variant; PS1 splice catalog (same_splice_position_pathogenic) not populated by pipeline".to_string(),
+                    summary: "Canonical splice variant; ClinVar splice index not loaded (rebuild clinvar_protein.oga from variant_summary.txt.gz to populate it)".to_string(),
                     details: serde_json::Value::Object(details),
                 };
             }
@@ -142,9 +164,32 @@ fn evaluate_ps1(
             .filter(|v| v.pos == prot_pos && v.alt_aa == alt_aa && v.sig.to_lowercase().contains("pathogenic"))
             .collect();
 
-        details.insert("matching_pathogenic_count".into(), serde_json::json!(matches.len()));
+        // Count distinct *nucleotide* changes, not index entries: the index
+        // dedups by amino-acid change, so two different codons producing the
+        // same substitution collapse into one entry carrying `n = 2`.
+        let distinct_nucleotide_changes: u32 = matches.iter().map(|v| v.n.max(1)).sum();
+        details.insert(
+            "matching_pathogenic_count".into(),
+            serde_json::json!(distinct_nucleotide_changes),
+        );
 
-        if !matches.is_empty() {
+        // PS1 is "same amino acid change as a **previously established**
+        // pathogenic variant, regardless of the nucleotide change". The
+        // protein index is keyed on (position, alt AA) and is built from
+        // ClinVar, so when the variant being classified is itself ClinVar
+        // pathogenic/likely-pathogenic, one of these matches IS this variant.
+        // Firing PS1 off its own record is circular: ENG c.991G>A got PS1
+        // from the single index entry `331:G>S:Pathogenic`, which is that
+        // variant. Require a second, independent nucleotide change in that case.
+        let self_in_index = config.exclude_self_from_clinvar_evidence
+            && input.clinvar.as_ref().is_some_and(|c| c.has_pathogenic());
+        let required_matches: u32 = if self_in_index { 2 } else { 1 };
+        if self_in_index {
+            details.insert("self_excluded_from_count".into(), serde_json::json!(true));
+            details.insert("required_matches".into(), serde_json::json!(required_matches));
+        }
+
+        if distinct_nucleotide_changes >= required_matches {
             return EvidenceCriterion {
                 code: "PS1".to_string(),
                 direction: EvidenceDirection::Pathogenic,
@@ -153,8 +198,9 @@ fn evaluate_ps1(
                 met: true,
                 evaluated: true,
                 summary: format!(
-                    "Same amino acid change (p.{}{}{}) is pathogenic in ClinVar ({} entries at protein position {})",
-                    ref_aa, prot_pos, alt_aa, matches.len(), prot_pos
+                    "Same amino acid change (p.{}{}{}) is pathogenic in ClinVar ({} independent entries at protein position {}{})",
+                    ref_aa, prot_pos, alt_aa, distinct_nucleotide_changes, prot_pos,
+                    if self_in_index { ", this variant's own record excluded" } else { "" }
                 ),
                 details: serde_json::Value::Object(details),
             };
@@ -168,8 +214,9 @@ fn evaluate_ps1(
             met: false,
             evaluated: true,
             summary: format!(
-                "No pathogenic ClinVar variant with same AA change at position {}",
-                prot_pos
+                "No independently-established pathogenic ClinVar variant with the same AA change at position {} ({} match(es), {} required{})",
+                prot_pos, distinct_nucleotide_changes, required_matches,
+                if self_in_index { "; this variant's own ClinVar record does not count toward PS1" } else { "" }
             ),
             details: serde_json::Value::Object(details),
         }
@@ -353,21 +400,23 @@ fn evaluate_ps2(
     }
 }
 
-/// PS3: Well-established in vitro or in vivo functional studies.
+/// PS3: Well-established in vitro or in vivo functional studies show a
+/// damaging effect.
+///
+/// Not computable from variant data, and fastVEP will not try: it reads a
+/// curated `--functional-evidence` file. Without one, PS3 stays NotEvaluated.
+/// See [`crate::functional`] for the file format and for why an entry also
+/// suppresses the computational criteria.
 fn evaluate_ps3(
-    _input: &ClassificationInput,
+    input: &ClassificationInput,
     _config: &AcmgConfig,
 ) -> EvidenceCriterion {
-    EvidenceCriterion {
-        code: "PS3".to_string(),
-        direction: EvidenceDirection::Pathogenic,
-        strength: EvidenceStrength::Strong,
-        default_strength: EvidenceStrength::Strong,
-        met: false,
-        evaluated: false,
-        summary: "Requires curated functional study evidence (in vitro/in vivo assays) — not automatable from variant data".to_string(),
-        details: serde_json::Value::Null,
-    }
+    super::functional_criterion(
+        input,
+        crate::functional::FunctionalCriterion::Ps3,
+        EvidenceDirection::Pathogenic,
+        "Requires curated functional study evidence (in vitro/in vivo assays) — supply one with --functional-evidence",
+    )
 }
 
 /// PS4: Prevalence of the variant in affected individuals is significantly
@@ -452,6 +501,7 @@ fn evaluate_ps4(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::minimal_input;
     use crate::sa_extract::ClinvarData;
     use fastvep_core::{Consequence, Impact};
 
@@ -460,33 +510,10 @@ mod tests {
             consequences: vec![Consequence::MissenseVariant],
             impact: Impact::Moderate,
             gene_symbol: Some("TP53".to_string()),
-            is_canonical: true,
             amino_acids: Some(("R".to_string(), "H".to_string())),
             protein_position: Some(175),
-            gnomad: None,
             clinvar,
-            revel: None,
-            splice_ai: None,
-            dbnsfp: None,
-            phylop: None,
-            gerp: None,
-            gene_constraints: None,
-            omim: None,
-            clinvar_protein: None,
-            hgvs_c: None,
-            predicted_nmd: None,
-            protein_truncation_pct: None,
-            is_last_exon: None,
-            in_critical_region: None,
-            alt_start_codon_distance: None,
-            same_splice_position_pathogenic: None,
-            in_repeat_region: None,
-            at_exon_edge: None,
-            intronic_offset: None,
-            proband_genotype: None,
-            mother_genotype: None,
-            father_genotype: None,
-            companion_variants: vec![],
+            ..minimal_input()
         }
     }
 
@@ -509,8 +536,10 @@ mod tests {
     fn test_ps4_proxy_path_when_opted_in() {
         // Backward-comparable: setting use_clinvar_stars_as_ps4_proxy=true
         // restores the previous proxy behavior.
-        let mut config = AcmgConfig::default();
-        config.use_clinvar_stars_as_ps4_proxy = true;
+        let config = AcmgConfig {
+            use_clinvar_stars_as_ps4_proxy: true,
+            ..Default::default()
+        };
         let input = make_input(Some(ClinvarData {
             significance: Some(vec!["Pathogenic".to_string()]),
             review_status: Some("reviewed_by_expert_panel".to_string()),
@@ -523,8 +552,10 @@ mod tests {
 
     #[test]
     fn test_ps4_proxy_single_submitter_not_enough() {
-        let mut config = AcmgConfig::default();
-        config.use_clinvar_stars_as_ps4_proxy = true;
+        let config = AcmgConfig {
+            use_clinvar_stars_as_ps4_proxy: true,
+            ..Default::default()
+        };
         let input = make_input(Some(ClinvarData {
             significance: Some(vec!["Pathogenic".to_string()]),
             review_status: Some("criteria_provided,_single_submitter".to_string()),
@@ -536,14 +567,19 @@ mod tests {
 
     #[test]
     fn test_ps1_splice_path_with_pathogenic_match() {
-        // Walker 2023: canonical splice variant matching a known pathogenic
-        // splice variant at the same position fires PS1 (Strong).
+        // Walker 2023 Table 3, row 3: a canonical-dinucleotide variant with a
+        // Pathogenic comparison variant on the same dinucleotide gets
+        // PS1_Supporting, not PS1. Anything stronger would let the variant
+        // under assessment out-score the variant it borrows evidence from.
         let mut input = make_input(None);
         input.consequences = vec![Consequence::SpliceDonorVariant];
         input.same_splice_position_pathogenic = Some(true);
         let r = evaluate_ps1(&input, &AcmgConfig::default());
         assert!(r.met);
-        assert_eq!(r.strength, EvidenceStrength::Strong);
+        assert_eq!(r.strength, EvidenceStrength::Supporting);
+        assert_eq!(r.code, "PS1_Supporting");
+        // Row 5's upgrade is applied by reconcile_evidence, which sees PVS1.
+        assert_eq!(r.details["ps1_path"], "splice_rna_match");
     }
 
     #[test]
@@ -563,5 +599,74 @@ mod tests {
         let result = evaluate_ps1(&input, &AcmgConfig::default());
         assert!(!result.evaluated);
         assert!(!result.met);
+    }
+
+    fn protein_index(n: u32) -> crate::sa_extract::ClinvarProteinData {
+        crate::sa_extract::ClinvarProteinData {
+            protein_variants: vec![crate::sa_extract::ClinvarProteinVariant {
+                pos: 175,
+                ref_aa: "R".into(),
+                alt_aa: "H".into(),
+                sig: "Pathogenic".into(),
+                n,
+            }],
+            benign_indexed: true,
+            ..Default::default()
+        }
+    }
+
+    fn clinvar_pathogenic() -> ClinvarData {
+        ClinvarData {
+            significance: Some(vec!["Pathogenic".into()]),
+            review_status: Some("criteria_provided,_multiple_submitters,_no_conflicts".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_ps1_does_not_fire_on_its_own_clinvar_record() {
+        // The protein index is built from ClinVar. When the variant being
+        // classified is itself ClinVar pathogenic and only one nucleotide
+        // change produces this residue substitution, the single matching entry
+        // IS this variant. Firing PS1 off it is circular: ENG c.991G>A did
+        // exactly that off `331:G>S:Pathogenic`.
+        let mut input = make_input(Some(clinvar_pathogenic()));
+        input.clinvar_protein = Some(protein_index(1));
+        let r = evaluate_ps1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.evaluated);
+    }
+
+    #[test]
+    fn test_ps1_fires_when_a_second_nucleotide_change_exists() {
+        // Two distinct codons producing p.Arg175His: one of them is this
+        // variant, the other is genuine independent evidence, which is exactly
+        // what PS1 means by "regardless of the nucleotide change".
+        let mut input = make_input(Some(clinvar_pathogenic()));
+        input.clinvar_protein = Some(protein_index(2));
+        let r = evaluate_ps1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_ps1_fires_for_novel_variant_against_single_precedent() {
+        // A variant with no pathogenic ClinVar record of its own is not in the
+        // index, so a single precedent is independent evidence.
+        let mut input = make_input(None);
+        input.clinvar_protein = Some(protein_index(1));
+        let r = evaluate_ps1(&input, &AcmgConfig::default());
+        assert!(r.met);
+    }
+
+    #[test]
+    fn test_ps1_self_exclusion_can_be_disabled() {
+        let mut input = make_input(Some(clinvar_pathogenic()));
+        input.clinvar_protein = Some(protein_index(1));
+        let cfg = AcmgConfig {
+            exclude_self_from_clinvar_evidence: false,
+            ..Default::default()
+        };
+        let r = evaluate_ps1(&input, &cfg);
+        assert!(r.met, "ClinVar-informed mode keeps the legacy behaviour");
     }
 }

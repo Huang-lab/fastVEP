@@ -172,6 +172,10 @@ fn write_string_tables<W: Write + Seek>(
 /// dropped here with a `log::warn!` that the CLI installs no logger to display —
 /// silent data loss on 668 of 4,438,232 real ClinVar records. They are now
 /// stored with their allele bytes verbatim.
+// Each argument is an independent coordinate, buffer or flag with no
+// natural grouping; bundling them would only move the list to the
+// call site.
+#[allow(clippy::too_many_arguments)]
 fn write_chunk_entries<W: Write + Seek>(
     zip: &mut zip::ZipWriter<W>,
     options: zip::write::SimpleFileOptions,

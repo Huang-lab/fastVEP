@@ -1,18 +1,113 @@
-use crate::types::{AcmgClassification, EvidenceCounts, EvidenceCriterion};
+use crate::types::{
+    AcmgClassification, EvidenceCounts, EvidenceCriterion, EvidenceDirection, EvidenceStrength,
+};
 
 /// Apply ACMG-AMP combination rules to determine final classification.
 ///
 /// Returns the classification and the name of the triggered rule.
 ///
-/// Rules: pathogenic (8 combinations) and benign (BA1 / >=2 BS / BS+BP /
-/// >=2 BP) are evaluated independently. If both directions reach a
+/// Rules: pathogenic (8 combinations) and benign (BA1, `>=2` BS, BS+BP,
+/// `>=2` BP) are evaluated independently. If both directions reach a
 /// definite call (P/LP and B/LB), the result is VUS (Conflicting).
 /// Otherwise the directional call wins.
 ///
 /// Includes the ClinGen SVI novel combination rule (Sept 2020) that
 /// PVS + >=1 PP → Likely Pathogenic, added to compensate for the PM2
 /// downgrade to Supporting (Bayesian Post_P = 0.988, within LP range).
-pub fn combine(criteria: &[EvidenceCriterion]) -> (AcmgClassification, Option<String>) {
+pub fn combine(
+    criteria: &[EvidenceCriterion],
+    config: &crate::config::AcmgConfig,
+) -> (AcmgClassification, Option<String>) {
+    combine_inner(criteria, config.use_point_system)
+}
+
+/// The ClinGen SVI point system (Tavtigian et al. 2020, Genet Med 22:1735).
+///
+/// The 2015 combining table and this point system are two encodings of the same
+/// Bayesian model, and where they disagree the SVI's own analysis is that the
+/// table has gaps. The clearest is a lone PVS1: 8 points, squarely inside the
+/// Likely Pathogenic band, but no row of Table 5 matches it, so the table gives
+/// Uncertain Significance. Run v10 had **2,319 truth-pathogenic variants land in
+/// VUS on `PVS1` and nothing else** - a nonsense or frameshift variant in a
+/// haploinsufficient disease gene, which is close to the least uncertain thing a
+/// classifier sees.
+///
+/// Points are `1 / 2 / 4 / 8` for Supporting / Moderate / Strong / Very Strong,
+/// negated for benign criteria, with a standalone benign criterion at `-8`.
+/// Bands: `>= 10` Pathogenic, `6..=9` Likely Pathogenic, `-6..=-2` Likely
+/// Benign, `<= -7` Benign, everything else Uncertain.
+///
+/// The Likely Benign floor is the one deliberate deviation from Tavtigian's
+/// published table, which puts it at `-1`. At `-1` a single BP4 - one
+/// supporting benign criterion, on its own - is enough for a Likely Benign
+/// call, where Richards 2015 requires two benign supporting criteria or a
+/// strong plus a supporting. Measured on the benchmark sample, the `-1` floor
+/// produced 36 false-benign calls against 1, and **22 of those 36 were a lone
+/// BP4**. Taking the stricter of the two schemes on the benign side costs
+/// almost nothing and removes the whole class: a missed diagnosis and a variant
+/// left uncertain are not comparable errors.
+///
+/// Conflict handling falls out of the arithmetic rather than needing a separate
+/// rule: evidence in both directions cancels toward zero, which is the VUS band.
+/// Pathogenic-side call from the ClinGen SVI point system, or `None` when the
+/// pathogenic evidence does not reach Likely Pathogenic.
+///
+/// Points are `1 / 2 / 4 / 8` for Supporting / Moderate / Strong / Very Strong.
+/// Bands: `>= 10` Pathogenic, `6..=9` Likely Pathogenic.
+///
+/// **Only the pathogenic direction is scored this way**, and the benign
+/// direction keeps the Richards 2015 rules. That split is deliberate and was
+/// measured, not assumed. Tavtigian's Likely Benign band opens at `-1`, so a
+/// single BP4 - one supporting benign criterion on its own - is enough for a
+/// Likely Benign call, where Richards requires two benign supporting criteria
+/// or a strong plus a supporting. On the benchmark sample the full point system
+/// scored 36 false-benign calls against the table's 1, and **22 of the 36 were
+/// a lone BP4**. Tightening the band instead (floor `-2`) removed those but
+/// took benign recall from 56.3 % down to 45.6 %, because a lone BP4 carries a
+/// great many correct benign calls too.
+///
+/// So the two schemes are used where each is the safer one. The point system's
+/// documented gap is on the pathogenic side: a lone PVS1 is 8 points, inside
+/// Likely Pathogenic, but matches no row of Table 5 and so returns Uncertain -
+/// which put 2,319 truth-pathogenic variants in VUS in run v10. Its divergence
+/// on the benign side runs the other way, toward calling variants benign on
+/// thinner evidence, and a missed diagnosis is not the same kind of error as a
+/// variant left uncertain.
+fn pathogenic_call_by_points(
+    criteria: &[EvidenceCriterion],
+) -> Option<(AcmgClassification, String)> {
+    let points: i32 = criteria
+        .iter()
+        .filter(|c| c.met && c.direction == EvidenceDirection::Pathogenic)
+        .map(|c| match c.strength {
+            EvidenceStrength::Supporting => 1,
+            EvidenceStrength::Moderate => 2,
+            EvidenceStrength::Strong => 4,
+            EvidenceStrength::VeryStrong | EvidenceStrength::Standalone => 8,
+        })
+        .sum();
+
+    let cls = if points >= 10 {
+        AcmgClassification::Pathogenic
+    } else if points >= 6 {
+        AcmgClassification::LikelyPathogenic
+    } else {
+        return None;
+    };
+    Some((cls, format!("{} pathogenic points (Tavtigian 2020)", points)))
+}
+
+/// The Richards 2015 combining table on both sides. The tests use it directly
+/// to pin table behaviour independently of the configured default.
+#[cfg(test)]
+fn combine_by_table(criteria: &[EvidenceCriterion]) -> (AcmgClassification, Option<String>) {
+    combine_inner(criteria, false)
+}
+
+fn combine_inner(
+    criteria: &[EvidenceCriterion],
+    use_points: bool,
+) -> (AcmgClassification, Option<String>) {
     let counts = EvidenceCounts::from_criteria(criteria);
     let pvs = counts.pathogenic_very_strong;
     let ps = counts.pathogenic_strong;
@@ -22,8 +117,71 @@ pub fn combine(criteria: &[EvidenceCriterion]) -> (AcmgClassification, Option<St
     let bs = counts.benign_strong;
     let bp = counts.benign_supporting;
 
-    let pathogenic_call = compute_pathogenic_call(pvs, ps, pm, pp);
+    let pathogenic_call = if use_points {
+        pathogenic_call_by_points(criteria)
+    } else {
+        compute_pathogenic_call(pvs, ps, pm, pp)
+    };
     let benign_call = compute_benign_call(ba, bs, bp);
+
+    // Richards 2015: "If a variant does not fulfil criteria using either of
+    // these sets, or the evidence for benign and pathogenic is conflicting,
+    // the variant defaults to uncertain significance." The rule below catches
+    // the case where one direction reaches a definite call while the other
+    // holds evidence at Strong or above without itself reaching a call.
+    //
+    // That asymmetry produced most of the false-benign calls in the round-2
+    // medical-genetics review: a met PS1 (Strong) plus two benign supporting
+    // criteria was reported Likely Benign, with the Strong pathogenic evidence
+    // silently discarded. 36 of the 78 such rows carried a met PS1 or PVS1.
+    let strong_pathogenic_present = pvs >= 1 || ps >= 1;
+    let strong_benign_present = ba >= 1 || bs >= 1;
+
+    if let Some((cls, rule)) = &benign_call {
+        if is_definite(*cls) && strong_pathogenic_present && pathogenic_call.is_none() {
+            return (
+                AcmgClassification::UncertainSignificance,
+                Some(format!(
+                    "Conflicting evidence: benign rules → {} ({}), but {} pathogenic criteri{} at Strong or above also met",
+                    cls.shorthand(),
+                    rule,
+                    pvs + ps,
+                    if pvs + ps == 1 { "on is" } else { "a are" }
+                )),
+            );
+        }
+    }
+    if let Some((cls, rule)) = &pathogenic_call {
+        if is_definite(*cls) && strong_benign_present && benign_call.is_none() {
+            return (
+                AcmgClassification::UncertainSignificance,
+                Some(format!(
+                    "Conflicting evidence: pathogenic rules → {} ({}), but {} benign criteri{} at Strong or above also met",
+                    cls.shorthand(),
+                    rule,
+                    ba + bs,
+                    if ba + bs == 1 { "on is" } else { "a are" }
+                )),
+            );
+        }
+    }
+
+    // A Likely Pathogenic call standing on read-derived evidence, at a site
+    // where the reads were declared unreliable, is not a Likely Pathogenic
+    // call. See [`site_level_frequency_veto`].
+    if let Some((AcmgClassification::LikelyPathogenic, rule)) = &pathogenic_call {
+        if benign_call.is_none() {
+            if let Some(reason) = site_level_frequency_veto(criteria) {
+                return (
+                    AcmgClassification::UncertainSignificance,
+                    Some(format!(
+                        "Pathogenic rules → LP ({}), but the population-frequency criteria could not be evaluated at all: {}. The same reads carry the consequence call, so the evidence is one-sided rather than complete",
+                        rule, reason
+                    )),
+                );
+            }
+        }
+    }
 
     match (pathogenic_call, benign_call) {
         // Both directions reach a definite call → conflict.
@@ -149,6 +307,60 @@ fn compute_benign_call(ba: u8, bs: u8, bp: u8) -> Option<(AcmgClassification, St
     None
 }
 
+/// The reason the population-frequency criteria were withheld, when the reason
+/// was a verdict on this site's short-read data *and* the frequency it
+/// suppressed would have carried benign evidence. `None` otherwise.
+///
+/// Why a lone Likely Pathogenic call cannot survive that pair of conditions.
+/// When gnomAD rejects a site - its own FILTER, a low-complexity tract, a
+/// segmental duplication - the classifier withholds BA1, BS1, BS2 *and* PM2,
+/// which is symmetric in intention and badly asymmetric in effect. The benign
+/// side loses up to Standalone plus two Strong criteria; the pathogenic side
+/// loses one Supporting. Everything that remains - PVS1 above all - is read
+/// from the same alignments that were just declared untrustworthy, and is kept
+/// at full strength.
+///
+/// The result is a class of confident calls made with the benign half of the
+/// ledger closed by the pipeline itself. In the ClinVar 2-star+ benchmark it
+/// produced, among others, RAI1 `c.840del` - 48,739 gnomAD homozygotes, inside
+/// a low-complexity tract, ClinVar Benign - reported Likely Pathogenic on PVS1
+/// alone, and 17 more of the same shape. Uncertain, with the veto named in the
+/// summary, is the honest output: a Very Strong pathogenic criterion and a
+/// population observation we have refused to read is not a resolved variant.
+///
+/// Both conditions are load-bearing, and the second was added after measuring
+/// the first on its own. Vetoing on the site flag alone demoted 2,630 correct
+/// pathogenic calls to Uncertain to remove 18 wrong ones, because most flagged
+/// sites carry a frequency far too low to have supported any benign criterion -
+/// withholding it cost the benign side nothing. Requiring that the suppressed
+/// frequency would actually have met BA1 or BS1 keeps the rule on the variants
+/// it was written for.
+///
+/// Scoped to Likely Pathogenic because that band is where PVS1's 8 points land
+/// unaided. A call reaching Pathogenic has 10 points from evidence that does
+/// not all come from one pileup, and the veto is not what is holding it up.
+fn site_level_frequency_veto(criteria: &[EvidenceCriterion]) -> Option<String> {
+    criteria
+        .iter()
+        .filter(|c| !c.evaluated && matches!(c.code.as_str(), "BA1" | "BS1" | "BS2"))
+        .find_map(|c| {
+            let flag = |key| c.details.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+            let vetoed = flag(crate::criteria::FREQUENCY_BLOCKED_SITE_LEVEL)
+                && flag(crate::criteria::FREQUENCY_BLOCKED_WOULD_BE_BENIGN);
+            vetoed.then(|| {
+                let reason = c
+                    .details
+                    .get("frequency_blocked")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("population frequency unusable at this site");
+                match c.details.get("frequency_blocked_af").and_then(|v| v.as_f64()) {
+                    Some(af) => format!("{} - and the frequency it suppressed, {:.3e}, would itself have met {}", reason, af, c.code),
+                    None => reason.to_string(),
+                }
+            })
+        })
+}
+
 /// A "definite" call is one that reaches P/LP or B/LB — anything strong
 /// enough that mixing it with the opposite direction warrants a Conflicting
 /// label rather than letting the stronger side win.
@@ -200,12 +412,105 @@ mod tests {
     use EvidenceDirection::*;
     use EvidenceStrength::*;
 
+    /// A frequency criterion the classifier declined to evaluate, carrying the
+    /// detail keys the frequency gate writes when it blocks.
+    fn vetoed(code: &str, strength: EvidenceStrength, site_level: bool) -> EvidenceCriterion {
+        vetoed_with(code, strength, site_level, true)
+    }
+
+    fn vetoed_with(
+        code: &str,
+        strength: EvidenceStrength,
+        site_level: bool,
+        would_be_benign: bool,
+    ) -> EvidenceCriterion {
+        let mut c = make_criterion(code, EvidenceDirection::Benign, strength, false);
+        c.evaluated = false;
+        c.details = serde_json::json!({
+            "frequency_blocked": "gnomAD flags this site as falling in a low-complexity region, where short-read allele frequencies are systematically unreliable",
+            crate::criteria::FREQUENCY_BLOCKED_SITE_LEVEL: site_level,
+            crate::criteria::FREQUENCY_BLOCKED_WOULD_BE_BENIGN: would_be_benign,
+            "frequency_blocked_af": 0.326,
+        });
+        c
+    }
+
+    // ── One-sided evidence from a site-level frequency veto ──
+
+    #[test]
+    fn test_lone_pvs1_is_uncertain_when_the_site_data_was_vetoed() {
+        // RAI1 c.840del in the benchmark: 48,739 gnomAD homozygotes inside a
+        // low-complexity tract, so BA1/BS1/BS2 and PM2 are all withheld and
+        // PVS1's 8 points stand unopposed.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            vetoed("BA1", Standalone, true),
+            vetoed("BS1", Strong, true),
+            vetoed("BS2", Strong, true),
+        ];
+        let (cls, rule) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+        assert!(rule.unwrap().contains("one-sided"));
+    }
+
+    #[test]
+    fn test_a_gene_level_veto_leaves_the_pathogenic_call_alone() {
+        // Curated homology says the frequency is confounded by a paralogue.
+        // It says nothing about whether this frameshift call is real, so the
+        // Likely Pathogenic call stands.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            vetoed("BA1", Standalone, false),
+            vetoed("BS1", Strong, false),
+        ];
+        let (cls, _) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
+    }
+
+    #[test]
+    fn test_a_veto_does_not_touch_a_call_that_reaches_pathogenic() {
+        // 10 points from evidence that is not all one pileup.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            met("PS1", Pathogenic, Strong),
+            vetoed("BA1", Standalone, true),
+        ];
+        let (cls, _) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::Pathogenic);
+    }
+
+    #[test]
+    fn test_a_veto_over_a_frequency_too_low_to_matter_changes_nothing() {
+        // The common case: a site fails gnomAD's FILTER with a handful of
+        // carriers. Withholding that frequency cost the benign side nothing,
+        // so there is no asymmetry to correct.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            vetoed_with("BA1", Standalone, true, false),
+            vetoed_with("BS1", Strong, true, false),
+        ];
+        let (cls, _) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
+    }
+
+    #[test]
+    fn test_an_assessed_frequency_criterion_is_not_a_veto() {
+        // BA1 evaluated and simply not met is the ordinary case, and must not
+        // be read as a withheld criterion.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            not_met("BA1", Benign, Standalone),
+        ];
+        let (cls, _) = combine(&criteria, &crate::config::AcmgConfig::default());
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
+    }
+
     // ── Benign Rules ──
 
     #[test]
     fn test_ba1_standalone_benign() {
         let criteria = vec![met("BA1", Benign, Standalone)];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Benign);
         assert_eq!(rule.unwrap(), "BA1");
     }
@@ -216,7 +521,7 @@ mod tests {
             met("BS1", Benign, Strong),
             met("BS2", Benign, Strong),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Benign);
         assert_eq!(rule.unwrap(), ">=2 BS");
     }
@@ -229,7 +534,7 @@ mod tests {
             met("PVS1", Pathogenic, VeryStrong),
             met("PS4", Pathogenic, Strong),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Pathogenic);
         assert_eq!(rule.unwrap(), "PVS + >=1 PS");
     }
@@ -241,7 +546,7 @@ mod tests {
             met("PM2", Pathogenic, Moderate),
             met("PM4", Pathogenic, Moderate),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Pathogenic);
         assert_eq!(rule.unwrap(), "PVS + >=2 PM");
     }
@@ -253,7 +558,7 @@ mod tests {
             met("PM2", Pathogenic, Moderate),
             met("PP3", Pathogenic, Supporting),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Pathogenic);
         assert_eq!(rule.unwrap(), "PVS + PM + PP");
     }
@@ -265,7 +570,7 @@ mod tests {
             met("PP2", Pathogenic, Supporting),
             met("PP3", Pathogenic, Supporting),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Pathogenic);
         assert_eq!(rule.unwrap(), "PVS + >=2 PP");
     }
@@ -276,7 +581,7 @@ mod tests {
             met("PS1", Pathogenic, Strong),
             met("PS4", Pathogenic, Strong),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Pathogenic);
         assert_eq!(rule.unwrap(), ">=2 PS");
     }
@@ -289,7 +594,7 @@ mod tests {
             met("PM2", Pathogenic, Moderate),
             met("PM4", Pathogenic, Moderate),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::Pathogenic);
         assert_eq!(rule.unwrap(), "PS + >=3 PM");
     }
@@ -302,7 +607,7 @@ mod tests {
             met("PVS1", Pathogenic, VeryStrong),
             met("PM2", Pathogenic, Moderate),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyPathogenic);
         assert_eq!(rule.unwrap(), "PVS + PM");
     }
@@ -313,7 +618,7 @@ mod tests {
             met("PS4", Pathogenic, Strong),
             met("PM2", Pathogenic, Moderate),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyPathogenic);
         assert_eq!(rule.unwrap(), "PS + 1-2 PM");
     }
@@ -325,7 +630,7 @@ mod tests {
             met("PP2", Pathogenic, Supporting),
             met("PP3", Pathogenic, Supporting),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyPathogenic);
         assert_eq!(rule.unwrap(), "PS + >=2 PP");
     }
@@ -337,7 +642,7 @@ mod tests {
             met("PM2", Pathogenic, Moderate),
             met("PM4", Pathogenic, Moderate),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyPathogenic);
         assert_eq!(rule.unwrap(), ">=3 PM");
     }
@@ -350,7 +655,7 @@ mod tests {
             met("PP2", Pathogenic, Supporting),
             met("PP3", Pathogenic, Supporting),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyPathogenic);
         assert_eq!(rule.unwrap(), "2 PM + >=2 PP");
     }
@@ -365,7 +670,7 @@ mod tests {
             met("PVS1", Pathogenic, VeryStrong),
             met("PM2_Supporting", Pathogenic, Supporting),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyPathogenic);
         assert_eq!(rule.unwrap(), "PVS + >=1 PP (SVI)");
     }
@@ -378,7 +683,7 @@ mod tests {
             met("BS1", Benign, Strong),
             met("BP7", Benign, Supporting),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyBenign);
         assert_eq!(rule.unwrap(), "BS + BP");
     }
@@ -389,7 +694,7 @@ mod tests {
             met("BP4", Benign, Supporting),
             met("BP7", Benign, Supporting),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyBenign);
         assert_eq!(rule.unwrap(), ">=2 BP");
     }
@@ -406,7 +711,7 @@ mod tests {
             met("BS1", Benign, Strong),
             met("BS2", Benign, Strong),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::UncertainSignificance);
         assert!(rule.unwrap().contains("Conflicting"));
     }
@@ -421,7 +726,7 @@ mod tests {
             met("PVS1", Pathogenic, VeryStrong),
             met("BS1", Benign, Strong),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::UncertainSignificance);
         assert!(rule.is_none(), "expected no rule, got {:?}", rule);
     }
@@ -436,7 +741,7 @@ mod tests {
             met("PM2_Supporting", Pathogenic, Supporting),
             met("BP4", Benign, Supporting),
         ];
-        let (cls, _) = combine(&criteria);
+        let (cls, _) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::LikelyPathogenic);
     }
 
@@ -447,7 +752,7 @@ mod tests {
         let criteria = vec![
             met("PM2", Pathogenic, Supporting), // Note: Supporting due to SVI downgrade
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::UncertainSignificance);
         assert!(rule.is_none());
     }
@@ -458,8 +763,144 @@ mod tests {
             not_met("PVS1", Pathogenic, VeryStrong),
             not_met("BA1", Benign, Standalone),
         ];
-        let (cls, rule) = combine(&criteria);
+        let (cls, rule) = combine_by_table(&criteria);
         assert_eq!(cls, AcmgClassification::UncertainSignificance);
         assert!(rule.is_none());
+    }
+
+    // ── Asymmetric conflict guard (Richards 2015) ──
+
+    #[test]
+    fn test_strong_pathogenic_blocks_likely_benign_call() {
+        // PS1 (Strong) alongside two BP criteria used to be reported Likely
+        // Benign with the Strong pathogenic evidence silently discarded. 36 of
+        // the 78 false-benign rows in the round-2 medical-genetics review had
+        // exactly this shape.
+        let criteria = vec![
+            met("PS1", Pathogenic, Strong),
+            met("BP1", Benign, Supporting),
+            met("BP4", Benign, Supporting),
+        ];
+        let (cls, rule) = combine_by_table(&criteria);
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+        assert!(rule.unwrap().contains("Conflicting evidence"));
+    }
+
+    #[test]
+    fn test_very_strong_pathogenic_blocks_benign_call() {
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            met("BS1", Benign, Strong),
+            met("BS2", Benign, Strong),
+        ];
+        let (cls, _) = combine_by_table(&criteria);
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+    }
+
+    #[test]
+    fn test_strong_benign_blocks_likely_pathogenic_call() {
+        // Mirror direction: a met BS1 alongside PM+PP evidence that reaches LP.
+        let criteria = vec![
+            met("PM1", Pathogenic, Moderate),
+            met("PM2", Pathogenic, Moderate),
+            met("PP2", Pathogenic, Supporting),
+            met("PP3", Pathogenic, Supporting),
+            met("BS1", Benign, Strong),
+        ];
+        let (cls, rule) = combine_by_table(&criteria);
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+        assert!(rule.unwrap().contains("Conflicting evidence"));
+    }
+
+    #[test]
+    fn test_supporting_benign_alone_does_not_block_pathogenic_call() {
+        // The guard is deliberately limited to Strong-or-above opposing
+        // evidence. A lone BP against a PVS1 is ordinary noise, not a conflict,
+        // and must not turn every pathogenic call into VUS.
+        let criteria = vec![
+            met("PVS1", Pathogenic, VeryStrong),
+            met("PM2", Pathogenic, Moderate),
+            met("BP3", Benign, Supporting),
+        ];
+        let (cls, _) = combine_by_table(&criteria);
+        assert_eq!(cls, AcmgClassification::LikelyPathogenic);
+    }
+
+    // ── ClinGen SVI point system (pathogenic side) ───────────────────────
+
+    fn points_of(criteria: &[EvidenceCriterion]) -> (AcmgClassification, Option<String>) {
+        combine_inner(criteria, true)
+    }
+
+    #[test]
+    fn lone_pvs1_is_likely_pathogenic_under_points_and_vus_under_the_table() {
+        // The disagreement that motivated the change. 2,319 truth-pathogenic
+        // variants sat in VUS on exactly this signature in run v10.
+        let criteria = vec![met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong)];
+        assert_eq!(points_of(&criteria).0, AcmgClassification::LikelyPathogenic);
+        assert_eq!(
+            combine_by_table(&criteria).0,
+            AcmgClassification::UncertainSignificance
+        );
+    }
+
+    #[test]
+    fn ten_points_reaches_pathogenic() {
+        // PVS1 (8) + PM2_Supporting (1) = 9 → LP; add a Moderate → 11 → P.
+        let mut criteria = vec![
+            met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
+            met("PM2_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting),
+        ];
+        assert_eq!(points_of(&criteria).0, AcmgClassification::LikelyPathogenic);
+        criteria.push(met("PM1", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate));
+        assert_eq!(points_of(&criteria).0, AcmgClassification::Pathogenic);
+    }
+
+    #[test]
+    fn five_pathogenic_points_stay_uncertain() {
+        // PM1 (2) + PM5 (2) + PM2_Supporting (1) = 5, one short of the band.
+        let criteria = vec![
+            met("PM1", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            met("PM5", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            met("PM2_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting),
+        ];
+        assert_eq!(points_of(&criteria).0, AcmgClassification::UncertainSignificance);
+    }
+
+    #[test]
+    fn the_benign_side_keeps_the_2015_table_under_points() {
+        // The measured reason for the split: Tavtigian's Likely Benign band
+        // opens at -1, so a lone BP4 would be a benign call. It must not be.
+        let criteria = vec![met("BP4", EvidenceDirection::Benign, EvidenceStrength::Supporting)];
+        assert_eq!(points_of(&criteria).0, AcmgClassification::UncertainSignificance);
+        // Two supporting benign criteria do reach Likely Benign, as Richards says.
+        let criteria = vec![
+            met("BP4", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+            met("BP7", EvidenceDirection::Benign, EvidenceStrength::Supporting),
+        ];
+        assert_eq!(points_of(&criteria).0, AcmgClassification::LikelyBenign);
+    }
+
+    #[test]
+    fn point_scoring_does_not_disable_the_conflict_guard() {
+        // A lone PVS1 now reaches LP on the pathogenic side, so the guard that
+        // sends definite-vs-definite to VUS has to keep working over it.
+        let criteria = vec![
+            met("PVS1", EvidenceDirection::Pathogenic, EvidenceStrength::VeryStrong),
+            met("BA1", EvidenceDirection::Benign, EvidenceStrength::Standalone),
+        ];
+        let (cls, rule) = points_of(&criteria);
+        assert_eq!(cls, AcmgClassification::UncertainSignificance);
+        assert!(rule.unwrap_or_default().contains("Conflicting"));
+    }
+
+    #[test]
+    fn graded_subcodes_score_at_their_effective_strength() {
+        // PVS1_Moderate is 2 points, not 8 — the grading has to reach the sum.
+        let criteria = vec![
+            met("PVS1_Moderate", EvidenceDirection::Pathogenic, EvidenceStrength::Moderate),
+            met("PM2_Supporting", EvidenceDirection::Pathogenic, EvidenceStrength::Supporting),
+        ];
+        assert_eq!(points_of(&criteria).0, AcmgClassification::UncertainSignificance);
     }
 }

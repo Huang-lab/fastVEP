@@ -1,22 +1,22 @@
 use fastvep_core::Strand;
 use fastvep_genome::Transcript;
 
-/// Splice site boundaries relative to the exon-intron junction.
-///
-/// Donor site (5' end of intron on forward strand):
-///   exon ...XY | GT...  intron
-///   splice_donor: positions 1-2 into intron (GT)
-///   splice_donor_5th_base: position 5 into intron
-///   splice_donor_region: positions 3-6 into intron
-///   splice_region (exonic side): 3 bases into exon from boundary
-///   splice_region (intronic side): 3-8 bases into intron
-///
-/// Acceptor site (3' end of intron on forward strand):
-///   intron  ...AG | XY...  exon
-///   splice_acceptor: last 2 bases of intron (AG)
-///   splice_polypyrimidine: 3-17 bases from end of intron
-///   splice_region (exonic side): 1-3 bases into exon
-///   splice_region (intronic side): 3-8 bases into intron
+// Splice site boundaries relative to the exon-intron junction.
+//
+// Donor site (5' end of intron on forward strand):
+//   exon ...XY | GT...  intron
+//   splice_donor: positions 1-2 into intron (GT)
+//   splice_donor_5th_base: position 5 into intron
+//   splice_donor_region: positions 3-6 into intron
+//   splice_region (exonic side): 3 bases into exon from boundary
+//   splice_region (intronic side): 3-8 bases into intron
+//
+// Acceptor site (3' end of intron on forward strand):
+//   intron  ...AG | XY...  exon
+//   splice_acceptor: last 2 bases of intron (AG)
+//   splice_polypyrimidine: 3-17 bases from end of intron
+//   splice_region (exonic side): 1-3 bases into exon
+//   splice_region (intronic side): 3-8 bases into intron
 
 /// Check if a genomic position is in a splice donor site (first 2 intronic bases at 5' of intron).
 pub fn is_splice_donor(transcript: &Transcript, genomic_pos: u64) -> bool {
@@ -119,7 +119,7 @@ pub fn is_splice_region(transcript: &Transcript, genomic_pos: u64) -> bool {
         } else {
             u64::MAX
         };
-        if donor_dist >= 2 && donor_dist <= 7 {
+        if (2..=7).contains(&donor_dist) {
             return true;
         }
 
@@ -133,22 +133,18 @@ pub fn is_splice_region(transcript: &Transcript, genomic_pos: u64) -> bool {
         } else {
             u64::MAX
         };
-        if acceptor_dist >= 2 && acceptor_dist <= 7 {
+        if (2..=7).contains(&acceptor_dist) {
             return true;
         }
 
         // Exonic splice region: 1-3 bases at exon boundaries adjacent to this intron
         // Donor-side exon boundary
-        let donor_exon = if transcript.strand == Strand::Forward {
-            sorted_exons[i]
-        } else {
-            sorted_exons[i]  // for reverse, sorted[i] is the upstream exon in transcript
-        };
-        let acceptor_exon = if transcript.strand == Strand::Forward {
-            sorted_exons[i + 1]
-        } else {
-            sorted_exons[i + 1]
-        };
+        // `sorted_exons` is in genomic order, so the exon on each side of the
+        // intron is the same regardless of strand; only the transcript-relative
+        // name (donor vs acceptor) differs, and the match on `strand` below is
+        // what applies that distinction.
+        let donor_exon = sorted_exons[i];
+        let acceptor_exon = sorted_exons[i + 1];
 
         // Exonic: 3 bases at donor-side exon boundary (toward intron)
         match transcript.strand {
@@ -271,7 +267,7 @@ fn sorted_exons(transcript: &Transcript) -> Vec<&fastvep_genome::Exon> {
     let mut exons: Vec<&fastvep_genome::Exon> = transcript.exons.iter().collect();
     match transcript.strand {
         Strand::Forward => exons.sort_by_key(|e| e.start),
-        Strand::Reverse => exons.sort_by(|a, b| b.start.cmp(&a.start)),
+        Strand::Reverse => exons.sort_by_key(|e| std::cmp::Reverse(e.start)),
     }
     exons
 }

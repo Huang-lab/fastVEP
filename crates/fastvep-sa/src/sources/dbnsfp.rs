@@ -187,10 +187,8 @@ impl DbNsfpColumns {
 
     fn max_idx(&self) -> usize {
         let mut m = self.alt;
-        for opt in [self.sift_score, self.sift_pred, self.polyphen_score, self.polyphen_pred] {
-            if let Some(i) = opt {
-                m = m.max(i);
-            }
+        for i in [self.sift_score, self.sift_pred, self.polyphen_score, self.polyphen_pred].into_iter().flatten() {
+            m = m.max(i);
         }
         m
     }

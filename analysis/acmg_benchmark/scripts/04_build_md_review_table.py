@@ -216,6 +216,37 @@ def vep_pos_ref_alt(pos: str, ref: str, alt: str) -> tuple[str, str, str]:
     return str(int(pos) + i), nr, na
 
 
+
+def variant_label(chrom: str, pos: str, ref: str, alt: str, clnhgvs: str) -> str:
+    """A human-readable identifier for the row.
+
+    Prefers ClinVar's own genomic HGVS, which names the change unambiguously.
+    Falls back to `chr:pos ref>alt` when the record has no CLNHGVS.
+
+    This column exists because of a question the round-2 reviewer asked of the
+    previous export: "does dot mean del?". It did not. `ALT=.` is ClinVar's
+    reference-agreement record - an assertion that the submitted sample matched
+    the reference at this position, carrying no alternate allele at all - and
+    passing that through into a column headed `alt` invited exactly the reading
+    she gave it. The raw `ref`/`alt` columns are still emitted verbatim, because
+    they are the join key back to the VCF, but nobody has to interpret them.
+    """
+    if clnhgvs:
+        return clnhgvs
+    return f"chr{chrom}:{pos} {ref}>{alt}"
+
+
+def alt_is_reference_agreement(alt: str) -> bool:
+    """True for ClinVar reference-agreement records (`ALT=.`).
+
+    These are not deletions and not variants. fastVEP skips them outright
+    since the C1 fix, so one reaching this table means something upstream
+    regressed - which is worth saying in the row rather than leaving to be
+    puzzled over.
+    """
+    return alt.strip() in (".", "")
+
+
 def parse_info_field(info: str, key: str) -> str:
     """Pull `key=...` value from a VCF INFO column. Empty if absent."""
     prefix = key + "="
@@ -448,7 +479,7 @@ def main() -> None:
     header = (
         ["priority_score"]
         + ["previously_reviewed", "prior_reviewer_note"]
-        + ["chrom", "pos", "ref", "alt", "gene", "stars"]
+        + ["chrom", "pos", "ref", "alt", "variant", "gene", "stars"]
         + ["truth_class", "fastvep_class", "n_criteria_met", "fastvep_met_criteria"]
         + ["consequence_top"]
         + [f"clinvar_{k}" for k in CLINVAR_FIELDS]
@@ -469,12 +500,21 @@ def main() -> None:
         # the collapsed side.
         v_pos, v_ref, v_alt = vep_pos_ref_alt(r["pos"], r["ref"], r["alt"])
         scores = json_idx.get((r["chrom"], v_pos, v_ref, v_alt), {})
-        review_q = (
-            f"Why does fastVEP call {r['predicted']} when ClinVar "
-            f"({r['stars']}-star) says {r['truth']}? "
-            f"Inspect: {fv.get('HGVSp') or fv.get('HGVSc') or 'no HGVS'}; "
-            f"criteria fired = {r['met_criteria'] or '(none)'}"
-        )
+        clnhgvs = cv.get("CLNHGVS", "")
+        if alt_is_reference_agreement(r["alt"]):
+            review_q = (
+                f"ALT is '.', a ClinVar reference-agreement record rather than a "
+                f"variant, so there is nothing here to classify. fastVEP should have "
+                f"skipped it; its appearance in this table is a bug to report, not a "
+                f"call to review. Record: {clnhgvs or 'no CLNHGVS'}"
+            )
+        else:
+            review_q = (
+                f"Why does fastVEP call {r['predicted']} when ClinVar "
+                f"({r['stars']}-star) says {r['truth']}? "
+                f"Inspect: {fv.get('HGVSp') or fv.get('HGVSc') or clnhgvs or 'no HGVS'}; "
+                f"criteria fired = {r['met_criteria'] or '(none)'}"
+            )
         prior_seen = key in prior_keys
         out_rows.append({
             "priority_score": score,
@@ -483,6 +523,7 @@ def main() -> None:
             "prior_reviewer_note": prior_notes.get(key, ""),
             "chrom": r["chrom"], "pos": r["pos"],
             "ref": r["ref"], "alt": r["alt"],
+            "variant": variant_label(r["chrom"], r["pos"], r["ref"], r["alt"], clnhgvs),
             "gene": r["gene"], "stars": r["stars"],
             "truth_class": r["truth"],
             "fastvep_class": r["predicted"],

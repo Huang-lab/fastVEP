@@ -6,7 +6,7 @@
 # After this script finishes, run the per-source build helpers in this
 # directory:
 #   - fastvep sa-build --source clinvar ...          (clinvar.osa)
-#   - fastvep sa-build --source clinvar_protein ...  (clinvar_protein.oga)
+#   - fastvep sa-build --source clinvar_protein ...  (clinvar_protein.oga; use variant_summary.txt.gz)
 #   - fastvep sa-build --source gnomad_gene ...      (gnomad_genes.oga)
 #   - fastvep sa-build --source revel ...            (per-chrom revel_chrN.osa)
 #   - build_gnomad_per_chrom.sh                      (per-chrom gnomad_chrN.osa)
@@ -18,6 +18,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+
+# Downloads land in the data tree, never beside the script. This file is
+# tracked; the ~30 GB it fetches must not be.
+DEST="${DEST:-$ROOT/data/benchmark/sa_sources}"
 
 # FORCE=1 re-downloads every file even if a valid copy already exists.
 FORCE="${FORCE:-0}"
@@ -73,12 +78,16 @@ download() {
     fi
 }
 
-cd "$SCRIPT_DIR"
+mkdir -p "$DEST"
+cd "$DEST"
+echo "Downloading into $DEST"
 
 echo "== ClinVar =="
 # ClinVar variant VCF on GRCh38 — drives clinvar.osa (per-allele clinical significance)
 download "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz"          "clinvar.vcf.gz"
-# ClinVar variant_summary.txt.gz — drives clinvar_protein.oga (per-protein-position pathogenic catalog for PS1/PM1/PM5)
+# ClinVar variant_summary.txt.gz - drives clinvar_protein.oga, which carries two indices:
+# classified missense by protein position (PS1 missense path, PM1, PM5) and canonical
+# splice-dinucleotide variants by genomic position (PS1 splice path, Walker 2023).
 download "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz" "variant_summary.txt.gz"
 
 echo ""
@@ -97,6 +106,15 @@ download "https://rothsj06.dmz.hpc.mssm.edu/revel-v1.3_all_chromosomes.zip" \
     "revel-v1.3_all_chromosomes.zip"
 
 echo ""
+echo "== RepeatMasker (UCSC) =="
+# Drives BP3, "in-frame deletions/insertions in a repetitive region". Convert
+# with repeatmasker_to_bed.py, then build as custom_bed --name repeatmasker;
+# the name matters, because the classifier finds the track by looking for a key
+# containing "repeat".
+download "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/rmsk.txt.gz" \
+    "rmsk.txt.gz"
+
+echo ""
 echo "== ClinGen Gene-Disease Validity =="
 # Used as PVS1 disease-gene fallback (preferred over OMIM per Abou Tayoun 2018).
 # Note: returns a redirect to a presigned S3 URL; the CSV is hand-saved as
@@ -106,11 +124,17 @@ download "https://search.clinicalgenome.org/kb/gene-validity/download" \
 
 echo ""
 echo -e "${GREEN}Done.${NC} Next steps:"
-echo "  1) Build clinvar/clinvar_protein/revel/gnomad_genes .osa/.oga via:"
+echo "  1) Build clinvar/revel/gnomad_genes .osa/.oga via:"
 echo "       fastvep sa-build --source <name> -i <path> -o <prefix>"
+echo "  1b) ClinVar gene index (PS1 protein + splice paths, PM1, PM5) - note the input:"
+echo "       fastvep sa-build --source clinvar_protein -i $DEST/variant_summary.txt.gz -o $ROOT/data/benchmark/sa_db/clinvar_protein"
+echo "      clinvar.vcf.gz also parses but carries no HGVS c. token, so it yields no splice index."
 echo "  2) Per-chrom gnomAD exomes:  bash $SCRIPT_DIR/build_gnomad_per_chrom.sh"
 echo "  3) SpliceAI + PhyloP (distilled from gnomAD):"
 echo "       bash $SCRIPT_DIR/build_spliceai_phylop.sh"
-echo "  4) ClinGen GDV -> omim.oga:"
-echo "       python3 $SCRIPT_DIR/clingen_gdv_to_oga.py < clingen_gene_validity.csv > clingen_gdv.tsv"
-echo "       fastvep sa-build --source omim -i clingen_gdv.tsv -o ../sa_db/omim"
+echo "  4) RepeatMasker -> repeatmasker.osi (BP3):"
+echo "       python3 $SCRIPT_DIR/repeatmasker_to_bed.py $DEST/rmsk.txt.gz > $DEST/repeatmasker.bed"
+echo "       fastvep sa-build --source custom_bed --name repeatmasker -i $DEST/repeatmasker.bed -o $ROOT/data/benchmark/sa_db/repeatmasker"
+echo "  5) ClinGen GDV -> omim.oga:"
+echo "       python3 $SCRIPT_DIR/clingen_gdv_to_oga.py < $DEST/clingen_gene_validity.csv > $DEST/clingen_gdv.tsv"
+echo "       fastvep sa-build --source omim -i $DEST/clingen_gdv.tsv -o $ROOT/data/benchmark/sa_db/omim"

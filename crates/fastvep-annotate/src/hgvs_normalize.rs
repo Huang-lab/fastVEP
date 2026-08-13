@@ -173,6 +173,10 @@ pub fn convert_ins_to_dup_noncoding(
 /// the position must be shifted toward the 3' end of the transcript.
 ///
 /// Returns the shifted genomic start and end positions.
+// Each argument is an independent coordinate, allele or flag with no
+// natural grouping; bundling them into a struct would only move the
+// argument list to the call site.
+#[allow(clippy::too_many_arguments)]
 pub fn three_prime_shift_intronic(
     seq_provider: &dyn SequenceProvider,
     chrom: &str,

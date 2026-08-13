@@ -14,6 +14,9 @@ use crate::predictor::{AlleleConsequenceResult, TranscriptConsequence};
 /// The SV is defined by its genomic coordinates [start, end] and variant type.
 /// For each transcript that overlaps, determines whether the SV causes
 /// ablation, amplification, or partial disruption.
+// Each argument is an independent coordinate or flag with no natural
+// grouping; bundling them would only move the list to the call site.
+#[allow(clippy::too_many_arguments)]
 pub fn predict_sv_consequences(
     chrom: &str,
     start: u64,
@@ -85,19 +88,13 @@ fn predict_sv_for_transcript(
             (downstream_distance, upstream_distance)
         };
 
+        // The gap to the transcript is a genomic distance and so is the same on
+        // either strand. Whether it reads as upstream or downstream is decided
+        // by the (upstream_distance, downstream_distance) swap above.
         let distance = if sv_end < tx_start {
-            // SV is before transcript
-            if transcript.strand == Strand::Forward {
-                Some(tx_start as i64 - sv_end as i64) // upstream
-            } else {
-                Some(tx_start as i64 - sv_end as i64) // downstream on reverse
-            }
+            Some(tx_start as i64 - sv_end as i64)
         } else if sv_start > tx_end {
-            if transcript.strand == Strand::Forward {
-                Some(sv_start as i64 - tx_end as i64) // downstream
-            } else {
-                Some(sv_start as i64 - tx_end as i64) // upstream on reverse
-            }
+            Some(sv_start as i64 - tx_end as i64)
         } else {
             None
         };
@@ -148,6 +145,8 @@ fn predict_sv_for_transcript(
             exon: None,
             intron: None,
             distance,
+            protein_length: None,
+            escapes_nmd: None,
         };
     }
 
@@ -182,6 +181,10 @@ fn predict_sv_for_transcript(
         exon: None,
         intron: None,
         distance: None,
+        // A structural variant has no single position for the 50-nt rule to
+        // measure, and PVS1's whole-gene-deletion track does not consult it.
+        protein_length: transcript.peptide_length(),
+        escapes_nmd: None,
     }
 }
 
@@ -276,11 +279,11 @@ fn hits_coding_region(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bo
 fn hits_splice_site(sv_start: u64, sv_end: u64, transcript: &Transcript) -> bool {
     for exon in &transcript.exons {
         // Donor site: 2bp after exon end (exon.end+1, exon.end+2)
-        if sv_start <= exon.end + 2 && sv_end >= exon.end + 1 {
+        if sv_start <= exon.end + 2 && sv_end > exon.end {
             return true;
         }
         // Acceptor site: 2bp before exon start (exon.start-2, exon.start-1)
-        if exon.start >= 3 && sv_start <= exon.start - 1 && sv_end >= exon.start - 2 {
+        if exon.start >= 3 && sv_start < exon.start && sv_end >= exon.start - 2 {
             return true;
         }
     }

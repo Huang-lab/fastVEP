@@ -1,20 +1,126 @@
-//! ClinVar protein-position index builder for .oga files.
+//! ClinVar gene-level evidence index builder for .oga files.
 //!
-//! Parses ClinVar VCF to extract protein-level data for pathogenic/likely-pathogenic
-//! missense variants, enabling PS1, PM5, and PM1 (hotspot) ACMG criteria evaluation.
+//! Two indices per gene, both read out of the same ClinVar pass:
+//!
+//! - **`proteinVariants`**, keyed by protein position, feeding PS1's missense
+//!   path, PM5 and PM1's hotspot count.
+//! - **`splicePositions`**, keyed by genomic position, feeding PS1's splice
+//!   path (Walker 2023, PMID 37352859).
+//!
+//! Both directions of assertion are indexed on the protein side. The pathogenic
+//! entries are what PS1, PM5 and PM1's hotspot count read. The benign ones exist
+//! for the second half of PM1's own definition - Richards 2015 asks for a
+//! hotspot or critical domain "**without benign variation**" - which cannot be
+//! tested from an index that only ever recorded one direction. `benignIndexed`
+//! marks a file built this way, so a classifier reading an older index can tell
+//! "no benign variation here" apart from "this file never carried any", and
+//! `spliceIndexed` does the same job for the splice pass.
+//!
+//! The source name is historical: the file is still `clinvar_protein.oga` so
+//! that existing databases and `--sa-dir` layouts keep working.
 
 use crate::common::{escape_json, GeneRecord};
 use anyhow::{Context, Result};
+use fastvep_core::{is_canonical_dinucleotide_offset, parse_intronic_offset};
 use std::collections::HashMap;
 use std::io::BufRead;
 
-/// A pathogenic missense variant at a specific protein position.
+/// How ClinVar classifies a missense variant, reduced to the four terms the
+/// index carries. Conflicting and uncertain records are not indexed at all:
+/// they are evidence of disagreement, not of either direction.
+fn normalise_significance(clnsig_lower: &str) -> Option<&'static str> {
+    if clnsig_lower.contains("conflicting") {
+        return None;
+    }
+    let pathogenic = clnsig_lower.contains("pathogenic");
+    let benign = clnsig_lower.contains("benign");
+    // "Likely_pathogenic" contains neither "benign" nor a conflict marker, but
+    // a term asserting both directions at once is not usable evidence.
+    match (pathogenic, benign) {
+        (true, false) if clnsig_lower.contains("likely") => Some("Likely_pathogenic"),
+        (true, false) => Some("Pathogenic"),
+        (false, true) if clnsig_lower.contains("likely") => Some("Likely_benign"),
+        (false, true) => Some("Benign"),
+        _ => None,
+    }
+}
+
+/// Sentinel used while deduplicating, never written to disk: marks a residue
+/// substitution that ClinVar asserts in both directions.
+const CONFLICTED: &str = "";
+
+/// Whether an indexed significance term is a benign assertion. The four terms
+/// the index carries are closed, so this is a total function over them.
+fn is_benign(sig: &str) -> bool {
+    sig.eq_ignore_ascii_case("Benign") || sig.eq_ignore_ascii_case("Likely_benign")
+}
+
+/// A classified missense variant at a specific protein position.
 #[derive(Debug, Clone)]
 struct ProteinVariant {
     pos: u64,
     ref_aa: String,
     alt_aa: String,
     sig: String,
+    /// The nucleotide-level change that produced this amino-acid change, e.g.
+    /// `c.5074G>C`. Several distinct nucleotide changes can produce the same
+    /// residue substitution, and PS1 is defined precisely on that distinction
+    /// ("same amino acid change ... regardless of the nucleotide change").
+    /// Empty when the source did not expose a c. token.
+    cdna: String,
+}
+
+/// A classified ClinVar variant sitting on a canonical splice dinucleotide.
+#[derive(Debug, Clone)]
+struct SpliceVariant {
+    /// 1-based genomic position on the build the index was made for.
+    pos: u64,
+    ref_allele: String,
+    alt: String,
+    /// Signed intronic offset, one of `+1`, `+2`, `-1`, `-2`.
+    off: i64,
+    sig: String,
+}
+
+/// Serialize one gene's splice-site variants, deduplicated by allele and sorted
+/// by position so the `.oga` bytes are reproducible.
+///
+/// A `Pathogenic` assertion wins over a `Likely_pathogenic` one for the same
+/// allele: `variant_summary` lists an allele once per assembly and can carry
+/// per-assembly differences, and PS1's splice path only reads `Pathogenic`, so
+/// collapsing to the stronger term keeps the two rows from disagreeing.
+fn serialize_splice_variants(variants: &[SpliceVariant]) -> String {
+    let mut unique: HashMap<(u64, String, String), SpliceVariant> = HashMap::new();
+    for v in variants {
+        let key = (v.pos, v.ref_allele.clone(), v.alt.clone());
+        match unique.get(&key) {
+            Some(existing) if existing.sig == "Pathogenic" => {}
+            _ => {
+                unique.insert(key, v.clone());
+            }
+        }
+    }
+    let mut unique: Vec<SpliceVariant> = unique.into_values().collect();
+    unique.sort_by(|a, b| {
+        a.pos
+            .cmp(&b.pos)
+            .then(a.ref_allele.cmp(&b.ref_allele))
+            .then(a.alt.cmp(&b.alt))
+    });
+    unique
+        .iter()
+        .map(|v| {
+            format!(
+                r#"{{"pos":{},"ref":"{}","alt":"{}","off":{},"sig":"{}"}}"#,
+                v.pos,
+                escape_json(&v.ref_allele),
+                escape_json(&v.alt),
+                v.off,
+                escape_json(&v.sig)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Serialize one gene's protein variants into a `GeneRecord`.
@@ -24,13 +130,36 @@ struct ProteinVariant {
 /// array order (and thus the on-disk `.oga` bytes) would vary run-to-run for
 /// identical input, breaking build reproducibility/diffing. Shared by both the
 /// VCF and variant_summary parse paths so the two stay byte-for-byte identical.
-fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecord {
-    let mut unique: HashMap<(u64, String, String), String> = HashMap::new();
+///
+/// Each entry also carries `n`, the number of *distinct nucleotide changes*
+/// that produce this amino-acid change. PS1 needs it: an entry with `n = 1`
+/// backed only by the variant being classified is that variant's own record,
+/// not independent evidence, and firing PS1 off it is circular. `n` is omitted
+/// when it is 1 so older `.oga` files (which default it to 1) stay compatible.
+fn serialize_gene_record(
+    gene: String,
+    variants: &[ProteinVariant],
+    splice: Option<(&str, &[SpliceVariant])>,
+) -> GeneRecord {
+    use std::collections::BTreeSet;
+    let mut unique: HashMap<(u64, String, String), (String, BTreeSet<String>)> = HashMap::new();
     for v in variants {
-        unique
+        let e = unique
             .entry((v.pos, v.ref_aa.clone(), v.alt_aa.clone()))
-            .or_insert_with(|| v.sig.clone());
+            .or_insert_with(|| (v.sig.clone(), BTreeSet::new()));
+        // Distinct alleles producing the same residue substitution can carry
+        // assertions in opposite directions. That is a conflict at the level
+        // this index is keyed on, so it is dropped for the same reason a
+        // `Conflicting_interpretations` record is: it supports neither side.
+        // Marked rather than removed here so a later record cannot resurrect it.
+        if is_benign(&e.0) != is_benign(&v.sig) {
+            e.0 = CONFLICTED.to_string();
+        }
+        if !v.cdna.is_empty() {
+            e.1.insert(v.cdna.clone());
+        }
     }
+    unique.retain(|_, (sig, _)| sig != CONFLICTED);
 
     let mut unique: Vec<_> = unique.into_iter().collect();
     unique.sort_by(|((pos_a, ref_a, alt_a), _), ((pos_b, ref_b, alt_b), _)| {
@@ -39,23 +168,42 @@ fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecor
 
     let variant_jsons: Vec<String> = unique
         .iter()
-        .map(|((pos, ref_aa, alt_aa), sig)| {
+        .map(|((pos, ref_aa, alt_aa), (sig, cdnas))| {
+            let n = cdnas.len().max(1);
+            let n_field = if n > 1 { format!(r#","n":{}"#, n) } else { String::new() };
             format!(
-                r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"}}"#,
-                pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig)
+                r#"{{"pos":{},"refAa":"{}","altAa":"{}","sig":"{}"{}}}"#,
+                pos, escape_json(ref_aa), escape_json(alt_aa), escape_json(sig), n_field
             )
         })
         .collect();
 
+    // The splice fields are omitted entirely, rather than emitted empty, when
+    // the source could not supply them. That is what makes `spliceIndexed`
+    // three-state on the reading side, and it keeps a VCF-built `.oga`
+    // byte-identical to what this builder produced before the splice pass.
+    let splice_json = match splice {
+        Some((assembly, rows)) => format!(
+            r#","spliceIndexed":true,"spliceAssembly":"{}","splicePositions":[{}]"#,
+            escape_json(assembly),
+            serialize_splice_variants(rows)
+        ),
+        None => String::new(),
+    };
+
     GeneRecord {
         gene_symbol: gene,
-        json: format!(r#"{{"proteinVariants":[{}]}}"#, variant_jsons.join(",")),
+        json: format!(
+            r#"{{"benignIndexed":true,"proteinVariants":[{}]{}}}"#,
+            variant_jsons.join(","),
+            splice_json
+        ),
     }
 }
 
 /// Parse a ClinVar source (VCF or variant_summary.txt.gz) and produce
-/// gene-level records of pathogenic/likely-pathogenic missense variants
-/// indexed by protein position. Auto-detects format from the header line:
+/// gene-level records of classified missense variants indexed by protein
+/// position. Auto-detects format from the header line:
 ///
 /// - **VCF (`clinvar.vcf.gz`)**: header begins with `#`. Per-record protein
 ///   change is rarely available in the VCF (ClinVar's MC field is just an SO
@@ -66,9 +214,14 @@ fn serialize_gene_record(gene: String, variants: &[ProteinVariant]) -> GeneRecor
 ///   `NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)`. Protein changes are
 ///   extracted from the parenthesised `p.` block.
 ///
-/// Output JSON per gene:
-/// `{"proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"Pathogenic"}, ...]}`
-pub fn parse_clinvar_protein_vcf<R: BufRead>(reader: R) -> Result<Vec<GeneRecord>> {
+/// Output JSON per gene (the splice fields only on the variant_summary path):
+/// ```text
+/// {"benignIndexed":true,
+///  "proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"Pathogenic"}, ...],
+///  "spliceIndexed":true,"spliceAssembly":"GRCh38",
+///  "splicePositions":[{"pos":7675237,"ref":"C","alt":"T","off":-1,"sig":"Pathogenic"}, ...]}
+/// ```
+pub fn parse_clinvar_protein_vcf<R: BufRead>(reader: R, assembly: &str) -> Result<Vec<GeneRecord>> {
     // Buffer the first line to detect format. Both formats start with `#`,
     // but the variant_summary header begins with `#AlleleID\t...`.
     let mut iter = reader.lines();
@@ -77,7 +230,7 @@ pub fn parse_clinvar_protein_vcf<R: BufRead>(reader: R) -> Result<Vec<GeneRecord
         None => return Ok(Vec::new()),
     };
     if first.starts_with("#AlleleID") || first.contains("\tName\t") {
-        return parse_variant_summary_inner(first, iter);
+        return parse_variant_summary_inner(first, iter, assembly);
     }
     // Otherwise treat as VCF — re-prepend the buffered first line.
     let chained = std::iter::once(Ok(first)).chain(iter);
@@ -88,7 +241,7 @@ fn parse_clinvar_vcf_inner<I>(lines: I) -> Result<Vec<GeneRecord>>
 where
     I: Iterator<Item = std::io::Result<String>>,
 {
-    // Collect pathogenic missense variants per gene
+    // Collect classified missense variants per gene, both directions.
     let mut gene_variants: HashMap<String, Vec<ProteinVariant>> = HashMap::new();
 
     for line in lines {
@@ -105,14 +258,13 @@ where
         let info = fields[7];
         let info_map = parse_info(info);
 
-        // Only process pathogenic/likely-pathogenic variants
         let clnsig = match info_map.get("CLNSIG") {
             Some(sig) => sig.to_lowercase(),
             None => continue,
         };
-        if !clnsig.contains("pathogenic") || clnsig.contains("conflicting") {
+        let Some(sig_clean) = normalise_significance(&clnsig) else {
             continue;
-        }
+        };
 
         // Check molecular consequence for missense
         let mc = info_map.get("MC").map(|s| s.as_str()).unwrap_or("");
@@ -162,12 +314,7 @@ where
         }
 
         if let Some(pv) = protein_variant {
-            let sig_clean = if clnsig.contains("likely") {
-                "Likely_pathogenic".to_string()
-            } else {
-                "Pathogenic".to_string()
-            };
-
+            let sig_clean = sig_clean.to_string();
             gene_variants
                 .entry(gene_symbol)
                 .or_default()
@@ -176,14 +323,20 @@ where
                     ref_aa: pv.1,
                     alt_aa: pv.2,
                     sig: sig_clean,
+                    // The VCF path has no c. token (CLNHGVS is genomic), so
+                    // distinct nucleotide changes cannot be counted here.
+                    // variant_summary is the preferred source and does carry it.
+                    cdna: String::new(),
                 });
         }
     }
 
-    // Convert to GeneRecords
+    // Convert to GeneRecords. The VCF carries no `c.` token (CLNHGVS is
+    // genomic), so a canonical splice offset cannot be read off it and the
+    // splice index is left unbuilt rather than built empty.
     let mut records: Vec<GeneRecord> = gene_variants
         .into_iter()
-        .map(|(gene, variants)| serialize_gene_record(gene, &variants))
+        .map(|(gene, variants)| serialize_gene_record(gene, &variants, None))
         .collect();
 
     records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
@@ -198,8 +351,11 @@ where
 ///  - col 5: `GeneSymbol`
 ///  - col 7: `ClinicalSignificance`
 ///  - col 25: `ReviewStatus`
-///  - col 26: `Assembly` (we keep all rows; protein change is independent of build)
-fn parse_variant_summary_inner<I>(header: String, lines: I) -> Result<Vec<GeneRecord>>
+///  - col 26: `Assembly` - protein change is independent of build, so all rows
+///    feed the protein index; genomic splice positions are not, so only rows on
+///    the requested build feed the splice index
+///  - `PositionVCF`, `ReferenceAlleleVCF`, `AlternateAlleleVCF` - splice index only
+fn parse_variant_summary_inner<I>(header: String, lines: I, assembly: &str) -> Result<Vec<GeneRecord>>
 where
     I: Iterator<Item = std::io::Result<String>>,
 {
@@ -209,7 +365,22 @@ where
     let i_gene = find("GeneSymbol").context("variant_summary missing GeneSymbol column")?;
     let i_sig = find("ClinicalSignificance").context("variant_summary missing ClinicalSignificance column")?;
 
+    // The four columns the splice index needs. All optional: a `variant_summary`
+    // predating any of them still builds a usable protein index, and the splice
+    // index is then reported as absent rather than as empty.
+    let splice_cols = (
+        find("Assembly"),
+        find("PositionVCF"),
+        find("ReferenceAlleleVCF"),
+        find("AlternateAlleleVCF"),
+    );
+    let splice_cols = match splice_cols {
+        (Some(a), Some(p), Some(r), Some(alt)) => Some((a, p, r, alt)),
+        _ => None,
+    };
+
     let mut gene_variants: HashMap<String, Vec<ProteinVariant>> = HashMap::new();
+    let mut gene_splice: HashMap<String, Vec<SpliceVariant>> = HashMap::new();
     for line in lines {
         let line = line.context("Reading variant_summary line")?;
         if line.starts_with('#') || line.is_empty() {
@@ -220,25 +391,36 @@ where
             continue;
         }
         let sig = cols[i_sig].to_lowercase();
-        if !sig.contains("pathogenic") || sig.contains("conflicting") {
+        let Some(sig_clean) = normalise_significance(&sig) else {
             continue;
-        }
+        };
         let gene = cols[i_gene].trim();
         if gene.is_empty() || gene == "-" {
             continue;
         }
         let name = cols[i_name];
+
+        // Splice pass, before the missense filter: a canonical splice variant
+        // has no residue substitution to index, so it would otherwise be
+        // dropped by the `p.` check below.
+        if let Some(sv) = parse_splice_variant(name, sig_clean, &cols, splice_cols, assembly) {
+            for g in gene.split(';').map(str::trim).filter(|g| !g.is_empty()) {
+                gene_splice.entry(g.to_string()).or_default().push(sv.clone());
+            }
+        }
+
         // Extract the parenthesised "p." block from the Name column.
         let pv = match parse_protein_from_summary_name(name) {
             Some(pv) => pv,
             None => continue,
         };
 
-        let sig_clean = if sig.contains("likely") {
-            "Likely_pathogenic".to_string()
-        } else {
-            "Pathogenic".to_string()
-        };
+        let sig_clean = sig_clean.to_string();
+        // The nucleotide change, e.g. `c.5074G>C` from
+        // `NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)`. variant_summary lists
+        // one row per assembly, so deduping on this also collapses the
+        // GRCh37/GRCh38 duplicate rows for the same allele.
+        let cdna = extract_cdna_token(name);
 
         // GeneSymbol may be a semicolon-delimited list; split and emit per gene.
         for g in gene.split(';').map(str::trim).filter(|g| !g.is_empty()) {
@@ -250,16 +432,88 @@ where
                     ref_aa: pv.1.clone(),
                     alt_aa: pv.2.clone(),
                     sig: sig_clean.clone(),
+                    cdna: cdna.clone(),
                 });
         }
     }
 
-    let mut records: Vec<GeneRecord> = gene_variants
+    // Union of both key sets: a gene can have canonical splice variants and no
+    // classified missense (or the reverse), and either way it needs a record.
+    let mut genes: Vec<String> = gene_variants.keys().cloned().collect();
+    genes.extend(gene_splice.keys().filter(|g| !gene_variants.contains_key(*g)).cloned());
+    genes.sort();
+
+    let empty_protein: Vec<ProteinVariant> = Vec::new();
+    let empty_splice: Vec<SpliceVariant> = Vec::new();
+    let records: Vec<GeneRecord> = genes
         .into_iter()
-        .map(|(gene, variants)| serialize_gene_record(gene, &variants))
+        .map(|gene| {
+            let protein = gene_variants.get(&gene).unwrap_or(&empty_protein);
+            let splice = splice_cols
+                .is_some()
+                .then(|| (assembly, gene_splice.get(&gene).unwrap_or(&empty_splice).as_slice()));
+            serialize_gene_record(gene.clone(), protein, splice)
+        })
         .collect();
-    records.sort_by(|a, b| a.gene_symbol.cmp(&b.gene_symbol));
     Ok(records)
+}
+
+/// Read a canonical splice-site variant off one `variant_summary` row.
+///
+/// Returns `None` unless the row is a `(Likely) Pathogenic` variant on
+/// `assembly` whose `c.` token puts it on a `±1`/`±2` splice
+/// dinucleotide. Likely-pathogenic rows are indexed even though PS1's splice
+/// path only reads `Pathogenic` ones (Walker 2023 Table 3 rules an LP
+/// comparison variant out for a canonical-dinucleotide variant under
+/// assessment): the rows covering an LP comparison for *non*-canonical variants
+/// are a live extension, and rebuilding the index is the expensive part.
+fn parse_splice_variant(
+    name: &str,
+    sig: &str,
+    cols: &[&str],
+    splice_cols: Option<(usize, usize, usize, usize)>,
+    assembly: &str,
+) -> Option<SpliceVariant> {
+    let (i_assembly, i_pos, i_ref, i_alt) = splice_cols?;
+    if !sig.eq_ignore_ascii_case("Pathogenic") && !sig.eq_ignore_ascii_case("Likely_pathogenic") {
+        return None;
+    }
+    if cols.len() <= i_assembly.max(i_pos).max(i_ref).max(i_alt) {
+        return None;
+    }
+    if !cols[i_assembly].eq_ignore_ascii_case(assembly) {
+        return None;
+    }
+    let off = parse_intronic_offset(&extract_cdna_token(name))?;
+    if !is_canonical_dinucleotide_offset(off) {
+        return None;
+    }
+    let pos: u64 = cols[i_pos].parse().ok()?;
+    let (ref_allele, alt) = (cols[i_ref].trim(), cols[i_alt].trim());
+    // ClinVar writes `na` for alleles it cannot express in VCF form, which
+    // cannot be compared against a call's REF/ALT.
+    if ref_allele.is_empty() || alt.is_empty() || ref_allele == "na" || alt == "na" {
+        return None;
+    }
+    Some(SpliceVariant {
+        pos,
+        ref_allele: ref_allele.to_string(),
+        alt: alt.to_string(),
+        off,
+        sig: sig.to_string(),
+    })
+}
+
+/// Pull the `c.` token out of a variant_summary `Name` value like
+/// `NM_007294.4(BRCA1):c.5074G>C (p.Asp1692His)`. Returns an empty string when
+/// there is no `c.` token to key on.
+fn extract_cdna_token(name: &str) -> String {
+    let Some(idx) = name.find(":c.") else {
+        return String::new();
+    };
+    let rest = &name[idx + 1..];
+    let end = rest.find(' ').unwrap_or(rest.len());
+    rest[..end].to_string()
 }
 
 /// Pull a `(pos, ref, alt)` protein change from a Name string like
@@ -288,11 +542,8 @@ fn extract_protein_from_mc(mc_part: &str) -> Option<(u64, String, String)> {
 /// Parse a protein HGVS expression like "p.Arg175His" or "p.R175H"
 /// Returns (position, ref_aa, alt_aa) using single-letter codes.
 fn parse_protein_hgvs(hgvs: &str) -> Option<(u64, String, String)> {
-    let p_str = if let Some(idx) = hgvs.find("p.") {
-        &hgvs[idx + 2..]
-    } else {
-        return None;
-    };
+    let idx = hgvs.find("p.")?;
+    let p_str = &hgvs[idx + 2..];
 
     // Try three-letter codes first: "Arg175His"
     if let Some(result) = parse_three_letter_protein(p_str) {
@@ -450,9 +701,9 @@ mod tests {
 2\tsingle nucleotide variant\tNM_000546.6(TP53):c.524G>A (p.Arg175His)\t7157\tTP53\tHGNC:11998\tPathogenic\t1\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000017.11\t17\t7674220\t7674220\tG\tA\t17p13.1\tcriteria provided, multiple submitters, no conflicts\t5\t-\t-\t-\t1\t2\t7674220\tG\tA\t-\t-\t-\t-\t-\t-
 3\tsingle nucleotide variant\tNM_000218.3(KCNQ1):c.123C>T (p.=)\t3784\tKCNQ1\tHGNC:6294\tBenign\t0\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000011.10\t11\t1\t1\tC\tT\t11p15.5-p15.4\tcriteria provided, single submitter\t1\t-\t-\t-\t1\t3\t1\tC\tT\t-\t-\t-\t-\t-\t-
 ";
-        let records = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
-        // Two genes (BRCA1, TP53) — KCNQ1 entry is silent (p.=) and benign so
-        // both gates skip it.
+        let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        // Two genes (BRCA1, TP53) - the KCNQ1 entry is silent (`p.=`), so it
+        // has no residue substitution to index in either direction.
         assert_eq!(records.len(), 2);
         let brca1 = records.iter().find(|r| r.gene_symbol == "BRCA1").unwrap();
         assert!(brca1.json.contains("\"pos\":1692"));
@@ -479,8 +730,8 @@ mod tests {
         }
         let data = rows.join("\n") + "\n";
 
-        let first = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
-        let second = parse_clinvar_protein_vcf(data.as_bytes()).unwrap();
+        let first = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        let second = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
         assert_eq!(
             first[0].json, second[0].json,
             "identical input must produce byte-identical proteinVariants ordering across runs"
@@ -496,5 +747,201 @@ mod tests {
             "proteinVariants must be sorted by position: {}",
             tp53.json
         );
+    }
+
+    /// One variant_summary row, parameterised on the fields these tests vary.
+    fn summary_rows(rows: &[(&str, &str, &str)]) -> String {
+        let header = "#AlleleID\tType\tName\tGeneID\tGeneSymbol\tHGNC_ID\tClinicalSignificance\tClinSigSimple\tLastEvaluated\tRS# (dbSNP)\tnsv/esv (dbVar)\tRCVaccession\tPhenotypeIDS\tPhenotypeList\tOrigin\tOriginSimple\tAssembly\tChromosomeAccession\tChromosome\tStart\tStop\tReferenceAllele\tAlternateAllele\tCytogenetic\tReviewStatus\tNumberSubmitters\tGuidelines\tTestedInGTR\tOtherIDs\tSubmitterCategories\tVariationID\tPositionVCF\tReferenceAlleleVCF\tAlternateAlleleVCF\tSomaticClinicalImpact\tSomaticClinicalImpactLastEvaluated\tReviewStatusClinicalImpact\tOncogenicity\tOncogenicityLastEvaluated\tReviewStatusOncogenicity";
+        let mut out = vec![header.to_string()];
+        for (i, (cdna, protein, sig)) in rows.iter().enumerate() {
+            out.push(format!(
+                "{i}\tsingle nucleotide variant\tNM_000546.6(TP53):{cdna} ({protein})\t7157\tTP53\tHGNC:11998\t{sig}\t1\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\tGRCh38\tNC_000017.11\t17\t1\t1\tG\tA\t17p13.1\tcriteria provided, multiple submitters, no conflicts\t5\t-\t-\t-\t1\t{i}\t1\tG\tA\t-\t-\t-\t-\t-\t-"
+            ));
+        }
+        out.join("\n") + "\n"
+    }
+
+    #[test]
+    fn test_index_carries_both_directions() {
+        // PM1's "without benign variation" half cannot be tested from an index
+        // that only ever recorded pathogenic assertions.
+        let data = summary_rows(&[
+            ("c.524G>A", "p.Arg175His", "Pathogenic"),
+            ("c.733G>A", "p.Gly245Ser", "Likely pathogenic"),
+            ("c.404G>A", "p.Cys135Tyr", "Benign"),
+            ("c.817C>T", "p.Arg273Cys", "Likely benign"),
+        ]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        let tp53 = &records[0];
+        assert!(tp53.json.contains(r#""benignIndexed":true"#));
+        for sig in ["Pathogenic", "Likely_pathogenic", "Benign", "Likely_benign"] {
+            assert!(
+                tp53.json.contains(&format!(r#""sig":"{sig}""#)),
+                "missing {sig} in {}",
+                tp53.json
+            );
+        }
+    }
+
+    #[test]
+    fn test_index_drops_uncertain_and_conflicting_records() {
+        let data = summary_rows(&[
+            ("c.524G>A", "p.Arg175His", "Uncertain significance"),
+            ("c.733G>A", "p.Gly245Ser", "Conflicting classifications of pathogenicity"),
+        ]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        assert!(records.is_empty(), "got {records:?}");
+    }
+
+    /// One variant_summary row per (cdna, protein, significance, assembly,
+    /// position, ref, alt) - everything the splice pass reads.
+    fn splice_rows(rows: &[(&str, &str, &str, &str, &str, &str)]) -> String {
+        let header = "#AlleleID\tType\tName\tGeneID\tGeneSymbol\tHGNC_ID\tClinicalSignificance\tClinSigSimple\tLastEvaluated\tRS# (dbSNP)\tnsv/esv (dbVar)\tRCVaccession\tPhenotypeIDS\tPhenotypeList\tOrigin\tOriginSimple\tAssembly\tChromosomeAccession\tChromosome\tStart\tStop\tReferenceAllele\tAlternateAllele\tCytogenetic\tReviewStatus\tNumberSubmitters\tGuidelines\tTestedInGTR\tOtherIDs\tSubmitterCategories\tVariationID\tPositionVCF\tReferenceAlleleVCF\tAlternateAlleleVCF\tSomaticClinicalImpact\tSomaticClinicalImpactLastEvaluated\tReviewStatusClinicalImpact\tOncogenicity\tOncogenicityLastEvaluated\tReviewStatusOncogenicity";
+        let mut out = vec![header.to_string()];
+        for (i, (cdna, sig, assembly, pos, r, a)) in rows.iter().enumerate() {
+            out.push(format!(
+                "{i}\tsingle nucleotide variant\tNM_000546.6(TP53):{cdna}\t7157\tTP53\tHGNC:11998\t{sig}\t1\t-\t-\t-\tRCV000\t-\t-\tgermline\tgermline\t{assembly}\tNC_000017.11\t17\t{pos}\t{pos}\tG\tA\t17p13.1\tcriteria provided, multiple submitters, no conflicts\t5\t-\t-\t-\t1\t{i}\t{pos}\t{r}\t{a}\t-\t-\t-\t-\t-\t-"
+            ));
+        }
+        out.join("\n") + "\n"
+    }
+
+    #[test]
+    fn test_splice_index_records_canonical_dinucleotide_variants() {
+        let data = splice_rows(&[
+            ("c.376-2A>G", "Pathogenic", "GRCh38", "7676000", "A", "G"),
+            ("c.376-1G>A", "Likely pathogenic", "GRCh38", "7676001", "G", "A"),
+        ]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        let tp53 = &records[0];
+        assert!(tp53.json.contains(r#""spliceIndexed":true"#), "{}", tp53.json);
+        assert!(tp53.json.contains(r#""spliceAssembly":"GRCh38""#), "{}", tp53.json);
+        assert!(
+            tp53.json
+                .contains(r#"{"pos":7676000,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#),
+            "{}",
+            tp53.json
+        );
+        assert!(
+            tp53.json
+                .contains(r#"{"pos":7676001,"ref":"G","alt":"A","off":-1,"sig":"Likely_pathogenic"}"#),
+            "{}",
+            tp53.json
+        );
+    }
+
+    #[test]
+    fn test_splice_index_skips_non_canonical_benign_and_other_assemblies() {
+        let data = splice_rows(&[
+            // One qualifying row, so the gene has a record to inspect.
+            ("c.900+1G>A", "Pathogenic", "GRCh38", "7676000", "G", "A"),
+            // +7 is inside the donor motif but outside the dinucleotide, and
+            // Table 3's prerequisite (identical predicted RNA event) does not
+            // hold for it by construction.
+            ("c.375+7G>A", "Pathogenic", "GRCh38", "7676010", "G", "A"),
+            // Exonic: no offset at all.
+            ("c.524G>A", "Pathogenic", "GRCh38", "7676020", "G", "A"),
+            // Benign assertions are not comparison variants for PS1.
+            ("c.376-2A>G", "Benign", "GRCh38", "7676030", "A", "G"),
+            // Right kind of variant, wrong build: its coordinate would point
+            // somewhere else entirely on the assembly we index.
+            ("c.376-2A>T", "Pathogenic", "GRCh37", "7576040", "A", "T"),
+        ]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        let tp53 = &records[0];
+        assert!(
+            tp53.json.contains(r#""splicePositions":[{"pos":7676000,"ref":"G","alt":"A","off":1,"sig":"Pathogenic"}]"#),
+            "{}",
+            tp53.json
+        );
+    }
+
+    #[test]
+    fn test_splice_index_absent_rather_than_empty_on_the_vcf_path() {
+        // The VCF has no `c.` token, so a canonical offset cannot be read off
+        // it. Claiming `spliceIndexed` here would tell the classifier "we
+        // looked and found nothing" for every gene in the file.
+        let data = "\
+##fileformat=VCFv4.1
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+17\t7674220\t2\tG\tA\t.\t.\tGENEINFO=TP53:7157;CLNSIG=Pathogenic;MC=SO:0001583|missense_variant|NP_000537.3:p.Arg175His
+";
+        let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        assert_eq!(records.len(), 1);
+        assert!(!records[0].json.contains("spliceIndexed"), "{}", records[0].json);
+        assert!(!records[0].json.contains("splicePositions"), "{}", records[0].json);
+    }
+
+    #[test]
+    fn test_splice_only_gene_still_gets_a_record() {
+        // A gene whose only classified variants are canonical splice ones has
+        // no residue substitutions to index, and used to fall out of the file
+        // entirely along with its splice evidence.
+        let data = splice_rows(&[("c.376-2A>G", "Pathogenic", "GRCh38", "7676000", "A", "G")]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        assert_eq!(records.len(), 1);
+        assert!(records[0].json.contains(r#""proteinVariants":[]"#), "{}", records[0].json);
+        assert!(records[0].json.contains(r#""pos":7676000"#), "{}", records[0].json);
+    }
+
+    #[test]
+    fn test_splice_index_order_is_deterministic() {
+        let data = splice_rows(&[
+            ("c.376-2A>G", "Pathogenic", "GRCh38", "7676030", "A", "G"),
+            ("c.500+1G>T", "Pathogenic", "GRCh38", "7676010", "G", "T"),
+            ("c.376-1G>A", "Pathogenic", "GRCh38", "7676020", "G", "A"),
+        ]);
+        let first = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        let second = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        assert_eq!(first[0].json, second[0].json);
+        let json = &first[0].json;
+        let (a, b, c) = (
+            json.find(r#""pos":7676010"#).unwrap(),
+            json.find(r#""pos":7676020"#).unwrap(),
+            json.find(r#""pos":7676030"#).unwrap(),
+        );
+        assert!(a < b && b < c, "splicePositions must be sorted by position: {json}");
+    }
+
+    #[test]
+    fn test_pathogenic_wins_over_likely_pathogenic_for_the_same_allele() {
+        // variant_summary carries one row per assembly and they can disagree.
+        // PS1's splice path only reads `Pathogenic`, so the stronger term has
+        // to survive the dedup regardless of row order.
+        for rows in [
+            [
+                ("c.376-2A>G", "Likely pathogenic", "GRCh38", "7676000", "A", "G"),
+                ("c.376-2A>G", "Pathogenic", "GRCh38", "7676000", "A", "G"),
+            ],
+            [
+                ("c.376-2A>G", "Pathogenic", "GRCh38", "7676000", "A", "G"),
+                ("c.376-2A>G", "Likely pathogenic", "GRCh38", "7676000", "A", "G"),
+            ],
+        ] {
+            let records = parse_clinvar_protein_vcf(splice_rows(&rows).as_bytes(), "GRCh38").unwrap();
+            assert!(
+                records[0].json.contains(r#""off":-2,"sig":"Pathogenic""#),
+                "{}",
+                records[0].json
+            );
+            assert!(!records[0].json.contains("Likely_pathogenic"), "{}", records[0].json);
+        }
+    }
+
+    #[test]
+    fn test_a_residue_asserted_both_ways_is_dropped() {
+        // Two distinct alleles produce the same substitution and ClinVar
+        // classifies them oppositely. That is a conflict at the level this
+        // index is keyed on, and it supports neither PM1's hotspot count nor
+        // its benign-variation test.
+        let data = summary_rows(&[
+            ("c.524G>A", "p.Arg175His", "Pathogenic"),
+            ("c.524G>C", "p.Arg175His", "Benign"),
+            ("c.733G>A", "p.Gly245Ser", "Pathogenic"),
+        ]);
+        let records = parse_clinvar_protein_vcf(data.as_bytes(), "GRCh38").unwrap();
+        let tp53 = &records[0];
+        assert!(!tp53.json.contains(r#""pos":175"#), "got {}", tp53.json);
+        assert!(tp53.json.contains(r#""pos":245"#), "got {}", tp53.json);
     }
 }

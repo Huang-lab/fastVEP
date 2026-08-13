@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 EXTRACTS=$ROOT/data/benchmark/sa_sources/spliceai_phylop_extracts
 SA_DB=$ROOT/data/benchmark/sa_db
 LOG_DIR=$ROOT/data/benchmark/sa_sources/spliceai_phylop_logs
@@ -22,7 +22,7 @@ build_one() {
   fi
 
   echo "[chr${chr}] $(date +%H:%M:%S) extracting..." >>"$log"
-  python3 "$ROOT/data/benchmark/sa_sources/extract_spliceai_phylop_from_gnomad.py" "$chr" >>"$log" 2>&1
+  python3 "$SCRIPT_DIR/extract_spliceai_phylop_from_gnomad.py" "$chr" >>"$log" 2>&1
 
   local sa_vcf="$EXTRACTS/spliceai_chr${chr}.vcf"
   local pp_tsv="$EXTRACTS/phylop_chr${chr}.tsv"

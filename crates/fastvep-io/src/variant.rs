@@ -90,6 +90,12 @@ pub struct AlleleAnnotation {
     pub exon: Option<(u32, u32)>,
     pub intron: Option<(u32, u32)>,
     pub distance: Option<i64>,
+    /// Full-length peptide of the transcript, in residues. `None` for
+    /// non-coding transcripts.
+    pub protein_length: Option<u64>,
+    /// Whether a premature termination codon here is predicted to escape
+    /// nonsense-mediated decay (the 50-nt rule). `None` when unknown.
+    pub escapes_nmd: Option<bool>,
     pub hgvsc: Option<String>,
     pub hgvsp: Option<String>,
     pub hgvsg: Option<String>,
@@ -140,13 +146,58 @@ impl VariationFeature {
 
     /// Check if this is a deletion.
     pub fn is_deletion(&self) -> bool {
-        self.alt_alleles.iter().any(|a| *a == Allele::Deletion)
+        self.alt_alleles.contains(&Allele::Deletion)
     }
 
     /// Check if this is an indel.
     pub fn is_indel(&self) -> bool {
         self.ref_allele == Allele::Deletion
-            || self.alt_alleles.iter().any(|a| *a == Allele::Deletion)
+            || self.alt_alleles.contains(&Allele::Deletion)
             || self.alt_alleles.iter().any(|a| a.len() != self.ref_allele.len())
+    }
+
+    /// One `(allele_key, pos, ref, alt)` tuple per alternate allele, in
+    /// `alt_alleles` order, for looking the variant up in coordinate-keyed
+    /// databases.
+    ///
+    /// The last three are as they appeared in the uploaded VCF, not as
+    /// normalised: `.osa`, `.osa2` and the ClinVar indices are all built from
+    /// VCF-form REF/ALT, so a query has to be in the same form to match. When
+    /// the variant did not come from a VCF, the normalised alleles and the
+    /// feature's own start position stand in.
+    pub fn query_alleles(&self) -> Vec<(String, u64, String, String)> {
+        if let Some(vcf) = &self.vcf_fields {
+            let uploaded_alts: Vec<&str> = vcf.alt.split(',').collect();
+            return self
+                .alt_alleles
+                .iter()
+                .enumerate()
+                .map(|(idx, allele)| {
+                    let allele_string = allele.to_string();
+                    (
+                        allele_string.clone(),
+                        vcf.pos,
+                        vcf.ref_allele.clone(),
+                        uploaded_alts
+                            .get(idx)
+                            .copied()
+                            .unwrap_or(&allele_string)
+                            .to_string(),
+                    )
+                })
+                .collect();
+        }
+
+        self.alt_alleles
+            .iter()
+            .map(|allele| {
+                (
+                    allele.to_string(),
+                    self.position.start,
+                    self.ref_allele.to_string(),
+                    allele.to_string(),
+                )
+            })
+            .collect()
     }
 }

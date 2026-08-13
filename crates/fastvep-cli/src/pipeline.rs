@@ -73,6 +73,11 @@ pub struct AnnotateConfig {
     pub acmg: bool,
     /// Path to ACMG configuration file (TOML).
     pub acmg_config: Option<String>,
+    /// Order of criteria used by `--pick`, in VEP's `--pick_order` syntax.
+    /// `None` uses VEP's default order.
+    pub pick_order: Option<String>,
+    /// Path to a curated functional-evidence TSV supplying PS3/BS3.
+    pub functional_evidence: Option<String>,
     /// Proband sample name for trio analysis.
     pub proband: Option<String>,
     /// Mother sample name for trio analysis.
@@ -91,8 +96,19 @@ pub struct AnnotateConfig {
     pub show_progress: bool,
 }
 
-pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
+pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     eprintln!("Annotating: {} -> {}", config.input, config.output);
+    // Several ACMG criteria read HGVS c. notation rather than raw coordinates:
+    // PVS1's canonical ±1/±2 splice gate and BP7's deep-intronic extension both
+    // need the intronic offset, and BA1's Ghosh 2018 exception list is keyed by
+    // `c.` string. Without `--hgvs` those signals are silently absent and the
+    // criteria quietly fall back to weaker behaviour, so `--acmg` turns HGVS on
+    // rather than degrading. The output field list is unchanged either way -
+    // HGVSc/HGVSp are always in the CSQ header and were simply empty before.
+    if config.acmg && !config.hgvs && !config.sa_only {
+        config.hgvs = true;
+    }
+    let config = config;
     let sa_only = config.sa_only;
     if sa_only {
         if config.sa_dir.is_none() {
@@ -494,10 +510,43 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
     // every provider for every allele of every variant inside the parallel loop.
     let normalize_gnomad_queries =
         seq_provider.is_some() && sa_providers.iter().any(|sa| sa.json_key() == "gnomad");
+    // BP3 must tell "this variant is not in a repeat" from "no repeat database
+    // was loaded". An interval source only yields an annotation on a hit, so
+    // those two are indistinguishable downstream unless the loaded-source list
+    // is consulted here. Same matching the classifier uses to find the track.
+    let repeat_db_loaded = sa_providers.iter().any(|sa| {
+        let k = sa.json_key().to_lowercase();
+        k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
+    });
     let gene_json_keys: Vec<String> = gene_providers
         .iter()
         .map(|gp| gp.json_key().to_string())
         .collect();
+
+    // Curated functional-assay evidence for PS3/BS3. Parsed up front so a
+    // malformed row fails before the run starts rather than after an hour of
+    // annotation, and so the error names the offending line.
+    // Resolved before annotation so a bad --pick-order fails immediately with
+    // the offending criterion named, rather than after the run.
+    let pick_order = match config.pick_order.as_deref() {
+        Some(spec) => {
+            let order = parse_pick_order(spec)?;
+            eprintln!("Using --pick order: {}", spec);
+            order
+        }
+        None => DEFAULT_PICK_ORDER.to_vec(),
+    };
+
+    let functional_index = match config.functional_evidence.as_deref() {
+        Some(path) => {
+            let idx = fastvep_classification::FunctionalEvidenceIndex::from_file(Path::new(path))
+                .map_err(anyhow::Error::msg)?;
+            eprintln!("Loaded {} curated functional-evidence entries from {}", idx.len(), path);
+            Some(idx)
+        }
+        None => None,
+    };
+    let functional_evidence = functional_index.as_ref();
     let owned_vcf_info_ids = output::vcf_owned_info_ids(&sa_json_keys, &gene_json_keys);
     let generated_vcf_headers =
         output::vcf_info_header_lines(&sa_json_keys, &gene_json_keys, output::DEFAULT_CSQ_FIELDS, sa_only);
@@ -512,7 +561,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             // Pass through original VCF headers
             for header_line in vcf_parser.header_lines() {
                 if let Some(info_id) = output::vcf_info_header_id(header_line) {
-                    if owned_vcf_info_ids.iter().any(|owned| *owned == info_id) {
+                    if owned_vcf_info_ids.contains(&info_id) {
                         continue;
                     }
                 }
@@ -723,6 +772,8 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                             exon: ac.exon,
                             intron: ac.intron,
                             distance: ac.distance,
+                            protein_length: ac.protein_length,
+                            escapes_nmd: ac.escapes_nmd,
                             hgvsc: None,
                             hgvsp: None,
                             hgvsg: None,
@@ -1191,7 +1242,9 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             // produce correct output but would waste the most expensive work
             // (ACMG classification) on transcripts that get thrown away.
             if config.pick && !sa_only && vf.transcript_variations.len() > 1 {
-                if let Some(idx) = pick_best_transcript_idx(&vf.transcript_variations) {
+                if let Some(idx) =
+                    pick_best_transcript_idx_with(&vf.transcript_variations, &pick_order)
+                {
                     vf.transcript_variations =
                         vec![vf.transcript_variations.swap_remove(idx)];
                 }
@@ -1206,7 +1259,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             // supplementary databases attach to every record that matches.
             if !sa_providers.is_empty() {
                 let chrom = &vf.position.chromosome;
-                let sa_queries = supplementary_query_alleles(vf);
+                let sa_queries = vf.query_alleles();
                 let mut allele_results: HashMap<String, Vec<(String, String)>> =
                     HashMap::new();
                 for tv in &vf.transcript_variations {
@@ -1317,6 +1370,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                 // Parse sample genotypes if trio config is present
                 let trio_genotypes = extract_trio_genotypes_cli(vf, acmg_cfg, &sample_names);
 
+                let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+                // Resolved here rather than inside the classifier: the ClinVar
+                // splice index is keyed by genomic coordinate, and
+                // `extract_classification_input` is handed a transcript-level
+                // view that carries none.
+                let query_alleles = vf.query_alleles();
+
                 for tv in &mut vf.transcript_variations {
                     let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
                     let gene_anns: Vec<&fastvep_core::GeneAnnotation> =
@@ -1325,6 +1385,7 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                             .filter(|ga| ga.gene_symbol == gene_sym)
                             .collect();
                     for aa in &mut tv.allele_annotations {
+                        let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
                         let input =
                             fastvep_classification::extract_classification_input(
                                 &aa.consequences,
@@ -1335,6 +1396,15 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
                                 aa.protein_position.map(|(s, _)| s),
                                 aa.hgvsc.as_deref(),
                                 aa.exon,
+                                aa.protein_length,
+                                aa.escapes_nmd,
+                                repeat_db_loaded,
+                                fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
+                                alt_idx.and_then(|i| query_alleles.get(i)).map(|(_, pos, r, a)| {
+                                    (vf.position.chromosome.to_string(), *pos, r.clone(), a.clone())
+                                }),
+                                fastvep_classification::is_pure_insertion(&vf.ref_allele),
+                                alt_idx.and_then(|i| functional_by_alt[i].clone()),
                                 &aa.supplementary,
                                 &gene_anns,
                                 &vf.supplementary_annotations,
@@ -1360,7 +1430,13 @@ pub fn run_annotate(config: AnnotateConfig) -> Result<()> {
             if acmg_cfg.trio.is_some() {
                 let mut vfs: Vec<&mut VariationFeature> =
                     batch.iter_mut().map(|(vf, _)| vf).collect();
-                enrich_compound_het_batch(&mut vfs, acmg_cfg, &sample_names);
+                enrich_compound_het_batch(
+                    &mut vfs,
+                    acmg_cfg,
+                    &sample_names,
+                    functional_evidence,
+                    repeat_db_loaded,
+                );
             }
         }
 
@@ -1435,33 +1511,153 @@ use fastvep_annotate::{
     three_prime_shift_intronic, zip_positions,
 };
 
-/// Index of the best transcript variation under VEP's default `--pick_order`
-/// hierarchy: mane_select, mane_plus_clinical, canonical, appris, tsl, biotype
-/// (protein_coding preferred), ccds, then most-severe consequence rank, with
-/// transcript_id alphabetical order as a final deterministic tie-breaker.
-fn pick_best_transcript_idx(tvs: &[TranscriptVariation]) -> Option<usize> {
-    (0..tvs.len()).min_by(|&a, &b| pick_key(&tvs[a]).cmp(&pick_key(&tvs[b])))
+/// One tier of the `--pick-order` hierarchy, in VEP's vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickCriterion {
+    ManeSelect,
+    ManePlusClinical,
+    Canonical,
+    Appris,
+    Tsl,
+    Biotype,
+    Ccds,
+    Rank,
 }
 
-fn pick_key(tv: &TranscriptVariation) -> (bool, bool, bool, u8, u8, u8, bool, u32, &str) {
-    let most_severe_rank = tv
-        .allele_annotations
-        .iter()
-        .flat_map(|aa| aa.consequences.iter())
-        .map(|c| c.rank())
-        .min()
-        .unwrap_or(u32::MAX);
-    (
-        tv.mane_select.is_none(),
-        tv.mane_plus_clinical.is_none(),
-        !tv.canonical,
-        appris_rank(tv.appris.as_deref()),
-        tv.tsl.unwrap_or(u8::MAX),
-        if tv.biotype.as_ref() == "protein_coding" { 0 } else { 1 },
-        tv.ccds.is_none(),
-        most_severe_rank,
-        tv.transcript_id.as_ref(),
-    )
+/// VEP's default `--pick_order`, which fastVEP matches exactly so that a
+/// default run of each tool picks the same transcript.
+///
+/// Note where `Rank` sits: **last**. Transcript status outranks consequence
+/// severity, so at a locus where a MANE transcript of one gene merely
+/// neighbours the variant while a non-MANE transcript of another is disrupted
+/// by it, both tools report the neighbour. That is correct VEP behaviour and
+/// wrong clinical reporting - see `--pick-order` in docs/ACMG.md.
+pub const DEFAULT_PICK_ORDER: &[PickCriterion] = &[
+    PickCriterion::ManeSelect,
+    PickCriterion::ManePlusClinical,
+    PickCriterion::Canonical,
+    PickCriterion::Appris,
+    PickCriterion::Tsl,
+    PickCriterion::Biotype,
+    PickCriterion::Ccds,
+    PickCriterion::Rank,
+];
+
+/// Parse a VEP-style `--pick_order` string, e.g. `rank,mane_select,canonical`.
+pub fn parse_pick_order(spec: &str) -> Result<Vec<PickCriterion>> {
+    let mut out = Vec::new();
+    for raw in spec.split(',') {
+        let name = raw.trim().to_ascii_lowercase();
+        if name.is_empty() {
+            continue;
+        }
+        let c = match name.as_str() {
+            "mane_select" | "mane" => PickCriterion::ManeSelect,
+            "mane_plus_clinical" => PickCriterion::ManePlusClinical,
+            "canonical" => PickCriterion::Canonical,
+            "appris" => PickCriterion::Appris,
+            "tsl" => PickCriterion::Tsl,
+            "biotype" => PickCriterion::Biotype,
+            "ccds" => PickCriterion::Ccds,
+            "rank" => PickCriterion::Rank,
+            "length" => {
+                // VEP's final tie-break. fastVEP's TranscriptVariation does not
+                // carry transcript length, so honouring it would mean silently
+                // doing nothing - worse than saying so.
+                return Err(anyhow::anyhow!(
+                    "--pick-order: 'length' is not supported; transcript length is not carried on \
+                     the annotation record. Ties beyond the criteria you list are broken by \
+                     transcript ID, which is deterministic."
+                ));
+            }
+            other => {
+                return Err(anyhow::anyhow!(
+                    "--pick-order: unknown criterion {:?}. Valid: mane_select, mane_plus_clinical, \
+                     canonical, appris, tsl, biotype, ccds, rank",
+                    other
+                ))
+            }
+        };
+        if out.contains(&c) {
+            return Err(anyhow::anyhow!(
+                "--pick-order: {:?} listed more than once",
+                name
+            ));
+        }
+        out.push(c);
+    }
+    if out.is_empty() {
+        return Err(anyhow::anyhow!("--pick-order: no criteria given"));
+    }
+    Ok(out)
+}
+
+/// Index of the best transcript variation under the given `--pick-order`
+/// hierarchy, with transcript_id alphabetical order as a final deterministic
+/// tie-breaker.
+///
+/// Criteria omitted from `order` are not consulted at all, which is what lets
+/// a caller drop a tier rather than only reorder it.
+fn pick_best_transcript_idx_with(
+    tvs: &[TranscriptVariation],
+    order: &[PickCriterion],
+) -> Option<usize> {
+    (0..tvs.len()).min_by(|&a, &b| {
+        pick_key_with(&tvs[a], order).cmp(&pick_key_with(&tvs[b], order))
+    })
+}
+
+/// Index of the best transcript variation under VEP's default `--pick_order`.
+///
+/// The production path resolves the order from `--pick-order` and calls
+/// [`pick_best_transcript_idx_with`] directly; this is the tests' shorthand for
+/// "what a default run does", which is the property most of them assert.
+#[cfg(test)]
+fn pick_best_transcript_idx(tvs: &[TranscriptVariation]) -> Option<usize> {
+    pick_best_transcript_idx_with(tvs, DEFAULT_PICK_ORDER)
+}
+
+/// Score one transcript on one criterion. Lower is better, uniformly, so the
+/// tiers compose by plain lexicographic comparison however they are ordered.
+fn pick_score(tv: &TranscriptVariation, c: PickCriterion) -> u32 {
+    match c {
+        PickCriterion::ManeSelect => tv.mane_select.is_none() as u32,
+        PickCriterion::ManePlusClinical => tv.mane_plus_clinical.is_none() as u32,
+        PickCriterion::Canonical => !tv.canonical as u32,
+        PickCriterion::Appris => appris_rank(tv.appris.as_deref()) as u32,
+        PickCriterion::Tsl => tv.tsl.unwrap_or(u8::MAX) as u32,
+        PickCriterion::Biotype => u32::from(tv.biotype.as_ref() != "protein_coding"),
+        PickCriterion::Ccds => tv.ccds.is_none() as u32,
+        PickCriterion::Rank => tv
+            .allele_annotations
+            .iter()
+            .flat_map(|aa| aa.consequences.iter())
+            .map(|c| c.rank())
+            .min()
+            .unwrap_or(u32::MAX),
+    }
+}
+
+/// Upper bound on `--pick-order` length: there are eight criteria and
+/// `parse_pick_order` rejects repeats, so no order can be longer.
+const MAX_PICK_CRITERIA: usize = 8;
+
+/// Score a transcript across the configured order.
+///
+/// Returns a fixed-size array rather than a `Vec` because this sits inside
+/// `min_by`, which evaluates the key twice per comparison: a `Vec` here is two
+/// heap allocations for every pair of transcripts considered, on every variant.
+/// Unused slots stay zero and compare equal, which is harmless since every key
+/// in a given comparison is built from the same `order`.
+fn pick_key_with<'a>(
+    tv: &'a TranscriptVariation,
+    order: &[PickCriterion],
+) -> ([u32; MAX_PICK_CRITERIA], &'a str) {
+    let mut key = [0u32; MAX_PICK_CRITERIA];
+    for (slot, &c) in key.iter_mut().zip(order.iter()) {
+        *slot = pick_score(tv, c);
+    }
+    (key, tv.transcript_id.as_ref())
 }
 
 /// Map an APPRIS tag (`P1`/`principal1`, ..., `A1`/`alternative1`, ...) to a
@@ -1520,20 +1716,20 @@ fn extract_trio_genotypes_cli(
     let proband_gt = samples
         .iter()
         .find(|s| s.name == trio.proband)
-        .map(|s| sample_data_to_genotype_info_cli(s));
+        .map(sample_data_to_genotype_info_cli);
 
     let mother_gt = trio.mother.as_ref().and_then(|name| {
         samples
             .iter()
             .find(|s| &s.name == name)
-            .map(|s| sample_data_to_genotype_info_cli(s))
+            .map(sample_data_to_genotype_info_cli)
     });
 
     let father_gt = trio.father.as_ref().and_then(|name| {
         samples
             .iter()
             .find(|s| &s.name == name)
-            .map(|s| sample_data_to_genotype_info_cli(s))
+            .map(sample_data_to_genotype_info_cli)
     });
 
     (proband_gt, mother_gt, father_gt)
@@ -1544,11 +1740,11 @@ fn sample_data_to_genotype_info_cli(
     sample: &fastvep_io::sample::SampleData,
 ) -> fastvep_classification::GenotypeInfo {
     let gt = sample.genotype.as_ref();
-    let is_het = gt.map_or(false, |g| g.is_het());
-    let is_hom_ref = gt.map_or(false, |g| g.is_hom_ref());
-    let is_hom_alt = gt.map_or(false, |g| g.is_hom_alt());
-    let is_missing = gt.map_or(true, |g| g.is_missing());
-    let is_phased = gt.map_or(false, |g| g.phased);
+    let is_het = gt.is_some_and(|g| g.is_het());
+    let is_hom_ref = gt.is_some_and(|g| g.is_hom_ref());
+    let is_hom_alt = gt.is_some_and(|g| g.is_hom_alt());
+    let is_missing = gt.is_none_or(|g| g.is_missing());
+    let is_phased = gt.is_some_and(|g| g.phased);
 
     let alt_allele_index = gt.and_then(|g| {
         g.alleles.iter().filter_map(|a| *a).find(|&a| a > 0)
@@ -1572,6 +1768,8 @@ fn enrich_compound_het_batch(
     variants: &mut [&mut VariationFeature],
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
+    functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
+    repeat_db_loaded: bool,
 ) {
     // Collect per-gene variant info
     struct VariantGeneInfo {
@@ -1623,8 +1821,8 @@ fn enrich_compound_het_batch(
                         (p_acc || p, lp_acc || lp)
                     });
 
-                let proband_het = proband_gt.as_ref().map_or(false, |g| g.is_het);
-                let is_phased = proband_gt.as_ref().map_or(false, |g| g.is_phased);
+                let proband_het = proband_gt.as_ref().is_some_and(|g| g.is_het);
+                let is_phased = proband_gt.as_ref().is_some_and(|g| g.is_phased);
                 let proband_alleles = if let Some(ref vcf_fields) = vf.vcf_fields {
                     if !vcf_fields.rest.is_empty() && !sample_names.is_empty() {
                         let format_str = &vcf_fields.rest[0];
@@ -1670,7 +1868,7 @@ fn enrich_compound_het_batch(
         }
     }
 
-    for (_gene, gene_infos) in &gene_variants {
+    for gene_infos in gene_variants.values() {
         let het_variants: Vec<&VariantGeneInfo> =
             gene_infos.iter().filter(|v| v.proband_het).collect();
         if het_variants.len() < 2 {
@@ -1691,11 +1889,11 @@ fn enrich_compound_het_batch(
                             let info_alt_on_first = info
                                 .proband_alleles
                                 .first()
-                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                                .is_some_and(|a| a.is_some_and(|v| v > 0));
                             let other_alt_on_first = other
                                 .proband_alleles
                                 .first()
-                                .map_or(false, |a| a.map_or(false, |v| v > 0));
+                                .is_some_and(|a| a.is_some_and(|v| v > 0));
                             Some(info_alt_on_first != other_alt_on_first)
                         } else {
                             None
@@ -1727,6 +1925,9 @@ fn enrich_compound_het_batch(
                 .iter()
                 .filter(|ga| ga.gene_symbol == gene_sym)
                 .collect();
+            let functional_by_alt = resolve_functional_by_alt(functional_evidence, vf);
+            let query_alleles = vf.query_alleles();
+            let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
 
             let trio_genotypes = extract_trio_genotypes_cli(vf, acmg_cfg, sample_names);
 
@@ -1739,6 +1940,15 @@ fn enrich_compound_het_batch(
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
                 aa.exon,
+                aa.protein_length,
+                aa.escapes_nmd,
+                repeat_db_loaded,
+                fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
+                alt_idx.and_then(|i| query_alleles.get(i)).map(|(_, pos, r, a)| {
+                    (vf.position.chromosome.to_string(), *pos, r.clone(), a.clone())
+                }),
+                fastvep_classification::is_pure_insertion(&vf.ref_allele),
+                alt_idx.and_then(|i| functional_by_alt[i].clone()),
                 &aa.supplementary,
                 &gene_anns,
                 &vf.supplementary_annotations,
@@ -1755,41 +1965,6 @@ fn enrich_compound_het_batch(
     }
 }
 
-fn supplementary_query_alleles(vf: &VariationFeature) -> Vec<(String, u64, String, String)> {
-    if let Some(vcf) = &vf.vcf_fields {
-        let uploaded_alts: Vec<&str> = vcf.alt.split(',').collect();
-        return vf
-            .alt_alleles
-            .iter()
-            .enumerate()
-            .map(|(idx, allele)| {
-                let allele_string = allele.to_string();
-                (
-                    allele_string.clone(),
-                    vcf.pos,
-                    vcf.ref_allele.clone(),
-                    uploaded_alts
-                        .get(idx)
-                        .copied()
-                        .unwrap_or(&allele_string)
-                        .to_string(),
-                )
-            })
-            .collect();
-    }
-
-    vf.alt_alleles
-        .iter()
-        .map(|allele| {
-            (
-                allele.to_string(),
-                vf.position.start,
-                vf.ref_allele.to_string(),
-                allele.to_string(),
-            )
-        })
-        .collect()
-}
 
 fn write_vcf_line(writer: &mut impl Write, vf: &VariationFeature, sa_only: bool) -> Result<()> {
     if let Some(ref fields) = vf.vcf_fields {
@@ -2301,11 +2476,10 @@ where
         crate::progress::ProgressMeter::new(show_progress)
     };
 
-    let records = make_iter(buf_reader, chrom_map).map(|record| {
+    let records = make_iter(buf_reader, chrom_map).inspect(|record| {
         if record.is_ok() {
             meter.update();
         }
-        record
     });
 
     // The streaming writer creates and fills the .osa incrementally, so a
@@ -2440,7 +2614,7 @@ pub fn run_sa_build(
             IndexHeader {
                 schema_version: fastvep_sa::common::SCHEMA_VERSION,
                 json_key: json_key.into(),
-                name: source.to_uppercase().into(),
+                name: source.to_uppercase(),
                 version: "latest".into(),
                 description: format!("{} conservation/prediction scores for {}", source, assembly),
                 assembly: assembly.into(),
@@ -2593,7 +2767,7 @@ pub fn run_sa_build(
         "phylop" => {
             return run_streaming_sa_build(
                 input, output, header, &chrom_map, &chrom_list, show_progress,
-                |r, m| iter_phylop_auto(r, m),
+                iter_phylop_auto,
             );
         }
         "gerp" | "dann" => {
@@ -2743,6 +2917,10 @@ pub fn source_from_json_key(json_key: &str) -> Option<&'static str> {
 ///   the higher-quality format per source without having to know which is which.
 /// * `osa` / `v1` — force v1 `.osa`.
 /// * `osa2` / `v2` — force v2 `.osa2` (errors if the source has no v2 encoder).
+// Each argument is an independent coordinate, allele or flag with no
+// natural grouping; bundling them into a struct would only move the
+// argument list to the call site.
+#[allow(clippy::too_many_arguments)]
 pub fn run_sa_build_format(
     format: &str,
     source: &str,
@@ -3192,6 +3370,10 @@ fn open_sa_reader_with_meter(
 /// Stream `records` into `out_path` as a `.osa2` file, then report. Mirrors
 /// the v1 streaming builder's crash-safety contract: on any failure the
 /// partial `.osa2` is removed so no corrupt database is left behind.
+// Each argument is an independent coordinate, buffer or flag with no
+// natural grouping; bundling them would only move the list to the
+// call site.
+#[allow(clippy::too_many_arguments)]
 fn finish_osa2_build(
     out_path: &Path,
     metadata: &fastvep_sa::writer_v2::Osa2Metadata,
@@ -3637,20 +3819,19 @@ fn run_custom_bed_build(
 /// Build a gene-level annotation database (`.oga`) from a source file.
 ///
 /// Supports three gene-level sources used by the ACMG-AMP classifier:
-/// - `omim`            — disease-gene annotations in genemap2 layout
-///                       (13-col TSV): ClinGen Gene-Disease Validity
-///                       (preferred per ClinGen SVI / Abou Tayoun
-///                       2018) or OMIM `genemap2.txt` (legacy). Drives
-///                       PVS1, BS2, PM3, BP2.
-/// - `gnomad_genes`    — gnomAD constraint metrics TSV (PVS1, PP2, BP1)
-/// - `clinvar_protein` — ClinVar VCF, extracts pathogenic missense by
-///                       protein position (PS1, PM1, PM5)
+/// - `omim` - disease-gene annotations in genemap2 layout (13-col TSV):
+///   ClinGen Gene-Disease Validity (preferred per ClinGen SVI / Abou
+///   Tayoun 2018) or OMIM `genemap2.txt` (legacy). Drives PVS1, BS2,
+///   PM3, BP2.
+/// - `gnomad_genes` - gnomAD constraint metrics TSV (PVS1, PP2, BP1)
+/// - `clinvar_protein` - ClinVar VCF, extracts pathogenic missense by
+///   protein position (PS1, PM1, PM5)
 ///
 /// The output is `<output>.oga`. The runtime loader at
 /// `fastvep_annotate::load_gene_providers` picks up any `.oga` file in
 /// `--sa-dir` and routes records to the classifier by `json_key`
 /// (`omim`, `gnomad_genes`, `clinvar_protein`).
-pub fn run_oga_build(source: &str, input: &str, output: &str, _assembly: &str) -> Result<()> {
+pub fn run_oga_build(source: &str, input: &str, output: &str, assembly: &str) -> Result<()> {
     use fastvep_sa::common::SCHEMA_VERSION;
     use fastvep_sa::gene::{GeneHeader, GeneIndex};
 
@@ -3683,7 +3864,7 @@ pub fn run_oga_build(source: &str, input: &str, output: &str, _assembly: &str) -
             fastvep_sa::sources::gnomad_gene::parse_gnomad_gene_scores(buf_reader)?
         }
         "clinvar_protein" => {
-            fastvep_sa::sources::clinvar_protein::parse_clinvar_protein_vcf(buf_reader)?
+            fastvep_sa::sources::clinvar_protein::parse_clinvar_protein_vcf(buf_reader, assembly)?
         }
         _ => unreachable!(),
     };
@@ -3695,7 +3876,7 @@ pub fn run_oga_build(source: &str, input: &str, output: &str, _assembly: &str) -
         json_key: json_key.into(),
         name: name.into(),
         version: "latest".into(),
-        assembly: _assembly.into(),
+        assembly: assembly.into(),
     };
 
     let mut index = GeneIndex::new(header);
@@ -3725,6 +3906,9 @@ mod pick_tests {
     use fastvep_core::{Allele, Impact, Strand};
     use std::sync::Arc;
 
+    // Each argument is an independent coordinate or flag with no natural
+    // grouping; bundling them would only move the list to the call site.
+    #[allow(clippy::too_many_arguments)]
     fn make_tv(
         transcript_id: &str,
         canonical: bool,
@@ -3753,6 +3937,8 @@ mod pick_tests {
                 exon: None,
                 intron: None,
                 distance: None,
+                protein_length: None,
+                escapes_nmd: None,
                 hgvsc: None,
                 hgvsp: None,
                 hgvsg: None,
@@ -3930,6 +4116,101 @@ mod pick_tests {
     fn pick_returns_none_for_empty_input() {
         let tvs: Vec<TranscriptVariation> = vec![];
         assert_eq!(pick_best_transcript_idx(&tvs), None);
+    }
+
+    // ── C5: configurable --pick-order ────────────────────────────────────
+
+    #[test]
+    fn pick_order_default_matches_vep_and_prefers_status_over_severity() {
+        // The behaviour the round-2 review flagged, pinned as a fact rather
+        // than left implicit: under VEP's default order a MANE transcript the
+        // variant merely neighbours outranks a non-MANE one it disrupts.
+        // CYP21A2 variants coming out on C4B `downstream_gene_variant`, and
+        // STRC-region ones on TIMM9 `upstream_gene_variant`, are this rule.
+        let tvs = vec![
+            make_tv("TX_DISRUPTED", false, "protein_coding",
+                vec![Consequence::StartLost],
+                None, None, None, None, None),
+            make_tv("TX_MANE_NEIGHBOUR", false, "protein_coding",
+                vec![Consequence::UpstreamGeneVariant],
+                Some("TX_MANE_NEIGHBOUR.1"), None, None, None, None),
+        ];
+        assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn pick_order_with_rank_first_reports_the_disrupted_transcript() {
+        // The clinical order. This is what makes the CYP21A2 and KIAA0586
+        // rows report the gene the variant actually hits.
+        let tvs = vec![
+            make_tv("TX_DISRUPTED", false, "protein_coding",
+                vec![Consequence::StartLost],
+                None, None, None, None, None),
+            make_tv("TX_MANE_NEIGHBOUR", false, "protein_coding",
+                vec![Consequence::UpstreamGeneVariant],
+                Some("TX_MANE_NEIGHBOUR.1"), None, None, None, None),
+        ];
+        let order = parse_pick_order("rank,mane_select,canonical").unwrap();
+        assert_eq!(pick_best_transcript_idx_with(&tvs, &order), Some(0));
+    }
+
+    #[test]
+    fn pick_order_still_breaks_ties_by_the_later_criteria() {
+        // Equal severity must fall through to MANE, or putting rank first
+        // would turn every same-consequence choice into a transcript-ID sort.
+        let tvs = vec![
+            make_tv("TX_PLAIN", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+            make_tv("TX_MANE", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                Some("TX_MANE.1"), None, None, None, None),
+        ];
+        let order = parse_pick_order("rank,mane_select,canonical").unwrap();
+        assert_eq!(pick_best_transcript_idx_with(&tvs, &order), Some(1));
+    }
+
+    #[test]
+    fn pick_order_parses_the_vep_default_spelling() {
+        let order = parse_pick_order(
+            "mane_select,mane_plus_clinical,canonical,appris,tsl,biotype,ccds,rank",
+        )
+        .unwrap();
+        assert_eq!(order, DEFAULT_PICK_ORDER.to_vec());
+    }
+
+    #[test]
+    fn pick_order_omitted_criteria_are_not_consulted() {
+        // Listing a subset drops the rest rather than appending them, which is
+        // what lets a caller say "severity, then MANE, and nothing else".
+        let tvs = vec![
+            make_tv("TX_A", true, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+            make_tv("TX_B", false, "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None, None, None, None, None),
+        ];
+        // Canonical would pick index 0; with only `rank` the tie falls to the
+        // transcript-ID tie-break, which is TX_A anyway - so use ccds to show
+        // an omitted criterion really is ignored.
+        let order = parse_pick_order("rank").unwrap();
+        assert_eq!(pick_best_transcript_idx_with(&tvs, &order), Some(0));
+        let order = parse_pick_order("canonical,rank").unwrap();
+        assert_eq!(pick_best_transcript_idx_with(&tvs, &order), Some(0));
+    }
+
+    #[test]
+    fn pick_order_rejects_bad_input_rather_than_guessing() {
+        for (spec, expect) in [
+            ("rank,notacriterion", "unknown criterion"),
+            ("rank,rank", "more than once"),
+            ("", "no criteria"),
+            ("rank,length", "not supported"),
+        ] {
+            let err = parse_pick_order(spec).expect_err("must reject").to_string();
+            assert!(err.contains(expect), "{spec:?} gave {err:?}, wanted {expect:?}");
+        }
     }
 }
 
@@ -4246,4 +4527,32 @@ mod custom_source_tests {
             out
         );
     }
+}
+
+/// Curated functional evidence for each ALT allele of a record, if the run was
+/// given a `--functional-evidence` file that names them.
+///
+/// Resolved for the whole record at once, before the mutable walk over
+/// `transcript_variations` begins, because that walk borrows the record and a
+/// per-allele lookup inside it would need the record again.
+///
+/// Keyed on the record's original VCF coordinates rather than fastVEP's
+/// normalised alleles: the curated file is written by a human reading a VCF, so
+/// that is the form the entry will be in. The result is positional, one slot
+/// per ALT, so one allele's curated result is never applied to its neighbours.
+fn resolve_functional_by_alt(
+    index: Option<&fastvep_classification::FunctionalEvidenceIndex>,
+    vf: &VariationFeature,
+) -> Vec<Option<fastvep_classification::FunctionalEvidence>> {
+    let empty = || vec![None; vf.alt_alleles.len()];
+    let (Some(index), Some(vcf)) = (index, vf.vcf_fields.as_ref()) else {
+        return empty();
+    };
+    (0..vf.alt_alleles.len())
+        .map(|i| {
+            index
+                .for_vcf_allele(&vcf.chrom, vcf.pos, &vcf.ref_allele, &vcf.alt, i)
+                .cloned()
+        })
+        .collect()
 }

@@ -271,7 +271,7 @@ fn alphamissense_osa2_round_trips_score_and_class() {
         let key = "\"amPathogenicity\":";
         let start = j.find(key).expect("score key") + key.len();
         let rest = &j[start..];
-        let end = rest.find(|c| c == ',' || c == '}').unwrap();
+        let end = rest.find([',', '}']).unwrap();
         rest[..end].parse::<f64>().expect("score float")
     };
     assert!((score - 0.2937).abs() < 1e-5, "score round-trip: {j}");

@@ -156,15 +156,25 @@ pub fn aa_one_to_three(aa: u8) -> &'static str {
 /// Format a ref/alt codon pair with changed bases UPPERCASE, unchanged lowercase.
 /// Matches VEP convention: e.g., GCA/GAA → "gCa/gAa"
 pub fn format_codon_change(ref_codon: &[u8; 3], alt_codon: &[u8; 3]) -> (String, String) {
-    let mut ref_display = String::with_capacity(3);
-    let mut alt_display = String::with_capacity(3);
-    for i in 0..3 {
-        if ref_codon[i].to_ascii_uppercase() != alt_codon[i].to_ascii_uppercase() {
-            ref_display.push((ref_codon[i] as char).to_ascii_uppercase());
-            alt_display.push((alt_codon[i] as char).to_ascii_uppercase());
+    format_codon_window(ref_codon, alt_codon)
+}
+
+/// Same convention as [`format_codon_change`], but over an arbitrary-length
+/// window. A multi-nucleotide substitution can straddle a codon boundary, in
+/// which case the affected window is two or three codons wide and VEP reports
+/// the whole window (e.g. `tcC/tcT` becomes `tcCAg/tcTGg` when the change runs
+/// past the codon edge).
+pub fn format_codon_window(ref_window: &[u8], alt_window: &[u8]) -> (String, String) {
+    let n = ref_window.len().min(alt_window.len());
+    let mut ref_display = String::with_capacity(n);
+    let mut alt_display = String::with_capacity(n);
+    for i in 0..n {
+        if !ref_window[i].eq_ignore_ascii_case(&alt_window[i]) {
+            ref_display.push((ref_window[i] as char).to_ascii_uppercase());
+            alt_display.push((alt_window[i] as char).to_ascii_uppercase());
         } else {
-            ref_display.push((ref_codon[i] as char).to_ascii_lowercase());
-            alt_display.push((alt_codon[i] as char).to_ascii_lowercase());
+            ref_display.push((ref_window[i] as char).to_ascii_lowercase());
+            alt_display.push((alt_window[i] as char).to_ascii_lowercase());
         }
     }
     (ref_display, alt_display)
