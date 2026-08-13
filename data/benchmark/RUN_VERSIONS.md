@@ -331,3 +331,39 @@ missed diagnosis - is unchanged at 10. The whole increase is false-pathogenic, 1
 the direct consequence of a lone PVS1 now reaching Likely Pathogenic. The trade is roughly 5,200
 additional correct pathogenic calls for 31 additional false-pathogenic ones, in the direction that
 gets scrutinised rather than filed away.
+
+## v12: BS1 threshold from measurement
+
+One change: `bs1_af_threshold` from 1 % to 0.5 %.
+
+Richards 2015 words BS1 as "allele frequency is greater than expected for disorder", a
+per-disease quantity; 1 % was a placeholder for it rather than a derivation, and far too
+permissive for a dominant early-onset condition. The reviewer's MTR (7,000 hets), KMT2C (1,721),
+TP63 (57), CHD7 (30) and PTCH1 (15) notes all turn on this.
+
+| Metric | v11 | **v12** |
+|---|---:|---:|
+| Exact match | 61.4 % | **61.8 %** |
+| Same-direction | 75.0 % | **76.0 %** |
+| Benign recall | 65.3 % | **68.4 %** |
+| Likely-benign recall | 45.7 % | **46.8 %** |
+| Pathogenic recall | 65.0 % | 65.0 % |
+| False-benign | 10 | 14 |
+| False-pathogenic | 46 | 45 |
+
+The sweep that picked 0.5 % ran on a 1-in-10 sample, where it looked free - benign recall up,
+neither error count moving. The full set says otherwise: +3.1 pp of benign recall for 4 additional
+missed diagnoses, roughly 1,200 to 1. A good trade by the same exchange-rate reasoning used for the
+BS2 prevalence bar, but a trade, and a sample of that size cannot resolve a four-count difference.
+Recorded here because the sample result was quoted before it was confirmed.
+
+## Progression, v9 to v12
+
+| Metric | v9 | v10 | v11 | v12 |
+|---|---:|---:|---:|---:|
+| Exact match | 59.9 % | 61.2 % | 61.4 % | **61.8 %** |
+| Same-direction | 71.0 % | 74.1 % | 75.0 % | **76.0 %** |
+| Pathogenic recall | 48.1 % | 58.5 % | 65.0 % | **65.0 %** |
+| Benign recall | 57.2 % | 65.3 % | 65.3 % | **68.4 %** |
+| False-benign | 18 | 10 | 10 | 14 |
+| False-pathogenic | 28 | 15 | 46 | 45 |

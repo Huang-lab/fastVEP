@@ -34,7 +34,38 @@ pub struct AcmgConfig {
     /// BA1: allele frequency threshold for standalone benign (default: 0.05)
     #[serde(default = "default_ba1")]
     pub ba1_af_threshold: f64,
-    /// BS1: allele frequency threshold for strong benign (default: 0.01)
+    /// BS1: allele frequency above which a variant is more common than the
+    /// disorder allows. Default 0.005.
+    ///
+    /// Richards 2015 words BS1 as "allele frequency is greater than expected
+    /// for disorder", which is a per-disease quantity; 1 % was a placeholder
+    /// for it, not a derivation. Whiffin 2017's maximum credible population
+    /// allele frequency lands well below 1 % for essentially every Mendelian
+    /// disorder, and published VCEP specifications cluster between 0.1 % and
+    /// 0.5 %.
+    ///
+    /// Swept alone over a 1-in-10 sample of the benchmark, which is what picked
+    /// the value:
+    ///
+    /// | bar | benign recall | false-pathogenic | false-benign |
+    /// |---|---:|---:|---:|
+    /// | 0.01 | 56.3 % | 4 | 1 |
+    /// | **0.005** | **58.5 %** | **4** | **1** |
+    /// | 0.001 | 61.9 % | 3 | 2 |
+    /// | 0.0005 | 63.1 % | 3 | 7 |
+    /// | 0.0001 | 65.9 % | 3 | 18 |
+    ///
+    /// On the sample 0.005 looked free. **It is not.** Confirming it on the
+    /// full 673,660-variant set (v11 to v12) put benign recall at 65.3 % to
+    /// 68.4 % and false-benign at 10 to 14: roughly 4,850 additional correct
+    /// benign calls for 4 additional missed diagnoses, about 1,200 to 1. That
+    /// is a good trade by the same exchange-rate reasoning used for the BS2
+    /// prevalence bar, but it is a trade, and a sample of this size cannot
+    /// resolve a four-count difference.
+    ///
+    /// Below 0.005 the cost climbs steeply - past 0.0005 false-benign roughly
+    /// triples - so the remainder is left to a per-gene-disease threshold,
+    /// which is what Richards' "expected for disorder" actually asks for.
     #[serde(default = "default_bs1")]
     pub bs1_af_threshold: f64,
     /// PM2: legacy single allele frequency threshold (default: 0.0001).
@@ -454,7 +485,7 @@ impl Default for AcmgConfig {
     fn default() -> Self {
         Self {
             ba1_af_threshold: 0.05,
-            bs1_af_threshold: 0.01,
+            bs1_af_threshold: default_bs1(),
             pm2_af_threshold: 0.0001,
             pm2_ad_af_threshold: default_pm2_ad(),
             pm2_ar_af_threshold: 0.00007,
@@ -556,7 +587,7 @@ impl AcmgConfig {
 
 // Default value functions for serde
 fn default_ba1() -> f64 { 0.05 }
-fn default_bs1() -> f64 { 0.01 }
+fn default_bs1() -> f64 { 0.005 }
 fn default_pm2() -> f64 { 0.0001 }
 fn default_pm2_ad() -> f64 { 0.00004 }
 fn default_pm2_ar() -> f64 { 0.00007 }
@@ -723,8 +754,9 @@ mod tests {
             },
         );
         assert_eq!(cfg.effective_bs1_threshold(Some("BRCA1")), 0.001);
-        assert_eq!(cfg.effective_bs1_threshold(Some("TP53")), 0.01);
-        assert_eq!(cfg.effective_bs1_threshold(None), 0.01);
+        // Genes without an override fall back to the measured default.
+        assert_eq!(cfg.effective_bs1_threshold(Some("TP53")), 0.005);
+        assert_eq!(cfg.effective_bs1_threshold(None), 0.005);
     }
 
     #[test]
