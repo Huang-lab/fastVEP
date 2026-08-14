@@ -1240,10 +1240,20 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                                             }
                                         } else if aa.1 == "-"
                                             || ac.consequences.contains(&Consequence::InframeDeletion)
+                                            || ac.consequences.contains(&Consequence::InframeInsertion)
                                         {
-                                            // In-frame deletion / delins (frameshift handled
-                                            // above). aa.0 holds the deleted residues, aa.1 the
+                                            // In-frame indel / delins (frameshift handled
+                                            // above). aa.0 holds the replaced residues, aa.1 the
                                             // replacement ("-" for a pure deletion).
+                                            //
+                                            // Insertions must route here too, not to `hgvsp()`:
+                                            // that compares only the first residue of each side,
+                                            // so `W/WR` reads as unchanged and renders
+                                            // `p.Trp185=` for a variant that lengthens the
+                                            // protein. The resulting `delins` is un-normalised
+                                            // (VEP would collapse a repeat to `dup`), but it is
+                                            // valid HGVS and never a substitution shape. See
+                                            // issue #81.
                                             ann.hgvsp = fastvep_hgvs::hgvsp_inframe_deletion(
                                                 &versioned_pid, ps, &aa.0, &aa.1,
                                             );

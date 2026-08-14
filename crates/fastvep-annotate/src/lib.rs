@@ -605,11 +605,24 @@ impl AnnotationContext {
                                                 || ac
                                                     .consequences
                                                     .contains(&Consequence::InframeDeletion)
+                                                || ac
+                                                    .consequences
+                                                    .contains(&Consequence::InframeInsertion)
                                             {
-                                                // In-frame deletion / delins (frameshift
-                                                // handled above). aa.0 holds the deleted
+                                                // In-frame indel / delins (frameshift
+                                                // handled above). aa.0 holds the replaced
                                                 // residues, aa.1 the replacement ("-" for a
                                                 // pure deletion).
+                                                //
+                                                // Insertions must route here too, not to
+                                                // `hgvsp()`: that compares only the first
+                                                // residue of each side, so `W/WR` reads as
+                                                // unchanged and renders `p.Trp185=` for a
+                                                // variant that lengthens the protein. The
+                                                // resulting `delins` is un-normalised (VEP
+                                                // would collapse a repeat to `dup`), but it
+                                                // is valid HGVS and never a substitution
+                                                // shape. See issue #81.
                                                 ann.hgvsp = fastvep_hgvs::hgvsp_inframe_deletion(
                                                     &versioned_pid,
                                                     ps,
@@ -1674,6 +1687,144 @@ mod tests {
             tc.get("hgvsp").is_none(),
             "hgvsp should be omitted (skipped), not present, when spliced_seq is \
              shorter than coding_start_idx implies: {:?}",
+            tc
+        );
+    }
+
+    #[test]
+    fn hgvsp_inframe_insertion_is_a_delins_not_a_substitution() {
+        // Regression for issue #81: the HGVSp routing tested only
+        // `aa.1 == "-" || InframeDeletion`, which no in-frame *insertion*
+        // satisfies, so insertions fell through to `hgvsp()`. That compares
+        // one byte per side, so `R/RR` looked unchanged and produced
+        // `p.Arg3=` -- a synonymous call for a variant that lengthens the
+        // protein by a residue. Unlike the malformed `p.Xaa123???` that #58
+        // fixed, a well-formed `=` or missense is indistinguishable from a
+        // genuine call downstream, which is what makes it dangerous.
+        //
+        // The emitted `delins` here is deliberately un-normalised: Ensembl
+        // VEP collapses this repeat to `p.Arg3dup`. Protein-level 3'-shift
+        // and duplication collapse are tracked separately in #81; this test
+        // pins only the property that matters clinically, that an insertion
+        // never renders as a substitution.
+        use fastvep_genome::{Exon, Gene, Transcript, Translation};
+
+        // Single-CDS-exon transcript on chr1 behind a 50 bp 5' UTR.
+        // CDS (genomic 51-62) is ATG TGG CGG TAA = Met Trp Arg Ter.
+        let mut transcript = Transcript {
+            stable_id: "ENST_INS_TEST".into(),
+            version: None,
+            gene: Gene {
+                stable_id: "ENSG_INS_TEST".into(),
+                symbol: Some("INS-TEST".into()),
+                symbol_source: None,
+                hgnc_id: None,
+                biotype: "protein_coding".into(),
+                chromosome: "1".into(),
+                start: 1,
+                end: 62,
+                strand: fastvep_core::Strand::Forward,
+            },
+            biotype: "protein_coding".into(),
+            chromosome: "1".into(),
+            start: 1,
+            end: 62,
+            strand: fastvep_core::Strand::Forward,
+            exons: vec![
+                Exon {
+                    stable_id: "ENSE_INS_TEST_1".into(),
+                    start: 1,
+                    end: 50,
+                    strand: fastvep_core::Strand::Forward,
+                    phase: -1,
+                    end_phase: 0,
+                    rank: 1,
+                },
+                Exon {
+                    stable_id: "ENSE_INS_TEST_2".into(),
+                    start: 51,
+                    end: 62,
+                    strand: fastvep_core::Strand::Forward,
+                    phase: 0,
+                    end_phase: -1,
+                    rank: 2,
+                },
+            ],
+            translation: Some(Translation {
+                stable_id: "ENSP_INS_TEST".into(),
+                genomic_start: 51,
+                genomic_end: 62,
+                start_exon_rank: 2,
+                start_exon_offset: 0,
+                end_exon_rank: 2,
+                end_exon_offset: 11,
+            }),
+            cdna_coding_start: Some(51),
+            cdna_coding_end: Some(62),
+            coding_region_start: Some(51),
+            coding_region_end: Some(62),
+            spliced_seq: None,
+            translateable_seq: None,
+            peptide: None,
+            canonical: true,
+            mane_select: None,
+            mane_plus_clinical: None,
+            tsl: None,
+            appris: None,
+            ccds: None,
+            protein_id: Some("ENSP_INS_TEST".into()),
+            protein_version: None,
+            swissprot: vec![],
+            trembl: vec![],
+            uniparc: vec![],
+            refseq_id: None,
+            source: None,
+            gencode_primary: false,
+            flags: vec![],
+            codon_table_start_phase: 0,
+        };
+
+        transcript
+            .build_sequences(|_chrom, start, _end| {
+                if start == 1 {
+                    Ok(b"N".repeat(50))
+                } else {
+                    Ok(b"ATGTGGCGGTAA".to_vec())
+                }
+            })
+            .expect("build_sequences should succeed for a well-formed test transcript");
+
+        let mut ctx = empty_context();
+        ctx.transcript_provider = IndexedTranscriptProvider::new(vec![transcript]);
+
+        // Insert CGG after the Trp codon (genomic 54-56), anchored at 56:
+        // Met Trp Arg Ter -> Met Trp Arg Arg Ter, an in-frame duplication
+        // of Arg3.
+        let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                   1\t56\t.\tG\tGCGG\t.\tPASS\t.\n";
+
+        let results = ctx.annotate_vcf_text_with_acmg(vcf, false, None).unwrap();
+        assert_eq!(results.len(), 1);
+        let tc = &results[0]["transcript_consequences"][0];
+
+        // Guard the premise: if this stops being classified as an in-frame
+        // insertion the assertion below would pass for the wrong reason.
+        let terms = tc["consequence_terms"]
+            .as_array()
+            .expect("consequence_terms should be present");
+        assert!(
+            terms
+                .iter()
+                .any(|t| t.as_str() == Some("inframe_insertion")),
+            "expected inframe_insertion, got: {:?}",
+            terms
+        );
+        assert_eq!(tc["amino_acids"], serde_json::json!("R/RR"));
+
+        assert_eq!(
+            tc["hgvsp"],
+            serde_json::json!("ENSP_INS_TEST:p.Arg3delinsArgArg"),
+            "in-frame insertion must render as a delins, not a substitution: {:?}",
             tc
         );
     }
