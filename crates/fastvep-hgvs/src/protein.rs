@@ -41,41 +41,231 @@ pub fn hgvsp(
     Some(format!("{}{}{}{}", prefix, ref_aa3, protein_pos, alt_aa3))
 }
 
-/// Generate HGVSp notation for an in-frame deletion or delins.
+/// Render a 1-based inclusive residue range, e.g. `Gly41` or `Asn587_Asp600`.
+fn residue_span(first_pos: u64, residues: &[u8]) -> String {
+    let first = aa_one_to_three(residues[0]);
+    if residues.len() == 1 {
+        format!("{}{}", first, first_pos)
+    } else {
+        let last = aa_one_to_three(residues[residues.len() - 1]);
+        format!(
+            "{}{}_{}{}",
+            first,
+            first_pos,
+            last,
+            first_pos + residues.len() as u64 - 1
+        )
+    }
+}
+
+fn three_letter(residues: &[u8]) -> String {
+    residues.iter().map(|&b| aa_one_to_three(b)).collect()
+}
+
+/// Describe the change using only the residues the caller supplied, without
+/// consulting the peptide. Always available when there is at least one
+/// reference residue, and the fallback whenever the peptide is missing or
+/// cannot be trusted — a valid, unshifted description beats emitting nothing.
+fn unshifted_description(
+    prefix: &str,
+    start: u64,
+    reference: &[u8],
+    alternate: &[u8],
+) -> Option<String> {
+    if reference.is_empty() {
+        return None;
+    }
+    let range = residue_span(start, reference);
+    if alternate.is_empty() {
+        Some(format!("{}{}del", prefix, range))
+    } else {
+        Some(format!(
+            "{}{}delins{}",
+            prefix,
+            range,
+            three_letter(alternate)
+        ))
+    }
+}
+
+/// Whether `peptide` actually carries `reference` at `protein_start`.
 ///
-/// `ref_aas` are the affected reference residues (one-letter, in order) starting
-/// at `protein_start`; `alt_aas` is the replacement ("-" or empty for a pure
-/// deletion). Produces standard HGVS:
-///   ENSP0:p.Phe157del                 (single-residue deletion)
-///   ENSP0:p.Tyr43_Gln45del            (multi-residue deletion)
-///   ENSP0:p.Asn2173_Leu2174delinsLys  (in-frame delins)
+/// A transcript whose sequence disagrees with its own coordinates would
+/// otherwise produce a confident, well-formed, wrong description — worse than
+/// no normalisation at all.
+fn peptide_carries(peptide: &[u8], protein_start: u64, reference: &[u8]) -> bool {
+    let Some(lo) = protein_start.checked_sub(1).map(|v| v as usize) else {
+        return false;
+    };
+    if reference.is_empty() {
+        // Pure insertion: only the flanking position is read.
+        return lo <= peptide.len();
+    }
+    peptide.get(lo..lo + reference.len()) == Some(reference)
+}
+
+/// Generate HGVSp notation for an in-frame indel — deletion, delins, insertion
+/// or duplication.
 ///
-/// This replaces the incorrect missense-style output (e.g. `p.Tyr43???`, where
-/// the deletion marker `-` had no three-letter code) for in-frame deletions.
-pub fn hgvsp_inframe_deletion(
+/// `ref_aas` are the affected reference residues (one-letter, in order)
+/// starting at `protein_start`; `alt_aas` is the replacement ("-" or empty for
+/// a pure deletion, longer than `ref_aas` for an insertion).
+///
+///   ENSP0:p.Phe157del            single-residue deletion
+///   ENSP0:p.Tyr43_Gln45del       multi-residue deletion
+///   ENSP0:p.Asn2173_Leu2174delinsLys   delins
+///   ENSP0:p.Ser92_Ser93insGly    insertion
+///   ENSP0:p.Asn587_Asp600dup     insertion that repeats what it follows
+///
+/// This is the only correct rendering for an in-frame indel: `hgvsp` compares
+/// just the first residue of each side, so it would describe these as a
+/// substitution — synonymous when that residue is unchanged, missense when it
+/// differs, and neither is true of a variant that changes the protein's length.
+///
+/// `ref_peptide` is the reference protein in one-letter codes, residue 1 at
+/// index 0 — pass `Transcript::peptide`, which is translated in frame from
+/// `codon_table_start_phase` and with the right codon table for the contig. Any
+/// terminator it carries is trimmed here. Given one, insertions and deletions
+/// are normalised per the HGVS 3'-rule — shifted as far C-terminal as they can
+/// go, with duplications collapsed to `dup` — matching Ensembl VEP. `delins` is
+/// not shifted.
+///
+/// Every peptide-dependent step degrades to the unshifted description rather
+/// than failing: a peptide that is absent, too short, or inconsistent with
+/// `protein_start` still yields valid HGVS, just unnormalised.
+pub fn hgvsp_inframe_indel(
     protein_id: &str,
     protein_start: u64,
     ref_aas: &str,
     alt_aas: &str,
+    ref_peptide: Option<&[u8]>,
 ) -> Option<String> {
-    let ref_bytes = ref_aas.as_bytes();
-    if ref_bytes.is_empty() {
+    let strip = |s: &str| -> Vec<u8> {
+        if s == "-" {
+            Vec::new()
+        } else {
+            s.bytes().collect()
+        }
+    };
+    let original_ref = strip(ref_aas);
+    let original_alt = strip(alt_aas);
+    let prefix = format!("{}:p.", protein_id);
+    let fallback = || unshifted_description(&prefix, protein_start, &original_ref, &original_alt);
+
+    // Transcript::peptide runs to cdna_coding_end, so it carries the terminator
+    // as a final `*` — and anything translated past an internal one on a
+    // mis-annotated CDS. Those residues are not part of the protein, so bound
+    // the peptide at the first terminator before shifting against it.
+    let ref_peptide = ref_peptide.map(|p| match p.iter().position(|&b| b == b'*') {
+        Some(terminator) => &p[..terminator],
+        None => p,
+    });
+    // Everything below re-anchors the description relative to `protein_start`,
+    // so none of it is safe unless the peptide corroborates that the caller's
+    // residues really sit there. They do not always: for a shrinking change
+    // like `FF/F` the call sites pass the end of the affected range rather than
+    // its start, and trimming from an anchor that is one residue off names a
+    // position the protein does not have. Without corroboration, emit exactly
+    // what the un-normalised path emits.
+    let Some(peptide) = ref_peptide.filter(|p| peptide_carries(p, protein_start, &original_ref))
+    else {
+        return fallback();
+    };
+
+    // Reduce to the minimal changed region: residues shared at either end are
+    // not part of the description. Trimming the prefix moves the start right.
+    let mut reference = original_ref.clone();
+    let mut alternate = original_alt.clone();
+    let mut start = protein_start;
+    while !reference.is_empty() && !alternate.is_empty() && reference[0] == alternate[0] {
+        reference.remove(0);
+        alternate.remove(0);
+        start += 1;
+    }
+    while !reference.is_empty() && !alternate.is_empty() && reference.last() == alternate.last() {
+        reference.pop();
+        alternate.pop();
+    }
+
+    if reference.is_empty() && alternate.is_empty() {
         return None;
     }
-    let prefix = format!("{}:p.", protein_id);
-    let first = aa_one_to_three(ref_bytes[0]);
-    let range = if ref_bytes.len() == 1 {
-        format!("{}{}", first, protein_start)
+
+    if reference.is_empty() {
+        // Pure insertion, sitting between residues (start - 1) and start.
+        let Some(mut at) = start.checked_sub(1).map(|v| v as usize) else {
+            return fallback();
+        };
+        let mut inserted = alternate;
+        // 3'-rule: slide right while the residue the insertion sits in front of
+        // is the one it would place there.
+        while at < peptide.len() && peptide[at] == inserted[0] {
+            inserted.rotate_left(1);
+            at += 1;
+        }
+        // A duplication is an insertion whose residues repeat those immediately
+        // before it.
+        let preceding = at
+            .checked_sub(inserted.len())
+            .and_then(|lo| peptide.get(lo..at));
+        if preceding == Some(inserted.as_slice()) {
+            let dup_start = (at - inserted.len() + 1) as u64;
+            return Some(format!(
+                "{}{}dup",
+                prefix,
+                residue_span(dup_start, &inserted)
+            ));
+        }
+        // Otherwise name the flanking pair. At a terminus there is no pair, so
+        // fall back rather than drop the annotation.
+        match (
+            at.checked_sub(1).and_then(|i| peptide.get(i)),
+            peptide.get(at),
+        ) {
+            (Some(&before), Some(&after)) => Some(format!(
+                "{}{}{}_{}{}ins{}",
+                prefix,
+                aa_one_to_three(before),
+                at,
+                aa_one_to_three(after),
+                at + 1,
+                three_letter(&inserted)
+            )),
+            _ => fallback(),
+        }
+    } else if alternate.is_empty() {
+        // Pure deletion of `reference` starting at `start`.
+        let mut at = start;
+        let mut residues = reference;
+        {
+            let len = residues.len();
+            // 3'-rule: slide right while the residue following the deleted block
+            // repeats the first deleted residue.
+            loop {
+                let first = at.checked_sub(1).and_then(|i| peptide.get(i as usize));
+                let following = peptide.get(at as usize + len - 1);
+                match (first, following) {
+                    (Some(a), Some(b)) if a == b => at += 1,
+                    _ => break,
+                }
+            }
+            match at
+                .checked_sub(1)
+                .and_then(|lo| peptide.get(lo as usize..lo as usize + len))
+            {
+                Some(block) => residues = block.to_vec(),
+                None => return fallback(),
+            }
+        }
+        Some(format!("{}{}del", prefix, residue_span(at, &residues)))
     } else {
-        let last = aa_one_to_three(ref_bytes[ref_bytes.len() - 1]);
-        let end = protein_start + ref_bytes.len() as u64 - 1;
-        format!("{}{}_{}{}", first, protein_start, last, end)
-    };
-    if alt_aas.is_empty() || alt_aas == "-" {
-        Some(format!("{}{}del", prefix, range))
-    } else {
-        let ins: String = alt_aas.bytes().map(aa_one_to_three).collect();
-        Some(format!("{}{}delins{}", prefix, range, ins))
+        // Replacement of one residue run by another.
+        Some(format!(
+            "{}{}delins{}",
+            prefix,
+            residue_span(start, &reference),
+            three_letter(&alternate)
+        ))
     }
 }
 
@@ -269,25 +459,295 @@ mod tests {
     #[test]
     fn test_hgvsp_inframe_deletion_single() {
         // single-residue in-frame deletion
-        let r = hgvsp_inframe_deletion("ENSP00000001", 157, "F", "-");
+        let r = hgvsp_inframe_indel("ENSP00000001", 157, "F", "-", None);
         assert_eq!(r, Some("ENSP00000001:p.Phe157del".to_string()));
     }
 
     #[test]
     fn test_hgvsp_inframe_deletion_range() {
         // multi-residue in-frame deletion (regression for the p.Tyr43??? bug)
-        let r = hgvsp_inframe_deletion("ENSP00000001", 43, "YXQ", "-");
+        let r = hgvsp_inframe_indel("ENSP00000001", 43, "YXQ", "-", None);
         assert_eq!(r, Some("ENSP00000001:p.Tyr43_Gln45del".to_string()));
     }
 
     #[test]
     fn test_hgvsp_inframe_delins() {
         // in-frame deletion-insertion
-        let r = hgvsp_inframe_deletion("ENSP00000001", 2173, "NL", "K");
+        let r = hgvsp_inframe_indel("ENSP00000001", 2173, "NL", "K", None);
         assert_eq!(
             r,
             Some("ENSP00000001:p.Asn2173_Leu2174delinsLys".to_string())
         );
+    }
+
+    // In-frame insertions previously fell through to the substitution branch,
+    // which compares only the first residue of each side. Every case below is
+    // real fastVEP output from a clinical panel, checked against Ensembl VEP.
+
+    /// Build a reference peptide with `residues` placed at 1-based `at`, padded
+    /// with a filler residue that cannot be confused with the payload.
+    fn peptide_with(at: u64, residues: &str, length: usize) -> Vec<u8> {
+        let mut pep = vec![b'M'; length];
+        for (i, b) in residues.bytes().enumerate() {
+            pep[at as usize - 1 + i] = b;
+        }
+        pep
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_insertion_collapses_to_duplication() {
+        // C8A c.553_554insGGA, amino_acids "W/WR" at 185 — previously p.Trp185=.
+        // Residue 186 is already Arg, so inserting Arg duplicates it.
+        let pep = peptide_with(185, "WRQ", 200);
+        let r = hgvsp_inframe_indel("ENSP00000001", 185, "W", "WR", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Arg186dup".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_insertion_multi_residue_duplication() {
+        // FLT3 c.1759_1800dup, a 14-codon ITD — previously p.Asp600=. The delins
+        // spelling runs to ~55 characters; the duplication form is 18.
+        let dup = "NEYFYVDFREYEYD";
+        let pep = peptide_with(587, &format!("{}K", dup), 700);
+        let alt = format!("D{}", dup);
+        let r = hgvsp_inframe_indel("ENSP00000001", 600, "D", &alt, Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Asn587_Asp600dup".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_insertion_true_insertion_uses_ins_form() {
+        // ITPKB c.275_276insGGT, amino_acids "S/SG" at 92 — previously p.Ser92=.
+        // Gly does not repeat the preceding residues, so it stays an insertion.
+        let pep = peptide_with(92, "SSK", 200);
+        let r = hgvsp_inframe_indel("ENSP00000001", 92, "S", "SG", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Ser92_Ser93insGly".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_deletion_is_three_prime_shifted() {
+        // A deletion inside a homopolymer run is reported at the most C-terminal
+        // position it can occupy: deleting one Ala from AAA at 2..4 is p.Ala4del.
+        let pep: Vec<u8> = "MAAAGK".bytes().collect();
+        let r = hgvsp_inframe_indel("ENSP00000001", 2, "A", "-", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Ala4del".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_indel_without_peptide_stays_valid() {
+        // No sequence context: emit an unshifted but well-formed description
+        // rather than nothing, and never a substitution shape.
+        let r = hgvsp_inframe_indel("ENSP00000001", 185, "W", "WR", None);
+        assert_eq!(r, Some("ENSP00000001:p.Trp185delinsTrpArg".to_string()));
+        let d = hgvsp_inframe_indel("ENSP00000001", 157, "F", "-", None);
+        assert_eq!(d, Some("ENSP00000001:p.Phe157del".to_string()));
+    }
+
+    // The peptide is caller-derived, so every index into it has to survive a
+    // transcript whose sequence disagrees with its own coordinates. Each case
+    // below aborted the process before the bounds checks were added.
+
+    /// `(case name, protein_start, ref_aas, alt_aas, peptide, expected)`.
+    type UnusablePeptideCase<'a> = (&'a str, u64, &'a str, &'a str, &'a [u8], Option<&'a str>);
+
+    #[test]
+    fn test_hgvsp_inframe_indel_survives_unusable_peptides() {
+        let short: Vec<u8> = "MAAAGK".bytes().collect();
+        let cases: Vec<UnusablePeptideCase> = vec![
+            // Deleted block overruns the peptide end.
+            (
+                "block overruns end",
+                6,
+                "KX",
+                "-",
+                &short,
+                Some("ENSP00000001:p.Lys6_Xaa7del"),
+            ),
+            // protein_start past the peptide entirely.
+            (
+                "start beyond peptide",
+                100,
+                "AK",
+                "-",
+                &short,
+                Some("ENSP00000001:p.Ala100_Lys101del"),
+            ),
+            // Insertion anchored past the peptide.
+            ("insertion beyond peptide", 500, "-", "R", &short, None),
+            // Empty peptide (truncated transcript).
+            (
+                "empty peptide",
+                1,
+                "F",
+                "-",
+                &[],
+                Some("ENSP00000001:p.Phe1del"),
+            ),
+            // Insertion one residue past the C-terminus.
+            (
+                "insertion at C-terminus",
+                7,
+                "K",
+                "KG",
+                &short,
+                Some("ENSP00000001:p.Lys7delinsLysGly"),
+            ),
+            // protein_start of 0 would underflow a 1-based conversion.
+            (
+                "zero protein_start",
+                0,
+                "F",
+                "-",
+                &short,
+                Some("ENSP00000001:p.Phe0del"),
+            ),
+        ];
+        for (name, start, reference, alternate, pep, expected) in cases {
+            let got = hgvsp_inframe_indel("ENSP00000001", start, reference, alternate, Some(pep));
+            assert_eq!(got.as_deref(), expected, "case: {name}");
+        }
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_indel_does_not_shift_onto_the_terminator() {
+        // Transcript::peptide ends with `*`. A change abutting the stop must not
+        // shift onto it or name it as a flanking residue: Ter is not a residue
+        // of the protein, and a position at or past it is not a real position.
+        let pep: Vec<u8> = "MKKG*".bytes().collect();
+
+        // Deleting one Lys from the KK run shifts to the 3'-most Lys (3), not
+        // onto Gly4 or the terminator.
+        let deletion = hgvsp_inframe_indel("ENSP00000001", 2, "K", "-", Some(&pep));
+        assert_eq!(deletion, Some("ENSP00000001:p.Lys3del".to_string()));
+
+        // An insertion immediately before the terminator has no residue on its
+        // 3' side once the stop is excluded, so it falls back rather than
+        // emitting a Ter-flanked range.
+        let insertion = hgvsp_inframe_indel("ENSP00000001", 4, "G", "GS", Some(&pep));
+        assert_eq!(
+            insertion,
+            Some("ENSP00000001:p.Gly4delinsGlySer".to_string())
+        );
+        for out in [deletion, insertion] {
+            let out = out.unwrap();
+            assert!(!out.contains("Ter"), "terminator named as a residue: {out}");
+        }
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_indel_ignores_a_peptide_that_disagrees() {
+        // The peptide says Gln at 2; the caller says Phe. Trusting the peptide
+        // would emit a confident, well-formed, wrong description (p.Gln6del).
+        // Fall back to the caller's residues instead.
+        let pep: Vec<u8> = "MQQQQQK".bytes().collect();
+        let r = hgvsp_inframe_indel("ENSP00000001", 2, "F", "-", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Phe2del".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_indel_does_not_trim_from_an_uncorroborated_anchor() {
+        // Guards against normalising off an anchor the peptide contradicts.
+        // For a shrinking change the call sites do not always pass the start of
+        // `ref_aas`: real output from a ClinVar run has `Protein_position`
+        // 328-329 with `Amino_acids` FF/F reaching this function as
+        // protein_start 329, one past the F pair. Trimming the shared F then
+        // advances the anchor again and describes a deletion at 330 -- which is
+        // Ala, not Phe. Trimming is only sound once the peptide confirms the
+        // residues are where the caller says, so an uncorroborated anchor takes
+        // the un-normalised path instead.
+        //
+        // The peptide here is M R I F F A S M: the F pair is at 4-5, and the
+        // caller names 5. The expected output still describes position 6 as Phe
+        // -- it inherits the caller's anchor, and correcting that belongs at the
+        // call site -- but it must not claim the more specific `p.Phe6del`.
+        let pep: Vec<u8> = "MRIFFASM".bytes().collect();
+        let r = hgvsp_inframe_indel("ENSP00000001", 5, "FF", "F", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Phe5_Phe6delinsPhe".to_string()));
+
+        // Same shape, anchored correctly: the peptide corroborates position 4,
+        // so this one does normalise, to a deletion of the second F.
+        let r = hgvsp_inframe_indel("ENSP00000001", 4, "FF", "F", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Phe5del".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_indel_never_drops_a_terminal_insertion() {
+        // An insertion with no flanking pair still has to produce something —
+        // returning None would be a regression against the pre-normalisation
+        // behaviour, which always emitted a (wrong) substitution.
+        let pep: Vec<u8> = "MKKRSTV".bytes().collect();
+        for start in [1u64, 8] {
+            let got = hgvsp_inframe_indel("ENSP00000001", start, "G", "GG", Some(&pep));
+            assert!(got.is_some(), "dropped annotation at protein_start {start}");
+        }
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_indel_never_emits_substitution_shape() {
+        // Every in-frame insertion observed in a clinical panel run, as
+        // (protein_start, amino_acids ref, amino_acids alt, prior output).
+        // All fifteen previously rendered in a substitution shape: eight as
+        // synonymous, seven as a plausible missense. Two (FLT3 at 598 and 596)
+        // are ITDs, where a missense reading is clinically misleading.
+        let insertions: &[(u64, &str, &str, &str)] = &[
+            (41, "G", "AG", "p.Gly41Ala"),
+            (185, "W", "WR", "p.Trp185="),
+            (92, "S", "SG", "p.Ser92="),
+            (2927, "E", "DE", "p.Glu2927Asp"),
+            (375, "Q", "PLGPAKPPAQQ", "p.Gln375Pro"),
+            (1829, "G", "GSSG", "p.Gly1829="),
+            (510, "P", "QP", "p.Pro510Gln"),
+            (510, "P", "QQP", "p.Pro510Gln"),
+            (498, "Q", "QQ", "p.Gln498="),
+            (600, "D", "DNEYFYVDFREYEYD", "p.Asp600="),
+            (598, "E", "DVDFREYE", "p.Glu598Asp"),
+            (596, "E", "VPSDNEYFYVDFRE", "p.Glu596Val"),
+            (439, "I", "IKKK", "p.Ile439="),
+            (
+                1688,
+                "S",
+                "CSKDLEAFNPESKELLDLVEFTNEIQTLLGSS",
+                "p.Ser1688Cys",
+            ),
+            (188, "S", "SD", "p.Ser188="),
+        ];
+        let deletions: &[(u64, &str, &str)] = &[(157, "F", "-"), (43, "YXQ", "-")];
+
+        // Run each case twice: with no peptide, and with a peptide that really
+        // carries the stated reference residues at the stated position.
+        for &(start, ref_aas, alt_aas, prior) in insertions {
+            let pep = peptide_with(start, ref_aas, start as usize + ref_aas.len() + 64);
+            for context in [None, Some(pep.as_slice())] {
+                let out = hgvsp_inframe_indel("ENSP00000001", start, ref_aas, alt_aas, context)
+                    .expect("in-frame indel must produce a protein description");
+                let change = out.split(":p.").nth(1).unwrap();
+                // "delins" contains both "del" and "ins", so require one of the
+                // whole forms rather than a substring of another.
+                assert!(
+                    change.ends_with("del")
+                        || change.ends_with("dup")
+                        || change.contains("delins")
+                        || change.contains("ins"),
+                    "{ref_aas}/{alt_aas} at {start} (was {prior}) rendered \
+                     without an indel form: {out}"
+                );
+                assert!(!out.contains('?'), "placeholder residue in {out}");
+                assert!(!out.ends_with('='), "synonymous shape: {out} (was {prior})");
+                assert_ne!(
+                    out.split(':').nth(1).unwrap(),
+                    prior,
+                    "still emitting {prior}"
+                );
+            }
+        }
+
+        for &(start, ref_aas, alt_aas) in deletions {
+            let pep = peptide_with(start, ref_aas, start as usize + ref_aas.len() + 64);
+            for context in [None, Some(pep.as_slice())] {
+                let out = hgvsp_inframe_indel("ENSP00000001", start, ref_aas, alt_aas, context)
+                    .expect("deletion must produce a protein description");
+                assert!(out.ends_with("del"), "deletion regressed: {out}");
+            }
+        }
     }
 
     #[test]
