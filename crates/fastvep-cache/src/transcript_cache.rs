@@ -17,12 +17,43 @@ const CACHE_MAGIC_V2: &[u8; 8] = b"FSTVEP02";
 const CACHE_MAGIC_V1: &[u8; 8] = b"FSTVEP01";
 
 /// Save transcripts to a binary cache file (bincode + zstd).
+///
+/// The write is atomic: the stream goes to a temporary file in the same
+/// directory and is renamed into place once complete. `File::create` on the
+/// destination would publish the path the instant writing began, and both the
+/// magic header and the zstd frame header are written first, so a reader
+/// arriving mid-write got a file that passed every check we make and then
+/// failed deep inside deserialization. Two annotations started back to back
+/// against a fresh GFF3 is enough to hit it, and the loser degrades to a
+/// plausible-looking, wrong annotation rather than an error. `rename` within
+/// one directory is atomic, so a reader now sees either the previous cache or
+/// the complete new one.
 pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
-    let file =
-        File::create(path).with_context(|| format!("Creating cache file: {}", path.display()))?;
-    let writer = BufWriter::new(file);
-    // zstd level 1: fast compression, still much better decompression than gzip
+    // The temp file has to live in the destination's own directory: `rename` is
+    // only atomic within a filesystem, and /tmp is frequently a different one.
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    let tmp = tempfile::Builder::new()
+        .prefix(".fastvep-cache-")
+        .suffix(".partial")
+        .tempfile_in(dir)
+        .with_context(|| format!("Creating temporary cache file in {}", dir.display()))?;
+
+    let writer = BufWriter::new(tmp.reopen().with_context(|| {
+        format!(
+            "Reopening temporary cache file {}",
+            tmp.path().to_path_buf().display()
+        )
+    })?);
+    // zstd level 1: fast compression, still much better decompression than gzip.
     let mut zst = zstd::Encoder::new(writer, 1)?;
+    // Record a frame checksum so a cache corrupted in place - a bad sector, a
+    // half-flushed page - fails loudly at load instead of deserializing into
+    // something subtly wrong.
+    zst.include_checksum(true)?;
 
     // Write magic header
     use std::io::Write;
@@ -32,7 +63,41 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
     bincode::serialize_into(&mut zst, transcripts)
         .with_context(|| "Serializing transcripts to cache")?;
 
-    zst.finish()?;
+    let mut writer = zst.finish()?;
+    writer.flush().with_context(|| "Flushing cache writer")?;
+    // fsync before the rename. Without it a crash between the two can leave the
+    // renamed path pointing at unwritten blocks, which is the same silent
+    // partial-cache failure by a slower route.
+    writer
+        .get_ref()
+        .sync_all()
+        .with_context(|| "Syncing cache file to disk")?;
+    drop(writer);
+
+    // tempfile creates at 0600. `File::create` produced 0666 & ~umask, so
+    // publishing the temp file as-is would quietly make a cache unreadable to
+    // everyone but its author - which matters where one user builds a cache in
+    // a shared reference directory for a whole group. Keep the mode the
+    // destination already had, and otherwise fall back to the 0644 a standard
+    // umask would have given.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(path)
+            .map(|m| m.permissions().mode() & 0o7777)
+            .unwrap_or(0o644);
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(mode)).with_context(
+            || {
+                format!(
+                    "Setting permissions on the new cache for {}",
+                    path.display()
+                )
+            },
+        )?;
+    }
+
+    tmp.persist(path)
+        .map_err(|e| anyhow::anyhow!("Publishing cache file {}: {}", path.display(), e.error))?;
     Ok(())
 }
 
@@ -208,6 +273,151 @@ mod tests {
         assert_eq!(loaded[0].spliced_seq.as_deref(), Some("ACGTACGT"));
         assert!(loaded[0].canonical);
         assert_eq!(loaded[0].tsl, Some(1));
+    }
+
+    /// A poorly-compressible transcript set, large enough that the cache write
+    /// takes long enough for a concurrent reader to be scheduled during it.
+    fn bulky_transcripts(n: usize) -> Vec<Transcript> {
+        (0..n)
+            .map(|i| {
+                let mut tr = make_test_transcript();
+                // Vary the sequence per transcript, or zstd folds the whole set
+                // into a few kilobytes and there is no write window at all.
+                let mut seq = String::with_capacity(4096);
+                let mut x = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+                for _ in 0..4096 {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    seq.push(match x % 4 {
+                        0 => 'A',
+                        1 => 'C',
+                        2 => 'G',
+                        _ => 'T',
+                    });
+                }
+                tr.stable_id = Arc::from(format!("ENST{i:08}").as_str());
+                tr.spliced_seq = Some(seq);
+                tr
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_truncated_cache_is_rejected_rather_than_read_short() {
+        let transcripts = bulky_transcripts(64);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_cache(&transcripts, &path).unwrap();
+
+        let full = std::fs::read(&path).unwrap();
+        for fraction in [1, 2, 10, 50, 90, 99] {
+            let cut = full.len() * fraction / 100;
+            std::fs::write(&path, &full[..cut]).unwrap();
+            let loaded = load_cache(&path);
+            assert!(
+                loaded.is_err(),
+                "a cache truncated to {fraction}% loaded anyway, as {:?} transcripts",
+                loaded.map(|t| t.len())
+            );
+        }
+
+        // And the intact file still loads, so the check is not just refusing
+        // everything.
+        std::fs::write(&path, &full).unwrap();
+        assert_eq!(load_cache(&path).unwrap().len(), transcripts.len());
+    }
+
+    #[test]
+    fn a_cache_write_is_never_visible_half_finished() {
+        // The failure this guards: `File::create` publishes the destination the
+        // instant writing starts, and the magic header goes out first, so a
+        // second annotation launched while the first was still writing read a
+        // prefix that passed the header check and then died inside
+        // deserialization - or, with a cache it could not rebuild, degraded to
+        // an all-intergenic answer at exit code 0.
+        let transcripts = bulky_transcripts(4_000);
+        let expected = transcripts.len();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("concurrent.cache");
+
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            save_cache(&transcripts, &writer_path).unwrap();
+        });
+
+        let mut absent = 0usize;
+        let mut complete = 0usize;
+        while !writer.is_finished() {
+            // Decide "published or not" from this one open, not from a second
+            // stat: the file can appear between the two, and then a legitimate
+            // not-yet-there reads as a corrupt cache.
+            match File::open(&path) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => absent += 1,
+                Err(e) => panic!("unexpected error opening {}: {e}", path.display()),
+                Ok(_) => match load_cache(&path) {
+                    Ok(trs) => {
+                        assert_eq!(
+                            trs.len(),
+                            expected,
+                            "observed a published cache holding {} of {expected} transcripts",
+                            trs.len()
+                        );
+                        complete += 1;
+                    }
+                    Err(e) => panic!(
+                        "a cache file was visible at {} but would not load: {e}",
+                        path.display()
+                    ),
+                },
+            }
+        }
+        writer.join().unwrap();
+
+        assert_eq!(load_cache(&path).unwrap().len(), expected);
+        assert!(
+            absent + complete > 0,
+            "the poll loop never ran, so this proved nothing"
+        );
+        // No temp file may be left behind on the happy path.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".partial"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "left temp files behind: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_published_cache_keeps_the_mode_the_old_writer_gave_it() {
+        // A cache in a shared reference directory has to stay readable by the
+        // group that did not build it. tempfile creates at 0600, so publishing
+        // the temp file unmodified would have silently locked everyone else out.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("modes.cache");
+
+        save_cache(&make_transcripts(), &path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "fresh cache published as {mode:o}, want 644");
+
+        // Replacing an existing cache preserves whatever mode it had.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        save_cache(&make_transcripts(), &path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o640,
+            "replacement cache published as {mode:o}, want 640"
+        );
+    }
+
+    fn make_transcripts() -> Vec<Transcript> {
+        vec![make_test_transcript()]
     }
 
     #[test]

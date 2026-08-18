@@ -381,10 +381,7 @@ impl AnnotationContext {
                                 impact: ac.impact,
                                 cdna_position: zip_positions(ac.cdna_start, ac.cdna_end),
                                 cds_position: zip_positions(ac.cds_start, ac.cds_end),
-                                protein_position: zip_positions(
-                                    ac.protein_start,
-                                    ac.protein_end,
-                                ),
+                                protein_position: ac.protein_range(),
                                 amino_acids: ac.amino_acids.clone(),
                                 codons: ac.codons.clone(),
                                 exon: ac.exon,
