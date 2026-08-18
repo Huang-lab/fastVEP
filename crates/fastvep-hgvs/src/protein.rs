@@ -104,6 +104,30 @@ fn peptide_carries(peptide: &[u8], protein_start: u64, reference: &[u8]) -> bool
     peptide.get(lo..lo + reference.len()) == Some(reference)
 }
 
+/// The positions at which `reference` may sit, given the caller's anchor.
+///
+/// `protein_start` is the first affected residue on the forward strand, but for
+/// a shrinking change it can be the *last*: the field is derived from the
+/// genomic left edge, which is the end of the affected range when the transcript
+/// runs right to left (see #89). Both readings describe the same span, so a
+/// reference of length n is anchored either at `protein_start` or at
+/// `protein_start - (n - 1)`.
+///
+/// Those two and no others. The pair is one span read from either end, so any
+/// further candidate would be a scan for a coincidental repeat rather than a
+/// consequence of the coordinate convention. An empty or single-residue
+/// reference has one candidate, which leaves insertions - where `protein_start`
+/// is already the far end of the pair - on exactly the path they had before.
+fn anchor_candidates(protein_start: u64, reference_len: usize) -> [Option<u64>; 2] {
+    let from_end = reference_len
+        .checked_sub(1)
+        .filter(|&back| back > 0)
+        .and_then(|back| protein_start.checked_sub(back as u64))
+        // Residues are numbered from 1, so 0 is not a position to try.
+        .filter(|&anchor| anchor > 0);
+    [Some(protein_start), from_end]
+}
+
 /// Generate HGVSp notation for an in-frame indel — deletion, delins, insertion
 /// or duplication.
 ///
@@ -160,15 +184,26 @@ pub fn hgvsp_inframe_indel(
         Some(terminator) => &p[..terminator],
         None => p,
     });
-    // Everything below re-anchors the description relative to `protein_start`,
-    // so none of it is safe unless the peptide corroborates that the caller's
-    // residues really sit there. They do not always: for a shrinking change
-    // like `FF/F` the call sites pass the end of the affected range rather than
-    // its start, and trimming from an anchor that is one residue off names a
-    // position the protein does not have. Without corroboration, emit exactly
-    // what the un-normalised path emits.
-    let Some(peptide) = ref_peptide.filter(|p| peptide_carries(p, protein_start, &original_ref))
-    else {
+    // Everything below is positioned relative to an anchor, so none of it is
+    // safe unless the peptide corroborates that the caller's residues really sit
+    // there. They do not always: for a shrinking change like `FF/F` the call
+    // sites pass the end of the affected range rather than its start, so try
+    // reading the span from its other end before giving up.
+    //
+    // Trusting only `protein_start` was not merely a missed normalisation. The
+    // un-normalised description takes its residue letters from `ref_aas` and its
+    // numbers from the anchor, so a wrong anchor emits a position the protein
+    // does not have - `p.Ser1092_Phe1094delinsPhe` on ENSP00000247087 where
+    // residues 1092-1094 are FQP and the SSF is at 1090-1092. The letters and
+    // the numbers contradict each other. Over 47,013 ClinVar indels that was
+    // 17,654 descriptions.
+    let Some((peptide, protein_start)) = ref_peptide.and_then(|p| {
+        anchor_candidates(protein_start, original_ref.len())
+            .into_iter()
+            .flatten()
+            .find(|&anchor| peptide_carries(p, anchor, &original_ref))
+            .map(|anchor| (p, anchor))
+    }) else {
         return fallback();
     };
 
@@ -644,29 +679,56 @@ mod tests {
     }
 
     #[test]
-    fn test_hgvsp_inframe_indel_does_not_trim_from_an_uncorroborated_anchor() {
-        // Guards against normalising off an anchor the peptide contradicts.
+    fn test_hgvsp_inframe_indel_reads_the_span_from_either_end() {
         // For a shrinking change the call sites do not always pass the start of
-        // `ref_aas`: real output from a ClinVar run has `Protein_position`
-        // 328-329 with `Amino_acids` FF/F reaching this function as
-        // protein_start 329, one past the F pair. Trimming the shared F then
-        // advances the anchor again and describes a deletion at 330 -- which is
-        // Ala, not Phe. Trimming is only sound once the peptide confirms the
-        // residues are where the caller says, so an uncorroborated anchor takes
-        // the un-normalised path instead.
+        // `ref_aas`: real ClinVar output has `Protein_position` 328-329 with
+        // `Amino_acids` FF/F arriving here as protein_start 329, the end of the
+        // pair rather than its start. Both numbers name the same span, so the
+        // description must not depend on which end the caller happened to send.
         //
-        // The peptide here is M R I F F A S M: the F pair is at 4-5, and the
-        // caller names 5. The expected output still describes position 6 as Phe
-        // -- it inherits the caller's anchor, and correcting that belongs at the
-        // call site -- but it must not claim the more specific `p.Phe6del`.
+        // The peptide is M R I F F A S M, so the F pair is at 4-5.
         let pep: Vec<u8> = "MRIFFASM".bytes().collect();
-        let r = hgvsp_inframe_indel("ENSP00000001", 5, "FF", "F", Some(&pep));
-        assert_eq!(r, Some("ENSP00000001:p.Phe5_Phe6delinsPhe".to_string()));
+        for anchor in [4u64, 5] {
+            assert_eq!(
+                hgvsp_inframe_indel("ENSP00000001", anchor, "FF", "F", Some(&pep)),
+                Some("ENSP00000001:p.Phe5del".to_string()),
+                "anchor {anchor} should describe the same deletion"
+            );
+        }
 
-        // Same shape, anchored correctly: the peptide corroborates position 4,
-        // so this one does normalise, to a deletion of the second F.
-        let r = hgvsp_inframe_indel("ENSP00000001", 4, "FF", "F", Some(&pep));
-        assert_eq!(r, Some("ENSP00000001:p.Phe5del".to_string()));
+        // This case used to take the un-normalised path and emit
+        // `p.Phe5_Phe6delinsPhe`, naming residue 6 as Phe when the peptide has
+        // Ala there. Reading the span from its other end is what fixes it: the
+        // letters and the numbers now agree with the protein.
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_indel_still_declines_when_neither_end_corroborates() {
+        // Reading from the other end is a consequence of the coordinate
+        // convention, not a search. When the peptide carries the reference at
+        // neither end of the span, there is no evidence for any anchor and the
+        // un-normalised description is still the honest answer.
+        let pep: Vec<u8> = "MRIFFASM".bytes().collect();
+        let r = hgvsp_inframe_indel("ENSP00000001", 5, "KK", "K", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Lys5_Lys6delinsLys".to_string()));
+
+        // A single residue has only one candidate: there is no other end to try,
+        // so an uncorroborated anchor cannot be rescued and must not be guessed.
+        let r = hgvsp_inframe_indel("ENSP00000001", 2, "W", "-", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Trp2del".to_string()));
+    }
+
+    #[test]
+    fn anchor_candidates_offers_the_other_end_only_when_there_is_one() {
+        // An empty or single reference has one reading, which keeps insertions -
+        // where protein_start is already the far end of the pair - unchanged.
+        assert_eq!(anchor_candidates(10, 0), [Some(10), None]);
+        assert_eq!(anchor_candidates(10, 1), [Some(10), None]);
+        assert_eq!(anchor_candidates(10, 2), [Some(10), Some(9)]);
+        assert_eq!(anchor_candidates(10, 5), [Some(10), Some(6)]);
+        // Never underflows past residue 1.
+        assert_eq!(anchor_candidates(2, 5), [Some(2), None]);
+        assert_eq!(anchor_candidates(1, 2), [Some(1), None]);
     }
 
     #[test]
