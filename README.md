@@ -667,6 +667,36 @@ The `.osa2` format (echtvar-inspired chunked binary; `--format auto` default) st
 
 Annotating 308,740 real chr22 variants against all five chr22/ClinVar databases at once (8.3M records total): **12.7 s from the `.osa` set, 8.5 s from the `.osa2` set — 1.50×**, md5-identical output. Every record of all five databases was queried through both readers and compared byte for byte (8,318,903 keys, zero differences).
 
+## VEP Concordance
+
+fastVEP is validated against Ensembl VEP v115.1 on two datasets, because they exercise different code paths.
+
+**Field-level, all annotation types.**
+All 23 compared CSQ fields agree on 100% of 2,340 shared (allele, transcript) pairs from the 173-variant VEP example set (`validation/run_validation.sh`), across all 12 consequence types the set contains.
+
+**HGVSp under in-frame indels.**
+The example set is SNV-only, so protein-level normalisation is validated separately on 400 ClinVar in-frame deletions run through both tools: **99.17% exact string agreement on 5,192 (variant, transcript) pairs**, with 399 of the 400 variant sites agreeing on every transcript.
+
+### The one known divergence
+
+The single divergent site is a two-residue deletion at a protein C-terminus:
+
+| | HGVSc | HGVSp |
+|---|---|---|
+| fastVEP | `c.1674_1679del` | `p.Glu560_Glu561del` |
+| Ensembl VEP | `c.1674_1679del` | `p.Glu559_Glu560del` |
+
+Residues 554-561 of NT5C2 are all Glu and the protein is 561 residues long, so the HGVS 3'-rule (assign the most 3' position possible) places the deletion at the terminal pair.
+fastVEP emits that; VEP stops one residue short.
+
+The cause is the scan bound in VEP's `_shift_3prime` (`Bio::EnsEMBL::Variation::TranscriptVariationAllele`), which iterates `length($post_seq) - $deleted_length` positions while consuming one residue per iteration.
+For an *n*-residue change it therefore halts *n*-1 residues before the terminus: exact for n=1, one short for n=2, two short for n=3.
+Running that subroutine verbatim on a synthetic C-terminal poly-Glu run reproduces the pattern, and it accounts for all 43 divergent rows with none left over.
+
+fastVEP keeps the 3'-maximal answer.
+It is what HGVS specifies, and it is what fastVEP's own `HGVSc` for the same variant - byte-identical to VEP's - already describes.
+See [issue #94](https://github.com/Huang-lab/fastVEP/issues/94) for the full analysis.
+
 ## Citation
 
 If you use fastVEP in your research, please cite:

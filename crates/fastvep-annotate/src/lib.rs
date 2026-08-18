@@ -1691,6 +1691,397 @@ mod tests {
         );
     }
 
+    /// Single-CDS-exon transcript behind a 50 bp 5' UTR, built from a CDS given
+    /// in transcript orientation. On the reverse strand the genomic sequence is
+    /// its reverse complement and CDS base i sits at genomic
+    /// `cds_end + 1 - i`, so the same peptide can be exercised from both
+    /// directions with one description.
+    fn cds_transcript(strand: fastvep_core::Strand, cds: &str) -> fastvep_genome::Transcript {
+        use fastvep_genome::{Exon, Gene, Transcript, Translation};
+        let cds_len = cds.len() as u64;
+        let cds_start = 51;
+        let cds_end = cds_start + cds_len - 1;
+        let genomic: String = if strand == fastvep_core::Strand::Forward {
+            cds.to_string()
+        } else {
+            cds.chars()
+                .rev()
+                .map(|c| match c {
+                    'A' => 'T',
+                    'T' => 'A',
+                    'C' => 'G',
+                    'G' => 'C',
+                    other => other,
+                })
+                .collect()
+        };
+
+        let mut transcript = Transcript {
+            stable_id: "ENST_ANCHOR".into(),
+            version: None,
+            gene: Gene {
+                stable_id: "ENSG_ANCHOR".into(),
+                symbol: Some("ANCHOR-TEST".into()),
+                symbol_source: None,
+                hgnc_id: None,
+                biotype: "protein_coding".into(),
+                chromosome: "1".into(),
+                start: 1,
+                end: cds_end,
+                strand,
+            },
+            biotype: "protein_coding".into(),
+            chromosome: "1".into(),
+            start: 1,
+            end: cds_end,
+            strand,
+            exons: vec![
+                Exon {
+                    stable_id: "ENSE_ANCHOR_1".into(),
+                    start: 1,
+                    end: 50,
+                    strand,
+                    phase: -1,
+                    end_phase: 0,
+                    rank: if strand == fastvep_core::Strand::Forward {
+                        1
+                    } else {
+                        2
+                    },
+                },
+                Exon {
+                    stable_id: "ENSE_ANCHOR_2".into(),
+                    start: cds_start,
+                    end: cds_end,
+                    strand,
+                    phase: 0,
+                    end_phase: -1,
+                    rank: if strand == fastvep_core::Strand::Forward {
+                        2
+                    } else {
+                        1
+                    },
+                },
+            ],
+            translation: Some(Translation {
+                stable_id: "ENSP_ANCHOR".into(),
+                genomic_start: cds_start,
+                genomic_end: cds_end,
+                start_exon_rank: if strand == fastvep_core::Strand::Forward {
+                    2
+                } else {
+                    1
+                },
+                start_exon_offset: 0,
+                end_exon_rank: if strand == fastvep_core::Strand::Forward {
+                    2
+                } else {
+                    1
+                },
+                end_exon_offset: cds_len - 1,
+            }),
+            // cDNA runs 5'->3' along the transcript, so the CDS follows the
+            // 50 bp UTR only on the forward strand. On the reverse strand the
+            // genomically-rightmost exon comes first, putting the CDS at the
+            // very start of the cDNA.
+            cdna_coding_start: Some(if strand == fastvep_core::Strand::Forward {
+                cds_start
+            } else {
+                1
+            }),
+            cdna_coding_end: Some(if strand == fastvep_core::Strand::Forward {
+                cds_end
+            } else {
+                cds_len
+            }),
+            coding_region_start: Some(cds_start),
+            coding_region_end: Some(cds_end),
+            spliced_seq: None,
+            translateable_seq: None,
+            peptide: None,
+            canonical: true,
+            mane_select: None,
+            mane_plus_clinical: None,
+            tsl: None,
+            appris: None,
+            ccds: None,
+            protein_id: Some("ENSP_ANCHOR".into()),
+            protein_version: None,
+            swissprot: vec![],
+            trembl: vec![],
+            uniparc: vec![],
+            refseq_id: None,
+            source: None,
+            gencode_primary: false,
+            flags: vec![],
+            codon_table_start_phase: 0,
+        };
+
+        let genomic_bytes = genomic.into_bytes();
+        transcript
+            .build_sequences(move |_chrom, start, _end| {
+                if start == 1 {
+                    Ok(b"N".repeat(50))
+                } else {
+                    Ok(genomic_bytes.clone())
+                }
+            })
+            .expect("build_sequences should succeed for a well-formed test transcript");
+        transcript
+    }
+
+    /// Annotate one VCF record against one transcript and return its first
+    /// transcript consequence.
+    fn annotate_one(
+        transcript: fastvep_genome::Transcript,
+        pos: u64,
+        r: &str,
+        a: &str,
+    ) -> serde_json::Value {
+        let mut ctx = empty_context();
+        ctx.transcript_provider = IndexedTranscriptProvider::new(vec![transcript]);
+        let vcf = format!(
+            "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+             1\t{pos}\t.\t{r}\t{a}\t.\tPASS\t.\n"
+        );
+        let results = ctx.annotate_vcf_text_with_acmg(&vcf, false, None).unwrap();
+        assert_eq!(results.len(), 1, "expected one annotated record");
+        results[0]["transcript_consequences"][0].clone()
+    }
+
+    /// Every residue an HGVSp names must actually be that residue in the
+    /// peptide. This is the property that a wrong anchor breaks: the letters come
+    /// from `Amino_acids` and the numbers from the anchor, so a mismatched pair
+    /// yields `p.Ser1092_Phe1094delinsPhe` on a protein whose 1092-1094 is FQP.
+    fn assert_hgvsp_agrees_with_peptide(hgvsp: &str, peptide: &str) {
+        let three_to_one = |aa3: &str| -> Option<char> {
+            const TABLE: &[(&str, char)] = &[
+                ("Ala", 'A'),
+                ("Arg", 'R'),
+                ("Asn", 'N'),
+                ("Asp", 'D'),
+                ("Cys", 'C'),
+                ("Gln", 'Q'),
+                ("Glu", 'E'),
+                ("Gly", 'G'),
+                ("His", 'H'),
+                ("Ile", 'I'),
+                ("Leu", 'L'),
+                ("Lys", 'K'),
+                ("Met", 'M'),
+                ("Phe", 'F'),
+                ("Pro", 'P'),
+                ("Ser", 'S'),
+                ("Thr", 'T'),
+                ("Trp", 'W'),
+                ("Tyr", 'Y'),
+                ("Val", 'V'),
+                ("Sec", 'U'),
+                ("Ter", '*'),
+            ];
+            TABLE.iter().find(|(k, _)| *k == aa3).map(|(_, v)| *v)
+        };
+        let body = hgvsp.split(":p.").nth(1).unwrap_or(hgvsp);
+        // Only the positions left of `delins`/`ins` name reference residues; the
+        // replacement residues after it are not in the reference peptide.
+        let named = body.split("ins").next().unwrap_or(body);
+        let mut checked = 0;
+        let bytes = named.as_bytes();
+        let mut i = 0;
+        while i + 3 <= bytes.len() {
+            let Some(one) = three_to_one(&named[i..i + 3]) else {
+                i += 1;
+                continue;
+            };
+            let digits: String = named[i + 3..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if digits.is_empty() {
+                i += 1;
+                continue;
+            }
+            let pos: usize = digits.parse().unwrap();
+            let actual = peptide.chars().nth(pos - 1);
+            assert_eq!(
+                actual,
+                Some(one),
+                "{hgvsp} names {} at residue {pos}, but the peptide has {:?} there ({peptide})",
+                &named[i..i + 3],
+                actual
+            );
+            checked += 1;
+            i += 3 + digits.len();
+        }
+        assert!(checked > 0, "no residue positions found in {hgvsp}");
+    }
+
+    #[test]
+    fn a_substitution_at_a_selenocysteine_codon_is_a_missense_not_a_stop_change() {
+        // Ensembl annotates selenoprotein CDSs straight through their in-frame
+        // UGA, which encodes selenocysteine. Translating that codon as a
+        // terminator made the protein look like it ended there - SELENOW is 87
+        // residues with its UGA at 13 - and made a substitution at the codon
+        // look like a change to a stop rather than the missense it is.
+        //
+        // CDS ATG TGG TGA CGG TAA on the forward strand: M W U R *, with the
+        // UGA at residue 3 and the real terminator at 5.
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Forward, "ATGTGGTGACGGTAA");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MWUR*"),
+            "the annotated CDS runs past the UGA, so residue 3 is selenocysteine"
+        );
+
+        // TGA -> TGC at the third base: Sec becomes Cys.
+        let tc = annotate_one(tr, 59, "A", "C");
+        let terms: Vec<&str> = tc["consequence_terms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t.as_str())
+            .collect();
+        assert!(
+            terms.contains(&"missense_variant"),
+            "changing selenocysteine to cysteine is a missense, got {terms:?}"
+        );
+        assert!(
+            !terms.iter().any(|t| t.contains("stop")),
+            "must not be reported as any kind of stop change, got {terms:?}"
+        );
+        assert_eq!(tc["amino_acids"], serde_json::json!("U/C"));
+        assert_eq!(
+            tc["hgvsp"],
+            serde_json::json!("ENSP_ANCHOR:p.Sec3Cys"),
+            "selenocysteine renders as Sec, not as the \"???\" an unknown letter would give: {tc:?}"
+        );
+    }
+
+    #[test]
+    fn a_transcript_whose_cds_does_not_end_in_a_terminator_keeps_its_internal_stop() {
+        // The guard that keeps readthrough from rewriting genuinely broken
+        // annotations: without a terminator at the annotated end there is no
+        // corroboration that the frame is right, so an internal UGA could as
+        // easily be a CDS annotated in the wrong frame.
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Forward, "ATGTGGTGACGGCGG");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MW*RR"),
+            "no terminator at the end means the internal stop is left alone"
+        );
+    }
+
+    #[test]
+    fn hgvsp_inframe_insertion_is_normalised_on_the_reverse_strand_too() {
+        // Asked for in the #86 review and not in the merged branch. The forward
+        // case is covered below; a reverse-strand transcript exercises the
+        // coordinate flip, where `protein_start` is derived from the genomic left
+        // edge and so runs against the direction the transcript reads.
+        //
+        // CDS ATG TGG CGG TAA sits at genomic 51-62, so CDS base i is at genomic
+        // 63 - i. Duplicating Arg3 means inserting after CDS 9 (genomic 54),
+        // i.e. between genomic 53 and 54, with the bases complemented.
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Reverse, "ATGTGGCGGTAA");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MWR*"),
+            "test transcript premise"
+        );
+
+        let tc = annotate_one(tr, 53, "A", "ACCG");
+        assert!(
+            tc["consequence_terms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t.as_str() == Some("inframe_insertion")),
+            "premise: should be an in-frame insertion, got {:?}",
+            tc["consequence_terms"]
+        );
+        assert_eq!(tc["amino_acids"], serde_json::json!("R/RR"));
+        assert_eq!(
+            tc["hgvsp"],
+            serde_json::json!("ENSP_ANCHOR:p.Arg3dup"),
+            "reverse-strand insertion repeating the residue it follows is a dup: {tc:?}"
+        );
+        assert_hgvsp_agrees_with_peptide(tc["hgvsp"].as_str().unwrap(), "MWR*");
+    }
+
+    #[test]
+    fn hgvsp_inframe_insertion_of_two_codons_is_a_two_residue_dup() {
+        // The second case asked for in the #86 review. A duplication spanning
+        // more than one residue has to render as a range, `p.Arg3_Lys4dup`, not
+        // as two separate events and not as an unshifted delins.
+        //
+        // CDS ATG TGG CGG AAG GAA TAA; inserting CGGAAG after CDS 12 repeats
+        // Arg3-Lys4. The trailing Glu keeps the insertion off the terminator,
+        // which is a separate unnormalised case (see the test below).
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Forward, "ATGTGGCGGAAGGAATAA");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MWRKE*"),
+            "test transcript premise"
+        );
+
+        let tc = annotate_one(tr, 62, "G", "GCGGAAG");
+        assert_eq!(tc["amino_acids"], serde_json::json!("E/RKE"));
+        assert_eq!(
+            tc["hgvsp"],
+            serde_json::json!("ENSP_ANCHOR:p.Arg3_Lys4dup"),
+            "two-codon duplication should render as a residue range: {tc:?}"
+        );
+        assert_hgvsp_agrees_with_peptide(tc["hgvsp"].as_str().unwrap(), "MWRKE*");
+    }
+
+    #[test]
+    fn hgvsp_names_real_residues_for_a_reverse_strand_shrinking_change() {
+        // The bug behind #91. For a shrinking in-frame change the predictor's
+        // `protein_start` is the genomic left edge, which on the reverse strand
+        // is the *end* of the affected residue range. HGVSp took its residue
+        // letters from `Amino_acids` and its numbers from that anchor, so it
+        // emitted positions the protein does not have: on real ClinVar data,
+        // `p.Ser1092_Phe1094delinsPhe` for a protein whose 1092-1094 is FQP,
+        // with the SSF at 1090-1092. 17,654 of 80,679 in-frame indel
+        // descriptions were affected.
+        //
+        // CDS ATG TGG TTT TTC AAG TAA = M W F F K * at genomic 51-68. Deleting
+        // genomic 58-60 removes CDS 9-11, taking the FF pair to a single F, and
+        // the anchor arrives as residue 4 - the end of the 3-4 range.
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Reverse, "ATGTGGTTTTTCAAGTAA");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MWFFK*"),
+            "test transcript premise"
+        );
+
+        let tc = annotate_one(tr, 57, "GAAA", "G");
+        assert!(
+            tc["consequence_terms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t.as_str() == Some("inframe_deletion")),
+            "premise: should be an in-frame deletion, got {:?}",
+            tc["consequence_terms"]
+        );
+        assert_eq!(tc["amino_acids"], serde_json::json!("FF/F"));
+
+        // Before the fix: `p.Phe4_Phe5delinsPhe`, which calls residue 5 Phe when
+        // the peptide has Lys there. The 3'-rule puts the deletion at the
+        // C-terminal F of the pair, so residue 4.
+        assert_eq!(
+            tc["hgvsp"],
+            serde_json::json!("ENSP_ANCHOR:p.Phe4del"),
+            "shrinking reverse-strand change should name the residues it deletes: {tc:?}"
+        );
+        assert_hgvsp_agrees_with_peptide(tc["hgvsp"].as_str().unwrap(), "MWFFK*");
+    }
+
     #[test]
     fn hgvsp_inframe_insertion_is_normalised_not_a_substitution() {
         // Regression for issue #81: the HGVSp routing tested only
