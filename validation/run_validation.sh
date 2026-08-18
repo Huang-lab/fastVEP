@@ -80,6 +80,22 @@ run_human() {
         echo "  Skipping VEP for now — use compare_vep.py on existing results"
     fi
 
+    # ClinVar in-frame deletions: the only input here that exercises
+    # protein-level 3'-normalisation, which the SNV-only example set cannot.
+    local indels="$SCRIPT_DIR/human/clinvar_inframe_deletions.vcf"
+    if [[ -f "$indels" ]]; then
+        echo ""
+        echo "--- ClinVar in-frame deletions (400 variants, HGVSp normalisation) ---"
+        echo "  Running fastVEP..."
+        run_fastvep "$indels" "$human_gff3" "$human_fasta" "$RESULTS_DIR/fastvep_indels.vcf"
+        if [[ -f "$RESULTS_DIR/vep_indels.vcf" ]]; then
+            python3 "$SCRIPT_DIR/compare_hgvsp.py" \
+                "$RESULTS_DIR/fastvep_indels.vcf" "$RESULTS_DIR/vep_indels.vcf"
+        else
+            echo "  No VEP output at $RESULTS_DIR/vep_indels.vcf - skipping comparison"
+        fi
+    fi
+
     # chr22 1KGP validation
     local chr22_vcf="$SCRIPT_DIR/human/chr22_1kgp.vcf"
     if [[ -f "$chr22_vcf" ]]; then
