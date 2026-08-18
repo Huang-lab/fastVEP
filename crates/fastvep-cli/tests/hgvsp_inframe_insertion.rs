@@ -38,7 +38,7 @@ fn write(path: &Path, contents: &str) {
 }
 
 #[test]
-fn cli_inframe_insertion_hgvsp_is_a_delins_not_a_substitution() {
+fn cli_inframe_insertion_hgvsp_is_normalised_not_a_substitution() {
     let tmp = tempfile::tempdir().unwrap();
     let gff3 = tmp.path().join("test.gff3");
     let fasta = tmp.path().join("test.fa");
@@ -93,9 +93,16 @@ fn cli_inframe_insertion_hgvsp_is_a_delins_not_a_substitution() {
         "in-frame insertion rendered as synonymous (issue #81):\n{}",
         out
     );
+    // `CGG` inserted after the Trp codon repeats the Arg that follows it, so
+    // the HGVS 3'-rule shifts the insertion right and writes the repeat as a
+    // duplication -- the value Ensembl VEP reports. Asserting the normalised
+    // form rather than a literal `delinsArgArg` also guards the peptide
+    // reaching this call site: `hgvsp_inframe_indel` falls back to the
+    // unshifted description whenever it has no usable peptide, so a pipeline
+    // that stopped passing `tr.peptide` would fail here.
     assert!(
-        out.contains("p.Arg3delinsArgArg"),
-        "expected an un-normalised delins for the in-frame insertion, got:\n{}",
+        out.contains("p.Arg3dup"),
+        "expected a normalised duplication for the in-frame insertion, got:\n{}",
         out
     );
 }

@@ -615,16 +615,19 @@ impl AnnotationContext {
                                                 // `hgvsp()`: that compares only the first
                                                 // residue of each side, so `W/WR` reads as
                                                 // unchanged and renders `p.Trp185=` for a
-                                                // variant that lengthens the protein. The
-                                                // resulting `delins` is un-normalised (VEP
-                                                // would collapse a repeat to `dup`), but it
-                                                // is valid HGVS and never a substitution
-                                                // shape. See issue #81.
-                                                ann.hgvsp = fastvep_hgvs::hgvsp_inframe_deletion(
+                                                // variant that lengthens the protein.
+                                                //
+                                                // The peptide lets `hgvsp_inframe_indel`
+                                                // apply the HGVS 3'-rule and collapse a
+                                                // repeat to `dup`, matching Ensembl VEP; it
+                                                // degrades to the unshifted description
+                                                // without one.
+                                                ann.hgvsp = fastvep_hgvs::hgvsp_inframe_indel(
                                                     &versioned_pid,
                                                     ps,
                                                     &aa.0,
                                                     &aa.1,
+                                                    tr.peptide.as_deref().map(str::as_bytes),
                                                 );
                                             } else {
                                                 let ref_aa_byte = aa
@@ -1689,7 +1692,7 @@ mod tests {
     }
 
     #[test]
-    fn hgvsp_inframe_insertion_is_a_delins_not_a_substitution() {
+    fn hgvsp_inframe_insertion_is_normalised_not_a_substitution() {
         // Regression for issue #81: the HGVSp routing tested only
         // `aa.1 == "-" || InframeDeletion`, which no in-frame *insertion*
         // satisfies, so insertions fell through to `hgvsp()`. That compares
@@ -1699,11 +1702,12 @@ mod tests {
         // fixed, a well-formed `=` or missense is indistinguishable from a
         // genuine call downstream, which is what makes it dangerous.
         //
-        // The emitted `delins` here is deliberately un-normalised: Ensembl
-        // VEP collapses this repeat to `p.Arg3dup`. Protein-level 3'-shift
-        // and duplication collapse are tracked separately in #81; this test
-        // pins only the property that matters clinically, that an insertion
-        // never renders as a substitution.
+        // `CGG` inserted after the Trp codon repeats the Arg that follows it,
+        // so the HGVS 3'-rule shifts the insertion one residue right and
+        // writes the repeat as a duplication. This is the value Ensembl VEP
+        // reports, and it exercises both halves of the guard: an insertion
+        // never renders as a substitution, and the description it does render
+        // is normalised rather than a literal `delinsArgArg`.
         use fastvep_genome::{Exon, Gene, Transcript, Translation};
 
         // Single-CDS-exon transcript on chr1 behind a 50 bp 5' UTR.
@@ -1820,8 +1824,9 @@ mod tests {
 
         assert_eq!(
             tc["hgvsp"],
-            serde_json::json!("ENSP_INS_TEST:p.Arg3delinsArgArg"),
-            "in-frame insertion must render as a delins, not a substitution: {:?}",
+            serde_json::json!("ENSP_INS_TEST:p.Arg3dup"),
+            "in-frame insertion must render as a normalised duplication, not a \
+             substitution and not an unshifted delins: {:?}",
             tc
         );
     }
