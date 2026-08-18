@@ -58,6 +58,18 @@ fn residue_span(first_pos: u64, residues: &[u8]) -> String {
     }
 }
 
+/// Render a deletion that starts at the initiation codon, whose downstream
+/// consequence is unknown: `Glu1?` for a single residue, `MetAsnIle1_?3` for a
+/// run. The residues are still named - the annotation does say what was removed
+/// - and the `?` marks the part that cannot be resolved from sequence.
+fn uncertain_from_initiator(residues: &[u8]) -> String {
+    if residues.len() == 1 {
+        format!("{}1?", aa_one_to_three(residues[0]))
+    } else {
+        format!("{}1_?{}", three_letter(residues), residues.len())
+    }
+}
+
 fn three_letter(residues: &[u8]) -> String {
     residues.iter().map(|&b| aa_one_to_three(b)).collect()
 }
@@ -291,6 +303,14 @@ pub fn hgvsp_inframe_indel(
                 Some(block) => residues = block.to_vec(),
                 None => return fallback(),
             }
+        }
+        if at == 1 {
+            // The deletion removes the initiation codon. What the ribosome does
+            // instead - start downstream, or not at all - is not something the
+            // sequence tells us, so HGVS marks the consequence unknown with `?`
+            // rather than describing a protein that may never be made. This is
+            // the form Ensembl VEP emits.
+            return Some(format!("{}{}", prefix, uncertain_from_initiator(&residues)));
         }
         Some(format!("{}{}del", prefix, residue_span(at, &residues)))
     } else {
@@ -700,6 +720,47 @@ mod tests {
         // `p.Phe5_Phe6delinsPhe`, naming residue 6 as Phe when the peptide has
         // Ala there. Reading the span from its other end is what fixes it: the
         // letters and the numbers now agree with the protein.
+    }
+
+    #[test]
+    fn a_deletion_of_the_initiation_codon_is_described_as_unresolvable() {
+        // Removing the start codon leaves the protein's fate undetermined: the
+        // ribosome may initiate downstream, or not at all, and the sequence does
+        // not say which. Describing it as an ordinary deletion asserts a protein
+        // that begins where nothing says it begins.
+        //
+        // Both shapes come from real ClinVar rows checked against Ensembl VEP:
+        // KCNA2 `MNII/I` at residues 1-4, and POLE `EA/A` at 1-2.
+        let kcna2: Vec<u8> = "MNIIDIVAIIPY".bytes().collect();
+        assert_eq!(
+            hgvsp_inframe_indel("ENSP00000491354", 1, "MNII", "I", Some(&kcna2)),
+            Some("ENSP00000491354:p.MetAsnIle1_?3".to_string())
+        );
+
+        let pole: Vec<u8> = "EAKRQ".bytes().collect();
+        assert_eq!(
+            hgvsp_inframe_indel("ENSP00000500921", 1, "EA", "A", Some(&pole)),
+            Some("ENSP00000500921:p.Glu1?".to_string())
+        );
+    }
+
+    #[test]
+    fn only_a_deletion_reaching_residue_one_is_unresolvable() {
+        // The marker is specific to the initiation codon. A deletion anywhere
+        // else is an ordinary `del`, including one that starts at residue 2.
+        let pep: Vec<u8> = "MKFFASM".bytes().collect();
+        assert_eq!(
+            hgvsp_inframe_indel("ENSP00000001", 2, "K", "-", Some(&pep)),
+            Some("ENSP00000001:p.Lys2del".to_string())
+        );
+
+        // And a delins at the start is still a delins - residues are replaced
+        // rather than removed, so the reading frame still begins somewhere known.
+        let r = hgvsp_inframe_indel("ENSP00000001", 1, "MK", "W", Some(&pep));
+        assert!(
+            r.as_deref().is_some_and(|d| d.contains("delins")),
+            "expected a delins, got {r:?}"
+        );
     }
 
     #[test]
