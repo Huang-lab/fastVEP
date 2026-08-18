@@ -20,6 +20,10 @@ noodles-csi = { workspace = true }
 bincode = { workspace = true }
 memmap2 = { workspace = true }
 zstd = { workspace = true }
+# Cache writes go to a sibling temp file and are renamed into place, so a
+# reader never sees a prefix. tempfile handles the unique name and the
+# cleanup-on-drop if serialization fails partway.
+tempfile = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

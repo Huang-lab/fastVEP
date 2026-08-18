@@ -162,6 +162,12 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             })
     };
 
+    // Set when any GFF3 source was read through the tabix path, which only
+    // returns features overlapping this VCF's variant regions. Such a
+    // transcript set is valid for *this* input and no other, so it must never
+    // be persisted as a sidecar cache — see the save site below.
+    let mut region_restricted = false;
+
     let mut transcripts = if sa_only {
         Vec::new()
     } else {
@@ -231,9 +237,28 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                                 break 'load trs;
                             }
                             Err(e) => {
+                                // An explicit --transcript-cache is the user
+                                // naming the transcript source. If it will not
+                                // load we cannot quietly substitute something
+                                // else: with no --gff3 to fall back to, the run
+                                // continues with zero transcripts and calls
+                                // every variant intergenic at exit code 0. A
+                                // cache truncated by a concurrent writer or a
+                                // full disk looked exactly like a small
+                                // annotation set.
+                                if explicit_cache {
+                                    return Err(anyhow::anyhow!(
+                                        "Transcript cache {} could not be loaded: {e}. \
+                                         It is most likely truncated or corrupt - delete it and \
+                                         rebuild with `fastvep cache`. Refusing to continue, \
+                                         because annotating without it would report every \
+                                         variant as intergenic.",
+                                        cp.display()
+                                    ));
+                                }
                                 eprintln!(
-                                    "Warning: cache load failed ({}), falling back to GFF3",
-                                    e
+                                    "Warning: sidecar cache {} could not be loaded ({e}); rebuilding from GFF3",
+                                    cp.display()
                                 );
                             }
                         }
@@ -248,20 +273,41 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             // and the consequence predictor doesn't require globally-unique
             // stable_ids, so Ensembl + RefSeq can simply coexist.
             if gff3_specs.is_empty() {
-                eprintln!(
-                    "Warning: No GFF3 file provided. Only intergenic variants will be annotated."
-                );
-                Vec::new()
+                // Reachable only when a sidecar cache failed to load and there
+                // is no GFF3 to rebuild from (an explicit cache failure has
+                // already returned above). Annotating with zero transcripts
+                // emits a complete, well-formed, all-intergenic VCF, which is
+                // indistinguishable downstream from a real result.
+                return Err(anyhow::anyhow!(
+                    "No transcript source is usable: no --gff3 was given and no transcript cache \
+                     could be loaded. Refusing to continue, because every variant would be \
+                     reported as intergenic. Pass --gff3, or --sa-only for a \
+                     transcript-free annotation."
+                ));
             } else {
                 let mut all: Vec<fastvep_genome::Transcript> = Vec::new();
                 for spec in &gff3_specs {
-                    let trs = load_one_gff3(spec, &config.input, config.distance)?;
-                    eprintln!(
-                        "Loaded {} transcripts from {} (source label: {})",
-                        trs.len(),
-                        spec.path,
-                        spec.source
-                    );
+                    let (trs, restricted) = load_one_gff3(spec, &config.input, config.distance)?;
+                    region_restricted |= restricted;
+                    // Say which kind of load this was. A tabix load returns a
+                    // small fraction of the file's transcripts, and printing
+                    // that count in the same shape as a whole-file count is
+                    // what made a by-design optimisation look like data loss.
+                    if restricted {
+                        eprintln!(
+                            "Loaded {} transcripts overlapping this input's variant regions from {} (source label: {}); the file as a whole holds more",
+                            trs.len(),
+                            spec.path,
+                            spec.source
+                        );
+                    } else {
+                        eprintln!(
+                            "Loaded {} transcripts from {} (source label: {})",
+                            trs.len(),
+                            spec.path,
+                            spec.source
+                        );
+                    }
                     all.extend(trs);
                 }
                 if all.is_empty() {
@@ -339,10 +385,20 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
     // Save cache after sequence build (only if sequences were built or
     // cache doesn't exist). Sidecar-cache writes are gated to the
-    // single-GFF3 case — multi-source caches need to round-trip through
+    // single-GFF3 case - multi-source caches need to round-trip through
     // an explicit `--transcript-cache` path so the on-disk filename
     // isn't tied to one of N inputs.
-    if needs_seq_build {
+    //
+    // They are also gated on `!region_restricted`. A tabix load only returns
+    // features overlapping this VCF's variants, so persisting it would leave a
+    // sidecar cache that looks fresh to every later run against the same
+    // --gff3 while holding only the first input's neighbourhood. The next run
+    // on a different VCF then loads it, finds no transcripts near its own
+    // variants, and reports them all as intergenic - exit code 0, no warning.
+    // Measured before this gate: 171 of 173 variants in
+    // validation/human/vep_example_GRCh38.vcf came back wrong that way,
+    // including a missense call reduced to `intergenic_variant`.
+    if needs_seq_build && !region_restricted {
         if let Some(ref cp) = cache_path {
             if single_gff3.is_some() || config.transcript_cache.is_some() {
                 if let Err(e) = fastvep_cache::transcript_cache::save_cache(&transcripts, cp) {
@@ -820,7 +876,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                             impact: ac.impact,
                             cdna_position: zip_positions(ac.cdna_start, ac.cdna_end),
                             cds_position: zip_positions(ac.cds_start, ac.cds_end),
-                            protein_position: zip_positions(ac.protein_start, ac.protein_end),
+                            protein_position: ac.protein_range(),
                             amino_acids: ac.amino_acids.clone(),
                             codons: ac.codons.clone(),
                             exon: ac.exon,
@@ -2405,11 +2461,17 @@ fn detect_gff3_source(path: &str) -> String {
     }
 }
 
+/// Load one GFF3 source, returning the transcripts and whether the load was
+/// restricted to the input VCF's variant regions.
+///
+/// The `bool` is not cosmetic: a region-restricted set is only valid for the
+/// VCF whose regions produced it, so callers must not persist it as a cache
+/// keyed on the GFF3 path alone.
 fn load_one_gff3(
     spec: &Gff3Spec,
     vcf_input: &str,
     distance: u64,
-) -> Result<Vec<fastvep_genome::Transcript>> {
+) -> Result<(Vec<fastvep_genome::Transcript>, bool)> {
     let gff_path = Path::new(&spec.path);
     let tbi_path = format!("{}.tbi", spec.path);
 
@@ -2420,15 +2482,18 @@ fn load_one_gff3(
             regions.len(),
             spec.path
         );
-        fastvep_cache::gff::parse_gff3_indexed_with_source(gff_path, &regions, &spec.source)
+        let trs =
+            fastvep_cache::gff::parse_gff3_indexed_with_source(gff_path, &regions, &spec.source)?;
+        Ok((trs, true))
     } else {
         let gff_file =
             File::open(&spec.path).with_context(|| format!("Opening GFF3 file: {}", spec.path))?;
-        if spec.path.ends_with(".gz") || spec.path.ends_with(".bgz") {
-            parse_gff3_with_source(flate2::read::MultiGzDecoder::new(gff_file), &spec.source)
+        let trs = if spec.path.ends_with(".gz") || spec.path.ends_with(".bgz") {
+            parse_gff3_with_source(flate2::read::MultiGzDecoder::new(gff_file), &spec.source)?
         } else {
-            parse_gff3_with_source(gff_file, &spec.source)
-        }
+            parse_gff3_with_source(gff_file, &spec.source)?
+        };
+        Ok((trs, false))
     }
 }
 

@@ -23,12 +23,36 @@ pub struct AlleleConsequenceResult {
     pub allele: Allele,
     pub consequences: Vec<Consequence>,
     pub impact: Impact,
+    /// Transcript-relative coordinate pairs, in *strand order*: `start` is the
+    /// position of the genomically leftmost affected base and `end` the
+    /// rightmost. On the reverse strand a transcript runs right-to-left, so
+    /// `start > end` there and the pair is not `(lo, hi)`.
+    ///
+    /// Use [`AlleleConsequenceResult::protein_range`] (and sort the others the
+    /// same way) whenever a span is wanted. A bare `protein_start` is only the
+    /// first affected residue on the forward strand; the exported
+    /// `Protein_position` matches Ensembl VEP because the output layer sorts the
+    /// pair before printing it.
     pub cdna_start: Option<u64>,
     pub cdna_end: Option<u64>,
     pub cds_start: Option<u64>,
     pub cds_end: Option<u64>,
     pub protein_start: Option<u64>,
     pub protein_end: Option<u64>,
+    /// `(replaced residues, replacement residues)`.
+    ///
+    /// The replaced residues are **not** guaranteed to begin at
+    /// `protein_start`. They are built from the lower of the two CDS
+    /// coordinates for deletions and from `cds_start` otherwise, so for a
+    /// shrinking in-frame change on the reverse strand `protein_start` is the
+    /// *end* of the affected range and the residues begin one codon earlier.
+    /// Over 37,122 in-frame ClinVar rows the replaced residues sat at
+    /// `protein_start` in 71.1% of cases, at `protein_start - 1` in 11.9%, and
+    /// at neither in 17.0%.
+    ///
+    /// Anything that needs the true anchor - HGVSp, in particular - has to
+    /// corroborate it against the transcript peptide rather than trust either
+    /// scalar. See `fastvep_hgvs::protein` and issue #89.
     pub amino_acids: Option<(String, String)>,
     pub codons: Option<(String, String)>,
     pub exon: Option<(u32, u32)>,
@@ -47,6 +71,28 @@ pub struct AlleleConsequenceResult {
     /// variant; the variant's own position is used as the stand-in, which is
     /// the approximation the published PVS1 implementations make.
     pub escapes_nmd: Option<bool>,
+}
+
+impl AlleleConsequenceResult {
+    /// The affected residue span as `(lo, hi)`, whichever way the transcript
+    /// runs.
+    ///
+    /// `protein_start`/`protein_end` are strand-ordered, so on the reverse
+    /// strand the raw pair arrives reversed - a 3 bp deletion spanning residues
+    /// 3 and 4 comes back as `protein_start = 4`, `protein_end = 3`. Every
+    /// consumer that wants a span therefore has to sort the pair, and each one
+    /// that open-coded it was one `min`/`max` away from an off-by-one that
+    /// nothing downstream could detect.
+    ///
+    /// A single present coordinate describes a single residue.
+    pub fn protein_range(&self) -> Option<(u64, u64)> {
+        match (self.protein_start, self.protein_end) {
+            (Some(s), Some(e)) => Some((s.min(e), s.max(e))),
+            (Some(s), None) => Some((s, s)),
+            (None, Some(e)) => Some((e, e)),
+            (None, None) => None,
+        }
+    }
 }
 
 /// Full prediction result for a variant.
@@ -947,6 +993,57 @@ impl Default for ConsequencePredictor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protein_range_sorts_a_reverse_strand_pair() {
+        // The trap this exists to remove: on the reverse strand the raw pair
+        // arrives with start past end, so a consumer reading `protein_start` as
+        // "the first affected residue" is one codon off, and `Protein_position`
+        // would print backwards.
+        let mut ac = bare_result();
+
+        ac.protein_start = Some(4);
+        ac.protein_end = Some(3);
+        assert_eq!(ac.protein_range(), Some((3, 4)));
+
+        // Forward strand: already ordered, unchanged.
+        ac.protein_start = Some(3);
+        ac.protein_end = Some(4);
+        assert_eq!(ac.protein_range(), Some((3, 4)));
+
+        // A single coordinate describes a single residue, from either side.
+        ac.protein_start = Some(7);
+        ac.protein_end = None;
+        assert_eq!(ac.protein_range(), Some((7, 7)));
+        ac.protein_start = None;
+        ac.protein_end = Some(7);
+        assert_eq!(ac.protein_range(), Some((7, 7)));
+
+        ac.protein_end = None;
+        assert_eq!(ac.protein_range(), None);
+    }
+
+    fn bare_result() -> AlleleConsequenceResult {
+        AlleleConsequenceResult {
+            allele: Allele::from_str("A"),
+            consequences: vec![],
+            impact: Impact::Modifier,
+            cdna_start: None,
+            cdna_end: None,
+            cds_start: None,
+            cds_end: None,
+            protein_start: None,
+            protein_end: None,
+            amino_acids: None,
+            codons: None,
+            exon: None,
+            intron: None,
+            distance: None,
+            protein_length: None,
+            escapes_nmd: None,
+        }
+    }
+
     use fastvep_genome::{Exon, Gene, Translation};
 
     fn make_coding_transcript() -> Transcript {

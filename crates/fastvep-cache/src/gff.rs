@@ -967,6 +967,76 @@ chr1\tensembl\texon\t6000\t9000\t.\t-\t.\tID=exon:ENSE00000002;Parent=transcript
     }
 
     #[test]
+    fn feature_order_does_not_change_the_transcript_set() {
+        // Issue #87 supposed that `sort -k1,1 -k4,4n -k5,5n` broke the parser by
+        // placing children before their parents, dropping ~2% of transcripts.
+        // It does not: parsing is two-pass, collecting all features before
+        // resolving any parent, so the file may arrive in any order. Pinning
+        // that here, because the ordering hypothesis is the natural one to reach
+        // for again and the real cause was elsewhere (a region-restricted tabix
+        // load being persisted as a whole-file cache).
+        let lines: Vec<&str> = sample_gff3().lines().filter(|l| !l.is_empty()).collect();
+
+        let parent_first = lines.join("\n");
+        let child_first = {
+            let mut v = lines.clone();
+            v.reverse();
+            v.join("\n")
+        };
+        // And the coordinate sort a user would actually apply.
+        let coordinate_sorted = {
+            let mut v: Vec<&str> = lines
+                .iter()
+                .filter(|l| !l.starts_with('#'))
+                .copied()
+                .collect();
+            v.sort_by_key(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                (
+                    f[0].to_string(),
+                    f[3].parse::<u64>().unwrap_or(0),
+                    f[4].parse::<u64>().unwrap_or(0),
+                )
+            });
+            v.join("\n")
+        };
+
+        let fingerprint = |text: &str| {
+            let mut trs = parse_gff3(text.as_bytes()).unwrap();
+            trs.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+            trs.iter()
+                .map(|t| {
+                    let mut exons: Vec<(u64, u64)> =
+                        t.exons.iter().map(|e| (e.start, e.end)).collect();
+                    exons.sort();
+                    format!(
+                        "{}|{}|{}|{:?}|{:?}|{:?}|{exons:?}",
+                        t.stable_id,
+                        t.start,
+                        t.end,
+                        t.strand,
+                        t.cdna_coding_start,
+                        t.cdna_coding_end
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let expected = fingerprint(&parent_first);
+        assert!(!expected.is_empty(), "fixture parsed to nothing");
+        assert_eq!(
+            fingerprint(&child_first),
+            expected,
+            "reversing the file changed the transcript set"
+        );
+        assert_eq!(
+            fingerprint(&coordinate_sorted),
+            expected,
+            "coordinate-sorting the file changed the transcript set"
+        );
+    }
+
+    #[test]
     fn test_gff3_skips_malformed_coordinate_lines() {
         // Two lines: one valid mRNA, one with a non-numeric start. The malformed
         // line used to silently parse as start=0, end=0 — colliding with every

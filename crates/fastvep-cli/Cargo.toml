@@ -35,3 +35,9 @@ env_logger = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 fastvep-sa = { workspace = true }
+# Building a bgzipped + tabix-indexed GFF3 fixture in-process, so the
+# region-restricted load path is covered without an htslib dependency.
+noodles-bgzf = { workspace = true }
+noodles-core = { workspace = true }
+noodles-csi = { workspace = true }
+noodles-tabix = { workspace = true }
