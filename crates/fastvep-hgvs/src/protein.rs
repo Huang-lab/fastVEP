@@ -162,9 +162,16 @@ fn anchor_candidates(protein_start: u64, reference_len: usize) -> [Option<u64>; 
 /// index 0 — pass `Transcript::peptide`, which is translated in frame from
 /// `codon_table_start_phase` and with the right codon table for the contig. Any
 /// terminator it carries is trimmed here. Given one, insertions and deletions
-/// are normalised per the HGVS 3'-rule — shifted as far C-terminal as they can
-/// go, with duplications collapsed to `dup` — matching Ensembl VEP. `delins` is
-/// not shifted.
+/// are normalised per the HGVS 3'-rule - shifted as far C-terminal as they can
+/// go, with duplications collapsed to `dup`. `delins` is not shifted.
+///
+/// This agrees with Ensembl VEP except within the last `n - 1` residues of the
+/// protein, for a change of `n` residues. VEP's `_shift_3prime`
+/// (`Bio::EnsEMBL::Variation::TranscriptVariationAllele`) bounds its scan at
+/// `length(post_seq) - n` while comparing a single residue per step, so it
+/// halts `n - 1` residues short of the terminus. We shift to the terminus,
+/// which is what the 3'-rule specifies and what our HGVSc for the same variant
+/// already describes. See issue #94.
 ///
 /// Every peptide-dependent step degrades to the unshifted description rather
 /// than failing: a peptide that is absent, too short, or inconsistent with
@@ -585,6 +592,19 @@ mod tests {
         let pep: Vec<u8> = "MAAAGK".bytes().collect();
         let r = hgvsp_inframe_indel("ENSP00000001", 2, "A", "-", Some(&pep));
         assert_eq!(r, Some("ENSP00000001:p.Ala4del".to_string()));
+    }
+
+    #[test]
+    fn test_hgvsp_inframe_deletion_shifts_onto_the_final_residue() {
+        // The 3'-rule runs to the end of the protein, not to one residue short
+        // of it. Ensembl VEP stops `n - 1` residues early for an n-residue
+        // change, so this pins our answer against a future attempt to reproduce
+        // that off-by-one in the name of compatibility. Real case: NT5C2
+        // c.1674_1679del is p.Glu560_Glu561del on a 561-residue protein, which
+        // VEP reports as p.Glu559_Glu560del.
+        let pep: Vec<u8> = "MKEEEEE*".bytes().collect();
+        let r = hgvsp_inframe_indel("ENSP00000001", 3, "EE", "-", Some(&pep));
+        assert_eq!(r, Some("ENSP00000001:p.Glu6_Glu7del".to_string()));
     }
 
     #[test]
