@@ -73,6 +73,33 @@ pub struct AlleleConsequenceResult {
     pub escapes_nmd: Option<bool>,
 }
 
+/// Resolve a codon-table residue against the transcript's own peptide.
+///
+/// The codon table cannot see readthrough. A selenoprotein's in-frame UGA
+/// translates to `*` here, while `build_sequences` has already resolved it to
+/// selenocysteine from the annotated CDS extent, so a substitution at that codon
+/// reads as `stop_lost` and a synonymous change reads as `stop_retained`.
+///
+/// The peptide is consulted only when the table says terminator and the peptide
+/// disagrees, which is exactly the readthrough case; every other position still
+/// decides by the codon table alone.
+///
+/// This describes the *reference* protein, so it must never be applied to an alt
+/// residue that the variant changed - doing so would rewrite a genuine
+/// `stop_gained` into the reference residue. Callers pass alt residues through
+/// only for codons the variant leaves untouched.
+fn resolve_readthrough_residue(transcript: &Transcript, codon_index: usize, translated: u8) -> u8 {
+    if translated != b'*' {
+        return translated;
+    }
+    transcript
+        .peptide
+        .as_deref()
+        .and_then(|p| p.as_bytes().get(codon_index).copied())
+        .filter(|&b| b != b'*')
+        .unwrap_or(translated)
+}
+
 impl AlleleConsequenceResult {
     /// The affected residue span as `(lo, hi)`, whichever way the transcript
     /// runs.
@@ -581,8 +608,18 @@ impl ConsequencePredictor {
                     for c in (0..ref_window.len()).step_by(3) {
                         let r: [u8; 3] = [ref_window[c], ref_window[c + 1], ref_window[c + 2]];
                         let a: [u8; 3] = [alt_window[c], alt_window[c + 1], alt_window[c + 2]];
-                        ref_aas.push(table.translate(&r) as char);
-                        alt_aas.push(table.translate(&a) as char);
+                        let codon_index = (win_start + c) / 3;
+                        let ref_res = resolve_readthrough_residue(
+                            transcript,
+                            codon_index,
+                            table.translate(&r),
+                        );
+                        // An untouched codon keeps whatever the reference
+                        // resolved to; a changed one is translated plainly, so a
+                        // newly-introduced stop is still a stop.
+                        let alt_res = if a == r { ref_res } else { table.translate(&a) };
+                        ref_aas.push(ref_res as char);
+                        alt_aas.push(alt_res as char);
                     }
 
                     let (ref_codon_str, alt_codon_str) =
@@ -673,7 +710,11 @@ impl ConsequencePredictor {
             seq_bytes[codon_start + 1],
             seq_bytes[codon_start + 2],
         ];
-        let ref_aa = self.codon_table_for(transcript).translate(&ref_codon);
+        let ref_aa = resolve_readthrough_residue(
+            transcript,
+            codon_number,
+            self.codon_table_for(transcript).translate(&ref_codon),
+        );
         let ref_aa_str = String::from(ref_aa as char);
 
         if is_frameshift {

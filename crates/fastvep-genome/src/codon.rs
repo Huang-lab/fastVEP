@@ -188,6 +188,13 @@ pub fn aa_one_to_three(aa: u8) -> &'static str {
         b'Y' => "Tyr",
         b'V' => "Val",
         b'*' => "Ter",
+        // The two amino acids that are inserted by readthrough rather than by a
+        // codon of their own. Selenocysteine reaches here whenever a CDS is
+        // annotated past an in-frame UGA (see
+        // `resolve_readthrough_selenocysteine`); without it the residue would
+        // fall to "???" and rebuild the malformed descriptions #58 removed.
+        b'U' => "Sec",
+        b'O' => "Pyl",
         b'X' => "Xaa",
         _ => "???",
     }

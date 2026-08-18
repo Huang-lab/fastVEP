@@ -1876,6 +1876,7 @@ mod tests {
                 ("Trp", 'W'),
                 ("Tyr", 'Y'),
                 ("Val", 'V'),
+                ("Sec", 'U'),
                 ("Ter", '*'),
             ];
             TABLE.iter().find(|(k, _)| *k == aa3).map(|(_, v)| *v)
@@ -1913,6 +1914,63 @@ mod tests {
             i += 3 + digits.len();
         }
         assert!(checked > 0, "no residue positions found in {hgvsp}");
+    }
+
+    #[test]
+    fn a_substitution_at_a_selenocysteine_codon_is_a_missense_not_a_stop_change() {
+        // Ensembl annotates selenoprotein CDSs straight through their in-frame
+        // UGA, which encodes selenocysteine. Translating that codon as a
+        // terminator made the protein look like it ended there - SELENOW is 87
+        // residues with its UGA at 13 - and made a substitution at the codon
+        // look like a change to a stop rather than the missense it is.
+        //
+        // CDS ATG TGG TGA CGG TAA on the forward strand: M W U R *, with the
+        // UGA at residue 3 and the real terminator at 5.
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Forward, "ATGTGGTGACGGTAA");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MWUR*"),
+            "the annotated CDS runs past the UGA, so residue 3 is selenocysteine"
+        );
+
+        // TGA -> TGC at the third base: Sec becomes Cys.
+        let tc = annotate_one(tr, 59, "A", "C");
+        let terms: Vec<&str> = tc["consequence_terms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t.as_str())
+            .collect();
+        assert!(
+            terms.contains(&"missense_variant"),
+            "changing selenocysteine to cysteine is a missense, got {terms:?}"
+        );
+        assert!(
+            !terms.iter().any(|t| t.contains("stop")),
+            "must not be reported as any kind of stop change, got {terms:?}"
+        );
+        assert_eq!(tc["amino_acids"], serde_json::json!("U/C"));
+        assert_eq!(
+            tc["hgvsp"],
+            serde_json::json!("ENSP_ANCHOR:p.Sec3Cys"),
+            "selenocysteine renders as Sec, not as the \"???\" an unknown letter would give: {tc:?}"
+        );
+    }
+
+    #[test]
+    fn a_transcript_whose_cds_does_not_end_in_a_terminator_keeps_its_internal_stop() {
+        // The guard that keeps readthrough from rewriting genuinely broken
+        // annotations: without a terminator at the annotated end there is no
+        // corroboration that the frame is right, so an internal UGA could as
+        // easily be a CDS annotated in the wrong frame.
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Forward, "ATGTGGTGACGGCGG");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MW*RR"),
+            "no terminator at the end means the internal stop is left alone"
+        );
     }
 
     #[test]

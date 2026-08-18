@@ -70,6 +70,62 @@ pub struct Transcript {
     pub codon_table_start_phase: u64,
 }
 
+/// Reinterpret an in-frame UGA that the annotation places *inside* the coding
+/// sequence as selenocysteine.
+///
+/// A GFF3 CDS is an assertion about where translation starts and ends. When it
+/// runs past an in-frame stop, the annotation is saying that codon is read
+/// through, and the only codon the genetic code reads through this way is UGA,
+/// which encodes selenocysteine. Translating it as a terminator instead makes
+/// the protein look like it ends partway: SELENOW is 87 residues and its UGA is
+/// at residue 13, so consumers that stop at the first `*` see a 13-residue
+/// protein. That is what blocked HGVSp normalisation past the Sec position, and
+/// it would make a substitution at the Sec codon look like `stop_lost` rather
+/// than the missense it is.
+///
+/// Three conditions, all read from the annotation rather than from a list of
+/// gene names:
+///
+///   1. The coding sequence is a whole number of codons.
+///   2. Its final codon is a terminator, so the annotated end is where
+///      translation really stops and the frame is corroborated.
+///   3. The internal codon is literally `TGA`, and the active codon table calls
+///      `TGA` a stop. Selenocysteine has no other codon, so `TAA`/`TAG` inside a
+///      CDS are left as terminators - they signal an annotation problem rather
+///      than readthrough, and silently translating them would invent residues.
+///
+/// A CDS failing 1 or 2 is untouched, which leaves incomplete and
+/// internally-inconsistent annotations exactly as they were. The vertebrate
+/// mitochondrial table reads `TGA` as Trp, so condition 3 never fires there.
+fn resolve_readthrough_selenocysteine(peptide: &mut [u8], cds: &[u8], table: &CodonTable) {
+    if !table.is_stop(b"TGA") {
+        return;
+    }
+    // A partial final codon means the annotated CDS is not a whole protein, so
+    // its interior is not trustworthy either.
+    if !cds.len().is_multiple_of(3) {
+        return;
+    }
+    // The last residue must be the terminator the annotation promises. Without
+    // it we cannot tell a readthrough codon from a CDS annotated in the wrong
+    // frame, and reading through would extend a protein that does end early.
+    match peptide.last() {
+        Some(b'*') => {}
+        _ => return,
+    }
+
+    let last = peptide.len() - 1;
+    for i in 0..last {
+        if peptide[i] != b'*' {
+            continue;
+        }
+        let codon = &cds[i * 3..i * 3 + 3];
+        if codon.eq_ignore_ascii_case(b"TGA") {
+            peptide[i] = b'U';
+        }
+    }
+}
+
 impl Transcript {
     /// Whether this transcript is protein-coding.
     pub fn is_coding(&self) -> bool {
@@ -223,7 +279,12 @@ impl Transcript {
                 } else {
                     CodonTable::standard()
                 };
-                let peptide_bytes = codon_table.translate_seq(translateable.as_bytes());
+                let mut peptide_bytes = codon_table.translate_seq(translateable.as_bytes());
+                resolve_readthrough_selenocysteine(
+                    &mut peptide_bytes,
+                    translateable.as_bytes(),
+                    &codon_table,
+                );
                 self.peptide = Some(String::from_utf8_lossy(&peptide_bytes).to_string());
             }
         }
@@ -405,6 +466,71 @@ pub struct Translation {
 
 #[cfg(test)]
 mod tests {
+    /// Translate then resolve, the way `build_sequences` does, so the tests
+    /// exercise the same pairing of peptide and CDS.
+    fn translated(cds: &str) -> String {
+        let table = CodonTable::standard();
+        let mut pep = table.translate_seq(cds.as_bytes());
+        super::resolve_readthrough_selenocysteine(&mut pep, cds.as_bytes(), &table);
+        String::from_utf8(pep).unwrap()
+    }
+
+    #[test]
+    fn an_internal_tga_inside_a_complete_cds_is_selenocysteine() {
+        // The shape of every real selenoprotein in Ensembl 115: a UGA partway
+        // through a CDS the annotation carries on past, and a real stop at the
+        // end. SELENOW is exactly this, with the UGA at residue 13 of 87.
+        // ATG AAA TGA CGG TAA -> M K * R *  ->  M K U R *
+        assert_eq!(translated("ATGAAATGACGGTAA"), "MKUR*");
+
+        // Several of them, as in TXNRD2 and the multi-Sec transcripts.
+        // ATG TGA AAA TGA CGG TAA
+        assert_eq!(translated("ATGTGAAAATGACGGTAA"), "MUKUR*");
+
+        // Case-insensitively, since soft-masked reference sequence is lowercase.
+        assert_eq!(translated("atgaaatgacggtaa"), "MKUR*");
+    }
+
+    #[test]
+    fn only_tga_reads_through_and_only_inside_a_complete_cds() {
+        // TAA and TAG are not selenocysteine codons. Inside a CDS they signal an
+        // annotation problem, and inventing a residue there would be a guess.
+        // ATG AAA TAA CGG TAA / ATG AAA TAG CGG TAA
+        assert_eq!(translated("ATGAAATAACGGTAA"), "MK*R*");
+        assert_eq!(translated("ATGAAATAGCGGTAA"), "MK*R*");
+
+        // The terminator the annotation promises is never itself read through,
+        // even though it is a TGA.
+        // ATG AAA CGG TGA
+        assert_eq!(translated("ATGAAACGGTGA"), "MKR*");
+
+        // No terminator at the end: the frame is uncorroborated, so an internal
+        // TGA could equally be a CDS annotated in the wrong frame. Left alone.
+        // ATG AAA TGA CGG CGG
+        assert_eq!(translated("ATGAAATGACGGCGG"), "MK*RR");
+
+        // A partial final codon means the annotated CDS is not a whole protein.
+        // ATG AAA TGA CGG TA
+        assert_eq!(translated("ATGAAATGACGGTA"), "MK*R");
+    }
+
+    #[test]
+    fn the_mitochondrial_table_has_no_readthrough_to_resolve() {
+        // NCBI table 2 reads TGA as Trp, so it never produces the internal
+        // terminator this resolves, and AGA/AGG stops must not be touched.
+        let table = crate::mitochondrial::mitochondrial_codon_table();
+        let cds = "ATGAAATGACGGAGA";
+        let mut pep = table.translate_seq(cds.as_bytes());
+        let before = pep.clone();
+        super::resolve_readthrough_selenocysteine(&mut pep, cds.as_bytes(), &table);
+        assert_eq!(pep, before, "mitochondrial translation must be untouched");
+        assert!(
+            !pep.contains(&b'U'),
+            "no selenocysteine in the mitochondrial table: {:?}",
+            String::from_utf8_lossy(&pep)
+        );
+    }
+
     use super::*;
 
     fn make_test_transcript() -> Transcript {
