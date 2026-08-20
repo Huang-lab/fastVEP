@@ -1324,12 +1324,18 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                                             // HGVS 3'-rule and collapse a repeat to `dup`,
                                             // matching Ensembl VEP; it degrades to the
                                             // unshifted description without one.
+                                            // `tr.strand` says which end of
+                                            // `aa.0` the `ps` above names: on
+                                            // the reverse strand a shrinking
+                                            // change arrives anchored at the
+                                            // end of its span (#89, #96).
                                             ann.hgvsp = fastvep_hgvs::hgvsp_inframe_indel(
                                                 &versioned_pid,
                                                 ps,
                                                 &aa.0,
                                                 &aa.1,
                                                 tr.peptide.as_deref().map(str::as_bytes),
+                                                tr.strand,
                                             );
                                         } else {
                                             let ref_aa_byte = aa.0.as_bytes().first().copied().unwrap_or(b'X');

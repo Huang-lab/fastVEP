@@ -622,12 +622,19 @@ impl AnnotationContext {
                                                 // repeat to `dup`, matching Ensembl VEP; it
                                                 // degrades to the unshifted description
                                                 // without one.
+                                                // `tr.strand` says which end
+                                                // of `aa.0` the `ps` above
+                                                // names: on the reverse strand a
+                                                // shrinking change arrives
+                                                // anchored at the end of its
+                                                // span (#89, #96).
                                                 ann.hgvsp = fastvep_hgvs::hgvsp_inframe_indel(
                                                     &versioned_pid,
                                                     ps,
                                                     &aa.0,
                                                     &aa.1,
                                                     tr.peptide.as_deref().map(str::as_bytes),
+                                                    tr.strand,
                                                 );
                                             } else {
                                                 let ref_aa_byte = aa
@@ -2080,6 +2087,78 @@ mod tests {
             "shrinking reverse-strand change should name the residues it deletes: {tc:?}"
         );
         assert_hgvsp_agrees_with_peptide(tc["hgvsp"].as_str().unwrap(), "MWFFK*");
+    }
+
+    #[test]
+    fn hgvsp_reads_a_periodic_reference_from_the_end_the_strand_determines() {
+        // The residue #93 left behind, filed as #96. Trying the other end of the
+        // span rescued the cases where the first end is not a match at all; where
+        // the reference is periodic *both* ends match, and taking whichever came
+        // first took the wrong one. The strand says which end applies, so it now
+        // decides instead of the iteration order.
+        //
+        // CDS ATG GAA GGT GAA GGT GAA GCT TAA = M E G E G E A * at genomic 51-74,
+        // so CDS base i sits at genomic 75 - i. `EGE` therefore sits at residues
+        // 2-4 and again at 4-6. Deleting CDS 4-12 (genomic 63-71) removes
+        // residues 2-4 and the anchor arrives as residue 4, the end of the range.
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Reverse, "ATGGAAGGTGAAGGTGAAGCTTAA");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MEGEGEA*"),
+            "test transcript premise"
+        );
+
+        let tc = annotate_one(tr, 62, "CTTCACCTTC", "C");
+        assert!(
+            tc["consequence_terms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|t| t.as_str() == Some("inframe_deletion")),
+            "premise: should be an in-frame deletion, got {:?}",
+            tc["consequence_terms"]
+        );
+        assert_eq!(tc["amino_acids"], serde_json::json!("EGE/-"));
+        assert_eq!(tc["protein_start"], serde_json::json!(2));
+        assert_eq!(tc["protein_end"], serde_json::json!(4));
+
+        // Before the fix: `p.Glu4_Glu6del`. Both descriptions are well-formed and
+        // name real Glu residues, which is what makes this one dangerous - only
+        // one of them describes this variant. Deleting 2-4 leaves MGEA; deleting
+        // 4-6 leaves MEGA, so no later 3'-shift can reconcile them.
+        assert_eq!(
+            tc["hgvsp"],
+            serde_json::json!("ENSP_ANCHOR:p.Glu2_Glu4del"),
+            "periodic reference resolved to the wrong end of the span: {tc:?}"
+        );
+        assert_hgvsp_agrees_with_peptide(tc["hgvsp"].as_str().unwrap(), "MEGEGEA*");
+    }
+
+    #[test]
+    fn hgvsp_reads_the_same_periodic_reference_from_the_start_on_the_forward_strand() {
+        // The mirror: same peptide, same deleted residues, transcript running the
+        // other way. Here `protein_start` already *is* the first affected residue,
+        // so ordering the candidates by strand has to leave this untouched -
+        // otherwise the fix for #96 would trade one wrong end for the other.
+        //
+        // Genomic 54-62 is CDS 4-12 on this strand, anchored at 53.
+        use fastvep_core::Strand;
+        let tr = cds_transcript(Strand::Forward, "ATGGAAGGTGAAGGTGAAGCTTAA");
+        assert_eq!(
+            tr.peptide.as_deref(),
+            Some("MEGEGEA*"),
+            "test transcript premise"
+        );
+
+        let tc = annotate_one(tr, 53, "GGAAGGTGAA", "G");
+        assert_eq!(tc["amino_acids"], serde_json::json!("EGE/-"));
+        assert_eq!(
+            tc["hgvsp"],
+            serde_json::json!("ENSP_ANCHOR:p.Glu2_Glu4del"),
+            "forward-strand reading changed: {tc:?}"
+        );
+        assert_hgvsp_agrees_with_peptide(tc["hgvsp"].as_str().unwrap(), "MEGEGEA*");
     }
 
     #[test]
