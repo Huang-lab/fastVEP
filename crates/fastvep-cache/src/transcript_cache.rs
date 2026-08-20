@@ -24,20 +24,41 @@ const CACHE_MAGIC_V2: &[u8; 8] = b"FSTVEP02";
 /// Magic header for legacy gzip-compressed caches (rejected, same reason).
 const CACHE_MAGIC_V1: &[u8; 8] = b"FSTVEP01";
 
-/// What a rejected pre-#90 cache says, in both the sidecar and the explicit
-/// `--transcript-cache` path. Written once so the two read the same.
-fn stale_format_error(found: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "Transcript cache is in the {found} format, which predates the #90 fix and \
-         cannot be trusted. Caches written between 2026-06-10 (the tabix read path) \
-         and 2026-08-18 (#90) may hold only the transcripts overlapping one input \
-         VCF's variants while looking like a whole-file cache to every later run - \
-         the #87 failure, which reported 47,196 of 47,196 chr17 variants as \
-         intergenic at exit code 0. Nothing in the file distinguishes the two, so \
-         it is rejected rather than read. Rebuild with `fastvep cache`, or delete \
-         it and let the sidecar rebuild itself."
-    )
+/// A cache whose format predates #90, and so cannot be trusted to hold a
+/// whole-file transcript set.
+///
+/// A distinct type rather than a bare message because the two callers need to
+/// say different things about it. The sidecar path rebuilds and only reports;
+/// the explicit `--transcript-cache` path has to stop, and its generic failure
+/// wording ("most likely truncated or corrupt") is the wrong diagnosis here -
+/// the file is intact, it is the guarantee that is missing. Callers distinguish
+/// the two with `anyhow::Error::downcast_ref`.
+#[derive(Debug)]
+pub struct StaleCacheFormat {
+    /// The format found on disk, named as the user would see it in the file.
+    pub found: &'static str,
 }
+
+impl std::fmt::Display for StaleCacheFormat {
+    /// Phrased to read as the reason a caller could not use the cache, so that
+    /// both call sites can introduce it with their own subject.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "it is in the {} format, which predates the #90 fix and cannot be trusted. \
+             Caches written between 2026-06-10 (the tabix read path) and 2026-08-18 \
+             (#90) may hold only the transcripts overlapping one input VCF's variants \
+             while looking like a whole-file cache to every later run - the #87 \
+             failure, which reported 47,196 of 47,196 chr17 variants as intergenic at \
+             exit code 0. Nothing in the file distinguishes the two, so it is rejected \
+             rather than read. Rebuild it with `fastvep cache`, or delete it and let \
+             the sidecar rebuild itself.",
+            self.found
+        )
+    }
+}
+
+impl std::error::Error for StaleCacheFormat {}
 
 /// Save transcripts to a binary cache file (bincode + zstd).
 ///
@@ -176,7 +197,7 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     zst.read_exact(&mut magic)
         .with_context(|| "Reading cache header")?;
     if &magic == CACHE_MAGIC_V2 {
-        return Err(stale_format_error("FSTVEP02"));
+        return Err(StaleCacheFormat { found: "FSTVEP02" }.into());
     }
     if &magic != CACHE_MAGIC_V3 {
         anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP03)");
@@ -203,7 +224,10 @@ fn load_cache_gzip<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     gz.read_exact(&mut magic)
         .with_context(|| "Reading cache header")?;
     if &magic == CACHE_MAGIC_V1 {
-        return Err(stale_format_error("FSTVEP01 (gzip)"));
+        return Err(StaleCacheFormat {
+            found: "FSTVEP01 (gzip)",
+        }
+        .into());
     }
     anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP01)");
 }

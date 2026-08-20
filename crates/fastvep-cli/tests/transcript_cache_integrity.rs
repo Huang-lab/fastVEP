@@ -121,7 +121,7 @@ fn a_truncated_explicit_transcript_cache_stops_the_run() {
     .expect_err("a truncated --transcript-cache must not annotate anyway");
     let msg = err.to_string();
     assert!(
-        msg.contains("could not be loaded") && msg.contains("truncated or corrupt"),
+        msg.contains("cannot be used") && msg.contains("truncated or corrupt"),
         "error should name the cache as the problem, got: {msg}"
     );
     assert!(
@@ -290,6 +290,13 @@ fn a_pre_90_explicit_transcript_cache_stops_the_run() {
     assert!(
         msg.contains("fastvep cache"),
         "the error should say how to recover, got: {msg}"
+    );
+    // One diagnosis, not two. The file is intact - sending the user to look for
+    // a truncated write or a full disk would be a different problem than the
+    // one they have, and the generic wording used to be appended to this one.
+    assert!(
+        !msg.contains("truncated or corrupt"),
+        "a pre-#90 cache is intact; the error must not also blame corruption, got: {msg}"
     );
     assert!(
         !out.exists()
