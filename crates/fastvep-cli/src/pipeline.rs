@@ -7,6 +7,7 @@ use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, MatchedVariant, SequenceProvider,
     TabixVariationProvider, TranscriptProvider, VariationProvider,
 };
+use fastvep_cache::transcript_cache::StaleCacheFormat;
 use fastvep_consequence::ConsequencePredictor;
 use fastvep_core::{Allele, Consequence};
 use fastvep_hgvs;
@@ -247,12 +248,23 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                                 // full disk looked exactly like a small
                                 // annotation set.
                                 if explicit_cache {
+                                    // A pre-#90 cache is intact, so "truncated
+                                    // or corrupt" is the wrong diagnosis and
+                                    // would send the user looking for a disk
+                                    // problem they do not have. Say which of
+                                    // the two it is, once.
+                                    let why = match e.downcast_ref::<StaleCacheFormat>() {
+                                        Some(stale) => stale.to_string(),
+                                        None => format!(
+                                            "it could not be read ({e}), and is most likely \
+                                             truncated or corrupt - delete it and rebuild with \
+                                             `fastvep cache`."
+                                        ),
+                                    };
                                     return Err(anyhow::anyhow!(
-                                        "Transcript cache {} could not be loaded: {e}. \
-                                         It is most likely truncated or corrupt - delete it and \
-                                         rebuild with `fastvep cache`. Refusing to continue, \
-                                         because annotating without it would report every \
-                                         variant as intergenic.",
+                                        "Transcript cache {} cannot be used: {why} Refusing to \
+                                         continue, because annotating without it would report \
+                                         every variant as intergenic.",
                                         cp.display()
                                     ));
                                 }

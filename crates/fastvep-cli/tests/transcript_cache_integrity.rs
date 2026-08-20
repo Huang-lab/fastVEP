@@ -121,7 +121,7 @@ fn a_truncated_explicit_transcript_cache_stops_the_run() {
     .expect_err("a truncated --transcript-cache must not annotate anyway");
     let msg = err.to_string();
     assert!(
-        msg.contains("could not be loaded") && msg.contains("truncated or corrupt"),
+        msg.contains("cannot be used") && msg.contains("truncated or corrupt"),
         "error should name the cache as the problem, got: {msg}"
     );
     assert!(
@@ -183,4 +183,126 @@ fn a_sidecar_cache_that_will_not_load_is_rebuilt_from_the_gff3() {
     assert!(std::fs::read_to_string(&out)
         .unwrap()
         .contains("missense_variant"));
+}
+
+/// Write a well-formed cache in the pre-#90 FSTVEP02 format, holding `n`
+/// transcripts. Deliberately valid: the whole difficulty is that a poisoned
+/// region-restricted cache and a whole-file one are the same bytes with a
+/// different transcript count, and neither the count nor the mtime tells them
+/// apart.
+fn write_v2_cache(path: &Path, transcripts: &[fastvep_genome::Transcript]) {
+    use std::io::{BufWriter, Write};
+    let file = File::create(path).unwrap();
+    let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+    zst.write_all(b"FSTVEP02").unwrap();
+    bincode::serialize_into(&mut zst, transcripts).unwrap();
+    zst.finish().unwrap().flush().unwrap();
+}
+
+fn make_fresh(path: &Path) {
+    // An hour into the future, so `cache_is_fresh` says yes against its source
+    // and the run really attempts the load rather than skipping it as stale.
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(future))
+        .unwrap();
+}
+
+#[test]
+fn a_pre_90_sidecar_cache_is_rebuilt_rather_than_trusted() {
+    // #90 stopped persisting region-restricted transcript sets, but every cache
+    // already on disk from a build between the tabix read path (2026-06-10) and
+    // that fix may be one. This is the regression that gate leaves open: a fresh
+    // FSTVEP02 sidecar, holding a transcript set that is *valid* and *wrong for
+    // this input*, next to the GFF3 it was keyed on.
+    let dir = TempDir::new().unwrap();
+    let gff3 = write_gff3(dir.path());
+    let fasta = write_fasta(dir.path());
+    let vcf = write_vcf(dir.path());
+
+    // An empty transcript set stands in for "someone else's neighbourhood":
+    // deserializes cleanly, and every variant comes back intergenic.
+    let sidecar = dir.path().join("ann.gff3.fastvep.cache");
+    write_v2_cache(&sidecar, &[]);
+    make_fresh(&sidecar);
+
+    let out = dir.path().join("out.vcf");
+    run_annotate(AnnotateConfig {
+        gff3: vec![gff3.to_string_lossy().into()],
+        fasta: Some(fasta.to_string_lossy().into()),
+        ..config(&vcf, &out)
+    })
+    .expect("a pre-#90 sidecar should be rebuilt from the GFF3, not fatal");
+
+    let annotated = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        annotated.contains("missense_variant"),
+        "the run trusted a pre-#90 cache and lost the annotation; got:\n{annotated}"
+    );
+    assert!(
+        !annotated.contains("intergenic_variant"),
+        "expected the rebuilt transcript set, not an all-intergenic answer"
+    );
+    // And the rebuild republished in the current format, so the next run is fast.
+    let republished = std::fs::read(&sidecar).unwrap();
+    let mut magic = [0u8; 8];
+    {
+        use std::io::Read;
+        zstd::Decoder::new(&republished[..])
+            .unwrap()
+            .read_exact(&mut magic)
+            .unwrap();
+    }
+    assert_eq!(
+        &magic, b"FSTVEP03",
+        "rebuild should publish the current format"
+    );
+}
+
+#[test]
+fn a_pre_90_explicit_transcript_cache_stops_the_run() {
+    // Named explicitly there is nothing to fall back to, so the only safe answer
+    // is to refuse - and to say why, because "rebuild it" is not obvious from
+    // "invalid cache".
+    let dir = TempDir::new().unwrap();
+    let fasta = write_fasta(dir.path());
+    let vcf = write_vcf(dir.path());
+
+    let stale = dir.path().join("old.cache");
+    write_v2_cache(&stale, &[]);
+
+    let out = dir.path().join("out.vcf");
+    let err = run_annotate(AnnotateConfig {
+        transcript_cache: Some(stale.to_string_lossy().into()),
+        fasta: Some(fasta.to_string_lossy().into()),
+        ..config(&vcf, &out)
+    })
+    .expect_err("a pre-#90 --transcript-cache must not annotate anyway");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("FSTVEP02") || msg.contains("pre-0.3.1"),
+        "the error should name the format, got: {msg}"
+    );
+    assert!(
+        msg.contains("fastvep cache"),
+        "the error should say how to recover, got: {msg}"
+    );
+    // One diagnosis, not two. The file is intact - sending the user to look for
+    // a truncated write or a full disk would be a different problem than the
+    // one they have, and the generic wording used to be appended to this one.
+    assert!(
+        !msg.contains("truncated or corrupt"),
+        "a pre-#90 cache is intact; the error must not also blame corruption, got: {msg}"
+    );
+    assert!(
+        !out.exists()
+            || !std::fs::read_to_string(&out)
+                .unwrap()
+                .contains("intergenic_variant"),
+        "a rejected cache must not leave an all-intergenic output behind"
+    );
 }

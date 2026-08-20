@@ -12,9 +12,53 @@ use std::path::Path;
 use std::time::SystemTime;
 
 /// Magic header for zstd-compressed caches (current format).
+///
+/// V3 differs from V2 in nothing but the guarantee it carries: every V3 cache
+/// was written by a build that cannot persist a region-restricted transcript
+/// set. See [`load_cache_zstd`] for why that has to be a format bump rather
+/// than a note in the changelog.
+const CACHE_MAGIC_V3: &[u8; 8] = b"FSTVEP03";
+/// Magic header for zstd caches written before #90 (rejected, see
+/// [`load_cache_zstd`]).
 const CACHE_MAGIC_V2: &[u8; 8] = b"FSTVEP02";
-/// Magic header for legacy gzip-compressed caches (read-only support).
+/// Magic header for legacy gzip-compressed caches (rejected, same reason).
 const CACHE_MAGIC_V1: &[u8; 8] = b"FSTVEP01";
+
+/// A cache whose format predates #90, and so cannot be trusted to hold a
+/// whole-file transcript set.
+///
+/// A distinct type rather than a bare message because the two callers need to
+/// say different things about it. The sidecar path rebuilds and only reports;
+/// the explicit `--transcript-cache` path has to stop, and its generic failure
+/// wording ("most likely truncated or corrupt") is the wrong diagnosis here -
+/// the file is intact, it is the guarantee that is missing. Callers distinguish
+/// the two with `anyhow::Error::downcast_ref`.
+#[derive(Debug)]
+pub struct StaleCacheFormat {
+    /// The format found on disk, named as the user would see it in the file.
+    pub found: &'static str,
+}
+
+impl std::fmt::Display for StaleCacheFormat {
+    /// Phrased to read as the reason a caller could not use the cache, so that
+    /// both call sites can introduce it with their own subject.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "it is in the {} format, which predates the #90 fix and cannot be trusted. \
+             Caches written between 2026-06-10 (the tabix read path) and 2026-08-18 \
+             (#90) may hold only the transcripts overlapping one input VCF's variants \
+             while looking like a whole-file cache to every later run - the #87 \
+             failure, which reported 47,196 of 47,196 chr17 variants as intergenic at \
+             exit code 0. Nothing in the file distinguishes the two, so it is rejected \
+             rather than read. Rebuild it with `fastvep cache`, or delete it and let \
+             the sidecar rebuild itself.",
+            self.found
+        )
+    }
+}
+
+impl std::error::Error for StaleCacheFormat {}
 
 /// Save transcripts to a binary cache file (bincode + zstd).
 ///
@@ -57,7 +101,7 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
 
     // Write magic header
     use std::io::Write;
-    zst.write_all(CACHE_MAGIC_V2)?;
+    zst.write_all(CACHE_MAGIC_V3)?;
 
     // Serialize with bincode
     bincode::serialize_into(&mut zst, transcripts)
@@ -129,6 +173,22 @@ pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
     }
 }
 
+/// Read a zstd cache, accepting only the current format.
+///
+/// A `FSTVEP02` cache is rejected, and this is deliberate even though the bytes
+/// after the header are identical. #90 stopped *writing* region-restricted
+/// transcript sets to the sidecar path, but every cache already on disk from a
+/// build between 2026-06-10 and 2026-08-18 may be one, and there is no way to
+/// tell from the file: the transcript count is plausible either way, the path is
+/// keyed on the GFF3 alone, and `cache_is_fresh` only compares mtimes, so a
+/// poisoned cache written after its GFF3 was downloaded passes every check we
+/// make. The failure it produces is the one #87 measured - a complete,
+/// well-formed VCF calling every variant intergenic at exit code 0.
+///
+/// So the fix has to be a format bump. Rejecting costs one rebuild, which the
+/// sidecar path does automatically; reading costs a silently wrong annotation
+/// that nothing downstream can detect. Same trade as #88's decision to error
+/// rather than annotate against an empty transcript set.
 fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     let mut zst = zstd::Decoder::new(reader)?;
 
@@ -136,8 +196,11 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     let mut magic = [0u8; 8];
     zst.read_exact(&mut magic)
         .with_context(|| "Reading cache header")?;
-    if &magic != CACHE_MAGIC_V2 {
-        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP02)");
+    if &magic == CACHE_MAGIC_V2 {
+        return Err(StaleCacheFormat { found: "FSTVEP02" }.into());
+    }
+    if &magic != CACHE_MAGIC_V3 {
+        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP03)");
     }
 
     let transcripts: Vec<Transcript> = bincode::deserialize_from(&mut zst)
@@ -145,6 +208,12 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     Ok(transcripts)
 }
 
+/// Legacy gzip caches are recognised and rejected.
+///
+/// V1 predates the zstd format and therefore also predates #90, so it carries
+/// the same ambiguity as V2 and gets the same answer. Recognising the magic
+/// rather than falling through to "invalid cache" is the point: a user with a
+/// years-old cache should be told to rebuild, not told their file is corrupt.
 fn load_cache_gzip<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     use flate2::read::GzDecoder;
 
@@ -154,13 +223,13 @@ fn load_cache_gzip<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     let mut magic = [0u8; 8];
     gz.read_exact(&mut magic)
         .with_context(|| "Reading cache header")?;
-    if &magic != CACHE_MAGIC_V1 {
-        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP01)");
+    if &magic == CACHE_MAGIC_V1 {
+        return Err(StaleCacheFormat {
+            found: "FSTVEP01 (gzip)",
+        }
+        .into());
     }
-
-    let transcripts: Vec<Transcript> = bincode::deserialize_from(&mut gz)
-        .with_context(|| "Deserializing transcripts from cache")?;
-    Ok(transcripts)
+    anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP01)");
 }
 
 /// Check if cache file is newer than source file.
@@ -427,26 +496,94 @@ mod tests {
         assert!(load_cache(tmp.path()).is_err());
     }
 
-    #[test]
-    fn test_legacy_gzip_cache_loads() {
-        // Create a legacy gzip cache and verify it still loads
+    /// Write a cache in an older format, byte-for-byte as the builds of the day
+    /// wrote it. Both are readable: rejecting them is a decision, not a
+    /// limitation, which is exactly why it needs a test.
+    fn write_v2_cache(path: &Path, transcripts: &[Transcript]) {
+        use std::io::Write;
+        let file = File::create(path).unwrap();
+        let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+        zst.write_all(CACHE_MAGIC_V2).unwrap();
+        bincode::serialize_into(&mut zst, transcripts).unwrap();
+        zst.finish().unwrap().flush().unwrap();
+    }
+
+    fn write_v1_cache(path: &Path, transcripts: &[Transcript]) {
         use flate2::write::GzEncoder;
         use flate2::Compression;
         use std::io::Write;
-
-        let transcripts = vec![make_test_transcript()];
-        let tmp = NamedTempFile::new().unwrap();
-        let path = tmp.path();
-
         let file = File::create(path).unwrap();
-        let writer = BufWriter::new(file);
-        let mut gz = GzEncoder::new(writer, Compression::fast());
+        let mut gz = GzEncoder::new(BufWriter::new(file), Compression::fast());
         gz.write_all(CACHE_MAGIC_V1).unwrap();
-        bincode::serialize_into(&mut gz, &transcripts).unwrap();
+        bincode::serialize_into(&mut gz, transcripts).unwrap();
         gz.finish().unwrap();
+    }
 
-        let loaded = load_cache(path).unwrap();
-        assert_eq!(loaded.len(), 1);
+    #[test]
+    fn a_pre_90_cache_is_rejected_rather_than_read() {
+        // A well-formed FSTVEP02 cache holding a plausible transcript set. The
+        // point is that this is indistinguishable from a region-restricted one
+        // written by the same build: same magic, same bincode, a transcript
+        // count that looks fine, and a path keyed on the GFF3 alone. #90 stopped
+        // writing them; it could do nothing about the ones already on disk.
+        let tmp = NamedTempFile::new().unwrap();
+        write_v2_cache(tmp.path(), &make_transcripts());
+
+        let err = load_cache(tmp.path()).expect_err("FSTVEP02 must not load");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("FSTVEP02"),
+            "the error should name the format found, got: {msg}"
+        );
+        assert!(
+            msg.contains("fastvep cache"),
+            "the error should say how to recover, got: {msg}"
+        );
+        assert!(
+            msg.contains("intergenic"),
+            "the error should say what goes wrong if it were read, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_legacy_gzip_cache_is_rejected_with_the_same_reason() {
+        // V1 predates the zstd format and therefore predates the tabix read
+        // path too, so it carries the same ambiguity. Recognised specifically,
+        // rather than falling through to "invalid cache": a user with an old
+        // cache should be told to rebuild, not told their file is corrupt.
+        let tmp = NamedTempFile::new().unwrap();
+        write_v1_cache(tmp.path(), &make_transcripts());
+
+        let err = load_cache(tmp.path()).expect_err("FSTVEP01 must not load");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("FSTVEP01"), "got: {msg}");
+        assert!(msg.contains("fastvep cache"), "got: {msg}");
+    }
+
+    #[test]
+    fn a_v3_cache_written_now_round_trips() {
+        // The other half of the bump: rejecting V2 is only acceptable if the
+        // current writer produces something the current reader accepts.
+        let tmp = NamedTempFile::new().unwrap();
+        let transcripts = make_transcripts();
+        save_cache(&transcripts, tmp.path()).unwrap();
+
+        let loaded = load_cache(tmp.path()).unwrap();
+        assert_eq!(loaded.len(), transcripts.len());
         assert_eq!(&*loaded[0].stable_id, "ENST00000001");
+    }
+
+    #[test]
+    fn the_published_magic_is_v3() {
+        // Pin the on-disk byte, so a future change to the writer that forgets
+        // the reader shows up here rather than in someone's annotation.
+        use std::io::Read;
+        let tmp = NamedTempFile::new().unwrap();
+        save_cache(&make_transcripts(), tmp.path()).unwrap();
+
+        let mut zst = zstd::Decoder::new(BufReader::new(File::open(tmp.path()).unwrap())).unwrap();
+        let mut magic = [0u8; 8];
+        zst.read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, CACHE_MAGIC_V3, "published magic drifted from V3");
     }
 }

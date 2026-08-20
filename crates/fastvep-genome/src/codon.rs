@@ -134,12 +134,13 @@ impl CodonTable {
     /// Translate a DNA sequence to a protein sequence.
     /// The sequence length must be a multiple of 3.
     pub fn translate_seq(&self, dna: &[u8]) -> Vec<u8> {
-        dna.chunks_exact(3)
-            .map(|chunk| {
-                let codon: [u8; 3] = [chunk[0], chunk[1], chunk[2]];
-                self.translate(&codon)
-            })
-            .collect()
+        // `as_chunks::<3>()` rather than `chunks_exact(3)`: the chunk size is a
+        // constant, so this hands `translate` a `&[u8; 3]` directly instead of
+        // rebuilding the array from a slice. Required by clippy's
+        // `chunks_exact_to_as_chunks` (new in 1.98), which the pinned `stable`
+        // toolchain picks up.
+        let (codons, _remainder) = dna.as_chunks::<3>();
+        codons.iter().map(|codon| self.translate(codon)).collect()
     }
 
     /// Check if a codon is a stop codon.

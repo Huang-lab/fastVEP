@@ -431,6 +431,7 @@ name = "fastvep-cli"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "clap",
  "env_logger",
  "fastvep-annotate",
@@ -452,6 +453,7 @@ dependencies = [
  "rayon",
  "serde_json",
  "tempfile",
+ "zstd",
 ]
 
 [[package]]
