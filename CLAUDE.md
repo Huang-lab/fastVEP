@@ -101,12 +101,19 @@ another partial-load path, it has to set that flag.
 ## Performance
 
 The release profile is already tuned (`lto = "fat"`, `codegen-units = 1`).
-What remains is allocation: a profile of the annotate path spends roughly a
-third of its instructions in `malloc`/`free`. When you touch the per-variant
-loop, the useful question is not "is this branch fast" but "does this allocate
-per variant, per transcript, or per allele" — the loop runs once per
-(variant × overlapping transcript × allele), so a `String` built there is built
-millions of times.
+What remains is allocation. A callgrind profile of the annotate path over a
+gene-dense locus puts about a quarter of its instructions in `malloc`/`free`,
+and output formatting — not consequence prediction — accounts for most of the
+rest. When you touch the per-variant loop, the useful question is not "is this
+branch fast" but "does this allocate per variant, per transcript, or per
+allele": the loop runs once per (variant × overlapping transcript × allele), so
+a `String` built there is built millions of times.
+
+Two shapes account for most of what has been found there so far. One is work
+done before deciding whether it is needed — a value built on entry as a fallback
+the common path discards. The other is a per-run cost paid per item: resolving
+the same column names, or rescanning the same list, once for every record
+rather than once.
 
 `crates/fastvep-io/src/output.rs` shows the shape to copy: `format_csq_entry_into`
 writes fields into a caller-owned `String` instead of returning one.

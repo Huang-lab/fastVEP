@@ -592,8 +592,9 @@ crates/
   fastvep-classification/ # ACMG-AMP variant classification engine (Richards 2015 +
                        #   ClinGen SVI). 28 criteria, trio/compound-het support,
                        #   configurable thresholds via TOML
-  fastvep-cli/          # CLI binary: annotation pipeline, sa-build, filter, cache,
-                       #   legacy web server
+  fastvep-cli/          # CLI binary. `src/pipeline/` holds one module per
+                       #   subcommand: annotate, cache_build, sa_build, filter,
+                       #   custom, plus pick (the --pick criteria)
   fastvep-web/          # Production web server (axum/tokio): async, multi-connection,
                        #   genome switching, SA integration, rate limiting
 web/                   # Web GUI (HTML/CSS/JS, embedded in both server binaries)
