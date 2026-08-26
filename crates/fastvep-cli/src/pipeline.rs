@@ -248,11 +248,13 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                                 // full disk looked exactly like a small
                                 // annotation set.
                                 if explicit_cache {
-                                    // A pre-#90 cache is intact, so "truncated
-                                    // or corrupt" is the wrong diagnosis and
-                                    // would send the user looking for a disk
-                                    // problem they do not have. Say which of
-                                    // the two it is, once.
+                                    // A cache rejected for its format (pre-#90,
+                                    // pre-#98) is intact, so "truncated or
+                                    // corrupt" is the wrong diagnosis and would
+                                    // send the user looking for a disk problem
+                                    // they do not have. Say which of the two it
+                                    // is, once, and let StaleCacheFormat supply
+                                    // the reason for the format it found.
                                     let why = match e.downcast_ref::<StaleCacheFormat>() {
                                         Some(stale) => stale.to_string(),
                                         None => format!(

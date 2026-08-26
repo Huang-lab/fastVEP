@@ -220,7 +220,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
         let attrs = parse_attributes(fields[8]);
 
         match feature_type {
-            "gene" | "pseudogene" => {
+            t if is_gene_feature(t) => {
                 let gene_id = attrs
                     .get("ID")
                     .or_else(|| attrs.get("gene_id"))
@@ -236,14 +236,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                     .get("biotype")
                     .or_else(|| attrs.get("gene_biotype"))
                     .cloned()
-                    .unwrap_or_else(|| {
-                        // NCBI GFF3 uses "protein_coding" in gene_biotype or infers from feature type
-                        if feature_type == "pseudogene" {
-                            "pseudogene".to_string()
-                        } else {
-                            "protein_coding".to_string()
-                        }
-                    });
+                    .unwrap_or_else(|| default_gene_biotype(feature_type));
 
                 genes.insert(
                     gene_id.clone(),
@@ -258,22 +251,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                     },
                 );
             }
-            "mRNA"
-            | "transcript"
-            | "lnc_RNA"
-            | "miRNA"
-            | "snRNA"
-            | "snoRNA"
-            | "rRNA"
-            | "ncRNA"
-            | "tRNA"
-            | "scRNA"
-            | "V_gene_segment"
-            | "D_gene_segment"
-            | "J_gene_segment"
-            | "C_gene_segment"
-            | "NMD_transcript_variant"
-            | "pseudogenic_transcript" => {
+            t if is_known_transcript_term(t) || is_provisional_transcript(t, &attrs) => {
                 let transcript_id = attrs
                     .get("ID")
                     .or_else(|| attrs.get("transcript_id"))
@@ -331,6 +309,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                         tsl,
                         flags,
                         version,
+                        provisional: !is_known_transcript_term(feature_type),
                     },
                 );
             }
@@ -437,6 +416,10 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                         tsl: None,
                         flags: vec![],
                         version: None,
+                        // Synthesised from a real CDS, so it is confirmed by
+                        // construction; the implicit-exon step below gives it
+                        // exons too.
+                        provisional: false,
                     },
                 );
             }
@@ -489,6 +472,14 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             .or_default()
             .push(exon);
     }
+    // Confirm or discard the records admitted on structure alone. A transcript
+    // is what exons hang off; a RefSeq `sequence_feature` parented to a gene has
+    // none, and would otherwise reach the output as a zero-exon phantom
+    // transcript with its own CSQ entry. Records matched by a known SO term are
+    // untouched here, so nothing that parsed before this rule existed can be
+    // dropped by it.
+    transcripts.retain(|tid, tr| !tr.provisional || exons_by_tx.contains_key(tid.as_str()));
+
     let mut cds_by_tx: HashMap<String, Vec<GffCds>> = HashMap::new();
     for cds in cds_features {
         cds_by_tx
@@ -755,6 +746,96 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
     Ok(result)
 }
 
+/// True when a GFF3 record carries a gene, whichever SO term the file uses.
+///
+/// Ensembl types non-coding loci `ncRNA_gene` and pseudogene loci
+/// `pseudogene`, keeping plain `gene` for protein-coding ones, and adds
+/// subtypes as new biotypes appear. Matching only `gene`/`pseudogene` dropped
+/// every `ncRNA_gene` record, so lncRNA/miRNA/snRNA transcripts fell back to a
+/// gene synthesised from the transcript's `Parent`: right stable ID, no symbol
+/// and biotype "unknown". That is why SYMBOL came out empty where VEP printed
+/// WASH7P (#98). Match the whole `*_gene` family instead; the V/D/J/C
+/// `*_gene_segment` transcript types end in `_segment` and are not caught.
+fn is_gene_feature(feature_type: &str) -> bool {
+    matches!(feature_type, "gene" | "pseudogene") || feature_type.ends_with("_gene")
+}
+
+/// Biotype to assume for a gene record with no `biotype`/`gene_biotype`.
+///
+/// A bare `gene` in a file that omits the attribute (NCBI) is almost always
+/// protein-coding, but the SO subtypes already say what they are: defaulting
+/// `ncRNA_gene` to protein_coding would mislabel every non-coding locus.
+fn default_gene_biotype(feature_type: &str) -> String {
+    match feature_type {
+        "gene" => "protein_coding".to_string(),
+        "ncRNA_gene" => "ncRNA".to_string(),
+        // `miRNA_gene` -> `miRNA`; `pseudogene` has no `_gene` suffix and
+        // stays as-is.
+        t => t.strip_suffix("_gene").unwrap_or(t).to_string(),
+    }
+}
+
+/// SO terms known to name a transcript.
+///
+/// What Ensembl and RefSeq emit today. A record matching one of these is taken
+/// at its word; anything else needs [`is_provisional_transcript`] to earn it.
+fn is_known_transcript_term(feature_type: &str) -> bool {
+    matches!(
+        feature_type,
+        "mRNA"
+            | "transcript"
+            | "lnc_RNA"
+            | "miRNA"
+            | "snRNA"
+            | "snoRNA"
+            | "rRNA"
+            | "ncRNA"
+            | "tRNA"
+            | "scRNA"
+            | "V_gene_segment"
+            | "D_gene_segment"
+            | "J_gene_segment"
+            | "C_gene_segment"
+            | "NMD_transcript_variant"
+            | "pseudogenic_transcript"
+    )
+}
+
+/// True when an unrecognised record is worth *provisionally* reading as a
+/// transcript, to be confirmed or discarded once its children are known.
+///
+/// Both vocabularies grow — RefSeq alone emits `primary_transcript`,
+/// `antisense_RNA` and `Y_RNA`, none of them listed above — and an unlisted term
+/// costs more than the `ncRNA_gene` gap in [`is_gene_feature`] did: the
+/// transcript is dropped outright, taking every consequence call at that locus
+/// with it rather than just its name.
+///
+/// Hanging off a gene is necessary but *not* sufficient, which is why the answer
+/// here is only provisional. RefSeq parents plain annotation records to a gene
+/// too — `sequence_feature` and `misc_feature` carry `Parent=gene-XXXX` and an
+/// ID — and reading one as a transcript invents a zero-exon feature that VEP has
+/// no counterpart for, which then shows up as an extra CSQ entry and as a
+/// candidate for `--pick`. What actually distinguishes a transcript is that
+/// exons hang off *it*, and that is not known until the file has been read; see
+/// the `retain` in [`parse_gff3_lines`]. `exon` and `CDS` are excluded up front
+/// because RefSeq attaches those straight to a gene for loci with no RNA record,
+/// and the arms below turn them into an implicit transcript instead.
+fn is_provisional_transcript(feature_type: &str, attrs: &HashMap<String, String>) -> bool {
+    !matches!(feature_type, "exon" | "CDS")
+        && parent_is_gene(attrs)
+        && (attrs.contains_key("ID") || attrs.contains_key("transcript_id"))
+}
+
+/// True when `Parent` names a gene record: `gene:ENSG...` in Ensembl GFF3,
+/// `gene-XXXX` in RefSeq. A transcript's own children name it instead
+/// (`transcript:`/`rna-`), so this tells the two levels apart without relying on
+/// the SO term.
+fn parent_is_gene(attrs: &HashMap<String, String>) -> bool {
+    attrs
+        .get("Parent")
+        .is_some_and(|p| p.starts_with("gene:") || p.starts_with("gene-"))
+}
+
 fn parse_attributes(attr_str: &str) -> HashMap<String, String> {
     let mut attrs = HashMap::new();
     for part in attr_str.split(';') {
@@ -815,6 +896,10 @@ struct GffTranscript {
     tsl: Option<u8>,
     flags: Vec<String>,
     version: Option<u32>,
+    /// Admitted only because it hangs off a gene, its SO term being unknown.
+    /// Kept only if exons turn out to claim it — see the `retain` in
+    /// [`parse_gff3_lines`] and [`is_provisional_transcript`].
+    provisional: bool,
 }
 
 #[derive(Debug)]
@@ -871,6 +956,134 @@ chr1\tensembl\tCDS\t4000\t4500\t.\t+\t1\tID=CDS:ENSP00000001;Parent=transcript:E
         assert_eq!(tr.end, 5000);
         assert_eq!(tr.strand, Strand::Forward);
         assert!(tr.canonical);
+    }
+
+    /// Ensembl GFF3 types non-coding gene records with SO term `ncRNA_gene`,
+    /// not `gene` (issue #98). Dropping those records left every lncRNA /
+    /// miRNA / snRNA transcript with a synthesised gene carrying no symbol
+    /// and biotype "unknown", so SYMBOL came out empty in the CSQ column
+    /// while VEP filled it in.
+    #[test]
+    fn test_parse_gff3_ncrna_gene_keeps_symbol() {
+        let gff = "##gff-version 3
+1\thavana\tncRNA_gene\t14696\t24886\t.\t-\t.\tID=gene:ENSG00000310526;Name=WASH7P;biotype=lncRNA;gene_id=ENSG00000310526
+1\thavana\tlnc_RNA\t14696\t24886\t.\t-\t.\tID=transcript:ENST00000488147;Parent=gene:ENSG00000310526;biotype=lncRNA;tag=Ensembl_canonical
+1\thavana\texon\t24738\t24886\t.\t-\t.\tID=exon:ENSE00000001;Parent=transcript:ENST00000488147;rank=1
+1\thavana\texon\t14696\t14829\t.\t-\t.\tID=exon:ENSE00000002;Parent=transcript:ENST00000488147;rank=2";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        assert_eq!(transcripts.len(), 1);
+        let tr = &transcripts[0];
+        assert_eq!(&*tr.gene.stable_id, "ENSG00000310526");
+        assert_eq!(tr.gene.symbol.as_deref(), Some("WASH7P"));
+        assert_eq!(&*tr.gene.biotype, "lncRNA");
+        assert_eq!(tr.gene.start, 14696);
+        assert_eq!(tr.gene.end, 24886);
+        assert_eq!(tr.gene.strand, Strand::Reverse);
+    }
+
+    /// `ends_with("_gene")` must not claim the V/D/J/C segment types: those are
+    /// transcripts (`*_gene_segment`), and treating one as a gene would drop
+    /// every IG/TR transcript.
+    #[test]
+    fn test_parse_gff3_gene_segment_is_a_transcript() {
+        let gff = "##gff-version 3
+14\tensembl_havana\tgene\t22438547\t22438554\t.\t+\t.\tID=gene:ENSG00000211821;Name=TRDV2;biotype=IG_V_gene
+14\tensembl_havana\tV_gene_segment\t22438547\t22438554\t.\t+\t.\tID=transcript:ENST00000390469;Parent=gene:ENSG00000211821;biotype=IG_V_gene
+14\tensembl_havana\texon\t22438547\t22438554\t.\t+\t.\tID=exon:ENSE00001;Parent=transcript:ENST00000390469;rank=1";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        assert_eq!(transcripts.len(), 1);
+        let tr = &transcripts[0];
+        assert_eq!(&*tr.stable_id, "ENST00000390469");
+        assert_eq!(tr.gene.symbol.as_deref(), Some("TRDV2"));
+        assert_eq!(tr.exons.len(), 1);
+    }
+
+    /// RefSeq names transcripts with SO terms the explicit list does not carry
+    /// (`antisense_RNA`, `primary_transcript`, ...). Such a record hangs off a
+    /// gene and has its own ID, so keep it rather than dropping the locus.
+    #[test]
+    fn test_parse_gff3_keeps_unlisted_transcript_term() {
+        let gff = "##gff-version 3
+NC_000001.11\tBestRefSeq\tgene\t1000\t2000\t.\t+\t.\tID=gene-TESTAS;Name=TESTAS;gene_biotype=lncRNA
+NC_000001.11\tBestRefSeq\tantisense_RNA\t1000\t2000\t.\t+\t.\tID=rna-NR_000001.1;Parent=gene-TESTAS
+NC_000001.11\tBestRefSeq\texon\t1000\t2000\t.\t+\t.\tID=exon-1;Parent=rna-NR_000001.1";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        assert_eq!(transcripts.len(), 1);
+        let tr = &transcripts[0];
+        assert_eq!(&*tr.stable_id, "rna-NR_000001.1");
+        assert_eq!(tr.gene.symbol.as_deref(), Some("TESTAS"));
+        // No biotype/transcript_biotype attribute: fall back to the SO term.
+        assert_eq!(&*tr.biotype, "antisense_RNA");
+        assert_eq!(tr.exons.len(), 1);
+    }
+
+    /// A CDS parented straight to a gene (RefSeq) still becomes an implicit
+    /// transcript — the structural transcript test must not claim `exon`/`CDS`
+    /// records just because their parent is a gene.
+    #[test]
+    fn test_parse_gff3_gene_parented_cds_still_implicit() {
+        let gff = "##gff-version 3
+NC_000001.11\tRefSeq\tgene\t1000\t1300\t.\t+\t.\tID=gene-TESTG;Name=TESTG;gene_biotype=protein_coding
+NC_000001.11\tRefSeq\tCDS\t1000\t1300\t.\t+\t0\tID=cds-NP_000001.1;Parent=gene-TESTG;protein_id=NP_000001.1";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        assert_eq!(transcripts.len(), 1);
+        let tr = &transcripts[0];
+        assert_eq!(&*tr.stable_id, "TESTG_t1");
+        assert_eq!(&*tr.gene.stable_id, "gene-TESTG");
+        assert_eq!(tr.gene.symbol.as_deref(), Some("TESTG"));
+        assert!(tr.is_coding());
+        assert_eq!(
+            tr.exons.len(),
+            1,
+            "CDS should have produced an implicit exon"
+        );
+    }
+
+    /// With no `biotype`/`gene_biotype` attribute the gene biotype comes from
+    /// the SO term. `ncRNA_gene` must not inherit the protein_coding default
+    /// that bare `gene` gets.
+    #[test]
+    fn test_gene_biotype_defaults_follow_the_so_term() {
+        assert_eq!(default_gene_biotype("gene"), "protein_coding");
+        assert_eq!(default_gene_biotype("pseudogene"), "pseudogene");
+        assert_eq!(default_gene_biotype("ncRNA_gene"), "ncRNA");
+        assert_eq!(default_gene_biotype("miRNA_gene"), "miRNA");
+
+        let gff = "##gff-version 3
+1\thavana\tncRNA_gene\t1000\t2000\t.\t+\t.\tID=gene:ENSG00000000001;Name=NCG
+1\thavana\tlnc_RNA\t1000\t2000\t.\t+\t.\tID=transcript:ENST00000000001;Parent=gene:ENSG00000000001
+1\thavana\texon\t1000\t2000\t.\t+\t.\tID=exon:ENSE00000001;Parent=transcript:ENST00000000001;rank=1";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        assert_eq!(transcripts.len(), 1);
+        assert_eq!(&*transcripts[0].gene.biotype, "ncRNA");
+    }
+
+    /// RefSeq hangs annotation records off a gene as well as transcripts:
+    /// `sequence_feature` / `misc_feature` carry `Parent=gene-XXXX` and an ID,
+    /// but no exons and no transcript. Admitting one as a transcript invents a
+    /// zero-exon feature that VEP has no counterpart for, and it then shows up
+    /// as an extra CSQ entry, in the "Loaded N transcripts" count, in the cache,
+    /// and among the candidates `--pick` chooses from.
+    #[test]
+    fn test_parse_gff3_ignores_gene_parented_annotation_records() {
+        let gff = "##gff-version 3
+NC_000023.11\tBestRefSeq\tgene\t100\t2000\t.\t-\t.\tID=gene-DMD;Name=DMD;gene_biotype=protein_coding
+NC_000023.11\tBestRefSeq\tmRNA\t100\t2000\t.\t-\t.\tID=rna-NM_004006.3;Parent=gene-DMD;transcript_id=NM_004006.3
+NC_000023.11\tBestRefSeq\texon\t100\t2000\t.\t-\t.\tID=exon-NM_004006.3-1;Parent=rna-NM_004006.3
+NC_000023.11\tBestRefSeq\tsequence_feature\t500\t600\t.\t-\t.\tID=id-DMD-2;Parent=gene-DMD;gbkey=misc_feature;gene=DMD";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        let ids: Vec<&str> = transcripts.iter().map(|t| &*t.stable_id).collect();
+        assert_eq!(
+            ids,
+            vec!["rna-NM_004006.3"],
+            "a gene-parented annotation record became a phantom transcript"
+        );
     }
 
     #[test]
