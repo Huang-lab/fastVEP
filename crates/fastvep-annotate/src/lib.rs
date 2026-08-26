@@ -23,6 +23,7 @@ use fastvep_cache::providers::{
 };
 use fastvep_consequence::ConsequencePredictor;
 use fastvep_core::{Allele, Consequence};
+use fastvep_genome::Transcript;
 use fastvep_io::output;
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use fastvep_io::vcf::VcfParser;
@@ -368,8 +369,22 @@ impl AnnotationContext {
                     ref_seq.as_deref(),
                 );
 
-                for tc in &result.transcript_consequences {
-                    let transcript = overlapping.iter().find(|t| t.stable_id == tc.transcript_id);
+                for (i, tc) in result.transcript_consequences.iter().enumerate() {
+                    // `predict` returns one consequence per transcript it was
+                    // handed, in that order, so index `i` is the match. The
+                    // scan is the fallback for a predictor that ever stops
+                    // promising that; without it the lookup cost grew with the
+                    // square of the transcripts overlapping the variant.
+                    let transcript: Option<&Transcript> = overlapping
+                        .get(i)
+                        .copied()
+                        .filter(|t| t.stable_id == tc.transcript_id)
+                        .or_else(|| {
+                            overlapping
+                                .iter()
+                                .copied()
+                                .find(|t| t.stable_id == tc.transcript_id)
+                        });
 
                     let allele_annotations: Vec<AlleleAnnotation> = tc
                         .allele_consequences

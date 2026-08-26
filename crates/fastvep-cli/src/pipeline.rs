@@ -10,6 +10,7 @@ use fastvep_cache::providers::{
 use fastvep_cache::transcript_cache::StaleCacheFormat;
 use fastvep_consequence::ConsequencePredictor;
 use fastvep_core::{Allele, Consequence};
+use fastvep_genome::Transcript;
 use fastvep_hgvs;
 use fastvep_io::output;
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
@@ -877,8 +878,26 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             };
 
             // Convert prediction results to VariationFeature annotations
-            for tc in &transcript_consequences {
-                let transcript = overlapping.iter().find(|t| t.stable_id == tc.transcript_id);
+            for (i, tc) in transcript_consequences.iter().enumerate() {
+                // `ConsequencePredictor::predict` emits one consequence per
+                // transcript it was handed, in that order, so index `i` is the
+                // match and the scan below never runs. The structural-variant
+                // branch above makes no such promise, so a miss falls back to a
+                // scan rather than losing the transcript. Before this, every
+                // consequence rescanned the whole overlap set, and a variant in
+                // a gene-dense window - a protocadherin or MHC cluster, where
+                // `--distance` pulls in dozens of transcripts - paid for that
+                // lookup in proportion to the square of the overlap.
+                let transcript: Option<&Transcript> = overlapping
+                    .get(i)
+                    .copied()
+                    .filter(|t| t.stable_id == tc.transcript_id)
+                    .or_else(|| {
+                        overlapping
+                            .iter()
+                            .copied()
+                            .find(|t| t.stable_id == tc.transcript_id)
+                    });
 
                 let allele_annotations: Vec<AlleleAnnotation> = tc
                     .allele_consequences
