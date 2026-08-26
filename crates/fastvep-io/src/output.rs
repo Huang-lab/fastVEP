@@ -240,6 +240,19 @@ fn format_csq_entry_into(
 
 /// Escape special characters in CSQ field values, appending to an existing buffer.
 fn escape_csq_str(value: &str, buf: &mut String) {
+    // Nearly every value that reaches here - a transcript ID, a gene symbol,
+    // an SO term, an HGVS string, a run of bases - contains none of the four
+    // characters VCF reserves inside an INFO field, and copying such a value
+    // whole skips a UTF-8 encode and a capacity check per character. All four
+    // are ASCII, so scanning bytes decides this exactly; only a value that
+    // really needs escaping falls through to the character loop.
+    if !value
+        .bytes()
+        .any(|b| matches!(b, b',' | b'|' | b';' | b'='))
+    {
+        buf.push_str(value);
+        return;
+    }
     for c in value.chars() {
         match c {
             ',' | '|' => buf.push('&'),
@@ -950,6 +963,13 @@ fn format_gene_projection(vf: &VariationFeature, spec: &VcfProjectionSpec) -> Op
 }
 
 fn format_spliceai_for_allele(vf: &VariationFeature, aa: &AlleleAnnotation) -> Option<String> {
+    // Establish that this allele carries a payload for the source before
+    // building anything. Every annotation is offered to every loaded source,
+    // so most calls match nothing and the whole body below was previously
+    // paid for to reach an empty `values` and return `None`.
+    if !aa.supplementary.iter().any(|(key, _)| key == "spliceAI") {
+        return None;
+    }
     let allele = uploaded_allele_for_annotation(vf, &aa.allele);
     let mut values: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -975,6 +995,12 @@ fn format_allele_projection_for_aa(
     aa: &AlleleAnnotation,
     spec: &VcfProjectionSpec,
 ) -> Option<String> {
+    // As in `format_spliceai_for_allele`: no payload for this source means no
+    // column, and finding that out costs a key comparison rather than an
+    // allele render, a `HashSet`, and two `Vec`s.
+    if !aa.supplementary.iter().any(|(key, _)| key == spec.json_key) {
+        return None;
+    }
     let allele = uploaded_allele_for_annotation(vf, &aa.allele);
     let mut values: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1238,18 +1264,19 @@ fn escape_vcf_subfield(value: &str) -> String {
 }
 
 fn uploaded_allele_for_annotation(vf: &VariationFeature, allele: &Allele) -> String {
-    let allele_string = allele.to_string();
+    // Rendering the allele is the fallback, not the starting point: it used to
+    // be built on entry and then thrown away on the common path, once per
+    // (variant x transcript x allele x source). Splitting the ALT column
+    // lazily rather than collecting it drops the other allocation.
     let Some(vcf) = &vf.vcf_fields else {
-        return allele_string;
+        return allele.to_string();
     };
 
-    let uploaded_alts: Vec<&str> = vcf.alt.split(',').collect();
     vf.alt_alleles
         .iter()
         .position(|alt| alt == allele)
-        .and_then(|idx| uploaded_alts.get(idx).copied())
-        .unwrap_or(&allele_string)
-        .to_string()
+        .and_then(|idx| vcf.alt.split(',').nth(idx))
+        .map_or_else(|| allele.to_string(), str::to_string)
 }
 
 /// Optional knobs that extend the base tab schema. All fields are
@@ -1388,7 +1415,7 @@ pub fn format_tab_line_with(
             let distance_str = aa
                 .distance
                 .map(|d| d.to_string())
-                .unwrap_or("-".to_string());
+                .unwrap_or_else(|| "-".to_string());
             let strand_str = format!("{}", tv.strand.as_int());
             let flags_str = if tv.canonical { "canonical" } else { "-" };
 
@@ -1410,13 +1437,13 @@ pub fn format_tab_line_with(
                 aa.amino_acids
                     .as_ref()
                     .map(|(r, a)| format!("{}/{}", r, a))
-                    .unwrap_or("-".to_string()),
+                    .unwrap_or_else(|| "-".to_string()),
             );
             parts.push(
                 aa.codons
                     .as_ref()
                     .map(|(r, a)| format!("{}/{}", r, a))
-                    .unwrap_or("-".to_string()),
+                    .unwrap_or_else(|| "-".to_string()),
             );
             parts.push(if aa.existing_variation.is_empty() {
                 "-".to_string()
