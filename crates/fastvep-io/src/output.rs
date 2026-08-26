@@ -12,6 +12,11 @@ use std::fmt::Write as FmtWrite;
 pub fn format_csq(vf: &VariationFeature, fields: &[&str]) -> String {
     let mut result = String::with_capacity(1024);
 
+    // Resolve the column names once for the whole variant. A variant in a
+    // gene-dense window produces dozens of entries, and every one of them used
+    // to re-match all 49 header strings.
+    let fields: Vec<CsqField> = fields.iter().copied().map(CsqField::from_name).collect();
+
     let mut first = true;
     for tv in &vf.transcript_variations {
         for aa in &tv.allele_annotations {
@@ -19,11 +24,131 @@ pub fn format_csq(vf: &VariationFeature, fields: &[&str]) -> String {
                 result.push(',');
             }
             first = false;
-            format_csq_entry_into(vf, tv, aa, fields, &mut result);
+            format_csq_entry_into(vf, tv, aa, &fields, &mut result);
         }
     }
 
     result
+}
+
+/// One CSQ column, resolved from its header name.
+///
+/// The per-entry writer used to `match` the column's header string, and it ran
+/// once per column per entry - 49 string matches for every
+/// (variant x transcript x allele). A profile of the annotate path put 7% of
+/// the program's instructions in `slice::cmp` underneath it. The names are
+/// fixed for a whole run, so they are resolved once and the writer dispatches
+/// on a discriminant.
+///
+/// `Unknown` covers a header fastVEP does not populate - `MOTIF_NAME` and the
+/// rest of the regulatory columns are in [`DEFAULT_CSQ_FIELDS`] but have no
+/// writer - and renders as an empty column, which is what the old catch-all
+/// arm did. Naming it means the writer's `match` is exhaustive, so a column
+/// added here without a writer is a compile error rather than a silently blank
+/// field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CsqField {
+    Allele,
+    Consequence,
+    Impact,
+    Symbol,
+    Gene,
+    FeatureType,
+    Feature,
+    Biotype,
+    Exon,
+    Intron,
+    Hgvsg,
+    Hgvsc,
+    Hgvsp,
+    CdnaPosition,
+    CdsPosition,
+    ProteinPosition,
+    AminoAcids,
+    Codons,
+    ExistingVariation,
+    RefAllele,
+    UploadedAllele,
+    Distance,
+    Strand,
+    Flags,
+    Canonical,
+    SymbolSource,
+    HgncId,
+    Mane,
+    ManeSelect,
+    ManePlusClinical,
+    Tsl,
+    Appris,
+    Ccds,
+    GencodePrimary,
+    Ensp,
+    Sift,
+    PolyPhen,
+    Af,
+    ClinSig,
+    Somatic,
+    Pheno,
+    Pubmed,
+    Source,
+    HgvsOffset,
+    Acmg,
+    AcmgCriteria,
+    Unknown,
+}
+
+impl CsqField {
+    fn from_name(name: &str) -> Self {
+        match name {
+            "Allele" => Self::Allele,
+            "Consequence" => Self::Consequence,
+            "IMPACT" => Self::Impact,
+            "SYMBOL" => Self::Symbol,
+            "Gene" => Self::Gene,
+            "Feature_type" => Self::FeatureType,
+            "Feature" => Self::Feature,
+            "BIOTYPE" => Self::Biotype,
+            "EXON" => Self::Exon,
+            "INTRON" => Self::Intron,
+            "HGVSg" => Self::Hgvsg,
+            "HGVSc" => Self::Hgvsc,
+            "HGVSp" => Self::Hgvsp,
+            "cDNA_position" => Self::CdnaPosition,
+            "CDS_position" => Self::CdsPosition,
+            "Protein_position" => Self::ProteinPosition,
+            "Amino_acids" => Self::AminoAcids,
+            "Codons" => Self::Codons,
+            "Existing_variation" => Self::ExistingVariation,
+            "REF_ALLELE" => Self::RefAllele,
+            "UPLOADED_ALLELE" => Self::UploadedAllele,
+            "DISTANCE" => Self::Distance,
+            "STRAND" => Self::Strand,
+            "FLAGS" => Self::Flags,
+            "CANONICAL" => Self::Canonical,
+            "SYMBOL_SOURCE" => Self::SymbolSource,
+            "HGNC_ID" => Self::HgncId,
+            "MANE" => Self::Mane,
+            "MANE_SELECT" => Self::ManeSelect,
+            "MANE_PLUS_CLINICAL" => Self::ManePlusClinical,
+            "TSL" => Self::Tsl,
+            "APPRIS" => Self::Appris,
+            "CCDS" => Self::Ccds,
+            "GENCODE_PRIMARY" => Self::GencodePrimary,
+            "ENSP" => Self::Ensp,
+            "SIFT" => Self::Sift,
+            "PolyPhen" => Self::PolyPhen,
+            "AF" => Self::Af,
+            "CLIN_SIG" => Self::ClinSig,
+            "SOMATIC" => Self::Somatic,
+            "PHENO" => Self::Pheno,
+            "PUBMED" => Self::Pubmed,
+            "SOURCE" => Self::Source,
+            "HGVS_OFFSET" => Self::HgvsOffset,
+            "ACMG" => Self::Acmg,
+            "ACMG_CRITERIA" => Self::AcmgCriteria,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 /// Write a single CSQ entry directly into the output buffer, avoiding intermediate String allocations.
@@ -31,7 +156,7 @@ fn format_csq_entry_into(
     vf: &VariationFeature,
     tv: &TranscriptVariation,
     aa: &AlleleAnnotation,
-    fields: &[&str],
+    fields: &[CsqField],
     buf: &mut String,
 ) {
     for (i, field) in fields.iter().enumerate() {
@@ -41,8 +166,8 @@ fn format_csq_entry_into(
         // Write each field value directly into buf via escape_csq_str, avoiding
         // temporary String allocations for most fields.
         match *field {
-            "Allele" => escape_csq_str(&aa.allele.to_string(), buf),
-            "Consequence" => {
+            CsqField::Allele => escape_csq_str(&aa.allele.to_string(), buf),
+            CsqField::Consequence => {
                 for (j, c) in aa.consequences.iter().enumerate() {
                     if j > 0 {
                         buf.push('&');
@@ -50,29 +175,29 @@ fn format_csq_entry_into(
                     buf.push_str(c.so_term());
                 }
             }
-            "IMPACT" => buf.push_str(aa.impact.as_str()),
-            "SYMBOL" => escape_csq_str(tv.gene_symbol.as_deref().unwrap_or_default(), buf),
-            "Gene" => escape_csq_str(&tv.gene_id, buf),
-            "Feature_type" => buf.push_str("Transcript"),
-            "Feature" => escape_csq_str(&tv.transcript_id, buf),
-            "BIOTYPE" => escape_csq_str(&tv.biotype, buf),
-            "EXON" => {
+            CsqField::Impact => buf.push_str(aa.impact.as_str()),
+            CsqField::Symbol => escape_csq_str(tv.gene_symbol.as_deref().unwrap_or_default(), buf),
+            CsqField::Gene => escape_csq_str(&tv.gene_id, buf),
+            CsqField::FeatureType => buf.push_str("Transcript"),
+            CsqField::Feature => escape_csq_str(&tv.transcript_id, buf),
+            CsqField::Biotype => escape_csq_str(&tv.biotype, buf),
+            CsqField::Exon => {
                 if let Some((n, t)) = aa.exon {
                     let _ = write!(buf, "{}/{}", n, t);
                 }
             }
-            "INTRON" => {
+            CsqField::Intron => {
                 if let Some((n, t)) = aa.intron {
                     let _ = write!(buf, "{}/{}", n, t);
                 }
             }
-            "HGVSg" => escape_csq_str(aa.hgvsg.as_deref().unwrap_or_default(), buf),
-            "HGVSc" => escape_csq_str(aa.hgvsc.as_deref().unwrap_or_default(), buf),
-            "HGVSp" => escape_csq_str(aa.hgvsp.as_deref().unwrap_or_default(), buf),
-            "cDNA_position" => write_position_range(aa.cdna_position, buf),
-            "CDS_position" => write_position_range(aa.cds_position, buf),
-            "Protein_position" => write_position_range(aa.protein_position, buf),
-            "Amino_acids" => {
+            CsqField::Hgvsg => escape_csq_str(aa.hgvsg.as_deref().unwrap_or_default(), buf),
+            CsqField::Hgvsc => escape_csq_str(aa.hgvsc.as_deref().unwrap_or_default(), buf),
+            CsqField::Hgvsp => escape_csq_str(aa.hgvsp.as_deref().unwrap_or_default(), buf),
+            CsqField::CdnaPosition => write_position_range(aa.cdna_position, buf),
+            CsqField::CdsPosition => write_position_range(aa.cds_position, buf),
+            CsqField::ProteinPosition => write_position_range(aa.protein_position, buf),
+            CsqField::AminoAcids => {
                 if let Some((ref r, ref a)) = aa.amino_acids {
                     escape_csq_str(r, buf);
                     if r != a {
@@ -81,14 +206,14 @@ fn format_csq_entry_into(
                     }
                 }
             }
-            "Codons" => {
+            CsqField::Codons => {
                 if let Some((ref r, ref a)) = aa.codons {
                     escape_csq_str(r, buf);
                     buf.push('/');
                     escape_csq_str(a, buf);
                 }
             }
-            "Existing_variation" => {
+            CsqField::ExistingVariation => {
                 for (j, ev) in aa.existing_variation.iter().enumerate() {
                     if j > 0 {
                         buf.push('&');
@@ -96,8 +221,8 @@ fn format_csq_entry_into(
                     escape_csq_str(ev, buf);
                 }
             }
-            "REF_ALLELE" => escape_csq_str(&vf.ref_allele.to_string(), buf),
-            "UPLOADED_ALLELE" => {
+            CsqField::RefAllele => escape_csq_str(&vf.ref_allele.to_string(), buf),
+            CsqField::UploadedAllele => {
                 if let Some(ref vcf) = vf.vcf_fields {
                     escape_csq_str(&vcf.ref_allele, buf);
                     buf.push('/');
@@ -108,15 +233,15 @@ fn format_csq_entry_into(
                     escape_csq_str(&aa.allele.to_string(), buf);
                 }
             }
-            "DISTANCE" => {
+            CsqField::Distance => {
                 if let Some(d) = aa.distance {
                     let _ = write!(buf, "{}", d);
                 }
             }
-            "STRAND" => {
+            CsqField::Strand => {
                 let _ = write!(buf, "{}", tv.strand.as_int());
             }
-            "FLAGS" => {
+            CsqField::Flags => {
                 for (j, f) in tv.flags.iter().enumerate() {
                     if j > 0 {
                         buf.push('&');
@@ -124,40 +249,44 @@ fn format_csq_entry_into(
                     buf.push_str(f);
                 }
             }
-            "CANONICAL" => {
+            CsqField::Canonical => {
                 if tv.canonical {
                     buf.push_str("YES");
                 }
             }
-            "SYMBOL_SOURCE" => escape_csq_str(tv.symbol_source.as_deref().unwrap_or_default(), buf),
-            "HGNC_ID" => escape_csq_str(tv.hgnc_id.as_deref().unwrap_or_default(), buf),
-            "MANE" => {
+            CsqField::SymbolSource => {
+                escape_csq_str(tv.symbol_source.as_deref().unwrap_or_default(), buf)
+            }
+            CsqField::HgncId => escape_csq_str(tv.hgnc_id.as_deref().unwrap_or_default(), buf),
+            CsqField::Mane => {
                 if tv.mane_select.is_some() {
                     buf.push_str("MANE_Select");
                 } else if tv.mane_plus_clinical.is_some() {
                     buf.push_str("MANE_Plus_Clinical");
                 }
             }
-            "MANE_SELECT" => escape_csq_str(tv.mane_select.as_deref().unwrap_or_default(), buf),
-            "MANE_PLUS_CLINICAL" => {
+            CsqField::ManeSelect => {
+                escape_csq_str(tv.mane_select.as_deref().unwrap_or_default(), buf)
+            }
+            CsqField::ManePlusClinical => {
                 escape_csq_str(tv.mane_plus_clinical.as_deref().unwrap_or_default(), buf)
             }
-            "TSL" => {
+            CsqField::Tsl => {
                 if let Some(t) = tv.tsl {
                     let _ = write!(buf, "{}", t);
                 }
             }
-            "APPRIS" => escape_csq_str(tv.appris.as_deref().unwrap_or_default(), buf),
-            "CCDS" => escape_csq_str(tv.ccds.as_deref().unwrap_or_default(), buf),
-            "GENCODE_PRIMARY" => {
+            CsqField::Appris => escape_csq_str(tv.appris.as_deref().unwrap_or_default(), buf),
+            CsqField::Ccds => escape_csq_str(tv.ccds.as_deref().unwrap_or_default(), buf),
+            CsqField::GencodePrimary => {
                 if tv.gencode_primary {
                     buf.push_str("YES");
                 }
             }
-            "ENSP" => escape_csq_str(tv.protein_id.as_deref().unwrap_or_default(), buf),
-            "SIFT" => escape_csq_str(aa.sift.as_deref().unwrap_or_default(), buf),
-            "PolyPhen" => escape_csq_str(aa.polyphen.as_deref().unwrap_or_default(), buf),
-            "AF" => {
+            CsqField::Ensp => escape_csq_str(tv.protein_id.as_deref().unwrap_or_default(), buf),
+            CsqField::Sift => escape_csq_str(aa.sift.as_deref().unwrap_or_default(), buf),
+            CsqField::PolyPhen => escape_csq_str(aa.polyphen.as_deref().unwrap_or_default(), buf),
+            CsqField::Af => {
                 if let Some(f) = vf.existing_variants.iter().find_map(|kv| {
                     kv.frequencies
                         .get("gnomAD")
@@ -167,7 +296,7 @@ fn format_csq_entry_into(
                     let _ = write!(buf, "{}", f);
                 }
             }
-            "CLIN_SIG" => {
+            CsqField::ClinSig => {
                 if let Some(cs) = vf
                     .existing_variants
                     .iter()
@@ -176,12 +305,12 @@ fn format_csq_entry_into(
                     escape_csq_str(cs, buf);
                 }
             }
-            "SOMATIC" => {
+            CsqField::Somatic => {
                 if vf.existing_variants.iter().any(|kv| kv.somatic) {
                     buf.push('1');
                 }
             }
-            "PHENO" => {
+            CsqField::Pheno => {
                 if vf
                     .existing_variants
                     .iter()
@@ -190,7 +319,7 @@ fn format_csq_entry_into(
                     buf.push('1');
                 }
             }
-            "PUBMED" => {
+            CsqField::Pubmed => {
                 let mut first_pub = true;
                 for kv in &vf.existing_variants {
                     for p in &kv.pubmed {
@@ -202,20 +331,20 @@ fn format_csq_entry_into(
                     }
                 }
             }
-            "SOURCE" => escape_csq_str(tv.source.as_deref().unwrap_or_default(), buf),
-            "HGVS_OFFSET" => {
+            CsqField::Source => escape_csq_str(tv.source.as_deref().unwrap_or_default(), buf),
+            CsqField::HgvsOffset => {
                 if let Some(o) = aa.hgvs_offset {
                     let _ = write!(buf, "{}", o);
                 }
             }
-            "ACMG" => {
+            CsqField::Acmg => {
                 if let Some(ref acmg) = aa.acmg_classification {
                     if let Some(sh) = acmg.get("shorthand").and_then(|v| v.as_str()) {
                         buf.push_str(sh);
                     }
                 }
             }
-            "ACMG_CRITERIA" => {
+            CsqField::AcmgCriteria => {
                 if let Some(ref acmg) = aa.acmg_classification {
                     if let Some(criteria) = acmg.get("criteria").and_then(|v| v.as_array()) {
                         let mut first = true;
@@ -233,7 +362,7 @@ fn format_csq_entry_into(
                     }
                 }
             }
-            _ => {}
+            CsqField::Unknown => {}
         }
     }
 }
@@ -1945,6 +2074,49 @@ mod tests {
         SupplementaryAnnotation, VariantType,
     };
     use std::sync::Arc;
+
+    /// Every default column resolves to its own writer, and the five that do
+    /// not are named.
+    ///
+    /// `CsqField::from_name` is a second copy of the column vocabulary, so a
+    /// typo in it - `"HGVSc" => Self::Hgvsg` - would silently write the wrong
+    /// value into a column, or blank it. Nothing else in the suite would fail
+    /// for a column no test happens to assert.
+    #[test]
+    fn every_default_csq_column_resolves_to_a_distinct_writer() {
+        // fastVEP emits the regulatory columns' headers for VEP header
+        // compatibility but has no writer for them, so they render empty.
+        const NO_WRITER: &[&str] = &[
+            "MOTIF_NAME",
+            "MOTIF_POS",
+            "HIGH_INF_POS",
+            "MOTIF_SCORE_CHANGE",
+            "TRANSCRIPTION_FACTORS",
+        ];
+
+        let unresolved: Vec<&str> = DEFAULT_CSQ_FIELDS
+            .iter()
+            .copied()
+            .filter(|name| CsqField::from_name(name) == CsqField::Unknown)
+            .collect();
+        assert_eq!(
+            unresolved, NO_WRITER,
+            "a default column stopped resolving to a writer, or gained one"
+        );
+
+        let mut seen: Vec<(CsqField, &str)> = Vec::new();
+        for name in DEFAULT_CSQ_FIELDS.iter().copied() {
+            let field = CsqField::from_name(name);
+            if field == CsqField::Unknown {
+                continue;
+            }
+            if let Some((_, other)) = seen.iter().find(|(f, _)| *f == field) {
+                panic!("{name} and {other} both resolve to {field:?}");
+            }
+            seen.push((field, name));
+        }
+        assert_eq!(seen.len(), DEFAULT_CSQ_FIELDS.len() - NO_WRITER.len());
+    }
 
     #[test]
     fn test_escape_csq_value() {
