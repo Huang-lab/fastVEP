@@ -603,7 +603,7 @@ tests/                 # Test data: chr1 (OR4F5) and chr17 (BRCA1) VCF + GFF3
 ## Running Tests
 
 ```bash
-cargo test --workspace          # 641 tests
+cargo test --workspace          # ~1,000 tests
 cargo test -p fastvep-consequence  # Consequence prediction tests (incl. SV)
 cargo test -p fastvep-filter       # Filter engine tests
 cargo test -p fastvep-sa           # Supplementary annotation format tests
