@@ -22,3 +22,6 @@ log = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 rayon = { workspace = true }
+
+[lints]
+workspace = true

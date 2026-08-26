@@ -9,3 +9,6 @@ description = "Consequence prediction engine for fastVEP (small variants + struc
 fastvep-core = { workspace = true }
 fastvep-genome = { workspace = true }
 log = { workspace = true }
+
+[lints]
+workspace = true

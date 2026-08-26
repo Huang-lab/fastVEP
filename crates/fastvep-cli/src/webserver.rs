@@ -171,7 +171,7 @@ fn handle_request(stream: &mut std::net::TcpStream, ctx: &mut AnnotationContext)
             let body_str = String::from_utf8_lossy(&body);
 
             let request: serde_json::Value =
-                serde_json::from_str(&body_str).unwrap_or(serde_json::json!({}));
+                serde_json::from_str(&body_str).unwrap_or_else(|_| serde_json::json!({}));
             let vcf_text = request["vcf"].as_str().unwrap_or("");
             let pick = request["pick"].as_bool().unwrap_or(false);
 

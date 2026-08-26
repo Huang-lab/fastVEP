@@ -677,7 +677,7 @@ mod tests {
     #[test]
     fn test_hgvsp_inframe_indel_survives_unusable_peptides() {
         let short: Vec<u8> = "MAAAGK".bytes().collect();
-        let cases: Vec<UnusablePeptideCase> = vec![
+        let cases: Vec<UnusablePeptideCase<'_>> = vec![
             // Deleted block overruns the peptide end.
             (
                 "block overruns end",

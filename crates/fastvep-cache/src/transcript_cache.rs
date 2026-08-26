@@ -283,7 +283,7 @@ pub fn cache_is_fresh(cache_path: &Path, source_path: &Path) -> bool {
     let source_mtime = source_path
         .metadata()
         .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::now());
+        .unwrap_or_else(|_| SystemTime::now());
     cache_mtime > source_mtime
 }
 

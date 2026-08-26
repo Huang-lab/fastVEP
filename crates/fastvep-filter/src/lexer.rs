@@ -141,7 +141,7 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == '-' || ch == '/' || ch == ':'
 }
 
-fn consume_word(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
+fn consume_word(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
     let mut word = String::new();
     while let Some(&ch) = chars.peek() {
         if is_word_char(ch) || ch == ',' {

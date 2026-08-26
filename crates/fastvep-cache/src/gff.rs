@@ -1221,7 +1221,7 @@ chr1\tensembl\texon\t6000\t9000\t.\t-\t.\tID=exon:ENSE00000002;Parent=transcript
                 .map(|t| {
                     let mut exons: Vec<(u64, u64)> =
                         t.exons.iter().map(|e| (e.start, e.end)).collect();
-                    exons.sort();
+                    exons.sort_unstable();
                     format!(
                         "{}|{}|{}|{:?}|{:?}|{:?}|{exons:?}",
                         t.stable_id,
