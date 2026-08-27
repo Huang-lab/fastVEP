@@ -46,3 +46,6 @@ noodles-tabix = { workspace = true }
 # the fixture has to be built with the real codecs.
 zstd = { workspace = true }
 bincode = { workspace = true }
+
+[lints]
+workspace = true

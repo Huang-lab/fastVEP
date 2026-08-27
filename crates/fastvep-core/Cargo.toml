@@ -8,3 +8,6 @@ description = "Core genomic types for fastVEP"
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -592,8 +592,9 @@ crates/
   fastvep-classification/ # ACMG-AMP variant classification engine (Richards 2015 +
                        #   ClinGen SVI). 28 criteria, trio/compound-het support,
                        #   configurable thresholds via TOML
-  fastvep-cli/          # CLI binary: annotation pipeline, sa-build, filter, cache,
-                       #   legacy web server
+  fastvep-cli/          # CLI binary. `src/pipeline/` holds one module per
+                       #   subcommand: annotate, cache_build, sa_build, filter,
+                       #   custom, plus pick (the --pick criteria)
   fastvep-web/          # Production web server (axum/tokio): async, multi-connection,
                        #   genome switching, SA integration, rate limiting
 web/                   # Web GUI (HTML/CSS/JS, embedded in both server binaries)
@@ -603,7 +604,7 @@ tests/                 # Test data: chr1 (OR4F5) and chr17 (BRCA1) VCF + GFF3
 ## Running Tests
 
 ```bash
-cargo test --workspace          # 641 tests
+cargo test --workspace          # ~1,000 tests
 cargo test -p fastvep-consequence  # Consequence prediction tests (incl. SV)
 cargo test -p fastvep-filter       # Filter engine tests
 cargo test -p fastvep-sa           # Supplementary annotation format tests

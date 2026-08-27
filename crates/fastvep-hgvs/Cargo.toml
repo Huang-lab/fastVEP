@@ -8,3 +8,6 @@ description = "HGVS nomenclature generation for fastVEP"
 [dependencies]
 fastvep-core = { workspace = true }
 fastvep-genome = { workspace = true }
+
+[lints]
+workspace = true

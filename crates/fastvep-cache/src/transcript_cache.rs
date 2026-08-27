@@ -13,10 +13,13 @@ use std::time::SystemTime;
 
 /// Magic header for zstd-compressed caches (current format).
 ///
-/// V3 differs from V2 in nothing but the guarantee it carries: every V3 cache
-/// was written by a build that cannot persist a region-restricted transcript
-/// set. See [`load_cache_zstd`] for why that has to be a format bump rather
-/// than a note in the changelog.
+/// Like V3 before it, V4 differs from its predecessor in nothing but the
+/// guarantee it carries: every V4 cache was written by a build whose GFF3
+/// parser recognises `ncRNA_gene` records (#98). See [`load_cache_zstd`] for
+/// why that has to be a format bump rather than a note in the changelog.
+const CACHE_MAGIC_V4: &[u8; 8] = b"FSTVEP04";
+/// Magic header for zstd caches written before #98 (rejected, see
+/// [`load_cache_zstd`]).
 const CACHE_MAGIC_V3: &[u8; 8] = b"FSTVEP03";
 /// Magic header for zstd caches written before #90 (rejected, see
 /// [`load_cache_zstd`]).
@@ -24,37 +27,88 @@ const CACHE_MAGIC_V2: &[u8; 8] = b"FSTVEP02";
 /// Magic header for legacy gzip-compressed caches (rejected, same reason).
 const CACHE_MAGIC_V1: &[u8; 8] = b"FSTVEP01";
 
-/// A cache whose format predates #90, and so cannot be trusted to hold a
-/// whole-file transcript set.
+/// One line naming what is wrong with a pre-#90 cache.
+const SUMMARY_PRE_90: &str = "predates the #90 fix and may hold only part of the \
+     transcript set";
+
+/// The evidence behind [`SUMMARY_PRE_90`], for the caller that has to stop.
+const DETAIL_PRE_90: &str = "Caches written between 2026-06-10 (the tabix read \
+     path) and 2026-08-18 (#90) may hold only the transcripts overlapping one \
+     input VCF's variants while looking like a whole-file cache to every later \
+     run - the #87 failure, which reported 47,196 of 47,196 chr17 variants as \
+     intergenic at exit code 0. Nothing in the file distinguishes the two, so it \
+     is rejected rather than read.";
+
+/// One line naming what is wrong with a pre-#98 cache.
+const SUMMARY_PRE_98: &str = "predates the #98 fix and holds unnamed non-coding \
+     genes";
+
+/// The evidence behind [`SUMMARY_PRE_98`], for the caller that has to stop.
+const DETAIL_PRE_98: &str = "The GFF3 parser that wrote it took only `gene` and \
+     `pseudogene` as gene records, so every locus Ensembl types `ncRNA_gene` - \
+     the lncRNA, miRNA and snRNA genes - was cached with no symbol and biotype \
+     \"unknown\". SYMBOL comes out empty where VEP prints a name, and every \
+     symbol-keyed annotation (OMIM, gnomAD constraint, ClinVar protein) silently \
+     misses those genes. The file is intact, and nothing in it separates a gene \
+     that lost its name from one that never had one, so it is rejected rather \
+     than read.";
+
+/// A cache whose format carries a guarantee this build requires and the file
+/// cannot supply: it may be region-restricted (pre-#90) or hold unnamed
+/// non-coding genes (pre-#98).
 ///
 /// A distinct type rather than a bare message because the two callers need to
-/// say different things about it. The sidecar path rebuilds and only reports;
-/// the explicit `--transcript-cache` path has to stop, and its generic failure
-/// wording ("most likely truncated or corrupt") is the wrong diagnosis here -
-/// the file is intact, it is the guarantee that is missing. Callers distinguish
-/// the two with `anyhow::Error::downcast_ref`.
+/// say different things about it, at different lengths.
+///
+/// The sidecar path rebuilds from the GFF3 on its own, so nothing is being
+/// asked of the user and one line is the whole story - [`Self::summary`]. The
+/// explicit `--transcript-cache` path has to stop, so it owes the user the
+/// evidence and a way out; it uses [`Display`], which adds [`Self::detail`].
+/// Neither carries recovery advice, because the two paths recover differently
+/// and a fixed clause was wrong on both: the sidecar had already rebuilt by the
+/// time it printed "let the sidecar rebuild itself", and deleting a cache named
+/// by `--transcript-cache` conjures no sidecar to replace it.
+///
+/// The generic read-failure wording at the explicit call site ("most likely
+/// truncated or corrupt") is also the wrong diagnosis here - the file is
+/// intact, it is the guarantee that is missing. Callers tell the two apart with
+/// `anyhow::Error::downcast_ref`.
+///
+/// [`Display`]: std::fmt::Display
 #[derive(Debug)]
 pub struct StaleCacheFormat {
     /// The format found on disk, named as the user would see it in the file.
     pub found: &'static str,
+    /// One clause completing "the {found} format, which ...". Per-format
+    /// because the formats are stale for different reasons: V1/V2 may be
+    /// region-restricted (#90), V3 is whole-file but has unnamed non-coding
+    /// genes (#98). Telling a user the wrong one sends them looking for the
+    /// wrong problem.
+    pub summary: &'static str,
+    /// The evidence behind `summary`, for the caller that has to stop. Kept out
+    /// of the sidecar warning, which recovers by itself and would otherwise
+    /// spend a paragraph on a problem the user does not have to act on.
+    pub detail: &'static str,
+}
+
+impl StaleCacheFormat {
+    /// The one-line form, for a caller that recovers on its own.
+    ///
+    /// A bare predicate with no subject and no trailing stop, so a call site can
+    /// put the file in front of it - "sidecar cache {path} {summary}; rebuilding
+    /// from GFF3" - and punctuate to suit.
+    pub fn summary(&self) -> String {
+        format!("is in the {} format, which {}", self.found, self.summary)
+    }
 }
 
 impl std::fmt::Display for StaleCacheFormat {
-    /// Phrased to read as the reason a caller could not use the cache, so that
-    /// both call sites can introduce it with their own subject.
+    /// The long form: the summary plus the evidence for it. Supplies the
+    /// pronoun subject that [`Self::summary`] leaves out, so it reads after a
+    /// caller's "cannot be used:" and can be followed by whatever recovery
+    /// applies on that path.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "it is in the {} format, which predates the #90 fix and cannot be trusted. \
-             Caches written between 2026-06-10 (the tabix read path) and 2026-08-18 \
-             (#90) may hold only the transcripts overlapping one input VCF's variants \
-             while looking like a whole-file cache to every later run - the #87 \
-             failure, which reported 47,196 of 47,196 chr17 variants as intergenic at \
-             exit code 0. Nothing in the file distinguishes the two, so it is rejected \
-             rather than read. Rebuild it with `fastvep cache`, or delete it and let \
-             the sidecar rebuild itself.",
-            self.found
-        )
+        write!(f, "it {}. {}", self.summary(), self.detail)
     }
 }
 
@@ -101,7 +155,7 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
 
     // Write magic header
     use std::io::Write;
-    zst.write_all(CACHE_MAGIC_V3)?;
+    zst.write_all(CACHE_MAGIC_V4)?;
 
     // Serialize with bincode
     bincode::serialize_into(&mut zst, transcripts)
@@ -189,6 +243,14 @@ pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
 /// sidecar path does automatically; reading costs a silently wrong annotation
 /// that nothing downstream can detect. Same trade as #88's decision to error
 /// rather than annotate against an empty transcript set.
+///
+/// `FSTVEP03` is rejected for the same reason at one remove. #98 fixed the GFF3
+/// parser, not the caches it had already written, and the sidecar path reuses a
+/// cache whenever it is newer than its GFF3 - so without a bump the user who
+/// reported #98 would upgrade, re-run the identical command, and still get an
+/// empty SYMBOL, because the parser never runs again. A V3 cache is whole-file
+/// and loads cleanly; it just has no name for any `ncRNA_gene` locus, which is
+/// indistinguishable from a genuinely unnamed gene.
 fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     let mut zst = zstd::Decoder::new(reader)?;
 
@@ -197,10 +259,23 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     zst.read_exact(&mut magic)
         .with_context(|| "Reading cache header")?;
     if &magic == CACHE_MAGIC_V2 {
-        return Err(StaleCacheFormat { found: "FSTVEP02" }.into());
+        return Err(StaleCacheFormat {
+            found: "FSTVEP02",
+            summary: SUMMARY_PRE_90,
+            detail: DETAIL_PRE_90,
+        }
+        .into());
     }
-    if &magic != CACHE_MAGIC_V3 {
-        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP03)");
+    if &magic == CACHE_MAGIC_V3 {
+        return Err(StaleCacheFormat {
+            found: "FSTVEP03",
+            summary: SUMMARY_PRE_98,
+            detail: DETAIL_PRE_98,
+        }
+        .into());
+    }
+    if &magic != CACHE_MAGIC_V4 {
+        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP04)");
     }
 
     let transcripts: Vec<Transcript> = bincode::deserialize_from(&mut zst)
@@ -226,6 +301,8 @@ fn load_cache_gzip<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
     if &magic == CACHE_MAGIC_V1 {
         return Err(StaleCacheFormat {
             found: "FSTVEP01 (gzip)",
+            summary: SUMMARY_PRE_90,
+            detail: DETAIL_PRE_90,
         }
         .into());
     }
@@ -241,7 +318,7 @@ pub fn cache_is_fresh(cache_path: &Path, source_path: &Path) -> bool {
     let source_mtime = source_path
         .metadata()
         .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::now());
+        .unwrap_or_else(|_| SystemTime::now());
     cache_mtime > source_mtime
 }
 
@@ -508,6 +585,15 @@ mod tests {
         zst.finish().unwrap().flush().unwrap();
     }
 
+    fn write_v3_cache(path: &Path, transcripts: &[Transcript]) {
+        use std::io::Write;
+        let file = File::create(path).unwrap();
+        let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+        zst.write_all(CACHE_MAGIC_V3).unwrap();
+        bincode::serialize_into(&mut zst, transcripts).unwrap();
+        zst.finish().unwrap().flush().unwrap();
+    }
+
     fn write_v1_cache(path: &Path, transcripts: &[Transcript]) {
         use flate2::write::GzEncoder;
         use flate2::Compression;
@@ -536,12 +622,43 @@ mod tests {
             "the error should name the format found, got: {msg}"
         );
         assert!(
-            msg.contains("fastvep cache"),
-            "the error should say how to recover, got: {msg}"
-        );
-        assert!(
             msg.contains("intergenic"),
             "the error should say what goes wrong if it were read, got: {msg}"
+        );
+        // Recovery advice is the caller's to add: it differs between the
+        // sidecar path, which has already rebuilt by the time it reports, and
+        // the explicit path, where deleting the named file produces no sidecar.
+        assert!(
+            !msg.contains("fastvep cache"),
+            "the type should not prescribe a recovery its callers disagree \
+             about, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_pre_98_cache_is_rejected_rather_than_read() {
+        // A well-formed FSTVEP03 cache: whole-file, loads cleanly, transcript
+        // count fine. What it cannot show is that every `ncRNA_gene` locus in it
+        // lost its symbol to the pre-#98 parser. The sidecar path reuses a cache
+        // that is newer than its GFF3, so without this rejection upgrading to the
+        // fix would change nothing for anyone who had already run the tool.
+        let tmp = NamedTempFile::new().unwrap();
+        write_v3_cache(tmp.path(), &make_transcripts());
+
+        let err = load_cache(tmp.path()).expect_err("FSTVEP03 must not load");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("FSTVEP03"),
+            "the error should name the format found, got: {msg}"
+        );
+        assert!(
+            msg.contains("SYMBOL"),
+            "the error should say what goes wrong if it were read, got: {msg}"
+        );
+        assert!(
+            !msg.contains("intergenic"),
+            "V3 is whole-file; the #90 reason would send the user after the wrong \
+             problem, got: {msg}"
         );
     }
 
@@ -557,13 +674,54 @@ mod tests {
         let err = load_cache(tmp.path()).expect_err("FSTVEP01 must not load");
         let msg = format!("{err:#}");
         assert!(msg.contains("FSTVEP01"), "got: {msg}");
-        assert!(msg.contains("fastvep cache"), "got: {msg}");
+        assert!(
+            msg.contains("#90"),
+            "it should carry the pre-#90 reason, got: {msg}"
+        );
     }
 
     #[test]
-    fn a_v3_cache_written_now_round_trips() {
-        // The other half of the bump: rejecting V2 is only acceptable if the
-        // current writer produces something the current reader accepts.
+    fn the_summary_is_one_sentence_and_the_detail_is_only_in_the_long_form() {
+        // The split exists so the sidecar path, which recovers by itself, can
+        // report in one line while the explicit path still owes the user the
+        // evidence. If `summary` ever grows into the paragraph, the sidecar
+        // warning silently becomes one again.
+        let tmp = NamedTempFile::new().unwrap();
+        write_v3_cache(tmp.path(), &make_transcripts());
+        let err = load_cache(tmp.path()).expect_err("FSTVEP03 must not load");
+        let stale = err
+            .downcast_ref::<StaleCacheFormat>()
+            .expect("a rejected format should downcast to StaleCacheFormat");
+
+        let summary = stale.summary();
+        assert!(
+            summary.contains("FSTVEP03") && summary.contains("#98"),
+            "the one-liner must still say which format and why, got: {summary}"
+        );
+        assert!(
+            !summary.contains('.'),
+            "the one-liner is a clause, not a paragraph; the caller punctuates \
+             it, got: {summary}"
+        );
+        assert!(
+            summary.starts_with("is in the "),
+            "the one-liner must leave its subject to the caller, which puts the \
+             file in front of it, got: {summary}"
+        );
+        assert!(
+            !summary.contains("SYMBOL"),
+            "the evidence belongs in `detail`, got: {summary}"
+        );
+        assert!(
+            stale.to_string().contains("SYMBOL"),
+            "the long form must still carry the evidence"
+        );
+    }
+
+    #[test]
+    fn a_v4_cache_written_now_round_trips() {
+        // The other half of the bump: rejecting V2 and V3 is only acceptable if
+        // the current writer produces something the current reader accepts.
         let tmp = NamedTempFile::new().unwrap();
         let transcripts = make_transcripts();
         save_cache(&transcripts, tmp.path()).unwrap();
@@ -574,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn the_published_magic_is_v3() {
+    fn the_published_magic_is_v4() {
         // Pin the on-disk byte, so a future change to the writer that forgets
         // the reader shows up here rather than in someone's annotation.
         use std::io::Read;
@@ -584,6 +742,6 @@ mod tests {
         let mut zst = zstd::Decoder::new(BufReader::new(File::open(tmp.path()).unwrap())).unwrap();
         let mut magic = [0u8; 8];
         zst.read_exact(&mut magic).unwrap();
-        assert_eq!(&magic, CACHE_MAGIC_V3, "published magic drifted from V3");
+        assert_eq!(&magic, CACHE_MAGIC_V4, "published magic drifted from V4");
     }
 }

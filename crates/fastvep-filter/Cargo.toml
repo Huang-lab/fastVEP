@@ -8,3 +8,6 @@ description = "Expression-based variant filter engine for fastVEP (filter_vep-co
 [dependencies]
 fastvep-core = { workspace = true }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

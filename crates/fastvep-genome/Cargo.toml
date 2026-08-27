@@ -8,3 +8,6 @@ description = "Transcript, exon, and gene models for fastVEP"
 [dependencies]
 fastvep-core = { workspace = true }
 serde = { workspace = true }
+
+[lints]
+workspace = true

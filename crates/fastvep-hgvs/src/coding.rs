@@ -165,7 +165,7 @@ pub fn hgvsc_with_seq(
                 let before_pos = (ins_before_cdna - 1) as usize;
                 // Check preceding sequence
                 let dup_before = if before_pos + 1 >= ins_len && before_pos < seq_bytes.len() {
-                    let preceding = &seq_bytes[before_pos + 1 - ins_len..before_pos + 1];
+                    let preceding = &seq_bytes[before_pos + 1 - ins_len..=before_pos];
                     preceding
                         .iter()
                         .zip(alt_bases.iter())

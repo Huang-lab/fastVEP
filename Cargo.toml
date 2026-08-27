@@ -55,6 +55,56 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 lru = "0.12"
 tempfile = "3"
 
+# One lint policy for all twelve crates, so a local `cargo clippy` and the CI
+# gate disagree about nothing but the `-D`. Before this block the only
+# statement of the bar lived in a flag in ci.yml, and a crate added to the
+# workspace inherited none of it.
+#
+# The set is deliberately narrow. Every lint here is one the workspace already
+# satisfies, so a warning means a genuine regression rather than a backlog
+# somebody has learned to scroll past. Style lints that would have flagged
+# hundreds of existing lines (`uninlined_format_args`, `map_unwrap_or`,
+# `semicolon_if_nothing_returned`) are left out on purpose: churning them would
+# cost more `git blame` history than the readability is worth, and a gate
+# nobody can keep green stops being a gate.
+[workspace.lints.rust]
+elided_lifetimes_in_paths = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
+
+[workspace.lints.clippy]
+# Placeholders that must never reach master.
+todo = "warn"
+unimplemented = "warn"
+
+# Silent-cost lints. This is a tool whose whole point is throughput, and each
+# of these hides an allocation or an eager evaluation behind innocuous syntax.
+cloned_instead_of_copied = "warn"
+inefficient_to_string = "warn"
+naive_bytecount = "warn"
+or_fun_call = "warn"
+stable_sort_primitive = "warn"
+string_lit_as_bytes = "warn"
+
+# Readability and footgun lints that cost nothing to keep clean.
+explicit_iter_loop = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+from_iter_instead_of_collect = "warn"
+index_refutable_slice = "warn"
+large_stack_arrays = "warn"
+manual_assert = "warn"
+match_bool = "warn"
+mut_mut = "warn"
+no_effect_underscore_binding = "warn"
+ptr_as_ptr = "warn"
+range_minus_one = "warn"
+range_plus_one = "warn"
+same_functions_in_if_condition = "warn"
+useless_let_if_seq = "warn"
+verbose_file_reads = "warn"
+zero_sized_map_values = "warn"
+
 [profile.release]
 opt-level = 3
 lto = "fat"
