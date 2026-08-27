@@ -51,6 +51,11 @@ const _: () = assert!(MAX_JSON_BLOB_DECOMPRESSED <= u32::MAX as usize);
 /// Soft cap on cached chunk *entries*; the byte budget is the real gate.
 const CHUNK_CACHE_MAX_ENTRIES: usize = 4096;
 
+/// How many distinct failing chunks a reader remembers. One entry is a key and
+/// a shared message, so this is kilobytes; the point of the cap is only that a
+/// wholly unreadable archive cannot grow the map without bound.
+const MAX_REMEMBERED_CHUNK_FAILURES: usize = 1 << 16;
+
 /// Monotonic id per reader so chunks are namespaced in the shared cache
 /// (two shards can share a `chunk_id` without colliding). Never reused.
 static NEXT_READER_ID: AtomicU64 = AtomicU64::new(0);
@@ -202,6 +207,17 @@ pub struct Osa2Reader {
     /// `chrom_aliases`, which allocates a `Vec<String>`, on every query of every
     /// variant.
     chrom_lookup: HashMap<String, String>,
+    /// Chunks whose build failed, and why.
+    ///
+    /// A chunk that cannot be decompressed now cannot be decompressed later
+    /// either, but every variant in its genomic width asked again - and each
+    /// attempt paid the full decompression before failing. One unreadable
+    /// megabase was enough to make a run look hung rather than slow: 200,000
+    /// variants over three such chunks did not finish in ten minutes (#101).
+    ///
+    /// Bounded by `MAX_REMEMBERED_CHUNK_FAILURES`; past that the verdict simply
+    /// is not remembered, which is slow but still correct.
+    failed_chunks: Mutex<HashMap<ChunkKey, Arc<str>>>,
 }
 
 impl Osa2Reader {
@@ -315,6 +331,7 @@ impl Osa2Reader {
             entries,
             reader_id: NEXT_READER_ID.fetch_add(1, Ordering::Relaxed),
             local_cache: local_budget.map(|b| Mutex::new(ChunkCache::new(b))),
+            failed_chunks: Mutex::new(HashMap::new()),
             chunk_load_count: AtomicU64::new(0),
             header_read_count,
             metadata,
@@ -330,6 +347,17 @@ impl Osa2Reader {
     /// by benchmarks/tests to detect chunk-cache thrashing.
     pub fn chunk_load_count(&self) -> u64 {
         self.chunk_load_count.load(Ordering::Relaxed)
+    }
+
+    /// Number of distinct chunks this reader has found unreadable. Each is
+    /// attempted once and the verdict remembered, so this is also the number of
+    /// failed build attempts - a run whose supplementary annotations came back
+    /// thin can tell a database problem from a genuine absence of records.
+    pub fn chunk_failure_count(&self) -> u64 {
+        self.failed_chunks
+            .lock()
+            .map(|f| f.len() as u64)
+            .unwrap_or(0)
     }
 
     /// Number of ZIP entries in the archive. Startup-cost diagnostic (issue
@@ -487,8 +515,26 @@ impl Osa2Reader {
             }
         }
 
+        // A chunk already known to be unreadable is not retried. Without this
+        // the failure costs a full decompression per variant rather than once.
+        if let Ok(failed) = self.failed_chunks.lock() {
+            if let Some(why) = failed.get(&key) {
+                return Err(anyhow::anyhow!("{}", why));
+            }
+        }
+
         // Build without holding the lock (lock-free mmap reads + inflate).
-        let chunk = Arc::new(self.build_chunk(chrom, chunk_id)?);
+        let chunk = match self.build_chunk(chrom, chunk_id) {
+            Ok(chunk) => Arc::new(chunk),
+            Err(e) => {
+                if let Ok(mut failed) = self.failed_chunks.lock() {
+                    if failed.len() < MAX_REMEMBERED_CHUNK_FAILURES {
+                        failed.insert(key, Arc::from(e.to_string().as_str()));
+                    }
+                }
+                return Err(e);
+            }
+        };
         self.chunk_load_count.fetch_add(1, Ordering::Relaxed);
         let bytes = chunk_bytes(&chunk);
 
