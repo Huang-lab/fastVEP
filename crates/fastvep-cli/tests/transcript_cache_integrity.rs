@@ -335,6 +335,14 @@ fn a_pre_90_explicit_transcript_cache_stops_the_run() {
         msg.contains("fastvep cache"),
         "the error should say how to recover, got: {msg}"
     );
+    // The recovery has to be one this path can actually perform. The cache was
+    // named on the command line, so there is no sidecar to fall back to and
+    // deleting the file conjures none - advice the message used to give because
+    // a single fixed clause served both call sites.
+    assert!(
+        !msg.contains("let the sidecar rebuild itself"),
+        "an explicitly named cache has no sidecar to fall back to, got: {msg}"
+    );
     // One diagnosis, not two. The file is intact - sending the user to look for
     // a truncated write or a full disk would be a different problem than the
     // one they have, and the generic wording used to be appended to this one.

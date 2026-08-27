@@ -987,6 +987,7 @@ fn load_transcript_models(
                             // cache truncated by a concurrent writer or a
                             // full disk looked exactly like a small
                             // annotation set.
+                            let stale = e.downcast_ref::<StaleCacheFormat>();
                             if explicit_cache {
                                 // A cache rejected for its format (pre-#90,
                                 // pre-#98) is intact, so "truncated or
@@ -994,9 +995,20 @@ fn load_transcript_models(
                                 // send the user looking for a disk problem
                                 // they do not have. Say which of the two it
                                 // is, once, and let StaleCacheFormat supply
-                                // the reason for the format it found.
-                                let why = match e.downcast_ref::<StaleCacheFormat>() {
-                                    Some(stale) => stale.to_string(),
+                                // the reason and the evidence for the format
+                                // it found.
+                                //
+                                // The recovery clause is written here rather
+                                // than inside StaleCacheFormat because it is
+                                // specific to this path: the file was named on
+                                // the command line, so deleting it produces no
+                                // sidecar to take its place.
+                                let why = match stale {
+                                    Some(stale) => format!(
+                                        "{stale} Rebuild it with `fastvep cache`, or drop \
+                                         --transcript-cache and pass --gff3 so a fresh \
+                                         sidecar is built alongside it."
+                                    ),
                                     None => format!(
                                         "it could not be read ({e}), and is most likely \
                                          truncated or corrupt - delete it and rebuild with \
@@ -1010,10 +1022,26 @@ fn load_transcript_models(
                                     cp.display()
                                 ));
                             }
-                            eprintln!(
-                                "Warning: sidecar cache {} could not be loaded ({e}); rebuilding from GFF3",
-                                cp.display()
-                            );
+                            // The sidecar rebuilds from the GFF3 on the next
+                            // few lines, so this asks nothing of the user and
+                            // says so in one line. A stale format is an
+                            // expected consequence of upgrading, not a fault;
+                            // the evidence behind it goes to the log for
+                            // anyone who wants it.
+                            match stale {
+                                Some(stale) => {
+                                    eprintln!(
+                                        "Note: sidecar cache {} {}; rebuilding from GFF3",
+                                        cp.display(),
+                                        stale.summary()
+                                    );
+                                    log::debug!("{}", stale.detail);
+                                }
+                                None => eprintln!(
+                                    "Warning: sidecar cache {} could not be loaded ({e}); rebuilding from GFF3",
+                                    cp.display()
+                                ),
+                            }
                         }
                     }
                 } else {

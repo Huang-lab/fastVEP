@@ -84,8 +84,16 @@ newer than the source. A user who fixes their fastVEP but not their GFF3 keeps
 reading the cache the *old* parser wrote, and sees no change at all. So a fix
 to `crates/fastvep-cache/src/gff.rs` that changes what gets parsed needs the
 cache magic in `transcript_cache.rs` bumped alongside it, with the old magic
-moved to the rejected list and a `WHY_PRE_NN` string saying what was wrong with
-what it holds. `#95` and `#98` are the worked examples.
+moved to the rejected list and a `SUMMARY_PRE_NN` / `DETAIL_PRE_NN` pair saying
+what was wrong with what it holds. `#95` and `#98` are the worked examples.
+
+The pair is two lengths of the same fact, because the two callers are not in
+the same situation. The sidecar path rebuilds from the GFF3 by itself, so it
+prints the summary and stops; the explicit `--transcript-cache` path has to
+refuse the run, so it owes the user the detail. Recovery advice belongs at the
+call site, not in the error: the sidecar has already rebuilt by the time it
+reports, and deleting a cache named on the command line produces no sidecar to
+replace it.
 
 Rejecting is deliberate, and the reason generalises: a stale cache is
 *intact*, so nothing in it distinguishes a gene that lost its symbol from one
