@@ -98,13 +98,30 @@ pub fn hgvsc_with_seq(
 ) -> Option<String> {
     let prefix = format!("{}:c.", transcript_id);
 
-    let pos_str = cds_span(cdna_start, cdna_end, coding_start, coding_end, start_phase);
+    // Ensembl applies the CDS phase offset to HGVSc for a single-base
+    // substitution and to nothing else. `hgvs_transcript`
+    // (`TranscriptVariationAllele.pm` release/115) takes the position from
+    // `$tv->cds_start` when `$vf->var_class eq 'SNP'`, and `cds_start` carries
+    // the offset - it is why a phase-1 transcript reports `CDS_position` 2286
+    // where `cDNA_position` is 2285. Every other class of change goes through
+    // `_get_cDNA_position`, which computes `cdna + 1 - cdna_coding_start` and
+    // has no phase term at all.
+    //
+    // So the asymmetry is Ensembl's, and it is written out per arm here rather
+    // than hidden in one shared span. #102 unified the three copies of this
+    // numbering on the grounds that they had drifted apart; they had, but this
+    // particular difference was not drift, and unifying it moved 5,216 ClinVar
+    // indel coordinates off VEP's by one or two bases. Only a run against real
+    // VEP tells the two conventions apart - both read as reasonable from the
+    // code alone, and neither produces a malformed coordinate.
+    const NO_PHASE: u64 = 0;
 
     let notation = match (ref_allele, alt_allele) {
         // SNV
         (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases))
             if ref_bases.len() == 1 && alt_bases.len() == 1 =>
         {
+            let pos_str = cds_span(cdna_start, cdna_end, coding_start, coding_end, start_phase);
             format!(
                 "{}{}{}>{}",
                 prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
@@ -133,7 +150,7 @@ pub fn hgvsc_with_seq(
                 shifted_end,
                 coding_start,
                 coding_end,
-                start_phase,
+                NO_PHASE,
             );
             format!("{}{}del", prefix, shifted_pos)
         }
@@ -188,7 +205,7 @@ pub fn hgvsc_with_seq(
                     ins_before_cdna,
                     coding_start,
                     coding_end,
-                    start_phase,
+                    NO_PHASE,
                 )
             } else {
                 cds_span(
@@ -196,7 +213,7 @@ pub fn hgvsc_with_seq(
                     ins_after_cdna,
                     coding_start,
                     coding_end,
-                    start_phase,
+                    NO_PHASE,
                 )
             };
 
@@ -213,6 +230,7 @@ pub fn hgvsc_with_seq(
         }
         // MNV or complex
         (Allele::Sequence(_), Allele::Sequence(alt_bases)) => {
+            let pos_str = cds_span(cdna_start, cdna_end, coding_start, coding_end, NO_PHASE);
             format!(
                 "{}{}delins{}",
                 prefix,
@@ -791,36 +809,68 @@ mod tests {
         assert_eq!(result, Some("ENST00000001:c.30_*1insAC".to_string()));
     }
 
-    /// A CDS position carries Ensembl's phase offset for an incomplete first
-    /// codon. Deletions used to skip it while every other path applied it, so
-    /// the same base was `c.716` as a substitution and `c.715` as a deletion.
+    /// Ensembl's phase offset for an incomplete first codon reaches HGVSc for a
+    /// single-base substitution and for nothing else, so the same base is
+    /// `c.52G>A` as a substitution and `c.50del` as a deletion.
+    ///
+    /// That asymmetry looks like drift and is not. `hgvs_transcript` reads the
+    /// position from `$tv->cds_start` - which carries the offset - only when
+    /// `$vf->var_class eq 'SNP'`, and from `_get_cDNA_position` otherwise, where
+    /// the arithmetic is `cdna + 1 - cdna_coding_start` with no phase term.
+    /// #102 removed the difference on the reasoning that three copies of this
+    /// numbering had drifted apart, and moved 5,216 ClinVar indel coordinates
+    /// off VEP's by one or two bases. Real VEP 115.1 is the arbiter: nothing in
+    /// the shape of either answer says which is right.
     #[test]
-    fn a_deletion_carries_the_same_phase_offset_as_a_substitution() {
-        let args = (100u64, 100u64, 51u64, Some(1000u64), 2u64);
-        let (cdna_s, cdna_e, coding_start, coding_end, phase) = args;
-        let sub = hgvsc_with_seq(
-            "ENST00000001",
-            cdna_s,
-            cdna_e,
-            &Allele::Sequence(b"G".to_vec()),
-            &Allele::Sequence(b"A".to_vec()),
-            coding_start,
-            coding_end,
-            None,
-            phase,
+    fn only_a_substitution_carries_the_cds_phase_offset() {
+        let (cdna_s, cdna_e, coding_start, coding_end, phase) =
+            (100u64, 100u64, 51u64, Some(1000u64), 2u64);
+        let at = |reference: Allele, alternate: Allele| {
+            hgvsc_with_seq(
+                "ENST00000001",
+                cdna_s,
+                cdna_e,
+                &reference,
+                &alternate,
+                coding_start,
+                coding_end,
+                None,
+                phase,
+            )
+        };
+        let g = || Allele::Sequence(b"G".to_vec());
+
+        assert_eq!(
+            at(g(), Allele::Sequence(b"A".to_vec())),
+            Some("ENST00000001:c.52G>A".to_string()),
+            "a substitution is numbered from cds_start, which includes the phase"
         );
-        let del = hgvsc_with_seq(
-            "ENST00000001",
-            cdna_s,
-            cdna_e,
-            &Allele::Sequence(b"G".to_vec()),
-            &Allele::Deletion,
-            coding_start,
-            coding_end,
-            None,
-            phase,
+        for (label, alternate) in [
+            ("deletion", Allele::Deletion),
+            ("delins", Allele::Sequence(b"AC".to_vec())),
+        ] {
+            let got = at(g(), alternate);
+            assert!(
+                got.as_deref().is_some_and(|d| d.contains("c.50")),
+                "a {label} is numbered without the phase, expected c.50, got {got:?}"
+            );
+        }
+        // An insertion is written over the two bases it sits between, and both
+        // of those are numbered the same way. It arrives as a coordinate pair
+        // rather than a single position, so it does not go through `at`.
+        assert_eq!(
+            hgvsc_with_seq(
+                "ENST00000001",
+                cdna_s,
+                cdna_e + 1,
+                &Allele::Deletion,
+                &Allele::Sequence(b"AC".to_vec()),
+                coding_start,
+                coding_end,
+                None,
+                phase,
+            ),
+            Some("ENST00000001:c.50_51insAC".to_string())
         );
-        assert_eq!(sub, Some("ENST00000001:c.52G>A".to_string()));
-        assert_eq!(del, Some("ENST00000001:c.52del".to_string()));
     }
 }
