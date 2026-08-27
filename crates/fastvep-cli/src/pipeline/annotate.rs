@@ -30,9 +30,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
-    annotate_intergenic, annotate_sa_only_scaffold, complement_allele, convert_ins_to_dup,
+    annotate_intergenic, annotate_sa_only_scaffold, convert_ins_to_dup,
     convert_ins_to_dup_noncoding, load_gene_providers, load_sa_providers,
-    three_prime_shift_intronic, zip_positions,
+    reverse_complement_allele, three_prime_shift_intronic, zip_positions,
 };
 
 const BATCH_SIZE: usize = 1024;
@@ -269,7 +269,7 @@ fn annotate_variant(
 
                                 // Determine alleles for HGVS - complement for minus strand
                                 let (hgvs_ref, hgvs_alt) = if tr.strand == fastvep_core::Strand::Reverse {
-                                    (complement_allele(&vf.ref_allele), complement_allele(&ac.allele))
+                                    (reverse_complement_allele(&vf.ref_allele), reverse_complement_allele(&ac.allele))
                                 } else {
                                     (vf.ref_allele.clone(), ac.allele.clone())
                                 };

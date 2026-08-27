@@ -431,8 +431,8 @@ impl AnnotationContext {
                                     let (hgvs_ref, hgvs_alt) =
                                         if tr.strand == fastvep_core::Strand::Reverse {
                                             (
-                                                complement_allele(&vf.ref_allele),
-                                                complement_allele(&ac.allele),
+                                                reverse_complement_allele(&vf.ref_allele),
+                                                reverse_complement_allele(&ac.allele),
                                             )
                                         } else {
                                             (vf.ref_allele.clone(), ac.allele.clone())
@@ -990,20 +990,17 @@ pub fn zip_positions(start: Option<u64>, end: Option<u64>) -> Option<(u64, u64)>
     }
 }
 
-pub fn complement_allele(allele: &Allele) -> Allele {
+/// Put an allele into transcript orientation for a reverse-strand transcript.
+///
+/// VCF alleles are given in genomic order, so reading them on the minus strand
+/// means reversing them as well as complementing each base. Complementing in
+/// place is indistinguishable for a single base, which is why it survived: it
+/// showed up only once a multi-base alternate reached HGVS, where a
+/// reverse-strand `ACG` was written `delinsTGC` instead of `delinsCGT`.
+pub fn reverse_complement_allele(allele: &Allele) -> Allele {
     match allele {
         Allele::Sequence(bases) => {
-            let comp: Vec<u8> = bases
-                .iter()
-                .map(|&b| match b {
-                    b'A' | b'a' => b'T',
-                    b'T' | b't' => b'A',
-                    b'C' | b'c' => b'G',
-                    b'G' | b'g' => b'C',
-                    other => other,
-                })
-                .collect();
-            Allele::Sequence(comp)
+            Allele::Sequence(fastvep_genome::codon::reverse_complement(bases))
         }
         other => other.clone(),
     }
@@ -2314,5 +2311,34 @@ mod tests {
              substitution and not an unshifted delins: {:?}",
             tc
         );
+    }
+
+    /// A minus-strand transcript reads a VCF allele reverse-complemented, not
+    /// complemented base-by-base. The two agree for a single base, which is why
+    /// complementing in place survived until a multi-base alternate reached
+    /// HGVS: `ACG` was written `TGC` instead of `CGT`.
+    #[test]
+    fn an_allele_in_transcript_orientation_is_reversed_as_well_as_complemented() {
+        assert_eq!(
+            reverse_complement_allele(&Allele::Sequence(b"ACG".to_vec())),
+            Allele::Sequence(b"CGT".to_vec())
+        );
+        // A palindrome would not have caught the bug, and neither would an SNV.
+        assert_eq!(
+            reverse_complement_allele(&Allele::Sequence(b"A".to_vec())),
+            Allele::Sequence(b"T".to_vec())
+        );
+        // Applying it twice is the identity, on any sequence.
+        let original = Allele::Sequence(b"ACGGTTA".to_vec());
+        assert_eq!(
+            reverse_complement_allele(&reverse_complement_allele(&original)),
+            original
+        );
+        // The placeholder alleles carry no sequence to orient.
+        assert_eq!(
+            reverse_complement_allele(&Allele::Deletion),
+            Allele::Deletion
+        );
+        assert_eq!(reverse_complement_allele(&Allele::Missing), Allele::Missing);
     }
 }
