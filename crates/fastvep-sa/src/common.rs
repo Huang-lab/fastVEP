@@ -37,8 +37,19 @@ pub const DEFAULT_BLOCK_SIZE: usize = 8 * 1024 * 1024;
 ///
 /// Overridable with `FASTVEP_SA_CACHE_BYTES` (bytes); the legacy
 /// `FASTVEP_SA_CACHE_BYTES_PER_READER` name is still honored as an alias so
-/// existing deployment scripts keep working. Clamped to
+/// existing deployment scripts keep working. The override is taken **verbatim**;
+/// only the thread-scaled default is clamped to
 /// `[SA_CACHE_MIN_BYTES, SA_CACHE_MAX_BYTES]`.
+///
+/// That asymmetry is deliberate. The bounds exist to keep the *default* sane on
+/// machines this code knows nothing about; an operator who names a number knows
+/// their machine better than the bounds do, and both directions are real: a
+/// large-memory host wanting more than the 384 MiB ceiling so a genome-wide
+/// dense source stops re-decompressing, and a small container wanting less than
+/// the 32 MiB floor. Clamping either would turn the override into a silent
+/// no-op, which is the one behaviour an operator cannot debug from the outside -
+/// the cache reports no size anywhere. A zero or unparseable value is the one
+/// case that falls back to the default, since it names no budget at all.
 pub const SA_CACHE_MIN_BYTES: usize = 32 * 1024 * 1024; // 4 × 8 MiB — historical floor
 pub const SA_CACHE_MAX_BYTES: usize = 384 * 1024 * 1024; // 48 × 8 MiB — per-cache ceiling
 const SA_CACHE_BYTES_PER_THREAD: usize = 3 * DEFAULT_BLOCK_SIZE; // ~3 blocks/worker
@@ -224,6 +235,30 @@ mod tests {
         std::env::set_var("FASTVEP_SA_CACHE_BYTES_PER_READER", "0");
         assert_eq!(sa_cache_budget_bytes(), expected);
         std::env::remove_var("FASTVEP_SA_CACHE_BYTES_PER_READER");
+
+        // An override is honored verbatim on BOTH sides of the bounds that the
+        // default is clamped to. Only asserting a value inside them - which is
+        // what "99000000" and "12345678" happen to be on one side each - cannot
+        // tell "the override wins" from "the override is clamped", and the two
+        // differ exactly where an operator reaches for the variable: a host with
+        // memory to spare, or a container with none.
+        std::env::set_var(
+            "FASTVEP_SA_CACHE_BYTES",
+            (SA_CACHE_MAX_BYTES * 4).to_string(),
+        );
+        assert_eq!(
+            sa_cache_budget_bytes(),
+            SA_CACHE_MAX_BYTES * 4,
+            "an override above the ceiling must not be clamped down to it"
+        );
+
+        std::env::set_var("FASTVEP_SA_CACHE_BYTES", "1048576");
+        assert_eq!(
+            sa_cache_budget_bytes(),
+            1_048_576,
+            "an override below the floor must not be clamped up to it"
+        );
+        std::env::remove_var("FASTVEP_SA_CACHE_BYTES");
     }
 
     #[test]
