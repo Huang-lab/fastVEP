@@ -753,16 +753,20 @@ impl AnnotationContext {
                             } else {
                                 (vf.position.start, ref_str.as_str(), alt_str.as_str())
                             };
-                            if let Ok(Some(ann)) = sa.annotate_position(chrom, q_pos, q_ref, q_alt)
-                            {
-                                let json_str = match ann {
-                                    AnnotationValue::Json(j) => j,
-                                    AnnotationValue::Positional(j) => j,
-                                    AnnotationValue::Interval(v) => {
-                                        format!("[{}]", v.join(","))
-                                    }
-                                };
-                                results.push((sa.json_key().to_string(), json_str));
+                            // A failed lookup is not a miss: see `SaLookupErrors`.
+                            match sa.annotate_position(chrom, q_pos, q_ref, q_alt) {
+                                Ok(Some(ann)) => {
+                                    let json_str = match ann {
+                                        AnnotationValue::Json(j) => j,
+                                        AnnotationValue::Positional(j) => j,
+                                        AnnotationValue::Interval(v) => {
+                                            format!("[{}]", v.join(","))
+                                        }
+                                    };
+                                    results.push((sa.json_key().to_string(), json_str));
+                                }
+                                Ok(None) => {}
+                                Err(e) => sa_lookup_errors().record(sa.json_key(), &e),
                             }
                         }
                         allele_results.insert(alt_str, results);
@@ -987,6 +991,79 @@ pub fn zip_positions(start: Option<u64>, end: Option<u64>) -> Option<(u64, u64)>
         (Some(s), None) => Some((s, s)),
         (None, Some(e)) => Some((e, e)),
         _ => None,
+    }
+}
+
+/// Supplementary-annotation lookups that failed, counted per source.
+///
+/// A provider error and a provider miss used to be the same thing at the call
+/// site - both per-variant loops wrote `if let Ok(Some(ann))`, so a source that
+/// *could not answer* produced a record indistinguishable from one it simply had
+/// nothing for. That is the silent wrong answer this codebase is most exposed
+/// to. A `.osa2` chunk whose JSON blob exceeds the decompression limit fails
+/// every lookup in its megabase of the genome, and the only visible effect was a
+/// missing column: on a dense converted SpliceAI database, 295 of 300 variants
+/// came back with no score and the run reported success (#101).
+///
+/// Reporting per variant is not an option - the loop runs millions of times - so
+/// the first message from each source is kept and the rest counted, for one
+/// summary at the end of the run.
+#[derive(Default)]
+pub struct SaLookupErrors {
+    /// `json_key -> (failures, first message)`.
+    inner: std::sync::Mutex<std::collections::HashMap<String, (u64, String)>>,
+}
+
+impl SaLookupErrors {
+    /// Record one failed lookup. Only ever called off the happy path, so the
+    /// mutex is never contended by a successful annotation.
+    pub fn record(&self, source: &str, err: &anyhow::Error) {
+        let Ok(mut map) = self.inner.lock() else {
+            return; // a poisoned counter must not take the run down with it
+        };
+        // Look the source up borrowed, and build the strings only when it is
+        // new. A source that is unreadable rather than merely missing a record
+        // fails on *every* variant, so this runs once per variant per broken
+        // source across every worker; `entry()` would allocate the key and
+        // format the error again each time.
+        if let Some(seen) = map.get_mut(source) {
+            seen.0 += 1;
+            return;
+        }
+        map.insert(source.to_string(), (1, err.to_string()));
+    }
+
+    /// One line per source that failed, sorted so the output is reproducible.
+    pub fn report_lines(&self) -> Vec<String> {
+        let Ok(map) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let mut rows: Vec<_> = map.iter().collect();
+        rows.sort_by(|a, b| a.0.cmp(b.0));
+        rows.iter()
+            .map(|(source, (count, first))| {
+                format!(
+                    "warning: {source} could not be read for {count} variant lookup(s); \
+                     those variants carry no {source} annotation, which is not the same as \
+                     having none. First error: {first}"
+                )
+            })
+            .collect()
+    }
+}
+
+/// The process-wide collector, shared by both annotation pipelines for the same
+/// reason the SA caches are shared: the providers are reached from deep inside
+/// two independent per-variant loops.
+pub fn sa_lookup_errors() -> &'static SaLookupErrors {
+    static ERRORS: std::sync::OnceLock<SaLookupErrors> = std::sync::OnceLock::new();
+    ERRORS.get_or_init(SaLookupErrors::default)
+}
+
+/// Print the supplementary-annotation failure summary, if there is one.
+pub fn report_sa_lookup_errors() {
+    for line in sa_lookup_errors().report_lines() {
+        eprintln!("{line}");
     }
 }
 
