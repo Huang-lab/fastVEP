@@ -793,3 +793,81 @@ that as 5 to 8. Among soft errors the ratio runs 5:1 the other way: 46 variants 
 call pathogenic where fastVEP defers to VUS. That gap is not a threshold problem - her notes
 cite segregation, in-trans phase and functional data that no annotator computes - which is
 why B1 and further adjudication, not further tuning, are what move it.
+
+## v23: the annotation layer, not the criteria
+
+v23 is the first run in this series whose differences come entirely from consequence
+calling. No criterion changed, no threshold moved, and the supplementary-annotation stack is
+byte-identical to v22. The criteria fire differently because they are reading a different
+consequence.
+
+The baseline is v22, which is numerically identical to the documented v20 (v21 and v22 were
+re-runs that moved nothing, which is why neither has a section here).
+
+Three annotation fixes, all of them cases where fastVEP disagreed with Ensembl VEP:
+
+- **A splice site is matched against the whole variant, not its first base.** Every splice
+  predicate tested only the leftmost base, so a deletion or delins whose *second* base landed
+  on the donor or acceptor dinucleotide was missed. BRCA2 `c.9256_9256+1delinsTA` was
+  `splice_region_variant`, LOW, where VEP says HIGH. This accounts for almost all the
+  movement below.
+- **A `delins` is read from its peptides.** A change that both deletes and inserts bases was
+  typed from the direction of its length change alone, with `Amino_acids` of the form `E/X`
+  and no `Codons` at all. VEP calls most of them `protein_altering_variant`.
+- **A codon window is refused when the variant is not contiguous in the CDS.** A change
+  straddling a splice junction was translated as though its bases were adjacent in the coding
+  sequence.
+
+### v22 to v23
+
+| Metric | v22 | **v23** | change |
+|---|---:|---:|---:|
+| Exact match | 425,145 | **425,235** | +90 |
+| Same-direction | 522,101 | **522,297** | +196 |
+| Opposite-direction | 59 | **61** | +2 |
+| Exact-match rate | 63.1 % | 63.1 % | - |
+| Same-direction rate | 77.5 % | 77.5 % | - |
+
+243 variants changed their call. The rates are unmoved because 243 out of 673,660 does not
+reach a decimal place; the interesting number is not the rate but which way the 243 went.
+
+### Scored against real VEP
+
+Every one of the 243 was re-run through Ensembl VEP 115.1 (Docker
+`ensemblorg/ensembl-vep:release_115.1`, the same GFF3 and FASTA, `--pick`). VEP picked the
+same transcript in all 243 cases, so the comparison is like for like:
+
+| | v22 | **v23** |
+|---|---:|---:|
+| Changed calls whose IMPACT tier matches VEP | 5 / 243 | **243 / 243** |
+
+That is the whole argument for this run. The calls that moved were calls where fastVEP's own
+consequence disagreed with VEP, and they now agree.
+
+| Movement | n | ClinVar 2-star+ says |
+|---|---:|---|
+| Gained P/LP | 193 | P/LP - recovered true positives |
+| Gained P/LP | 9 | VUS |
+| Gained P/LP | 3 | B/LB - **new opposite-direction** |
+| Lost P/LP | 21 | VUS |
+| Lost P/LP | 10 | P/LP - **new false-benign** |
+| Lost P/LP | 1 | B/LB |
+| LP to P | 3 | P/LP |
+| Other | 3 | - |
+
+Both flagged buckets are the same class of variant seen from two sides, and both are
+written up for the next medical-genetics round in
+[`results/v23/MD_REVIEW.md`](results/v23/MD_REVIEW.md):
+
+- The **10 new false-benign** are all `c.N+2dup` single-base duplications two bases into the
+  intron, in MECR, COL11A1, PCDH15, SLX4, BRIP1, SLC7A9, ERCC2, NEB, GLB1 and NPHP3. VEP
+  agrees with the new `splice_region_variant` call on all ten: duplicating the base after
+  `+2` leaves the `GT` intact. This is the class the round-2 review already reached in the
+  *classifier* (PVS1 stands down for an insertion at the site without SpliceAI support);
+  what changed is that the consequence itself is now right, rather than PVS1's gate carrying
+  the whole burden.
+- The **3 new opposite-direction** calls are deletions that genuinely remove part of a donor
+  or acceptor dinucleotide - NFKB2, FOXP2, LMX1B - and VEP calls all three HIGH. The
+  disagreement is with ClinVar's classification rather than with the annotation. Two sit in
+  repeat-rich introns where the deletion 3'-shifts far from the site in HGVS notation, which
+  is a plausible reason a submitter read them as benign.
