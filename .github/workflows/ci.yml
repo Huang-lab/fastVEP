@@ -19,11 +19,17 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Debug info is only useful when someone is attached to a debugger, which
+  # Full debug info is only useful when someone is attached to a debugger, which
   # nobody is on a runner. Off, the workspace links faster and the cache below
   # stores a fraction as many bytes.
+  #
+  # The test profile keeps line tables rather than dropping debug info outright.
+  # They cost a small fraction of full debug info and are the difference between
+  # a CI failure that names the assertion's file and line and one that does not
+  # - and a test that only fails on the runner is exactly the one nobody can
+  # step through locally.
   CARGO_PROFILE_DEV_DEBUG: 0
-  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   rust:
