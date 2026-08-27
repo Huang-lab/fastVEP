@@ -833,9 +833,9 @@ fn is_known_transcript_term(feature_type: &str) -> bool {
 /// just its name. Measured against the releases current when this was written,
 /// the terms this admits that the explicit list does not carry are:
 ///
-/// - RefSeq GRCh38.p14: `primary_transcript` (998 on the genome),
-///   `scaRNA` (29), `antisense_RNA` (21), `Y_RNA` (4), `vault_RNA` (4),
-///   `telomerase_RNA` (1), `RNase_MRP_RNA` (1)
+/// - RefSeq GRCh38.p14 (whole genome): `primary_transcript` (2,139),
+///   `scaRNA` (54), `antisense_RNA` (42), `vault_RNA` (4), `Y_RNA` (4),
+///   `RNase_P_RNA` (2), `telomerase_RNA` (1), `RNase_MRP_RNA` (1)
 /// - Ensembl GRCh38.115: `unconfirmed_transcript` (40 on chr1 alone)
 /// - FlyBase BDGP6: `transposable_element` (5,896), `pre_miRNA` (262)
 ///
@@ -847,12 +847,16 @@ fn is_known_transcript_term(feature_type: &str) -> bool {
 /// transcript is that a spliced feature hangs off *it*, and that is not known
 /// until the file has been read; see the `retain` in [`parse_gff3_lines`].
 ///
-/// No such record exists in any of the reference files checked above - RefSeq
-/// `sequence_feature` records carry no `Parent` at all, and every gene-parented
-/// record in RefSeq GRCh38.p14 has children - so the `retain` currently drops
-/// nothing. It is kept as the cheap half of the bargain: without it this
-/// predicate would have to be a second closed allowlist, which is the thing it
-/// exists to avoid.
+/// That is not hypothetical. RefSeq GRCh38.p14 has six `enhancer` records at
+/// the immunoglobulin heavy chain locus - `ID=id-IGH`, `Parent=gene-IGH`,
+/// `gbkey=regulatory` - with no exon and no CDS. They are the only six of its
+/// 199,249 gene-parented records that carry neither, and without the `retain`
+/// each becomes a transcript with biotype `enhancer` that reports
+/// `non_coding_transcript_variant` at a locus VEP calls intergenic.
+///
+/// It is *not* `sequence_feature` that does this, contrary to what an earlier
+/// version of this comment said: RefSeq has 1,964 of those and not one carries
+/// a `Parent`.
 ///
 /// `exon` and `CDS` are excluded up front because RefSeq attaches those straight
 /// to a gene for loci with no RNA record, and the arms below turn them into an
@@ -1111,25 +1115,27 @@ NC_000001.11\tRefSeq\tCDS\t1000\t1300\t.\t+\t0\tID=cds-NP_000001.1;Parent=gene-T
     /// "Loaded N transcripts" count, in the cache, and among the candidates
     /// `--pick` chooses from.
     ///
-    /// The record below is a *synthetic* shape, not a transcription of any
-    /// release: no `sequence_feature` in RefSeq GRCh38.p14 carries a `Parent` at
-    /// all, and every gene-parented record in it has children. This pins the
-    /// rule against a vocabulary that may grow into it, which is the only reason
-    /// the `provisional` flag exists; see [`is_provisional_transcript`].
+    /// The `enhancer` record below is copied from RefSeq GRCh38.p14, where six
+    /// of them sit at the immunoglobulin heavy chain locus and are the only six
+    /// of its 199,249 gene-parented records with no child of any kind. Without
+    /// the confirmation pass this record parses as a transcript of biotype
+    /// `enhancer` and reports `non_coding_transcript_variant` where VEP says
+    /// intergenic. It is the reason the `provisional` flag exists; see
+    /// [`is_provisional_transcript`].
     #[test]
     fn test_parse_gff3_ignores_gene_parented_annotation_records() {
         let gff = "##gff-version 3
-NC_000023.11\tBestRefSeq\tgene\t100\t2000\t.\t-\t.\tID=gene-DMD;Name=DMD;gene_biotype=protein_coding
-NC_000023.11\tBestRefSeq\tmRNA\t100\t2000\t.\t-\t.\tID=rna-NM_004006.3;Parent=gene-DMD;transcript_id=NM_004006.3
-NC_000023.11\tBestRefSeq\texon\t100\t2000\t.\t-\t.\tID=exon-NM_004006.3-1;Parent=rna-NM_004006.3
-NC_000023.11\tBestRefSeq\tsequence_feature\t500\t600\t.\t-\t.\tID=id-DMD-2;Parent=gene-DMD;gbkey=misc_feature;gene=DMD";
+NC_000014.9\tBestRefSeq\tgene\t105550000\t105900000\t.\t-\t.\tID=gene-IGH;Name=IGH;gene_biotype=C_region
+NC_000014.9\tBestRefSeq\tmRNA\t105860000\t105870000\t.\t-\t.\tID=rna-NM_IGHM;Parent=gene-IGH;transcript_id=NM_IGHM
+NC_000014.9\tBestRefSeq\texon\t105860000\t105870000\t.\t-\t.\tID=exon-NM_IGHM-1;Parent=rna-NM_IGHM
+NC_000014.9\tCurated Genomic\tenhancer\t105686122\t105686482\t.\t-\t.\tID=id-IGH;Parent=gene-IGH;Note=HS4 enhancer;gbkey=regulatory;regulatory_class=enhancer";
 
         let transcripts = parse_gff3(gff.as_bytes()).unwrap();
         let ids: Vec<&str> = transcripts.iter().map(|t| &*t.stable_id).collect();
         assert_eq!(
             ids,
-            vec!["rna-NM_004006.3"],
-            "a gene-parented annotation record became a phantom transcript"
+            vec!["rna-NM_IGHM"],
+            "a gene-parented regulatory record became a phantom transcript"
         );
     }
 
