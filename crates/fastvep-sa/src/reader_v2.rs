@@ -41,6 +41,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// Hard cap on a per-chunk zstd-decompressed JSON blob (256 MiB). Defends
 /// against zstd bombs in maliciously crafted .osa2 files.
+///
+/// A legitimate file can reach it too, which is the more likely reason to see
+/// it: a chunk holds every record in its genomic width, and a blob-encoded
+/// source that scores nearly every base puts hundreds of megabytes of JSON in
+/// one megabase. That is a chunk-width problem rather than a bomb, so the error
+/// says which of the two it is looking at and what to do about it.
 const MAX_JSON_BLOB_DECOMPRESSED: usize = 256 * 1024 * 1024;
 
 /// `JsonBlobs` delimits its rows with `u32` offsets into the decompressed
@@ -474,9 +480,23 @@ impl Osa2Reader {
                     .take(MAX_JSON_BLOB_DECOMPRESSED as u64 + 1)
                     .read_to_end(&mut decompressed)?;
                 if decompressed.len() > MAX_JSON_BLOB_DECOMPRESSED {
+                    // Name the chunk and the remedy. Every lookup in this
+                    // megabase fails while this holds, so a user who only sees
+                    // the limit has no way to tell a too-wide chunk from a
+                    // corrupt file (#101).
+                    let width = 1u64 << self.metadata.chunk_bits;
                     anyhow::bail!(
-                        "JSON blob decompressed size exceeds limit ({} bytes)",
-                        MAX_JSON_BLOB_DECOMPRESSED
+                        "{}: the JSON blobs for chunk {}/{} decompress past the {} MiB limit. \
+                         This chunk spans {} bases, and one record cannot be read without \
+                         decompressing all of them, so every lookup in it fails. Rebuild the \
+                         database with narrower chunks - `fastvep sa-convert --chunk-bits 16` \
+                         for a source this dense, or `fastvep sa-build --format osa2` if the \
+                         source has a column-oriented encoder.",
+                        self.sa_metadata.name,
+                        chrom,
+                        chunk_id,
+                        MAX_JSON_BLOB_DECOMPRESSED / (1024 * 1024),
+                        width,
                     );
                 }
                 Some(JsonBlobs::from_text(String::from_utf8(decompressed)?))

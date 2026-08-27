@@ -47,7 +47,7 @@ fn build_and_convert(
         "v1 build should have produced {}",
         osa.display()
     );
-    run_sa_convert(osa.to_str().unwrap(), base.to_str().unwrap(), false).unwrap();
+    run_sa_convert(osa.to_str().unwrap(), base.to_str().unwrap(), 20, false).unwrap();
 
     let osa2 = base.with_extension("osa2");
     assert!(
@@ -198,6 +198,7 @@ fn rejects_inputs_that_have_no_v2_form() {
     let err = run_sa_convert(
         osa2.to_str().unwrap(),
         dir.path().join("o").to_str().unwrap(),
+        20,
         false,
     )
     .unwrap_err();
@@ -212,6 +213,7 @@ fn rejects_inputs_that_have_no_v2_form() {
         let err = run_sa_convert(
             path.to_str().unwrap(),
             dir.path().join("o").to_str().unwrap(),
+            20,
             false,
         )
         .unwrap_err();
@@ -227,6 +229,7 @@ fn rejects_inputs_that_have_no_v2_form() {
     let err = run_sa_convert(
         other.to_str().unwrap(),
         dir.path().join("o").to_str().unwrap(),
+        20,
         false,
     )
     .unwrap_err();
@@ -254,7 +257,8 @@ fn refuses_to_overwrite_its_own_input() {
     // collide — asking for an output path that resolves onto the input file.
     let osa2_in = base.with_extension("osa2");
     fs::rename(base.with_extension("osa"), &osa2_in).unwrap();
-    let err = run_sa_convert(osa2_in.to_str().unwrap(), base.to_str().unwrap(), false).unwrap_err();
+    let err =
+        run_sa_convert(osa2_in.to_str().unwrap(), base.to_str().unwrap(), 20, false).unwrap_err();
     assert!(err.to_string().contains("already a v2"), "got: {err}");
 }
 
@@ -282,7 +286,7 @@ fn a_failed_conversion_leaves_no_partial_output() {
     fs::write(&osa, &truncated).unwrap();
 
     let out_base = dir.path().join("converted");
-    let result = run_sa_convert(osa.to_str().unwrap(), out_base.to_str().unwrap(), false);
+    let result = run_sa_convert(osa.to_str().unwrap(), out_base.to_str().unwrap(), 20, false);
     assert!(
         result.is_err(),
         "a truncated .osa must not convert successfully"
