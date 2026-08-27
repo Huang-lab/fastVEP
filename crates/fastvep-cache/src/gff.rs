@@ -472,14 +472,6 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             .or_default()
             .push(exon);
     }
-    // Confirm or discard the records admitted on structure alone. A transcript
-    // is what exons hang off; a RefSeq `sequence_feature` parented to a gene has
-    // none, and would otherwise reach the output as a zero-exon phantom
-    // transcript with its own CSQ entry. Records matched by a known SO term are
-    // untouched here, so nothing that parsed before this rule existed can be
-    // dropped by it.
-    transcripts.retain(|tid, tr| !tr.provisional || exons_by_tx.contains_key(tid.as_str()));
-
     let mut cds_by_tx: HashMap<String, Vec<GffCds>> = HashMap::new();
     for cds in cds_features {
         cds_by_tx
@@ -487,6 +479,31 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             .or_default()
             .push(cds);
     }
+
+    // Confirm or discard the records admitted on structure alone. What makes a
+    // record a transcript is that a spliced feature hangs off it, and that is
+    // not known until the whole file has been read - hence the two passes.
+    //
+    // Both exons and CDS count. Requiring exons alone would re-close the
+    // allowlist for the case this rule exists to open: a file that names its
+    // transcripts with an SO term not in `is_known_transcript_term` *and*
+    // describes them with CDS records only. The implicit-exon step above cannot
+    // rescue those, because it fires only for the `_t1` transcripts it
+    // synthesised itself, so such a transcript would be admitted here and then
+    // dropped - taking every consequence call at that locus with it, which is
+    // exactly the failure the provisional rule was added to prevent.
+    //
+    // A record that carries neither is annotation, not a transcript: reading one
+    // as a transcript invents a zero-exon phantom that VEP has no counterpart
+    // for, which then reaches the output as its own CSQ entry, inflates the
+    // "Loaded N transcripts" count, is written to the cache, and competes in
+    // `--pick`. Records matched by a known SO term are untouched here, so
+    // nothing that parsed before this rule existed can be dropped by it.
+    transcripts.retain(|tid, tr| {
+        !tr.provisional
+            || exons_by_tx.contains_key(tid.as_str())
+            || cds_by_tx.contains_key(tid.as_str())
+    });
 
     // Build transcripts
     let mut result = Vec::with_capacity(transcripts.len());
@@ -804,22 +821,36 @@ fn is_known_transcript_term(feature_type: &str) -> bool {
 /// True when an unrecognised record is worth *provisionally* reading as a
 /// transcript, to be confirmed or discarded once its children are known.
 ///
-/// Both vocabularies grow — RefSeq alone emits `primary_transcript`,
-/// `antisense_RNA` and `Y_RNA`, none of them listed above — and an unlisted term
-/// costs more than the `ncRNA_gene` gap in [`is_gene_feature`] did: the
-/// transcript is dropped outright, taking every consequence call at that locus
-/// with it rather than just its name.
+/// Both vocabularies grow, and an unlisted term costs more than the
+/// `ncRNA_gene` gap in [`is_gene_feature`] did: the transcript is dropped
+/// outright, taking every consequence call at that locus with it rather than
+/// just its name. Measured against the releases current when this was written,
+/// the terms this admits that the explicit list does not carry are:
+///
+/// - RefSeq GRCh38.p14: `primary_transcript` (998 on the genome),
+///   `scaRNA` (29), `antisense_RNA` (21), `Y_RNA` (4), `vault_RNA` (4),
+///   `telomerase_RNA` (1), `RNase_MRP_RNA` (1)
+/// - Ensembl GRCh38.115: `unconfirmed_transcript` (40 on chr1 alone)
+/// - FlyBase BDGP6: `transposable_element` (5,896), `pre_miRNA` (262)
 ///
 /// Hanging off a gene is necessary but *not* sufficient, which is why the answer
-/// here is only provisional. RefSeq parents plain annotation records to a gene
-/// too — `sequence_feature` and `misc_feature` carry `Parent=gene-XXXX` and an
-/// ID — and reading one as a transcript invents a zero-exon feature that VEP has
-/// no counterpart for, which then shows up as an extra CSQ entry and as a
-/// candidate for `--pick`. What actually distinguishes a transcript is that
-/// exons hang off *it*, and that is not known until the file has been read; see
-/// the `retain` in [`parse_gff3_lines`]. `exon` and `CDS` are excluded up front
-/// because RefSeq attaches those straight to a gene for loci with no RNA record,
-/// and the arms below turn them into an implicit transcript instead.
+/// here is only provisional: a GFF3 may hang plain annotation records off a gene
+/// as well as transcripts, and reading one as a transcript invents a zero-exon
+/// feature that VEP has no counterpart for, which then shows up as an extra CSQ
+/// entry and as a candidate for `--pick`. What actually distinguishes a
+/// transcript is that a spliced feature hangs off *it*, and that is not known
+/// until the file has been read; see the `retain` in [`parse_gff3_lines`].
+///
+/// No such record exists in any of the reference files checked above - RefSeq
+/// `sequence_feature` records carry no `Parent` at all, and every gene-parented
+/// record in RefSeq GRCh38.p14 has children - so the `retain` currently drops
+/// nothing. It is kept as the cheap half of the bargain: without it this
+/// predicate would have to be a second closed allowlist, which is the thing it
+/// exists to avoid.
+///
+/// `exon` and `CDS` are excluded up front because RefSeq attaches those straight
+/// to a gene for loci with no RNA record, and the arms below turn them into an
+/// implicit transcript instead.
 fn is_provisional_transcript(feature_type: &str, attrs: &HashMap<String, String>) -> bool {
     !matches!(feature_type, "exon" | "CDS")
         && parent_is_gene(attrs)
@@ -1063,12 +1094,17 @@ NC_000001.11\tRefSeq\tCDS\t1000\t1300\t.\t+\t0\tID=cds-NP_000001.1;Parent=gene-T
         assert_eq!(&*transcripts[0].gene.biotype, "ncRNA");
     }
 
-    /// RefSeq hangs annotation records off a gene as well as transcripts:
-    /// `sequence_feature` / `misc_feature` carry `Parent=gene-XXXX` and an ID,
-    /// but no exons and no transcript. Admitting one as a transcript invents a
-    /// zero-exon feature that VEP has no counterpart for, and it then shows up
-    /// as an extra CSQ entry, in the "Loaded N transcripts" count, in the cache,
-    /// and among the candidates `--pick` chooses from.
+    /// A gene-parented record with an ID but no exons and no CDS is annotation,
+    /// not a transcript. Admitting one invents a zero-exon feature that VEP has
+    /// no counterpart for, and it then shows up as an extra CSQ entry, in the
+    /// "Loaded N transcripts" count, in the cache, and among the candidates
+    /// `--pick` chooses from.
+    ///
+    /// The record below is a *synthetic* shape, not a transcription of any
+    /// release: no `sequence_feature` in RefSeq GRCh38.p14 carries a `Parent` at
+    /// all, and every gene-parented record in it has children. This pins the
+    /// rule against a vocabulary that may grow into it, which is the only reason
+    /// the `provisional` flag exists; see [`is_provisional_transcript`].
     #[test]
     fn test_parse_gff3_ignores_gene_parented_annotation_records() {
         let gff = "##gff-version 3
@@ -1083,6 +1119,37 @@ NC_000023.11\tBestRefSeq\tsequence_feature\t500\t600\t.\t-\t.\tID=id-DMD-2;Paren
             ids,
             vec!["rna-NM_004006.3"],
             "a gene-parented annotation record became a phantom transcript"
+        );
+    }
+
+    /// A transcript may be described by CDS records alone, with no `exon` line.
+    /// When its SO term is also one the explicit list does not carry, both new
+    /// rules apply at once: it is admitted provisionally, and it must survive
+    /// confirmation on its CDS.
+    ///
+    /// Requiring exons there would have re-closed the allowlist for exactly the
+    /// case the provisional rule exists to open - the implicit-exon step cannot
+    /// rescue it, because that fires only for the `_t1` transcripts it
+    /// synthesised itself - and the locus would lose every consequence call,
+    /// not just its name.
+    #[test]
+    fn test_parse_gff3_keeps_cds_only_transcript_with_unlisted_term() {
+        let gff = "##gff-version 3
+NC_000001.11\tRefSeq\tgene\t1000\t1300\t.\t+\t.\tID=gene-SRP;Name=SRPGENE;gene_biotype=protein_coding
+NC_000001.11\tRefSeq\tSRP_RNA\t1000\t1300\t.\t+\t.\tID=rna-SRP1;Parent=gene-SRP
+NC_000001.11\tRefSeq\tCDS\t1000\t1300\t.\t+\t0\tID=cds-SRP1;Parent=rna-SRP1;protein_id=NP_SRP1";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        let ids: Vec<&str> = transcripts.iter().map(|t| &*t.stable_id).collect();
+        assert_eq!(
+            ids,
+            vec!["rna-SRP1"],
+            "a CDS-only transcript with an unlisted SO term was dropped"
+        );
+        assert_eq!(transcripts[0].gene.symbol.as_deref(), Some("SRPGENE"));
+        assert!(
+            transcripts[0].is_coding(),
+            "its CDS should have survived the confirmation pass"
         );
     }
 
