@@ -100,6 +100,24 @@ fn resolve_readthrough_residue(transcript: &Transcript, codon_index: usize, tran
         .unwrap_or(translated)
 }
 
+/// Drop the common prefix and the common suffix of two sequences, Ensembl's
+/// `Bio::EnsEMBL::Variation::Utils::Sequence::trim_sequences`.
+///
+/// Used to ask whether one sequence is an interior slice of the other: if
+/// nothing is left of the shorter side, everything it contained matched in
+/// place.
+fn trim_common_ends<'a>(a: &'a [u8], b: &'a [u8]) -> (&'a [u8], &'a [u8]) {
+    let mut lo = 0;
+    while lo < a.len() && lo < b.len() && a[lo] == b[lo] {
+        lo += 1;
+    }
+    let mut hi = 0;
+    while hi < a.len() - lo && hi < b.len() - lo && a[a.len() - 1 - hi] == b[b.len() - 1 - hi] {
+        hi += 1;
+    }
+    (&a[lo..a.len() - hi], &b[lo..b.len() - hi])
+}
+
 impl AlleleConsequenceResult {
     /// The affected residue span as `(lo, hi)`, whichever way the transcript
     /// runs.
@@ -133,6 +151,35 @@ pub struct PredictionResult {
 /// A ref/alt pair rendered for display: amino acids (`("T", "M")`) or codons
 /// (`("aCg", "aTg")`). `None` when the change does not produce one.
 pub type DisplayPair = Option<(String, String)>;
+
+/// What a change inside the CDS resolves to.
+///
+/// `additional` carries a second SO term for the changes that earn two. Ensembl
+/// evaluates every predicate in `VariationEffect.pm` independently and keeps all
+/// that hold, so one delins can be both `stop_gained` and
+/// `protein_altering_variant` - 164 of the 1,803 coding rows the ClinVar 2-star
+/// in-frame delins produce are exactly that pair. One slot rather than a `Vec`
+/// because this value is built once per (variant x transcript x allele) and a
+/// `Vec` there is an allocation on the hot path; no shape in that set yields
+/// more than two coding terms.
+pub struct CodingChange {
+    pub consequence: Consequence,
+    pub additional: Option<Consequence>,
+    pub amino_acids: DisplayPair,
+    pub codons: DisplayPair,
+}
+
+impl CodingChange {
+    /// The common case: one term, with whatever ref/alt pairs go with it.
+    fn single(consequence: Consequence, amino_acids: DisplayPair, codons: DisplayPair) -> Self {
+        Self {
+            consequence,
+            additional: None,
+            amino_acids,
+            codons,
+        }
+    }
+}
 
 pub struct ConsequencePredictor {
     pub upstream_distance: u64,
@@ -444,10 +491,13 @@ impl ConsequencePredictor {
                 let coding_conseq = self.predict_coding_consequence(
                     ref_allele, alt_allele, transcript, cds_start, cds_end, cdna_start, cdna_end,
                 );
-                if let Some((conseq, aa, cdn)) = coding_conseq {
-                    consequences.push(conseq);
-                    amino_acids = aa;
-                    codons = cdn;
+                if let Some(change) = coding_conseq {
+                    consequences.push(change.consequence);
+                    if let Some(extra) = change.additional {
+                        consequences.push(extra);
+                    }
+                    amino_acids = change.amino_acids;
+                    codons = change.codons;
                 } else {
                     consequences.push(Consequence::CodingSequenceVariant);
                 }
@@ -537,7 +587,7 @@ impl ConsequencePredictor {
         cds_end: Option<u64>,
         cdna_start: Option<u64>,
         cdna_end: Option<u64>,
-    ) -> Option<(Consequence, DisplayPair, DisplayPair)> {
+    ) -> Option<CodingChange> {
         // A variant reaching past either end of the CDS is not a codon edit:
         // the bases falling in the UTR belong to no codon, and the frame
         // arithmetic below would count them anyway - which is how a delins
@@ -576,6 +626,22 @@ impl ConsequencePredictor {
         let is_deletion = *ref_allele != Allele::Deletion && *alt_allele == Allele::Deletion;
         let is_insertion = *ref_allele == Allele::Deletion && *alt_allele != Allele::Missing;
         let is_indel = is_deletion || is_insertion || ref_len != alt_len;
+
+        // A delins - both sides real sequence, lengths differing by a multiple
+        // of three - is resolved entirely by `predict_delins_consequence`,
+        // including the `None` that means "no codon window describes this".
+        // Falling through to the length-only branch below would put back the
+        // `inframe_deletion` / `(residue, "X")` answer it exists to replace.
+        let is_inframe_delins = matches!(
+            (ref_allele, alt_allele),
+            (Allele::Sequence(_), Allele::Sequence(_))
+        ) && ref_len != alt_len
+            && ((ref_len as i64 - alt_len as i64).unsigned_abs() as usize).is_multiple_of(3);
+        if is_inframe_delins {
+            return self.predict_delins_consequence(
+                ref_allele, alt_allele, transcript, cds_start, cds_end,
+            );
+        }
 
         if is_indel {
             let (consequence, is_frameshift) = if is_deletion || is_insertion {
@@ -618,7 +684,7 @@ impl ConsequencePredictor {
                 is_frameshift,
             );
 
-            return Some((consequence, aa_pair, codon_pair));
+            return Some(CodingChange::single(consequence, aa_pair, codon_pair));
         }
 
         // Same length substitution (SNV or MNV).
@@ -656,8 +722,21 @@ impl ConsequencePredictor {
                 None => cds_pos_start,
             };
 
+            // The changed bases have to be contiguous in CDS space before a
+            // codon window can describe them. An MNV straddling a splice
+            // junction covers fewer CDS positions than it has bases, and a
+            // window built from `cds_lo` and the allele length alone then
+            // translates codons the variant never touched: 156 rows over a
+            // 6,600-variant ClinVar sample, ten of them a false `stop_gained`.
+            // VEP reports `coding_sequence_variant` with no amino acids for
+            // these, which is what falling through to `None` produces.
+            let contiguous_in_cds = match (cds_start, cds_end) {
+                (Some(s), Some(e)) => s.max(e) - s.min(e) + 1 == alt_bases_cds.len() as u64,
+                _ => false,
+            };
+
             let n = alt_bases_cds.len();
-            if n > 0 && cds_lo >= 1 {
+            if n > 0 && cds_lo >= 1 && contiguous_in_cds {
                 let first_changed = (cds_lo - 1) as usize;
                 let last_changed = first_changed + n - 1;
                 let win_start = (first_changed / 3) * 3;
@@ -700,15 +779,27 @@ impl ConsequencePredictor {
                     if win_start == 0 {
                         let first_alt: [u8; 3] = [alt_window[0], alt_window[1], alt_window[2]];
                         if !CodonTable::is_start(&first_alt) {
-                            return Some((Consequence::StartLost, aa_pair, codon_pair));
+                            return Some(CodingChange::single(
+                                Consequence::StartLost,
+                                aa_pair,
+                                codon_pair,
+                            ));
                         }
                     }
 
                     if ref_aas == alt_aas {
                         if ref_aas.contains('*') {
-                            return Some((Consequence::StopRetainedVariant, aa_pair, codon_pair));
+                            return Some(CodingChange::single(
+                                Consequence::StopRetainedVariant,
+                                aa_pair,
+                                codon_pair,
+                            ));
                         }
-                        return Some((Consequence::SynonymousVariant, aa_pair, codon_pair));
+                        return Some(CodingChange::single(
+                            Consequence::SynonymousVariant,
+                            aa_pair,
+                            codon_pair,
+                        ));
                     }
 
                     // A stop introduced anywhere in the window is stop_gained;
@@ -718,28 +809,270 @@ impl ConsequencePredictor {
                         .zip(alt_aas.chars())
                         .any(|(r, a)| a == '*' && r != '*');
                     if gained_stop {
-                        return Some((Consequence::StopGained, aa_pair, codon_pair));
+                        return Some(CodingChange::single(
+                            Consequence::StopGained,
+                            aa_pair,
+                            codon_pair,
+                        ));
                     }
                     let lost_stop = ref_aas
                         .chars()
                         .zip(alt_aas.chars())
                         .any(|(r, a)| r == '*' && a != '*');
                     if lost_stop {
-                        return Some((Consequence::StopLost, aa_pair, codon_pair));
+                        return Some(CodingChange::single(
+                            Consequence::StopLost,
+                            aa_pair,
+                            codon_pair,
+                        ));
                     }
 
-                    return Some((Consequence::MissenseVariant, aa_pair, codon_pair));
+                    return Some(CodingChange::single(
+                        Consequence::MissenseVariant,
+                        aa_pair,
+                        codon_pair,
+                    ));
                 }
             }
         }
 
-        // Fallback: if we can't determine the exact consequence,
-        // classify based on whether it's an in-frame or frameshift change
-        if ref_len == alt_len {
-            Some((Consequence::MissenseVariant, None, None))
-        } else {
-            None
+        // Nothing above could read a codon window: the change is not contiguous
+        // in CDS space, or the window runs off the end of an incomplete CDS.
+        //
+        // `missense_variant` used to be returned here for a same-length change,
+        // on the reasoning that a substitution in the CDS changes a residue. It
+        // does not follow - the change could equally be synonymous, and we have
+        // just established that we cannot tell. VEP reports
+        // `coding_sequence_variant`, which is what a coding change nobody can
+        // resolve any further is, and `None` is how the caller reaches it. Over a
+        // 6,600-variant ClinVar sample this was 156 rows of MODERATE where VEP
+        // says MODIFIER, each naming an amino-acid change built from codons the
+        // variant never touched.
+        None
+    }
+
+    /// Consequence for a delins inside the CDS: a change where both sides are
+    /// real sequence and the lengths differ.
+    ///
+    /// Such a change is neither a pure insertion nor a pure deletion, and the
+    /// terms Ensembl gives it do not follow from the direction of the length
+    /// change - they follow from the peptides. `protein_altering_variant`
+    /// (`VariationEffect.pm` release/115, l. 375) is what a replacement earns
+    /// when it is not a prefix or suffix extension of what it replaces;
+    /// `inframe_insertion` (l. 1100) and `inframe_deletion` (l. 1160) are
+    /// reserved for the cases where it is. Choosing by length alone - which is
+    /// what this code did until now - got the term wrong far more often than
+    /// right: over the 156 in-frame delins in the ClinVar 2-star set, real VEP
+    /// 115.1 reports `protein_altering_variant` on 1,231 transcript rows,
+    /// `inframe_insertion` on 81 and `inframe_deletion` on none.
+    ///
+    /// It also had nothing to say about the residues. The old path fell through
+    /// to `(ref_residue, "X")` with no codons at all, so 1,697 rows carried an
+    /// `Amino_acids` of `E/X` and an empty `Codons` - and HGVSp built
+    /// `p.Glu721delinsXaa` on top of it, which reads as "one residue replaced
+    /// by one unknown residue" for a variant that inserts twelve.
+    ///
+    /// Returns `None` when the change cannot be read as a codon window: it runs
+    /// across a splice junction (so it covers fewer CDS bases than reference
+    /// bases), or the window would run off the end of the CDS. VEP reports
+    /// `coding_sequence_variant` for those instead of naming a codon change,
+    /// and returning `None` is how the caller reaches that term.
+    fn predict_delins_consequence(
+        &self,
+        ref_allele: &Allele,
+        alt_allele: &Allele,
+        transcript: &Transcript,
+        cds_start: Option<u64>,
+        cds_end: Option<u64>,
+    ) -> Option<CodingChange> {
+        let (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases)) = (ref_allele, alt_allele)
+        else {
+            return None;
+        };
+        let seq_bytes = transcript.translateable_seq.as_deref()?.as_bytes();
+
+        let (cds_s, cds_e) = (cds_start?, cds_end?);
+        let (cds_lo, cds_hi) = (cds_s.min(cds_e), cds_s.max(cds_e));
+        if cds_lo < 1 {
+            return None;
         }
+        // The replaced bases have to be contiguous in CDS space for a codon
+        // window to describe them. A delins reaching across a splice junction
+        // covers fewer CDS positions than it has reference bases, and one end
+        // of it is not in the CDS at all.
+        if cds_hi - cds_lo + 1 != ref_bases.len() as u64 {
+            return None;
+        }
+
+        // Alt bases in transcript orientation. On the reverse strand the VCF
+        // gives them in genomic order, so they are reversed *as well as*
+        // complemented: complementing in place reported HPS4
+        // c.1060_1061delTCinsAG as `stop_gained` when it is synonymous.
+        let alt_cds: Vec<u8> = match transcript.strand {
+            Strand::Forward => alt_bases.clone(),
+            Strand::Reverse => alt_bases.iter().rev().map(|&b| complement(b)).collect(),
+        };
+
+        // The affected window is the whole codons the replaced bases touch, so
+        // every codon in it carries at least one changed base.
+        let first = (cds_lo - 1) as usize;
+        let last = first + ref_bases.len() - 1;
+        let win_start = (first / 3) * 3;
+        let win_end = (last / 3 + 1) * 3;
+        if win_end > seq_bytes.len() {
+            return None; // the last codon is partial - VEP's `partial_codon`
+        }
+        let ref_window = &seq_bytes[win_start..win_end];
+        let lead = first - win_start; // unchanged bases before the change
+        let trail = win_end - 1 - last; // unchanged bases after it
+
+        let mut alt_window = Vec::with_capacity(lead + alt_cds.len() + trail);
+        alt_window.extend_from_slice(&ref_window[..lead]);
+        alt_window.extend_from_slice(&alt_cds);
+        alt_window.extend_from_slice(&ref_window[ref_window.len() - trail..]);
+        // In frame by construction: the window is whole codons and the length
+        // difference is a multiple of three, which is what routed us here.
+        debug_assert!(alt_window.len().is_multiple_of(3));
+
+        let table = self.codon_table_for(transcript);
+        let mut ref_aas = String::with_capacity(ref_window.len() / 3);
+        for c in (0..ref_window.len()).step_by(3) {
+            let codon = [ref_window[c], ref_window[c + 1], ref_window[c + 2]];
+            ref_aas.push(resolve_readthrough_residue(
+                transcript,
+                (win_start + c) / 3,
+                table.translate(&codon),
+            ) as char);
+        }
+        let mut alt_aas = String::with_capacity(alt_window.len() / 3);
+        for c in (0..alt_window.len()).step_by(3) {
+            let codon = [alt_window[c], alt_window[c + 1], alt_window[c + 2]];
+            let translated = table.translate(&codon);
+            // A codon the edit happens to leave byte-identical to the reference
+            // codon at the same offset keeps whatever the reference resolved to,
+            // so a selenoprotein's readthrough UGA is not re-read as a new
+            // terminator. Every other codon is translated plainly, which is what
+            // makes a genuinely introduced stop a stop.
+            let residue = if ref_window.get(c..c + 3) == Some(&codon[..]) {
+                resolve_readthrough_residue(transcript, (win_start + c) / 3, translated)
+            } else {
+                translated
+            };
+            alt_aas.push(residue as char);
+        }
+
+        // VEP's codon rendering for a length-changing edit: the unchanged flanks
+        // of the window stay lowercase and exactly the replaced or inserted
+        // bases are uppercase, on both sides - `gGg/gTCCCg` for one base
+        // replaced by four. That is not the same as "uppercase from the first
+        // difference", which would lose the lowercase tail.
+        let render = |window: &[u8], upper_len: usize| -> String {
+            window
+                .iter()
+                .enumerate()
+                .map(|(i, &b)| {
+                    if i >= lead && i < lead + upper_len {
+                        (b as char).to_ascii_uppercase()
+                    } else {
+                        (b as char).to_ascii_lowercase()
+                    }
+                })
+                .collect()
+        };
+        let codons = Some((
+            render(ref_window, ref_bases.len()),
+            render(&alt_window, alt_cds.len()),
+        ));
+        let amino_acids = Some((ref_aas.clone(), alt_aas.clone()));
+
+        // `inframe_insertion` cuts the alt peptide back to its first terminator
+        // before the prefix/suffix test (l. 1124), so an insertion that also
+        // introduces a stop is still an insertion. The other predicates read the
+        // untruncated peptide.
+        let alt_to_stop = match alt_aas.find('*') {
+            Some(i) => &alt_aas[..=i],
+            None => alt_aas.as_str(),
+        };
+        let extends = |pep: &str| pep.starts_with(&ref_aas) || pep.ends_with(&ref_aas);
+
+        // `start_lost` (l. 851) asks whether the initiator's residue survived at
+        // either end of the replacement, not whether some ATG still sits at the
+        // coding start; it takes precedence over every term below, and
+        // `protein_altering_variant` defers to it explicitly.
+        if win_start == 0 && !extends(&alt_aas) {
+            return Some(CodingChange::single(
+                Consequence::StartLost,
+                amino_acids,
+                codons,
+            ));
+        }
+
+        let ref_has_stop = ref_aas.contains('*');
+        let alt_has_stop = alt_aas.contains('*');
+        if ref_has_stop {
+            // The window carried the annotated terminator. Whether the edited
+            // window still ends translation there is the whole question, and it
+            // outranks the length change.
+            let consequence = if alt_has_stop {
+                Consequence::StopRetainedVariant
+            } else {
+                Consequence::StopLost
+            };
+            return Some(CodingChange::single(consequence, amino_acids, codons));
+        }
+
+        let inframe = if alt_window.len() > ref_window.len() {
+            extends(alt_to_stop).then_some(Consequence::InframeInsertion)
+        } else {
+            // `inframe_deletion` tests the codon strings rather than the
+            // peptides: the replacement counts as a deletion only when it
+            // reproduces a prefix, a suffix, or a whole-codon interior slice of
+            // what it replaced.
+            let interior = {
+                let (r, a) = trim_common_ends(ref_window, &alt_window);
+                a.is_empty() && r.len().is_multiple_of(3)
+            };
+            (ref_window.starts_with(&alt_window) || ref_window.ends_with(&alt_window) || interior)
+                .then_some(Consequence::InframeDeletion)
+        };
+
+        // `protein_altering_variant` (l. 375) is the term for a replacement that
+        // changes the residue count without preserving the reference residues at
+        // either end. It defers to `inframe_deletion` but not to
+        // `inframe_insertion`, and its own peptide test is the untruncated one -
+        // so an insertion carrying a new stop earns both terms. It also defers
+        // to a peptide *starting* with a terminator, which is why `HQ/*` is
+        // `stop_gained` alone while `SL/MEP*S` is the pair.
+        let protein_altering = ref_aas.len() != alt_aas.len()
+            && !ref_aas.starts_with('*')
+            && !alt_aas.starts_with('*')
+            && !extends(&alt_aas)
+            && inframe != Some(Consequence::InframeDeletion);
+
+        let stop_gained = alt_has_stop;
+        Some(match (stop_gained, protein_altering, inframe) {
+            (true, pa, _) => CodingChange {
+                consequence: Consequence::StopGained,
+                additional: pa.then_some(Consequence::ProteinAlteringVariant),
+                amino_acids,
+                codons,
+            },
+            (false, _, Some(term)) => CodingChange::single(term, amino_acids, codons),
+            (false, true, None) => {
+                CodingChange::single(Consequence::ProteinAlteringVariant, amino_acids, codons)
+            }
+            // Same residue count, reference residues preserved, no stop
+            // involved: the replacement produced the same protein.
+            (false, false, None) => CodingChange::single(
+                if ref_aas == alt_aas {
+                    Consequence::SynonymousVariant
+                } else {
+                    Consequence::MissenseVariant
+                },
+                amino_acids,
+                codons,
+            ),
+        })
     }
 
     /// Consequence for a coding variant that reaches past one end of the CDS.
@@ -768,7 +1101,7 @@ impl ConsequencePredictor {
         transcript: &Transcript,
         cdna_start: Option<u64>,
         cdna_end: Option<u64>,
-    ) -> Option<(Consequence, DisplayPair, DisplayPair)> {
+    ) -> Option<CodingChange> {
         let coding_start = transcript.cdna_coding_start?;
         let coding_end = transcript.cdna_coding_end?;
         let (s, e) = (cdna_start?, cdna_end?);
@@ -801,11 +1134,11 @@ impl ConsequencePredictor {
                 .edited_codon(transcript, cdna_lo, cdna_hi, alt_allele, coding_end - 2)
                 .map(|codon| self.codon_table_for(transcript).translate(&codon) == b'*');
             return Some(match still_a_stop {
-                Some(true) => (Consequence::StopRetainedVariant, None, None),
+                Some(true) => CodingChange::single(Consequence::StopRetainedVariant, None, None),
                 // Either the terminator now reads as something else, or the
                 // edited transcript no longer reaches the position it sat at.
                 // Both mean the annotated stop is gone from where it was.
-                _ => (Consequence::StopLost, None, None),
+                _ => CodingChange::single(Consequence::StopLost, None, None),
             });
         }
 
@@ -831,7 +1164,7 @@ impl ConsequencePredictor {
             // bases than cDNA positions. VEP's `increase_length` /
             // `decrease_length` are likewise properties of the allele pair.
             if ref_allele.len() != alt_allele.len() {
-                return Some((Consequence::StartLost, None, None));
+                return Some(CodingChange::single(Consequence::StartLost, None, None));
             }
             // A same-length change cannot shift the frame, so the codon it
             // leaves at the coding start is the whole question.
@@ -839,7 +1172,7 @@ impl ConsequencePredictor {
                 .edited_codon(transcript, cdna_lo, cdna_hi, alt_allele, coding_start)
                 .map(|codon| CodonTable::is_start(&codon));
             if still_a_start != Some(true) {
-                return Some((Consequence::StartLost, None, None));
+                return Some(CodingChange::single(Consequence::StartLost, None, None));
             }
         }
 
@@ -952,33 +1285,18 @@ impl ConsequencePredictor {
         let ref_aa_str = String::from(ref_aa as char);
 
         if is_frameshift {
-            // Build the alt sequence by applying the indel
-            let mut alt_seq: Vec<u8> = seq_bytes.to_vec();
-
-            match (ref_allele, alt_allele) {
-                (Allele::Sequence(_), Allele::Deletion) => {
-                    let del_len = ref_allele.len();
-                    let end = (cds_idx + del_len).min(alt_seq.len());
-                    alt_seq.drain(cds_idx..end);
-                }
-                (Allele::Deletion, Allele::Sequence(ins_bases)) => {
-                    let mut bases: Vec<u8> = ins_bases.clone();
-                    if transcript.strand == Strand::Reverse {
-                        bases = bases.iter().map(|&b| complement(b)).collect();
-                    }
-                    for (i, &b) in bases.iter().enumerate() {
-                        alt_seq.insert(cds_idx + i, b);
-                    }
-                }
-                (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases)) => {
-                    let end = (cds_idx + ref_bases.len()).min(alt_seq.len());
-                    let mut replacement = alt_bases.clone();
-                    if transcript.strand == Strand::Reverse {
-                        replacement = replacement.iter().map(|&b| complement(b)).collect();
-                    }
-                    alt_seq.splice(cds_idx..end, replacement);
-                }
-                _ => return (None, None),
+            // A frameshift's alt residue is `X` and its alt codon is only the
+            // remains of the codon the indel starts in, so the whole edited CDS
+            // is never read here. It used to be built anyway - a clone of
+            // `translateable_seq` plus a splice, per frameshift variant, thrown
+            // away unused. Only the allele shapes still need checking.
+            if !matches!(
+                (ref_allele, alt_allele),
+                (Allele::Sequence(_), Allele::Deletion)
+                    | (Allele::Deletion, Allele::Sequence(_))
+                    | (Allele::Sequence(_), Allele::Sequence(_))
+            ) {
+                return (None, None);
             }
 
             // Build codon display: VEP style with deleted base uppercase
@@ -2368,6 +2686,214 @@ mod tests {
                     "{strand:?} insertion at cDNA {cdna_flank}: unexpected {forbidden:?} in {got:?}"
                 );
             }
+        }
+    }
+    /// A delins in CDS terms, run through the full predictor.
+    ///
+    /// `cds_lo` is the CDS coordinate of the first replaced base in transcript
+    /// order; `reference` and `replacement` are read in transcript order too, so
+    /// the reverse-strand case is written the same way and the helper supplies
+    /// the reverse complement the VCF would carry.
+    fn delins_at(
+        strand: Strand,
+        cds_lo: u64,
+        reference: &str,
+        replacement: &str,
+    ) -> AlleleConsequenceResult {
+        let tr = make_boundary_transcript(strand);
+        // CDS n is cDNA n + 10 on this transcript.
+        let (lo, hi) = genomic_span(
+            strand,
+            cds_lo + 10,
+            cds_lo + 10 + reference.len() as u64 - 1,
+        );
+        let orient = |s: &str| -> Allele {
+            Allele::Sequence(match strand {
+                Strand::Forward => s.as_bytes().to_vec(),
+                Strand::Reverse => fastvep_genome::codon::reverse_complement(s.as_bytes()),
+            })
+        };
+        let pos = GenomicPosition::new("chr1", lo, hi, Strand::Forward);
+        let alt = orient(replacement);
+        let result = ConsequencePredictor::default().predict(
+            &pos,
+            &orient(reference),
+            std::slice::from_ref(&alt),
+            &[&tr],
+            None,
+        );
+        result.transcript_consequences[0].allele_consequences[0].clone()
+    }
+
+    /// A delins that replaces residues without preserving the reference ones at
+    /// either end of the replacement is `protein_altering_variant`, not an
+    /// in-frame indel.
+    ///
+    /// Choosing the term from the direction of the length change - which is what
+    /// this code did - called all of these `inframe_deletion` or
+    /// `inframe_insertion`. Real VEP 115.1 over the 156 in-frame delins in the
+    /// ClinVar 2-star set gives `protein_altering_variant` on 1,231 transcript
+    /// rows, `inframe_insertion` on 81 and `inframe_deletion` on none.
+    #[test]
+    fn a_delins_that_replaces_residues_is_protein_altering_on_either_strand() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            // CDS 4-9 is Ala2 Ala3 (`GCTGCT`), replaced by `TGG` (Trp).
+            let ac = delins_at(strand, 4, "GCTGCT", "TGG");
+            assert!(
+                ac.consequences
+                    .contains(&Consequence::ProteinAlteringVariant),
+                "{strand:?}: expected protein_altering_variant, got {:?}",
+                ac.consequences
+            );
+            assert_eq!(
+                ac.amino_acids,
+                Some(("AA".to_string(), "W".to_string())),
+                "{strand:?}"
+            );
+            // Every base of the window is replaced, so none of it stays lower.
+            assert_eq!(
+                ac.codons,
+                Some(("GCTGCT".to_string(), "TGG".to_string())),
+                "{strand:?}"
+            );
+        }
+    }
+
+    /// The replacement preserving the reference residues at one end of itself is
+    /// what makes a delins an in-frame indel. The codon rendering keeps the
+    /// unchanged flanks of the window lowercase and uppercases exactly the
+    /// replaced and inserted bases - `gGg/gTCCCg`, not "uppercase from the first
+    /// difference", which would lose the trailing lowercase base.
+    #[test]
+    fn a_delins_that_extends_the_reference_residues_is_an_inframe_insertion() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            // CDS 5 is the middle base of Ala2's `gCt`. Replacing `C` with
+            // `CTGC` rebuilds the window as `GCTGCT`, so the alt peptide still
+            // starts with the reference residue and gains one.
+            let ac = delins_at(strand, 5, "C", "CTGC");
+            assert!(
+                ac.consequences.contains(&Consequence::InframeInsertion),
+                "{strand:?}: expected inframe_insertion, got {:?}",
+                ac.consequences
+            );
+            assert_eq!(
+                ac.amino_acids,
+                Some(("A".to_string(), "AA".to_string())),
+                "{strand:?}"
+            );
+            assert_eq!(
+                ac.codons,
+                Some(("gCt".to_string(), "gCTGCt".to_string())),
+                "{strand:?}"
+            );
+        }
+    }
+
+    /// A delins that introduces a terminator earns both terms. Ensembl evaluates
+    /// each predicate independently and keeps all that hold, so the new stop
+    /// gives `stop_gained` and the changed residue count gives
+    /// `protein_altering_variant` - 164 of the 1,803 coding rows in the ClinVar
+    /// in-frame delins set are that pair in real VEP.
+    ///
+    /// `Amino_acids` keeps the whole translated window including what follows
+    /// the new terminator, which is what VEP reports (`SL/MEP*S`).
+    #[test]
+    fn a_delins_introducing_a_terminator_reports_both_terms() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let ac = delins_at(strand, 4, "GCTGCT", "GCCTAGGCC");
+            for expected in [Consequence::StopGained, Consequence::ProteinAlteringVariant] {
+                assert!(
+                    ac.consequences.contains(&expected),
+                    "{strand:?}: expected {expected:?}, got {:?}",
+                    ac.consequences
+                );
+            }
+            assert_eq!(ac.impact, Impact::High, "{strand:?}");
+            assert_eq!(
+                ac.amino_acids,
+                Some(("AA".to_string(), "A*A".to_string())),
+                "{strand:?}"
+            );
+        }
+    }
+
+    /// A replacement whose peptide *begins* with the terminator is `stop_gained`
+    /// alone: `protein_altering_variant` declines when either peptide starts
+    /// with `*`. That is what separates VEP's `HQ/*` rows, which carry one term,
+    /// from its `SL/MEP*S` rows, which carry two.
+    #[test]
+    fn a_delins_whose_peptide_begins_with_a_terminator_is_stop_gained_alone() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let ac = delins_at(strand, 4, "GCTGCT", "TAG");
+            assert_eq!(
+                ac.amino_acids,
+                Some(("AA".to_string(), "*".to_string())),
+                "{strand:?}"
+            );
+            assert!(
+                ac.consequences.contains(&Consequence::StopGained),
+                "{strand:?}: got {:?}",
+                ac.consequences
+            );
+            assert!(
+                !ac.consequences
+                    .contains(&Consequence::ProteinAlteringVariant),
+                "{strand:?}: protein_altering_variant must decline, got {:?}",
+                ac.consequences
+            );
+        }
+    }
+
+    /// A delins over the initiator is `start_lost`, and that outranks the length
+    /// change. Ensembl asks whether the reference residues survived at either
+    /// end of the replacement, not whether some ATG still sits at the coding
+    /// start.
+    #[test]
+    fn a_delins_over_the_initiator_is_start_lost() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let ac = delins_at(strand, 1, "ATGGCT", "CCC");
+            assert!(
+                ac.consequences.contains(&Consequence::StartLost),
+                "{strand:?}: got {:?}",
+                ac.consequences
+            );
+            assert_eq!(ac.impact, Impact::High, "{strand:?}");
+        }
+    }
+
+    /// A change whose reference bases are not contiguous in CDS space has no
+    /// codon window, and building one from the low CDS coordinate and the allele
+    /// length translates codons the variant never touched. VEP reports
+    /// `coding_sequence_variant` with no residues for these, which is what
+    /// resolving to no coding term produces.
+    ///
+    /// This is what a change straddling a splice junction looks like from here:
+    /// its two ends are both in the CDS, but further apart than it has bases.
+    /// Over a 6,600-variant ClinVar sample it was 156 rows of invented residue
+    /// change, ten of them a false `stop_gained`.
+    #[test]
+    fn a_change_that_is_not_contiguous_in_the_cds_names_no_residues() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_boundary_transcript(Strand::Forward);
+        for (reference, replacement) in [
+            ("GCTGCT", "TGG"),    // delins
+            ("GCTGCT", "TGGCCC"), // equal-length MNV
+        ] {
+            let change = predictor.predict_coding_consequence(
+                &Allele::Sequence(reference.as_bytes().to_vec()),
+                &Allele::Sequence(replacement.as_bytes().to_vec()),
+                &tr,
+                Some(4),
+                Some(20), // 17 CDS positions for six reference bases
+                Some(14),
+                Some(30),
+            );
+            assert!(
+                change.is_none(),
+                "{reference}/{replacement}: a non-contiguous change must resolve to \
+                 no coding term, got {:?}",
+                change.map(|c| c.consequence)
+            );
         }
     }
 }
