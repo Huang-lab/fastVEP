@@ -20,7 +20,7 @@
 //! before the first variant was annotated. They are now resolved lazily, on the
 //! first read of each entry, when the page is about to be touched anyway.
 
-use crate::chunk::{delta_decode, Chunk};
+use crate::chunk::{delta_decode, Chunk, JsonBlobs};
 use crate::fields::{Field, FieldType};
 use crate::kmer16::{LongVariant, OtherVariant};
 use crate::var32;
@@ -42,6 +42,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// Hard cap on a per-chunk zstd-decompressed JSON blob (256 MiB). Defends
 /// against zstd bombs in maliciously crafted .osa2 files.
 const MAX_JSON_BLOB_DECOMPRESSED: usize = 256 * 1024 * 1024;
+
+/// `JsonBlobs` delimits its rows with `u32` offsets into the decompressed
+/// buffer, and this cap is what keeps that in range. Tie the two together here
+/// so raising the cap past 4 GiB cannot silently truncate them.
+const _: () = assert!(MAX_JSON_BLOB_DECOMPRESSED <= u32::MAX as usize);
 
 /// Soft cap on cached chunk *entries*; the byte budget is the real gate.
 const CHUNK_CACHE_MAX_ENTRIES: usize = 4096;
@@ -79,11 +84,7 @@ fn chunk_bytes(c: &Chunk) -> usize {
         .iter()
         .map(|col| col.len() * std::mem::size_of::<u32>())
         .sum();
-    let blobs: usize = c.json_blobs.as_ref().map_or(0, |b| {
-        b.iter()
-            .map(|s| s.len() + std::mem::size_of::<String>())
-            .sum()
-    });
+    let blobs: usize = c.json_blobs.as_ref().map_or(0, JsonBlobs::heap_bytes);
     v32.saturating_add(longs)
         .saturating_add(others)
         .saturating_add(vals)
@@ -450,8 +451,7 @@ impl Osa2Reader {
                         MAX_JSON_BLOB_DECOMPRESSED
                     );
                 }
-                let text = String::from_utf8(decompressed)?;
-                Some(text.lines().map(|l| l.to_string()).collect())
+                Some(JsonBlobs::from_text(String::from_utf8(decompressed)?))
             }
             None => None,
         };
