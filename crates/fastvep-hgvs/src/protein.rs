@@ -59,15 +59,30 @@ fn residue_span(first_pos: u64, residues: &[u8]) -> String {
     }
 }
 
-/// Render a deletion that starts at the initiation codon, whose downstream
+/// Render a change that takes out the initiation codon, whose downstream
 /// consequence is unknown: `Glu1?` for a single residue, `MetAsnIle1_?3` for a
-/// run. The residues are still named - the annotation does say what was removed
-/// - and the `?` marks the part that cannot be resolved from sequence.
-fn uncertain_from_initiator(residues: &[u8]) -> String {
+/// run. The residues are still named - the annotation does say what was
+/// affected - and the `?` marks the part that cannot be resolved from sequence.
+///
+/// `start` is the position of the first residue named. It is not always 1: a
+/// change that begins at the initiator can share its leading residue with the
+/// replacement, and Ensembl trims that off first. `XP/XAKSTVGA` on
+/// ENSP00000500558 is `p.Pro2?` in VEP 115.1, not `p.XaaPro1_?2`.
+///
+/// The run's second coordinate is written as the last residue named, which is
+/// what `p.Met1_?N` reads as. Not verified: every multi-residue case in the
+/// ClinVar sample starts at residue 1, where the last position and the residue
+/// count are the same number, so nothing here distinguishes them.
+fn uncertain_from_initiator(start: u64, residues: &[u8]) -> String {
     if residues.len() == 1 {
-        format!("{}1?", aa_one_to_three(residues[0]))
+        format!("{}{}?", aa_one_to_three(residues[0]), start)
     } else {
-        format!("{}1_?{}", three_letter(residues), residues.len())
+        format!(
+            "{}{}_?{}",
+            three_letter(residues),
+            start,
+            start + residues.len() as u64 - 1
+        )
     }
 }
 
@@ -240,7 +255,19 @@ pub fn hgvsp_inframe_indel(
         }
     };
     let original_ref = strip(ref_aas);
-    let original_alt = strip(alt_aas);
+    // Nothing past a terminator the change introduces is translated, so those
+    // residues are not part of the protein and must not be named. Ensembl's
+    // `Amino_acids` column keeps the whole translated window - `SL/MEP*S` - but
+    // its HGVSp for the same row is `p.Ser269_Leu270delinsMetGluProTer`, and
+    // naming the `S` after the `Ter` would describe a residue that does not
+    // exist. The terminator itself is kept: it is the last thing the protein has.
+    let original_alt = {
+        let all = strip(alt_aas);
+        match all.iter().position(|&b| b == b'*') {
+            Some(terminator) => all[..=terminator].to_vec(),
+            None => all,
+        }
+    };
     let prefix = format!("{}:p.", protein_id);
     let fallback = || unshifted_description(&prefix, protein_start, &original_ref, &original_alt);
 
@@ -275,6 +302,22 @@ pub fn hgvsp_inframe_indel(
     }) else {
         return fallback();
     };
+
+    // Ensembl's `start_lost` (`VariationEffect.pm` release/115, l. 851): the
+    // replacement begins at the initiator and preserves the reference residues
+    // at neither end of itself. What the ribosome does then - start at a
+    // downstream ATG, or not at all - is not something the sequence tells us, so
+    // HGVS marks the consequence unknown with `?` rather than naming residues of
+    // a protein that may never be made. Evaluated on the untrimmed residues,
+    // because that is what the predicate reads: for `XP/XAKSTVGA` the shared
+    // leading `X` trims away and the description starts at residue 2, and VEP
+    // still writes `p.Pro2?`.
+    //
+    // The pure-deletion arm below has its own, older test for this and keeps it:
+    // it decides after 3'-shifting, which can move the deletion off residue 1.
+    let start_lost = protein_start == 1
+        && !original_alt.starts_with(&original_ref[..])
+        && !original_alt.ends_with(&original_ref[..]);
 
     // Reduce to the minimal changed region: residues shared at either end are
     // not part of the description. Trimming the prefix moves the start right.
@@ -367,9 +410,19 @@ pub fn hgvsp_inframe_indel(
             // sequence tells us, so HGVS marks the consequence unknown with `?`
             // rather than describing a protein that may never be made. This is
             // the form Ensembl VEP emits.
-            return Some(format!("{}{}", prefix, uncertain_from_initiator(&residues)));
+            return Some(format!(
+                "{}{}",
+                prefix,
+                uncertain_from_initiator(at, &residues)
+            ));
         }
         Some(format!("{}{}del", prefix, residue_span(at, &residues)))
+    } else if start_lost {
+        Some(format!(
+            "{}{}",
+            prefix,
+            uncertain_from_initiator(start, &reference)
+        ))
     } else {
         // Replacement of one residue run by another.
         Some(format!(
@@ -850,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_deletion_reaching_residue_one_is_unresolvable() {
+    fn a_change_that_loses_the_initiator_is_unresolvable() {
         // The marker is specific to the initiation codon. A deletion anywhere
         // else is an ordinary `del`, including one that starts at residue 2.
         let pep: Vec<u8> = "MKFFASM".bytes().collect();
@@ -859,12 +912,24 @@ mod tests {
             Some("ENSP00000001:p.Lys2del".to_string())
         );
 
-        // And a delins at the start is still a delins - residues are replaced
-        // rather than removed, so the reading frame still begins somewhere known.
-        let r = hgvsp_inframe_indel("ENSP00000001", 1, "MK", "W", Some(&pep), Strand::Forward);
-        assert!(
-            r.as_deref().is_some_and(|d| d.contains("delins")),
-            "expected a delins, got {r:?}"
+        // A delins that takes out the initiator is *not* an ordinary delins.
+        // Replacing `MK` with `W` removes the ATG, so where translation begins
+        // is exactly what is no longer known, and Ensembl marks it `?` for every
+        // shape of change that loses the start - `p.Met1?` for `M/T`,
+        // `p.MetAla1_?2` for `MA/IS`, `p.Pro2?` for `XP/XAKSTVGA`, all from real
+        // VEP 115.1. Naming the replacement instead described a protein that may
+        // never be made.
+        assert_eq!(
+            hgvsp_inframe_indel("ENSP00000001", 1, "MK", "W", Some(&pep), Strand::Forward),
+            Some("ENSP00000001:p.MetLys1_?2".to_string())
+        );
+
+        // A replacement that keeps the reference residues at one end of itself
+        // has not lost the start. `MK` -> `MWK` is an insertion between them,
+        // and it is described as one.
+        assert_eq!(
+            hgvsp_inframe_indel("ENSP00000001", 1, "MK", "MWK", Some(&pep), Strand::Forward),
+            Some("ENSP00000001:p.Met1_Lys2insTrp".to_string())
         );
     }
 

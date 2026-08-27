@@ -647,6 +647,8 @@ fn annotate_variant(
                                                 }
                                             }
                                         } else if aa.1 == "-"
+                                            || aa.0.len() != aa.1.len()
+                                            || ac.consequences.contains(&Consequence::StartLost)
                                             || ac.consequences.contains(&Consequence::InframeDeletion)
                                             || ac.consequences.contains(&Consequence::InframeInsertion)
                                         {
@@ -659,6 +661,14 @@ fn annotate_variant(
                                             // so `W/WR` reads as unchanged and renders
                                             // `p.Trp185=` for a variant that lengthens the
                                             // protein.
+                                            //
+                                            // The residue counts decide, not the SO term. A
+                                            // delins that replaces residues earns
+                                            // `protein_altering_variant` or `stop_gained` rather
+                                            // than either in-frame term, and keying on the term
+                                            // alone dropped HGVSp entirely for every one of them
+                                            // - 1,560 rows over the ClinVar 2-star in-frame
+                                            // delins, where VEP names `p.Lys666delinsAsnSer`.
                                             //
                                             // The peptide lets `hgvsp_inframe_indel` apply the
                                             // HGVS 3'-rule and collapse a repeat to `dup`,
