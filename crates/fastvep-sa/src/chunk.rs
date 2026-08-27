@@ -6,6 +6,93 @@
 use crate::fields::{Field, FieldType};
 use crate::kmer16::{LongVariant, OtherVariant};
 
+/// The JSON-blob payloads of a chunk: one buffer holding every row's text, plus
+/// the offsets that delimit the rows.
+///
+/// These were a `Vec<String>` - one heap allocation and one copy per row. The
+/// cost is paid per *stored* row, not per queried one, and a chunk holds every
+/// row in its megabase of the genome. For a sparse source that is a handful; for
+/// the densest ones it is the whole neighbourhood. SpliceAI scores three
+/// alternates at essentially every position of a gene body, which puts on the
+/// order of a million records in one chunk, so a single lookup allocated a
+/// million strings, copied the entire decompressed blob into them, read one, and
+/// dropped the rest (#101). Measured on a 3M-row-per-chunk source, 300 scattered
+/// queries took 5.9s and 3.8 GB of resident memory.
+///
+/// Indexing the buffer instead costs eight bytes a row and no allocation, and
+/// the text is kept exactly as it was decompressed, so what a query returns is
+/// byte-for-byte what it returned before.
+#[derive(Debug, Default, Clone)]
+pub struct JsonBlobs {
+    text: String,
+    /// `(start, end)` byte offsets into `text`, one per row.
+    ///
+    /// `u32` is sound because `reader_v2::MAX_JSON_BLOB_DECOMPRESSED` rejects a
+    /// chunk blob well before 4 GiB, and that check runs before this is built.
+    rows: Vec<(u32, u32)>,
+}
+
+impl JsonBlobs {
+    /// Index the newline-separated rows of a decompressed blob entry.
+    ///
+    /// Row boundaries come from [`str::lines`], so a `\r\n` archive is split the
+    /// same way the `Vec<String>` build split it.
+    pub fn from_text(text: String) -> Self {
+        debug_assert!(
+            text.len() <= u32::MAX as usize,
+            "blob buffer exceeds the u32 offsets this type stores"
+        );
+        let base = text.as_ptr() as usize;
+        let rows: Vec<(u32, u32)> = text
+            .lines()
+            .map(|line| {
+                // `lines()` yields subslices of `text`, so the difference is an
+                // offset into it. Integers only, so the borrow ends here.
+                let start = line.as_ptr() as usize - base;
+                (start as u32, (start + line.len()) as u32)
+            })
+            .collect();
+        Self { text, rows }
+    }
+
+    /// Build from rows already in hand, for callers and tests that have them
+    /// separated rather than as one buffer.
+    pub fn from_rows<I, S>(rows: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut text = String::new();
+        for (i, row) in rows.into_iter().enumerate() {
+            if i > 0 {
+                text.push('\n');
+            }
+            text.push_str(row.as_ref());
+        }
+        Self::from_text(text)
+    }
+
+    /// Number of rows.
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// The blob for one row, borrowed out of the buffer.
+    pub fn get(&self, idx: usize) -> Option<&str> {
+        let &(start, end) = self.rows.get(idx)?;
+        self.text.get(start as usize..end as usize)
+    }
+
+    /// Resident footprint, for the chunk cache's byte budget.
+    pub fn heap_bytes(&self) -> usize {
+        self.text.len() + self.rows.len() * std::mem::size_of::<(u32, u32)>()
+    }
+}
+
 /// A loaded genomic chunk (~1MB region) with sorted variant keys and values.
 pub struct Chunk {
     /// Sorted Var32-encoded variant keys for binary search.
@@ -25,7 +112,7 @@ pub struct Chunk {
     /// non-JsonBlob fields when indexing into this array.
     pub values: Vec<Vec<u32>>,
     /// Optional JSON blob strings for JsonBlob fields.
-    pub json_blobs: Option<Vec<String>>,
+    pub json_blobs: Option<JsonBlobs>,
 }
 
 impl Chunk {
@@ -114,17 +201,17 @@ impl Chunk {
 
         for (fi, field) in fields.iter().enumerate() {
             if field.ftype == FieldType::JsonBlob {
-                if let Some(ref blobs) = self.json_blobs {
-                    if idx < blobs.len() && !blobs[idx].is_empty() {
+                if let Some(blob) = self.json_blobs.as_ref().and_then(|b| b.get(idx)) {
+                    if !blob.is_empty() {
                         // An empty alias marks a whole-record blob (see
                         // `writer_v2::raw_json_blob_fields`): the stored blob is
                         // the complete record object, so emit it verbatim rather
                         // than nesting it under a key. Such sources carry this
                         // as their sole field, so returning here is correct.
                         if field.alias.is_empty() {
-                            return blobs[idx].clone();
+                            return blob.to_string();
                         }
-                        parts.push(format!("\"{}\":{}", field.alias, blobs[idx]));
+                        parts.push(format!("\"{}\":{}", field.alias, blob));
                     }
                 }
                 continue;
@@ -270,7 +357,7 @@ mod tests {
         chunk.var32s = vec![var32::encode(100, b"A", b"G").unwrap()];
         // Two non-JsonBlob columns, in field order: AF then AC.
         chunk.values = vec![vec![1234], vec![42]];
-        chunk.json_blobs = Some(vec![r#"{"k":1}"#.to_string()]);
+        chunk.json_blobs = Some(JsonBlobs::from_rows([r#"{"k":1}"#]));
 
         let json = chunk.reconstruct_json(0, &fields, &[]);
         assert!(json.contains("\"af\":"), "missing af in: {}", json);
@@ -300,7 +387,7 @@ mod tests {
         let mut chunk = Chunk::empty();
         chunk.var32s = vec![var32::encode(100, b"A", b"G").unwrap()];
         let blob = r#"{"significance":["Pathogenic"],"reviewStatus":"criteria_provided"}"#;
-        chunk.json_blobs = Some(vec![blob.to_string()]);
+        chunk.json_blobs = Some(JsonBlobs::from_rows([blob]));
 
         let json = chunk.reconstruct_json(0, &fields, &[]);
         assert_eq!(json, blob, "whole-record blob must round-trip verbatim");

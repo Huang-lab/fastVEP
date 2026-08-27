@@ -209,6 +209,55 @@ column-oriented sources it is not, so if you still have the upstream release
 prefer `sa-build --format osa2` to get the column layout. Which of the two ends
 up smaller is data-dependent, so compare if size matters.
 
+#### Chunk width for dense sources (`--chunk-bits`)
+
+A chunk is the unit a query loads, and it covers a fixed genomic width -- 2^20
+bases, 1 Mb, by default.
+A blob-encoded chunk stores its records' JSON one after another in a single
+compressed stream, so reading one record decompresses the whole chunk's worth.
+
+That is cheap for the sparse sources.
+dbSNP, ClinVar, COSMIC and REVEL put kilobytes in a megabase, and the wide chunk
+is what keeps them compact.
+It is not cheap for a source that scores nearly every base.
+SpliceAI carries three alternates at essentially every position of a gene body,
+which is hundreds of megabytes of JSON in a single 1 Mb chunk: queries slow to a
+crawl, and past 256 MiB the chunk exceeds the blob decompression limit outright,
+at which point *every* lookup in that megabase fails.
+
+Pass `--chunk-bits 16` (65 kb) when converting such a source:
+
+```bash
+fastvep sa-convert -i old/spliceai.osa -o new/spliceai --chunk-bits 16
+```
+
+Measured on a source built to SpliceAI's density, 300 scattered queries:
+
+| `--chunk-bits` | file size | 300 queries | records annotated |
+|---|---:|---:|---:|
+| 20 (default) | 0.26 MB | 9.7 s | 5 / 300 |
+| 18 | 0.27 MB | 0.83 s | 300 / 300 |
+| 16 | 0.29 MB | 0.51 s | 300 / 300 |
+| 14 | 0.35 MB | 0.47 s | 300 / 300 |
+
+For comparison, the same queries against the native column encoding took 0.41 s,
+so a converted database at `--chunk-bits 16` is close to it.
+
+Do not lower it for the sparse sources: narrower chunks mean more of them, and
+real ClinVar grows from 40.9 MB to 53.6 MB (and from 7,566 to 54,911 archive
+entries) between 20 and 16.
+`chunk_bits` is recorded per file, so a database converted at any width is read
+correctly without telling the reader anything.
+
+A run that hits the limit now says so, once per source, rather than returning
+records with the column quietly absent:
+
+```
+warning: spliceAI could not be read for 295 variant lookup(s); those variants
+carry no spliceAI annotation, which is not the same as having none. First error:
+SpliceAI: the JSON blobs for chunk chr1/1 decompress past the 256 MiB limit ...
+```
+
 `sa-convert` refuses `.osi` and `.oga` inputs with an explanation rather than
 failing obscurely: v2 is a variant-level container and has no equivalent form
 for interval- or gene-keyed data.

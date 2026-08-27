@@ -260,6 +260,19 @@ enum Commands {
         #[arg(short, long)]
         output: Option<String>,
 
+        /// Genomic width of one chunk, as a power of two (1..=20). A chunk is
+        /// the unit a query loads, and a conversion stores whole-record JSON
+        /// blobs, so the whole chunk's blobs are decompressed to read one
+        /// record. The default of 20 (1 Mb) suits the sparse sources - dbSNP,
+        /// ClinVar, COSMIC, REVEL - and keeps them compact. A source that
+        /// scores nearly every base, SpliceAI above all, puts so much in one
+        /// megabase that queries slow to a crawl and can exceed the blob
+        /// decompression limit outright; pass 16 (65 kb) for those. Measured on
+        /// a SpliceAI-density source, 300 scattered queries went from 9.7s
+        /// (with most lookups failing) to 0.5s, for 12% more file size.
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=20))]
+        chunk_bits: u32,
+
         /// Suppress periodic progress output
         #[arg(long, default_value_t = false)]
         no_progress: bool,
@@ -381,6 +394,7 @@ fn main() -> Result<()> {
         Commands::SaConvert {
             input,
             output,
+            chunk_bits,
             no_progress,
         } => {
             // Default the output alongside the input: `foo.osa` -> `foo.osa2`.
@@ -391,7 +405,7 @@ fn main() -> Result<()> {
                     .to_string_lossy()
                     .into_owned()
             });
-            pipeline::run_sa_convert(&input, &output, !no_progress)?
+            pipeline::run_sa_convert(&input, &output, chunk_bits, !no_progress)?
         }
         Commands::Filter {
             input,

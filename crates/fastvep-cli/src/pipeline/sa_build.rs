@@ -1280,7 +1280,12 @@ where
 /// ends up smaller is data-dependent (blob columns zstd well when adjacent
 /// records are similar; value columns win when the payload is genuinely
 /// numeric), so the tool points at the rebuild without promising a size win.
-pub fn run_sa_convert(input: &str, output: &str, show_progress: bool) -> Result<()> {
+pub fn run_sa_convert(
+    input: &str,
+    output: &str,
+    chunk_bits: u32,
+    show_progress: bool,
+) -> Result<()> {
     use fastvep_sa::reader::SaReader;
     use fastvep_sa::writer_v2::{Osa2Metadata, Osa2Record};
 
@@ -1346,7 +1351,7 @@ pub fn run_sa_convert(input: &str, output: &str, show_progress: bool) -> Result<
         match_by_allele: header.match_by_allele,
         is_array: header.is_array,
         is_positional: header.is_positional,
-        chunk_bits: 20,
+        chunk_bits,
         description: header.description.clone(),
     };
 

@@ -30,9 +30,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
-    annotate_intergenic, annotate_sa_only_scaffold, complement_allele, convert_ins_to_dup,
+    annotate_intergenic, annotate_sa_only_scaffold, convert_ins_to_dup,
     convert_ins_to_dup_noncoding, load_gene_providers, load_sa_providers,
-    three_prime_shift_intronic, zip_positions,
+    reverse_complement_allele, three_prime_shift_intronic, zip_positions,
 };
 
 const BATCH_SIZE: usize = 1024;
@@ -269,7 +269,7 @@ fn annotate_variant(
 
                                 // Determine alleles for HGVS - complement for minus strand
                                 let (hgvs_ref, hgvs_alt) = if tr.strand == fastvep_core::Strand::Reverse {
-                                    (complement_allele(&vf.ref_allele), complement_allele(&ac.allele))
+                                    (reverse_complement_allele(&vf.ref_allele), reverse_complement_allele(&ac.allele))
                                 } else {
                                     (vf.ref_allele.clone(), ac.allele.clone())
                                 };
@@ -791,15 +791,20 @@ fn annotate_variant(
                     } else {
                         (vf.position.start, "", "")
                     };
-                    if let Ok(Some(ann)) = sa.annotate_position(chrom, sa_pos, sa_ref, sa_alt) {
-                        let json_str = match ann {
-                            AnnotationValue::Json(j) => j,
-                            AnnotationValue::Positional(j) => j,
-                            AnnotationValue::Interval(v) => {
-                                format!("[{}]", v.join(","))
-                            }
-                        };
-                        results.push((sa.json_key().to_string(), json_str));
+                    // A failed lookup is not a miss: see `SaLookupErrors`.
+                    match sa.annotate_position(chrom, sa_pos, sa_ref, sa_alt) {
+                        Ok(Some(ann)) => {
+                            let json_str = match ann {
+                                AnnotationValue::Json(j) => j,
+                                AnnotationValue::Positional(j) => j,
+                                AnnotationValue::Interval(v) => {
+                                    format!("[{}]", v.join(","))
+                                }
+                            };
+                            results.push((sa.json_key().to_string(), json_str));
+                        }
+                        Ok(None) => {}
+                        Err(e) => fastvep_annotate::sa_lookup_errors().record(sa.json_key(), &e),
                     }
                 }
                 allele_results.insert(allele_key, results);
@@ -1773,6 +1778,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
     writer.flush()?;
     meter.finish();
+    // After the meter, so a run that lost annotations says so last and the
+    // warning is not buried in progress output.
+    fastvep_annotate::report_sa_lookup_errors();
 
     Ok(())
 }
