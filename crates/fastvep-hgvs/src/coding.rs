@@ -1,5 +1,56 @@
 use fastvep_core::Allele;
 
+/// Format one cDNA position as an HGVS `c.` coordinate.
+///
+/// Three numbering schemes meet on a coding transcript: `-N` counting back from
+/// the initiator, `N` inside the CDS, `*N` counting on from the terminator.
+/// Which one applies is a property of the *position*, not of the variant, and
+/// deciding it per variant is what let a span that crosses a boundary be
+/// numbered in the wrong scheme: a delins over FOXL2's stop codon came out
+/// `c.1127_1135`, naming four bases past the end of an 1131-base CDS, where
+/// VEP writes `c.1127_*4` (#100).
+///
+/// `start_phase` is Ensembl's offset for a CDS whose first codon is incomplete,
+/// and applies only inside the CDS - there is no position 0, so the 5' UTR
+/// numbering has neither the `+ 1` nor the phase.
+fn cds_coord(
+    cdna_pos: u64,
+    coding_start: u64,
+    coding_end: Option<u64>,
+    start_phase: u64,
+) -> String {
+    if cdna_pos < coding_start {
+        return format!("{}", cdna_pos as i64 - coding_start as i64);
+    }
+    if let Some(coding_end) = coding_end {
+        if cdna_pos > coding_end {
+            return format!("*{}", cdna_pos - coding_end);
+        }
+    }
+    format!(
+        "{}",
+        cdna_pos as i64 - coding_start as i64 + 1 + start_phase as i64
+    )
+}
+
+/// Format a cDNA span as an HGVS `c.` coordinate or coordinate range,
+/// collapsing a single-position span to one coordinate.
+fn cds_span(
+    cdna_start: u64,
+    cdna_end: u64,
+    coding_start: u64,
+    coding_end: Option<u64>,
+    start_phase: u64,
+) -> String {
+    let start = cds_coord(cdna_start, coding_start, coding_end, start_phase);
+    let end = cds_coord(cdna_end, coding_start, coding_end, start_phase);
+    if start == end {
+        start
+    } else {
+        format!("{}_{}", start, end)
+    }
+}
+
 /// Generate HGVSc (coding DNA) notation.
 ///
 /// Uses the transcript ID as the reference and cDNA position numbering.
@@ -47,38 +98,7 @@ pub fn hgvsc_with_seq(
 ) -> Option<String> {
     let prefix = format!("{}:c.", transcript_id);
 
-    // Convert cDNA position to CDS position (relative to ATG)
-    // For 5'UTR (before ATG): position = cdna - coding_start (negative, no +1)
-    // For coding region: position = cdna - coding_start + 1 + start_phase (1-based)
-    // start_phase accounts for incomplete start codons (Ensembl convention)
-    let cds_pos_start = if (cdna_start as i64) < (coding_start as i64) {
-        cdna_start as i64 - coding_start as i64 // 5'UTR: no phase
-    } else {
-        cdna_start as i64 - coding_start as i64 + 1 + start_phase as i64 // CDS: with phase
-    };
-    let cds_pos_end = if (cdna_end as i64) < (coding_start as i64) {
-        cdna_end as i64 - coding_start as i64
-    } else {
-        cdna_end as i64 - coding_start as i64 + 1 + start_phase as i64
-    };
-
-    let pos_str = if cds_pos_start < 0 {
-        // 5' UTR: negative positions
-        format!("{}", cds_pos_start)
-    } else if coding_end.is_some_and(|ce| cdna_start > ce) {
-        // 3' UTR: c.*N notation
-        let utr_offset_start = cdna_start - coding_end.unwrap();
-        if cdna_start == cdna_end {
-            format!("*{}", utr_offset_start)
-        } else {
-            let utr_offset_end = cdna_end - coding_end.unwrap();
-            format!("*{}_*{}", utr_offset_start, utr_offset_end)
-        }
-    } else if cds_pos_start == cds_pos_end {
-        format!("{}", cds_pos_start)
-    } else {
-        format!("{}_{}", cds_pos_start, cds_pos_end)
-    };
+    let pos_str = cds_span(cdna_start, cdna_end, coding_start, coding_end, start_phase);
 
     let notation = match (ref_allele, alt_allele) {
         // SNV
@@ -91,8 +111,7 @@ pub fn hgvsc_with_seq(
             )
         }
         // Deletion — apply HGVS 3' shifting in repetitive regions
-        (Allele::Sequence(ref_bases), Allele::Deletion) => {
-            let del_len = ref_bases.len();
+        (Allele::Sequence(_), Allele::Deletion) => {
             // Try 3' shifting if we have the transcript sequence
             let (shifted_start, shifted_end) = if let Some(seq) = spliced_seq {
                 let seq_bytes = seq.as_bytes();
@@ -109,54 +128,19 @@ pub fn hgvsc_with_seq(
             } else {
                 (cdna_start, cdna_end)
             };
-            // Recompute positions for shifted coordinates, with UTR awareness
-            let shifted_pos = if coding_end.is_some_and(|ce| shifted_start > ce) {
-                // 3'UTR deletion
-                let utr_s = shifted_start - coding_end.unwrap();
-                if del_len == 1 {
-                    format!("*{}", utr_s)
-                } else {
-                    let utr_e = shifted_end - coding_end.unwrap();
-                    format!("*{}_*{}", utr_s, utr_e)
-                }
-            } else if (shifted_start as i64) < (coding_start as i64) {
-                // 5'UTR deletion
-                let cds_s = shifted_start as i64 - coding_start as i64;
-                if del_len == 1 {
-                    format!("{}", cds_s)
-                } else {
-                    let cds_e = shifted_end as i64 - coding_start as i64;
-                    if coding_end.is_some_and(|ce| shifted_end > ce) {
-                        // Spans into 3'UTR
-                        let utr_e = shifted_end - coding_end.unwrap();
-                        format!("{}_*{}", cds_s, utr_e)
-                    } else {
-                        format!("{}_{}", cds_s, cds_e)
-                    }
-                }
-            } else {
-                let cds_s = shifted_start as i64 - coding_start as i64 + 1;
-                if del_len == 1 {
-                    format!("{}", cds_s)
-                } else {
-                    if coding_end.is_some_and(|ce| shifted_end > ce) {
-                        // Spans from CDS into 3'UTR
-                        let utr_e = shifted_end - coding_end.unwrap();
-                        format!("{}_*{}", cds_s, utr_e)
-                    } else {
-                        let cds_e = shifted_end as i64 - coding_start as i64 + 1;
-                        format!("{}_{}", cds_s, cds_e)
-                    }
-                }
-            };
+            let shifted_pos = cds_span(
+                shifted_start,
+                shifted_end,
+                coding_start,
+                coding_end,
+                start_phase,
+            );
             format!("{}{}del", prefix, shifted_pos)
         }
         // Insertion — normalize coordinates: ensure ins_before < ins_after
         (Allele::Deletion, Allele::Sequence(alt_bases)) => {
             let ins_before_cdna = cdna_start.min(cdna_end); // base before insertion
             let ins_after_cdna = cdna_start.max(cdna_end); // base after insertion
-            let ins_before_cds = cds_pos_start.min(cds_pos_end);
-            let ins_after_cds = cds_pos_start.max(cds_pos_end);
 
             // Check for duplication: if inserted bases match the preceding OR following sequence
             let is_dup = if let Some(seq) = spliced_seq {
@@ -193,42 +177,27 @@ pub fn hgvsc_with_seq(
                 false
             };
 
-            // Position of the base before insertion in CDS or UTR coordinates
-            let ins_pos_str = if coding_end.is_some_and(|ce| ins_before_cdna > ce) {
-                // 3'UTR: both flanking positions are in 3'UTR
-                let utr_before = ins_before_cdna - coding_end.unwrap();
-                let utr_after = ins_after_cdna - coding_end.unwrap();
-                if is_dup {
-                    let ins_len = alt_bases.len() as u64;
-                    if ins_len == 1 {
-                        format!("*{}", utr_before)
-                    } else {
-                        format!("*{}_*{}", utr_before - ins_len + 1, utr_before)
-                    }
-                } else {
-                    format!("*{}_*{}", utr_before, utr_after)
-                }
-            } else if ins_before_cds < 0 {
-                // 5'UTR insertion
-                if is_dup {
-                    let ins_len = alt_bases.len() as i64;
-                    if ins_len == 1 {
-                        format!("{}", ins_before_cds)
-                    } else {
-                        format!("{}_{}", ins_before_cds - ins_len + 1, ins_before_cds)
-                    }
-                } else {
-                    format!("{}_{}", ins_before_cds, ins_after_cds)
-                }
-            } else if is_dup {
-                let ins_len = alt_bases.len() as i64;
-                if ins_len == 1 {
-                    format!("{}", ins_before_cds)
-                } else {
-                    format!("{}_{}", ins_before_cds - ins_len + 1, ins_before_cds)
-                }
+            // A duplication is written over the duplicated bases, which end at
+            // the base before the insertion point. A plain insertion is written
+            // over the two bases it sits between, and those two can straddle
+            // the end of the CDS, so both spans go through the same numbering.
+            let ins_pos_str = if is_dup {
+                let ins_len = alt_bases.len() as u64;
+                cds_span(
+                    ins_before_cdna.saturating_sub(ins_len.saturating_sub(1)),
+                    ins_before_cdna,
+                    coding_start,
+                    coding_end,
+                    start_phase,
+                )
             } else {
-                format!("{}_{}", ins_before_cds, ins_after_cds)
+                cds_span(
+                    ins_before_cdna,
+                    ins_after_cdna,
+                    coding_start,
+                    coding_end,
+                    start_phase,
+                )
             };
 
             if is_dup {
@@ -723,5 +692,135 @@ mod tests {
             &Allele::Sequence(b"G".to_vec()),
         );
         assert_eq!(result, Some("ENST00000472807.5:n.100A>G".to_string()));
+    }
+
+    // ---- spans that cross a CDS boundary (#100) ----
+
+    /// A span that starts inside the CDS and ends past the terminator numbers
+    /// each end in its own scheme.
+    ///
+    /// It used to number both ends as CDS positions, so FOXL2's
+    /// `c.1127_*4delinsCG` came out `c.1127_1135` - four bases past the end of
+    /// an 1131-base CDS, a coordinate the transcript does not have.
+    #[test]
+    fn a_delins_reaching_past_the_terminator_numbers_its_end_from_the_stop() {
+        // CDS is cDNA 51..1181 (1131 bases). cDNA 1177..1185 spans c.1127
+        // to four bases into the 3' UTR.
+        let result = hgvsc(
+            "ENST00000648323.1",
+            1177,
+            1185,
+            &Allele::Sequence(b"GCTCTCAGA".to_vec()),
+            &Allele::Sequence(b"CG".to_vec()),
+            51,
+            Some(1181),
+        );
+        assert_eq!(
+            result,
+            Some("ENST00000648323.1:c.1127_*4delinsCG".to_string())
+        );
+    }
+
+    /// The mirror at the other end: a span starting in the 5' UTR keeps its end
+    /// coordinate, which used to be dropped entirely (`c.-4delinsTT`).
+    #[test]
+    fn a_delins_reaching_out_of_the_five_prime_utr_keeps_both_coordinates() {
+        // CDS starts at cDNA 149. cDNA 145..153 spans c.-4 to c.5.
+        let result = hgvsc(
+            "ENST00000383165.4",
+            145,
+            153,
+            &Allele::Sequence(b"GGAGATGAC".to_vec()),
+            &Allele::Sequence(b"TT".to_vec()),
+            149,
+            Some(676),
+        );
+        assert_eq!(result, Some("ENST00000383165.4:c.-4_5delinsTT".to_string()));
+    }
+
+    /// A deletion whose end falls inside the CDS numbers that end as a CDS
+    /// position. The 5' UTR branch used to reuse its own formula for both ends,
+    /// leaving the end one too low - `c.-9_1del` for a span ending at c.2.
+    #[test]
+    fn a_deletion_from_the_five_prime_utr_into_the_cds_numbers_its_end_in_the_cds() {
+        // CDS starts at cDNA 11; cDNA 2..12 spans c.-9 to c.2.
+        let result = hgvsc(
+            "ENST00000001",
+            2,
+            12,
+            &Allele::Sequence(b"CCCATACCTCG".to_vec()),
+            &Allele::Deletion,
+            11,
+            Some(100),
+        );
+        assert_eq!(result, Some("ENST00000001:c.-9_2del".to_string()));
+    }
+
+    /// There is no `c.0`, so a span reaching back across the initiator has to
+    /// skip it. `c.-1_1` names two positions where three bases were changed.
+    #[test]
+    fn a_span_across_the_initiator_skips_the_nonexistent_position_zero() {
+        // CDS starts at cDNA 11; cDNA 9..11 spans c.-2, c.-1, c.1.
+        let result = hgvsc(
+            "ENST00000001",
+            9,
+            11,
+            &Allele::Sequence(b"CCA".to_vec()),
+            &Allele::Deletion,
+            11,
+            Some(100),
+        );
+        assert_eq!(result, Some("ENST00000001:c.-2_1del".to_string()));
+    }
+
+    /// The last base of the CDS is a CDS position, not `*0`. The 3' UTR branch
+    /// used to reach that coordinate by arithmetic and emit `c.*0_*1`.
+    #[test]
+    fn the_last_cds_base_is_never_numbered_star_zero() {
+        // CDS is cDNA 11..40; cDNA 40..41 straddles the terminator's last base
+        // and the first 3' UTR base.
+        let result = hgvsc(
+            "ENST00000001",
+            40,
+            41,
+            &Allele::Deletion,
+            &Allele::Sequence(b"AC".to_vec()),
+            11,
+            Some(40),
+        );
+        assert_eq!(result, Some("ENST00000001:c.30_*1insAC".to_string()));
+    }
+
+    /// A CDS position carries Ensembl's phase offset for an incomplete first
+    /// codon. Deletions used to skip it while every other path applied it, so
+    /// the same base was `c.716` as a substitution and `c.715` as a deletion.
+    #[test]
+    fn a_deletion_carries_the_same_phase_offset_as_a_substitution() {
+        let args = (100u64, 100u64, 51u64, Some(1000u64), 2u64);
+        let (cdna_s, cdna_e, coding_start, coding_end, phase) = args;
+        let sub = hgvsc_with_seq(
+            "ENST00000001",
+            cdna_s,
+            cdna_e,
+            &Allele::Sequence(b"G".to_vec()),
+            &Allele::Sequence(b"A".to_vec()),
+            coding_start,
+            coding_end,
+            None,
+            phase,
+        );
+        let del = hgvsc_with_seq(
+            "ENST00000001",
+            cdna_s,
+            cdna_e,
+            &Allele::Sequence(b"G".to_vec()),
+            &Allele::Deletion,
+            coding_start,
+            coding_end,
+            None,
+            phase,
+        );
+        assert_eq!(sub, Some("ENST00000001:c.52G>A".to_string()));
+        assert_eq!(del, Some("ENST00000001:c.52del".to_string()));
     }
 }
