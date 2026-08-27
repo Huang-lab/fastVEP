@@ -347,10 +347,25 @@ impl ConsequencePredictor {
         let in_intron = intron_info.is_some();
 
         // 4. Check splice sites (always check regardless of coding status)
-        if splice::is_splice_donor(transcript, var_start) {
+        //
+        // A site is matched against the variant's whole span, because that is
+        // what Ensembl does: every test in `_intron_effects` is an `overlap`
+        // against `$r_start, $r_end`. Reading `var_start` alone missed any
+        // variant whose *second* base landed on the site.
+        //
+        // `is_splice_donor_5th_base`, `is_splice_donor_region` and
+        // `is_splice_polypyrimidine_tract` below still read `var_start` alone.
+        // That is a known remaining gap, not a judgement that they differ: they
+        // are LOW terms, so missing one cannot drop a HIGH the way missing a
+        // donor or acceptor does, and each needs its own check against VEP.
+        //
+        // Measured over a 6,600-variant ClinVar sample against real VEP 115.1,
+        // the span change took donor/acceptor errors from 1,341 to 170 and the
+        // extended-term errors from 2,935 to 1,906.
+        if splice::is_splice_donor(transcript, var_start, var_end) {
             consequences.push(Consequence::SpliceDonorVariant);
         }
-        if splice::is_splice_acceptor(transcript, var_start) {
+        if splice::is_splice_acceptor(transcript, var_start, var_end) {
             consequences.push(Consequence::SpliceAcceptorVariant);
         }
 
@@ -375,7 +390,9 @@ impl ConsequencePredictor {
             }
             // VEP excludes splice_region_variant when a more specific splice term is present:
             // splice_donor_region_variant or splice_donor_5th_base_variant
-            if !is_donor_5th && !is_donor_region && splice::is_splice_region(transcript, var_start)
+            if !is_donor_5th
+                && !is_donor_region
+                && splice::is_splice_region(transcript, var_start, var_end)
             {
                 consequences.push(Consequence::SpliceRegionVariant);
             }

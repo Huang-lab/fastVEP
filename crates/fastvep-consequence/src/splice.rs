@@ -18,22 +18,42 @@ use fastvep_genome::Transcript;
 //   splice_region (exonic side): 1-3 bases into exon
 //   splice_region (intronic side): 3-8 bases into intron
 
-/// Check if a genomic position is in a splice donor site (first 2 intronic bases at 5' of intron).
-pub fn is_splice_donor(transcript: &Transcript, genomic_pos: u64) -> bool {
+/// Whether `[var_start, var_end]` overlaps `[site_start, site_end]`.
+///
+/// Ensembl's `overlap`, and the insertion convention falls out of it rather than
+/// needing a case: an insertion arrives as the zero-length interval
+/// `end = start - 1`, so the test narrows to `site_start < start <= site_end` -
+/// an insertion counts only where it sits *inside* the site, not where it abuts
+/// it. Do not sort the pair before calling; the order carries that meaning.
+fn overlaps(var_start: u64, var_end: u64, site_start: u64, site_end: u64) -> bool {
+    var_start <= site_end && var_end >= site_start
+}
+
+/// Check if a variant overlaps a splice donor site (first 2 intronic bases at 5' of intron).
+///
+/// The whole span is tested, not just its start. Ensembl's `_intron_effects`
+/// (`BaseTranscriptVariationAllele.pm`) asks `overlap($r_start, $r_end, ...)` for
+/// every splice site, and a variant whose *second* base lands on the donor
+/// dinucleotide is a `splice_donor_variant` to it. Testing the start alone made
+/// BRCA2 `c.9256_9256+1delinsTA` - the exon's last base and the intron's first,
+/// changed together - a `splice_region_variant`, LOW where VEP says HIGH.
+pub fn is_splice_donor(transcript: &Transcript, var_start: u64, var_end: u64) -> bool {
     for_each_intron_boundary(
         transcript,
         |donor_start, donor_end, _acc_start, _acc_end| {
-            genomic_pos >= donor_start && genomic_pos <= donor_end
+            overlaps(var_start, var_end, donor_start, donor_end)
         },
     )
 }
 
-/// Check if a genomic position is in a splice acceptor site (last 2 intronic bases at 3' of intron).
-pub fn is_splice_acceptor(transcript: &Transcript, genomic_pos: u64) -> bool {
+/// Check if a variant overlaps a splice acceptor site (last 2 intronic bases at 3' of intron).
+///
+/// Span-based for the same reason as [`is_splice_donor`].
+pub fn is_splice_acceptor(transcript: &Transcript, var_start: u64, var_end: u64) -> bool {
     for_each_intron_boundary(
         transcript,
         |_donor_start, _donor_end, acc_start, acc_end| {
-            genomic_pos >= acc_start && genomic_pos <= acc_end
+            overlaps(var_start, var_end, acc_start, acc_end)
         },
     )
 }
@@ -84,111 +104,44 @@ pub fn is_splice_polypyrimidine_tract(transcript: &Transcript, genomic_pos: u64)
     })
 }
 
-/// Check if position is in a splice region (3-8 bases into intron from either end,
-/// or 1-3 bases into exon from the boundary).
-pub fn is_splice_region(transcript: &Transcript, genomic_pos: u64) -> bool {
-    let sorted_exons = sorted_exons(transcript);
-    let n = sorted_exons.len();
-    if n < 2 {
-        return false;
-    }
-
-    for i in 0..n - 1 {
-        // Compute intron boundaries correctly for both strands
-        let (intron_start, intron_end) = match transcript.strand {
-            Strand::Forward => (sorted_exons[i].end + 1, sorted_exons[i + 1].start - 1),
-            Strand::Reverse => (sorted_exons[i + 1].end + 1, sorted_exons[i].start - 1),
-        };
-
-        if intron_start > intron_end {
-            continue;
-        }
-
-        // Determine donor/acceptor ends based on strand
-        let (_donor_end_genomic, _acceptor_end_genomic) = match transcript.strand {
-            Strand::Forward => (intron_start, intron_end), // donor at start, acceptor at end
-            Strand::Reverse => (intron_end, intron_start), // donor at end, acceptor at start
-        };
-
-        // Intronic splice region: 3-8 bases from donor boundary
-        let donor_dist = if genomic_pos >= intron_start && genomic_pos <= intron_end {
-            if transcript.strand == Strand::Forward {
-                genomic_pos - intron_start
-            } else {
-                intron_end - genomic_pos
-            }
-        } else {
-            u64::MAX
-        };
-        if (2..=7).contains(&donor_dist) {
-            return true;
-        }
-
-        // Intronic splice region: 3-8 bases from acceptor boundary
-        let acceptor_dist = if genomic_pos >= intron_start && genomic_pos <= intron_end {
-            if transcript.strand == Strand::Forward {
-                intron_end - genomic_pos
-            } else {
-                genomic_pos - intron_start
-            }
-        } else {
-            u64::MAX
-        };
-        if (2..=7).contains(&acceptor_dist) {
-            return true;
-        }
-
-        // Exonic splice region: 1-3 bases at exon boundaries adjacent to this intron
-        // Donor-side exon boundary
-        // `sorted_exons` is in genomic order, so the exon on each side of the
-        // intron is the same regardless of strand; only the transcript-relative
-        // name (donor vs acceptor) differs, and the match on `strand` below is
-        // what applies that distinction.
-        let donor_exon = sorted_exons[i];
-        let acceptor_exon = sorted_exons[i + 1];
-
-        // Exonic: 3 bases at donor-side exon boundary (toward intron)
-        match transcript.strand {
-            Strand::Forward => {
-                // Donor exon end
-                let region_start = if donor_exon.end >= 2 {
-                    donor_exon.end - 2
-                } else {
-                    donor_exon.start
-                };
-                if genomic_pos >= region_start && genomic_pos <= donor_exon.end {
-                    return true;
-                }
-                // Acceptor exon start
-                let region_end = (acceptor_exon.start + 2).min(acceptor_exon.end);
-                if genomic_pos >= acceptor_exon.start && genomic_pos <= region_end {
-                    return true;
-                }
-            }
-            Strand::Reverse => {
-                // Donor exon start (lower genomic coord for reverse strand donor)
-                let region_end = (donor_exon.start + 2).min(donor_exon.end);
-                if genomic_pos >= donor_exon.start && genomic_pos <= region_end {
-                    return true;
-                }
-                // Acceptor exon end (higher genomic coord for reverse strand acceptor)
-                let region_start = if acceptor_exon.end >= 2 {
-                    acceptor_exon.end - 2
-                } else {
-                    acceptor_exon.start
-                };
-                if genomic_pos >= region_start && genomic_pos <= acceptor_exon.end {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
+/// Check whether a variant overlaps a splice region: SO:0001630, "within 1-3
+/// bases of the exon or 3-8 bases of the intron".
+///
+/// A port of Ensembl's `_intron_overlap` (`Utils/VariationEffect.pm`). Two
+/// things about it are worth keeping visible. It is purely genomic - the four
+/// ranges are symmetric about each intron, so the strand never enters, which is
+/// why this reads shorter than the donor/acceptor-relative version it replaces.
+/// And it has an insertion clause: an insertion sitting exactly on an intron
+/// edge, or on the inner edge of a donor or acceptor dinucleotide, is in the
+/// splice region even though its zero-length interval overlaps none of the four
+/// ranges. Without that clause a `c.830+2dup` lands in no splice term at all -
+/// MODIFIER where VEP says LOW.
+pub fn is_splice_region(transcript: &Transcript, var_start: u64, var_end: u64) -> bool {
+    // Ensembl's zero-length interval for an insertion; see `overlaps`.
+    let insertion = var_end + 1 == var_start;
+    for_each_intron_boundary_extended(transcript, |intron_start, intron_end, _| {
+        overlaps(var_start, var_end, intron_start + 2, intron_start + 7)
+            || overlaps(
+                var_start,
+                var_end,
+                intron_end.saturating_sub(7),
+                intron_end.saturating_sub(2),
+            )
+            || overlaps(
+                var_start,
+                var_end,
+                intron_start.saturating_sub(3),
+                intron_start.saturating_sub(1),
+            )
+            || overlaps(var_start, var_end, intron_end + 1, intron_end + 3)
+            || (insertion
+                && (var_start == intron_start
+                    || var_end == intron_end
+                    || var_start == intron_start + 2
+                    || var_end == intron_end.saturating_sub(2)))
+    })
 }
 
-/// Helper: iterate intron boundaries and check a condition.
-/// Calls `check(donor_start, donor_end, acceptor_start, acceptor_end)`.
 fn for_each_intron_boundary<F>(transcript: &Transcript, check: F) -> bool
 where
     F: Fn(u64, u64, u64, u64) -> bool,
@@ -374,37 +327,37 @@ mod tests {
     fn test_splice_donor() {
         let tr = make_forward_transcript();
         // Intron: 1201-1999. Donor = first 2 bases: 1201, 1202
-        assert!(is_splice_donor(&tr, 1201));
-        assert!(is_splice_donor(&tr, 1202));
-        assert!(!is_splice_donor(&tr, 1203));
-        assert!(!is_splice_donor(&tr, 1200)); // exonic
+        assert!(is_splice_donor(&tr, 1201, 1201));
+        assert!(is_splice_donor(&tr, 1202, 1202));
+        assert!(!is_splice_donor(&tr, 1203, 1203));
+        assert!(!is_splice_donor(&tr, 1200, 1200)); // exonic
     }
 
     #[test]
     fn test_splice_acceptor() {
         let tr = make_forward_transcript();
         // Intron: 1201-1999. Acceptor = last 2 bases: 1998, 1999
-        assert!(is_splice_acceptor(&tr, 1998));
-        assert!(is_splice_acceptor(&tr, 1999));
-        assert!(!is_splice_acceptor(&tr, 1997));
-        assert!(!is_splice_acceptor(&tr, 2000)); // exonic
+        assert!(is_splice_acceptor(&tr, 1998, 1998));
+        assert!(is_splice_acceptor(&tr, 1999, 1999));
+        assert!(!is_splice_acceptor(&tr, 1997, 1997));
+        assert!(!is_splice_acceptor(&tr, 2000, 2000)); // exonic
     }
 
     #[test]
     fn test_splice_region() {
         let tr = make_forward_transcript();
         // Exonic splice region: last 3 bases of exon1 (1198, 1199, 1200)
-        assert!(is_splice_region(&tr, 1198));
-        assert!(is_splice_region(&tr, 1200));
+        assert!(is_splice_region(&tr, 1198, 1198));
+        assert!(is_splice_region(&tr, 1200, 1200));
         // Exonic splice region: first 3 bases of exon2 (2000, 2001, 2002)
-        assert!(is_splice_region(&tr, 2000));
-        assert!(is_splice_region(&tr, 2002));
+        assert!(is_splice_region(&tr, 2000, 2000));
+        assert!(is_splice_region(&tr, 2002, 2002));
         // Intronic splice region: 3-8 bases from donor (1203-1208)
-        assert!(is_splice_region(&tr, 1203));
-        assert!(is_splice_region(&tr, 1208));
-        assert!(!is_splice_region(&tr, 1209));
+        assert!(is_splice_region(&tr, 1203, 1203));
+        assert!(is_splice_region(&tr, 1208, 1208));
+        assert!(!is_splice_region(&tr, 1209, 1209));
         // Mid-intron: not splice region
-        assert!(!is_splice_region(&tr, 1500));
+        assert!(!is_splice_region(&tr, 1500, 1500));
     }
 
     #[test]
@@ -568,5 +521,83 @@ mod tests {
             !is_splice_polypyrimidine_tract(&tr, 1202),
             "pos 1202 (c.X-2, acceptor site) should NOT be PPT"
         );
+    }
+    /// A variant whose *second* base lands on the donor dinucleotide is a
+    /// `splice_donor_variant`, not merely a `splice_region_variant`.
+    ///
+    /// Ensembl tests every splice site by overlap with the variant's whole span
+    /// (`_intron_effects`, `BaseTranscriptVariationAllele.pm`). Reading
+    /// `var_start` alone made BRCA2 `c.9256_9256+1delinsTA` - the last base of an
+    /// exon and the first of the intron, changed together - LOW where VEP says
+    /// HIGH. It also reported `stop_gained` for it, from a codon window built as
+    /// if the two bases were adjacent in the CDS.
+    #[test]
+    fn a_variant_reaching_onto_the_donor_dinucleotide_is_a_donor_variant() {
+        let tr = make_forward_transcript();
+        // The first intron starts at 1201, so 1201-1202 is the donor.
+        assert!(
+            is_splice_donor(&tr, 1200, 1201),
+            "a change over the exon/intron junction must reach the donor"
+        );
+        assert!(
+            !is_splice_donor(&tr, 1198, 1199),
+            "a change wholly inside the exon must not"
+        );
+        assert!(
+            is_splice_donor(&tr, 1202, 1210),
+            "a change starting on the donor's second base still reaches it"
+        );
+        assert!(
+            !is_splice_donor(&tr, 1203, 1210),
+            "a change starting past the donor must not"
+        );
+
+        // An insertion arrives as the zero-length interval `end = start - 1`, and
+        // counts only where it sits inside the site rather than abutting it -
+        // which is what Ensembl's `overlap` yields for that convention.
+        assert!(
+            is_splice_donor(&tr, 1202, 1201),
+            "an insertion between the two donor bases is inside the site"
+        );
+        assert!(
+            !is_splice_donor(&tr, 1201, 1200),
+            "an insertion at the exon/intron boundary abuts the site, not inside it"
+        );
+        assert!(
+            !is_splice_donor(&tr, 1203, 1202),
+            "an insertion just past the donor abuts it, not inside it"
+        );
+    }
+    /// An insertion on an intron edge or on the inner edge of a donor or
+    /// acceptor dinucleotide is in the splice region, even though its
+    /// zero-length interval overlaps none of the four ranges that define one.
+    ///
+    /// This is Ensembl's own special case (`_intron_overlap`), and without it a
+    /// duplication like `c.830+2dup` collects no splice term at all - MODIFIER
+    /// where real VEP 115.1 reports `splice_region_variant`, LOW. Ten ClinVar
+    /// 2-star pathogenic splice-site duplications land here.
+    #[test]
+    fn an_insertion_on_a_splice_boundary_is_in_the_splice_region() {
+        let tr = make_forward_transcript();
+        // First intron: 1201..1999 inclusive on this fixture.
+        // An insertion arrives as `end = start - 1`.
+        for (start, end, expected, what) in [
+            (1201u64, 1200u64, true, "on the intron's first base"),
+            (1203, 1202, true, "on the donor dinucleotide's inner edge"),
+            (2000, 1999, true, "on the intron's last base"),
+            (
+                1998,
+                1997,
+                true,
+                "on the acceptor dinucleotide's inner edge",
+            ),
+            (1600, 1599, false, "deep inside the intron"),
+        ] {
+            assert_eq!(
+                is_splice_region(&tr, start, end),
+                expected,
+                "insertion {what} ({start},{end})"
+            );
+        }
     }
 }
