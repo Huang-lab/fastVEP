@@ -779,15 +779,21 @@ fn is_gene_feature(feature_type: &str) -> bool {
 
 /// Biotype to assume for a gene record with no `biotype`/`gene_biotype`.
 ///
+/// Only reached when the file omits the attribute; every gene record in
+/// Ensembl GRCh38.115 and RefSeq GRCh38.p14 carries one, so this is the path
+/// for sparser sources rather than the common case.
+///
 /// A bare `gene` in a file that omits the attribute (NCBI) is almost always
-/// protein-coding, but the SO subtypes already say what they are: defaulting
-/// `ncRNA_gene` to protein_coding would mislabel every non-coding locus.
+/// protein-coding. Every other SO term in the `*_gene` family already names its
+/// own biotype, so dropping the suffix is both the answer and the reason:
+/// `ncRNA_gene` -> `ncRNA`, `miRNA_gene` -> `miRNA`,
+/// `transposable_element_gene` -> `transposable_element`. Defaulting those to
+/// protein_coding - which is what a fixed fallback did before they were read at
+/// all - would mislabel every non-coding locus. `pseudogene` has no `_gene`
+/// suffix and stays as it is.
 fn default_gene_biotype(feature_type: &str) -> String {
     match feature_type {
         "gene" => "protein_coding".to_string(),
-        "ncRNA_gene" => "ncRNA".to_string(),
-        // `miRNA_gene` -> `miRNA`; `pseudogene` has no `_gene` suffix and
-        // stays as-is.
         t => t.strip_suffix("_gene").unwrap_or(t).to_string(),
     }
 }
@@ -1083,6 +1089,11 @@ NC_000001.11\tRefSeq\tCDS\t1000\t1300\t.\t+\t0\tID=cds-NP_000001.1;Parent=gene-T
         assert_eq!(default_gene_biotype("pseudogene"), "pseudogene");
         assert_eq!(default_gene_biotype("ncRNA_gene"), "ncRNA");
         assert_eq!(default_gene_biotype("miRNA_gene"), "miRNA");
+        // FlyBase and SGD, where this family is not hypothetical.
+        assert_eq!(
+            default_gene_biotype("transposable_element_gene"),
+            "transposable_element"
+        );
 
         let gff = "##gff-version 3
 1\thavana\tncRNA_gene\t1000\t2000\t.\t+\t.\tID=gene:ENSG00000000001;Name=NCG
