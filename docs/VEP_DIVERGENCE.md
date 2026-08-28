@@ -36,7 +36,7 @@ Reproduce with `analysis/acmg_benchmark/` for the variant set and the harness de
 
 ## Part 1 - deliberate divergences
 
-Four. Each is a case where Ensembl's output is either not valid HGVS or contradicts what the
+Six. Each is a case where Ensembl's output is either not valid HGVS, or contradicts what the
 sequence says, and where matching it would degrade a clinical call.
 
 ### 1. A frameshift that introduces a premature stop is HIGH, not a moderate in-frame insertion
@@ -112,6 +112,73 @@ the exonic base that follows it instead: `c.2319-944del`.
 
 The anchor number itself is not independently verified - only that Ensembl's form is malformed.
 
+### 5. A frameshift's terminator distance counts to the stop the frameshift creates
+
+**373 `HGVSp` rows** - the largest `HGVSp` divergence of all.
+
+`p.Leu151ProfsTer39` says the new reading frame runs 39 residues from the first changed one before
+it hits a stop. That is a fact about the edited protein, so it can be computed rather than argued
+about.
+
+Ten of these rows were checked by rebuilding the CDS from the Ensembl 115 GFF3 and FASTA, applying
+the variant and translating, independently of either tool. The reconstruction is corroborated by the
+reference protein lengths it produced - TP53 393, FLCN 579, SLC17A5 495, MPV17 176, NRIP1 1158, all
+matching UniProt.
+
+| Gene | Variant | Computed | fastVEP | Ensembl VEP 115.1 |
+|---|---|---:|---:|---:|
+| MPV17 | `c.451dup` | **39** | 39 | 50 |
+| NRIP1 | `c.3465_3468del` | **15** | 15 | 6 |
+| GSS | `c.1295_1296del` | **62** | 62 | 49 |
+| CNGB3 | `c.2085del` | **134** | 134 | 118 |
+| DYM | `c.2043del` | **94** | 94 | 81 |
+| TP53 | `p.Asp393Thrfs` | **29** | 29 | 89 |
+| ARSA | `p.Arg498Profs` | **76** | 76 | 21 |
+| SLC17A5 | `p.Thr448Profs` | **54** | 54 | 114 |
+| FLCN | `p.Ala541Cysfs` | **61** | 61 | 60 |
+| RHCE region | `p.Pro573Leufs` | **108** | 108 | 197 |
+
+fastVEP matched on all ten, over differences of 1 to 89 and in both directions - Ensembl is shorter
+on roughly two thirds of the rows and longer on the rest, and it is wrong either way.
+
+In every one of the ten the new stop lies **past the reference protein's own terminator**, which is
+the whole difficulty: the frameshift runs off the end of the annotated CDS and the stop that ends it
+is in what was the 3' UTR. fastVEP translates a CDS that continues downstream for exactly that
+reason. Ensembl's `_get_alternate_cds` builds its edited CDS from 3'-shifted coordinates while
+taking consequences from unshifted ones, and the two do not line up.
+
+**This entry previously sat in Part 2, as a fastVEP defect.** It was recorded there from reading
+Ensembl's source rather than from computing the answer, and computing it reverses the verdict.
+
+### 6. A frame with no stop in the transcript is reported as having none
+
+**62 `HGVSp` rows.** Ensembl reports no stop on 43 of them and fastVEP on 19, so this is not one
+tool being systematically more cautious.
+
+Checked the same way as divergence 5 - rebuild the CDS, apply the variant, translate - on seven
+rows, spanning both directions:
+
+| Gene | Ensembl VEP 115.1 | fastVEP | Computed |
+|---|---|---|---|
+| ITGA2B `p.Ter1040Trpfs` | `Ter13` | `Ter?` | **no stop in 62 UTR codons** |
+| CLN3 `p.Gly37Valfs` | `Ter43` | `Ter?` | **no stop** |
+| BRCA1 `p.Cys44Leufs` | `Ter26` | `Ter?` | **no stop** |
+| RUNX1 `p.Arg380Profs` | `Ter62` | `Ter?` | **no stop** |
+| FBN1 `p.Arg283Serfs` | `Ter71` | `Ter?` | **no stop** |
+| CARS2 `p.Val497Glyfs` | `Ter?` | `Ter101` | **101** |
+| NTHL1 `p.Ter305Metfs` | `Ter?` | `Ter16` | **16** |
+
+fastVEP was right on all seven. Where it writes `Ter?` the shifted frame really does run to the end
+of the transcript without a stop, and where it names a distance the stop is there.
+
+The ITGA2B reconstruction is worth stating because it is the strongest of the five: the reference
+protein comes out at 1,039 residues starting `MARALCPL`, residue 1040 translates to Trp under the
+edit - which is what *both* tools call it - and the remaining 62 codons of 3' UTR contain no stop in
+that frame.
+
+NTHL1 also settles a second disagreement in the same string: the terminator becomes Met, as fastVEP
+writes, not Lys.
+
 ---
 
 ## Part 2 - gaps, where Ensembl is right
@@ -149,14 +216,19 @@ under-shifting on forward-strand transcripts and over-shifting on reverse-strand
 
 | Gap | Rows | What it looks like |
 |---|---:|---|
-| Frameshift terminator distance | 415 | VEP `p.Ser318PhefsTer181`, fastVEP `p.Ser318PhefsTer282`. Ensembl builds the edited CDS from *3'-shifted* coordinates for HGVS (`_get_alternate_cds`) while computing consequences from unshifted ones; fastVEP uses unshifted for both |
 | fastVEP emits an HGVSp where VEP emits none | 113 | mostly spans with one end outside the CDS |
-| VEP emits one where fastVEP does not | 23 | |
-| First changed residue of a frameshift at the annotated terminator | 46 | VEP `p.Ter309LysfsTer14`, fastVEP `p.Ter309MetfsTer16` |
+| VEP emits one where fastVEP does not | 23 | VEP `p.Glu480del` |
+| A delins naming the same replacement one residue further along | 15 | VEP `p.Thr454_Thr455delinsHisPro`, fastVEP `p.Thr455_Thr456delinsHisPro`. The protein-side twin of the exonic 3'-shift off by one above |
+| Other | 10 | VEP `p.Ter44GlnextTer20`, fastVEP `p.Gln44ext*?`; VEP `p.Met4_?1` |
 | `Amino_acids` of `X` from an ambiguous reference codon | 3 | VEP `p.Ter157=`, fastVEP `p.Xaa157=`. Which is right depends on whether the position is the terminator or genuinely unknown; unresolved |
+| A frameshift differing in its first changed residue | 1 | |
 
-The eight buckets above and the four divergences account for all 856 `HGVSp` mismatches exactly:
-415 + 137 + 113 + 101 + 46 + 23 + 18 + 3.
+These six and the five `HGVSp`-bearing divergences account for all 856 mismatches exactly:
+373 + 137 + 113 + 101 + 62 + 23 + 18 + 15 + 10 + 3 + 1.
+
+Note the shape of that list. 691 of the 856 are places fastVEP diverges on purpose and has been
+checked against the sequence; 162 are gaps, and 113 of those are simply fastVEP naming a change
+where Ensembl declines to. The `HGVSp` column is not 856 defects.
 
 ### Consequence terms
 
@@ -164,9 +236,21 @@ The eight buckets above and the four divergences account for all 856 `HGVSp` mis
 |---|---:|
 | `3_prime_UTR_variant` / `5_prime_UTR_variant` missing on a delins that spans the CDS boundary | 6 |
 | `non_coding_transcript_variant` where fastVEP says `non_coding_transcript_exon_variant`, for an insertion at an exon edge | 6 |
-| `start_lost` missing, or reported as `protein_altering_variant` | 2 |
-| `stop_retained_variant` where fastVEP says `stop_lost` | 1 |
 | `incomplete_terminal_codon_variant` missing on one boundary-spanning delins | 1 |
+
+Three rows that were in this table are not gaps, and two of them are `IMPACT` differences. Each was
+checked by rebuilding the transcript and translating it:
+
+| Variant | Ensembl VEP 115.1 | fastVEP | What the sequence says |
+|---|---|---|---|
+| TSC1 `9:132923438 GCATGGTTATCAA>AC` | `stop_retained_variant`, LOW | `stop_lost`, **HIGH** | The change covers the last four bases of the CDS, the annotated `TGA` among them. The edited frame has no stop at residue 126 and runs to 353. The stop is lost. |
+| ALDH3A2 `17:19663333 CCC>GGGCTAAAAGTACT` | `start_lost`, HIGH | `protein_altering_variant`, MODERATE | The transcript's first CDS record carries **phase 2**: the CDS begins mid-codon, 5' incomplete, and no initiator is annotated. There is no `ATG` to lose. |
+| ST3GAL5 `2:85861216 TC>T` | `frameshift_variant,start_lost` | `frameshift_variant` | Same shape - the first CDS record in transcript order carries **phase 1**. |
+
+The two `start_lost` rows are the same mistake: Ensembl treats the first codon of the CDS as the
+initiator whether or not it is one, and on a transcript whose CDS is annotated as 5' incomplete it
+is not. Declining to call `start_lost` there is the lower-impact answer, which is worth saying
+plainly - it is not a case where the cautious reading and the correct one agree.
 
 ---
 
