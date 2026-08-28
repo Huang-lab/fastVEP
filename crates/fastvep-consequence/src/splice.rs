@@ -325,6 +325,24 @@ where
     // adjacent entries bound one intron whichever way the transcript runs.
     // Reading the pair through `min`/`max` rather than sorting a copy keeps this
     // free of the per-(variant x transcript) allocation a `Vec` would cost.
+    // The pairing is order-agnostic between ascending and descending, but not
+    // against an unsorted list: two non-adjacent exons would bound an intron
+    // that does not exist, and the result is a wrong splice term rather than an
+    // error. Every other transcript accessor calls `sorted_exons()`; this one
+    // cannot without paying that allocation per (variant x transcript), so the
+    // invariant is asserted instead.
+    debug_assert!(
+        transcript
+            .exons
+            .windows(2)
+            .all(|p| p[0].start <= p[1].start)
+            || transcript
+                .exons
+                .windows(2)
+                .all(|p| p[0].start >= p[1].start),
+        "exons of {} are neither ascending nor descending",
+        transcript.stable_id
+    );
     for pair in transcript.exons.windows(2) {
         let (intron_start, intron_end) = (
             pair[0].end.min(pair[1].end) + 1,

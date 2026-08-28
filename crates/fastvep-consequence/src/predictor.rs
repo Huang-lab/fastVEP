@@ -166,17 +166,22 @@ pub type DisplayPair = Option<(String, String)>;
 
 /// What a change inside the CDS resolves to.
 ///
-/// `additional` carries a second SO term for the changes that earn two. Ensembl
-/// evaluates every predicate in `VariationEffect.pm` independently and keeps all
-/// that hold, so one delins can be both `stop_gained` and
-/// `protein_altering_variant` - 164 of the 1,803 coding rows the ClinVar 2-star
-/// in-frame delins produce are exactly that pair. One slot rather than a `Vec`
-/// because this value is built once per (variant x transcript x allele) and a
-/// `Vec` there is an allocation on the hot path; no shape in that set yields
-/// more than two coding terms.
+/// `additional` carries every SO term beyond the first. Ensembl evaluates each
+/// predicate in `VariationEffect.pm` independently and keeps all that hold, so
+/// one delins can be both `stop_gained` and `protein_altering_variant` - 164 of
+/// the 1,803 coding rows the ClinVar 2-star in-frame delins produce are exactly
+/// that pair.
+///
+/// This was one `Option` slot, on the stated grounds that no shape yields more
+/// than two coding terms. Three do: a change that replaces the initiator and
+/// both introduces a stop and shifts the frame fires `stop_gained`,
+/// `frameshift_variant` *and* `start_lost`, and `start_lost` - the lowest-ranked
+/// of the three - was dropped without a diagnostic. The `Vec` costs nothing
+/// extra on the hot path because `terms_for_window` already builds one and this
+/// now takes ownership of it rather than copying out of it.
 pub struct CodingChange {
     pub consequence: Consequence,
-    pub additional: Option<Consequence>,
+    pub additional: Vec<Consequence>,
     pub amino_acids: DisplayPair,
     pub codons: DisplayPair,
 }
@@ -226,7 +231,7 @@ impl CodingChange {
     fn single(consequence: Consequence, amino_acids: DisplayPair, codons: DisplayPair) -> Self {
         Self {
             consequence,
-            additional: None,
+            additional: Vec::new(),
             amino_acids,
             codons,
         }
@@ -523,9 +528,7 @@ impl ConsequencePredictor {
                 );
                 if let Some(change) = coding_conseq {
                     consequences.push(change.consequence);
-                    if let Some(extra) = change.additional {
-                        consequences.push(extra);
-                    }
+                    consequences.extend(change.additional);
                     amino_acids = change.amino_acids;
                     codons = change.codons;
                 } else {
@@ -675,7 +678,7 @@ impl ConsequencePredictor {
                 });
             return partial_codon.then_some(CodingChange {
                 consequence: Consequence::CodingSequenceVariant,
-                additional: Some(Consequence::IncompleteTerminalCodonVariant),
+                additional: vec![Consequence::IncompleteTerminalCodonVariant],
                 amino_acids: None,
                 codons: None,
             });
@@ -911,16 +914,17 @@ impl ConsequencePredictor {
         };
         let amino_acids = Some((shown(&w.ref_aas), shown(&w.alt_aas)));
         let codons = Some((w.ref_codons.clone(), w.alt_codons.clone()));
-        match terms.first() {
-            Some(&first) => CodingChange {
-                consequence: first,
-                additional: terms.get(1).copied(),
-                amino_acids,
-                codons,
-            },
+        if terms.is_empty() {
             // Nothing held: a length change whose peptides Ensembl cannot
             // classify is `coding_sequence_variant`, which the caller supplies.
-            None => CodingChange::single(Consequence::CodingSequenceVariant, amino_acids, codons),
+            return CodingChange::single(Consequence::CodingSequenceVariant, amino_acids, codons);
+        }
+        let first = terms.remove(0);
+        CodingChange {
+            consequence: first,
+            additional: terms,
+            amino_acids,
+            codons,
         }
     }
 
@@ -1587,6 +1591,40 @@ mod tests {
             gencode_primary: false,
             flags: vec![],
             codon_table_start_phase: 0,
+        }
+    }
+
+    /// Nine predicates run over the codon window and every one that holds is a
+    /// term Ensembl would report. Keeping two dropped the third silently.
+    ///
+    /// A change that replaces the initiator, introduces a stop and shifts the
+    /// frame holds `stop_gained`, `frameshift_variant` and `start_lost` at once.
+    /// `start_lost` ranks below the other two, so it was the one lost.
+    ///
+    /// PVS1 happens to be unaffected here - `NonsenseOrFrameshift` outranks
+    /// `StartLost` when both are present, so the criterion takes the same branch
+    /// either way - but the reported consequence set was still short a term
+    /// Ensembl's model holds.
+    #[test]
+    fn every_coding_term_that_holds_is_reported() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_coding_transcript();
+        // CDS 1-3 is the initiator.
+        let pos = GenomicPosition::new("chr1", 1050, 1052, Strand::Forward);
+        let result = predictor.predict(
+            &pos,
+            &Allele::from_str("ATG"),
+            &[Allele::from_str("TAAA")],
+            &[&tr],
+            None,
+        );
+        let got = &result.transcript_consequences[0].allele_consequences[0].consequences;
+        for term in [
+            Consequence::StopGained,
+            Consequence::FrameshiftVariant,
+            Consequence::StartLost,
+        ] {
+            assert!(got.contains(&term), "{term:?} missing from {got:?}");
         }
     }
 
