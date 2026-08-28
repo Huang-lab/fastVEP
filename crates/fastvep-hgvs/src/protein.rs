@@ -283,6 +283,19 @@ pub fn hgvsp_inframe_indel(
         protein_start
     };
     let prefix = format!("{}:p.", protein_id);
+
+    // A window whose residues all survive unchanged is synonymous, and HGVS
+    // names the whole span it covers: `p.Leu346_Leu347=`. Ensembl writes
+    // `p.LeuLeu346=` - two three-letter codes sharing one position, which is not
+    // a form HGVS defines - and reading one residue of the pair gave
+    // `p.Leu347=`, which names the second of two on a reverse-strand transcript
+    // and the first on a forward one. 137 rows over a 6,600-variant ClinVar
+    // sample; neither tool agreed with the other and neither was well formed.
+    if !original_ref.is_empty() && original_ref == original_alt {
+        let lo = protein_start.min(protein_end);
+        return Some(format!("{}{}=", prefix, residue_span(lo, &original_ref)));
+    }
+
     let fallback = || unshifted_description(&prefix, protein_start, &original_ref, &original_alt);
 
     // Transcript::peptide runs to cdna_coding_end, so it carries the terminator
