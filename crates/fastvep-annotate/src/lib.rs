@@ -2121,7 +2121,9 @@ mod tests {
             "premise: should be an in-frame insertion, got {:?}",
             tc["consequence_terms"]
         );
-        assert_eq!(tc["amino_acids"], serde_json::json!("R/RR"));
+        // See the note in the two-codon test: a codon-aligned insertion has no
+        // reference codon, so the reference side is `-`.
+        assert_eq!(tc["amino_acids"], serde_json::json!("-/R"));
         assert_eq!(
             tc["hgvsp"],
             serde_json::json!("ENSP_ANCHOR:p.Arg3dup"),
@@ -2148,7 +2150,12 @@ mod tests {
         );
 
         let tc = annotate_one(tr, 62, "G", "GCGGAAG");
-        assert_eq!(tc["amino_acids"], serde_json::json!("E/RKE"));
+        // `-/RK`, not `E/RKE`: an insertion that falls exactly on a codon
+        // boundary replaces no codon, so Ensembl's window is empty on the
+        // reference side and holds only the inserted codons on the alternate.
+        // This used to read `E/RKE`, which repeats the flanking residue on both
+        // sides of a change that does not touch it.
+        assert_eq!(tc["amino_acids"], serde_json::json!("-/RK"));
         assert_eq!(
             tc["hgvsp"],
             serde_json::json!("ENSP_ANCHOR:p.Arg3_Lys4dup"),
@@ -2403,7 +2410,8 @@ mod tests {
             "expected inframe_insertion, got: {:?}",
             terms
         );
-        assert_eq!(tc["amino_acids"], serde_json::json!("R/RR"));
+        // See the note in `hgvsp_inframe_insertion_of_two_codons_is_a_two_residue_dup`.
+        assert_eq!(tc["amino_acids"], serde_json::json!("-/R"));
 
         assert_eq!(
             tc["hgvsp"],
