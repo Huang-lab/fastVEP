@@ -90,6 +90,71 @@ pub fn convert_ins_to_dup_range_noncoding(
     }
 }
 
+/// A window of reference the shift walks through, refilled in blocks rather than
+/// fetched a base at a time.
+///
+/// The walk used to call `fetch_sequence` once per base, and twice per base for
+/// a deletion, each returning an owned `Vec` - so a variant sliding 4,000 bases
+/// down a repeat cost 4,000 heap allocations, or 8,000 as a deletion, once per
+/// (variant x transcript x allele).
+///
+/// The block **grows**, and that is the point: almost every shift stops within a
+/// base or two, so a window that opened at its full size would read and copy
+/// hundreds of bases to answer two questions - work done before knowing it is
+/// needed, which measured 11 % slower over a real indel-only callset than the
+/// per-base reads it replaced. Starting small and doubling keeps the common case
+/// at one short read and still collapses a long walk to a handful.
+struct RefWindow<'a> {
+    provider: &'a dyn SequenceProvider,
+    chrom: &'a str,
+    /// 1-based genomic position of `bases[0]`. Zero until the first fill.
+    origin: u64,
+    bases: Vec<u8>,
+    next_block: u64,
+}
+
+impl<'a> RefWindow<'a> {
+    /// Enough for a shift that stops immediately, which is nearly all of them.
+    const FIRST_BLOCK: u64 = 16;
+    /// Past this a walk is in a long repeat and the reads are already amortised.
+    const MAX_BLOCK: u64 = 1024;
+
+    fn new(provider: &'a dyn SequenceProvider, chrom: &'a str) -> Self {
+        Self {
+            provider,
+            chrom,
+            origin: 0,
+            bases: Vec::new(),
+            next_block: Self::FIRST_BLOCK,
+        }
+    }
+
+    /// The base at `pos`, uppercased, or `None` past the contig.
+    fn base(&mut self, pos: u64) -> Option<u8> {
+        if pos == 0 {
+            return None;
+        }
+        if self.origin == 0 || pos < self.origin || pos >= self.origin + self.bases.len() as u64 {
+            let block = self.next_block;
+            self.next_block = (block * 2).min(Self::MAX_BLOCK);
+            // Centre the block on the request so a walk in either direction has
+            // room; the caller's direction is not known here.
+            let origin = pos.saturating_sub(block / 2).max(1);
+            self.bases = self
+                .provider
+                .fetch_sequence_slice(self.chrom, origin, origin + block - 1)
+                .ok()?;
+            self.origin = origin;
+            if self.bases.is_empty() {
+                return None;
+            }
+        }
+        self.bases
+            .get((pos - self.origin) as usize)
+            .map(|b| b.to_ascii_uppercase())
+    }
+}
+
 /// 3' shift an intronic indel along the transcript direction.
 ///
 /// HGVS requires variants to be described at the most 3' position.
@@ -115,102 +180,79 @@ pub fn three_prime_shift_intronic(
     use fastvep_core::Allele;
 
     match (ref_allele, alt_allele) {
-        // Deletion: shift the deleted bases toward 3' end
+        // A deletion slides 3' while the base past its end repeats the base at
+        // its start, which leaves the deleted sequence unchanged.
+        //
+        // The two cursors sit a whole deletion apart, so they get a window each:
+        // sharing one would refetch on every step of any deletion longer than a
+        // block, which is worse than the per-base reads this replaced.
         (Allele::Sequence(ref_bases), Allele::Deletion) if !ref_bases.is_empty() => {
-            let mut s = start;
-            let mut e = end;
-
+            let (mut s, mut e) = (start, end);
+            let mut ahead = RefWindow::new(seq_provider, chrom);
+            let mut behind = RefWindow::new(seq_provider, chrom);
             match strand {
                 fastvep_core::Strand::Forward => loop {
-                    let next_pos = e + 1;
-                    if next_pos > intron_genomic_end {
+                    let next = e + 1;
+                    if next > intron_genomic_end {
                         break;
                     }
-                    let next_base = match seq_provider.fetch_sequence(chrom, next_pos, next_pos) {
-                        Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                    match (ahead.base(next), behind.base(s)) {
+                        (Some(a), Some(b)) if a == b => {
+                            s += 1;
+                            e += 1;
+                        }
                         _ => break,
-                    };
-                    let first_base = match seq_provider.fetch_sequence(chrom, s, s) {
-                        Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                        _ => break,
-                    };
-                    if next_base == first_base {
-                        s += 1;
-                        e += 1;
-                    } else {
-                        break;
                     }
                 },
                 fastvep_core::Strand::Reverse => loop {
                     if s == 0 || s - 1 < intron_genomic_start {
                         break;
                     }
-                    let prev_pos = s - 1;
-                    let prev_base = match seq_provider.fetch_sequence(chrom, prev_pos, prev_pos) {
-                        Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
+                    match (ahead.base(s - 1), behind.base(e)) {
+                        (Some(a), Some(b)) if a == b => {
+                            s -= 1;
+                            e -= 1;
+                        }
                         _ => break,
-                    };
-                    let last_base = match seq_provider.fetch_sequence(chrom, e, e) {
-                        Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                        _ => break,
-                    };
-                    if prev_base == last_base {
-                        s -= 1;
-                        e -= 1;
-                    } else {
-                        break;
                     }
                 },
             }
             (s, e)
         }
-        // Insertion/dup: shift toward 3' end using the actual inserted bases
+        // An insertion slides over a base that repeats the next base of the
+        // inserted sequence, which rotates the sequence by one each step.
         (Allele::Deletion, Allele::Sequence(ins_bases)) if !ins_bases.is_empty() => {
             let ins_len = ins_bases.len();
             let mut pos = start;
-            let genomic_ins: Vec<u8> = ins_bases.iter().map(|b| b.to_ascii_uppercase()).collect();
-
+            let mut shift = 0usize;
+            let mut window = RefWindow::new(seq_provider, chrom);
             match strand {
-                fastvep_core::Strand::Forward => {
-                    let mut shift_count = 0u64;
-                    loop {
-                        if pos > intron_genomic_end {
-                            break;
-                        }
-                        let check_base = match seq_provider.fetch_sequence(chrom, pos, pos) {
-                            Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                            _ => break,
-                        };
-                        let idx = (shift_count as usize) % ins_len;
-                        if check_base == genomic_ins[idx] {
+                fastvep_core::Strand::Forward => loop {
+                    if pos > intron_genomic_end {
+                        break;
+                    }
+                    let expected = ins_bases[shift % ins_len].to_ascii_uppercase();
+                    match window.base(pos) {
+                        Some(b) if b == expected => {
                             pos += 1;
-                            shift_count += 1;
-                        } else {
-                            break;
+                            shift += 1;
                         }
+                        _ => break,
                     }
-                }
-                fastvep_core::Strand::Reverse => {
-                    let mut shift_count = 0u64;
-                    loop {
-                        if pos == 0 || pos - 1 < intron_genomic_start {
-                            break;
-                        }
-                        let check_pos = pos - 1;
-                        let check_base =
-                            match seq_provider.fetch_sequence(chrom, check_pos, check_pos) {
-                                Ok(seq) if seq.len() == 1 => seq[0].to_ascii_uppercase(),
-                                _ => break,
-                            };
-                        let idx = ins_len - 1 - (shift_count as usize % ins_len);
-                        if check_base == genomic_ins[idx] {
+                },
+                fastvep_core::Strand::Reverse => loop {
+                    if pos == 0 || pos - 1 < intron_genomic_start {
+                        break;
+                    }
+                    let expected = ins_bases[ins_len - 1 - (shift % ins_len)].to_ascii_uppercase();
+                    match window.base(pos - 1) {
+                        Some(b) if b == expected => {
                             pos -= 1;
-                            shift_count += 1;
-                        } else {
-                            break;
+                            shift += 1;
                         }
+                        _ => break,
                     }
-                }
+                },
             }
             (pos, pos.saturating_sub(1))
         }

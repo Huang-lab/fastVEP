@@ -218,11 +218,27 @@ coding consequence at all, against 45.2 % in the stratified sample.
 genome-wide against 98.82 % on the ClinVar sample, and **87.0 %** on insertion rows, because deep
 intronic repeats are where a WGS callset's indels live and that was exactly the failing case.
 
-Of the 148 rows left, **108 come from multi-allelic VCF records** (`TAA>TA,T`), where the shared
-first base is stripped across all alleles but each allele is not then trimmed on its own, so
-`ACAC>AC` is described as a four-base deletion rather than a two-base one. That is a variant-parsing
-gap rather than an HGVS one, it changes the consequence as well as the name, and it is not fixed
-here.
+Most of the 148 rows left come from **multi-allelic VCF records** (`TAA>TA,T`), which are 1.18 % of
+this callset. The shared first base is stripped across all alleles, but each allele is not then
+trimmed against the reference on its own, so `ACAC>AC` stays a four-base replacement where it is a
+two-base deletion.
+
+That is a variant-parsing gap rather than an HGVS one, and it reaches further than the name. Written
+three ways at the same site, the same 5-base deletion comes out:
+
+| VCF | Ensembl VEP 115.1 | fastVEP |
+|---|---|---|
+| `GAAGAA>G` | `-`, `frameshift_variant`, `c.1364_1368del` | `-`, `frameshift_variant`, `c.1365_1369del` |
+| `GAAGAAA>GA` | `-`, `frameshift_variant,splice_region_variant`, `c.1364_1368del` | `A`, `frameshift_variant,splice_region_variant`, `c.1361_1366delinsA` |
+
+VEP trims the shared suffix and reports the allele as a clean deletion; fastVEP carries the extra
+base, which widens the span by one, turns the `del` into a `delins`, and reports `A` where VEP
+reports `-`. A comparison keyed on the allele does not even line those rows up.
+
+Neither dataset here contains a *single*-alt record needing that trim - both are already
+parsimonious - so the gap is reachable only through multi-allelic sites and through callers that
+emit non-minimal records. Fixing it means carrying a position per allele rather than one per site,
+which the variant representation does not do today. It is not fixed here.
 
 ## The earlier divergence, still standing
 

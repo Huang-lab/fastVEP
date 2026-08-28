@@ -700,8 +700,9 @@ of the ClinVar 2-star+ set it is drawn from, so these are the rates on the shape
 The same comparison over a systematic 1-in-200 sample of the GIAB HG002 WGS callset - 20,241
 variants, **122,317 matched rows** - is the other end of that range: the consequence set and
 `IMPACT` agree on **100.000 %** of rows, `HGVSp` on **99.985 %**, `HGVSc` on **99.879 %**.
-108 of the 148 remaining `HGVSc` rows come from multi-allelic VCF records, whose per-allele
-trimming is a known gap.
+Most of the 148 remaining `HGVSc` rows come from multi-allelic VCF records (1.18% of this
+callset), whose per-allele trimming against the reference is a known gap - see
+[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
 
 **HGVSp under in-frame indels.**
 Protein-level normalisation is additionally checked on 400 ClinVar in-frame deletions run through
