@@ -289,7 +289,14 @@ fn annotate_variant(
                                             tr.spliced_seq.as_deref(),
                                             tr.codon_table_start_phase,
                                         );
-                                    } else if ac.intron.is_some() {
+                                    } else {
+                                        // Not "is this intronic": a variant with
+                                        // one end in an exon and the other in an
+                                        // intron has no exonic cDNA pair, and
+                                        // `intron_at` reads its first base only.
+                                        // `intronic_or_exonic_cdna` returns
+                                        // `None` for anything it cannot place,
+                                        // which is the real guard.
                                         // Intronic variant: offset notation
                                         // Note: intronic HGVS uses original coding_start (no phase adjustment)
                                         // Apply HGVS 3' normalization for intronic indels
@@ -363,10 +370,10 @@ fn annotate_variant(
                                         } else {
                                             shifted_start
                                         };
-                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(hgvs_pos) {
+                                        if let Some((cdna_pos, offset)) = fastvep_annotate::intronic_or_exonic_cdna(tr, hgvs_pos) {
                                             // For multi-base variants, compute end position too
                                             let (end_cdna, end_offset) = if shifted_start != shifted_end && hgvs_pos == shifted_start {
-                                                tr.genomic_to_intronic_cdna(shifted_end)
+                                                fastvep_annotate::intronic_or_exonic_cdna(tr, shifted_end)
                                                     .map(|(c, o)| (Some(c), Some(o)))
                                                     .unwrap_or((None, None))
                                             } else {
@@ -436,7 +443,10 @@ fn annotate_variant(
                                                                 };
                                                                 // Use shifted_dup (start of dup region) for offset computation
                                                                 if let Some((dup_cdna, dup_offset)) = tr.genomic_to_intronic_cdna(shifted_dup) {
-                                                                    hgvsc = convert_ins_to_dup(h, dup_offset, ins_len, dup_cdna, coding_start, tr.cdna_coding_end);
+                                                                    // `None` means the duplicated block crosses the exon
+                                                                    // boundary and cannot be written from one anchor;
+                                                                    // the insertion notation already there is correct.
+                                                                    hgvsc = convert_ins_to_dup(h, dup_offset, ins_len, dup_cdna, coding_start, tr.cdna_coding_end).or_else(|| hgvsc.clone());
                                                                 }
                                                             }
                                                         }
@@ -457,7 +467,14 @@ fn annotate_variant(
                                             &hgvs_alt,
                                             tr.spliced_seq.as_deref(),
                                         );
-                                    } else if ac.intron.is_some() {
+                                    } else {
+                                        // Not "is this intronic": a variant with
+                                        // one end in an exon and the other in an
+                                        // intron has no exonic cDNA pair, and
+                                        // `intron_at` reads its first base only.
+                                        // `intronic_or_exonic_cdna` returns
+                                        // `None` for anything it cannot place,
+                                        // which is the real guard.
                                         // Apply 3' normalization for non-coding intronic indels
                                         let (nc_shifted_start, nc_shifted_end) = if let Some(sp) = seq_provider {
                                             let is_indel = matches!((&hgvs_ref, &hgvs_alt),
@@ -506,9 +523,9 @@ fn annotate_variant(
                                             hgvs_alt.clone()
                                         };
 
-                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(nc_shifted_start) {
+                                        if let Some((cdna_pos, offset)) = fastvep_annotate::intronic_or_exonic_cdna(tr, nc_shifted_start) {
                                             let (end_cdna, end_offset) = if nc_shifted_start != nc_shifted_end {
-                                                tr.genomic_to_intronic_cdna(nc_shifted_end)
+                                                fastvep_annotate::intronic_or_exonic_cdna(tr, nc_shifted_end)
                                                     .map(|(c, o)| (Some(c), Some(o)))
                                                     .unwrap_or((None, None))
                                             } else {
@@ -565,7 +582,7 @@ fn annotate_variant(
                                                                     dup_base_pos
                                                                 };
                                                                 if let Some((dup_cdna, dup_offset)) = tr.genomic_to_intronic_cdna(shifted_dup) {
-                                                                    hgvsc = convert_ins_to_dup_noncoding(h, dup_offset, ins_len, dup_cdna);
+                                                                    hgvsc = convert_ins_to_dup_noncoding(h, dup_offset, ins_len, dup_cdna).or_else(|| hgvsc.clone());
                                                                 }
                                                             }
                                                         }

@@ -452,13 +452,20 @@ impl AnnotationContext {
                                                 tr.spliced_seq.as_deref(),
                                                 tr.codon_table_start_phase,
                                             );
-                                        } else if ac.intron.is_some() {
+                                        } else {
+                                            // Not "is this intronic": a variant with
+                                            // one end in an exon and the other in an
+                                            // intron has no exonic cDNA pair, and
+                                            // `intron_at` reads its first base only.
+                                            // `intronic_or_exonic_cdna` returns
+                                            // `None` for anything it cannot place,
+                                            // which is the real guard.
                                             if let Some((cdna_pos, offset)) =
-                                                tr.genomic_to_intronic_cdna(vf.position.start)
+                                                intronic_or_exonic_cdna(tr, vf.position.start)
                                             {
                                                 let (end_cdna, end_offset) =
                                                     if vf.position.start != vf.position.end {
-                                                        tr.genomic_to_intronic_cdna(vf.position.end)
+                                                        intronic_or_exonic_cdna(tr, vf.position.end)
                                                             .map(|(c, o)| (Some(c), Some(o)))
                                                             .unwrap_or((None, None))
                                                     } else {
@@ -488,13 +495,20 @@ impl AnnotationContext {
                                             &hgvs_alt,
                                             tr.spliced_seq.as_deref(),
                                         );
-                                    } else if ac.intron.is_some() {
+                                    } else {
+                                        // Not "is this intronic": a variant with
+                                        // one end in an exon and the other in an
+                                        // intron has no exonic cDNA pair, and
+                                        // `intron_at` reads its first base only.
+                                        // `intronic_or_exonic_cdna` returns
+                                        // `None` for anything it cannot place,
+                                        // which is the real guard.
                                         if let Some((cdna_pos, offset)) =
-                                            tr.genomic_to_intronic_cdna(vf.position.start)
+                                            intronic_or_exonic_cdna(tr, vf.position.start)
                                         {
                                             let (end_cdna, end_offset) =
                                                 if vf.position.start != vf.position.end {
-                                                    tr.genomic_to_intronic_cdna(vf.position.end)
+                                                    intronic_or_exonic_cdna(tr, vf.position.end)
                                                         .map(|(c, o)| (Some(c), Some(o)))
                                                         .unwrap_or((None, None))
                                                 } else {
@@ -979,6 +993,23 @@ pub fn zip_positions(start: Option<u64>, end: Option<u64>) -> Option<(u64, u64)>
         (None, Some(e)) => Some((e, e)),
         _ => None,
     }
+}
+
+/// The `(cDNA anchor, offset)` pair one genomic position maps to on a
+/// transcript, with an offset of 0 for an exonic base.
+///
+/// An indel that reaches from an exon into an intron has one end of each kind,
+/// and a span written from its intronic end alone claims the change happens
+/// where its far end does. That is not a cosmetic difference: PVS1 reads the
+/// offset off HGVSc to decide whether a splice consequence reached the
+/// canonical dinucleotide.
+pub fn intronic_or_exonic_cdna(
+    transcript: &fastvep_genome::Transcript,
+    genomic: u64,
+) -> Option<(u64, i64)> {
+    transcript
+        .genomic_to_intronic_cdna(genomic)
+        .or_else(|| transcript.genomic_to_cdna(genomic).map(|c| (c, 0)))
 }
 
 /// The CDS and everything downstream of it, indexed by CDS position.

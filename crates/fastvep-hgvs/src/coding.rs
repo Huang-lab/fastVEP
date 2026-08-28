@@ -383,6 +383,13 @@ fn intronic_coord(
     coding_start: u64,
     coding_end: Option<u64>,
 ) -> String {
+    // Offset 0 is an exonic endpoint, which is written as the anchor alone.
+    // A span can have one of each - `c.764_771+9delins…` runs from the last
+    // coding bases of an exon into the intron - and writing only its intronic
+    // end says the change happens nine bases into the intron when it starts in
+    // the exon. PVS1 reads that offset to decide whether a splice consequence
+    // reached the canonical dinucleotide, and stood itself down on 15
+    // ClinVar-pathogenic donor and acceptor deletions on the strength of it.
     let anchor = if let Some(ce) = coding_end.filter(|&ce| cdna_pos > ce) {
         format!("*{}", cdna_pos - ce)
     } else {
@@ -390,17 +397,20 @@ fn intronic_coord(
         // There is no position 0: the base before the initiator is -1.
         format!("{}", if raw <= 0 { raw - 1 } else { raw })
     };
-    if offset > 0 {
-        format!("{}+{}", anchor, offset)
-    } else {
-        format!("{}{}", anchor, offset)
+    match offset.cmp(&0) {
+        std::cmp::Ordering::Greater => format!("{}+{}", anchor, offset),
+        std::cmp::Ordering::Less => format!("{}{}", anchor, offset),
+        std::cmp::Ordering::Equal => anchor,
     }
 }
 
-/// Generate HGVSc for a variant spanning intronic positions, in `c.` numbering.
+/// Generate HGVSc for a variant reaching into an intron, in `c.` numbering.
 ///
-/// The end position is optional: a single-base change, and any change the
-/// caller could not map at both ends, is written from the start alone.
+/// Each end is a `(cDNA anchor, offset)` pair, and an offset of 0 marks an
+/// exonic end - the two are not interchangeable, so a span with one of each is
+/// written `c.764_771+9`. The end pair is optional: a single-base change, and
+/// any change the caller could not map at both ends, is written from the start
+/// alone.
 // Each argument is an independent coordinate or allele; grouping them into a
 // struct would only move the argument list to the call site.
 #[allow(clippy::too_many_arguments)]
@@ -570,12 +580,11 @@ pub fn hgvsc_noncoding_intronic_range(
     let prefix = format!("{}:n.", transcript_id);
     let start = (nearest_exon_cdna_pos, intron_offset);
     let end = end_cdna_pos.zip(end_intron_offset);
-    let show = |(c, o): (u64, i64)| {
-        if o > 0 {
-            format!("{}+{}", c, o)
-        } else {
-            format!("{}{}", c, o)
-        }
+    let show = |(c, o): (u64, i64)| match o.cmp(&0) {
+        // Offset 0 is an exonic endpoint; see `intronic_coord`.
+        std::cmp::Ordering::Greater => format!("{}+{}", c, o),
+        std::cmp::Ordering::Less => format!("{}{}", c, o),
+        std::cmp::Ordering::Equal => format!("{}", c),
     };
     // Transcript order is `(anchor, offset)` ascending; the caller's pair is
     // strand-ordered, so on the reverse strand it arrives the other way round.

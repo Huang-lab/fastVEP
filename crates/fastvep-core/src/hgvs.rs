@@ -27,24 +27,27 @@
 /// ATM, MLH1 and others - every one of them a deletion or delins that removes
 /// part of the donor or acceptor site.
 pub fn parse_intronic_offset(hgvs_c: &str) -> Option<i64> {
-    // A range's endpoints are separated by `_`. Anything else is one position,
-    // and the scan below reduces to reading its single offset token.
-    if let Some((lhs, rhs)) = hgvs_c.split_once('_') {
-        let (a, b) = (offset_token(lhs), offset_token(rhs));
-        return match (a, b) {
-            // One end exonic, the other intronic: the span crosses the boundary,
-            // so the nearest intronic base it covers is the first one.
-            (None, Some(o)) | (Some(o), None) => Some(o.signum()),
-            (Some(x), Some(y)) if x.signum() != y.signum() => {
-                // Opposite sides of the same intron: the span covers the
-                // interior between them, and neither end reaches past the other.
-                Some(if x.abs() <= y.abs() { x } else { y })
-            }
-            (Some(x), Some(y)) => Some(if x.abs() <= y.abs() { x } else { y }),
-            (None, None) => None,
-        };
+    // A range's endpoints are separated by `_`, but so are the parts of a RefSeq
+    // accession, so look for it only after the numbering prefix - `NM_000059.4`
+    // would otherwise split into `NM` and everything else.
+    let coords = match hgvs_c.find("c.").or_else(|| hgvs_c.find("n.")) {
+        Some(i) => &hgvs_c[i + 2..],
+        None => hgvs_c,
+    };
+    let Some((lhs, rhs)) = coords.split_once('_') else {
+        return offset_token(coords);
+    };
+    match (offset_token(lhs), offset_token(rhs)) {
+        (None, None) => None,
+        // One end exonic, the other intronic: the span runs continuously from
+        // the exon into the intron, so the nearest intronic base it covers is
+        // the first one, whatever its far endpoint reads.
+        (None, Some(o)) | (Some(o), None) => Some(o.signum()),
+        // Two intronic ends, on the same side or on opposite sides of the same
+        // intron: the span covers what lies between them and no more, so the
+        // endpoint nearer a boundary is the nearest base it reaches.
+        (Some(x), Some(y)) => Some(if x.abs() <= y.abs() { x } else { y }),
     }
-    offset_token(hgvs_c)
 }
 
 /// The single `+N` / `-N` offset token in one HGVS coordinate, smallest first
@@ -151,5 +154,15 @@ mod span_tests {
         // Wholly exonic, either as a point or as a span.
         assert_eq!(parse_intronic_offset("c.5098G>C"), None);
         assert_eq!(parse_intronic_offset("c.190_210del"), None);
+        // A RefSeq accession carries its own underscore, which is not a range.
+        assert_eq!(
+            parse_intronic_offset("NM_000059.4:c.4001+12_4001+15del"),
+            Some(12)
+        );
+        assert_eq!(
+            parse_intronic_offset("NM_000059.4:c.764_771+9delinsTT"),
+            Some(1)
+        );
+        assert_eq!(parse_intronic_offset("NM_000059.4:c.5098G>C"), None);
     }
 }
