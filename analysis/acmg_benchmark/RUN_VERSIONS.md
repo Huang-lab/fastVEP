@@ -946,9 +946,12 @@ protein.
 
 ### Review queue
 
-Three buckets are written up for the next medical-genetics round in
-[`results/v26/MD_REVIEW.md`](results/v26/MD_REVIEW.md), with the full table in
-`call_changes_v23_to_v26.tsv`:
+Two documents. [`results/v26/MD_REVIEW.md`](results/v26/MD_REVIEW.md) is the v23-to-v26 delta with
+the full table in `call_changes_v23_to_v26.tsv`.
+[`results/v26/MD_REVIEW_ROUND6.md`](results/v26/MD_REVIEW_ROUND6.md) is the standalone note for the
+reviewer, covering everything since v20 - round 5's table went out unmarked, so its 59 rows are
+carried forward - with `discordant_64_round6.xlsx` built by
+`scripts/07_build_round6_table.py`. Three buckets need her:
 
 - **Three insertions at an exon's last base** (MSH6 ×2, DSP) that are frameshifts where the
   VCF puts them and intronic duplications after the 3'-shift. ClinVar calls all three benign.
