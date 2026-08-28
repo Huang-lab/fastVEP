@@ -10,8 +10,8 @@
 mod hgvs_normalize;
 
 pub use hgvs_normalize::{
-    convert_ins_to_dup, convert_ins_to_dup_noncoding, convert_ins_to_dup_range,
-    convert_ins_to_dup_range_noncoding, three_prime_shift_intronic,
+    convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvsc_intronic_shifted,
+    intronic_dup_span, intronic_ins_as_dup, three_prime_shift_intronic,
 };
 
 use anyhow::{Context, Result};
@@ -457,32 +457,25 @@ impl AnnotationContext {
                                             // one end in an exon and the other in an
                                             // intron has no exonic cDNA pair, and
                                             // `intron_at` reads its first base only.
-                                            // `intronic_or_exonic_cdna` returns
+                                            // `hgvsc_intronic_shifted` returns
                                             // `None` for anything it cannot place,
                                             // which is the real guard.
-                                            if let Some((cdna_pos, offset)) =
-                                                intronic_or_exonic_cdna(tr, vf.position.start)
-                                            {
-                                                let (end_cdna, end_offset) =
-                                                    if vf.position.start != vf.position.end {
-                                                        intronic_or_exonic_cdna(tr, vf.position.end)
-                                                            .map(|(c, o)| (Some(c), Some(o)))
-                                                            .unwrap_or((None, None))
-                                                    } else {
-                                                        (None, None)
-                                                    };
-                                                ann.hgvsc = fastvep_hgvs::hgvsc_intronic_range(
-                                                    &versioned_tid,
-                                                    cdna_pos,
-                                                    offset,
-                                                    end_cdna,
-                                                    end_offset,
-                                                    &hgvs_ref,
-                                                    &hgvs_alt,
-                                                    coding_start,
-                                                    tr.cdna_coding_end,
-                                                );
-                                            }
+                                            ann.hgvsc = hgvsc_intronic_shifted(
+                                                self.seq_provider
+                                                    .as_deref()
+                                                    .map(|sp| sp as &dyn SequenceProvider),
+                                                chrom,
+                                                tr,
+                                                &versioned_tid,
+                                                vf.position.start,
+                                                vf.position.end,
+                                                &vf.ref_allele,
+                                                &ac.allele,
+                                                &hgvs_ref,
+                                                &hgvs_alt,
+                                                Some(coding_start),
+                                                tr.cdna_coding_end,
+                                            );
                                         }
                                     } else if let (Some(cs), Some(ce)) =
                                         (ac.cdna_start, ac.cdna_end)
@@ -500,31 +493,25 @@ impl AnnotationContext {
                                         // one end in an exon and the other in an
                                         // intron has no exonic cDNA pair, and
                                         // `intron_at` reads its first base only.
-                                        // `intronic_or_exonic_cdna` returns
+                                        // `hgvsc_intronic_shifted` returns
                                         // `None` for anything it cannot place,
                                         // which is the real guard.
-                                        if let Some((cdna_pos, offset)) =
-                                            intronic_or_exonic_cdna(tr, vf.position.start)
-                                        {
-                                            let (end_cdna, end_offset) =
-                                                if vf.position.start != vf.position.end {
-                                                    intronic_or_exonic_cdna(tr, vf.position.end)
-                                                        .map(|(c, o)| (Some(c), Some(o)))
-                                                        .unwrap_or((None, None))
-                                                } else {
-                                                    (None, None)
-                                                };
-                                            ann.hgvsc =
-                                                fastvep_hgvs::hgvsc_noncoding_intronic_range(
-                                                    &versioned_tid,
-                                                    cdna_pos,
-                                                    offset,
-                                                    end_cdna,
-                                                    end_offset,
-                                                    &hgvs_ref,
-                                                    &hgvs_alt,
-                                                );
-                                        }
+                                        ann.hgvsc = hgvsc_intronic_shifted(
+                                            self.seq_provider
+                                                .as_deref()
+                                                .map(|sp| sp as &dyn SequenceProvider),
+                                            chrom,
+                                            tr,
+                                            &versioned_tid,
+                                            vf.position.start,
+                                            vf.position.end,
+                                            &vf.ref_allele,
+                                            &ac.allele,
+                                            &hgvs_ref,
+                                            &hgvs_alt,
+                                            None,
+                                            None,
+                                        );
                                     }
 
                                     // HGVSp

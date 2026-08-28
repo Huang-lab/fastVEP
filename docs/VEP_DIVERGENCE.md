@@ -11,6 +11,11 @@ GRCh38 Ensembl 115 GFF3 and FASTA fastVEP reads, `--hgvs --symbol --canonical`) 
 6,600-variant stratified sample of the ClinVar 2-star+ set: **150,725 matched (variant, allele,
 transcript) rows**, 72,632 of them with a coding consequence.
 
+That sample is stratified to be hard - 54.5 % of its variants are not SNVs, against 7.2 % of the
+ClinVar 2-star+ set it is drawn from - so the rates below are the rates on the shapes that
+disagree, not the rates a typical callset sees. The genome-wide section at the end gives the other
+end of that range.
+
 ## Current agreement
 
 | Field | Scope | Rows disagreeing | Agreement |
@@ -21,7 +26,7 @@ transcript) rows**, 72,632 of them with a coding consequence.
 | Splice terms | all rows | 0 | **100 %** |
 | Whole consequence set | all rows | 117 | 99.92 % |
 | `IMPACT` | all rows | 104 | 99.93 % |
-| `HGVSc` | all rows | 1,774 | 98.82 % |
+| `HGVSc` | all rows | 597 | 99.60 % |
 | `HGVSp` | all rows | 856 | 99.43 % |
 
 Reproduce with `analysis/acmg_benchmark/` for the variant set and the harness described in
@@ -118,14 +123,27 @@ is on the record.
 
 | Gap | Rows | What it looks like |
 |---|---:|---|
-| Intronic 3'-shift off by one, and the anchor side chosen for a duplication deep in a long intron | 1,238 | VEP `c.513+13_513+15dup`, fastVEP `c.513+14_513+16dup`; VEP `c.-65-166_-65-155dup`, fastVEP `c.-65-184_-65-173dup` |
-| A span crossing the exon boundary shifts differently before being named | 243 | VEP `c.2834_2844+13dup`, fastVEP `c.2845_2846insTGAGGG…` |
-| Exonic 3'-shift off by one | 210 | VEP `c.2403_2406del`, fastVEP `c.2404_2407del` |
-| A duplication at an exon edge is written as a boundary insertion | 47 | VEP `c.17430dup`, fastVEP `c.17430_17430+1insT` |
+| The shift crosses the exon boundary and the two tools land on opposite sides of it | 344 | VEP `c.732dup`, fastVEP `c.731-1_731insA`; VEP `n.1134+1del`, fastVEP `n.1135del` |
+| Both ends intronic, but a span reaching the boundary is still placed differently | 151 | VEP `c.956-5_957del`, fastVEP `c.956-6_956del` |
+| Exonic 3'-shift off by one | 66 | VEP `c.2403_2406del`, fastVEP `c.2404_2407del` |
 | fastVEP emits an HGVSc where VEP emits none | 19 | |
 
-These five and divergence 4 account for all 1,774 `HGVSc` mismatches exactly:
-1,238 + 243 + 210 + 47 + 19 + 17.
+These four and divergence 4 account for all 597 `HGVSc` mismatches exactly:
+344 + 151 + 66 + 19 + 17.
+
+495 of the 597 - the first two rows - are the same unfinished piece of work: the 3'-shift is
+bounded by the intron it starts in, so a span that should travel across the splice site stops at
+it. The exonic shift and the intronic shift are each correct within their own territory.
+
+**Fixed since this document was first written.** The largest gap it listed, *"intronic 3'-shift off
+by one, and the anchor side chosen for a duplication deep in a long intron"* (1,238 rows), was
+neither off by one nor about the anchor side. The duplication's position was derived by walking the
+*unshifted* insertion point one base at a time while the next base repeated the current one, which
+slides through a homopolymer and nothing else, so a `TG` insertion in a `TGTG…` repeat never moved
+at all - up to 48 bases from where HGVS puts it, and only 16 % of the disagreements were a single
+base. It also explains a pattern the row counts hid: because that walk stays where the VCF put the
+variant, fastVEP's anchor was the genomically-left one on both strands, so it read as
+under-shifting on forward-strand transcripts and over-shifting on reverse-strand ones.
 
 ### HGVSp
 
@@ -177,6 +195,50 @@ Reproducing the tidier rule instead put a `splice_region_variant` on 63 rows tha
 missense.
 
 ---
+
+## Genome-wide, on an ordinary callset
+
+The table at the top is measured on a sample stratified towards the hard shapes. The same
+comparison over a systematic 1-in-200 sample of the GIAB HG002 WGS callset - 20,241 variants,
+**122,317 matched rows**, real Ensembl VEP 115.1 through the same harness - is the other end of the
+range:
+
+| Field | ClinVar sample | HG002 genome-wide |
+|---|---:|---:|
+| Whole consequence set | 99.92 % | **100.000 %** (0 rows) |
+| `IMPACT` | 99.93 % | **100.000 %** (0 rows) |
+| `HGVSp` | 99.43 % | **99.985 %** (18 rows) |
+| `HGVSc` | 99.60 % | **99.879 %** (148 rows) |
+
+The three fields that carry a clinical call agree completely on a genome-wide callset, because the
+divergences that remain need a coding indel and only 0.5 % of genome-wide transcript rows have a
+coding consequence at all, against 45.2 % in the stratified sample.
+
+`HGVSc` is the exception and does not dilute: before the intronic duplication fix it was **98.74 %**
+genome-wide against 98.82 % on the ClinVar sample, and **87.0 %** on insertion rows, because deep
+intronic repeats are where a WGS callset's indels live and that was exactly the failing case.
+
+Most of the 148 rows left come from **multi-allelic VCF records** (`TAA>TA,T`), which are 1.18 % of
+this callset. The shared first base is stripped across all alleles, but each allele is not then
+trimmed against the reference on its own, so `ACAC>AC` stays a four-base replacement where it is a
+two-base deletion.
+
+That is a variant-parsing gap rather than an HGVS one, and it reaches further than the name. Written
+three ways at the same site, the same 5-base deletion comes out:
+
+| VCF | Ensembl VEP 115.1 | fastVEP |
+|---|---|---|
+| `GAAGAA>G` | `-`, `frameshift_variant`, `c.1364_1368del` | `-`, `frameshift_variant`, `c.1365_1369del` |
+| `GAAGAAA>GA` | `-`, `frameshift_variant,splice_region_variant`, `c.1364_1368del` | `A`, `frameshift_variant,splice_region_variant`, `c.1361_1366delinsA` |
+
+VEP trims the shared suffix and reports the allele as a clean deletion; fastVEP carries the extra
+base, which widens the span by one, turns the `del` into a `delins`, and reports `A` where VEP
+reports `-`. A comparison keyed on the allele does not even line those rows up.
+
+Neither dataset here contains a *single*-alt record needing that trim - both are already
+parsimonious - so the gap is reachable only through multi-allelic sites and through callers that
+emit non-minimal records. Fixing it means carrying a position per allele rather than one per site,
+which the variant representation does not do today. It is not fixed here.
 
 ## The earlier divergence, still standing
 

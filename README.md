@@ -682,7 +682,8 @@ set contains.
 **Consequences and HGVS under indels, MNVs and splice sites.**
 The example set is SNV-only, so the harder shapes are validated on a 6,600-variant stratified
 sample of the ClinVar 2-star+ set - **150,725 matched (variant, allele, transcript) rows**, 72,632
-of them coding:
+of them coding. That sample is built to be hard: 54.5% of its variants are not SNVs, against 7.2%
+of the ClinVar 2-star+ set it is drawn from, so these are the rates on the shapes that disagree.
 
 | Field | Scope | Agreement |
 |---|---|---:|
@@ -692,8 +693,16 @@ of them coding:
 | Consequence terms | coding rows | 99.86 % |
 | Whole consequence set | all rows | 99.92 % |
 | `IMPACT` | all rows | 99.93 % |
+| `HGVSc` | all rows | 99.60 % |
 | `HGVSp` | all rows | 99.43 % |
-| `HGVSc` | all rows | 98.82 % |
+
+**Genome-wide, on an ordinary callset.**
+The same comparison over a systematic 1-in-200 sample of the GIAB HG002 WGS callset - 20,241
+variants, **122,317 matched rows** - is the other end of that range: the consequence set and
+`IMPACT` agree on **100.000 %** of rows, `HGVSp` on **99.985 %**, `HGVSc` on **99.879 %**.
+Most of the 148 remaining `HGVSc` rows come from multi-allelic VCF records (1.18% of this
+callset), whose per-allele trimming against the reference is a known gap - see
+[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
 
 **HGVSp under in-frame indels.**
 Protein-level normalisation is additionally checked on 400 ClinVar in-frame deletions run through
