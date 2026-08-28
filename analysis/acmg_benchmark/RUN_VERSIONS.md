@@ -793,3 +793,177 @@ that as 5 to 8. Among soft errors the ratio runs 5:1 the other way: 46 variants 
 call pathogenic where fastVEP defers to VUS. That gap is not a threshold problem - her notes
 cite segregation, in-trans phase and functional data that no annotator computes - which is
 why B1 and further adjudication, not further tuning, are what move it.
+
+## v23: the annotation layer, not the criteria
+
+v23 is the first run in this series whose differences come entirely from consequence
+calling. No criterion changed, no threshold moved, and the supplementary-annotation stack is
+byte-identical to v22. The criteria fire differently because they are reading a different
+consequence.
+
+The baseline is v22, which is numerically identical to the documented v20 (v21 and v22 were
+re-runs that moved nothing, which is why neither has a section here).
+
+Three annotation fixes, all of them cases where fastVEP disagreed with Ensembl VEP:
+
+- **A splice site is matched against the whole variant, not its first base.** Every splice
+  predicate tested only the leftmost base, so a deletion or delins whose *second* base landed
+  on the donor or acceptor dinucleotide was missed. BRCA2 `c.9256_9256+1delinsTA` was
+  `splice_region_variant`, LOW, where VEP says HIGH. This accounts for almost all the
+  movement below.
+- **A `delins` is read from its peptides.** A change that both deletes and inserts bases was
+  typed from the direction of its length change alone, with `Amino_acids` of the form `E/X`
+  and no `Codons` at all. VEP calls most of them `protein_altering_variant`.
+- **A codon window is refused when the variant is not contiguous in the CDS.** A change
+  straddling a splice junction was translated as though its bases were adjacent in the coding
+  sequence.
+
+### v22 to v23
+
+| Metric | v22 | **v23** | change |
+|---|---:|---:|---:|
+| Exact match | 425,145 | **425,235** | +90 |
+| Same-direction | 522,101 | **522,297** | +196 |
+| Opposite-direction | 59 | **61** | +2 |
+| Exact-match rate | 63.1 % | 63.1 % | - |
+| Same-direction rate | 77.5 % | 77.5 % | - |
+
+243 variants changed their call. The rates are unmoved because 243 out of 673,660 does not
+reach a decimal place; the interesting number is not the rate but which way the 243 went.
+
+### Scored against real VEP
+
+Every one of the 243 was re-run through Ensembl VEP 115.1 (Docker
+`ensemblorg/ensembl-vep:release_115.1`, the same GFF3 and FASTA, `--pick`). VEP picked the
+same transcript in all 243 cases, so the comparison is like for like:
+
+| | v22 | **v23** |
+|---|---:|---:|
+| Changed calls whose IMPACT tier matches VEP | 5 / 243 | **243 / 243** |
+
+That is the whole argument for this run. The calls that moved were calls where fastVEP's own
+consequence disagreed with VEP, and they now agree.
+
+| Movement | n | ClinVar 2-star+ says |
+|---|---:|---|
+| Gained P/LP | 193 | P/LP - recovered true positives |
+| Gained P/LP | 9 | VUS |
+| Gained P/LP | 3 | B/LB - **new opposite-direction** |
+| Lost P/LP | 21 | VUS |
+| Lost P/LP | 10 | P/LP - **new false-benign** |
+| Lost P/LP | 1 | B/LB |
+| LP to P | 3 | P/LP |
+| Other | 3 | - |
+
+Both flagged buckets are the same class of variant seen from two sides, and both are
+written up for the next medical-genetics round in
+[`results/v23/MD_REVIEW.md`](results/v23/MD_REVIEW.md):
+
+- The **10 new false-benign** are all `c.N+2dup` single-base duplications two bases into the
+  intron, in MECR, COL11A1, PCDH15, SLX4, BRIP1, SLC7A9, ERCC2, NEB, GLB1 and NPHP3. VEP
+  agrees with the new `splice_region_variant` call on all ten: duplicating the base after
+  `+2` leaves the `GT` intact. This is the class the round-2 review already reached in the
+  *classifier* (PVS1 stands down for an insertion at the site without SpliceAI support);
+  what changed is that the consequence itself is now right, rather than PVS1's gate carrying
+  the whole burden.
+- The **3 new opposite-direction** calls are deletions that genuinely remove part of a donor
+  or acceptor dinucleotide - NFKB2, FOXP2, LMX1B - and VEP calls all three HIGH. The
+  disagreement is with ClinVar's classification rather than with the annotation. Two sit in
+  repeat-rich introns where the deletion 3'-shifts far from the site in HGVS notation, which
+  is a plausible reason a submitter read them as benign.
+
+## v26: the same annotation layer, finished
+
+v23 fixed three consequence-calling bugs. v26 finishes the job: it replaces the last of the
+hand-rolled annotation logic with a port of Ensembl's own model, and corrects two places
+where the *classifier* was misreading the (now more complete) annotation. No criterion logic
+changed, no threshold moved, and the supplementary-annotation stack is identical to v23.
+
+Measured against real Ensembl VEP 115.1 over a 6,600-variant stratified ClinVar sample -
+150,725 transcript rows, the same GFF3 and FASTA both tools read:
+
+| Field | v23 | **v26** |
+|---|---:|---:|
+| Consequence terms (coding rows) | 98.0 % | **100 %** |
+| `Amino_acids` | 77.7 % | **100 %** |
+| `Codons` | 72.5 % | **100 %** |
+| HGVSc (coding rows) | 87.7 % | **99.5 %** |
+| HGVSp (coding rows) | 83.4 % | **98.8 %** |
+| Splice terms (all rows) | 99.00 % | **100 %** |
+| Whole consequence set (all rows) | 97.96 % | **99.92 %** |
+| IMPACT (all rows) | 99.76 % | **99.93 %** |
+
+### What moved
+
+- **One codon window for every shape.** Four code paths - substitution, pure insertion, pure
+  deletion, delins - each had a partial version of `VariationEffect.pm`'s rules. They are now
+  one window, translated on both sides, with every term read off the peptide and codon pair.
+- **Splice terms from one pass over the introns.** `_intron_effects` tests the parts of a
+  variant that *differ*, selects its intron lists from the whole span, sorts the pair for the
+  polypyrimidine tests and nowhere else, and assigns rather than or-assigns `splice_region`.
+  The extended terms coexist with donor and acceptor rather than hiding behind them, and so
+  does `intron_variant`.
+- **HGVS applies the 3'-rule before naming anything.** An insertion is shifted before it is
+  tested for duplication; an equal-length replacement by the reverse complement is `inv`; a
+  span with one end in an exon and the other in an intron is written over both ends.
+- **PVS1 reads the offset a span covers, not its endpoint.** `c.764_771+9delins…` reaches the
+  canonical dinucleotide on its way; reading `+9` stood PVS1 down on 14 ClinVar-pathogenic
+  donor and acceptor deletions. Those spans had no HGVSc at all before, which is why the gate
+  only started firing once HGVSc improved.
+- **A duplication is not written across an exon boundary.** Offsets do not run through zero.
+
+### v23 to v26
+
+| Metric | v23 | **v26** | change |
+|---|---:|---:|---:|
+| Exact match | 425,235 | **425,322** | +87 |
+| Same-direction | 522,297 | **522,473** | +176 |
+| Opposite-direction | 61 | 64 | +3 |
+| P/LP recall | 62.22 % | **62.42 %** | +187 |
+| False-benign (ClinVar P/LP, fastVEP B/LB) | 30 | 30 | 0 |
+| False-pathogenic (ClinVar B/LB, fastVEP P/LP) | 31 | 34 | +3 |
+
+290 calls changed. Every one was re-run through Ensembl VEP 115.1 with `--pick`; VEP chose the
+same transcript in all 290.
+
+| | v23 | **v26** |
+|---|---:|---:|
+| Changed calls whose IMPACT tier matches VEP | 232 / 290 | **276 / 290** |
+
+### The one deliberate disagreement
+
+The 14 that do not match are a single class, and fastVEP disagrees with VEP on purpose.
+`ref_eq_alt_sequence`'s first clause asks whether a replacement keeps the residue it starts on
+and introduces a terminator *anywhere* - not whether the annotated terminator survived - and
+`frameshift_variant` and `stop_gained` both defer to it. Real VEP 115.1 therefore calls BRCA1
+`c.5030_5033dup` `inframe_insertion,stop_retained_variant`, MODERATE, where ClinVar 3-star
+says Pathogenic; the same for BRCA1 `c.1499_1508dup`, BRCA2 `c.3205_3206ins…`, TP53
+`c.895_919dup` and 30 more in this set. fastVEP keeps `stop_gained` and `frameshift_variant`.
+
+That clause accounts for 101 of the 117 remaining consequence-set differences and 369 of the
+370 IMPACT differences. Every one is fastVEP reporting HIGH for a variant that truncates the
+protein.
+
+### Review queue
+
+Two documents. [`results/v26/MD_REVIEW.md`](results/v26/MD_REVIEW.md) is the v23-to-v26 delta with
+the full table in `call_changes_v23_to_v26.tsv`.
+[`results/v26/MD_REVIEW_ROUND6.md`](results/v26/MD_REVIEW_ROUND6.md) is the standalone note for the
+reviewer, covering **v9 to v26** - the run her last comments were written against through this one -
+because round 5's table and note went out and have not come back. It folds in the answers to her six
+points, the gnomAD-rejection defect those comments uncovered, both annotation rounds and the two
+classifier defects, and carries round 5's 59 rows forward into
+`discordant_64_round6.xlsx`, built by `scripts/07_build_round6_table.py`. Three buckets need her:
+
+- **Three insertions at an exon's last base** (MSH6 ×2, DSP) that are frameshifts where the
+  VCF puts them and intronic duplications after the 3'-shift. ClinVar calls all three benign.
+  PVS1's "a pure insertion may not do what its position suggests" gate exists on the splice
+  track and not on the frameshift track; whether it should is a criteria question.
+- **One inversion over an acceptor** (NBN, ClinVar Pathogenic) that loses PVS1 because
+  Ensembl matches only the bases that differ, and an inversion leaves its palindromic
+  positions unchanged. VEP agrees it is MODIFIER.
+- The deliberate divergence above, if the reviewer would rather match VEP.
+
+v24 and v25 were intermediate runs of this work. v24 exposed both classifier bugs above -
+34 ClinVar-pathogenic calls lost PVS1 in it - and v25 fixed one of the two. Neither is a
+shipped state; they have no section here and no results directory.

@@ -289,7 +289,14 @@ fn annotate_variant(
                                             tr.spliced_seq.as_deref(),
                                             tr.codon_table_start_phase,
                                         );
-                                    } else if ac.intron.is_some() {
+                                    } else {
+                                        // Not "is this intronic": a variant with
+                                        // one end in an exon and the other in an
+                                        // intron has no exonic cDNA pair, and
+                                        // `intron_at` reads its first base only.
+                                        // `intronic_or_exonic_cdna` returns
+                                        // `None` for anything it cannot place,
+                                        // which is the real guard.
                                         // Intronic variant: offset notation
                                         // Note: intronic HGVS uses original coding_start (no phase adjustment)
                                         // Apply HGVS 3' normalization for intronic indels
@@ -363,10 +370,10 @@ fn annotate_variant(
                                         } else {
                                             shifted_start
                                         };
-                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(hgvs_pos) {
+                                        if let Some((cdna_pos, offset)) = fastvep_annotate::intronic_or_exonic_cdna(tr, hgvs_pos) {
                                             // For multi-base variants, compute end position too
                                             let (end_cdna, end_offset) = if shifted_start != shifted_end && hgvs_pos == shifted_start {
-                                                tr.genomic_to_intronic_cdna(shifted_end)
+                                                fastvep_annotate::intronic_or_exonic_cdna(tr, shifted_end)
                                                     .map(|(c, o)| (Some(c), Some(o)))
                                                     .unwrap_or((None, None))
                                             } else {
@@ -436,7 +443,10 @@ fn annotate_variant(
                                                                 };
                                                                 // Use shifted_dup (start of dup region) for offset computation
                                                                 if let Some((dup_cdna, dup_offset)) = tr.genomic_to_intronic_cdna(shifted_dup) {
-                                                                    hgvsc = convert_ins_to_dup(h, dup_offset, ins_len, dup_cdna, coding_start, tr.cdna_coding_end);
+                                                                    // `None` means the duplicated block crosses the exon
+                                                                    // boundary and cannot be written from one anchor;
+                                                                    // the insertion notation already there is correct.
+                                                                    hgvsc = convert_ins_to_dup(h, dup_offset, ins_len, dup_cdna, coding_start, tr.cdna_coding_end).or_else(|| hgvsc.clone());
                                                                 }
                                                             }
                                                         }
@@ -451,11 +461,20 @@ fn annotate_variant(
                                     if let (Some(cs), Some(ce)) = (ac.cdna_start, ac.cdna_end) {
                                         ann.hgvsc = fastvep_hgvs::hgvsc_noncoding(
                                             &versioned_tid,
-                                            cs, ce,
+                                            cs,
+                                            ce,
                                             &hgvs_ref,
                                             &hgvs_alt,
+                                            tr.spliced_seq.as_deref(),
                                         );
-                                    } else if ac.intron.is_some() {
+                                    } else {
+                                        // Not "is this intronic": a variant with
+                                        // one end in an exon and the other in an
+                                        // intron has no exonic cDNA pair, and
+                                        // `intron_at` reads its first base only.
+                                        // `intronic_or_exonic_cdna` returns
+                                        // `None` for anything it cannot place,
+                                        // which is the real guard.
                                         // Apply 3' normalization for non-coding intronic indels
                                         let (nc_shifted_start, nc_shifted_end) = if let Some(sp) = seq_provider {
                                             let is_indel = matches!((&hgvs_ref, &hgvs_alt),
@@ -504,9 +523,9 @@ fn annotate_variant(
                                             hgvs_alt.clone()
                                         };
 
-                                        if let Some((cdna_pos, offset)) = tr.genomic_to_intronic_cdna(nc_shifted_start) {
+                                        if let Some((cdna_pos, offset)) = fastvep_annotate::intronic_or_exonic_cdna(tr, nc_shifted_start) {
                                             let (end_cdna, end_offset) = if nc_shifted_start != nc_shifted_end {
-                                                tr.genomic_to_intronic_cdna(nc_shifted_end)
+                                                fastvep_annotate::intronic_or_exonic_cdna(tr, nc_shifted_end)
                                                     .map(|(c, o)| (Some(c), Some(o)))
                                                     .unwrap_or((None, None))
                                             } else {
@@ -563,7 +582,7 @@ fn annotate_variant(
                                                                     dup_base_pos
                                                                 };
                                                                 if let Some((dup_cdna, dup_offset)) = tr.genomic_to_intronic_cdna(shifted_dup) {
-                                                                    hgvsc = convert_ins_to_dup_noncoding(h, dup_offset, ins_len, dup_cdna);
+                                                                    hgvsc = convert_ins_to_dup_noncoding(h, dup_offset, ins_len, dup_cdna).or_else(|| hgvsc.clone());
                                                                 }
                                                             }
                                                         }
@@ -577,6 +596,13 @@ fn annotate_variant(
                             }
 
                             if let (Some(ref aa), Some(ps)) = (&ac.amino_acids, ac.protein_start) {
+                                // The residue pair is strand-ordered: which of the two is
+                                // the lower one depends on the strand, and
+                                // `hgvsp_inframe_indel` needs both to place an insertion
+                                // between two residues. A variant on an exon's edge has one
+                                // end outside the CDS and so may have only one coordinate;
+                                // using it for both is what the single one meant before.
+                                let pe = ac.protein_end.unwrap_or(ps);
                                 if let Some(tr) = transcript {
                                     if let Some(ref pid) = tr.protein_id {
                                         let versioned_pid = match tr.protein_version {
@@ -593,62 +619,44 @@ fn annotate_variant(
                                         let is_fs = ac.consequences.contains(&Consequence::FrameshiftVariant);
 
                                         if is_fs {
-                                            // Frameshift: build alt sequence and scan for first changed AA + new stop
-                                            // Use spliced_seq from CDS start onwards (includes 3'UTR for stop codon search)
-                                            if let (Some(ref spliced), Some(coding_start), Some(cds_s)) =
-                                                (&tr.spliced_seq, tr.cdna_coding_start, ac.cds_start)
-                                            {
-                                                // Extract from CDS start to end of spliced seq (includes 3'UTR).
-                                                // Guard against malformed/truncated GFF3-derived transcript data
-                                                // where `coding_start` is inconsistent with the actual spliced
-                                                // sequence length — skip HGVSp generation for this case rather
-                                                // than panicking on an out-of-bounds slice.
-                                                let coding_start_idx = (coding_start - 1) as usize;
-                                                if coding_start >= 1 && coding_start_idx <= spliced.len() {
-                                                let ref_from_cds = &spliced.as_bytes()[coding_start_idx..];
-                                                let cds_idx = (cds_s - 1) as usize;
-                                                let mut alt_from_cds = ref_from_cds.to_vec();
-
-                                                // Apply the indel to build the frameshifted sequence
-                                                if ac.allele == Allele::Deletion {
-                                                    let del_len = vf.ref_allele.len();
-                                                    let end = (cds_idx + del_len).min(alt_from_cds.len());
-                                                    alt_from_cds.drain(cds_idx..end);
-                                                } else if let Allele::Sequence(ins_bases) = &ac.allele {
-                                                    let mut bases = ins_bases.clone();
-                                                    if tr.strand == fastvep_core::Strand::Reverse {
-                                                        bases = bases.iter().map(|&b| match b {
-                                                            b'A' => b'T', b'T' => b'A',
-                                                            b'C' => b'G', b'G' => b'C',
-                                                            o => o,
-                                                        }).collect();
-                                                    }
-                                                    for (j, &b) in bases.iter().enumerate() {
-                                                        if cds_idx + j <= alt_from_cds.len() {
-                                                            alt_from_cds.insert(cds_idx + j, b);
-                                                        }
-                                                    }
-                                                }
-
-                                                let codon_start = cds_idx / 3;
-                                                let fs_codon_table =
-                                                    if fastvep_genome::is_mitochondrial(&tr.chromosome) {
-                                                        fastvep_genome::mitochondrial_codon_table()
-                                                    } else {
-                                                        fastvep_genome::CodonTable::standard()
-                                                    };
-                                                ann.hgvsp = fastvep_hgvs::hgvsp_frameshift(
-                                                    &versioned_pid,
-                                                    ref_from_cds,
-                                                    &alt_from_cds,
-                                                    codon_start,
-                                                    &fs_codon_table,
-                                                );
-                                                }
+                                            if let (
+                                                Some(spliced),
+                                                Some(coding_start),
+                                            ) = (
+                                                tr.spliced_seq.as_deref(),
+                                                tr.cdna_coding_start,
+                                            ) {
+                                                ann.hgvsp =
+                                                    fastvep_annotate::cds_and_downstream(
+                                                        tr,
+                                                        spliced,
+                                                        coding_start,
+                                                    )
+                                                    .and_then(|cds| {
+                                                        fastvep_hgvs::hgvsp_frameshift_from_cds(
+                                                            &versioned_pid,
+                                                            &cds,
+                                                            ac.cds_start,
+                                                            ac.cds_end,
+                                                            &vf.ref_allele,
+                                                            &ac.allele,
+                                                            tr.strand,
+                                                            &fastvep_annotate::frameshift_codon_table(tr),
+                                                        )
+                                                    });
                                             }
                                         } else if aa.1 == "-"
+                                            || aa.0.len() != aa.1.len()
+                                            || ac.consequences.contains(&Consequence::StartLost)
                                             || ac.consequences.contains(&Consequence::InframeDeletion)
                                             || ac.consequences.contains(&Consequence::InframeInsertion)
+                                            // A window wider than one residue also routes here
+                                            // even when the lengths match: `hgvsp()` compares one
+                                            // residue per side, so `EP/ET` reads as unchanged and
+                                            // renders `p.Glu153=` for a change VEP calls
+                                            // `p.Pro154Thr` - and a synonymous two-residue window
+                                            // needs its whole span named.
+                                            || aa.0.len() > 1
                                         {
                                             // In-frame indel / delins (frameshift handled
                                             // above). aa.0 holds the replaced residues, aa.1 the
@@ -659,6 +667,14 @@ fn annotate_variant(
                                             // so `W/WR` reads as unchanged and renders
                                             // `p.Trp185=` for a variant that lengthens the
                                             // protein.
+                                            //
+                                            // The residue counts decide, not the SO term. A
+                                            // delins that replaces residues earns
+                                            // `protein_altering_variant` or `stop_gained` rather
+                                            // than either in-frame term, and keying on the term
+                                            // alone dropped HGVSp entirely for every one of them
+                                            // - 1,560 rows over the ClinVar 2-star in-frame
+                                            // delins, where VEP names `p.Lys666delinsAsnSer`.
                                             //
                                             // The peptide lets `hgvsp_inframe_indel` apply the
                                             // HGVS 3'-rule and collapse a repeat to `dup`,
@@ -672,6 +688,7 @@ fn annotate_variant(
                                             ann.hgvsp = fastvep_hgvs::hgvsp_inframe_indel(
                                                 &versioned_pid,
                                                 ps,
+                                                pe,
                                                 &aa.0,
                                                 &aa.1,
                                                 tr.peptide.as_deref().map(str::as_bytes),
@@ -1143,24 +1160,32 @@ fn open_sequence_provider(config: &AnnotateConfig) -> Result<Option<Box<dyn Sequ
     })
 }
 
-/// Fill in the spliced and protein sequences of coding transcripts that arrived
+/// Fill in the spliced and protein sequences of transcripts that arrived
 /// without them - from a cache written before sequences were built, or a GFF3
 /// read on a run with no `--fasta`.
+///
+/// A non-coding transcript needs its spliced sequence only for HGVS: the
+/// 3'-rule and `dup` collapsing are read off it, and without it an `n.`
+/// coordinate is written where the VCF put it rather than where HGVS asks for
+/// it - 2,800 rows over a 6,600-variant ClinVar sample. Nothing else in the
+/// pipeline reads it, and building it for every lncRNA and retained-intron
+/// transcript roughly doubles this step, so `for_hgvs` keeps that cost on the
+/// runs that spend it.
 ///
 /// Returns whether any transcript needed the work, which is what tells the
 /// caller the sidecar cache on disk no longer matches what is in memory.
 fn attach_transcript_sequences(
     transcripts: &mut [Transcript],
     seq_provider: Option<&dyn SequenceProvider>,
+    for_hgvs: bool,
 ) -> bool {
-    let needs_seq_build = transcripts
-        .iter()
-        .any(|t| t.is_coding() && t.spliced_seq.is_none());
+    let wanted = |t: &Transcript| (for_hgvs || t.is_coding()) && t.spliced_seq.is_none();
+    let needs_seq_build = transcripts.iter().any(&wanted);
     if needs_seq_build {
         if let Some(sp) = seq_provider {
             let built = AtomicUsize::new(0);
             transcripts.par_iter_mut().for_each(|tr| {
-                if tr.is_coding() && tr.spliced_seq.is_none() {
+                if wanted(tr) {
                     if let Err(e) = tr.build_sequences(|chrom, start, end| {
                         sp.fetch_sequence(chrom, start, end)
                             .map_err(|e| e.to_string())
@@ -1263,7 +1288,8 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         open_sequence_provider(&config)?
     };
 
-    let needs_seq_build = attach_transcript_sequences(&mut transcripts, seq_provider.as_deref());
+    let needs_seq_build =
+        attach_transcript_sequences(&mut transcripts, seq_provider.as_deref(), config.hgvs);
 
     // Save cache after sequence build (only if sequences were built or
     // cache doesn't exist). Sidecar-cache writes are gated to the

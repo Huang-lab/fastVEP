@@ -1,4 +1,4 @@
-use fastvep_core::Strand;
+use fastvep_core::{Allele, Strand};
 use fastvep_genome::codon::{aa_one_to_three, CodonTable};
 
 /// Generate HGVSp (protein) notation.
@@ -59,15 +59,30 @@ fn residue_span(first_pos: u64, residues: &[u8]) -> String {
     }
 }
 
-/// Render a deletion that starts at the initiation codon, whose downstream
+/// Render a change that takes out the initiation codon, whose downstream
 /// consequence is unknown: `Glu1?` for a single residue, `MetAsnIle1_?3` for a
-/// run. The residues are still named - the annotation does say what was removed
-/// - and the `?` marks the part that cannot be resolved from sequence.
-fn uncertain_from_initiator(residues: &[u8]) -> String {
+/// run. The residues are still named - the annotation does say what was
+/// affected - and the `?` marks the part that cannot be resolved from sequence.
+///
+/// `start` is the position of the first residue named. It is not always 1: a
+/// change that begins at the initiator can share its leading residue with the
+/// replacement, and Ensembl trims that off first. `XP/XAKSTVGA` on
+/// ENSP00000500558 is `p.Pro2?` in VEP 115.1, not `p.XaaPro1_?2`.
+///
+/// The run's second coordinate is written as the last residue named, which is
+/// what `p.Met1_?N` reads as. Not verified: every multi-residue case in the
+/// ClinVar sample starts at residue 1, where the last position and the residue
+/// count are the same number, so nothing here distinguishes them.
+fn uncertain_from_initiator(start: u64, residues: &[u8]) -> String {
     if residues.len() == 1 {
-        format!("{}1?", aa_one_to_three(residues[0]))
+        format!("{}{}?", aa_one_to_three(residues[0]), start)
     } else {
-        format!("{}1_?{}", three_letter(residues), residues.len())
+        format!(
+            "{}{}_?{}",
+            three_letter(residues),
+            start,
+            start + residues.len() as u64 - 1
+        )
     }
 }
 
@@ -227,6 +242,7 @@ fn anchor_candidates(
 pub fn hgvsp_inframe_indel(
     protein_id: &str,
     protein_start: u64,
+    protein_end: u64,
     ref_aas: &str,
     alt_aas: &str,
     ref_peptide: Option<&[u8]>,
@@ -240,8 +256,46 @@ pub fn hgvsp_inframe_indel(
         }
     };
     let original_ref = strip(ref_aas);
-    let original_alt = strip(alt_aas);
+    // Nothing past a terminator the change introduces is translated, so those
+    // residues are not part of the protein and must not be named. Ensembl's
+    // `Amino_acids` column keeps the whole translated window - `SL/MEP*S` - but
+    // its HGVSp for the same row is `p.Ser269_Leu270delinsMetGluProTer`, and
+    // naming the `S` after the `Ter` would describe a residue that does not
+    // exist. The terminator itself is kept: it is the last thing the protein has.
+    let original_alt = {
+        let all = strip(alt_aas);
+        match all.iter().position(|&b| b == b'*') {
+            Some(terminator) => all[..=terminator].to_vec(),
+            None => all,
+        }
+    };
+    // A pure insertion replaces no residue, so it is written between two of
+    // them - and the caller's pair names both. `protein_start` comes from the
+    // genomic left edge, which is the *upper* residue on the forward strand and
+    // the lower one on the reverse; the insertion sits in front of the higher of
+    // the two whichever way the transcript runs. Taking `protein_start` alone
+    // put every reverse-strand duplication one residue early, which reads as an
+    // ordinary insertion rather than a `dup`: `p.Gly559_Asp560insHisGluAsnLys...`
+    // where VEP writes `p.His553_Asp560dup`.
+    let protein_start = if original_ref.is_empty() {
+        protein_start.max(protein_end)
+    } else {
+        protein_start
+    };
     let prefix = format!("{}:p.", protein_id);
+
+    // A window whose residues all survive unchanged is synonymous, and HGVS
+    // names the whole span it covers: `p.Leu346_Leu347=`. Ensembl writes
+    // `p.LeuLeu346=` - two three-letter codes sharing one position, which is not
+    // a form HGVS defines - and reading one residue of the pair gave
+    // `p.Leu347=`, which names the second of two on a reverse-strand transcript
+    // and the first on a forward one. 137 rows over a 6,600-variant ClinVar
+    // sample; neither tool agreed with the other and neither was well formed.
+    if !original_ref.is_empty() && original_ref == original_alt {
+        let lo = protein_start.min(protein_end);
+        return Some(format!("{}{}=", prefix, residue_span(lo, &original_ref)));
+    }
+
     let fallback = || unshifted_description(&prefix, protein_start, &original_ref, &original_alt);
 
     // Transcript::peptide runs to cdna_coding_end, so it carries the terminator
@@ -275,6 +329,22 @@ pub fn hgvsp_inframe_indel(
     }) else {
         return fallback();
     };
+
+    // Ensembl's `start_lost` (`VariationEffect.pm` release/115, l. 851): the
+    // replacement begins at the initiator and preserves the reference residues
+    // at neither end of itself. What the ribosome does then - start at a
+    // downstream ATG, or not at all - is not something the sequence tells us, so
+    // HGVS marks the consequence unknown with `?` rather than naming residues of
+    // a protein that may never be made. Evaluated on the untrimmed residues,
+    // because that is what the predicate reads: for `XP/XAKSTVGA` the shared
+    // leading `X` trims away and the description starts at residue 2, and VEP
+    // still writes `p.Pro2?`.
+    //
+    // The pure-deletion arm below has its own, older test for this and keeps it:
+    // it decides after 3'-shifting, which can move the deletion off residue 1.
+    let start_lost = protein_start == 1
+        && !original_alt.starts_with(&original_ref[..])
+        && !original_alt.ends_with(&original_ref[..]);
 
     // Reduce to the minimal changed region: residues shared at either end are
     // not part of the description. Trimming the prefix moves the start right.
@@ -367,9 +437,38 @@ pub fn hgvsp_inframe_indel(
             // sequence tells us, so HGVS marks the consequence unknown with `?`
             // rather than describing a protein that may never be made. This is
             // the form Ensembl VEP emits.
-            return Some(format!("{}{}", prefix, uncertain_from_initiator(&residues)));
+            return Some(format!(
+                "{}{}",
+                prefix,
+                uncertain_from_initiator(at, &residues)
+            ));
         }
         Some(format!("{}{}del", prefix, residue_span(at, &residues)))
+    } else if start_lost {
+        Some(format!(
+            "{}{}",
+            prefix,
+            uncertain_from_initiator(start, &reference)
+        ))
+    } else if reference.len() == 1 && alternate.len() == 1 {
+        // One residue for one residue is a substitution, whatever the window it
+        // came from. A change spanning two codons that alters only the second
+        // one - `EP/ET` - is `p.Pro154Thr` to Ensembl, not a two-residue delins
+        // and not `p.Glu153=`, which is what reading the first residue of each
+        // side gave. About 3,000 HGVSp rows per 6,600 ClinVar variants.
+        let (r, a) = (reference[0], alternate[0]);
+        Some(match (r, a) {
+            // A terminator the change removes extends the protein by an unknown
+            // amount; one it introduces ends it here.
+            (b'*', _) => format!("{}{}{}ext*?", prefix, aa_one_to_three(a), start),
+            _ => format!(
+                "{}{}{}{}",
+                prefix,
+                aa_one_to_three(r),
+                start,
+                aa_one_to_three(a)
+            ),
+        })
     } else {
         // Replacement of one residue run by another.
         Some(format!(
@@ -378,6 +477,94 @@ pub fn hgvsp_inframe_indel(
             residue_span(start, &reference),
             three_letter(&alternate)
         ))
+    }
+}
+
+/// HGVSp for a frameshift, from the transcript's own sequence and the variant's
+/// CDS coordinates.
+///
+/// The edit is the same one the codon window makes: replace the CDS bases the
+/// reference allele covers with the alternate allele's, in transcript
+/// orientation. Both per-variant loops used to open-code it, and both got it
+/// wrong in the same three ways - they read `cds_start` as the low end of the
+/// span (it is the *high* end on the reverse strand), they complemented the
+/// inserted bases in place instead of reverse-complementing them, and they had
+/// no case at all for a delins, so a replacement was inserted without removing
+/// what it replaced. Over a 6,600-variant ClinVar sample that was 3,200 of
+/// 3,794 frameshift-delins rows disagreeing with real VEP 115.1, plus 2,900 of
+/// 11,596 frameshift deletions and 2,400 of 11,212 frameshift insertions.
+///
+/// `cds_and_downstream` must be CDS-indexed - its byte `n - 1` is CDS position
+/// `n` - and run past the annotated terminator, because a frameshift's new stop
+/// is often in what was the 3' UTR.
+#[allow(clippy::too_many_arguments)] // each argument is an independent coordinate or allele
+pub fn hgvsp_frameshift_from_cds(
+    protein_id: &str,
+    cds_and_downstream: &[u8],
+    cds_start: Option<u64>,
+    cds_end: Option<u64>,
+    ref_allele: &Allele,
+    alt_allele: &Allele,
+    strand: Strand,
+    codon_table: &CodonTable,
+) -> Option<String> {
+    let (first, ref_len) = if *ref_allele == Allele::Deletion {
+        // The reference covers no bases, and Ensembl's zero-length interval puts
+        // the insertion point just after the lower coordinate. An insertion on
+        // an exon's edge has one end in the intron and so only one coordinate:
+        // it still abuts the exonic base, on whichever side the strand puts the
+        // intron. `cds_start` comes from the genomic left edge and `cds_end`
+        // from the right, so the surviving one says which.
+        let point = match (cds_start, cds_end) {
+            (Some(s), Some(e)) if s.max(e) == s.min(e) + 1 => s.min(e),
+            (Some(s), None) if strand == Strand::Reverse => s,
+            (Some(s), None) => s.checked_sub(1)?,
+            (None, Some(e)) if strand == Strand::Forward => e,
+            (None, Some(e)) => e.checked_sub(1)?,
+            _ => return None,
+        };
+        (point as usize, 0usize)
+    } else {
+        let (s, e) = (cds_start?, cds_end?);
+        let (lo, hi) = (s.min(e), s.max(e));
+        let ref_len = ref_allele.len();
+        if lo < 1 || hi - lo + 1 != ref_len as u64 {
+            return None; // not contiguous in CDS space; no single edit describes it
+        }
+        ((lo - 1) as usize, ref_len)
+    };
+    if first + ref_len > cds_and_downstream.len() {
+        return None;
+    }
+    let alt_cds: Vec<u8> = match alt_allele {
+        Allele::Sequence(bases) => match strand {
+            Strand::Forward => bases.clone(),
+            Strand::Reverse => bases.iter().rev().map(|&b| complement(b)).collect(),
+        },
+        _ => Vec::new(),
+    };
+
+    let mut edited = Vec::with_capacity(cds_and_downstream.len() - ref_len + alt_cds.len());
+    edited.extend_from_slice(&cds_and_downstream[..first]);
+    edited.extend_from_slice(&alt_cds);
+    edited.extend_from_slice(&cds_and_downstream[first + ref_len..]);
+
+    hgvsp_frameshift(
+        protein_id,
+        cds_and_downstream,
+        &edited,
+        first / 3,
+        codon_table,
+    )
+}
+
+fn complement(base: u8) -> u8 {
+    match base.to_ascii_uppercase() {
+        b'A' => b'T',
+        b'T' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        other => other,
     }
 }
 
@@ -458,6 +645,15 @@ pub fn hgvsp_frameshift(
 
     let ref_aa3 = aa_one_to_three(ref_aa);
     let alt_aa3 = aa_one_to_three(alt_aa);
+
+    // A frameshift whose *first* changed residue is already a terminator is
+    // described as the nonsense variant it is: `p.Leu1545Ter`, not
+    // `p.Leu1545TerfsTer1`. There is no shifted reading frame to describe -
+    // translation stops at the residue the change lands on. 1,611 rows over a
+    // 6,600-variant ClinVar sample.
+    if alt_aa == b'*' {
+        return Some(format!("{}{}{}Ter", prefix, ref_aa3, first_changed_pos));
+    }
 
     // Find the new stop codon position in the alt sequence.
     // If the sequence contains unresolved (X) amino acids, use Ter? to indicate uncertainty.
@@ -571,21 +767,21 @@ mod tests {
     #[test]
     fn test_hgvsp_inframe_deletion_single() {
         // single-residue in-frame deletion
-        let r = hgvsp_inframe_indel("ENSP00000001", 157, "F", "-", None, Strand::Forward);
+        let r = hgvsp_inframe_indel("ENSP00000001", 157, 157, "F", "-", None, Strand::Forward);
         assert_eq!(r, Some("ENSP00000001:p.Phe157del".to_string()));
     }
 
     #[test]
     fn test_hgvsp_inframe_deletion_range() {
         // multi-residue in-frame deletion (regression for the p.Tyr43??? bug)
-        let r = hgvsp_inframe_indel("ENSP00000001", 43, "YXQ", "-", None, Strand::Forward);
+        let r = hgvsp_inframe_indel("ENSP00000001", 43, 43, "YXQ", "-", None, Strand::Forward);
         assert_eq!(r, Some("ENSP00000001:p.Tyr43_Gln45del".to_string()));
     }
 
     #[test]
     fn test_hgvsp_inframe_delins() {
         // in-frame deletion-insertion
-        let r = hgvsp_inframe_indel("ENSP00000001", 2173, "NL", "K", None, Strand::Forward);
+        let r = hgvsp_inframe_indel("ENSP00000001", 2173, 2173, "NL", "K", None, Strand::Forward);
         assert_eq!(
             r,
             Some("ENSP00000001:p.Asn2173_Leu2174delinsLys".to_string())
@@ -611,7 +807,15 @@ mod tests {
         // C8A c.553_554insGGA, amino_acids "W/WR" at 185 — previously p.Trp185=.
         // Residue 186 is already Arg, so inserting Arg duplicates it.
         let pep = peptide_with(185, "WRQ", 200);
-        let r = hgvsp_inframe_indel("ENSP00000001", 185, "W", "WR", Some(&pep), Strand::Forward);
+        let r = hgvsp_inframe_indel(
+            "ENSP00000001",
+            185,
+            185,
+            "W",
+            "WR",
+            Some(&pep),
+            Strand::Forward,
+        );
         assert_eq!(r, Some("ENSP00000001:p.Arg186dup".to_string()));
     }
 
@@ -622,7 +826,15 @@ mod tests {
         let dup = "NEYFYVDFREYEYD";
         let pep = peptide_with(587, &format!("{}K", dup), 700);
         let alt = format!("D{}", dup);
-        let r = hgvsp_inframe_indel("ENSP00000001", 600, "D", &alt, Some(&pep), Strand::Forward);
+        let r = hgvsp_inframe_indel(
+            "ENSP00000001",
+            600,
+            600,
+            "D",
+            &alt,
+            Some(&pep),
+            Strand::Forward,
+        );
         assert_eq!(r, Some("ENSP00000001:p.Asn587_Asp600dup".to_string()));
     }
 
@@ -631,7 +843,15 @@ mod tests {
         // ITPKB c.275_276insGGT, amino_acids "S/SG" at 92 — previously p.Ser92=.
         // Gly does not repeat the preceding residues, so it stays an insertion.
         let pep = peptide_with(92, "SSK", 200);
-        let r = hgvsp_inframe_indel("ENSP00000001", 92, "S", "SG", Some(&pep), Strand::Forward);
+        let r = hgvsp_inframe_indel(
+            "ENSP00000001",
+            92,
+            92,
+            "S",
+            "SG",
+            Some(&pep),
+            Strand::Forward,
+        );
         assert_eq!(r, Some("ENSP00000001:p.Ser92_Ser93insGly".to_string()));
     }
 
@@ -640,7 +860,7 @@ mod tests {
         // A deletion inside a homopolymer run is reported at the most C-terminal
         // position it can occupy: deleting one Ala from AAA at 2..4 is p.Ala4del.
         let pep: Vec<u8> = "MAAAGK".bytes().collect();
-        let r = hgvsp_inframe_indel("ENSP00000001", 2, "A", "-", Some(&pep), Strand::Forward);
+        let r = hgvsp_inframe_indel("ENSP00000001", 2, 2, "A", "-", Some(&pep), Strand::Forward);
         assert_eq!(r, Some("ENSP00000001:p.Ala4del".to_string()));
     }
 
@@ -653,7 +873,7 @@ mod tests {
         // c.1674_1679del is p.Glu560_Glu561del on a 561-residue protein, which
         // VEP reports as p.Glu559_Glu560del.
         let pep: Vec<u8> = "MKEEEEE*".bytes().collect();
-        let r = hgvsp_inframe_indel("ENSP00000001", 3, "EE", "-", Some(&pep), Strand::Forward);
+        let r = hgvsp_inframe_indel("ENSP00000001", 3, 3, "EE", "-", Some(&pep), Strand::Forward);
         assert_eq!(r, Some("ENSP00000001:p.Glu6_Glu7del".to_string()));
     }
 
@@ -661,9 +881,9 @@ mod tests {
     fn test_hgvsp_inframe_indel_without_peptide_stays_valid() {
         // No sequence context: emit an unshifted but well-formed description
         // rather than nothing, and never a substitution shape.
-        let r = hgvsp_inframe_indel("ENSP00000001", 185, "W", "WR", None, Strand::Forward);
+        let r = hgvsp_inframe_indel("ENSP00000001", 185, 185, "W", "WR", None, Strand::Forward);
         assert_eq!(r, Some("ENSP00000001:p.Trp185delinsTrpArg".to_string()));
-        let d = hgvsp_inframe_indel("ENSP00000001", 157, "F", "-", None, Strand::Forward);
+        let d = hgvsp_inframe_indel("ENSP00000001", 157, 157, "F", "-", None, Strand::Forward);
         assert_eq!(d, Some("ENSP00000001:p.Phe157del".to_string()));
     }
 
@@ -730,6 +950,7 @@ mod tests {
             let got = hgvsp_inframe_indel(
                 "ENSP00000001",
                 start,
+                start,
                 reference,
                 alternate,
                 Some(pep),
@@ -749,14 +970,14 @@ mod tests {
         // Deleting one Lys from the KK run shifts to the 3'-most Lys (3), not
         // onto Gly4 or the terminator.
         let deletion =
-            hgvsp_inframe_indel("ENSP00000001", 2, "K", "-", Some(&pep), Strand::Forward);
+            hgvsp_inframe_indel("ENSP00000001", 2, 2, "K", "-", Some(&pep), Strand::Forward);
         assert_eq!(deletion, Some("ENSP00000001:p.Lys3del".to_string()));
 
         // An insertion immediately before the terminator has no residue on its
         // 3' side once the stop is excluded, so it falls back rather than
         // emitting a Ter-flanked range.
         let insertion =
-            hgvsp_inframe_indel("ENSP00000001", 4, "G", "GS", Some(&pep), Strand::Forward);
+            hgvsp_inframe_indel("ENSP00000001", 4, 4, "G", "GS", Some(&pep), Strand::Forward);
         assert_eq!(
             insertion,
             Some("ENSP00000001:p.Gly4delinsGlySer".to_string())
@@ -773,7 +994,7 @@ mod tests {
         // would emit a confident, well-formed, wrong description (p.Gln6del).
         // Fall back to the caller's residues instead.
         let pep: Vec<u8> = "MQQQQQK".bytes().collect();
-        let r = hgvsp_inframe_indel("ENSP00000001", 2, "F", "-", Some(&pep), Strand::Forward);
+        let r = hgvsp_inframe_indel("ENSP00000001", 2, 2, "F", "-", Some(&pep), Strand::Forward);
         assert_eq!(r, Some("ENSP00000001:p.Phe2del".to_string()));
     }
 
@@ -792,7 +1013,15 @@ mod tests {
         let pep: Vec<u8> = "MRIFFASM".bytes().collect();
         for (anchor, strand) in [(4u64, Strand::Forward), (5, Strand::Reverse)] {
             assert_eq!(
-                hgvsp_inframe_indel("ENSP00000001", anchor, "FF", "F", Some(&pep), strand),
+                hgvsp_inframe_indel(
+                    "ENSP00000001",
+                    anchor,
+                    anchor,
+                    "FF",
+                    "F",
+                    Some(&pep),
+                    strand
+                ),
                 Some("ENSP00000001:p.Phe5del".to_string()),
                 "anchor {anchor} on {strand:?} should describe the same deletion"
             );
@@ -802,7 +1031,7 @@ mod tests {
         // caller whose residues really do sit at `protein_start` still
         // normalises, because the other end stays as a fallback.
         assert_eq!(
-            hgvsp_inframe_indel("ENSP00000001", 4, "FF", "F", Some(&pep), Strand::Reverse),
+            hgvsp_inframe_indel("ENSP00000001", 4, 4, "FF", "F", Some(&pep), Strand::Reverse),
             Some("ENSP00000001:p.Phe5del".to_string()),
             "the unpreferred end must still be tried"
         );
@@ -827,6 +1056,7 @@ mod tests {
             hgvsp_inframe_indel(
                 "ENSP00000491354",
                 1,
+                1,
                 "MNII",
                 "I",
                 Some(&kcna2),
@@ -840,6 +1070,7 @@ mod tests {
             hgvsp_inframe_indel(
                 "ENSP00000500921",
                 1,
+                1,
                 "EA",
                 "A",
                 Some(&pole),
@@ -850,21 +1081,41 @@ mod tests {
     }
 
     #[test]
-    fn only_a_deletion_reaching_residue_one_is_unresolvable() {
+    fn a_change_that_loses_the_initiator_is_unresolvable() {
         // The marker is specific to the initiation codon. A deletion anywhere
         // else is an ordinary `del`, including one that starts at residue 2.
         let pep: Vec<u8> = "MKFFASM".bytes().collect();
         assert_eq!(
-            hgvsp_inframe_indel("ENSP00000001", 2, "K", "-", Some(&pep), Strand::Forward),
+            hgvsp_inframe_indel("ENSP00000001", 2, 2, "K", "-", Some(&pep), Strand::Forward),
             Some("ENSP00000001:p.Lys2del".to_string())
         );
 
-        // And a delins at the start is still a delins - residues are replaced
-        // rather than removed, so the reading frame still begins somewhere known.
-        let r = hgvsp_inframe_indel("ENSP00000001", 1, "MK", "W", Some(&pep), Strand::Forward);
-        assert!(
-            r.as_deref().is_some_and(|d| d.contains("delins")),
-            "expected a delins, got {r:?}"
+        // A delins that takes out the initiator is *not* an ordinary delins.
+        // Replacing `MK` with `W` removes the ATG, so where translation begins
+        // is exactly what is no longer known, and Ensembl marks it `?` for every
+        // shape of change that loses the start - `p.Met1?` for `M/T`,
+        // `p.MetAla1_?2` for `MA/IS`, `p.Pro2?` for `XP/XAKSTVGA`, all from real
+        // VEP 115.1. Naming the replacement instead described a protein that may
+        // never be made.
+        assert_eq!(
+            hgvsp_inframe_indel("ENSP00000001", 1, 1, "MK", "W", Some(&pep), Strand::Forward),
+            Some("ENSP00000001:p.MetLys1_?2".to_string())
+        );
+
+        // A replacement that keeps the reference residues at one end of itself
+        // has not lost the start. `MK` -> `MWK` is an insertion between them,
+        // and it is described as one.
+        assert_eq!(
+            hgvsp_inframe_indel(
+                "ENSP00000001",
+                1,
+                1,
+                "MK",
+                "MWK",
+                Some(&pep),
+                Strand::Forward
+            ),
+            Some("ENSP00000001:p.Met1_Lys2insTrp".to_string())
         );
     }
 
@@ -876,7 +1127,7 @@ mod tests {
         // un-normalised description is still the honest answer.
         let pep: Vec<u8> = "MRIFFASM".bytes().collect();
         for strand in [Strand::Forward, Strand::Reverse] {
-            let r = hgvsp_inframe_indel("ENSP00000001", 5, "KK", "K", Some(&pep), strand);
+            let r = hgvsp_inframe_indel("ENSP00000001", 5, 5, "KK", "K", Some(&pep), strand);
             assert_eq!(
                 r,
                 Some("ENSP00000001:p.Lys5_Lys6delinsLys".to_string()),
@@ -886,7 +1137,7 @@ mod tests {
 
         // A single residue has only one candidate: there is no other end to try,
         // so an uncorroborated anchor cannot be rescued and must not be guessed.
-        let r = hgvsp_inframe_indel("ENSP00000001", 2, "W", "-", Some(&pep), Strand::Forward);
+        let r = hgvsp_inframe_indel("ENSP00000001", 2, 2, "W", "-", Some(&pep), Strand::Forward);
         assert_eq!(r, Some("ENSP00000001:p.Trp2del".to_string()));
     }
 
@@ -950,14 +1201,30 @@ mod tests {
         // afterwards - the wrong answer named residues the variant never touched.
         let pep: Vec<u8> = "MEGEGEA".bytes().collect();
         assert_eq!(
-            hgvsp_inframe_indel("ENSP00000001", 4, "EGE", "-", Some(&pep), Strand::Reverse),
+            hgvsp_inframe_indel(
+                "ENSP00000001",
+                4,
+                4,
+                "EGE",
+                "-",
+                Some(&pep),
+                Strand::Reverse
+            ),
             Some("ENSP00000001:p.Glu2_Glu4del".to_string())
         );
 
         // Period 3 at n = 4, the same shape one residue longer.
         let pep: Vec<u8> = "MABCABCA".bytes().collect();
         assert_eq!(
-            hgvsp_inframe_indel("ENSP00000001", 5, "ABCA", "-", Some(&pep), Strand::Reverse),
+            hgvsp_inframe_indel(
+                "ENSP00000001",
+                5,
+                5,
+                "ABCA",
+                "-",
+                Some(&pep),
+                Strand::Reverse
+            ),
             Some("ENSP00000001:p.Ala2_Ala5del".to_string())
         );
     }
@@ -970,12 +1237,28 @@ mod tests {
         // and the same reference must resolve to the other span.
         let pep: Vec<u8> = "MEGEGEA".bytes().collect();
         assert_eq!(
-            hgvsp_inframe_indel("ENSP00000001", 4, "EGE", "-", Some(&pep), Strand::Forward),
+            hgvsp_inframe_indel(
+                "ENSP00000001",
+                4,
+                4,
+                "EGE",
+                "-",
+                Some(&pep),
+                Strand::Forward
+            ),
             Some("ENSP00000001:p.Glu4_Glu6del".to_string())
         );
         // And the caller that means residues 2-4 on the forward strand says so.
         assert_eq!(
-            hgvsp_inframe_indel("ENSP00000001", 2, "EGE", "-", Some(&pep), Strand::Forward),
+            hgvsp_inframe_indel(
+                "ENSP00000001",
+                2,
+                2,
+                "EGE",
+                "-",
+                Some(&pep),
+                Strand::Forward
+            ),
             Some("ENSP00000001:p.Glu2_Glu4del".to_string())
         );
     }
@@ -1102,6 +1385,7 @@ mod tests {
                 let got = hgvsp_inframe_indel(
                     "P",
                     anchor,
+                    anchor,
                     reference,
                     &alt_aas,
                     Some(peptide.as_bytes()),
@@ -1136,7 +1420,15 @@ mod tests {
             (4, Strand::Reverse),
         ] {
             assert_eq!(
-                hgvsp_inframe_indel("ENSP00000001", anchor, "KK", "-", Some(&pep), strand),
+                hgvsp_inframe_indel(
+                    "ENSP00000001",
+                    anchor,
+                    anchor,
+                    "KK",
+                    "-",
+                    Some(&pep),
+                    strand
+                ),
                 Some("ENSP00000001:p.Lys4_Lys5del".to_string()),
                 "anchor {anchor} on {strand:?}"
             );
@@ -1153,7 +1445,15 @@ mod tests {
             // Both strands: an insertion is anchored at `protein_start` whichever
             // way the transcript runs, so the strand must make no difference here.
             for strand in [Strand::Forward, Strand::Reverse] {
-                let got = hgvsp_inframe_indel("ENSP00000001", start, "G", "GG", Some(&pep), strand);
+                let got = hgvsp_inframe_indel(
+                    "ENSP00000001",
+                    start,
+                    start,
+                    "G",
+                    "GG",
+                    Some(&pep),
+                    strand,
+                );
                 assert!(
                     got.is_some(),
                     "dropped annotation at protein_start {start} on {strand:?}"
@@ -1205,6 +1505,7 @@ mod tests {
                     let out = hgvsp_inframe_indel(
                         "ENSP00000001",
                         start,
+                        start,
                         ref_aas,
                         alt_aas,
                         context,
@@ -1240,6 +1541,7 @@ mod tests {
                     let out = hgvsp_inframe_indel(
                         "ENSP00000001",
                         start,
+                        start,
                         ref_aas,
                         alt_aas,
                         context,
@@ -1271,5 +1573,109 @@ mod tests {
     fn test_hgvsp_stop_lost() {
         let result = hgvsp("ENSP00000001", 100, b'*', b'R', false);
         assert_eq!(result, Some("ENSP00000001:p.Arg100ext*?".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    /// A change spanning two codons that alters only one of them is a
+    /// substitution, not a two-residue delins and not "unchanged".
+    ///
+    /// `hgvsp()` compares one residue per side, so `EP/ET` read as unchanged and
+    /// rendered `p.Glu153=` for a change real VEP 115.1 calls `p.Pro154Thr`.
+    /// About 3,000 HGVSp rows per 6,600 ClinVar variants.
+    #[test]
+    fn a_two_residue_window_that_changes_one_residue_is_a_substitution() {
+        let pep = b"MKEPQR".to_vec();
+        let call = |start: u64, r: &str, a: &str| {
+            hgvsp_inframe_indel("P", start, start, r, a, Some(&pep), Strand::Forward).unwrap()
+        };
+        // Residues 3 and 4 are E and P; only the second changes.
+        assert_eq!(call(3, "EP", "ET"), "P:p.Pro4Thr");
+        // Both change: the delins form names the whole run.
+        assert_eq!(call(3, "EP", "MG"), "P:p.Glu3_Pro4delinsMetGly");
+        // A terminator the change introduces ends the description there.
+        assert_eq!(call(3, "EP", "E*"), "P:p.Pro4Ter");
+    }
+
+    /// A frameshift whose first changed residue is already a terminator is the
+    /// nonsense variant it is: `p.Leu1545Ter`, not `p.Leu1545TerfsTer1`.
+    ///
+    /// 1,611 rows over a 6,600-variant ClinVar sample.
+    #[test]
+    fn a_frameshift_landing_on_a_terminator_is_written_as_nonsense() {
+        let table = CodonTable::standard();
+        // ATG AAA CTT TTT TAA: M K L F *
+        let cds = b"ATGAAACTTTTTTAA";
+        // Deleting the C of codon 3 shifts the frame: ATG AAA TTT TTT AA ->
+        // M K F F, no terminator where the reference had one.
+        let shifted = hgvsp_frameshift_from_cds(
+            "P",
+            cds,
+            Some(7),
+            Some(7),
+            &Allele::Sequence(b"C".to_vec()),
+            &Allele::Deletion,
+            Strand::Forward,
+            &table,
+        )
+        .unwrap();
+        assert!(shifted.starts_with("P:p.Leu3Phefs"), "got {shifted}");
+
+        // ATG TAC AAA CTT TAA: deleting the C of codon 2 leaves `TA` in front of
+        // the A that follows, so the first changed residue is itself a
+        // terminator - which HGVS writes without the `fs`.
+        let cds = b"ATGTACAAACTTTAA";
+        let nonsense = hgvsp_frameshift_from_cds(
+            "P",
+            cds,
+            Some(6),
+            Some(6),
+            &Allele::Sequence(b"C".to_vec()),
+            &Allele::Deletion,
+            Strand::Forward,
+            &table,
+        )
+        .unwrap();
+        assert_eq!(nonsense, "P:p.Tyr2Ter");
+    }
+
+    /// The edit is "replace the CDS bases the reference covers", which is not
+    /// what either per-variant loop used to do: both read `cds_start` as the low
+    /// end of the span, complemented an insertion in place instead of
+    /// reverse-complementing it, and had no case for a delins at all.
+    #[test]
+    fn the_edited_cds_replaces_the_reference_bases_on_either_strand() {
+        let table = CodonTable::standard();
+        // ATG AAA CTT TTT TAA on the transcript's own strand.
+        let cds = b"ATGAAACTTTTTTAA";
+        // A delins replacing CDS 7-8 (`TT`) with one base: the reference bases
+        // have to come out, not just the replacement go in.
+        let forward = hgvsp_frameshift_from_cds(
+            "P",
+            cds,
+            Some(7),
+            Some(8),
+            &Allele::Sequence(b"TT".to_vec()),
+            &Allele::Sequence(b"G".to_vec()),
+            Strand::Forward,
+            &table,
+        );
+        // The same edit on a reverse-strand transcript arrives with its CDS
+        // coordinates the other way round and its alternate reverse-complemented.
+        let reverse = hgvsp_frameshift_from_cds(
+            "P",
+            cds,
+            Some(8),
+            Some(7),
+            &Allele::Sequence(b"AA".to_vec()),
+            &Allele::Sequence(b"C".to_vec()),
+            Strand::Reverse,
+            &table,
+        );
+        assert_eq!(forward, reverse, "the two strands describe the same edit");
+        assert!(forward.is_some());
     }
 }

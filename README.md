@@ -670,33 +670,48 @@ Annotating 308,740 real chr22 variants against all five chr22/ClinVar databases 
 
 ## VEP Concordance
 
-fastVEP is validated against Ensembl VEP v115.1 on two datasets, because they exercise different code paths.
+fastVEP's consequence and HGVS output is a port of Ensembl VEP's own model, validated against
+**real Ensembl VEP v115.1** (Docker `ensemblorg/ensembl-vep:release_115.1`, `--gff` mode, the same
+GRCh38 Ensembl 115 GFF3 and FASTA) on three datasets, because they exercise different code paths.
 
 **Field-level, all annotation types.**
-All 23 compared CSQ fields agree on 100% of 2,340 shared (allele, transcript) pairs from the 173-variant VEP example set (`validation/run_validation.sh`), across all 12 consequence types the set contains.
+All 23 compared CSQ fields agree on 100% of 2,340 shared (allele, transcript) pairs from the
+173-variant VEP example set (`validation/run_validation.sh`), across all 12 consequence types the
+set contains.
+
+**Consequences and HGVS under indels, MNVs and splice sites.**
+The example set is SNV-only, so the harder shapes are validated on a 6,600-variant stratified
+sample of the ClinVar 2-star+ set - **150,725 matched (variant, allele, transcript) rows**, 72,632
+of them coding:
+
+| Field | Scope | Agreement |
+|---|---|---:|
+| `Amino_acids` | coding rows | **100 %** |
+| `Codons` | coding rows | **100 %** |
+| Splice terms | all rows | **100 %** |
+| Consequence terms | coding rows | 99.86 % |
+| Whole consequence set | all rows | 99.92 % |
+| `IMPACT` | all rows | 99.93 % |
+| `HGVSp` | all rows | 99.43 % |
+| `HGVSc` | all rows | 98.82 % |
 
 **HGVSp under in-frame indels.**
-The example set is SNV-only, so protein-level normalisation is validated separately on 400 ClinVar in-frame deletions run through both tools: **99.17% exact string agreement on 5,192 (variant, transcript) pairs**, with 399 of the 400 variant sites agreeing on every transcript.
+Protein-level normalisation is additionally checked on 400 ClinVar in-frame deletions run through
+both tools: 99.17% exact string agreement on 5,192 (variant, transcript) pairs.
 
-### The one known divergence
+### Divergences
 
-The single divergent site is a two-residue deletion at a protein C-terminus:
+Agreement is the evidence that the port is faithful, not the objective. The output is a prediction
+a clinician may act on, so where Ensembl is demonstrably wrong in a way that changes a call,
+fastVEP is right instead.
 
-| | HGVSc | HGVSp |
-|---|---|---|
-| fastVEP | `c.1674_1679del` | `p.Glu560_Glu561del` |
-| Ensembl VEP | `c.1674_1679del` | `p.Glu559_Glu560del` |
+There are five such places, and one of them matters clinically: Ensembl reports a frameshift that
+introduces a premature stop as `inframe_insertion,stop_retained_variant`, MODERATE. BRCA1
+`c.5030_5033dup` - ClinVar 3-star Pathogenic - is one of 34 such variants in the ClinVar 2-star+
+set. fastVEP reports `stop_gained,frameshift_variant`, HIGH, so those 34 keep PVS1.
 
-Residues 554-561 of NT5C2 are all Glu and the protein is 561 residues long, so the HGVS 3'-rule (assign the most 3' position possible) places the deletion at the terminal pair.
-fastVEP emits that; VEP stops one residue short.
-
-The cause is the scan bound in VEP's `_shift_3prime` (`Bio::EnsEMBL::Variation::TranscriptVariationAllele`), which iterates `length($post_seq) - $deleted_length` positions while consuming one residue per iteration.
-For an *n*-residue change it therefore halts *n*-1 residues before the terminus: exact for n=1, one short for n=2, two short for n=3.
-Running that subroutine verbatim on a synthetic C-terminal poly-Glu run reproduces the pattern, and it accounts for all 43 divergent rows with none left over.
-
-fastVEP keeps the 3'-maximal answer.
-It is what HGVS specifies, and it is what fastVEP's own `HGVSc` for the same variant - byte-identical to VEP's - already describes.
-See [issue #94](https://github.com/Huang-lab/fastVEP/issues/94) for the full analysis.
+Every divergence, its cause in the Ensembl source, its row count, and the list of fastVEP's own
+remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md)**.
 
 ## Citation
 

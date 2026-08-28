@@ -77,10 +77,203 @@ pub fn hgvsc(
     )
 }
 
-/// Generate HGVSc with optional 3' shifting for deletions/insertions.
+/// Whether `alt` is the reverse complement of `ref_bases`, which is what makes
+/// an equal-length replacement an inversion rather than a delins.
+fn is_reverse_complement(ref_bases: &[u8], alt: &[u8]) -> bool {
+    ref_bases.len() == alt.len()
+        && ref_bases
+            .iter()
+            .rev()
+            .zip(alt.iter())
+            .all(|(&r, &a)| complement(r) == a.to_ascii_uppercase())
+}
+
+fn complement(base: u8) -> u8 {
+    match base.to_ascii_uppercase() {
+        b'A' => b'T',
+        b'T' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        other => other,
+    }
+}
+
+/// One HGVS change on a spliced transcript: the shape, and the cDNA span it
+/// applies to.
 ///
-/// When `spliced_seq` is provided, deletions in repetitive regions are shifted
-/// to the most 3' position per HGVS nomenclature standard.
+/// Coding and non-coding transcripts differ only in how the coordinates are
+/// *printed* - `c.` numbering counts from the initiator and the terminator,
+/// `n.` numbering counts from the transcript's first base - so everything that
+/// decides which shape a variant has belongs here rather than in either
+/// renderer. It used to live in the coding one alone, which is why a non-coding
+/// insertion was written `n.218_219insA` where VEP writes `n.217_218insA`, and
+/// never collapsed to `dup`: 4,688 rows over a 6,600-variant ClinVar sample.
+enum Change {
+    Substitution {
+        pos: u64,
+        from: u8,
+        to: u8,
+    },
+    Deletion {
+        start: u64,
+        end: u64,
+    },
+    Duplication {
+        start: u64,
+        end: u64,
+    },
+    Insertion {
+        before: u64,
+        after: u64,
+        bases: String,
+    },
+    Inversion {
+        start: u64,
+        end: u64,
+    },
+    Delins {
+        start: u64,
+        end: u64,
+        bases: String,
+    },
+}
+
+/// Read a variant on a spliced transcript as an HGVS change.
+///
+/// `spliced_seq` is what makes the 3'-rule available. Without it a deletion is
+/// written where the VCF put it and an insertion never collapses to `dup`,
+/// which is a valid description but not the one HGVS asks for.
+fn describe(
+    cdna_start: u64,
+    cdna_end: u64,
+    ref_allele: &Allele,
+    alt_allele: &Allele,
+    spliced_seq: Option<&str>,
+) -> Option<Change> {
+    // Every span below is read low-to-high. The pair arrives strand-ordered, so
+    // a reverse-strand deletion has its ends the other way round, and the 3'
+    // shift walks off in the wrong direction from a start that is really the
+    // end. Only an insertion carries meaning in the order, and it is read
+    // through `min`/`max` too.
+    let (cdna_lo, cdna_hi) = (cdna_start.min(cdna_end), cdna_start.max(cdna_end));
+    // cDNA numbering is 1-based, so a zero here is a coordinate that was never
+    // mapped. Everything below indexes the spliced sequence from it.
+    if cdna_lo == 0 {
+        return None;
+    }
+    match (ref_allele, alt_allele) {
+        (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases))
+            if ref_bases.len() == 1 && alt_bases.len() == 1 =>
+        {
+            Some(Change::Substitution {
+                pos: cdna_lo,
+                from: ref_bases[0],
+                to: alt_bases[0],
+            })
+        }
+        // A deletion slides 3' while the base past its end repeats the base at
+        // its start, which leaves the deleted sequence unchanged.
+        (Allele::Sequence(_), Allele::Deletion) => {
+            let (mut start, mut end) = (cdna_lo, cdna_hi);
+            if let Some(seq) = spliced_seq {
+                let seq_bytes = seq.as_bytes();
+                let (mut s, mut e) = ((start - 1) as usize, (end - 1) as usize);
+                while e + 1 < seq_bytes.len()
+                    && seq_bytes[e + 1].eq_ignore_ascii_case(&seq_bytes[s])
+                {
+                    s += 1;
+                    e += 1;
+                }
+                (start, end) = (s as u64 + 1, e as u64 + 1);
+            }
+            Some(Change::Deletion { start, end })
+        }
+        // HGVS 3'-rule, then duplication. The order is the whole point: an
+        // insertion inside a repeat can be written at any of several positions,
+        // HGVS picks the most 3' of them, and only *there* does the inserted
+        // sequence sit against the copy it duplicates. Testing for a duplication
+        // at the unshifted position finds one only when the variant was already
+        // written 3'-most, which is why we wrote `c.4172_4173insCACCAG` where VEP
+        // writes `c.4177_4182dup` - 1,109 of 1,808 in-frame insertion rows over a
+        // 6,600-variant ClinVar sample.
+        //
+        // The shift is a rotation: stepping the insertion point over a base that
+        // repeats the next base of the inserted sequence leaves the transcript
+        // unchanged, so the inserted string rotates by one each step. Ensembl
+        // writes the rotated form - `c.3263_3264insCGATAGCAG` for an insertion of
+        // `GATAGCAGC` shifted by eight.
+        (Allele::Deletion, Allele::Sequence(alt_bases)) => {
+            let (mut before, mut after) = (cdna_lo, cdna_hi);
+            let len = alt_bases.len();
+            let mut rotation = 0usize;
+            if let Some(seq) = spliced_seq {
+                let seq_bytes = seq.as_bytes();
+                let mut shift = 0usize;
+                while let Some(&next) = seq_bytes.get(before as usize) {
+                    if !next.eq_ignore_ascii_case(&alt_bases[shift % len]) {
+                        break;
+                    }
+                    shift += 1;
+                    before += 1;
+                    after += 1;
+                }
+                rotation = shift % len;
+                // After a maximal shift the only place a duplicated copy can be
+                // is immediately before the insertion point; anything after it
+                // would have been shifted over.
+                let end = (before - 1) as usize;
+                if end + 1 >= len
+                    && end < seq_bytes.len()
+                    && seq_bytes[end + 1 - len..=end]
+                        .iter()
+                        .zip(alt_bases.iter().cycle().skip(rotation))
+                        .all(|(a, b)| a.eq_ignore_ascii_case(b))
+                {
+                    // `before` is the last duplicated base, so the span it
+                    // closes is `len` bases long ending there.
+                    return Some(Change::Duplication {
+                        start: before + 1 - len as u64,
+                        end: before,
+                    });
+                }
+            }
+            Some(Change::Insertion {
+                before,
+                after,
+                bases: alt_bases
+                    .iter()
+                    .cycle()
+                    .skip(rotation)
+                    .take(len)
+                    .map(|&b| b as char)
+                    .collect(),
+            })
+        }
+        // An equal-length replacement by the reverse complement is an inversion,
+        // and HGVS has a notation for it. Checked against real VEP 115.1 over a
+        // 6,600-variant ClinVar sample: all 121 same-length multi-base variants
+        // whose alternate is the reverse complement of the reference are written
+        // `inv`, and no `delins` row is one.
+        (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases)) => {
+            let (start, end) = (cdna_lo, cdna_hi);
+            if ref_bases.len() > 1 && is_reverse_complement(ref_bases, alt_bases) {
+                Some(Change::Inversion { start, end })
+            } else {
+                Some(Change::Delins {
+                    start,
+                    end,
+                    bases: std::str::from_utf8(alt_bases).ok()?.to_string(),
+                })
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Generate HGVSc with 3' shifting, duplication and inversion detection.
+///
+/// When `spliced_seq` is provided, indels in repetitive regions are shifted to
+/// the most 3' position per HGVS nomenclature standard.
 // Each argument is an independent coordinate, allele or flag with no
 // natural grouping; bundling them into a struct would only move the
 // argument list to the call site.
@@ -98,132 +291,55 @@ pub fn hgvsc_with_seq(
 ) -> Option<String> {
     let prefix = format!("{}:c.", transcript_id);
 
-    let pos_str = cds_span(cdna_start, cdna_end, coding_start, coding_end, start_phase);
+    // Ensembl applies the CDS phase offset to HGVSc for a single-base
+    // substitution and to nothing else. `hgvs_transcript`
+    // (`TranscriptVariationAllele.pm` release/115) takes the position from
+    // `$tv->cds_start` when `$vf->var_class eq 'SNP'`, and `cds_start` carries
+    // the offset - it is why a phase-1 transcript reports `CDS_position` 2286
+    // where `cDNA_position` is 2285. Every other class of change goes through
+    // `_get_cDNA_position`, which computes `cdna + 1 - cdna_coding_start` and
+    // has no phase term at all.
+    //
+    // So the asymmetry is Ensembl's. #102 unified the three copies of this
+    // numbering on the grounds that they had drifted apart; they had, but this
+    // particular difference was not drift, and unifying it moved 5,216 ClinVar
+    // indel coordinates off VEP's by one or two bases. Only a run against real
+    // VEP tells the two conventions apart - both read as reasonable from the
+    // code alone, and neither produces a malformed coordinate.
+    const NO_PHASE: u64 = 0;
+    let span = |a: u64, b: u64, phase: u64| cds_span(a, b, coding_start, coding_end, phase);
 
-    let notation = match (ref_allele, alt_allele) {
-        // SNV
-        (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases))
-            if ref_bases.len() == 1 && alt_bases.len() == 1 =>
-        {
-            format!(
+    Some(
+        match describe(cdna_start, cdna_end, ref_allele, alt_allele, spliced_seq)? {
+            Change::Substitution { pos, from, to } => format!(
                 "{}{}{}>{}",
-                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
-            )
-        }
-        // Deletion — apply HGVS 3' shifting in repetitive regions
-        (Allele::Sequence(_), Allele::Deletion) => {
-            // Try 3' shifting if we have the transcript sequence
-            let (shifted_start, shifted_end) = if let Some(seq) = spliced_seq {
-                let seq_bytes = seq.as_bytes();
-                let mut s = (cdna_start - 1) as usize; // 0-based start
-                let mut e = (cdna_end - 1) as usize; // 0-based end (inclusive)
-                                                     // Shift right while the base at position end+1 matches base at start
-                while e + 1 < seq_bytes.len()
-                    && seq_bytes[e + 1].eq_ignore_ascii_case(&seq_bytes[s])
-                {
-                    s += 1;
-                    e += 1;
-                }
-                (s as u64 + 1, e as u64 + 1) // back to 1-based
-            } else {
-                (cdna_start, cdna_end)
-            };
-            let shifted_pos = cds_span(
-                shifted_start,
-                shifted_end,
-                coding_start,
-                coding_end,
-                start_phase,
-            );
-            format!("{}{}del", prefix, shifted_pos)
-        }
-        // Insertion — normalize coordinates: ensure ins_before < ins_after
-        (Allele::Deletion, Allele::Sequence(alt_bases)) => {
-            let ins_before_cdna = cdna_start.min(cdna_end); // base before insertion
-            let ins_after_cdna = cdna_start.max(cdna_end); // base after insertion
-
-            // Check for duplication: if inserted bases match the preceding OR following sequence
-            let is_dup = if let Some(seq) = spliced_seq {
-                let seq_bytes = seq.as_bytes();
-                let ins_len = alt_bases.len();
-                let before_pos = (ins_before_cdna - 1) as usize;
-                // Check preceding sequence
-                let dup_before = if before_pos + 1 >= ins_len && before_pos < seq_bytes.len() {
-                    let preceding = &seq_bytes[before_pos + 1 - ins_len..=before_pos];
-                    preceding
-                        .iter()
-                        .zip(alt_bases.iter())
-                        .all(|(a, b)| a.eq_ignore_ascii_case(b))
-                } else {
-                    false
-                };
-                // Check following sequence
-                let dup_after = if !dup_before {
-                    let after_pos = ins_after_cdna as usize; // 0-based index of base after insertion
-                    if after_pos + ins_len <= seq_bytes.len() {
-                        let following = &seq_bytes[after_pos..after_pos + ins_len];
-                        following
-                            .iter()
-                            .zip(alt_bases.iter())
-                            .all(|(a, b)| a.eq_ignore_ascii_case(b))
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                dup_before || dup_after
-            } else {
-                false
-            };
-
-            // A duplication is written over the duplicated bases, which end at
-            // the base before the insertion point. A plain insertion is written
-            // over the two bases it sits between, and those two can straddle
-            // the end of the CDS, so both spans go through the same numbering.
-            let ins_pos_str = if is_dup {
-                let ins_len = alt_bases.len() as u64;
-                cds_span(
-                    ins_before_cdna.saturating_sub(ins_len.saturating_sub(1)),
-                    ins_before_cdna,
-                    coding_start,
-                    coding_end,
-                    start_phase,
-                )
-            } else {
-                cds_span(
-                    ins_before_cdna,
-                    ins_after_cdna,
-                    coding_start,
-                    coding_end,
-                    start_phase,
-                )
-            };
-
-            if is_dup {
-                format!("{}{}dup", prefix, ins_pos_str)
-            } else {
-                format!(
-                    "{}{}ins{}",
-                    prefix,
-                    ins_pos_str,
-                    std::str::from_utf8(alt_bases).unwrap_or("?")
-                )
-            }
-        }
-        // MNV or complex
-        (Allele::Sequence(_), Allele::Sequence(alt_bases)) => {
-            format!(
-                "{}{}delins{}",
                 prefix,
-                pos_str,
-                std::str::from_utf8(alt_bases).unwrap_or("?")
-            )
-        }
-        _ => return None,
-    };
-
-    Some(notation)
+                span(pos, pos, start_phase),
+                from as char,
+                to as char
+            ),
+            Change::Deletion { start, end } => {
+                format!("{}{}del", prefix, span(start, end, NO_PHASE))
+            }
+            Change::Duplication { start, end } => {
+                format!("{}{}dup", prefix, span(start, end, NO_PHASE))
+            }
+            // An insertion is written over the two bases it sits between, and
+            // those two can straddle the end of the CDS, so both go through the
+            // same numbering.
+            Change::Insertion {
+                before,
+                after,
+                bases,
+            } => format!("{}{}ins{}", prefix, span(before, after, NO_PHASE), bases),
+            Change::Inversion { start, end } => {
+                format!("{}{}inv", prefix, span(start, end, NO_PHASE))
+            }
+            Change::Delins { start, end, bases } => {
+                format!("{}{}delins{}", prefix, span(start, end, NO_PHASE), bases)
+            }
+        },
+    )
 }
 
 /// Generate HGVSc notation for an intronic variant.
@@ -253,10 +369,50 @@ pub fn hgvsc_intronic(
     )
 }
 
-/// Generate HGVSc intronic notation with optional end position for multi-base variants.
-// Each argument is an independent coordinate, allele or flag with no
-// natural grouping; bundling them into a struct would only move the
-// argument list to the call site.
+/// Format one intronic position as an HGVS coordinate: an exonic anchor plus a
+/// signed offset, `c.151+5` or `c.*12-3`.
+///
+/// The anchor's own numbering is the same three-scheme problem `cds_coord`
+/// solves, minus the phase - Ensembl applies that to substitutions in the CDS
+/// and nowhere else. This used to be written out four times inside
+/// `hgvsc_intronic_range`, once per allele shape, which is how two of the four
+/// came to disagree about the 5' UTR.
+fn intronic_coord(
+    cdna_pos: u64,
+    offset: i64,
+    coding_start: u64,
+    coding_end: Option<u64>,
+) -> String {
+    // Offset 0 is an exonic endpoint, which is written as the anchor alone.
+    // A span can have one of each - `c.764_771+9delins…` runs from the last
+    // coding bases of an exon into the intron - and writing only its intronic
+    // end says the change happens nine bases into the intron when it starts in
+    // the exon. PVS1 reads that offset to decide whether a splice consequence
+    // reached the canonical dinucleotide, and stood itself down on 15
+    // ClinVar-pathogenic donor and acceptor deletions on the strength of it.
+    let anchor = if let Some(ce) = coding_end.filter(|&ce| cdna_pos > ce) {
+        format!("*{}", cdna_pos - ce)
+    } else {
+        let raw = cdna_pos as i64 - coding_start as i64 + 1;
+        // There is no position 0: the base before the initiator is -1.
+        format!("{}", if raw <= 0 { raw - 1 } else { raw })
+    };
+    match offset.cmp(&0) {
+        std::cmp::Ordering::Greater => format!("{}+{}", anchor, offset),
+        std::cmp::Ordering::Less => format!("{}{}", anchor, offset),
+        std::cmp::Ordering::Equal => anchor,
+    }
+}
+
+/// Generate HGVSc for a variant reaching into an intron, in `c.` numbering.
+///
+/// Each end is a `(cDNA anchor, offset)` pair, and an offset of 0 marks an
+/// exonic end - the two are not interchangeable, so a span with one of each is
+/// written `c.764_771+9`. The end pair is optional: a single-base change, and
+/// any change the caller could not map at both ends, is written from the start
+/// alone.
+// Each argument is an independent coordinate or allele; grouping them into a
+// struct would only move the argument list to the call site.
 #[allow(clippy::too_many_arguments)]
 pub fn hgvsc_intronic_range(
     transcript_id: &str,
@@ -270,183 +426,122 @@ pub fn hgvsc_intronic_range(
     coding_end: Option<u64>,
 ) -> Option<String> {
     let prefix = format!("{}:c.", transcript_id);
+    let start = (nearest_exon_cdna_pos, intron_offset);
+    let end = end_cdna_pos.zip(end_intron_offset);
+    let show = |(c, o): (u64, i64)| intronic_coord(c, o, coding_start, coding_end);
 
-    // Convert cDNA pos to CDS-relative position.
-    // For CDS positions: cds_pos = cdna - coding_start + 1 (so position 1 = first CDS base)
-    // For 5'UTR positions: cds_pos = cdna - coding_start (no +1, since there's no position 0;
-    //   position -1 = last 5'UTR base at cdna = coding_start - 1)
-    let raw_cds_pos = nearest_exon_cdna_pos as i64 - coding_start as i64 + 1;
-    let cds_pos = if raw_cds_pos <= 0 {
-        raw_cds_pos - 1
-    } else {
-        raw_cds_pos
+    // The caller's pair is strand-ordered - it comes from the variant's genomic
+    // ends - so on the reverse strand the two arrive back to front. Transcript
+    // order is `(anchor, offset)` ascending: a donor-side offset is positive and
+    // grows away from the exon, an acceptor-side one is negative and grows
+    // towards it, and the anchor separates the two sides of the same intron.
+    let span = |ref_len: usize| -> String {
+        match end.filter(|_| ref_len > 1) {
+            Some(e) => {
+                let (lo, hi) = if start <= e { (start, e) } else { (e, start) };
+                format!("{}_{}", show(lo), show(hi))
+            }
+            None => show(start),
+        }
     };
 
-    // Build the position string with offset
-    let pos_str = if cds_pos < 0 {
-        // 5' UTR
-        if intron_offset > 0 {
-            format!("{}+{}", cds_pos, intron_offset)
-        } else {
-            format!("{}{}", cds_pos, intron_offset) // offset is already negative
-        }
-    } else if coding_end.is_some_and(|ce| nearest_exon_cdna_pos > ce) {
-        // 3' UTR
-        let utr_offset = nearest_exon_cdna_pos - coding_end.unwrap();
-        if intron_offset > 0 {
-            format!("*{}+{}", utr_offset, intron_offset)
-        } else {
-            format!("*{}{}", utr_offset, intron_offset)
-        }
-    } else if intron_offset > 0 {
-        format!("{}+{}", cds_pos, intron_offset)
-    } else {
-        format!("{}{}", cds_pos, intron_offset) // offset is already negative
-    };
-
-    // Format the variant
     let notation = match (ref_allele, alt_allele) {
         (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases))
             if ref_bases.len() == 1 && alt_bases.len() == 1 =>
         {
             format!(
                 "{}{}{}>{}",
-                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
+                prefix,
+                show(start),
+                ref_bases[0] as char,
+                alt_bases[0] as char
             )
         }
         (Allele::Sequence(ref_bases), Allele::Deletion) => {
-            // A single-base deletion, or one with no end offset from the
-            // caller, is written from the start position alone; `filter` binds
-            // the offset only in the case that actually uses it.
-            if let Some(e_offset) = end_intron_offset.filter(|_| ref_bases.len() > 1) {
-                // Multi-base intronic deletion: use end position from caller
-                let e_cdna = end_cdna_pos.unwrap_or(nearest_exon_cdna_pos);
-                let e_raw = e_cdna as i64 - coding_start as i64 + 1;
-                let e_cds = if e_raw <= 0 { e_raw - 1 } else { e_raw };
-                let end_pos_str = if e_cds < 0 {
-                    if e_offset > 0 {
-                        format!("{}+{}", e_cds, e_offset)
-                    } else {
-                        format!("{}{}", e_cds, e_offset)
-                    }
-                } else if coding_end.is_some_and(|ce| e_cdna > ce) {
-                    let utr = e_cdna - coding_end.unwrap();
-                    if e_offset > 0 {
-                        format!("*{}+{}", utr, e_offset)
-                    } else {
-                        format!("*{}{}", utr, e_offset)
-                    }
-                } else if e_offset > 0 {
-                    format!("{}+{}", e_cds, e_offset)
-                } else {
-                    format!("{}{}", e_cds, e_offset)
-                };
-
-                // For same-sign offsets: smaller absolute value first (closer to exon)
-                // For positive: +4035 before +4038
-                // For negative: -2625 before -2616
-                let same_sign =
-                    (intron_offset > 0 && e_offset > 0) || (intron_offset < 0 && e_offset < 0);
-                let (start_str, end_str) = if same_sign && intron_offset >= e_offset {
-                    (end_pos_str, pos_str.clone())
-                } else {
-                    (pos_str.clone(), end_pos_str)
-                };
-                format!("{}{}_{}del", prefix, start_str, end_str)
-            } else {
-                format!("{}{}del", prefix, pos_str)
-            }
+            format!("{}{}del", prefix, span(ref_bases.len()))
         }
-        // Insertion in intron — show range: c.X+N_X+N+1insB
+        // An insertion sits between two positions and is written over both, so
+        // it needs the pair whatever its length.
         (Allele::Deletion, Allele::Sequence(alt_bases)) => {
-            let ins_str = std::str::from_utf8(alt_bases).unwrap_or("?");
-            let next_offset = intron_offset + 1;
-            let build_pos = |cdna: u64, off: i64| -> String {
-                let raw = cdna as i64 - coding_start as i64 + 1;
-                let cp = if raw <= 0 { raw - 1 } else { raw }; // skip position 0 for 5'UTR
-                if cp < 0 {
-                    if off > 0 {
-                        format!("{}+{}", cp, off)
-                    } else {
-                        format!("{}{}", cp, off)
-                    }
-                } else if coding_end.is_some_and(|ce| cdna > ce) {
-                    let u = cdna - coding_end.unwrap();
-                    if off > 0 {
-                        format!("*{}+{}", u, off)
-                    } else {
-                        format!("*{}{}", u, off)
-                    }
-                } else if off > 0 {
-                    format!("{}+{}", cp, off)
-                } else {
-                    format!("{}{}", cp, off)
+            let between = match end {
+                Some(e) => {
+                    let (lo, hi) = if start <= e { (start, e) } else { (e, start) };
+                    format!("{}_{}", show(lo), show(hi))
                 }
+                // With only one end mapped, the other is the next position along.
+                None => format!(
+                    "{}_{}",
+                    show(start),
+                    show((nearest_exon_cdna_pos, intron_offset + 1))
+                ),
             };
-            let end_str = build_pos(nearest_exon_cdna_pos, next_offset);
-            format!("{}{}_{}ins{}", prefix, pos_str, end_str, ins_str)
+            format!(
+                "{}{}ins{}",
+                prefix,
+                between,
+                std::str::from_utf8(alt_bases).unwrap_or("?")
+            )
+        }
+        // A replacement by the reverse complement is an inversion; anything else
+        // that changes the sequence in place is a delins. Neither had an arm
+        // here at all, so 5,343 intronic rows over a 6,600-variant ClinVar sample
+        // carried no HGVSc where VEP writes one.
+        (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases)) => {
+            if ref_bases.len() > 1 && is_reverse_complement(ref_bases, alt_bases) {
+                format!("{}{}inv", prefix, span(ref_bases.len()))
+            } else {
+                format!(
+                    "{}{}delins{}",
+                    prefix,
+                    span(ref_bases.len()),
+                    std::str::from_utf8(alt_bases).unwrap_or("?")
+                )
+            }
         }
         _ => return None,
     };
-
     Some(notation)
 }
 
 /// Generate HGVSc notation for non-coding transcripts using `n.` prefix.
 ///
-/// Non-coding transcripts (lncRNA, retained_intron, etc.) use cDNA position
-/// directly with `n.` prefix, e.g. `ENST00000472807.5:n.1234A>G`.
+/// Non-coding transcripts (lncRNA, retained_intron, etc.) number from the
+/// transcript's first base rather than from the initiator, but the change they
+/// describe is the same one - see [`describe`], which both renderers share.
 pub fn hgvsc_noncoding(
     transcript_id: &str,
     cdna_start: u64,
     cdna_end: u64,
     ref_allele: &Allele,
     alt_allele: &Allele,
+    spliced_seq: Option<&str>,
 ) -> Option<String> {
     let prefix = format!("{}:n.", transcript_id);
-    let (pos_min, pos_max) = if cdna_start <= cdna_end {
-        (cdna_start, cdna_end)
-    } else {
-        (cdna_end, cdna_start)
+    let span = |a: u64, b: u64| {
+        if a == b {
+            format!("{}", a)
+        } else {
+            format!("{}_{}", a.min(b), a.max(b))
+        }
     };
-    let pos_str = if pos_min == pos_max {
-        format!("{}", pos_min)
-    } else {
-        format!("{}_{}", pos_min, pos_max)
-    };
-
-    let notation = match (ref_allele, alt_allele) {
-        (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases))
-            if ref_bases.len() == 1 && alt_bases.len() == 1 =>
-        {
-            format!(
-                "{}{}{}>{}",
-                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
-            )
-        }
-        (Allele::Sequence(_), Allele::Deletion) => {
-            format!("{}{}del", prefix, pos_str)
-        }
-        (Allele::Deletion, Allele::Sequence(alt_bases)) => {
-            let ins_pos = format!("{}_{}", pos_max, pos_max + 1);
-            format!(
-                "{}{}ins{}",
-                prefix,
-                ins_pos,
-                std::str::from_utf8(alt_bases).unwrap_or("?")
-            )
-        }
-        (Allele::Sequence(_), Allele::Sequence(alt_bases)) => {
-            format!(
-                "{}{}delins{}",
-                prefix,
-                pos_str,
-                std::str::from_utf8(alt_bases).unwrap_or("?")
-            )
-        }
-        _ => return None,
-    };
-    Some(notation)
+    Some(
+        match describe(cdna_start, cdna_end, ref_allele, alt_allele, spliced_seq)? {
+            Change::Substitution { pos, from, to } => {
+                format!("{}{}{}>{}", prefix, pos, from as char, to as char)
+            }
+            Change::Deletion { start, end } => format!("{}{}del", prefix, span(start, end)),
+            Change::Duplication { start, end } => format!("{}{}dup", prefix, span(start, end)),
+            Change::Insertion {
+                before,
+                after,
+                bases,
+            } => format!("{}{}ins{}", prefix, span(before, after), bases),
+            Change::Inversion { start, end } => format!("{}{}inv", prefix, span(start, end)),
+            Change::Delins { start, end, bases } => {
+                format!("{}{}delins{}", prefix, span(start, end), bases)
+            }
+        },
+    )
 }
 
 /// Generate HGVSc intronic notation for non-coding transcripts using `n.` prefix.
@@ -468,7 +563,11 @@ pub fn hgvsc_noncoding_intronic(
     )
 }
 
-/// Generate HGVSc intronic notation for non-coding transcripts with optional end position.
+/// Generate HGVSc for a variant spanning intronic positions of a non-coding
+/// transcript, in `n.` numbering.
+///
+/// The same shapes as [`hgvsc_intronic_range`], with the anchor printed as a
+/// plain cDNA position - there is no initiator to count from.
 pub fn hgvsc_noncoding_intronic_range(
     transcript_id: &str,
     nearest_exon_cdna_pos: u64,
@@ -479,10 +578,24 @@ pub fn hgvsc_noncoding_intronic_range(
     alt_allele: &Allele,
 ) -> Option<String> {
     let prefix = format!("{}:n.", transcript_id);
-    let pos_str = if intron_offset > 0 {
-        format!("{}+{}", nearest_exon_cdna_pos, intron_offset)
-    } else {
-        format!("{}{}", nearest_exon_cdna_pos, intron_offset)
+    let start = (nearest_exon_cdna_pos, intron_offset);
+    let end = end_cdna_pos.zip(end_intron_offset);
+    let show = |(c, o): (u64, i64)| match o.cmp(&0) {
+        // Offset 0 is an exonic endpoint; see `intronic_coord`.
+        std::cmp::Ordering::Greater => format!("{}+{}", c, o),
+        std::cmp::Ordering::Less => format!("{}{}", c, o),
+        std::cmp::Ordering::Equal => format!("{}", c),
+    };
+    // Transcript order is `(anchor, offset)` ascending; the caller's pair is
+    // strand-ordered, so on the reverse strand it arrives the other way round.
+    let span = |ref_len: usize| -> String {
+        match end.filter(|_| ref_len > 1) {
+            Some(e) => {
+                let (lo, hi) = if start <= e { (start, e) } else { (e, start) };
+                format!("{}_{}", show(lo), show(hi))
+            }
+            None => show(start),
+        }
     };
 
     let notation = match (ref_allele, alt_allele) {
@@ -491,41 +604,45 @@ pub fn hgvsc_noncoding_intronic_range(
         {
             format!(
                 "{}{}{}>{}",
-                prefix, pos_str, ref_bases[0] as char, alt_bases[0] as char
+                prefix,
+                show(start),
+                ref_bases[0] as char,
+                alt_bases[0] as char
             )
         }
         (Allele::Sequence(ref_bases), Allele::Deletion) => {
-            // A single-base deletion, or one with no end offset from the
-            // caller, is written from the start position alone; `filter` binds
-            // the offset only in the case that actually uses it.
-            if let Some(e_offset) = end_intron_offset.filter(|_| ref_bases.len() > 1) {
-                let e_cdna = end_cdna_pos.unwrap_or(nearest_exon_cdna_pos);
-                let end_pos_str = if e_offset > 0 {
-                    format!("{}+{}", e_cdna, e_offset)
-                } else {
-                    format!("{}{}", e_cdna, e_offset)
-                };
-                // Order: smaller offset first
-                let (s, e) = if intron_offset < e_offset {
-                    (pos_str.clone(), end_pos_str)
-                } else {
-                    (end_pos_str, pos_str.clone())
-                };
-                format!("{}{}_{}del", prefix, s, e)
-            } else {
-                format!("{}{}del", prefix, pos_str)
-            }
+            format!("{}{}del", prefix, span(ref_bases.len()))
         }
-        // Insertion in intron — show range: n.X+N_X+N+1insB
         (Allele::Deletion, Allele::Sequence(alt_bases)) => {
-            let ins_str = std::str::from_utf8(alt_bases).unwrap_or("?");
-            let next_offset = intron_offset + 1;
-            let end_pos_str = if next_offset > 0 {
-                format!("{}+{}", nearest_exon_cdna_pos, next_offset)
-            } else {
-                format!("{}{}", nearest_exon_cdna_pos, next_offset)
+            let between = match end {
+                Some(e) => {
+                    let (lo, hi) = if start <= e { (start, e) } else { (e, start) };
+                    format!("{}_{}", show(lo), show(hi))
+                }
+                None => format!(
+                    "{}_{}",
+                    show(start),
+                    show((nearest_exon_cdna_pos, intron_offset + 1))
+                ),
             };
-            format!("{}{}_{}ins{}", prefix, pos_str, end_pos_str, ins_str)
+            format!(
+                "{}{}ins{}",
+                prefix,
+                between,
+                std::str::from_utf8(alt_bases).unwrap_or("?")
+            )
+        }
+        (Allele::Sequence(ref_bases), Allele::Sequence(alt_bases)) => {
+            if ref_bases.len() > 1 && is_reverse_complement(ref_bases, alt_bases) {
+                format!("{}{}inv", prefix, span(ref_bases.len()))
+            } else {
+                format!(
+                    "{}{}delins{}",
+                    prefix,
+                    span(ref_bases.len()),
+                    std::str::from_utf8(alt_bases).unwrap_or("?")
+                )
+            }
         }
         _ => return None,
     };
@@ -690,6 +807,7 @@ mod tests {
             100,
             &Allele::Sequence(b"A".to_vec()),
             &Allele::Sequence(b"G".to_vec()),
+            None,
         );
         assert_eq!(result, Some("ENST00000472807.5:n.100A>G".to_string()));
     }
@@ -791,36 +909,205 @@ mod tests {
         assert_eq!(result, Some("ENST00000001:c.30_*1insAC".to_string()));
     }
 
-    /// A CDS position carries Ensembl's phase offset for an incomplete first
-    /// codon. Deletions used to skip it while every other path applied it, so
-    /// the same base was `c.716` as a substitution and `c.715` as a deletion.
+    /// Ensembl's phase offset for an incomplete first codon reaches HGVSc for a
+    /// single-base substitution and for nothing else, so the same base is
+    /// `c.52G>A` as a substitution and `c.50del` as a deletion.
+    ///
+    /// That asymmetry looks like drift and is not. `hgvs_transcript` reads the
+    /// position from `$tv->cds_start` - which carries the offset - only when
+    /// `$vf->var_class eq 'SNP'`, and from `_get_cDNA_position` otherwise, where
+    /// the arithmetic is `cdna + 1 - cdna_coding_start` with no phase term.
+    /// #102 removed the difference on the reasoning that three copies of this
+    /// numbering had drifted apart, and moved 5,216 ClinVar indel coordinates
+    /// off VEP's by one or two bases. Real VEP 115.1 is the arbiter: nothing in
+    /// the shape of either answer says which is right.
     #[test]
-    fn a_deletion_carries_the_same_phase_offset_as_a_substitution() {
-        let args = (100u64, 100u64, 51u64, Some(1000u64), 2u64);
-        let (cdna_s, cdna_e, coding_start, coding_end, phase) = args;
-        let sub = hgvsc_with_seq(
-            "ENST00000001",
-            cdna_s,
-            cdna_e,
-            &Allele::Sequence(b"G".to_vec()),
-            &Allele::Sequence(b"A".to_vec()),
-            coding_start,
-            coding_end,
-            None,
-            phase,
+    fn only_a_substitution_carries_the_cds_phase_offset() {
+        let (cdna_s, cdna_e, coding_start, coding_end, phase) =
+            (100u64, 100u64, 51u64, Some(1000u64), 2u64);
+        let at = |reference: Allele, alternate: Allele| {
+            hgvsc_with_seq(
+                "ENST00000001",
+                cdna_s,
+                cdna_e,
+                &reference,
+                &alternate,
+                coding_start,
+                coding_end,
+                None,
+                phase,
+            )
+        };
+        let g = || Allele::Sequence(b"G".to_vec());
+
+        assert_eq!(
+            at(g(), Allele::Sequence(b"A".to_vec())),
+            Some("ENST00000001:c.52G>A".to_string()),
+            "a substitution is numbered from cds_start, which includes the phase"
         );
-        let del = hgvsc_with_seq(
-            "ENST00000001",
-            cdna_s,
-            cdna_e,
-            &Allele::Sequence(b"G".to_vec()),
-            &Allele::Deletion,
-            coding_start,
-            coding_end,
-            None,
-            phase,
+        for (label, alternate) in [
+            ("deletion", Allele::Deletion),
+            ("delins", Allele::Sequence(b"AC".to_vec())),
+        ] {
+            let got = at(g(), alternate);
+            assert!(
+                got.as_deref().is_some_and(|d| d.contains("c.50")),
+                "a {label} is numbered without the phase, expected c.50, got {got:?}"
+            );
+        }
+        // An insertion is written over the two bases it sits between, and both
+        // of those are numbered the same way. It arrives as a coordinate pair
+        // rather than a single position, so it does not go through `at`.
+        assert_eq!(
+            hgvsc_with_seq(
+                "ENST00000001",
+                cdna_s,
+                cdna_e + 1,
+                &Allele::Deletion,
+                &Allele::Sequence(b"AC".to_vec()),
+                coding_start,
+                coding_end,
+                None,
+                phase,
+            ),
+            Some("ENST00000001:c.50_51insAC".to_string())
         );
-        assert_eq!(sub, Some("ENST00000001:c.52G>A".to_string()));
-        assert_eq!(del, Some("ENST00000001:c.52del".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+
+    /// An insertion inside a repeat is written at its most 3' position, and only
+    /// there does it read as a duplication.
+    ///
+    /// Checked against real VEP 115.1: `c.4172_4173insCACCAG` is `c.4177_4182dup`
+    /// to Ensembl, and testing for the duplication before shifting found one on
+    /// 699 of 1,808 in-frame insertion rows instead of 1,808.
+    #[test]
+    fn an_insertion_in_a_repeat_shifts_before_it_can_be_a_duplication() {
+        // cDNA 1-based: 1 2 3 4 5 6 7 8 9 10
+        //               A C G T T T T C A  G
+        let seq = "ACGTTTTCAG";
+        let ins = |before: u64, bases: &str| {
+            hgvsc_with_seq(
+                "T",
+                before + 1,
+                before,
+                &Allele::Deletion,
+                &Allele::Sequence(bases.as_bytes().to_vec()),
+                1,
+                Some(10),
+                Some(seq),
+                0,
+            )
+            .unwrap()
+        };
+        // Inserting a T before the run of four slides to its end, where the base
+        // in front of it is the T it duplicates.
+        assert_eq!(ins(4, "T"), "T:c.7dup");
+        // Inserting a base that does not repeat what follows stays put.
+        assert_eq!(ins(4, "A"), "T:c.4_5insA");
+        // The shift rotates the inserted string, and the rotated form is what is
+        // written: inserting `TC` before the run of T's is `CT` one base into
+        // it, which is as far as it goes.
+        assert_eq!(ins(4, "TC"), "T:c.5_6insCT");
+        // A pair that does repeat the run collapses to a two-base duplication.
+        assert_eq!(ins(4, "TT"), "T:c.6_7dup");
+    }
+
+    /// An equal-length replacement by the reverse complement is an inversion.
+    ///
+    /// Verified against real VEP 115.1 over a 6,600-variant ClinVar sample: all
+    /// 121 same-length multi-base variants whose alternate is the reverse
+    /// complement of the reference are written `inv`, and none of the 20,781
+    /// `delins` rows is one.
+    #[test]
+    fn a_replacement_by_the_reverse_complement_is_an_inversion() {
+        let call = |r: &str, a: &str| {
+            hgvsc_with_seq(
+                "T",
+                3,
+                4,
+                &Allele::Sequence(r.as_bytes().to_vec()),
+                &Allele::Sequence(a.as_bytes().to_vec()),
+                1,
+                Some(10),
+                None,
+                0,
+            )
+            .unwrap()
+        };
+        assert_eq!(call("CA", "TG"), "T:c.3_4inv");
+        assert_eq!(call("CA", "GT"), "T:c.3_4delinsGT");
+        // A single base is never an inversion, however it complements.
+        assert_eq!(
+            hgvsc_with_seq(
+                "T",
+                3,
+                3,
+                &Allele::Sequence(b"C".to_vec()),
+                &Allele::Sequence(b"G".to_vec()),
+                1,
+                Some(10),
+                None,
+                0,
+            )
+            .unwrap(),
+            "T:c.3C>G"
+        );
+    }
+
+    /// A multi-base change inside an intron had no arm at all, so it was
+    /// annotated with no HGVSc where VEP writes one - 5,343 rows over a
+    /// 6,600-variant ClinVar sample.
+    #[test]
+    fn a_multi_base_intronic_change_is_written_as_a_range() {
+        let call = |r: &str, a: Option<&str>| {
+            hgvsc_intronic_range(
+                "T",
+                96,
+                21764,
+                Some(96),
+                Some(21765),
+                &Allele::Sequence(r.as_bytes().to_vec()),
+                &match a {
+                    Some(a) => Allele::Sequence(a.as_bytes().to_vec()),
+                    None => Allele::Deletion,
+                },
+                1,
+                Some(300),
+            )
+            .unwrap()
+        };
+        assert_eq!(call("TC", Some("CG")), "T:c.96+21764_96+21765delinsCG");
+        assert_eq!(call("TC", Some("GA")), "T:c.96+21764_96+21765inv");
+        assert_eq!(call("TC", None), "T:c.96+21764_96+21765del");
+    }
+
+    /// The two ends of an intronic span arrive strand-ordered, so on the reverse
+    /// strand they arrive back to front. Transcript order is `(anchor, offset)`
+    /// ascending on both sides of the intron.
+    #[test]
+    fn an_intronic_span_is_written_in_transcript_order() {
+        let call = |(c1, o1): (u64, i64), (c2, o2): (u64, i64)| {
+            hgvsc_intronic_range(
+                "T",
+                c1,
+                o1,
+                Some(c2),
+                Some(o2),
+                &Allele::Sequence(b"TC".to_vec()),
+                &Allele::Deletion,
+                1,
+                Some(300),
+            )
+            .unwrap()
+        };
+        assert_eq!(call((96, 5), (96, 4)), "T:c.96+4_96+5del");
+        assert_eq!(call((97, -5), (97, -6)), "T:c.97-6_97-5del");
+        // Opposite sides of one intron: the anchor separates them.
+        assert_eq!(call((97, -6), (96, 5)), "T:c.96+5_97-6del");
     }
 }

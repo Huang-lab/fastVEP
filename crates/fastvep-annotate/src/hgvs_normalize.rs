@@ -46,13 +46,23 @@ pub fn convert_ins_to_dup(
 
     if ins_len == 1 {
         let pos = build_pos(nearest_exon_cdna_pos, intron_offset);
-        Some(format!("{}{}dup", prefix, pos))
-    } else {
-        let start_offset = intron_offset - ins_len as i64 + 1;
-        let start_pos = build_pos(nearest_exon_cdna_pos, start_offset);
-        let end_pos = build_pos(nearest_exon_cdna_pos, intron_offset);
-        Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
+        return Some(format!("{}{}dup", prefix, pos));
     }
+    let start_offset = intron_offset - ins_len as i64 + 1;
+    // Offsets count from the exon, so stepping `ins_len` bases back from `+1`
+    // does not reach `-2`: the exon lies between them, and a range written that
+    // way names bases in the *previous* intron. When the duplicated block would
+    // cross the boundary there is no single anchor that describes it, so the
+    // insertion keeps its own notation, which is unambiguous. Writing the
+    // crossing range instead put PVS1's offset gate at `-2` for a duplication
+    // that sits on the donor, and called two ClinVar-benign MSH6 and DSP
+    // variants likely pathogenic.
+    if start_offset.signum() != intron_offset.signum() {
+        return None;
+    }
+    let start_pos = build_pos(nearest_exon_cdna_pos, start_offset);
+    let end_pos = build_pos(nearest_exon_cdna_pos, intron_offset);
+    Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
 }
 
 /// Convert intronic insertion to dup notation with explicit start/end offsets (coding).
@@ -157,13 +167,17 @@ pub fn convert_ins_to_dup_noncoding(
 
     if ins_len == 1 {
         let pos = build_pos(intron_offset);
-        Some(format!("{}{}dup", prefix, pos))
-    } else {
-        let start_offset = intron_offset - ins_len as i64 + 1;
-        let start_pos = build_pos(start_offset);
-        let end_pos = build_pos(intron_offset);
-        Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
+        return Some(format!("{}{}dup", prefix, pos));
     }
+    let start_offset = intron_offset - ins_len as i64 + 1;
+    // See `convert_ins_to_dup`: a range that crosses the exon boundary names
+    // bases in the wrong intron.
+    if start_offset.signum() != intron_offset.signum() {
+        return None;
+    }
+    let start_pos = build_pos(start_offset);
+    let end_pos = build_pos(intron_offset);
+    Some(format!("{}{}_{}dup", prefix, start_pos, end_pos))
 }
 
 /// 3' shift an intronic indel along the transcript direction.
