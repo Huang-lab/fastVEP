@@ -236,9 +236,21 @@ where Ensembl declines to. The `HGVSp` column is not 856 defects.
 |---|---:|
 | `3_prime_UTR_variant` / `5_prime_UTR_variant` missing on a delins that spans the CDS boundary | 6 |
 | `non_coding_transcript_variant` where fastVEP says `non_coding_transcript_exon_variant`, for an insertion at an exon edge | 6 |
-| `start_lost` missing, or reported as `protein_altering_variant` | 2 |
-| `stop_retained_variant` where fastVEP says `stop_lost` | 1 |
 | `incomplete_terminal_codon_variant` missing on one boundary-spanning delins | 1 |
+
+Three rows that were in this table are not gaps, and two of them are `IMPACT` differences. Each was
+checked by rebuilding the transcript and translating it:
+
+| Variant | Ensembl VEP 115.1 | fastVEP | What the sequence says |
+|---|---|---|---|
+| TSC1 `9:132923438 GCATGGTTATCAA>AC` | `stop_retained_variant`, LOW | `stop_lost`, **HIGH** | The change covers the last four bases of the CDS, the annotated `TGA` among them. The edited frame has no stop at residue 126 and runs to 353. The stop is lost. |
+| ALDH3A2 `17:19663333 CCC>GGGCTAAAAGTACT` | `start_lost`, HIGH | `protein_altering_variant`, MODERATE | The transcript's first CDS record carries **phase 2**: the CDS begins mid-codon, 5' incomplete, and no initiator is annotated. There is no `ATG` to lose. |
+| ST3GAL5 `2:85861216 TC>T` | `frameshift_variant,start_lost` | `frameshift_variant` | Same shape - the first CDS record in transcript order carries **phase 1**. |
+
+The two `start_lost` rows are the same mistake: Ensembl treats the first codon of the CDS as the
+initiator whether or not it is one, and on a transcript whose CDS is annotated as 5' incomplete it
+is not. Declining to call `start_lost` there is the lower-impact answer, which is worth saying
+plainly - it is not a case where the cautious reading and the correct one agree.
 
 ---
 
