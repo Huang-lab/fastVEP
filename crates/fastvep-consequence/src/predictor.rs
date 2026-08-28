@@ -741,19 +741,33 @@ impl ConsequencePredictor {
         // `stop_lost` and `stop_retained` are asked first because everything
         // below defers to one or the other.
         let stop_lost = ref_pep.contains('*') && !alt_pep.contains('*');
-        // `ref_eq_alt_sequence` (l. 1321), all three clauses. It matters because
-        // `frameshift` defers to `stop_retained`: an insertion that leaves the
-        // terminator where it was is an `inframe_insertion` to Ensembl however
-        // many bases it adds, and 153 rows per 230 IMPACT-changing ClinVar
-        // variants turn on it.
+        // `ref_eq_alt_sequence` (l. 1321). It matters because `frameshift` and
+        // `stop_gained` both defer to `stop_retained`: an insertion that leaves
+        // the terminator where it was is an `inframe_insertion` to Ensembl
+        // however many bases it adds.
         //
-        // The third clause asks whether the edited *protein* still matches the
-        // reference over the reference's own length and grows by fewer than
-        // three residues past it. That is only possible when nothing follows the
-        // window, so it needs the peptide's length - deriving it from the CDS
-        // length instead assumes the CDS is exactly the peptide plus a
-        // terminator, and a `cds_end_NF` transcript is not, which turned three
-        // frameshifts into `inframe_insertion`: HIGH reported as MODERATE.
+        // Two of Ensembl's three clauses are reproduced. The first is not, and
+        // that is a deliberate divergence rather than an omission. It reads
+        // `$ref_pep eq substr($alt_pep, 0, 1) && $alt_pep =~ /\*/` - the
+        // replacement keeps the residue it starts on and introduces a terminator
+        // *anywhere* - which does not test whether the annotated terminator
+        // survived, and fires on any frameshift whose new stop lands in the
+        // first codon after the insertion point. Real VEP 115.1 therefore calls
+        // BRCA1 `c.5030_5033dup` `inframe_insertion,stop_retained_variant`,
+        // MODERATE, where ClinVar 3-star says Pathogenic and PVS1 applies; the
+        // same for `c.1499_1508dup`, BRCA2 `c.3205_3206ins…`, TP53
+        // `c.895_919dup` and 30 more in the ClinVar 2-star set. Reproducing it
+        // would report a known truncating variant as a moderate in-frame
+        // insertion, which is the failure this codebase exists to avoid, so
+        // these keep `stop_gained` and `frameshift_variant`.
+        //
+        // The remaining two do test the terminator. One asks whether it sits at
+        // the same residue on both sides; the other whether the edited *protein*
+        // still matches the reference over the reference's own length and grows
+        // by fewer than three residues past it - only possible when nothing
+        // follows the window, so it needs the peptide's length. Deriving that
+        // from the CDS length instead assumes the CDS is exactly the peptide
+        // plus a terminator, and a `cds_end_NF` transcript is not.
         let grows_past_the_last_residue = |pep_len: usize| {
             // Nothing after the window means the edit cannot displace anything.
             if w.tl_end < pep_len || w.tl_start == 0 {
@@ -766,12 +780,11 @@ impl ConsequencePredictor {
             let kept = pep_len.saturating_sub(before).min(ref_pep.len());
             grown > pep_len && grown - pep_len < 3 && alt_pep.starts_with(&ref_pep[..kept])
         };
+        // `stop_retained` also declines on an incomplete terminal codon.
         let stop_retained = !stop_lost
+            && !w.partial_codon
             && !alt_pep.is_empty()
-            && ((ref_pep.chars().count() == 1
-                && alt_pep.starts_with(ref_pep)
-                && alt_pep.contains('*'))
-                || (ref_pep.contains('*') && ref_pep.find('*') == alt_pep.find('*'))
+            && ((ref_pep.contains('*') && ref_pep.find('*') == alt_pep.find('*'))
                 || peptide_len.is_some_and(grows_past_the_last_residue));
 
         // `frameshift` and `inframe_deletion` both decline when the codon the
