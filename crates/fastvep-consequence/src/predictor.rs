@@ -1037,13 +1037,14 @@ impl ConsequencePredictor {
         // genuinely introduced stop a stop.
         let translate = |window: &[u8], anchored: bool| -> String {
             let mut pep: String = window
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .enumerate()
                 .map(|(i, codon)| {
-                    let [a, b, c] = [codon[0], codon[1], codon[2]];
-                    let translated = table.translate(&[a, b, c]);
+                    let translated = table.translate(codon);
                     let index = win_start / 3 + i;
-                    if anchored || ref_window.get(i * 3..i * 3 + 3) == Some(codon) {
+                    if anchored || ref_window.get(i * 3..i * 3 + 3) == Some(&codon[..]) {
                         resolve_readthrough_residue(transcript, index, translated) as char
                     } else {
                         translated as char
