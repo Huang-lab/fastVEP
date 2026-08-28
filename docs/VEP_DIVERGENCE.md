@@ -36,7 +36,7 @@ Reproduce with `analysis/acmg_benchmark/` for the variant set and the harness de
 
 ## Part 1 - deliberate divergences
 
-Four. Each is a case where Ensembl's output is either not valid HGVS or contradicts what the
+Five. Each is a case where Ensembl's output is either not valid HGVS, or contradicts what the
 sequence says, and where matching it would degrade a clinical call.
 
 ### 1. A frameshift that introduces a premature stop is HIGH, not a moderate in-frame insertion
@@ -112,6 +112,44 @@ the exonic base that follows it instead: `c.2319-944del`.
 
 The anchor number itself is not independently verified - only that Ensembl's form is malformed.
 
+### 5. A frameshift's terminator distance counts to the stop the frameshift creates
+
+**363 `HGVSp` rows** - the largest `HGVSp` divergence of all.
+
+`p.Leu151ProfsTer39` says the new reading frame runs 39 residues from the first changed one before
+it hits a stop. That is a fact about the edited protein, so it can be computed rather than argued
+about.
+
+Ten of these rows were checked by rebuilding the CDS from the Ensembl 115 GFF3 and FASTA, applying
+the variant and translating, independently of either tool. The reconstruction is corroborated by the
+reference protein lengths it produced - TP53 393, FLCN 579, SLC17A5 495, MPV17 176, NRIP1 1158, all
+matching UniProt.
+
+| Gene | Variant | Computed | fastVEP | Ensembl VEP 115.1 |
+|---|---|---:|---:|---:|
+| MPV17 | `c.451dup` | **39** | 39 | 50 |
+| NRIP1 | `c.3465_3468del` | **15** | 15 | 6 |
+| GSS | `c.1295_1296del` | **62** | 62 | 49 |
+| CNGB3 | `c.2085del` | **134** | 134 | 118 |
+| DYM | `c.2043del` | **94** | 94 | 81 |
+| TP53 | `p.Asp393Thrfs` | **29** | 29 | 89 |
+| ARSA | `p.Arg498Profs` | **76** | 76 | 21 |
+| SLC17A5 | `p.Thr448Profs` | **54** | 54 | 114 |
+| FLCN | `p.Ala541Cysfs` | **61** | 61 | 60 |
+| RHCE region | `p.Pro573Leufs` | **108** | 108 | 197 |
+
+fastVEP matched on all ten, over differences of 1 to 89 and in both directions - Ensembl is shorter
+on 229 of the 363 rows and longer on 134, and it is wrong either way.
+
+In every one of the ten the new stop lies **past the reference protein's own terminator**, which is
+the whole difficulty: the frameshift runs off the end of the annotated CDS and the stop that ends it
+is in what was the 3' UTR. fastVEP translates a CDS that continues downstream for exactly that
+reason. Ensembl's `_get_alternate_cds` builds its edited CDS from 3'-shifted coordinates while
+taking consequences from unshifted ones, and the two do not line up.
+
+**This entry previously sat in Part 2, as a fastVEP defect.** It was recorded there from reading
+Ensembl's source rather than from computing the answer, and computing it reverses the verdict.
+
 ---
 
 ## Part 2 - gaps, where Ensembl is right
@@ -149,14 +187,16 @@ under-shifting on forward-strand transcripts and over-shifting on reverse-strand
 
 | Gap | Rows | What it looks like |
 |---|---:|---|
-| Frameshift terminator distance | 415 | VEP `p.Ser318PhefsTer181`, fastVEP `p.Ser318PhefsTer282`. Ensembl builds the edited CDS from *3'-shifted* coordinates for HGVS (`_get_alternate_cds`) while computing consequences from unshifted ones; fastVEP uses unshifted for both |
 | fastVEP emits an HGVSp where VEP emits none | 113 | mostly spans with one end outside the CDS |
-| VEP emits one where fastVEP does not | 23 | |
-| First changed residue of a frameshift at the annotated terminator | 46 | VEP `p.Ter309LysfsTer14`, fastVEP `p.Ter309MetfsTer16` |
+| A frameshift whose first changed residue differs | 47 | VEP `p.Val27GlyfsTer25`, fastVEP `p.Val27GlyfsTer?` - usually one tool finding no stop where the other does |
+| First changed residue of a frameshift at the annotated terminator | 26 | VEP `p.Ter247LysfsTer?`, fastVEP `p.Ter247MetfsTer16` |
+| VEP emits one where fastVEP does not | 23 | VEP `p.Glu480del` |
+| A delins naming the same replacement one residue further along | 15 | VEP `p.Thr454_Thr455delinsHisPro`, fastVEP `p.Thr455_Thr456delinsHisPro`. The protein-side twin of the exonic 3'-shift off by one above |
+| Other | 10 | VEP `p.Ter44GlnextTer20`, fastVEP `p.Gln44ext*?`; VEP `p.Met4_?1` |
 | `Amino_acids` of `X` from an ambiguous reference codon | 3 | VEP `p.Ter157=`, fastVEP `p.Xaa157=`. Which is right depends on whether the position is the terminator or genuinely unknown; unresolved |
 
-The eight buckets above and the four divergences account for all 856 `HGVSp` mismatches exactly:
-415 + 137 + 113 + 101 + 46 + 23 + 18 + 3.
+Those seven and the four `HGVSp`-bearing divergences account for all 856 mismatches exactly:
+363 + 137 + 113 + 101 + 47 + 26 + 23 + 18 + 15 + 10 + 3.
 
 ### Consequence terms
 

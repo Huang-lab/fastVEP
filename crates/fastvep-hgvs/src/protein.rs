@@ -1600,6 +1600,51 @@ mod window_tests {
         assert_eq!(call(3, "EP", "E*"), "P:p.Pro4Ter");
     }
 
+    /// A frameshift's new stop is usually *past* the annotated terminator, and
+    /// the Ter distance counts to that stop, not to the end of the reference
+    /// protein.
+    ///
+    /// This is the largest place fastVEP and Ensembl disagree on HGVSp - 373
+    /// rows over a 6,600-variant ClinVar sample - and Ensembl is the one that is
+    /// wrong. Ten were checked by rebuilding the CDS from the Ensembl 115 GFF3
+    /// and FASTA, applying the variant and translating, independently of either
+    /// tool; the reference protein lengths came back matching UniProt (TP53 393,
+    /// FLCN 579, SLC17A5 495, MPV17 176, NRIP1 1158), and fastVEP matched the
+    /// computed distance on all ten, over deltas of 1 to 89 in both directions:
+    ///
+    /// | first changed residue | computed | fastVEP | VEP 115.1 |
+    /// |---|---:|---:|---:|
+    /// | MPV17 `p.Leu151Profs` | 39 | 39 | 50 |
+    /// | NRIP1 `p.Lys1155Asnfs` | 15 | 15 | 6 |
+    /// | TP53 `p.Asp393Thrfs` | 29 | 29 | 89 |
+    /// | ARSA `p.Arg498Profs` | 76 | 76 | 21 |
+    /// | FLCN `p.Ala541Cysfs` | 61 | 61 | 60 |
+    ///
+    /// In every one of the ten the new stop lay beyond the reference protein's
+    /// end, which is why `cds_and_downstream` has to run past the annotated
+    /// terminator: a translation stopping there would have no stop to find.
+    #[test]
+    fn a_frameshift_stop_past_the_annotated_terminator_is_counted_to() {
+        let table = CodonTable::standard();
+        //          M   K   L   F   *  | what was the 3' UTR
+        let reference = b"ATGAAACTTTTTTAA\
+                          CCCGTAACCCTAG"
+            .iter()
+            .filter(|b| !b.is_ascii_whitespace())
+            .copied()
+            .collect::<Vec<u8>>();
+        // Drop one base from codon 2, shifting the frame from there.
+        let mut edited = reference.clone();
+        edited.remove(4);
+
+        let out = hgvsp_frameshift("P", &reference, &edited, 1, &table).unwrap();
+
+        // Reference reads M K L F *; edited reads M N F F N P *. The new stop is
+        // residue 7 and the first changed residue is 2, so Ter counts 6 - and
+        // residue 7 is two past the terminator the reference had at residue 5.
+        assert_eq!(out, "P:p.Lys2AsnfsTer6");
+    }
+
     /// A frameshift whose first changed residue is already a terminator is the
     /// nonsense variant it is: `p.Leu1545Ter`, not `p.Leu1545TerfsTer1`.
     ///
