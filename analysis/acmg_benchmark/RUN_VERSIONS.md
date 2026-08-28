@@ -949,9 +949,11 @@ protein.
 Two documents. [`results/v26/MD_REVIEW.md`](results/v26/MD_REVIEW.md) is the v23-to-v26 delta with
 the full table in `call_changes_v23_to_v26.tsv`.
 [`results/v26/MD_REVIEW_ROUND6.md`](results/v26/MD_REVIEW_ROUND6.md) is the standalone note for the
-reviewer, covering everything since v20 - round 5's table went out unmarked, so its 59 rows are
-carried forward - with `discordant_64_round6.xlsx` built by
-`scripts/07_build_round6_table.py`. Three buckets need her:
+reviewer, covering **v9 to v26** - the run her last comments were written against through this one -
+because round 5's table and note went out and have not come back. It folds in the answers to her six
+points, the gnomAD-rejection defect those comments uncovered, both annotation rounds and the two
+classifier defects, and carries round 5's 59 rows forward into
+`discordant_64_round6.xlsx`, built by `scripts/07_build_round6_table.py`. Three buckets need her:
 
 - **Three insertions at an exon's last base** (MSH6 ×2, DSP) that are frameshifts where the
   VCF puts them and intronic duplications after the 3'-shift. ClinVar calls all three benign.
