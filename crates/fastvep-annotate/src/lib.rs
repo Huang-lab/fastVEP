@@ -585,12 +585,6 @@ impl AnnotationContext {
                                                 // for a change VEP calls `p.Pro154Thr` - and a
                                                 // synonymous two-residue window needs its whole
                                                 // span named.
-                                                // A window wider than one residue also routes here
-                                            // even when the lengths match: `hgvsp()` compares one
-                                            // residue per side, so `EP/ET` reads as unchanged and
-                                            // renders `p.Glu153=` for a change VEP calls
-                                            // `p.Pro154Thr` - and a synonymous two-residue window
-                                            // needs its whole span named.
                                             || aa.0.len() > 1
                                             {
                                                 // In-frame indel / delins (frameshift

@@ -956,6 +956,18 @@ fn attach_transcript_sequences(
                 "Built sequences for {} coding transcripts",
                 built.load(Ordering::Relaxed)
             );
+        } else {
+            // Without the CDS there is no way to tell a missense change from a
+            // synonymous one, so `terms_for_window` reports the honest
+            // `coding_sequence_variant` - which is MODIFIER, where a missense
+            // call would be MODERATE. Anything filtering on IMPACT drops those
+            // rows, so say so rather than letting the tier change go unseen.
+            eprintln!(
+                "Warning: no reference sequence (--fasta not given, and the transcript \
+                 source carries none), so coding changes are reported as \
+                 coding_sequence_variant with MODIFIER impact rather than \
+                 missense/synonymous. Pass --fasta for coding consequences."
+            );
         }
     }
     needs_seq_build

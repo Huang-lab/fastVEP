@@ -106,11 +106,11 @@ fn the_shift_reads_the_reference_in_blocks_not_a_base_at_a_time() {
     });
     assert_eq!(deleted.1, 4_000, "the walk should cross the whole repeat");
 
-    // Measured: 32 and 63. A 256-base block centred on the request leaves 128
-    // bases in the direction of travel, so a 4,000-base walk refills about 32
-    // times, and the deletion pays that once per end. Per-base reads cost ~4,000
-    // and ~8,000. The budget is loose enough to survive a block-size change and
-    // tight enough that a return to per-base reads fails it.
+    // The window opens at 16 bases and doubles to 1,024, so a 4,000-base walk
+    // pays a handful of small refills and then a few large ones; the deletion
+    // pays that once per end. Per-base reads cost ~4,000 and ~8,000. The budget
+    // is loose enough to survive a change to the growth curve and tight enough
+    // that a return to per-base reads fails it.
     assert!(
         insertion <= 64,
         "insertion shift allocated {insertion} times crossing 4,000 bases"

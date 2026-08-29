@@ -205,6 +205,13 @@ fn describe(
         (Allele::Deletion, Allele::Sequence(alt_bases)) => {
             let (mut before, mut after) = (cdna_lo, cdna_hi);
             let len = alt_bases.len();
+            // An insertion of nothing describes no change, and every index below
+            // is taken modulo this length. `Allele::from_str("")` yields an empty
+            // `Sequence`, so the pair is constructible even though the VCF reader
+            // maps a fully consumed allele to `-` and never produces it.
+            if len == 0 {
+                return None;
+            }
             let mut rotation = 0usize;
             if let Some(seq) = spliced_seq {
                 let seq_bytes = seq.as_bytes();
