@@ -24,7 +24,7 @@ input, a database or a bulk output, it belongs in `data/benchmark/`.**
 | Path | What |
 |---|---|
 | [`METHODS.md`](METHODS.md) | What the benchmark measures, how the truth set is built, what the numbers mean |
-| [`RUN_VERSIONS.md`](RUN_VERSIONS.md) | Per-run history: what changed between v1 and v17, with measured effect |
+| [`RUN_VERSIONS.md`](RUN_VERSIONS.md) | Per-run history: what changed between v1 and v27, with measured effect |
 | [`STATUS.md`](STATUS.md) | On-disk inventory - what is downloaded and built locally |
 | [`scripts/`](scripts/) | Everything executable, plus [its own README](scripts/README.md) |
 | [`scripts/sa_sources/`](scripts/sa_sources/) | Building the supplementary annotation databases from public sources |

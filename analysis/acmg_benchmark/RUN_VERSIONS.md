@@ -967,3 +967,97 @@ classifier defects, and carries round 5's 59 rows forward into
 v24 and v25 were intermediate runs of this work. v24 exposed both classifier bugs above -
 34 ClinVar-pathogenic calls lost PVS1 in it - and v25 fixed one of the two. Neither is a
 shipped state; they have no section here and no results directory.
+
+## v27: the 3'-rule reaches the splice junction, and PVS1 stops firing on an intact donor
+
+No criterion logic changed, no threshold moved, and the supplementary-annotation stack is
+identical to v23 and v26.
+The binary is `master` through #104 plus the then-open #106.
+Every call that moved, moved because an HGVSc string moved.
+
+#104 let the HGVS 3'-shift apply to a span with one end in an exon and the other in an intron.
+v26 stopped such a span at the junction; v27 shifts it the way Ensembl does.
+541 variants got a different HGVSc, and consequence terms and IMPACT are **byte-identical on all
+673,660 variants** - which is also the measurement that says #106 contributed nothing here, since
+adding coding terms is the only thing #106 does.
+
+### v26 to v27
+
+| Metric | v26 | **v27** | change |
+|---|---:|---:|---:|
+| Exact match | 425,322 | **425,334** | +12 |
+| Same-direction | 522,473 | **522,474** | +1 |
+| Opposite-direction | 64 | **59** | -5 |
+| False-benign (ClinVar P/LP, fastVEP B/LB) | 30 | 30 | 0 |
+| False-pathogenic (ClinVar B/LB, fastVEP P/LP) | 34 | **29** | -5 |
+| P/LP recall | 62.42 % | 62.41 % | -15 variants |
+
+56 calls changed: 34 `LP -> VUS`, 11 `VUS -> LB`, 11 `LB -> VUS`.
+
+### Every one of the 56 was checked against real Ensembl VEP 115.1
+
+Docker `ensemblorg/ensembl-vep:release_115.1`, the same GFF3 and FASTA fastVEP reads, `--pick`.
+
+| HGVSc VEP agrees with | count |
+|---|---:|
+| v27 | **55** |
+| v26 | 0 |
+| neither | 1 |
+
+The one VEP matches neither on is VHL `c.341-25_370dup`, a duplication whose span runs from the
+intron into the exon.
+fastVEP cannot write that span in either run, and it is the same boundary-crossing family already
+recorded against #104.
+
+### The 34 that lost PVS1
+
+Each is a deletion that starts in an exon and runs through the donor dinucleotide *as the VCF spells
+it*, and is a purely intronic deletion at +3 or later once shifted.
+CDH1 is the shape: `c.2438_2439+2del` in v26, `c.2439+5_2439+8del` in v27 and in VEP.
+
+PVS1's splice track reads the offset off the HGVSc, so it stood down on all 34.
+**That is the right answer, and v26's PVS1 was a false positive.**
+Verified rather than argued: for each of the 34 the maximal 3'-shift was recomputed directly from
+the FASTA, independently of both tools.
+It lands on the offset VEP and fastVEP report in all 34, every donor is a canonical `GT`, and in
+none of them does the shifted span touch +1 or +2.
+The shifted spelling is the one that preserves the longest prefix of the reference, so the sequence
+through +2 is untouched and the donor survives in the variant transcript.
+
+The consequence stays `splice_donor_variant`, in v27 and in VEP both, because Ensembl does not
+3'-shift before calling consequences.
+A HIGH consequence next to a VUS call looks like a contradiction and is not one: the two fields
+answer questions about different positions, by design.
+
+### The 22 that moved on BP7
+
+BP7's intron-offset gate reads the same shifted offset.
+The shift moves a donor-side variant away from the site and an acceptor-side variant toward it, so
+11 variants cleared the gate and 11 no longer do.
+Both directions follow from the same rule, because the shifted spelling always puts the disturbed
+sequence downstream of the shifted position.
+VEP agrees with v27 on 21 of the 22.
+
+### Review queue: nothing new
+
+| | v26 | **v27** |
+|---|---:|---:|
+| Discordant rows for the reviewer | 64 | **59** |
+| Resolved since v26 | | 5 |
+| **New since v26** | | **0** |
+
+The five that resolved are ClinVar-benign variants fastVEP had been calling likely pathogenic on the
+false-positive PVS1 above: AGRN, NFKB2, PTEN, LZTR1, LMX1B.
+No variant entered the queue, so round 6 stands as sent and needs no reissue.
+
+One question is worth folding into round 7 when her comments arrive, and it is a criteria question
+rather than a defect.
+15 of the 34 are ClinVar P/LP that are now VUS.
+Their canonical `GT` is intact, so ClinGen SVI's PVS1 splice track does not reach them, but the
+deletion still removes `+5`/`+6` of the donor consensus in several.
+Whether a near-donor deletion should carry PVS1 at reduced strength, or be left to SpliceAI through
+PP3, is hers to rule on.
+
+`scripts/08_diff_calls.py` produces the call-changes table; the v23-to-v26 one was built by hand,
+which is why no script existed for it.
+It reproduces that table exactly - 290 changed calls - when run over v23 and v26.
