@@ -8,6 +8,7 @@
 //! the same underlying crates.
 
 mod hgvs_normalize;
+pub mod pick;
 
 pub use hgvs_normalize::{
     convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvsc_intronic_shifted,
@@ -27,6 +28,7 @@ use fastvep_genome::Transcript;
 use fastvep_io::output;
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use fastvep_io::vcf::VcfParser;
+use pick::{has_transcripts_to_pick, pick_best_transcript_idx_with, DEFAULT_PICK_ORDER};
 use rayon::prelude::*;
 use std::fs::File;
 use std::path::Path;
@@ -665,31 +667,44 @@ impl AnnotationContext {
                         })
                         .collect();
 
-                    let should_include =
-                        !pick || tc.canonical || vf.transcript_variations.is_empty();
-                    if should_include {
-                        vf.transcript_variations.push(TranscriptVariation {
-                            transcript_id: tc.transcript_id.clone(),
-                            gene_id: tc.gene_id.clone(),
-                            gene_symbol: tc.gene_symbol.clone(),
-                            biotype: tc.biotype.clone(),
-                            allele_annotations,
-                            canonical: tc.canonical,
-                            strand: tc.strand,
-                            source: self.gff3_source.clone(),
-                            protein_id: transcript.and_then(|t| t.protein_id.clone()),
-                            mane_select: transcript.and_then(|t| t.mane_select.clone()),
-                            mane_plus_clinical: transcript
-                                .and_then(|t| t.mane_plus_clinical.clone()),
-                            tsl: transcript.and_then(|t| t.tsl),
-                            appris: transcript.and_then(|t| t.appris.clone()),
-                            ccds: transcript.and_then(|t| t.ccds.clone()),
-                            gencode_primary: transcript.map(|t| t.gencode_primary).unwrap_or(false),
-                            symbol_source: transcript.and_then(|t| t.gene.symbol_source.clone()),
-                            hgnc_id: transcript.and_then(|t| t.gene.hgnc_id.clone()),
-                            flags: transcript.map(|t| t.flags.clone()).unwrap_or_default(),
-                        });
-                    }
+                    // Collect every transcript here; `pick` runs as a single
+                    // post-pass below so it can compare all candidates, the
+                    // same way `fastvep annotate --pick` does.
+                    vf.transcript_variations.push(TranscriptVariation {
+                        transcript_id: tc.transcript_id.clone(),
+                        gene_id: tc.gene_id.clone(),
+                        gene_symbol: tc.gene_symbol.clone(),
+                        biotype: tc.biotype.clone(),
+                        allele_annotations,
+                        canonical: tc.canonical,
+                        strand: tc.strand,
+                        source: self.gff3_source.clone(),
+                        protein_id: transcript.and_then(|t| t.protein_id.clone()),
+                        mane_select: transcript.and_then(|t| t.mane_select.clone()),
+                        mane_plus_clinical: transcript.and_then(|t| t.mane_plus_clinical.clone()),
+                        tsl: transcript.and_then(|t| t.tsl),
+                        appris: transcript.and_then(|t| t.appris.clone()),
+                        ccds: transcript.and_then(|t| t.ccds.clone()),
+                        gencode_primary: transcript.map(|t| t.gencode_primary).unwrap_or(false),
+                        symbol_source: transcript.and_then(|t| t.gene.symbol_source.clone()),
+                        hgnc_id: transcript.and_then(|t| t.gene.hgnc_id.clone()),
+                        flags: transcript.map(|t| t.flags.clone()).unwrap_or_default(),
+                    });
+                }
+            }
+
+            // Apply `pick` before SA/ACMG so those passes only run on the
+            // surviving transcript, and before `compute_most_severe` so the
+            // summary term describes the transcript actually reported.
+            // Shares `pick::` with `fastvep annotate --pick`: this path used to
+            // keep "canonical, or the first transcript seen", which returned a
+            // non-canonical first row next to the canonical one for a
+            // single-gene variant.
+            if pick && has_transcripts_to_pick(&vf.transcript_variations) {
+                if let Some(idx) =
+                    pick_best_transcript_idx_with(&vf.transcript_variations, DEFAULT_PICK_ORDER)
+                {
+                    vf.transcript_variations = vec![vf.transcript_variations.swap_remove(idx)];
                 }
             }
 

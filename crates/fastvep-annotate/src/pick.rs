@@ -1,4 +1,10 @@
 //! `--pick`: choosing one consequence per variant, in VEP's order.
+//!
+//! This lives in `fastvep-annotate` rather than in the CLI because both
+//! drivers need it and they had already drifted: the CLI ran this hierarchy
+//! while `annotate_vcf_text` (the web server's path) kept "canonical, or the
+//! first transcript seen", which returns two rows for a single-gene variant
+//! and puts a non-canonical one first. One implementation, one behaviour.
 
 use anyhow::Result;
 use fastvep_io::variant::TranscriptVariation;
@@ -84,13 +90,29 @@ pub fn parse_pick_order(spec: &str) -> Result<Vec<PickCriterion>> {
     Ok(out)
 }
 
+/// Whether `--pick` has competing transcripts to choose between.
+///
+/// The placeholder rows `annotate_intergenic` and `annotate_sa_only_scaffold`
+/// emit carry `transcript_id` `-`, and they are built one per *alt allele*
+/// rather than one per transcript. Running the hierarchy over those keeps a
+/// single row and silently drops every other alt from the output - no error,
+/// just a missing allele. There is no transcript to pick at such a site, so
+/// pick does not apply there.
+///
+/// A mix cannot currently occur, because those scaffolds run only when nothing
+/// overlaps the variant; `any` is the deliberate reading if one ever does, so
+/// that a real transcript still gets picked.
+pub fn has_transcripts_to_pick(tvs: &[TranscriptVariation]) -> bool {
+    tvs.len() > 1 && tvs.iter().any(|tv| tv.transcript_id.as_ref() != "-")
+}
+
 /// Index of the best transcript variation under the given `--pick-order`
 /// hierarchy, with transcript_id alphabetical order as a final deterministic
 /// tie-breaker.
 ///
 /// Criteria omitted from `order` are not consulted at all, which is what lets
 /// a caller drop a tier rather than only reorder it.
-pub(crate) fn pick_best_transcript_idx_with(
+pub fn pick_best_transcript_idx_with(
     tvs: &[TranscriptVariation],
     order: &[PickCriterion],
 ) -> Option<usize> {
@@ -242,6 +264,60 @@ mod pick_tests {
             hgnc_id: None,
             flags: Vec::new(),
         }
+    }
+
+    #[test]
+    fn intergenic_placeholders_are_not_pickable() {
+        // Regression test: a multi-allelic intergenic site arrives as one
+        // placeholder row per alt allele. Picking among them drops alleles.
+        let rows: Vec<TranscriptVariation> = ["-", "-"]
+            .iter()
+            .map(|id| {
+                make_tv(
+                    id,
+                    false,
+                    "-",
+                    vec![Consequence::IntergenicVariant],
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            })
+            .collect();
+        assert!(!has_transcripts_to_pick(&rows));
+    }
+
+    #[test]
+    fn real_transcripts_are_pickable() {
+        let rows = vec![
+            make_tv(
+                "ENST1",
+                false,
+                "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            make_tv(
+                "ENST2",
+                true,
+                "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        ];
+        assert!(has_transcripts_to_pick(&rows));
+        // One transcript is not a choice either.
+        assert!(!has_transcripts_to_pick(&rows[..1]));
     }
 
     #[test]

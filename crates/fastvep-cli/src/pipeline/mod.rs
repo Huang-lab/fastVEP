@@ -13,14 +13,16 @@ pub mod annotate;
 pub mod cache_build;
 pub mod custom;
 pub mod filter;
-pub mod pick;
 pub mod sa_build;
 
 pub use annotate::{run_annotate, AnnotateConfig};
 pub use cache_build::{parse_gff3_arg, run_cache_build, Gff3Spec};
 pub use custom::run_oga_build;
 pub use filter::run_filter;
-pub use pick::{parse_pick_order, PickCriterion, DEFAULT_PICK_ORDER};
+// `pick` moved into `fastvep-annotate` so the CLI and the web server
+// share one implementation; re-exported here so callers of
+// `pipeline::` keep the path they had.
+pub use fastvep_annotate::pick::{parse_pick_order, PickCriterion, DEFAULT_PICK_ORDER};
 pub use sa_build::{
     run_sa_build, run_sa_build_format, run_sa_build_v2, run_sa_convert, source_from_json_key,
     source_has_decomposed_osa2, source_supports_osa2, OSA2_DECOMPOSED_SOURCES,
