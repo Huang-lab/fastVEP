@@ -472,7 +472,8 @@ objects will be heterogeneous.
 | `--fasta` | Reference FASTA file | -- |
 | `--output-format` | `vcf`, `tab`, or `json` | `vcf` |
 | `--hgvs` | Include HGVS notations | off |
-| `--pick` | Report only the most severe consequence per variant | off |
+| `--pick` | Report one consequence per variant, chosen by `--pick-order` | off |
+| `--pick-order` | Criteria order used by `--pick`, VEP `--pick_order` syntax. Severity (`rank`) is last in the default, so this is not "most severe" -- see [docs/ACMG.md](docs/ACMG.md#which-transcript---pick-reports) | VEP's default |
 | `--symbol` | Include gene symbol in output | off |
 | `--canonical` | Include canonical-transcript flag in output | off |
 | `--everything` | Turn on all common annotation flags | off |

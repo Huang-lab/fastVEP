@@ -57,7 +57,8 @@ enum Commands {
         #[arg(long, default_value_t = 5000)]
         buffer_size: usize,
 
-        /// Pick one consequence per variant (most severe)
+        /// Pick one consequence per variant, by `--pick-order` (not by severity:
+        /// severity is that order's last tie-break, as in VEP)
         #[arg(long)]
         pick: bool,
 

@@ -85,7 +85,8 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
 }
 ```
 
-Check `has_fasta` and `sa_sources` here before you trust any annotation, for the reason in the next section.
+Check `transcripts`, `has_fasta`, and `sa_sources` here before you trust any annotation.
+Each of the three can be missing without the server saying so: a zero transcript count makes every variant `intergenic_variant`, and the other two are the subject of the next section.
 
 ## Always pass `--fasta`
 
@@ -127,7 +128,7 @@ All request and response bodies are JSON, except `POST /api/upload-gff3`, which 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `vcf` | string | required | VCF text. Header lines are optional; records are tab-separated. |
-| `pick` | bool | `false` | Narrow the reported transcripts (see the caveat below). |
+| `pick` | bool | `false` | Reduce each variant to one transcript consequence (see below). |
 | `acmg` | bool | `false` | Attach ACMG-AMP classification to each consequence. |
 
 ```bash
@@ -203,9 +204,16 @@ Expect responses to be large, and select the transcript you care about rather th
 The per-variant shape follows Ensembl VEP's JSON output, so clients written against VEP's `transcript_consequences` mostly port over.
 `time_ms` is server-side annotation time, excluding transport.
 
-> **`pick` does not guarantee one consequence per variant.**
-> In this code path a transcript is kept when it is canonical *or* when it is the first one seen for the variant (`crates/fastvep-annotate/src/lib.rs:669`), so a request with `"pick": true` can still return two entries.
-> If you need exactly one row per variant, select it client-side from `most_severe_consequence`, or use the CLI.
+`"pick": true` reduces each variant to one transcript, chosen by the same hierarchy as `fastvep annotate --pick`: MANE Select, then MANE Plus Clinical, canonical, APPRIS, TSL, biotype, CCDS, and only then consequence severity.
+That is Ensembl VEP's default `--pick_order`, so a default run of either tool picks the same transcript.
+It reduces to one *transcript*, not to one entry: `transcript_consequences` carries one entry per (transcript, allele), so a biallelic site still returns two.
+A variant that overlaps no transcript at all is left untouched, because there its entries are one per alt allele rather than competing transcripts.
+
+> **`pick` does not mean "most severe".**
+> Severity is the *last* tie-break in that order, so where genes overlap, a neighbouring gene's MANE transcript outranks a non-MANE transcript the variant actually disrupts, and the reported consequence can be `upstream_gene_variant` on the neighbour rather than the damaging term on the real target.
+> Stock VEP behaves the same way; it is still the wrong answer for clinical reporting.
+> The server does not expose `--pick-order`, so if severity must come first, use the CLI with `--pick-order rank,mane_select,...` -- [docs/ACMG.md](ACMG.md#which-transcript---pick-reports) has the measured effect.
+> `most_severe_consequence` is computed from the transcripts actually reported, so with `"pick": true` it describes the picked transcript, not the whole locus.
 
 Setting `"acmg": true` adds an `acmg` object to each transcript consequence with the classification, the per-criterion verdicts, and the evidence counts.
 Classification quality depends on which supplementary databases are loaded, so read [docs/ACMG_SETUP.md](ACMG_SETUP.md) before relying on it.
@@ -253,7 +261,7 @@ Check the server's stderr when you get one.
 | --- | --- | --- | --- |
 | `--bind` | `FASTVEP_BIND` | `0.0.0.0` | Interface to listen on |
 | `--port` | `FASTVEP_PORT` | `8080` | Port to listen on |
-| `--gff3` | `FASTVEP_GFF3` | built-in example | Gene model |
+| `--gff3` | `FASTVEP_GFF3` | none | Gene model |
 | `--fasta` | `FASTVEP_FASTA` | none | Reference FASTA, needs a `.fai` |
 | `--sa-dir` | `FASTVEP_SA_DIR` | none | Directory of `.osa`/`.osa2`/`.osi`/`.oga` files |
 | `--data-dir` | `FASTVEP_DATA_DIR` | none | Directory of switchable genomes |
@@ -262,7 +270,8 @@ Check the server's stderr when you get one.
 | `--max-concurrent` | | `64` | Concurrent annotation requests |
 | `--stats-file` | `FASTVEP_STATS_FILE` | `stats.json` | Where the served-variant counters persist |
 
-Two things to know about the defaults.
+Three things to know about the defaults.
+`--gff3` has none, and a server started without one does not refuse to start: it comes up with `"status": "ok"`, reports `"transcripts": 0`, and answers every request with `intergenic_variant` at HTTP 200.
 `--stats-file` is relative, so a bare `fastvep-web` writes `stats.json` into whatever directory you launched it from; pass an absolute path under a service account's own state directory when running it as a daemon.
 Requests beyond `--max-concurrent` queue rather than fail, which is why raising it is rarely the fix for a slow server.
 

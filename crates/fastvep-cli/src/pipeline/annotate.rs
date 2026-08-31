@@ -2,10 +2,11 @@
 
 use super::cache_build::{load_one_gff3, parse_gff3_arg, Gff3Spec};
 use super::open_vcf_input_reader;
-use super::pick::{
-    parse_pick_order, pick_best_transcript_idx_with, PickCriterion, DEFAULT_PICK_ORDER,
-};
 use anyhow::{Context, Result};
+use fastvep_annotate::pick::{
+    has_transcripts_to_pick, parse_pick_order, pick_best_transcript_idx_with, PickCriterion,
+    DEFAULT_PICK_ORDER,
+};
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, GeneAnnotationProvider};
 use fastvep_cache::fasta::FastaReader;
 use fastvep_cache::info::CacheInfo;
@@ -495,7 +496,7 @@ fn annotate_variant(
     // single surviving transcript. Running pick after them would still
     // produce correct output but would waste the most expensive work
     // (ACMG classification) on transcripts that get thrown away.
-    if config.pick && !sa_only && vf.transcript_variations.len() > 1 {
+    if config.pick && !sa_only && has_transcripts_to_pick(&vf.transcript_variations) {
         if let Some(idx) = pick_best_transcript_idx_with(&vf.transcript_variations, pick_order) {
             vf.transcript_variations = vec![vf.transcript_variations.swap_remove(idx)];
         }

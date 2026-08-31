@@ -15,6 +15,7 @@ use std::sync::{Arc, RwLock};
 use tower::ServiceExt;
 
 const MINI_GFF3: &str = include_str!("../fixtures/mini.gff3");
+const PICK_GFF3: &str = include_str!("../fixtures/pick.gff3");
 
 /// One transcript, no FASTA, no supplementary annotations. Deliberately the
 /// minimum a caller can stand up, so a failure here is the API's fault rather
@@ -27,6 +28,22 @@ fn test_state() -> AppState {
         data_dir: None,
         sa_dir: None,
         // No stats file: these tests must not write to the working directory.
+        stats_file: None,
+        total_variants: AtomicU64::new(0),
+        total_genomes: AtomicU64::new(0),
+    })
+}
+
+/// Two overlapping transcripts of one gene, the first-seen one non-canonical.
+/// Kept separate from [`test_state`] so the single-transcript counts the other
+/// tests assert stay meaningful.
+fn pick_state() -> AppState {
+    let mut ctx = AnnotationContext::new(None, None, None, 5000).expect("build context");
+    ctx.update_gff3_text(PICK_GFF3).expect("load pick gff3");
+    Arc::new(SharedState {
+        ctx: RwLock::new(ctx),
+        data_dir: None,
+        sa_dir: None,
         stats_file: None,
         total_variants: AtomicU64::new(0),
         total_genomes: AtomicU64::new(0),
@@ -206,6 +223,94 @@ async fn acmg_is_attached_only_when_requested() {
         acmg["criteria"].is_array(),
         "acmg block must carry per-criterion verdicts"
     );
+}
+
+#[tokio::test]
+async fn pick_returns_exactly_one_transcript_and_it_is_the_canonical_one() {
+    // Regression test for the drift between the two annotation drivers. The
+    // CLI ran VEP's `--pick_order` hierarchy; this path kept a transcript when
+    // it was canonical *or* the first one seen, which returned both rows here
+    // with the non-canonical TXB first. A client reading
+    // `transcript_consequences[0]` therefore got the wrong transcript from a
+    // request that had explicitly asked for one answer.
+    let state = pick_state();
+    let vcf = vcf_line(1100, "pick");
+
+    let (status, all) = post_json(&state, "/api/annotate", json!({ "vcf": &vcf })).await;
+    assert_eq!(status, StatusCode::OK);
+    let unpicked = all["results"][0]["transcript_consequences"]
+        .as_array()
+        .expect("transcript consequences");
+    // Both transcripts really do overlap the variant, so the pick below is
+    // making a choice rather than describing a set that only had one member.
+    let ids: Vec<&str> = unpicked
+        .iter()
+        .map(|t| t["transcript_id"].as_str().unwrap_or_default())
+        .collect();
+    assert!(ids.contains(&"TXA") && ids.contains(&"TXB"), "got {ids:?}");
+
+    let (status, picked) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": &vcf, "pick": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let kept = picked["results"][0]["transcript_consequences"]
+        .as_array()
+        .expect("transcript consequences");
+    assert_eq!(kept.len(), 1, "pick must reduce to one row, got {kept:?}");
+    assert_eq!(
+        kept[0]["transcript_id"], "TXA",
+        "pick must keep the canonical transcript, not the first one seen"
+    );
+}
+
+#[tokio::test]
+async fn pick_does_not_drop_alleles_at_a_site_with_no_transcripts() {
+    // An intergenic site is scaffolded one row per *alt allele*, not one row
+    // per transcript, so running the pick hierarchy over those rows keeps one
+    // and silently loses the other alt. There is no transcript to pick here,
+    // so `pick` must leave the site alone.
+    let state = pick_state();
+    let vcf = "17\t900000\t.\tG\tA,T\t50\tPASS\t.";
+
+    for pick in [false, true] {
+        let (status, body) =
+            post_json(&state, "/api/annotate", json!({ "vcf": vcf, "pick": pick })).await;
+        assert_eq!(status, StatusCode::OK);
+        let alleles: Vec<&str> = body["results"][0]["transcript_consequences"]
+            .as_array()
+            .expect("transcript consequences")
+            .iter()
+            .map(|t| t["variant_allele"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(alleles, ["A", "T"], "pick={pick} lost an alt allele");
+    }
+}
+
+#[tokio::test]
+async fn pick_keeps_every_allele_of_the_transcript_it_picks() {
+    // `pick` reduces to one transcript, not to one row: the JSON carries one
+    // entry per (transcript, allele), so a biallelic site keeps two.
+    let state = pick_state();
+    let vcf = "17\t1100\t.\tG\tA,T\t50\tPASS\t.";
+
+    let (status, body) =
+        post_json(&state, "/api/annotate", json!({ "vcf": vcf, "pick": true })).await;
+    assert_eq!(status, StatusCode::OK);
+    let kept: Vec<(&str, &str)> = body["results"][0]["transcript_consequences"]
+        .as_array()
+        .expect("transcript consequences")
+        .iter()
+        .map(|t| {
+            (
+                t["transcript_id"].as_str().unwrap_or_default(),
+                t["variant_allele"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(kept, [("TXA", "A"), ("TXA", "T")]);
 }
 
 #[tokio::test]

@@ -1,0 +1,13 @@
+##gff-version 3
+# Two transcripts of one gene, for the `pick` contract test. TXB starts earlier
+# so it is the first one the annotator sees, and it is not canonical: that is
+# the shape the old "canonical, or the first transcript seen" filter got wrong,
+# returning both rows with the non-canonical one first.
+17	test	gene	900	3000	.	+	.	ID=gene:GENEA;Name=GENEA;biotype=protein_coding;gene_id=GENEA
+17	test	mRNA	900	3000	.	+	.	ID=transcript:TXB;Parent=gene:GENEA;Name=GENEA-202;biotype=protein_coding;transcript_id=TXB
+17	test	exon	900	1200	.	+	.	ID=exon:TXB-E1;Parent=transcript:TXB;rank=1
+17	test	mRNA	1000	3000	.	+	.	ID=transcript:TXA;Parent=gene:GENEA;Name=GENEA-201;biotype=protein_coding;tag=Ensembl_canonical;transcript_id=TXA
+17	test	exon	1000	1200	.	+	.	ID=exon:TXA-E1;Parent=transcript:TXA;rank=1
+17	test	CDS	1000	1200	.	+	0	ID=CDS:TXA;Parent=transcript:TXA;protein_id=PROTA
+17	test	exon	2800	3000	.	+	.	ID=exon:TXA-E2;Parent=transcript:TXA;rank=2
+17	test	CDS	2800	3000	.	+	0	ID=CDS:TXA;Parent=transcript:TXA;protein_id=PROTA
