@@ -16,6 +16,9 @@ The classifier evaluates all 28 ACMG-AMP evidence criteria for each variant-alle
 
 ## Quick Start
 
+> **First, build the databases.** Every `--sa-dir ./sa/` below stands for the nine-source reference stack, and the classifier degrades quietly without it: a criterion with no data reports `evaluated: false` instead of firing, so a half-built `--sa-dir` produces VUS rather than an error.
+> [ACMG_SETUP.md](ACMG_SETUP.md) has the verified download URL, build command and measured size for each source, plus `scripts/check_acmg_stack.py` to confirm each one answers a query before you trust a run.
+
 ### CLI
 
 ```bash

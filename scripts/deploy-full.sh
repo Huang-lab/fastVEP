@@ -152,8 +152,8 @@ download_organism "Zebrafish (GRCz11)" "zebrafish_grcz11_ensembl_115" \
     "https://ftp.ensembl.org/pub/release-115/fasta/danio_rerio/dna/Danio_rerio.GRCz11.dna.primary_assembly.fa.gz"
 
 download_organism "Drosophila (BDGP6)" "drosophila_bdgp6_ensembl_115" \
-    "https://ftp.ensembl.org/pub/release-115/gff3/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.46.115.gff3.gz" \
-    "https://ftp.ensembl.org/pub/release-115/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz"
+    "https://ftp.ensembl.org/pub/release-115/gff3/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.54.115.gff3.gz" \
+    "https://ftp.ensembl.org/pub/release-115/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa.gz"
 
 download_organism "C. elegans (WBcel235)" "celegans_wbcel235_ensembl_115" \
     "https://ftp.ensembl.org/pub/release-115/gff3/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.115.gff3.gz" \
