@@ -97,14 +97,14 @@ fi
 echo "  → Drosophila (BDGP6)..."
 mkdir -p "$DATA_DIR/drosophila_bdgp6_ensembl_115"
 cd "$DATA_DIR/drosophila_bdgp6_ensembl_115"
-if [ ! -f Drosophila_melanogaster.BDGP6.46.115.gff3 ]; then
-    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/gff3/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.46.115.gff3.gz
-    gunzip Drosophila_melanogaster.BDGP6.46.115.gff3.gz
+if [ ! -f Drosophila_melanogaster.BDGP6.54.115.gff3 ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/gff3/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.54.115.gff3.gz
+    gunzip Drosophila_melanogaster.BDGP6.54.115.gff3.gz
 fi
-if [ ! -f Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa ]; then
-    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
-    gunzip Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
-    samtools faidx Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa
+if [ ! -f Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa.gz
+    gunzip Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa.gz
+    samtools faidx Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa
 fi
 
 # C. elegans (~200MB)
@@ -136,29 +136,29 @@ if [ ! -f Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa ]; then
 fi
 
 # Rat (~2GB)
-echo "  → Rat (mRatBN7.2)..."
+echo "  → Rat (GRCr8)..."
 mkdir -p "$DATA_DIR/rat_mratbn72_ensembl_115"
 cd "$DATA_DIR/rat_mratbn72_ensembl_115"
-if [ ! -f Rattus_norvegicus.mRatBN7.2.115.gff3 ]; then
-    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/gff3/rattus_norvegicus/Rattus_norvegicus.mRatBN7.2.115.gff3.gz
-    gunzip Rattus_norvegicus.mRatBN7.2.115.gff3.gz
+if [ ! -f Rattus_norvegicus.GRCr8.115.gff3 ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/gff3/rattus_norvegicus/Rattus_norvegicus.GRCr8.115.gff3.gz
+    gunzip Rattus_norvegicus.GRCr8.115.gff3.gz
 fi
-if [ ! -f Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa ]; then
-    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/fasta/rattus_norvegicus/dna/Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa.gz
-    gunzip Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa.gz
-    samtools faidx Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa
+if [ ! -f Rattus_norvegicus.GRCr8.dna.toplevel.fa ]; then
+    wget -q --show-progress https://ftp.ensembl.org/pub/release-115/fasta/rattus_norvegicus/dna/Rattus_norvegicus.GRCr8.dna.toplevel.fa.gz
+    gunzip Rattus_norvegicus.GRCr8.dna.toplevel.fa.gz
+    samtools faidx Rattus_norvegicus.GRCr8.dna.toplevel.fa
 fi
 
 # Arabidopsis (~200MB)
 echo "  → Arabidopsis (TAIR10)..."
 mkdir -p "$DATA_DIR/arabidopsis_tair10_ensembl_115"
 cd "$DATA_DIR/arabidopsis_tair10_ensembl_115"
-if [ ! -f Arabidopsis_thaliana.TAIR10.58.gff3 ]; then
-    wget -q --show-progress https://ftp.ensemblgenomes.org/pub/plants/release-58/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.58.gff3.gz
-    gunzip Arabidopsis_thaliana.TAIR10.58.gff3.gz
+if [ ! -f Arabidopsis_thaliana.TAIR10.60.gff3 ]; then
+    wget -q --show-progress http://ftp.ensemblgenomes.org/pub/plants/release-60/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.60.gff3.gz
+    gunzip Arabidopsis_thaliana.TAIR10.60.gff3.gz
 fi
 if [ ! -f Arabidopsis_thaliana.TAIR10.dna.toplevel.fa ]; then
-    wget -q --show-progress https://ftp.ensemblgenomes.org/pub/plants/release-58/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
+    wget -q --show-progress http://ftp.ensemblgenomes.org/pub/plants/release-60/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
     gunzip Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
     samtools faidx Arabidopsis_thaliana.TAIR10.dna.toplevel.fa
 fi

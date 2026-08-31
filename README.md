@@ -98,7 +98,7 @@ fastvep annotate -i tests/test.vcf --gff3 tests/test.gff3 --hgvs --output-format
 fastvep sa-build --source clinvar --input clinvar.vcf.gz --output clinvar
 
 # Build gnomAD population frequency database (writes gnomad.osa2)
-fastvep sa-build --source gnomad --input gnomad.genomes.v4.vcf.bgz --output gnomad
+fastvep sa-build --source gnomad --input gnomad.genomes.v4.1.sites.chr1.vcf.bgz --output gnomad_chr1
 
 # Build AlphaMissense pathogenicity predictions (writes alphamissense.osa2).
 # Download AlphaMissense_hg38.tsv.gz from Zenodo record 8208688.
@@ -188,16 +188,20 @@ Each supplementary database (ClinVar, gnomAD, etc.) is built in **two steps** �
 ```bash
 mkdir -p sa_databases
 
-# ── ClinVar — clinical variant significance ──
-# Download (~50 MB)
+# ── ClinVar - clinical variant significance ──
+# Download (193 MB as of 2026-08-31; re-released weekly and growing)
 wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
-# Build (expect ~80–120 MB .osa)
+# Build (expect ~40-60 MB)
 fastvep sa-build --source clinvar -i clinvar.vcf.gz -o sa_databases/clinvar --assembly GRCh38
 
-# ── gnomAD v4 — population allele frequencies ──
-# Download per-chromosome from https://gnomad.broadinstitute.org/downloads
-# (~30–60 GB total for genomes v4.0)
-fastvep sa-build --source gnomad -i gnomad.genomes.v4.0.sites.vcf.bgz -o sa_databases/gnomad --assembly GRCh38
+# ── gnomAD v4.1 — population allele frequencies ──
+# Per-chromosome sites VCFs. Measured 2026-08-31, chr1-22 X Y: the exomes
+# release is 198 GB and the genomes release is 563 GB, so most setups want
+# tabix-extracted target regions rather than the whole thing. See
+# docs/ACMG_SETUP.md for the region-restricted recipe.
+GNOMAD=https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/exomes
+wget "$GNOMAD/gnomad.exomes.v4.1.sites.chr1.vcf.bgz"
+fastvep sa-build --source gnomad -i gnomad.exomes.v4.1.sites.chr1.vcf.bgz -o sa_databases/gnomad_chr1 --assembly GRCh38
 
 # ── dbSNP — variant identifiers ──
 wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
@@ -211,12 +215,17 @@ fastvep sa-build --source cosmic -i CosmicCodingMuts.vcf.gz -o sa_databases/cosm
 **Verify before moving on:**
 
 ```bash
-ls -la sa_databases/*.osa
-# Expected: clinvar ~100 MB; gnomad several GB; dbsnp ~5 GB.
-# Anything < 1 MB usually means an empty build — re-check the source file.
+ls -la sa_databases/*.osa2 sa_databases/*.osa
+# Expected: clinvar ~50 MB; gnomad hundreds of MB to several GB depending on
+# how much of the release you built; dbsnp ~5 GB.
+# Anything < 1 MB usually means an empty build - re-check the source file.
 ```
 
-> For ACMG-AMP classification specifically (REVEL, SpliceAI, PhyloP, dbNSFP, OMIM, ClinVar protein index, etc.), see the dedicated **[ACMG Setup Guide](docs/ACMG_SETUP.md)** — it walks through every source the classifier needs with download URLs, build commands, expected disk sizes, and a verification recipe.
+> **Setting up for ACMG-AMP classification?** Read the **[ACMG Setup Guide](docs/ACMG_SETUP.md)** instead of this section.
+> The classifier reads a specific nine-source stack: gnomAD, ClinVar, REVEL, SpliceAI, PhyloP, ClinGen Gene-Disease Validity, gnomAD gene constraints, the ClinVar protein/splice index, and RepeatMasker.
+> All of it is public and none of it needs an account, because **SpliceAI and PhyloP are distilled from gnomAD's own `spliceai_ds_max` and `phylop` INFO fields rather than downloaded from Illumina BaseSpace and UCSC**, and the disease-gene source is ClinGen Gene-Disease Validity rather than OMIM.
+> The guide gives the verified download URL, build command and measured size for each, explains what silently stops working when one is missing, and ends with `scripts/check_acmg_stack.py`, which annotates eight probe variants and tells you which sources actually answered.
+> An incomplete `--sa-dir` does not error; it quietly turns pathogenic variants into VUS.
 
 ### Step 3: Run the CLI annotator
 

@@ -332,13 +332,13 @@ gunzip Mus_musculus.GRCm39.dna.primary_assembly.fa.gz
 samtools faidx Mus_musculus.GRCm39.dna.primary_assembly.fa
 cd /opt/fastvep/data
 
-# Rat (Rattus norvegicus) — mRatBN7.2
+# Rat (Rattus norvegicus) - GRCr8
 mkdir -p rat_mratbn72_ensembl_115 && cd rat_mratbn72_ensembl_115
-wget https://ftp.ensembl.org/pub/release-115/gff3/rattus_norvegicus/Rattus_norvegicus.mRatBN7.2.115.gff3.gz
-gunzip Rattus_norvegicus.mRatBN7.2.115.gff3.gz
-wget https://ftp.ensembl.org/pub/release-115/fasta/rattus_norvegicus/dna/Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa.gz
-gunzip Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa.gz
-samtools faidx Rattus_norvegicus.mRatBN7.2.dna.toplevel.fa
+wget https://ftp.ensembl.org/pub/release-115/gff3/rattus_norvegicus/Rattus_norvegicus.GRCr8.115.gff3.gz
+gunzip Rattus_norvegicus.GRCr8.115.gff3.gz
+wget https://ftp.ensembl.org/pub/release-115/fasta/rattus_norvegicus/dna/Rattus_norvegicus.GRCr8.dna.toplevel.fa.gz
+gunzip Rattus_norvegicus.GRCr8.dna.toplevel.fa.gz
+samtools faidx Rattus_norvegicus.GRCr8.dna.toplevel.fa
 cd /opt/fastvep/data
 
 # Zebrafish (Danio rerio) — GRCz11
@@ -350,13 +350,13 @@ gunzip Danio_rerio.GRCz11.dna.primary_assembly.fa.gz
 samtools faidx Danio_rerio.GRCz11.dna.primary_assembly.fa
 cd /opt/fastvep/data
 
-# Fruit fly (Drosophila melanogaster) — BDGP6.46
+# Fruit fly (Drosophila melanogaster) - BDGP6.54
 mkdir -p drosophila_bdgp6_ensembl_115 && cd drosophila_bdgp6_ensembl_115
-wget https://ftp.ensembl.org/pub/release-115/gff3/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.46.115.gff3.gz
-gunzip Drosophila_melanogaster.BDGP6.46.115.gff3.gz
-wget https://ftp.ensembl.org/pub/release-115/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
-gunzip Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa.gz
-samtools faidx Drosophila_melanogaster.BDGP6.46.dna.toplevel.fa
+wget https://ftp.ensembl.org/pub/release-115/gff3/drosophila_melanogaster/Drosophila_melanogaster.BDGP6.54.115.gff3.gz
+gunzip Drosophila_melanogaster.BDGP6.54.115.gff3.gz
+wget https://ftp.ensembl.org/pub/release-115/fasta/drosophila_melanogaster/dna/Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa.gz
+gunzip Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa.gz
+samtools faidx Drosophila_melanogaster.BDGP6.54.dna.toplevel.fa
 cd /opt/fastvep/data
 
 # C. elegans — WBcel235
@@ -379,9 +379,9 @@ cd /opt/fastvep/data
 
 # Arabidopsis — TAIR10
 mkdir -p arabidopsis_tair10_ensembl_115 && cd arabidopsis_tair10_ensembl_115
-wget https://ftp.ensemblgenomes.org/pub/plants/release-58/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.58.gff3.gz
-gunzip Arabidopsis_thaliana.TAIR10.58.gff3.gz
-wget https://ftp.ensemblgenomes.org/pub/plants/release-58/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
+wget http://ftp.ensemblgenomes.org/pub/plants/release-60/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.60.gff3.gz
+gunzip Arabidopsis_thaliana.TAIR10.60.gff3.gz
+wget http://ftp.ensemblgenomes.org/pub/plants/release-60/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
 gunzip Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
 samtools faidx Arabidopsis_thaliana.TAIR10.dna.toplevel.fa
 cd /opt/fastvep/data
