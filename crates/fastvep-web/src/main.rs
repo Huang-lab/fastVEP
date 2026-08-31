@@ -1,22 +1,11 @@
-mod context;
-mod errors;
-mod handlers;
-
-use axum::extract::DefaultBodyLimit;
-use axum::http::{header, Method};
-use axum::routing::{get, post};
-use axum::Router;
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
-use tower::limit::ConcurrencyLimitLayer;
-use tower::ServiceBuilder;
-use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
 
-use crate::context::AnnotationContext;
-use crate::handlers::{AppState, SharedState};
+use fastvep_web::build_router;
+use fastvep_web::context::AnnotationContext;
+use fastvep_web::handlers::{AppState, SharedState};
 
 #[derive(Parser)]
 #[command(name = "fastvep-web")]
@@ -117,34 +106,7 @@ async fn main() -> anyhow::Result<()> {
         total_genomes: AtomicU64::new(initial_genomes),
     });
 
-    let app = Router::new()
-        .route("/", get(handlers::index_html))
-        .route("/index.html", get(handlers::index_html))
-        .route("/assets/logo.png", get(handlers::logo_png))
-        .route("/favicon.ico", get(handlers::logo_png))
-        .route("/apple-touch-icon.png", get(handlers::logo_png))
-        .route("/api/status", get(handlers::status))
-        .route("/api/genomes", get(handlers::list_genomes))
-        .route("/api/load-genome", post(handlers::load_genome))
-        .route("/api/annotate", post(handlers::annotate))
-        .route("/api/upload-gff3", post(handlers::upload_gff3))
-        .with_state(state)
-        .layer(DefaultBodyLimit::max(cli.max_body_size))
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(
-                    // Origin stays open (this is a public annotation API by
-                    // design, per DEPLOYMENT.md), but methods/headers are
-                    // scoped to what the routes above actually use instead
-                    // of blanket `Any` on every axis.
-                    CorsLayer::new()
-                        .allow_origin(Any)
-                        .allow_methods([Method::GET, Method::POST])
-                        .allow_headers([header::CONTENT_TYPE]),
-                )
-                .layer(ConcurrencyLimitLayer::new(cli.max_concurrent)),
-        );
+    let app = build_router(state, cli.max_body_size, cli.max_concurrent);
 
     let addr = format!("{}:{}", cli.bind, cli.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

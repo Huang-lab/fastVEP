@@ -6,6 +6,8 @@ fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.
 
 **Try it now:** A hosted web server is available at [fastVEP.org](https://fastVEP.org) — paste VCF data and get annotated results instantly, no installation required. As of July 2026 it has served **2,372 genome analysis sessions** and annotated **19,013 variants**.
 
+The hosted instance is for interactive use in the browser. For programmatic access, run your own server: see the **[REST API guide](docs/API.md)**.
+
 ## Features
 
 - **Variant Consequence Prediction** — Classifies variants using 49 [Sequence Ontology](http://www.sequenceontology.org/) terms (missense, frameshift, splice donor, copy_number_change, transcript_ablation, etc.)
@@ -158,6 +160,20 @@ fastvep-web --gff3 genes.gff3 --fasta ref.fa --sa-dir /path/to/sa_databases/
 Open http://localhost:8080 in your browser. The web interface lets you paste VCF data, switch gene models, and view results in an interactive table.
 
 > **Note:** `fastvep-web` is a separate production-quality binary (axum/tokio, async, multi-connection). The legacy `fastvep web` command still works but is single-threaded.
+
+### REST API (self-hosted)
+
+The same binary serves a JSON API over the same annotation engine, so anything the web interface can do a script can do:
+
+```bash
+curl -s -X POST http://localhost:8080/api/annotate \
+  -H 'Content-Type: application/json' \
+  -d '{"vcf": "17\t43124027\t.\tG\tA\t50\tPASS\t.", "acmg": true}'
+```
+
+It is designed for self-hosting on a workstation or local network, which is also the only supported way to use it: please do not point scripts at fastVEP.org, which is a single small machine sized for interactive browser use. Bulk VCFs belong in `fastvep annotate`, not in an HTTP request.
+
+Full setup, endpoint reference, and response shapes: **[docs/API.md](docs/API.md)**.
 
 ## Local Setup Guide
 
