@@ -1,0 +1,10 @@
+##gff-version 3
+# Two-exon protein-coding gene used by the API contract tests. Small enough to
+# parse in microseconds, and shaped so a variant can land in coding sequence,
+# in the intron, or upstream of the gene without needing a reference FASTA.
+17	test	gene	1000	3000	.	+	.	ID=gene:GENEA;Name=GENEA;biotype=protein_coding;gene_id=GENEA
+17	test	mRNA	1000	3000	.	+	.	ID=transcript:TXA;Parent=gene:GENEA;Name=GENEA-201;biotype=protein_coding;tag=Ensembl_canonical;transcript_id=TXA
+17	test	exon	1000	1200	.	+	.	ID=exon:TXA-E1;Parent=transcript:TXA;rank=1
+17	test	CDS	1000	1200	.	+	0	ID=CDS:TXA;Parent=transcript:TXA;protein_id=PROTA
+17	test	exon	2800	3000	.	+	.	ID=exon:TXA-E2;Parent=transcript:TXA;rank=2
+17	test	CDS	2800	3000	.	+	0	ID=CDS:TXA;Parent=transcript:TXA;protein_id=PROTA
