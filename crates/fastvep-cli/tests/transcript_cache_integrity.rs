@@ -257,7 +257,7 @@ fn a_pre_90_sidecar_cache_is_rebuilt_rather_than_trusted() {
             .unwrap();
     }
     assert_eq!(
-        &magic, b"FSTVEP04",
+        &magic, b"FSTVEP05",
         "rebuild should publish the current format"
     );
 }
@@ -303,6 +303,50 @@ fn a_pre_98_sidecar_cache_is_rebuilt_rather_than_trusted() {
     assert!(
         annotated.contains("missense_variant"),
         "the run trusted a pre-#98 cache and lost the annotation; got:\n{annotated}"
+    );
+}
+
+/// Write a well-formed cache in the pre-APPRIS FSTVEP04 format. Whole-file,
+/// every gene named - the only thing wrong with it is that the parser which
+/// filled it did not read GENCODE's `appris_*` tags, so no transcript in it
+/// carries an APPRIS call and `--pick`'s APPRIS tier has nothing to compare.
+fn write_v4_cache(path: &Path, transcripts: &[fastvep_genome::Transcript]) {
+    use std::io::{BufWriter, Write};
+    let file = File::create(path).unwrap();
+    let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+    zst.write_all(b"FSTVEP04").unwrap();
+    bincode::serialize_into(&mut zst, transcripts).unwrap();
+    zst.finish().unwrap().flush().unwrap();
+}
+
+#[test]
+fn a_pre_appris_sidecar_cache_is_rebuilt_rather_than_trusted() {
+    // Third instance of the same gap: the sidecar is newer than its GFF3, so a
+    // user who upgrades and re-runs the identical command never re-parses the
+    // file, and the APPRIS column stays empty and the pick stays wrong. The
+    // cache loads cleanly; nothing in it distinguishes "GENCODE model whose
+    // APPRIS tags were dropped" from "Ensembl model that never had any".
+    let dir = TempDir::new().unwrap();
+    let gff3 = write_gff3(dir.path());
+    let fasta = write_fasta(dir.path());
+    let vcf = write_vcf(dir.path());
+
+    let sidecar = dir.path().join("ann.gff3.fastvep.cache");
+    write_v4_cache(&sidecar, &[]);
+    make_fresh(&sidecar);
+
+    let out = dir.path().join("out.vcf");
+    run_annotate(AnnotateConfig {
+        gff3: vec![gff3.to_string_lossy().into()],
+        fasta: Some(fasta.to_string_lossy().into()),
+        ..config(&vcf, &out)
+    })
+    .expect("a pre-APPRIS sidecar should be rebuilt from the GFF3, not fatal");
+
+    let annotated = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        annotated.contains("missense_variant"),
+        "the run trusted a pre-APPRIS cache and lost the annotation; got:\n{annotated}"
     );
 }
 

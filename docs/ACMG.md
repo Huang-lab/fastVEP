@@ -597,6 +597,14 @@ clinical reporting, and the round-2 review caught it: CYP21A2 variants were repo
 the neighbouring gene's MANE transcript outranked the disrupted non-MANE one.
 Stock VEP makes the same choice; this is not a fastVEP deviation.
 
+The `appris` tier is only as good as the gene model.
+APPRIS reaches fastVEP through GENCODE's `tag=appris_principal_1` / `tag=appris_alternative_2`
+attributes; **Ensembl's own GFF3 carries no APPRIS tag at all**, so on an Ensembl model every
+transcript scores the same at that tier and the pick falls through to `tsl`.
+That is the same answer VEP gives from the same file, but it is worth knowing which tier is
+actually deciding: at a locus where two genes' canonical transcripts overlap and neither is MANE,
+an Ensembl model decides the pick on TSL, and a GENCODE model decides it on APPRIS.
+
 For clinical reporting, put `rank` first:
 
 ```bash
