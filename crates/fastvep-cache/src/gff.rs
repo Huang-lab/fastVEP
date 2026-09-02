@@ -291,6 +291,11 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                     .get("transcript_support_level")
                     .and_then(|v| v.split_whitespace().next().and_then(|n| n.parse().ok()));
 
+                // APPRIS rides in the same `tag=` list as MANE and canonical,
+                // spelled `appris_principal_1` / `appris_alternative_2`. VEP
+                // reports the suffix, so that is what is stored.
+                let appris = appris_from_tags(&tag_str);
+
                 transcripts.insert(
                     transcript_id.clone(),
                     GffTranscript {
@@ -307,6 +312,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                         gencode_primary,
                         ccds,
                         tsl,
+                        appris,
                         flags,
                         version,
                         provisional: !is_known_transcript_term(feature_type),
@@ -414,6 +420,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                         gencode_primary: false,
                         ccds: None,
                         tsl: None,
+                        appris: None,
                         flags: vec![],
                         version: None,
                         // Synthesised from a real CDS, so it is confirmed by
@@ -741,7 +748,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                 None
             },
             tsl: gff_tr.tsl,
-            appris: None,
+            appris: gff_tr.appris.clone(),
             ccds: gff_tr.ccds.clone(),
             protein_id: tr_cds.first().map(|c| c.protein_id.clone()),
             protein_version: if !tr_cds.is_empty() { Some(1) } else { None },
@@ -877,6 +884,47 @@ fn parent_is_gene(attrs: &HashMap<String, String>) -> bool {
         .is_some_and(|p| p.starts_with("gene:") || p.starts_with("gene-"))
 }
 
+/// The APPRIS annotation carried in a GENCODE GFF3 `tag=` list, in the short
+/// form VEP reports.
+///
+/// GENCODE spells it `appris_principal_1` .. `appris_principal_5` and
+/// `appris_alternative_1` / `appris_alternative_2`, in the same comma-separated
+/// `tag=` attribute that carries `MANE_Select` and `Ensembl_canonical`. VEP
+/// reports the short form, `P1`..`P5` and `ALT1`/`ALT2`, and that is what goes
+/// in the APPRIS column and into `--pick-order`'s APPRIS tier.
+///
+/// Older GENCODE releases write the un-numbered `appris_principal` /
+/// `appris_alternative`; those become `P` / `ALT`, which `pick`'s APPRIS rank
+/// orders after every numbered principal and alternative respectively.
+///
+/// Ensembl's own GFF3 carries no APPRIS tag at all, so this returns `None`
+/// there and the tier stays inert for that source - which is what it was for
+/// every source before this function existed.
+fn appris_from_tags(tag_str: &str) -> Option<String> {
+    for tag in tag_str.split(',') {
+        let tag = tag.trim().to_ascii_lowercase();
+        let Some(rest) = tag.strip_prefix("appris_") else {
+            continue;
+        };
+        // `principal_1` / `principal1` / `principal`, and the same for
+        // `alternative`. The separator has moved between GENCODE releases.
+        let (short, digits) = if let Some(d) = rest.strip_prefix("principal") {
+            ("P", d)
+        } else if let Some(d) = rest.strip_prefix("alternative") {
+            ("ALT", d)
+        } else {
+            continue;
+        };
+        let digits = digits.trim_start_matches(['_', '-']);
+        return Some(if digits.is_empty() {
+            short.to_string()
+        } else {
+            format!("{}{}", short, digits)
+        });
+    }
+    None
+}
+
 fn parse_attributes(attr_str: &str) -> HashMap<String, String> {
     let mut attrs = HashMap::new();
     for part in attr_str.split(';') {
@@ -935,6 +983,7 @@ struct GffTranscript {
     gencode_primary: bool,
     ccds: Option<String>,
     tsl: Option<u8>,
+    appris: Option<String>,
     flags: Vec<String>,
     version: Option<u32>,
     /// Admitted only because it hangs off a gene, its SO term being unknown.
@@ -1004,6 +1053,63 @@ chr1\tensembl\tCDS\t4000\t4500\t.\t+\t1\tID=CDS:ENSP00000001;Parent=transcript:E
     /// miRNA / snRNA transcript with a synthesised gene carrying no symbol
     /// and biotype "unknown", so SYMBOL came out empty in the CSQ column
     /// while VEP filled it in.
+    /// GENCODE carries APPRIS in the same comma-separated `tag=` list as
+    /// `MANE_Select` and `Ensembl_canonical`, and the parser read every other
+    /// tag in that list and dropped this one. `Transcript::appris` was
+    /// therefore `None` for every transcript from every source, so the APPRIS
+    /// column of the CSQ line was always empty and `--pick`'s APPRIS tier
+    /// scored every candidate identically.
+    #[test]
+    fn test_parse_gff3_reads_the_gencode_appris_tag() {
+        let gff = "##gff-version 3
+1\ttest\tgene\t1000\t2000\t.\t+\t.\tID=gene:ENSG_A;Name=GA;biotype=protein_coding
+1\ttest\tmRNA\t1000\t2000\t.\t+\t.\tID=transcript:ENST_P;Parent=gene:ENSG_A;biotype=protein_coding;tag=gencode_basic,Ensembl_canonical,appris_principal_1
+1\ttest\texon\t1000\t2000\t.\t+\t.\tID=exon:E_P;Parent=transcript:ENST_P;rank=1
+1\ttest\tmRNA\t1000\t2000\t.\t+\t.\tID=transcript:ENST_A;Parent=gene:ENSG_A;biotype=protein_coding;tag=gencode_basic,appris_alternative_2
+1\ttest\texon\t1000\t2000\t.\t+\t.\tID=exon:E_A;Parent=transcript:ENST_A;rank=1
+1\ttest\tmRNA\t1000\t2000\t.\t+\t.\tID=transcript:ENST_N;Parent=gene:ENSG_A;biotype=protein_coding;tag=gencode_basic
+1\ttest\texon\t1000\t2000\t.\t+\t.\tID=exon:E_N;Parent=transcript:ENST_N;rank=1";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        let appris_of = |id: &str| {
+            transcripts
+                .iter()
+                .find(|t| &*t.stable_id == id)
+                .unwrap_or_else(|| panic!("{id} missing"))
+                .appris
+                .clone()
+        };
+        assert_eq!(appris_of("ENST_P").as_deref(), Some("P1"));
+        assert_eq!(appris_of("ENST_A").as_deref(), Some("ALT2"));
+        // No APPRIS tag is not "unannotated principal": it stays absent, which
+        // is what Ensembl's own GFF3 gives for every transcript.
+        assert_eq!(appris_of("ENST_N"), None);
+    }
+
+    /// Every spelling the tag has had, and the two ways it can be absent.
+    #[test]
+    fn test_appris_from_tags_spellings() {
+        let cases = [
+            ("appris_principal_1", Some("P1")),
+            ("appris_principal1", Some("P1")),
+            ("appris_principal", Some("P")),
+            ("appris_alternative_2", Some("ALT2")),
+            ("appris_alternative2", Some("ALT2")),
+            ("appris_alternative", Some("ALT")),
+            ("gencode_basic,MANE_Select,appris_principal_4", Some("P4")),
+            ("APPRIS_PRINCIPAL_3", Some("P3")),
+            ("gencode_basic,Ensembl_canonical", None),
+            ("", None),
+            // Not APPRIS, and close enough to catch a prefix match that is too
+            // eager: `appris_` is required, and so is a class after it.
+            ("apprisal", None),
+            ("appris_something_else", None),
+        ];
+        for (tags, want) in cases {
+            assert_eq!(appris_from_tags(tags).as_deref(), want, "tag list {tags:?}");
+        }
+    }
+
     #[test]
     fn test_parse_gff3_ncrna_gene_keeps_symbol() {
         let gff = "##gff-version 3

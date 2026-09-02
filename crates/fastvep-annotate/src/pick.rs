@@ -25,6 +25,14 @@ pub enum PickCriterion {
 /// VEP's default `--pick_order`, which fastVEP matches exactly so that a
 /// default run of each tool picks the same transcript.
 ///
+/// "Matches exactly" is a claim about the tiers *and* about what feeds them.
+/// It was false for two years on the APPRIS tier: `Transcript::appris` came
+/// from the GFF3 parser, which never read the `appris_*` tags, so the tier
+/// scored every candidate the same and the pick fell through to the next one
+/// that could tell them apart. The three unit tests below covered the tier and
+/// passed throughout, because they build `TranscriptVariation` by hand. A tier
+/// added here needs a test that reaches it through the parser.
+///
 /// Note where `Rank` sits: **last**. Transcript status outranks consequence
 /// severity, so at a locus where a MANE transcript of one gene merely
 /// neighbours the variant while a non-MANE transcript of another is disrupted
@@ -137,7 +145,7 @@ fn pick_score(tv: &TranscriptVariation, c: PickCriterion) -> u32 {
         PickCriterion::ManeSelect => tv.mane_select.is_none() as u32,
         PickCriterion::ManePlusClinical => tv.mane_plus_clinical.is_none() as u32,
         PickCriterion::Canonical => !tv.canonical as u32,
-        PickCriterion::Appris => appris_rank(tv.appris.as_deref()) as u32,
+        PickCriterion::Appris => appris_rank(tv.appris.as_deref()),
         PickCriterion::Tsl => tv.tsl.unwrap_or(u8::MAX) as u32,
         PickCriterion::Biotype => u32::from(tv.biotype.as_ref() != "protein_coding"),
         PickCriterion::Ccds => tv.ccds.is_none() as u32,
@@ -173,30 +181,68 @@ fn pick_key_with<'a>(
     (key, tv.transcript_id.as_ref())
 }
 
-/// Map an APPRIS tag (`P1`/`principal1`, ..., `A1`/`alternative1`, ...) to a
-/// rank where lower is better, matching VEP's `--pick_order` APPRIS tier:
-/// principal1 < principal2 < ... < alternative1 < alternative2 < absent.
-fn appris_rank(appris: Option<&str>) -> u8 {
-    let Some(s) = appris else { return u8::MAX };
-    let lower = s.to_ascii_lowercase();
-    let (is_alt, digits) = if let Some(d) = lower.strip_prefix("principal") {
-        (false, d)
-    } else if let Some(d) = lower.strip_prefix("alternative") {
-        (true, d)
-    } else if let Some(d) = lower.strip_prefix('p') {
-        (false, d)
-    } else if let Some(d) = lower.strip_prefix('a') {
-        (true, d)
-    } else {
-        // Present but unrecognised: still better than absent, worse than any
-        // recognised principal/alternative.
-        return u8::MAX - 1;
+/// Every APPRIS spelling reaches here, so the bands are spaced rather than
+/// adjacent: a tier number is added to its band's base, and an un-numbered
+/// call sits at the top of its own band.
+///
+/// APPRIS itself only issues principal 1-5 and alternative 1-2, so the 99
+/// slots per band are slack, not a claim about the vocabulary.
+const APPRIS_PRINCIPAL_BASE: u32 = 0;
+const APPRIS_PRINCIPAL_UNNUMBERED: u32 = 100;
+const APPRIS_ALTERNATIVE_BASE: u32 = 200;
+const APPRIS_ALTERNATIVE_UNNUMBERED: u32 = 300;
+/// Present but in no spelling this understands. Worse than any call it does
+/// understand, better than no call at all - the transcript was annotated.
+const APPRIS_UNRECOGNISED: u32 = u32::MAX - 1;
+/// No APPRIS annotation. Ensembl's own GFF3 carries none for any transcript, so
+/// on that source this is every transcript's rank and the tier decides nothing,
+/// correctly, because there is nothing to decide with. GENCODE's GFF3 does
+/// carry it, and before the parser read those tags this was every transcript's
+/// rank on every source.
+const APPRIS_ABSENT: u32 = u32::MAX;
+
+/// Map an APPRIS tag to a rank where lower is better, matching VEP's
+/// `--pick_order` APPRIS tier:
+/// principal1 < ... < principal5 < principal < alternative1 < alternative2 <
+/// alternative < unrecognised < absent.
+///
+/// Four spellings of the same thing reach this function, because three sources
+/// write it differently and the separator moved between GENCODE releases:
+/// GENCODE's own tag (`appris_principal_1`), the tag with the `appris_` prefix
+/// already stripped (`principal_1`, `principal1`), and VEP's short form (`P1`,
+/// `ALT1`). Handling only some of them is how `appris_principal_1` used to rank
+/// *below* every alternative: it fell through to the bare-`a` arm.
+fn appris_rank(appris: Option<&str>) -> u32 {
+    let Some(s) = appris else {
+        return APPRIS_ABSENT;
     };
-    let n: u8 = digits.parse().unwrap_or(9);
-    if is_alt {
-        5u8.saturating_add(n)
+    let lower = s.trim().to_ascii_lowercase();
+    let body = lower.strip_prefix("appris_").unwrap_or(&lower);
+    // `alt` before the bare `a`, and `alternative` before `alt`: the shorter
+    // prefixes would otherwise swallow the longer spellings' digits.
+    let (base, unnumbered, digits) = if let Some(d) = body.strip_prefix("principal") {
+        (APPRIS_PRINCIPAL_BASE, APPRIS_PRINCIPAL_UNNUMBERED, d)
+    } else if let Some(d) = body.strip_prefix("alternative") {
+        (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
+    } else if let Some(d) = body.strip_prefix("alt") {
+        (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
+    } else if let Some(d) = body.strip_prefix('p') {
+        (APPRIS_PRINCIPAL_BASE, APPRIS_PRINCIPAL_UNNUMBERED, d)
+    } else if let Some(d) = body.strip_prefix('a') {
+        (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
     } else {
-        n
+        return APPRIS_UNRECOGNISED;
+    };
+    let digits = digits.trim_start_matches(['_', '-']);
+    if digits.is_empty() {
+        return unnumbered;
+    }
+    match digits.parse::<u32>() {
+        // Clamped so an out-of-vocabulary tier still sorts inside its own
+        // band rather than past the next one.
+        Ok(n) => base + n.clamp(1, 99),
+        // `P1extra`: the class is legible, the tier is not.
+        Err(_) => unnumbered,
     }
 }
 
@@ -641,6 +687,103 @@ mod pick_tests {
             ),
         ];
         assert_eq!(pick_best_transcript_idx(&tvs), Some(1));
+    }
+
+    #[test]
+    fn appris_orders_alternatives_by_their_tier() {
+        // ALT1 and ALT2 both reach the ranker as the short form the GFF3
+        // parser now writes, and the pre-fix ranker scored them equal: the
+        // bare-`a` arm swallowed the `A`, `lt1` and `lt2` both failed to
+        // parse, and both landed on the same fallback tier.
+        //
+        // The IDs are chosen so that a tie is not silently right. `TX_A`
+        // carries the *worse* call, so the alphabetical transcript-ID
+        // tie-break returns it whenever the APPRIS tier declines to decide -
+        // which is what the equal scores used to produce.
+        let tvs = vec![
+            make_tv(
+                "TX_A",
+                false,
+                "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None,
+                None,
+                Some("ALT2"),
+                None,
+                None,
+            ),
+            make_tv(
+                "TX_Z",
+                false,
+                "protein_coding",
+                vec![Consequence::MissenseVariant],
+                None,
+                None,
+                Some("ALT1"),
+                None,
+                None,
+            ),
+        ];
+        assert_eq!(
+            pick_best_transcript_idx(&tvs),
+            Some(1),
+            "ALT1 should outrank ALT2; index 0 is what the ID tie-break gives"
+        );
+    }
+
+    #[test]
+    fn appris_reads_every_spelling_of_the_same_call() {
+        // Three sources write the same annotation three ways, and the
+        // separator moved between GENCODE releases. All four spellings of
+        // principal 1 have to rank identically, and all of them ahead of
+        // every spelling of alternative 2.
+        for principal in [
+            "P1",
+            "p1",
+            "principal1",
+            "principal_1",
+            "appris_principal_1",
+        ] {
+            for alternative in [
+                "ALT2",
+                "A2",
+                "alternative2",
+                "alternative_2",
+                "appris_alternative_2",
+            ] {
+                assert!(
+                    appris_rank(Some(principal)) < appris_rank(Some(alternative)),
+                    "{principal} ({}) should outrank {alternative} ({})",
+                    appris_rank(Some(principal)),
+                    appris_rank(Some(alternative)),
+                );
+            }
+        }
+        // And the numbered forms agree with each other exactly.
+        let p1 = appris_rank(Some("P1"));
+        for spelling in ["p1", "principal1", "principal_1", "appris_principal_1"] {
+            assert_eq!(appris_rank(Some(spelling)), p1, "{spelling}");
+        }
+    }
+
+    #[test]
+    fn appris_ranks_an_unnumbered_call_at_the_end_of_its_own_class() {
+        // Older GENCODE releases write `appris_principal` with no tier. It is
+        // still a principal call: worse than every numbered principal, better
+        // than any alternative.
+        let (p1, p5) = (appris_rank(Some("P1")), appris_rank(Some("P5")));
+        let (p, alt1) = (appris_rank(Some("P")), appris_rank(Some("ALT1")));
+        let (alt2, alt) = (appris_rank(Some("ALT2")), appris_rank(Some("ALT")));
+        assert!(p1 < p5, "P1 < P5");
+        assert!(p5 < p, "P5 < P");
+        assert!(p < alt1, "P < ALT1");
+        assert!(alt1 < alt2, "ALT1 < ALT2");
+        assert!(alt2 < alt, "ALT2 < ALT");
+        assert!(alt < appris_rank(Some("weird")), "ALT < unrecognised");
+        assert!(
+            appris_rank(Some("weird")) < appris_rank(None),
+            "unrecognised < absent"
+        );
     }
 
     #[test]

@@ -13,10 +13,13 @@ use std::time::SystemTime;
 
 /// Magic header for zstd-compressed caches (current format).
 ///
-/// Like V3 before it, V4 differs from its predecessor in nothing but the
-/// guarantee it carries: every V4 cache was written by a build whose GFF3
-/// parser recognises `ncRNA_gene` records (#98). See [`load_cache_zstd`] for
-/// why that has to be a format bump rather than a note in the changelog.
+/// Like V3 and V4 before it, V5 differs from its predecessor in nothing but
+/// the guarantee it carries: every V5 cache was written by a build whose GFF3
+/// parser reads the `appris_*` tags. See [`load_cache_zstd`] for why that has
+/// to be a format bump rather than a note in the changelog.
+const CACHE_MAGIC_V5: &[u8; 8] = b"FSTVEP05";
+/// Magic header for zstd caches written before the APPRIS fix (rejected, see
+/// [`load_cache_zstd`]).
 const CACHE_MAGIC_V4: &[u8; 8] = b"FSTVEP04";
 /// Magic header for zstd caches written before #98 (rejected, see
 /// [`load_cache_zstd`]).
@@ -38,6 +41,22 @@ const DETAIL_PRE_90: &str = "Caches written between 2026-06-10 (the tabix read \
      run - the #87 failure, which reported 47,196 of 47,196 chr17 variants as \
      intergenic at exit code 0. Nothing in the file distinguishes the two, so it \
      is rejected rather than read.";
+
+/// One line naming what is wrong with a pre-APPRIS cache.
+const SUMMARY_PRE_APPRIS: &str = "predates the APPRIS fix and carries no APPRIS \
+     tier for any transcript";
+
+/// The evidence behind [`SUMMARY_PRE_APPRIS`], for the caller that has to stop.
+const DETAIL_PRE_APPRIS: &str = "The GFF3 parser that wrote it dropped the \
+     `appris_principal_*` / `appris_alternative_*` tags GENCODE carries in the \
+     same `tag=` list as MANE_Select, so every transcript in the file has an \
+     empty APPRIS column and `--pick` reaches the APPRIS tier to find every \
+     candidate equal - at a locus where two genes' canonical transcripts \
+     overlap and neither is MANE, the pick then falls through to TSL and \
+     finally to alphabetical transcript ID. Ensembl's own GFF3 has no APPRIS \
+     tag to lose, so a cache built from one is unchanged by the rebuild; \
+     nothing in the file says which source it came from, so it is rejected \
+     rather than read.";
 
 /// One line naming what is wrong with a pre-#98 cache.
 const SUMMARY_PRE_98: &str = "predates the #98 fix and holds unnamed non-coding \
@@ -155,7 +174,7 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
 
     // Write magic header
     use std::io::Write;
-    zst.write_all(CACHE_MAGIC_V4)?;
+    zst.write_all(CACHE_MAGIC_V5)?;
 
     // Serialize with bincode
     bincode::serialize_into(&mut zst, transcripts)
@@ -244,6 +263,14 @@ pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
 /// that nothing downstream can detect. Same trade as #88's decision to error
 /// rather than annotate against an empty transcript set.
 ///
+/// `FSTVEP04` is rejected on the same grounds as `FSTVEP03`: the parser that
+/// wrote it could not see GENCODE's `appris_*` tags, and the sidecar path
+/// reuses a cache whenever it is newer than its GFF3, so without a bump the
+/// APPRIS column stays empty and `--pick`'s APPRIS tier stays inert after the
+/// upgrade. A V4 cache loads cleanly; it just has no APPRIS call for any
+/// transcript, which is indistinguishable from an Ensembl source that never
+/// carried one.
+///
 /// `FSTVEP03` is rejected for the same reason at one remove. #98 fixed the GFF3
 /// parser, not the caches it had already written, and the sidecar path reuses a
 /// cache whenever it is newer than its GFF3 - so without a bump the user who
@@ -274,8 +301,16 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
         }
         .into());
     }
-    if &magic != CACHE_MAGIC_V4 {
-        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP04)");
+    if &magic == CACHE_MAGIC_V4 {
+        return Err(StaleCacheFormat {
+            found: "FSTVEP04",
+            summary: SUMMARY_PRE_APPRIS,
+            detail: DETAIL_PRE_APPRIS,
+        }
+        .into());
+    }
+    if &magic != CACHE_MAGIC_V5 {
+        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP05)");
     }
 
     let transcripts: Vec<Transcript> = bincode::deserialize_from(&mut zst)
@@ -732,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn the_published_magic_is_v4() {
+    fn the_published_magic_is_v5() {
         // Pin the on-disk byte, so a future change to the writer that forgets
         // the reader shows up here rather than in someone's annotation.
         use std::io::Read;
@@ -742,6 +777,6 @@ mod tests {
         let mut zst = zstd::Decoder::new(BufReader::new(File::open(tmp.path()).unwrap())).unwrap();
         let mut magic = [0u8; 8];
         zst.read_exact(&mut magic).unwrap();
-        assert_eq!(&magic, CACHE_MAGIC_V4, "published magic drifted from V4");
+        assert_eq!(&magic, CACHE_MAGIC_V5, "published magic drifted from V5");
     }
 }
