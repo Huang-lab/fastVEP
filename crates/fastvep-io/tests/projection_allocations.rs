@@ -10,12 +10,17 @@
 //! the results away. Each helper now establishes that a payload exists before
 //! allocating anything.
 //!
+//! The same bar applies to the custom-source projection added for #116: it is
+//! resolved per run from the loaded `json_key`s, not from a static descriptor,
+//! but it runs in the same per-allele loop and so confirms a payload before it
+//! allocates. The measured run has one loaded.
+//!
 //! This file installs a counting global allocator, so it deliberately holds
 //! exactly ONE test: `cargo test` runs the tests in a binary concurrently, and
 //! a second test allocating on another thread would be counted here.
 
 use fastvep_core::{Allele, Consequence, Impact, Strand, VariantType};
-use fastvep_io::output::format_supplementary_vcf_info;
+use fastvep_io::output::{format_supplementary_vcf_info, LoadedSupplementarySpecs};
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -126,12 +131,20 @@ fn projecting_a_variant_with_no_supplementary_payload_allocates_nothing() {
         gene_annotations: Vec::new(),
     };
 
+    // A run with a user's own `custom_vcf` database loaded. Its projection is
+    // resolved from the source's `json_key` rather than a static descriptor
+    // (#116), so it is the one helper that could not exist before the budget
+    // was written - and it has to clear the same bar: no payload for this
+    // allele, no allocation. Built outside the measured window because
+    // resolving the loaded set is a once-per-run cost by design.
+    let specs = LoadedSupplementarySpecs::new(&["my_panel".to_string()], &[]);
+
     // Warm any lazily-initialised state so the measured call sees none of it.
-    let _ = format_supplementary_vcf_info(&vf);
+    let _ = format_supplementary_vcf_info(&vf, &specs);
 
     let mut projected = Vec::new();
     let allocations = allocations_during(|| {
-        projected = format_supplementary_vcf_info(&vf);
+        projected = format_supplementary_vcf_info(&vf, &specs);
     });
 
     assert!(projected.is_empty(), "nothing to project: {projected:?}");

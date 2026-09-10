@@ -450,7 +450,7 @@ fastvep sa-build --source custom_bed \
 
 # Annotate as usual — both .osa and .osi in --sa-dir are picked up
 fastvep annotate -i variants.vcf --gff3 genes.gff3 \
-  --sa-dir sa_databases/ --output-format json
+  --sa-dir sa_databases/ --output-format vcf
 ```
 
 Allele-level custom VCFs produce a `.osa` and attach to records whose
@@ -459,6 +459,25 @@ and attach via positional overlap (returning every interval that
 contains the variant). Omit `--info-fields` to capture every INFO key
 on every record — convenient for exploration, but the resulting JSON
 objects will be heterogeneous.
+
+Every output format carries the annotation. JSON files it under the
+`--name` key; VCF and tab project it under `FV_<NAME>`, as a
+self-describing `ALLELE|KEY=VALUE&KEY=VALUE` value rather than the fixed
+pipe layout a built-in source uses, because a custom source's field set
+is whatever its records carry:
+
+```console
+$ fastvep sa-build --source custom_vcf --name mypanel -i panel.vcf -o sa/mypanel
+$ fastvep annotate -i variants.vcf --gff3 genes.gff3 --sa-dir sa/ --output-format vcf | grep FV_MYPANEL
+##INFO=<ID=FV_MYPANEL,Number=.,Type=String,Description="fastVEP custom annotations from mypanel. ...">
+17  43124090  .  A  G  30  PASS  FV_MYPANEL=G|AC=7&AF=0.005814&AN=1204;CSQ=...
+```
+
+A local frequency panel needs nothing beyond this: `AC` / `AN` / `AF`
+come through by name, and `bcftools query -f '%INFO/FV_MYPANEL\n'` reads
+them back. See
+[docs/SUPPLEMENTARY_ANNOTATIONS.md](docs/SUPPLEMENTARY_ANNOTATIONS.md#custom-sources)
+for the parsing rules and the escaping table.
 
 ## Command Reference
 
