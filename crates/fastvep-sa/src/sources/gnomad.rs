@@ -237,8 +237,13 @@ const JOINT_FILTER_KEYS: &[&str] = &["exomes_filters", "genomes_filters"];
 /// Reading only the column there left all three flags unset, so a site that
 /// failed both callsets annotated exactly like a clean `PASS` - which is the
 /// reading that matters, because these flags exist to stop a filtered site
-/// being used as benign frequency evidence. 2,956 of the 3,339 chr21 records
-/// in the v4.1 joint release carry a filter, and none of them reported one.
+/// being used as benign frequency evidence. Measured over the first 2,571
+/// records of the v4.1 joint chr21 release, 2,252 carry a per-callset filter
+/// name (87.6 %) and none of them reported one; every non-`PASS` record in
+/// that sample carries a name in [`JOINT_FILTER_KEYS`] and every `PASS` record
+/// carries none, so the column and the lists agree on *whether* a filter fired
+/// and disagree only on *what* did. The whole chromosome was not counted -
+/// the joint chr21 VCF is 11 GiB - so the rate is a sample, not a census.
 ///
 /// A name is reported if it fired in *either* callset. That is the conservative
 /// direction for a guard against trusting a frequency: a variant filtered in
