@@ -50,6 +50,19 @@ struct Cli {
     /// Path to a file for persistent statistics tracking
     #[arg(long, default_value = "stats.json", env = "FASTVEP_STATS_FILE")]
     stats_file: PathBuf,
+
+    /// Allow `/api/upload-gff3` and `/api/load-genome` to replace the active
+    /// gene model.
+    ///
+    /// Off by default. A replacement is process-wide and permanent, so on a
+    /// shared server one client trying out a gene model changes what every
+    /// other client is answered against - with no error, and nothing in an
+    /// `/api/annotate` response to say the model moved. Turn it on for a
+    /// single-user desktop run, where the browser UI's own genome switching
+    /// needs it; leave it off for anything several people share, and the gene
+    /// model becomes a property of how the server was started.
+    #[arg(long, default_value_t = false, env = "FASTVEP_ALLOW_MODEL_REPLACEMENT")]
+    allow_model_replacement: bool,
 }
 
 #[tokio::main]
@@ -97,6 +110,13 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    if cli.allow_model_replacement {
+        tracing::warn!(
+            "--allow-model-replacement is set: any client may replace the gene model for every \
+             other client. Intended for a single-user run."
+        );
+    }
+
     let state: AppState = Arc::new(SharedState {
         ctx: RwLock::new(ctx),
         data_dir,
@@ -104,6 +124,8 @@ async fn main() -> anyhow::Result<()> {
         stats_file: Some(cli.stats_file),
         total_variants: AtomicU64::new(initial_variants),
         total_genomes: AtomicU64::new(initial_genomes),
+        allow_model_replacement: cli.allow_model_replacement,
+        gene_model_generation: AtomicU64::new(0),
     });
 
     let app = build_router(state, cli.max_body_size, cli.max_concurrent);

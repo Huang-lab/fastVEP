@@ -6,6 +6,9 @@ use axum::Json;
 pub enum AppError {
     Internal(anyhow::Error),
     BadRequest(String),
+    /// The request was understood and refused by configuration - the caller
+    /// cannot fix it by changing the request, so it is not a 400.
+    Forbidden(String),
 }
 
 impl IntoResponse for AppError {
@@ -22,6 +25,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
         };
         (status, Json(serde_json::json!({"error": message}))).into_response()
     }

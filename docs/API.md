@@ -65,6 +65,16 @@ fastvep-web --bind 0.0.0.0 --port 8080 --gff3 ... --fasta ...
 > On a machine with a public IP it means the server is open to the internet, so put it behind a reverse proxy with auth, or a firewall rule, before exposing it.
 > [DEPLOYMENT.md](../DEPLOYMENT.md) covers the nginx and TLS setup.
 
+A firewall does not cover the other risk, so the server closes that one itself.
+`POST /api/upload-gff3` and `POST /api/load-genome` replace the gene model for the whole process, which on a server several colleagues share means one client's experiment changes what every other client is answered against.
+Both clients are authorised and neither is doing anything wrong, which is exactly why being inside the firewall does not help.
+So both endpoints are **off by default** and return `403` unless the server was started with `--allow-model-replacement`.
+Turn it on for a single-user desktop run, where the browser interface's own genome switching needs it.
+Leave it off for anything shared, and the gene model becomes a property of how the server was started.
+
+Every `/api/annotate` response also reports the model that produced it, so a client that does not control the server can still tell.
+See [`POST /api/annotate`](#post-apiannotate).
+
 ### 4. Verify it is up
 
 ```bash
@@ -73,7 +83,9 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
 
 ```json
 {
+    "allow_model_replacement": false,
     "backend": true,
+    "gene_model_generation": 0,
     "gff3_source": "Homo_sapiens.GRCh38.115.gff3",
     "has_fasta": true,
     "sa_sources": ["ClinVar", "COSMIC", "dbSNP", "gnomAD", "1000 Genomes", "SpliceAI"],
@@ -87,6 +99,9 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
 
 Check `transcripts`, `has_fasta`, and `sa_sources` here before you trust any annotation.
 Each of the three can be missing without the server saying so: a zero transcript count makes every variant `intergenic_variant`, and the other two are the subject of the next section.
+
+`allow_model_replacement` says whether a request can change the gene model on this server; `gene_model_generation` counts how many times one has.
+A UI can read the first to decide whether to offer its model-switching controls at all, rather than finding out with a `403` a user cannot interpret.
 
 ## Always pass `--fasta`
 
@@ -118,8 +133,10 @@ All request and response bodies are JSON, except `POST /api/upload-gff3`, which 
 | `GET` | `/api/status` | Server version and what is loaded |
 | `POST` | `/api/annotate` | Annotate VCF records |
 | `GET` | `/api/genomes` | List genomes available under `--data-dir` |
-| `POST` | `/api/load-genome` | Switch the active genome |
-| `POST` | `/api/upload-gff3` | Replace the active gene model with a posted GFF3 |
+| `POST` | `/api/load-genome` | Switch the active genome - needs `--allow-model-replacement` |
+| `POST` | `/api/upload-gff3` | Replace the active gene model with a posted GFF3 - needs `--allow-model-replacement` |
+
+The two marked endpoints replace the gene model for every client of the server, so they return `403` unless it was started with `--allow-model-replacement`.
 
 `GET /` serves the browser interface.
 
@@ -136,6 +153,19 @@ curl -s -X POST http://localhost:8080/api/annotate \
   -H 'Content-Type: application/json' \
   -d '{"vcf": "17\t43124027\t.\tG\tA\t50\tPASS\t.", "acmg": false}'
 ```
+
+Every response also reports the gene model that produced it:
+
+```json
+"gene_model": {"gff3_source": "Homo_sapiens.GRCh38.115.gff3", "transcripts": 509650, "generation": 0}
+```
+
+This is the field to assert on if you are running a batch through a server you do not control.
+Without it, a client whose gene model was replaced mid-batch got a well-formed `200` computed against the wrong model, with nothing in the response to say so: a BRCA1 coding variant coming back `intergenic_variant`, plausibly.
+`/api/status` showed the swap, but only to a client that polled it between every request.
+
+`generation` is the field to compare, not the other two.
+It counts replacements, so it changes on every one; `gff3_source` reads `user-upload` for every upload, and a transcript count can coincide across two different models.
 
 Multiple records in one request are annotated in one pass, and an `ID` column is carried through to `id` in the response:
 
@@ -237,11 +267,14 @@ curl -s -X POST http://localhost:8080/api/load-genome \
 ```
 
 ```json
-{"name": "human_grch38", "transcripts": 509650, "sa_sources": ["ClinVar"], "time_ms": 6}
+{"name": "human_grch38", "transcripts": 509650, "sa_sources": ["ClinVar"], "generation": 1, "time_ms": 6}
 ```
 
 `name` must be a plain directory name; anything containing a path separator or `..` is rejected with 400.
-Loading a genome swaps the model out from under every client of that server, so treat it as an admin operation rather than something a request handler calls.
+
+Loading a genome swaps the model out from under every client of that server, so it is an admin operation rather than something a request handler calls, and the server now treats it as one.
+`POST /api/load-genome` returns `403` unless the server was started with `--allow-model-replacement`; `GET /api/genomes` is a read and always answers.
+The `generation` in the response is the value `/api/annotate` will report for answers computed against this model.
 
 ## Errors
 
@@ -252,6 +285,7 @@ Failures return the matching HTTP status and a single-field body:
 ```
 
 `400` carries a caller-facing message, as above.
+`403` means the request was understood and refused by how the server was started, so changing the request will not help. Currently only the two gene-model-replacing endpoints return it, and the message names the flag that lifts it.
 `500` is always the literal string `Internal server error`; the detail is written to the server log instead, so that paths and parser internals are not returned to clients.
 Check the server's stderr when you get one.
 
@@ -269,6 +303,7 @@ Check the server's stderr when you get one.
 | `--max-body-size` | | `10485760` | Request body cap in bytes |
 | `--max-concurrent` | | `64` | Concurrent annotation requests |
 | `--stats-file` | `FASTVEP_STATS_FILE` | `stats.json` | Where the served-variant counters persist |
+| `--allow-model-replacement` | `FASTVEP_ALLOW_MODEL_REPLACEMENT` | off | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model |
 
 Three things to know about the defaults.
 `--gff3` has none, and a server started without one does not refuse to start: it comes up with `"status": "ok"`, reports `"transcripts": 0`, and answers every request with `intergenic_variant` at HTTP 200.
