@@ -21,6 +21,7 @@ use crate::common::AnnotationRecord;
 use crate::fields::{Field, FieldType};
 use crate::writer_v2::{Osa2Metadata, Osa2Record};
 use anyhow::{Context, Result};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::BufRead;
 
@@ -170,22 +171,32 @@ fn extended_values(
             + FILTER_FLAGS.len(),
     );
 
+    // Every extended key is looked up under the name *this* release spells it
+    // with; `ext_key` is identity on the standard release.
+    let values_for = |key: &str| {
+        split_info_values(
+            info_map
+                .get(field_names.ext_key(key).as_ref())
+                .map(String::as_str),
+        )
+    };
+
     for (key, alias, _) in XY_ALLELE_INTS {
-        let vals = split_info_values(info_map.get(&field_names.ext_key(key)).map(|s| s.as_str()));
+        let vals = values_for(key);
         out.push((
             *alias,
             ExtValue::Int(vals.get(allele_idx).and_then(|s| s.parse::<i64>().ok())),
         ));
     }
     for (key, alias, _) in XY_SITE_INTS {
-        let vals = split_info_values(info_map.get(&field_names.ext_key(key)).map(|s| s.as_str()));
+        let vals = values_for(key);
         out.push((
             *alias,
             ExtValue::Int(vals.first().and_then(|s| s.parse::<i64>().ok())),
         ));
     }
     for (key, alias, _) in FAF_FLOATS {
-        let vals = split_info_values(info_map.get(&field_names.ext_key(key)).map(|s| s.as_str()));
+        let vals = values_for(key);
         out.push((
             *alias,
             ExtValue::Float(vals.get(allele_idx).and_then(|s| s.parse::<f64>().ok())),
@@ -301,13 +312,21 @@ impl FieldNames {
     /// Identity on the standard release, where `flavor` is empty. Per-population
     /// keys do not come through here - [`FieldNames::pop_key`] already builds
     /// them from a template that carries the flavor.
-    fn ext_key(&self, base: &str) -> String {
+    ///
+    /// Borrows rather than allocates when the flavor is empty. The caller has
+    /// the key as a `&'static str` from a descriptor table and wants it only to
+    /// index `info_map`, and this runs once per extended column per allele of
+    /// every record in the build - so on the standard release, which is what
+    /// the genome-scale exomes and genomes databases are built from, returning
+    /// `String` would heap-copy four static keys per allele to look each one up
+    /// and drop it.
+    fn ext_key<'a>(&self, base: &'a str) -> Cow<'a, str> {
         if self.flavor.is_empty() {
-            return base.to_string();
+            return Cow::Borrowed(base);
         }
         match base.strip_suffix("_XY") {
-            Some(statistic) => format!("{statistic}{}_XY", self.flavor),
-            None => format!("{base}{}", self.flavor),
+            Some(statistic) => Cow::Owned(format!("{statistic}{}_XY", self.flavor)),
+            None => Cow::Owned(format!("{base}{}", self.flavor)),
         }
     }
 
@@ -1347,6 +1366,32 @@ chr1\t10001\t.\tA\tG\t.\tEXOMES_FILTERED\tAF_joint=0.2;AN_joint=1000;AC_joint=20
         for key in ["faf95", "fafmax_faf95_max", "AC_XY", "AN_XY"] {
             assert_eq!(standard.ext_key(key), key);
         }
+    }
+
+    #[test]
+    fn test_ext_key_does_not_allocate_on_the_standard_release() {
+        // Structural rather than a timing or allocation-count assertion,
+        // because the property is structural: the caller already holds the key
+        // as a `&'static str` from a descriptor table and wants it only to
+        // index `info_map`. `extended_values` resolves four of them
+        // (`XY_ALLELE_INTS` + `XY_SITE_INTS` + `FAF_FLOATS`) for every allele
+        // of every record, so on the standard release - the one the
+        // genome-scale exomes and genomes databases are built from - an owned
+        // return heap-copies four static strings per allele to look each one up
+        // and drop it.
+        let standard = FieldNames::standard();
+        for (key, _, _) in XY_ALLELE_INTS.iter().chain(XY_SITE_INTS).chain(FAF_FLOATS) {
+            assert!(
+                matches!(standard.ext_key(key), Cow::Borrowed(_)),
+                "{key} was resolved into an owned String on the standard release"
+            );
+        }
+
+        // The joint release has to allocate: no static string spells its keys.
+        assert!(matches!(
+            FieldNames::joint().ext_key("AC_XY"),
+            Cow::Owned(_)
+        ));
     }
 
     #[test]
