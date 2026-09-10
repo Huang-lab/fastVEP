@@ -692,39 +692,105 @@ const VCF_PROJECTION_SPECS: &[VcfProjectionSpec] = &[
     },
 ];
 
-/// Format fastSA SpliceAI annotations as a VCF-compatible INFO field value.
-pub fn format_spliceai_info(vf: &VariationFeature) -> Option<String> {
-    format_supplementary_vcf_info(vf)
-        .into_iter()
-        .find_map(|(id, value)| if id == "SpliceAI" { Some(value) } else { None })
+/// A loaded supplementary source with no entry in [`VCF_PROJECTION_SPECS`].
+///
+/// `VCF_PROJECTION_SPECS` is a closed table of `&'static` descriptors, so it
+/// can only name sources that existed when it was written. A `custom_vcf` /
+/// `custom_bed` database is named by `--name` at build time and carries
+/// whatever fields its source file had, so it matches no entry - and the VCF
+/// and tab writers walk that table. The annotation was therefore dropped from
+/// both formats with no header, no column and no warning, reaching only
+/// `--output-format json`, which iterates the record's own keys (#116).
+///
+/// The projection is self-describing (`KEY=VALUE&KEY=VALUE`) rather than the
+/// fixed pipe list the built-ins use, because the key set genuinely varies:
+/// with `--info-fields` unset the builder stores every INFO key each record
+/// happens to carry, so there is no layout to declare in the header. Naming
+/// each value makes a heterogeneous source readable and keeps the one failure
+/// this repository cares about off the table - a reader can never mistake
+/// which field a position holds, because position does not carry meaning.
+struct CustomProjection {
+    /// The source's `json_key`: what `aa.supplementary` / `gene_annotations`
+    /// file the record under, and the key the JSON output already used.
+    json_key: String,
+    /// VCF INFO ID and tab column name, derived from `json_key`.
+    info_id: String,
+    /// Shared by the `##INFO=` header line and the tab `## COLUMN=` prologue,
+    /// so the two formats document the same schema - the same reason the
+    /// built-in specs keep one `description` for both.
+    description: String,
+    /// `true` for an `.oga` gene-level source, whose annotations hang off a
+    /// gene symbol rather than an allele.
+    gene_keyed: bool,
 }
 
-/// Return VCF INFO IDs that fastVEP owns for the given loaded sources.
-pub fn vcf_owned_info_ids(sa_keys: &[String], gene_keys: &[String]) -> Vec<&'static str> {
+/// Derive a VCF INFO ID for a source with no static spec.
+///
+/// VCF requires an INFO ID to match `[A-Za-z_][0-9A-Za-z_.]*`, and `--name` is
+/// free text, so every character outside that set becomes `_`. The `FV_`
+/// prefix marks the field fastVEP-owned - which is what makes re-annotating a
+/// VCF replace it rather than append a second copy, via
+/// [`vcf_owned_info_ids`] - and guarantees the leading character whatever the
+/// name started with.
+fn custom_info_id(json_key: &str) -> String {
+    let mut id = String::with_capacity(3 + json_key.len());
+    id.push_str("FV_");
+    for c in json_key.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+            id.push(c.to_ascii_uppercase());
+        } else {
+            id.push('_');
+        }
+    }
+    id
+}
+
+/// Render a source name for a `Description="..."` attribute.
+///
+/// The name reaches here from `--name`, so it can hold the quote that would
+/// end the attribute or a newline that would end the header line. Neither can
+/// be escaped inside a VCF header, so both are replaced.
+fn describable_name(json_key: &str) -> String {
+    json_key
+        .chars()
+        .map(|c| match c {
+            '"' => '\'',
+            '\\' => '/',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect()
+}
+
+/// Format fastSA SpliceAI annotations as a VCF-compatible INFO field value.
+pub fn format_spliceai_info(vf: &VariationFeature) -> Option<String> {
+    format_spliceai_projection(vf)
+}
+
+/// Return VCF INFO IDs that fastVEP owns for this run's loaded sources.
+///
+/// Reads the same [`LoadedSupplementarySpecs`] the header lines and the
+/// per-row values come from. Deriving the three lists separately let them
+/// disagree, and the disagreement that matters is silent: an emitted `FV_*`
+/// field whose `##INFO=` header was never written is an invalid VCF that most
+/// readers accept anyway.
+pub fn vcf_owned_info_ids(specs: &LoadedSupplementarySpecs) -> Vec<&str> {
     let mut ids = vec!["CSQ"];
-    if sa_keys.iter().any(|key| key == "spliceAI") {
+    if specs.spliceai {
         ids.push("SpliceAI");
     }
-    for spec in VCF_PROJECTION_SPECS {
-        let loaded = match spec.kind {
-            VcfProjectionKind::GeneObject | VcfProjectionKind::ClinvarProtein => {
-                gene_keys.iter().any(|key| key == spec.json_key)
-            }
-            VcfProjectionKind::AlleleObject | VcfProjectionKind::AlleleScalar => {
-                sa_keys.iter().any(|key| key == spec.json_key)
-            }
-        };
-        if loaded {
-            ids.push(spec.info_id);
-        }
+    for spec in specs.loaded_specs() {
+        ids.push(spec.info_id);
+    }
+    for custom in &specs.custom {
+        ids.push(&custom.info_id);
     }
     ids
 }
 
 /// Generate fastVEP-owned VCF INFO header lines for the loaded sources.
 pub fn vcf_info_header_lines(
-    sa_keys: &[String],
-    gene_keys: &[String],
+    specs: &LoadedSupplementarySpecs,
     csq_fields: &[&str],
     sa_only: bool,
 ) -> Vec<String> {
@@ -733,24 +799,20 @@ pub fn vcf_info_header_lines(
     } else {
         vec![csq_header_line(csq_fields)]
     };
-    if sa_keys.iter().any(|key| key == "spliceAI") {
+    if specs.spliceai {
         headers.push(spliceai_header_line());
     }
-    for spec in VCF_PROJECTION_SPECS {
-        let loaded = match spec.kind {
-            VcfProjectionKind::GeneObject | VcfProjectionKind::ClinvarProtein => {
-                gene_keys.iter().any(|key| key == spec.json_key)
-            }
-            VcfProjectionKind::AlleleObject | VcfProjectionKind::AlleleScalar => {
-                sa_keys.iter().any(|key| key == spec.json_key)
-            }
-        };
-        if loaded {
-            headers.push(format!(
-                "##INFO=<ID={},Number=.,Type=String,Description=\"{}\">",
-                spec.info_id, spec.description
-            ));
-        }
+    for spec in specs.loaded_specs() {
+        headers.push(format!(
+            "##INFO=<ID={},Number=.,Type=String,Description=\"{}\">",
+            spec.info_id, spec.description
+        ));
+    }
+    for custom in &specs.custom {
+        headers.push(format!(
+            "##INFO=<ID={},Number=.,Type=String,Description=\"{}\">",
+            custom.info_id, custom.description
+        ));
     }
     headers
 }
@@ -772,9 +834,15 @@ pub struct LoadedSupplementarySpecs {
     /// Parallel to `VCF_PROJECTION_SPECS`: `true` when that spec's source is
     /// loaded for this run.
     per_spec: Vec<bool>,
+    /// Loaded sources that no `VCF_PROJECTION_SPECS` entry describes - the
+    /// user's own `custom_vcf` / `custom_bed` databases. Resolved once here
+    /// rather than rediscovered per variant: the set is a property of which
+    /// providers opened, and the per-variant loop runs once per
+    /// (variant x transcript x allele x source).
+    custom: Vec<CustomProjection>,
     /// Total number of extra tab columns (`spliceai` + number of `true`
-    /// entries in `per_spec`), cached at construction so the per-row hot
-    /// path doesn't re-scan `per_spec` for the column count.
+    /// entries in `per_spec` + `custom`), cached at construction so the
+    /// per-row hot path doesn't re-scan for the column count.
     column_count: usize,
 }
 
@@ -794,10 +862,65 @@ impl LoadedSupplementarySpecs {
                 }
             })
             .collect();
-        let column_count = spliceai as usize + per_spec.iter().filter(|b| **b).count();
+
+        // Anything loaded that the static table does not describe. Seeded with
+        // the IDs already in play so a derived ID cannot collide with one of
+        // them - `--name gnomad_gene` sanitises to `FV_GNOMAD_GENE`, which the
+        // built-in `gnomad_genes` spec owns - and two custom names that
+        // sanitise alike cannot collide with each other either. Two INFO
+        // fields sharing an ID is a malformed VCF; the suffix keeps the run
+        // going and the `Description` names the source it came from.
+        let mut taken: std::collections::HashSet<&str> = ["CSQ", "SpliceAI"].into_iter().collect();
+        for (spec, loaded) in VCF_PROJECTION_SPECS.iter().zip(per_spec.iter()) {
+            if *loaded {
+                taken.insert(spec.info_id);
+            }
+        }
+        let mut taken: std::collections::HashSet<String> =
+            taken.into_iter().map(str::to_string).collect();
+        let mut custom = Vec::new();
+        let described = |keys: &[String], gene_keyed: bool| -> Vec<(String, bool)> {
+            keys.iter()
+                .filter(|key| {
+                    *key != "spliceAI"
+                        && !VCF_PROJECTION_SPECS
+                            .iter()
+                            .any(|spec| spec.json_key == key.as_str())
+                })
+                .map(|key| (key.clone(), gene_keyed))
+                .collect()
+        };
+        for (json_key, gene_keyed) in described(sa_keys, false)
+            .into_iter()
+            .chain(described(gene_keys, true))
+        {
+            let base = custom_info_id(&json_key);
+            let mut info_id = base.clone();
+            let mut n = 2;
+            while !taken.insert(info_id.clone()) {
+                info_id = format!("{base}_{n}");
+                n += 1;
+            }
+            let subject = if gene_keyed { "SYMBOL" } else { "ALLELE" };
+            let description = format!(
+                "fastVEP custom annotations from {}. Format: {subject}|KEY=VALUE&KEY=VALUE, \
+                 naming the fields the source record carries (key-sorted)",
+                describable_name(&json_key)
+            );
+            custom.push(CustomProjection {
+                json_key,
+                info_id,
+                description,
+                gene_keyed,
+            });
+        }
+
+        let column_count =
+            spliceai as usize + per_spec.iter().filter(|b| **b).count() + custom.len();
         Self {
             spliceai,
             per_spec,
+            custom,
             column_count,
         }
     }
@@ -826,13 +949,16 @@ impl LoadedSupplementarySpecs {
 /// output, in the same order as `vcf_info_header_lines` emits them. SpliceAI
 /// is included first when it's loaded, followed by every loaded
 /// `VCF_PROJECTION_SPECS` entry.
-pub fn tab_supplementary_column_names(specs: &LoadedSupplementarySpecs) -> Vec<&'static str> {
+pub fn tab_supplementary_column_names(specs: &LoadedSupplementarySpecs) -> Vec<&str> {
     let mut names = Vec::with_capacity(specs.column_count());
     if specs.spliceai {
         names.push("SpliceAI");
     }
     for spec in specs.loaded_specs() {
         names.push(spec.info_id);
+    }
+    for custom in &specs.custom {
+        names.push(&custom.info_id);
     }
     names
 }
@@ -852,6 +978,12 @@ pub fn tab_supplementary_header_lines(specs: &LoadedSupplementarySpecs) -> Vec<S
         lines.push(format!(
             "## COLUMN=<ID={},Description=\"{}\">",
             spec.info_id, spec.description
+        ));
+    }
+    for custom in &specs.custom {
+        lines.push(format!(
+            "## COLUMN=<ID={},Description=\"{}\">",
+            custom.info_id, custom.description
         ));
     }
     lines
@@ -882,11 +1014,26 @@ pub fn format_supplementary_tab_columns_for_allele(
         };
         cols.push(value.unwrap_or_else(|| "-".to_string()));
     }
+    for custom in &specs.custom {
+        let value = if custom.gene_keyed {
+            format_custom_gene_projection_for_tv(vf, tv, custom)
+        } else {
+            format_custom_allele_projection_for_aa(vf, aa, custom)
+        };
+        cols.push(value.unwrap_or_else(|| "-".to_string()));
+    }
     cols
 }
 
 /// Format all supplementary VCF INFO projections for an annotated variant.
-pub fn format_supplementary_vcf_info(vf: &VariationFeature) -> Vec<(String, String)> {
+///
+/// `specs` supplies the run's custom sources; the built-in specs are walked in
+/// full and yield nothing for a source this variant carries no payload for, as
+/// before.
+pub fn format_supplementary_vcf_info(
+    vf: &VariationFeature,
+    specs: &LoadedSupplementarySpecs,
+) -> Vec<(String, String)> {
     let mut projected = Vec::new();
 
     if let Some(value) = format_spliceai_projection(vf) {
@@ -906,6 +1053,17 @@ pub fn format_supplementary_vcf_info(vf: &VariationFeature) -> Vec<(String, Stri
         }
     }
 
+    for custom in &specs.custom {
+        let value = if custom.gene_keyed {
+            format_custom_gene_projection(vf, custom)
+        } else {
+            format_custom_allele_projection(vf, custom)
+        };
+        if let Some(value) = value {
+            projected.push((custom.info_id.clone(), value));
+        }
+    }
+
     projected
 }
 
@@ -915,8 +1073,13 @@ pub fn format_supplementary_vcf_info(vf: &VariationFeature) -> Vec<(String, Stri
 /// re-added only when `csq` is non-empty. This prevents stale `CSQ=` from a
 /// re-annotated VCF from leaking through in `--sa-only` mode where the CSQ
 /// header has already been removed.
-pub fn format_vcf_info_fields(original_info: &str, vf: &VariationFeature, csq: &str) -> String {
-    let mut projections = format_supplementary_vcf_info(vf);
+pub fn format_vcf_info_fields(
+    original_info: &str,
+    vf: &VariationFeature,
+    csq: &str,
+    specs: &LoadedSupplementarySpecs,
+) -> String {
+    let mut projections = format_supplementary_vcf_info(vf, specs);
     if !csq.is_empty() {
         projections.push(("CSQ".to_string(), csq.to_string()));
     }
@@ -1165,6 +1328,226 @@ fn format_allele_projection_for_aa(
             _ => format_object_projection_entries(&allele, &parsed, spec.fields),
         };
         for value in entries {
+            if seen.insert(value.clone()) {
+                values.push(value);
+            }
+        }
+    }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
+}
+
+/// Append one `KEY=VALUE` pair, `&`-separated from what is already there.
+///
+/// Skips a value with no scalar rendering. `escape_vcf_subfield` percent-encodes
+/// `=`, `&`, `|` and `,`, so neither a key nor a value can contain a separator
+/// and the pair list splits back apart exactly.
+fn push_custom_pair(out: &mut String, key: &str, value: &Value) {
+    let rendered = match value {
+        Value::Null | Value::Array(_) | Value::Object(_) => return,
+        leaf => escape_vcf_subfield(&json_leaf_to_string(leaf)),
+    };
+    if !out.is_empty() {
+        out.push('&');
+    }
+    out.push_str(key);
+    out.push('=');
+    out.push_str(&rendered);
+}
+
+/// Render a custom source's record object as `KEY=VALUE&KEY=VALUE`.
+///
+/// `serde_json::Map` is a `BTreeMap` here (the `preserve_order` feature is
+/// off), so the pairs come out key-sorted and every record of a source lists
+/// its fields in the same order - which is what makes the column greppable
+/// even when the records are heterogeneous.
+///
+/// An array value repeats its key (`AF=0.1&AF=0.2`) rather than joining the
+/// elements the way [`json_value_to_vcf`] does, because `&` already separates
+/// pairs: joining would produce `AF=0.1&0.2`, whose second element has no key
+/// and reads as a malformed pair. Nested objects are dropped - neither custom
+/// builder emits one, and flattening would have to invent a separator for the
+/// compound key.
+fn format_custom_pairs(object: &serde_json::Map<String, Value>) -> String {
+    let mut out = String::new();
+    for (key, value) in object {
+        let key = escape_vcf_subfield(key);
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    push_custom_pair(&mut out, &key, item);
+                }
+            }
+            leaf => push_custom_pair(&mut out, &key, leaf),
+        }
+    }
+    out
+}
+
+/// One projection entry per record object: `SUBJECT|KEY=VALUE&KEY=VALUE`.
+///
+/// `subject` is the allele or the gene symbol, matching the built-in specs'
+/// leading field. The pair list is emitted even when empty, so the entry is
+/// always two `|`-separated fields: a three-column BED carries no attributes
+/// at all, and `region|` still says the allele hit it - the same way the
+/// built-in specs render a value they have no data for.
+fn format_custom_entries(subject: &str, parsed: &Value) -> Vec<String> {
+    let records: Vec<&Value> = match parsed {
+        Value::Array(items) => items.iter().collect(),
+        single => vec![single],
+    };
+    records
+        .into_iter()
+        .filter_map(|record| {
+            let subject = escape_vcf_subfield(subject);
+            match record {
+                Value::Object(object) => Some(format!("{subject}|{}", format_custom_pairs(object))),
+                // A source whose record is a bare scalar rather than an object
+                // has nothing to name, so it projects like the built-in
+                // `AlleleScalar` specs do.
+                Value::Null | Value::Array(_) => None,
+                leaf => Some(format!(
+                    "{subject}|{}",
+                    escape_vcf_subfield(&json_leaf_to_string(leaf))
+                )),
+            }
+        })
+        .collect()
+}
+
+/// Project a custom allele-level source for one allele annotation (tab rows).
+fn format_custom_allele_projection_for_aa(
+    vf: &VariationFeature,
+    aa: &AlleleAnnotation,
+    custom: &CustomProjection,
+) -> Option<String> {
+    // Establish a payload before building anything, as the built-in helpers
+    // do: every loaded source is offered every annotation, so most calls match
+    // nothing and the allele render, the dedupe set and the value vector would
+    // all be paid for to reach an empty result.
+    if !aa
+        .supplementary
+        .iter()
+        .any(|(key, _)| *key == custom.json_key)
+    {
+        return None;
+    }
+    let allele = uploaded_allele_for_annotation(vf, &aa.allele);
+    let mut values: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (key, json_str) in &aa.supplementary {
+        if *key != custom.json_key {
+            continue;
+        }
+        // Same policy as `format_allele_projection_for_aa`: a truncated or
+        // otherwise non-JSON payload is skipped with a debug line rather than
+        // pushed through raw, so a caller sees a missing column instead of a
+        // mis-shaped one.
+        let parsed = match serde_json::from_str::<Value>(json_str) {
+            Ok(v) => v,
+            Err(e) => {
+                log::debug!(
+                    "Skipping non-JSON supplementary payload for custom key='{}': {} (payload snippet: {})",
+                    custom.json_key,
+                    e,
+                    json_str.chars().take(80).collect::<String>(),
+                );
+                continue;
+            }
+        };
+        for value in format_custom_entries(&allele, &parsed) {
+            if seen.insert(value.clone()) {
+                values.push(value);
+            }
+        }
+    }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
+}
+
+/// Project a custom allele-level source across every allele (VCF INFO).
+fn format_custom_allele_projection(
+    vf: &VariationFeature,
+    custom: &CustomProjection,
+) -> Option<String> {
+    let mut values: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for tv in &vf.transcript_variations {
+        for aa in &tv.allele_annotations {
+            let Some(joined) = format_custom_allele_projection_for_aa(vf, aa, custom) else {
+                continue;
+            };
+            for value in joined.split(',') {
+                let owned = value.to_string();
+                if seen.insert(owned.clone()) {
+                    values.push(owned);
+                }
+            }
+        }
+    }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values.join(","))
+    }
+}
+
+/// Project a custom gene-level source for one transcript (tab rows).
+fn format_custom_gene_projection_for_tv(
+    vf: &VariationFeature,
+    tv: &TranscriptVariation,
+    custom: &CustomProjection,
+) -> Option<String> {
+    format_custom_gene_entries(vf, custom, tv.gene_symbol.as_deref())
+}
+
+/// Project a custom gene-level source across every gene (VCF INFO).
+fn format_custom_gene_projection(
+    vf: &VariationFeature,
+    custom: &CustomProjection,
+) -> Option<String> {
+    format_custom_gene_entries(vf, custom, None)
+}
+
+/// Shared body for the two gene-level custom projections.
+///
+/// `symbol_filter` restricts the annotations to one gene for a tab row that
+/// has a symbol; `None` emits every match, which is both the VCF behaviour and
+/// what a tab row for a transcript with no symbol needs so it does not lose
+/// data. Same split as `format_gene_projection` / `format_gene_projection_for_tv`.
+fn format_custom_gene_entries(
+    vf: &VariationFeature,
+    custom: &CustomProjection,
+    symbol_filter: Option<&str>,
+) -> Option<String> {
+    if !vf
+        .gene_annotations
+        .iter()
+        .any(|ga| ga.json_key == custom.json_key)
+    {
+        return None;
+    }
+    let mut values: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for ga in &vf.gene_annotations {
+        if ga.json_key != custom.json_key {
+            continue;
+        }
+        if let Some(want) = symbol_filter {
+            if ga.gene_symbol != want {
+                continue;
+            }
+        }
+        let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
+            continue;
+        };
+        for value in format_custom_entries(&ga.gene_symbol, &parsed) {
             if seen.insert(value.clone()) {
                 values.push(value);
             }
@@ -2067,6 +2450,14 @@ fn json_str(opt: &Option<String>) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
+    /// A `LoadedSupplementarySpecs` with no custom sources, for the tests that
+    /// only exercise the built-in projections. Those walk
+    /// `VCF_PROJECTION_SPECS` in full regardless of what loaded, so an empty
+    /// lookup is the right neutral value.
+    fn no_custom_sources() -> super::LoadedSupplementarySpecs {
+        super::LoadedSupplementarySpecs::new(&[], &[])
+    }
+
     use super::*;
     use crate::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
     use fastvep_core::{
@@ -2239,10 +2630,245 @@ mod tests {
         }
     }
 
+    /// A variant carrying only user-supplied custom payloads, so nothing below
+    /// can be satisfied by a built-in projection.
+    fn custom_source_variant(
+        allele_payloads: &[(&str, &str)],
+        gene_payloads: &[(&str, &str)],
+    ) -> VariationFeature {
+        let mut vf = projection_test_variant();
+        vf.supplementary_annotations.clear();
+        vf.gene_annotations = gene_payloads
+            .iter()
+            .map(|(key, json)| GeneAnnotation {
+                gene_symbol: "GENE1".into(),
+                json_key: (*key).into(),
+                json_string: (*json).into(),
+            })
+            .collect();
+        for tv in &mut vf.transcript_variations {
+            for aa in &mut tv.allele_annotations {
+                aa.supplementary = allele_payloads
+                    .iter()
+                    .map(|(key, json)| ((*key).to_string(), (*json).to_string()))
+                    .collect();
+            }
+        }
+        vf
+    }
+
+    #[test]
+    fn format_spliceai_info_returns_the_spliceai_projection_alone() {
+        // Public API with no in-tree caller, so nothing else would notice if
+        // it broke. It used to build every projection and then filter for the
+        // one entry it wanted; it now asks for that entry directly, which is
+        // the same value `format_supplementary_vcf_info` files under
+        // `SpliceAI`.
+        let vf = projection_test_variant();
+        let direct = format_spliceai_info(&vf).expect("SpliceAI payload is in the fixture");
+        assert_eq!(direct, "G|GENE%7C1|0.01|0.00|0.85|0.00|5|-28|2|-13");
+
+        let via_all = format_supplementary_vcf_info(&vf, &no_custom_sources())
+            .into_iter()
+            .find_map(|(id, value)| (id == "SpliceAI").then_some(value));
+        assert_eq!(via_all, Some(direct));
+
+        // No payload, no value - not an empty string.
+        let bare = custom_source_variant(&[], &[]);
+        assert_eq!(format_spliceai_info(&bare), None);
+    }
+
+    #[test]
+    fn a_custom_source_reaches_the_vcf_and_the_tab_column() {
+        // The bug in #116: a `custom_vcf` database annotated `--output-format
+        // json` and nothing else, because the VCF and tab writers projected
+        // through a static table that could not name it. The annotation was
+        // dropped with no header, no column and no warning - a complete-looking
+        // VCF missing the field the run was for.
+        let vf = custom_source_variant(
+            &[("mypanel", r#"{"AC":"7","AF":"0.005814","AN":"1204"}"#)],
+            &[],
+        );
+        let specs = LoadedSupplementarySpecs::new(&["mypanel".to_string()], &[]);
+
+        let projections = format_supplementary_vcf_info(&vf, &specs);
+        assert_eq!(
+            projections,
+            vec![(
+                "FV_MYPANEL".to_string(),
+                "G|AC=7&AF=0.005814&AN=1204".to_string()
+            )]
+        );
+
+        // ... and the same value in the tab column, without the `ID=` prefix.
+        let columns = tab_supplementary_column_names(&specs);
+        assert_eq!(columns, vec!["FV_MYPANEL"]);
+        let rows = format_tab_line(&vf, &specs, false);
+        assert!(
+            rows.iter()
+                .all(|row| row.ends_with("\tG|AC=7&AF=0.005814&AN=1204")),
+            "tab rows lost the custom column: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn every_emitted_custom_field_is_declared_in_the_header() {
+        // A `FV_*` field with no `##INFO=` line is an invalid VCF that most
+        // readers accept anyway, so the mismatch would be silent. The header
+        // list and the value list are now derived from one
+        // `LoadedSupplementarySpecs`; this is what that buys.
+        let vf = custom_source_variant(
+            &[
+                ("panel one", r#"{"AF":"0.01"}"#),
+                ("panel/one", r#"{"AF":"0.02"}"#),
+            ],
+            &[("my_genes", r#"{"tier":"1"}"#)],
+        );
+        let specs = LoadedSupplementarySpecs::new(
+            &["panel one".to_string(), "panel/one".to_string()],
+            &["my_genes".to_string()],
+        );
+
+        let declared: Vec<String> = vcf_info_header_lines(&specs, DEFAULT_CSQ_FIELDS, false)
+            .iter()
+            .filter_map(|line| vcf_info_header_id(line).map(str::to_string))
+            .collect();
+        for (id, _) in format_supplementary_vcf_info(&vf, &specs) {
+            assert!(
+                declared.contains(&id),
+                "{id} was emitted but never declared; declared = {declared:?}"
+            );
+        }
+        // And fastVEP claims ownership of each, so re-annotating replaces
+        // rather than duplicates them.
+        let owned = vcf_owned_info_ids(&specs);
+        for id in &declared {
+            assert!(
+                owned.contains(&id.as_str()),
+                "{id} is declared but not owned"
+            );
+        }
+    }
+
+    #[test]
+    fn a_separator_inside_a_custom_value_cannot_break_the_pair_list() {
+        // The pair list is only unambiguous because `escape_vcf_subfield`
+        // percent-encodes every separator it uses. A raw `=` or `&` in a value
+        // would silently invent a key or truncate one.
+        let vf = custom_source_variant(&[("p", r#"{"NOTE":"a=b&c|d,e;f","OK":"1"}"#)], &[]);
+        let specs = LoadedSupplementarySpecs::new(&["p".to_string()], &[]);
+        let (_, value) = format_supplementary_vcf_info(&vf, &specs)
+            .into_iter()
+            .next()
+            .expect("custom projection missing");
+        assert_eq!(value, "G|NOTE=a%3Db%26c%7Cd%2Ce%3Bf&OK=1");
+
+        // Splitting the way the header documents recovers exactly two fields
+        // and exactly two pairs.
+        let (_allele, pairs) = value.split_once('|').unwrap();
+        let keys: Vec<&str> = pairs
+            .split('&')
+            .map(|pair| pair.split_once('=').unwrap().0)
+            .collect();
+        assert_eq!(keys, vec!["NOTE", "OK"]);
+    }
+
+    #[test]
+    fn a_custom_record_with_no_fields_still_reports_the_hit() {
+        // A three-column BED carries no attributes at all. "In a listed
+        // region" is the whole annotation, and dropping the entry would be
+        // indistinguishable from a miss.
+        let vf = custom_source_variant(&[("regions", "{}")], &[]);
+        let specs = LoadedSupplementarySpecs::new(&["regions".to_string()], &[]);
+        assert_eq!(
+            format_supplementary_vcf_info(&vf, &specs),
+            vec![("FV_REGIONS".to_string(), "G|".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_gene_level_custom_source_projects_on_the_symbol() {
+        let vf = custom_source_variant(&[], &[("my_genes", r#"{"panel":"cardio","tier":2}"#)]);
+        let specs = LoadedSupplementarySpecs::new(&[], &["my_genes".to_string()]);
+        assert_eq!(
+            format_supplementary_vcf_info(&vf, &specs),
+            vec![(
+                "FV_MY_GENES".to_string(),
+                "GENE1|panel=cardio&tier=2".to_string()
+            )]
+        );
+        // The header says which subject the leading field holds.
+        let header = vcf_info_header_lines(&specs, DEFAULT_CSQ_FIELDS, false)
+            .into_iter()
+            .find(|line| line.contains("FV_MY_GENES"))
+            .unwrap();
+        assert!(header.contains("Format: SYMBOL|KEY=VALUE"), "{header}");
+    }
+
+    #[test]
+    fn a_custom_array_value_repeats_its_key() {
+        // `&` already separates pairs, so joining the elements the way
+        // `json_value_to_vcf` does would leave the second element keyless.
+        let vf = custom_source_variant(&[("p", r#"{"AF":[0.1,0.2],"ID":"x"}"#)], &[]);
+        let specs = LoadedSupplementarySpecs::new(&["p".to_string()], &[]);
+        let (_, value) = format_supplementary_vcf_info(&vf, &specs)
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(value, "G|AF=0.1&AF=0.2&ID=x");
+    }
+
+    #[test]
+    fn custom_info_ids_are_valid_vcf_and_never_collide() {
+        // `--name` is free text; a VCF INFO ID is not. Anything outside
+        // `[0-9A-Za-z_.]` becomes `_`, which means distinct names can sanitise
+        // alike - and two INFO fields sharing an ID is a malformed VCF.
+        assert_eq!(custom_info_id("my-panel"), "FV_MY_PANEL");
+        assert_eq!(custom_info_id("my panel!"), "FV_MY_PANEL_");
+        assert_eq!(custom_info_id("v1.2"), "FV_V1.2");
+
+        let specs = LoadedSupplementarySpecs::new(
+            &[
+                "my-panel".to_string(),
+                "my_panel".to_string(),
+                "my/panel".to_string(),
+                // Sanitises onto the built-in `gnomad_genes` spec's ID.
+                "gnomad_gene".to_string(),
+            ],
+            &["gnomad_genes".to_string()],
+        );
+        let ids = vcf_owned_info_ids(&specs);
+        let unique: std::collections::HashSet<&&str> = ids.iter().collect();
+        assert_eq!(ids.len(), unique.len(), "duplicate INFO ID in {ids:?}");
+        assert!(ids.contains(&"FV_MY_PANEL"));
+        assert!(ids.contains(&"FV_MY_PANEL_2"));
+        assert!(ids.contains(&"FV_MY_PANEL_3"));
+        // The built-in keeps its ID; the custom source that wanted it yields.
+        assert!(ids.contains(&"FV_GNOMAD_GENE"));
+        assert!(ids.contains(&"FV_GNOMAD_GENE_2"));
+    }
+
+    #[test]
+    fn a_quote_in_a_source_name_cannot_end_the_header_attribute() {
+        // The name reaches the `Description="..."` attribute from `--name`,
+        // and a VCF header has no escape for a quote inside one.
+        let specs = LoadedSupplementarySpecs::new(&["pa\"nel\nx".to_string()], &[]);
+        let header = vcf_info_header_lines(&specs, DEFAULT_CSQ_FIELDS, false)
+            .into_iter()
+            .find(|line| line.contains("FV_PA_NEL_X"))
+            .expect("custom header missing");
+        assert_eq!(
+            header.matches('"').count(),
+            2,
+            "unbalanced quotes: {header}"
+        );
+        assert!(!header.contains('\n'));
+    }
+
     #[test]
     fn vcf_projection_emits_supported_fastsa_sources_without_json_payloads() {
         let vf = projection_test_variant();
-        let projections = format_supplementary_vcf_info(&vf);
+        let projections = format_supplementary_vcf_info(&vf, &no_custom_sources());
         let ids: Vec<&str> = projections.iter().map(|(id, _)| id.as_str()).collect();
 
         for expected in [
@@ -2300,8 +2926,12 @@ mod tests {
     fn vcf_info_replaces_existing_fastvep_owned_fields() {
         let vf = projection_test_variant();
         let csq = "G|missense_variant|MODERATE";
-        let info =
-            format_vcf_info_fields("DP=12;CSQ=old;SpliceAI=old;FV_CLINVAR=old;KEEP=1", &vf, csq);
+        let info = format_vcf_info_fields(
+            "DP=12;CSQ=old;SpliceAI=old;FV_CLINVAR=old;KEEP=1",
+            &vf,
+            csq,
+            &no_custom_sources(),
+        );
 
         assert!(info.contains("DP=12"));
         assert!(info.contains("KEEP=1"));
@@ -2406,7 +3036,9 @@ mod tests {
         );
 
         let vcf_projections: std::collections::HashMap<String, String> =
-            format_supplementary_vcf_info(&vf).into_iter().collect();
+            format_supplementary_vcf_info(&vf, &no_custom_sources())
+                .into_iter()
+                .collect();
 
         for (i, info_id) in extra_cols.iter().enumerate() {
             let tab_value = cols[17 + i];
@@ -2595,7 +3227,9 @@ mod tests {
 
         // VCF projection — should carry both OMIM entries comma-joined.
         let info: std::collections::HashMap<String, String> =
-            format_supplementary_vcf_info(&vf).into_iter().collect();
+            format_supplementary_vcf_info(&vf, &no_custom_sources())
+                .into_iter()
+                .collect();
         let omim = info.get("FV_OMIM").expect("FV_OMIM should be present");
         assert!(
             omim.contains("GENE1|113705|Breast%20cancer"),
@@ -2726,7 +3360,7 @@ mod tests {
             r#"{"gene":"GENE1","dsAg":0.1,"dsAl":0.0,"dsDg":0.0,"dsDl":0.0,"dpAg":4,"dpAl":7,"dpDg":27,"dpDl":17}"#.into(),
         )];
 
-        let info = format_supplementary_vcf_info(&vf)
+        let info = format_supplementary_vcf_info(&vf, &no_custom_sources())
             .into_iter()
             .map(|(id, value)| format!("{id}={value}"))
             .collect::<Vec<_>>()
