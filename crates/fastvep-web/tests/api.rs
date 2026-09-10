@@ -31,6 +31,28 @@ fn test_state() -> AppState {
         stats_file: None,
         total_variants: AtomicU64::new(0),
         total_genomes: AtomicU64::new(0),
+        // The default a server ships with: the gene model is whatever it was
+        // started with, and no request can move it (#113).
+        allow_model_replacement: false,
+        gene_model_generation: AtomicU64::new(0),
+    })
+}
+
+/// The same, started with `--allow-model-replacement` - the single-user
+/// desktop configuration the browser UI's genome switching needs.
+fn replaceable_state() -> AppState {
+    let state = test_state();
+    let mut ctx = AnnotationContext::new(None, None, None, 5000).expect("build context");
+    ctx.update_gff3_text(MINI_GFF3).expect("load mini gff3");
+    Arc::new(SharedState {
+        ctx: RwLock::new(ctx),
+        data_dir: state.data_dir.clone(),
+        sa_dir: state.sa_dir.clone(),
+        stats_file: None,
+        total_variants: AtomicU64::new(0),
+        total_genomes: AtomicU64::new(0),
+        allow_model_replacement: true,
+        gene_model_generation: AtomicU64::new(0),
     })
 }
 
@@ -47,6 +69,8 @@ fn pick_state() -> AppState {
         stats_file: None,
         total_variants: AtomicU64::new(0),
         total_genomes: AtomicU64::new(0),
+        allow_model_replacement: false,
+        gene_model_generation: AtomicU64::new(0),
     })
 }
 
@@ -349,7 +373,7 @@ async fn oversized_body_is_rejected_rather_than_annotated() {
 
 #[tokio::test]
 async fn genome_endpoints_are_inert_without_a_data_dir() {
-    let state = test_state();
+    let state = replaceable_state();
 
     let (status, body) = get(&state, "/api/genomes").await;
     assert_eq!(status, StatusCode::OK);
@@ -362,25 +386,118 @@ async fn genome_endpoints_are_inert_without_a_data_dir() {
 
 #[tokio::test]
 async fn upload_gff3_replaces_the_active_gene_model() {
-    let state = test_state();
+    let state = replaceable_state();
 
-    let resp = router(&state)
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/upload-gff3")
-                .body(Body::from(MINI_GFF3))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let resp = post_gff3(&state, MINI_GFF3).await;
     let (status, body) = read_json(resp).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["genes"], 1);
     assert_eq!(body["transcripts"], 1);
+    // The replacement is counted, so a client can tell one model from the next
+    // even though every upload reports the same `gff3_source`.
+    assert_eq!(body["generation"], 1);
 
     // The swap is visible to the next caller, not just to this request.
     let (_, status_body) = get(&state, "/api/status").await;
     assert_eq!(status_body["transcripts"], 1);
+    assert_eq!(status_body["gene_model_generation"], 1);
+}
+
+// ---- #113: the gene model a request was answered against ----
+
+async fn post_gff3(state: &AppState, gff3: &str) -> axum::response::Response {
+    router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/upload-gff3")
+                .body(Body::from(gff3.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn replacing_the_gene_model_is_refused_unless_the_server_allows_it() {
+    // The documented deployment is a lab server several colleagues share.
+    // There, one client posting a GFF3 changed what every other client was
+    // answered against - both authorised, neither doing anything wrong, so a
+    // firewall does not help. Off by default makes the gene model a property
+    // of how the server was started.
+    let state = test_state();
+
+    let (status, body) = read_json(post_gff3(&state, MINI_GFF3).await).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let message = body["error"].as_str().unwrap();
+    assert!(
+        message.contains("--allow-model-replacement"),
+        "the refusal has to name the flag that lifts it: {message}"
+    );
+
+    let (status, _) = post_json(&state, "/api/load-genome", json!({ "name": "human" })).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "/api/load-genome replaces the model the same way /api/upload-gff3 does"
+    );
+
+    // Refused, and nothing moved.
+    let (_, after) = get(&state, "/api/status").await;
+    assert_eq!(after["transcripts"], 1);
+    assert_eq!(after["gene_model_generation"], 0);
+}
+
+#[tokio::test]
+async fn status_advertises_whether_the_model_can_be_replaced() {
+    // So a UI can offer the model-replacing controls only when they will
+    // work, rather than finding out with a 403 the user cannot interpret.
+    let (_, locked) = get(&test_state(), "/api/status").await;
+    assert_eq!(locked["allow_model_replacement"], false);
+
+    let (_, open) = get(&replaceable_state(), "/api/status").await;
+    assert_eq!(open["allow_model_replacement"], true);
+}
+
+#[tokio::test]
+async fn annotate_reports_the_gene_model_that_answered() {
+    // Before this, an `/api/annotate` response carried no indication of what
+    // it was computed against: a client whose gene model had been replaced
+    // mid-batch got a well-formed HTTP 200 answer against the wrong model,
+    // with nothing to assert on. `/api/status` showed the swap, but only to a
+    // client that polled it between every request.
+    let state = replaceable_state();
+
+    let (status, before) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(43_100_000, "v1") }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(before["gene_model"]["transcripts"], 1);
+    assert_eq!(before["gene_model"]["generation"], 0);
+
+    // Another client replaces the model. The request below is byte-identical
+    // to the one above.
+    let (status, _) = read_json(post_gff3(&state, PICK_GFF3).await).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, after) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(43_100_000, "v1") }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        after["gene_model"]["generation"], 1,
+        "the same request answered against a different model has to say so"
+    );
+    assert_eq!(after["gene_model"]["gff3_source"], "user-upload");
+    assert_ne!(
+        before["gene_model"]["generation"], after["gene_model"]["generation"],
+        "an undetectable wrong answer is what this field exists to prevent"
+    );
 }
