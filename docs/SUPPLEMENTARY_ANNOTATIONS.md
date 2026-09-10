@@ -42,12 +42,13 @@ input's other headers pass through unchanged.
 compatible with the standard SpliceAI INFO contract that downstream tools
 already parse.
 
-\* For `custom_vcf` / `custom_bed` / `custom`, the JSON key and `FV_*`
-INFO ID derive from the `--name` flag at build time (or the input
-filename if `--name` is omitted). For example, `sa-build --source
-custom_vcf --name clinical -i my.vcf -o my` produces a `.osa` whose
-JSON key is `clinical` and whose VCF projection is emitted under
-`FV_CLINICAL`.
+\* For `custom_vcf` / `custom_bed` / `custom`, the JSON key and `FV_*` INFO ID derive from the `--name` flag at build time (or the input filename if `--name` is omitted).
+For example, `sa-build --source custom_vcf --name clinical -i my.vcf -o my` produces a `.osa` whose JSON key is `clinical` and whose VCF projection is emitted under `FV_CLINICAL`.
+
+A VCF INFO ID must match `[A-Za-z_][0-9A-Za-z_.]*` and `--name` is free text, so every character outside that set becomes `_` and the name is upper-cased.
+Distinct names can therefore sanitise alike (`my-panel` and `my_panel` both give `FV_MY_PANEL`), and a derived ID can land on a built-in one (`--name gnomad_gene` gives `FV_GNOMAD_GENE`, which `gnomad_genes` owns).
+Two INFO fields sharing an ID is a malformed VCF, so a collision takes a `_2`, `_3`, … suffix in load order; the built-in keeps its own ID, and each header line's `Description` names the source it came from.
+The JSON key is always the unmodified `--name`.
 
 ## On-disk file formats
 
@@ -298,6 +299,24 @@ lead with the **gene symbol**.
 - `FV_CLINVAR_PROTEIN`: `SYMBOL|PROTEIN_VARIANTS` — the `PROTEIN_VARIANTS`
   segment is itself a `&`-joined list of `pos:ref>alt:significance` records.
 
+### Custom sources
+
+A custom source has no fixed pipe layout, because it has no fixed field set: with `--info-fields` unset, `sa-build` stores every INFO key each record happens to carry, so the fields vary from record to record.
+Its projection is therefore **self-describing** rather than positional:
+
+- `FV_<NAME>`: `ALLELE|KEY=VALUE&KEY=VALUE` for an allele-level source (`custom_vcf`, `custom_bed`)
+- `FV_<NAME>`: `SYMBOL|KEY=VALUE&KEY=VALUE` for a gene-level source
+
+The pairs are key-sorted, so a source lists its fields in the same order on every record.
+Keys and values are escaped by the table below before assembly, so neither can contain `=`, `&`, `|` or `,` and the list splits back apart exactly: split the value on `|` for the subject and the pair list, the pair list on `&`, and each pair on its first `=`.
+
+An array value repeats its key (`AF=0.1&AF=0.2`) rather than joining the elements, so no element is left without one.
+Nested objects are dropped - neither custom builder emits one.
+A record with no fields still emits the subject and an empty pair list (`G|`), because for a three-column BED "the allele is in a listed region" is the whole annotation and dropping the entry would be indistinguishable from a miss.
+
+A frequency panel is the common case, and needs nothing special: build it with `--source custom_vcf` and the `AC` / `AN` / `AF` INFO fields come through as `FV_<NAME>=G|AC=7&AF=0.005814&AN=1204`, readable with `bcftools query -f '%INFO/FV_<NAME>\n'`.
+Pass `--info-fields AC,AN,AF` at build time to keep only those three and get the same three pairs on every record.
+
 ## Escaping inside pipe fields
 
 To keep `FV_*` values parseable by `bcftools` and similar tools without
@@ -333,7 +352,10 @@ structured object.
 - **VCF**: each loaded source emits one `##INFO=<ID=FV_*,Number=.,Type=String,Description="...">`
   header line and one `FV_*=<pipe value>` entry per record (omitted when the
   variant has no annotation). The header `Description` carries the exact
-  pipe format above.
+  pipe format above. The declared headers, the owned-ID list that a
+  re-annotation replaces, and the emitted values are all derived from one
+  loaded-source lookup, so a run cannot emit an `FV_*` field it did not
+  declare.
 - **Tab**: each loaded source appends one column to the row, after the 17
   built-in columns. The file prologue contains one
   `## COLUMN=<ID=FV_*,Description="...">` line per loaded source documenting
