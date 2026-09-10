@@ -718,6 +718,9 @@
       <span class="step-subtitle">Choose a reference genome and gene model (or upload a custom GFF3).</span>
       <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap">
         <select id="gffSource" onchange="onGffSourceChange()" style="flex:1;min-width:250px;max-width:500px">
+          <!-- The genomes a server offers are added here at load time from
+               /api/genomes, and the model it already has loaded from
+               /api/status. These two are the fallbacks that need no server. -->
           <option value="builtin">Built-in demo (OR4F5 + lncRNA, chr1 only)</option>
           <option value="upload">Upload custom GFF3 file</option>
         </select>
@@ -1405,6 +1408,13 @@ let hasBackend = null; // null = unknown, true/false after check
 let serverTranscripts = 0; // how many transcripts are loaded on the server
 let serverGenomes = []; // available genomes from --data-dir
 let serverSaSources = []; // loaded SA sources (ClinVar, gnomAD, etc.)
+let serverGff3Source = null; // name of the gene model the server already has loaded
+// Whether the server will let a request replace its gene model. Off by
+// default: the replacement is process-wide, so on a shared server it changes
+// what every other client is answered against (#113). Every control in this
+// selector except "the model the server already has" replaces it, so this
+// decides which ones are offered at all.
+let allowModelReplacement = false;
 // Fallback version = the static header badge text (single source of truth);
 // overridden by /api/status when a backend responds.
 let serverVersion = (document.querySelector('.badge')?.textContent || 'v0.3.0').replace(/^v/, '').trim();
@@ -1467,6 +1477,8 @@ async function checkBackend() {
       hasBackend = j.backend === true;
       serverTranscripts = j.transcripts || 0;
       serverSaSources = j.sa_sources || [];
+      serverGff3Source = j.gff3_source || null;
+      allowModelReplacement = j.allow_model_replacement === true;
       if (j.version) serverVersion = j.version;
 
       // Update counters
@@ -1496,6 +1508,22 @@ async function checkBackend() {
 
   // Populate genome options in the dropdown
   const sel = document.getElementById('gffSource');
+
+  // The gene model the server already has loaded, first and selected. Without
+  // it the selector showed "Built-in demo" while the server was serving the
+  // operator's `--gff3` - a label that contradicted the transcript count next
+  // to it, and one that replaced that model with the two-gene demo if the
+  // user so much as re-picked it.
+  if (serverTranscripts > 0) {
+    const active = document.createElement('option');
+    active.value = 'server-active';
+    const name = serverGff3Source && serverGff3Source !== 'user-upload'
+      ? serverGff3Source
+      : 'loaded on server';
+    active.textContent = `${name} — ${serverTranscripts.toLocaleString()} transcripts (active)`;
+    sel.insertBefore(active, sel.querySelector('option'));
+  }
+
   let humanGenome = null;
   if (serverGenomes.length > 0) {
     for (const g of serverGenomes) {
@@ -1514,21 +1542,61 @@ async function checkBackend() {
     }
   }
 
-  // Auto-select human genome if available; otherwise fall back to built-in demo
-  if (humanGenome) {
+  // Everything except the active model replaces the server's gene model for
+  // every client, so offer those only when the server allows it. Disabled
+  // rather than hidden, so the reason is visible.
+  if (!allowModelReplacement) {
+    for (const opt of sel.options) {
+      if (opt.value !== 'server-active') opt.disabled = true;
+    }
+  }
+
+  // Selection priority: keep what the server already has, else load a
+  // data-directory genome, else the built-in demo.
+  if (serverTranscripts > 0) {
+    sel.value = 'server-active';
+  } else if (humanGenome && allowModelReplacement) {
     sel.value = 'server:' + humanGenome.name;
     await loadServerGenome(humanGenome.name);
-  } else if (serverTranscripts === 0) {
+  } else if (allowModelReplacement) {
     await uploadBuiltinToServer();
   }
 
   updateGffInfo();
 }
 
+// One line under the selector saying why the list is the length it is.
+//
+// Both short lists have a cause the user can act on, and neither used to be
+// stated: a server with no --data-dir offers no genomes to switch to, and a
+// server that will not replace its model offers nothing but the model it has.
+// Without this the two remaining entries read as hardcoded (#114).
+function gffSelectorNote() {
+  if (!hasBackend) return 'No server: annotating in the browser against the built-in demo model.';
+  const notes = [];
+  if (serverGenomes.length === 0) {
+    notes.push('No switchable genomes: start fastvep-web with --data-dir to list them.');
+  }
+  if (!allowModelReplacement) {
+    notes.push(serverTranscripts > 0
+      ? 'This server serves one fixed gene model; --allow-model-replacement lets a client change it.'
+      : 'This server has no gene model and will not accept one (--allow-model-replacement is off).');
+  }
+  return notes.join(' ');
+}
+
 // Upload the built-in example GFF3 to the server so server-mode annotation works
+// Returns true when the server ends up holding the built-in model. A false
+// return is not a warning to show and forget: the caller has to annotate in
+// the browser instead, because annotating against a server with no gene model
+// answers `intergenic_variant` for everything, at HTTP 200.
 async function uploadBuiltinToServer() {
-  if (builtinUploadedToServer) return;
+  if (builtinUploadedToServer) return true;
   const info = document.getElementById('gffInfo');
+  if (!allowModelReplacement) {
+    info.textContent = 'This server does not accept a gene model; annotating in the browser.';
+    return false;
+  }
   info.textContent = 'Loading built-in gene model on server...';
   try {
     const r = await fetch('/api/upload-gff3', {
@@ -1541,23 +1609,27 @@ async function uploadBuiltinToServer() {
       builtinUploadedToServer = true;
       serverTranscripts = data.transcripts || 0;
       info.textContent = `Built-in: ${data.genes} genes, ${data.transcripts} transcripts`;
-    } else {
-      info.textContent = 'Failed to load built-in: ' + data.error;
+      return true;
     }
+    info.textContent = 'Failed to load built-in: ' + data.error;
+    return false;
   } catch (e) {
     info.textContent = 'Failed to load built-in: ' + e.message;
+    return false;
   }
 }
 
 function updateGffInfo() {
   const info = document.getElementById('gffInfo');
-  const source = document.getElementById('gffSource').value;
+  const note = gffSelectorNote();
   if (hasBackend && (builtinUploadedToServer || serverTranscripts > 0)) {
-    let text = `${serverTranscripts} transcripts`;
+    let text = `${serverTranscripts.toLocaleString()} transcripts`;
     if (serverSaSources.length > 0) {
       text += ` | SA: ${serverSaSources.join(', ')}`;
     }
-    info.textContent = text;
+    info.textContent = note ? `${text} — ${note}` : text;
+  } else if (note) {
+    info.textContent = note;
   }
 }
 
@@ -1620,12 +1692,19 @@ async function annotate() {
 
   try {
     if (hasBackend) {
-      // Ensure server has transcripts loaded (upload builtin if needed)
-      if (serverTranscripts === 0) {
+      // A server with no gene model answers `intergenic_variant` for every
+      // variant, at HTTP 200. If it will not take one, annotate here instead
+      // of asking it a question it cannot answer.
+      let serverReady = serverTranscripts > 0;
+      if (!serverReady) {
         updateLoading('Loading gene model…');
-        await uploadBuiltinToServer();
+        serverReady = await uploadBuiltinToServer();
       }
-      await annotateBackend(vcfText);
+      if (serverReady) {
+        await annotateBackend(vcfText);
+      } else {
+        annotateClientSide(vcfText);
+      }
     } else {
       annotateClientSide(vcfText);
     }
@@ -2389,6 +2468,23 @@ function onGffSourceChange() {
   const source = document.getElementById('gffSource').value;
   const fileInput = document.getElementById('gffFile');
   const info = document.getElementById('gffInfo');
+
+  if (source === 'server-active') {
+    // The model the server already has. Selecting it must change nothing -
+    // this is the one entry in the list that is not a replacement.
+    fileInput.style.display = 'none';
+    customGFF3 = null;
+    updateGffInfo();
+    return;
+  }
+
+  if (hasBackend && !allowModelReplacement) {
+    // The options are disabled, so this is only reachable by a stale
+    // selection; say why rather than firing a request that 403s.
+    fileInput.style.display = 'none';
+    info.textContent = 'This server does not allow a client to change its gene model.';
+    return;
+  }
 
   if (source === 'upload') {
     fileInput.style.display = 'block';
