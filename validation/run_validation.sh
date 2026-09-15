@@ -33,7 +33,17 @@ run_fastvep() {
 
 run_vep_docker() {
     local input="$1" gff3="$2" fasta="$3" output="$4"
+    # VEP_DATABASE=0, not --offline: --offline sets `cache => 1` (Config.pm's
+    # option sets), and VEP then demands a species cache directory it does not
+    # need in --gff mode and errors out before reading a variant. Setting
+    # `database` to 0 through the environment is what leaves the GFF3 as the
+    # only annotation source ("Setting offline mode", it says, and means it).
+    #
+    # --allele_number because VEP does not emit CSQ entries in ALT order on a
+    # multi-allelic record, and without it the comparison cannot tell which
+    # entry belongs to which ALT.
     docker run --rm \
+        -e VEP_DATABASE=0 \
         -v "$PROJECT_DIR:/work" \
         -v "$VEP_CACHE:/opt/vep/.vep" \
         "$VEP_IMAGE" \
@@ -42,7 +52,7 @@ run_vep_docker() {
         --fasta "/work/$fasta" \
         --output_file "/work/$output" \
         --vcf --force_overwrite --no_stats \
-        --hgvs --symbol --canonical --offline 2>&1 | tail -3
+        --hgvs --symbol --canonical --allele_number 2>&1 | tail -3
 }
 
 compare() {
