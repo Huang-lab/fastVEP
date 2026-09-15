@@ -11,8 +11,8 @@ mod hgvs_normalize;
 pub mod pick;
 
 pub use hgvs_normalize::{
-    convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvsc_intronic_shifted,
-    intronic_dup_span, intronic_ins_as_dup, three_prime_shift_intronic,
+    convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvsc_shifted, intronic_dup_span,
+    intronic_ins_as_dup, is_shiftable_indel, three_prime_shift_genomic,
 };
 
 use anyhow::{Context, Result};
@@ -440,68 +440,28 @@ impl AnnotationContext {
                                         } else {
                                             (vf.ref_allele.clone(), ac.allele.clone())
                                         };
-                                    if let Some(coding_start) = tr.cdna_coding_start {
-                                        if let (Some(cs), Some(ce)) = (ac.cdna_start, ac.cdna_end) {
-                                            let (cs, ce) = (cs.min(ce), cs.max(ce));
-                                            ann.hgvsc = fastvep_hgvs::hgvsc_with_seq(
-                                                &versioned_tid,
-                                                cs,
-                                                ce,
-                                                &hgvs_ref,
-                                                &hgvs_alt,
-                                                coding_start,
-                                                tr.cdna_coding_end,
-                                                tr.spliced_seq.as_deref(),
-                                                tr.codon_table_start_phase,
-                                            );
-                                        } else {
-                                            // Not "is this intronic": a variant with
-                                            // one end in an exon and the other in an
-                                            // intron has no exonic cDNA pair, and
-                                            // `intron_at` reads its first base only.
-                                            // `hgvsc_intronic_shifted` returns
-                                            // `None` for anything it cannot place,
-                                            // which is the real guard.
-                                            ann.hgvsc = hgvsc_intronic_shifted(
-                                                self.seq_provider
-                                                    .as_deref()
-                                                    .map(|sp| sp as &dyn SequenceProvider),
-                                                chrom,
-                                                tr,
-                                                &versioned_tid,
-                                                vf.position.start,
-                                                vf.position.end,
-                                                &vf.ref_allele,
-                                                &ac.allele,
-                                                &hgvs_ref,
-                                                &hgvs_alt,
-                                                Some(coding_start),
-                                                tr.cdna_coding_end,
-                                            );
-                                        }
-                                    } else if let (Some(cs), Some(ce)) =
-                                        (ac.cdna_start, ac.cdna_end)
-                                    {
-                                        ann.hgvsc = fastvep_hgvs::hgvsc_noncoding(
-                                            &versioned_tid,
-                                            cs,
-                                            ce,
-                                            &hgvs_ref,
-                                            &hgvs_alt,
-                                            tr.spliced_seq.as_deref(),
-                                        );
-                                    } else {
-                                        // Not "is this intronic": a variant with
-                                        // one end in an exon and the other in an
-                                        // intron has no exonic cDNA pair, and
-                                        // `intron_at` reads its first base only.
-                                        // `hgvsc_intronic_shifted` returns
-                                        // `None` for anything it cannot place,
-                                        // which is the real guard.
-                                        ann.hgvsc = hgvsc_intronic_shifted(
-                                            self.seq_provider
-                                                .as_deref()
-                                                .map(|sp| sp as &dyn SequenceProvider),
+                                    // Every indel is 3'-shifted over the genome,
+                                    // so it routes through `hgvsc_shifted`
+                                    // whether or not both its ends are exonic:
+                                    // the shift crosses splice sites, and the
+                                    // description has to follow it there.
+                                    // Without a reference there is no walk to
+                                    // make, so those fall to the cDNA renderer
+                                    // below, which shifts on the spliced sequence
+                                    // instead - not the same answer across a
+                                    // splice site, but the only one available.
+                                    // `hgvsc_shifted` also returns `None` for a
+                                    // variant it cannot place at all, and that
+                                    // falls the same way.
+                                    let provider = self
+                                        .seq_provider
+                                        .as_deref()
+                                        .map(|sp| sp as &dyn SequenceProvider);
+                                    let shifted = (is_shiftable_indel(&hgvs_ref, &hgvs_alt)
+                                        && provider.is_some())
+                                    .then(|| {
+                                        hgvsc_shifted(
+                                            provider,
                                             chrom,
                                             tr,
                                             &versioned_tid,
@@ -511,10 +471,76 @@ impl AnnotationContext {
                                             &ac.allele,
                                             &hgvs_ref,
                                             &hgvs_alt,
-                                            None,
-                                            None,
-                                        );
-                                    }
+                                            tr.cdna_coding_start,
+                                            tr.cdna_coding_end,
+                                        )
+                                    })
+                                    .flatten();
+                                    ann.hgvsc = match (shifted, tr.cdna_coding_start) {
+                                        (Some(h), _) => Some(h),
+                                        (None, Some(coding_start)) => {
+                                            match (ac.cdna_start, ac.cdna_end) {
+                                                (Some(cs), Some(ce)) => {
+                                                    let (cs, ce) = (cs.min(ce), cs.max(ce));
+                                                    fastvep_hgvs::hgvsc_with_seq(
+                                                        &versioned_tid,
+                                                        cs,
+                                                        ce,
+                                                        &hgvs_ref,
+                                                        &hgvs_alt,
+                                                        coding_start,
+                                                        tr.cdna_coding_end,
+                                                        tr.spliced_seq.as_deref(),
+                                                        tr.codon_table_start_phase,
+                                                    )
+                                                }
+                                                // Not "is this intronic": a
+                                                // variant with one end in an exon
+                                                // and the other in an intron has
+                                                // no exonic cDNA pair, and
+                                                // `intron_at` reads its first
+                                                // base only.
+                                                _ => hgvsc_shifted(
+                                                    provider,
+                                                    chrom,
+                                                    tr,
+                                                    &versioned_tid,
+                                                    vf.position.start,
+                                                    vf.position.end,
+                                                    &vf.ref_allele,
+                                                    &ac.allele,
+                                                    &hgvs_ref,
+                                                    &hgvs_alt,
+                                                    Some(coding_start),
+                                                    tr.cdna_coding_end,
+                                                ),
+                                            }
+                                        }
+                                        (None, None) => match (ac.cdna_start, ac.cdna_end) {
+                                            (Some(cs), Some(ce)) => fastvep_hgvs::hgvsc_noncoding(
+                                                &versioned_tid,
+                                                cs,
+                                                ce,
+                                                &hgvs_ref,
+                                                &hgvs_alt,
+                                                tr.spliced_seq.as_deref(),
+                                            ),
+                                            _ => hgvsc_shifted(
+                                                provider,
+                                                chrom,
+                                                tr,
+                                                &versioned_tid,
+                                                vf.position.start,
+                                                vf.position.end,
+                                                &vf.ref_allele,
+                                                &ac.allele,
+                                                &hgvs_ref,
+                                                &hgvs_alt,
+                                                None,
+                                                None,
+                                            ),
+                                        },
+                                    };
 
                                     // HGVSp
                                     if let (Some(ref aa), Some(ps)) =
@@ -546,7 +572,38 @@ impl AnnotationContext {
                                             let is_fs = ac
                                                 .consequences
                                                 .contains(&Consequence::FrameshiftVariant);
-                                            if is_fs {
+                                            // A lost terminator names how much
+                                            // protein the loss adds, which needs
+                                            // the sequence past the stop for the
+                                            // same reason a frameshift does.
+                                            // `None` when the change is not an
+                                            // equal-length replacement of the
+                                            // terminator's codon, and then the
+                                            // chain below describes it.
+                                            let stop_lost_extension = (!is_fs
+                                                && ac
+                                                    .consequences
+                                                    .contains(&Consequence::StopLost))
+                                            .then(|| {
+                                                let spliced = tr.spliced_seq.as_deref()?;
+                                                let coding_start = tr.cdna_coding_start?;
+                                                let cds =
+                                                    cds_and_downstream(tr, spliced, coding_start)?;
+                                                fastvep_hgvs::hgvsp_stop_lost_from_cds(
+                                                    &versioned_pid,
+                                                    &cds,
+                                                    ac.cds_start,
+                                                    ac.cds_end,
+                                                    &vf.ref_allele,
+                                                    &ac.allele,
+                                                    tr.strand,
+                                                    &frameshift_codon_table(tr),
+                                                )
+                                            })
+                                            .flatten();
+                                            if stop_lost_extension.is_some() {
+                                                ann.hgvsp = stop_lost_extension;
+                                            } else if is_fs {
                                                 if let (Some(spliced), Some(coding_start)) = (
                                                     tr.spliced_seq.as_deref(),
                                                     tr.cdna_coding_start,
