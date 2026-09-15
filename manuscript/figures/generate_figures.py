@@ -193,7 +193,13 @@ def fig2_comparison():
 
 
 def fig3_concordance():
-    """VEP concordance: field-level 100% + identical consequence calls."""
+    """VEP concordance: field-level 100% + identical consequence calls.
+
+    The compared set is every CSQ field both tools populate in this
+    configuration. TSL is excluded because Ensembl VEP does not fill it when
+    annotating from a GFF3, and SOURCE because it carries the name of the file
+    each tool was given.
+    """
     data = read_csv('vep_concordance.csv')
     types = read_csv('vep_type_concordance.csv')
     if not HAS_MPL: return
@@ -213,7 +219,7 @@ def fig3_concordance():
     ax1.set_xlim(0, 104); ax1.set_xticks([0, 25, 50, 75, 100])
     ax1.axvline(100, color=C['success'], ls='--', alpha=0.4, lw=1)
     ax1.set_xlabel('Concordance with Ensembl VEP v115.1 (%)', fontsize=11)
-    ax1.set_title('A. Field-level concordance: 23/23 fields = 100%\n(2,340 shared transcript-allele pairs)', fontsize=12, fontweight='bold')
+    ax1.set_title('A. Field-level concordance: 22/22 fields = 100%\n(2,920 shared transcript-allele pairs)', fontsize=12, fontweight='bold')
     ax1.grid(True, alpha=0.2, axis='x')
 
     # === Panel B: consequence-type calls, fastVEP vs VEP (identical) ===

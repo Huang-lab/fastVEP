@@ -1061,3 +1061,73 @@ PP3, is hers to rule on.
 `scripts/08_diff_calls.py` produces the call-changes table; the v23-to-v26 one was built by hand,
 which is why no script existed for it.
 It reproduces that table exactly - 290 changed calls - when run over v23 and v26.
+
+## v28 to v30: the 3'-shift crosses splice sites, and PS1 stops reading a display string
+
+No criterion threshold moved and the supplementary-annotation stack is identical to v23, v26 and
+v27.
+The binary is `master` through #115 plus the annotation and classifier fixes made while auditing
+[`docs/VEP_DIVERGENCE.md`](../../docs/VEP_DIVERGENCE.md) against real Ensembl VEP 115.1.
+
+What changed in the annotation layer: the HGVSc 3'-shift now runs on the genome rather than on the
+spliced sequence, so it crosses splice sites in both directions instead of stopping at them; a
+lost terminator's extension is computed (`p.Ter486GluextTer36`) instead of written `ext*?`; the
+3'-rule's rotation no longer carries residues out from behind a terminator; Ensembl's second
+`ref_eq_alt_sequence` clause is ported as the sequence comparison it is; `start_lost` falls
+through to Ensembl's peptide test, so an in-frame deletion that removes the initiator is a start
+loss; and an unknown residue no longer silences `missense_variant`.
+
+### v28: what the run caught
+
+v28 is that annotation layer with the classifier untouched, and it is recorded here because it
+went **backwards**:
+
+| Metric | v27 | v28 | change |
+|---|---:|---:|---:|
+| Exact match | 425,334 | 425,325 | **-9** |
+| Same-direction | 522,474 | 522,473 | -1 |
+| Opposite-direction | 59 | 59 | 0 |
+
+15 calls moved, and 14 of them were one shape: a deletion of a canonical acceptor's own `G`,
+ClinVar Pathogenic, falling from `Pathogenic` to `Likely_pathogenic` because `PS1_Supporting`
+stopped firing. KCNQ1, NF1 (twice), MSH2, MLH1, BRCA2, RB1, TSC2, APC, OPA1, PCCB, ACADVL, CHD7
+and KCNQ1 again.
+
+The cause is worth stating, because it is a class of defect rather than a detail. PS1's splice
+path (Walker 2023) asks whether a ClinVar-pathogenic variant sits on the same canonical
+dinucleotide, and it recovered which side of the intron the variant was on by parsing the `+N` /
+`-N` token out of the **HGVSc string**. That string is a display form: once the 3'-shift began
+crossing splice sites, `c.1686-1del` became `c.1686del` - the same variant, the same
+`splice_acceptor_variant` call, and no offset token left to read.
+
+### v29 and v30: the fix, and where it leaves the benchmark
+
+`same_splice_position_pathogenic` now takes the sign from the consequence term, which is computed
+from the unshifted position and does not move, whenever the HGVSc carries no canonical ±1/±2
+offset.
+
+| Metric | v27 | **v30** | change |
+|---|---:|---:|---:|
+| Exact match | 425,334 | **425,334** | 0 |
+| Same-direction | 522,474 | **522,473** | -1 |
+| Opposite-direction | 59 | **59** | 0 |
+| Discrepancy rows | 10,059 | **10,059** | identical set |
+
+v30 is v29 plus one more annotation correction, found by checking every consequence change of the
+run against real VEP rather than trusting the sample: the ported `ref_eq_alt_sequence` clause
+rejected a window sitting *on* the terminator, where Ensembl's `substr` appends, so an insertion
+in front of the stop lost `stop_retained_variant` (SMARCE1 `17:40628786 T>TAAA`). One variant's
+consequence set changed between v29 and v30 and no call moved.
+
+One call moved against v27, and it is the remaining case of the same class: POLE
+`12:132659279 T>TGGGGGGAGCCCTCACCTCTCCGTGAC`, `LB -> VUS`, because BP7's deep-intronic extension
+also reads its offset from the HGVSc. The insertion sits at `c.3275+15`, 15 bases into the intron,
+and the shift now writes it as the duplication it is - `c.3265_3275+15dup` - whose span starts in
+the exon, so the parsed offset reads 1 rather than 15 and BP7's `>= 7` gate declines. The call
+moves in the conservative direction on a variant ClinVar calls benign, and the fix is the same one
+PS1 got: give the criterion the unshifted offset rather than a string. It is not fixed here.
+
+534 variants got a different HGVSc, 174 a different HGVSp, 31 a different criteria set, 7 a
+different consequence set and 4 a different IMPACT tier. Every consequence and IMPACT change is a
+row where the annotation now agrees with real VEP 115.1 and did not before; the per-field row
+counts are in [`docs/VEP_DIVERGENCE.md`](../../docs/VEP_DIVERGENCE.md).

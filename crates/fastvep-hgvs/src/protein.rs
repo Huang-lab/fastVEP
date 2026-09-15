@@ -377,6 +377,16 @@ pub fn hgvsp_inframe_indel(
             inserted.rotate_left(1);
             at += 1;
         }
+        // The rotation can carry the terminator out of last place, and the
+        // residues it carries past are not translated: an insertion of `VVALDT*`
+        // shifted by one reads `insValAlaLeuAspThrTerVal`, naming a Val the
+        // protein never has. Ensembl writes `insValAlaLeuAspThrTer` for the same
+        // row (LDLR `c.1309_1310ins…`, ENST00000557933), which is the same trim
+        // the alternate already got before shifting. 23 rows over a 6,600-variant
+        // ClinVar sample.
+        if let Some(terminator) = inserted.iter().position(|&b| b == b'*') {
+            inserted.truncate(terminator + 1);
+        }
         // A duplication is an insertion whose residues repeat those immediately
         // before it.
         let preceding = at
@@ -558,6 +568,104 @@ pub fn hgvsp_frameshift_from_cds(
     )
 }
 
+/// HGVSp for a change that removes the annotated terminator.
+///
+/// `p.Ter486GluextTer36` - the terminator at residue 486 becomes Glu, and
+/// translation runs 36 residues past it before the next stop. Both halves are
+/// facts about the edited transcript, so both are computed: `p.Glu486ext*?`,
+/// which is what the substitution path emitted, names neither the residue that
+/// was lost nor how much protein the loss adds, and it is the form HGVS defines
+/// for an *unknown* extension. 29 rows over a 6,600-variant ClinVar sample and
+/// one more genome-wide, against real VEP 115.1, which writes the computed form.
+///
+/// `extTer?` is kept for the case it really describes: a frame that runs to the
+/// end of the transcript without another stop.
+///
+/// Only an equal-length replacement routes here. A terminator lost to an indel
+/// either shifts the frame or resizes the protein, and both of those have their
+/// own description; this returns `None` for them so the caller keeps it.
+///
+/// `cds_and_downstream` must be CDS-indexed and run past the annotated
+/// terminator, exactly as [`hgvsp_frameshift_from_cds`] needs it: the extension
+/// is in what was the 3' UTR by definition.
+#[allow(clippy::too_many_arguments)] // each argument is an independent coordinate or allele
+pub fn hgvsp_stop_lost_from_cds(
+    protein_id: &str,
+    cds_and_downstream: &[u8],
+    cds_start: Option<u64>,
+    cds_end: Option<u64>,
+    ref_allele: &Allele,
+    alt_allele: &Allele,
+    strand: Strand,
+    codon_table: &CodonTable,
+) -> Option<String> {
+    let (s, e) = (cds_start?, cds_end?);
+    let (lo, hi) = (s.min(e), s.max(e));
+    let ref_len = ref_allele.len();
+    if lo < 1 || hi - lo + 1 != ref_len as u64 {
+        return None; // not contiguous in CDS space
+    }
+    let alt_cds: Vec<u8> = match alt_allele {
+        Allele::Sequence(bases) if bases.len() == ref_len => match strand {
+            Strand::Forward => bases.clone(),
+            Strand::Reverse => bases.iter().rev().map(|&b| complement(b)).collect(),
+        },
+        // A length change is not an extension of the same reading frame.
+        _ => return None,
+    };
+    let first = (lo - 1) as usize;
+    if first + ref_len > cds_and_downstream.len() {
+        return None;
+    }
+    // The edit is read through rather than applied to a copy: the replacement is
+    // the same length as what it replaces, so every base outside it is the
+    // reference's own, and copying the CDS here would be a copy per row.
+    let edited_base = |i: usize| -> Option<u8> {
+        if (first..first + ref_len).contains(&i) {
+            alt_cds.get(i - first).copied()
+        } else {
+            cds_and_downstream.get(i).copied()
+        }
+    };
+    let residue = |index: usize, edited: bool| -> Option<u8> {
+        let base = |i: usize| {
+            if edited {
+                edited_base(i)
+            } else {
+                cds_and_downstream.get(i).copied()
+            }
+        };
+        let (a, b, c) = (base(index * 3)?, base(index * 3 + 1)?, base(index * 3 + 2)?);
+        Some(codon_table.translate(&[a, b, c]))
+    };
+    // The terminator that was lost is the reference's own first one: a CDS whose
+    // translation stops earlier than its annotation says is a different problem,
+    // and naming a residue past that stop would describe protein that is not made.
+    let codons = cds_and_downstream.len() / 3;
+    let lost = (0..codons).find(|&i| residue(i, false) == Some(b'*'))?;
+    let replacement = residue(lost, true)?;
+    if replacement == b'*' {
+        return None; // still a terminator: nothing was lost
+    }
+    let prefix = format!("{}:p.", protein_id);
+    let extension = ((lost + 1)..codons).find(|&i| residue(i, true) == Some(b'*'));
+    Some(match extension {
+        Some(stop) => format!(
+            "{}Ter{}{}extTer{}",
+            prefix,
+            lost + 1,
+            aa_one_to_three(replacement),
+            stop - lost
+        ),
+        None => format!(
+            "{}Ter{}{}extTer?",
+            prefix,
+            lost + 1,
+            aa_one_to_three(replacement)
+        ),
+    })
+}
+
 fn complement(base: u8) -> u8 {
     match base.to_ascii_uppercase() {
         b'A' => b'T',
@@ -703,6 +811,99 @@ pub fn hgvsp_frameshift(
 mod tests {
     use super::*;
     use fastvep_genome::mitochondrial_codon_table;
+
+    /// A lost terminator names the residue it became and how far the protein
+    /// now runs: `p.Ter5TrpextTer3`, not `p.Trp5ext*?`. Both halves are in the
+    /// sequence, and `ext*?` is the form HGVS keeps for an extension nobody can
+    /// measure.
+    #[test]
+    fn a_lost_terminator_names_the_extension_it_causes() {
+        // Five codons of CDS ending in TAA, then 3' UTR. Changing that TAA to
+        // TGG (Trp) runs the protein on to the TGA three residues later.
+        let cds = b"ATGAAACCCGGGTAAAAACCCTGAGGG";
+        let table = CodonTable::standard();
+        let out = hgvsp_stop_lost_from_cds(
+            "ENSP1",
+            cds,
+            Some(13),
+            Some(15),
+            &Allele::Sequence(b"TAA".to_vec()),
+            &Allele::Sequence(b"TGG".to_vec()),
+            Strand::Forward,
+            &table,
+        );
+        assert_eq!(out.as_deref(), Some("ENSP1:p.Ter5TrpextTer3"));
+
+        // A frame with no further stop is the case `extTer?` describes.
+        let no_stop = b"ATGAAACCCGGGTAAAAACCCGGGGGG";
+        let out = hgvsp_stop_lost_from_cds(
+            "ENSP1",
+            no_stop,
+            Some(13),
+            Some(15),
+            &Allele::Sequence(b"TAA".to_vec()),
+            &Allele::Sequence(b"TGG".to_vec()),
+            Strand::Forward,
+            &table,
+        );
+        assert_eq!(out.as_deref(), Some("ENSP1:p.Ter5TrpextTer?"));
+
+        // A length change is not an extension of the same reading frame, and a
+        // replacement that leaves a terminator in place loses nothing: both are
+        // left to the descriptions that do fit them.
+        assert_eq!(
+            hgvsp_stop_lost_from_cds(
+                "ENSP1",
+                cds,
+                Some(13),
+                Some(15),
+                &Allele::Sequence(b"TAA".to_vec()),
+                &Allele::Sequence(b"TGGG".to_vec()),
+                Strand::Forward,
+                &table,
+            ),
+            None
+        );
+        assert_eq!(
+            hgvsp_stop_lost_from_cds(
+                "ENSP1",
+                cds,
+                Some(13),
+                Some(15),
+                &Allele::Sequence(b"TAA".to_vec()),
+                &Allele::Sequence(b"TGA".to_vec()),
+                Strand::Forward,
+                &table,
+            ),
+            None
+        );
+    }
+
+    /// Nothing past a terminator the change introduces is translated, so the
+    /// 3'-rule's rotation must not carry a residue out from behind it: an
+    /// insertion of `VVALDT*` shifted by one is `insValAlaLeuAspThrTer`, not
+    /// `insValAlaLeuAspThrTerVal`, which names a residue the protein never has.
+    /// LDLR `c.1309_1310ins…` on ENSP00000453557, and 23 rows like it over a
+    /// 6,600-variant ClinVar sample.
+    #[test]
+    fn a_rotated_insertion_stops_at_the_terminator() {
+        // Peptide `…E V A…`: the insertion after E slides one residue, because
+        // the V it would place is the V already there.
+        let peptide = b"MKEVALDTQR";
+        let out = hgvsp_inframe_indel(
+            "ENSP1",
+            3,
+            3,
+            "E",
+            "EVVALDT*",
+            Some(peptide),
+            Strand::Forward,
+        );
+        assert_eq!(
+            out.as_deref(),
+            Some("ENSP1:p.Val4_Ala5insValAlaLeuAspThrTer")
+        );
+    }
 
     #[test]
     fn test_hgvsp_frameshift_mitochondrial_table_differs() {

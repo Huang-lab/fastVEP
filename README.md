@@ -720,38 +720,43 @@ fastVEP's consequence and HGVS output is a port of Ensembl VEP's own model, vali
 GRCh38 Ensembl 115 GFF3 and FASTA) on three datasets, because they exercise different code paths.
 
 **Field-level, all annotation types.**
-All 23 compared CSQ fields agree on 100% of 2,340 shared (allele, transcript) pairs from the
+22 of the 24 compared CSQ fields agree on 100% of 2,920 shared (allele, transcript) pairs from the
 173-variant VEP example set (`validation/run_validation.sh`), across all 12 consequence types the
-set contains.
+set contains. The two that do not are not disagreements about a variant: `SOURCE` carries the
+filename each tool was given, and `TSL` is blank in VEP's `--gff` mode on all 2,920 rows, where
+fastVEP reads the transcript's own `transcript_support_level` attribute on 1,284 of them.
 
 **Consequences and HGVS under indels, MNVs and splice sites.**
 The example set is SNV-only, so the harder shapes are validated on a 6,600-variant stratified
-sample of the ClinVar 2-star+ set - **150,725 matched (variant, allele, transcript) rows**, 72,632
+sample of the ClinVar 2-star+ set - **151,684 matched (variant, allele, transcript) rows**, 74,150
 of them coding. That sample is built to be hard: 54.5% of its variants are not SNVs, against 7.2%
 of the ClinVar 2-star+ set it is drawn from, so these are the rates on the shapes that disagree.
 
-| Field | Scope | Agreement |
-|---|---|---:|
-| `Amino_acids` | coding rows | **100 %** |
-| `Codons` | coding rows | **100 %** |
-| Splice terms | all rows | **100 %** |
-| Consequence terms | coding rows | 99.86 % |
-| Whole consequence set | all rows | 99.92 % |
-| `IMPACT` | all rows | 99.93 % |
-| `HGVSc` | all rows | 99.60 % |
-| `HGVSp` | all rows | 99.43 % |
+| Field | Scope | ClinVar sample | Genome-wide |
+|---|---|---:|---:|
+| `Amino_acids` | coding rows | **100 %** | **100 %** |
+| `Codons` | coding rows | **100 %** | **100 %** |
+| Splice terms | all rows | 99.999 % | **100 %** |
+| Consequence terms | coding rows | 99.92 % | **100 %** |
+| Whole consequence set | all rows | 99.96 % | **100 %** |
+| `IMPACT` | all rows | 99.97 % | **100 %** |
+| `HGVSc` | all rows | 99.97 % | 99.31 % |
+| `HGVSp` | all rows | 99.49 % | 99.99 % |
 
 **Genome-wide, on an ordinary callset.**
-The same comparison over a systematic 1-in-200 sample of the GIAB HG002 WGS callset - 20,241
-variants, **122,317 matched rows** - is the other end of that range: the consequence set and
-`IMPACT` agree on **100.000 %** of rows, `HGVSp` on **99.985 %**, `HGVSc` on **99.879 %**.
-Most of the 148 remaining `HGVSc` rows come from multi-allelic VCF records (1.18% of this
-callset), whose per-allele trimming against the reference is a known gap - see
+The right-hand column is a systematic 1-in-200 sample of the GIAB HG002 WGS callset - 20,241
+variants, **118,956 matched rows** - and every field that carries a clinical call agrees on all of
+them. 801 of the 824 remaining `HGVSc` rows come from multi-allelic VCF records (0.96% of this
+callset), whose per-allele trimming against the reference is a known gap; on single-ALT records
+the field disagrees on 23 rows genome-wide, 12 of them a malformed VEP coordinate. See
 [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
 
 **HGVSp under in-frame indels.**
 Protein-level normalisation is additionally checked on 400 ClinVar in-frame deletions run through
-both tools: 99.17% exact string agreement on 5,192 (variant, transcript) pairs.
+both tools. 43 rows disagree, and they are one variant across its 43 transcripts, where VEP's
+protein-level 3'-shift stops one residue short of a poly-Glu C-terminus. That is 99.17% of the
+5,192 pairs on which both tools name a protein change - the figure the manuscript reports - and
+99.53% of all 9,141 matched rows.
 
 ### Divergences
 
@@ -759,10 +764,11 @@ Agreement is the evidence that the port is faithful, not the objective. The outp
 a clinician may act on, so where Ensembl is demonstrably wrong in a way that changes a call,
 fastVEP is right instead.
 
-There are five such places, and one of them matters clinically: Ensembl reports a frameshift that
+There are nine such places, and one of them matters clinically: Ensembl reports a change that
 introduces a premature stop as `inframe_insertion,stop_retained_variant`, MODERATE. BRCA1
-`c.5030_5033dup` - ClinVar 3-star Pathogenic - is one of 34 such variants in the ClinVar 2-star+
-set. fastVEP reports `stop_gained,frameshift_variant`, HIGH, so those 34 keep PVS1.
+`c.5030_5033dup` - ClinVar Pathogenic - is one of 52 such variants in the ClinVar 2-star+ set, 38
+of them Pathogenic or Likely pathogenic. fastVEP reports `stop_gained,frameshift_variant`, HIGH,
+so those 52 keep PVS1.
 
 Every divergence, its cause in the Ensembl source, its row count, and the list of fastVEP's own
 remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md)**.
