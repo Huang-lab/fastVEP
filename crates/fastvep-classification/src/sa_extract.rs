@@ -569,7 +569,32 @@ pub fn same_splice_position_pathogenic(
         return None;
     }
 
-    let own_offset = hgvs_c.and_then(parse_intronic_offset);
+    // The offset says which side of the intron the variant is on, and it is
+    // read off the HGVSc - which is a *display* form, 3'-shifted. A deletion of
+    // the acceptor's own `G` is written `c.1686-1del` where the shift has
+    // nowhere to go and `c.1686del` where the first exonic base repeats it, and
+    // the second spelling carries no offset at all. The consequence term is the
+    // part that does not move: `splice_acceptor_variant` is decided from the
+    // unshifted position, so it supplies the sign the string lost.
+    //
+    // Without this, 14 canonical acceptor deletions of the ClinVar 2-star+ set
+    // stopped matching the other base of their own dinucleotide the moment the
+    // 3'-shift began crossing splice sites, and every one of them - KCNQ1, NF1,
+    // MSH2, MLH1, BRCA2, RB1, TSC2, APC among them, all ClinVar Pathogenic -
+    // fell from Pathogenic to Likely pathogenic.
+    let own_offset = hgvs_c
+        .and_then(parse_intronic_offset)
+        .filter(|o| is_canonical_dinucleotide_offset(*o))
+        .or_else(|| {
+            let acceptor = consequences.contains(&Consequence::SpliceAcceptorVariant);
+            let donor = consequences.contains(&Consequence::SpliceDonorVariant);
+            // A change reaching both sides of one intron names neither.
+            match (acceptor, donor) {
+                (true, false) => Some(-1),
+                (false, true) => Some(1),
+                _ => None,
+            }
+        });
     let met = cpd.splice_positions.iter().any(|v| {
         v.sig.eq_ignore_ascii_case("Pathogenic")
             && !is_same_allele(v, pos, ref_allele, alt_allele)
@@ -1424,15 +1449,47 @@ mod tests {
     }
 
     #[test]
-    fn test_ps1_splice_without_hgvs_still_matches_the_same_position() {
-        // No HGVS means no offset for the variant being classified, so the
-        // adjacent base cannot be reasoned about - but the same position is
-        // the same dinucleotide whatever the offset is.
+    fn test_ps1_splice_reads_the_side_off_the_term_when_the_string_has_no_offset() {
+        // The offset is parsed from the HGVSc, which is a display form: a
+        // deletion of the acceptor's own base is written `c.376-1del` where the
+        // 3'-shift has nowhere to go and `c.376del` where the first exonic base
+        // repeats it. The consequence term does not move with the spelling, and
+        // `splice_acceptor_variant` already means "on the acceptor
+        // dinucleotide", so it settles the side that the string cannot.
         let idx = splice_index(
             r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"},
                {"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#,
         );
+        // The same position is the same dinucleotide whatever the offset is.
         assert_eq!(splice_ps1(Some(&idx), None, 100, "A", "T"), Some(true));
-        assert_eq!(splice_ps1(Some(&idx), None, 102, "C", "T"), Some(false));
+        // The adjacent base of the same dinucleotide, reached through the term.
+        assert_eq!(splice_ps1(Some(&idx), None, 102, "C", "T"), Some(true));
+        // Two bases away is a different position on either reading.
+        assert_eq!(splice_ps1(Some(&idx), None, 103, "C", "T"), Some(false));
+        // An exonic spelling of the same deletion reaches it too.
+        assert_eq!(
+            splice_ps1(Some(&idx), Some("c.376del"), 102, "C", "T"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_ps1_splice_declines_when_the_variant_reaches_both_sides() {
+        // A change covering a donor and an acceptor has no side, so nothing
+        // supplies the sign and only an exact position match can fire.
+        let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#);
+        let anns: Vec<&GeneAnnotation> = Some(&idx).into_iter().collect();
+        let both = [
+            Consequence::SpliceAcceptorVariant,
+            Consequence::SpliceDonorVariant,
+        ];
+        assert_eq!(
+            same_splice_position_pathogenic(&both, &anns, None, 102, "C", "T"),
+            Some(false)
+        );
+        assert_eq!(
+            same_splice_position_pathogenic(&both, &anns, None, 101, "C", "T"),
+            Some(true)
+        );
     }
 }
