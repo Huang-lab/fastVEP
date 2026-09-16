@@ -509,6 +509,75 @@ pub fn clipped_span(
     (start + front as u64, end - back as u64)
 }
 
+/// The offset the change takes at its most 3' position, which is where HGVS
+/// numbers it and is not where it is.
+///
+/// [`Transcript::intronic_offset_covered`] over the variant's own span answers
+/// "how far into the intron is this change". This answers a different question,
+/// and PVS1's canonical-splice gate is the caller that needs it.
+///
+/// An indel in a repeat can be written at any of several positions, all of which
+/// produce the same edited sequence, and the 3'-rule picks one end of that
+/// range. **On a donor the 3' end is the one furthest into the intron**, so an
+/// offset past `+2` there proves the change *can* be written without touching
+/// `+1` or `+2` - and since every alignment yields the same edited sequence, the
+/// canonical `GT` is intact whichever one is written. PTEN
+/// `10:87931087 GAGGT>G` is the shape: `splice_donor_variant` in both tools,
+/// `c.253+4_253+7del` in both, and the intron still opens `GTATGA` after the
+/// edit. PVS1's splice track assumes the dinucleotide is destroyed, so it must
+/// stand down there.
+///
+/// **On an acceptor the 3' end is the one nearest the exon**, because the shift
+/// runs toward it, so the same number means the opposite thing and the gate does
+/// correspondingly little. That asymmetry is HGVS's, not this function's.
+///
+/// `None` when the change reaches no intronic base, when it does not touch the
+/// transcript, or when there is no reference to walk - and a caller that cannot
+/// tell must not read "not intronic" into it.
+#[allow(clippy::too_many_arguments)]
+pub fn shifted_intronic_offset(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    transcript: &fastvep_genome::Transcript,
+    var_start: u64,
+    var_end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+) -> Option<i64> {
+    // The clip first, for the same reason every other reader of a position
+    // wants it: bases the pair repeats at either end are unchanged, and a walk
+    // that starts from them starts from the wrong place.
+    let (lo, hi) = clipped_span(
+        transcript.strand,
+        var_start,
+        var_end,
+        genomic_ref,
+        genomic_alt,
+    );
+    let (span_lo, span_hi) = (lo.min(hi), lo.max(hi));
+    if span_hi < transcript.start || span_lo > transcript.end {
+        return None;
+    }
+    let (shifted_start, shifted_end) =
+        match seq_provider.filter(|_| is_shiftable_indel(genomic_ref, genomic_alt)) {
+            Some(sp) => three_prime_shift_genomic(
+                sp,
+                chrom,
+                lo,
+                hi,
+                genomic_ref,
+                genomic_alt,
+                transcript.strand,
+                transcript.start,
+                transcript.end,
+            ),
+            // Nothing to shift, or nothing to shift it over: the change is written
+            // where it sits.
+            None => (lo, hi),
+        };
+    transcript.intronic_offset_covered(shifted_start, shifted_end)
+}
+
 /// Read one allele of a site as HGVS describes it. See [`HgvsAllele`].
 ///
 /// `start`/`end` and the pair are genomic; `cdna` is the span the predictor
@@ -1121,6 +1190,63 @@ mod tests {
             Some(40),
         );
         assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.20+1_21-1dup"));
+    }
+
+    /// 20 exonic bases, an intron opening `AGGT AGGT` and then not repeating,
+    /// then exon 2. A four-base deletion at the donor can be written at `+1` or
+    /// at `+5`, and both edit the sequence the same way.
+    const DONOR_REPEAT: &str = "AAAAAAAAAAAAAAAAAAAA\
+                                AGGTAGGTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\
+                                GGGGGGGGGGGGGGGGGGGG";
+
+    /// Where the change *is* and where HGVS *numbers* it are two different
+    /// questions, and PVS1's gate needs the second: a deletion that can be
+    /// written at `+5` can be written without touching `+1` or `+2`, so the
+    /// canonical `GT` survives it whichever alignment is chosen.
+    #[test]
+    fn the_shifted_offset_is_the_furthest_the_change_reaches_on_a_donor() {
+        let r = StrRef(DONOR_REPEAT);
+        let tr = transcript(Strand::Forward);
+        let (del_ref, del_alt) = (Allele::Sequence(b"AGGT".to_vec()), Allele::Deletion);
+        // Written at the donor's own first base.
+        assert_eq!(tr.intronic_offset_covered(21, 24), Some(1));
+        // Numbered four bases further in, clear of the dinucleotide.
+        assert_eq!(
+            shifted_intronic_offset(Some(&r), "1", &tr, 21, 24, &del_ref, &del_alt),
+            Some(5)
+        );
+    }
+
+    /// Without a reference there is no walk to make, so the change is numbered
+    /// where it sits - the same fallback the description itself takes.
+    #[test]
+    fn the_shifted_offset_falls_back_to_the_position_when_there_is_no_reference() {
+        let tr = transcript(Strand::Forward);
+        let (del_ref, del_alt) = (Allele::Sequence(b"AGGT".to_vec()), Allele::Deletion);
+        assert_eq!(
+            shifted_intronic_offset(None, "1", &tr, 21, 24, &del_ref, &del_alt),
+            Some(1)
+        );
+    }
+
+    /// A change that reaches no intronic base has no offset either way, and a
+    /// change off the transcript has no position on it at all.
+    #[test]
+    fn the_shifted_offset_declines_where_there_is_nothing_intronic_to_reach() {
+        let r = StrRef(DONOR_REPEAT);
+        let tr = transcript(Strand::Forward);
+        let snv = (
+            Allele::Sequence(b"A".to_vec()),
+            Allele::Sequence(b"G".to_vec()),
+        );
+        assert_eq!(
+            shifted_intronic_offset(Some(&r), "1", &tr, 10, 10, &snv.0, &snv.1),
+            None
+        );
+        assert_eq!(
+            shifted_intronic_offset(Some(&r), "1", &tr, 500, 500, &snv.0, &snv.1),
+            None
+        );
     }
 
     /// The offset a criterion reads is measured on the transcript, over the span

@@ -13,7 +13,7 @@ pub mod pick;
 pub use hgvs_normalize::{
     clipped_span, convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele,
     hgvsc_shifted, hgvsg_clipped, intronic_dup_span, intronic_ins_as_dup, is_shiftable_indel,
-    three_prime_shift_genomic, HgvsAllele,
+    shifted_intronic_offset, three_prime_shift_genomic, HgvsAllele,
 };
 
 use anyhow::{Context, Result};
@@ -427,6 +427,27 @@ impl AnnotationContext {
                                     );
                                     tr.intronic_offset_covered(s, e)
                                 }),
+                                // The same distance where HGVS numbers the change rather
+                                // than where it sits, which is what PVS1's gate is
+                                // calibrated to, and only for the variants that gate
+                                // looks at: walking the reference twice for every indel
+                                // would be work done before knowing it is needed.
+                                shifted_intron_offset: acmg_config
+                                    .and(transcript)
+                                    .filter(|_| has_canonical_splice(&ac.consequences))
+                                    .and_then(|tr| {
+                                        shifted_intronic_offset(
+                                            self.seq_provider
+                                                .as_deref()
+                                                .map(|sp| sp as &dyn SequenceProvider),
+                                            chrom,
+                                            tr,
+                                            vf.position.start,
+                                            vf.position.end,
+                                            &vf.ref_allele,
+                                            &ac.allele,
+                                        )
+                                    }),
                                 distance: ac.distance,
                                 protein_length: ac.protein_length,
                                 escapes_nmd: ac.escapes_nmd,
@@ -918,6 +939,7 @@ impl AnnotationContext {
                             aa.protein_position.map(|(s, _)| s),
                             aa.hgvsc.as_deref(),
                             aa.intron_offset,
+                            aa.shifted_intron_offset,
                             aa.exon,
                             aa.protein_length,
                             aa.escapes_nmd,
@@ -987,6 +1009,7 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
                 consequences: vec![],
                 impact: fastvep_core::Impact::Modifier,
                 intron_offset: None,
+                shifted_intron_offset: None,
                 cdna_position: None,
                 cds_position: None,
                 protein_position: None,
@@ -1036,6 +1059,7 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 consequences: vec![Consequence::IntergenicVariant],
                 impact: fastvep_core::Impact::Modifier,
                 intron_offset: None,
+                shifted_intron_offset: None,
                 cdna_position: None,
                 cds_position: None,
                 protein_position: None,
@@ -1223,6 +1247,20 @@ pub fn report_sa_lookup_errors() {
 /// place is indistinguishable for a single base, which is why it survived: it
 /// showed up only once a multi-base alternate reached HGVS, where a
 /// reverse-strand `ACG` was written `delinsTGC` instead of `delinsCGT`.
+/// Whether a consequence set puts the change on a canonical splice dinucleotide.
+///
+/// The gate on [`shifted_intronic_offset`]: PVS1 reads that number only for a
+/// canonical splice variant, and finding it walks the reference, so every other
+/// variant is spared the walk.
+pub fn has_canonical_splice(consequences: &[Consequence]) -> bool {
+    consequences.iter().any(|c| {
+        matches!(
+            c,
+            Consequence::SpliceAcceptorVariant | Consequence::SpliceDonorVariant
+        )
+    })
+}
+
 pub fn reverse_complement_allele(allele: &Allele) -> Allele {
     match allele {
         Allele::Sequence(bases) => {
@@ -1519,6 +1557,7 @@ fn enrich_compound_het(
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
                 aa.intron_offset,
+                aa.shifted_intron_offset,
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,

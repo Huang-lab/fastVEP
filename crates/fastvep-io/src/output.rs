@@ -2182,6 +2182,7 @@ mod tests {
                     exon: None,
                     intron: None,
                     intron_offset: None,
+                    shifted_intron_offset: None,
                     distance: None,
                     protein_length: None,
                     escapes_nmd: None,

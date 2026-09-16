@@ -103,6 +103,17 @@ pub struct AlleleAnnotation {
     /// populated only under `--hgvs`: the ACMG criteria are its only reader and
     /// finding it walks the transcript's introns per allele.
     pub intron_offset: Option<i64>,
+    /// The same distance at the most 3' position HGVS gives the change, which on
+    /// a donor is the furthest into the intron it can be written.
+    ///
+    /// PVS1's canonical-splice gate is the only reader: an offset past `+2`
+    /// there proves some alignment of the change leaves `+1` and `+2` alone, so
+    /// the dinucleotide PVS1's splice track assumes is destroyed is intact. See
+    /// `fastvep_annotate::shifted_intronic_offset`.
+    ///
+    /// Populated only for a variant carrying a canonical splice term, which is
+    /// the only case that gate looks at, because finding it walks the reference.
+    pub shifted_intron_offset: Option<i64>,
     pub distance: Option<i64>,
     /// Full-length peptide of the transcript, in residues. `None` for
     /// non-coding transcripts.

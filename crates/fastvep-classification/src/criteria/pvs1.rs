@@ -118,11 +118,16 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
     // rather than discarding genuine LOF evidence. Only when there is no
     // coding-null consequence is PVS1 dropped entirely (defer to SpliceAI/PP3).
     if matches!(kind, NullKind::CanonicalSplice) {
-        // The *rendered* offset, deliberately: this gate tells a point change
-        // on the dinucleotide from an indel whose span merely reaches it, and
-        // the 3'-shifted description is what it was calibrated against. See
-        // `ClassificationInput::hgvsc_intronic_offset`.
-        if let Some(offset) = input.hgvsc_intronic_offset {
+        // The offset at the change's most 3' position, deliberately, and not
+        // the one at the position it sits at. On a donor the 3' end is the
+        // furthest into the intron the change can be written, so `> 2` there
+        // proves some alignment of it leaves `+1` and `+2` alone - and every
+        // alignment edits the sequence the same way, so the `GT` this track
+        // assumes is destroyed is intact. PTEN `c.253+4_253+7del` is
+        // `splice_donor_variant` in both tools and still opens the intron
+        // `GTATGA` afterwards. See
+        // `ClassificationInput::shifted_intronic_offset`.
+        if let Some(offset) = input.shifted_intronic_offset {
             details.insert("intronic_offset".into(), serde_json::json!(offset));
             if offset.abs() > 2 {
                 match NullKind::detect_non_splice(&input.consequences) {
@@ -626,7 +631,7 @@ mod tests {
             }),
             None,
         );
-        input.hgvsc_intronic_offset = Some(12);
+        input.shifted_intronic_offset = Some(12);
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(!r.met);
         assert!(r.summary.contains("canonical ±1/±2"));
@@ -644,7 +649,7 @@ mod tests {
             }),
             None,
         );
-        input.hgvsc_intronic_offset = Some(-2);
+        input.shifted_intronic_offset = Some(-2);
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(r.met);
         assert_eq!(r.strength, EvidenceStrength::VeryStrong);
@@ -667,7 +672,7 @@ mod tests {
             }),
             None,
         );
-        input.hgvsc_intronic_offset = Some(7); // outside canonical ±1/±2
+        input.shifted_intronic_offset = Some(7); // outside canonical ±1/±2
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(
             r.met,

@@ -1,4 +1,4 @@
-use fastvep_core::{is_canonical_dinucleotide_offset, parse_intronic_offset};
+use fastvep_core::is_canonical_dinucleotide_offset;
 use fastvep_core::{Consequence, Impact};
 use fastvep_core::{GeneAnnotation, SupplementaryAnnotation};
 use serde::Deserialize;
@@ -816,27 +816,31 @@ pub struct ClassificationInput {
     /// `splice_donor_region_variant`. See [`Self::hgvsc_intronic_offset`] for
     /// the number the HGVSc shows, which is a different one.
     pub intronic_offset: Option<i64>,
-    /// The same offset as [`Self::intronic_offset`] reads *in the rendered
-    /// HGVSc*, which is a display form and 3'-shifted.
+    /// The same distance measured at the most 3' position HGVS gives the
+    /// change, which is where it is *numbered* rather than where it is.
     ///
-    /// The two are not interchangeable and the difference is not small. Real
-    /// Ensembl VEP 115.1 writes `ENST00000379370.7:c.4298+21_4298+55del` for
-    /// an AGRN deletion it calls `splice_donor_variant`: the change removes the
-    /// donor's own first base, and the string says twenty-one bases into the
-    /// intron. The shift runs the other way on an acceptor, so a change that
-    /// reaches no splice term at all can be written `c.2043-9dup`.
+    /// An indel in a repeat can be written at any of several positions, all of
+    /// which produce the same edited sequence. On a donor the 3' end of that
+    /// range is the one furthest into the intron, so an offset past `+2` there
+    /// **proves the canonical `GT` survives**: some alignment of the change
+    /// leaves `+1` and `+2` alone, and every alignment edits the sequence the
+    /// same way. PVS1's splice track assumes that dinucleotide is destroyed, so
+    /// that is exactly when it must stand down - and it is why the number is
+    /// worth carrying beside [`Self::intronic_offset`] rather than collapsing
+    /// the two.
     ///
-    /// Only PVS1's canonical-splice gate reads this. That gate was written
-    /// against the rendered offset and uses it to tell a point change on the
-    /// dinucleotide from an indel whose *span* merely reaches it - a different
-    /// question from "how deep is this", and one the transcript measurement
-    /// cannot answer, because it is decided from the same position that made
-    /// the term `splice_donor_variant` in the first place. Handing PVS1 the
-    /// measured offset instead turns its gate into a tautology: 97 splice-donor
-    /// variants of the ClinVar 2-star+ set collect PVS1 that do not today, 47
-    /// of them ClinVar Pathogenic and 6 ClinVar Benign. That is a decision
-    /// about PVS1, not about where a variant is, so it is not taken here.
-    pub hgvsc_intronic_offset: Option<i64>,
+    /// PTEN `10:87931087 GAGGT>G` is the shape: `splice_donor_variant` in both
+    /// tools, `c.253+4_253+7del` in both, and the intron still opens `GTATGA`
+    /// after the edit. [`Self::intronic_offset`] reads `+1` there, because that
+    /// is where the change sits and where the consequence term was decided, and
+    /// answering PVS1's question with it turns the gate into a tautology: 97
+    /// splice-donor variants of the ClinVar 2-star+ set collect PVS1 that do
+    /// not today, 47 ClinVar Pathogenic and 6 ClinVar Benign.
+    ///
+    /// The shift runs toward the exon on an acceptor, so the same number means
+    /// the nearest approach there and the gate does correspondingly little.
+    /// That asymmetry is HGVS's.
+    pub shifted_intronic_offset: Option<i64>,
     /// Proband genotype information (from trio VCF)
     pub proband_genotype: Option<GenotypeInfo>,
     /// Mother genotype information (from trio VCF)
@@ -878,6 +882,7 @@ pub fn extract_classification_input(
     protein_position: Option<u64>,
     hgvs_c: Option<&str>,
     intron_offset: Option<i64>,
+    shifted_intronic_offset: Option<i64>,
     exon: Option<(u32, u32)>,
     protein_length: Option<u64>,
     escapes_nmd: Option<bool>,
@@ -1011,11 +1016,7 @@ pub fn extract_classification_input(
     // starts in the exon - so the parsed offset read 1 where the change sits at
     // 15, and BP7 declined.
     let intronic_offset = intron_offset;
-    // The same distance as the rendered HGVSc shows it, which is 3'-shifted and
-    // so a different number. PVS1's canonical-splice gate is the only reader;
-    // see `ClassificationInput::hgvsc_intronic_offset` for why it keeps this
-    // one.
-    let hgvsc_intronic_offset = hgvs_c.and_then(parse_intronic_offset);
+
     // Both NMD signals are carried, and PVS1 picks between them per config.
     // The last-exon proxy is the historical one; the 50-nt measurement is the
     // rule Abou Tayoun 2018 actually states. They disagree only for a PTC in
@@ -1090,7 +1091,7 @@ pub fn extract_classification_input(
         // stays None (BP7 exon-edge exclusion falls back to legacy behavior).
         at_exon_edge: None,
         intronic_offset,
-        hgvsc_intronic_offset,
+        shifted_intronic_offset,
         proband_genotype,
         mother_genotype,
         father_genotype,
@@ -1272,6 +1273,7 @@ mod tests {
             protein_position,
             None,
             None, // intron_offset: these unit tests are not splice-site cases
+            None, // shifted_intronic_offset: likewise
             exon,
             protein_length,
             escapes_nmd,

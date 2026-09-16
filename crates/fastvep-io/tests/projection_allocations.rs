@@ -60,6 +60,7 @@ fn annotation(allele: &str) -> AlleleAnnotation {
         exon: Some((2, 6)),
         intron: None,
         intron_offset: None,
+        shifted_intron_offset: None,
         distance: None,
         protein_length: Some(300),
         escapes_nmd: None,

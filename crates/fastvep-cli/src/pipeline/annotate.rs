@@ -31,8 +31,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
-    annotate_intergenic, annotate_sa_only_scaffold, clipped_span, hgvs_allele, hgvsg_clipped,
-    load_gene_providers, load_sa_providers, zip_positions,
+    annotate_intergenic, annotate_sa_only_scaffold, clipped_span, has_canonical_splice,
+    hgvs_allele, hgvsg_clipped, load_gene_providers, load_sa_providers, shifted_intronic_offset,
+    zip_positions,
 };
 
 const BATCH_SIZE: usize = 1024;
@@ -254,6 +255,25 @@ fn annotate_variant(
                                 );
                                 tr.intronic_offset_covered(s, e)
                             }),
+                            // The same distance where HGVS numbers the change rather
+                            // than where it sits, which is what PVS1's gate is
+                            // calibrated to, and only for the variants that gate
+                            // looks at: walking the reference twice for every indel
+                            // would be work done before knowing it is needed.
+                            shifted_intron_offset: acmg_config
+                                .and(transcript)
+                                .filter(|_| has_canonical_splice(&ac.consequences))
+                                .and_then(|tr| {
+                                    shifted_intronic_offset(
+                                        seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                                        chrom,
+                                        tr,
+                                        vf.position.start,
+                                        vf.position.end,
+                                        &vf.ref_allele,
+                                        &ac.allele,
+                                    )
+                                }),
                             distance: ac.distance,
                             protein_length: ac.protein_length,
                             escapes_nmd: ac.escapes_nmd,
@@ -728,6 +748,7 @@ fn annotate_variant(
                     aa.protein_position.map(|(s, _)| s),
                     aa.hgvsc.as_deref(),
                     aa.intron_offset,
+                    aa.shifted_intron_offset,
                     aa.exon,
                     aa.protein_length,
                     aa.escapes_nmd,
@@ -1918,6 +1939,7 @@ fn enrich_compound_het_batch(
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
                 aa.intron_offset,
+                aa.shifted_intron_offset,
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,

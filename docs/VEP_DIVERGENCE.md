@@ -391,10 +391,19 @@ Real VEP 115.1 writes `ENST00000379370.7:c.4298+21_4298+55del` for an AGRN delet
 `splice_donor_variant`, and `ENST00000676179.1:c.2043-9dup` for a KIF1B insertion that earns no
 splice term at all.
 fastVEP writes the same strings, because they are the right descriptions.
-What that means is that no consumer of these fields may recover a position by parsing one: the
-ACMG criteria that did are the subject of a run-versions entry
-([`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md)), and
-they now take the offset from the transcript instead.
+
+What follows is that no consumer of these fields may recover a position by parsing one, and that
+"where the change is" and "where HGVS numbers it" are two different questions rather than one
+question with a right and a wrong answer to it.
+Both are computed off the transcript now, and the ACMG criteria take whichever their own rule
+asks for: BP7's deep-intronic extension reads the first, so that it cannot call a variant
+deep-intronic while the row beside it says `splice_donor_region_variant`; PVS1's canonical-splice
+gate reads the second, because on a donor the 3' end of an indel's range is the furthest into the
+intron it can be written, and an offset past `+2` there *proves* the canonical `GT` survives the
+edit - which is exactly when PVS1's splice track, which assumes it is destroyed, must stand down.
+No criterion parses an HGVSc for it.
+[`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md) carries
+the worked example and the benchmark runs on either side of the choice.
 
 **`splice_region_variant` is decided by the last differing region, not the union.**
 `_intron_effects` (`BaseTranscriptVariationAllele.pm`, l. 215) assigns rather than or-assigns it
