@@ -388,6 +388,34 @@ impl Transcript {
         None
     }
 
+    /// The signed offset from the nearest exon boundary that a genomic span
+    /// reaches: `+N` on the donor side, `-N` on the acceptor side, `None` for a
+    /// span that touches no intronic base.
+    ///
+    /// What is returned for a range is the smallest |offset| it *covers*, not
+    /// the smaller of its two endpoints, matching
+    /// `fastvep_core::parse_intronic_offset` - the two have to agree, because
+    /// the criteria that read this also read offsets parsed out of ClinVar's
+    /// own HGVS strings. A span with one end in an exon and the other in an
+    /// intron runs continuously into it, so the nearest intronic base it
+    /// reaches is the first one, `+1` or `-1`, whatever its far end reads.
+    ///
+    /// This is the same number the criteria used to recover by parsing a `+N` /
+    /// `-N` token out of the HGVSc, and it is not the same answer: `c.` is a
+    /// display form, 3'-shifted, so the offset can be shifted away entirely.
+    pub fn intronic_offset_covered(&self, start: u64, end: u64) -> Option<i64> {
+        let (lo, hi) = (start.min(end), start.max(end));
+        let ends = (
+            self.genomic_to_intronic_cdna(lo).map(|(_, off)| off),
+            self.genomic_to_intronic_cdna(hi).map(|(_, off)| off),
+        );
+        match ends {
+            (None, None) => None,
+            (None, Some(o)) | (Some(o), None) => Some(o.signum()),
+            (Some(x), Some(y)) => Some(if x.abs() <= y.abs() { x } else { y }),
+        }
+    }
+
     /// Get the genomic boundaries (start, end) of the intron containing the given position.
     /// Returns None if the position is not in an intron.
     pub fn intron_bounds_at(&self, genomic_pos: u64) -> Option<(u64, u64)> {

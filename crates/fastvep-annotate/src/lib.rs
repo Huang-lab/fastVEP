@@ -11,8 +11,8 @@ mod hgvs_normalize;
 pub mod pick;
 
 pub use hgvs_normalize::{
-    convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele, hgvsc_shifted,
-    hgvsg_clipped, intronic_dup_span, intronic_ins_as_dup, is_shiftable_indel,
+    clipped_span, convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele,
+    hgvsc_shifted, hgvsg_clipped, intronic_dup_span, intronic_ins_as_dup, is_shiftable_indel,
     three_prime_shift_genomic, HgvsAllele,
 };
 
@@ -405,6 +405,28 @@ impl AnnotationContext {
                                 codons: ac.codons.clone(),
                                 exon: ac.exon,
                                 intron: ac.intron,
+                                // Off the transcript, not off the HGVSc, and
+                                // over the span the allele actually changes:
+                                // the bases a pair repeats at either end are by
+                                // definition unchanged, and counting them can
+                                // only make a change look nearer a splice site
+                                // than it is.
+                                //
+                                // Only the classifier reads it, and finding it
+                                // walks the transcript's introns once per end of
+                                // the span, per (variant x transcript x allele).
+                                // So it is found when something is going to ask,
+                                // the way `hgvsc` is built only under `--hgvs`.
+                                intron_offset: acmg_config.and(transcript).and_then(|tr| {
+                                    let (s, e) = clipped_span(
+                                        tr.strand,
+                                        vf.position.start,
+                                        vf.position.end,
+                                        &vf.ref_allele,
+                                        &ac.allele,
+                                    );
+                                    tr.intronic_offset_covered(s, e)
+                                }),
                                 distance: ac.distance,
                                 protein_length: ac.protein_length,
                                 escapes_nmd: ac.escapes_nmd,
@@ -895,6 +917,7 @@ impl AnnotationContext {
                             aa.amino_acids.as_ref(),
                             aa.protein_position.map(|(s, _)| s),
                             aa.hgvsc.as_deref(),
+                            aa.intron_offset,
                             aa.exon,
                             aa.protein_length,
                             aa.escapes_nmd,
@@ -963,6 +986,7 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
                 allele: alt.clone(),
                 consequences: vec![],
                 impact: fastvep_core::Impact::Modifier,
+                intron_offset: None,
                 cdna_position: None,
                 cds_position: None,
                 protein_position: None,
@@ -1011,6 +1035,7 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 allele: alt.clone(),
                 consequences: vec![Consequence::IntergenicVariant],
                 impact: fastvep_core::Impact::Modifier,
+                intron_offset: None,
                 cdna_position: None,
                 cds_position: None,
                 protein_position: None,
@@ -1493,6 +1518,7 @@ fn enrich_compound_het(
                 aa.amino_acids.as_ref(),
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
+                aa.intron_offset,
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
@@ -1683,7 +1709,7 @@ pub fn splice_ps1_evidence(
     fastvep_classification::same_splice_position_pathogenic(
         &aa.consequences,
         gene_anns,
-        aa.hgvsc.as_deref(),
+        aa.intron_offset,
         *pos,
         ref_allele,
         alt,

@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
-    annotate_intergenic, annotate_sa_only_scaffold, hgvs_allele, hgvsg_clipped,
+    annotate_intergenic, annotate_sa_only_scaffold, clipped_span, hgvs_allele, hgvsg_clipped,
     load_gene_providers, load_sa_providers, zip_positions,
 };
 
@@ -233,6 +233,27 @@ fn annotate_variant(
                             codons: ac.codons.clone(),
                             exon: ac.exon,
                             intron: ac.intron,
+                            // Off the transcript, not off the HGVSc, and over
+                            // the span the allele actually changes: the bases a
+                            // pair repeats at either end are by definition
+                            // unchanged, and counting them can only make a
+                            // change look nearer a splice site than it is.
+                            //
+                            // Only the classifier reads it, and finding it
+                            // walks the transcript's introns once per end of
+                            // the span, per (variant x transcript x allele).
+                            // So it is found when something is going to ask,
+                            // the way `hgvsc` is built only under `--hgvs`.
+                            intron_offset: acmg_config.and(transcript).and_then(|tr| {
+                                let (s, e) = clipped_span(
+                                    tr.strand,
+                                    vf.position.start,
+                                    vf.position.end,
+                                    &vf.ref_allele,
+                                    &ac.allele,
+                                );
+                                tr.intronic_offset_covered(s, e)
+                            }),
                             distance: ac.distance,
                             protein_length: ac.protein_length,
                             escapes_nmd: ac.escapes_nmd,
@@ -706,6 +727,7 @@ fn annotate_variant(
                     aa.amino_acids.as_ref(),
                     aa.protein_position.map(|(s, _)| s),
                     aa.hgvsc.as_deref(),
+                    aa.intron_offset,
                     aa.exon,
                     aa.protein_length,
                     aa.escapes_nmd,
@@ -1895,6 +1917,7 @@ fn enrich_compound_het_batch(
                 aa.amino_acids.as_ref(),
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
+                aa.intron_offset,
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,

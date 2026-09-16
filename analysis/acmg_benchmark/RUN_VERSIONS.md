@@ -1131,3 +1131,79 @@ PS1 got: give the criterion the unshifted offset rather than a string. It is not
 different consequence set and 4 a different IMPACT tier. Every consequence and IMPACT change is a
 row where the annotation now agrees with real VEP 115.1 and did not before; the per-field row
 counts are in [`docs/VEP_DIVERGENCE.md`](../../docs/VEP_DIVERGENCE.md).
+
+---
+
+## v31 to v34: BP7 stops reading a display string, and what that exposed in PVS1
+
+v30 left one call moved against v27 and named the reason: BP7's deep-intronic extension recovered
+how far into the intron a variant sits by parsing the `+N` / `-N` token out of the HGVSc, and the
+HGVSc is a display form.
+This closes that.
+The offset BP7 reads is now measured against the transcript from the unshifted position -
+`Transcript::intronic_offset_covered`, over the span the allele actually changes - which is the
+same position the consequence terms are decided from, so the two agree.
+
+**v31** gave that measured offset to every criterion that reads an intronic offset, BP7 and PVS1
+alike, and the benchmark said no.
+
+| Metric | v30 | v31 | v34 (shipped) |
+|---|---:|---:|---:|
+| Exact match | 425,334 | 425,307 | **425,328** |
+| Same-direction | 522,473 | 522,545 | **522,542** |
+| Opposite-direction | 59 | 65 | **59** |
+| Calls changed vs v30 | - | 274 | 177 |
+
+### What v31 got right, and why it is not shipped as it stands
+
+Every one of the 274 moved calls in v31 was a criterion agreeing with its own variant's
+consequence terms where it had not before.
+PVS1 gained 97 and lost none, and **all 97 are `splice_donor_variant`** - a canonical donor
+deletion whose 3'-shifted description had walked off the dinucleotide.
+Real Ensembl VEP 115.1 writes `ENST00000379370.7:c.4298+21_4298+55del` for one of them, and calls
+it `splice_donor_variant` in the same CSQ entry.
+
+PVS1's canonical-splice gate stands PVS1 down when the offset is outside ±2, and its purpose is to
+tell a point change on the dinucleotide from an indel whose *span* merely reaches it.
+The rendered offset could answer that; a measured one cannot, because it is taken from the same
+position that made the term `splice_donor_variant` in the first place, so the gate becomes a
+tautology.
+The cost is visible: 6 of the 97 are ClinVar Benign or Likely benign - AGRN, NFKB2, PTEN, BRCA2,
+LZTR1, LMX1B, every one a repeat-context deletion starting at `+1`, two with SpliceAI 1.00 and
+0.89 and four with no SpliceAI score at all - and the opposite-direction count goes 59 to 65.
+
+That is a decision about how PVS1 should treat a repeat-context deletion, not about where a
+variant is, and it is left to be taken on its own evidence.
+`ClassificationInput` carries the two numbers separately: `intronic_offset`, measured against the
+transcript, and `hgvsc_intronic_offset`, parsed from the rendered string, with PVS1's gate reading
+the second and a comment at each saying why.
+
+### v32 to v34: BP7 alone
+
+**v33** and **v34** are v32 rebuilt as the code settled - v33 with the multi-allelic clip reaching
+`HGVSg`, v34 with the offset found only when a classifier is going to ask for it. All three runs'
+discrepancy sets and criterion firing rates are identical, and all three change only BP7 against
+v30: **+132, -45, nothing else**.
+
+| | |
+|---|---:|
+| Calls changed vs v30 | 177, all between VUS and LB |
+| BP7 gained | 132, of which **131 carry no splice-proximity term at all** |
+| BP7 lost | 45, of which **44 carry one** (`splice_donor_region_variant`, `splice_region_variant`, `splice_donor_5th_base_variant`) |
+| Opposite-direction | 59, unchanged |
+
+The two halves say the same thing from either side.
+BP7 was firing on 44 variants the annotation itself calls splice-region, because the donor-side
+3'-shift had written them deep in the intron; and declining on 131 variants with no splice term at
+all, because the acceptor-side shift runs the other way and had pulled them toward the exon.
+Of the 177 calls that move, 168 are on a ClinVar benign or likely-benign variant.
+Exact match falls by 6 and same-direction rises by 69, because 9 ClinVar-VUS variants now collect
+enough benign evidence to be called LB.
+
+The POLE variant v30 recorded as the one call still moving the wrong way -
+`12:132659279 T>TGGGGGGAGCCCTCACCTCTCCGTGAC`, written `c.3265_3275+15dup`, whose span starts in
+the exon so the parsed offset read 1 rather than 15 - is `LB` again, with `BP4&BP7`.
+
+Annotation is unchanged by this pass except for the multi-allelic clip described in
+[`docs/VEP_DIVERGENCE.md`](../../docs/VEP_DIVERGENCE.md): 801 of the 824 genome-wide `HGVSc` rows,
+with the ClinVar sample, the in-frame deletion set and every other field byte-identical to v30's.

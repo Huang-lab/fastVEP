@@ -89,6 +89,20 @@ pub struct AlleleAnnotation {
     pub codons: Option<(String, String)>,
     pub exon: Option<(u32, u32)>,
     pub intron: Option<(u32, u32)>,
+    /// Signed distance in bp from the nearest exon boundary: `+N` on the donor
+    /// side, `-N` on the acceptor side, `None` for a change that reaches no
+    /// intronic base.
+    ///
+    /// Read off the transcript, not off the HGVSc. The two used to be the same
+    /// number and are not: `c.` is a *display* form, 3'-shifted, so a deletion
+    /// of an acceptor's own `G` is written `c.1686-1del` where the shift has
+    /// nowhere to go and `c.1686del` where the first exonic base repeats it -
+    /// the same variant, one spelling of it carrying no offset at all.
+    ///
+    /// Populated only when the run is going to classify, the way `hgvsc` is
+    /// populated only under `--hgvs`: the ACMG criteria are its only reader and
+    /// finding it walks the transcript's introns per allele.
+    pub intron_offset: Option<i64>,
     pub distance: Option<i64>,
     /// Full-length peptide of the transcript, in residues. `None` for
     /// non-coding transcripts.

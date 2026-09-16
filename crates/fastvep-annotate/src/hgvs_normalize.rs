@@ -488,6 +488,27 @@ pub fn hgvsg_clipped(
     )
 }
 
+/// The genomic span one allele actually changes, clipped of the bases its
+/// reference and alternate repeat at either end.
+///
+/// [`hgvs_allele`] is the same clip carrying the alleles along; this is the span
+/// alone, for a caller that needs to know *where* the change is and not what to
+/// call it. It allocates nothing.
+pub fn clipped_span(
+    strand: fastvep_core::Strand,
+    start: u64,
+    end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+) -> (u64, u64) {
+    use fastvep_core::{Allele, Strand};
+    let (front, back) = match (genomic_ref, genomic_alt) {
+        (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, strand == Strand::Reverse),
+        _ => (0, 0),
+    };
+    (start + front as u64, end - back as u64)
+}
+
 /// Read one allele of a site as HGVS describes it. See [`HgvsAllele`].
 ///
 /// `start`/`end` and the pair are genomic; `cdna` is the span the predictor
@@ -1100,6 +1121,52 @@ mod tests {
             Some(40),
         );
         assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.20+1_21-1dup"));
+    }
+
+    /// The offset a criterion reads is measured on the transcript, over the span
+    /// the allele actually changes. The fixture's intron runs 21..80, so the
+    /// donor's own base is 21.
+    #[test]
+    fn the_offset_is_measured_over_the_change_and_not_over_the_record() {
+        let tr = transcript(Strand::Forward);
+        let offset = |r: &str, a: &str, start: u64, end: u64| {
+            let (lo, hi) = clipped_span(
+                Strand::Forward,
+                start,
+                end,
+                &Allele::Sequence(r.as_bytes().to_vec()),
+                &Allele::Sequence(a.as_bytes().to_vec()),
+            );
+            tr.intronic_offset_covered(lo, hi)
+        };
+        // Six bases from the donor's own base, of which the first three are
+        // unchanged: the record reaches `+1`, the deletion sits at `+4`.
+        assert_eq!(offset("AAGAAG", "AAG", 21, 26), Some(4));
+        // The same record with nothing to clip is the `+1` it looks like.
+        assert_eq!(offset("AAGAAG", "C", 21, 26), Some(1));
+        // Wholly exonic reaches no intronic base at all.
+        assert_eq!(offset("AA", "C", 10, 11), None);
+        // Running out of the exon into the intron reaches the first base of it,
+        // whatever the far end reads - the same rule the HGVS string parser
+        // follows, because the two answers are compared against each other.
+        assert_eq!(offset("AAAAA", "C", 19, 23), Some(1));
+        // Deep in the intron, the nearer boundary wins.
+        assert_eq!(offset("AA", "C", 76, 77), Some(-4));
+    }
+
+    /// Which boundary an intronic base counts from is a property of the
+    /// transcript's direction, so the two strands mirror each other.
+    #[test]
+    fn the_strand_decides_which_boundary_the_offset_counts_from() {
+        let (fwd, rev) = (transcript(Strand::Forward), transcript(Strand::Reverse));
+        // 21 is the base after exon 1 and 80 the base before exon 2.
+        assert_eq!(fwd.intronic_offset_covered(21, 21), Some(1));
+        assert_eq!(fwd.intronic_offset_covered(80, 80), Some(-1));
+        assert_eq!(rev.intronic_offset_covered(80, 80), Some(1));
+        assert_eq!(rev.intronic_offset_covered(21, 21), Some(-1));
+        // A span reaching both exons covers the whole intron and names no
+        // boundary, which is what the HGVS string for it says too.
+        assert_eq!(fwd.intronic_offset_covered(10, 90), None);
     }
 
     /// The rule is "clip what the two repeat at either end", not "strip the one

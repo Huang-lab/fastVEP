@@ -283,6 +283,7 @@ mod pick_tests {
                 codons: None,
                 exon: None,
                 intron: None,
+                intron_offset: None,
                 distance: None,
                 protein_length: None,
                 escapes_nmd: None,
