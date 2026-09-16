@@ -55,13 +55,13 @@ Neither is a disagreement about a variant both tools annotated.
 | Consequence terms | coding rows | 59 rows, 99.920 % | 0 rows, **100 %** |
 | Whole consequence set | all rows | 60 rows, 99.960 % | 0 rows, **100 %** |
 | `IMPACT` | all rows | 47 rows, 99.969 % | 0 rows, **100 %** |
-| `HGVSc` | all rows | 41 rows, 99.973 % | 824 rows, 99.307 % |
+| `HGVSc` | all rows | 41 rows, 99.973 % | 23 rows, 99.981 % |
 | `HGVSp` | all rows | 778 rows, 99.487 % | 17 rows, 99.986 % |
 
 Every field that carries a clinical call agrees completely on a genome-wide callset.
-`HGVSc` is the exception there, and 801 of its 824 rows are one known gap in variant
-representation rather than a nomenclature disagreement: see
-[multi-allelic records](#multi-allelic-records) below.
+`HGVSc` and `HGVSp` are the exceptions, and both are down to the two gaps in Part 2: a description
+one tool writes and the other declines to.
+No row on any of the three inputs has both tools naming a `c.` change and naming it differently.
 
 The 400-variant in-frame deletion set is the only input that exercises protein-level
 3'-normalisation at a protein terminus: `IMPACT`, `Amino_acids`, `Codons` and the splice terms
@@ -284,34 +284,64 @@ above.
 
 | Gap | Rows | What it looks like |
 |---|---:|---|
-| Multi-allelic records, where each allele is not trimmed against the reference on its own | 801 genome-wide | see below |
 | fastVEP names one where VEP names none | 18 on the ClinVar sample, 11 genome-wide, 9 on the in-frame deletion set | fastVEP `c.-66_-60del` for HNF4A `20:44401297 GGGAGGGC>G` on ENST00000415691, a deletion that straddles the transcript's first base; VEP writes nothing |
 
-#### Multi-allelic records
+That is the whole list for `HGVSc`.
+The 23 rows left genome-wide are 11 of those and 12 of divergence 4; the 41 on the ClinVar sample
+are 18 of those and 23 where VEP writes a malformed `*` coordinate.
+There is no row on any of the three inputs where both tools write a description and the two
+disagree.
 
-The VCF reader strips the base shared by every allele of a site, and then does not trim each
-allele against the reference on its own, so an allele that is a clean deletion can come out as a
-replacement.
-TTC28 `22:28225368 AAAGAAG>AAAG,A` on ENST00000612946 is the shape:
+#### Multi-allelic records, and what is still untrimmed on them
+
+A VCF record carries one position for the whole site, so a multi-allelic indel can only have the
+one base *every* allele shares stripped from it.
+An allele that is a clean deletion therefore reaches the annotator as a replacement.
+TTC28 `22:28225368 AAAGAAG>AAAG,A` on ENST00000612946 is the shape, and the `HGVSc` column is what
+this used to get wrong:
 
 | Allele | Ensembl VEP 115.1 | fastVEP |
 |---|---|---|
-| `AAAG` (a 3 bp deletion) | `-`, `c.553-61772_553-61770del` | `AAG`, `c.553-61775_553-61770delinsCTT` |
+| `AAAG` (a 3 bp deletion) | `-`, `c.553-61772_553-61770del` | `AAG`, `c.553-61772_553-61770del` |
 | `A` (a 6 bp deletion) | `-`, `c.553-61775_553-61770del` | `-`, `c.553-61775_553-61770del` |
 
-Multi-allelic records are 0.96 % of this sample of the HG002 callset - 194 of 20,241 - and they
-account for **801 of its 824 disagreeing `HGVSc` rows**.
-On single-ALT records the field disagrees on 23 rows genome-wide, 12 of which are divergence 4.
-The reach is wider than the name: the allele is reported as `AAG` where VEP reports `-`, so a
-comparison keyed on the allele string does not even line the rows up, which is why
-`validation/compare_rows.py` pairs them by `ALLELE_NUM` instead.
+Ensembl closes this twice over, and neither is gated on `--minimal`.
+`Parser.pm`'s `post_process_vfs` sends any record whose alleles differ in length through
+`minimise_alleles`, and `InputBuffer::split_variants` then makes it one VariationFeature per ALT,
+each trimmed against the reference on its own and annotated separately before being rejoined for
+output; `_clip_alleles` in `TranscriptVariationAllele.pm` clips again while building the notation.
+fastVEP does the second of those, where the description is built, which is why the descriptions
+now agree: **801 of the 824 genome-wide `HGVSc` rows**, and the 11 records where the two tools'
+`HGVSg` sets differed are down to 10.
 
-Neither ClinVar nor HG002 contains a *single*-alt record needing that trim - both are already
-parsimonious - so the gap is reachable only through multi-allelic sites and through callers that
-emit non-minimal records.
-Fixing it means carrying a position per allele rather than one per site, which the variant
-representation does not do today.
-It is not fixed here.
+What is still untrimmed is the **reported allele** - `AAG` above where VEP prints `-` - and the
+positional fields beside it, which describe the site's span.
+The reach of that is wider than it sounds: a comparison keyed on the allele string does not line
+those rows up at all, which is why `validation/compare_rows.py` pairs them by `ALLELE_NUM`.
+Closing it means splitting the site into one variant per allele the way Ensembl does, which would
+put at risk the thing this document's strongest result rests on - the consequence caller reads its
+differing region out of the untrimmed pair and agrees with VEP on every row of all three inputs.
+That is a change to make on its own evidence, not as a side effect of a nomenclature fix, and it
+is not made here.
+
+### HGVSg
+
+`HGVSg` is not in the CSQ field set, so `validation/compare_rows.py` does not rate it; it was
+measured separately against the same HG002 sample, run with `--hgvsg` on VEP's side and JSON
+output on fastVEP's, comparing the set of `g.` descriptions each tool writes per record.
+They agree on **13,525 of 13,535 records (99.926 %)**.
+
+Every one of the ten is the same gap: Ensembl applies the 3'-rule over the genome and fastVEP does
+not, so an insertion sits where the VCF put it rather than where HGVS asks for it, and never
+collapses to a `dup`.
+`9:905488 C>CTGTGTGTG` is `9:g.905488_905489insTGTGTGTG` here and `9:g.905507_905514dup` there.
+That shift is not the transcript-direction one `HGVSc` gets: it runs along the genome whichever
+way the gene points, and it is a separate piece of work.
+
+Two of the ten are a record where VEP's own `HGVSg` disagrees with VEP's own `Allele`: for
+`5:100381015 CATAA>AATAA,C` it writes `Allele` `A` and `HGVSc` `n.188+196G>T` - the substitution
+that it is - beside `HGVSg` `5:g.100381015delinsAATAA`.
+fastVEP writes `5:g.100381015C>A`, which is the same change as its own `HGVSc`.
 
 ### HGVSp
 
@@ -332,7 +362,7 @@ change where Ensembl declines to.
 
 ## What is *not* a divergence
 
-Three things that look like one and are not.
+Four things that look like one and are not.
 
 **Consequences are not 3'-shifted.**
 `TranscriptVariation.pm` (l. 132) sets
@@ -352,6 +382,19 @@ That is both narrower than the span - a matching interior is not tested - and wi
 padding puts every base past the reference allele's end into a region.
 fastVEP reproduces it, which is why the splice terms disagree on exactly one row in 151,684.
 
+**An HGVSc offset does not say where the variant is, in either tool.**
+`c.` is a display form and 3'-shifted, and the shift runs away from the exon on a donor and toward
+it on an acceptor, so the `+N` / `-N` token can be a long way from the change that earned the
+consequence term beside it.
+Real VEP 115.1 writes `ENST00000379370.7:c.4298+21_4298+55del` for an AGRN deletion it calls
+`splice_donor_variant`, and `ENST00000676179.1:c.2043-9dup` for a KIF1B insertion that earns no
+splice term at all.
+fastVEP writes the same strings, because they are the right descriptions.
+What that means is that no consumer of these fields may recover a position by parsing one: the
+ACMG criteria that did are the subject of a run-versions entry
+([`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md)), and
+they now take the offset from the transcript instead.
+
 **`splice_region_variant` is decided by the last differing region, not the union.**
 `_intron_effects` (`BaseTranscriptVariationAllele.pm`, l. 215) assigns rather than or-assigns it
 inside its region loop, so a change whose first differing base is in the splice region and whose
@@ -363,12 +406,13 @@ calls plain missense.
 
 ## Fixed since this document was last measured
 
-Six defects are gone, and the numbers above are what is left.
+Eight defects are gone, and the numbers above are what is left.
 Each was measured the same way before and after, on the same samples: the row counts below are
 what the fix removed.
 
 | What was wrong | Rows it cost | What it was |
 |---|---:|---|
+| Each allele of a multi-allelic record kept the bases it shared with the reference | 801 of 824 genome-wide `HGVSc` rows, and 1 of 11 `HGVSg` records | A site is trimmed once for the whole record, so an allele that is a clean deletion arrives as a replacement and was written as one: `c.553-61775_553-61770delinsCTT` for TTC28's `c.553-61772_553-61770del`. Clipped now where the description is built, which is the second of the two places Ensembl clips. What the clip does *not* reach is in Part 2 |
 | The HGVSc 3'-shift ran on the *spliced* sequence | 563 of 602 `HGVSc` rows | It could not follow a repeat out of an exon into the intron (`c.220del` for VEP's `c.220+1del`), and it would walk a deletion over a splice junction into the next exon, naming a block that is contiguous in the mRNA and not in the DNA a `c.` description is numbered against (BRCA1 `c.71_81del` for VEP's `c.70_80del`). The shift now runs on the genome, bounded by the transcript, and each end is written where it lands |
 | A lost terminator was written `p.Glu486ext*?` | 30 `HGVSp` rows | The extension is a fact about the edited transcript, and `ext*?` is the form HGVS keeps for one nobody can measure. Now divergence 7 |
 | The 3'-rule's rotation carried residues out from behind a terminator | 23 `HGVSp` rows | `insValAlaLeuAspThrTerVal` named a Val the protein never has |

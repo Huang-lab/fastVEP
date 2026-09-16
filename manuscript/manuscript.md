@@ -261,7 +261,7 @@ The same rule accounts for all 43 divergent rows with none unexplained, and pred
 Neither of those two sets is adversarial, so agreement was also measured on inputs chosen to be hard and on an ordinary whole-genome callset.
 A 6,600-variant sample of the ClinVar two-star call set, stratified so that 54.5% of its variants are not single-nucleotide (against 7.2% of the set it is drawn from), yields 151,684 matched (variant, allele, transcript) rows.
 On those rows the two tools agree on `Amino_acids` and `Codons` completely, on the whole consequence set for 99.96%, on IMPACT for 99.97%, on HGVSc for 99.97% and on HGVSp for 99.49%.
-A systematic 1-in-200 sample of the same GIAB HG002 callset used for the throughput benchmarks (20,241 variants, 118,956 matched rows) agrees completely on the consequence set, IMPACT, `Amino_acids`, `Codons` and the splice terms, and on 99.99% of HGVSp descriptions.
+A systematic 1-in-200 sample of the same GIAB HG002 callset used for the throughput benchmarks (20,241 variants, 118,956 matched rows) agrees completely on the consequence set, IMPACT, `Amino_acids`, `Codons` and the splice terms, on 99.98% of HGVSc and on 99.99% of HGVSp descriptions.
 Every row on which the two tools disagree is enumerated and attributed in the repository's divergence record, which separates the cases where fastVEP is deliberately not reproducing Ensembl's output - among them a frameshift that introduces a premature stop, which Ensembl reports as a moderate-impact in-frame insertion on 52 variants of the ClinVar two-star set, 38 of them classified pathogenic or likely pathogenic - from the cases that remain defects in fastVEP.
 
 ### 3.4 Resource Efficiency

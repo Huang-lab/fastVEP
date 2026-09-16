@@ -721,16 +721,17 @@ of the ClinVar 2-star+ set it is drawn from, so these are the rates on the shape
 | Consequence terms | coding rows | 99.92 % | **100 %** |
 | Whole consequence set | all rows | 99.96 % | **100 %** |
 | `IMPACT` | all rows | 99.97 % | **100 %** |
-| `HGVSc` | all rows | 99.97 % | 99.31 % |
+| `HGVSc` | all rows | 99.97 % | 99.98 % |
 | `HGVSp` | all rows | 99.49 % | 99.99 % |
 
 **Genome-wide, on an ordinary callset.**
 The right-hand column is a systematic 1-in-200 sample of the GIAB HG002 WGS callset - 20,241
 variants, **118,956 matched rows** - and every field that carries a clinical call agrees on all of
-them. 801 of the 824 remaining `HGVSc` rows come from multi-allelic VCF records (0.96% of this
-callset), whose per-allele trimming against the reference is a known gap; on single-ALT records
-the field disagrees on 23 rows genome-wide, 12 of them a malformed VEP coordinate. See
-[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
+them. The 23 `HGVSc` rows left are 11 where fastVEP names a change VEP declines to name and 12
+where VEP writes a malformed `*` coordinate: no row of any of the three datasets has both tools
+naming a `c.` change and naming it differently. `HGVSg`, which is not in the CSQ field set and is
+rated separately, agrees on 13,525 of 13,535 records (99.93%); the ten are Ensembl's genomic
+3'-rule, which fastVEP does not apply. See [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
 
 **HGVSp under in-frame indels.**
 Protein-level normalisation is additionally checked on 400 ClinVar in-frame deletions run through

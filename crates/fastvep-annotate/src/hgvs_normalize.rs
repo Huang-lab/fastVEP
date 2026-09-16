@@ -353,6 +353,204 @@ pub fn is_shiftable_indel(
     )
 }
 
+/// One allele of a site, clipped of the bases its reference and alternate
+/// repeat at either end and turned to face the transcript.
+///
+/// A VCF record carries one position for the whole site, so a multi-allelic
+/// indel can only have the one base *every* allele shares stripped from it -
+/// that is what the reader does, and it is what Ensembl's parser does too
+/// (`Parser/VCF.pm`, release/115: `if(scalar keys %first_bases == 1)`). An
+/// allele that is a clean deletion therefore arrives as a replacement. TTC28
+/// `22:28225368 AAAGAAG>AAAG,A` reaches the annotator as `AAGAAG` -> `AAG` and
+/// came out `c.553-61775_553-61770delinsCTT`, where VEP writes
+/// `c.553-61772_553-61770del`: the same six bases, read as the three-base
+/// deletion they are.
+///
+/// Ensembl closes the gap twice over. `Parser.pm`'s `post_process_vfs` sends
+/// any record whose alleles differ in length through `minimise_alleles`, and
+/// `InputBuffer::split_variants` then turns it into one VariationFeature per
+/// ALT, each trimmed against the reference on its own and annotated separately
+/// before being rejoined for output; `_clip_alleles` in
+/// `TranscriptVariationAllele.pm` clips again while building the notation.
+/// Neither is gated on `--minimal`.
+///
+/// This clips where the description is built, which is the second of the two.
+/// A description carries its own coordinates, so getting it right needs nothing
+/// else to move: the consequence caller reads the differing region out of the
+/// untrimmed pair and agrees with VEP on every row of all three samples, and
+/// splitting the site into one variant per allele to match the first would put
+/// that agreement at risk for no field that is wrong today. What stays
+/// untrimmed is the *reported allele* - `AAG` here where VEP prints `-` - and
+/// the positional fields beside it, which describe the site's span.
+///
+/// The description was 801 of the 824 HGVSc rows disagreeing with real VEP
+/// 115.1 over a 1-in-200 sample of the GIAB HG002 callset.
+pub struct HgvsAllele {
+    /// Genomic span of the clipped change. An insertion leaves `start` one past
+    /// `end`, which is Ensembl's zero-length interval.
+    pub start: u64,
+    pub end: u64,
+    /// The clipped pair as the genome reads it.
+    pub genomic_ref: fastvep_core::Allele,
+    pub genomic_alt: fastvep_core::Allele,
+    /// The same pair as the transcript reads it.
+    pub hgvs_ref: fastvep_core::Allele,
+    pub hgvs_alt: fastvep_core::Allele,
+    /// cDNA span of the clipped change, for the caller that had one before the
+    /// clip. Both ends of a cDNA pair are exonic, so the bases clipped off
+    /// either end are exonic too and the span moves with them.
+    pub cdna: Option<(u64, u64)>,
+}
+
+/// How many bases a pair repeats at its front and at its back, clipping the
+/// front first or the back first.
+///
+/// The order decides the answer whenever one side runs out - `AAGAAG` against
+/// `AAG` is the front three bases or the back three, never both - and Ensembl
+/// takes the front of the sequence *as the transcript reads it*, which is the
+/// back of the genomic one on the reverse strand. Where neither side runs out
+/// the two orders agree: the leading run and the trailing run cannot overlap
+/// while a differing base separates them.
+fn shared_ends(r: &[u8], a: &[u8], back_first: bool) -> (usize, usize) {
+    let (mut front, mut back) = (0usize, 0usize);
+    let clip_front = |front: &mut usize, back: usize| {
+        while *front + back < r.len()
+            && *front + back < a.len()
+            && r[*front].eq_ignore_ascii_case(&a[*front])
+        {
+            *front += 1;
+        }
+    };
+    let clip_back = |back: &mut usize, front: usize| {
+        while front + *back < r.len()
+            && front + *back < a.len()
+            && r[r.len() - 1 - *back].eq_ignore_ascii_case(&a[a.len() - 1 - *back])
+        {
+            *back += 1;
+        }
+    };
+    if back_first {
+        clip_back(&mut back, front);
+        clip_front(&mut front, back);
+    } else {
+        clip_front(&mut front, back);
+        clip_back(&mut back, front);
+    }
+    (front, back)
+}
+
+/// `g.` for one allele, clipped of the bases its reference and alternate repeat
+/// at either end.
+///
+/// Ensembl clips here too, and in genomic orientation: `hgvs_genomic`
+/// (`VariationFeature.pm`, release/115) calls `trim_sequences` without a strand,
+/// so the front of the *sequence* gives way first whichever way the gene runs.
+/// The same allele of TTC28 `22:28225368 AAAGAAG>AAAG,A` that reaches
+/// [`hgvs_allele`] as a replacement was written `22:g.28225369_28225374delinsAAG`
+/// here, beside an HGVSc that had already been read as the deletion it is.
+///
+/// This does not close the field: Ensembl also applies the 3'-rule over the
+/// genome, which nothing here does, so `9:905488 C>CTGTGTGTG` stays
+/// `g.905488_905489insTGTGTGTG` where VEP writes `g.905507_905514dup`. Over a
+/// 1-in-200 sample of the GIAB HG002 callset the two disagree on 11 of 13,535
+/// records; clipping accounts for part of that and the genomic shift for the
+/// rest.
+pub fn hgvsg_clipped(
+    chrom: &str,
+    start: u64,
+    end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+) -> String {
+    use fastvep_core::Allele;
+    let (front, back) = match (genomic_ref, genomic_alt) {
+        (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, false),
+        _ => (0, 0),
+    };
+    // Nothing repeats, which is every ordinary variant: answer from the pair
+    // the caller already holds rather than building a copy of it to answer from.
+    if front + back == 0 {
+        return fastvep_hgvs::hgvsg(chrom, start, end, genomic_ref, genomic_alt);
+    }
+    let clipped = |bases: &[u8]| match &bases[front..bases.len() - back] {
+        [] => Allele::Deletion,
+        kept => Allele::Sequence(kept.to_vec()),
+    };
+    let (Allele::Sequence(r), Allele::Sequence(a)) = (genomic_ref, genomic_alt) else {
+        unreachable!("a non-zero clip needs two sequences")
+    };
+    fastvep_hgvs::hgvsg(
+        chrom,
+        start + front as u64,
+        end - back as u64,
+        &clipped(r),
+        &clipped(a),
+    )
+}
+
+/// Read one allele of a site as HGVS describes it. See [`HgvsAllele`].
+///
+/// `start`/`end` and the pair are genomic; `cdna` is the span the predictor
+/// mapped for the unclipped reference, low end first.
+pub fn hgvs_allele(
+    strand: fastvep_core::Strand,
+    start: u64,
+    end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+    cdna: Option<(u64, u64)>,
+) -> HgvsAllele {
+    use fastvep_core::{Allele, Strand};
+
+    let reverse = strand == Strand::Reverse;
+    let (front, back) = match (genomic_ref, genomic_alt) {
+        // Only a pair of sequences can repeat anything. A `-` on either side is
+        // already minimal, and `*` or a symbolic allele names no bases to
+        // compare.
+        (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, reverse),
+        _ => (0, 0),
+    };
+
+    let clipped = |bases: &[u8]| -> Allele {
+        match &bases[front..bases.len() - back] {
+            [] => Allele::Deletion,
+            kept => Allele::Sequence(kept.to_vec()),
+        }
+    };
+    let (genomic_ref, genomic_alt) = match (genomic_ref, genomic_alt) {
+        (Allele::Sequence(r), Allele::Sequence(a)) if front + back > 0 => (clipped(r), clipped(a)),
+        (r, a) => (r.clone(), a.clone()),
+    };
+    let (hgvs_ref, hgvs_alt) = if reverse {
+        (
+            crate::reverse_complement_allele(&genomic_ref),
+            crate::reverse_complement_allele(&genomic_alt),
+        )
+    } else {
+        (genomic_ref.clone(), genomic_alt.clone())
+    };
+
+    // cDNA runs in transcript order, so the front of the genomic pair is its
+    // low end only on the forward strand.
+    let (cdna_front, cdna_back) = if reverse {
+        (back, front)
+    } else {
+        (front, back)
+    };
+    HgvsAllele {
+        start: start + front as u64,
+        end: end - back as u64,
+        genomic_ref,
+        genomic_alt,
+        hgvs_ref,
+        hgvs_alt,
+        // Saturating because a clip is bounded by the shorter allele, not by
+        // the transcript: a change at cDNA position 1 whose back clips away can
+        // land at 0, which is not a position, and the renderer refuses it.
+        cdna: cdna.map(|(lo, hi)| (lo + cdna_front as u64, hi.saturating_sub(cdna_back as u64))),
+    }
+}
+
 /// Do two genomic positions of one transcript sit in the same exon or intron, or
 /// in an exon and an intron that touch?
 ///
@@ -628,7 +826,7 @@ pub fn hgvsc_shifted(
 mod tests {
     use super::*;
     use anyhow::{anyhow, Result};
-    use fastvep_core::Strand;
+    use fastvep_core::{Allele, Strand};
     use fastvep_genome::{Exon, Gene, Transcript};
 
     /// Minimal `SequenceProvider` over a 1-based reference string for one contig,
@@ -902,5 +1100,128 @@ mod tests {
             Some(40),
         );
         assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.20+1_21-1dup"));
+    }
+
+    /// The rule is "clip what the two repeat at either end", not "strip the one
+    /// base the VCF anchored on": what is left of `AAGAAG` -> `AAG` is a
+    /// deletion, and naming it a replacement invents three bases of change.
+    #[test]
+    fn a_pair_that_repeats_at_one_end_clips_down_to_the_change_it_is() {
+        let hv = hgvs_allele(
+            Strand::Forward,
+            100,
+            105,
+            &Allele::Sequence(b"AAGAAG".to_vec()),
+            &Allele::Sequence(b"AAG".to_vec()),
+            Some((10, 15)),
+        );
+        assert_eq!((hv.start, hv.end), (103, 105));
+        assert_eq!(hv.genomic_ref, Allele::Sequence(b"AAG".to_vec()));
+        assert_eq!(hv.genomic_alt, Allele::Deletion);
+        assert_eq!(hv.cdna, Some((13, 15)));
+    }
+
+    /// Which end is clipped when only one can be decides where the change
+    /// lands, and Ensembl clips the front of the sequence *as the transcript
+    /// reads it* - the far end of the genomic one on the reverse strand.
+    #[test]
+    fn the_strand_decides_which_repeated_end_gives_way() {
+        let call = |strand| {
+            let hv = hgvs_allele(
+                strand,
+                100,
+                102,
+                &Allele::Sequence(b"ACA".to_vec()),
+                &Allele::Sequence(b"A".to_vec()),
+                Some((10, 12)),
+            );
+            (hv.start, hv.end, hv.cdna)
+        };
+        // Forward: the front two bases match, so the back two go.
+        assert_eq!(call(Strand::Forward), (101, 102, Some((11, 12))));
+        // Reverse: `TGT` against `T` matches at its front, which is the genomic
+        // back, so the front two go instead - and cDNA, which runs the other
+        // way, still loses its first two.
+        assert_eq!(call(Strand::Reverse), (100, 101, Some((11, 12))));
+    }
+
+    /// A clip that empties the reference leaves Ensembl's zero-length interval,
+    /// `start` one past `end`, which is what every insertion downstream reads.
+    #[test]
+    fn a_pair_whose_reference_clips_away_becomes_an_insertion() {
+        let hv = hgvs_allele(
+            Strand::Forward,
+            100,
+            100,
+            &Allele::Sequence(b"T".to_vec()),
+            &Allele::Sequence(b"TT".to_vec()),
+            Some((10, 10)),
+        );
+        assert_eq!((hv.start, hv.end), (101, 100));
+        assert_eq!(hv.genomic_ref, Allele::Deletion);
+        assert_eq!(hv.genomic_alt, Allele::Sequence(b"T".to_vec()));
+        assert!(is_shiftable_indel(&hv.hgvs_ref, &hv.hgvs_alt));
+        assert_eq!(hv.cdna, Some((11, 10)));
+    }
+
+    /// Both ends may repeat at once. An equal-length pair clips to the same core
+    /// whichever end goes first, so the strand cannot move it.
+    #[test]
+    fn a_pair_repeating_at_both_ends_clips_to_the_same_core_either_way() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let hv = hgvs_allele(
+                strand,
+                100,
+                103,
+                &Allele::Sequence(b"ACGT".to_vec()),
+                &Allele::Sequence(b"ATGT".to_vec()),
+                Some((10, 13)),
+            );
+            assert_eq!((hv.start, hv.end), (101, 101));
+            assert_eq!(hv.genomic_ref, Allele::Sequence(b"C".to_vec()));
+            assert_eq!(hv.genomic_alt, Allele::Sequence(b"T".to_vec()));
+        }
+    }
+
+    /// Nothing repeats, nothing moves. This is every ordinary variant.
+    #[test]
+    fn a_pair_that_repeats_nothing_is_left_where_it_was() {
+        for (r, a) in [
+            (
+                Allele::Sequence(b"A".to_vec()),
+                Allele::Sequence(b"G".to_vec()),
+            ),
+            (
+                Allele::Sequence(b"AC".to_vec()),
+                Allele::Sequence(b"GT".to_vec()),
+            ),
+            (Allele::Sequence(b"AC".to_vec()), Allele::Deletion),
+            (Allele::Deletion, Allele::Sequence(b"AC".to_vec())),
+            (Allele::Sequence(b"A".to_vec()), Allele::Missing),
+        ] {
+            let hv = hgvs_allele(Strand::Forward, 100, 101, &r, &a, Some((10, 11)));
+            assert_eq!((hv.start, hv.end, hv.cdna), (100, 101, Some((10, 11))));
+            assert_eq!((hv.genomic_ref, hv.genomic_alt), (r, a));
+        }
+    }
+
+    /// The reverse-strand pair is complemented as well as clipped, and the two
+    /// orientations have to agree about which bases are left.
+    #[test]
+    fn the_transcript_sees_the_clipped_pair_complemented() {
+        let hv = hgvs_allele(
+            Strand::Reverse,
+            100,
+            105,
+            &Allele::Sequence(b"AAGAAG".to_vec()),
+            &Allele::Sequence(b"AAG".to_vec()),
+            None,
+        );
+        // `CTTCTT` against `CTT` repeats at its front, and the transcript's
+        // front is the genome's back, so the last three bases go.
+        assert_eq!((hv.start, hv.end), (100, 102));
+        assert_eq!(hv.genomic_ref, Allele::Sequence(b"AAG".to_vec()));
+        assert_eq!(hv.hgvs_ref, Allele::Sequence(b"CTT".to_vec()));
+        assert_eq!(hv.hgvs_alt, Allele::Deletion);
     }
 }
