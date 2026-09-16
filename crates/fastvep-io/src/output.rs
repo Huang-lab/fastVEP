@@ -1661,12 +1661,42 @@ fn collect_clinvar_protein_variants(parsed: &Value) -> String {
             let ref_aa = v.get("refAa").map(json_leaf_to_string)?;
             let alt_aa = v.get("altAa").map(json_leaf_to_string)?;
             let sig = v.get("sig").map(json_leaf_to_string).unwrap_or_default();
-            Some(escape_vcf_subfield(&format!(
-                "{pos}:{ref_aa}>{alt_aa}:{sig}"
-            )))
+            // Escape the four leaves, then join with literal `:` and `>`. The
+            // whole composed string used to go through the escaper, which
+            // encoded the delimiters this function had just written itself -
+            // `175%3AR>H%3APathogenic` for a record documented as
+            // `175:R>H:Pathogenic`.
+            Some(format!(
+                "{}:{}>{}:{}",
+                escape_clinvar_protein_leaf(&pos),
+                escape_clinvar_protein_leaf(&ref_aa),
+                escape_clinvar_protein_leaf(&alt_aa),
+                escape_clinvar_protein_leaf(&sig),
+            ))
         })
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// Escape one leaf of a `pos:ref>alt:sig` record.
+///
+/// `:` and `>` are this field's own delimiters and no other `FV_*` field uses
+/// them, so [`escape_vcf_subfield`] leaves both alone and this adds them back
+/// for the values that sit between them. Running the escaper first keeps the
+/// result exactly one decode pass deep: a literal `%` is already `%25` by the
+/// time these two are appended.
+///
+/// No payload can reach here containing either character today - `pos` is a
+/// number, `refAa` / `altAa` are single residues, and `sig` is one of the four
+/// `&'static str` constants `normalise_significance` returns. This is what
+/// keeps that true if a fifth term or a three-letter residue code ever
+/// arrives, rather than silently splitting a record in two.
+fn escape_clinvar_protein_leaf(value: &str) -> String {
+    let escaped = escape_vcf_subfield(value);
+    if escaped.contains([':', '>']) {
+        return escaped.replace(':', "%3A").replace('>', "%3E");
+    }
+    escaped
 }
 
 fn format_clinvar_protein_projection(
@@ -1753,11 +1783,35 @@ fn json_leaf_to_string(value: &Value) -> String {
     }
 }
 
+/// Percent-encode the characters that would otherwise be read as structure
+/// inside an `FV_*` pipe field.
+///
+/// The set is exactly "illegal, or one of our own delimiters", and nothing
+/// else. VCF 4.3 restricts only three characters inside an INFO value
+/// (`;` and `=` are not permitted, `,` only as a list delimiter); `|` and `&`
+/// are the delimiters these fields are built from; `%` is the escape
+/// introducer, so it has to be encoded for a single decode pass to be exact;
+/// CR / LF / TAB would end the value or the record.
+///
+/// Three characters used to be encoded here and are not any more, because
+/// none of them is reserved and encoding them only cost legibility - `#123`
+/// reported an `FV_CLINVAR_PROTEIN` value with sixty `%3A` in it. Measured
+/// against Ensembl VEP 115.1 with a `--custom` BED whose names carried each
+/// one: VEP writes `:` and `"` through literally, and turns a space into `_`.
+/// fastVEP's own CSQ writer already emits `:` literally too (every HGVSc has
+/// one), so encoding it here contradicted the same record's CSQ column.
+///
+/// Space is the one that stays encoded, and deliberately: the spec allows a
+/// literal space in a value, but a whitespace-free INFO column survives the
+/// `awk`/`cut -d' '` pipelines these files get read by, and `%20` is
+/// reversible where VEP's `_` is not - `Breast_cancer` cannot be told back
+/// from `Breast cancer`. The reversibility is a documented promise
+/// (docs/SUPPLEMENTARY_ANNOTATIONS.md), so it outranks matching VEP on a
+/// field VEP does not emit.
 fn escape_vcf_subfield(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for c in value.chars() {
         match c {
-            ':' => escaped.push_str("%3A"),
             ';' => escaped.push_str("%3B"),
             '=' => escaped.push_str("%3D"),
             '%' => escaped.push_str("%25"),
@@ -1766,7 +1820,6 @@ fn escape_vcf_subfield(value: &str) -> String {
             '\n' => escaped.push_str("%0A"),
             '\t' => escaped.push_str("%09"),
             ' ' => escaped.push_str("%20"),
-            '"' => escaped.push_str("%22"),
             '|' => escaped.push_str("%7C"),
             '&' => escaped.push_str("%26"),
             _ => escaped.push(c),
@@ -2519,6 +2572,61 @@ mod tests {
     }
 
     #[test]
+    fn test_escape_vcf_subfield_encodes_only_structure() {
+        // Illegal in an INFO value, or one of the pipe field's own delimiters.
+        assert_eq!(escape_vcf_subfield("a;b"), "a%3Bb");
+        assert_eq!(escape_vcf_subfield("a=b"), "a%3Db");
+        assert_eq!(escape_vcf_subfield("a,b"), "a%2Cb");
+        assert_eq!(escape_vcf_subfield("a|b"), "a%7Cb");
+        assert_eq!(escape_vcf_subfield("a&b"), "a%26b");
+        assert_eq!(escape_vcf_subfield("a%b"), "a%25b");
+        assert_eq!(escape_vcf_subfield("a\tb"), "a%09b");
+
+        // Reserved by nothing: VEP 115.1 writes both through literally, and
+        // fastVEP's own CSQ column carries a `:` in every HGVSc. #123.
+        assert_eq!(
+            escape_vcf_subfield("NM_001159702.3:c.-101+5113dup"),
+            "NM_001159702.3:c.-101+5113dup"
+        );
+        assert_eq!(escape_vcf_subfield("a\"b"), "a\"b");
+
+        // Legal unencoded, kept encoded on purpose: an INFO column with no
+        // whitespace in it survives being cut on spaces, and %20 is
+        // reversible where VEP's `_` substitution is not.
+        assert_eq!(escape_vcf_subfield("Breast cancer"), "Breast%20cancer");
+    }
+
+    #[test]
+    fn test_clinvar_protein_record_keeps_its_delimiters_literal() {
+        let parsed: serde_json::Value = serde_json::from_str(
+            r#"{"proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"Pathogenic"},
+                                   {"pos":248,"refAa":"R","altAa":"W","sig":"Likely_pathogenic"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            collect_clinvar_protein_variants(&parsed),
+            "175:R>H:Pathogenic&248:R>W:Likely_pathogenic"
+        );
+    }
+
+    #[test]
+    fn test_clinvar_protein_leaf_cannot_forge_a_delimiter() {
+        // No source reaches this today - `sig` is one of four constants and the
+        // residues are single letters. If one ever does, the record still
+        // splits into the three leaves a reader expects rather than five.
+        let parsed: serde_json::Value = serde_json::from_str(
+            r#"{"proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"odd:term>here"}]}"#,
+        )
+        .unwrap();
+        let rendered = collect_clinvar_protein_variants(&parsed);
+        assert_eq!(rendered, "175:R>H:odd%3Aterm%3Ehere");
+
+        let leaves: Vec<&str> = rendered.split(':').collect();
+        assert_eq!(leaves, vec!["175", "R>H", "odd%3Aterm%3Ehere"]);
+        assert_eq!(leaves[1].split('>').count(), 2);
+    }
+
+    #[test]
     fn test_csq_header() {
         let header = csq_header_line(&["Allele", "Consequence"]);
         assert!(header.contains("Format: Allele|Consequence"));
@@ -2916,12 +3024,12 @@ mod tests {
             "VCF INFO must not contain JSON quotes: {info}"
         );
         assert!(info.contains("SpliceAI=G|GENE%7C1|0.01|0.00|0.85|0.00|5|-28|2|-13"));
-        assert!(info.contains("FV_CLINVAR=G|Pathogenic&Likely_pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast%2Ccancer&Ovarian%7Ccancer|SNV|SO%3A0001483"));
+        assert!(info.contains("FV_CLINVAR=G|Pathogenic&Likely_pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast%2Ccancer&Ovarian%7Ccancer|SNV|SO:0001483"));
         assert!(info.contains("FV_PHYLOP=G|3.14"));
         assert!(info.contains("FV_REVEL=G|0.8123"));
         assert!(info.contains("FV_PRIMATEAI=G|0.4567"));
         assert!(info.contains("FV_OMIM=GENE1|113705|Breast%20cancer&Ovarian%2Ccancer"));
-        assert!(info.contains("FV_CLINVAR_PROTEIN=GENE1|175%3AR>H%3APathogenic"));
+        assert!(info.contains("FV_CLINVAR_PROTEIN=GENE1|175:R>H:Pathogenic"));
     }
 
     #[test]
@@ -3245,11 +3353,11 @@ mod tests {
             .get("FV_CLINVAR_PROTEIN")
             .expect("FV_CLINVAR_PROTEIN should be present even for array payload");
         assert!(
-            cvp.contains("175%3AR>H%3APathogenic"),
+            cvp.contains("175:R>H:Pathogenic"),
             "FV_CLINVAR_PROTEIN should carry first proteinVariants entry: {cvp}"
         );
         assert!(
-            cvp.contains("248%3AR>W%3APathogenic"),
+            cvp.contains("248:R>W:Pathogenic"),
             "FV_CLINVAR_PROTEIN should carry second proteinVariants entry: {cvp}"
         );
 
@@ -3268,7 +3376,7 @@ mod tests {
             "tab FV_OMIM cell should carry both records: {fv_omim}"
         );
         assert!(
-            fv_cvp.contains("175%3AR>H") && fv_cvp.contains("248%3AR>W"),
+            fv_cvp.contains("175:R>H") && fv_cvp.contains("248:R>W"),
             "tab FV_CLINVAR_PROTEIN cell should carry both proteinVariants: {fv_cvp}"
         );
     }
