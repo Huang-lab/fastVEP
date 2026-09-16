@@ -326,9 +326,10 @@ is not made here.
 
 ### HGVSg
 
-`HGVSg` is not in the CSQ field set, so `validation/compare_rows.py` does not rate it; it was
-measured separately against the same HG002 sample, run with `--hgvsg` on VEP's side and JSON
-output on fastVEP's, comparing the set of `g.` descriptions each tool writes per record.
+`HGVSg` is not in the CSQ field set, so `validation/compare_rows.py` does not rate it and
+`run_divergence.sh` does not produce the number below.
+It was measured separately against the same HG002 sample: VEP run with `--hgvsg` added, fastVEP
+with `--output-format json`, comparing the set of `g.` descriptions each writes per record.
 They agree on **13,525 of 13,535 records (99.926 %)**.
 
 Every one of the ten is the same gap: Ensembl applies the 3'-rule over the genome and fastVEP does
