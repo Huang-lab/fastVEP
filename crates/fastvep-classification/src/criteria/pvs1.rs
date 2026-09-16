@@ -118,7 +118,16 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
     // rather than discarding genuine LOF evidence. Only when there is no
     // coding-null consequence is PVS1 dropped entirely (defer to SpliceAI/PP3).
     if matches!(kind, NullKind::CanonicalSplice) {
-        if let Some(offset) = input.intronic_offset {
+        // The offset at the change's most 3' position, deliberately, and not
+        // the one at the position it sits at. On a donor the 3' end is the
+        // furthest into the intron the change can be written, so `> 2` there
+        // proves some alignment of it leaves `+1` and `+2` alone - and every
+        // alignment edits the sequence the same way, so the `GT` this track
+        // assumes is destroyed is intact. PTEN `c.253+4_253+7del` is
+        // `splice_donor_variant` in both tools and still opens the intron
+        // `GTATGA` afterwards. See
+        // `ClassificationInput::shifted_intronic_offset`.
+        if let Some(offset) = input.shifted_intronic_offset {
             details.insert("intronic_offset".into(), serde_json::json!(offset));
             if offset.abs() > 2 {
                 match NullKind::detect_non_splice(&input.consequences) {
@@ -608,9 +617,11 @@ mod tests {
 
     #[test]
     fn test_pvs1_canonical_splice_deep_offset_not_applicable() {
-        // splice_donor/acceptor consequence but the HGVS offset is beyond ±2
-        // (e.g. an indel spanning into the intron, c.4001+12_4001+15del). PVS1
-        // must not fire — splicing signal is left to SpliceAI/PP3.
+        // splice_donor/acceptor consequence but the offset the HGVSc shows is
+        // beyond ±2 (e.g. an indel spanning into the intron,
+        // c.4001+12_4001+15del). PVS1 must not fire — splicing signal is left
+        // to SpliceAI/PP3. The gate reads the rendered offset on purpose; see
+        // `ClassificationInput::hgvsc_intronic_offset`.
         let mut input = make_input(
             vec![Consequence::SpliceDonorVariant],
             Some(GnomadGeneData {
@@ -620,7 +631,7 @@ mod tests {
             }),
             None,
         );
-        input.intronic_offset = Some(12);
+        input.shifted_intronic_offset = Some(12);
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(!r.met);
         assert!(r.summary.contains("canonical ±1/±2"));
@@ -638,7 +649,7 @@ mod tests {
             }),
             None,
         );
-        input.intronic_offset = Some(-2);
+        input.shifted_intronic_offset = Some(-2);
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(r.met);
         assert_eq!(r.strength, EvidenceStrength::VeryStrong);
@@ -661,7 +672,7 @@ mod tests {
             }),
             None,
         );
-        input.intronic_offset = Some(7); // outside canonical ±1/±2
+        input.shifted_intronic_offset = Some(7); // outside canonical ±1/±2
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(
             r.met,

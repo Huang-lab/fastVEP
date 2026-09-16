@@ -1,4 +1,4 @@
-use fastvep_core::{is_canonical_dinucleotide_offset, parse_intronic_offset};
+use fastvep_core::is_canonical_dinucleotide_offset;
 use fastvep_core::{Consequence, Impact};
 use fastvep_core::{GeneAnnotation, SupplementaryAnnotation};
 use serde::Deserialize;
@@ -546,7 +546,7 @@ pub struct ClinvarSpliceVariant {
 pub fn same_splice_position_pathogenic(
     consequences: &[Consequence],
     gene_annotations: &[&GeneAnnotation],
-    hgvs_c: Option<&str>,
+    intron_offset: Option<i64>,
     pos: u64,
     ref_allele: &str,
     alt_allele: &str,
@@ -569,7 +569,33 @@ pub fn same_splice_position_pathogenic(
         return None;
     }
 
-    let own_offset = hgvs_c.and_then(parse_intronic_offset);
+    // The offset says which side of the intron the variant is on. It used to be
+    // read off the HGVSc, which is a *display* form, 3'-shifted: a deletion of
+    // the acceptor's own `G` is written `c.1686-1del` where the shift has
+    // nowhere to go and `c.1686del` where the first exonic base repeats it, and
+    // the second spelling carries no offset at all. 14 canonical acceptor
+    // deletions of the ClinVar 2-star+ set stopped matching the other base of
+    // their own dinucleotide the moment the 3'-shift began crossing splice
+    // sites - KCNQ1, NF1, MSH2, MLH1, BRCA2, RB1, TSC2, APC among them, all
+    // ClinVar Pathogenic - and every one fell from Pathogenic to Likely
+    // pathogenic. `intron_offset` is measured against the transcript from the
+    // unshifted position instead, so there is nothing to lose.
+    //
+    // The consequence term is the backstop for a caller with no transcript
+    // geometry to hand: `splice_acceptor_variant` is decided from the same
+    // unshifted position and supplies the sign on its own.
+    let own_offset = intron_offset
+        .filter(|o| is_canonical_dinucleotide_offset(*o))
+        .or_else(|| {
+            let acceptor = consequences.contains(&Consequence::SpliceAcceptorVariant);
+            let donor = consequences.contains(&Consequence::SpliceDonorVariant);
+            // A change reaching both sides of one intron names neither.
+            match (acceptor, donor) {
+                (true, false) => Some(-1),
+                (false, true) => Some(1),
+                _ => None,
+            }
+        });
     let met = cpd.splice_positions.iter().any(|v| {
         v.sig.eq_ignore_ascii_case("Pathogenic")
             && !is_same_allele(v, pos, ref_allele, alt_allele)
@@ -783,7 +809,38 @@ pub struct ClassificationInput {
     /// BP7 may extend to intronic variants outside the standard splice region:
     /// donor-side `offset ≥ 7` or acceptor-side `offset ≤ -21`. `None` for
     /// non-intronic variants or when the pipeline can't compute it.
+    ///
+    /// Measured against the transcript from the unshifted position, which is
+    /// also where the consequence terms are decided, so the two agree: a
+    /// variant this calls `+8` does not arrive carrying
+    /// `splice_donor_region_variant`. See [`Self::hgvsc_intronic_offset`] for
+    /// the number the HGVSc shows, which is a different one.
     pub intronic_offset: Option<i64>,
+    /// The same distance measured at the most 3' position HGVS gives the
+    /// change, which is where it is *numbered* rather than where it is.
+    ///
+    /// An indel in a repeat can be written at any of several positions, all of
+    /// which produce the same edited sequence. On a donor the 3' end of that
+    /// range is the one furthest into the intron, so an offset past `+2` there
+    /// **proves the canonical `GT` survives**: some alignment of the change
+    /// leaves `+1` and `+2` alone, and every alignment edits the sequence the
+    /// same way. PVS1's splice track assumes that dinucleotide is destroyed, so
+    /// that is exactly when it must stand down - and it is why the number is
+    /// worth carrying beside [`Self::intronic_offset`] rather than collapsing
+    /// the two.
+    ///
+    /// PTEN `10:87931087 GAGGT>G` is the shape: `splice_donor_variant` in both
+    /// tools, `c.253+4_253+7del` in both, and the intron still opens `GTATGA`
+    /// after the edit. [`Self::intronic_offset`] reads `+1` there, because that
+    /// is where the change sits and where the consequence term was decided, and
+    /// answering PVS1's question with it turns the gate into a tautology: 97
+    /// splice-donor variants of the ClinVar 2-star+ set collect PVS1 that do
+    /// not today, 47 ClinVar Pathogenic and 6 ClinVar Benign.
+    ///
+    /// The shift runs toward the exon on an acceptor, so the same number means
+    /// the nearest approach there and the gate does correspondingly little.
+    /// That asymmetry is HGVS's.
+    pub shifted_intronic_offset: Option<i64>,
     /// Proband genotype information (from trio VCF)
     pub proband_genotype: Option<GenotypeInfo>,
     /// Mother genotype information (from trio VCF)
@@ -824,6 +881,8 @@ pub fn extract_classification_input(
     amino_acids: Option<&(String, String)>,
     protein_position: Option<u64>,
     hgvs_c: Option<&str>,
+    intron_offset: Option<i64>,
+    shifted_intronic_offset: Option<i64>,
     exon: Option<(u32, u32)>,
     protein_length: Option<u64>,
     escapes_nmd: Option<bool>,
@@ -946,9 +1005,18 @@ pub fn extract_classification_input(
     // already computes (exon rank/total + HGVS c. notation). ────────────────
     // `is_last_exon`: the variant sits in the 3'-most exon (rank == total).
     let is_last_exon = exon.and_then(|(rank, total)| (total > 0).then_some(rank == total));
-    // `intronic_offset`: distance from the nearest exon boundary, parsed from
-    // the HGVS `+N`/`-N` token. None for purely exonic variants.
-    let intronic_offset = hgvs_c.and_then(parse_intronic_offset);
+    // `intronic_offset`: signed distance from the nearest exon boundary, `None`
+    // for a change that reaches no intronic base.
+    //
+    // Measured against the transcript by the annotation pass, not parsed out of
+    // the HGVSc. BP7's deep-intronic extension is the criterion that reads it,
+    // and the string it used to read is 3'-shifted: POLE
+    // `12:132659279 T>TGGGGGGAGCCCTCACCTCTCCGTGAC` inserts at `c.3275+15` and
+    // is written as the duplication it is, `c.3265_3275+15dup`, whose span
+    // starts in the exon - so the parsed offset read 1 where the change sits at
+    // 15, and BP7 declined.
+    let intronic_offset = intron_offset;
+
     // Both NMD signals are carried, and PVS1 picks between them per config.
     // The last-exon proxy is the historical one; the 50-nt measurement is the
     // rule Abou Tayoun 2018 actually states. They disagree only for a PTC in
@@ -1023,6 +1091,7 @@ pub fn extract_classification_input(
         // stays None (BP7 exon-edge exclusion falls back to legacy behavior).
         at_exon_edge: None,
         intronic_offset,
+        shifted_intronic_offset,
         proband_genotype,
         mother_genotype,
         father_genotype,
@@ -1203,6 +1272,8 @@ mod tests {
             None,
             protein_position,
             None,
+            None, // intron_offset: these unit tests are not splice-site cases
+            None, // shifted_intronic_offset: likewise
             exon,
             protein_length,
             escapes_nmd,
@@ -1317,7 +1388,7 @@ mod tests {
 
     fn splice_ps1(
         index: Option<&GeneAnnotation>,
-        hgvs: Option<&str>,
+        offset: Option<i64>,
         pos: u64,
         r: &str,
         a: &str,
@@ -1326,7 +1397,7 @@ mod tests {
         same_splice_position_pathogenic(
             &[Consequence::SpliceAcceptorVariant],
             &anns,
-            hgvs,
+            offset,
             pos,
             r,
             a,
@@ -1336,10 +1407,7 @@ mod tests {
     #[test]
     fn test_ps1_splice_fires_on_a_different_allele_at_the_same_position() {
         let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#);
-        assert_eq!(
-            splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"),
-            Some(true)
-        );
+        assert_eq!(splice_ps1(Some(&idx), Some(-2), 100, "A", "T"), Some(true));
     }
 
     #[test]
@@ -1348,10 +1416,7 @@ mod tests {
         // Pathogenic finds its own entry. A comparison variant is by
         // definition another variant, and firing off yourself is circular.
         let idx = splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"}"#);
-        assert_eq!(
-            splice_ps1(Some(&idx), Some("c.376-2A>G"), 100, "A", "G"),
-            Some(false)
-        );
+        assert_eq!(splice_ps1(Some(&idx), Some(-2), 100, "A", "G"), Some(false));
     }
 
     #[test]
@@ -1359,10 +1424,7 @@ mod tests {
         // c.376-1 and c.376-2 are the two bases of one acceptor, genomically
         // adjacent on either strand.
         let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#);
-        assert_eq!(
-            splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"),
-            Some(true)
-        );
+        assert_eq!(splice_ps1(Some(&idx), Some(-2), 100, "A", "T"), Some(true));
     }
 
     #[test]
@@ -1370,10 +1432,7 @@ mod tests {
         // Opposite-signed offsets are different splice sites even if the
         // coordinates were somehow adjacent.
         let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":1,"sig":"Pathogenic"}"#);
-        assert_eq!(
-            splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"),
-            Some(false)
-        );
+        assert_eq!(splice_ps1(Some(&idx), Some(-2), 100, "A", "T"), Some(false));
     }
 
     #[test]
@@ -1383,15 +1442,12 @@ mod tests {
         // to reach for its clinical evidence to be borrowable unchecked.
         let idx =
             splice_index(r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Likely_pathogenic"}"#);
-        assert_eq!(
-            splice_ps1(Some(&idx), Some("c.376-2A>T"), 100, "A", "T"),
-            Some(false)
-        );
+        assert_eq!(splice_ps1(Some(&idx), Some(-2), 100, "A", "T"), Some(false));
     }
 
     #[test]
     fn test_ps1_splice_without_an_index_is_unknown_not_absent() {
-        assert_eq!(splice_ps1(None, Some("c.376-2A>T"), 100, "A", "T"), None);
+        assert_eq!(splice_ps1(None, Some(-2), 100, "A", "T"), None);
 
         // A record built before the splice pass carries no `spliceIndexed`,
         // and its silence says nothing about the gene.
@@ -1400,10 +1456,7 @@ mod tests {
             json_key: "clinvar_protein".to_string(),
             json_string: r#"{"benignIndexed":true,"proteinVariants":[]}"#.to_string(),
         };
-        assert_eq!(
-            splice_ps1(Some(&old), Some("c.376-2A>T"), 100, "A", "T"),
-            None
-        );
+        assert_eq!(splice_ps1(Some(&old), Some(-2), 100, "A", "T"), None);
     }
 
     #[test]
@@ -1414,7 +1467,7 @@ mod tests {
             same_splice_position_pathogenic(
                 &[Consequence::MissenseVariant],
                 &anns,
-                Some("c.524G>A"),
+                None,
                 100,
                 "A",
                 "T"
@@ -1424,15 +1477,47 @@ mod tests {
     }
 
     #[test]
-    fn test_ps1_splice_without_hgvs_still_matches_the_same_position() {
-        // No HGVS means no offset for the variant being classified, so the
-        // adjacent base cannot be reasoned about - but the same position is
-        // the same dinucleotide whatever the offset is.
+    fn test_ps1_splice_reads_the_side_off_the_term_when_it_has_no_offset() {
+        // A caller with no transcript geometry to hand supplies no offset, and
+        // the side still has to come from somewhere. `splice_acceptor_variant`
+        // already means "on the acceptor dinucleotide", so the term settles it.
         let idx = splice_index(
             r#"{"pos":100,"ref":"A","alt":"G","off":-2,"sig":"Pathogenic"},
                {"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#,
         );
+        // The same position is the same dinucleotide whatever the offset is.
         assert_eq!(splice_ps1(Some(&idx), None, 100, "A", "T"), Some(true));
-        assert_eq!(splice_ps1(Some(&idx), None, 102, "C", "T"), Some(false));
+        // The adjacent base of the same dinucleotide, reached through the term.
+        assert_eq!(splice_ps1(Some(&idx), None, 102, "C", "T"), Some(true));
+        // Two bases away is a different position on either reading.
+        assert_eq!(splice_ps1(Some(&idx), None, 103, "C", "T"), Some(false));
+    }
+
+    /// An offset outside the canonical dinucleotide is not a side: it belongs to
+    /// a variant the index cannot pair, and the term has to answer instead.
+    #[test]
+    fn test_ps1_splice_ignores_an_offset_off_the_dinucleotide() {
+        let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#);
+        assert_eq!(splice_ps1(Some(&idx), Some(-30), 102, "C", "T"), Some(true));
+    }
+
+    #[test]
+    fn test_ps1_splice_declines_when_the_variant_reaches_both_sides() {
+        // A change covering a donor and an acceptor has no side, so nothing
+        // supplies the sign and only an exact position match can fire.
+        let idx = splice_index(r#"{"pos":101,"ref":"G","alt":"A","off":-1,"sig":"Pathogenic"}"#);
+        let anns: Vec<&GeneAnnotation> = Some(&idx).into_iter().collect();
+        let both = [
+            Consequence::SpliceAcceptorVariant,
+            Consequence::SpliceDonorVariant,
+        ];
+        assert_eq!(
+            same_splice_position_pathogenic(&both, &anns, None, 102, "C", "T"),
+            Some(false)
+        );
+        assert_eq!(
+            same_splice_position_pathogenic(&both, &anns, None, 101, "C", "T"),
+            Some(true)
+        );
     }
 }

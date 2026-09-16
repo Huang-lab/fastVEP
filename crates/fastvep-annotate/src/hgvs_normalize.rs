@@ -1,7 +1,7 @@
-//! The intronic HGVSc path: 3'-shifting, and naming a shifted insertion as the
-//! duplication it is.
+//! The HGVSc normalisation path: 3'-shifting an indel over the genome, and
+//! naming a shifted insertion as the duplication it is.
 //!
-//! [`hgvsc_intronic_shifted`] is the entry point, and both annotation loops call
+//! [`hgvsc_shifted`] is the entry point, and both annotation loops call
 //! it. They used to carry a copy each - the CLI's shifted, the library's did
 //! not - so the same intronic duplication came out normalised from
 //! `fastvep annotate` and unnormalised from the server.
@@ -155,18 +155,27 @@ impl<'a> RefWindow<'a> {
     }
 }
 
-/// 3' shift an intronic indel along the transcript direction.
+/// 3' shift an indel along the transcript direction, over the reference.
 ///
-/// HGVS requires variants to be described at the most 3' position.
-/// For intronic deletions and insertions/dups in repetitive regions,
-/// the position must be shifted toward the 3' end of the transcript.
+/// HGVS describes a change at the most 3' position its reference sequence
+/// allows, and the reference a `c.` description is numbered against is the
+/// gene's genomic sequence - introns included. So the walk is over the genome in
+/// transcript orientation, and `bound_start`/`bound_end` are the caller's
+/// limits on it: in production the transcript's own extent, so a change can
+/// travel out of the intron it was written in and into the exon beyond, which is
+/// where HGVS puts it and where VEP writes it.
+///
+/// Bounding the walk by the *intron* instead was worth 529 of the 602 HGVSc rows
+/// disagreeing with real VEP 115.1 over a 6,600-variant ClinVar sample: a
+/// deletion of the last intronic base came out `c.1792-1del` where the exonic
+/// base it repeats makes it `c.1793del`.
 ///
 /// Returns the shifted genomic start and end positions.
 // Each argument is an independent coordinate, allele or flag with no
 // natural grouping; bundling them into a struct would only move the
 // argument list to the call site.
 #[allow(clippy::too_many_arguments)]
-pub fn three_prime_shift_intronic(
+pub fn three_prime_shift_genomic(
     seq_provider: &dyn SequenceProvider,
     chrom: &str,
     start: u64,
@@ -174,8 +183,8 @@ pub fn three_prime_shift_intronic(
     ref_allele: &fastvep_core::Allele,
     alt_allele: &fastvep_core::Allele,
     strand: fastvep_core::Strand,
-    intron_genomic_start: u64,
-    intron_genomic_end: u64,
+    bound_start: u64,
+    bound_end: u64,
 ) -> (u64, u64) {
     use fastvep_core::Allele;
 
@@ -193,7 +202,7 @@ pub fn three_prime_shift_intronic(
             match strand {
                 fastvep_core::Strand::Forward => loop {
                     let next = e + 1;
-                    if next > intron_genomic_end {
+                    if next > bound_end {
                         break;
                     }
                     match (ahead.base(next), behind.base(s)) {
@@ -205,7 +214,7 @@ pub fn three_prime_shift_intronic(
                     }
                 },
                 fastvep_core::Strand::Reverse => loop {
-                    if s == 0 || s - 1 < intron_genomic_start {
+                    if s == 0 || s - 1 < bound_start {
                         break;
                     }
                     match (ahead.base(s - 1), behind.base(e)) {
@@ -228,7 +237,7 @@ pub fn three_prime_shift_intronic(
             let mut window = RefWindow::new(seq_provider, chrom);
             match strand {
                 fastvep_core::Strand::Forward => loop {
-                    if pos > intron_genomic_end {
+                    if pos > bound_end {
                         break;
                     }
                     let expected = ins_bases[shift % ins_len].to_ascii_uppercase();
@@ -241,7 +250,7 @@ pub fn three_prime_shift_intronic(
                     }
                 },
                 fastvep_core::Strand::Reverse => loop {
-                    if pos == 0 || pos - 1 < intron_genomic_start {
+                    if pos == 0 || pos - 1 < bound_start {
                         break;
                     }
                     let expected = ins_bases[ins_len - 1 - (shift % ins_len)].to_ascii_uppercase();
@@ -268,12 +277,12 @@ pub fn three_prime_shift_intronic(
 /// shifted, so the block is compared against that rotated form and not against
 /// the string the VCF carried.
 ///
-/// `shifted_start` follows the same convention [`three_prime_shift_intronic`]
+/// `shifted_start` follows the same convention [`three_prime_shift_genomic`]
 /// returns: the insertion sits between genomic `shifted_start - 1` and
 /// `shifted_start`.
 ///
 /// The dup anchor used to be derived by re-shifting the *unshifted* insertion
-/// point through `three_prime_shift_intronic` over a single position, which
+/// point through `three_prime_shift_genomic` over a single position, which
 /// walks while the next base repeats the current one - a homopolymer test. A
 /// `TG` insertion in a `TGTGTG…` repeat therefore never moved at all and named
 /// the copy 16 bases 5' of the one HGVS asks for. That accounted for 1,390 of
@@ -328,6 +337,342 @@ pub fn intronic_dup_span(
         .then_some((lo, hi))
 }
 
+/// Is this change one the HGVS 3'-rule can move - a pure deletion or a pure
+/// insertion?
+///
+/// A substitution has nowhere to go, and neither tool shifts a delins, so the
+/// callers use this to decide what routes through [`hgvsc_shifted`].
+pub fn is_shiftable_indel(
+    hgvs_ref: &fastvep_core::Allele,
+    hgvs_alt: &fastvep_core::Allele,
+) -> bool {
+    use fastvep_core::Allele;
+    matches!(
+        (hgvs_ref, hgvs_alt),
+        (Allele::Sequence(_), Allele::Deletion) | (Allele::Deletion, Allele::Sequence(_))
+    )
+}
+
+/// One allele of a site, clipped of the bases its reference and alternate
+/// repeat at either end and turned to face the transcript.
+///
+/// A VCF record carries one position for the whole site, so a multi-allelic
+/// indel can only have the one base *every* allele shares stripped from it -
+/// that is what the reader does, and it is what Ensembl's parser does too
+/// (`Parser/VCF.pm`, release/115: `if(scalar keys %first_bases == 1)`). An
+/// allele that is a clean deletion therefore arrives as a replacement. TTC28
+/// `22:28225368 AAAGAAG>AAAG,A` reaches the annotator as `AAGAAG` -> `AAG` and
+/// came out `c.553-61775_553-61770delinsCTT`, where VEP writes
+/// `c.553-61772_553-61770del`: the same six bases, read as the three-base
+/// deletion they are.
+///
+/// Ensembl closes the gap twice over. `Parser.pm`'s `post_process_vfs` sends
+/// any record whose alleles differ in length through `minimise_alleles`, and
+/// `InputBuffer::split_variants` then turns it into one VariationFeature per
+/// ALT, each trimmed against the reference on its own and annotated separately
+/// before being rejoined for output; `_clip_alleles` in
+/// `TranscriptVariationAllele.pm` clips again while building the notation.
+/// Neither is gated on `--minimal`.
+///
+/// This clips where the description is built, which is the second of the two.
+/// A description carries its own coordinates, so getting it right needs nothing
+/// else to move: the consequence caller reads the differing region out of the
+/// untrimmed pair and agrees with VEP on every row of all three samples, and
+/// splitting the site into one variant per allele to match the first would put
+/// that agreement at risk for no field that is wrong today. What stays
+/// untrimmed is the *reported allele* - `AAG` here where VEP prints `-` - and
+/// the positional fields beside it, which describe the site's span.
+///
+/// The description was 801 of the 824 HGVSc rows disagreeing with real VEP
+/// 115.1 over a 1-in-200 sample of the GIAB HG002 callset.
+pub struct HgvsAllele {
+    /// Genomic span of the clipped change. An insertion leaves `start` one past
+    /// `end`, which is Ensembl's zero-length interval.
+    pub start: u64,
+    pub end: u64,
+    /// The clipped pair as the genome reads it.
+    pub genomic_ref: fastvep_core::Allele,
+    pub genomic_alt: fastvep_core::Allele,
+    /// The same pair as the transcript reads it.
+    pub hgvs_ref: fastvep_core::Allele,
+    pub hgvs_alt: fastvep_core::Allele,
+    /// cDNA span of the clipped change, for the caller that had one before the
+    /// clip. Both ends of a cDNA pair are exonic, so the bases clipped off
+    /// either end are exonic too and the span moves with them.
+    pub cdna: Option<(u64, u64)>,
+}
+
+/// How many bases a pair repeats at its front and at its back, clipping the
+/// front first or the back first.
+///
+/// The order decides the answer whenever one side runs out - `AAGAAG` against
+/// `AAG` is the front three bases or the back three, never both - and Ensembl
+/// takes the front of the sequence *as the transcript reads it*, which is the
+/// back of the genomic one on the reverse strand. Where neither side runs out
+/// the two orders agree: the leading run and the trailing run cannot overlap
+/// while a differing base separates them.
+fn shared_ends(r: &[u8], a: &[u8], back_first: bool) -> (usize, usize) {
+    let (mut front, mut back) = (0usize, 0usize);
+    let clip_front = |front: &mut usize, back: usize| {
+        while *front + back < r.len()
+            && *front + back < a.len()
+            && r[*front].eq_ignore_ascii_case(&a[*front])
+        {
+            *front += 1;
+        }
+    };
+    let clip_back = |back: &mut usize, front: usize| {
+        while front + *back < r.len()
+            && front + *back < a.len()
+            && r[r.len() - 1 - *back].eq_ignore_ascii_case(&a[a.len() - 1 - *back])
+        {
+            *back += 1;
+        }
+    };
+    if back_first {
+        clip_back(&mut back, front);
+        clip_front(&mut front, back);
+    } else {
+        clip_front(&mut front, back);
+        clip_back(&mut back, front);
+    }
+    (front, back)
+}
+
+/// `g.` for one allele, clipped of the bases its reference and alternate repeat
+/// at either end.
+///
+/// Ensembl clips here too, and in genomic orientation: `hgvs_genomic`
+/// (`VariationFeature.pm`, release/115) calls `trim_sequences` without a strand,
+/// so the front of the *sequence* gives way first whichever way the gene runs.
+/// The same allele of TTC28 `22:28225368 AAAGAAG>AAAG,A` that reaches
+/// [`hgvs_allele`] as a replacement was written `22:g.28225369_28225374delinsAAG`
+/// here, beside an HGVSc that had already been read as the deletion it is.
+///
+/// This does not close the field: Ensembl also applies the 3'-rule over the
+/// genome, which nothing here does, so `9:905488 C>CTGTGTGTG` stays
+/// `g.905488_905489insTGTGTGTG` where VEP writes `g.905507_905514dup`. Over a
+/// 1-in-200 sample of the GIAB HG002 callset the two disagree on 11 of 13,535
+/// records; clipping accounts for part of that and the genomic shift for the
+/// rest.
+pub fn hgvsg_clipped(
+    chrom: &str,
+    start: u64,
+    end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+) -> String {
+    use fastvep_core::Allele;
+    let (front, back) = match (genomic_ref, genomic_alt) {
+        (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, false),
+        _ => (0, 0),
+    };
+    // Nothing repeats, which is every ordinary variant: answer from the pair
+    // the caller already holds rather than building a copy of it to answer from.
+    if front + back == 0 {
+        return fastvep_hgvs::hgvsg(chrom, start, end, genomic_ref, genomic_alt);
+    }
+    let clipped = |bases: &[u8]| match &bases[front..bases.len() - back] {
+        [] => Allele::Deletion,
+        kept => Allele::Sequence(kept.to_vec()),
+    };
+    let (Allele::Sequence(r), Allele::Sequence(a)) = (genomic_ref, genomic_alt) else {
+        unreachable!("a non-zero clip needs two sequences")
+    };
+    fastvep_hgvs::hgvsg(
+        chrom,
+        start + front as u64,
+        end - back as u64,
+        &clipped(r),
+        &clipped(a),
+    )
+}
+
+/// The genomic span one allele actually changes, clipped of the bases its
+/// reference and alternate repeat at either end.
+///
+/// [`hgvs_allele`] is the same clip carrying the alleles along; this is the span
+/// alone, for a caller that needs to know *where* the change is and not what to
+/// call it. It allocates nothing.
+pub fn clipped_span(
+    strand: fastvep_core::Strand,
+    start: u64,
+    end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+) -> (u64, u64) {
+    use fastvep_core::{Allele, Strand};
+    let (front, back) = match (genomic_ref, genomic_alt) {
+        (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, strand == Strand::Reverse),
+        _ => (0, 0),
+    };
+    (start + front as u64, end - back as u64)
+}
+
+/// The offset the change takes at its most 3' position, which is where HGVS
+/// numbers it and is not where it is.
+///
+/// [`Transcript::intronic_offset_covered`] over the variant's own span answers
+/// "how far into the intron is this change". This answers a different question,
+/// and PVS1's canonical-splice gate is the caller that needs it.
+///
+/// An indel in a repeat can be written at any of several positions, all of which
+/// produce the same edited sequence, and the 3'-rule picks one end of that
+/// range. **On a donor the 3' end is the one furthest into the intron**, so an
+/// offset past `+2` there proves the change *can* be written without touching
+/// `+1` or `+2` - and since every alignment yields the same edited sequence, the
+/// canonical `GT` is intact whichever one is written. PTEN
+/// `10:87931087 GAGGT>G` is the shape: `splice_donor_variant` in both tools,
+/// `c.253+4_253+7del` in both, and the intron still opens `GTATGA` after the
+/// edit. PVS1's splice track assumes the dinucleotide is destroyed, so it must
+/// stand down there.
+///
+/// **On an acceptor the 3' end is the one nearest the exon**, because the shift
+/// runs toward it, so the same number means the opposite thing and the gate does
+/// correspondingly little. That asymmetry is HGVS's, not this function's.
+///
+/// `None` when the change reaches no intronic base, when it does not touch the
+/// transcript, or when there is no reference to walk - and a caller that cannot
+/// tell must not read "not intronic" into it.
+#[allow(clippy::too_many_arguments)]
+pub fn shifted_intronic_offset(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    transcript: &fastvep_genome::Transcript,
+    var_start: u64,
+    var_end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+) -> Option<i64> {
+    // The clip first, for the same reason every other reader of a position
+    // wants it: bases the pair repeats at either end are unchanged, and a walk
+    // that starts from them starts from the wrong place.
+    let (lo, hi) = clipped_span(
+        transcript.strand,
+        var_start,
+        var_end,
+        genomic_ref,
+        genomic_alt,
+    );
+    let (span_lo, span_hi) = (lo.min(hi), lo.max(hi));
+    if span_hi < transcript.start || span_lo > transcript.end {
+        return None;
+    }
+    let (shifted_start, shifted_end) =
+        match seq_provider.filter(|_| is_shiftable_indel(genomic_ref, genomic_alt)) {
+            Some(sp) => three_prime_shift_genomic(
+                sp,
+                chrom,
+                lo,
+                hi,
+                genomic_ref,
+                genomic_alt,
+                transcript.strand,
+                transcript.start,
+                transcript.end,
+            ),
+            // Nothing to shift, or nothing to shift it over: the change is written
+            // where it sits.
+            None => (lo, hi),
+        };
+    transcript.intronic_offset_covered(shifted_start, shifted_end)
+}
+
+/// Read one allele of a site as HGVS describes it. See [`HgvsAllele`].
+///
+/// `start`/`end` and the pair are genomic; `cdna` is the span the predictor
+/// mapped for the unclipped reference, low end first.
+pub fn hgvs_allele(
+    strand: fastvep_core::Strand,
+    start: u64,
+    end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+    cdna: Option<(u64, u64)>,
+) -> HgvsAllele {
+    use fastvep_core::{Allele, Strand};
+
+    let reverse = strand == Strand::Reverse;
+    let (front, back) = match (genomic_ref, genomic_alt) {
+        // Only a pair of sequences can repeat anything. A `-` on either side is
+        // already minimal, and `*` or a symbolic allele names no bases to
+        // compare.
+        (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, reverse),
+        _ => (0, 0),
+    };
+
+    let clipped = |bases: &[u8]| -> Allele {
+        match &bases[front..bases.len() - back] {
+            [] => Allele::Deletion,
+            kept => Allele::Sequence(kept.to_vec()),
+        }
+    };
+    let (genomic_ref, genomic_alt) = match (genomic_ref, genomic_alt) {
+        (Allele::Sequence(r), Allele::Sequence(a)) if front + back > 0 => (clipped(r), clipped(a)),
+        (r, a) => (r.clone(), a.clone()),
+    };
+    let (hgvs_ref, hgvs_alt) = if reverse {
+        (
+            crate::reverse_complement_allele(&genomic_ref),
+            crate::reverse_complement_allele(&genomic_alt),
+        )
+    } else {
+        (genomic_ref.clone(), genomic_alt.clone())
+    };
+
+    // cDNA runs in transcript order, so the front of the genomic pair is its
+    // low end only on the forward strand.
+    let (cdna_front, cdna_back) = if reverse {
+        (back, front)
+    } else {
+        (front, back)
+    };
+    HgvsAllele {
+        start: start + front as u64,
+        end: end - back as u64,
+        genomic_ref,
+        genomic_alt,
+        hgvs_ref,
+        hgvs_alt,
+        // Saturating because a clip is bounded by the shorter allele, not by
+        // the transcript: a change at cDNA position 1 whose back clips away can
+        // land at 0, which is not a position, and the renderer refuses it.
+        cdna: cdna.map(|(lo, hi)| (lo + cdna_front as u64, hi.saturating_sub(cdna_back as u64))),
+    }
+}
+
+/// Do two genomic positions of one transcript sit in the same exon or intron, or
+/// in an exon and an intron that touch?
+///
+/// That is the widest span a single `c.` range can name without an offset having
+/// to run through zero - see [`intronic_ins_as_dup`], which is the only caller.
+fn one_region_or_adjacent(transcript: &fastvep_genome::Transcript, first: u64, last: u64) -> bool {
+    let (a, b) = (
+        transcript.intron_bounds_at(first),
+        transcript.intron_bounds_at(last),
+    );
+    match (a, b) {
+        // Same intron, or both exonic.
+        (Some(x), Some(y)) => x == y,
+        (None, None) => {
+            // Both exonic: the same exon, since a block that left one would have
+            // an intronic base between.
+            let (lo, hi) = (first.min(last), first.max(last));
+            transcript
+                .exons
+                .iter()
+                .any(|e| e.start <= lo && hi <= e.end)
+        }
+        // One of each: the intron has to touch the exon the other end is in.
+        (Some((s, e)), None) | (None, Some((s, e))) => {
+            let exonic = if a.is_some() { last } else { first };
+            transcript.exons.iter().any(|x| {
+                x.start <= exonic && exonic <= x.end && (x.end + 1 == s || e + 1 == x.start)
+            })
+        }
+    }
+}
+
 /// Rewrite a 3'-shifted intronic insertion as a duplication, when it is one.
 ///
 /// `hgvsc` is the insertion notation already built for the shifted position, and
@@ -366,20 +711,21 @@ pub fn intronic_ins_as_dup(
         fastvep_core::Strand::Forward => (lo, hi),
         fastvep_core::Strand::Reverse => (hi, lo),
     };
-    let start = transcript.genomic_to_intronic_cdna(first)?;
-    let end = transcript.genomic_to_intronic_cdna(last)?;
-    // Both ends must lie in the *same* intron. Offsets count from their own
-    // exon and do not run through zero, so a block reaching into the next
-    // intron - or into an exon - cannot be written as one range: stepping back
-    // from `+1` does not arrive at `-2`, it names bases in the intron before.
-    // Writing the crossing range anyway put PVS1's offset gate at `-2` for a
-    // duplication sitting on the donor and called two ClinVar-benign MSH6 and
-    // DSP variants likely pathogenic.
+    let start = crate::intronic_or_exonic_cdna(transcript, first)?;
+    let end = crate::intronic_or_exonic_cdna(transcript, last)?;
+    // The two ends have to be writable as one range, and an offset counts from
+    // its own exon and does not run through zero: stepping back from `+1` does
+    // not arrive at `-2`, it names bases in the intron before. So a block may
+    // span one splice site at most - the exon and the intron on one side of it,
+    // where Ensembl writes `c.1176_1183+7dup` - and never two. Writing a
+    // crossing range anyway put PVS1's offset gate at `-2` for a duplication
+    // sitting on the donor and called two ClinVar-benign MSH6 and DSP variants
+    // likely pathogenic.
     //
     // A span running past the intron's own midpoint is fine, and Ensembl writes
     // it from the exon on either side: `c.5044+27_5045-47dup`. Requiring one
-    // shared anchor instead of one shared intron left 160 such rows as `ins`.
-    if transcript.intron_bounds_at(first) != transcript.intron_bounds_at(last) {
+    // shared anchor instead of one shared region left 160 such rows as `ins`.
+    if !one_region_or_adjacent(transcript, first, last) {
         return None;
     }
     match coding_start {
@@ -388,9 +734,21 @@ pub fn intronic_ins_as_dup(
     }
 }
 
-/// Build the HGVSc for a variant reaching into an intron: 3'-shifted, and
-/// written as a duplication where the shifted insertion sits against the block
-/// it copies.
+/// Build the HGVSc for an indel: 3'-shifted over the genome, and written as a
+/// duplication where the shifted insertion sits against the block it copies.
+///
+/// Every indel routes here, exonic or not, because the shift does not stop at a
+/// splice site and so neither can the description. Each end is mapped on its
+/// own and an exonic one is written as its anchor alone, which is how a change
+/// that travels out of an exon and into the intron beyond comes out
+/// `c.220+1del` and one travelling the other way `c.1793del`.
+///
+/// Shifting on the *spliced* sequence instead - which is what the exonic path
+/// did - is wrong in both directions at once. It cannot follow a repeat into the
+/// intron, and it will happily walk a deletion over a splice junction, naming a
+/// block that is contiguous in the mRNA and not in the DNA the description is
+/// numbered against: `c.71_81del` for BRCA1 `c.70_80del`, where the eleventh
+/// base named is the first base of the next exon.
 ///
 /// Both annotation loops call this. They had drifted: the CLI's copy shifted and
 /// converted to `dup`, the library's did neither, so the same intronic
@@ -407,7 +765,7 @@ pub fn intronic_ins_as_dup(
 // The arguments are independent coordinates, alleles and transcript state with
 // no natural grouping; a struct would only move the list to the call site.
 #[allow(clippy::too_many_arguments)]
-pub fn hgvsc_intronic_shifted(
+pub fn hgvsc_shifted(
     seq_provider: Option<&dyn SequenceProvider>,
     chrom: &str,
     transcript: &fastvep_genome::Transcript,
@@ -433,16 +791,22 @@ pub fn hgvsc_intronic_shifted(
             (Allele::Sequence(_), Allele::Deletion)
         );
 
-    // The walk is bounded by the intron the variant sits in, and an insertion
-    // sits *between* two bases, so `var_start` alone does not always find it:
-    // one written against the last intronic base has `var_start` in the exon
-    // beyond it, and a reverse-strand transcript travels 3' back down into that
-    // intron. Reading `var_end` when `var_start` lands outside places it.
-    let bounds = transcript
-        .intron_bounds_at(var_start)
-        .or_else(|| transcript.intron_bounds_at(var_end));
-    let (shifted_start, shifted_end) = match seq_provider.filter(|_| is_indel).zip(bounds) {
-        Some((sp, (intron_start, intron_end))) => three_prime_shift_intronic(
+    // A change that does not touch the transcript has no position on it, and the
+    // 3'-rule must not give it one: an upstream deletion sitting in a repeat
+    // that runs into the first exon would otherwise shift in and be described as
+    // `n.1_3del`, naming bases of a transcript it never reaches. VEP writes no
+    // HGVSc for those, and neither did this before every indel started routing
+    // through here.
+    let (var_lo, var_hi) = (var_start.min(var_end), var_start.max(var_end));
+    if var_hi < transcript.start || var_lo > transcript.end {
+        return None;
+    }
+    // The walk is bounded by the *transcript*, not by the exon or intron the
+    // variant starts in. HGVS shifts over the reference sequence a description
+    // is numbered against, and for `c.` that sequence is genomic - so a change
+    // whose repeat runs on past the splice site travels with it.
+    let (shifted_start, shifted_end) = match seq_provider.filter(|_| is_indel) {
+        Some(sp) => three_prime_shift_genomic(
             sp,
             chrom,
             var_start,
@@ -450,8 +814,8 @@ pub fn hgvsc_intronic_shifted(
             genomic_ref,
             genomic_alt,
             transcript.strand,
-            intron_start,
-            intron_end,
+            transcript.start,
+            transcript.end,
         ),
         None => (var_start, var_end),
     };
@@ -552,7 +916,7 @@ pub fn hgvsc_intronic_shifted(
 mod tests {
     use super::*;
     use anyhow::{anyhow, Result};
-    use fastvep_core::Strand;
+    use fastvep_core::{Allele, Strand};
     use fastvep_genome::{Exon, Gene, Transcript};
 
     /// Minimal `SequenceProvider` over a 1-based reference string for one contig,
@@ -723,15 +1087,18 @@ mod tests {
         assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.21-2_21-1dup"));
     }
 
-    /// A block reaching out of the intron cannot be written as one offset range -
-    /// offsets count from their own exon and do not run through zero - so the
-    /// insertion notation it already carries is kept.
+    /// A duplicated block that sits inside the exon is named there, in exonic
+    /// coordinates. It reads as an intronic case only from the insertion
+    /// notation the caller brings; the block itself is two exonic bases, and
+    /// refusing it - which is what mapping both ends through
+    /// `genomic_to_intronic_cdna` did, since that returns `None` for an exonic
+    /// position - left a duplication written as a plain insertion.
     #[test]
-    fn a_block_leaving_the_intron_keeps_its_insertion_notation() {
-        // Exon 2 begins with `C`s, so a `CC` insert at the intron's 3' edge
-        // duplicates a block that starts inside the exon.
+    fn a_block_inside_the_exon_is_named_in_exonic_coordinates() {
         let r = StrRef(TG_REPEAT);
         let tr = transcript(Strand::Reverse);
+        // Genomic 81-82 are the first two bases of exon 2, which on the reverse
+        // strand are c.20 and c.19.
         let out = intronic_ins_as_dup(
             &r,
             "1",
@@ -743,7 +1110,36 @@ mod tests {
             Some(1),
             Some(40),
         );
-        assert_eq!(out, None);
+        assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.19_20dup"));
+    }
+
+    /// One `c.` range can name a span that crosses one splice site and no more.
+    /// An offset counts from its own exon and does not run through zero, so a
+    /// block reaching from one exon across an intron into the next cannot be
+    /// written as a range at all: stepping back from `+1` does not arrive at
+    /// `-2`, it names bases in the intron before. Writing the crossing range
+    /// anyway put PVS1's offset gate at `-2` for a duplication sitting on the
+    /// donor and called two ClinVar-benign MSH6 and DSP variants likely
+    /// pathogenic.
+    #[test]
+    fn a_range_may_cross_one_splice_site_and_no_more() {
+        let tr = transcript(Strand::Forward);
+        // Exon 1 is 1..=20, the intron 21..=80, exon 2 is 81..=100.
+        assert!(one_region_or_adjacent(&tr, 5, 10), "one exon");
+        assert!(one_region_or_adjacent(&tr, 30, 40), "one intron");
+        assert!(
+            one_region_or_adjacent(&tr, 18, 25),
+            "exon into the intron after it"
+        );
+        assert!(
+            one_region_or_adjacent(&tr, 75, 85),
+            "intron into the exon after it"
+        );
+        assert!(
+            !one_region_or_adjacent(&tr, 10, 85),
+            "across a whole intron"
+        );
+        assert!(one_region_or_adjacent(&tr, 5, 19), "the whole of one exon");
     }
 
     /// The property the whole shift exists to provide, and the one that broke:
@@ -794,5 +1190,231 @@ mod tests {
             Some(40),
         );
         assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.20+1_21-1dup"));
+    }
+
+    /// 20 exonic bases, an intron opening `AGGT AGGT` and then not repeating,
+    /// then exon 2. A four-base deletion at the donor can be written at `+1` or
+    /// at `+5`, and both edit the sequence the same way.
+    const DONOR_REPEAT: &str = "AAAAAAAAAAAAAAAAAAAA\
+                                AGGTAGGTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\
+                                GGGGGGGGGGGGGGGGGGGG";
+
+    /// Where the change *is* and where HGVS *numbers* it are two different
+    /// questions, and PVS1's gate needs the second: a deletion that can be
+    /// written at `+5` can be written without touching `+1` or `+2`, so the
+    /// canonical `GT` survives it whichever alignment is chosen.
+    #[test]
+    fn the_shifted_offset_is_the_furthest_the_change_reaches_on_a_donor() {
+        let r = StrRef(DONOR_REPEAT);
+        let tr = transcript(Strand::Forward);
+        let (del_ref, del_alt) = (Allele::Sequence(b"AGGT".to_vec()), Allele::Deletion);
+        // Written at the donor's own first base.
+        assert_eq!(tr.intronic_offset_covered(21, 24), Some(1));
+        // Numbered four bases further in, clear of the dinucleotide.
+        assert_eq!(
+            shifted_intronic_offset(Some(&r), "1", &tr, 21, 24, &del_ref, &del_alt),
+            Some(5)
+        );
+    }
+
+    /// Without a reference there is no walk to make, so the change is numbered
+    /// where it sits - the same fallback the description itself takes.
+    #[test]
+    fn the_shifted_offset_falls_back_to_the_position_when_there_is_no_reference() {
+        let tr = transcript(Strand::Forward);
+        let (del_ref, del_alt) = (Allele::Sequence(b"AGGT".to_vec()), Allele::Deletion);
+        assert_eq!(
+            shifted_intronic_offset(None, "1", &tr, 21, 24, &del_ref, &del_alt),
+            Some(1)
+        );
+    }
+
+    /// A change that reaches no intronic base has no offset either way, and a
+    /// change off the transcript has no position on it at all.
+    #[test]
+    fn the_shifted_offset_declines_where_there_is_nothing_intronic_to_reach() {
+        let r = StrRef(DONOR_REPEAT);
+        let tr = transcript(Strand::Forward);
+        let snv = (
+            Allele::Sequence(b"A".to_vec()),
+            Allele::Sequence(b"G".to_vec()),
+        );
+        assert_eq!(
+            shifted_intronic_offset(Some(&r), "1", &tr, 10, 10, &snv.0, &snv.1),
+            None
+        );
+        assert_eq!(
+            shifted_intronic_offset(Some(&r), "1", &tr, 500, 500, &snv.0, &snv.1),
+            None
+        );
+    }
+
+    /// The offset a criterion reads is measured on the transcript, over the span
+    /// the allele actually changes. The fixture's intron runs 21..80, so the
+    /// donor's own base is 21.
+    #[test]
+    fn the_offset_is_measured_over_the_change_and_not_over_the_record() {
+        let tr = transcript(Strand::Forward);
+        let offset = |r: &str, a: &str, start: u64, end: u64| {
+            let (lo, hi) = clipped_span(
+                Strand::Forward,
+                start,
+                end,
+                &Allele::Sequence(r.as_bytes().to_vec()),
+                &Allele::Sequence(a.as_bytes().to_vec()),
+            );
+            tr.intronic_offset_covered(lo, hi)
+        };
+        // Six bases from the donor's own base, of which the first three are
+        // unchanged: the record reaches `+1`, the deletion sits at `+4`.
+        assert_eq!(offset("AAGAAG", "AAG", 21, 26), Some(4));
+        // The same record with nothing to clip is the `+1` it looks like.
+        assert_eq!(offset("AAGAAG", "C", 21, 26), Some(1));
+        // Wholly exonic reaches no intronic base at all.
+        assert_eq!(offset("AA", "C", 10, 11), None);
+        // Running out of the exon into the intron reaches the first base of it,
+        // whatever the far end reads - the same rule the HGVS string parser
+        // follows, because the two answers are compared against each other.
+        assert_eq!(offset("AAAAA", "C", 19, 23), Some(1));
+        // Deep in the intron, the nearer boundary wins.
+        assert_eq!(offset("AA", "C", 76, 77), Some(-4));
+    }
+
+    /// Which boundary an intronic base counts from is a property of the
+    /// transcript's direction, so the two strands mirror each other.
+    #[test]
+    fn the_strand_decides_which_boundary_the_offset_counts_from() {
+        let (fwd, rev) = (transcript(Strand::Forward), transcript(Strand::Reverse));
+        // 21 is the base after exon 1 and 80 the base before exon 2.
+        assert_eq!(fwd.intronic_offset_covered(21, 21), Some(1));
+        assert_eq!(fwd.intronic_offset_covered(80, 80), Some(-1));
+        assert_eq!(rev.intronic_offset_covered(80, 80), Some(1));
+        assert_eq!(rev.intronic_offset_covered(21, 21), Some(-1));
+        // A span reaching both exons covers the whole intron and names no
+        // boundary, which is what the HGVS string for it says too.
+        assert_eq!(fwd.intronic_offset_covered(10, 90), None);
+    }
+
+    /// The rule is "clip what the two repeat at either end", not "strip the one
+    /// base the VCF anchored on": what is left of `AAGAAG` -> `AAG` is a
+    /// deletion, and naming it a replacement invents three bases of change.
+    #[test]
+    fn a_pair_that_repeats_at_one_end_clips_down_to_the_change_it_is() {
+        let hv = hgvs_allele(
+            Strand::Forward,
+            100,
+            105,
+            &Allele::Sequence(b"AAGAAG".to_vec()),
+            &Allele::Sequence(b"AAG".to_vec()),
+            Some((10, 15)),
+        );
+        assert_eq!((hv.start, hv.end), (103, 105));
+        assert_eq!(hv.genomic_ref, Allele::Sequence(b"AAG".to_vec()));
+        assert_eq!(hv.genomic_alt, Allele::Deletion);
+        assert_eq!(hv.cdna, Some((13, 15)));
+    }
+
+    /// Which end is clipped when only one can be decides where the change
+    /// lands, and Ensembl clips the front of the sequence *as the transcript
+    /// reads it* - the far end of the genomic one on the reverse strand.
+    #[test]
+    fn the_strand_decides_which_repeated_end_gives_way() {
+        let call = |strand| {
+            let hv = hgvs_allele(
+                strand,
+                100,
+                102,
+                &Allele::Sequence(b"ACA".to_vec()),
+                &Allele::Sequence(b"A".to_vec()),
+                Some((10, 12)),
+            );
+            (hv.start, hv.end, hv.cdna)
+        };
+        // Forward: the front two bases match, so the back two go.
+        assert_eq!(call(Strand::Forward), (101, 102, Some((11, 12))));
+        // Reverse: `TGT` against `T` matches at its front, which is the genomic
+        // back, so the front two go instead - and cDNA, which runs the other
+        // way, still loses its first two.
+        assert_eq!(call(Strand::Reverse), (100, 101, Some((11, 12))));
+    }
+
+    /// A clip that empties the reference leaves Ensembl's zero-length interval,
+    /// `start` one past `end`, which is what every insertion downstream reads.
+    #[test]
+    fn a_pair_whose_reference_clips_away_becomes_an_insertion() {
+        let hv = hgvs_allele(
+            Strand::Forward,
+            100,
+            100,
+            &Allele::Sequence(b"T".to_vec()),
+            &Allele::Sequence(b"TT".to_vec()),
+            Some((10, 10)),
+        );
+        assert_eq!((hv.start, hv.end), (101, 100));
+        assert_eq!(hv.genomic_ref, Allele::Deletion);
+        assert_eq!(hv.genomic_alt, Allele::Sequence(b"T".to_vec()));
+        assert!(is_shiftable_indel(&hv.hgvs_ref, &hv.hgvs_alt));
+        assert_eq!(hv.cdna, Some((11, 10)));
+    }
+
+    /// Both ends may repeat at once. An equal-length pair clips to the same core
+    /// whichever end goes first, so the strand cannot move it.
+    #[test]
+    fn a_pair_repeating_at_both_ends_clips_to_the_same_core_either_way() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let hv = hgvs_allele(
+                strand,
+                100,
+                103,
+                &Allele::Sequence(b"ACGT".to_vec()),
+                &Allele::Sequence(b"ATGT".to_vec()),
+                Some((10, 13)),
+            );
+            assert_eq!((hv.start, hv.end), (101, 101));
+            assert_eq!(hv.genomic_ref, Allele::Sequence(b"C".to_vec()));
+            assert_eq!(hv.genomic_alt, Allele::Sequence(b"T".to_vec()));
+        }
+    }
+
+    /// Nothing repeats, nothing moves. This is every ordinary variant.
+    #[test]
+    fn a_pair_that_repeats_nothing_is_left_where_it_was() {
+        for (r, a) in [
+            (
+                Allele::Sequence(b"A".to_vec()),
+                Allele::Sequence(b"G".to_vec()),
+            ),
+            (
+                Allele::Sequence(b"AC".to_vec()),
+                Allele::Sequence(b"GT".to_vec()),
+            ),
+            (Allele::Sequence(b"AC".to_vec()), Allele::Deletion),
+            (Allele::Deletion, Allele::Sequence(b"AC".to_vec())),
+            (Allele::Sequence(b"A".to_vec()), Allele::Missing),
+        ] {
+            let hv = hgvs_allele(Strand::Forward, 100, 101, &r, &a, Some((10, 11)));
+            assert_eq!((hv.start, hv.end, hv.cdna), (100, 101, Some((10, 11))));
+            assert_eq!((hv.genomic_ref, hv.genomic_alt), (r, a));
+        }
+    }
+
+    /// The reverse-strand pair is complemented as well as clipped, and the two
+    /// orientations have to agree about which bases are left.
+    #[test]
+    fn the_transcript_sees_the_clipped_pair_complemented() {
+        let hv = hgvs_allele(
+            Strand::Reverse,
+            100,
+            105,
+            &Allele::Sequence(b"AAGAAG".to_vec()),
+            &Allele::Sequence(b"AAG".to_vec()),
+            None,
+        );
+        // `CTTCTT` against `CTT` repeats at its front, and the transcript's
+        // front is the genome's back, so the last three bases go.
+        assert_eq!((hv.start, hv.end), (100, 102));
+        assert_eq!(hv.genomic_ref, Allele::Sequence(b"AAG".to_vec()));
+        assert_eq!(hv.hgvs_ref, Allele::Sequence(b"CTT".to_vec()));
+        assert_eq!(hv.hgvs_alt, Allele::Deletion);
     }
 }

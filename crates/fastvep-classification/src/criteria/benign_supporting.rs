@@ -1030,6 +1030,37 @@ mod tests {
         assert!(result.summary.contains("Deep-intronic"));
     }
 
+    /// BP7 reads where the variant *is*, not where HGVS numbers it. The two
+    /// part company on any shiftable intronic indel: real VEP 115.1 writes
+    /// `c.4298+21_4298+55del` for an AGRN deletion it also calls
+    /// `splice_donor_variant`, and `c.2043-9dup` for a KIF1B insertion that
+    /// earns no splice term at all. Reading the numbered position let BP7 call
+    /// the first one deep-intronic and refuse the second; reading the variant's
+    /// own position agrees with the consequence terms, which are decided there
+    /// too.
+    #[test]
+    fn test_bp7_reads_the_variants_own_offset_and_not_the_shifted_one() {
+        let mk = |own, shifted| {
+            let mut input = make_input(
+                vec![Consequence::IntronVariant],
+                None,
+                Some(0.03),
+                Some(0.4),
+                None,
+            );
+            input.intronic_offset = own;
+            input.shifted_intronic_offset = shifted;
+            evaluate_bp7(&input, &AcmgConfig::default())
+        };
+        // Deep where it sits, inside the splice region where HGVS numbers it.
+        assert!(mk(Some(-25), Some(-9)).met);
+        // Inside the splice region where it sits, deep where HGVS numbers it.
+        assert!(!mk(Some(1), Some(21)).met);
+        // With no position for the change there is nothing to extend BP7 on,
+        // and the numbered one does not stand in for it.
+        assert!(!mk(None, Some(21)).met);
+    }
+
     #[test]
     fn test_bp3_distinguishes_no_repeat_from_no_database() {
         // An interval source only yields an annotation on a hit, so "not in a

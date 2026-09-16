@@ -13,11 +13,11 @@
 //! fastVEP returned two on all 168. Genome-wide over a 20,241-variant HG002
 //! sample that was 1,390 of 1,538 disagreeing HGVSc rows.
 //!
-//! These tests go through `hgvsc_intronic_shifted`, which is the intronic path
+//! These tests go through `hgvsc_shifted`, which is the intronic path
 //! both annotation loops call, so a regression in either one fails here.
 
 use anyhow::{anyhow, Result};
-use fastvep_annotate::hgvsc_intronic_shifted;
+use fastvep_annotate::hgvsc_shifted;
 use fastvep_cache::providers::SequenceProvider;
 use fastvep_core::{Allele, Strand};
 use fastvep_genome::{Exon, Gene, Transcript};
@@ -133,7 +133,7 @@ fn hgvsc_for_insertion(strand: Strand, vcf_pos: u64, ins: &[u8]) -> Option<Strin
         Strand::Forward => genomic_alt.clone(),
         Strand::Reverse => Allele::Sequence(revcomp(ins)),
     };
-    hgvsc_intronic_shifted(
+    hgvsc_shifted(
         Some(&reference),
         "1",
         &tr,
@@ -246,7 +246,7 @@ fn every_spelling_of_an_intronic_deletion_agrees() {
         .step_by(2)
         .map(|start| {
             let deleted: &[u8] = b"TG";
-            hgvsc_intronic_shifted(
+            hgvsc_shifted(
                 Some(&reference),
                 "1",
                 &tr,
@@ -277,7 +277,7 @@ fn every_spelling_of_an_intronic_deletion_agrees() {
 #[test]
 fn no_reference_still_produces_a_description() {
     let tr = transcript(Strand::Forward);
-    let out = hgvsc_intronic_shifted(
+    let out = hgvsc_shifted(
         None,
         "1",
         &tr,
@@ -335,7 +335,7 @@ fn a_partial_shift_rotates_the_insert_the_same_way_on_both_strands() {
                                 Strand::Forward => Allele::Sequence(genomic.clone()),
                                 Strand::Reverse => Allele::Sequence(revcomp(genomic)),
                             };
-                            hgvsc_intronic_shifted(
+                            hgvsc_shifted(
                                 Some(&reference),
                                 "1",
                                 &wide_transcript(strand),
@@ -402,4 +402,116 @@ fn wide_transcript(strand: Strand) -> Transcript {
     t.exons[1].start = 181;
     t.exons[1].end = 200;
     t
+}
+
+// ---------------------------------------------------------------------------
+// The shift crosses splice sites, in both directions, and stops where the
+// genome stops it.
+//
+// These four pin the boundary behaviour measured against real Ensembl VEP
+// 115.1: over a 6,600-variant ClinVar sample, shifting on the *spliced*
+// sequence instead of the genome accounted for 563 of the 602 disagreeing
+// HGVSc rows, in both directions at once - a change that should have travelled
+// into the intron stayed in the exon, and one that should have stopped at the
+// exon's end walked over the splice junction into the next exon.
+// ---------------------------------------------------------------------------
+
+/// Annotate a one-base deletion the way both per-variant loops do.
+fn hgvsc_for_deletion(reference: &str, tr: &Transcript, pos: u64, base: u8) -> Option<String> {
+    let reference = MemRef(reference.to_string());
+    let genomic_ref = Allele::Sequence(vec![base]);
+    let hgvs_ref = match tr.strand {
+        Strand::Forward => genomic_ref.clone(),
+        Strand::Reverse => Allele::Sequence(revcomp(&[base])),
+    };
+    hgvsc_shifted(
+        Some(&reference),
+        "1",
+        tr,
+        "ENST00000000001.1",
+        pos,
+        pos,
+        &genomic_ref,
+        &Allele::Deletion,
+        &hgvs_ref,
+        &Allele::Deletion,
+        Some(1),
+        Some(40),
+    )
+}
+
+/// The last base of an exon repeats the first base of the intron after it, so
+/// the deletion travels out of the exon: `c.20+1del`, not `c.20del`. Shifting on
+/// the spliced sequence cannot see that base at all.
+#[test]
+fn a_deletion_shifts_out_of_the_exon_and_into_the_intron() {
+    // Exon 1 ends `…AT` at 19-20, the intron opens `T` at 21.
+    let reference = format!(
+        "{}{}{}{}",
+        "A".repeat(19),
+        "T",
+        "TG".repeat(30),
+        "C".repeat(19)
+    );
+    let out = hgvsc_for_deletion(&reference, &transcript(Strand::Forward), 20, b'T');
+    assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.20+1del"));
+}
+
+/// And the other way: the last base of an intron repeats the first base of the
+/// exon after it, so the deletion travels into the exon and is written in exonic
+/// coordinates - `c.21del`, where bounding the walk at the intron gave
+/// `c.21-1del`.
+#[test]
+fn a_deletion_shifts_out_of_the_intron_and_into_the_exon() {
+    // Intron 21..=80 ends `C` at 80; exon 2 opens `C` at 81 and is `A` after.
+    let reference = format!(
+        "{}{}{}{}{}",
+        "A".repeat(20),
+        "G".repeat(59),
+        "C",
+        "C",
+        "A".repeat(19)
+    );
+    let out = hgvsc_for_deletion(&reference, &transcript(Strand::Forward), 80, b'C');
+    assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.21del"));
+}
+
+/// A repeat that continues in the *transcript* and not in the genome does not
+/// move the description. The base after the last exonic one is the first base of
+/// the intron, not the first base of the next exon, and a `c.` range names
+/// genomic bases: walking the spliced sequence instead wrote `c.21del` here,
+/// which is BRCA1 `c.71_81del` for VEP's `c.70_80del` at full size.
+#[test]
+fn a_deletion_does_not_cross_a_splice_junction_the_genome_does_not_allow() {
+    // Exon 1 ends `T` at 20 and exon 2 opens `T` at 81, but the intron opens `G`.
+    let reference = format!(
+        "{}{}{}{}{}",
+        "A".repeat(19),
+        "T",
+        "G".repeat(60),
+        "T",
+        "C".repeat(19)
+    );
+    let out = hgvsc_for_deletion(&reference, &transcript(Strand::Forward), 20, b'T');
+    assert_eq!(out.as_deref(), Some("ENST00000000001.1:c.20del"));
+}
+
+/// A change that does not reach the transcript has no position on it, and the
+/// 3'-rule must not give it one. An upstream deletion inside a repeat that runs
+/// on into the first exon would otherwise shift in and be described as `c.1del`,
+/// naming a base of a transcript the variant never touches.
+#[test]
+fn a_change_that_does_not_reach_the_transcript_has_no_hgvsc() {
+    let mut tr = transcript(Strand::Forward);
+    tr.start = 11;
+    tr.exons[0].start = 11;
+    let reference = format!("{}{}{}", "A".repeat(20), "G".repeat(60), "C".repeat(20));
+    // Position 8 is upstream of the transcript, inside the same run of `A`s the
+    // first exon begins with.
+    assert_eq!(hgvsc_for_deletion(&reference, &tr, 8, b'A'), None);
+    // The first base the transcript does own still gets one.
+    assert_eq!(
+        hgvsc_for_deletion(&reference, &tr, 11, b'A').as_deref(),
+        Some("ENST00000000001.1:c.10del")
+    );
 }

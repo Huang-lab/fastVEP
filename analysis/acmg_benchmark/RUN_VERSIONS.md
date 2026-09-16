@@ -1061,3 +1061,201 @@ PP3, is hers to rule on.
 `scripts/08_diff_calls.py` produces the call-changes table; the v23-to-v26 one was built by hand,
 which is why no script existed for it.
 It reproduces that table exactly - 290 changed calls - when run over v23 and v26.
+
+## v28 to v30: the 3'-shift crosses splice sites, and PS1 stops reading a display string
+
+No criterion threshold moved and the supplementary-annotation stack is identical to v23, v26 and
+v27.
+The binary is `master` through #115 plus the annotation and classifier fixes made while auditing
+[`docs/VEP_DIVERGENCE.md`](../../docs/VEP_DIVERGENCE.md) against real Ensembl VEP 115.1.
+
+What changed in the annotation layer: the HGVSc 3'-shift now runs on the genome rather than on the
+spliced sequence, so it crosses splice sites in both directions instead of stopping at them; a
+lost terminator's extension is computed (`p.Ter486GluextTer36`) instead of written `ext*?`; the
+3'-rule's rotation no longer carries residues out from behind a terminator; Ensembl's second
+`ref_eq_alt_sequence` clause is ported as the sequence comparison it is; `start_lost` falls
+through to Ensembl's peptide test, so an in-frame deletion that removes the initiator is a start
+loss; and an unknown residue no longer silences `missense_variant`.
+
+### v28: what the run caught
+
+v28 is that annotation layer with the classifier untouched, and it is recorded here because it
+went **backwards**:
+
+| Metric | v27 | v28 | change |
+|---|---:|---:|---:|
+| Exact match | 425,334 | 425,325 | **-9** |
+| Same-direction | 522,474 | 522,473 | -1 |
+| Opposite-direction | 59 | 59 | 0 |
+
+15 calls moved, and 14 of them were one shape: a deletion of a canonical acceptor's own `G`,
+ClinVar Pathogenic, falling from `Pathogenic` to `Likely_pathogenic` because `PS1_Supporting`
+stopped firing. KCNQ1, NF1 (twice), MSH2, MLH1, BRCA2, RB1, TSC2, APC, OPA1, PCCB, ACADVL, CHD7
+and KCNQ1 again.
+
+The cause is worth stating, because it is a class of defect rather than a detail. PS1's splice
+path (Walker 2023) asks whether a ClinVar-pathogenic variant sits on the same canonical
+dinucleotide, and it recovered which side of the intron the variant was on by parsing the `+N` /
+`-N` token out of the **HGVSc string**. That string is a display form: once the 3'-shift began
+crossing splice sites, `c.1686-1del` became `c.1686del` - the same variant, the same
+`splice_acceptor_variant` call, and no offset token left to read.
+
+### v29 and v30: the fix, and where it leaves the benchmark
+
+`same_splice_position_pathogenic` now takes the sign from the consequence term, which is computed
+from the unshifted position and does not move, whenever the HGVSc carries no canonical ±1/±2
+offset.
+
+| Metric | v27 | **v30** | change |
+|---|---:|---:|---:|
+| Exact match | 425,334 | **425,334** | 0 |
+| Same-direction | 522,474 | **522,473** | -1 |
+| Opposite-direction | 59 | **59** | 0 |
+| Discrepancy rows | 10,059 | **10,059** | identical set |
+
+v30 is v29 plus one more annotation correction, found by checking every consequence change of the
+run against real VEP rather than trusting the sample: the ported `ref_eq_alt_sequence` clause
+rejected a window sitting *on* the terminator, where Ensembl's `substr` appends, so an insertion
+in front of the stop lost `stop_retained_variant` (SMARCE1 `17:40628786 T>TAAA`). One variant's
+consequence set changed between v29 and v30 and no call moved.
+
+One call moved against v27, and it is the remaining case of the same class: POLE
+`12:132659279 T>TGGGGGGAGCCCTCACCTCTCCGTGAC`, `LB -> VUS`, because BP7's deep-intronic extension
+also reads its offset from the HGVSc. The insertion sits at `c.3275+15`, 15 bases into the intron,
+and the shift now writes it as the duplication it is - `c.3265_3275+15dup` - whose span starts in
+the exon, so the parsed offset reads 1 rather than 15 and BP7's `>= 7` gate declines. The call
+moves in the conservative direction on a variant ClinVar calls benign, and the fix is the same one
+PS1 got: give the criterion the unshifted offset rather than a string. It is not fixed here.
+
+534 variants got a different HGVSc, 174 a different HGVSp, 31 a different criteria set, 7 a
+different consequence set and 4 a different IMPACT tier. Every consequence and IMPACT change is a
+row where the annotation now agrees with real VEP 115.1 and did not before; the per-field row
+counts are in [`docs/VEP_DIVERGENCE.md`](../../docs/VEP_DIVERGENCE.md).
+
+---
+
+## v31 to v35: BP7 stops reading a display string, and what that exposed in PVS1
+
+v30 left one call moved against v27 and named the reason: BP7's deep-intronic extension recovered
+how far into the intron a variant sits by parsing the `+N` / `-N` token out of the HGVSc, and the
+HGVSc is a display form.
+This closes that.
+The offset BP7 reads is now measured against the transcript from the unshifted position -
+`Transcript::intronic_offset_covered`, over the span the allele actually changes - which is the
+same position the consequence terms are decided from, so the two agree.
+
+**v31** gave that measured offset to every criterion that reads an intronic offset, BP7 and PVS1
+alike, and the benchmark said no.
+
+| Metric | v30 | v31 | v35 (shipped) |
+|---|---:|---:|---:|
+| Exact match | 425,334 | 425,307 | **425,328** |
+| Same-direction | 522,473 | 522,545 | **522,542** |
+| Opposite-direction | 59 | 65 | **59** |
+| Calls changed vs v30 | - | 274 | 177 |
+
+### Why v31 is wrong for PVS1, and it is not a matter of caution
+
+PVS1 gained 97 in v31 and lost none, and **all 97 are `splice_donor_variant`**.
+Real Ensembl VEP 115.1 writes `ENST00000379370.7:c.4298+21_4298+55del` for one of them and calls
+it `splice_donor_variant` in the same CSQ entry, so at first reading the gate looks like it was
+being fooled by a display string and v31 looks like the fix.
+
+It is the other way round, and the reason is provable rather than cautious.
+
+An indel in a repeat can be written at any of several positions, **all of which edit the sequence
+identically**, and the 3'-rule picks one end of that range.
+On a **donor** the 3' end is the one *furthest into the intron*.
+So a shifted offset past `+2` says: there exists an alignment of this change that never touches
+`+1` or `+2` - and since every alignment produces the same edited sequence, the canonical `GT` is
+intact in the edited transcript, whichever alignment is written down.
+PVS1's canonical-splice track exists on the assumption that the dinucleotide is *destroyed*.
+When it demonstrably is not, the track must stand down, and the shifted offset is an exact test
+for that, not a proxy for it.
+
+PTEN `10:87931087 GAGGT>G` is the worked case. The VCF deletes `AGGT` at 87931088-87931091, which
+overlaps the last two exonic bases and `+1`,`+2`; the maximal 3' alignment of the same deletion is
+87931093-87931096, which is `c.253+4_253+7`. Read against the reference, the intron opens
+`GTAGGTATGA` before the edit and **`GTATGA` after it**: the `GT` survives, the rest of the motif
+does not. Both tools call it `splice_donor_variant`, because SO defines that term by positional
+overlap and not by destruction.
+
+The offset measured at the variant's own position cannot answer this. It is taken from the same
+position that produced the `splice_donor_variant` term, so it is inside ±2 whenever that term
+exists, and the gate becomes a tautology - which is exactly what the run shows: 97 gained, **zero
+lost**. The cost is visible too: 6 of the 97 are ClinVar Benign or Likely benign (AGRN, NFKB2,
+PTEN, BRCA2, LZTR1, LMX1B, every one a repeat-context deletion whose shifted description starts at
+`+4` or later, so the dinucleotide survives all six), and opposite-direction goes 59 to 65.
+
+The shift runs *toward* the exon on an acceptor, so the same number is the nearest approach there
+and the gate does correspondingly little. That asymmetry belongs to HGVS.
+
+`ClassificationInput` carries the two numbers separately, because they answer two different
+questions: `intronic_offset`, where the change is, and `shifted_intronic_offset`, where HGVS
+numbers it. BP7 reads the first, PVS1's gate the second, and each field says why at its
+declaration.
+
+### v35: the gate stops parsing a string for it
+
+v34 got PVS1's number by parsing the `+N` token back out of the rendered HGVSc, which works but
+leaves a criterion depending on a display form - the defect BP7 had just been cured of.
+`shifted_intronic_offset` computes it instead: the same clip, the same 3'-shift the description
+itself is built from, then the offset off the transcript. **No criterion parses HGVSc any more.**
+
+Over all 673,660 variants, v35 against v34: **0 calls changed, 0 criteria changed**, discrepancy
+set, criterion firing rates and rule distribution byte-identical, and the annotate pass takes the
+same 1.8 min. The walk runs only for a variant that carries a canonical splice term, which is the
+only case the gate looks at.
+
+### v32 to v35: BP7 alone
+
+**v33**, **v34** and **v35** are v32 rebuilt as the code settled - v33 with the multi-allelic clip
+reaching `HGVSg`, v34 with the offset found only when a classifier is going to ask for it, v35
+with PVS1's number computed rather than parsed. All four runs' discrepancy sets and criterion
+firing rates are identical, and all four change only BP7 against v30: **+132, -45, nothing
+else**.
+
+| | |
+|---|---:|
+| Calls changed vs v30 | 177, all between VUS and LB |
+| BP7 gained | 132, of which **131 carry no splice-proximity term at all** |
+| BP7 lost | 45, of which **44 carry one** (`splice_donor_region_variant`, `splice_region_variant`, `splice_donor_5th_base_variant`) |
+| Opposite-direction | 59, unchanged |
+
+The two halves say the same thing from either side.
+BP7 was firing on 44 variants the annotation itself calls splice-region, because the donor-side
+3'-shift had written them deep in the intron; and declining on 131 variants with no splice term at
+all, because the acceptor-side shift runs the other way and had pulled them toward the exon.
+Of the 177 calls that move, 168 are on a ClinVar benign or likely-benign variant.
+Exact match falls by 6 and same-direction rises by 69, because 9 ClinVar-VUS variants now collect
+enough benign evidence to be called LB.
+
+The POLE variant v30 recorded as the one call still moving the wrong way -
+`12:132659279 T>TGGGGGGAGCCCTCACCTCTCCGTGAC`, written `c.3265_3275+15dup`, whose span starts in
+the exon so the parsed offset read 1 rather than 15 - is `LB` again, with `BP4&BP7`.
+
+#### What BP7's choice rests on, stated plainly
+
+It is worth being exact about what "where the change is" buys BP7, because the donor/acceptor
+asymmetry above means it is not the same as "the most cautious reading".
+For an indel in a repeat there is a *range* of equally valid positions, and:
+
+| | nearest the exon | furthest into the intron |
+|---|---|---|
+| donor (`+N`) | the variant's own position | the 3'-shifted one |
+| acceptor (`-N`) | the 3'-shifted one | the variant's own position |
+
+So reading the variant's own position is the more cautious answer on a donor and the less cautious
+one on an acceptor.
+The reason to take it anyway is **consistency with the rest of the annotation**: the consequence
+terms are decided at that same position, and the criterion must not be able to call a variant
+deep-intronic while the row beside it says `splice_donor_region_variant`.
+That is what the 175 of 177 above measure.
+A criterion that instead took the nearest approach on both sides would decline on those 45 *and*
+on the 131, which is a different rule from the one Walker 2023 states and is not what is
+implemented here.
+If a curator wants that rule, it is a threshold change, not a defect fix.
+
+Annotation is unchanged by this pass except for the multi-allelic clip described in
+[`docs/VEP_DIVERGENCE.md`](../../docs/VEP_DIVERGENCE.md): 801 of the 824 genome-wide `HGVSc` rows,
+with the ClinVar sample, the in-frame deletion set and every other field byte-identical to v30's.

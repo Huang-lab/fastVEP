@@ -1,4 +1,4 @@
-//! Pins the allocation behaviour of the intronic 3'-shift.
+//! Pins the allocation behaviour of the HGVS 3'-shift.
 //!
 //! The shift walked the reference one base at a time, calling `fetch_sequence`
 //! per step - and twice per step for a deletion, once for each end - with every
@@ -8,14 +8,16 @@
 //! transcripts pays it twenty times for the same variant.
 //!
 //! It now reads a block at a time, so the count is set by how many blocks the
-//! walk crosses rather than by how far it travels.
+//! walk crosses rather than by how far it travels. Every indel routes through
+//! this walk, exonic ones included, so the second half of the test pins the
+//! short-walk cost as well as the long one.
 //!
 //! This file installs a counting global allocator, so it deliberately holds
 //! exactly ONE test: `cargo test` runs the tests in a binary concurrently, and a
 //! second test allocating on another thread would be counted here.
 
 use anyhow::{anyhow, Result};
-use fastvep_annotate::three_prime_shift_intronic;
+use fastvep_annotate::three_prime_shift_genomic;
 use fastvep_cache::providers::SequenceProvider;
 use fastvep_core::{Allele, Strand};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -74,7 +76,7 @@ fn the_shift_reads_the_reference_in_blocks_not_a_base_at_a_time() {
     // An insertion travelling the full repeat: 3,999 steps.
     let mut landed = (0, 0);
     let insertion = allocations_during(|| {
-        landed = three_prime_shift_intronic(
+        landed = three_prime_shift_genomic(
             &reference,
             "1",
             1,
@@ -92,7 +94,7 @@ fn the_shift_reads_the_reference_in_blocks_not_a_base_at_a_time() {
     // A deletion travelling the same distance, reading both of its ends.
     let mut deleted = (0, 0);
     let deletion = allocations_during(|| {
-        deleted = three_prime_shift_intronic(
+        deleted = three_prime_shift_genomic(
             &reference,
             "1",
             1,
@@ -118,5 +120,50 @@ fn the_shift_reads_the_reference_in_blocks_not_a_base_at_a_time() {
     assert!(
         deletion <= 128,
         "deletion shift allocated {deletion} times crossing 4,000 bases"
+    );
+
+    // The per-row cost, which is the one paid millions of times. Every indel
+    // routes through this walk now, exonic ones included, so the common case is
+    // not the 4,000-base slide above but a variant that moves a base or two or
+    // not at all. That has to cost a bounded handful of reads.
+    let mut bases = b"A".repeat(4_000);
+    bases[3] = b'T'; // stops the walk after a single step
+    let short = MemRef(bases);
+
+    let short_insertion = allocations_during(|| {
+        three_prime_shift_genomic(
+            &short,
+            "1",
+            1,
+            0,
+            &Allele::Deletion,
+            &Allele::Sequence(b"A".to_vec()),
+            Strand::Forward,
+            1,
+            4_000,
+        );
+    });
+    let short_deletion = allocations_during(|| {
+        three_prime_shift_genomic(
+            &short,
+            "1",
+            1,
+            1,
+            &Allele::Sequence(b"A".to_vec()),
+            &Allele::Deletion,
+            Strand::Forward,
+            1,
+            4_000,
+        );
+    });
+    // One window per cursor - two for a deletion, which reads both of its ends -
+    // and the window opens at 16 bases, which is more than a short walk needs.
+    assert!(
+        short_insertion <= 4,
+        "a one-base insertion shift allocated {short_insertion} times"
+    );
+    assert!(
+        short_deletion <= 8,
+        "a one-base deletion shift allocated {short_deletion} times"
     );
 }

@@ -50,6 +50,7 @@ pub(crate) fn minimal_input() -> ClassificationInput {
         is_pure_insertion: None,
         at_exon_edge: None,
         intronic_offset: None,
+        shifted_intronic_offset: None,
         proband_genotype: None,
         mother_genotype: None,
         father_genotype: None,

@@ -712,11 +712,11 @@ impl ConsequencePredictor {
         // Ensembl's `_peptide` is the protein without its terminator; ours
         // carries it, because that is what the annotation's own translation
         // ends with.
-        let peptide_len = transcript
+        let peptide = transcript
             .peptide
             .as_deref()
-            .map(|p| p.strip_suffix('*').unwrap_or(p).len());
-        Some(self.terms_for_window(&window, overlaps_initiator, peptide_len))
+            .map(|p| p.strip_suffix('*').unwrap_or(p));
+        Some(self.terms_for_window(&window, overlaps_initiator, peptide))
     }
 
     /// The SO terms Ensembl derives from a codon window.
@@ -736,7 +736,7 @@ impl ConsequencePredictor {
         &self,
         w: &CodonWindow,
         overlaps_initiator: bool,
-        peptide_len: Option<usize>,
+        peptide: Option<&str>,
     ) -> CodingChange {
         let (ref_pep, alt_pep) = (w.ref_aas.as_str(), w.alt_aas.as_str());
         let extends = |pep: &str| pep.starts_with(ref_pep) || pep.ends_with(ref_pep);
@@ -767,28 +767,70 @@ impl ConsequencePredictor {
         // The remaining two do test the terminator. One asks whether it sits at
         // the same residue on both sides; the other whether the edited *protein*
         // still matches the reference over the reference's own length and grows
-        // by fewer than three residues past it - only possible when nothing
-        // follows the window, so it needs the peptide's length. Deriving that
-        // from the CDS length instead assumes the CDS is exactly the peptide
-        // plus a terminator, and a `cds_end_NF` transcript is not.
-        let grows_past_the_last_residue = |pep_len: usize| {
-            // Nothing after the window means the edit cannot displace anything.
-            if w.tl_end < pep_len || w.tl_start == 0 {
+        // by fewer than three residues past it. That is a comparison of two
+        // *sequences*, not of two positions: an insertion whose residues repeat
+        // what follows them pushes the rest of the protein along without
+        // changing the first `length($ref_seq)` residues of it, and holds the
+        // clause anywhere the repeat reaches the terminator. Reading it as
+        // "nothing follows the window" instead missed 18 rows per 6,600 ClinVar
+        // variants, all of them a duplication near the C-terminus - MSH6
+        // `c.4106_4108dup` on ENST00000936511, where the inserted Leu repeats
+        // the Leu already there.
+        //
+        // The edited protein is compared in place rather than built: this runs
+        // once per (variant x transcript x allele), and a `String` here is a
+        // String per row.
+        let keeps_the_protein_and_grows_past_it = |peptide: &str| {
+            let pep = peptide.as_bytes();
+            let (len, alt) = (pep.len(), alt_pep.as_bytes());
+            if w.tl_start == 0 {
                 return false;
             }
-            let before = w.tl_start - 1;
-            let grown = before + alt_pep.len();
-            // The residues of the window that lie inside the peptide have to
-            // survive unchanged at the front of the replacement.
-            let kept = pep_len.saturating_sub(before).min(ref_pep.len());
-            grown > pep_len && grown - pep_len < 3 && alt_pep.starts_with(&ref_pep[..kept])
+            // `tl_start` is 1-based and `tl_end` is one *behind* it for an
+            // insertion, which makes `before`/`after` the same index there.
+            //
+            // Both are clipped to the peptide's length, because Ensembl's
+            // `substr($mut_seq, $tl_start - 1, $tl_end - $tl_start + 1) = $alt_pep`
+            // clips the same way: a window sitting *on* the terminator starts at
+            // exactly `length($ref_seq)` and appends. Rejecting that instead
+            // dropped `stop_retained_variant` from an insertion in front of the
+            // stop - `*/F*` on SMARCE1 ENST00000348513, which VEP 115.1 calls
+            // `inframe_insertion,stop_retained_variant`.
+            let (before, after) = (w.tl_start.saturating_sub(1).min(len), w.tl_end.min(len));
+            // Ensembl asks that the edited protein be longer than the reference
+            // by one residue or two - `$final_stop_length < 3` on a string that
+            // exists only when it is longer at all.
+            let edited_len = before + alt.len() + (len - after);
+            if edited_len <= len || edited_len - len >= 3 {
+                return false;
+            }
+            // The replacement has to reproduce the reference where it lands,
+            // and what followed the window has to reproduce it too, shifted
+            // along by however much longer the replacement is.
+            //
+            // A window that replaces nothing - an insertion on a codon boundary
+            // - compares nothing here, and the clause holds on the length test
+            // alone. That is Ensembl's arithmetic too, its `substr` with a
+            // zero-length replacement being an insertion, and it is why a
+            // single base inserted just before the terminator comes out
+            // `inframe_insertion,stop_retained_variant`, MODERATE, rather than
+            // a frameshift. Real VEP 115.1 agrees on all 184 transcript rows of
+            // the 11 ClinVar 2-star+ variants with that shape, so this
+            // reproduces Ensembl rather than diverging from it; divergence 1 in
+            // docs/VEP_DIVERGENCE.md is the clause this codebase does refuse.
+            let overlap = alt.len().min(len - before);
+            if pep[before..before + overlap] != alt[..overlap] {
+                return false;
+            }
+            let tail = before + alt.len();
+            tail >= len || pep[after..after + (len - tail)] == pep[tail..]
         };
         // `stop_retained` also declines on an incomplete terminal codon.
         let stop_retained = !stop_lost
             && !w.partial_codon
             && !alt_pep.is_empty()
             && ((ref_pep.contains('*') && ref_pep.find('*') == alt_pep.find('*'))
-                || peptide_len.is_some_and(grows_past_the_last_residue));
+                || peptide.is_some_and(keeps_the_protein_and_grows_past_it));
 
         // `frameshift` and `inframe_deletion` both decline when the codon the
         // change starts in is incomplete; `protein_altering_variant` does not.
@@ -839,14 +881,32 @@ impl ConsequencePredictor {
                 _ => true,
             };
         let length_changed = w.ref_len != w.alt_len;
+        // The peptide test, which Ensembl skips when either side is missing or
+        // the alternate is the frameshift placeholder.
+        let peptide_loses_the_initiator = w.tl_start == 1
+            && !ref_pep.is_empty()
+            && !alt_pep.is_empty()
+            && alt_pep != "X"
+            && !extends(alt_pep);
+        // `start_lost` (l. 851) answers on the coordinates first: an edit that
+        // alters the initiator and is neither in-frame term is a start loss
+        // there (l. 870). When that line declines *because* the edit is an
+        // in-frame indel, Ensembl does not stop - it falls through to the
+        // peptide test below, and an in-frame deletion that takes the initiator
+        // out reads as a start loss there. `MNII/I` on KCNA2 ENST00000639048 is
+        // `start_lost,inframe_deletion` and HIGH to VEP 115.1, where stopping at
+        // the first test called a deletion of the start codon a MODERATE
+        // in-frame deletion - and fastVEP's own HGVSp for the row already said
+        // `p.MetAsnIle1_?3`, which is a start loss by another name.
+        //
+        // The fall-through is reachable when the coordinate arm declines
+        // because the initiator *survived*, and `start_retained_variant` below
+        // holds on the same row, so the two can be reported together - which
+        // Ensembl also does, by the same path. No variant of the 673,660 in the
+        // ClinVar 2-star+ set reaches it.
         let start_lost = overlaps_initiator
-            && if length_changed {
-                start_altered && !(inframe_insertion || inframe_deletion)
-            } else {
-                // The peptide test, which Ensembl skips when either side is
-                // missing or the alternate is the frameshift placeholder.
-                !ref_pep.is_empty() && !alt_pep.is_empty() && alt_pep != "X" && !extends(alt_pep)
-            };
+            && ((length_changed && start_altered && !(inframe_insertion || inframe_deletion))
+                || peptide_loses_the_initiator);
         // `start_retained_variant` is the complement of the same question, and
         // only for a length change: for a substitution Ensembl reaches it
         // through `_snp_start_altered`, which this window does not model.
@@ -884,15 +944,25 @@ impl ConsequencePredictor {
         // base: a CDS padded with `N` for an incomplete first codon translates
         // to `X`, and calling that synonymous claims the protein is unchanged
         // when the reference residue was never known.
+        //
+        // An unknown residue silences `synonymous_variant` (l. 1077 tests both
+        // peptides for an `X`) but not `missense_variant` (l. 1085, which only
+        // asks that the two differ and declines on a partial codon), and
+        // `coding_unknown` does not defer to either. So a window that resolves
+        // one residue and not the next earns *both* terms: `QX/HX` on
+        // ENST00000515665 is `missense_variant,coding_sequence_variant` to VEP
+        // 115.1, where reporting `coding_sequence_variant` alone called a real
+        // missense MODIFIER and anything filtering on IMPACT dropped it.
         let unresolved = ref_pep.contains('X') || alt_pep.contains('X');
         if terms.is_empty() && !length_changed {
-            terms.push(if unresolved {
-                Consequence::CodingSequenceVariant
-            } else if ref_pep == alt_pep {
-                Consequence::SynonymousVariant
-            } else {
-                Consequence::MissenseVariant
-            });
+            if ref_pep != alt_pep && !w.partial_codon {
+                terms.push(Consequence::MissenseVariant);
+            } else if ref_pep == alt_pep && !unresolved {
+                terms.push(Consequence::SynonymousVariant);
+            }
+            if unresolved || terms.is_empty() {
+                terms.push(Consequence::CodingSequenceVariant);
+            }
         }
         // `incomplete_terminal_codon_variant` sits beside whatever else held,
         // and beside `coding_sequence_variant` when nothing else did.
@@ -1407,6 +1477,184 @@ mod tests {
 
         ac.protein_end = None;
         assert_eq!(ac.protein_range(), None);
+    }
+
+    /// An in-frame deletion that removes the initiator is a start loss too.
+    ///
+    /// Ensembl's `start_lost` (l. 851) answers on coordinates first and falls
+    /// through to the peptide test when that line declines because the edit is
+    /// an in-frame indel. Stopping at the first test reported KCNA2
+    /// `c.3_11del` on ENST00000639048 - `MNII/I`, the initiator among the
+    /// residues it removes - as a MODERATE in-frame deletion where VEP 115.1
+    /// calls it `start_lost,inframe_deletion`, HIGH. Four rows over the
+    /// 400-variant ClinVar in-frame deletion set, and all four are IMPACT.
+    #[test]
+    fn an_inframe_deletion_that_removes_the_initiator_is_a_start_loss() {
+        let predictor = ConsequencePredictor::default();
+        let window = CodonWindow {
+            ref_aas: "MNII".into(),
+            alt_aas: "I".into(),
+            ref_window: b"ATGAACATCATT".to_vec(),
+            alt_window: b"ATT".to_vec(),
+            ref_codons: "atGAACATCATt".into(),
+            alt_codons: "att".into(),
+            ref_len: 9,
+            alt_len: 0,
+            tl_start: 1,
+            tl_end: 4,
+            partial_codon: false,
+        };
+        let terms = predictor.terms_for_window(&window, true, Some("MNIIKEL"));
+        let all: Vec<_> = std::iter::once(terms.consequence)
+            .chain(terms.additional.iter().copied())
+            .collect();
+        assert!(all.contains(&Consequence::StartLost), "got {all:?}");
+        assert!(all.contains(&Consequence::InframeDeletion), "got {all:?}");
+    }
+
+    /// Ensembl's second `ref_eq_alt_sequence` clause is a comparison of
+    /// sequences, not of positions: an insertion whose residues repeat what
+    /// follows them leaves the reference's own length unchanged and pushes the
+    /// terminator along, which is `stop_retained_variant` to VEP whether or not
+    /// the window sits on the last residue. MSH6 `c.4106_4108dup` on
+    /// ENST00000936511 inserts a Leu in front of the Leu already there, two
+    /// residues from the end; reading the clause as "nothing follows the window"
+    /// missed it and 17 more per 6,600 ClinVar variants.
+    #[test]
+    fn an_insertion_that_repeats_what_follows_it_retains_the_stop() {
+        let predictor = ConsequencePredictor::default();
+        // `…K E L` - inserting a Leu after the E reproduces the protein and
+        // grows it by one.
+        let peptide = "MSRQKEL";
+        let window = |tl_start: usize, ref_aas: &str, alt_aas: &str| CodonWindow {
+            ref_aas: ref_aas.into(),
+            alt_aas: alt_aas.into(),
+            ref_window: b"GAA".to_vec(),
+            alt_window: b"GAATTA".to_vec(),
+            ref_codons: "gaa".into(),
+            alt_codons: "gaATTa".into(),
+            ref_len: 3,
+            alt_len: 6,
+            tl_start,
+            tl_end: tl_start,
+            partial_codon: false,
+        };
+
+        let retained = predictor.terms_for_window(&window(6, "E", "EL"), false, Some(peptide));
+        assert!(
+            retained
+                .additional
+                .contains(&Consequence::StopRetainedVariant)
+                || retained.consequence == Consequence::StopRetainedVariant
+        );
+
+        // The same insertion earlier in the protein changes what follows it, so
+        // the clause does not hold and the terminator is not retained.
+        let moved = predictor.terms_for_window(&window(2, "S", "SL"), false, Some(peptide));
+        assert!(!moved.additional.contains(&Consequence::StopRetainedVariant));
+        assert_ne!(moved.consequence, Consequence::StopRetainedVariant);
+
+        // A window can also sit *on* the terminator, which is one past the
+        // peptide's own last residue: Ensembl's
+        // `substr($mut_seq, $tl_start - 1, ...) = $alt_pep` appends there rather
+        // than replacing, and clips a window running off the end. Treating those
+        // coordinates as out of range instead dropped the term from every
+        // insertion in front of a stop - `*/F*` on SMARCE1 ENST00000348513 is
+        // the shape, and real VEP 115.1 calls it
+        // `inframe_insertion,stop_retained_variant`.
+        //
+        // The rule, not the row: a replacement of the terminator's own window is
+        // stop-retaining exactly when it leaves the protein's own residues
+        // untouched and grows it by fewer than three - and the terminator itself
+        // is one of those, so one added residue passes and two do not.
+        let at_terminator = |ref_aas: &str, alt_aas: &str, start_past_end: usize| CodonWindow {
+            ref_aas: ref_aas.into(),
+            alt_aas: alt_aas.into(),
+            ref_window: b"TAA".to_vec(),
+            alt_window: b"TTTTAA".to_vec(),
+            ref_codons: "taa".into(),
+            alt_codons: "tTTTaa".into(),
+            ref_len: 3,
+            alt_len: 6,
+            tl_start: peptide.len() + start_past_end,
+            tl_end: peptide.len() + start_past_end,
+            partial_codon: false,
+        };
+        let terms = |w: &CodonWindow| -> Vec<Consequence> {
+            let out = predictor.terms_for_window(w, false, Some(peptide));
+            std::iter::once(out.consequence)
+                .chain(out.additional.iter().copied())
+                .collect()
+        };
+
+        // One residue in front of the stop: retained.
+        let one = terms(&at_terminator("*", "F*", 1));
+        assert!(
+            one.contains(&Consequence::StopRetainedVariant),
+            "one residue added: {one:?}"
+        );
+        // Two, which with the terminator is three characters past the
+        // reference's own length: past Ensembl's `< 3` bound, so it declines.
+        let two = terms(&at_terminator("*", "FF*", 1));
+        assert!(
+            !two.contains(&Consequence::StopRetainedVariant),
+            "two residues added: {two:?}"
+        );
+        // A window further past the end resolves rather than panicking. Which
+        // term it earns is not asserted: the codon window is built from CDS
+        // coordinates, so a start more than one residue past the terminator does
+        // not arise, and Ensembl's own `substr` dies rather than defining it.
+        // What has to hold is that the slicing stays inside the peptide.
+        assert!(!terms(&at_terminator("*", "F*", 4)).is_empty());
+    }
+
+    /// A window that resolves one residue and not the next earns both terms.
+    ///
+    /// Ensembl's `missense_variant` (l. 1085) asks only that the two peptides
+    /// differ and that the codon is complete; the `X` silences
+    /// `synonymous_variant` (l. 1077) and not it, and `coding_unknown` (l. 1507)
+    /// defers to neither. Reporting `coding_sequence_variant` alone made a real
+    /// missense MODIFIER, which anything filtering on IMPACT drops: IL7R
+    /// `5:35860925 GC>TT` on ENST00000515665, `QX/HX`, is
+    /// `missense_variant,coding_sequence_variant` to real VEP 115.1.
+    #[test]
+    fn an_unknown_residue_beside_a_changed_one_keeps_the_missense() {
+        let predictor = ConsequencePredictor::default();
+        let window = |ref_aas: &str, alt_aas: &str, partial_codon: bool| CodonWindow {
+            ref_aas: ref_aas.into(),
+            alt_aas: alt_aas.into(),
+            ref_window: b"CAGC".to_vec(),
+            alt_window: b"CATT".to_vec(),
+            ref_codons: "caGC".into(),
+            alt_codons: "caTT".into(),
+            ref_len: 2,
+            alt_len: 2,
+            tl_start: 52,
+            tl_end: 53,
+            partial_codon,
+        };
+
+        let both =
+            predictor.terms_for_window(&window("QX", "HX", false), false, Some(&"M".repeat(100)));
+        assert_eq!(both.consequence, Consequence::MissenseVariant);
+        assert_eq!(both.additional, vec![Consequence::CodingSequenceVariant]);
+
+        // Unchanged where nothing resolves: an `X` on both sides is not a
+        // synonymous change, because the reference residue was never known.
+        let unknown =
+            predictor.terms_for_window(&window("X", "X", false), false, Some(&"M".repeat(100)));
+        assert_eq!(unknown.consequence, Consequence::CodingSequenceVariant);
+        assert!(unknown.additional.is_empty());
+
+        // And `missense_variant` still declines on a partial codon, as Ensembl's
+        // does (l. 1093), leaving the terms that describe one.
+        let partial =
+            predictor.terms_for_window(&window("QX", "HX", true), false, Some(&"M".repeat(100)));
+        assert_eq!(
+            partial.consequence,
+            Consequence::IncompleteTerminalCodonVariant
+        );
+        assert_eq!(partial.additional, vec![Consequence::CodingSequenceVariant]);
     }
 
     fn bare_result() -> AlleleConsequenceResult {

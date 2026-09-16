@@ -31,8 +31,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
-    annotate_intergenic, annotate_sa_only_scaffold, load_gene_providers, load_sa_providers,
-    reverse_complement_allele, zip_positions,
+    annotate_intergenic, annotate_sa_only_scaffold, clipped_span, has_canonical_splice,
+    hgvs_allele, hgvsg_clipped, load_gene_providers, load_sa_providers, shifted_intronic_offset,
+    zip_positions,
 };
 
 const BATCH_SIZE: usize = 1024;
@@ -233,6 +234,46 @@ fn annotate_variant(
                             codons: ac.codons.clone(),
                             exon: ac.exon,
                             intron: ac.intron,
+                            // Off the transcript, not off the HGVSc, and over
+                            // the span the allele actually changes: the bases a
+                            // pair repeats at either end are by definition
+                            // unchanged, and counting them can only make a
+                            // change look nearer a splice site than it is.
+                            //
+                            // Only the classifier reads it, and finding it
+                            // walks the transcript's introns once per end of
+                            // the span, per (variant x transcript x allele).
+                            // So it is found when something is going to ask,
+                            // the way `hgvsc` is built only under `--hgvs`.
+                            intron_offset: acmg_config.and(transcript).and_then(|tr| {
+                                let (s, e) = clipped_span(
+                                    tr.strand,
+                                    vf.position.start,
+                                    vf.position.end,
+                                    &vf.ref_allele,
+                                    &ac.allele,
+                                );
+                                tr.intronic_offset_covered(s, e)
+                            }),
+                            // The same distance where HGVS numbers the change rather
+                            // than where it sits, which is what PVS1's gate is
+                            // calibrated to, and only for the variants that gate
+                            // looks at: walking the reference twice for every indel
+                            // would be work done before knowing it is needed.
+                            shifted_intron_offset: acmg_config
+                                .and(transcript)
+                                .filter(|_| has_canonical_splice(&ac.consequences))
+                                .and_then(|tr| {
+                                    shifted_intronic_offset(
+                                        seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                                        chrom,
+                                        tr,
+                                        vf.position.start,
+                                        vf.position.end,
+                                        &vf.ref_allele,
+                                        &ac.allele,
+                                    )
+                                }),
                             distance: ac.distance,
                             protein_length: ac.protein_length,
                             escapes_nmd: ac.escapes_nmd,
@@ -252,7 +293,7 @@ fn annotate_variant(
 
                         // Generate HGVS if requested
                         if config.hgvs {
-                            ann.hgvsg = Some(fastvep_hgvs::hgvsg(
+                            ann.hgvsg = Some(hgvsg_clipped(
                                 chrom,
                                 vf.position.start,
                                 vf.position.end,
@@ -267,86 +308,121 @@ fn annotate_variant(
                                     None => tc.transcript_id.to_string(),
                                 };
 
-                                // Determine alleles for HGVS - complement for minus strand
-                                let (hgvs_ref, hgvs_alt) = if tr.strand == fastvep_core::Strand::Reverse {
-                                    (reverse_complement_allele(&vf.ref_allele), reverse_complement_allele(&ac.allele))
-                                } else {
-                                    (vf.ref_allele.clone(), ac.allele.clone())
-                                };
+                                // Read the way HGVS reads it: clipped of the
+                                // bases the pair repeats at either end, and
+                                // facing the transcript. A multi-allelic record
+                                // is trimmed once for the whole site, so an
+                                // allele that reaches here as a replacement may
+                                // still be a plain deletion.
+                                let hv = hgvs_allele(
+                                    tr.strand,
+                                    vf.position.start,
+                                    vf.position.end,
+                                    &vf.ref_allele,
+                                    &ac.allele,
+                                    // `zip` and not `zip_positions`: a pair with one end
+                                    // mapped is a variant with one end in an exon and
+                                    // the other in an intron, which has no cDNA span at
+                                    // all. Collapsing it to a point names one base of a
+                                    // change that covers seventeen.
+                                    ac.cdna_start
+                                        .zip(ac.cdna_end)
+                                        .map(|(a, b)| (a.min(b), a.max(b))),
+                                );
 
-                                if let Some(coding_start) = tr.cdna_coding_start {
-                                    if let (Some(cs), Some(ce)) = (ac.cdna_start, ac.cdna_end) {
-                                        // Normalize cDNA positions (minus-strand can reverse order)
-                                        let (cs, ce) = (cs.min(ce), cs.max(ce));
-                                        // Exonic variant: standard HGVSc with 3' shifting
-                                        ann.hgvsc = fastvep_hgvs::hgvsc_with_seq(
+                                // Every indel is 3'-shifted over the genome, so
+                                // it routes through `hgvsc_shifted` whether or
+                                // not both its ends are exonic: the shift
+                                // crosses splice sites, and the description has
+                                // to follow it there. Without a reference
+                                // there is no walk to make, so those fall to the
+                                // cDNA renderer below, which shifts on the
+                                // spliced sequence instead - not the same answer
+                                // across a splice site, but the only one
+                                // available. `hgvsc_shifted` also returns `None`
+                                // for a variant it cannot place at all, and that
+                                // falls the same way.
+                                let shifted = (fastvep_annotate::is_shiftable_indel(
+                                    &hv.hgvs_ref,
+                                    &hv.hgvs_alt,
+                                ) && seq_provider.is_some())
+                                .then(|| {
+                                    fastvep_annotate::hgvsc_shifted(
+                                        seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                                        chrom,
+                                        tr,
+                                        &versioned_tid,
+                                        hv.start,
+                                        hv.end,
+                                        &hv.genomic_ref,
+                                        &hv.genomic_alt,
+                                        &hv.hgvs_ref,
+                                        &hv.hgvs_alt,
+                                        tr.cdna_coding_start,
+                                        tr.cdna_coding_end,
+                                    )
+                                })
+                                .flatten();
+                                ann.hgvsc = match (shifted, tr.cdna_coding_start) {
+                                    (Some(h), _) => Some(h),
+                                    (None, Some(coding_start)) => match hv.cdna {
+                                        Some((cs, ce)) => fastvep_hgvs::hgvsc_with_seq(
                                             &versioned_tid,
-                                            cs, ce,
-                                            &hgvs_ref,
-                                            &hgvs_alt,
+                                            cs,
+                                            ce,
+                                            &hv.hgvs_ref,
+                                            &hv.hgvs_alt,
                                             coding_start,
                                             tr.cdna_coding_end,
                                             tr.spliced_seq.as_deref(),
                                             tr.codon_table_start_phase,
-                                        );
-                                    } else {
-                                        // Not "is this intronic": a variant with
-                                        // one end in an exon and the other in an
-                                        // intron has no exonic cDNA pair, and
-                                        // `intron_at` reads its first base only.
-                                        // `hgvsc_intronic_shifted` returns
-                                        // `None` for anything it cannot place,
-                                        // which is the real guard.
-                                        ann.hgvsc = fastvep_annotate::hgvsc_intronic_shifted(
+                                        ),
+                                        // Not "is this intronic": a variant
+                                        // with one end in an exon and the
+                                        // other in an intron has no exonic
+                                        // cDNA pair, and `intron_at` reads
+                                        // its first base only.
+                                        None => fastvep_annotate::hgvsc_shifted(
                                             seq_provider.map(|sp| sp as &dyn SequenceProvider),
                                             chrom,
                                             tr,
                                             &versioned_tid,
-                                            vf.position.start,
-                                            vf.position.end,
-                                            &vf.ref_allele,
-                                            &ac.allele,
-                                            &hgvs_ref,
-                                            &hgvs_alt,
+                                            hv.start,
+                                            hv.end,
+                                            &hv.genomic_ref,
+                                            &hv.genomic_alt,
+                                            &hv.hgvs_ref,
+                                            &hv.hgvs_alt,
                                             Some(coding_start),
                                             tr.cdna_coding_end,
-                                        );
-                                    }
-                                } else {
+                                        ),
+                                    },
                                     // Non-coding transcript: use n. notation
-                                    if let (Some(cs), Some(ce)) = (ac.cdna_start, ac.cdna_end) {
-                                        ann.hgvsc = fastvep_hgvs::hgvsc_noncoding(
+                                    (None, None) => match hv.cdna {
+                                        Some((cs, ce)) => fastvep_hgvs::hgvsc_noncoding(
                                             &versioned_tid,
                                             cs,
                                             ce,
-                                            &hgvs_ref,
-                                            &hgvs_alt,
+                                            &hv.hgvs_ref,
+                                            &hv.hgvs_alt,
                                             tr.spliced_seq.as_deref(),
-                                        );
-                                    } else {
-                                        // Not "is this intronic": a variant with
-                                        // one end in an exon and the other in an
-                                        // intron has no exonic cDNA pair, and
-                                        // `intron_at` reads its first base only.
-                                        // `hgvsc_intronic_shifted` returns
-                                        // `None` for anything it cannot place,
-                                        // which is the real guard.
-                                        ann.hgvsc = fastvep_annotate::hgvsc_intronic_shifted(
+                                        ),
+                                        None => fastvep_annotate::hgvsc_shifted(
                                             seq_provider.map(|sp| sp as &dyn SequenceProvider),
                                             chrom,
                                             tr,
                                             &versioned_tid,
-                                            vf.position.start,
-                                            vf.position.end,
-                                            &vf.ref_allele,
-                                            &ac.allele,
-                                            &hgvs_ref,
-                                            &hgvs_alt,
+                                            hv.start,
+                                            hv.end,
+                                            &hv.genomic_ref,
+                                            &hv.genomic_alt,
+                                            &hv.hgvs_ref,
+                                            &hv.hgvs_alt,
                                             None,
                                             None,
-                                        );
-                                    }
-                                }
+                                        ),
+                                    },
+                                };
                             }
 
                             if let (Some(ref aa), Some(ps)) = (&ac.amino_acids, ac.protein_start) {
@@ -371,8 +447,39 @@ fn annotate_variant(
                                             None => pid.clone(),
                                         };
                                         let is_fs = ac.consequences.contains(&Consequence::FrameshiftVariant);
+                                        // A lost terminator names how much
+                                        // protein the loss adds, which needs the
+                                        // sequence past the stop for the same
+                                        // reason a frameshift does. `None` when
+                                        // the change is not an equal-length
+                                        // replacement of the terminator's codon,
+                                        // and then the chain below describes it.
+                                        let stop_lost_extension = (!is_fs
+                                            && ac.consequences.contains(&Consequence::StopLost))
+                                            .then(|| {
+                                                let spliced = tr.spliced_seq.as_deref()?;
+                                                let coding_start = tr.cdna_coding_start?;
+                                                let cds = fastvep_annotate::cds_and_downstream(
+                                                    tr,
+                                                    spliced,
+                                                    coding_start,
+                                                )?;
+                                                fastvep_hgvs::hgvsp_stop_lost_from_cds(
+                                                    &versioned_pid,
+                                                    &cds,
+                                                    ac.cds_start,
+                                                    ac.cds_end,
+                                                    &vf.ref_allele,
+                                                    &ac.allele,
+                                                    tr.strand,
+                                                    &fastvep_annotate::frameshift_codon_table(tr),
+                                                )
+                                            })
+                                            .flatten();
 
-                                        if is_fs {
+                                        if stop_lost_extension.is_some() {
+                                            ann.hgvsp = stop_lost_extension;
+                                        } else if is_fs {
                                             if let (
                                                 Some(spliced),
                                                 Some(coding_start),
@@ -640,6 +747,8 @@ fn annotate_variant(
                     aa.amino_acids.as_ref(),
                     aa.protein_position.map(|(s, _)| s),
                     aa.hgvsc.as_deref(),
+                    aa.intron_offset,
+                    aa.shifted_intron_offset,
                     aa.exon,
                     aa.protein_length,
                     aa.escapes_nmd,
@@ -1827,6 +1936,8 @@ fn enrich_compound_het_batch(
                 aa.amino_acids.as_ref(),
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
+                aa.intron_offset,
+                aa.shifted_intron_offset,
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
