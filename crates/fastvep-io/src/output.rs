@@ -370,13 +370,17 @@ fn format_csq_entry_into(
 /// Escape special characters in CSQ field values, appending to an existing
 /// buffer.
 ///
-/// Each substitution is the one Ensembl VEP makes, measured against 115.1
-/// rather than assumed: `,` and `|` become `&`, `;` becomes `%3B`, `=` becomes
-/// `%3D` (VEP writes a synonymous HGVSp as `ENSP00000269305.1:p.Thr125%3D`),
-/// and a space becomes `_`. Note that VEP is not self-consistent here - the
-/// value it appends to CSQ for a `--custom` annotation keeps a literal `=` -
-/// so this follows what it does to CSQ's own fields, which is also the only
-/// reading VCF 4.3 permits.
+/// Five of these substitutions are the ones Ensembl VEP makes, measured
+/// against 115.1 by `validation/run_escaping_probe.sh` rather than assumed:
+/// `,` and `|` become `&`, `;` becomes `%3B`, `=` becomes `%3D` (VEP writes a
+/// synonymous HGVSp as `ENSP00000269305.1:p.Thr125%3D`), and a space becomes
+/// `_`. Note that VEP is not self-consistent on `=` - the value it appends to
+/// CSQ for a `--custom` annotation keeps a literal one - so this follows what
+/// it does to CSQ's own fields, which is also the only reading VCF 4.3
+/// permits.
+///
+/// TAB / CR / LF are encoded without a VEP measurement behind them; see the
+/// comment at that arm.
 ///
 /// `:` is *not* escaped, by VEP or here: every HGVSc carries one.
 fn escape_csq_str(value: &str, buf: &mut String) {
@@ -388,7 +392,7 @@ fn escape_csq_str(value: &str, buf: &mut String) {
     // escaping falls through to the character loop.
     if !value
         .bytes()
-        .any(|b| matches!(b, b',' | b'|' | b';' | b'=' | b' '))
+        .any(|b| matches!(b, b',' | b'|' | b';' | b'=' | b' ' | b'\t' | b'\r' | b'\n'))
     {
         buf.push_str(value);
         return;
@@ -403,6 +407,15 @@ fn escape_csq_str(value: &str, buf: &mut String) {
             // reversibility in a column whose whole point is to be diffable
             // against VEP's, and no CSQ field carries free text.
             ' ' => buf.push('_'),
+            // Not measured against VEP, because no source could deliver one
+            // to measure with: a tab or a newline here does not mangle a
+            // value, it ends the column or the record, and there is no
+            // reading of "agrees with VEP" that justifies writing a VCF a
+            // reader will silently truncate. `push_escaped_subfield_char`
+            // encodes the same three for the same reason.
+            '\t' => buf.push_str("%09"),
+            '\r' => buf.push_str("%0D"),
+            '\n' => buf.push_str("%0A"),
             _ => buf.push(c),
         }
     }
@@ -1636,8 +1649,9 @@ fn format_clinvar_protein_projection_for_tv(
     // See `format_gene_projection_for_tv`: fall back to variant-level
     // dedupe when the transcript has no associated gene symbol.
     let symbol_filter = tv.gene_symbol.as_deref();
-    let mut values: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = String::new();
+    // `(start, end)` of each accepted value inside `out`, for the dedupe.
+    let mut seen: Vec<(usize, usize)> = Vec::new();
     for ga in &vf.gene_annotations {
         if ga.json_key != spec.json_key {
             continue;
@@ -1650,19 +1664,34 @@ fn format_clinvar_protein_projection_for_tv(
         let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
             continue;
         };
-        let variants = collect_clinvar_protein_variants(&parsed);
-        if variants.is_empty() {
+        // Written straight into the output, with the `,` that joins two
+        // genes' entries, so neither the value nor the dedupe key is ever a
+        // second copy of the rendered list.
+        let start = out.len();
+        if !out.is_empty() {
+            out.push(',');
+        }
+        let value_at = out.len();
+        if !push_clinvar_protein_value(&mut out, &ga.gene_symbol, &parsed) {
+            out.truncate(start);
             continue;
         }
-        let value = format!("{}|{}", escape_vcf_subfield(&ga.gene_symbol), variants);
-        if seen.insert(value.clone()) {
-            values.push(value);
+        // One entry per overlapping gene, so this list is one to a handful
+        // long: a scan of it beats hashing a value that can be kilobytes, and
+        // it compares in place rather than cloning to build a key.
+        if seen
+            .iter()
+            .any(|&(from, to)| out[from..to] == out[value_at..])
+        {
+            out.truncate(start);
+            continue;
         }
+        seen.push((value_at, out.len()));
     }
-    if values.is_empty() {
+    if out.is_empty() {
         None
     } else {
-        Some(values.join(","))
+        Some(out)
     }
 }
 
@@ -1670,17 +1699,42 @@ fn format_clinvar_protein_projection_for_tv(
 /// payload and render the `&`-joined `pos:ref>alt:sig` list. Accepts either
 /// a single object payload or the JSON array `GeneIndex::annotate_gene`
 /// emits when a gene has multiple records.
-fn collect_clinvar_protein_variants(parsed: &Value) -> String {
-    let mut out = String::new();
+/// Append every `proteinVariants` record in `parsed` to `out`, `&`-separated.
+///
+/// Returns whether anything was written, which is also what tells the caller
+/// whether the `SYMBOL|` prefix it wrote first has a value to belong to.
+fn push_clinvar_protein_records(out: &mut String, parsed: &Value) -> bool {
+    let mut wrote = false;
     for obj in iter_gene_objects(parsed) {
         let Some(vars) = obj.get("proteinVariants").and_then(|v| v.as_array()) else {
             continue;
         };
         for v in vars {
-            push_clinvar_protein_record(&mut out, v);
+            // The separator belongs to the record that follows it, so a
+            // skipped record cannot leave a trailing `&`.
+            wrote |= push_clinvar_protein_record(out, v, wrote);
         }
     }
-    out
+    wrote
+}
+
+/// Append `SYMBOL|pos:ref>alt:sig&...` for one gene annotation, or leave `out`
+/// exactly as it was if the payload holds no renderable record.
+///
+/// The value is built in place rather than returned, because the tab writer
+/// reaches this once per (variant x transcript x allele): composing it with a
+/// `format!` and then cloning it into a dedupe set copied the whole rendered
+/// list twice on each of those, and the list grows with how many records
+/// ClinVar has for the gene.
+fn push_clinvar_protein_value(out: &mut String, symbol: &str, parsed: &Value) -> bool {
+    let start = out.len();
+    escape_vcf_subfield_into(symbol, out);
+    out.push('|');
+    if push_clinvar_protein_records(out, parsed) {
+        return true;
+    }
+    out.truncate(start);
+    false
 }
 
 /// Append one `&`-separated `pos:ref>alt:sig` record to `out`, or nothing if
@@ -1693,17 +1747,17 @@ fn collect_clinvar_protein_variants(parsed: &Value) -> String {
 /// has 31 in the report that prompted #123. Composing each record through four
 /// escaped `String`s and a `format!` built nine allocations per record; this
 /// builds none beyond the growth of `out` itself.
-fn push_clinvar_protein_record(out: &mut String, v: &Value) {
+fn push_clinvar_protein_record(out: &mut String, v: &Value, needs_separator: bool) -> bool {
     // An entry missing any of the three coordinates is not a substitution this
     // field can describe. A *present* but null one renders empty, which is what
     // the previous `json_leaf_to_string` spelling did, so an odd record still
     // keeps its place in the list rather than shifting the ones after it.
     let (Some(pos), Some(ref_aa), Some(alt_aa)) = (v.get("pos"), v.get("refAa"), v.get("altAa"))
     else {
-        return;
+        return false;
     };
 
-    if !out.is_empty() {
+    if needs_separator {
         out.push('&');
     }
     push_clinvar_protein_leaf(out, pos);
@@ -1715,6 +1769,7 @@ fn push_clinvar_protein_record(out: &mut String, v: &Value) {
     if let Some(sig) = v.get("sig") {
         push_clinvar_protein_leaf(out, sig);
     }
+    true
 }
 
 /// Append one leaf of a `pos:ref>alt:sig` record, escaped.
@@ -1756,8 +1811,9 @@ fn format_clinvar_protein_projection(
     vf: &VariationFeature,
     spec: &VcfProjectionSpec,
 ) -> Option<String> {
-    let mut values: Vec<String> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = String::new();
+    // `(start, end)` of each accepted value inside `out`, for the dedupe.
+    let mut seen: Vec<(usize, usize)> = Vec::new();
     for ga in &vf.gene_annotations {
         if ga.json_key != spec.json_key {
             continue;
@@ -1765,19 +1821,34 @@ fn format_clinvar_protein_projection(
         let Ok(parsed) = serde_json::from_str::<Value>(&ga.json_string) else {
             continue;
         };
-        let variants = collect_clinvar_protein_variants(&parsed);
-        if variants.is_empty() {
+        // Written straight into the output, with the `,` that joins two
+        // genes' entries, so neither the value nor the dedupe key is ever a
+        // second copy of the rendered list.
+        let start = out.len();
+        if !out.is_empty() {
+            out.push(',');
+        }
+        let value_at = out.len();
+        if !push_clinvar_protein_value(&mut out, &ga.gene_symbol, &parsed) {
+            out.truncate(start);
             continue;
         }
-        let value = format!("{}|{}", escape_vcf_subfield(&ga.gene_symbol), variants);
-        if seen.insert(value.clone()) {
-            values.push(value);
+        // One entry per overlapping gene, so this list is one to a handful
+        // long: a scan of it beats hashing a value that can be kilobytes, and
+        // it compares in place rather than cloning to build a key.
+        if seen
+            .iter()
+            .any(|&(from, to)| out[from..to] == out[value_at..])
+        {
+            out.truncate(start);
+            continue;
         }
+        seen.push((value_at, out.len()));
     }
-    if values.is_empty() {
+    if out.is_empty() {
         None
     } else {
-        Some(values.join(","))
+        Some(out)
     }
 }
 
@@ -1839,34 +1910,47 @@ fn json_leaf_to_string(value: &Value) -> String {
 /// Percent-encode the characters that would otherwise be read as structure
 /// inside an `FV_*` pipe field.
 ///
-/// The set is exactly "illegal, or one of our own delimiters", and nothing
-/// else. VCF 4.3 restricts only three characters inside an INFO value
+/// The set is "illegal, one of our own delimiters, or a character that breaks
+/// a reader of the column". VCF 4.3 restricts only three inside an INFO value
 /// (`;` and `=` are not permitted, `,` only as a list delimiter); `|` and `&`
 /// are the delimiters these fields are built from; `%` is the escape
 /// introducer, so it has to be encoded for a single decode pass to be exact;
 /// CR / LF / TAB would end the value or the record.
 ///
-/// Three characters used to be encoded here and are not any more, because
-/// none of them is reserved and encoding them only cost legibility - `#123`
-/// reported an `FV_CLINVAR_PROTEIN` value with sixty `%3A` in it. Measured
-/// against Ensembl VEP 115.1 with a `--custom` BED whose names carried each
-/// one: VEP writes `:` and `"` through literally, and turns a space into `_`.
-/// fastVEP's own CSQ writer already emits `:` literally too (every HGVSc has
-/// one), so encoding it here contradicted the same record's CSQ column.
+/// **Exactly one character was dropped from this set**, the colon, because it
+/// is reserved by nothing and encoding it only cost legibility - `#123`
+/// reported an `FV_CLINVAR_PROTEIN` value with sixty `%3A` in it. Ensembl VEP
+/// 115.1 writes `:` through literally (`validation/run_escaping_probe.sh`
+/// measures this), and so does fastVEP's own CSQ writer - every HGVSc carries
+/// one - so encoding it here contradicted the same record's CSQ column.
 ///
-/// Space is the one that stays encoded, and deliberately: the spec allows a
-/// literal space in a value, but a whitespace-free INFO column survives the
-/// `awk`/`cut -d' '` pipelines these files get read by, and `%20` is
-/// reversible where VEP's `_` is not - `Breast_cancer` cannot be told back
-/// from `Breast cancer`. The reversibility is a documented promise
-/// (docs/SUPPLEMENTARY_ANNOTATIONS.md), so it outranks matching VEP on a
-/// field VEP does not emit.
+/// Two characters the spec does *not* require are still encoded, and both for
+/// the same reason: matching VEP is worth nothing on a field VEP does not
+/// emit, while surviving the tools that read these columns is worth a lot.
+///
+/// - **Space** (`%20`): a whitespace-free INFO column survives an `awk` or
+///   `cut -d' '` pipeline, and `%20` is reversible where VEP's `_`
+///   substitution is not - `Breast_cancer` cannot be told back from
+///   `Breast cancer`. The single-decode-pass promise in
+///   docs/SUPPLEMENTARY_ANNOTATIONS.md depends on that.
+/// - **Double quote** (`%22`): VEP writes it literally, and dropping it here
+///   to match cost a real invariant - `R`'s `read.delim` and Python's `csv`
+///   both default to `"` as a quote character, so one inch mark in a disease
+///   name or a `--custom` BED field silently swallows the rest of the record.
+///   The design spec in docs/superpowers/ states the property, and the
+///   `"VCF INFO must not contain JSON quotes"` assertion below is what holds
+///   it; neither survives a reader that only has VEP's behaviour to go on.
 fn escape_vcf_subfield(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
-    for c in value.chars() {
-        push_escaped_subfield_char(c, &mut escaped);
-    }
+    escape_vcf_subfield_into(value, &mut escaped);
     escaped
+}
+
+/// [`escape_vcf_subfield`] appending to a caller-owned buffer.
+fn escape_vcf_subfield_into(value: &str, out: &mut String) {
+    for c in value.chars() {
+        push_escaped_subfield_char(c, out);
+    }
 }
 
 /// One character of a pipe field, percent-encoded if it would otherwise be
@@ -1884,6 +1968,7 @@ fn push_escaped_subfield_char(c: char, out: &mut String) {
         '\n' => out.push_str("%0A"),
         '\t' => out.push_str("%09"),
         ' ' => out.push_str("%20"),
+        '"' => out.push_str("%22"),
         '|' => out.push_str("%7C"),
         '&' => out.push_str("%26"),
         _ => out.push(c),
@@ -2640,6 +2725,9 @@ mod tests {
             escape_csq_value("ENST00000370131.3:c.452_454del"),
             "ENST00000370131.3:c.452_454del"
         );
+        // These do not mangle a value, they end the column or the record.
+        assert_eq!(escape_csq_value("a\tb"), "a%09b");
+        assert_eq!(escape_csq_value("a\r\nb"), "a%0D%0Ab");
     }
 
     #[test]
@@ -2653,18 +2741,31 @@ mod tests {
         assert_eq!(escape_vcf_subfield("a%b"), "a%25b");
         assert_eq!(escape_vcf_subfield("a\tb"), "a%09b");
 
-        // Reserved by nothing: VEP 115.1 writes both through literally, and
-        // fastVEP's own CSQ column carries a `:` in every HGVSc. #123.
+        // Reserved by nothing, and VEP 115.1 writes it through literally, as
+        // fastVEP's own CSQ column already did - every HGVSc carries one. The
+        // single character #123 is about.
         assert_eq!(
             escape_vcf_subfield("NM_001159702.3:c.-101+5113dup"),
             "NM_001159702.3:c.-101+5113dup"
         );
-        assert_eq!(escape_vcf_subfield("a\"b"), "a\"b");
 
-        // Legal unencoded, kept encoded on purpose: an INFO column with no
-        // whitespace in it survives being cut on spaces, and %20 is
-        // reversible where VEP's `_` substitution is not.
+        // Legal unencoded, kept encoded on purpose. VEP writes a literal space
+        // as `_` and a literal `"` as itself; neither helps here, because no
+        // `FV_*` field exists in VEP to be diffed against, and both cost a
+        // reader of the column - `awk` splits on the space, and R's
+        // `read.delim` and Python's `csv` treat the quote as an opening quote.
         assert_eq!(escape_vcf_subfield("Breast cancer"), "Breast%20cancer");
+        assert_eq!(escape_vcf_subfield("6\" of tissue"), "6%22%20of%20tissue");
+    }
+
+    /// `push_clinvar_protein_records` as an expression. A wrapper, not a
+    /// second implementation: the production path writes into a buffer it
+    /// already owns, and a test that re-implemented that would stop testing
+    /// it.
+    fn rendered_records(parsed: &serde_json::Value) -> String {
+        let mut out = String::new();
+        push_clinvar_protein_records(&mut out, parsed);
+        out
     }
 
     #[test]
@@ -2675,7 +2776,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            collect_clinvar_protein_variants(&parsed),
+            rendered_records(&parsed),
             "175:R>H:Pathogenic&248:R>W:Likely_pathogenic"
         );
     }
@@ -2689,7 +2790,7 @@ mod tests {
             r#"{"proteinVariants":[{"pos":175,"refAa":"R","altAa":"H","sig":"odd:term>here"}]}"#,
         )
         .unwrap();
-        let rendered = collect_clinvar_protein_variants(&parsed);
+        let rendered = rendered_records(&parsed);
         assert_eq!(rendered, "175:R>H:odd%3Aterm%3Ehere");
 
         let leaves: Vec<&str> = rendered.split(':').collect();

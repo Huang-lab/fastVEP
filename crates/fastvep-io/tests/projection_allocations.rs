@@ -27,7 +27,9 @@
 //! This file installs a counting global allocator, so it deliberately holds
 //! exactly ONE test: `cargo test` runs the tests in a binary concurrently, and
 //! a second test allocating on another thread would be counted here. Both
-//! properties are therefore asserted in that one test.
+//! properties are therefore asserted in that one test, and its name says so -
+//! a payload-budget regression failing under a name about the empty case
+//! sends the next reader to the wrong function.
 
 use fastvep_core::{Allele, Consequence, GeneAnnotation, Impact, Strand, VariantType};
 use fastvep_io::output::{format_supplementary_vcf_info, LoadedSupplementarySpecs};
@@ -116,7 +118,7 @@ fn transcript_variation(id: &str, alts: &[&str]) -> TranscriptVariation {
 }
 
 #[test]
-fn projecting_a_variant_with_no_supplementary_payload_allocates_nothing() {
+fn projection_allocations_stay_within_budget_with_and_without_a_payload() {
     // Twelve transcripts, two alleles each: the shape of a variant in a
     // gene-dense window, where the per-source helpers run most often.
     let alts = ["C", "G"];
@@ -211,6 +213,7 @@ fn projecting_a_variant_with_no_supplementary_payload_allocates_nothing() {
     // paid and which the budget does not try to hide. The bound is set below
     // every per-record-`String` spelling, so a return to one fails here rather
     // than in a profile six months later.
+    eprintln!("ClinVar-protein payload projection: {allocations} allocations");
     assert!(
         allocations <= 400,
         "rendering 40 ClinVar-protein records took {allocations} allocations, \
