@@ -15,11 +15,21 @@
 //! but it runs in the same per-allele loop and so confirms a payload before it
 //! allocates. The measured run has one loaded.
 //!
+//! The second property here is the *payload* path rather than the empty one.
+//! `FV_CLINVAR_PROTEIN` renders a `&`-joined list of `pos:ref>alt:sig` records,
+//! and ClinVar carries tens of them for a well-studied gene - 31 for FHL1 in
+//! the report behind #123. Composing each record out of escaped `String`s and
+//! a `format!` cost nine allocations per record, once per (variant x
+//! transcript) for the tab writer; the records are written into one buffer
+//! instead, so the count is bounded by that buffer's growth and does not scale
+//! with the number of records.
+//!
 //! This file installs a counting global allocator, so it deliberately holds
 //! exactly ONE test: `cargo test` runs the tests in a binary concurrently, and
-//! a second test allocating on another thread would be counted here.
+//! a second test allocating on another thread would be counted here. Both
+//! properties are therefore asserted in that one test.
 
-use fastvep_core::{Allele, Consequence, Impact, Strand, VariantType};
+use fastvep_core::{Allele, Consequence, GeneAnnotation, Impact, Strand, VariantType};
 use fastvep_io::output::{format_supplementary_vcf_info, LoadedSupplementarySpecs};
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -155,5 +165,56 @@ fn projecting_a_variant_with_no_supplementary_payload_allocates_nothing() {
         "projecting a variant with no supplementary payload should not allocate; \
          each per-source helper must confirm a matching payload before it builds \
          the uploaded allele, the dedupe set, or the value vector"
+    );
+
+    // Same variant, now carrying a gene-level ClinVar-protein payload with 40
+    // records - the shape of a well-studied gene.
+    let records: Vec<String> = (1..=40)
+        .map(|i| format!(r#"{{"pos":{i},"refAa":"R","altAa":"H","sig":"Pathogenic"}}"#))
+        .collect();
+    let mut with_payload = vf;
+    with_payload.gene_annotations = vec![GeneAnnotation {
+        gene_symbol: "FHL1".to_string(),
+        json_key: "clinvar_protein".to_string(),
+        json_string: format!(r#"{{"proteinVariants":[{}]}}"#, records.join(",")),
+    }];
+    let gene_specs = LoadedSupplementarySpecs::new(&[], &["clinvar_protein".to_string()]);
+
+    let mut rendered = Vec::new();
+    let _ = format_supplementary_vcf_info(&with_payload, &gene_specs);
+    let allocations = allocations_during(|| {
+        rendered = format_supplementary_vcf_info(&with_payload, &gene_specs);
+    });
+
+    let value = &rendered
+        .iter()
+        .find(|(id, _)| id == "FV_CLINVAR_PROTEIN")
+        .expect("the payload projects")
+        .1;
+    assert_eq!(
+        value.matches('&').count(),
+        39,
+        "all 40 records render: {value}"
+    );
+    assert!(
+        value.contains("1:R>H:Pathogenic"),
+        "with literal delimiters: {value}"
+    );
+
+    // Measured on this payload: 663 when each record was composed with a
+    // `format!` and escaped whole, 743 when the four leaves were escaped into
+    // four `String`s to keep the delimiters literal (#123), and 345 once the
+    // records were written into one buffer instead.
+    //
+    // What remains per record is `serde_json` parsing the payload into a
+    // `Value` - a `Map` and a `String` per key - which this path has always
+    // paid and which the budget does not try to hide. The bound is set below
+    // every per-record-`String` spelling, so a return to one fails here rather
+    // than in a profile six months later.
+    assert!(
+        allocations <= 400,
+        "rendering 40 ClinVar-protein records took {allocations} allocations, \
+         over the 400 budget; the records must be written into one buffer \
+         rather than composed out of per-record `String`s"
     );
 }

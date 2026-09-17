@@ -1671,51 +1671,85 @@ fn format_clinvar_protein_projection_for_tv(
 /// a single object payload or the JSON array `GeneIndex::annotate_gene`
 /// emits when a gene has multiple records.
 fn collect_clinvar_protein_variants(parsed: &Value) -> String {
-    iter_gene_objects(parsed)
-        .into_iter()
-        .filter_map(|obj| obj.get("proteinVariants").and_then(|v| v.as_array()))
-        .flat_map(|vars| vars.iter())
-        .filter_map(|v| {
-            let pos = v.get("pos").map(json_leaf_to_string)?;
-            let ref_aa = v.get("refAa").map(json_leaf_to_string)?;
-            let alt_aa = v.get("altAa").map(json_leaf_to_string)?;
-            let sig = v.get("sig").map(json_leaf_to_string).unwrap_or_default();
-            // Escape the four leaves, then join with literal `:` and `>`. The
-            // whole composed string used to go through the escaper, which
-            // encoded the delimiters this function had just written itself -
-            // `175%3AR>H%3APathogenic` for a record documented as
-            // `175:R>H:Pathogenic`.
-            Some(format!(
-                "{}:{}>{}:{}",
-                escape_clinvar_protein_leaf(&pos),
-                escape_clinvar_protein_leaf(&ref_aa),
-                escape_clinvar_protein_leaf(&alt_aa),
-                escape_clinvar_protein_leaf(&sig),
-            ))
-        })
-        .collect::<Vec<_>>()
-        .join("&")
+    let mut out = String::new();
+    for obj in iter_gene_objects(parsed) {
+        let Some(vars) = obj.get("proteinVariants").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for v in vars {
+            push_clinvar_protein_record(&mut out, v);
+        }
+    }
+    out
 }
 
-/// Escape one leaf of a `pos:ref>alt:sig` record.
+/// Append one `&`-separated `pos:ref>alt:sig` record to `out`, or nothing if
+/// the entry does not name a substitution.
+///
+/// Writes into the caller's buffer rather than returning a `String`, the way
+/// `format_csq_entry_into` does and for the same reason: with a gene-level
+/// source loaded this runs once per (variant x transcript) for the tab writer,
+/// and ClinVar carries tens of protein variants for a well-studied gene - FHL1
+/// has 31 in the report that prompted #123. Composing each record through four
+/// escaped `String`s and a `format!` built nine allocations per record; this
+/// builds none beyond the growth of `out` itself.
+fn push_clinvar_protein_record(out: &mut String, v: &Value) {
+    // An entry missing any of the three coordinates is not a substitution this
+    // field can describe. A *present* but null one renders empty, which is what
+    // the previous `json_leaf_to_string` spelling did, so an odd record still
+    // keeps its place in the list rather than shifting the ones after it.
+    let (Some(pos), Some(ref_aa), Some(alt_aa)) = (v.get("pos"), v.get("refAa"), v.get("altAa"))
+    else {
+        return;
+    };
+
+    if !out.is_empty() {
+        out.push('&');
+    }
+    push_clinvar_protein_leaf(out, pos);
+    out.push(':');
+    push_clinvar_protein_leaf(out, ref_aa);
+    out.push('>');
+    push_clinvar_protein_leaf(out, alt_aa);
+    out.push(':');
+    if let Some(sig) = v.get("sig") {
+        push_clinvar_protein_leaf(out, sig);
+    }
+}
+
+/// Append one leaf of a `pos:ref>alt:sig` record, escaped.
 ///
 /// `:` and `>` are this field's own delimiters and no other `FV_*` field uses
-/// them, so [`escape_vcf_subfield`] leaves both alone and this adds them back
-/// for the values that sit between them. Running the escaper first keeps the
-/// result exactly one decode pass deep: a literal `%` is already `%25` by the
-/// time these two are appended.
+/// them, so [`escape_vcf_subfield`] leaves both alone and this encodes them
+/// for the values that sit *between* them. Order matters: the shared escaper
+/// runs on the same character, so a literal `%` becomes `%25` and the result
+/// stays exactly one decode pass deep.
 ///
 /// No payload can reach here containing either character today - `pos` is a
 /// number, `refAa` / `altAa` are single residues, and `sig` is one of the four
 /// `&'static str` constants `normalise_significance` returns. This is what
 /// keeps that true if a fifth term or a three-letter residue code ever
 /// arrives, rather than silently splitting a record in two.
-fn escape_clinvar_protein_leaf(value: &str) -> String {
-    let escaped = escape_vcf_subfield(value);
-    if escaped.contains([':', '>']) {
-        return escaped.replace(':', "%3A").replace('>', "%3E");
+fn push_clinvar_protein_leaf(out: &mut String, value: &Value) {
+    match value {
+        // A number renders as digits, `-`, `.` and `e`, none of which either
+        // escaper touches, so it is written straight through.
+        Value::Number(n) => {
+            let _ = write!(out, "{}", n);
+        }
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::String(text) => {
+            for c in text.chars() {
+                match c {
+                    ':' => out.push_str("%3A"),
+                    '>' => out.push_str("%3E"),
+                    _ => push_escaped_subfield_char(c, out),
+                }
+            }
+        }
+        // `json_leaf_to_string` renders these empty too.
+        Value::Null | Value::Array(_) | Value::Object(_) => {}
     }
-    escaped
 }
 
 fn format_clinvar_protein_projection(
@@ -1830,21 +1864,30 @@ fn json_leaf_to_string(value: &Value) -> String {
 fn escape_vcf_subfield(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for c in value.chars() {
-        match c {
-            ';' => escaped.push_str("%3B"),
-            '=' => escaped.push_str("%3D"),
-            '%' => escaped.push_str("%25"),
-            ',' => escaped.push_str("%2C"),
-            '\r' => escaped.push_str("%0D"),
-            '\n' => escaped.push_str("%0A"),
-            '\t' => escaped.push_str("%09"),
-            ' ' => escaped.push_str("%20"),
-            '|' => escaped.push_str("%7C"),
-            '&' => escaped.push_str("%26"),
-            _ => escaped.push(c),
-        }
+        push_escaped_subfield_char(c, &mut escaped);
     }
     escaped
+}
+
+/// One character of a pipe field, percent-encoded if it would otherwise be
+/// read as structure. The single definition of the set described on
+/// [`escape_vcf_subfield`]; `push_clinvar_protein_leaf` shares it so a field
+/// with delimiters of its own cannot drift from the shared rules.
+#[inline]
+fn push_escaped_subfield_char(c: char, out: &mut String) {
+    match c {
+        ';' => out.push_str("%3B"),
+        '=' => out.push_str("%3D"),
+        '%' => out.push_str("%25"),
+        ',' => out.push_str("%2C"),
+        '\r' => out.push_str("%0D"),
+        '\n' => out.push_str("%0A"),
+        '\t' => out.push_str("%09"),
+        ' ' => out.push_str("%20"),
+        '|' => out.push_str("%7C"),
+        '&' => out.push_str("%26"),
+        _ => out.push(c),
+    }
 }
 
 fn uploaded_allele_for_annotation(vf: &VariationFeature, allele: &Allele) -> String {
