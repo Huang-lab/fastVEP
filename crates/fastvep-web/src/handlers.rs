@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use fastvep_annotate::pick::PickFlags;
+
 use crate::context::AnnotationContext;
 use crate::errors::AppError;
 
@@ -308,7 +310,12 @@ pub async fn load_genome(
 #[derive(Deserialize)]
 pub struct AnnotateRequest {
     vcf: Option<String>,
-    pick: Option<bool>,
+    /// `pick`, `pick_allele`, `pick_allele_gene`, `flag_pick`,
+    /// `flag_pick_allele`, `flag_pick_allele_gene` - flattened so the six
+    /// names come from `PickFlags` itself and cannot drift from the CLI's or
+    /// from the bundled server's.
+    #[serde(flatten)]
+    pick: PickFlags,
     /// Enable ACMG-AMP variant classification for this request.
     acmg: Option<bool>,
 }
@@ -322,7 +329,7 @@ pub async fn annotate(
         return Err(AppError::BadRequest("No VCF data provided".into()));
     }
 
-    let pick = req.pick.unwrap_or(false);
+    let pick = req.pick.resolve();
     let acmg_requested = req.acmg.unwrap_or(false);
     let ctx = Arc::clone(&state);
 

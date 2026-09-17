@@ -4,8 +4,7 @@ use super::cache_build::{load_one_gff3, parse_gff3_arg, Gff3Spec};
 use super::open_vcf_input_reader;
 use anyhow::{Context, Result};
 use fastvep_annotate::pick::{
-    has_transcripts_to_pick, parse_pick_order, pick_best_transcript_idx_with, PickCriterion,
-    DEFAULT_PICK_ORDER,
+    apply_pick, parse_pick_order, PickCriterion, PickFlags, PickRequest, DEFAULT_PICK_ORDER,
 };
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, GeneAnnotationProvider};
 use fastvep_cache::fasta::FastaReader;
@@ -48,7 +47,8 @@ pub struct AnnotateConfig {
     pub gff3: Vec<String>,
     pub fasta: Option<String>,
     pub output_format: String,
-    pub pick: bool,
+    /// The `--pick*` / `--flag-pick*` switch this run was given, if any.
+    pub pick: PickFlags,
     pub hgvs: bool,
     pub distance: u64,
     pub cache_dir: Option<String>,
@@ -104,6 +104,8 @@ struct AnnotationContext<'a> {
     acmg_config: Option<&'a fastvep_classification::AcmgConfig>,
     functional_evidence: Option<&'a fastvep_classification::FunctionalEvidenceIndex>,
     pick_order: &'a [PickCriterion],
+    /// `None` for a run that picks nothing.
+    pick: Option<PickRequest>,
     sample_names: &'a [String],
     /// gnomAD queries need the VCF-style allele rather than fastVEP's
     /// normalised one; set when a gnomAD source is among `sa_providers`.
@@ -136,6 +138,7 @@ fn annotate_variant(
         acmg_config,
         functional_evidence,
         pick_order,
+        pick,
         sample_names,
         normalize_gnomad_queries,
         repeat_db_loaded,
@@ -289,6 +292,7 @@ fn annotate_variant(
                             polyphen: None,
                             supplementary: Vec::new(),
                             acmg_classification: None,
+                            pick: false,
                         };
 
                         // Generate HGVS if requested
@@ -599,14 +603,18 @@ fn annotate_variant(
         } // close `else` of overlapping.is_empty()
     } // close `else` of `if sa_only`
 
-    // Apply --pick before SA/gene/ACMG so those passes only run on the
-    // single surviving transcript. Running pick after them would still
-    // produce correct output but would waste the most expensive work
-    // (ACMG classification) on transcripts that get thrown away.
-    if config.pick && !sa_only && has_transcripts_to_pick(&vf.transcript_variations) {
-        if let Some(idx) = pick_best_transcript_idx_with(&vf.transcript_variations, pick_order) {
-            vf.transcript_variations = vec![vf.transcript_variations.swap_remove(idx)];
-        }
+    // Apply the pick before SA/gene/ACMG so those passes only run on the
+    // surviving transcripts. Running it after would still produce correct
+    // output but would waste the most expensive work (ACMG classification)
+    // on transcripts that get thrown away.
+    //
+    // That saving is exactly what a `--flag-pick*` run gives up: flagging
+    // retains every transcript by definition, so classification runs on all
+    // of them. The order still matters for the reducing modes, and putting
+    // the two in the same place keeps the flag and the reduction deciding
+    // from identical inputs.
+    if let Some(request) = pick.filter(|_| !sa_only) {
+        apply_pick(&mut vf.transcript_variations, &request.plan(pick_order));
     }
 
     // Supplementary annotation: query SA providers once per unique
@@ -1103,6 +1111,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                 "--sa-only requires --sa-dir to be set (otherwise there is nothing to emit)."
             ));
         }
+        let pick_switch = config.pick.requested_option();
         for (set, name) in [
             (!config.gff3.is_empty(), "--gff3"),
             (config.fasta.is_some(), "--fasta"),
@@ -1110,7 +1119,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             (config.transcript_cache.is_some(), "--transcript-cache"),
             (config.acmg, "--acmg"),
             (config.hgvs, "--hgvs"),
-            (config.pick, "--pick"),
+            // Names the switch the user actually typed, so the warning is not
+            // about `--pick` when they passed `--flag-pick-allele-gene`.
+            (pick_switch.is_some(), pick_switch.unwrap_or("--pick")),
             (config.proband.is_some(), "--proband"),
             (config.mother.is_some(), "--mother"),
             (config.father.is_some(), "--father"),
@@ -1421,6 +1432,23 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         None => DEFAULT_PICK_ORDER.to_vec(),
     };
 
+    // Resolved once, next to the order it will be paired with: the CSQ field
+    // list, the tab header and the per-variant pick all have to agree about
+    // whether this run flags, and deriving each from `config.pick`
+    // independently is how they would come to disagree.
+    let pick_request = config.pick.resolve();
+    // `&& !sa_only` because the run has already told the user it is ignoring
+    // the switch (see the warning above), and `annotate_variant` skips the
+    // pick entirely in that mode. Declaring the column anyway would put a
+    // `PICK` header over a column that is empty on every row, which reads as
+    // "every entry lost the pick" rather than "no pick ran".
+    let pick_flags_column = !sa_only && pick_request.is_some_and(|r| r.needs_pick_column());
+    let csq_fields: Vec<&'static str> = if pick_flags_column {
+        output::csq_fields_with_pick()
+    } else {
+        output::DEFAULT_CSQ_FIELDS.to_vec()
+    };
+
     let functional_index = match config.functional_evidence.as_deref() {
         Some(path) => {
             let idx = fastvep_classification::FunctionalEvidenceIndex::from_file(Path::new(path))
@@ -1442,7 +1470,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     let supplementary_specs = output::LoadedSupplementarySpecs::new(&sa_json_keys, &gene_json_keys);
     let owned_vcf_info_ids = output::vcf_owned_info_ids(&supplementary_specs);
     let generated_vcf_headers =
-        output::vcf_info_header_lines(&supplementary_specs, output::DEFAULT_CSQ_FIELDS, sa_only);
+        output::vcf_info_header_lines(&supplementary_specs, &csq_fields, sa_only);
 
     // Write headers based on output format
     match config.output_format.as_str() {
@@ -1487,6 +1515,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             for col in &extra_columns {
                 header.push('\t');
                 header.push_str(col);
+            }
+            if pick_flags_column {
+                header.push_str("\tPICK");
             }
             if qc_rules.is_some() {
                 header.push_str("\tQC_CLASS");
@@ -1596,6 +1627,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             acmg_config: acmg_config.as_ref(),
             functional_evidence,
             pick_order: &pick_order,
+            pick: pick_request,
             sample_names: &sample_names,
             normalize_gnomad_queries,
             repeat_db_loaded,
@@ -1623,7 +1655,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         // Phase 3: Write output sequentially (preserves VCF order)
         for (vf, _) in &batch {
             match config.output_format.as_str() {
-                "vcf" => write_vcf_line(&mut writer, vf, sa_only, &supplementary_specs)?,
+                "vcf" => {
+                    write_vcf_line(&mut writer, vf, sa_only, &supplementary_specs, &csq_fields)?
+                }
                 "tab" => {
                     // Classify variant against QC rules (if any). The
                     // classifier reads the VCF INFO column once via a
@@ -1648,6 +1682,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                         gene_set: gene_set.as_ref(),
                         explicit_ref: config.explicit_alleles,
                         qc_class: qc_label,
+                        pick_column: pick_flags_column,
                     };
                     for line in
                         output::format_tab_line_with(vf, &supplementary_specs, sa_only, opts)
@@ -1976,12 +2011,13 @@ fn write_vcf_line(
     vf: &VariationFeature,
     sa_only: bool,
     specs: &output::LoadedSupplementarySpecs,
+    csq_fields: &[&str],
 ) -> Result<()> {
     if let Some(ref fields) = vf.vcf_fields {
         let csq = if sa_only {
             String::new()
         } else {
-            output::format_csq(vf, output::DEFAULT_CSQ_FIELDS)
+            output::format_csq(vf, csq_fields)
         };
         let info = output::format_vcf_info_fields(&fields.info, vf, &csq, specs);
 

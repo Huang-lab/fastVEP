@@ -58,9 +58,37 @@ enum Commands {
         buffer_size: usize,
 
         /// Pick one consequence per variant, by `--pick-order` (not by severity:
-        /// severity is that order's last tie-break, as in VEP)
-        #[arg(long)]
+        /// severity is that order's last tie-break, as in VEP).
+        ///
+        /// Keeps the winning transcript's annotation for every alt allele.
+        /// VEP's `--pick` emits one entry for the whole record, dropping the
+        /// other alts; use `--pick-allele` for that, which agrees with VEP.
+        #[arg(long, group = "pick_family")]
         pick: bool,
+
+        /// Pick one consequence per (variant, allele). VEP's `--pick_allele`.
+        #[arg(long, group = "pick_family")]
+        pick_allele: bool,
+
+        /// Pick one consequence per (variant, allele, gene).
+        /// VEP's `--pick_allele_gene`.
+        #[arg(long, group = "pick_family")]
+        pick_allele_gene: bool,
+
+        /// Report every consequence, and mark the one `--pick` would have kept
+        /// with `PICK=1`. VEP's `--flag_pick`.
+        #[arg(long, group = "pick_family")]
+        flag_pick: bool,
+
+        /// Report every consequence, and mark the one chosen per allele.
+        /// VEP's `--flag_pick_allele`.
+        #[arg(long, group = "pick_family")]
+        flag_pick_allele: bool,
+
+        /// Report every consequence, and mark the one chosen per allele and
+        /// gene. VEP's `--flag_pick_allele_gene`.
+        #[arg(long, group = "pick_family")]
+        flag_pick_allele_gene: bool,
 
         /// Include gene symbol in output
         #[arg(long)]
@@ -309,6 +337,11 @@ fn main() -> Result<()> {
             everything: _,
             buffer_size: _,
             pick,
+            pick_allele,
+            pick_allele_gene,
+            flag_pick,
+            flag_pick_allele,
+            flag_pick_allele_gene,
             symbol: _,
             hgvs,
             canonical: _,
@@ -335,7 +368,14 @@ fn main() -> Result<()> {
                 gff3,
                 fasta,
                 output_format,
-                pick,
+                pick: pipeline::PickFlags {
+                    pick,
+                    pick_allele,
+                    pick_allele_gene,
+                    flag_pick,
+                    flag_pick_allele,
+                    flag_pick_allele_gene,
+                },
                 hgvs,
                 distance,
                 cache_dir,

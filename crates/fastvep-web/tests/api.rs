@@ -291,6 +291,96 @@ async fn pick_returns_exactly_one_transcript_and_it_is_the_canonical_one() {
 }
 
 #[tokio::test]
+async fn flag_pick_keeps_every_transcript_and_marks_the_one_pick_would_have_kept() {
+    // `pick` and `flag_pick` must agree about the winner, or the flag means
+    // something other than the option it is named after. Worth asserting over
+    // HTTP and not only in `pick::`: the six switches reach this handler
+    // through `#[serde(flatten)]`, which is a runtime contract - a name that
+    // does not deserialize fails silently as "no pick requested".
+    let state = pick_state();
+    let vcf = vcf_line(1100, "flagpick");
+
+    let (status, flagged) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": &vcf, "flag_pick": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let all = flagged["results"][0]["transcript_consequences"]
+        .as_array()
+        .expect("transcript consequences");
+    assert_eq!(all.len(), 2, "flag_pick retains every transcript: {all:?}");
+
+    let marked: Vec<&str> = all
+        .iter()
+        .filter(|t| t["pick"].as_u64() == Some(1))
+        .map(|t| t["transcript_id"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        marked,
+        vec!["TXA"],
+        "flag_pick must mark the transcript `pick` keeps, in {all:?}"
+    );
+    // Absent, not 0, on the rest - the same convention as `canonical`.
+    assert!(
+        all.iter()
+            .filter(|t| t["transcript_id"] != "TXA")
+            .all(|t| t.get("pick").is_none()),
+        "unpicked entries should not carry the key: {all:?}"
+    );
+
+    // And a request that asks for nothing says nothing about picking.
+    let (status, plain) = post_json(&state, "/api/annotate", json!({ "vcf": &vcf })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        plain["results"][0]["transcript_consequences"]
+            .as_array()
+            .expect("transcript consequences")
+            .iter()
+            .all(|t| t.get("pick").is_none()),
+        "a plain request should not mention pick"
+    );
+}
+
+#[tokio::test]
+async fn every_pick_switch_is_accepted_under_its_documented_name() {
+    // docs/API.md lists these six names. A typo in one of them deserializes as
+    // `false` and the request is answered without the pick it asked for, which
+    // is a wrong answer that looks like a right one.
+    let state = pick_state();
+    let vcf = vcf_line(1100, "names");
+
+    for (name, reduces) in [
+        ("pick", true),
+        ("pick_allele", true),
+        ("pick_allele_gene", true),
+        ("flag_pick", false),
+        ("flag_pick_allele", false),
+        ("flag_pick_allele_gene", false),
+    ] {
+        let (status, body) =
+            post_json(&state, "/api/annotate", json!({ "vcf": &vcf, name: true })).await;
+        assert_eq!(status, StatusCode::OK, "{name}");
+        let rows = body["results"][0]["transcript_consequences"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{name}: no transcript consequences"));
+        if reduces {
+            assert_eq!(rows.len(), 1, "{name} should reduce to one row: {rows:?}");
+        } else {
+            assert_eq!(rows.len(), 2, "{name} should retain both rows: {rows:?}");
+            assert_eq!(
+                rows.iter()
+                    .filter(|t| t["pick"].as_u64() == Some(1))
+                    .count(),
+                1,
+                "{name} should mark exactly one row: {rows:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn pick_does_not_drop_alleles_at_a_site_with_no_transcripts() {
     // An intergenic site is scaffolded one row per *alt allele*, not one row
     // per transcript, so running the pick hierarchy over those rows keeps one

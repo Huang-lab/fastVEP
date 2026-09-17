@@ -388,6 +388,7 @@ dependencies = [
  "fastvep-sa",
  "flate2",
  "rayon",
+ "serde",
  "serde_json",
  "tempfile",
  "tracing",

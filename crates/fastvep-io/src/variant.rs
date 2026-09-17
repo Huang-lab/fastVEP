@@ -133,6 +133,17 @@ pub struct AlleleAnnotation {
     pub supplementary: Vec<(String, String)>,
     /// ACMG-AMP classification result (serialized as serde_json::Value).
     pub acmg_classification: Option<serde_json::Value>,
+    /// Whether `--flag-pick*` chose this (transcript, allele) pair.
+    ///
+    /// The flag sits on the allele rather than on the `TranscriptVariation`
+    /// because that is the granularity the output has: every format emits one
+    /// entry per (transcript x allele), so a transcript picked for one alt of
+    /// a multi-allelic site and not for another has to say so per alt or say
+    /// something false about one of them.
+    ///
+    /// Always `false` under `--pick*`, which deletes the losers instead of
+    /// marking the winner, and under a plain run, which picks nothing.
+    pub pick: bool,
 }
 
 /// A known/existing variant from the variation cache.

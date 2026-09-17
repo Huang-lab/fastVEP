@@ -8,7 +8,7 @@
 //! VCF on disk, so it fails if the routing regresses anywhere between parsing
 //! the variant and writing the CSQ field.
 
-use fastvep_cli::pipeline::{run_annotate, AnnotateConfig};
+use fastvep_cli::pipeline::{run_annotate, AnnotateConfig, PickFlags};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -54,7 +54,7 @@ fn cli_inframe_insertion_hgvsp_is_normalised_not_a_substitution() {
         gff3: vec![gff3.to_string_lossy().into()],
         fasta: Some(fasta.to_string_lossy().into()),
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: true,
         distance: 5000,
         cache_dir: None,

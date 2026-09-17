@@ -4,7 +4,7 @@
 //! `run_sa_build` (the same entrypoint the CLI uses), and reads the resulting
 //! database back to confirm the round-trip.
 
-use fastvep_cli::pipeline::{run_annotate, run_sa_build, AnnotateConfig};
+use fastvep_cli::pipeline::{run_annotate, run_sa_build, AnnotateConfig, PickFlags};
 use fastvep_sa::gene::GeneIndex;
 use std::fs::{self, File};
 use std::io::Write;
@@ -263,7 +263,7 @@ fn annotate_vcf_emits_spliceai_from_fastsa() {
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -365,7 +365,7 @@ chr1\t26011\t2.71
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -446,7 +446,7 @@ fn annotate_vcf_replaces_existing_fastvep_info() {
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -516,7 +516,7 @@ fn annotate_vcf_emits_fastsa_projection_for_gnomad() {
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -585,7 +585,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "tab".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -711,7 +711,7 @@ fn sa_only_vcf_omits_csq_and_default_pipeline() {
         gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -774,7 +774,7 @@ fn sa_only_tab_emits_minimal_columns() {
         gff3: vec![],
         fasta: None,
         output_format: "tab".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -845,7 +845,7 @@ fn sa_only_json_omits_transcript_consequences() {
         gff3: vec![],
         fasta: None,
         output_format: "json".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -944,7 +944,7 @@ fn sa_only_requires_sa_dir() {
         gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -1014,7 +1014,7 @@ fn sa_only_multi_allelic_emits_per_alt_rows_with_independent_sa_columns() {
         gff3: vec![],
         fasta: None,
         output_format: "tab".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -1092,7 +1092,7 @@ fn sa_only_strips_preexisting_csq_from_input_info() {
         gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -1164,7 +1164,7 @@ fn sa_only_strips_csq_when_in_middle_of_info_field() {
         gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -1260,7 +1260,7 @@ fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -1322,7 +1322,7 @@ fn annotate_tab_gene_list_filters_to_panel_genes() {
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "tab".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -1376,7 +1376,7 @@ fn annotate_tab_explicit_alleles_inserts_ref_column() {
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "tab".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -1462,7 +1462,7 @@ min_dp = 8
         gff3: vec![gff3.to_string_lossy().into_owned()],
         fasta: None,
         output_format: "tab".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 0,
         cache_dir: None,
@@ -1515,4 +1515,67 @@ min_dp = 8
         "DP=5 falls below LOW_QC threshold (min_dp=8) → fallback: {}",
         row_30k
     );
+}
+
+#[test]
+fn sa_only_does_not_declare_a_pick_column_for_the_switch_it_ignores() {
+    // `--sa-only` warns that it is ignoring `--flag-pick*` and skips the pick
+    // entirely, but the CSQ field list and the tab header were derived from
+    // the switch alone - so the run declared a `PICK` column that was empty on
+    // every row. An empty column asserts "this entry lost the pick", which is
+    // a claim about a pick the run just said it did not make.
+    let tmp = tempfile::tempdir().unwrap();
+    let input_vcf = tmp.path().join("input.vcf");
+    let output_tab = tmp.path().join("annotated.tsv");
+    fs::write(&input_vcf, INPUT_NO_SPLICEAI_INFO_VCF).unwrap();
+    write_clinvar_fixture(tmp.path());
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_tab.to_string_lossy().into_owned(),
+        gff3: vec![],
+        fasta: None,
+        output_format: "tab".into(),
+        pick: PickFlags {
+            flag_pick_allele_gene: true,
+            ..PickFlags::default()
+        },
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: None,
+        sa_dir: Some(tmp.path().to_string_lossy().into_owned()),
+        sa_only: true,
+        acmg: false,
+        acmg_config: None,
+        pick_order: None,
+        functional_evidence: None,
+        proband: None,
+        mother: None,
+        father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
+        show_progress: false,
+    })
+    .expect("sa-only annotation should succeed");
+
+    let annotated = fs::read_to_string(&output_tab).unwrap();
+    let header = annotated
+        .lines()
+        .find(|l| l.starts_with("#Uploaded_variation"))
+        .unwrap_or_else(|| panic!("no tab header in:\n{annotated}"));
+    assert!(
+        !header.split('\t').any(|c| c == "PICK"),
+        "sa-only ignores the switch, so it must not declare the column: {header}"
+    );
+    // And every row still matches the header it declared.
+    let columns = header.split('\t').count();
+    for row in annotated.lines().filter(|l| !l.starts_with('#')) {
+        assert_eq!(
+            row.split('\t').count(),
+            columns,
+            "row does not match the {columns}-column header: {row}"
+        );
+    }
 }

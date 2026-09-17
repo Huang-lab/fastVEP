@@ -173,11 +173,31 @@ fn handle_request(stream: &mut std::net::TcpStream, ctx: &mut AnnotationContext)
             let request: serde_json::Value =
                 serde_json::from_str(&body_str).unwrap_or_else(|_| serde_json::json!({}));
             let vcf_text = request["vcf"].as_str().unwrap_or("");
-            let pick = request["pick"].as_bool().unwrap_or(false);
+            // Deserialized from the body rather than read key by key, so this
+            // server and fastvep-web's handler name the six switches from one
+            // definition. Unknown keys (`vcf`, `acmg`) are ignored.
+            //
+            // From a *borrowed* `&Value`: `from_value` takes ownership, so
+            // reading six bools out of it meant deep-cloning the whole request
+            // on every call to this endpoint - and the request is a VCF, the
+            // one field here that can be megabytes.
+            let pick_flags =
+                fastvep_annotate::pick::pick_flags_from_json(&request).map(|f| f.resolve());
 
             if vcf_text.is_empty() {
                 send_json(stream, 400, r#"{"error":"No VCF data provided"}"#)?;
+            } else if let Err(e) = &pick_flags {
+                // Not `unwrap_or_default`: all six switches are read in one
+                // pass, so a wrong type on any one of them would otherwise
+                // discard a correctly spelled sibling and answer 200 with a
+                // fully unpicked annotation. fastvep-web's typed handler
+                // rejects the same body, and these two are one wire contract.
+                let resp = serde_json::json!({
+                    "error": format!("Invalid pick option: {}", e)
+                });
+                send_json(stream, 400, &serde_json::to_string(&resp)?)?;
             } else {
+                let pick = pick_flags.unwrap_or(None);
                 let start = std::time::Instant::now();
                 match ctx.annotate_vcf_text(vcf_text, pick) {
                     Ok(results) => {

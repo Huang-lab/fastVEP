@@ -20,7 +20,7 @@
 //! a unit test that passes `protein_start` by hand would be asserting my own
 //! reading of the convention rather than the pipeline's.
 
-use fastvep_cli::pipeline::{run_annotate, AnnotateConfig};
+use fastvep_cli::pipeline::{run_annotate, AnnotateConfig, PickFlags};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -82,7 +82,7 @@ fn annotate(dir: &Path, strand: char) -> String {
         gff3: vec![gff3_path.to_string_lossy().into()],
         fasta: Some(fasta.to_string_lossy().into()),
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: true,
         distance: 5000,
         cache_dir: None,

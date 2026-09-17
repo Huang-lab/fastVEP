@@ -22,7 +22,9 @@ pub use filter::run_filter;
 // `pick` moved into `fastvep-annotate` so the CLI and the web server
 // share one implementation; re-exported here so callers of
 // `pipeline::` keep the path they had.
-pub use fastvep_annotate::pick::{parse_pick_order, PickCriterion, DEFAULT_PICK_ORDER};
+pub use fastvep_annotate::pick::{
+    parse_pick_order, PickCriterion, PickFlags, PickMode, PickScope, DEFAULT_PICK_ORDER,
+};
 pub use sa_build::{
     run_sa_build, run_sa_build_format, run_sa_build_v2, run_sa_convert, source_from_json_key,
     source_has_decomposed_osa2, source_supports_osa2, OSA2_DECOMPOSED_SOURCES,
