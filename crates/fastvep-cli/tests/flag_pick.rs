@@ -186,6 +186,96 @@ fn flags_for(option: &str) -> PickFlags {
     f
 }
 
+/// One gene, one transcript: the shape that has nothing to choose between and
+/// still has something to flag.
+fn write_single_transcript_gff3(dir: &Path) -> PathBuf {
+    let path = dir.join("one.gff3");
+    std::fs::write(
+        &path,
+        "1\ttest\tgene\t1001\t1200\t.\t+\t.\tID=gene:ENSG_ONE;Name=ONLYGENE;biotype=protein_coding\n\
+         1\ttest\tmRNA\t1001\t1200\t.\t+\t.\tID=transcript:ENST_ONE;Parent=gene:ENSG_ONE;biotype=protein_coding;tag=Ensembl_canonical;transcript_support_level=1\n\
+         1\ttest\texon\t1001\t1200\t.\t+\t.\tID=exon:E_ONE;Parent=transcript:ENST_ONE;rank=1\n\
+         1\ttest\tCDS\t1001\t1200\t.\t+\t0\tID=CDS:P_ONE;Parent=transcript:ENST_ONE\n",
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn a_variant_with_one_transcript_is_still_flagged() {
+    // This shipped wrong. `apply_pick` was gated on a `len > 1` check written
+    // for the reducing modes, so a variant overlapping exactly one transcript
+    // got a declared `PICK` column and an empty value in it - and an empty
+    // column reads as "this entry lost the pick", not "no pick ran". A client
+    // filtering on `PICK is 1` therefore dropped every single-transcript
+    // variant in the file.
+    //
+    // Ensembl VEP 115.1 flags it. Measured on this same one-transcript gene:
+    // `--flag_pick`, `--flag_pick_allele` and `--flag_pick_allele_gene` all
+    // return `PICK=1` on the only entry.
+    for option in [
+        "--flag-pick",
+        "--flag-pick-allele",
+        "--flag-pick-allele-gene",
+    ] {
+        let dir = TempDir::new().unwrap();
+        let gff3 = write_single_transcript_gff3(dir.path());
+        let fasta = write_fasta(dir.path());
+        let vcf = write_vcf(dir.path());
+        let out = dir.path().join("out.vcf");
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3.to_string_lossy().into()],
+            fasta: Some(fasta.to_string_lossy().into()),
+            pick: flags_for(option),
+            ..config(&vcf, &out)
+        })
+        .expect("annotation should succeed");
+        let annotated = std::fs::read_to_string(&out).unwrap();
+
+        let rows = entries(&annotated);
+        assert_eq!(
+            rows.len(),
+            2,
+            "{option}: one transcript x two alleles, in:\n{annotated}"
+        );
+        assert!(
+            rows.iter().all(|(_, _, _, pick)| pick == "1"),
+            "{option}: the only transcript is the pick for each allele, in:\n{annotated}"
+        );
+    }
+}
+
+#[test]
+fn a_lone_transcript_survives_a_reducing_pick_too() {
+    // The same gate made the reducing modes no-ops here, which was harmless
+    // because there was nothing to remove. Asserted so that lifting the gate
+    // cannot start deleting the only annotation a variant has.
+    for option in ["--pick", "--pick-allele", "--pick-allele-gene"] {
+        let dir = TempDir::new().unwrap();
+        let gff3 = write_single_transcript_gff3(dir.path());
+        let fasta = write_fasta(dir.path());
+        let vcf = write_vcf(dir.path());
+        let out = dir.path().join("out.vcf");
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3.to_string_lossy().into()],
+            fasta: Some(fasta.to_string_lossy().into()),
+            pick: flags_for(option),
+            ..config(&vcf, &out)
+        })
+        .expect("annotation should succeed");
+        let annotated = std::fs::read_to_string(&out).unwrap();
+        let alleles: Vec<String> = entries(&annotated)
+            .into_iter()
+            .map(|(a, _, _, _)| a)
+            .collect();
+        assert_eq!(
+            alleles,
+            vec!["C".to_string(), "G".to_string()],
+            "{option} must keep both alts of the only transcript, in:\n{annotated}"
+        );
+    }
+}
+
 #[test]
 fn a_plain_run_reports_every_transcript_and_declares_no_pick_column() {
     let dir = TempDir::new().unwrap();

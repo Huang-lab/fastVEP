@@ -1516,3 +1516,66 @@ min_dp = 8
         row_30k
     );
 }
+
+#[test]
+fn sa_only_does_not_declare_a_pick_column_for_the_switch_it_ignores() {
+    // `--sa-only` warns that it is ignoring `--flag-pick*` and skips the pick
+    // entirely, but the CSQ field list and the tab header were derived from
+    // the switch alone - so the run declared a `PICK` column that was empty on
+    // every row. An empty column asserts "this entry lost the pick", which is
+    // a claim about a pick the run just said it did not make.
+    let tmp = tempfile::tempdir().unwrap();
+    let input_vcf = tmp.path().join("input.vcf");
+    let output_tab = tmp.path().join("annotated.tsv");
+    fs::write(&input_vcf, INPUT_NO_SPLICEAI_INFO_VCF).unwrap();
+    write_clinvar_fixture(tmp.path());
+
+    run_annotate(AnnotateConfig {
+        input: input_vcf.to_string_lossy().into_owned(),
+        output: output_tab.to_string_lossy().into_owned(),
+        gff3: vec![],
+        fasta: None,
+        output_format: "tab".into(),
+        pick: PickFlags {
+            flag_pick_allele_gene: true,
+            ..PickFlags::default()
+        },
+        hgvs: false,
+        distance: 0,
+        cache_dir: None,
+        transcript_cache: None,
+        sa_dir: Some(tmp.path().to_string_lossy().into_owned()),
+        sa_only: true,
+        acmg: false,
+        acmg_config: None,
+        pick_order: None,
+        functional_evidence: None,
+        proband: None,
+        mother: None,
+        father: None,
+        gene_list: None,
+        explicit_alleles: false,
+        qc_rules: None,
+        show_progress: false,
+    })
+    .expect("sa-only annotation should succeed");
+
+    let annotated = fs::read_to_string(&output_tab).unwrap();
+    let header = annotated
+        .lines()
+        .find(|l| l.starts_with("#Uploaded_variation"))
+        .unwrap_or_else(|| panic!("no tab header in:\n{annotated}"));
+    assert!(
+        !header.split('\t').any(|c| c == "PICK"),
+        "sa-only ignores the switch, so it must not declare the column: {header}"
+    );
+    // And every row still matches the header it declared.
+    let columns = header.split('\t').count();
+    for row in annotated.lines().filter(|l| !l.starts_with('#')) {
+        assert_eq!(
+            row.split('\t').count(),
+            columns,
+            "row does not match the {columns}-column header: {row}"
+        );
+    }
+}

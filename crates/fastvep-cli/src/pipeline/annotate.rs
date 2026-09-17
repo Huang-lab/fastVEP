@@ -1437,7 +1437,12 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // whether this run flags, and deriving each from `config.pick`
     // independently is how they would come to disagree.
     let pick_request = config.pick.resolve();
-    let pick_flags_column = pick_request.is_some_and(|r| r.needs_pick_column());
+    // `&& !sa_only` because the run has already told the user it is ignoring
+    // the switch (see the warning above), and `annotate_variant` skips the
+    // pick entirely in that mode. Declaring the column anyway would put a
+    // `PICK` header over a column that is empty on every row, which reads as
+    // "every entry lost the pick" rather than "no pick ran".
+    let pick_flags_column = !sa_only && pick_request.is_some_and(|r| r.needs_pick_column());
     let csq_fields: Vec<&'static str> = if pick_flags_column {
         output::csq_fields_with_pick()
     } else {

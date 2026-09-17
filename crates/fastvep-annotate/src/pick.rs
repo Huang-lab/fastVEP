@@ -9,6 +9,7 @@
 use anyhow::Result;
 use fastvep_core::Allele;
 use fastvep_io::variant::TranscriptVariation;
+use serde::Deserialize;
 
 /// One tier of the `--pick-order` hierarchy, in VEP's vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,22 +100,6 @@ pub fn parse_pick_order(spec: &str) -> Result<Vec<PickCriterion>> {
     Ok(out)
 }
 
-/// Whether `--pick` has competing transcripts to choose between.
-///
-/// The placeholder rows `annotate_intergenic` and `annotate_sa_only_scaffold`
-/// emit carry `transcript_id` `-`, and they are built one per *alt allele*
-/// rather than one per transcript. Running the hierarchy over those keeps a
-/// single row and silently drops every other alt from the output - no error,
-/// just a missing allele. There is no transcript to pick at such a site, so
-/// pick does not apply there.
-///
-/// A mix cannot currently occur, because those scaffolds run only when nothing
-/// overlaps the variant; `any` is the deliberate reading if one ever does, so
-/// that a real transcript still gets picked.
-pub fn has_transcripts_to_pick(tvs: &[TranscriptVariation]) -> bool {
-    tvs.len() > 1 && tvs.iter().any(|tv| tv.transcript_id.as_ref() != "-")
-}
-
 /// What one pick is chosen *per*, matching VEP's option family.
 ///
 /// Measured against Ensembl VEP 115.1 on a two-alt site in TP53, which
@@ -174,6 +159,24 @@ impl<'a> PickPlan<'a> {
             order,
         }
     }
+}
+
+/// Read the six switches out of a JSON request body.
+///
+/// Both HTTP entry points go through this rather than naming the keys
+/// themselves, so the wire contract has one definition; the `Deserialize` on
+/// [`PickFlags`] is what actually spells the names.
+///
+/// Takes the body by *reference*. `serde_json::from_value` consumes its
+/// argument, so reading six bools out of a request meant cloning the whole
+/// thing - and the body of the endpoint that carries these is a VCF, which is
+/// the one field in it that can be megabytes.
+///
+/// Returns the error rather than defaulting: all six are read in one pass, so
+/// a wrong type on any one of them would otherwise discard a correctly spelled
+/// sibling and leave the caller annotating with no pick at all.
+pub fn pick_flags_from_json(body: &serde_json::Value) -> Result<PickFlags, serde_json::Error> {
+    PickFlags::deserialize(body)
 }
 
 /// A pick request, before a `--pick-order` has been resolved to attach to it.
@@ -273,41 +276,74 @@ impl PickFlags {
 /// Run a pick over one variant's transcript variations, in place.
 ///
 /// The single entry point both drivers call, because they had already drifted
-/// once on the question of what `--pick` even means. Does nothing when there
-/// is nothing to pick between - see [`has_transcripts_to_pick`].
+/// once on the question of what `--pick` even means.
+///
+/// There used to be a `has_transcripts_to_pick` gate here, returning early
+/// unless the record held more than one row and at least one real transcript.
+/// It was written for the reducing modes, where collapsing a set of
+/// per-allele scaffold rows loses an alt, and it was wrong for the flagging
+/// ones in a way that a `PICK is 1` filter turns into missing variants: a
+/// variant overlapping exactly *one* transcript failed `len > 1`, so
+/// `--flag-pick*` declared the column and left it empty on the only entry
+/// there was. Ensembl VEP 115.1 flags that entry (measured on a
+/// single-transcript GFF3: `PICK=1` for all three `--flag_pick*` forms), and
+/// so does this now. The scaffold hazard the gate existed for is handled
+/// where it belongs, in [`pick_winners`], for all three scopes at once.
 pub fn apply_pick(tvs: &mut Vec<TranscriptVariation>, plan: &PickPlan<'_>) {
-    if !has_transcripts_to_pick(tvs) {
-        return;
+    let winners = pick_winners(tvs, plan);
+    match plan.mode {
+        PickMode::Reduce => {
+            // Nothing to keep means nothing was a candidate, which is not the
+            // same as "every row lost": a site whose only rows are scaffolds
+            // must come through untouched.
+            if !winners.is_empty() {
+                retain_winners(tvs, &winners);
+            }
+        }
+        PickMode::Flag => {
+            for &(ti, ai) in &winners {
+                tvs[ti].allele_annotations[ai].pick = true;
+            }
+        }
     }
+}
+
+/// The `(transcript index, allele index)` pairs one pick chooses.
+///
+/// Candidates are the rows carrying a real transcript, at every scope. A
+/// scaffold row (`transcript_id` `-`) is never a candidate, so it is never
+/// flagged - it has no transcript, so "the transcript the pick chose" is not a
+/// thing it can be - and never deleted, because it carries an alt allele that
+/// nothing else in the record reports.
+fn pick_winners(tvs: &[TranscriptVariation], plan: &PickPlan<'_>) -> Vec<(usize, usize)> {
     match plan.scope {
         PickScope::Variant => {
-            let Some(best) = pick_best_transcript_idx_with(tvs, plan.order) else {
-                return;
+            let Some(best) = best_real_transcript_idx(tvs, plan.order) else {
+                return Vec::new();
             };
-            match plan.mode {
-                PickMode::Reduce => {
-                    let kept = tvs.swap_remove(best);
-                    *tvs = vec![kept];
-                }
-                PickMode::Flag => {
-                    for aa in &mut tvs[best].allele_annotations {
-                        aa.pick = true;
-                    }
-                }
-            }
+            // Every allele of the winning transcript, which is what makes
+            // `--pick` keep an alt that VEP's `--pick` drops. See `PickScope`.
+            (0..tvs[best].allele_annotations.len())
+                .map(|ai| (best, ai))
+                .collect()
         }
-        PickScope::Allele | PickScope::AlleleGene => {
-            let winners = grouped_winners(tvs, plan);
-            match plan.mode {
-                PickMode::Reduce => retain_winners(tvs, &winners),
-                PickMode::Flag => {
-                    for &(ti, ai) in &winners {
-                        tvs[ti].allele_annotations[ai].pick = true;
-                    }
-                }
-            }
-        }
+        PickScope::Allele | PickScope::AlleleGene => grouped_winners(tvs, plan),
     }
+}
+
+/// Index of the best row carrying a real transcript.
+///
+/// `pick_best_transcript_idx_with` scores whatever it is given, and `"-"` sorts
+/// before every real transcript ID in the final tie-break - so at a site
+/// holding both a scaffold and a transcript, an order whose listed criteria all
+/// tie would pick the scaffold, and a reducing pick would then delete the real
+/// annotation. `--pick-order mane_select` is enough to produce that tie.
+fn best_real_transcript_idx(tvs: &[TranscriptVariation], order: &[PickCriterion]) -> Option<usize> {
+    (0..tvs.len())
+        .filter(|&i| tvs[i].transcript_id.as_ref() != "-")
+        .min_by(|&a, &b| {
+            pick_key_with(&tvs[a], order, None).cmp(&pick_key_with(&tvs[b], order, None))
+        })
 }
 
 /// The best `(transcript index, allele index)` pair in each group, where a
@@ -608,14 +644,59 @@ mod pick_tests {
     }
 
     #[test]
-    fn intergenic_placeholders_are_not_pickable() {
-        // Regression test: a multi-allelic intergenic site arrives as one
-        // placeholder row per alt allele. Picking among them drops alleles.
-        let rows: Vec<TranscriptVariation> = ["-", "-"]
-            .iter()
-            .map(|id| {
+    fn a_scaffold_only_site_keeps_every_allele_at_every_scope() {
+        // A multi-allelic intergenic site arrives as one placeholder row per
+        // alt allele, so a pick that treated them as competing transcripts
+        // would keep one and silently lose the other alt - no error, just a
+        // missing allele. Nothing here is a candidate, so nothing is picked.
+        for scope in [PickScope::Variant, PickScope::Allele, PickScope::AlleleGene] {
+            for mode in [PickMode::Reduce, PickMode::Flag] {
+                let mut rows: Vec<TranscriptVariation> = ["-", "-"]
+                    .iter()
+                    .map(|id| {
+                        make_tv(
+                            id,
+                            false,
+                            "-",
+                            vec![Consequence::IntergenicVariant],
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    })
+                    .collect();
+                apply_pick(
+                    &mut rows,
+                    &PickPlan {
+                        scope,
+                        mode,
+                        order: DEFAULT_PICK_ORDER,
+                    },
+                );
+                assert_eq!(rows.len(), 2, "{scope:?}/{mode:?} dropped a scaffold row");
+                assert!(
+                    rows.iter()
+                        .all(|tv| tv.allele_annotations.iter().all(|aa| !aa.pick)),
+                    "{scope:?}/{mode:?} flagged a row with no transcript"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_scaffold_cannot_outrank_a_real_transcript() {
+        // `"-"` sorts before every real transcript ID, which is the final
+        // tie-break, so an order whose listed criteria all tie used to hand
+        // the pick to the placeholder - and a reducing pick then deleted the
+        // real annotation. `mane_select` alone is such an order: neither row
+        // has one.
+        let order = parse_pick_order("mane_select").unwrap();
+        for mode in [PickMode::Reduce, PickMode::Flag] {
+            let mut rows = vec![
                 make_tv(
-                    id,
+                    "-",
                     false,
                     "-",
                     vec![Consequence::IntergenicVariant],
@@ -624,41 +705,69 @@ mod pick_tests {
                     None,
                     None,
                     None,
-                )
-            })
-            .collect();
-        assert!(!has_transcripts_to_pick(&rows));
+                ),
+                make_tv(
+                    "ENST1",
+                    true,
+                    "protein_coding",
+                    vec![Consequence::MissenseVariant],
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ];
+            apply_pick(
+                &mut rows,
+                &PickPlan {
+                    scope: PickScope::Variant,
+                    mode,
+                    order: &order,
+                },
+            );
+            assert!(
+                rows.iter().any(|tv| tv.transcript_id.as_ref() == "ENST1"),
+                "{mode:?} deleted the real transcript in favour of a scaffold"
+            );
+            let flagged: Vec<&str> = rows
+                .iter()
+                .filter(|tv| tv.allele_annotations.iter().any(|aa| aa.pick))
+                .map(|tv| tv.transcript_id.as_ref())
+                .collect();
+            if mode == PickMode::Flag {
+                assert_eq!(flagged, vec!["ENST1"], "the transcript is the pick");
+            }
+        }
     }
 
     #[test]
-    fn real_transcripts_are_pickable() {
-        let rows = vec![
-            make_tv(
-                "ENST1",
-                false,
-                "protein_coding",
-                vec![Consequence::MissenseVariant],
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-            make_tv(
-                "ENST2",
+    fn a_lone_transcript_is_still_the_pick() {
+        // The bug this replaced a `len > 1` gate for: with one overlapping
+        // transcript there is nothing to choose between, but there is still
+        // something to *flag*, and a client filtering on `PICK is 1` drops the
+        // variant entirely if it is left blank. VEP 115.1 flags it.
+        for scope in [PickScope::Variant, PickScope::Allele, PickScope::AlleleGene] {
+            let mut rows = vec![tv_in_gene(
+                "ENST_ONLY",
+                "GENE",
                 true,
-                "protein_coding",
-                vec![Consequence::MissenseVariant],
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-        ];
-        assert!(has_transcripts_to_pick(&rows));
-        // One transcript is not a choice either.
-        assert!(!has_transcripts_to_pick(&rows[..1]));
+                &[("A", Consequence::MissenseVariant)],
+            )];
+            apply_pick(
+                &mut rows,
+                &PickPlan {
+                    scope,
+                    mode: PickMode::Flag,
+                    order: DEFAULT_PICK_ORDER,
+                },
+            );
+            assert_eq!(
+                rendered(&rows),
+                vec![("ENST_ONLY".into(), "A".into(), true)],
+                "{scope:?} left the only entry unflagged"
+            );
+        }
     }
 
     #[test]
@@ -1488,9 +1597,9 @@ mod pick_tests {
 
     #[test]
     fn a_scaffold_row_keeps_its_allele_through_every_scope() {
-        // The hazard `has_transcripts_to_pick` guards for variant scope, at
-        // the grouping scopes: a placeholder carries an alt that nothing else
-        // reports, so reducing must not be able to delete it.
+        // A placeholder carries an alt that nothing else in the record
+        // reports, so a reducing pick at a grouping scope must not be able to
+        // delete it while keeping the real transcript beside it.
         for scope in [PickScope::Allele, PickScope::AlleleGene] {
             let mut tvs = vec![
                 tv_in_gene(
@@ -1586,6 +1695,30 @@ mod pick_tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn a_malformed_pick_switch_is_an_error_rather_than_no_pick() {
+        // All six are read in one pass, so defaulting on failure would let a
+        // wrong type on one key discard a correctly spelled sibling and
+        // annotate with no pick at all - a wrong answer that looks right.
+        let err = pick_flags_from_json(&serde_json::json!({
+            "vcf": "ignored",
+            "pick_allele": true,
+            "pick": "yes",
+        }))
+        .expect_err("a non-bool switch must not be silently ignored");
+        assert!(
+            err.to_string().contains("boolean") || err.to_string().contains("bool"),
+            "the error should name the problem: {err}"
+        );
+
+        // And a well-formed body still resolves, reading through a borrow.
+        let body = serde_json::json!({ "vcf": "ignored", "pick_allele": true });
+        assert_eq!(
+            pick_flags_from_json(&body).unwrap().requested_option(),
+            Some("--pick-allele")
+        );
     }
 
     #[test]
