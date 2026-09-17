@@ -332,16 +332,21 @@ pipe field:
 | `\|`      | `%7C`       | separates the pipe field's own segments        |
 | `&`       | `%26`       | separates the elements of a list segment       |
 | ` ` (space)| `%20`      | keeps the INFO column free of whitespace       |
+| `\"`      | `%22`       | opens a quoted field in `read.delim` / `csv`   |
 | `\r`      | `%0D`       | would end the record                           |
 | `\n`      | `%0A`       | would end the record                           |
 | `\t`      | `%09`       | would end the column                           |
 
 Nothing else is encoded.
-The set is exactly the characters that would otherwise be read as structure: VCF 4.3 (data lines, fixed fields) restricts only `;`, `=` and `,` inside an INFO value, `|` and `&` are the delimiters these fields are assembled from, and `%` has to be encoded for a single decode pass to be exact.
-In particular `:` and `"` are written through literally, as Ensembl VEP writes them and as fastVEP's own `CSQ` column already did (every `HGVSc` carries a `:`).
+VCF 4.3 (data lines, fixed fields) restricts only `;`, `=` and `,` inside an INFO value; `|` and `&` are the delimiters these fields are assembled from; `%` has to be encoded for a single decode pass to be exact; and the last three would end the value, the column or the record.
 
-Space is the one character encoded here that the spec does not require.
-It stays encoded because a whitespace-free INFO column survives being read by tools that split on spaces, and because `%20` is reversible: VEP substitutes `_` for a space, which cannot be told back from a value that contained a `_` to begin with.
+The one character that used to be encoded here and is not any more is the colon.
+It is reserved by nothing, Ensembl VEP writes it through literally, and fastVEP's own `CSQ` column already did too - every `HGVSc` carries one - so encoding it here contradicted the same record's `CSQ` field.
+`validation/run_escaping_probe.sh` measures what VEP does with each of these characters against a real VEP 115.1, so the rules above can be rechecked rather than taken on trust.
+
+Space and `"` are encoded although the spec permits both, and for the same reason in each case: there is no `FV_*` field in VEP to be diffed against, so matching VEP buys nothing here, while a reader of the column loses something real.
+`awk` and `cut -d' '` split a record on the space; `R`'s `read.delim` and Python's `csv` both treat `"` as opening a quoted field and swallow the rest of the line.
+`%20` is also reversible, where VEP's `_` substitution is not: `Breast_cancer` cannot be told back from `Breast cancer`.
 
 Lists within a single pipe field (for example, multiple ClinVar
 significances) are joined with `&` *after* per-element escaping, so the
