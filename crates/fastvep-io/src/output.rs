@@ -367,17 +367,28 @@ fn format_csq_entry_into(
     }
 }
 
-/// Escape special characters in CSQ field values, appending to an existing buffer.
+/// Escape special characters in CSQ field values, appending to an existing
+/// buffer.
+///
+/// Each substitution is the one Ensembl VEP makes, measured against 115.1
+/// rather than assumed: `,` and `|` become `&`, `;` becomes `%3B`, `=` becomes
+/// `%3D` (VEP writes a synonymous HGVSp as `ENSP00000269305.1:p.Thr125%3D`),
+/// and a space becomes `_`. Note that VEP is not self-consistent here - the
+/// value it appends to CSQ for a `--custom` annotation keeps a literal `=` -
+/// so this follows what it does to CSQ's own fields, which is also the only
+/// reading VCF 4.3 permits.
+///
+/// `:` is *not* escaped, by VEP or here: every HGVSc carries one.
 fn escape_csq_str(value: &str, buf: &mut String) {
     // Nearly every value that reaches here - a transcript ID, a gene symbol,
-    // an SO term, an HGVS string, a run of bases - contains none of the four
-    // characters VCF reserves inside an INFO field, and copying such a value
-    // whole skips a UTF-8 encode and a capacity check per character. All four
-    // are ASCII, so scanning bytes decides this exactly; only a value that
-    // really needs escaping falls through to the character loop.
+    // an SO term, an HGVS string, a run of bases - contains none of the five
+    // characters that need substituting, and copying such a value whole skips
+    // a UTF-8 encode and a capacity check per character. All five are ASCII,
+    // so scanning bytes decides this exactly; only a value that really needs
+    // escaping falls through to the character loop.
     if !value
         .bytes()
-        .any(|b| matches!(b, b',' | b'|' | b';' | b'='))
+        .any(|b| matches!(b, b',' | b'|' | b';' | b'=' | b' '))
     {
         buf.push_str(value);
         return;
@@ -387,20 +398,28 @@ fn escape_csq_str(value: &str, buf: &mut String) {
             ',' | '|' => buf.push('&'),
             ';' => buf.push_str("%3B"),
             '=' => buf.push_str("%3D"),
+            // VEP substitutes rather than encodes, so a reader cannot recover
+            // an original `_` from it either. Matching VEP is worth more than
+            // reversibility in a column whose whole point is to be diffable
+            // against VEP's, and no CSQ field carries free text.
+            ' ' => buf.push('_'),
             _ => buf.push(c),
         }
     }
 }
 
-/// Escape special characters in CSQ field values.
+/// `escape_csq_str` as an expression, for the tests that assert one value at a
+/// time.
+///
+/// This used to be a second implementation with its own `replace` chain, and
+/// it had drifted: it substituted `_` for a space and the writer above did
+/// not, so `test_escape_csq_value` asserted VEP's behaviour against a function
+/// no output path called. A wrapper cannot drift.
 #[cfg(test)]
 fn escape_csq_value(value: &str) -> String {
-    value
-        .replace(',', "&")
-        .replace(';', "%3B")
-        .replace('=', "%3D")
-        .replace('|', "&")
-        .replace(' ', "_")
+    let mut buf = String::with_capacity(value.len());
+    escape_csq_str(value, &mut buf);
+    buf
 }
 
 fn write_position_range(pos: Option<(u64, u64)>, buf: &mut String) {
@@ -2569,6 +2588,15 @@ mod tests {
         assert_eq!(escape_csq_value("a|b"), "a&b");
         assert_eq!(escape_csq_value("a b"), "a_b");
         assert_eq!(escape_csq_value("p.Leu153="), "p.Leu153%3D");
+        // A space is the only substitution the byte pre-scan had not been
+        // told about, so a value whose *only* special character is a space
+        // took the copy-whole path and reached the INFO column unescaped.
+        assert_eq!(escape_csq_value("Breast cancer"), "Breast_cancer");
+        // Left alone: VEP writes it, and every HGVSc has one.
+        assert_eq!(
+            escape_csq_value("ENST00000370131.3:c.452_454del"),
+            "ENST00000370131.3:c.452_454del"
+        );
     }
 
     #[test]
