@@ -491,7 +491,12 @@ for the parsing rules and the escaping table.
 | `--fasta` | Reference FASTA file | -- |
 | `--output-format` | `vcf`, `tab`, or `json` | `vcf` |
 | `--hgvs` | Include HGVS notations | off |
-| `--pick` | Report one consequence per variant, chosen by `--pick-order` | off |
+| `--pick` | Report one consequence per variant, chosen by `--pick-order`, keeping that transcript's annotation for every alt allele | off |
+| `--pick-allele` | One consequence per (variant, allele). VEP's `--pick_allele` | off |
+| `--pick-allele-gene` | One consequence per (variant, allele, gene). VEP's `--pick_allele_gene` | off |
+| `--flag-pick` | Report *every* consequence and mark the one `--pick` would have kept with `PICK=1`. VEP's `--flag_pick` | off |
+| `--flag-pick-allele` | As `--flag-pick`, marking the pick per allele | off |
+| `--flag-pick-allele-gene` | As `--flag-pick`, marking the pick per allele and gene | off |
 | `--pick-order` | Criteria order used by `--pick`, VEP `--pick_order` syntax. Severity (`rank`) is last in the default, so this is not "most severe" -- see [docs/ACMG.md](docs/ACMG.md#which-transcript---pick-reports) | VEP's default |
 | `--symbol` | Include gene symbol in output | off |
 | `--canonical` | Include canonical-transcript flag in output | off |

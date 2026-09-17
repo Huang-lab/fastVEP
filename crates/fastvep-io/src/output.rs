@@ -72,6 +72,7 @@ enum CsqField {
     Distance,
     Strand,
     Flags,
+    Pick,
     Canonical,
     SymbolSource,
     HgncId,
@@ -124,6 +125,7 @@ impl CsqField {
             "DISTANCE" => Self::Distance,
             "STRAND" => Self::Strand,
             "FLAGS" => Self::Flags,
+            "PICK" => Self::Pick,
             "CANONICAL" => Self::Canonical,
             "SYMBOL_SOURCE" => Self::SymbolSource,
             "HGNC_ID" => Self::HgncId,
@@ -247,6 +249,14 @@ fn format_csq_entry_into(
                         buf.push('&');
                     }
                     buf.push_str(f);
+                }
+            }
+            // `1` or empty, as VEP writes it - measured on 115.1 with
+            // `--flag_pick_allele_gene`, which flags one entry per (allele,
+            // gene) and leaves the column empty on the rest.
+            CsqField::Pick => {
+                if aa.pick {
+                    buf.push('1');
                 }
             }
             CsqField::Canonical => {
@@ -478,6 +488,24 @@ pub const DEFAULT_CSQ_FIELDS: &[&str] = &[
     "ACMG",
     "ACMG_CRITERIA",
 ];
+
+/// [`DEFAULT_CSQ_FIELDS`] with `PICK` spliced in after `FLAGS`, for a run that
+/// flags a pick instead of reducing to it.
+///
+/// A column that is always present but always empty is worse than no column:
+/// it widens every record of every run for a flag almost nobody passes, and it
+/// tells a reader nothing about whether a pick was even requested. VEP adds
+/// the column only under `--flag_pick*` too, and puts it in this position.
+pub fn csq_fields_with_pick() -> Vec<&'static str> {
+    let mut fields = Vec::with_capacity(DEFAULT_CSQ_FIELDS.len() + 1);
+    for &name in DEFAULT_CSQ_FIELDS {
+        fields.push(name);
+        if name == "FLAGS" {
+            fields.push("PICK");
+        }
+    }
+    fields
+}
 
 /// Generate the VCF INFO header line for CSQ.
 pub fn csq_header_line(fields: &[&str]) -> String {
@@ -1805,6 +1833,16 @@ pub struct TabOptions<'a> {
     /// Append a `QC_CLASS` column carrying the supplied class name. When
     /// `None`, the column is omitted.
     pub qc_class: Option<&'a str>,
+    /// Append a `PICK` column carrying `1` on the flagged (transcript, allele)
+    /// pairs and `-` on the rest. Set by `--flag-pick*`; omitted otherwise,
+    /// for the reason in [`csq_fields_with_pick`].
+    pub pick_column: bool,
+}
+
+/// `1` when flagged, `-` when not, so the column is never blank - every other
+/// empty cell in this format is `-` too.
+fn pick_cell(flagged: bool) -> String {
+    if flagged { "1" } else { "-" }.to_string()
 }
 
 /// Format a VariationFeature as a tab-delimited VEP output line using the
@@ -1858,12 +1896,13 @@ pub fn format_tab_line_with(
     };
     let qc_extra = if opts.qc_class.is_some() { 1 } else { 0 };
     let ref_extra = if opts.explicit_ref { 1 } else { 0 };
+    let pick_extra = usize::from(opts.pick_column);
 
     if sa_only {
         for tv in &vf.transcript_variations {
             for aa in &tv.allele_annotations {
                 let mut parts: Vec<String> =
-                    Vec::with_capacity(3 + ref_extra + extra_count + qc_extra);
+                    Vec::with_capacity(3 + ref_extra + extra_count + qc_extra + pick_extra);
                 parts.push(uploaded_variation.clone());
                 parts.push(location.clone());
                 parts.push(aa.allele.to_string());
@@ -1874,6 +1913,9 @@ pub fn format_tab_line_with(
                     parts.extend(format_supplementary_tab_columns_for_allele(
                         vf, tv, aa, specs,
                     ));
+                }
+                if opts.pick_column {
+                    parts.push(pick_cell(aa.pick));
                 }
                 if let Some(cls) = opts.qc_class {
                     parts.push(cls.to_string());
@@ -1888,7 +1930,7 @@ pub fn format_tab_line_with(
         if lines.is_empty() {
             for alt in &vf.alt_alleles {
                 let mut parts: Vec<String> =
-                    Vec::with_capacity(3 + ref_extra + extra_count + qc_extra);
+                    Vec::with_capacity(3 + ref_extra + extra_count + qc_extra + pick_extra);
                 parts.push(uploaded_variation.clone());
                 parts.push(location.clone());
                 parts.push(alt.to_string());
@@ -1897,6 +1939,9 @@ pub fn format_tab_line_with(
                 }
                 if extra_count > 0 {
                     parts.extend(vec!["-".to_string(); extra_count]);
+                }
+                if opts.pick_column {
+                    parts.push(pick_cell(false));
                 }
                 if let Some(cls) = opts.qc_class {
                     parts.push(cls.to_string());
@@ -1907,7 +1952,7 @@ pub fn format_tab_line_with(
         return lines;
     }
 
-    let row_capacity = 17 + ref_extra + extra_count + qc_extra;
+    let row_capacity = 17 + ref_extra + extra_count + qc_extra + pick_extra;
 
     for tv in &vf.transcript_variations {
         if let Some(set) = opts.gene_set {
@@ -1973,6 +2018,10 @@ pub fn format_tab_line_with(
                 ));
             }
 
+            if opts.pick_column {
+                parts.push(pick_cell(aa.pick));
+            }
+
             if let Some(cls) = opts.qc_class {
                 parts.push(cls.to_string());
             }
@@ -1998,6 +2047,9 @@ pub fn format_tab_line_with(
             parts.extend(vec!["-".to_string(); 10]);
             if extra_count > 0 {
                 parts.extend(vec!["-".to_string(); extra_count]);
+            }
+            if opts.pick_column {
+                parts.push(pick_cell(false));
             }
             if let Some(cls) = opts.qc_class {
                 parts.push(cls.to_string());
@@ -2144,6 +2196,13 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                 );
                 if tv.canonical {
                     tc.insert("canonical".into(), serde_json::Value::Number(1.into()));
+                }
+                // Present only when set, like `canonical` beside it and like
+                // VEP's own JSON: a `"pick": 0` on every consequence of every
+                // run would say a pick happened and this one lost, which is
+                // false for a run that never picked.
+                if aa.pick {
+                    tc.insert("pick".into(), serde_json::Value::Number(1.into()));
                 }
                 if let Some(ref ms) = tv.mane_select {
                     tc.insert("mane_select".into(), serde_json::Value::String(ms.clone()));
@@ -2586,6 +2645,7 @@ mod tests {
                     polyphen: None,
                     supplementary,
                     acmg_classification: None,
+                    pick: false,
                 }],
                 canonical: false,
                 strand: Strand::Forward,

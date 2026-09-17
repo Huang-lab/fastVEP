@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use fastvep_cli::pipeline::{run_annotate, AnnotateConfig};
+use fastvep_cli::pipeline::{run_annotate, AnnotateConfig, PickFlags};
 use noodles_bgzf as bgzf;
 use noodles_core::Position;
 use noodles_csi::binning_index::index::header::format::CoordinateSystem;
@@ -134,7 +134,7 @@ fn annotate(input: &Path, gff3: &Path, fasta: &Path, out: &Path) {
         gff3: vec![gff3.to_string_lossy().into()],
         fasta: Some(fasta.to_string_lossy().into()),
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: true,
         distance: 5000,
         cache_dir: None,

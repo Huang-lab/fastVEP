@@ -22,7 +22,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use fastvep_cli::pipeline::{run_annotate, AnnotateConfig};
+use fastvep_cli::pipeline::{run_annotate, AnnotateConfig, PickFlags};
 use tempfile::TempDir;
 
 /// Two overlapping protein-coding genes with GENCODE's APPRIS tags.
@@ -77,7 +77,7 @@ fn config(input: &Path, out: &Path) -> AnnotateConfig {
         gff3: vec![],
         fasta: None,
         output_format: "vcf".into(),
-        pick: false,
+        pick: PickFlags::default(),
         hgvs: false,
         distance: 5000,
         cache_dir: None,
@@ -132,7 +132,10 @@ fn annotate(dir: &Path, pick: bool, pick_order: Option<&str>) -> String {
     run_annotate(AnnotateConfig {
         gff3: vec![gff3.to_string_lossy().into()],
         fasta: Some(fasta.to_string_lossy().into()),
-        pick,
+        pick: PickFlags {
+            pick,
+            ..PickFlags::default()
+        },
         pick_order: pick_order.map(str::to_string),
         ..config(&vcf, &out)
     })

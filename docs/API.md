@@ -146,7 +146,14 @@ The two marked endpoints replace the gene model for every client of the server, 
 | --- | --- | --- | --- |
 | `vcf` | string | required | VCF text. Header lines are optional; records are tab-separated. |
 | `pick` | bool | `false` | Reduce each variant to one transcript consequence (see below). |
+| `pick_allele` | bool | `false` | Reduce to one consequence per (variant, allele). VEP's `--pick_allele`. |
+| `pick_allele_gene` | bool | `false` | Reduce to one consequence per (variant, allele, gene). VEP's `--pick_allele_gene`. |
+| `flag_pick` | bool | `false` | Return every consequence, with `"pick": 1` on the one `pick` would have kept. VEP's `--flag_pick`. |
+| `flag_pick_allele` | bool | `false` | As `flag_pick`, marking the pick per allele. |
+| `flag_pick_allele_gene` | bool | `false` | As `flag_pick`, marking the pick per allele and gene. |
 | `acmg` | bool | `false` | Attach ACMG-AMP classification to each consequence. |
+
+At most one of the six pick switches may be set; the request is read in the order listed.
 
 ```bash
 curl -s -X POST http://localhost:8080/api/annotate \
@@ -238,6 +245,12 @@ The per-variant shape follows Ensembl VEP's JSON output, so clients written agai
 That is Ensembl VEP's default `--pick_order`, so a default run of either tool picks the same transcript.
 It reduces to one *transcript*, not to one entry: `transcript_consequences` carries one entry per (transcript, allele), so a biallelic site still returns two.
 A variant that overlaps no transcript at all is left untouched, because there its entries are one per alt allele rather than competing transcripts.
+
+`"pick_allele": true` is the one that reduces to one *entry* per allele, which is what Ensembl VEP's `--pick` does; `"pick_allele_gene": true` keeps one per allele per gene.
+The three `flag_pick*` switches return everything and mark the winner with `"pick": 1` on the chosen `transcript_consequences` entries, so a client can apply its own rule and still see what the hierarchy chose.
+The key is absent, not `0`, on the entries that were not picked and on every entry of a request that picked nothing.
+
+Which of these agrees with VEP, measured, is in [docs/VEP_DIVERGENCE.md](VEP_DIVERGENCE.md#10---pick-keeps-every-allele-of-the-transcript-it-picks): the four allele-scoped switches agree exactly, and `pick` / `flag_pick` keep every allele of the winning transcript where VEP would drop all but one.
 
 > **`pick` does not mean "most severe".**
 > Severity is the *last* tie-break in that order, so where genes overlap, a neighbouring gene's MANE transcript outranks a non-MANE transcript the variant actually disrupts, and the reported consequence can be `upstream_gene_variant` on the neighbour rather than the damaging term on the real target.

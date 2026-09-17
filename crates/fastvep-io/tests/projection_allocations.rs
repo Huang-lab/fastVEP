@@ -79,6 +79,7 @@ fn annotation(allele: &str) -> AlleleAnnotation {
         // The point of the test: no supplementary payload for any source.
         supplementary: Vec::new(),
         acmg_classification: None,
+        pick: false,
     }
 }
 

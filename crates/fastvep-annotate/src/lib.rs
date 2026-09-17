@@ -29,7 +29,7 @@ use fastvep_genome::Transcript;
 use fastvep_io::output;
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use fastvep_io::vcf::VcfParser;
-use pick::{has_transcripts_to_pick, pick_best_transcript_idx_with, DEFAULT_PICK_ORDER};
+use pick::{apply_pick, PickRequest, DEFAULT_PICK_ORDER};
 use rayon::prelude::*;
 use std::fs::File;
 use std::path::Path;
@@ -304,7 +304,13 @@ impl AnnotationContext {
     }
 
     /// Annotate VCF text and return JSON results, using `self.acmg_config`.
-    pub fn annotate_vcf_text(&self, vcf_text: &str, pick: bool) -> Result<Vec<serde_json::Value>> {
+    ///
+    /// `pick` is `None` for a run that reports every transcript.
+    pub fn annotate_vcf_text(
+        &self,
+        vcf_text: &str,
+        pick: Option<PickRequest>,
+    ) -> Result<Vec<serde_json::Value>> {
         self.annotate_vcf_text_with_acmg(vcf_text, pick, self.acmg_config.as_ref())
     }
 
@@ -320,7 +326,7 @@ impl AnnotationContext {
     pub fn annotate_vcf_text_with_acmg(
         &self,
         vcf_text: &str,
-        pick: bool,
+        pick: Option<PickRequest>,
         acmg_config: Option<&fastvep_classification::AcmgConfig>,
     ) -> Result<Vec<serde_json::Value>> {
         // Computed once: BP3 must distinguish "not in a repeat" from "no repeat
@@ -460,6 +466,7 @@ impl AnnotationContext {
                                 polyphen: None,
                                 supplementary: Vec::new(),
                                 acmg_classification: None,
+                                pick: false,
                             };
 
                             if self.hgvs {
@@ -800,19 +807,18 @@ impl AnnotationContext {
                 }
             }
 
-            // Apply `pick` before SA/ACMG so those passes only run on the
-            // surviving transcript, and before `compute_most_severe` so the
-            // summary term describes the transcript actually reported.
+            // Apply the pick before SA/ACMG so those passes only run on the
+            // surviving transcripts, and before `compute_most_severe` so the
+            // summary term describes the transcripts actually reported.
             // Shares `pick::` with `fastvep annotate --pick`: this path used to
             // keep "canonical, or the first transcript seen", which returned a
             // non-canonical first row next to the canonical one for a
             // single-gene variant.
-            if pick && has_transcripts_to_pick(&vf.transcript_variations) {
-                if let Some(idx) =
-                    pick_best_transcript_idx_with(&vf.transcript_variations, DEFAULT_PICK_ORDER)
-                {
-                    vf.transcript_variations = vec![vf.transcript_variations.swap_remove(idx)];
-                }
+            if let Some(request) = pick {
+                apply_pick(
+                    &mut vf.transcript_variations,
+                    &request.plan(DEFAULT_PICK_ORDER),
+                );
             }
 
             // Supplementary annotation: query SA providers once per unique
@@ -1029,6 +1035,7 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
                 polyphen: None,
                 supplementary: Vec::new(),
                 acmg_classification: None,
+                pick: false,
             }],
             canonical: false,
             strand: fastvep_core::Strand::Forward,
@@ -1079,6 +1086,7 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 polyphen: None,
                 supplementary: Vec::new(),
                 acmg_classification: None,
+                pick: false,
             }],
             canonical: false,
             strand: fastvep_core::Strand::Forward,
@@ -1792,7 +1800,7 @@ mod tests {
         let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
                    1\t100\t.\tA\tG\t.\tPASS\t.\n\
                    1\t200\t.\tC\tT\t.\tPASS\t.\n";
-        let results = ctx.annotate_vcf_text(vcf, false).unwrap();
+        let results = ctx.annotate_vcf_text(vcf, None).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(
             results[0]["most_severe_consequence"],
@@ -1812,7 +1820,7 @@ mod tests {
         // acmg_requested=false) must take precedence over self.acmg_config,
         // since concurrent requests share one AnnotationContext and must not
         // leak each other's ACMG preference.
-        let results = ctx.annotate_vcf_text_with_acmg(vcf, false, None).unwrap();
+        let results = ctx.annotate_vcf_text_with_acmg(vcf, None, None).unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -1942,7 +1950,7 @@ mod tests {
 
         // Must not panic despite the truncated spliced_seq.
         let results = ctx
-            .annotate_vcf_text_with_acmg(vcf, false, None)
+            .annotate_vcf_text_with_acmg(vcf, None, None)
             .expect("annotation should succeed even with a truncated spliced_seq");
         assert_eq!(results.len(), 1);
 
@@ -2129,7 +2137,7 @@ mod tests {
             "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
              1\t{pos}\t.\t{r}\t{a}\t.\tPASS\t.\n"
         );
-        let results = ctx.annotate_vcf_text_with_acmg(&vcf, false, None).unwrap();
+        let results = ctx.annotate_vcf_text_with_acmg(&vcf, None, None).unwrap();
         assert_eq!(results.len(), 1, "expected one annotated record");
         results[0]["transcript_consequences"][0].clone()
     }
@@ -2559,7 +2567,7 @@ mod tests {
         let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
                    1\t56\t.\tG\tGCGG\t.\tPASS\t.\n";
 
-        let results = ctx.annotate_vcf_text_with_acmg(vcf, false, None).unwrap();
+        let results = ctx.annotate_vcf_text_with_acmg(vcf, None, None).unwrap();
         assert_eq!(results.len(), 1);
         let tc = &results[0]["transcript_consequences"][0];
 

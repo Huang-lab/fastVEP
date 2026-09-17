@@ -265,11 +265,54 @@ verdict, exactly as it did for divergence 5.
 | `start_lost` and `start_retained_variant` on the same row, where a *substitution* replaces a non-canonical initiator with `ATG`. NBEA `13:35171273 C>T` (`aCg`→`aTg`), ENST00000629018 | 2 | `start_lost` | `start_lost,start_retained_variant` | The pair contradicts itself. `IMPACT` is HIGH either way. Ensembl reaches `start_retained_variant` for a substitution through `_snp_start_altered`, which this window does not model; for a length change both tools can report the pair, and no variant of the ClinVar 2-star+ set does |
 | The polypyrimidine tract on a transcript carrying a frameshift intron. PTEN `10:87933000 C>CT`, ENST00000693560 | 1 | `splice_polypyrimidine_tract_variant` at -3 to -17 | the term stops at -13 | An intron of 12 bp or less makes VEP treat every exon as 12 bases wider (`_overlapped_exons`, `BaseTranscriptVariation.pm` l. 861). At the same 15 positions the other 14 PTEN transcripts get the full window from VEP, and this is the only one with a 1 bp intron |
 
+### 10. `--pick` keeps every allele of the transcript it picks
+
+VEP's `--pick` is documented as "pick one line or block of consequence data per variant", and it
+means it literally.
+On TP53 `17:7676154 G>A,C`, where both tools report 76 consequence entries unpicked, VEP's
+`--pick` leaves **one** and fastVEP's leaves **two**.
+The entry VEP drops is not a duplicate: it is the only annotation of the `C` allele anywhere in
+the record.
+
+| Option | fastVEP entries | VEP entries | Agree |
+|---|---:|---:|:-:|
+| `--pick` | 2 | 1 | no |
+| `--pick-allele` | 2 | 2 | yes |
+| `--pick-allele-gene` | 2 | 2 | yes |
+| `--flag-pick` | 76, 2 flagged | 76, 1 flagged | no |
+| `--flag-pick-allele` | 76, 2 flagged | 76, 2 flagged | yes |
+| `--flag-pick-allele-gene` | 76, 2 flagged | 76, 2 flagged | yes |
+
+A missing alt allele is indistinguishable from an alt that had no consequence, in a file whose
+reader is deciding what to report on.
+So `--pick` reduces to one transcript and keeps that transcript's annotation for every allele,
+and the option for VEP's behaviour is `--pick-allele`, which agrees with it exactly.
+`--flag-pick` flags the same set `--pick` would have kept, for the same reason.
+
+The four allele-scoped options agree with VEP on which transcript wins as well as how many
+entries survive: over five two-alt sites at overlapping-gene loci on chromosome 22 (HDHD5,
+HIRA/C22orf39, GNB1L/RTL10, PI4KA/SERPIND1, CLTCL1/SLC25A1), `--pick-allele-gene` and
+`--flag-pick-allele-gene` picked the same (allele, gene, transcript) set as VEP at 5 of 5, once
+the comparison is restricted to the genes VEP reports at all - see the `ncRNA_gene` note under
+[What is measured](#what-is-measured).
+
 ---
 
 ## Part 2 - gaps, where Ensembl is right
 
 These are fastVEP's remaining defects, not disagreements.
+
+### `--pick`'s last tie-break
+
+| Gap | Rows | What it looks like |
+|---|---:|---|
+| The ninth tie-break, transcript length, is not available | 1 of 5 two-alt overlapping-gene sites on chromosome 22 | PI4KA/SERPIND1 at `22:20780916`. Both transcripts are MANE Select and canonical for their own gene, both TSL 1, both protein_coding, both carry a CCDS, and both are `intron_variant` - so all eight tiers of `--pick-order` tie. VEP then breaks the tie on transcript length and reports PI4KA; fastVEP breaks it on transcript ID and reports SERPIND1 |
+
+`TranscriptVariation` does not carry a transcript length, which is why `--pick-order length` is
+rejected with a message saying so rather than accepted and ignored.
+The tie is only reachable where a pick compares transcripts of *different* genes, so it affects
+`--pick`, `--pick-allele` and their flagging forms, and never `--pick-allele-gene`, which compares
+within one gene.
 
 ### Consequence terms
 

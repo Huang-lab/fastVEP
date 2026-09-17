@@ -173,7 +173,12 @@ fn handle_request(stream: &mut std::net::TcpStream, ctx: &mut AnnotationContext)
             let request: serde_json::Value =
                 serde_json::from_str(&body_str).unwrap_or_else(|_| serde_json::json!({}));
             let vcf_text = request["vcf"].as_str().unwrap_or("");
-            let pick = request["pick"].as_bool().unwrap_or(false);
+            // Deserialized from the whole body rather than read key by key, so
+            // this server and fastvep-web's handler name the six switches from
+            // one definition. Unknown keys (`vcf`, `acmg`) are ignored.
+            let pick = serde_json::from_value::<fastvep_annotate::pick::PickFlags>(request.clone())
+                .unwrap_or_default()
+                .resolve();
 
             if vcf_text.is_empty() {
                 send_json(stream, 400, r#"{"error":"No VCF data provided"}"#)?;

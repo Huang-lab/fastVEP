@@ -7,6 +7,7 @@
 //! and puts a non-canonical one first. One implementation, one behaviour.
 
 use anyhow::Result;
+use fastvep_core::Allele;
 use fastvep_io::variant::TranscriptVariation;
 
 /// One tier of the `--pick-order` hierarchy, in VEP's vocabulary.
@@ -114,6 +115,283 @@ pub fn has_transcripts_to_pick(tvs: &[TranscriptVariation]) -> bool {
     tvs.len() > 1 && tvs.iter().any(|tv| tv.transcript_id.as_ref() != "-")
 }
 
+/// What one pick is chosen *per*, matching VEP's option family.
+///
+/// Measured against Ensembl VEP 115.1 on a two-alt site in TP53, which
+/// produces 76 consequence entries unpicked: `--pick` leaves 1,
+/// `--pick_allele` leaves 2, `--pick_allele_gene` leaves 2 (one gene at that
+/// locus), and `--flag_pick_allele_gene` leaves all 76 with 2 flagged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickScope {
+    /// One pick for the whole variant.
+    ///
+    /// **This is where fastVEP diverges from VEP, deliberately.** VEP's
+    /// `--pick` reduces that TP53 site to a single entry, which means one of
+    /// the two alt alleles is simply absent from the output - no error, no
+    /// note. fastVEP keeps the winning transcript's annotation for *every*
+    /// allele, so `--pick` there leaves 2 entries rather than 1. A dropped alt
+    /// is indistinguishable from an alt that had no consequence, and this is a
+    /// file a clinician reads. `--pick-allele` is the option for one entry per
+    /// allele, and it agrees with VEP exactly. See docs/VEP_DIVERGENCE.md.
+    #[default]
+    Variant,
+    /// One pick per (variant, allele).
+    Allele,
+    /// One pick per (variant, allele, gene).
+    AlleleGene,
+}
+
+/// What happens to the (transcript, allele) pairs a pick did not choose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickMode {
+    /// Delete them, leaving only the winners. VEP's `--pick*`.
+    #[default]
+    Reduce,
+    /// Keep them, and set `pick` on the winners. VEP's `--flag_pick*`.
+    ///
+    /// Costs what it sounds like: every pass that runs after the pick - SA
+    /// lookup, gene annotation, ACMG classification - runs on every
+    /// transcript, because that is what "retains others" means. Reduce mode
+    /// exists partly to avoid exactly that.
+    Flag,
+}
+
+/// A resolved pick request: what to pick per, what to do with the losers, and
+/// the hierarchy to decide with.
+#[derive(Debug, Clone, Copy)]
+pub struct PickPlan<'a> {
+    pub scope: PickScope,
+    pub mode: PickMode,
+    pub order: &'a [PickCriterion],
+}
+
+impl<'a> PickPlan<'a> {
+    /// A plan equivalent to the `--pick` fastVEP has always had.
+    pub fn reduce_per_variant(order: &'a [PickCriterion]) -> Self {
+        Self {
+            scope: PickScope::Variant,
+            mode: PickMode::Reduce,
+            order,
+        }
+    }
+}
+
+/// A pick request, before a `--pick-order` has been resolved to attach to it.
+///
+/// Separate from [`PickPlan`] only because the plan borrows the order, and a
+/// run's configuration is built before the order is parsed - a bad
+/// `--pick-order` should fail the run at startup, not per variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PickRequest {
+    pub scope: PickScope,
+    pub mode: PickMode,
+}
+
+impl PickRequest {
+    /// Attach a resolved hierarchy, giving something [`apply_pick`] can run.
+    pub fn plan<'a>(&self, order: &'a [PickCriterion]) -> PickPlan<'a> {
+        PickPlan {
+            scope: self.scope,
+            mode: self.mode,
+            order,
+        }
+    }
+
+    /// Whether the output needs a `PICK` column. Only flagging does: a
+    /// reducing pick answers the question by what it leaves behind.
+    pub fn needs_pick_column(&self) -> bool {
+        self.mode == PickMode::Flag
+    }
+}
+
+/// The six mutually exclusive pick switches as the command line spells them.
+///
+/// Named fields rather than six positional `bool`s, because the call site
+/// reads `--flag-pick-allele` and `--flag-pick-allele-gene` next to each
+/// other and a transposition between them would be invisible.
+///
+/// `Deserialize` so that the two HTTP entry points - fastvep-web's typed
+/// handler and the CLI's bundled server - name these switches from one
+/// definition rather than each spelling six JSON keys. They are two
+/// implementations of one wire contract, and the annotation path behind them
+/// has already drifted once (see the module header). Missing keys default to
+/// `false`, so a body that mentions none of them asks for no pick.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default)]
+pub struct PickFlags {
+    pub pick: bool,
+    pub pick_allele: bool,
+    pub pick_allele_gene: bool,
+    pub flag_pick: bool,
+    pub flag_pick_allele: bool,
+    pub flag_pick_allele_gene: bool,
+}
+
+impl PickFlags {
+    /// The request these switches describe, or `None` for a run that picks
+    /// nothing.
+    ///
+    /// The CLI declares all six in one clap group, so at most one can be set
+    /// from a command line. A caller that sets more than one by hand gets the
+    /// first match in this order, which is deterministic rather than correct -
+    /// there is no correct answer to two conflicting requests.
+    pub fn resolve(self) -> Option<PickRequest> {
+        let (scope, mode) = if self.pick {
+            (PickScope::Variant, PickMode::Reduce)
+        } else if self.pick_allele {
+            (PickScope::Allele, PickMode::Reduce)
+        } else if self.pick_allele_gene {
+            (PickScope::AlleleGene, PickMode::Reduce)
+        } else if self.flag_pick {
+            (PickScope::Variant, PickMode::Flag)
+        } else if self.flag_pick_allele {
+            (PickScope::Allele, PickMode::Flag)
+        } else if self.flag_pick_allele_gene {
+            (PickScope::AlleleGene, PickMode::Flag)
+        } else {
+            return None;
+        };
+        Some(PickRequest { scope, mode })
+    }
+
+    /// The switch a resolved request came from, for a message that has to name
+    /// the option the user actually typed.
+    pub fn requested_option(self) -> Option<&'static str> {
+        [
+            (self.pick, "--pick"),
+            (self.pick_allele, "--pick-allele"),
+            (self.pick_allele_gene, "--pick-allele-gene"),
+            (self.flag_pick, "--flag-pick"),
+            (self.flag_pick_allele, "--flag-pick-allele"),
+            (self.flag_pick_allele_gene, "--flag-pick-allele-gene"),
+        ]
+        .into_iter()
+        .find_map(|(set, name)| set.then_some(name))
+    }
+}
+
+/// Run a pick over one variant's transcript variations, in place.
+///
+/// The single entry point both drivers call, because they had already drifted
+/// once on the question of what `--pick` even means. Does nothing when there
+/// is nothing to pick between - see [`has_transcripts_to_pick`].
+pub fn apply_pick(tvs: &mut Vec<TranscriptVariation>, plan: &PickPlan<'_>) {
+    if !has_transcripts_to_pick(tvs) {
+        return;
+    }
+    match plan.scope {
+        PickScope::Variant => {
+            let Some(best) = pick_best_transcript_idx_with(tvs, plan.order) else {
+                return;
+            };
+            match plan.mode {
+                PickMode::Reduce => {
+                    let kept = tvs.swap_remove(best);
+                    *tvs = vec![kept];
+                }
+                PickMode::Flag => {
+                    for aa in &mut tvs[best].allele_annotations {
+                        aa.pick = true;
+                    }
+                }
+            }
+        }
+        PickScope::Allele | PickScope::AlleleGene => {
+            let winners = grouped_winners(tvs, plan);
+            match plan.mode {
+                PickMode::Reduce => retain_winners(tvs, &winners),
+                PickMode::Flag => {
+                    for &(ti, ai) in &winners {
+                        tvs[ti].allele_annotations[ai].pick = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The best `(transcript index, allele index)` pair in each group, where a
+/// group is one allele or one (allele, gene) pair.
+///
+/// One pass, with the groups in a `Vec` scanned linearly rather than hashed: a
+/// site has a handful of alt alleles and a locus a handful of genes, so the
+/// scan is shorter than a hash, and it holds borrows of the alleles and gene
+/// IDs already in `tvs` instead of building a `String` key per (transcript x
+/// allele). This runs once per variant, but the pairs it walks are the
+/// (variant x transcript x allele) product, which is the loop that matters.
+fn grouped_winners(tvs: &[TranscriptVariation], plan: &PickPlan<'_>) -> Vec<(usize, usize)> {
+    struct Group<'a> {
+        allele: &'a Allele,
+        gene: Option<&'a str>,
+        best: (usize, usize),
+        key: PickKey<'a>,
+    }
+
+    let by_gene = plan.scope == PickScope::AlleleGene;
+    let mut groups: Vec<Group<'_>> = Vec::new();
+
+    for (ti, tv) in tvs.iter().enumerate() {
+        // A scaffold row carries no transcript, so it cannot win a pick and
+        // must not be able to lose one either - it would take an allele with
+        // it under Reduce.
+        if tv.transcript_id.as_ref() == "-" {
+            continue;
+        }
+        let gene = by_gene.then(|| tv.gene_id.as_ref());
+        for (ai, aa) in tv.allele_annotations.iter().enumerate() {
+            let key = pick_key_with(tv, plan.order, Some(&aa.allele));
+            match groups
+                .iter_mut()
+                .find(|g| g.allele == &aa.allele && g.gene == gene)
+            {
+                Some(g) => {
+                    if key < g.key {
+                        g.best = (ti, ai);
+                        g.key = key;
+                    }
+                }
+                None => groups.push(Group {
+                    allele: &aa.allele,
+                    gene,
+                    best: (ti, ai),
+                    key,
+                }),
+            }
+        }
+    }
+
+    groups.into_iter().map(|g| g.best).collect()
+}
+
+/// Drop every (transcript, allele) pair that is not a winner, keeping the
+/// original transcript and allele order.
+///
+/// A transcript left with no alleles is dropped, and a scaffold row is kept
+/// untouched: it was never in a group, and deleting it would delete an allele
+/// nothing else reports.
+fn retain_winners(tvs: &mut Vec<TranscriptVariation>, winners: &[(usize, usize)]) {
+    let mut out: Vec<TranscriptVariation> = Vec::with_capacity(winners.len());
+    for (ti, mut tv) in std::mem::take(tvs).into_iter().enumerate() {
+        if tv.transcript_id.as_ref() == "-" {
+            out.push(tv);
+            continue;
+        }
+        let anns = std::mem::take(&mut tv.allele_annotations);
+        let kept: Vec<_> = anns
+            .into_iter()
+            .enumerate()
+            .filter(|(ai, _)| winners.contains(&(ti, *ai)))
+            .map(|(_, aa)| aa)
+            .collect();
+        if kept.is_empty() {
+            continue;
+        }
+        tv.allele_annotations = kept;
+        out.push(tv);
+    }
+    *tvs = out;
+}
+
 /// Index of the best transcript variation under the given `--pick-order`
 /// hierarchy, with transcript_id alphabetical order as a final deterministic
 /// tie-breaker.
@@ -124,8 +402,9 @@ pub fn pick_best_transcript_idx_with(
     tvs: &[TranscriptVariation],
     order: &[PickCriterion],
 ) -> Option<usize> {
-    (0..tvs.len())
-        .min_by(|&a, &b| pick_key_with(&tvs[a], order).cmp(&pick_key_with(&tvs[b], order)))
+    (0..tvs.len()).min_by(|&a, &b| {
+        pick_key_with(&tvs[a], order, None).cmp(&pick_key_with(&tvs[b], order, None))
+    })
 }
 
 /// Index of the best transcript variation under VEP's default `--pick_order`.
@@ -140,7 +419,14 @@ fn pick_best_transcript_idx(tvs: &[TranscriptVariation]) -> Option<usize> {
 
 /// Score one transcript on one criterion. Lower is better, uniformly, so the
 /// tiers compose by plain lexicographic comparison however they are ordered.
-fn pick_score(tv: &TranscriptVariation, c: PickCriterion) -> u32 {
+///
+/// `allele` scopes the `Rank` tier. Every other criterion is a property of the
+/// transcript and ignores it, but severity is a property of the *change*: a
+/// transcript that a site's first alt makes nonsense and its second alt makes
+/// synonymous has two ranks, and an allele-scoped pick has to compare the one
+/// belonging to the allele it is picking for. `None` means "every allele on
+/// this transcript", which is what a variant-scoped pick wants.
+fn pick_score(tv: &TranscriptVariation, c: PickCriterion, allele: Option<&Allele>) -> u32 {
     match c {
         PickCriterion::ManeSelect => tv.mane_select.is_none() as u32,
         PickCriterion::ManePlusClinical => tv.mane_plus_clinical.is_none() as u32,
@@ -152,6 +438,7 @@ fn pick_score(tv: &TranscriptVariation, c: PickCriterion) -> u32 {
         PickCriterion::Rank => tv
             .allele_annotations
             .iter()
+            .filter(|aa| allele.is_none_or(|a| &aa.allele == a))
             .flat_map(|aa| aa.consequences.iter())
             .map(|c| c.rank())
             .min()
@@ -173,13 +460,18 @@ const MAX_PICK_CRITERIA: usize = 8;
 fn pick_key_with<'a>(
     tv: &'a TranscriptVariation,
     order: &[PickCriterion],
-) -> ([u32; MAX_PICK_CRITERIA], &'a str) {
+    allele: Option<&Allele>,
+) -> PickKey<'a> {
     let mut key = [0u32; MAX_PICK_CRITERIA];
     for (slot, &c) in key.iter_mut().zip(order.iter()) {
-        *slot = pick_score(tv, c);
+        *slot = pick_score(tv, c, allele);
     }
     (key, tv.transcript_id.as_ref())
 }
+
+/// The scores in `--pick-order` order, then the transcript ID as the final
+/// deterministic tie-break.
+type PickKey<'a> = ([u32; MAX_PICK_CRITERIA], &'a str);
 
 /// Every APPRIS spelling reaches here, so the bands are spaced rather than
 /// adjacent: a tier number is added to its band's base, and an un-numbered
@@ -297,6 +589,7 @@ mod pick_tests {
                 polyphen: None,
                 supplementary: Vec::new(),
                 acmg_classification: None,
+                pick: false,
             }],
             canonical,
             strand: Strand::Forward,
@@ -954,5 +1247,359 @@ mod pick_tests {
                 "{spec:?} gave {err:?}, wanted {expect:?}"
             );
         }
+    }
+
+    /// A transcript with an explicit gene and one annotation per allele, for
+    /// the scope tests. `make_tv` hardcodes one gene and one allele, which is
+    /// all the tier tests need and neither of the things a scope decides on.
+    fn tv_in_gene(
+        transcript_id: &str,
+        gene_id: &str,
+        canonical: bool,
+        per_allele: &[(&str, Consequence)],
+    ) -> TranscriptVariation {
+        let mut tv = make_tv(
+            transcript_id,
+            canonical,
+            "protein_coding",
+            vec![Consequence::IntronVariant],
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        tv.gene_id = Arc::from(gene_id);
+        tv.gene_symbol = Some(Arc::from(gene_id));
+        tv.allele_annotations = per_allele
+            .iter()
+            .map(|(allele, csq)| {
+                let mut aa = tv.allele_annotations[0].clone();
+                aa.allele = Allele::from_str(allele);
+                aa.consequences = vec![*csq];
+                aa
+            })
+            .collect();
+        tv
+    }
+
+    /// `(transcript, allele, flagged)` for every annotation left standing, in
+    /// output order - which is what every writer iterates.
+    fn rendered(tvs: &[TranscriptVariation]) -> Vec<(String, String, bool)> {
+        tvs.iter()
+            .flat_map(|tv| {
+                tv.allele_annotations
+                    .iter()
+                    .map(move |aa| (tv.transcript_id.to_string(), aa.allele.to_string(), aa.pick))
+            })
+            .collect()
+    }
+
+    /// Two genes at one locus, each with a canonical and a non-canonical
+    /// transcript, and two alt alleles whose severity ordering is opposite
+    /// between the genes - so a scope that ignores the allele cannot get the
+    /// per-allele answers right by accident.
+    fn two_gene_locus() -> Vec<TranscriptVariation> {
+        vec![
+            tv_in_gene(
+                "ENST_A_CANON",
+                "GENE_A",
+                true,
+                &[
+                    ("A", Consequence::MissenseVariant),
+                    ("C", Consequence::SynonymousVariant),
+                ],
+            ),
+            tv_in_gene(
+                "ENST_A_OTHER",
+                "GENE_A",
+                false,
+                &[
+                    ("A", Consequence::StopGained),
+                    ("C", Consequence::StopGained),
+                ],
+            ),
+            tv_in_gene(
+                "ENST_B_CANON",
+                "GENE_B",
+                true,
+                &[
+                    ("A", Consequence::SynonymousVariant),
+                    ("C", Consequence::MissenseVariant),
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn variant_scope_reduce_keeps_one_transcript_with_all_its_alleles() {
+        // fastVEP's deliberate divergence: VEP's `--pick` emits one entry for
+        // the record, which silently drops an alt. Measured on VEP 115.1 at a
+        // two-alt TP53 site: 1 entry against fastVEP's 2. See `PickScope`.
+        let mut tvs = two_gene_locus();
+        apply_pick(&mut tvs, &PickPlan::reduce_per_variant(DEFAULT_PICK_ORDER));
+        assert_eq!(
+            rendered(&tvs),
+            vec![
+                ("ENST_A_CANON".into(), "A".into(), false),
+                ("ENST_A_CANON".into(), "C".into(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn allele_scope_picks_per_allele_across_genes() {
+        let mut tvs = two_gene_locus();
+        apply_pick(
+            &mut tvs,
+            &PickPlan {
+                scope: PickScope::Allele,
+                mode: PickMode::Reduce,
+                order: DEFAULT_PICK_ORDER,
+            },
+        );
+        // Canonical eliminates GENE_A's other transcript for both alleles,
+        // even though it carries the most severe consequence at the locus.
+        // That leaves the two canonical transcripts tied on every tier above
+        // `rank`, so `rank` decides - and it decides *per allele*, because
+        // severity is a property of the change and not of the transcript.
+        // Each allele therefore goes to a different gene, which is the whole
+        // difference between this scope and the variant one.
+        assert_eq!(
+            rendered(&tvs),
+            vec![
+                ("ENST_A_CANON".into(), "A".into(), false),
+                ("ENST_B_CANON".into(), "C".into(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn allele_gene_scope_picks_once_per_allele_and_gene() {
+        let mut tvs = two_gene_locus();
+        apply_pick(
+            &mut tvs,
+            &PickPlan {
+                scope: PickScope::AlleleGene,
+                mode: PickMode::Reduce,
+                order: DEFAULT_PICK_ORDER,
+            },
+        );
+        // Four groups: two alleles x two genes. GENE_A's non-canonical
+        // transcript loses both of its, even though it carries the most severe
+        // consequence at the locus - canonical outranks rank, as in VEP.
+        assert_eq!(
+            rendered(&tvs),
+            vec![
+                ("ENST_A_CANON".into(), "A".into(), false),
+                ("ENST_A_CANON".into(), "C".into(), false),
+                ("ENST_B_CANON".into(), "A".into(), false),
+                ("ENST_B_CANON".into(), "C".into(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn flag_mode_marks_the_same_choices_it_would_have_reduced_to() {
+        // The property that makes `--flag-pick*` trustworthy: flagging and
+        // reducing must not disagree about which entry wins, or the flag means
+        // something different from the option it is named after.
+        for scope in [PickScope::Variant, PickScope::Allele, PickScope::AlleleGene] {
+            let mut reduced = two_gene_locus();
+            apply_pick(
+                &mut reduced,
+                &PickPlan {
+                    scope,
+                    mode: PickMode::Reduce,
+                    order: DEFAULT_PICK_ORDER,
+                },
+            );
+            let mut flagged = two_gene_locus();
+            apply_pick(
+                &mut flagged,
+                &PickPlan {
+                    scope,
+                    mode: PickMode::Flag,
+                    order: DEFAULT_PICK_ORDER,
+                },
+            );
+
+            let kept: Vec<_> = rendered(&reduced)
+                .into_iter()
+                .map(|(t, a, _)| (t, a))
+                .collect();
+            let marked: Vec<_> = rendered(&flagged)
+                .into_iter()
+                .filter(|(_, _, picked)| *picked)
+                .map(|(t, a, _)| (t, a))
+                .collect();
+            assert_eq!(
+                kept, marked,
+                "{scope:?} flags a different set than it keeps"
+            );
+
+            // And flagging keeps everything, which is the whole point.
+            assert_eq!(rendered(&flagged).len(), 6, "{scope:?} dropped an entry");
+        }
+    }
+
+    #[test]
+    fn allele_scope_consults_the_rank_of_the_allele_being_picked_for() {
+        // Two transcripts of one gene, neither canonical, so `rank` is the
+        // only tier that can separate them - and it points a different way for
+        // each allele. Scoring `rank` over every allele at once, as a
+        // variant-scoped pick does, would give both alleles the same winner.
+        let mut tvs = vec![
+            tv_in_gene(
+                "ENST_X",
+                "GENE",
+                false,
+                &[
+                    ("A", Consequence::StopGained),
+                    ("C", Consequence::SynonymousVariant),
+                ],
+            ),
+            tv_in_gene(
+                "ENST_Y",
+                "GENE",
+                false,
+                &[
+                    ("A", Consequence::SynonymousVariant),
+                    ("C", Consequence::StopGained),
+                ],
+            ),
+        ];
+        apply_pick(
+            &mut tvs,
+            &PickPlan {
+                scope: PickScope::Allele,
+                mode: PickMode::Reduce,
+                order: DEFAULT_PICK_ORDER,
+            },
+        );
+        assert_eq!(
+            rendered(&tvs),
+            vec![
+                ("ENST_X".into(), "A".into(), false),
+                ("ENST_Y".into(), "C".into(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_scaffold_row_keeps_its_allele_through_every_scope() {
+        // The hazard `has_transcripts_to_pick` guards for variant scope, at
+        // the grouping scopes: a placeholder carries an alt that nothing else
+        // reports, so reducing must not be able to delete it.
+        for scope in [PickScope::Allele, PickScope::AlleleGene] {
+            let mut tvs = vec![
+                tv_in_gene(
+                    "ENST_REAL",
+                    "GENE",
+                    true,
+                    &[("A", Consequence::MissenseVariant)],
+                ),
+                tv_in_gene("-", "-", false, &[("C", Consequence::IntergenicVariant)]),
+            ];
+            apply_pick(
+                &mut tvs,
+                &PickPlan {
+                    scope,
+                    mode: PickMode::Reduce,
+                    order: DEFAULT_PICK_ORDER,
+                },
+            );
+            let alleles: Vec<String> = rendered(&tvs).into_iter().map(|(_, a, _)| a).collect();
+            assert!(
+                alleles.contains(&"C".to_string()),
+                "{scope:?} dropped the scaffolded allele: {alleles:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pick_flags_resolve_to_the_six_vep_options() {
+        assert_eq!(PickFlags::default().resolve(), None);
+        for (flags, scope, mode, name) in [
+            (
+                PickFlags {
+                    pick: true,
+                    ..Default::default()
+                },
+                PickScope::Variant,
+                PickMode::Reduce,
+                "--pick",
+            ),
+            (
+                PickFlags {
+                    pick_allele: true,
+                    ..Default::default()
+                },
+                PickScope::Allele,
+                PickMode::Reduce,
+                "--pick-allele",
+            ),
+            (
+                PickFlags {
+                    pick_allele_gene: true,
+                    ..Default::default()
+                },
+                PickScope::AlleleGene,
+                PickMode::Reduce,
+                "--pick-allele-gene",
+            ),
+            (
+                PickFlags {
+                    flag_pick: true,
+                    ..Default::default()
+                },
+                PickScope::Variant,
+                PickMode::Flag,
+                "--flag-pick",
+            ),
+            (
+                PickFlags {
+                    flag_pick_allele: true,
+                    ..Default::default()
+                },
+                PickScope::Allele,
+                PickMode::Flag,
+                "--flag-pick-allele",
+            ),
+            (
+                PickFlags {
+                    flag_pick_allele_gene: true,
+                    ..Default::default()
+                },
+                PickScope::AlleleGene,
+                PickMode::Flag,
+                "--flag-pick-allele-gene",
+            ),
+        ] {
+            let request = flags.resolve().expect("a switch is set");
+            assert_eq!(request.scope, scope, "{name}");
+            assert_eq!(request.mode, mode, "{name}");
+            assert_eq!(flags.requested_option(), Some(name));
+            assert_eq!(
+                request.needs_pick_column(),
+                mode == PickMode::Flag,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn pick_switches_deserialize_under_their_wire_names() {
+        // Both HTTP entry points read the request body through this, so the
+        // names are part of the API, not an implementation detail.
+        let body = serde_json::json!({
+            "vcf": "ignored",
+            "flag_pick_allele_gene": true,
+        });
+        let flags: PickFlags = serde_json::from_value(body).expect("unknown keys are ignored");
+        assert_eq!(flags.requested_option(), Some("--flag-pick-allele-gene"));
+
+        let empty: PickFlags = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(empty.resolve(), None);
     }
 }
