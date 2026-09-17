@@ -641,7 +641,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
     let cols: Vec<&str> = pos25k.split('\t').collect();
     assert_eq!(cols.len(), 17 + 2);
     assert_eq!(
-        cols[17], "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO%3A0001483",
+        cols[17], "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO:0001483",
         "FV_CLINVAR tab column must match the VCF pipe schema: {}",
         pos25k
     );
@@ -825,7 +825,7 @@ fn sa_only_tab_emits_minimal_columns() {
     assert_eq!(cols[2], "G");
     assert_eq!(
         cols[3],
-        "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO%3A0001483"
+        "G|Pathogenic|criteria_provided%2C_multiple_submitters%2C_no_conflicts|Breast_cancer|SNV|SO:0001483"
     );
 }
 

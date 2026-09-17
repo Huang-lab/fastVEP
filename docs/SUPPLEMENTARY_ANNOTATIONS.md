@@ -323,24 +323,36 @@ To keep `FV_*` values parseable by `bcftools` and similar tools without
 double-decoding, fastVEP percent-encodes the following characters within any
 pipe field:
 
-| Character | Replacement |
-|-----------|-------------|
-| `:`       | `%3A`       |
-| `;`       | `%3B`       |
-| `=`       | `%3D`       |
-| `%`       | `%25`       |
-| `,`       | `%2C`       |
-| `\r`      | `%0D`       |
-| `\n`      | `%0A`       |
-| `\t`      | `%09`       |
-| ` ` (space)| `%20`       |
-| `"`       | `%22`       |
-| `\|`      | `%7C`       |
-| `&`       | `%26`       |
+| Character | Replacement | Why                                            |
+|-----------|-------------|------------------------------------------------|
+| `;`       | `%3B`       | ends an INFO field                             |
+| `=`       | `%3D`       | separates an INFO key from its value           |
+| `,`       | `%2C`       | separates the values of one INFO key           |
+| `%`       | `%25`       | introduces an escape                           |
+| `\|`      | `%7C`       | separates the pipe field's own segments        |
+| `&`       | `%26`       | separates the elements of a list segment       |
+| ` ` (space)| `%20`      | keeps the INFO column free of whitespace       |
+| `\"`      | `%22`       | opens a quoted field in `read.delim` / `csv`   |
+| `\r`      | `%0D`       | would end the record                           |
+| `\n`      | `%0A`       | would end the record                           |
+| `\t`      | `%09`       | would end the column                           |
+
+Nothing else is encoded.
+VCF 4.3 (data lines, fixed fields) restricts only `;`, `=` and `,` inside an INFO value; `|` and `&` are the delimiters these fields are assembled from; `%` has to be encoded for a single decode pass to be exact; and the last three would end the value, the column or the record.
+
+The one character that used to be encoded here and is not any more is the colon.
+It is reserved by nothing, Ensembl VEP writes it through literally, and fastVEP's own `CSQ` column already did too - every `HGVSc` carries one - so encoding it here contradicted the same record's `CSQ` field.
+`validation/run_escaping_probe.sh` measures what VEP does with each of these characters against a real VEP 115.1, so the rules above can be rechecked rather than taken on trust.
+
+Space and `"` are encoded although the spec permits both, and for the same reason in each case: there is no `FV_*` field in VEP to be diffed against, so matching VEP buys nothing here, while a reader of the column loses something real.
+`awk` and `cut -d' '` split a record on the space; `R`'s `read.delim` and Python's `csv` both treat `"` as opening a quoted field and swallow the rest of the line.
+`%20` is also reversible, where VEP's `_` substitution is not: `Breast_cancer` cannot be told back from `Breast cancer`.
 
 Lists within a single pipe field (for example, multiple ClinVar
 significances) are joined with `&` *after* per-element escaping, so the
 delimiter cannot collide with payload content.
+A field that introduces a delimiter of its own encodes that delimiter in its own leaves for the same reason.
+`FV_CLINVAR_PROTEIN` is the only one that does: its `:` and `>` are literal between the leaves of a `pos:ref>alt:significance` record, and encoded (`%3A`, `%3E`) inside any leaf that contains one.
 
 `bcftools query -f '%INFO/FV_CLINVAR\n'` returns the raw escaped value; a
 single percent-decode pass recovers the original. JSON output is **not**
