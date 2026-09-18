@@ -61,18 +61,18 @@ impl TranscriptProvider for MemoryTranscriptProvider {
 }
 
 /// High-performance transcript provider using per-chromosome sorted arrays,
-/// binary search, and suffix-max-end for O(log n + k) lookups with early termination.
+/// binary search, and prefix-max-end lookups with early termination.
 ///
 /// Each chromosome's transcripts are sorted by start position. A parallel
-/// `suffix_max_end` array stores the maximum `end` value from index `i` to the
-/// end of the array, enabling early termination when scanning backwards:
-/// if `suffix_max_end[i] < query_start`, no transcript at index <= i can overlap.
+/// `prefix_max_end` array stores the maximum `end` value through index `i`,
+/// enabling early termination when scanning backwards:
+/// if `prefix_max_end[i] < query_start`, no transcript at index <= i can overlap.
 pub struct IndexedTranscriptProvider {
     /// Transcripts grouped by chromosome, sorted by start position within each group.
     by_chrom: HashMap<Arc<str>, Vec<Transcript>>,
-    /// Suffix-max-end arrays: `suffix_max_end[chrom][i]` = max(end) for transcripts[i..].
+    /// Prefix-max-end arrays: `prefix_max_end[chrom][i]` = max(end) for transcripts[..=i].
     /// Enables early termination in backward scan.
-    suffix_max_end: HashMap<Arc<str>, Vec<u64>>,
+    prefix_max_end: HashMap<Arc<str>, Vec<u64>>,
 }
 
 impl IndexedTranscriptProvider {
@@ -88,22 +88,22 @@ impl IndexedTranscriptProvider {
         for trs in by_chrom.values_mut() {
             trs.sort_by_key(|t| t.start);
         }
-        // Build suffix-max-end arrays for early termination
-        let mut suffix_max_end = HashMap::new();
+        // Build prefix-max-end arrays for early termination
+        let mut prefix_max_end = HashMap::new();
         for (chrom, trs) in &by_chrom {
             let n = trs.len();
-            let mut sme = vec![0u64; n];
+            let mut pme = vec![0u64; n];
             if n > 0 {
-                sme[n - 1] = trs[n - 1].end;
-                for i in (0..n - 1).rev() {
-                    sme[i] = trs[i].end.max(sme[i + 1]);
+                pme[0] = trs[0].end;
+                for i in 1..n {
+                    pme[i] = trs[i].end.max(pme[i - 1]);
                 }
             }
-            suffix_max_end.insert(Arc::clone(chrom), sme);
+            prefix_max_end.insert(Arc::clone(chrom), pme);
         }
         Self {
             by_chrom,
-            suffix_max_end,
+            prefix_max_end,
         }
     }
 
@@ -133,18 +133,17 @@ impl TranscriptProvider for IndexedTranscriptProvider {
             None => return Ok(Vec::new()),
         };
         let trs = &self.by_chrom[key];
-        let sme = &self.suffix_max_end[key];
+        let pme = &self.prefix_max_end[key];
 
         // Binary search: find the first transcript whose start > end (query end).
         // All transcripts that could overlap must have start <= end, so they're in [0..upper).
         let upper = trs.partition_point(|t| t.start <= end);
 
         // From [0..upper), filter those whose end >= start (query start).
-        // Use suffix_max_end for early termination: if the max end from index i
-        // onwards is less than query start, no transcript at i or earlier can overlap.
+        // Use prefix_max_end for early termination over index i and earlier.
         let mut results = Vec::new();
         for i in (0..upper).rev() {
-            if sme[i] < start {
+            if pme[i] < start {
                 break; // No transcript from [0..=i] can reach query start
             }
             if trs[i].end >= start {
@@ -483,6 +482,51 @@ mod tests {
 
         // Transcript count
         assert_eq!(provider.transcript_count(), 3);
+    }
+
+    #[test]
+    fn indexed_provider_retains_nested_long_transcript() {
+        let provider = IndexedTranscriptProvider::new(vec![
+            make_transcript("chr1", 1000, 5000),
+            make_transcript("chr1", 3000, 4000),
+        ]);
+        let results = provider.get_transcripts("chr1", 4500, 4501).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].start, 1000);
+        assert_eq!(results[0].end, 5000);
+    }
+
+    #[test]
+    fn indexed_provider_matches_linear_nested_queries() {
+        let transcripts = vec![
+            make_transcript("chr1", 1000, 6000),
+            make_transcript("chr1", 1000, 1500),
+            make_transcript("chr1", 1100, 1600),
+            make_transcript("chr1", 2000, 5000),
+            make_transcript("chr1", 3000, 4000),
+        ];
+        let indexed = IndexedTranscriptProvider::new(transcripts.clone());
+        let linear = MemoryTranscriptProvider::new(transcripts);
+        for start in (900..=6200).step_by(37) {
+            for width in [0, 1, 100, 5000] {
+                let expected = linear
+                    .get_transcripts("chr1", start, start + width)
+                    .unwrap();
+                let actual = indexed
+                    .get_transcripts("chr1", start, start + width)
+                    .unwrap();
+                let intervals = |rows: Vec<&Transcript>| {
+                    rows.into_iter()
+                        .map(|transcript| (transcript.start, transcript.end))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(
+                    intervals(actual),
+                    intervals(expected),
+                    "query {start} + {width}"
+                );
+            }
+        }
     }
 
     #[test]
