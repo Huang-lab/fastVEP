@@ -2,7 +2,14 @@
 //! naive overlap filter returns, for every query, on real gene models.
 //!
 //! Point the test at one or more GFF3 files with `FASTVEP_TEST_GFF3`
-//! (colon-separated). Without it the test is a no-op, so CI stays hermetic.
+//! (colon-separated, plain or gzipped). Without it the test is a no-op, so CI
+//! stays hermetic. Cargo runs the test from this crate's directory, so give
+//! absolute paths — a path relative to the workspace root will not be found:
+//!
+//! ```text
+//! FASTVEP_TEST_GFF3=$PWD/validation/mouse/mouse_chr19_sorted.gff3.gz \
+//!     cargo test --release -p fastvep-cache --test real_gff3_overlap_parity
+//! ```
 //!
 //! The reference answer comes from a sweep line rather than from re-filtering
 //! every transcript per query: the query points are dense (hundreds of
