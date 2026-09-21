@@ -60,19 +60,31 @@ impl TranscriptProvider for MemoryTranscriptProvider {
     }
 }
 
-/// High-performance transcript provider using per-chromosome sorted arrays,
-/// binary search, and suffix-max-end for O(log n + k) lookups with early termination.
+/// High-performance transcript provider using per-chromosome sorted arrays and
+/// two binary searches to bound an overlap query.
 ///
 /// Each chromosome's transcripts are sorted by start position. A parallel
-/// `suffix_max_end` array stores the maximum `end` value from index `i` to the
-/// end of the array, enabling early termination when scanning backwards:
-/// if `suffix_max_end[i] < query_start`, no transcript at index <= i can overlap.
+/// `prefix_max_end` array stores `max(end)` over `transcripts[..=i]`. Because a
+/// running maximum is monotonically non-decreasing, that array can itself be
+/// binary-searched for the first transcript able to reach back to a query, so
+/// only a bounded window is examined rather than every transcript that begins
+/// at or before the query end.
+///
+/// A *prefix* maximum, not a suffix one. The question the scan has to answer is
+/// "can anything at index `i` or earlier still reach this query?", and a
+/// transcript nested inside a longer one that began earlier is the normal case
+/// in a real gene model. A suffix maximum answers the opposite question, and
+/// using it drops every transcript still open past the last transcript to
+/// *begin* on the chromosome — 2,186 bp of Ensembl 116 chr22 covered by 29
+/// transcripts were reported as intergenic (issue #126).
 pub struct IndexedTranscriptProvider {
     /// Transcripts grouped by chromosome, sorted by start position within each group.
     by_chrom: HashMap<Arc<str>, Vec<Transcript>>,
-    /// Suffix-max-end arrays: `suffix_max_end[chrom][i]` = max(end) for transcripts[i..].
-    /// Enables early termination in backward scan.
-    suffix_max_end: HashMap<Arc<str>, Vec<u64>>,
+    /// Prefix-max-end arrays: `prefix_max_end[chrom][i]` == max(end) over
+    /// `by_chrom[chrom][..=i]`. Built once in [`new`](Self::new) alongside
+    /// `by_chrom` and never mutated after, so it is always the same length as
+    /// the list it indexes.
+    prefix_max_end: HashMap<Arc<str>, Vec<u64>>,
 }
 
 impl IndexedTranscriptProvider {
@@ -88,22 +100,22 @@ impl IndexedTranscriptProvider {
         for trs in by_chrom.values_mut() {
             trs.sort_by_key(|t| t.start);
         }
-        // Build suffix-max-end arrays for early termination
-        let mut suffix_max_end = HashMap::new();
+        // Build prefix-max-end arrays to bound the overlap window
+        let mut prefix_max_end = HashMap::new();
         for (chrom, trs) in &by_chrom {
-            let n = trs.len();
-            let mut sme = vec![0u64; n];
-            if n > 0 {
-                sme[n - 1] = trs[n - 1].end;
-                for i in (0..n - 1).rev() {
-                    sme[i] = trs[i].end.max(sme[i + 1]);
-                }
-            }
-            suffix_max_end.insert(Arc::clone(chrom), sme);
+            let mut running = 0u64;
+            let maxima = trs
+                .iter()
+                .map(|t| {
+                    running = running.max(t.end);
+                    running
+                })
+                .collect();
+            prefix_max_end.insert(Arc::clone(chrom), maxima);
         }
         Self {
             by_chrom,
-            suffix_max_end,
+            prefix_max_end,
         }
     }
 
@@ -124,35 +136,44 @@ impl IndexedTranscriptProvider {
                 .map(|(k, _)| k.as_ref())
         })
     }
+
+    /// The half-open `[lo, hi)` slice of `by_chrom[key]` that can contain a
+    /// transcript overlapping `[start, end]`. `key` must already be resolved.
+    ///
+    /// * `hi` — one past the last transcript that begins at or before `end`,
+    ///   by binary search over the start-sorted list. Anything later begins
+    ///   after the query and cannot overlap it.
+    /// * `lo` — the first transcript that can still reach back to `start`, by
+    ///   binary search over the monotone `prefix_max_end`. Every transcript
+    ///   before `lo` ends strictly before `start`, so none can overlap.
+    ///
+    /// Split out from [`get_transcripts`](TranscriptProvider::get_transcripts)
+    /// so the window itself is testable and not just the rows it yields: a
+    /// pruning bug that only *widens* the window returns correct results while
+    /// costing a full scan per query, which is how the suffix-max-end version
+    /// of this index came to scan an average of 5,257 entries per chr22 query
+    /// where 17 suffice.
+    fn candidate_window(&self, key: &str, start: u64, end: u64) -> (usize, usize) {
+        let trs = &self.by_chrom[key];
+        let maxima = &self.prefix_max_end[key];
+        debug_assert_eq!(maxima.len(), trs.len(), "prefix_max_end out of sync");
+
+        let hi = trs.partition_point(|t| t.start <= end);
+        let lo = maxima.partition_point(|&max_end| max_end < start);
+        (lo.min(hi), hi)
+    }
 }
 
 impl TranscriptProvider for IndexedTranscriptProvider {
     fn get_transcripts(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<&Transcript>> {
-        let key = match self.resolve_key(chrom) {
-            Some(key) => key,
-            None => return Ok(Vec::new()),
+        let Some(key) = self.resolve_key(chrom) else {
+            return Ok(Vec::new());
         };
-        let trs = &self.by_chrom[key];
-        let sme = &self.suffix_max_end[key];
-
-        // Binary search: find the first transcript whose start > end (query end).
-        // All transcripts that could overlap must have start <= end, so they're in [0..upper).
-        let upper = trs.partition_point(|t| t.start <= end);
-
-        // From [0..upper), filter those whose end >= start (query start).
-        // Use suffix_max_end for early termination: if the max end from index i
-        // onwards is less than query start, no transcript at i or earlier can overlap.
-        let mut results = Vec::new();
-        for i in (0..upper).rev() {
-            if sme[i] < start {
-                break; // No transcript from [0..=i] can reach query start
-            }
-            if trs[i].end >= start {
-                results.push(&trs[i]);
-            }
-        }
-        results.reverse(); // Restore start-position order
-        Ok(results)
+        let (lo, hi) = self.candidate_window(key, start, end);
+        Ok(self.by_chrom[key][lo..hi]
+            .iter()
+            .filter(|t| t.end >= start)
+            .collect())
     }
 
     fn get_transcripts_by_chrom(&self, chrom: &str) -> Result<Vec<&Transcript>> {
@@ -483,6 +504,98 @@ mod tests {
 
         // Transcript count
         assert_eq!(provider.transcript_count(), 3);
+    }
+
+    /// Intervals as `(start, end)`, in the order the provider reports them.
+    fn spans(rows: Vec<&Transcript>) -> Vec<(u64, u64)> {
+        rows.into_iter().map(|t| (t.start, t.end)).collect()
+    }
+
+    /// A short transcript that both begins and ends after a longer one, so it
+    /// sorts last by start while the longer one is still open past its end.
+    /// The suffix-max-end version of the scan stopped at the short one and
+    /// reported the region past it as having no transcripts at all (#126).
+    #[test]
+    fn indexed_provider_retains_nested_long_transcript() {
+        let provider = IndexedTranscriptProvider::new(vec![
+            make_transcript("chr1", 1000, 5000),
+            make_transcript("chr1", 3000, 4000),
+        ]);
+        let results = provider.get_transcripts("chr1", 4500, 4501).unwrap();
+        assert_eq!(spans(results), vec![(1000, 5000)]);
+    }
+
+    /// Every query against a nested set must agree with a plain filter. The
+    /// fixture deliberately mixes containment, shared starts and a transcript
+    /// that outlives every later start.
+    #[test]
+    fn indexed_provider_matches_linear_nested_queries() {
+        let transcripts = vec![
+            make_transcript("chr1", 3000, 4000),
+            make_transcript("chr1", 1000, 6000),
+            make_transcript("chr1", 1100, 1600),
+            make_transcript("chr1", 1000, 1500),
+            make_transcript("chr1", 2000, 5000),
+        ];
+        let indexed = IndexedTranscriptProvider::new(transcripts.clone());
+        let linear = MemoryTranscriptProvider::new(transcripts);
+
+        for start in (900..=6200).step_by(37) {
+            for width in [0, 1, 100, 5000] {
+                // `MemoryTranscriptProvider` reports in input order and the
+                // index in start order, so compare as sorted multisets: the
+                // index's own ordering is pinned by the assertion below.
+                let mut expected = spans(
+                    linear
+                        .get_transcripts("chr1", start, start + width)
+                        .unwrap(),
+                );
+                let mut actual = spans(
+                    indexed
+                        .get_transcripts("chr1", start, start + width)
+                        .unwrap(),
+                );
+                let ordered = actual.clone();
+                expected.sort_unstable();
+                actual.sort_unstable();
+                assert_eq!(actual, expected, "query {start} + {width}");
+
+                let mut by_start = ordered.clone();
+                by_start.sort_by_key(|&(s, _)| s);
+                assert_eq!(
+                    ordered, by_start,
+                    "results not start-sorted at {start} + {width}"
+                );
+            }
+        }
+    }
+
+    /// Correct results alone cannot tell a working prune from a broken one: a
+    /// window that is too wide still yields the right rows. Pin the window.
+    #[test]
+    fn candidate_window_excludes_transcripts_that_end_before_the_query() {
+        let provider = IndexedTranscriptProvider::new(
+            (0..100)
+                .map(|i| make_transcript("chr1", i * 100 + 1, i * 100 + 50))
+                .collect(),
+        );
+
+        // Non-overlapping transcripts: a point query needs a window of one.
+        let (lo, hi) = provider.candidate_window("chr1", 5001, 5001);
+        assert_eq!((lo, hi), (50, 51));
+
+        // A transcript spanning everything forces the window open from 0,
+        // because the running maximum never drops below the query.
+        let with_spanner = IndexedTranscriptProvider::new(
+            std::iter::once(make_transcript("chr1", 1, 10_000))
+                .chain((0..100).map(|i| make_transcript("chr1", i * 100 + 1, i * 100 + 50)))
+                .collect(),
+        );
+        let (lo, _) = with_spanner.candidate_window("chr1", 5001, 5001);
+        assert_eq!(
+            lo, 0,
+            "a chromosome-spanning transcript must keep the window open"
+        );
     }
 
     #[test]
