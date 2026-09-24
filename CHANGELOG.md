@@ -5,7 +5,85 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-24
+
+A correctness release. Most of what follows is a wrong answer that looked
+right: a variant annotated against a transcript VEP would not have chosen, an
+HGVS name for a residue the protein does not have, a gene that lost its symbol,
+a supplementary-annotation column that resolved to the wrong field. None of it
+surfaced as an error message, which is why each entry names the consequence
+rather than the edit.
+
+### Added
+
+- **fastvep-classification**: the ACMG/AMP criteria went through a
+  medical-genetics review, and this release carries everything done about it
+  (#82). Benchmark run v27 records the resulting behaviour, including PVS1 no
+  longer firing on an intact donor site (#107).
+- **fastvep-annotate / CLI**: VEP's `--pick` family is implemented, and it
+  flags as well as reduces — so a run can mark the picked consequence without
+  discarding the rest (#121, #125).
+- **docs**: the self-hosted REST API is documented, with a contract that can be
+  broken deliberately rather than by accident (#110).
+
 ### Fixed
+
+- **fastvep-annotate (#111)**: annotation picked the first overlapping
+  transcript it saw rather than the one Ensembl VEP would choose. Variants in
+  multi-transcript loci were reported against the wrong transcript.
+- **fastvep-pick (#112)**: the APPRIS tags were never read, so the APPRIS tier
+  of the pick order could not decide anything and silently fell through to the
+  next criterion.
+- **fastvep-consequence (#106)**: only the first two coding terms were
+  reported. Every coding term that holds is now emitted.
+- **fastvep-consequence (#100, #102)**: a variant at a CDS boundary reported
+  one term where two hold; both are now reported.
+- **fastvep-annotate (#103)**: the annotation is now Ensembl's own gene model,
+  and the ACMG benchmarks were rerun against it.
+- **VEP parity (#122)**: every known divergence from Ensembl VEP was
+  re-measured rather than assumed still present; six turned out to be ours and
+  are fixed here.
+- **fastvep-cache (#87, #88, #89, #90)**: three separate ways an incomplete
+  transcript set became a silent wrong answer — a stale set is *intact*, so
+  nothing in it distinguishes a gene that lost its symbol from one that never
+  had one.
+- **fastvep-cache (#95)**: the pre-#90 cache format is now rejected instead of
+  trusted. A user who upgraded fastVEP but not their GFF3 was still reading the
+  cache the old parser wrote and seeing no change at all.
+- **fastvep-cache (#126, #128)**: the transcript overlap window is bounded by a
+  prefix maximum, so overlap lookup no longer scans further than it must.
+- **fastvep-cache/gff (#98, #99)**: `ncRNA_gene` records are now read, so
+  non-coding genes keep their symbol; the annotate path was streamlined around
+  the fix.
+- **fastvep-hgvs (#85)**: in-frame insertions are routed to `delins` rather
+  than being named as a substitution.
+- **fastvep-hgvs (#86)**: in-frame indels are normalised per the HGVS 3'-rule.
+- **fastvep-hgvs (#91, #93)**: the affected residue span is read from either
+  end, so HGVSp names residues the protein actually has.
+- **fastvep-hgvs (#96, #97)**: anchor candidates are ordered by strand, so a
+  periodic reference resolves to the span the variant touches.
+- **fastvep-hgvs (#104)**: an intronic duplication now names the block it
+  actually copies.
+- **fastvep-io (#116, #118)**: custom annotation sources are projected into VCF
+  and tab output; previously they were computed and then dropped.
+- **fastvep-io (#123, #124)**: output no longer percent-encodes the delimiters
+  fastVEP wrote itself.
+- **fastvep-sa/gnomad (#115)**: the joint release now resolves the extended
+  columns it declares, instead of declaring columns it could not resolve.
+- **fastvep-sa/gnomad (#117)**: the joint filter-rate claim is corrected, and
+  key resolution no longer allocates per lookup.
+- **fastvep-sa (#101, #102)**: a dense `.osa2` is usable rather than silently
+  thin.
+- **fastvep-sa (#78, #79)**: `.osa2` startup is O(central directory) rather
+  than O(entries).
+- **fastvep-sa (#80)**: the `.osa2` migration is finished, closing two v2
+  record-fidelity bugs.
+- **fastvep-web (#113, #119)**: the server says which gene model answered, and
+  no client can replace it.
+- **fastvep-web (#114, #120)**: the UI shows the gene model the server actually
+  has, not a fixed pair of options.
+- **fastvep-web (#74)**: the header version badge is server-driven from
+  `CARGO_PKG_VERSION` instead of a hardcoded literal that had gone stale.
 
 - **fastvep-sa (issue #75)**: adding a large, dense whole-genome `.osa` source
   such as SpliceAI made `annotate` dramatically slower (reported ~1.6 min →
@@ -42,6 +120,21 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
   `FASTVEP_SA_CACHE_BYTES` budget as the `.osa` block cache), keyed by
   `(reader, chromosome, chunk_id)`. Adds `Osa2Reader::chunk_load_count()` and
   `open_with_cache_budget()` plus a multi-chromosome + parallel regression test.
+
+### Changed
+
+- **tests/CI (#77)**: an unanchored `tests/` pattern in `.gitignore` had
+  silently excluded four integration test files — the `.osa2` format-correctness
+  suites — from the repository. They are restored, the patterns are anchored,
+  and CI now runs the integration tests rather than `--lib` only.
+- **CI (#83)**: the Rust toolchain is pinned, so a local check means what it
+  says.
+- **style (#84)**: the workspace was rustfmt'd in one isolated commit, recorded
+  in `.git-blame-ignore-revs`.
+- **docs (#105)**: the frameshift terminator distance is documented as a
+  deliberate difference from VEP, not a defect.
+- **docs (#109)**: the nine-source ACMG stack is named, and URLs that had
+  rotted are corrected.
 
 ### Removed
 
