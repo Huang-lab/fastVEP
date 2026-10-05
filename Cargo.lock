@@ -386,7 +386,6 @@ dependencies = [
  "fastvep-hgvs",
  "fastvep-io",
  "fastvep-sa",
- "flate2",
  "rayon",
  "serde",
  "serde_json",

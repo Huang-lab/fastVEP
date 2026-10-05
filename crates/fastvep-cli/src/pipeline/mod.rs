@@ -5,9 +5,8 @@
 //! keeps only what more than one command needs.
 
 use anyhow::{Context, Result};
-use flate2::read::MultiGzDecoder;
 use std::fs::File;
-use std::io::{self, Read};
+use std::io;
 
 pub mod annotate;
 pub mod cache_build;
@@ -42,17 +41,8 @@ pub(crate) fn open_vcf_input_reader(input: &str) -> Result<Box<dyn io::Read>> {
 }
 
 pub(crate) fn wrap_maybe_gzip_reader(
-    mut reader: Box<dyn io::Read>,
+    reader: Box<dyn io::Read>,
     source: &str,
 ) -> Result<Box<dyn io::Read>> {
-    let mut prefix = [0u8; 2];
-    let bytes_read = reader.read(&mut prefix)?;
-    let looks_like_gzip = bytes_read == 2 && prefix == [0x1f, 0x8b];
-
-    let replay = io::Cursor::new(prefix[..bytes_read].to_vec()).chain(reader);
-    if looks_like_gzip || (source != "-" && source.ends_with(".gz")) {
-        Ok(Box::new(MultiGzDecoder::new(replay)))
-    } else {
-        Ok(Box::new(replay))
-    }
+    fastvep_cache::gzip::wrap_maybe_gzip(reader, source)
 }

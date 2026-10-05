@@ -4,9 +4,9 @@ use super::open_vcf_input_reader;
 use anyhow::{Context, Result};
 use fastvep_cache::fasta::FastaReader;
 use fastvep_cache::gff::parse_gff3_with_source;
+use fastvep_cache::gzip::open_maybe_gzip;
 use fastvep_cache::providers::{FastaSequenceProvider, SequenceProvider};
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
 
@@ -30,15 +30,11 @@ pub fn run_cache_build(
     let specs: Vec<Gff3Spec> = gff3_paths.iter().map(|s| parse_gff3_arg(s)).collect();
     let mut transcripts: Vec<fastvep_genome::Transcript> = Vec::new();
     for spec in &specs {
-        let gff_file =
-            File::open(&spec.path).with_context(|| format!("Opening GFF3 file: {}", spec.path))?;
-        // Auto-decompress .gz / .bgz GFF3 inputs. Without this we'd silently
-        // produce a 0-transcript cache.
-        let trs = if spec.path.ends_with(".gz") || spec.path.ends_with(".bgz") {
-            parse_gff3_with_source(flate2::read::MultiGzDecoder::new(gff_file), &spec.source)?
-        } else {
-            parse_gff3_with_source(gff_file, &spec.source)?
-        };
+        // Gzip is detected by magic bytes, not only by the suffix, so a
+        // renamed `.gff3.gz` still parses. Extension-only detection used to
+        // yield a 0-transcript cache.
+        let gff_file = open_maybe_gzip(Path::new(&spec.path))?;
+        let trs = parse_gff3_with_source(gff_file, &spec.source)?;
         eprintln!(
             "Loaded {} transcripts from {} (source label: {})",
             trs.len(),
@@ -78,8 +74,8 @@ pub fn run_cache_build(
     };
 
     if let Some(fasta) = fasta_path {
-        let fasta_file =
-            File::open(fasta).with_context(|| format!("Opening FASTA file: {}", fasta))?;
+        let fasta_file = open_maybe_gzip(Path::new(fasta))
+            .with_context(|| format!("Opening FASTA file: {}", fasta))?;
         let reader = FastaReader::from_reader(fasta_file)?;
         eprintln!("Loaded reference FASTA from {}", fasta);
 
@@ -216,6 +212,10 @@ fn detect_gff3_source(path: &str) -> String {
     }
 }
 
+fn gzip_suffix(path: &str) -> bool {
+    path.ends_with(".gz") || path.ends_with(".bgz")
+}
+
 /// Load one GFF3 source, returning the transcripts and whether the load was
 /// restricted to the input VCF's variant regions.
 ///
@@ -230,7 +230,10 @@ pub(crate) fn load_one_gff3(
     let gff_path = Path::new(&spec.path);
     let tbi_path = format!("{}.tbi", spec.path);
 
-    if spec.path.ends_with(".gz") && Path::new(&tbi_path).exists() {
+    // A tabix index addresses BGZF blocks, so this path stays on the
+    // compressed file. Anything else, including a gzip member with no
+    // index, is a sequential read.
+    if gzip_suffix(&spec.path) && Path::new(&tbi_path).exists() {
         let regions = prescan_vcf_regions(vcf_input, distance)?;
         eprintln!(
             "Pre-scanned {} variant regions for {}",
@@ -241,13 +244,8 @@ pub(crate) fn load_one_gff3(
             fastvep_cache::gff::parse_gff3_indexed_with_source(gff_path, &regions, &spec.source)?;
         Ok((trs, true))
     } else {
-        let gff_file =
-            File::open(&spec.path).with_context(|| format!("Opening GFF3 file: {}", spec.path))?;
-        let trs = if spec.path.ends_with(".gz") || spec.path.ends_with(".bgz") {
-            parse_gff3_with_source(flate2::read::MultiGzDecoder::new(gff_file), &spec.source)?
-        } else {
-            parse_gff3_with_source(gff_file, &spec.source)?
-        };
+        let gff_file = open_maybe_gzip(Path::new(&spec.path))?;
+        let trs = parse_gff3_with_source(gff_file, &spec.source)?;
         Ok((trs, false))
     }
 }

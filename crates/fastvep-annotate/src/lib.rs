@@ -18,8 +18,9 @@ pub use hgvs_normalize::{
 
 use anyhow::{Context, Result};
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue};
-use fastvep_cache::fasta::FastaReader;
+use fastvep_cache::fasta::ReferenceFasta;
 use fastvep_cache::gff::parse_gff3;
+use fastvep_cache::gzip::open_maybe_gzip;
 use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, SequenceProvider, TranscriptProvider,
 };
@@ -31,7 +32,6 @@ use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeatur
 use fastvep_io::vcf::VcfParser;
 use pick::{apply_pick, PickRequest, DEFAULT_PICK_ORDER};
 use rayon::prelude::*;
-use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -102,16 +102,10 @@ impl AnnotationContext {
                 tracing::info!("Loaded {} transcripts from cache", trs.len());
                 trs
             } else {
-                let gff_file = File::open(gff3_path)
-                    .with_context(|| format!("Opening GFF3 file: {}", gff3_path))?;
-                // Auto-decompress gzipped GFF3. Without this, parse_gff3
-                // reads binary gz bytes as text, yields zero transcripts,
-                // and downstream silently produces empty annotations.
-                let trs = if gff3_path.ends_with(".gz") || gff3_path.ends_with(".bgz") {
-                    parse_gff3(flate2::read::MultiGzDecoder::new(gff_file))?
-                } else {
-                    parse_gff3(gff_file)?
-                };
+                // Magic bytes, not the suffix: a gzipped GFF3 renamed to
+                // `.gff3` used to parse as text and yield zero transcripts.
+                let gff_file = open_maybe_gzip(Path::new(gff3_path))?;
+                let trs = parse_gff3(gff_file)?;
                 if trs.is_empty() {
                     return Err(anyhow::anyhow!(
                         "GFF3 file {} produced 0 transcripts — likely malformed, truncated, or unrecognized format. Refusing to continue with empty transcript set.",
@@ -128,26 +122,33 @@ impl AnnotationContext {
             Vec::new()
         };
 
-        let seq_provider: Option<Box<dyn SequenceProvider + Send + Sync>> =
-            if let Some(fasta_path) = fasta {
-                let fai_path = format!("{}.fai", fasta_path);
-                if Path::new(&fai_path).exists() {
-                    let reader =
-                        fastvep_cache::fasta::MmapFastaReader::open(Path::new(fasta_path))?;
+        let seq_provider: Option<Box<dyn SequenceProvider + Send + Sync>> = if let Some(
+            fasta_path,
+        ) = fasta
+        {
+            match ReferenceFasta::open(Path::new(fasta_path))? {
+                ReferenceFasta::Mapped(reader) => {
                     tracing::info!("Memory-mapped FASTA from {}", fasta_path);
                     Some(Box::new(
                         fastvep_cache::providers::MmapFastaSequenceProvider::new(reader),
                     ))
-                } else {
-                    let fasta_file = File::open(fasta_path)
-                        .with_context(|| format!("Opening FASTA: {}", fasta_path))?;
-                    let reader = FastaReader::from_reader(fasta_file)?;
+                }
+                ReferenceFasta::Loaded {
+                    reader,
+                    ignored_fai,
+                } => {
+                    if ignored_fai {
+                        tracing::warn!(
+                                "Ignoring {fasta_path}.fai: the FASTA is gzip-compressed, and a .fai addresses the uncompressed file"
+                            );
+                    }
                     tracing::info!("Loaded FASTA from {}", fasta_path);
                     Some(Box::new(FastaSequenceProvider::new(reader)))
                 }
-            } else {
-                None
-            };
+            }
+        } else {
+            None
+        };
 
         // A non-coding transcript needs its spliced sequence only for HGVS - the
         // 3'-rule and `dup` collapsing are read off it - and building it for

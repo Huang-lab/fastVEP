@@ -29,7 +29,9 @@ enum Commands {
         #[arg(short, long, default_value = "-")]
         output: String,
 
-        /// GFF3 annotation file(s) for transcript models. May be repeated
+        /// GFF3 annotation file(s) for transcript models. Plain text or gzip
+        /// (`.gz` / `.bgz`, or a gzip member under any name). A `.gz` with a
+        /// sibling `.tbi` is read through tabix. May be repeated
         /// (`--gff3 a.gff3 --gff3 b.gff3`) or passed as a comma-separated
         /// list to replicate VEP's `--merged` cache (e.g. Ensembl + RefSeq
         /// in one annotation run). Each value may optionally be prefixed
@@ -41,7 +43,9 @@ enum Commands {
         #[arg(long, num_args = 1.., value_delimiter = ',')]
         gff3: Vec<String>,
 
-        /// Path to FASTA reference file
+        /// Path to FASTA reference file. Plain text or gzip (`.gz` / `.bgz`,
+        /// or a gzip member under any name). A `.fai` is used only for an
+        /// uncompressed FASTA; a gzipped file is loaded into memory.
         #[arg(long)]
         fasta: Option<String>,
 
@@ -202,13 +206,15 @@ enum Commands {
 
     /// Build a binary transcript cache for fast startup
     Cache {
-        /// GFF3 annotation file(s). May be repeated or comma-separated to
+        /// GFF3 annotation file(s). Plain text or gzip, same as `annotate`.
+        /// May be repeated or comma-separated to
         /// build a merged cache (Ensembl + RefSeq); each value may be
         /// `LABEL=path` to control the SOURCE column.
         #[arg(long, num_args = 1.., value_delimiter = ',')]
         gff3: Vec<String>,
 
-        /// Path to FASTA reference file (for pre-building sequences)
+        /// Path to FASTA reference file (for pre-building sequences).
+        /// Gzip is accepted, same as `annotate`.
         #[arg(long)]
         fasta: Option<String>,
 

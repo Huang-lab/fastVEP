@@ -7,7 +7,7 @@ use fastvep_annotate::pick::{
     apply_pick, parse_pick_order, PickCriterion, PickFlags, PickRequest, DEFAULT_PICK_ORDER,
 };
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, GeneAnnotationProvider};
-use fastvep_cache::fasta::FastaReader;
+use fastvep_cache::fasta::ReferenceFasta;
 use fastvep_cache::info::CacheInfo;
 use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, MatchedVariant, SequenceProvider,
@@ -1004,29 +1004,35 @@ fn load_transcript_models(
     Ok((transcripts, region_restricted))
 }
 
-/// Open the reference FASTA named by `--fasta`, preferring the memory-mapped
-/// reader when a `.fai` index sits beside it.
+/// Open the reference FASTA named by `--fasta`. A `.fai` is used only when
+/// the file is uncompressed; a gzipped FASTA is decompressed into memory.
 fn open_sequence_provider(config: &AnnotateConfig) -> Result<Option<Box<dyn SequenceProvider>>> {
     let Some(fasta_path) = config.fasta.as_deref() else {
         return Ok(None);
     };
     Ok({
-        let fai_path = format!("{}.fai", fasta_path);
-        if Path::new(&fai_path).exists() {
-            let reader = fastvep_cache::fasta::MmapFastaReader::open(Path::new(fasta_path))?;
-            eprintln!(
-                "Memory-mapped reference FASTA from {} (using .fai index)",
-                fasta_path
-            );
-            Some(Box::new(
-                fastvep_cache::providers::MmapFastaSequenceProvider::new(reader),
-            ))
-        } else {
-            let fasta_file = File::open(fasta_path)
-                .with_context(|| format!("Opening FASTA file: {}", fasta_path))?;
-            let reader = FastaReader::from_reader(fasta_file)?;
-            eprintln!("Loaded reference FASTA from {}", fasta_path);
-            Some(Box::new(FastaSequenceProvider::new(reader)))
+        match ReferenceFasta::open(Path::new(fasta_path))? {
+            ReferenceFasta::Mapped(reader) => {
+                eprintln!(
+                    "Memory-mapped reference FASTA from {} (using .fai index)",
+                    fasta_path
+                );
+                Some(Box::new(
+                    fastvep_cache::providers::MmapFastaSequenceProvider::new(reader),
+                ))
+            }
+            ReferenceFasta::Loaded {
+                reader,
+                ignored_fai,
+            } => {
+                if ignored_fai {
+                    eprintln!(
+                        "Ignoring {fasta_path}.fai: the FASTA is gzip-compressed, and a .fai addresses the uncompressed file. Loading it into memory."
+                    );
+                }
+                eprintln!("Loaded reference FASTA from {}", fasta_path);
+                Some(Box::new(FastaSequenceProvider::new(reader)))
+            }
         }
     })
 }

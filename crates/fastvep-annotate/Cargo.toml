@@ -20,7 +20,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 rayon = { workspace = true }
 tracing = "0.1"
-flate2.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }

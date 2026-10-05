@@ -122,6 +122,36 @@ impl FastaReader {
     }
 }
 
+/// A reference FASTA opened the way its compression allows.
+///
+/// A `.fai` addresses bytes in the uncompressed file. A gzipped FASTA is
+/// loaded whole instead, and `ignored_fai` says a neighbouring index was
+/// left unused for that reason.
+pub enum ReferenceFasta {
+    Mapped(MmapFastaReader),
+    Loaded {
+        reader: FastaReader,
+        ignored_fai: bool,
+    },
+}
+
+impl ReferenceFasta {
+    pub fn open(path: &std::path::Path) -> Result<Self> {
+        let fai_path = format!("{}.fai", path.display());
+        let fai_exists = std::path::Path::new(&fai_path).exists();
+        let gzip = crate::gzip::is_gzip_compressed(path)?;
+        if fai_exists && !gzip {
+            return Ok(Self::Mapped(MmapFastaReader::open(path)?));
+        }
+        let reader = crate::gzip::open_maybe_gzip(path)
+            .with_context(|| format!("Opening FASTA: {}", path.display()))?;
+        Ok(Self::Loaded {
+            reader: FastaReader::from_reader(reader)?,
+            ignored_fai: fai_exists && gzip,
+        })
+    }
+}
+
 /// Memory-mapped FASTA reader using .fai index.
 /// Avoids loading the entire FASTA into RAM by memory-mapping the file.
 pub struct MmapFastaReader {
@@ -391,5 +421,32 @@ mod tests {
         let mut cursor = Cursor::new(fasta.as_bytes().to_vec());
         let seq = fetch_with_index(&mut cursor, &fai_entries, "chr1", 1, 4).unwrap();
         assert_eq!(seq, b"ACGT");
+    }
+
+    #[test]
+    fn gzipped_fasta_loads_even_when_the_name_hides_it_and_a_fai_is_ignored() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ref.fa");
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(b">chr1\nACGTACGT\n").unwrap();
+        std::fs::write(&path, enc.finish().unwrap()).unwrap();
+        // Offsets in this index do not address the gzip member. Using it
+        // would return compressed bytes.
+        std::fs::write(dir.path().join("ref.fa.fai"), "chr1\t8\t6\t8\t9\n").unwrap();
+
+        match ReferenceFasta::open(&path).unwrap() {
+            ReferenceFasta::Loaded {
+                reader,
+                ignored_fai,
+            } => {
+                assert!(ignored_fai);
+                assert_eq!(reader.fetch("chr1", 1, 4).unwrap(), b"ACGT");
+            }
+            ReferenceFasta::Mapped(_) => panic!("a gzipped FASTA must not be memory-mapped"),
+        }
     }
 }

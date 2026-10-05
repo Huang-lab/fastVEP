@@ -1,6 +1,7 @@
 pub mod annotation;
 pub mod fasta;
 pub mod gff;
+pub mod gzip;
 pub mod info;
 pub mod normalize;
 pub mod providers;

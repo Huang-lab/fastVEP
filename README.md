@@ -25,7 +25,7 @@ The hosted instance is for interactive use in the browser. For programmatic acce
 - **ACMG-AMP Classification** — `--acmg` runs the full Richards 2015 + ClinGen SVI rule set (28 criteria, configurable thresholds, trio / compound-het support via `--proband`/`--mother`/`--father`)
 - **VEP `--merged` Cache** — `--gff3` is repeatable on `annotate` and `cache`; combine Ensembl + RefSeq in a single run with per-transcript SOURCE labels
 - **`--sa-only` Mode** — Skip the default CSQ pipeline and emit only supplementary annotations, useful for re-annotating already-annotated VCFs
-- **Gzipped VCF Input** — `annotate` auto-detects `.vcf.gz` / `.vcf.bgz` (no upstream decompression needed)
+- **Gzipped inputs** — `annotate` auto-detects gzip-compressed VCF, GFF3, and FASTA by magic bytes, with a `.gz` / `.bgz` filename fallback. A `.gff3.gz` that has a `.tbi` is still read through tabix. A `.fai` applies only to an uncompressed FASTA, because its offsets address that file; a gzipped FASTA is loaded into memory
 - **Web Interface** — Built-in web GUI for interactive variant annotation
 - **GFF3 Annotation Support** — Load gene models from standard GFF3 files (any organism)
 
@@ -185,11 +185,12 @@ This section walks through setting up fastVEP with full annotation capabilities 
 mkdir -p data && cd data
 
 # Gene models (GFF3) — pick your organism
-# Human GRCh38
+# Human GRCh38. `annotate` reads the `.gz` directly; gunzip is optional.
 wget https://ftp.ensembl.org/pub/release-115/gff3/homo_sapiens/Homo_sapiens.GRCh38.115.gff3.gz
-gunzip Homo_sapiens.GRCh38.115.gff3.gz
 
-# Reference FASTA (needed for HGVS and sequence context)
+# Reference FASTA (needed for HGVS and sequence context).
+# `annotate` reads `.fa.gz` directly, into memory. For a whole genome,
+# gunzip and index it so the run memory-maps the file instead.
 wget https://ftp.ensembl.org/pub/release-115/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
 gunzip Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
 
