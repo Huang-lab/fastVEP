@@ -18,7 +18,7 @@ use crate::predictor::{AlleleConsequenceResult, TranscriptConsequence};
 // grouping; bundling them would only move the list to the call site.
 #[allow(clippy::too_many_arguments)]
 pub fn predict_sv_consequences(
-    chrom: &str,
+    _chrom: &str,
     start: u64,
     end: u64,
     variant_type: VariantType,
@@ -30,10 +30,10 @@ pub fn predict_sv_consequences(
     let mut results = Vec::new();
 
     for &transcript in transcripts {
-        if *transcript.chromosome != *chrom {
-            continue;
-        }
-
+        // No contig comparison here: `transcripts` comes from a provider that
+        // already matched the VCF's contig to its own (chr1 <-> 1, RefSeq
+        // accessions, file synonyms, #132). Comparing the raw names again
+        // silently dropped every transcript when the spellings differed.
         let allele_consequences: Vec<AlleleConsequenceResult> = alt_alleles
             .iter()
             .map(|allele| {
@@ -370,6 +370,27 @@ mod tests {
             flags: vec![],
             codon_table_start_phase: 0,
         }
+    }
+
+    #[test]
+    fn test_sv_chrom_prefix_mismatch_still_annotates() {
+        // VCF says `chr1`, the Ensembl GFF3 says `1`; the provider has matched them (#132).
+        let mut tx = make_coding_transcript(5000, 6000);
+        tx.chromosome = "1".into();
+        let results = predict_sv_consequences(
+            "chr1",
+            4000,
+            7000,
+            VariantType::CopyNumberLoss,
+            &[Allele::Symbolic("<DEL>".into())],
+            &[&tx],
+            5000,
+            5000,
+        );
+        assert_eq!(results.len(), 1);
+        assert!(results[0].allele_consequences[0]
+            .consequences
+            .contains(&Consequence::TranscriptAblation));
     }
 
     #[test]
