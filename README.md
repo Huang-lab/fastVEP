@@ -200,6 +200,9 @@ samtools faidx Homo_sapiens.GRCh38.dna.primary_assembly.fa
 
 ### Step 2: Build supplementary annotation databases
 
+For every source, for both GRCh38 and GRCh37, with download URLs, sizes, which ones need an account, and a script that does the downloading and building, see [docs/SA_DATABASES.md](docs/SA_DATABASES.md).
+The quickest way to try supplementary annotation is `scripts/build-sa-databases.sh --assembly GRCh38`, which builds the small open sources in a few minutes.
+
 Each supplementary database (ClinVar, gnomAD, etc.) is built in **two steps** — *download the source file*, then run `fastvep sa-build` to convert it into a fastSA database (a `.osa2` file by default; a `.osa` + `.osa.idx` pair under `--format osa`). **`sa-build` is a converter, not a downloader; if you skip the download, the resulting database will be empty and your annotations will silently come back blank.** After each build, check that the file size matches the expected magnitude (column below); a few-KB database is the tell that the source file wasn't real.
 
 ```bash

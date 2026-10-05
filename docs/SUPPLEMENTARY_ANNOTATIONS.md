@@ -1,5 +1,7 @@
 # Supplementary annotation (fastSA) output contract
 
+To build the databases themselves (URLs, sizes, GRCh37 and GRCh38), see [SA_DATABASES.md](SA_DATABASES.md).
+
 This document is the authoritative schema for every supplementary annotation
 source produced by `fastvep sa-build` and emitted by `fastvep annotate`. The
 same per-source pipe format is used by the **VCF** `FV_*` INFO fields and by
