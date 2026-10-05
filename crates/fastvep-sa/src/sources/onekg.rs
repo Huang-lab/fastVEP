@@ -64,6 +64,14 @@ pub fn parse_onekg_vcf<R: BufRead>(
     chrom_to_idx: &HashMap<String, u16>,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records = Vec::new();
+    // Phase 3 (GRCh37) names its per-population frequencies `EAS_AF`; the NYGC
+    // high-coverage GRCh38 release names them `AF_EAS`. Reading only the first
+    // spelling built a GRCh38 database whose population columns were all empty
+    // (#133), which looks exactly like a population with no data.
+    let pop_keys: Vec<(String, String, String)> = POPS
+        .iter()
+        .map(|pop| (format!("{pop}_AF"), format!("AF_{pop}"), pop.to_lowercase()))
+        .collect();
 
     for line in reader.lines() {
         let line = line.context("Reading 1000G VCF")?;
@@ -102,12 +110,11 @@ pub fn parse_onekg_vcf<R: BufRead>(
             if let Some(af) = all_afs.get(i).and_then(|s| s.parse::<f64>().ok()) {
                 parts.push(format!("\"allAf\":{:.6e}", af));
             }
-            for pop in POPS {
-                let key = format!("{}_AF", pop);
-                if let Some(val) = info_map.get(&key) {
+            for (phase3_key, nygc_key, lower) in &pop_keys {
+                if let Some(val) = info_map.get(phase3_key).or_else(|| info_map.get(nygc_key)) {
                     let vals = split_vals(Some(val.as_str()));
                     if let Some(f) = vals.get(i).and_then(|s| s.parse::<f64>().ok()) {
-                        parts.push(format!("\"{}Af\":{:.6e}", pop.to_lowercase(), f));
+                        parts.push(format!("\"{}Af\":{:.6e}", lower, f));
                     }
                 }
             }
@@ -155,6 +162,17 @@ fn normalize_chrom(c: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nygc_grch38_population_frequencies_are_read() {
+        let vcf =
+            "#h\nchr1\t10001\t.\tA\tG\t.\t.\tAF=0.15;AF_AFR=0.20;AF_EUR=0.10;AF_EUR_unrel=0.5\n";
+        let mut m = HashMap::new();
+        m.insert("chr1".to_string(), 0u16);
+        let recs = parse_onekg_vcf(vcf.as_bytes(), &m).unwrap();
+        assert!(recs[0].json.contains("\"afrAf\":2.0"), "{}", recs[0].json);
+        assert!(recs[0].json.contains("\"eurAf\":1.0"), "{}", recs[0].json);
+    }
+
     #[test]
     fn test_parse_onekg() {
         let vcf = "#h\nchr1\t10001\t.\tA\tG\t.\t.\tAF=0.15;AFR_AF=0.20;EUR_AF=0.10\n";

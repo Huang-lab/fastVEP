@@ -496,9 +496,13 @@ pub fn run_sa_build(
         "cosmic" => fastvep_sa::sources::cosmic::parse_cosmic_vcf(buf_reader, &chrom_map)?,
         "onekg" | "1000g" => fastvep_sa::sources::onekg::parse_onekg_vcf(buf_reader, &chrom_map)?,
         "mitomap" => fastvep_sa::sources::mitomap::parse_mitomap(buf_reader, &chrom_map)?,
-        "revel" => fastvep_sa::sources::revel::parse_revel(buf_reader, &chrom_map, 2)?,
+        "revel" => fastvep_sa::sources::revel::parse_revel(
+            buf_reader,
+            &chrom_map,
+            fastvep_sa::sources::revel::position_column(assembly),
+        )?,
         "primateai" => fastvep_sa::sources::primateai::parse_primateai(buf_reader, &chrom_map)?,
-        "dbnsfp" => fastvep_sa::sources::dbnsfp::parse_dbnsfp(buf_reader, &chrom_map)?,
+        "dbnsfp" => fastvep_sa::sources::dbnsfp::parse_dbnsfp(buf_reader, &chrom_map, assembly)?,
         _ => unreachable!(),
     };
 
@@ -963,12 +967,12 @@ pub fn run_sa_build_v2(
         }
         // REVEL: single `{"score":..}` object per allele, stored as a
         // whole-record blob (its fixed-decimal score text rides through
-        // untouched). The v1 parser buffers+sorts the CSV; column 2 is the
-        // GRCh38 position, matching the v1 build path.
+        // untouched). The v1 parser buffers+sorts the CSV; the position
+        // column follows `--assembly` (REVEL ships hg19 and GRCh38 side by side).
         "revel" => {
             eprintln!("Building revel .osa2: {} -> {}", input, out_path.display());
             let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
-            let v1 = revel::parse_revel(buf_reader, &chrom_map, 2)?;
+            let v1 = revel::parse_revel(buf_reader, &chrom_map, revel::position_column(assembly))?;
             let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
             finish_osa2_build(
                 &out_path,
@@ -1029,7 +1033,7 @@ pub fn run_sa_build_v2(
         "dbnsfp" => {
             eprintln!("Building dbnsfp .osa2: {} -> {}", input, out_path.display());
             let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
-            let v1 = dbnsfp::parse_dbnsfp(buf_reader, &chrom_map)?;
+            let v1 = dbnsfp::parse_dbnsfp(buf_reader, &chrom_map, assembly)?;
             let records = bridge_v1_raw_blobs(v1.into_iter().map(Ok), &chrom_list);
             finish_osa2_build(
                 &out_path,
