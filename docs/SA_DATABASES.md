@@ -33,7 +33,8 @@ Then annotate with `--sa-dir sa_databases`.
 Every `.osa2`, `.osa`, `.osi` and `.oga` in the directory is loaded, and a database's key in the output comes from its source rather than its filename, so `gnomad_chr1` and `gnomad_chr2` both feed `FV_GNOMAD`.
 
 **Use one `--sa-dir` per assembly.**
-fastVEP does not compare a database's assembly to the gene models it is annotating against, so a GRCh37 database in a GRCh38 run answers with the wrong base's data and raises no error.
+fastVEP warns when one `--sa-dir` holds databases built for different assemblies, and names which databases are on which.
+It cannot warn when the whole directory is for the wrong assembly, because a GFF3 does not declare one: a GRCh37 directory used on a GRCh38 VCF loads and answers with the data of a different base or nothing.
 Keep `sa_databases/` and `sa_databases_grch37/` apart, as above.
 
 ## The manifest

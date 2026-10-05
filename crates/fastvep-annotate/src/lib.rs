@@ -199,6 +199,9 @@ impl AnnotationContext {
         } else {
             Vec::new()
         };
+        if let Some(conflict) = check_sa_assemblies(&sa_providers, &gene_providers) {
+            tracing::warn!("{conflict}");
+        }
 
         Ok(Self {
             functional_evidence: None,
@@ -1600,6 +1603,61 @@ fn enrich_compound_het(
     }
 }
 
+/// Describe a `--sa-dir` whose databases were built for different assemblies,
+/// or `None` when they agree.
+///
+/// Each database is stamped with the `--assembly` it was built with, but
+/// nothing compared them: a GRCh37 database in a GRCh38 run loads, queries and
+/// answers with the data of a different base, or with nothing, and no message
+/// says so (#137). The run's own assembly is not known here (a GFF3 does not
+/// declare one), so this catches the mixed directory, which is how the mistake
+/// is made when both builds come from the same script.
+pub fn sa_assembly_conflict<'a>(
+    databases: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<String> {
+    // GRCh37/hg19 and GRCh38/hg38 are the same builds under two names.
+    let canonical = |assembly: &str| match assembly.to_ascii_lowercase().as_str() {
+        "grch37" | "hg19" | "b37" => "GRCh37".to_string(),
+        "grch38" | "hg38" => "GRCh38".to_string(),
+        _ => assembly.to_string(),
+    };
+    let mut by_assembly: std::collections::BTreeMap<String, Vec<&str>> = Default::default();
+    for (json_key, assembly) in databases {
+        let keys = by_assembly.entry(canonical(assembly)).or_default();
+        if !keys.contains(&json_key) {
+            keys.push(json_key);
+        }
+    }
+    if by_assembly.len() < 2 {
+        return None;
+    }
+    let groups: Vec<String> = by_assembly
+        .iter()
+        .map(|(assembly, keys)| format!("{assembly} ({})", keys.join(", ")))
+        .collect();
+    Some(format!(
+        "--sa-dir holds databases built for different assemblies: {}. Variants are looked up by coordinate, so a database for the other assembly answers with a different base's data or nothing. Keep one assembly per directory.",
+        groups.join("; ")
+    ))
+}
+
+/// Run [`sa_assembly_conflict`] over loaded allele-level and gene-level providers.
+pub fn check_sa_assemblies(
+    sa_providers: &[Box<dyn AnnotationProvider>],
+    gene_providers: &[fastvep_sa::gene::GeneIndex],
+) -> Option<String> {
+    sa_assembly_conflict(
+        sa_providers
+            .iter()
+            .map(|p| (p.json_key(), p.metadata().assembly.as_str()))
+            .chain(
+                gene_providers
+                    .iter()
+                    .map(|g| (g.header.json_key.as_str(), g.header.assembly.as_str())),
+            ),
+    )
+}
+
 /// Load supplementary annotation providers (.osa, .osa2, .osi files) from a
 /// directory.
 ///
@@ -1783,6 +1841,25 @@ fn resolve_functional_by_alt(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mixed_assemblies_in_one_sa_dir_are_reported() {
+        let msg = sa_assembly_conflict([
+            ("clinvar", "GRCh38"),
+            ("revel", "GRCh37"),
+            ("gnomad", "GRCh38"),
+        ])
+        .expect("two assemblies must be reported");
+        assert!(msg.contains("GRCh37 (revel)"), "{msg}");
+        assert!(msg.contains("GRCh38 (clinvar, gnomad)"), "{msg}");
+    }
+
+    #[test]
+    fn one_assembly_under_two_names_is_not_a_conflict() {
+        assert!(sa_assembly_conflict([("a", "GRCh38"), ("b", "hg38")]).is_none());
+        assert!(sa_assembly_conflict([("a", "GRCh37"), ("b", "hg19")]).is_none());
+        assert!(sa_assembly_conflict([]).is_none());
+    }
+
     use super::*;
 
     /// fastvep-annotate is the shared engine both fastvep-cli and
