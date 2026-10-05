@@ -37,10 +37,14 @@ pub fn dbnsfp_osa2_metadata(assembly: &str) -> Osa2Metadata {
 /// `#chr`, `pos(1-based)`, `ref`, `alt`, `SIFT_score`, `SIFT_pred`,
 /// `Polyphen2_HDIV_score`, `Polyphen2_HDIV_pred`
 ///
-/// Column indices are auto-detected from the header row.
+/// Column indices are auto-detected from the header row. dbNSFP's `#chr` and
+/// `pos(1-based)` are GRCh38; for a GRCh37 build the lifted-over `hg19_chr` and
+/// `hg19_pos(1-based)` are read instead, and a header without them is an error
+/// rather than a quiet fall back to the GRCh38 coordinates (#133).
 pub fn parse_dbnsfp<R: BufRead>(
     reader: R,
     chrom_to_idx: &HashMap<String, u16>,
+    assembly: &str,
 ) -> Result<Vec<AnnotationRecord>> {
     let mut records = Vec::new();
     let mut col_indices: Option<DbNsfpColumns> = None;
@@ -51,7 +55,7 @@ pub fn parse_dbnsfp<R: BufRead>(
         if line.starts_with('#') || line.starts_with("chr\t") {
             // Parse header to find column indices
             let header = line.trim_start_matches('#');
-            col_indices = Some(DbNsfpColumns::from_header(header)?);
+            col_indices = Some(DbNsfpColumns::from_header(header, assembly)?);
             continue;
         }
 
@@ -176,7 +180,8 @@ struct DbNsfpColumns {
 }
 
 impl DbNsfpColumns {
-    fn from_header(header: &str) -> Result<Self> {
+    fn from_header(header: &str, assembly: &str) -> Result<Self> {
+        let hg19 = matches!(assembly.to_ascii_lowercase().as_str(), "grch37" | "hg19");
         let fields: Vec<&str> = header.split('\t').collect();
         let find = |names: &[&str]| -> Option<usize> {
             fields.iter().position(|f| {
@@ -185,9 +190,24 @@ impl DbNsfpColumns {
             })
         };
 
+        let (chr, pos) = if hg19 {
+            match (find(&["hg19_chr"]), find(&["hg19_pos(1-based)"])) {
+                (Some(c), Some(p)) => (c, p),
+                _ => anyhow::bail!(
+                    "dbNSFP header has no hg19_chr / hg19_pos(1-based) columns, which a GRCh37 \
+                     build needs; its #chr / pos(1-based) columns are GRCh38"
+                ),
+            }
+        } else {
+            (
+                find(&["chr", "#chr"]).unwrap_or(0),
+                find(&["pos(1-based)", "pos", "hg38_pos"]).unwrap_or(1),
+            )
+        };
+
         Ok(Self {
-            chr: find(&["chr", "#chr"]).unwrap_or(0),
-            pos: find(&["pos(1-based)", "pos", "hg38_pos"]).unwrap_or(1),
+            chr,
+            pos,
             ref_col: find(&["ref", "ref_allele"]).unwrap_or(2),
             alt: find(&["alt", "alt_allele"]).unwrap_or(3),
             sift_score: find(&["sift_score"]),
@@ -237,7 +257,7 @@ mod tests {
         let mut chrom_map = HashMap::new();
         chrom_map.insert("chr1".into(), 0u16);
 
-        let records = parse_dbnsfp(data.as_bytes(), &chrom_map).unwrap();
+        let records = parse_dbnsfp(data.as_bytes(), &chrom_map, "GRCh38").unwrap();
         // Third line has all dots, should be skipped
         assert_eq!(records.len(), 2);
 
@@ -246,5 +266,29 @@ mod tests {
 
         assert!(records[1].json.contains("tolerated(0.450)"));
         assert!(records[1].json.contains("benign(0.100)"));
+    }
+
+    #[test]
+    fn grch37_reads_the_hg19_coordinates() {
+        let data = "\
+#chr\tpos(1-based)\tref\talt\thg19_chr\thg19_pos(1-based)\tSIFT_score\tSIFT_pred
+1\t10001\tA\tG\t1\t9000\t0.032\tD
+1\t10002\tC\tT\t.\t.\t0.010\tD
+";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".into(), 0u16);
+
+        let records = parse_dbnsfp(data.as_bytes(), &chrom_map, "GRCh37").unwrap();
+        // The second row has no hg19 liftover, so it is skipped, not misplaced.
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].position, 9000);
+    }
+
+    #[test]
+    fn grch37_without_hg19_columns_is_an_error() {
+        let data = "#chr\tpos(1-based)\tref\talt\tSIFT_score\tSIFT_pred\n1\t10001\tA\tG\t0.1\tD\n";
+        let mut chrom_map = HashMap::new();
+        chrom_map.insert("chr1".into(), 0u16);
+        assert!(parse_dbnsfp(data.as_bytes(), &chrom_map, "GRCh37").is_err());
     }
 }

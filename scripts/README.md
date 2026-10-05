@@ -7,6 +7,7 @@ Benchmark-specific scripts live in [`analysis/acmg_benchmark/scripts/`](../analy
 |---|---|
 | `check_acmg_stack.py` | Annotates eight real ClinVar variants and reports which supplementary annotation sources actually answered. Exits non-zero when one answers nothing. |
 | `extract_gnomad_scores.py` | Distils SpliceAI and PhyloP databases out of the gnomAD v4.1 sites VCF, so neither needs its own download. |
+| `build-sa-databases.sh` | Downloads and builds every publicly available supplementary annotation source for GRCh37 or GRCh38. The manifest is [`docs/SA_DATABASES.md`](../docs/SA_DATABASES.md). |
 | `deploy-minimal.sh` | Human GRCh38 gene models and reference sequence only. |
 | `deploy-clinical.sh` | The clinical deployment: human plus ClinVar and dbSNP. |
 | `deploy-full.sh` | Every organism and every supplementary source. |

@@ -29,10 +29,24 @@ pub fn revel_osa2_metadata(assembly: &str) -> Osa2Metadata {
     }
 }
 
+/// Column of the REVEL CSV that holds the coordinate for `assembly`.
+///
+/// One file carries both builds side by side, so indexing the wrong column
+/// does not fail: a GRCh37 database built from `grch38_pos` loads, answers,
+/// and returns the score of a different base (#133). Anything that is not
+/// GRCh37/hg19 reads `grch38_pos`, which is what every earlier release did.
+pub fn position_column(assembly: &str) -> usize {
+    match assembly.to_ascii_lowercase().as_str() {
+        "grch37" | "hg19" => 1,
+        _ => 2,
+    }
+}
+
 /// Parse a REVEL score file (CSV) into sorted AnnotationRecords.
 ///
 /// REVEL distributes scores as CSV: chr, hg19_pos, grch38_pos, ref, alt, aaref, aaalt, REVEL
-/// We use grch38_pos (column index 2) by default.
+/// `pos_column` picks which of the two coordinate columns is indexed; use
+/// [`position_column`] to derive it from the build's `--assembly`.
 pub fn parse_revel<R: BufRead>(
     reader: R,
     chrom_to_idx: &HashMap<String, u16>,
@@ -100,6 +114,13 @@ fn normalize_chrom(chrom: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn position_column_follows_the_assembly() {
+        assert_eq!(position_column("GRCh38"), 2);
+        assert_eq!(position_column("GRCh37"), 1);
+        assert_eq!(position_column("hg19"), 1);
+    }
 
     #[test]
     fn test_parse_revel() {
