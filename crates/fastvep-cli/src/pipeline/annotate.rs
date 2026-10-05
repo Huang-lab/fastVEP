@@ -1298,6 +1298,10 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         Vec::new()
     };
 
+    if let Some(conflict) = fastvep_annotate::check_sa_assemblies(&sa_providers, &gene_providers) {
+        eprintln!("warning: {conflict}");
+    }
+
     // Load ACMG-AMP classification config if enabled.
     // Skipped in --sa-only mode (ACMG depends on default annotations).
     let acmg_config: Option<fastvep_classification::AcmgConfig> = if config.acmg && !sa_only {
