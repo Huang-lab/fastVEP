@@ -107,7 +107,7 @@ def main():
             f"hgvsc_{o}", f"hgvsc_{n}", f"hgvsp_{o}", f"hgvsp_{n}",
             f"transcript_{o}", f"transcript_{n}"]
     with out.open("w", newline="") as f:
-        w = csv.writer(f, delimiter="\t")
+        w = csv.writer(f, delimiter="\t", lineterminator="\n")
         w.writerow(cols)
         for key in changed_call:
             a, b = old[key], new[key]

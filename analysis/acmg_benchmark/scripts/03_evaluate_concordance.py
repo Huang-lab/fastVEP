@@ -279,7 +279,7 @@ def main():
     # ── concordance_matrix.csv ──
     matrix_path = out_dir / "concordance_matrix.csv"
     with matrix_path.open("w") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["clinvar"] + CLASSES + ["NoCall"])
         for tcl in CLASSES:
             w.writerow([tcl] + [cm[tcl][pc] for pc in CLASSES + ["NoCall"]])
@@ -287,7 +287,7 @@ def main():
     # ── concordance_by_chrom.csv ──
     by_chrom_path = out_dir / "concordance_by_chrom.csv"
     with by_chrom_path.open("w") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["chrom", "clinvar", "n", "exact", "same_dir", "opposite", "no_call"])
         for chrom in sorted(cm_chrom.keys(), key=lambda x: (len(x), x)):
             for tcl in CLASSES:
@@ -314,7 +314,7 @@ def main():
     )[:15]
     by_csq_path = out_dir / "concordance_by_consequence.csv"
     with by_csq_path.open("w") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["consequence", "clinvar"] + CLASSES + ["NoCall", "n"])
         for csq, mat in consq_counts:
             for tcl in CLASSES:
@@ -328,7 +328,7 @@ def main():
     fr_path = out_dir / "criterion_firing_rates.csv"
     all_codes = sorted({c for cnt in criterion_fires.values() for c in cnt})
     with fr_path.open("w") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         header = ["criterion"] + [f"{tcl}_fired" for tcl in CLASSES]
         w.writerow(header)
         for code in all_codes:
@@ -338,7 +338,7 @@ def main():
     # ── rule_distribution.csv ──
     rd_path = out_dir / "rule_distribution.csv"
     with rd_path.open("w") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["criteria_signature", "n"])
         for rule, n in rule_dist.most_common(200):
             w.writerow([rule, n])
