@@ -1,6 +1,6 @@
 use fastvep_core::{
-    Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, Strand, SupplementaryAnnotation,
-    VariantType,
+    Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, SpliceContext, Strand,
+    SupplementaryAnnotation, VariantType,
 };
 use std::sync::Arc;
 
@@ -89,31 +89,15 @@ pub struct AlleleAnnotation {
     pub codons: Option<(String, String)>,
     pub exon: Option<(u32, u32)>,
     pub intron: Option<(u32, u32)>,
-    /// Signed distance in bp from the nearest exon boundary: `+N` on the donor
-    /// side, `-N` on the acceptor side, `None` for a change that reaches no
-    /// intronic base.
+    /// Where this allele sits against the transcript's exons and introns, for
+    /// the ACMG criteria and for nothing else.
     ///
-    /// Read off the transcript, not off the HGVSc. The two used to be the same
-    /// number and are not: `c.` is a *display* form, 3'-shifted, so a deletion
-    /// of an acceptor's own `G` is written `c.1686-1del` where the shift has
-    /// nowhere to go and `c.1686del` where the first exonic base repeats it -
-    /// the same variant, one spelling of it carrying no offset at all.
-    ///
-    /// Populated only when the run is going to classify, the way `hgvsc` is
-    /// populated only under `--hgvs`: the ACMG criteria are its only reader and
-    /// finding it walks the transcript's introns per allele.
-    pub intron_offset: Option<i64>,
-    /// The same distance at the most 3' position HGVS gives the change, which on
-    /// a donor is the furthest into the intron it can be written.
-    ///
-    /// PVS1's canonical-splice gate is the only reader: an offset past `+2`
-    /// there proves some alignment of the change leaves `+1` and `+2` alone, so
-    /// the dinucleotide PVS1's splice track assumes is destroyed is intact. See
-    /// `fastvep_annotate::shifted_intronic_offset`.
-    ///
-    /// Populated only for a variant carrying a canonical splice term, which is
-    /// the only case that gate looks at, because finding it walks the reference.
-    pub shifted_intron_offset: Option<i64>,
+    /// Filled in by the classification pass, for the rows `--pick` kept, the way
+    /// `hgvsc` is filled in only under `--hgvs`: finding it walks the
+    /// transcript's exons and, for an indel, the reference. It is stored here and
+    /// not recomputed because the compound-heterozygote pass classifies a row a
+    /// second time, long after the transcript models are out of reach.
+    pub splice: SpliceContext,
     pub distance: Option<i64>,
     /// Full-length peptide of the transcript, in residues. `None` for
     /// non-coding transcripts.

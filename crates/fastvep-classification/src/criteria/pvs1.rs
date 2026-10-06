@@ -1,4 +1,4 @@
-use fastvep_core::Consequence;
+use fastvep_core::{Consequence, HgvsPlacement};
 
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
@@ -107,120 +107,121 @@ pub fn evaluate_pvs1(input: &ClassificationInput, config: &AcmgConfig) -> Eviden
         );
     }
 
-    // Canonical-splice offset gate (Abou Tayoun 2018 / Walker 2023): PVS1's
-    // splice track applies only to the canonical ±1/±2 dinucleotide. When the
-    // pipeline provides an intronic offset that falls outside ±2, the variant
-    // is not a canonical null splice variant — it was labeled splice_donor /
-    // splice_acceptor by an indel spanning the region or by a deep-intronic
-    // call. In that case PVS1's splice track does not apply. But if the same
-    // indel ALSO deletes coding sequence (frameshift / nonsense) or hits the
-    // start codon, PVS1 still applies via that null track — re-grade as such
-    // rather than discarding genuine LOF evidence. Only when there is no
-    // coding-null consequence is PVS1 dropped entirely (defer to SpliceAI/PP3).
+    // The change as HGVS places it decides whether PVS1's premise holds. A record
+    // carries the consequence terms its caller's alignment gave it, but PVS1
+    // asks what the *edited sequence* does, and an indel in a repeat can be
+    // written at several positions that all edit it the same way.
+    if let Some(placement) = input.hgvs_placement {
+        details.insert("hgvs_placement".into(), super::placement_detail(placement));
+    }
+    // Wholly inside an intron past ±2, no exon base and no canonical
+    // dinucleotide is altered under any of those positions, so a null term is a
+    // statement about the anchor. PTEN `c.253+4_253+7del` is
+    // `splice_donor_variant` in both tools and the intron still opens `GTATGA`
+    // afterwards; MSH6 `c.3801+3_3801+6dup` is `frameshift_variant` because its
+    // record anchors on the exon's last base. A splice term used to be
+    // re-graded to a co-occurring frameshift one here, but that term describes
+    // the same anchor, so there is nothing to re-grade to.
+    if input.placed_beyond_canonical_splice() {
+        return mk(
+            "PVS1".to_string(),
+            EvidenceStrength::VeryStrong,
+            false,
+            true,
+            "HGVS places the change wholly inside an intron beyond the canonical ±1/±2 dinucleotide: it alters no exon base and no canonical splice site, so the consequence term describes how the record is anchored and PVS1 does not apply (defer to SpliceAI/PP3)".to_string(),
+            details,
+        );
+    }
+    // The mirror case, which only a splice term can produce: on an acceptor the
+    // 3' shift runs toward the exon. MLH1 `TAGG>T` deletes the intron's `AG`
+    // and the exon's first base, so the record is `splice_acceptor_variant`;
+    // the exon opens `GAGC`, so the same sequence is the exon's own first three
+    // bases deleted in frame with the acceptor `AG` untouched, and HGVS writes
+    // it `c.1732_1734del`. FOXP2 `CCAG>C` gets there through a `CAG` repeat that
+    // runs across the acceptor (`c.618_620del`). A coding-null term beside the
+    // splice one keeps PVS1, because this says nothing about whether that term
+    // is real.
+    if matches!(kind, NullKind::CanonicalSplice)
+        && matches!(
+            input.hgvs_placement,
+            Some(HgvsPlacement::Exonic { in_frame: true })
+        )
+        && NullKind::detect_non_splice(&input.consequences).is_none()
+    {
+        return mk(
+            "PVS1".to_string(),
+            EvidenceStrength::VeryStrong,
+            false,
+            true,
+            "HGVS places the change inside an exon as an in-frame indel, leaving the canonical splice dinucleotide intact: the splice term describes how the record is anchored and PVS1's splice track does not apply (defer to SpliceAI/PP3)".to_string(),
+            details,
+        );
+    }
+
+    // Splice-prediction consistency gate (Walker 2023, ClinGen SVI
+    // Splicing Subgroup). PVS1's canonical track assumes the ±1/±2
+    // dinucleotide is destroyed. Two situations break that assumption and
+    // both showed up in the medical-genetics review:
+    //
+    //  1. SpliceAI is confidently benign (≤ `spliceai_benign`). A genuine
+    //     canonical ±1/±2 change is the easiest call SpliceAI makes, so a
+    //     score of ~0 means the positional call is wrong - typically an
+    //     indel that merely overlaps the region, or a repeat-context
+    //     deletion with an ambiguous alignment. ATM c.?  `GTAATC>G`
+    //     (SpliceAI 0.00) and KMT2C `C>CT` (0.05) are both ClinVar
+    //     benign/likely-benign and both collected PVS1 this way.
+    //  2. The variant is a pure insertion or duplication. Inserting bases
+    //     beside, or even inside, the dinucleotide does not necessarily
+    //     destroy it: `PTEN c.802-2dupA` and `BRIP1 c.2258-2dup` add the
+    //     base the acceptor already carries, so the intron still ends AG.
+    //     Without positive splice evidence (SpliceAI ≥ `spliceai_pathogenic`)
+    //     PVS1 must not fire on those.
+    //
+    // In both cases a coding-null consequence on the same allele still
+    // carries PVS1 through its own track, so re-grade rather than discard.
     if matches!(kind, NullKind::CanonicalSplice) {
-        // The offset at the change's most 3' position, deliberately, and not
-        // the one at the position it sits at. On a donor the 3' end is the
-        // furthest into the intron the change can be written, so `> 2` there
-        // proves some alignment of it leaves `+1` and `+2` alone - and every
-        // alignment edits the sequence the same way, so the `GT` this track
-        // assumes is destroyed is intact. PTEN `c.253+4_253+7del` is
-        // `splice_donor_variant` in both tools and still opens the intron
-        // `GTATGA` afterwards. See
-        // `ClassificationInput::shifted_intronic_offset`.
-        if let Some(offset) = input.shifted_intronic_offset {
-            details.insert("intronic_offset".into(), serde_json::json!(offset));
-            if offset.abs() > 2 {
-                match NullKind::detect_non_splice(&input.consequences) {
-                    Some(coding_null) => {
-                        details.insert(
-                            "splice_offset_regraded_to".into(),
-                            serde_json::json!(coding_null.label()),
-                        );
-                        kind = coding_null;
-                    }
-                    None => {
-                        return mk(
-                            "PVS1".to_string(),
-                            EvidenceStrength::VeryStrong,
-                            false,
-                            true,
-                            format!(
-                                "Splice consequence at intronic offset {:+} is outside the canonical ±1/±2 dinucleotide and no coding-null consequence is present → PVS1 not applicable (defer to SpliceAI/PP3)",
-                                offset
-                            ),
-                            details,
-                        );
-                    }
-                }
-            }
+        let spliceai_max = input.splice_ai.as_ref().and_then(|s| s.max_delta_score());
+        if let Some(ds) = spliceai_max {
+            details.insert("spliceai_max_ds".into(), serde_json::json!(ds));
         }
+        let contradicted_by_spliceai = spliceai_max.is_some_and(|ds| ds <= config.spliceai_benign);
+        let unsupported_insertion = input.is_pure_insertion == Some(true)
+            && !spliceai_max.is_some_and(|ds| ds >= config.spliceai_pathogenic);
 
-        // Splice-prediction consistency gate (Walker 2023, ClinGen SVI
-        // Splicing Subgroup). PVS1's canonical track assumes the ±1/±2
-        // dinucleotide is destroyed. Two situations break that assumption and
-        // both showed up in the medical-genetics review:
-        //
-        //  1. SpliceAI is confidently benign (≤ `spliceai_benign`). A genuine
-        //     canonical ±1/±2 change is the easiest call SpliceAI makes, so a
-        //     score of ~0 means the positional call is wrong - typically an
-        //     indel that merely overlaps the region, or a repeat-context
-        //     deletion with an ambiguous alignment. ATM c.?  `GTAATC>G`
-        //     (SpliceAI 0.00) and KMT2C `C>CT` (0.05) are both ClinVar
-        //     benign/likely-benign and both collected PVS1 this way.
-        //  2. The variant is a pure insertion or duplication. Inserting bases
-        //     beside, or even inside, the dinucleotide does not necessarily
-        //     destroy it: `PTEN c.802-2dupA` and `BRIP1 c.2258-2dup` add the
-        //     base the acceptor already carries, so the intron still ends AG.
-        //     Without positive splice evidence (SpliceAI ≥ `spliceai_pathogenic`)
-        //     PVS1 must not fire on those.
-        //
-        // In both cases a coding-null consequence on the same allele still
-        // carries PVS1 through its own track, so re-grade rather than discard.
-        if matches!(kind, NullKind::CanonicalSplice) {
-            let spliceai_max = input.splice_ai.as_ref().and_then(|s| s.max_delta_score());
-            if let Some(ds) = spliceai_max {
-                details.insert("spliceai_max_ds".into(), serde_json::json!(ds));
-            }
-            let contradicted_by_spliceai =
-                spliceai_max.is_some_and(|ds| ds <= config.spliceai_benign);
-            let unsupported_insertion = input.is_pure_insertion == Some(true)
-                && !spliceai_max.is_some_and(|ds| ds >= config.spliceai_pathogenic);
-
-            if contradicted_by_spliceai || unsupported_insertion {
-                let reason = if contradicted_by_spliceai {
-                    format!(
-                        "SpliceAI max_ds={:.2} ≤ {:.2} contradicts loss of the canonical ±1/±2 site",
-                        spliceai_max.unwrap_or(0.0),
-                        config.spliceai_benign
-                    )
-                } else {
-                    "pure insertion/duplication at the canonical site may leave the ±1/±2 dinucleotide intact, and no positive SpliceAI support is available".to_string()
-                };
-                match NullKind::detect_non_splice(&input.consequences) {
-                    Some(coding_null) => {
-                        details.insert(
-                            "splice_evidence_regraded_to".into(),
-                            serde_json::json!(coding_null.label()),
-                        );
-                        kind = coding_null;
-                    }
-                    None => {
-                        details.insert(
-                            "splice_evidence_conflict".into(),
-                            serde_json::json!(reason.clone()),
-                        );
-                        return mk(
-                            "PVS1".to_string(),
-                            EvidenceStrength::VeryStrong,
-                            false,
-                            true,
-                            format!(
-                                "PVS1 splice track not applicable: {} (defer to PP3/BP4)",
-                                reason
-                            ),
-                            details,
-                        );
-                    }
+        if contradicted_by_spliceai || unsupported_insertion {
+            let reason = if contradicted_by_spliceai {
+                format!(
+                    "SpliceAI max_ds={:.2} ≤ {:.2} contradicts loss of the canonical ±1/±2 site",
+                    spliceai_max.unwrap_or(0.0),
+                    config.spliceai_benign
+                )
+            } else {
+                "pure insertion/duplication at the canonical site may leave the ±1/±2 dinucleotide intact, and no positive SpliceAI support is available".to_string()
+            };
+            match NullKind::detect_non_splice(&input.consequences) {
+                Some(coding_null) => {
+                    details.insert(
+                        "splice_evidence_regraded_to".into(),
+                        serde_json::json!(coding_null.label()),
+                    );
+                    kind = coding_null;
+                }
+                None => {
+                    details.insert(
+                        "splice_evidence_conflict".into(),
+                        serde_json::json!(reason.clone()),
+                    );
+                    return mk(
+                        "PVS1".to_string(),
+                        EvidenceStrength::VeryStrong,
+                        false,
+                        true,
+                        format!(
+                            "PVS1 splice track not applicable: {} (defer to PP3/BP4)",
+                            reason
+                        ),
+                        details,
+                    );
                 }
             }
         }
@@ -269,60 +270,40 @@ enum NullKind {
 }
 
 impl NullKind {
-    fn detect(cs: &[Consequence]) -> Option<Self> {
-        // Scan all consequences and pick the most severe null kind so the
-        // result doesn't depend on input ordering (e.g. when both
-        // splice_donor_variant and frameshift_variant appear, splice wins
-        // deterministically). Severity rank below matches Ensembl VEP's
-        // null-variant ordering.
-        let mut best: Option<Self> = None;
-        for c in cs {
-            let kind = match c {
-                Consequence::TranscriptAblation => Some(Self::WholeGeneDeletion),
-                Consequence::SpliceAcceptorVariant | Consequence::SpliceDonorVariant => {
-                    Some(Self::CanonicalSplice)
-                }
-                Consequence::StopGained | Consequence::FrameshiftVariant => {
-                    Some(Self::NonsenseOrFrameshift)
-                }
-                Consequence::StartLost => Some(Self::StartLost),
-                _ => None,
-            };
-            if let Some(k) = kind {
-                best = Some(match best {
-                    None => k,
-                    Some(prev) if k.severity_rank() > prev.severity_rank() => k,
-                    Some(prev) => prev,
-                });
+    /// The null kind one consequence term stands for, if it is one.
+    fn of(c: &Consequence) -> Option<Self> {
+        match c {
+            Consequence::TranscriptAblation => Some(Self::WholeGeneDeletion),
+            Consequence::SpliceAcceptorVariant | Consequence::SpliceDonorVariant => {
+                Some(Self::CanonicalSplice)
             }
+            Consequence::StopGained | Consequence::FrameshiftVariant => {
+                Some(Self::NonsenseOrFrameshift)
+            }
+            Consequence::StartLost => Some(Self::StartLost),
+            _ => None,
         }
-        best
     }
 
-    /// Detect the most severe NON-splice null kind (whole-gene deletion,
-    /// nonsense/frameshift, start-lost). Used when a non-canonical splice
-    /// offset disqualifies the splice track but a co-occurring coding-null
-    /// consequence still justifies PVS1.
+    /// The most severe null kind among the terms, so the result does not depend
+    /// on their order: when both `splice_donor_variant` and `frameshift_variant`
+    /// appear, splice wins deterministically. The severity rank matches Ensembl
+    /// VEP's null-variant ordering.
+    fn detect(cs: &[Consequence]) -> Option<Self> {
+        cs.iter()
+            .filter_map(Self::of)
+            .max_by_key(Self::severity_rank)
+    }
+
+    /// The most severe NON-splice null kind (whole-gene deletion,
+    /// nonsense/frameshift, start-lost): what is left of an allele once its
+    /// splice term has been set aside, so a co-occurring coding-null term can
+    /// still justify PVS1.
     fn detect_non_splice(cs: &[Consequence]) -> Option<Self> {
-        let mut best: Option<Self> = None;
-        for c in cs {
-            let kind = match c {
-                Consequence::TranscriptAblation => Some(Self::WholeGeneDeletion),
-                Consequence::StopGained | Consequence::FrameshiftVariant => {
-                    Some(Self::NonsenseOrFrameshift)
-                }
-                Consequence::StartLost => Some(Self::StartLost),
-                _ => None,
-            };
-            if let Some(k) = kind {
-                best = Some(match best {
-                    None => k,
-                    Some(prev) if k.severity_rank() > prev.severity_rank() => k,
-                    Some(prev) => prev,
-                });
-            }
-        }
-        best
+        cs.iter()
+            .filter_map(Self::of)
+            .filter(|k| !matches!(k, Self::CanonicalSplice))
+            .max_by_key(Self::severity_rank)
     }
 
     fn severity_rank(&self) -> u8 {
@@ -615,71 +596,157 @@ mod tests {
         assert!(result.met); // OMIM disease association is proxy for LOF gene
     }
 
-    #[test]
-    fn test_pvs1_canonical_splice_deep_offset_not_applicable() {
-        // splice_donor/acceptor consequence but the offset the HGVSc shows is
-        // beyond ±2 (e.g. an indel spanning into the intron,
-        // c.4001+12_4001+15del). PVS1 must not fire — splicing signal is left
-        // to SpliceAI/PP3. The gate reads the rendered offset on purpose; see
-        // `ClassificationInput::hgvsc_intronic_offset`.
-        let mut input = make_input(
-            vec![Consequence::SpliceDonorVariant],
+    /// A gene PVS1 would otherwise apply in, so each test below isolates the
+    /// placement and not the gene-level preconditions.
+    fn lof_gene_input(consequences: Vec<Consequence>) -> ClassificationInput {
+        make_input(
+            consequences,
             Some(GnomadGeneData {
                 pli: Some(1.0),
                 loeuf: Some(0.03),
                 ..Default::default()
             }),
             None,
-        );
-        input.shifted_intronic_offset = Some(12);
+        )
+    }
+
+    #[test]
+    fn test_pvs1_canonical_splice_placed_beyond_the_dinucleotide_not_applicable() {
+        // splice_donor consequence, but HGVS places the change at +12: no
+        // alignment of it touches +1 or +2, so PVS1's splice track has nothing
+        // to apply to. Splicing is left to SpliceAI/PP3.
+        let mut input = lof_gene_input(vec![Consequence::SpliceDonorVariant]);
+        input.hgvs_placement = Some(HgvsPlacement::Intronic { offset: 12 });
         let r = evaluate_pvs1(&input, &AcmgConfig::default());
         assert!(!r.met);
+        assert!(r.evaluated);
         assert!(r.summary.contains("canonical ±1/±2"));
+        assert_eq!(
+            r.details["hgvs_placement"],
+            serde_json::json!({"kind": "intronic", "offset": 12})
+        );
     }
 
     #[test]
     fn test_pvs1_canonical_splice_within_2_still_fires() {
-        // Canonical ±1/2 splice (offset = -2) keeps PVS1.
-        let mut input = make_input(
-            vec![Consequence::SpliceAcceptorVariant],
-            Some(GnomadGeneData {
-                pli: Some(1.0),
-                loeuf: Some(0.03),
-                ..Default::default()
-            }),
-            None,
-        );
-        input.shifted_intronic_offset = Some(-2);
-        let r = evaluate_pvs1(&input, &AcmgConfig::default());
-        assert!(r.met);
-        assert_eq!(r.strength, EvidenceStrength::VeryStrong);
+        // The canonical dinucleotide itself keeps PVS1, on either side.
+        for (term, offset) in [
+            (Consequence::SpliceAcceptorVariant, -2),
+            (Consequence::SpliceAcceptorVariant, -1),
+            (Consequence::SpliceDonorVariant, 1),
+            (Consequence::SpliceDonorVariant, 2),
+        ] {
+            let mut input = lof_gene_input(vec![term]);
+            input.hgvs_placement = Some(HgvsPlacement::Intronic { offset });
+            let r = evaluate_pvs1(&input, &AcmgConfig::default());
+            assert!(r.met, "{term:?} at {offset:+}");
+            assert_eq!(r.strength, EvidenceStrength::VeryStrong);
+        }
     }
 
+    /// MSH6 `2:47806358 G>GGTAT`: the record anchors on the exon's last base,
+    /// so the term is `frameshift_variant`, and HGVS writes
+    /// `c.3801+3_3801+6dup`, four intronic bases. No exon base is edited, so
+    /// there is no frameshift for PVS1 to grade.
     #[test]
-    fn test_pvs1_deep_offset_with_coding_frameshift_still_fires() {
-        // An indel called BOTH splice_donor (deep offset >2, e.g. an exon→intron
-        // deletion) AND frameshift must keep PVS1 via the frameshift track — the
-        // genuine coding LOF must not be discarded by the splice offset gate.
-        let mut input = make_input(
-            vec![
+    fn test_pvs1_frameshift_term_placed_wholly_in_the_intron_not_applicable() {
+        let mut input = lof_gene_input(vec![Consequence::FrameshiftVariant]);
+        input.hgvs_placement = Some(HgvsPlacement::Intronic { offset: 8 });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.evaluated);
+    }
+
+    /// The same placement stands every null term down, not the splice ones
+    /// alone, and `reads_hgvs_placement` asks for it for exactly these terms:
+    /// a term the gate did not cover would never be handed a placement.
+    #[test]
+    fn test_pvs1_every_null_term_stands_down_for_an_intronic_placement() {
+        for term in [
+            Consequence::SpliceAcceptorVariant,
+            Consequence::SpliceDonorVariant,
+            Consequence::FrameshiftVariant,
+            Consequence::StopGained,
+            Consequence::StartLost,
+        ] {
+            assert!(
+                crate::sa_extract::reads_hgvs_placement(&[term]),
+                "{term:?} is a null term the pipeline must place"
+            );
+            let mut input = lof_gene_input(vec![term]);
+            input.hgvs_placement = Some(HgvsPlacement::Intronic { offset: -9 });
+            assert!(
+                !evaluate_pvs1(&input, &AcmgConfig::default()).met,
+                "{term:?}"
+            );
+        }
+    }
+
+    /// This replaces the old expectation that a splice term beside a frameshift
+    /// one kept PVS1 through the frameshift track when the offset was deep. A
+    /// placement wholly in the intron past +2 means no exon base is edited, so
+    /// the frameshift term describes the same anchor the splice term does and
+    /// there is no coding loss to fall back on.
+    #[test]
+    fn test_pvs1_splice_and_frameshift_terms_both_stand_down_for_an_intronic_placement() {
+        let mut input = lof_gene_input(vec![
+            Consequence::SpliceDonorVariant,
+            Consequence::FrameshiftVariant,
+        ]);
+        input.hgvs_placement = Some(HgvsPlacement::Intronic { offset: 7 });
+        assert!(!evaluate_pvs1(&input, &AcmgConfig::default()).met);
+    }
+
+    /// MLH1 `TAGG>T`: the record deletes the intron's `AG` and the exon's first
+    /// base, so it is `splice_acceptor_variant`, but HGVS places it as the
+    /// exon's own first three bases deleted in frame, `c.1732_1734del`, with the
+    /// acceptor untouched.
+    #[test]
+    fn test_pvs1_splice_term_placed_as_an_in_frame_exonic_change_not_applicable() {
+        let mut input = lof_gene_input(vec![Consequence::SpliceAcceptorVariant]);
+        input.hgvs_placement = Some(HgvsPlacement::Exonic { in_frame: true });
+        let r = evaluate_pvs1(&input, &AcmgConfig::default());
+        assert!(!r.met);
+        assert!(r.evaluated);
+        assert!(r.summary.contains("in-frame"));
+    }
+
+    /// An in-frame placement says nothing about a coding-null term beside the
+    /// splice one, so it is not a reason to drop PVS1 for it.
+    #[test]
+    fn test_pvs1_in_frame_placement_keeps_a_coding_null_term() {
+        for coding_null in [Consequence::FrameshiftVariant, Consequence::StopGained] {
+            let mut input = lof_gene_input(vec![Consequence::SpliceAcceptorVariant, coding_null]);
+            input.hgvs_placement = Some(HgvsPlacement::Exonic { in_frame: true });
+            assert!(
+                evaluate_pvs1(&input, &AcmgConfig::default()).met,
+                "{coding_null:?}"
+            );
+        }
+    }
+
+    /// Where the placement says nothing - not worked out, spanning exon and
+    /// intron, or exonic and out of frame - the record's own terms decide, as
+    /// they did before the placement existed.
+    #[test]
+    fn test_pvs1_an_inconclusive_placement_leaves_the_terms_in_charge() {
+        for placement in [
+            None,
+            Some(HgvsPlacement::Spans),
+            Some(HgvsPlacement::Exonic { in_frame: false }),
+        ] {
+            for term in [
                 Consequence::SpliceDonorVariant,
                 Consequence::FrameshiftVariant,
-            ],
-            Some(GnomadGeneData {
-                pli: Some(1.0),
-                loeuf: Some(0.03),
-                ..Default::default()
-            }),
-            None,
-        );
-        input.shifted_intronic_offset = Some(7); // outside canonical ±1/±2
-        let r = evaluate_pvs1(&input, &AcmgConfig::default());
-        assert!(
-            r.met,
-            "frameshift LOF should keep PVS1 despite deep splice offset"
-        );
-        // No NMD/grading signals → frameshift legacy fallback → Very Strong.
-        assert_eq!(r.strength, EvidenceStrength::VeryStrong);
+            ] {
+                let mut input = lof_gene_input(vec![term]);
+                input.hgvs_placement = placement;
+                assert!(
+                    evaluate_pvs1(&input, &AcmgConfig::default()).met,
+                    "{term:?} with {placement:?}"
+                );
+            }
+        }
     }
 
     #[test]

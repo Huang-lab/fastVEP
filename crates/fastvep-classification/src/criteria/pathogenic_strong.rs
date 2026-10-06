@@ -66,6 +66,33 @@ fn evaluate_ps1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 
     // Walker 2023 splice-RNA path.
     if is_canonical_splice {
+        // The path compares what the variant does to the canonical dinucleotide
+        // with what a Pathogenic variant on it does. A change HGVS places wholly
+        // inside an intron past +-2, or wholly inside an exon in frame, does
+        // nothing to it, whichever term the record's anchor produced: a repeat
+        // that straddles the acceptor can be written as deleting the intron's `AG`
+        // or as deleting an exon's bases in frame, and it is the same edited
+        // sequence. PVS1's splice track stands down for exactly these placements,
+        // so with PS1 left running the call would read "the splice site is not
+        // abolished" and "the splice site is abolished as it is in this Pathogenic
+        // variant" at once. Where PVS1 keeps the record's term - an exonic
+        // placement out of frame, which is a frameshift with its record anchored
+        // on the splice site - PS1 keeps it too.
+        if input.splice_term_is_an_anchor_artefact() {
+            if let Some(placement) = input.hgvs_placement {
+                details.insert("hgvs_placement".into(), super::placement_detail(placement));
+            }
+            return EvidenceCriterion {
+                code: "PS1".to_string(),
+                direction: EvidenceDirection::Pathogenic,
+                strength: EvidenceStrength::Strong,
+                default_strength: EvidenceStrength::Strong,
+                met: false,
+                evaluated: true,
+                summary: "HGVS places the change where it leaves the canonical splice dinucleotide intact, wholly inside an intron beyond ±1/±2 or wholly inside an exon in frame: the splice term describes how the record is anchored, so no dinucleotide is abolished to match against a Pathogenic variant (PS1's splice path does not apply)".to_string(),
+                details: serde_json::Value::Object(details),
+            };
+        }
         match input.same_splice_position_pathogenic {
             Some(true) => {
                 details.insert("ps1_path".into(), serde_json::json!("splice_rna_match"));
@@ -598,6 +625,67 @@ mod tests {
         assert_eq!(r.code, "PS1_Supporting");
         // Row 5's upgrade is applied by reconcile_evidence, which sees PVS1.
         assert_eq!(r.details["ps1_path"], "splice_rna_match");
+    }
+
+    /// A splice term whose record anchors on the dinucleotide but whose edit HGVS
+    /// writes elsewhere abolishes no dinucleotide, so there is nothing for a
+    /// Pathogenic variant on that dinucleotide to match. PVS1's splice track
+    /// stands down for the same placements, and keeps the others.
+    #[test]
+    fn test_ps1_splice_path_stands_down_for_a_change_placed_clear_of_the_dinucleotide() {
+        use fastvep_core::HgvsPlacement;
+        let config = AcmgConfig::default();
+        for term in [
+            Consequence::SpliceAcceptorVariant,
+            Consequence::SpliceDonorVariant,
+        ] {
+            let mut input = make_input(None);
+            input.consequences = vec![term];
+            input.same_splice_position_pathogenic = Some(true);
+            assert!(evaluate_ps1(&input, &config).met, "{term:?} as anchored");
+
+            for (placement, detail) in [
+                (
+                    HgvsPlacement::Intronic { offset: 8 },
+                    serde_json::json!({"kind": "intronic", "offset": 8}),
+                ),
+                (
+                    HgvsPlacement::Intronic { offset: -3 },
+                    serde_json::json!({"kind": "intronic", "offset": -3}),
+                ),
+                (
+                    HgvsPlacement::Exonic { in_frame: true },
+                    serde_json::json!({"kind": "exonic", "in_frame": true}),
+                ),
+            ] {
+                input.hgvs_placement = Some(placement);
+                let placed = evaluate_ps1(&input, &config);
+                assert!(!placed.met, "{term:?} {placement:?}");
+                assert!(placed.evaluated, "{term:?} {placement:?}");
+                assert_eq!(placed.code, "PS1");
+                assert!(
+                    placed.summary.contains("leaves the canonical splice"),
+                    "{}",
+                    placed.summary
+                );
+                assert_eq!(placed.details["hgvs_placement"], detail);
+            }
+
+            // On the dinucleotide, inconclusive, or an exonic frameshift, which PVS1
+            // also keeps as a null variant: the term decides. Acceptor `AG>A`
+            // deletions of the exon's first base are the common case, and moving
+            // PS1 alone off them took Pathogenic calls to Likely pathogenic for
+            // a distinction PVS1 does not make.
+            for placement in [
+                HgvsPlacement::Intronic { offset: 1 },
+                HgvsPlacement::Intronic { offset: -2 },
+                HgvsPlacement::Exonic { in_frame: false },
+                HgvsPlacement::Spans,
+            ] {
+                input.hgvs_placement = Some(placement);
+                assert!(evaluate_ps1(&input, &config).met, "{term:?} {placement:?}");
+            }
+        }
     }
 
     #[test]

@@ -12,8 +12,8 @@ pub mod pick;
 
 pub use hgvs_normalize::{
     clipped_span, convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele,
-    hgvsc_shifted, hgvsg_clipped, intronic_dup_span, intronic_ins_as_dup, is_shiftable_indel,
-    shifted_intronic_offset, three_prime_shift_genomic, HgvsAllele,
+    hgvs_placement, hgvsc_shifted, hgvsg_clipped, intronic_dup_span, intronic_ins_as_dup,
+    is_shiftable_indel, three_prime_shift_genomic, HgvsAllele,
 };
 
 use anyhow::{Context, Result};
@@ -25,7 +25,7 @@ use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, SequenceProvider, TranscriptProvider,
 };
 use fastvep_consequence::ConsequencePredictor;
-use fastvep_core::{Allele, Consequence};
+use fastvep_core::{Allele, Consequence, SpliceContext};
 use fastvep_genome::Transcript;
 use fastvep_io::output;
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
@@ -34,6 +34,7 @@ use pick::{apply_pick, PickRequest, DEFAULT_PICK_ORDER};
 use rayon::prelude::*;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// Pre-loaded annotation context shared by web and CLI.
 ///
@@ -415,49 +416,7 @@ impl AnnotationContext {
                                 codons: ac.codons.clone(),
                                 exon: ac.exon,
                                 intron: ac.intron,
-                                // Off the transcript, not off the HGVSc, and
-                                // over the span the allele actually changes:
-                                // the bases a pair repeats at either end are by
-                                // definition unchanged, and counting them can
-                                // only make a change look nearer a splice site
-                                // than it is.
-                                //
-                                // Only the classifier reads it, and finding it
-                                // walks the transcript's introns once per end of
-                                // the span, per (variant x transcript x allele).
-                                // So it is found when something is going to ask,
-                                // the way `hgvsc` is built only under `--hgvs`.
-                                intron_offset: acmg_config.and(transcript).and_then(|tr| {
-                                    let (s, e) = clipped_span(
-                                        tr.strand,
-                                        vf.position.start,
-                                        vf.position.end,
-                                        &vf.ref_allele,
-                                        &ac.allele,
-                                    );
-                                    tr.intronic_offset_covered(s, e)
-                                }),
-                                // The same distance where HGVS numbers the change rather
-                                // than where it sits, which is what PVS1's gate is
-                                // calibrated to, and only for the variants that gate
-                                // looks at: walking the reference twice for every indel
-                                // would be work done before knowing it is needed.
-                                shifted_intron_offset: acmg_config
-                                    .and(transcript)
-                                    .filter(|_| has_canonical_splice(&ac.consequences))
-                                    .and_then(|tr| {
-                                        shifted_intronic_offset(
-                                            self.seq_provider
-                                                .as_deref()
-                                                .map(|sp| sp as &dyn SequenceProvider),
-                                            chrom,
-                                            tr,
-                                            vf.position.start,
-                                            vf.position.end,
-                                            &vf.ref_allele,
-                                            &ac.allele,
-                                        )
-                                    }),
+                                splice: Default::default(),
                                 distance: ac.distance,
                                 protein_length: ac.protein_length,
                                 escapes_nmd: ac.escapes_nmd,
@@ -930,6 +889,7 @@ impl AnnotationContext {
                 // `extract_classification_input` is handed a transcript-level
                 // view that carries none.
                 let query_alleles = vf.query_alleles();
+                let mut row_transcripts = RowTranscripts::new(&overlapping);
 
                 for tv in &mut vf.transcript_variations {
                     let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
@@ -938,8 +898,23 @@ impl AnnotationContext {
                         .iter()
                         .filter(|ga| ga.gene_symbol == gene_sym)
                         .collect();
+                    let transcript = row_transcripts.of(&tv.transcript_id);
                     for aa in &mut tv.allele_annotations {
                         let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
+                        if let Some(tr) = transcript {
+                            aa.splice = splice_context(
+                                self.seq_provider
+                                    .as_deref()
+                                    .map(|sp| sp as &dyn SequenceProvider),
+                                &vf.position.chromosome,
+                                tr,
+                                vf.position.start,
+                                vf.position.end,
+                                &vf.ref_allele,
+                                &aa.allele,
+                                &aa.consequences,
+                            );
+                        }
                         let input = fastvep_classification::extract_classification_input(
                             &aa.consequences,
                             aa.impact,
@@ -948,8 +923,7 @@ impl AnnotationContext {
                             aa.amino_acids.as_ref(),
                             aa.protein_position.map(|(s, _)| s),
                             aa.hgvsc.as_deref(),
-                            aa.intron_offset,
-                            aa.shifted_intron_offset,
+                            aa.splice,
                             aa.exon,
                             aa.protein_length,
                             aa.escapes_nmd,
@@ -1018,8 +992,7 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
                 allele: alt.clone(),
                 consequences: vec![],
                 impact: fastvep_core::Impact::Modifier,
-                intron_offset: None,
-                shifted_intron_offset: None,
+                splice: Default::default(),
                 cdna_position: None,
                 cds_position: None,
                 protein_position: None,
@@ -1069,8 +1042,7 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 allele: alt.clone(),
                 consequences: vec![Consequence::IntergenicVariant],
                 impact: fastvep_core::Impact::Modifier,
-                intron_offset: None,
-                shifted_intron_offset: None,
+                splice: Default::default(),
                 cdna_position: None,
                 cds_position: None,
                 protein_position: None,
@@ -1259,20 +1231,6 @@ pub fn report_sa_lookup_errors() {
 /// place is indistinguishable for a single base, which is why it survived: it
 /// showed up only once a multi-base alternate reached HGVS, where a
 /// reverse-strand `ACG` was written `delinsTGC` instead of `delinsCGT`.
-/// Whether a consequence set puts the change on a canonical splice dinucleotide.
-///
-/// The gate on [`shifted_intronic_offset`]: PVS1 reads that number only for a
-/// canonical splice variant, and finding it walks the reference, so every other
-/// variant is spared the walk.
-pub fn has_canonical_splice(consequences: &[Consequence]) -> bool {
-    consequences.iter().any(|c| {
-        matches!(
-            c,
-            Consequence::SpliceAcceptorVariant | Consequence::SpliceDonorVariant
-        )
-    })
-}
-
 pub fn reverse_complement_allele(allele: &Allele) -> Allele {
     match allele {
         Allele::Sequence(bases) => {
@@ -1568,8 +1526,7 @@ fn enrich_compound_het(
                 aa.amino_acids.as_ref(),
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
-                aa.intron_offset,
-                aa.shifted_intron_offset,
+                aa.splice,
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
@@ -1784,17 +1741,115 @@ pub fn load_gene_providers(sa_dir: &Path) -> Result<Vec<fastvep_sa::gene::GeneIn
     Ok(providers)
 }
 
-/// Curated functional evidence for each ALT allele of a record, if the run was
-/// given a `--functional-evidence` file that names them.
+/// The transcript behind each row of one variant's `transcript_variations`,
+/// found in one pass over the transcripts that overlapped it.
 ///
-/// Resolved for the whole record at once, before the mutable walk over
-/// `transcript_variations` begins, because that walk borrows the record and a
-/// per-allele lookup inside it would need the record again.
+/// The classification pass runs after `--pick`, when what is left is the rows
+/// the pick kept and nothing pairs them with their transcripts by position any
+/// more. Rows are made one per overlapping transcript, in order, and a pick only
+/// ever deletes some, so each survivor lies at or after the one before it:
+/// looking forward from the last hit finds every row without rescanning the set,
+/// which is the lookup that once cost the square of the overlap.
 ///
-/// Keyed on the record's original VCF coordinates rather than fastVEP's
-/// normalised alleles: the curated file is written by a human reading a VCF, so
-/// that is the form the entry will be in. The result is positional, one slot
-/// per ALT, so one allele's curated result is never applied to its neighbours.
+/// A row is matched to its transcript by the identity of the id they share, not
+/// by its text. Both predictors hand a row the transcript's own `Arc<str>`, so
+/// two transcripts that carry one id - a GFF3 loaded twice under different
+/// labels - are still told apart, where a text match takes the first. A
+/// predictor that minted its own id would fall back to the text.
+pub struct RowTranscripts<'o, 't> {
+    overlapping: &'o [&'t Transcript],
+    next: usize,
+}
+
+impl<'o, 't> RowTranscripts<'o, 't> {
+    pub fn new(overlapping: &'o [&'t Transcript]) -> Self {
+        Self {
+            overlapping,
+            next: 0,
+        }
+    }
+
+    /// The transcript the row carrying `id` was predicted against, or `None`
+    /// for a row that has none, such as a `--sa-only` scaffold.
+    pub fn of(&mut self, id: &Arc<str>) -> Option<&'t Transcript> {
+        let ahead = &self.overlapping[self.next..];
+        if let Some(k) = ahead.iter().position(|t| Arc::ptr_eq(&t.stable_id, id)) {
+            self.next += k + 1;
+            return Some(ahead[k]);
+        }
+        // Out of order, or not the same `Arc`: everything, by identity and then
+        // by text.
+        self.overlapping
+            .iter()
+            .copied()
+            .find(|t| Arc::ptr_eq(&t.stable_id, id))
+            .or_else(|| {
+                self.overlapping
+                    .iter()
+                    .copied()
+                    .find(|t| t.stable_id == *id)
+            })
+    }
+}
+
+/// Where one allele sits against one transcript's exons and introns, worked out
+/// for the ACMG criteria. See [`SpliceContext`] for what each part means.
+///
+/// Public, and shared, for the reason [`splice_ps1_evidence`] is: `fastvep-cli`
+/// classifies the same annotations by a different path, and this is the kind of
+/// input one of the two ends up quietly not supplying.
+///
+/// Each part is found only where a criterion reads it. The offset is cheap and
+/// several read it. The placement walks the reference, so it is taken only for an
+/// allele whose consequence terms a criterion reads it for, and never for a
+/// substitution: a substitution has one way of being written, so its placement
+/// is where it sits and the offset already says that. The exon edge is read by
+/// BP7 for a synonymous change and by nothing else.
+// Each argument is an independent coordinate, allele or term set of one variant
+// against one transcript; bundling them into a struct would only move the
+// argument list to the call sites.
+#[allow(clippy::too_many_arguments)]
+pub fn splice_context(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    transcript: &Transcript,
+    var_start: u64,
+    var_end: u64,
+    ref_allele: &Allele,
+    alt_allele: &Allele,
+    consequences: &[Consequence],
+) -> SpliceContext {
+    let (start, end) = clipped_span(
+        transcript.strand,
+        var_start,
+        var_end,
+        ref_allele,
+        alt_allele,
+    );
+    let is_substitution = matches!(
+        (ref_allele, alt_allele),
+        (Allele::Sequence(r), Allele::Sequence(a)) if r.len() == a.len()
+    );
+    SpliceContext {
+        intron_offset: transcript.intronic_offset_covered(start, end),
+        hgvs_placement: (!is_substitution
+            && fastvep_classification::reads_hgvs_placement(consequences))
+        .then(|| {
+            hgvs_placement(
+                seq_provider,
+                chrom,
+                transcript,
+                var_start,
+                var_end,
+                ref_allele,
+                alt_allele,
+            )
+        }),
+        at_exon_edge: fastvep_classification::reads_exon_edge(consequences)
+            .then(|| transcript.touches_splice_exon_edge(start, end)),
+    }
+}
+
 /// Whether PS1's splice path has a comparison variant for this allele.
 ///
 /// A thin adapter: it pairs the allele with its VCF-form coordinates from
@@ -1815,13 +1870,24 @@ pub fn splice_ps1_evidence(
     fastvep_classification::same_splice_position_pathogenic(
         &aa.consequences,
         gene_anns,
-        aa.intron_offset,
+        aa.splice.intron_offset,
         *pos,
         ref_allele,
         alt,
     )
 }
 
+/// Curated functional evidence for each ALT allele of a record, if the run was
+/// given a `--functional-evidence` file that names them.
+///
+/// Resolved for the whole record at once, before the mutable walk over
+/// `transcript_variations` begins, because that walk borrows the record and a
+/// per-allele lookup inside it would need the record again.
+///
+/// Keyed on the record's original VCF coordinates rather than fastVEP's
+/// normalised alleles: the curated file is written by a human reading a VCF, so
+/// that is the form the entry will be in. The result is positional, one slot
+/// per ALT, so one allele's curated result is never applied to its neighbours.
 fn resolve_functional_by_alt(
     index: Option<&fastvep_classification::FunctionalEvidenceIndex>,
     vf: &VariationFeature,

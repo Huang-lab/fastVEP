@@ -35,7 +35,7 @@ fn evaluate_pm1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
     // exactly that stacking on CBS, MSH6 and RYR1 ("PM1 is called with PVS1?
     // Where is the evidence for PM1 coming?"). The PVS1 co-occurrence case is
     // additionally suppressed in the reconciliation pass.
-    let pm1_eligible_consequence = input.consequences.iter().any(|c| {
+    let has_eligible_term = input.consequences.iter().any(|c| {
         matches!(
             c,
             Consequence::MissenseVariant
@@ -46,6 +46,26 @@ fn evaluate_pm1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
                 | Consequence::StartLost
         )
     });
+    // A change HGVS places wholly inside an intron beyond ±2 edits no exon base,
+    // so there is no residue for a hotspot to say anything about, whatever term
+    // its record's anchor produced. PM4 and BP3 stand down for the same reason.
+    // See `ClassificationInput::placed_beyond_canonical_splice`.
+    if has_eligible_term && input.placed_beyond_canonical_splice() {
+        if let Some(placement) = input.hgvs_placement {
+            details.insert("hgvs_placement".into(), super::placement_detail(placement));
+        }
+        return EvidenceCriterion {
+            code: "PM1".to_string(),
+            direction: EvidenceDirection::Pathogenic,
+            strength: EvidenceStrength::Moderate,
+            default_strength: EvidenceStrength::Moderate,
+            met: false,
+            evaluated: true,
+            summary: "HGVS places the change wholly inside an intron beyond the canonical ±1/±2 dinucleotides: it alters no exon base, so the protein-altering term describes how the record is anchored and there is no residue for PM1's hotspot to describe".to_string(),
+            details: serde_json::Value::Object(details),
+        };
+    }
+    let pm1_eligible_consequence = has_eligible_term;
     if !pm1_eligible_consequence {
         return EvidenceCriterion {
             code: "PM1".to_string(),
@@ -650,14 +670,24 @@ fn mk_pm3(
 /// PM4: Protein length changes due to in-frame deletions/insertions in non-repeat region,
 /// or stop-loss variants.
 fn evaluate_pm4(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
-    let is_length_change = input.consequences.iter().any(|c| {
+    let has_length_term = input.consequences.iter().any(|c| {
         matches!(
             c,
             Consequence::InframeInsertion | Consequence::InframeDeletion | Consequence::StopLost
         )
     });
+    // A change HGVS places wholly inside an intron beyond ±2 edits no exon base,
+    // so the protein is unchanged whatever length term its record's anchor
+    // produced. See `ClassificationInput::placed_beyond_canonical_splice`.
+    let placed_in_intron = input.placed_beyond_canonical_splice();
+    let is_length_change = has_length_term && !placed_in_intron;
 
     let mut details = serde_json::Map::new();
+    if has_length_term && placed_in_intron {
+        if let Some(placement) = input.hgvs_placement {
+            details.insert("hgvs_placement".into(), super::placement_detail(placement));
+        }
+    }
     if is_length_change {
         let types: Vec<&str> = input
             .consequences
@@ -677,6 +707,8 @@ fn evaluate_pm4(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCr
 
     let summary = if is_length_change {
         "Protein length-changing variant (in-frame indel or stop-loss)".to_string()
+    } else if has_length_term {
+        "HGVS places the change wholly inside an intron beyond the canonical ±1/±2 dinucleotides: it alters no exon base, so the in-frame or stop-loss term describes how the record is anchored and the protein length is unchanged".to_string()
     } else {
         "Not a protein length-changing variant".to_string()
     };
@@ -1001,6 +1033,94 @@ mod tests {
             gnomad,
             ..minimal_input()
         }
+    }
+
+    /// PM4 asks whether the protein changes length. A change HGVS places wholly
+    /// inside an intron past ±2 edits no exon base, so whatever length term its
+    /// record's anchor produced, it does not.
+    #[test]
+    fn test_pm4_does_not_apply_to_a_length_term_placed_wholly_in_the_intron() {
+        use fastvep_core::HgvsPlacement;
+        let config = AcmgConfig::default();
+        for term in [
+            Consequence::InframeInsertion,
+            Consequence::InframeDeletion,
+            Consequence::StopLost,
+        ] {
+            let mut input = make_input(vec![term], None);
+            assert!(evaluate_pm4(&input, &config).met, "{term:?} as anchored");
+
+            input.hgvs_placement = Some(HgvsPlacement::Intronic { offset: 8 });
+            let placed = evaluate_pm4(&input, &config);
+            assert!(!placed.met, "{term:?} placed in the intron");
+            assert!(placed.evaluated);
+            assert!(placed.summary.contains("intron"), "{}", placed.summary);
+            assert_eq!(
+                placed.details["hgvs_placement"],
+                serde_json::json!({"kind": "intronic", "offset": 8})
+            );
+
+            // Inconclusive, or on the dinucleotide: the term decides.
+            for placement in [
+                HgvsPlacement::Spans,
+                HgvsPlacement::Exonic { in_frame: true },
+                HgvsPlacement::Intronic { offset: 2 },
+            ] {
+                input.hgvs_placement = Some(placement);
+                assert!(evaluate_pm4(&input, &config).met, "{term:?} {placement:?}");
+            }
+        }
+    }
+
+    /// PM1 is residue-level evidence, and a change HGVS places wholly inside an
+    /// intron past ±2 edits no residue, whatever protein-altering term its
+    /// record's anchor produced. PM4 and BP3 stand down for the same placement.
+    #[test]
+    fn test_pm1_does_not_apply_to_a_protein_term_placed_wholly_in_the_intron() {
+        use fastvep_core::HgvsPlacement;
+        let config = AcmgConfig::default();
+        let hotspot = |term| {
+            let mut input = hotspot_missense("ARMC9");
+            input.consequences = vec![term];
+            input
+        };
+        for term in [
+            Consequence::InframeInsertion,
+            Consequence::InframeDeletion,
+            Consequence::ProteinAlteringVariant,
+            Consequence::StopLost,
+            Consequence::StartLost,
+        ] {
+            let mut input = hotspot(term);
+            assert!(evaluate_pm1(&input, &config).met, "{term:?} as anchored");
+
+            input.hgvs_placement = Some(HgvsPlacement::Intronic { offset: 8 });
+            let placed = evaluate_pm1(&input, &config);
+            assert!(!placed.met, "{term:?} placed in the intron");
+            assert!(placed.evaluated);
+            assert!(placed.summary.contains("intron"), "{}", placed.summary);
+            assert_eq!(
+                placed.details["hgvs_placement"],
+                serde_json::json!({"kind": "intronic", "offset": 8})
+            );
+
+            // Inconclusive, wholly in an exon, or on the dinucleotide: the term decides.
+            for placement in [
+                HgvsPlacement::Spans,
+                HgvsPlacement::Exonic { in_frame: true },
+                HgvsPlacement::Intronic { offset: 2 },
+            ] {
+                input.hgvs_placement = Some(placement);
+                assert!(evaluate_pm1(&input, &config).met, "{term:?} {placement:?}");
+            }
+        }
+        // A term PM1 never reads has nothing to explain.
+        let mut frameshift = hotspot(Consequence::FrameshiftVariant);
+        frameshift.hgvs_placement = Some(HgvsPlacement::Intronic { offset: 8 });
+        let result = evaluate_pm1(&frameshift, &config);
+        assert!(!result.met);
+        assert!(result.summary.contains("missense and in-frame"));
+        assert!(result.details.get("hgvs_placement").is_none());
     }
 
     #[test]

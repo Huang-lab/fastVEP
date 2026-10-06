@@ -12,6 +12,20 @@ pub mod pvs1;
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
 use crate::types::{EvidenceCriterion, EvidenceStrength};
+use fastvep_core::HgvsPlacement;
+
+/// How a criterion reports where HGVS placed the change, in its `details`.
+pub(crate) fn placement_detail(placement: HgvsPlacement) -> serde_json::Value {
+    match placement {
+        HgvsPlacement::Intronic { offset } => {
+            serde_json::json!({ "kind": "intronic", "offset": offset })
+        }
+        HgvsPlacement::Exonic { in_frame } => {
+            serde_json::json!({ "kind": "exonic", "in_frame": in_frame })
+        }
+        HgvsPlacement::Spans => serde_json::json!({ "kind": "spans" }),
+    }
+}
 
 /// Evaluate all 28 ACMG-AMP criteria and return the full list.
 ///

@@ -126,6 +126,48 @@ fn resolve_readthrough_selenocysteine(peptide: &mut [u8], cds: &[u8], table: &Co
     }
 }
 
+/// Where a genomic span sits against a transcript's exons and introns. See
+/// [`Transcript::span_site`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpanSite {
+    /// Wholly inside one exon.
+    Exon,
+    /// Wholly inside one intron. `offset` is the signed distance from the exon
+    /// boundary of the nearest base the span covers: `+N` counted from the
+    /// donor, `-N` from the acceptor.
+    Intron { offset: i64 },
+    /// Anything else: it reaches an exon and an intron, crosses an exon between
+    /// two introns, covers a whole intron, or does not touch the transcript.
+    Spans,
+}
+
+/// One intron and the exon boundaries on either side of it.
+struct IntronBounds {
+    start: u64,
+    end: u64,
+    /// Genomic position of the last base of the upstream exon.
+    donor: u64,
+    /// Genomic position of the first base of the downstream exon.
+    acceptor: u64,
+    strand: Strand,
+}
+
+impl IntronBounds {
+    /// The signed offset of a position inside this intron: `+N` from the donor
+    /// when that is the nearer boundary, `-N` from the acceptor otherwise.
+    fn offset_of(&self, pos: u64) -> i64 {
+        let (from_donor, from_acceptor) = match self.strand {
+            Strand::Forward => (pos - self.donor, self.acceptor - pos),
+            Strand::Reverse => (self.donor - pos, pos - self.acceptor),
+        };
+        if from_donor <= from_acceptor {
+            from_donor as i64
+        } else {
+            -(from_acceptor as i64)
+        }
+    }
+}
+
 impl Transcript {
     /// Whether this transcript is protein-coding.
     pub fn is_coding(&self) -> bool {
@@ -405,15 +447,137 @@ impl Transcript {
     /// display form, 3'-shifted, so the offset can be shifted away entirely.
     pub fn intronic_offset_covered(&self, start: u64, end: u64) -> Option<i64> {
         let (lo, hi) = (start.min(end), start.max(end));
-        let ends = (
-            self.genomic_to_intronic_cdna(lo).map(|(_, off)| off),
-            self.genomic_to_intronic_cdna(hi).map(|(_, off)| off),
-        );
-        match ends {
+        let low = self.intronic_offset_at(lo);
+        // One base reads the same at both ends, and almost every variant is one.
+        let high = if hi == lo {
+            low
+        } else {
+            self.intronic_offset_at(hi)
+        };
+        match (low, high) {
             (None, None) => None,
             (None, Some(o)) | (Some(o), None) => Some(o.signum()),
             (Some(x), Some(y)) => Some(if x.abs() <= y.abs() { x } else { y }),
         }
+    }
+
+    /// Where a genomic span sits against the exons and introns of this
+    /// transcript, for a caller that needs to know whether it is *wholly* inside
+    /// one of them.
+    ///
+    /// [`Self::intronic_offset_covered`] cannot say: it reads `+1` for a span
+    /// that runs from an exon into an intron and the nearer end's offset for one
+    /// that crosses an exon between two introns, and it reads `None` for both a
+    /// span inside an exon and one that covers a whole intron. This separates
+    /// the three outcomes a criterion has to tell apart. An insertion is the
+    /// span of the two bases it sits between, so one that sits on an exon
+    /// boundary is [`SpanSite::Spans`].
+    ///
+    /// Reads the exons in the order they are stored, as the other per-allele
+    /// helpers do, and allocates nothing.
+    pub fn span_site(&self, start: u64, end: u64) -> SpanSite {
+        let (lo, hi) = (start.min(end), start.max(end));
+        if self.exons.iter().any(|e| e.start <= lo && hi <= e.end) {
+            return SpanSite::Exon;
+        }
+        match self.introns().find(|i| i.start <= lo && hi <= i.end) {
+            Some(intron) => {
+                let (a, b) = (intron.offset_of(lo), intron.offset_of(hi));
+                SpanSite::Intron {
+                    offset: if a.abs() <= b.abs() { a } else { b },
+                }
+            }
+            None => SpanSite::Spans,
+        }
+    }
+
+    /// Whether a change touches the first base of an exon or the last three, for
+    /// an exon that has a splice site on that side.
+    ///
+    /// These are the positions Walker 2023 (ClinGen SVI Splicing Subgroup)
+    /// excludes from BP7, because SpliceAI is known to miss splice impact there.
+    /// The first base of a transcript's first exon and the last bases of its last
+    /// are not next to a splice site, so they are not edges. Counted in
+    /// transcript order, so on the reverse strand the first base of an exon is
+    /// its higher coordinate.
+    pub fn touches_splice_exon_edge(&self, start: u64, end: u64) -> bool {
+        let (lo, hi) = (start.min(end), start.max(end));
+        let lowest = self.exons.iter().map(|e| e.start).min().unwrap_or(0);
+        let highest = self.exons.iter().map(|e| e.end).max().unwrap_or(0);
+        self.exons.iter().any(|exon| {
+            // The transcript's own first exon has no acceptor and its last no
+            // donor; which of the outermost exons that is depends on the strand.
+            let (has_acceptor, has_donor) = match self.strand {
+                Strand::Forward => (exon.start != lowest, exon.end != highest),
+                Strand::Reverse => (exon.end != highest, exon.start != lowest),
+            };
+            let (first_base, final_three) = match self.strand {
+                Strand::Forward => (
+                    (exon.start, exon.start),
+                    (exon.end.saturating_sub(2).max(exon.start), exon.end),
+                ),
+                Strand::Reverse => (
+                    (exon.end, exon.end),
+                    (exon.start, (exon.start + 2).min(exon.end)),
+                ),
+            };
+            let overlaps = |(a, b): (u64, u64)| lo <= b && a <= hi;
+            (has_acceptor && overlaps(first_base)) || (has_donor && overlaps(final_three))
+        })
+    }
+
+    /// The signed distance from `pos` to the nearest exon boundary of the intron
+    /// it sits in, `None` for a position in no intron.
+    ///
+    /// The same number [`Self::genomic_to_intronic_cdna`] returns beside the cDNA
+    /// anchor, without the anchor: that call maps the boundary through the
+    /// spliced coordinates and, like every accessor that sorts, allocates doing
+    /// it - per end, per allele, per overlapping transcript, to produce a value
+    /// the only caller here then throws away.
+    fn intronic_offset_at(&self, pos: u64) -> Option<i64> {
+        self.introns()
+            .find(|i| i.start <= pos && pos <= i.end)
+            .map(|i| i.offset_of(pos))
+    }
+
+    /// The introns of this transcript.
+    ///
+    /// Adjacent exons bound one intron, whichever way the list runs, so pairing
+    /// them directly - rather than through `sorted_exons` - is what keeps the
+    /// callers allocation-free. The cost is the invariant that the list is
+    /// ascending or descending, asserted here and shared with
+    /// `fastvep-consequence`'s splice code, which makes the same bargain for the
+    /// same reason (`gff.rs` stores exons in transcript order, which is one of
+    /// the two). Which exon is the donor side is the strand's to say, not the
+    /// list's: the lower exon is upstream on the forward strand and downstream on
+    /// the reverse.
+    fn introns(&self) -> impl Iterator<Item = IntronBounds> + '_ {
+        debug_assert!(
+            self.exons.windows(2).all(|p| p[0].start <= p[1].start)
+                || self.exons.windows(2).all(|p| p[0].start >= p[1].start),
+            "exons of {} are neither ascending nor descending",
+            self.stable_id
+        );
+        self.exons.windows(2).filter_map(move |pair| {
+            let (lower, upper) = if pair[0].start <= pair[1].start {
+                (&pair[0], &pair[1])
+            } else {
+                (&pair[1], &pair[0])
+            };
+            let (start, end) = (lower.end + 1, upper.start.checked_sub(1)?);
+            let (donor, acceptor) = match self.strand {
+                Strand::Forward => (lower.end, upper.start),
+                Strand::Reverse => (upper.start, lower.end),
+            };
+            // A transcript with overlapping exons yields start > end.
+            (start <= end).then_some(IntronBounds {
+                start,
+                end,
+                donor,
+                acceptor,
+                strand: self.strand,
+            })
+        })
     }
 
     /// Get the genomic boundaries (start, end) of the intron containing the given position.
@@ -758,6 +922,135 @@ mod tests {
         assert_eq!(tr.intron_at(1500), Some((0, 2)));
         assert_eq!(tr.intron_at(3000), Some((1, 2)));
         assert_eq!(tr.intron_at(1100), None); // exon
+    }
+
+    /// The three-exon fixture read the other way round: the same coordinates, on
+    /// the reverse strand, with the exons stored in transcript order, which is
+    /// descending. Exon 1 is 4000-5000, exon 2 2000-2300, exon 3 1000-1200.
+    fn reverse_test_transcript() -> Transcript {
+        let mut tr = make_test_transcript();
+        tr.strand = Strand::Reverse;
+        tr.gene.strand = Strand::Reverse;
+        tr.exons.reverse();
+        for (i, e) in tr.exons.iter_mut().enumerate() {
+            e.strand = Strand::Reverse;
+            e.rank = i as u32 + 1;
+        }
+        tr
+    }
+
+    /// A reverse-strand transcript whose exons are stored ascending, as several
+    /// fixtures across the workspace build them, reads the same as one stored in
+    /// transcript order: which exon is the donor side is the strand's to say.
+    #[test]
+    fn the_exon_order_in_the_list_does_not_change_what_the_helpers_report() {
+        let descending = reverse_test_transcript();
+        let mut ascending = descending.clone();
+        ascending.exons.reverse();
+        for pos in (900..5100).step_by(7) {
+            assert_eq!(
+                ascending.intronic_offset_at(pos),
+                descending.intronic_offset_at(pos),
+                "{pos}"
+            );
+            assert_eq!(
+                ascending.touches_splice_exon_edge(pos, pos),
+                descending.touches_splice_exon_edge(pos, pos),
+                "{pos}"
+            );
+        }
+        assert_eq!(
+            ascending.span_site(3999, 3999),
+            descending.span_site(3999, 3999)
+        );
+    }
+
+    /// The offset the allocation-free lookup reports is the one
+    /// `genomic_to_intronic_cdna` always did, base for base, on both strands.
+    #[test]
+    fn the_allocation_free_intronic_offset_agrees_with_the_mapping_it_replaces() {
+        for tr in [make_test_transcript(), reverse_test_transcript()] {
+            for pos in 900..5100 {
+                assert_eq!(
+                    tr.intronic_offset_at(pos),
+                    tr.genomic_to_intronic_cdna(pos).map(|(_, off)| off),
+                    "strand {:?}, position {pos}",
+                    tr.strand
+                );
+            }
+        }
+    }
+
+    /// What a span is, against the exons and introns, on both strands. Introns
+    /// are 1201-1999 and 2301-3999, whose first bases are `+1` from the exon
+    /// above them in the forward transcript and `-1` from the exon below.
+    #[test]
+    fn a_span_is_inside_an_exon_inside_an_intron_or_neither() {
+        let fwd = make_test_transcript();
+        assert_eq!(fwd.span_site(1100, 1150), SpanSite::Exon);
+        assert_eq!(fwd.span_site(1300, 1310), SpanSite::Intron { offset: 100 });
+        // The nearer end decides inside one intron: 1990 is -10 from exon 2.
+        assert_eq!(fwd.span_site(1500, 1990), SpanSite::Intron { offset: -10 });
+        // A single base against a boundary.
+        assert_eq!(fwd.span_site(1201, 1201), SpanSite::Intron { offset: 1 });
+        assert_eq!(fwd.span_site(1999, 1999), SpanSite::Intron { offset: -1 });
+        // An exon and an intron, an exon between two introns, a whole intron,
+        // an insertion sitting on a boundary, and a change off the transcript.
+        assert_eq!(fwd.span_site(1195, 1205), SpanSite::Spans);
+        assert_eq!(fwd.span_site(1990, 2310), SpanSite::Spans);
+        assert_eq!(fwd.span_site(1100, 2100), SpanSite::Spans);
+        assert_eq!(fwd.span_site(1200, 1201), SpanSite::Spans);
+        assert_eq!(fwd.span_site(10, 20), SpanSite::Spans);
+        // An insertion is its two flanking bases, whichever order they arrive in.
+        assert_eq!(fwd.span_site(1305, 1304), SpanSite::Intron { offset: 104 });
+
+        let rev = reverse_test_transcript();
+        assert_eq!(rev.span_site(4100, 4200), SpanSite::Exon);
+        // Intron 1 is 2301-3999, entered from exon 1 (4000-5000) at 3999.
+        assert_eq!(rev.span_site(3999, 3999), SpanSite::Intron { offset: 1 });
+        assert_eq!(rev.span_site(2301, 2301), SpanSite::Intron { offset: -1 });
+        assert_eq!(rev.span_site(3900, 3910), SpanSite::Intron { offset: 90 });
+        assert_eq!(rev.span_site(3990, 4005), SpanSite::Spans);
+        // 2310 is -10 from exon 2 and 3995 is +5 from exon 1: the nearer end.
+        assert_eq!(rev.span_site(2310, 3995), SpanSite::Intron { offset: 5 });
+    }
+
+    /// Walker 2023: the first base of an exon and its last three, where there is
+    /// a splice site on that side. Exon 2 here is 2000-2300 and has one on each.
+    #[test]
+    fn the_first_base_and_last_three_of_an_exon_are_its_splice_edges() {
+        let fwd = make_test_transcript();
+        let edge = |p: u64| fwd.touches_splice_exon_edge(p, p);
+        assert!(edge(2000), "first base");
+        assert!(!edge(2001), "second base is not an edge");
+        assert!(!edge(2297), "fourth from the end is not an edge");
+        assert!(edge(2298) && edge(2299) && edge(2300), "last three");
+        // The first exon has no acceptor, the last no donor: their outer ends
+        // are not next to a splice site.
+        assert!(!edge(1000) && !edge(1001), "first base of the first exon");
+        assert!(
+            edge(1198) && edge(1200),
+            "last bases of the first exon have a donor"
+        );
+        assert!(!edge(5000) && !edge(4998), "last bases of the last exon");
+        assert!(edge(4000), "first base of the last exon has an acceptor");
+        // A span counts if any base of it does.
+        assert!(fwd.touches_splice_exon_edge(2290, 2298));
+        assert!(!fwd.touches_splice_exon_edge(2100, 2200));
+
+        // Reverse strand: transcript order puts an exon's first base at its
+        // higher coordinate. Exon 2 is 2000-2300 again.
+        let rev = reverse_test_transcript();
+        let edge = |p: u64| rev.touches_splice_exon_edge(p, p);
+        assert!(edge(2300), "first base, transcript order");
+        assert!(!edge(2299));
+        assert!(
+            edge(2000) && edge(2001) && edge(2002),
+            "last three, transcript order"
+        );
+        assert!(!edge(2003));
+        assert!(!edge(5000), "first base of the first exon");
+        assert!(!edge(1000), "last base of the last exon");
     }
 
     #[test]
