@@ -27,7 +27,7 @@ pub fn combine(
 /// Bayesian model, and where they disagree the SVI's own analysis is that the
 /// table has gaps. The clearest is a lone PVS1: 8 points, squarely inside the
 /// Likely Pathogenic band, but no row of Table 5 matches it, so the table gives
-/// Uncertain Significance. Run v10 had **2,319 truth-pathogenic variants land in
+/// Uncertain Significance. Run v10 had **2,319 ClinVar-Pathogenic variants land in
 /// VUS on `PVS1` and nothing else** - a nonsense or frameshift variant in a
 /// haploinsufficient disease gene, which is close to the least uncertain thing a
 /// classifier sees.
@@ -69,7 +69,7 @@ pub fn combine(
 /// So the two schemes are used where each is the safer one. The point system's
 /// documented gap is on the pathogenic side: a lone PVS1 is 8 points, inside
 /// Likely Pathogenic, but matches no row of Table 5 and so returns Uncertain -
-/// which put 2,319 truth-pathogenic variants in VUS in run v10. Its divergence
+/// which put 2,319 ClinVar-Pathogenic variants in VUS in run v10. Its divergence
 /// on the benign side runs the other way, toward calling variants benign on
 /// thinner evidence, and a missed diagnosis is not the same kind of error as a
 /// variant left uncertain.
@@ -843,7 +843,7 @@ mod tests {
 
     #[test]
     fn lone_pvs1_is_likely_pathogenic_under_points_and_vus_under_the_table() {
-        // The disagreement that motivated the change. 2,319 truth-pathogenic
+        // The disagreement that motivated the change. 2,319 ClinVar-Pathogenic
         // variants sat in VUS on exactly this signature in run v10.
         let criteria = vec![met(
             "PVS1",

@@ -11,7 +11,7 @@ scripts.
 ## Pipeline
 
 ```bash
-# 1. Build the truth set from a ClinVar VCF (one-time)
+# 1. Extract ClinVar's 2-star+ classifications from a ClinVar VCF (one-time)
 python3 01_extract_clinvar_2star.py \
     /path/to/clinvar.vcf.gz \
     ../../../data/benchmark/
@@ -35,7 +35,7 @@ python3 generate_figures.py
 
 | File | Purpose |
 |------|---------|
-| `01_extract_clinvar_2star.py` | Filter ClinVar `clinvar.vcf.gz` → 2-star+ truth VCF + parallel TSV |
+| `01_extract_clinvar_2star.py` | Filter ClinVar `clinvar.vcf.gz` → 2-star+ VCF + parallel TSV of ClinVar's classifications (`clinvar_2star_labels.tsv`, formerly `clinvar_2star_truth.tsv`) |
 | `03_evaluate_concordance.py`  | Stream the bgzipped VCF output of `fastvep annotate --acmg` and emit concordance matrix / per-chrom / per-consequence / per-criterion CSVs |
 | `08_diff_calls.py`            | Diff two runs' ACMG calls variant by variant into a `call_changes_vN_to_vM.tsv`, reusing `03`'s own `pick_csq` so both describe the same transcript |
 | `generate_figures.py`         | Read the v7 outputs at `data/benchmark/output_v7/` and emit 6 PDF + PNG panels (incl. v1 vs v7 comparisons) |
@@ -105,7 +105,7 @@ unit tests had not caught. Each is fixed with a regression test.
 8. **Indel allele matching**. VCF stores REF=`C`/ALT=`CT` for an
    insertion; VEP CSQ Allele uses the inserted-base form (`T`) and `-`
    for deletions. The original script matched raw VCF ALT against CSQ
-   Allele and so missed all 48,539 indels in the truth (counted as
+   Allele and so missed all 48,539 indels in the ClinVar 2-star+ set (counted as
    NoCall). Fix: `vep_allele(ref, alt)` strips the leading common
    prefix.
 

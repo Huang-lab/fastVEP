@@ -58,7 +58,7 @@ TRACKED_CRITERIA = (
 )
 
 
-def truth_bucket(clnsig):
+def clinvar_bucket(clnsig):
     """Collapse a CLNSIG string to pathogenic / benign / uncertain.
 
     Checked in this order because `Likely_pathogenic` contains "pathogenic"
@@ -119,7 +119,7 @@ def score(vcf_path):
                 continue
             rec = dict(zip(csq_fields, vals))
 
-            truth = truth_bucket(info.get("CLNSIG", ""))
+            label = clinvar_bucket(info.get("CLNSIG", ""))
             called = call_bucket(rec.get("ACMG", ""))
             codes = set(c for c in rec.get("ACMG_CRITERIA", "").split("&") if c)
 
@@ -127,16 +127,16 @@ def score(vcf_path):
             for code in codes:
                 if code in TRACKED_CRITERIA:
                     m["fired_" + code] += 1
-            if truth != "uncertain" and called != "uncertain":
-                m["same_direction" if truth == called else "opposite_direction"] += 1
-            if truth == "pathogenic":
-                m["truth_pathogenic"] += 1
+            if label != "uncertain" and called != "uncertain":
+                m["same_direction" if label == called else "opposite_direction"] += 1
+            if label == "pathogenic":
+                m["clinvar_pathogenic"] += 1
                 if called == "pathogenic":
                     m["recall_pathogenic"] += 1
                 elif called == "benign":
                     m["false_benign"] += 1
-            elif truth == "benign":
-                m["truth_benign"] += 1
+            elif label == "benign":
+                m["clinvar_benign"] += 1
                 if called == "benign":
                     m["recall_benign"] += 1
                 elif called == "pathogenic":
@@ -209,8 +209,8 @@ def main():
             row = {"key": key, "value": value, "setting": label, **dict(m)}
             results.append(row)
             print(
-                f"    path_recall {pct(m['recall_pathogenic'], m['truth_pathogenic']):5.1f}%"
-                f"  benign_recall {pct(m['recall_benign'], m['truth_benign']):5.1f}%"
+                f"    path_recall {pct(m['recall_pathogenic'], m['clinvar_pathogenic']):5.1f}%"
+                f"  benign_recall {pct(m['recall_benign'], m['clinvar_benign']):5.1f}%"
                 f"  false_path {m['false_pathogenic']:>5}"
                 f"  false_benign {m['false_benign']:>5}"
                 f"  opposite {m['opposite_direction']:>5}",

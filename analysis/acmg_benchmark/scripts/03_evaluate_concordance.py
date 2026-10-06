@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Evaluate ACMG classifier concordance against ClinVar 2-star+ truth.
+Evaluate ACMG classifier concordance against ClinVar's 2-star+ classifications.
+
+Those classifications are a reference, not ground truth: ClinVar assigns some of
+them partly from the same kinds of evidence the classifier reads, so agreement is
+partly circular. "Exact", "same-direction" and "opposite" below mean agreement
+with ClinVar's classification and nothing stronger.
 
 Inputs
-  --truth        TSV: chrom\tpos\tref\talt\tgene\tclnsig\tnormalized_class\treview_stars\trcv
+  --labels       TSV (alias --truth): chrom\tpos\tref\talt\tgene\tclnsig\tnormalized_class\treview_stars\trcv
   --predictions  fastvep --output-format vcf (.vcf.gz / .vcf / .vcf.bgz)
 
 The VCF stores annotations in INFO/CSQ as a comma-separated list of
@@ -12,11 +17,11 @@ the field order. We pick the first CSQ entry whose ACMG field is
 non-empty (with `--pick` this is usually the canonical transcript).
 
 Outputs (under --out)
-  concordance_matrix.csv             5×6 (truth × predicted+NoCall)
+  concordance_matrix.csv             5×6 (ClinVar classification × predicted+NoCall)
   concordance_by_chrom.csv           per-chromosome concordance
   concordance_by_consequence.csv     top consequences × class concordance
   concordance_summary.txt            full text report
-  criterion_firing_rates.csv         per-criterion fire rates by truth class
+  criterion_firing_rates.csv         per-criterion fire rates by ClinVar class
   rule_distribution.csv              triggered-rule frequencies
   discrepancies.tsv                  opposite-direction calls (top 10k)
 """
@@ -35,14 +40,14 @@ from collections import defaultdict, Counter
 CLASSES = ["Pathogenic", "Likely_pathogenic", "VUS", "Likely_benign", "Benign"]
 
 
-def load_truth(path):
-    truth = {}
+def load_labels(path):
+    labels = {}
     with open(path) as f:
         rdr = csv.DictReader(f, delimiter="\t")
         for row in rdr:
             key = (row["chrom"], row["pos"], row["ref"], row["alt"])
-            truth[key] = row
-    return truth
+            labels[key] = row
+    return labels
 
 
 def open_text(path):
@@ -187,13 +192,19 @@ def pick_csq(entries: list[list[str]], csq_idx: dict[str, int]):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--truth", required=True)
+    p.add_argument(
+        "--labels",
+        "--truth",
+        dest="labels",
+        required=True,
+        help="ClinVar 2-star+ classifications TSV (--truth is the old name)",
+    )
     p.add_argument("--predictions", required=True)
     p.add_argument("--out", default="output")
     args = p.parse_args()
 
-    truth = load_truth(args.truth)
-    print(f"Loaded {len(truth):,} truth records")
+    labels = load_labels(args.labels)
+    print(f"Loaded {len(labels):,} ClinVar 2-star+ records")
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -210,25 +221,25 @@ def main():
 
     for chrom, pos, ref, alt, csq_idx, entries in variant_records(args.predictions):
         key = (chrom, pos, ref, alt)
-        if key not in truth:
+        if key not in labels:
             continue
-        t = truth[key]
-        tc_truth = t["normalized_class"]
+        t = labels[key]
+        tc_label = t["normalized_class"]
         acmg, criteria_str, top_csq, _canonical = pick_csq(entries, csq_idx)
         if not acmg:
-            cm[tc_truth]["NoCall"] += 1
-            cm_chrom[chrom][tc_truth]["NoCall"] += 1
+            cm[tc_label]["NoCall"] += 1
+            cm_chrom[chrom][tc_label]["NoCall"] += 1
             continue
         pc = class_label(acmg) or "NoCall"
-        cm[tc_truth][pc] += 1
-        cm_chrom[chrom][tc_truth][pc] += 1
-        cm_consequence[top_csq][tc_truth][pc] += 1
+        cm[tc_label][pc] += 1
+        cm_chrom[chrom][tc_label][pc] += 1
+        cm_consequence[top_csq][tc_label][pc] += 1
         # ACMG_CRITERIA is "&"-joined inside CSQ (because "," is a record
         # separator in INFO and ";" terminates INFO entries). Each token is
         # a met criterion code (e.g. BP4_Moderate, PVS1, PM2_Supporting).
         criteria = [c for c in criteria_str.split("&") if c] if criteria_str else []
         for c in criteria:
-            criterion_fires[tc_truth][c] += 1
+            criterion_fires[tc_label][c] += 1
         # Triggered-rule distribution: derive from the unique combination.
         # We don't get the named rule from VCF output; sort criteria as a
         # surrogate so identical rule signatures group together.
@@ -239,19 +250,19 @@ def main():
         # An "opposite-direction" call flips benign-side <-> pathogenic-side:
         # these are the review-critical errors and must ALWAYS be logged in
         # full (they feed 04_build_md_review_table.py). "Soft" discrepancies
-        # (a directional truth landing on VUS / NoCall) are far more numerous
+        # (a directional ClinVar classification landing on VUS / NoCall) are far more numerous
         # and only the first 10k are kept — but they must never crowd out an
         # opposite-direction call, which the old single 10k cap allowed once
         # the soft calls filled the buffer before the end of the genome.
         is_opposite = (
-            tc_truth in ("Pathogenic", "Likely_pathogenic")
+            tc_label in ("Pathogenic", "Likely_pathogenic")
             and pc in ("Benign", "Likely_benign")
         ) or (
-            tc_truth in ("Benign", "Likely_benign")
+            tc_label in ("Benign", "Likely_benign")
             and pc in ("Pathogenic", "Likely_pathogenic")
         )
         is_soft = (
-            tc_truth in ("Pathogenic", "Likely_pathogenic")
+            tc_label in ("Pathogenic", "Likely_pathogenic")
             and pc in ("VUS", "NoCall")
         )
         if is_opposite or (is_soft and n_soft_disc < 10000):
@@ -259,17 +270,17 @@ def main():
                 n_soft_disc += 1
             discrepancies.append((
                 chrom, pos, ref, alt, t["gene"], t["review_stars"],
-                tc_truth, pc, top_csq, rule, ";".join(criteria)
+                tc_label, pc, top_csq, rule, ";".join(criteria)
             ))
 
-    n_truth = len(truth)
-    n_unmatched = n_truth - len(matched)
+    n_labels = len(labels)
+    n_unmatched = n_labels - len(matched)
 
     # ── concordance_matrix.csv ──
     matrix_path = out_dir / "concordance_matrix.csv"
     with matrix_path.open("w") as f:
         w = csv.writer(f)
-        w.writerow(["truth"] + CLASSES + ["NoCall"])
+        w.writerow(["clinvar"] + CLASSES + ["NoCall"])
         for tcl in CLASSES:
             w.writerow([tcl] + [cm[tcl][pc] for pc in CLASSES + ["NoCall"]])
 
@@ -277,7 +288,7 @@ def main():
     by_chrom_path = out_dir / "concordance_by_chrom.csv"
     with by_chrom_path.open("w") as f:
         w = csv.writer(f)
-        w.writerow(["chrom", "truth", "n", "exact", "same_dir", "opposite", "no_call"])
+        w.writerow(["chrom", "clinvar", "n", "exact", "same_dir", "opposite", "no_call"])
         for chrom in sorted(cm_chrom.keys(), key=lambda x: (len(x), x)):
             for tcl in CLASSES:
                 row = cm_chrom[chrom][tcl]
@@ -304,7 +315,7 @@ def main():
     by_csq_path = out_dir / "concordance_by_consequence.csv"
     with by_csq_path.open("w") as f:
         w = csv.writer(f)
-        w.writerow(["consequence", "truth"] + CLASSES + ["NoCall", "n"])
+        w.writerow(["consequence", "clinvar"] + CLASSES + ["NoCall", "n"])
         for csq, mat in consq_counts:
             for tcl in CLASSES:
                 row = mat[tcl]
@@ -335,7 +346,7 @@ def main():
     # ── discrepancies.tsv ──
     disc_path = out_dir / "discrepancies.tsv"
     with disc_path.open("w") as f:
-        f.write("chrom\tpos\tref\talt\tgene\tstars\ttruth\tpredicted\tconsequence\trule\tmet_criteria\n")
+        f.write("chrom\tpos\tref\talt\tgene\tstars\tclinvar\tpredicted\tconsequence\trule\tmet_criteria\n")
         for d in discrepancies:
             f.write("\t".join(str(x) for x in d) + "\n")
 
@@ -345,11 +356,11 @@ def main():
     with summary_path.open("w") as f:
         f.write("ClinVar 2-star+ concordance against fastvep ACMG classifier (real data)\n")
         f.write("=" * 75 + "\n\n")
-        f.write(f"Truth records:       {n_truth:,}\n")
+        f.write(f"ClinVar records:     {n_labels:,}\n")
         f.write(f"Classified:          {n_classified:,}\n")
-        f.write(f"Truth not annotated: {n_unmatched:,}\n\n")
+        f.write(f"ClinVar not annotated: {n_unmatched:,}\n\n")
         f.write("Per-class breakdown (entire dataset):\n")
-        f.write(f"{'truth':<22} {'n':>8} {'exact':>8} {'same_dir':>10} {'opposite':>10} {'no_call':>8}\n")
+        f.write(f"{'clinvar':<22} {'n':>8} {'exact':>8} {'same_dir':>10} {'opposite':>10} {'no_call':>8}\n")
         for tcl in CLASSES:
             row = cm[tcl]
             n = sum(row.values())
@@ -381,7 +392,7 @@ def main():
         for rule, n in rule_dist.most_common(25):
             f.write(f"  {n:>8}  {rule}\n")
 
-        f.write("\nCriterion fire counts by truth class:\n")
+        f.write("\nCriterion fire counts by ClinVar class:\n")
         f.write(f"{'criterion':<22}")
         for tcl in CLASSES:
             f.write(f"  {tcl:>22}")

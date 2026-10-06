@@ -23,7 +23,7 @@ OUT_DIR = Path(sys.argv[2] if len(sys.argv) > 2 else
                REPO_ROOT / "data/benchmark")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 OUT_VCF = OUT_DIR / "clinvar_2star.vcf"
-OUT_TSV = OUT_DIR / "clinvar_2star_truth.tsv"
+OUT_TSV = OUT_DIR / "clinvar_2star_labels.tsv"
 
 # ClinVar review status → star level
 def review_stars(clnrevstat: str) -> int:

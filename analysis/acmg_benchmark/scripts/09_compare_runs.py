@@ -123,7 +123,7 @@ def reviewed_still_opposite(run_dir: Path, reviewed: set[tuple[str, str, str, st
     with path.open() as f:
         for row in csv.DictReader(f, delimiter="\t"):
             pc = row["predicted"]
-            tc = row["truth"] if "truth" in row else row.get("clinvar_class", "")
+            tc = row.get("clinvar") or row.get("truth") or row.get("clinvar_class", "")
             opposite = (tc in ("Pathogenic", "Likely_pathogenic") and pc in ("Benign", "Likely_benign")) or (
                 tc in ("Benign", "Likely_benign") and pc in ("Pathogenic", "Likely_pathogenic")
             )
@@ -167,20 +167,20 @@ def attribute(base_calls: dict, run_calls: dict, labels: dict) -> list[dict]:
         gained = ",".join(sorted(b["criteria"] - a["criteria"])) or "-"
         g = groups[f"{lost} -> {gained}"]
         g["changed"] += 1
-        truth = labels.get(key)
+        label = labels.get(key)
         ca, cb = label_of(a["acmg"]), label_of(b["acmg"])
-        if truth is None or ca is None or cb is None:
+        if label is None or ca is None or cb is None:
             continue
-        before, after = abs(RANK[ca] - RANK[truth]), abs(RANK[cb] - RANK[truth])
+        before, after = abs(RANK[ca] - RANK[label]), abs(RANK[cb] - RANK[label])
         if after < before:
             g["toward"] += 1
         elif after > before:
             g["away"] += 1
-        pathogenic_label = truth in ("Pathogenic", "Likely_pathogenic")
-        benign_label = truth in ("Benign", "Likely_benign")
+        pathogenic_label = label in ("Pathogenic", "Likely_pathogenic")
+        benign_label = label in ("Benign", "Likely_benign")
         g["label_pathogenic"] += pathogenic_label
         g["label_benign"] += benign_label
-        g["label_vus"] += truth == "VUS"
+        g["label_vus"] += label == "VUS"
         # Opposite-direction before and after, the review-critical count.
         if (pathogenic_label and RANK[ca] < 0) or (benign_label and RANK[ca] > 0):
             g["opposite_before"] += 1

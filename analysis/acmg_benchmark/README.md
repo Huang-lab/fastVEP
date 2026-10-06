@@ -23,7 +23,7 @@ input, a database or a bulk output, it belongs in `data/benchmark/`.**
 
 | Path | What |
 |---|---|
-| [`METHODS.md`](METHODS.md) | What the benchmark measures, how the truth set is built, what the numbers mean |
+| [`METHODS.md`](METHODS.md) | What the benchmark measures, how the ClinVar 2-star+ set is built, what the numbers mean (ClinVar's classifications are a reference, not ground truth) |
 | [`RUN_VERSIONS.md`](RUN_VERSIONS.md) | Per-run history: what changed between v1 and v27, with measured effect |
 | [`STATUS.md`](STATUS.md) | On-disk inventory - what is downloaded and built locally |
 | [`scripts/`](scripts/) | Everything executable, plus [its own README](scripts/README.md) |
@@ -41,13 +41,13 @@ instead. This directory is only about clinical concordance.
 # One-time: fetch sources (~30 GB, into data/benchmark/sa_sources/) and build databases
 bash analysis/acmg_benchmark/scripts/sa_sources/download_sa_sources.sh
 
-# One-time: build the truth set
+# One-time: extract ClinVar's 2-star+ classifications
 python3 analysis/acmg_benchmark/scripts/01_extract_clinvar_2star.py
 
 # Each run - the version string names the output directory
 bash analysis/acmg_benchmark/scripts/run_benchmark.sh v15
 
-# Or with a config, to measure one change against the same truth set
+# Or with a config, to measure one change against the same ClinVar 2-star+ set
 ACMG_CONFIG=analysis/acmg_benchmark/data/vcep_thresholds.toml \
   bash analysis/acmg_benchmark/scripts/run_benchmark.sh v17
 ```

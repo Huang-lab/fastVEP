@@ -13,14 +13,16 @@
 #
 # Inputs (all under data/benchmark/):
 #   clinvar_2star.vcf         ClinVar 2-star+ VCF, ~673k SNV/small-indel
-#   clinvar_2star_truth.tsv   truth table for concordance
+#   clinvar_2star_labels.tsv  ClinVar's 2-star+ classifications, the reference for concordance
+#                             (a reference, not ground truth; the file was called
+#                             clinvar_2star_truth.tsv, which is still read if the new name is absent)
 #   sa_db/                    built .osa/.osa2/.oga databases
 #   plus test_data/organisms/human/ for the FASTA + GFF3 + cache
 #
 # Outputs (data/benchmark/output_<version>/):
 #   clinvar_2star.fastvep.vcf.gz   annotation + ACMG, bgzipped
 #   concordance_summary.txt        headline metrics
-#   concordance_matrix.csv         truth x predicted
+#   concordance_matrix.csv         ClinVar classification x predicted
 #   concordance_by_chrom.csv, concordance_by_consequence.csv
 #   criterion_firing_rates.csv, rule_distribution.csv
 #   discrepancies.tsv              every non-exact call
@@ -45,7 +47,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 INPUT="${INPUT:-$ROOT/data/benchmark/clinvar_2star.vcf}"
-TRUTH="${TRUTH:-$ROOT/data/benchmark/clinvar_2star_truth.tsv}"
+# TRUTH is the old name of this variable and is still honoured.
+LABELS="${LABELS:-${TRUTH:-$ROOT/data/benchmark/clinvar_2star_labels.tsv}}"
+if [ ! -e "$LABELS" ] && [ -e "$ROOT/data/benchmark/clinvar_2star_truth.tsv" ]; then
+  LABELS="$ROOT/data/benchmark/clinvar_2star_truth.tsv"
+fi
 GFF3="${GFF3:-$ROOT/test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3}"
 FASTA="${FASTA:-$ROOT/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa}"
 SA_DIR="${SA_DIR:-$ROOT/data/benchmark/sa_db}"
@@ -77,7 +83,7 @@ if [ -n "$EXTRA_ARGS" ]; then
   set +f
 fi
 
-for f in "$INPUT" "$TRUTH" "$GFF3" "$FASTA" "$FASTVEP"; do
+for f in "$INPUT" "$LABELS" "$GFF3" "$FASTA" "$FASTVEP"; do
   [ -e "$f" ] || { echo "missing required input: $f" >&2; exit 1; }
 done
 [ -d "$SA_DIR" ] || { echo "missing SA database directory: $SA_DIR" >&2; exit 1; }
@@ -151,7 +157,7 @@ ls -la "$VCFGZ"
 
 echo "==> Computing concordance..."
 python3 "$SCRIPT_DIR/03_evaluate_concordance.py" \
-  --truth "$TRUTH" \
+  --labels "$LABELS" \
   --predictions "$VCFGZ" \
   --out "$OUT_DIR"
 

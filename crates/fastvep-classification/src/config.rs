@@ -337,7 +337,7 @@ pub struct AcmgConfig {
     /// row of Table 5 matches it, so the table returns Uncertain Significance.
     ///
     /// Measured on the ClinVar 2-star+ benchmark, run v10 put **2,319
-    /// truth-pathogenic variants in VUS on `PVS1` and nothing else** - nonsense
+    /// ClinVar-Pathogenic variants in VUS on `PVS1` and nothing else** - nonsense
     /// and frameshift variants in haploinsufficient disease genes.
     #[serde(default = "default_true")]
     pub use_point_system: bool,

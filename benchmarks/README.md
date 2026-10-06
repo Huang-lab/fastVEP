@@ -113,7 +113,7 @@ bash analysis/acmg_benchmark/scripts/sa_sources/download_sa_sources.sh
 #    (see scripts in analysis/acmg_benchmark/scripts/sa_sources/ - `build_gnomad_per_chrom.sh`,
 #    `build_spliceai_phylop.sh`, and `fastvep sa-build` for the rest).
 
-# 3. Generate the ClinVar 2-star+ truth set
+# 3. Extract the ClinVar 2-star+ classifications
 python3 analysis/acmg_benchmark/scripts/01_extract_clinvar_2star.py \
     data/benchmark/sa_sources/clinvar.vcf.gz \
     data/benchmark/

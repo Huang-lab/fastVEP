@@ -221,7 +221,7 @@ mod tests {
         //
         // Point system (the default): 8 points, inside the Likely Pathogenic
         // band. A frameshift in a haploinsufficient disease gene is not an
-        // uncertain finding, and run v10 had 2,319 truth-pathogenic variants
+        // uncertain finding, and run v10 had 2,319 ClinVar-Pathogenic variants
         // sitting in VUS on exactly this signature.
         assert_eq!(
             classify(&input, &AcmgConfig::default()).classification,

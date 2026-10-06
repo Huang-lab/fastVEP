@@ -1048,7 +1048,7 @@ mod tests {
     fn test_pvs1_survives_for_a_gene_clingen_has_not_curated() {
         // The v10 regression: SPAST, ABCB11, FLG and LAMB3 all cause disease
         // and are all absent from ClinGen GDV. Blocking on absence cost 1,497
-        // truth-pathogenic PVS1 firings.
+        // ClinVar-Pathogenic PVS1 firings.
         let mut input = constrained_frameshift("SPAST");
         input.omim = None;
         assert!(evaluate_pvs1(&input, &AcmgConfig::default()).met);

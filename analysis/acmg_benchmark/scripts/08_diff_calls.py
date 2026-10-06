@@ -65,7 +65,7 @@ def main():
     ap.add_argument("--new", required=True)
     ap.add_argument("--old-name", default="old")
     ap.add_argument("--new-name", default="new")
-    ap.add_argument("--truth")
+    ap.add_argument("--labels", "--truth", dest="labels", help="ClinVar 2-star+ classifications TSV (--truth is the old name)")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -79,8 +79,8 @@ def main():
     sys.stderr.write(f"  {len(new):,} variants\n")
 
     truth = {}
-    if args.truth:
-        with open(args.truth) as f:
+    if args.labels:
+        with open(args.labels) as f:
             for row in csv.DictReader(f, delimiter="\t"):
                 truth[(row["chrom"], row["pos"], row["ref"], row["alt"])] = row
 
