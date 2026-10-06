@@ -47,14 +47,29 @@ python3 analysis/acmg_benchmark/scripts/01_extract_clinvar_2star.py
 # Each run - the version string names the output directory
 bash analysis/acmg_benchmark/scripts/run_benchmark.sh v15
 
-# Or with a config, to measure one change against the same ClinVar 2-star+ set
+# Or with a config, to measure one change against the same ClinVar 2-star+ set.
+# A variant of a run is a run of its own, so it gets its own version name.
 ACMG_CONFIG=analysis/acmg_benchmark/data/vcep_thresholds.toml \
-  bash analysis/acmg_benchmark/scripts/run_benchmark.sh v17
+  bash analysis/acmg_benchmark/scripts/run_benchmark.sh v15_vcep
+
+# Any other `fastvep annotate` flag, the same way
+EXTRA_ARGS="--pick-order mane_plus_clinical,mane_select,canonical,appris,tsl,biotype,ccds,rank" \
+  bash analysis/acmg_benchmark/scripts/run_benchmark.sh v15_mpc
+
+# Any number of runs against a baseline, call by call
+python3 analysis/acmg_benchmark/scripts/09_compare_runs.py \
+  --baseline v15 --runs v15_vcep v15_mpc --out /tmp/v15_comparison
 ```
 
-The run script takes about 90 seconds to annotate 673,660 variants plus a couple
-of minutes to score, reuses an existing annotated VCF if one is present, and
-writes to `data/benchmark/output_v15/`.
+The run script takes about 2 minutes to annotate 673,660 variants plus a couple
+of minutes to score, and writes to `data/benchmark/output_v15/`.
+It records what produced the annotation in `run_provenance.txt` beside it: the
+flags, the hash of the binary and of every `--acmg-config`, which inputs were
+read and the commit.
+It reuses an existing annotated VCF only when the same binary, flags,
+configuration and inputs made it, and stops with exit code 3 otherwise, so a
+second run under a name already used cannot be scored against the first run's
+annotation.
 Record what changed, and its measured effect, in [`RUN_VERSIONS.md`](RUN_VERSIONS.md).
 
 To vary one threshold instead of one version, use the sweep harness rather than a

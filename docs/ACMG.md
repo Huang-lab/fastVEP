@@ -132,22 +132,29 @@ pm1_max_benign_in_window = 0   # Benign/likely-benign ClinVar missense tolerated
 
 # ── gnomAD v4 AN minimum (ClinGen SVI March 2024) ──
 min_an_for_frequency_criteria = 2000  # BA1/BS1 require AN ≥ this; below → NotEvaluated
+                                      # (BS2 only needs an AN to exist)
 
-# ── BS2 null-individual test (Richards 2015 "full penetrance ... at an early age") ──
-bs2_ar_min_hom = 2                      # Absolute floor on observed individuals with no
-                                        # functional copy (homozygotes, plus hemizygotes on
-                                        # a non-PAR sex-chromosome site)
-bs2_hom_prevalence_threshold = 1e-3     # BS2 fires only when the 95% lower bound on their
-                                        # frequency exceeds this prevalence bar, so the
-                                        # criterion scales with cohort size rather than with
-                                        # a bare count. Chosen by measurement, not convention
-                                        # - see "Choosing the BS2 prevalence bar" below.
+# ── BS2 (Richards 2015 "full penetrance ... at an early age") ──
+# Both branches hold a 95% lower bound on the frequency of the individuals the disorder
+# would affect against a maximum credible prevalence, so the criterion scales with cohort
+# size rather than with a bare count. Both bars were chosen by measurement, not convention
+# - see "Choosing the BS2 prevalence bar" below.
+bs2_ad_min_ac = 5                       # Dominant: absolute floor on carrier alleles
+bs2_ad_prevalence_threshold = 3e-4      # Dominant: the lower bound on the carrier frequency
+                                        # (AC - nhomalt individuals) must exceed this. 0
+                                        # switches the bar off and leaves the floor as the
+                                        # whole test
+bs2_ar_min_hom = 2                      # Recessive / X-linked: absolute floor on observed
+                                        # individuals with no functional copy (homozygotes,
+                                        # plus hemizygotes on a non-PAR sex-chromosome site)
+bs2_hom_prevalence_threshold = 1e-3     # Recessive / X-linked: the lower bound on their
+                                        # frequency must exceed this
 
 # NOTE: `bs2_ar_min_hom` is a belt-and-braces floor, not an active knob. A sweep of the
 # full benchmark found it inert at the default prevalence bar: values from 1 to 10 give
 # identical false-benign and opposite-direction counts, because the prevalence test
 # subsumes it. It is kept so that a config lowering the prevalence bar still cannot fire
-# BS2 on a single observation.
+# BS2 on a single observation. `bs2_ad_min_ac` is not inert: see "The dominant bar".
 
 # ── Genes where population frequencies cannot be trusted (Mandelker 2016, PMID 27228465) ──
 # BA1/BS1/BS2/PM2 all report NotEvaluated for these. Specifying the list in TOML REPLACES
@@ -206,7 +213,8 @@ use_clinvar_stars_as_ps4_proxy = false # Opt back into the legacy ClinVar-stars 
                                        # (true PS4 needs case-control statistics, so off by default)
 
 # ── Curated frequency-exception list ──
-# Ships with Ghosh 2018's nine BA1 exceptions plus three hypomorphic alleles.
+# Ships with Ghosh 2018's nine BA1 exceptions, three hypomorphic alleles and three
+# alleles the round-6 review named.
 # Specifying ba1_exceptions in TOML REPLACES the whole shipped list; include
 # the defaults alongside your additions if you want to keep them.
 #
@@ -319,14 +327,79 @@ Hence the 1e-3 default. It is a plain config value: a lab that weighs VUS burden
 heavily sets a smaller one, and a gene-specific prevalence from a VCEP specification should
 override it per gene once that table exists.
 
-Two related knobs were measured at the same time and found inert, which is worth knowing
-before spending effort on them:
+### The dominant bar
 
-- `bs2_ad_min_ac` (dominant branch) barely affects the final call. Raising it from 5 to 100
-  removes 45 BS2 firings on pathogenic truth but changes false-benign and
-  opposite-direction counts by zero. A criterion firing is not a criterion deciding.
-- `bs2_ar_min_hom` is fully subsumed by the prevalence test: 1 versus 10 gives identical
-  results. It is retained only as a floor for configs that lower the prevalence bar.
+The dominant branch used to fire at `AC >= bs2_ad_min_ac` (5), whatever the size of the cohort.
+Nine carriers among gnomAD v4's 1.4 million alleles is not "observed in a healthy adult" for a disorder with full penetrance at an early age, because that is the count a rare dominant disease produces.
+SNRNP200 p.Ser1087Leu, which ClinVar classifies Pathogenic, is the round-6 reviewer's case: nine carriers, and BS2 called it tolerated.
+
+The branch now asks the question the recessive branch asks.
+It counts carriers, `AC - nhomalt`, so that a homozygote counts once.
+It requires the 95% lower bound on their frequency to exceed `bs2_ad_prevalence_threshold`, and the floor as well.
+A dominant-only gene is decided in that branch alone.
+Master had no bar: a dominant-only variant that cleared the floor fired at once, and one below the floor that had a homozygote fell into the recessive branch and could be fired there.
+Neither can reach the recessive branch now, so a variant that clears the floor but not the bar cannot be fired by its homozygotes.
+
+Each row below is a whole run of the final classifier over the 673,660-variant benchmark ([`run_benchmark.sh`](../analysis/acmg_benchmark/scripts/run_benchmark.sh), one `ACMG_CONFIG` per row, the configurations in [`results/v37/configs`](../analysis/acmg_benchmark/results/v37/configs)), so the rows from "bar off" down differ in the BS2 setting alone.
+The master row is v36 and differs from the bar-off row by 534 calls that are the other changes of this round.
+The columns count calls in the same direction as ClinVar's 2-star+ classification, which is a reference and not ground truth.
+
+| Run | Exact | Same-direction | Opposite | P same | LP same | LB same | B same |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| v36 (master) | 425,328 | 522,542 | 59 | 51,796 | 6,750 | 66,046 | 111,965 |
+| bar off (floor 5) | 425,289 | 522,388 | 49 | 51,793 | 6,747 | 65,825 | 111,855 |
+| 3e-5 | 425,773 | 522,873 | 49 | 51,839 | 6,753 | 65,610 | 111,837 |
+| 1e-4 | 425,877 | 522,938 | 49 | 51,852 | 6,755 | 65,500 | 111,803 |
+| **3e-4 (default)** | 425,869 | 522,886 | 49 | 51,855 | 6,755 | 65,461 | 111,745 |
+| 1e-3 | 425,753 | 522,819 | 49 | 51,855 | 6,755 | 65,437 | 111,693 |
+| 3e-3 | 425,653 | 522,775 | 49 | 51,855 | 6,755 | 65,427 | 111,652 |
+
+Against the bar switched off, 3e-4 recovers 70 Pathogenic and Likely pathogenic calls (58,540 to 58,610 same-direction) and gives up 474 benign-direction ones (177,680 to 177,206), about 7 to 1.
+Nothing above 3e-4 recovers another pathogenic call, and every step above it only gives up more benign ones.
+Below it the recovery is incomplete: 58,592 at 3e-5 and 58,607 at 1e-4.
+That is the rule the default follows, the smallest bar on the swept grid at which every Pathogenic and Likely pathogenic call the bar can recover is recovered.
+It is a statement about this benchmark and about which error is worse, not a claim about any disease's prevalence.
+The data alone do not pick it: exact and same-direction agreement both peak at 1e-4, three Pathogenic calls short of it.
+The asymmetry the recessive bar was chosen on applies here as well, since a missed diagnosis costs more than a benign call lost to VUS.
+
+Against the bar switched off, 1,518 calls change.
+1,007 of them move toward ClinVar's classification and 438 away, and the other 73 stay as far from it as they were.
+Of the 70 recovered, 69 go from VUS to Likely pathogenic and one to Pathogenic.
+68 of them carry a PVS1 that BS2 had been cancelling (BEST1, ALG8, NEK8, APOB and COL11A1 among them) and the other two are CASR missense variants.
+The same change moves 32 variants ClinVar calls VUS to Likely pathogenic, which is the opposite error type and part of what the trade costs.
+22 of them carry a PVS1 that BS2 had been cancelling, and the other 10 are missense variants on PP3 or PM1.
+474 benign-direction calls are lost to VUS, 364 Likely benign and 110 Benign, and 7 Benign calls become Likely benign, which stays benign-direction.
+
+A flat floor does the same work with the same count in a cohort of any size:
+
+| Run | Exact | Same-direction | Opposite | P same | LP same | LB same | B same |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| floor 5 (the old rule) | 425,289 | 522,388 | 49 | 51,793 | 6,747 | 65,825 | 111,855 |
+| floor 20 | 425,721 | 522,827 | 49 | 51,833 | 6,753 | 65,656 | 111,844 |
+| floor 100 | 425,872 | 522,918 | 49 | 51,853 | 6,755 | 65,488 | 111,786 |
+| floor 1,000 | 425,726 | 522,798 | 49 | 51,855 | 6,755 | 65,434 | 111,670 |
+| bar 3e-4, floor 5 | 425,869 | 522,886 | 49 | 51,855 | 6,755 | 65,461 | 111,745 |
+
+A floor of 1,000 reaches the same pathogenic recovery as the bar, 58,610, and gives up 576 benign-direction calls against the bar's 474.
+A floor of 100 has a slightly better exchange rate and recovers two fewer.
+What the bar adds is that it scales: 1,000 carriers is a large share of a cohort of a few thousand and a small one of 730,000 individuals.
+
+**This corrects an earlier note.**
+`bs2_ad_min_ac` was described here as barely affecting the final call.
+That was true of the false-benign and opposite-direction counts, which is all the sweep behind it looked at, and it is not true of agreement: with the bar off, raising the floor from 5 to 20, 100 and 1,000 recovers 46, 68 and 70 Pathogenic and Likely pathogenic calls.
+
+**Applying BA1's and BS1's minimum AN to BS2 was tried and rejected.**
+The SVI guidance behind that minimum is about the noise of a frequency estimate, and a count test over a small cohort is already as strict as the cohort is small.
+With the bar off it moved 693 calls, 690 of them away from ClinVar's classification.
+BS2 is not evaluated for a record with no AN or an AN of zero, since the cohort size is then unknown, and takes no other minimum.
+
+**"Dominant" is read from disease names.**
+See limitation 20: the gene's ClinGen inheritance tag is not read, so the dominant branch reaches the genes whose annotation says so in words.
+
+One other knob was measured and found inert on the false-benign count:
+
+- `bs2_ar_min_hom` is fully subsumed by the prevalence test: 1 versus 10 gives identical results.
+  It is retained only as a floor for configs that lower the prevalence bar.
 
 ## Choosing the PM2 bar for dominant genes
 
@@ -484,7 +557,7 @@ It is applied in the reconciliation pass, because criteria are evaluated indepen
 Combining PS1 with PVS1 is sanctioned rather than double counting.
 The subgroup's [response to feedback](https://clinicalgenome.org/docs/clingen-svi-splicing-subgroup-response-to-feedback/) (22 March 2024, item 7b) is explicit: "if there is a relevant pathogenic variant with the same predicted impact as the variant under assessment, then you can use PS1 as well as PVS1(RNA)".
 
-### Three restrictions, and why each is there
+### Four restrictions, and why each is there
 
 **The comparison variant must be `Pathogenic`, not `Likely_pathogenic`.**
 Table 3 reads `N/A` in the LP column for a canonical-dinucleotide variant under assessment.
@@ -499,6 +572,10 @@ Those rows are left to curators.
 **The variant's own ClinVar record never counts.**
 A comparison variant is by definition another variant, and the index is built from ClinVar, so a variant that is itself ClinVar Pathogenic will find its own entry.
 The splice index carries REF and ALT, so the self entry is matched exactly rather than guessed at; this is why the splice path does not consult `exclude_self_from_clinvar_evidence`, which exists for the protein index precisely because that one *cannot* tell which entry is the variant being classified.
+
+**The variant must abolish the dinucleotide where HGVS places it.**
+A record anchored on the dinucleotide can describe a change that HGVS places wholly inside the intron past ±2, or wholly inside an exon in frame, and that change abolishes no dinucleotide.
+PS1's splice path stands down for it, as PVS1 does, and records the placement; see [Where HGVS places an indel](#where-hgvs-places-an-indel).
 
 ### The data it reads
 
@@ -526,7 +603,7 @@ And `spliceIndexed` is what separates "this gene has no catalogued comparison va
 
 ### What it moved
 
-On the 673,660-variant ClinVar 2-star+ benchmark, PS1's splice path fires 4,776 times, 98.8 % of them on pathogenic-side truth, and lifts the exact-match rate from 62.67 % to 63.11 % without moving a single benign-side call or adding an opposite-direction error.
+On the 673,660-variant ClinVar 2-star+ benchmark, PS1's splice path fires 4,776 times, 98.8 % of them on variants ClinVar classifies as Pathogenic or Likely pathogenic, and lifts the exact-match rate from 62.67 % to 63.11 % without moving a single benign-side call or adding an opposite-direction error.
 The whole effect is 3,793 variants going from Likely pathogenic to Pathogenic, of which 3,363 are true Pathogenic.
 The mechanism is arithmetic: `PVS1` (8 points) + `PM2_Supporting` (1) is 9, one short of the 10 that Pathogenic requires, and a large fraction of the pathogenic set was sitting on exactly that signature.
 Full numbers in [`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md).
@@ -579,6 +656,95 @@ after    call=VUS   PS3 (PMID 26637981) + BA1 + BS2, BP4 and BP7 superseded
 Without an entry, PS3 and BS3 stay `evaluated: false` - no assertion in either direction, which is
 the honest answer when nobody has run the assay.
 
+## Where HGVS places an indel
+
+A consequence term is decided from the position a VCF record anchors a change at.
+An indel in a repeat can be written at several positions that all edit the sequence the same way, and HGVS names the most 3' one.
+The two can disagree about whether the change touches an exon at all, and PVS1, PS1's splice path, PM1, PM4, BP3 and BP4's splice path used to follow the record.
+
+| Record | Term the record earns | HGVS | What the edited sequence is |
+|---|---|---|---|
+| MSH6 `2:47806358 G>GGTAT` | `frameshift_variant` | `c.3801+3_3801+6dup` | four intronic bases inserted; exon 8 untouched, donor `GT` intact |
+| MLH1 `3:37047516 TAGG>T` at an acceptor | `splice_acceptor_variant` | `c.1732_1734del` | the exon's own first three bases (`GAG`) deleted, in frame; the acceptor `AG` intact |
+| FOXP2 `7:114631524 CCAG>C` | `splice_acceptor_variant` | `c.618_620del` | one unit of a `CAG` repeat that runs across the acceptor, in frame, inside the exon; the acceptor `AG` intact |
+| NBEAL2 `3:47005320 C>CGGTGCGGCCCAGGGGCT` | `frameshift_variant`, anchored inside the exon | `c.6560+4_6560+20dup` | seventeen intronic bases inserted |
+
+The consequence terms stay VEP's, and the output stays comparable with VEP's.
+What changed is what the criteria ask.
+PVS1 asks whether the *edited sequence* loses function, and a term that describes how the record was anchored cannot answer that.
+
+Each reported (transcript, allele) row now carries a placement, worked out after `--pick` for the rows that survive it.
+The alleles are clipped of the bases the pair repeats, as the HGVSc is, shifted 3' over the reference and bounded by the transcript, and the shifted span is classed against the transcript's exons and introns.
+An insertion is the two bases it sits between.
+A substitution has one way of being written and is never walked, and without a reference sequence every change is placed where it sits.
+
+| HGVS places the change | PVS1 | PS1, splice path | PM1, PM4, BP3 | BP4 splice path |
+|---|---|---|---|---|
+| wholly inside an intron, beyond ±2 | does not apply | does not apply | no residue for PM1, no length change for PM4 and BP3 | open, as for any intronic variant |
+| wholly inside an exon, in frame, and the record's only null term is a splice one | the splice track does not apply | does not apply | unchanged | unchanged |
+| wholly inside an exon, out of frame | the record's terms decide | the record's terms decide | unchanged | unchanged |
+| across an exon and an intron, or across an exon between two introns | the record's terms decide | the record's terms decide | unchanged | unchanged |
+| within ±2 of an exon, or not worked out | the record's terms decide | the record's terms decide | unchanged | unchanged |
+
+A coding-null term beside the splice term keeps PVS1 in the second row, because the placement says nothing about whether that term is real.
+PS1's splice path asks whether the variant abolishes a canonical splice dinucleotide, and it stands down for the placements PVS1's splice track stands down for, so that one row is never a splice variant to one criterion and not to the other.
+A change wholly inside an exon and out of frame is left to the record's terms by both.
+It leaves the dinucleotide intact as well, but it is a frameshift whose record anchors on the splice site.
+The 83 acceptor deletions and insertions of the benchmark that HGVS places in the exon out of frame, NF1 `c.4174del` among them, are PVS1 variants that also carry `PS1_Supporting`.
+Taking PS1 alone away from them moved 32 calls from Pathogenic to Likely pathogenic, 29 of them on variants ClinVar calls Pathogenic, for a distinction PVS1 does not make, and it was not kept.
+Each stand-down is recorded on the criterion: `details.hgvs_placement` carries the placement, and the summary says why the record's term was set aside.
+This replaces an earlier rule that re-graded a splice term to a co-occurring frameshift one when the offset was deep.
+That term describes the same anchor, so there was nothing to re-grade to.
+
+The placement walks the reference, so it is taken only for an allele whose consequence terms a criterion reads it for (`fastvep_classification::reads_hgvs_placement`).
+The intronic offset, which several criteria read, and the exon edge, which BP7 reads for a synonymous change, are worked out for every classified row from the transcript's exon list in place.
+A counting-allocator test pins that neither allocates, and that the walk costs a handful of allocations whatever distance the change slides.
+Both pipelines call one `splice_context` in `fastvep-annotate`, and look each surviving row's transcript up by the identity of its id, so two models sharing an id are told apart.
+
+### What it measured
+
+On the 673,660-variant benchmark, 36 calls lose PVS1 to this rule.
+25 are variants ClinVar calls VUS, 5 are Benign or Likely benign, and 6 are Pathogenic or Likely pathogenic.
+30 of the 36 move toward ClinVar's classification and 5 away.
+The reviewer's MSH6 and DSP rows are among them, and so is FOXP2.
+
+The six Pathogenic and Likely pathogenic variants are the price of the rule, and it is not zero:
+
+| Variant | HGVS | ClinVar | Call before, after |
+|---|---|---|---|
+| ALPL | `c.69_74del`, in-frame, at an acceptor | Pathogenic/Likely pathogenic | LP, VUS |
+| KCNQ1 | `c.478_480del`, in-frame, at an acceptor | Likely pathogenic | P, VUS |
+| RYR1 | `c.958_960del`, in-frame, at an acceptor | Likely pathogenic | LP, VUS |
+| LDLR | `c.190+2_190+3dup` | Pathogenic/Likely pathogenic | LP, VUS |
+| DYSF | `c.1267_1276+4dup` | Pathogenic | LP, VUS |
+| DYSF | `c.1272_1276+3dup` | Likely pathogenic | LP, VUS |
+
+In each, the edit leaves the exon and the canonical dinucleotide in place, so PVS1's premise does not hold.
+ClinVar's classification rests on evidence that an annotator cannot compute from the variant, such as functional, case and segregation data.
+They now report VUS with the stand-down recorded in PVS1's `details.hgvs_placement`, which is where a curator should look.
+
+PS1's splice path, PM1 and BP3 follow the same placement, and BP3 now records why it set an in-frame term aside.
+Adding them changed no call in the benchmark.
+It changed the criteria of 43 variants, each of which lost a `PS1_Supporting` that borrowed a Pathogenic variant's evidence for a dinucleotide HGVS places the change away from (`c.1136+3del` and `c.3556+3_3556+7dup` are two), and they keep their calls: 42 are VUS and one is Benign.
+
+### BP7 and the exon edge
+
+Walker 2023 excludes BP7 for a synonymous change at an exon's first base or its last three.
+The criterion read `at_exon_edge`, this document described the exclusion, and the pipeline never set the field, so the exclusion did not exist.
+It is now read off the transcript's exon coordinates, and an exon's outer end, which has no splice site beside it, is not an edge.
+
+475 calls lose BP7: 330 are variants ClinVar calls Benign or Likely benign, 143 are VUS, and 2 are Pathogenic or Likely pathogenic.
+145 move toward ClinVar's classification and 330 away.
+That is the measured price of following the guideline, and it is paid in benign calls that become VUS.
+All 475 sit at an exon edge in the Ensembl GFF3, which was checked independently of fastVEP's own exon code.
+Of 89,213 synonymous variants that still carry BP7, a random 39,999 were checked the same way and none is at an edge.
+
+BP7's deep-intronic extension reads where the record sits, and not where HGVS places the change.
+That keeps it from calling a variant deep-intronic while the row beside it says `splice_donor_region_variant`, and it is the one place the two offsets disagree in the less cautious direction.
+141 of the 1,267 `intron_variant` indels that carry BP7 are numbered by HGVS inside the splice region while the record's own offset is outside it.
+ClinVar calls 116 of them Benign, 17 Likely benign, 8 VUS and none Pathogenic or Likely pathogenic, so requiring both offsets to clear the region would give up 133 benign calls ClinVar agrees with and recover no pathogenic call.
+That is why it was left.
+
 ## Which transcript `--pick` reports
 
 `--pick` reduces a variant to one consequence block, and which one it keeps is decided by
@@ -626,6 +792,21 @@ reports:
 Severity first, then the same tie-breaks as before, so equal-consequence choices still resolve to
 MANE - the ordering changes which question is asked first, not which transcripts are eligible.
 
+**That advice is for reporting consequences, and it is not free for an ACMG call.**
+Run over the whole ClinVar 2-star+ benchmark, the classifier gives:
+
+| Run | Exact | Same-direction | Opposite | P same | LP same | LB same | B same |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| default order | 425,869 | 522,886 | 49 | 51,855 | 6,755 | 65,461 | 111,745 |
+| MANE Plus Clinical first | 425,645 | 522,484 | 47 | 51,689 | 6,655 | 65,355 | 111,722 |
+| severity (`rank`) first | 423,481 | 519,120 | 452 | 52,821 | 6,895 | 63,171 | 109,754 |
+
+Severity first gains 1,106 Pathogenic and Likely pathogenic same-direction calls and loses 4,281 benign-direction ones, and opposite-direction calls rise from 49 to 452.
+It picks the transcript on which the variant looks worst, and an ACMG call made there is a call about the worst reading and not about the variant.
+MANE Plus Clinical first resolves the reviewer's DST row (`c.1779-222C>T` is intronic on MANE Select and `c.64C>T p.Arg22Ter` on the Plus Clinical transcript) and costs 224 exact matches and 402 same-direction ones overall.
+A Plus Clinical transcript is an alternative isoform and not a better reading of every variant in its gene.
+The supportable form is to report its call beside the MANE Select one when they differ, which is not implemented.
+
 Criteria you leave out are not consulted at all rather than appended, so `--pick-order rank` really
 does mean "severity, then transcript ID". Unknown or repeated criteria are rejected at startup with
 the offending name. `length` (VEP's final tie-break) is rejected rather than silently ignored:
@@ -646,7 +827,7 @@ simply not reached is unaffected.
 
 That distinction is not academic. ClinGen has curated roughly 2,400 genes to
 Definitive/Strong/Moderate, so absence is overwhelmingly "nobody got to it yet". The first version
-of this gate blocked on absence, and run v10 measured the cost: **1,497 truth-pathogenic null
+of this gate blocked on absence, and run v10 measured the cost: **1,497 ClinVar-Pathogenic null
 variants lost PVS1**, in genes including SPAST, ABCB11, FLG and LAMB3 - all of which cause disease
 and none of which are in the file. Worse, the genes the gate was written to catch (RYK, GIGYF2) are
 absent from ClinGen too, so blocking on absence was not selecting for gene-disease validity at all.
@@ -670,7 +851,7 @@ pathogenic criteria: `>= 10` Pathogenic, `6..=9` Likely Pathogenic.
 
 **Why points on the pathogenic side.** The table has a documented gap at a lone PVS1. It scores 8
 points, squarely inside Likely Pathogenic, but matches no row of Table 5, so the table returns
-Uncertain Significance. Run v10 put **2,319 truth-pathogenic variants in VUS on `PVS1` and nothing
+Uncertain Significance. Run v10 put **2,319 ClinVar-Pathogenic variants in VUS on `PVS1` and nothing
 else** - nonsense and frameshift variants in haploinsufficient disease genes, which is close to the
 least uncertain thing a classifier sees.
 
@@ -753,8 +934,8 @@ simple tandem repeat and one inside an exonized Alu are not equally good
 arguments for benignity and the distinction is invisible if it is dropped.
 
 **What it is worth.** Measured over the full ClinVar 2-star-or-better set, BP3
-fires on 1,307 variants, split 688 on benign-truth against 56 on
-pathogenic-truth - directionally right, roughly 12:1. Its effect on the headline
+fires on 1,307 variants, split 688 on ClinVar-benign variants against 56 on
+ClinVar-pathogenic ones - directionally right, roughly 12:1. Its effect on the headline
 is nil: benign recall moves 71.47 % to 71.49 %, and every error count is
 unchanged. That is the expected behaviour of a lone Supporting criterion, which
 cannot reach a classification by itself. BP3 earns its place by being visible to
@@ -793,7 +974,7 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 
 | Code | Strength | Description | Data Source | Automatable |
 |---|---|---|---|---|
-| **PVS1** | Very Strong → Supporting* | Null variant in LOF-intolerant gene; graded per Abou Tayoun 2018 decision tree (NMD prediction, %protein removed, critical region, alt start codon, last exon). Two gene-level preconditions run first: the gene must have an established gene-disease relationship, and its curated mechanism must not exclude loss of function | Consequence + pLI/LOEUF/ClinGen GDV + curated mechanism + transcript context | Yes |
+| **PVS1** | Very Strong → Supporting* | Null variant in LOF-intolerant gene; graded per Abou Tayoun 2018 decision tree (NMD prediction, %protein removed, critical region, alt start codon, last exon). Two gene-level preconditions run first: the gene must have an established gene-disease relationship, and its curated mechanism must not exclude loss of function. A change HGVS places wholly inside an intron beyond ±2 is not a null variant whatever term its record's anchor produced, and neither is an in-frame exonic change under a splice-only term - see [Where HGVS places an indel](#where-hgvs-places-an-indel) | Consequence + HGVS placement + pLI/LOEUF/ClinGen GDV + curated mechanism + transcript context | Yes |
 | **PS1** | Strong | Same AA change as established pathogenic missense **or** canonical ±1/2 splice predicted to produce same RNA outcome (Walker 2023) | ClinVar protein index + splice catalog | Yes (with .oga) |
 | **PS2** | Strong | De novo with confirmed parents | Trio VCF genotypes | Yes (with trio) |
 | **PS3** | Strong | Functional studies show damaging. Read from `--functional-evidence`; suppresses PP3/BP4/BP7 for that variant (SVI ranks experimental evidence above prediction) | Curated TSV | Yes (with file) |
@@ -801,7 +982,7 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 | **PM1** | Moderate | Mutational hotspot / critical domain **without benign variation** - both halves of Richards 2015's wording are tested, so a window that also holds benign ClinVar missense does not count. NotEvaluated where the gene has no established gene-disease relationship: a cluster of assertions in an uncurated gene is not evidence of a critical region | ClinVar protein density (both directions) + ClinGen GDV | Yes (with .oga) |
 | **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown fires at AF ≤ 0.00004, AR at AF ≤ 0.00007 (SVI v1.0 plus published VCEP practice; see "Choosing the PM2 bar for dominant genes"). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
 | **PM3** | Supporting → Very Strong* | In trans with pathogenic (recessive); points-based per SVI v1.0 (in-trans/P=1.0pt, in-trans/LP=0.5pt, unphased/P=0.5pt, unphased/LP=0.25pt, hom=0.5pt cap 1.0) | Phased VCF + ClinVar | Yes (with trio) |
-| **PM4** | Moderate | Protein length change (in-frame/stop-loss) | Consequence type | Yes |
+| **PM4** | Moderate | Protein length change (in-frame/stop-loss). Not applied where HGVS places the change wholly inside an intron beyond ±2: no exon base is edited, so the protein is unchanged | Consequence type + HGVS placement | Yes |
 | **PM5** | Moderate | Different pathogenic missense at same residue | ClinVar protein index | Yes (with .oga) |
 | **PM6** | Moderate | Assumed de novo (partial confirmation) | Partial trio VCF | Yes (with trio) |
 | **PP1** | Supporting | Co-segregation in family | Pedigree data | No |
@@ -816,18 +997,18 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 
 | Code | Strength | Description | Data Source | Automatable |
 |---|---|---|---|---|
-| **BA1** | Standalone | AF > 5%, AN ≥ 2,000 (gnomAD v4 SVI March 2024). Tested against the **filtering allele frequency** (95% CI lower bound, max across ancestry groups; Whiffin 2017) where the database provides it, else the population maximum. The curated exception list blocks BA1 regardless of AF - Ghosh 2018's nine plus three hypomorphic alleles; see [Curated frequency-exception list](#curated-frequency-exception-list) | gnomAD population AFs + FAF + AN + HGVSc | Yes |
+| **BA1** | Standalone | AF > 5%, AN ≥ 2,000 (gnomAD v4 SVI March 2024). Tested against the **filtering allele frequency** (95% CI lower bound, max across ancestry groups; Whiffin 2017) where the database provides it, else the population maximum. The curated exception list blocks BA1 regardless of AF - Ghosh 2018's nine, three hypomorphic alleles and three the round-6 review named; see [Curated frequency-exception list](#curated-frequency-exception-list) | gnomAD population AFs + FAF + AN + HGVSc | Yes |
 | **BS1** | Strong | Cross-population AF > expected, read from the same statistic as BA1 (filtering AF where available, else population maximum). NotEvaluated for homology-confounded genes, for gnomAD-flagged `segdup`/`lcr` sites, for non-PASS gnomAD records, and for ClinVar low-penetrance / risk alleles. Stands down where the gene's own BA1 bar already covers the frequency. Blocked outright by a curated exception whose `blocks` names BS1 | gnomAD per-population AFs + FAF + QC flags + ClinVar terms | Yes |
-| **BS2** | Strong | Observed in healthy adult - AD/X-linked-D requires AC ≥ 5 (`bs2_ad_min_ac`). AR / X-linked counts individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and requires ≥ `bs2_ar_min_hom` of them **and** a 95% lower bound on their frequency above `bs2_hom_prevalence_threshold` (default 1e-3, set by measurement - see [Choosing the BS2 prevalence bar](#choosing-the-bs2-prevalence-bar)), so the test scales with cohort size. Richards 2015's "full penetrance expected at an early age" qualifier is what this implements: one or two such individuals in a 730 K cohort is what a late-onset or reduced-penetrance disorder looks like, not tolerance Blocked outright by a curated exception whose `blocks` names BS2, which is how a hypomorphic allele's unaffected homozygotes are kept from reading as tolerance | gnomAD hom + hemizygote counts + AN + inheritance | Yes |
+| **BS2** | Strong | Observed in healthy adult, for a disorder with full penetrance expected at an early age (Richards 2015). Both branches ask whether more healthy individuals have the allele than the disorder could account for, by holding a 95% lower bound on their frequency against a prevalence bar, so the test scales with cohort size. **Dominant** genes count carriers (`AC - nhomalt`, a homozygote once) and require AC ≥ `bs2_ad_min_ac` (5) **and** a lower bound above `bs2_ad_prevalence_threshold` (default 3e-4, set by measurement). **Recessive / X-linked** genes count individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and require ≥ `bs2_ar_min_hom` of them **and** a lower bound above `bs2_hom_prevalence_threshold` (1e-3). Both bars are set by measurement - see [Choosing the BS2 prevalence bar](#choosing-the-bs2-prevalence-bar). "Dominant" means the gene's disease annotation says so in words; ClinGen's `/AD` tag is not read (see limitation 20). Not evaluated where gnomAD AN is missing, since there is then no cohort size; it does not take BA1's and BS1's minimum AN, which is SVI guidance about the noise of a frequency estimate, and the lower bound already accounts for a small cohort. Blocked outright by a curated exception whose `blocks` names BS2, which is how a hypomorphic allele's unaffected homozygotes are kept from reading as tolerance | gnomAD AC + hom + hemizygote counts + AN + inheritance | Yes |
 | **BS3** | Strong | Functional studies show no damage. Read from `--functional-evidence`; suppresses PP3/BP4/BP7 for that variant | Curated TSV | Yes (with file) |
 | **BS4** | Strong | Lack of segregation | Pedigree data | No |
 | **BP1** | Supporting | Missense in a gene where primarily truncating variants cause disease. Requires both the constraint signature (high pLI, low misZ) **and** a mutation spectrum without an established missense mechanism (< `bp1_max_pathogenic_missense` pathogenic missense in the ClinVar protein index) | pLI + misZ + ClinVar protein index | Yes |
 | **BP2** | Supporting | In trans/cis with pathogenic | Phased VCF + ClinVar | Yes (with trio) |
-| **BP3** | Supporting | In-frame indel in repeat region | Consequence + RepeatMasker | Yes (with .osi) |
-| **BP4** | Supporting-Very Strong | Computational evidence (benign) - REVEL **missense-only** with Very Strong band at ≤ 0.003 (Pejaver 2022) + SpliceAI ≤ 0.1 → Supporting (Walker 2023). BP4-splice is withheld from PVS1-territory consequences, from deep-exonic missense, and from in-frame indels / stop-lost / protein-altering variants, for which no calibrated benign predictor exists. | REVEL + SpliceAI | Yes |
+| **BP3** | Supporting | In-frame indel in repeat region. Not applied where HGVS places the change wholly inside an intron beyond ±2 | Consequence + HGVS placement + RepeatMasker | Yes (with .osi) |
+| **BP4** | Supporting-Very Strong | Computational evidence (benign) - REVEL **missense-only** with Very Strong band at ≤ 0.003 (Pejaver 2022) + SpliceAI ≤ 0.1 → Supporting (Walker 2023). BP4-splice is withheld from PVS1-territory consequences, from deep-exonic missense, and from in-frame indels / stop-lost / protein-altering variants, for which no calibrated benign predictor exists - except where HGVS places the change wholly inside an intron beyond ±2, which makes it as splice-assessable as any other intronic variant. A splice BP4 is also set aside beside a PP3 met from REVEL (reconciliation rule below). | REVEL + SpliceAI + HGVS placement | Yes |
 | **BP5** | Supporting | Alternate molecular basis in case | Case-level analysis | No |
 | **BP6** | Supporting | Reputable source reports benign | ClinVar (disabled by default per SVI) | Partial |
-| **BP7** | Supporting | Synonymous + no splice impact + not conserved. Per Walker 2023: must NOT fire for synonymous at first base / last 3 bases of an exon (`at_exon_edge`); extends to deep-intronic offsets ≥ 7 (donor) or ≤ -21 (acceptor). | Consequence + SpliceAI + PhyloP + exon position | Yes |
+| **BP7** | Supporting | Synonymous + no splice impact + not conserved. Per Walker 2023: must NOT fire for synonymous at first base / last 3 bases of an exon (`at_exon_edge`, read off the transcript's exon coordinates; an exon's outer end, which has no splice site beside it, is not an edge); extends to deep-intronic offsets ≥ 7 (donor) or ≤ -21 (acceptor). | Consequence + SpliceAI + PhyloP + exon position | Yes |
 
 ### PP3/BP4 Strength Elevation (ClinGen SVI Calibrated)
 
@@ -902,7 +1083,7 @@ In-cis companions are excluded (they count toward BP2 instead). Requires AR inhe
 
 ### Anti-Double-Counting (Reconciliation Pass)
 
-After per-criterion evaluation, a reconciliation pass suppresses computational evidence (PP3) that would double-count molecular signals already captured by other criteria. Suppressed criteria appear with `met: false` and `details.suppressed_by_reconcile` explaining why.
+After per-criterion evaluation, a reconciliation pass suppresses computational evidence (PP3, and a splice BP4 beside a REVEL PP3) that would double-count molecular signals already captured by other criteria. Suppressed criteria appear with `met: false` and `details.suppressed_by_reconcile` explaining why.
 
 | Trigger | Action | Reference |
 |---|---|---|
@@ -911,6 +1092,7 @@ After per-criterion evaluation, a reconciliation pass suppresses computational e
 | PS1 fires + PP3 driven by REVEL (missense) | Suppress PP3 | Pejaver 2022 (PS1 covers residue) |
 | PM5 fires + PP3 driven by REVEL (missense) | Suppress PP3 | Pejaver 2022 (PM5 covers residue) |
 | PP3 elevated to Strong + PM1 fires | Suppress PM1 (cap combined at Strong = 4 Tavtigian points) | Pejaver 2022 |
+| PP3 driven by REVEL (missense) + BP4 driven by SpliceAI | Suppress BP4 | Walker 2023 (the protein and splicing effects are assessed separately and the more deleterious stands; SpliceAI saying splicing is unaffected is not a vote against a damaging missense prediction) |
 
 ## Classification Combination Rules
 
@@ -1098,7 +1280,7 @@ Output (JSON / VCF CSQ / TSV)
 5. **PS4** is `NotEvaluated` by default — true PS4 needs case-control statistics; the legacy ClinVar-stars proxy is invalid per SVI. Opt back in via `use_clinvar_stars_as_ps4_proxy = true` for backward-comparable benchmarks.
 6. **PS1's splice path covers only the same canonical dinucleotide.** Walker 2023 Table 3 also allows a comparison variant elsewhere in the same splice motif, and allows PS1 on variants *outside* the canonical dinucleotide. Neither is implemented, because both need the table's prerequisite - that the two variants' predicted RNA events "precisely match" - to be established rather than assumed. See [PS1 for splicing](#ps1-for-splicing). Requires a `clinvar_protein.oga` built by a version that carries `spliceIndexed`; older files make PS1 report `evaluated: false` on canonical splice variants rather than assuming no comparison exists.
 7. **PVS1 grading** uses Abou Tayoun 2018 signals (`predicted_nmd`, `protein_truncation_pct`, `is_last_exon`, `in_critical_region`, `alt_start_codon_distance`). When the pipeline cannot derive these for a transcript, PVS1 falls back to legacy Very Strong on any null variant in an LOF-intolerant gene.
-8. **BP7 exon-edge / deep-intronic extension** uses optional `at_exon_edge` / `intronic_offset` fields. When unset, BP7 falls back to the legacy synonymous-only rule.
+8. **BP7 exon-edge / deep-intronic extension** uses optional `at_exon_edge` / `intronic_offset` fields. Both pipelines populate them from the transcript's exon coordinates; a caller of the classification crate that does not gets the legacy synonymous-only rule.
 9. **BP3** requires a RepeatMasker interval `.osi`. Build it from the UCSC track - see [Building the RepeatMasker track](#building-the-repeatmasker-track-bp3). Without one BP3 reports `evaluated: false` rather than assuming a variant is not in a repeat.
 10. **PS2/PM6/PM3/BP2** require a multi-sample VCF with trio sample names configured
 11. Compound heterozygote detection (PM3/BP2) works per-batch in the CLI; variants in different batches within the same gene may not be cross-referenced
@@ -1106,10 +1288,38 @@ Output (JSON / VCF CSQ / TSV)
 13. **The frequency dead zone between PM2 and BS1.** See below - this is the largest known gap on the frequency side and it is open by decision, not oversight.
 14. **Penetrance is unsourced.** BS2's precondition is "full penetrance expected at an early age" and no public resource publishes penetrance per gene-disorder pair. Prevalence, onset and inheritance are covered; see [Per-gene frequency bars](#per-gene-frequency-bars-clingen-vcep-specifications).
 15. **Published VCEP bars are applied without their founder-variant exceptions.** The exclusions are prose in the specification text, and `ba1_exceptions` carries no panel-specific entries beyond Ghosh 2018's nine, which is why the generated threshold table is opt-in rather than a default.
-16. **The ClinVar-concordance benchmark cannot validate the BA1 exception list.** Seven of Ghosh 2018's nine variants are `Conflicting classifications` in ClinVar and carry no consensus truth label, so they are not in the truth set; the criterion exists for exactly the population a consensus benchmark discards. It is covered by an end-to-end test over all nine instead. Any future exception entries need the same treatment.
-17. **The hypomorphic-allele list is three entries long.** GAA `c.-32-13T>G`, CFTR `c.1210-11T>G` and SPTA1 `c.4339-99C>T` ship with `blocks = ["BA1", "BS1", "BS2"]`, because an allele that causes disease only in trans with a rarer null is expected to be common and expected to be tolerated homozygous. The mechanism is general and the list is not; it grows by curation only. See [The curated frequency-exception list](#curated-frequency-exception-list).
+16. **The ClinVar-concordance benchmark cannot validate the BA1 exception list.** Seven of Ghosh 2018's nine variants are `Conflicting classifications` in ClinVar and carry no consensus classification, so they are not in the ClinVar 2-star+ set; the criterion exists for exactly the population a consensus benchmark discards. It is covered by an end-to-end test over all nine instead. Any future exception entries need the same treatment.
+17. **The hypomorphic-allele list is three entries long, and the reviewer-named list three more.** GAA `c.-32-13T>G`, CFTR `c.1210-11T>G` and SPTA1 `c.4339-99C>T` ship with `blocks = ["BA1", "BS1", "BS2"]`, because an allele that causes disease only in trans with a rarer null is expected to be common and expected to be tolerated homozygous. The mechanism is general and the list is not; it grows by curation only. G6PD `c.563C>T`, G6PD `c.202G>A` and SERPINC1 `c.439A>G` ship the same way on the round-6 reviewer's word, with no PMID, which each entry says. See [The curated frequency-exception list](#curated-frequency-exception-list).
 18. **A variant at a site where the population data is vetoed cannot reach Likely pathogenic alone.** Where gnomAD's FILTER or a low-complexity / segmental-duplication flag makes the frequency unusable, BA1, BS1, BS2 and PM2 are all withheld while PVS1 - read from the same alignments - is not, so a lone PVS1 call would rest on a one-sided ledger. Such calls are reported Uncertain with the veto named. The rule applies only when the suppressed frequency would itself have met BA1 or BS1; applying it to every flagged site cost 2,630 correct pathogenic calls to remove 18 wrong ones.
-
+19. **HGVS placement reaches PVS1, PS1's splice path, PM1, PM4, BP3 and BP4's splice path, and no further.**
+    A placement only ever removes evidence.
+    An in-frame exonic change under a splice-only term loses PVS1's splice track but earns no PM4 or BP3, because the record carries no in-frame term: FOXP2's Q209del in a `CAG` repeat is an example.
+    BP7 reads the record's own intronic offset and not the placed one, on purpose, and that is the one place the two disagree in the less cautious direction.
+    On an acceptor the shift runs toward the exon, so an intronic indel in a pyrimidine tract that the record anchors deeper than `-21` can be numbered by HGVS inside the splice region.
+    Of the 1,267 `intron_variant` indels that carry BP7, 141 are numbered that way.
+    ClinVar calls 116 of them Benign, 17 Likely benign, 8 VUS and none Pathogenic, so asking both offsets to clear the region would trade 133 benign calls ClinVar agrees with for no pathogenic call recovered, and it was not done.
+    PP3's splice path is not gated on placement.
+    A change that spans an exon and an intron, or crosses an exon between two introns, is left to the record's terms.
+    So is an exonic frameshift under a splice term, which PVS1 keeps as a null variant and PS1 keeps with it.
+    On an acceptor, a deletion of the final `AG` of `...AGAG|exon` is placed on the dinucleotide by the 3' rule although an equivalent placement leaves the intron ending in `AG`, so it keeps PVS1; this was reasoned and not measured.
+    Without a reference sequence every change is placed where it sits.
+    Six ClinVar Pathogenic or Likely pathogenic variants fall to VUS under the rule; see [Where HGVS places an indel](#where-hgvs-places-an-indel).
+20. **"Dominant" and "recessive" are read from disease names, not from ClinGen's inheritance tag.**
+    `has_dominant_inheritance` matches OMIM-style text and "dominant" in the disease name.
+    The `/AD` in `(ClinGen Definitive/AD, MONDO:...)` is not read, and neither is `/AR`.
+    Of the 740 genes with a variant in the benchmark whose established ClinGen tags are AD only, 39 register as dominant, and of the 1,285 that are AR only, 60 register as recessive.
+    BS2's dominant branch, PM2's recessive bar, PM3 and BP2 share the predicate, so all of them reach roughly one gene in twenty.
+    Making BS2 read the tag was tried with a locally patched build that is not in the repository, on the stack as it stood before PS1's splice path, PM1 and BP3 followed the placement, which changed the call of no variant.
+    It gains 3,809 exact matches and 2,812 same-direction calls.
+    The exact Benign matches rise by 4,902, and the Likely benign and VUS classes give back 904 and 189.
+    It also moves two ClinVar Pathogenic or Likely pathogenic variants from VUS to Benign, and four Likely pathogenic calls to VUS.
+    The two are TTR p.Val142Ile, a common dominant allele of hereditary ATTR amyloidosis that is not fully penetrant, and VWF p.Arg854Gln.
+    The VWF allele is a type 2N variant, which the repo's own gene-disease table lists as recessive, in a gene ClinGen tags AD for other subtypes, so a gene-level tag is the wrong grain for it.
+    BS2's "full penetrance at an early age" does not hold for either, and for TTR BS1 already counts the same frequency.
+    The four are loss-of-function alleles in NEK1, DDX41, SRCAP and PROKR2 with about 300 carriers each, whose lower bounds sit between 3.6e-4 and 4.0e-4, just above the bar.
+    The bar was chosen on the name-based set of genes and would need sweeping again on the widened one.
+    Widening the predicate for every criterion changes 26 more calls, 21 of them toward ClinVar, which are PM2's.
+    Whether to widen it is a policy decision about penetrance and about BS1 and BS2 counting one signal twice, so it is not made here.
 ## The frequency dead zone between PM2 and BS1
 
 Both frequency bars are set by measurement, and between them is a range where fastVEP
@@ -1205,7 +1415,23 @@ defaults, all raised by the round-5 medical-genetics review:
 | CFTR `c.1210-11T>G` | 9.8e-3 | 27 | the 5T poly-pyrimidine tract; CBAVD or CF in trans with a CF-causing variant |
 | SPTA1 `c.4339-99C>T` | 6.6e-3 | 40 | alpha-LELY; elliptocytosis in trans with an SPTA1 mutation |
 
-None of the three reaches 5 %, which is why a BA1-only list never touched them, and none
+**Common, and a medical geneticist says it is not evidence.**
+Three more ship with `blocks = ["BA1", "BS1", "BS2"]` because the round-6 reviewer named them.
+Each entry quotes the reviewer and gives the frequencies read from the gnomAD v4 database the benchmark runs against.
+No PMID came with any of them, so none is cited, and no mechanism is asserted that the review did not state.
+
+| Variant | gnomAD AF | Population maximum | Homozygotes | Reviewer |
+|---|---:|---:|---:|---|
+| G6PD `c.563C>T` (p.Ser188Phe) | 1.5e-3 | 4.4e-2 | 21 | "Mediterranean deficiency variant; G6PD variants are common;exceptions to Benign population criteria" |
+| G6PD `c.202G>A` (p.Val68Met) | 3.7e-3 | 0.131 | 173 | "G6PD variants are common;exceptions to Benign population criteria" |
+| SERPINC1 `c.439A>G` (p.Thr147Ala) | 1.8e-4 | 7.0e-3 | 3 | "founder variant in the African population; exceptions to Benign population criteria" |
+
+The two G6PD alleles are not a ruling on the gene.
+"G6PD variants are common" suggests that every G6PD variant is exempt, and only these two were put forward.
+Either route to an entry, the coordinate or the gene and HGVS token, is enough for a match, so with both supplied a typo in one is hidden by the other, and an entry could ship half inert.
+The benchmark that would show it is not part of CI, so each route is exercised on its own, in the form the pipeline produces, with a BA1 case for G6PD `c.202G>A`, whose population maximum crosses 5 %.
+
+None of the first three reaches 5 %, which is why a BA1-only list never touched them, and none
 reaches Likely pathogenic even with the exception applied - the deciding evidence is PM3,
 the second allele in trans, which no annotator computes from a single variant.
 

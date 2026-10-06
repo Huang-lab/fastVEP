@@ -1,0 +1,16 @@
+criteria_lost_to_gained	changed	toward	away	level	unscored	label_pathogenic	label_vus	label_benign	opposite_before	opposite_after
+BS2 -> -	998	741	220	37	0	52	714	232	0	0
+BP7 -> -	465	141	324	0	0	2	139	324	2	0
+BP4 -> -	18	9	9	0	0	0	9	9	0	0
+PVS1 -> -	14	10	4	0	0	4	9	1	1	0
+BP4,BS2 -> -	11	11	0	0	0	1	10	0	1	0
+PVS1 -> BP4	10	9	1	0	0	1	7	2	2	0
+PVS1 -> PP3	8	8	0	0	0	0	6	2	1	0
+BP7,BS2 -> -	3	2	1	0	0	0	2	1	0	0
+PS1,PVS1 -> -	2	1	0	1	0	1	1	0	0	0
+BS1 -> -	1	1	0	0	0	1	0	0	1	0
+PM4,PVS1 -> -	1	1	0	0	0	0	1	0	0	0
+PS1,PVS1 -> PP3	1	1	0	0	0	0	1	0	0	0
+- -> BP4	1	1	0	0	0	0	0	1	0	0
+BS1,BS2 -> -	1	1	0	0	0	1	0	0	1	0
+BA1,BS2 -> -	1	1	0	0	0	1	0	0	1	0
