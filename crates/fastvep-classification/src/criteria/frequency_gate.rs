@@ -109,6 +109,48 @@ pub(crate) fn note_withheld_benign_frequency(
     }
 }
 
+/// Why a frequency criterion cannot be assessed because gnomAD covered too few
+/// chromosomes at the site, recorded in `details`; `None` when coverage is
+/// enough.
+///
+/// ClinGen SVI gnomAD v4 guidance (March 2024) requires a minimum AN before a
+/// frequency-based criterion fires, to protect against noisy estimates at
+/// poorly covered sites. A missing AN is treated as below the minimum: the
+/// guidance is a requirement and not an opt-in check, so a criterion cannot fire
+/// without confirming it. The summary is the criterion's own, so BA1 and BS1
+/// each report under their own code. BS2 does not call this: its test is a count
+/// against the cohort it came from, which needs an AN to exist and not a minimum
+/// one, and `evaluate_bs2` says why.
+pub(crate) fn insufficient_an(
+    code: &str,
+    an: Option<u64>,
+    config: &AcmgConfig,
+    details: &mut serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    let minimum = config.min_an_for_frequency_criteria;
+    if an.is_some_and(|an| an >= minimum) {
+        return None;
+    }
+    details.insert(
+        "min_an_for_frequency_criteria".into(),
+        serde_json::json!(minimum),
+    );
+    Some(match an {
+        Some(an) => {
+            details.insert("an_below_minimum".into(), serde_json::json!(an));
+            format!(
+                "{code} not evaluated: gnomAD AN={an} below minimum {minimum} (gnomAD v4 guidance)"
+            )
+        }
+        None => {
+            details.insert("an_missing".into(), serde_json::json!(true));
+            format!(
+                "{code} not evaluated: gnomAD AN unavailable; minimum {minimum} required (gnomAD v4 guidance)"
+            )
+        }
+    })
+}
+
 /// The curated exception forbidding `code` on this variant, if any.
 ///
 /// Coordinate first, HGVS second - see [`crate::config::Ba1Exception::matches`]

@@ -203,18 +203,44 @@ pub struct AcmgConfig {
     /// that coverage.
     #[serde(default = "default_true")]
     pub pm2_absent_when_no_record: bool,
-    /// Minimum allele count (AC) required to fire BS2 on an autosomal-
-    /// dominant or X-linked-dominant gene from heterozygous gnomAD
-    /// observations alone. Singleton / doubleton observations of a
-    /// novel allele in a 100K-cohort are not sufficient evidence that
-    /// the variant is tolerated in healthy adults - Richards 2015 BS2
-    /// requires "observed in unaffected adult". Recessive and X-linked
-    /// genes take the separate null-individual test instead, governed by
-    /// [`Self::bs2_ar_min_hom`] and
-    /// [`Self::bs2_hom_prevalence_threshold`]. Default `5` mirrors common
-    /// ClinGen VCEP practice (e.g. Hereditary Cancer / Lynch).
+    /// Minimum allele count (AC) required to fire BS2 on a dominant gene from
+    /// gnomAD observations alone. Singleton / doubleton observations of a
+    /// novel allele in a 100K-cohort are not sufficient evidence that the
+    /// variant is tolerated in healthy adults - Richards 2015 BS2 requires
+    /// "observed in unaffected adult". Default `5` mirrors common ClinGen VCEP
+    /// practice (e.g. Hereditary Cancer / Lynch).
+    ///
+    /// This is a floor and not the test: it cannot tell nine carriers among
+    /// 1.4 M alleles from nine hundred, which is what
+    /// [`Self::bs2_ad_prevalence_threshold`] is for, and the two apply together.
+    /// Recessive and X-linked genes take the separate null-individual test
+    /// instead, governed by [`Self::bs2_ar_min_hom`] and
+    /// [`Self::bs2_hom_prevalence_threshold`].
     #[serde(default = "default_bs2_ad_min_ac")]
     pub bs2_ad_min_ac: u64,
+    /// Maximum disease prevalence, as a fraction of individuals, that BS2's
+    /// carrier test is asked to rule out for a dominant gene: the dominant
+    /// counterpart of [`Self::bs2_hom_prevalence_threshold`]. BS2 fires only when
+    /// the 95 % lower confidence bound on the *carrier* frequency in gnomAD -
+    /// `AC - nhomalt` individuals, so a homozygote counts once - exceeds this
+    /// value and [`Self::bs2_ad_min_ac`] is also met. `0` switches the bar off and
+    /// leaves the floor as the whole test.
+    ///
+    /// **Default 3e-4, chosen from measurement.** AC ≥ 5 alone fired BS2 on
+    /// SNRNP200 p.Ser1087Leu with nine carriers among 1.4 M alleles, a
+    /// ClinVar-Pathogenic variant, because the floor ignores how many
+    /// individuals were looked at. The sweep is in `docs/ACMG.md`; its shape is
+    /// that every ClinVar Pathogenic and Likely pathogenic call the bar can
+    /// recover is recovered by 3e-4, and each step above it only gives up
+    /// correct benign calls. That is the rule used to pick it - the smallest bar
+    /// on the swept grid that recovers all of them - and not a claim about a
+    /// disease prevalence, nor that nothing between two grid points would do.
+    ///
+    /// Raise or lower it freely: a lab that reads the asymmetry the other way
+    /// sets a lower value, and a gene-specific prevalence from a VCEP
+    /// specification should override it per gene once that table lands.
+    #[serde(default = "default_bs2_ad_prevalence")]
+    pub bs2_ad_prevalence_threshold: f64,
     /// Absolute floor on homozygous observations before BS2 can fire on a
     /// recessive (or unknown-inheritance) gene. A single homozygote is not
     /// evidence of tolerance: 20 of the 52 BS2 misfires in the round-2
@@ -728,6 +754,7 @@ impl Default for AcmgConfig {
             pm2_downgrade_to_supporting: true,
             pm2_absent_when_no_record: true,
             bs2_ad_min_ac: 5,
+            bs2_ad_prevalence_threshold: 3e-4,
             bs2_ar_min_hom: 2,
             bs2_hom_prevalence_threshold: 1e-3,
             homology_unreliable_genes: default_homology_unreliable_genes(),
@@ -870,6 +897,9 @@ fn default_bs2_ar_min_hom() -> u64 {
 }
 fn default_bs2_prevalence() -> f64 {
     1e-3
+}
+fn default_bs2_ad_prevalence() -> f64 {
+    3e-4
 }
 fn default_bp1_max_pathogenic_missense() -> u32 {
     3

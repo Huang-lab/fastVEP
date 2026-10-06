@@ -31,6 +31,12 @@ fn poisson_lower_95(observed: u64) -> f64 {
     (k * term * term * term).max(0.0)
 }
 
+/// 95 % lower confidence bound on the frequency of `count` events among
+/// `individuals`: the quantity both arms of BS2 hold against a prevalence.
+fn lower_bound_frequency(count: u64, individuals: u64) -> f64 {
+    poisson_lower_95(count) / individuals as f64
+}
+
 /// BS1: Allele frequency is greater than expected for disorder.
 fn evaluate_bs1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let threshold = config.effective_bs1_threshold(input.gene_symbol.as_deref());
@@ -76,43 +82,20 @@ fn evaluate_bs1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
     }
 
     let (met, summary) = if let Some(ref gnomad) = input.gnomad {
-        // ClinGen SVI gnomAD v4 guidance (March 2024): require minimum AN
-        // before BS1 fires, same as BA1. Treat missing AN as NotEvaluated
-        // (the SVI guidance is a requirement, not an opt-in).
-        match gnomad.all_an {
-            Some(an) if an >= config.min_an_for_frequency_criteria => {}
-            other => {
-                details.insert(
-                    "min_an_for_frequency_criteria".into(),
-                    serde_json::json!(config.min_an_for_frequency_criteria),
-                );
-                let summary = match other {
-                    Some(an) => {
-                        details.insert("an_below_minimum".into(), serde_json::json!(an));
-                        format!(
-                            "BS1 not evaluated: gnomAD AN={} below minimum {} (gnomAD v4 guidance)",
-                            an, config.min_an_for_frequency_criteria
-                        )
-                    }
-                    None => {
-                        details.insert("an_missing".into(), serde_json::json!(true));
-                        format!(
-                            "BS1 not evaluated: gnomAD AN unavailable; minimum {} required (gnomAD v4 guidance)",
-                            config.min_an_for_frequency_criteria
-                        )
-                    }
-                };
-                return EvidenceCriterion {
-                    code: "BS1".to_string(),
-                    direction: EvidenceDirection::Benign,
-                    strength: EvidenceStrength::Strong,
-                    default_strength: EvidenceStrength::Strong,
-                    met: false,
-                    evaluated: false,
-                    summary,
-                    details: serde_json::Value::Object(details),
-                };
-            }
+        // Coverage first, the same requirement as BA1: see `insufficient_an`.
+        if let Some(summary) =
+            super::frequency_gate::insufficient_an("BS1", gnomad.all_an, config, &mut details)
+        {
+            return EvidenceCriterion {
+                code: "BS1".to_string(),
+                direction: EvidenceDirection::Benign,
+                strength: EvidenceStrength::Strong,
+                default_strength: EvidenceStrength::Strong,
+                met: false,
+                evaluated: false,
+                summary,
+                details: serde_json::Value::Object(details),
+            };
         }
         // ClinGen SVI guidance applies BS1 across populations rather than to
         // the cohort-wide allAf: using the cohort AF would let a 5 % variant in
@@ -186,20 +169,41 @@ fn evaluate_bs1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 /// dominant (heterozygous), or X-linked (hemizygous) disorder with full
 /// penetrance expected at an early age (Richards 2015).
 ///
+/// Both arms ask the same question - are there more healthy individuals with the
+/// allele than the disorder could account for? - of the individuals the disorder
+/// would affect, so both compare a 95 % Poisson lower bound on their frequency
+/// against a maximum credible prevalence. That makes the criterion scale with
+/// the size of the cohort behind the observation: one homozygote among gnomAD's
+/// 730 K individuals is what a late-onset or reduced-penetrance disorder looks
+/// like, not evidence of tolerance, and nor is a handful of heterozygous
+/// carriers of a dominant one.
+///
 /// - **Recessive / X-linked** (or unknown inheritance): count the individuals
 ///   with no functional copy - homozygotes plus, on a non-PAR sex-chromosome
 ///   site, hemizygotes - and require both an absolute floor of
-///   `bs2_ar_min_hom` and a 95 % lower bound on their frequency above
-///   `bs2_hom_prevalence_threshold`. The criterion therefore scales with the
-///   size of the cohort behind the observation: one homozygote among gnomAD's
-///   730 K individuals is what a late-onset or reduced-penetrance disorder
-///   looks like, not evidence of tolerance.
-/// - **Dominant**: require AC ≥ `bs2_ad_min_ac` (default 5) — Richards 2015
-///   says "observed in unaffected adult", which is not the same as a single
-///   carrier of a novel allele in a 100K cohort. Singletons / doubletons
-///   are sequencing-noise plausibility, not evidence the variant is
-///   tolerated. ClinGen VCEPs commonly use AC ≥ 5 (Hereditary Cancer
-///   VCEP, Lynch Syndrome curation guide).
+///   `bs2_ar_min_hom` and a lower bound on their frequency above
+///   `bs2_hom_prevalence_threshold`.
+/// - **Dominant**: count the individuals carrying the allele at all - `AC - nhomalt`,
+///   so a homozygote counts once - and require both an absolute floor of
+///   `bs2_ad_min_ac` alleles and a lower bound on the carrier frequency above
+///   `bs2_ad_prevalence_threshold`. The floor is the old rule and is kept:
+///   Richards 2015 says "observed in unaffected adult", and a singleton or
+///   doubleton is sequencing-noise plausibility, not evidence the variant is
+///   tolerated; ClinGen VCEPs commonly use AC ≥ 5. The prevalence bar is what
+///   the floor alone could not do, which is tell nine carriers among 1.4 M
+///   alleles from nine hundred.
+///
+/// A gene is dominant here when its disease annotation says so in words: an
+/// OMIM-style inheritance ("autosomal dominant") or "dominant" in the disease
+/// name. ClinGen's own `/AD` tag, which the `.oga` carries on most of its
+/// entries, is not read, so a gene known to ClinGen only by that tag takes the
+/// recessive arm. The predicate is shared with PM2, so widening it is its own
+/// change and needs its own measurement.
+///
+/// BS2 is not evaluated for a record with no AN, since there is then no cohort
+/// size to test a count against. It does not take BA1's and BS1's minimum AN:
+/// that is SVI guidance about the noise of a frequency estimate, and the lower
+/// bound used here already accounts for a small cohort.
 ///
 /// Inheritance is inferred from the disease-gene `.oga` (ClinGen GDV
 /// preferred, OMIM accepted as legacy).
@@ -248,6 +252,27 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
     details.insert("omim_recessive".into(), serde_json::json!(is_recessive));
 
     let (met, evaluated, summary) = if let Some(ref gnomad) = input.gnomad {
+        // The cohort size below is read from AN, and a record with none has no
+        // cohort to test a count against: `.max(1)` used to turn that into one
+        // individual and make any bar vacuous. A small AN is not that problem.
+        // The lower bound already accounts for how few individuals there were,
+        // and BA1's and BS1's minimum AN is SVI guidance about the noise of a
+        // frequency *estimate*, which a count test does not make. Applying it
+        // here, with the carrier bar off, moved 693 ClinVar 2-star+ calls, 690
+        // of them away from the ClinVar classification and 3 toward it.
+        if matches!(gnomad.all_an, None | Some(0)) {
+            details.insert("an_missing".into(), serde_json::json!(true));
+            return EvidenceCriterion {
+                code: "BS2".to_string(),
+                direction: EvidenceDirection::Benign,
+                strength: EvidenceStrength::Strong,
+                default_strength: EvidenceStrength::Strong,
+                met: false,
+                evaluated: false,
+                summary: "BS2 not evaluated: gnomAD AN unavailable, so there is no cohort size to test the count against".to_string(),
+                details: serde_json::Value::Object(details),
+            };
+        }
         let hc = gnomad.all_hc.unwrap_or(0);
         let an = gnomad.all_an.unwrap_or(0);
         let ac = gnomad.all_ac.unwrap_or(0);
@@ -273,19 +298,70 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
         // `(AN - AN_XY) / 2 + AN_XY`. With no XY data this is exactly `AN / 2`,
         // the autosomal count used before hemizygotes were extracted.
         let individuals = (an.saturating_sub(hemizygote_an) / 2 + hemizygote_an).max(1);
+        details.insert("gnomad_individuals".into(), serde_json::json!(individuals));
 
-        if is_dominant && !is_recessive && ac >= config.bs2_ad_min_ac {
-            // For AD-only genes: ≥`bs2_ad_min_ac` heterozygote observations
-            // in healthy adults (gnomAD). Singletons / doubletons of a
-            // novel allele are not BS2 evidence.
-            (
-                true,
-                true,
-                format!(
-                    "Observed in gnomAD as ≥{} unaffected heterozygotes (AC={}) for autosomal-dominant disorder",
-                    config.bs2_ad_min_ac, ac
-                ),
-            )
+        if is_dominant && !is_recessive {
+            // A dominant-only gene is decided here and nowhere else: a variant
+            // that clears the floor but not the bar must not fall into the
+            // recessive arm below and be explained, or worse fired, by its
+            // homozygotes.
+            let carriers = ac.saturating_sub(hc);
+            let carrier_freq_lower_95 = lower_bound_frequency(carriers, individuals);
+            let bar = config.bs2_ad_prevalence_threshold;
+            details.insert("gnomad_carriers".into(), serde_json::json!(carriers));
+            details.insert(
+                "carrier_freq_lower_95".into(),
+                serde_json::json!(carrier_freq_lower_95),
+            );
+            details.insert("ad_prevalence_threshold".into(), serde_json::json!(bar));
+            details.insert(
+                "bs2_ad_min_ac".into(),
+                serde_json::json!(config.bs2_ad_min_ac),
+            );
+
+            let homozygous = if hc > 0 {
+                format!(", {hc} of them homozygous")
+            } else {
+                String::new()
+            };
+            if ac < config.bs2_ad_min_ac {
+                (
+                    false,
+                    true,
+                    format!(
+                        "AC={} below BS2 threshold ({} required for a dominant disorder)",
+                        ac, config.bs2_ad_min_ac
+                    ),
+                )
+            } else if bar <= 0.0 {
+                // The bar is switched off, so the floor is the whole test.
+                (
+                    true,
+                    true,
+                    format!(
+                        "Observed in gnomAD as ≥{} alleles (AC={}) for a dominant disorder; no prevalence bar is configured",
+                        config.bs2_ad_min_ac, ac
+                    ),
+                )
+            } else if carrier_freq_lower_95 > bar {
+                (
+                    true,
+                    true,
+                    format!(
+                        "{} of {} gnomAD individuals carry this allele{} (AC={}); the 95% lower bound on the carrier frequency, {:.2e}, exceeds the {:e} prevalence bar for a dominant disorder, so more healthy adults carry it than the disorder could account for",
+                        carriers, individuals, homozygous, ac, carrier_freq_lower_95, bar
+                    ),
+                )
+            } else {
+                (
+                    false,
+                    true,
+                    format!(
+                        "{} of {} gnomAD individuals carry this allele{} (AC={}), a 95% lower bound on the carrier frequency of {:.2e} that does not exceed the {:e} prevalence bar for a dominant disorder; this few carriers is what a rare or reduced-penetrance dominant disorder looks like, not evidence of tolerance",
+                        carriers, individuals, homozygous, ac, carrier_freq_lower_95, bar
+                    ),
+                )
+            }
         } else if hc + hemizygotes > 0 {
             // Recessive / X-linked / unknown inheritance. Richards 2015 asks
             // for observation "in a healthy adult ... with full penetrance
@@ -306,8 +382,7 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
             // (FMR1, IDS in the round-2 review) previously looked as though
             // gnomAD had never seen a null individual.
             let null_individuals = hc + hemizygotes;
-            let freq_lower_95 = poisson_lower_95(null_individuals) / individuals as f64;
-            details.insert("gnomad_individuals".into(), serde_json::json!(individuals));
+            let freq_lower_95 = lower_bound_frequency(null_individuals, individuals);
             details.insert(
                 "null_individuals".into(),
                 serde_json::json!(null_individuals),
@@ -346,7 +421,7 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
                     true,
                     true,
                     format!(
-                        "{} among {} gnomAD individuals (95% lower bound on their frequency {:.2e} exceeds the {:.0e} prevalence bar), so complete loss of this allele is tolerated in healthy adults",
+                        "{} among {} gnomAD individuals (95% lower bound on their frequency {:.2e} exceeds the {:e} prevalence bar), so complete loss of this allele is tolerated in healthy adults",
                         observed, individuals, freq_lower_95, config.bs2_hom_prevalence_threshold
                     ),
                 )
@@ -355,20 +430,11 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
                     false,
                     true,
                     format!(
-                        "{} among {} gnomAD individuals gives a 95% lower bound of {:.2e}, which does not exceed the {:.0e} prevalence bar; consistent with a late-onset, reduced-penetrance or variably expressive disorder rather than tolerance",
+                        "{} among {} gnomAD individuals gives a 95% lower bound of {:.2e}, which does not exceed the {:e} prevalence bar; consistent with a late-onset, reduced-penetrance or variably expressive disorder rather than tolerance",
                         observed, individuals, freq_lower_95, config.bs2_hom_prevalence_threshold
                     ),
                 )
             }
-        } else if is_dominant && !is_recessive {
-            (
-                false,
-                true,
-                format!(
-                    "AC={} below BS2 threshold ({} required for AD)",
-                    ac, config.bs2_ad_min_ac
-                ),
-            )
         } else {
             (false, true, "No homozygotes observed in gnomAD".to_string())
         }
@@ -619,22 +685,28 @@ mod tests {
 
     #[test]
     fn test_bs2_homozygotes_present() {
+        // Five homozygotes among the thousand individuals a 2,000-allele site
+        // surveys: a lower bound of 2e-3, above the 1e-3 bar. The same five in
+        // gnomAD's 730 K individuals would not be (see the AR tests below).
         let input = make_input(Some(GnomadData {
             all_hc: Some(5),
+            all_an: Some(2_000),
             ..Default::default()
         }));
         let result = evaluate_bs2(&input, &AcmgConfig::default());
-        assert!(result.met);
+        assert!(result.met, "{}", result.summary);
     }
 
     #[test]
     fn test_bs2_no_homozygotes() {
         let input = make_input(Some(GnomadData {
             all_hc: Some(0),
+            all_an: Some(1_460_000),
             ..Default::default()
         }));
         let result = evaluate_bs2(&input, &AcmgConfig::default());
         assert!(!result.met);
+        assert!(result.evaluated);
     }
 
     fn make_input_omim(
@@ -669,49 +741,210 @@ mod tests {
         assert!(r.summary.contains("below BS2 threshold"));
     }
 
-    #[test]
-    fn test_bs2_ad_gene_meets_threshold_fires() {
-        // AD gene + AC≥5 (default `bs2_ad_min_ac`) → BS2 fires.
+    /// A dominant gene's record: `ac` alleles, `hc` of them in homozygotes, among
+    /// `an` called chromosomes.
+    fn dominant_input(ac: u64, hc: u64, an: Option<u64>) -> ClassificationInput {
         use crate::sa_extract::OmimData;
-        let input = make_input_omim(
+        make_input_omim(
             Some(GnomadData {
-                all_ac: Some(7),
-                all_hc: Some(0),
-                all_af: Some(7e-6),
-                all_an: Some(1_000_000),
+                all_ac: Some(ac),
+                all_hc: Some(hc),
+                all_an: an,
                 ..Default::default()
             }),
             Some(OmimData {
                 mim_number: None,
                 phenotypes: Some(vec!["dominant disorder".into()]),
             }),
-        );
-        let r = evaluate_bs2(&input, &AcmgConfig::default());
-        assert!(r.met, "AC=7 ≥ default 5 should fire AD BS2");
-        assert!(r.summary.contains("autosomal-dominant"));
+        )
     }
 
     #[test]
-    fn test_bs2_ad_gene_min_ac_configurable() {
-        // Config knob lets a stricter VCEP raise the threshold.
-        use crate::sa_extract::OmimData;
-        let cfg = AcmgConfig {
+    fn test_bs2_ad_gene_many_carriers_fires() {
+        // 500 carriers among the 500 K individuals of a million-allele site: a
+        // 95% lower bound of about 9e-4, above the 3e-4 bar, so more healthy
+        // adults carry this allele than a dominant disorder could account for.
+        let r = evaluate_bs2(
+            &dominant_input(500, 0, Some(1_000_000)),
+            &AcmgConfig::default(),
+        );
+        assert!(r.met, "{}", r.summary);
+        assert!(r.summary.contains("carry this allele"), "{}", r.summary);
+        assert_eq!(r.details["gnomad_carriers"], serde_json::json!(500));
+        assert_eq!(r.details["gnomad_individuals"], serde_json::json!(500_000));
+    }
+
+    /// The case the floor alone got wrong. SNRNP200 p.Ser1087Leu has nine
+    /// carriers among 1.4 M alleles - ClinVar Pathogenic - and AC ≥ 5 called it
+    /// tolerated.
+    #[test]
+    fn test_bs2_ad_gene_few_carriers_in_a_large_cohort_does_not_fire() {
+        let r = evaluate_bs2(
+            &dominant_input(9, 0, Some(1_461_868)),
+            &AcmgConfig::default(),
+        );
+        assert!(!r.met, "{}", r.summary);
+        assert!(r.evaluated);
+        assert!(r.summary.contains("does not exceed"), "{}", r.summary);
+        assert!(r.summary.contains("3e-4"), "{}", r.summary);
+    }
+
+    /// `AC - nhomalt` counts individuals: a homozygote contributes two alleles
+    /// and is one person. 480 alleles of which 240 are homozygotes is 240
+    /// carriers, below the bar, where 480 heterozygotes would clear it.
+    #[test]
+    fn test_bs2_ad_gene_counts_a_homozygote_once() {
+        let an = Some(1_460_000);
+        let heterozygous = evaluate_bs2(&dominant_input(480, 0, an), &AcmgConfig::default());
+        assert!(heterozygous.met, "{}", heterozygous.summary);
+        let homozygous = evaluate_bs2(&dominant_input(480, 240, an), &AcmgConfig::default());
+        assert!(!homozygous.met, "{}", homozygous.summary);
+        assert_eq!(
+            homozygous.details["gnomad_carriers"],
+            serde_json::json!(240)
+        );
+    }
+
+    /// A dominant-only gene is decided in its own arm. A variant that clears the
+    /// floor but not the bar, and has homozygotes, must not fall into the
+    /// recessive arm and be explained - or fired - by them.
+    #[test]
+    fn test_bs2_ad_gene_that_fails_the_bar_does_not_fall_into_the_recessive_arm() {
+        let r = evaluate_bs2(
+            &dominant_input(20, 3, Some(1_461_868)),
+            &AcmgConfig::default(),
+        );
+        assert!(!r.met);
+        assert!(r.summary.contains("dominant disorder"), "{}", r.summary);
+        assert!(!r.summary.contains("late-onset"), "{}", r.summary);
+        assert!(r.details.get("hom_freq_lower_95").is_none());
+        assert!(r.details.get("null_individuals").is_none());
+
+        // And with the recessive bar lowered to where the homozygotes alone
+        // would have fired it, the dominant verdict still stands.
+        let permissive_recessive = AcmgConfig {
+            bs2_hom_prevalence_threshold: 1e-9,
+            bs2_ar_min_hom: 1,
+            ..Default::default()
+        };
+        assert!(
+            !evaluate_bs2(
+                &dominant_input(20, 3, Some(1_461_868)),
+                &permissive_recessive
+            )
+            .met
+        );
+    }
+
+    #[test]
+    fn test_bs2_ad_gene_singleton_floor_and_bar_apply_together() {
+        // 7 carriers in a 20,000-allele site clears the bar (lower bound 3.3e-4)
+        // and the default floor of 5, and so fires; raising the floor to 20 is
+        // enough to stop it. Neither condition replaces the other.
+        let input = dominant_input(7, 0, Some(20_000));
+        assert!(evaluate_bs2(&input, &AcmgConfig::default()).met);
+        let strict = AcmgConfig {
             bs2_ad_min_ac: 20,
             ..Default::default()
         };
-        let input = make_input_omim(
-            Some(GnomadData {
-                all_ac: Some(7),
-                all_hc: Some(0),
-                ..Default::default()
+        let r = evaluate_bs2(&input, &strict);
+        assert!(!r.met, "AC=7 < raised floor 20 should not fire");
+        assert!(r.summary.contains("below BS2 threshold"), "{}", r.summary);
+    }
+
+    #[test]
+    fn test_bs2_ad_prevalence_bar_default_is_the_measured_one() {
+        // Chosen from the sweep in docs/ACMG.md and quoted in the config doc
+        // comment: move it deliberately or not at all.
+        assert_eq!(AcmgConfig::default().bs2_ad_prevalence_threshold, 3e-4);
+    }
+
+    #[test]
+    fn test_bs2_ad_bar_can_be_switched_off_and_is_reported_as_configured() {
+        let off = AcmgConfig {
+            bs2_ad_prevalence_threshold: 0.0,
+            ..Default::default()
+        };
+        // With the bar off the floor is the whole test, as it was.
+        let r = evaluate_bs2(&dominant_input(9, 0, Some(1_461_868)), &off);
+        assert!(r.met, "{}", r.summary);
+        assert!(r.summary.contains("no prevalence bar"), "{}", r.summary);
+
+        // A bar with more than one significant digit is printed whole.
+        let odd = AcmgConfig {
+            bs2_ad_prevalence_threshold: 1.5e-3,
+            ..Default::default()
+        };
+        let r = evaluate_bs2(&dominant_input(9, 0, Some(1_461_868)), &odd);
+        assert!(r.summary.contains("1.5e-3"), "{}", r.summary);
+    }
+
+    /// Both arms read the cohort size from AN, and without one a single
+    /// individual's worth of cohort made any bar vacuous.
+    #[test]
+    fn test_bs2_is_not_evaluated_without_a_cohort_size() {
+        for (label, input) in [
+            ("dominant, AN missing", dominant_input(9, 0, None)),
+            ("dominant, AN zero", dominant_input(9, 0, Some(0))),
+            ("recessive, AN missing", {
+                let mut i = recessive_input(5, 1_460_000);
+                i.gnomad.as_mut().unwrap().all_an = None;
+                i
             }),
-            Some(OmimData {
-                mim_number: None,
-                phenotypes: Some(vec!["dominant disorder".into()]),
-            }),
+        ] {
+            let r = evaluate_bs2(&input, &AcmgConfig::default());
+            assert!(!r.met, "{label}");
+            assert!(!r.evaluated, "{label}: {}", r.summary);
+            assert!(
+                r.summary.starts_with("BS2 not evaluated"),
+                "{label}: {}",
+                r.summary
+            );
+            assert_eq!(r.details["an_missing"], serde_json::json!(true), "{label}");
+        }
+    }
+
+    /// A small AN is evaluated, not withheld: BA1's and BS1's minimum AN guards
+    /// a frequency estimate against noise, and a count test over a small cohort
+    /// is already as strict as the cohort is small. Nine carriers among 250
+    /// individuals is a carrier frequency far above the bar, and a few
+    /// homozygotes among as many are above the recessive one.
+    #[test]
+    fn test_bs2_reads_a_small_cohort_as_the_small_cohort_it_is() {
+        let dominant = evaluate_bs2(&dominant_input(9, 0, Some(500)), &AcmgConfig::default());
+        assert!(dominant.met, "{}", dominant.summary);
+        assert_eq!(
+            dominant.details["gnomad_individuals"],
+            serde_json::json!(250)
         );
-        let r = evaluate_bs2(&input, &cfg);
-        assert!(!r.met, "AC=7 < raised threshold 20 should not fire");
+        let recessive = evaluate_bs2(&recessive_input(5, 500), &AcmgConfig::default());
+        assert!(recessive.met, "{}", recessive.summary);
+        // And the same counts in a large cohort are not evidence of anything.
+        assert!(
+            !evaluate_bs2(
+                &dominant_input(9, 0, Some(1_461_868)),
+                &AcmgConfig::default()
+            )
+            .met
+        );
+        assert!(!evaluate_bs2(&recessive_input(5, 1_461_868), &AcmgConfig::default()).met);
+    }
+
+    /// A gene annotated both ways takes the recessive arm, as it always has.
+    #[test]
+    fn test_bs2_gene_that_is_dominant_and_recessive_takes_the_recessive_arm() {
+        use crate::sa_extract::OmimData;
+        let mut input = recessive_input(1_000, 1_460_000);
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec![
+                "dominant disorder".into(),
+                "recessive disorder".into(),
+            ]),
+        });
+        let r = evaluate_bs2(&input, &AcmgConfig::default());
+        assert!(r.met, "{}", r.summary);
+        assert!(r.summary.contains("homozygote"), "{}", r.summary);
     }
 
     fn recessive_input(hc: u64, an: u64) -> ClassificationInput {
@@ -791,17 +1024,19 @@ mod tests {
     #[test]
     fn test_bs2_ar_scales_with_cohort_size() {
         // The same raw count means different things at different cohort sizes.
-        // 3 homozygotes among 500 individuals is a homozygote frequency far
-        // above any Mendelian prevalence; 3 among 730 K is not.
-        let small = evaluate_bs2(&recessive_input(3, 1_000), &AcmgConfig::default());
-        let large = evaluate_bs2(&recessive_input(3, 1_460_000), &AcmgConfig::default());
+        // 4 homozygotes among 1,000 individuals - the smallest cohort BS2 will
+        // read, 2,000 alleles - is a homozygote frequency above any Mendelian
+        // prevalence; 4 among 730 K is not.
+        let small = evaluate_bs2(&recessive_input(4, 2_000), &AcmgConfig::default());
+        let large = evaluate_bs2(&recessive_input(4, 1_460_000), &AcmgConfig::default());
         assert!(
             small.met,
-            "3 homozygotes among 500 individuals should fire BS2"
+            "4 homozygotes among 1,000 individuals should fire BS2: {}",
+            small.summary
         );
         assert!(
             !large.met,
-            "3 homozygotes among 730 K individuals should not fire BS2"
+            "4 homozygotes among 730 K individuals should not fire BS2"
         );
     }
 
