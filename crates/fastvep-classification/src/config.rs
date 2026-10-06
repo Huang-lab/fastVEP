@@ -1136,6 +1136,26 @@ fn default_ba1_exceptions() -> Vec<Ba1Exception> {
         hypomorph("SPTA1", "c.4339-99C>T", "1", 158_643_524, "G", "A",
             "the alpha-LELY allele; reduces alpha-spectrin output and causes elliptocytosis only in trans with an SPTA1 mutation, benign homozygous; gnomAD AF 6.6e-3 with 40 homozygotes"),
     ]);
+
+    // Common alleles raised by the round-6 medical-genetics review. Each is on
+    // the list because the reviewer named it, and its reason says so: the
+    // clinical statement is the reviewer's, quoted, and the frequencies are the
+    // values in the gnomAD v4 annotation database the benchmark runs against.
+    // No PMID came with any of them, so none is cited, and no mechanism is
+    // asserted here that the review did not state. Two G6PD alleles are not a
+    // ruling on the gene: the reviewer's "G6PD variants are common" suggests
+    // that every G6PD variant is exempt, but only these two were put forward.
+    // The same shape as a hypomorphic allele - no ClinVar id, BA1, BS1 and BS2
+    // blocked - named for where the entry came from and not for a mechanism.
+    let reviewer_named = hypomorph;
+    entries.extend([
+        reviewer_named("G6PD", "c.563C>T", "X", 154_534_419, "G", "A",
+            "p.Ser188Phe. Round-6 reviewer: 'Mediterranean deficiency variant; G6PD variants are common;exceptions to Benign population criteria'. ClinVar Pathogenic/Likely pathogenic (2 stars); gnomAD v4 AF 1.5e-3, population-maximum AF 4.4e-2, 21 homozygotes"),
+        reviewer_named("G6PD", "c.202G>A", "X", 154_536_002, "C", "T",
+            "p.Val68Met. Round-6 reviewer: 'G6PD variants are common;exceptions to Benign population criteria'. ClinVar Pathogenic/Likely pathogenic (2 stars); gnomAD v4 AF 3.7e-3, population-maximum AF 0.131, 173 homozygotes"),
+        reviewer_named("SERPINC1", "c.439A>G", "1", 173_911_984, "T", "C",
+            "p.Thr147Ala. Round-6 reviewer: 'founder variant in the African population; exceptions to Benign population criteria'. ClinVar Likely pathogenic (3 stars, expert panel); gnomAD v4 population-maximum AF 7.0e-3"),
+    ]);
     entries
 }
 

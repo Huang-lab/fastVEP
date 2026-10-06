@@ -562,6 +562,100 @@ mod tests {
         }
     }
 
+    /// The three alleles the round-6 review named, in the form the pipeline
+    /// produces them. A wrong coordinate, allele or chromosome spelling, or a
+    /// wrong HGVS token, would leave one route to the entry inert, and the
+    /// benchmark that would show it is not part of CI. Either route alone is
+    /// enough for a match, so with both supplied a typo in one is hidden by the
+    /// other: each is exercised on its own.
+    #[test]
+    fn test_reviewer_named_alleles_block_bs1_and_bs2_in_pipeline_form() {
+        // (gene, HGVS as the pipeline writes it, chrom, pos, ref, alt, gnomAD
+        // AF, population-maximum AF, homozygotes, AN)
+        let cases = [
+            (
+                "G6PD",
+                "ENST00000393562.10:c.563C>T",
+                "X",
+                154_534_419u64,
+                "G",
+                "A",
+                1.5e-3,
+                4.4e-2,
+                21u64,
+                1_097_898u64,
+            ),
+            (
+                "G6PD",
+                "ENST00000393562.10:c.202G>A",
+                "X",
+                154_536_002,
+                "C",
+                "T",
+                3.7e-3,
+                0.131,
+                173,
+                1_098_048,
+            ),
+            (
+                "SERPINC1",
+                "ENST00000367698.4:c.439A>G",
+                "1",
+                173_911_984,
+                "T",
+                "C",
+                1.8e-4,
+                7.0e-3,
+                3,
+                1_461_832,
+            ),
+        ];
+        let config = AcmgConfig::default();
+        for (gene, hgvs, chrom, pos, r, a, af, pop_af, hc, an) in cases {
+            for (route, hgvs_c, coordinates) in [
+                (
+                    "by coordinate",
+                    None,
+                    Some((chrom.to_string(), pos, r.to_string(), a.to_string())),
+                ),
+                ("by HGVS", Some(hgvs.to_string()), None),
+            ] {
+                let input = ClassificationInput {
+                    gene_symbol: Some(gene.to_string()),
+                    hgvs_c,
+                    variant_coordinates: coordinates,
+                    gnomad: Some(GnomadData {
+                        all_af: Some(af),
+                        all_an: Some(an),
+                        all_hc: Some(hc),
+                        faf95_max: Some(pop_af),
+                        ..Default::default()
+                    }),
+                    ..minimal_input()
+                };
+                let bs1 = evaluate_bs1(&input, &config);
+                assert!(
+                    !bs1.met,
+                    "{gene} {hgvs} {route}: BS1 must not fire: {}",
+                    bs1.summary
+                );
+                assert!(bs1.summary.contains("exception list"), "{}", bs1.summary);
+                let bs2 = evaluate_bs2(&input, &config);
+                assert!(
+                    !bs2.met,
+                    "{gene} {hgvs} {route}: BS2 must not fire: {}",
+                    bs2.summary
+                );
+                assert!(bs2.summary.contains("exception list"), "{}", bs2.summary);
+                assert_eq!(
+                    bs2.details["exception_gene"],
+                    serde_json::json!(gene),
+                    "{gene} {hgvs} {route}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_a_ba1_only_exception_does_not_reach_bs1() {
         // Ghosh's entries are scoped to BA1 by `blocks`, so BS1 evaluates

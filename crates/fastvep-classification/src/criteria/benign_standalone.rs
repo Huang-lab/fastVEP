@@ -501,6 +501,49 @@ mod tests {
         );
     }
 
+    /// G6PD p.Val68Met is the one reviewer-named allele that crosses the BA1 bar
+    /// as well as BS1's: its population-maximum frequency is 0.131, so without
+    /// the exception it would collect Standalone benign evidence.
+    #[test]
+    fn test_ba1_reviewer_named_g6pd_allele_is_exempt() {
+        let at = |pos: Option<u64>, hgvs: Option<&str>| ClassificationInput {
+            impact: fastvep_core::Impact::Moderate,
+            gene_symbol: Some("G6PD".to_string()),
+            hgvs_c: hgvs.map(str::to_string),
+            variant_coordinates: pos
+                .map(|p| ("X".to_string(), p, "C".to_string(), "T".to_string())),
+            gnomad: Some(GnomadData {
+                all_af: Some(3.7e-3),
+                all_an: Some(1_098_048),
+                faf95_max: Some(0.131),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        };
+        // Either route alone is enough for a match, so with both supplied a typo
+        // in one is hidden by the other: each is exercised on its own.
+        for (route, input) in [
+            ("by coordinate", at(Some(154_536_002), None)),
+            ("by HGVS", at(None, Some("ENST00000393562.10:c.202G>A"))),
+        ] {
+            let exempt = evaluate_ba1(&input, &AcmgConfig::default());
+            assert!(!exempt.met, "{route}: {}", exempt.summary);
+            assert!(
+                exempt.summary.contains("exception list"),
+                "{route}: {}",
+                exempt.summary
+            );
+        }
+
+        // The exception is the one variant and not the gene: the neighbouring
+        // base is a different coordinate and a different c. token.
+        let neighbour = evaluate_ba1(
+            &at(Some(154_536_003), Some("ENST00000393562.10:c.201G>A")),
+            &AcmgConfig::default(),
+        );
+        assert!(neighbour.met, "{}", neighbour.summary);
+    }
+
     #[test]
     fn test_ba1_exception_does_not_match_a_neighbouring_variant() {
         // One base away, same gene: not the listed variant, and BA1 must fire.
