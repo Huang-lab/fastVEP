@@ -536,6 +536,16 @@ fn evaluate_bp4(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
         (false, true) => (true, EvidenceStrength::Supporting),
         (false, false) => (false, EvidenceStrength::Supporting),
     };
+    // Which evidence carried it, for the reconciliation pass, which has to tell
+    // a splice-only BP4 from a REVEL one: see `reconcile_evidence`.
+    details.insert(
+        "bp4_source".into(),
+        serde_json::json!(match (revel_met, splice_supporting) {
+            (true, _) => "revel_missense",
+            (false, true) => "spliceai",
+            (false, false) => "none",
+        }),
+    );
 
     let evaluated = (is_missense && input.revel.is_some()) || input.splice_ai.is_some();
     details.insert("evidence_lines".into(), serde_json::json!(evidence_lines));
