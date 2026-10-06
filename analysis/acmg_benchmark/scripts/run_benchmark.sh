@@ -65,6 +65,18 @@ if [ -n "$ACMG_CONFIG" ]; then
   CONFIG_ARGS=(--acmg-config "$ACMG_CONFIG")
 fi
 
+# Any other `fastvep annotate` flags, for a variant of the same version - for
+# instance `EXTRA_ARGS="--pick-order rank,mane_select"`. Split on whitespace,
+# newlines included, and never globbed, so a flag and its value stay two words.
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+EXTRA_ARR=()
+if [ -n "$EXTRA_ARGS" ]; then
+  set -f
+  # shellcheck disable=SC2206 # splitting is the point
+  EXTRA_ARR=($EXTRA_ARGS)
+  set +f
+fi
+
 for f in "$INPUT" "$TRUTH" "$GFF3" "$FASTA" "$FASTVEP"; do
   [ -e "$f" ] || { echo "missing required input: $f" >&2; exit 1; }
 done
@@ -72,10 +84,41 @@ done
 
 mkdir -p "$OUT_DIR"
 VCFGZ="$OUT_DIR/clinvar_2star.fastvep.vcf.gz"
+PROVENANCE="$OUT_DIR/run_provenance.txt"
+
+# What produced the annotation, recorded beside it. The version name is the only
+# part of the output's key, so without this a second run under the same name
+# with a different config or flags would find the first run's annotation and
+# score it as if it were its own.
+ARGS_LINE="annotate --acmg --pick ${CONFIG_ARGS[*]+${CONFIG_ARGS[*]}} ${EXTRA_ARR[*]+${EXTRA_ARR[*]}}"
+CONFIG_HASH="none"
+if [ -n "$ACMG_CONFIG" ]; then
+  CONFIG_HASH="$(shasum -a 256 "$ACMG_CONFIG" | cut -d' ' -f1)"
+fi
+CURRENT="args: $ARGS_LINE
+acmg_config_sha256: $CONFIG_HASH"
+
+if [ -s "$VCFGZ" ] && [ -f "$PROVENANCE" ]; then
+  RECORDED="$(grep -E '^(args|acmg_config_sha256):' "$PROVENANCE")"
+  if [ "$RECORDED" != "$CURRENT" ]; then
+    echo "error: $VCFGZ was produced with different arguments than this run asks for." >&2
+    echo "--- recorded ($PROVENANCE)" >&2
+    echo "$RECORDED" >&2
+    echo "--- requested" >&2
+    echo "$CURRENT" >&2
+    echo "Delete $OUT_DIR, or give this run its own version name." >&2
+    exit 3
+  fi
+fi
 
 if [ ! -s "$VCFGZ" ]; then
   echo "==> Annotating $(grep -vc '^#' "$INPUT") variants with --acmg ($VERSION)..."
   T0=$(date +%s)
+  # Written under a temporary name and moved into place only once the whole
+  # pipeline has succeeded. A failed annotate - a mistyped flag, say - used to
+  # leave a valid, empty bgzip under the final name, which the next run found,
+  # reused and scored as zero classified variants.
+  rm -f "$VCFGZ.partial"
   "$FASTVEP" annotate \
     -i "$INPUT" \
     -o - \
@@ -84,10 +127,23 @@ if [ ! -s "$VCFGZ" ]; then
     --sa-dir "$SA_DIR" \
     --acmg --pick \
     ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} \
+    ${EXTRA_ARR[@]+"${EXTRA_ARR[@]}"} \
     --output-format vcf \
-    | bgzip -c > "$VCFGZ"
+    | bgzip -c > "$VCFGZ.partial"
+  mv "$VCFGZ.partial" "$VCFGZ"
   T1=$(date +%s)
   echo "==> Annotation took $((T1-T0)) seconds"
+  {
+    echo "$CURRENT"
+    echo "fastvep: $FASTVEP"
+    echo "fastvep_version: $("$FASTVEP" --version 2>&1 | head -1)"
+    echo "repo_commit: $(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+    echo "repo_dirty_files: $(git -C "$ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+    echo "annotation_seconds: $((T1-T0))"
+    echo "recorded_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$PROVENANCE"
+elif [ ! -f "$PROVENANCE" ]; then
+  echo "==> Reusing existing annotation at $VCFGZ, skipping. It predates run_provenance.txt, so what produced it is not recorded."
 else
   echo "==> Reusing existing annotation at $VCFGZ, skipping. Delete it to re-annotate."
 fi
