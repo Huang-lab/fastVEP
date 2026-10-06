@@ -26,14 +26,24 @@
 #   concordance_by_chrom.csv, concordance_by_consequence.csv
 #   criterion_firing_rates.csv, rule_distribution.csv
 #   discrepancies.tsv              every non-exact call
+#   run_provenance.txt             what produced the annotation: the flags, the
+#                                  hashes of the binary and of every --acmg-config,
+#                                  which inputs were read, and the commit
 #
 # Output is VCF-bgzipped (~10x smaller than pretty-printed JSON and ~100x
 # smaller than tab format with all fields). VCF is the only format that carries
 # ACMG/ACMG_CRITERIA in the per-transcript CSQ entry.
 #
 # An existing annotated VCF is reused rather than regenerated, so re-running to
-# recompute concordance after a scoring change is cheap. Delete it to force a
-# fresh annotation.
+# recompute concordance after a scoring change is cheap - but only when
+# run_provenance.txt says the same binary, flags, configuration and inputs made
+# it. Anything else stops the run (exit 3): delete the directory, or give the
+# run its own version name.
+#
+# Variants of a run, under their own version names:
+#   ACMG_CONFIG=path.toml  an extra --acmg-config
+#   EXTRA_ARGS="..."       any other `fastvep annotate` flags, split on whitespace
+#   LABELS=path.tsv        the ClinVar 2-star+ labels (TRUTH is the old name)
 
 set -euo pipefail
 
@@ -47,10 +57,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 INPUT="${INPUT:-$ROOT/data/benchmark/clinvar_2star.vcf}"
-# TRUTH is the old name of this variable and is still honoured.
-LABELS="${LABELS:-${TRUTH:-$ROOT/data/benchmark/clinvar_2star_labels.tsv}}"
-if [ ! -e "$LABELS" ] && [ -e "$ROOT/data/benchmark/clinvar_2star_truth.tsv" ]; then
-  LABELS="$ROOT/data/benchmark/clinvar_2star_truth.tsv"
+# TRUTH is the old name of this variable and is still honoured. The old file name
+# is the fallback only when neither variable is set: a path that was asked for and
+# is missing is an error, and silently reading a different file instead would
+# score against the wrong labels.
+LABELS="${LABELS:-${TRUTH:-}}"
+if [ -z "$LABELS" ]; then
+  LABELS="$ROOT/data/benchmark/clinvar_2star_labels.tsv"
+  if [ ! -e "$LABELS" ] && [ -e "$ROOT/data/benchmark/clinvar_2star_truth.tsv" ]; then
+    LABELS="$ROOT/data/benchmark/clinvar_2star_truth.tsv"
+  fi
 fi
 GFF3="${GFF3:-$ROOT/test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3}"
 FASTA="${FASTA:-$ROOT/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa}"
@@ -92,29 +108,106 @@ mkdir -p "$OUT_DIR"
 VCFGZ="$OUT_DIR/clinvar_2star.fastvep.vcf.gz"
 PROVENANCE="$OUT_DIR/run_provenance.txt"
 
-# What produced the annotation, recorded beside it. The version name is the only
-# part of the output's key, so without this a second run under the same name
-# with a different config or flags would find the first run's annotation and
-# score it as if it were its own.
-ARGS_LINE="annotate --acmg --pick ${CONFIG_ARGS[*]+${CONFIG_ARGS[*]}} ${EXTRA_ARR[*]+${EXTRA_ARR[*]}}"
-CONFIG_HASH="none"
+# ---- What produced the annotation, recorded beside it --------------------------
+#
+# The version name is the only part of the output's key, so without this a second
+# run under the same name with a different config, flags, binary or inputs would
+# find the first run's annotation and score it as if it were its own. What is
+# compared is the content that decides the annotation - the flags, the config
+# files' hashes, the binary's hash, and which inputs were read - and not how a
+# path happened to be spelled.
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi
+}
+abspath() {
+  if [ -d "$1" ]; then (cd "$1" && pwd -P); else printf '%s/%s' "$(cd "$(dirname "$1")" && pwd -P)" "$(basename "$1")"; fi
+}
+bytes() { wc -c < "$1" | tr -d ' '; }
+
+# Every --acmg-config the run reads, whether it came in through ACMG_CONFIG or
+# through EXTRA_ARGS, so editing either one is seen.
+CONFIG_FILES=()
 if [ -n "$ACMG_CONFIG" ]; then
-  CONFIG_HASH="$(shasum -a 256 "$ACMG_CONFIG" | cut -d' ' -f1)"
+  CONFIG_FILES+=("$ACMG_CONFIG")
 fi
-CURRENT="args: $ARGS_LINE
-acmg_config_sha256: $CONFIG_HASH"
+prev=""
+for a in ${EXTRA_ARR[@]+"${EXTRA_ARR[@]}"}; do
+  if [ "$prev" = "--acmg-config" ]; then
+    CONFIG_FILES+=("$a")
+  fi
+  case "$a" in
+    --acmg-config=*) CONFIG_FILES+=("${a#--acmg-config=}") ;;
+  esac
+  prev="$a"
+done
+CONFIG_HASHES=""
+for c in ${CONFIG_FILES[@]+"${CONFIG_FILES[@]}"}; do
+  [ -f "$c" ] || { echo "missing --acmg-config file: $c" >&2; exit 1; }
+  CONFIG_HASHES="${CONFIG_HASHES:+$CONFIG_HASHES,}$(sha256 < "$c")"
+done
+CONFIG_HASHES="${CONFIG_HASHES:-none}"
+
+# The flags, with each config's path replaced by a placeholder: its hash says
+# what was in it.
+ARGS_NORM="annotate --acmg --pick"
+prev=""
+for a in ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} ${EXTRA_ARR[@]+"${EXTRA_ARR[@]}"}; do
+  if [ "$prev" = "--acmg-config" ]; then
+    ARGS_NORM="$ARGS_NORM <config>"
+  else
+    case "$a" in
+      --acmg-config=*) ARGS_NORM="$ARGS_NORM --acmg-config=<config>" ;;
+      *) ARGS_NORM="$ARGS_NORM $a" ;;
+    esac
+  fi
+  prev="$a"
+done
+
+SA_SIGNATURE="$(find "$SA_DIR" -type f | LC_ALL=C sort | while read -r f; do printf '%s %s\n' "${f#"$SA_DIR"/}" "$(bytes "$f")"; done | sha256)"
+CURRENT="provenance_version: 2
+args: $ARGS_NORM
+acmg_config_sha256: $CONFIG_HASHES
+fastvep_sha256: $(sha256 < "$FASTVEP")
+input: $(abspath "$INPUT")
+input_bytes: $(bytes "$INPUT")
+gff3: $(abspath "$GFF3")
+gff3_bytes: $(bytes "$GFF3")
+fasta: $(abspath "$FASTA")
+fasta_bytes: $(bytes "$FASTA")
+sa_dir: $(abspath "$SA_DIR")
+sa_dir_signature: $SA_SIGNATURE"
+
+# One line per key, whitespace-trimmed, with a recorded config path folded into
+# its placeholder the way the current one is.
+trim() { sed -E 's/[[:space:]]+$//; s/[[:space:]]+/ /g; s/--acmg-config [^ ]+/--acmg-config <config>/'; }
+recorded_keys() { grep -E "^($1):" "$PROVENANCE" | trim || true; }
 
 if [ -s "$VCFGZ" ] && [ -f "$PROVENANCE" ]; then
-  RECORDED="$(grep -E '^(args|acmg_config_sha256):' "$PROVENANCE")"
-  if [ "$RECORDED" != "$CURRENT" ]; then
-    echo "error: $VCFGZ was produced with different arguments than this run asks for." >&2
+  if grep -q '^provenance_version: 2$' "$PROVENANCE"; then
+    KEYS='provenance_version|args|acmg_config_sha256|fastvep_sha256|input|input_bytes|gff3|gff3_bytes|fasta|fasta_bytes|sa_dir|sa_dir_signature'
+    WANT="$CURRENT"
+  else
+    # Written by an earlier version of this script, which recorded the flags and
+    # the config's hash and nothing else.
+    KEYS='args|acmg_config_sha256'
+    WANT="$(printf '%s\n' "$CURRENT" | grep -E '^(args|acmg_config_sha256):')"
+  fi
+  RECORDED="$(recorded_keys "$KEYS")"
+  if [ "$RECORDED" != "$(printf '%s\n' "$WANT" | trim)" ]; then
+    echo "error: $VCFGZ was produced by something other than what this run asks for." >&2
     echo "--- recorded ($PROVENANCE)" >&2
     echo "$RECORDED" >&2
     echo "--- requested" >&2
-    echo "$CURRENT" >&2
+    printf '%s\n' "$WANT" | trim >&2
     echo "Delete $OUT_DIR, or give this run its own version name." >&2
     exit 3
   fi
+elif [ -s "$VCFGZ" ] && { [ -n "$ACMG_CONFIG" ] || [ -n "$EXTRA_ARGS" ]; }; then
+  # An annotation from before provenance was recorded, and a run that asks for
+  # something other than the defaults: there is nothing to check it against.
+  echo "error: $VCFGZ predates run_provenance.txt, so it cannot be checked against ACMG_CONFIG or EXTRA_ARGS." >&2
+  echo "Delete $OUT_DIR, or give this run its own version name." >&2
+  exit 3
 fi
 
 if [ ! -s "$VCFGZ" ]; then
@@ -136,18 +229,30 @@ if [ ! -s "$VCFGZ" ]; then
     ${EXTRA_ARR[@]+"${EXTRA_ARR[@]}"} \
     --output-format vcf \
     | bgzip -c > "$VCFGZ.partial"
-  mv "$VCFGZ.partial" "$VCFGZ"
   T1=$(date +%s)
   echo "==> Annotation took $((T1-T0)) seconds"
+  # `unknown` and not a number when git cannot say: a count of zero would read as
+  # a clean tree.
+  if GIT_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)"; then
+    GIT_DIRTY="$(git -C "$ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  else
+    GIT_COMMIT="unknown"
+    GIT_DIRTY="unknown"
+  fi
   {
     echo "$CURRENT"
     echo "fastvep: $FASTVEP"
     echo "fastvep_version: $("$FASTVEP" --version 2>&1 | head -1)"
-    echo "repo_commit: $(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-    echo "repo_dirty_files: $(git -C "$ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+    echo "repo_commit: $GIT_COMMIT"
+    echo "repo_dirty_files: $GIT_DIRTY"
     echo "annotation_seconds: $((T1-T0))"
     echo "recorded_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } > "$PROVENANCE"
+  } > "$PROVENANCE.partial"
+  # The record goes first. Interrupted between the two moves, the directory holds
+  # a record and no annotation, which the next run simply redoes; the other order
+  # would leave an annotation with no record of what made it.
+  mv "$PROVENANCE.partial" "$PROVENANCE"
+  mv "$VCFGZ.partial" "$VCFGZ"
 elif [ ! -f "$PROVENANCE" ]; then
   echo "==> Reusing existing annotation at $VCFGZ, skipping. It predates run_provenance.txt, so what produced it is not recorded."
 else

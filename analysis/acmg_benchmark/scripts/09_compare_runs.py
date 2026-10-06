@@ -22,10 +22,19 @@ fitted to its own input. "Toward" and "away" below mean "closer to ClinVar's
 label" and "further from it", nothing stronger.
 
 Usage:
-  09_compare_runs.py --baseline v36 --runs v37b v38 --out results/v38/
-  09_compare_runs.py --baseline v36 --runs v38 --labels data/benchmark/clinvar_2star_labels.tsv
+  09_compare_runs.py --baseline v36 --runs v37 v37_bs2off --out analysis/acmg_benchmark/results/v37/
+  09_compare_runs.py --baseline v36 --runs v38 --out /tmp/v38 --labels data/benchmark/clinvar_2star_labels.tsv
 
-Runs are directory names under `data/benchmark/output_<run>/`.
+Runs are directory names under `data/benchmark/output_<run>/`. `--out` is
+required and is taken relative to the working directory.
+
+Every changed call is counted once in `changed` and lands in exactly one of
+`toward`, `away`, `level` (the same distance from the label before and after,
+as when P becomes B against a VUS label) or `unscored` (a NoCall on either side,
+or no ClinVar label for the variant), so those four add up to `changed`.
+
+`reviewed_rows_opposite` is -1 in run_summary.tsv, and n/a in summary.md, for a
+run whose `discrepancies.tsv` or reviewed-rows file is missing.
 """
 
 from __future__ import annotations
@@ -45,6 +54,7 @@ DEFAULT_LABELS = BENCH / "clinvar_2star_labels.tsv"
 LEGACY_LABELS = BENCH / "clinvar_2star_truth.tsv"
 DEFAULT_REVIEWED = HERE.parent / "data" / "round6_reviewed_rows.tsv"
 
+ATTRIBUTION_ROWS_SHOWN = 25
 CLASSES = ["Pathogenic", "Likely_pathogenic", "VUS", "Likely_benign", "Benign"]
 SHORT = {"P": "Pathogenic", "LP": "Likely_pathogenic", "VUS": "VUS", "LB": "Likely_benign", "B": "Benign"}
 # One axis, pathogenic positive: a call is "closer" to a label when the distance
@@ -94,6 +104,7 @@ def metrics(matrix: dict[str, dict[str, int]]) -> dict[str, int]:
     )
     no_call = sum(matrix[c]["NoCall"] for c in CLASSES)
     return {
+        "classified": sum(matrix[c][k] for c in CLASSES for k in CLASSES),
         "exact": exact,
         "same_direction": same,
         "opposite": opposite,
@@ -156,6 +167,10 @@ def label_of(call: str) -> str | None:
     return SHORT.get(call) if call in SHORT else call if call in RANK else None
 
 
+ATTRIBUTION_FIELDS = ["criteria_lost_to_gained", "changed", "toward", "away", "level", "unscored",
+                      "label_pathogenic", "label_vus", "label_benign", "opposite_before", "opposite_after"]
+
+
 def attribute(base_calls: dict, run_calls: dict, labels: dict) -> list[dict]:
     """Group changed calls by the criteria they lost and gained."""
     groups: dict[str, Counter] = defaultdict(Counter)
@@ -168,29 +183,35 @@ def attribute(base_calls: dict, run_calls: dict, labels: dict) -> list[dict]:
         g = groups[f"{lost} -> {gained}"]
         g["changed"] += 1
         label = labels.get(key)
+        if label is None:
+            g["unscored"] += 1
+            continue
+        pathogenic_label = label in ("Pathogenic", "Likely_pathogenic")
+        benign_label = label in ("Benign", "Likely_benign")
+        g["label_pathogenic"] += pathogenic_label
+        g["label_benign"] += benign_label
+        g["label_vus"] += label == "VUS"
+        # A NoCall is no direction at all, so it is never opposite to anything,
+        # and a change into or out of one has no distance to compare.
         ca, cb = label_of(a["acmg"]), label_of(b["acmg"])
-        if label is None or ca is None or cb is None:
+        # Opposite-direction before and after, the review-critical count.
+        if ca is not None and ((pathogenic_label and RANK[ca] < 0) or (benign_label and RANK[ca] > 0)):
+            g["opposite_before"] += 1
+        if cb is not None and ((pathogenic_label and RANK[cb] < 0) or (benign_label and RANK[cb] > 0)):
+            g["opposite_after"] += 1
+        if ca is None or cb is None:
+            g["unscored"] += 1
             continue
         before, after = abs(RANK[ca] - RANK[label]), abs(RANK[cb] - RANK[label])
         if after < before:
             g["toward"] += 1
         elif after > before:
             g["away"] += 1
-        pathogenic_label = label in ("Pathogenic", "Likely_pathogenic")
-        benign_label = label in ("Benign", "Likely_benign")
-        g["label_pathogenic"] += pathogenic_label
-        g["label_benign"] += benign_label
-        g["label_vus"] += label == "VUS"
-        # Opposite-direction before and after, the review-critical count.
-        if (pathogenic_label and RANK[ca] < 0) or (benign_label and RANK[ca] > 0):
-            g["opposite_before"] += 1
-        if (pathogenic_label and RANK[cb] < 0) or (benign_label and RANK[cb] > 0):
-            g["opposite_after"] += 1
+        else:
+            g["level"] += 1
     rows = []
     for key, g in groups.items():
-        rows.append({"criteria_lost_to_gained": key, **{k: g.get(k, 0) for k in (
-            "changed", "toward", "away", "label_pathogenic", "label_vus", "label_benign",
-            "opposite_before", "opposite_after")}})
+        rows.append({"criteria_lost_to_gained": key, **{k: g.get(k, 0) for k in ATTRIBUTION_FIELDS[1:]}})
     rows.sort(key=lambda r: -r["changed"])
     return rows
 
@@ -200,14 +221,24 @@ def main() -> None:
     ap.add_argument("--baseline", required=True, help="run name under data/benchmark/output_<name>/")
     ap.add_argument("--runs", nargs="+", required=True)
     ap.add_argument("--labels", type=Path, default=None, help="ClinVar 2-star+ labels TSV")
-    ap.add_argument("--reviewed", type=Path, default=DEFAULT_REVIEWED, help="TSV of reviewed rows (chrom pos ref alt)")
+    ap.add_argument("--reviewed", type=Path, default=None,
+                    help=f"TSV of reviewed rows (chrom pos ref alt); default {DEFAULT_REVIEWED.relative_to(ROOT)}")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--no-attribution", action="store_true", help="skip the per-variant diff (fast; headline only)")
     args = ap.parse_args()
 
     labels_path = args.labels or (DEFAULT_LABELS if DEFAULT_LABELS.exists() else LEGACY_LABELS)
+    if not labels_path.exists():
+        ap.error(f"labels file not found: {labels_path}")
+    # A reviewed-rows file that was asked for and is missing is an error; one that
+    # was not asked for and is missing leaves the column at -1, "not computed".
+    if args.reviewed is not None and not args.reviewed.exists():
+        ap.error(f"--reviewed file not found: {args.reviewed}")
+    reviewed_path = args.reviewed or DEFAULT_REVIEWED
+    if not reviewed_path.exists():
+        sys.stderr.write(f"warning: no reviewed-rows file at {reviewed_path}; reviewed_rows_opposite will be n/a\n")
+    reviewed = read_reviewed(reviewed_path)
     args.out.mkdir(parents=True, exist_ok=True)
-    reviewed = read_reviewed(args.reviewed)
 
     names = [args.baseline] + [r for r in args.runs if r != args.baseline]
     summary = []
@@ -218,7 +249,7 @@ def main() -> None:
         m["reviewed_rows_opposite"] = reviewed_still_opposite(run_dir, reviewed)
         summary.append(m)
 
-    cols = ["run", "exact", "same_direction", "opposite", "no_call", "p_same", "lp_same", "vus_exact",
+    cols = ["run", "classified", "exact", "same_direction", "opposite", "no_call", "p_same", "lp_same", "vus_exact",
             "lb_same", "b_same", "false_benign", "false_pathogenic", "reviewed_rows_opposite"]
     with (args.out / "run_summary.tsv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, delimiter="\t", lineterminator="\n")
@@ -226,15 +257,18 @@ def main() -> None:
         for row in summary:
             w.writerow({c: row[c] for c in cols})
 
+    # One sentence to a line, so that a diff of two of these files shows which
+    # sentence changed.
     md = ["# Run comparison", "",
-          f"Baseline `{args.baseline}`. Labels: ClinVar 2-star+ classifications "
-          f"(`{labels_path.name}`), a reference and not ground truth.", "",
-          "| run | exact | same-direction | opposite | P same | LP same | VUS exact | LB same | B same "
+          f"Baseline `{args.baseline}`.",
+          f"Labels: ClinVar 2-star+ classifications (`{labels_path.name}`), a reference and not ground truth.", "",
+          "| run | classified | exact | same-direction | opposite | P same | LP same | VUS exact | LB same | B same "
           "| P/LP called B/LB | B/LB called P/LP | reviewed rows opposite |",
-          "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+          "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for r in summary:
-        md.append("| {run} | {exact:,} | {same_direction:,} | {opposite} | {p_same:,} | {lp_same:,} | {vus_exact:,} "
-                  "| {lb_same:,} | {b_same:,} | {false_benign} | {false_pathogenic} | {reviewed_rows_opposite} |".format(**r))
+        md.append("| {run} | {classified:,} | {exact:,} | {same_direction:,} | {opposite} | {p_same:,} | {lp_same:,} "
+                  "| {vus_exact:,} | {lb_same:,} | {b_same:,} | {false_benign} | {false_pathogenic} "
+                  "| {reviewed} |".format(reviewed="n/a" if r["reviewed_rows_opposite"] < 0 else r["reviewed_rows_opposite"], **r))
 
     if not args.no_attribution:
         ev = load_module("acmg_eval", HERE / "03_evaluate_concordance.py")
@@ -247,25 +281,28 @@ def main() -> None:
             run_calls = picked_calls(ev, diff, BENCH / f"output_{name}" / "clinvar_2star.fastvep.vcf.gz")
             rows = attribute(base_calls, run_calls, labels)
             out = args.out / f"attribution_{args.baseline}_to_{name}.tsv"
-            fields = ["criteria_lost_to_gained", "changed", "toward", "away", "label_pathogenic",
-                      "label_vus", "label_benign", "opposite_before", "opposite_after"]
             with out.open("w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fields, delimiter="\t", lineterminator="\n")
+                w = csv.DictWriter(f, fieldnames=ATTRIBUTION_FIELDS, delimiter="\t", lineterminator="\n")
                 w.writeheader()
                 w.writerows(rows)
             total = Counter()
             for r in rows:
-                for k in fields[1:]:
+                for k in ATTRIBUTION_FIELDS[1:]:
                     total[k] += r[k]
             md += ["", f"## `{args.baseline}` to `{name}`", "",
                    f"{total['changed']:,} calls changed: {total['toward']:,} toward ClinVar's label, "
-                   f"{total['away']:,} away. Opposite-direction {total['opposite_before']} before, "
+                   f"{total['away']:,} away, {total['level']:,} the same distance from it, "
+                   f"{total['unscored']:,} not scored (a NoCall on either side, or no ClinVar label).",
+                   f"Opposite-direction {total['opposite_before']} before, "
                    f"{total['opposite_after']} after, among the changed calls.", "",
-                   "| criteria lost to gained | changed | toward | away | ClinVar P/LP | ClinVar VUS | ClinVar B/LB | opposite before | after |",
-                   "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
-            for r in rows[:25]:
-                md.append("| {criteria_lost_to_gained} | {changed:,} | {toward:,} | {away:,} | {label_pathogenic:,} "
-                          "| {label_vus:,} | {label_benign:,} | {opposite_before} | {opposite_after} |".format(**r))
+                   "| criteria lost to gained | changed | toward | away | level | not scored | ClinVar P/LP | ClinVar VUS | ClinVar B/LB | opposite before | after |",
+                   "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+            for r in rows[:ATTRIBUTION_ROWS_SHOWN]:
+                md.append("| {criteria_lost_to_gained} | {changed:,} | {toward:,} | {away:,} | {level:,} | {unscored:,} "
+                          "| {label_pathogenic:,} | {label_vus:,} | {label_benign:,} | {opposite_before} | {opposite_after} |".format(**r))
+            if len(rows) > ATTRIBUTION_ROWS_SHOWN:
+                md += ["", f"The {ATTRIBUTION_ROWS_SHOWN} largest of {len(rows):,} groups; all of them, and the totals above, "
+                           f"are in `{out.name}`."]
 
     (args.out / "summary.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))
