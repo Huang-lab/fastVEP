@@ -1,0 +1,4 @@
+# v37_bs2ac_20: The carrier bar off and the observed-carrier floor raised from 5 to 20.
+# Everything else is the shipped default.
+bs2_ad_prevalence_threshold = 0
+bs2_ad_min_ac = 20

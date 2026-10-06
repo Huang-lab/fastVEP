@@ -1,0 +1,3 @@
+# v37_bs2prev_1e-4: The carrier bar at a third of the shipped 3e-4.
+# Everything else is the shipped default.
+bs2_ad_prevalence_threshold = 1e-4

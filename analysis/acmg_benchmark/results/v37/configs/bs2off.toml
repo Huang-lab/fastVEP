@@ -1,0 +1,3 @@
+# v37_bs2off: The dominant-gene carrier bar switched off, leaving BS2's old floor of five observed carriers alone.
+# Everything else is the shipped default.
+bs2_ad_prevalence_threshold = 0
