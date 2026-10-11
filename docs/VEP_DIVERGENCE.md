@@ -449,7 +449,7 @@ On a donor the 3' end of an indel's range is the furthest into the intron it can
 placement past `+2` *proves* the canonical `GT` survives the edit, and no exon base is edited
 either; on an acceptor the shift runs toward the exon, so a deletion written across the acceptor
 can arrive wholly exonic and in frame (MLH1 `TAGG>T`, or FOXP2 `CCAG>C` down a `CAG` repeat).
-Neither case changes a consequence term, which stays VEP's: the placement is used only where a
+Neither case changes a consequence term, which is left as the predictor reports it: the placement is used only where a
 criterion is asking about the edited sequence and not about the record.
 No criterion parses an HGVSc for it.
 [`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md) carries

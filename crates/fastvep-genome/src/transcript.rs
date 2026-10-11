@@ -495,7 +495,8 @@ impl Transcript {
     /// an exon that has a splice site on that side.
     ///
     /// These are the positions Walker 2023 (ClinGen SVI Splicing Subgroup)
-    /// excludes from BP7, because SpliceAI is known to miss splice impact there.
+    /// excludes from BP7, for the reason BP7's own doc comment gives, that
+    /// SpliceAI can miss splice impact there.
     /// The first base of a transcript's first exon and the last bases of its last
     /// are not next to a splice site, so they are not edges. Counted in
     /// transcript order, so on the reverse strand the first base of an exon is

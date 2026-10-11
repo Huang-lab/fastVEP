@@ -10,7 +10,7 @@ Benign (B).
 
 **A note on the word "truth".**
 The benchmark compares fastVEP with ClinVar's own 2-star-and-better classifications.
-That is a reference, not ground truth: ClinVar curators assign some of those classifications from the same kinds of evidence fastVEP computes (frequency, computational prediction, consequence), so agreement is partly circular, and a disagreement can as well be ClinVar being out of date or fastVEP being wrong.
+That is a reference, not ground truth: ClinVar's classifications can rest on the same kinds of evidence fastVEP computes (frequency, computational prediction, consequence), so agreement is partly circular, and a disagreement can as well be ClinVar being out of date or fastVEP being wrong.
 Older text in this document, and the `truth` column in older result files, mean ClinVar's classification and nothing stronger; the scripts accept both the old and the new file and column names.
 
 This document reflects the state after the SVI alignment series (PR1–PR10).

@@ -64,8 +64,9 @@ python3 analysis/acmg_benchmark/scripts/09_compare_runs.py \
 The run script takes about 2 minutes to annotate 673,660 variants plus a couple
 of minutes to score, and writes to `data/benchmark/output_v15/`.
 It records what produced the annotation in `run_provenance.txt` beside it: the
-flags, the hash of the binary and of every `--acmg-config`, which inputs were
-read and the commit.
+flags, the hash of the binary and of every `--acmg-config` and
+`--functional-evidence` file, which inputs were read (by name and size, not
+content) and the commit.
 It reuses an existing annotated VCF only when the same binary, flags,
 configuration and inputs made it, and stops with exit code 3 otherwise, so a
 second run under a name already used cannot be scored against the first run's
