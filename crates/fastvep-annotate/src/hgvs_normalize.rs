@@ -482,7 +482,8 @@ pub fn hgvsg_clipped(
     fastvep_hgvs::hgvsg(
         chrom,
         start + front as u64,
-        end - back as u64,
+        // Saturating, as in `hgvs_allele`: `end` need not belong to these alleles.
+        end.saturating_sub(back as u64),
         &clipped(r),
         &clipped(a),
     )
@@ -506,7 +507,8 @@ pub fn clipped_span(
         (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, strand == Strand::Reverse),
         _ => (0, 0),
     };
-    (start + front as u64, end - back as u64)
+    // Saturating, as in `hgvs_allele`: `end` need not belong to these alleles.
+    (start + front as u64, end.saturating_sub(back as u64))
 }
 
 /// Where HGVS places one allele against a transcript: the most 3' position its
@@ -561,6 +563,13 @@ pub fn hgvs_placement(
         genomic_alt,
         None,
     );
+    // A span that ends before it starts by more than the one base a pure
+    // insertion's does belongs to no change on this transcript: the record's
+    // `end` is another allele's. There is no placement to work out, so the
+    // record's terms decide, as they do where the placement is not worked out.
+    if hv.start > hv.end.saturating_add(1) {
+        return HgvsPlacement::Spans;
+    }
     let (lo, hi) = (hv.start.min(hv.end), hv.start.max(hv.end));
     if hi < transcript.start || lo > transcript.end {
         return HgvsPlacement::Spans;
@@ -655,7 +664,11 @@ pub fn hgvs_allele(
     };
     HgvsAllele {
         start: start + front as u64,
-        end: end - back as u64,
+        // Saturating because `end` need not belong to these alleles: a sequence
+        // ALT beside a symbolic one in the same record takes its `end` from INFO
+        // END, which describes the symbolic allele and can be smaller than the
+        // clip. A subtraction that wraps aborts a debug or test build.
+        end: end.saturating_sub(back as u64),
         genomic_ref,
         genomic_alt,
         hgvs_ref,
@@ -1283,6 +1296,45 @@ mod tests {
 
     /// A change inside an exon is exonic, one off the transcript is given no
     /// position on it, and a substitution has nowhere to go.
+    /// A sequence ALT beside a symbolic one takes its `end` from INFO END, which
+    /// belongs to the symbolic allele and can be smaller than the clip. The
+    /// subtraction used to underflow, which aborts a debug or test build on a
+    /// line of a VCF (`1 30 . CTCCTCCT GATGCT,<DEL> . . END=1;SVTYPE=DEL`).
+    #[test]
+    fn a_span_that_ends_before_the_clip_does_not_underflow() {
+        let r = Allele::Sequence(b"CTCCTCCT".to_vec());
+        let a = Allele::Sequence(b"GATGCT".to_vec());
+        // The back clip is two bases, and `end` is 1.
+        assert_eq!(clipped_span(Strand::Forward, 30, 1, &r, &a), (30, 0));
+        let hv = hgvs_allele(Strand::Forward, 30, 1, &r, &a, None);
+        assert_eq!((hv.start, hv.end), (30, 0));
+        let _ = hgvsg_clipped("1", 30, 1, &r, &a);
+        // There is no change on the transcript to place, so the terms decide.
+        for strand in [Strand::Forward, Strand::Reverse] {
+            assert_eq!(
+                hgvs_placement(None, "1", &transcript(strand), 30, 1, &r, &a),
+                HgvsPlacement::Spans
+            );
+        }
+        // A pure insertion's span ends one base before it starts, and is placed.
+        let ins = (
+            Allele::Sequence(b"G".to_vec()),
+            Allele::Sequence(b"GTT".to_vec()),
+        );
+        assert_eq!(
+            hgvs_placement(
+                None,
+                "1",
+                &transcript(Strand::Forward),
+                10,
+                10,
+                &ins.0,
+                &ins.1
+            ),
+            HgvsPlacement::Exonic { in_frame: false }
+        );
+    }
+
     #[test]
     fn the_placement_names_an_exonic_change_and_declines_one_off_the_transcript() {
         let r = StrRef(DONOR_REPEAT);
