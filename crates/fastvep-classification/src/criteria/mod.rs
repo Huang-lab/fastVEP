@@ -12,6 +12,20 @@ pub mod pvs1;
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
 use crate::types::{EvidenceCriterion, EvidenceStrength};
+use fastvep_core::HgvsPlacement;
+
+/// How a criterion reports where HGVS placed the change, in its `details`.
+pub(crate) fn placement_detail(placement: HgvsPlacement) -> serde_json::Value {
+    match placement {
+        HgvsPlacement::Intronic { offset } => {
+            serde_json::json!({ "kind": "intronic", "offset": offset })
+        }
+        HgvsPlacement::Exonic { in_frame } => {
+            serde_json::json!({ "kind": "exonic", "in_frame": in_frame })
+        }
+        HgvsPlacement::Spans => serde_json::json!({ "kind": "spans" }),
+    }
+}
 
 /// Evaluate all 28 ACMG-AMP criteria and return the full list.
 ///
@@ -148,10 +162,30 @@ fn push_with_overrides(
 ///    PM1 is suppressed. PP3 at Moderate or Supporting + PM1 stays within the
 ///    cap and both fire.
 ///
+/// 5. **PP3 (REVEL) + BP4 (SpliceAI)** - a missense variant is judged twice,
+///    once for the amino-acid change and once for splicing. Walker 2023's
+///    section "Combined application of ACMG/AMP codes" recommends that "the
+///    effects on the protein with and without splicing impact be evaluated
+///    independently as separate variant classifications based on these
+///    different mechanisms, with the most deleterious classification resulting
+///    in the final classification" (quoted from the medRxiv version,
+///    PMC9980257; the published article's text could not be checked here).
+///    BP4 from SpliceAI says only that splicing is unaffected, which is true
+///    and says nothing about the protein, so it is not a vote against a
+///    damaging missense prediction. It is suppressed when PP3 was met from
+///    REVEL. The mirror - BP4 from a benign REVEL score beside PP3 from
+///    SpliceAI - is left alone. Applying the principle symmetrically would
+///    withhold benign calls, and on the ClinVar 2-star+ benchmark it recovers
+///    no Pathogenic or Likely pathogenic call, because the BP4 is not what
+///    holds those variants at VUS (`analysis/acmg_benchmark/RUN_VERSIONS.md`,
+///    "v36 to v37"). The repo's stance on that trade is that a missed
+///    diagnosis is the worse error, which is a reason to act only where one is
+///    recovered.
+///
 /// It also applies one *upgrade*, which is not suppression but needs the same
 /// cross-criterion view:
 ///
-/// 5. **PS1 (splice) graded against PVS1** - Walker 2023 Table 3 sets PS1's
+/// 6. **PS1 (splice) graded against PVS1** - Walker 2023 Table 3 sets PS1's
 ///    strength for a canonical-dinucleotide variant from the PVS1 code the
 ///    variant already carries: `PS1_Supporting` under a full-strength PVS1, and
 ///    full `PS1` under a downgraded one, so that a variant whose null evidence
@@ -263,6 +297,24 @@ fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
     let pp3_from_revel = pp3_source == "revel_missense";
     let pp3_from_splice = pp3_source == "spliceai";
     let pp3_strength = criteria[pp3_i].strength;
+
+    // Rule 5: PP3 (REVEL) + BP4 (SpliceAI) - drop the BP4. Independent of the
+    // rules below, so it does not return: PS1 or PM5 may go on to suppress the
+    // PP3, and the protein-level evidence they stand for is no more of a
+    // dissent from a splice prediction than the PP3 was.
+    if pp3_from_revel {
+        for c in criteria.iter_mut() {
+            let splice_bp4 = c.met
+                && c.code.starts_with("BP4")
+                && c.details.get("bp4_source").and_then(|v| v.as_str()) == Some("spliceai");
+            if splice_bp4 {
+                suppress(
+                    c,
+                    "Suppressed: REVEL supports a damaging missense effect (PP3), and SpliceAI saying splicing is unaffected is not evidence against it; the protein and splicing effects are assessed separately and the more deleterious stands (Walker 2023).",
+                );
+            }
+        }
+    }
 
     // Rule 1: PVS1 + PP3(splice) — drop PP3.
     if pvs1_met && pp3_from_splice {
@@ -614,6 +666,76 @@ mod reconcile_tests {
             summary: "test".to_string(),
             details: serde_json::Value::Object(details),
         }
+    }
+
+    fn bp4_with_source(source: &str) -> EvidenceCriterion {
+        let mut c = met(
+            "BP4",
+            EvidenceDirection::Benign,
+            EvidenceStrength::Supporting,
+        );
+        c.details = serde_json::json!({ "bp4_source": source });
+        c
+    }
+
+    #[test]
+    fn test_splice_bp4_does_not_count_against_a_damaging_missense_prediction() {
+        let mut criteria = vec![
+            pp3_with_source(EvidenceStrength::Supporting, "revel_missense"),
+            bp4_with_source("spliceai"),
+        ];
+        reconcile_evidence(&mut criteria);
+        assert!(find(&criteria, "PP3").met, "the missense evidence stands");
+        let bp4 = find(&criteria, "BP4");
+        assert!(!bp4.met);
+        assert!(
+            bp4.details["suppressed_by_reconcile"]
+                .as_str()
+                .is_some_and(|r| r.contains("Walker 2023")),
+            "{}",
+            bp4.details
+        );
+    }
+
+    /// PS1 or PM5 may take the PP3 away. The protein-level evidence they stand
+    /// for is no more answered by a splice prediction than the PP3 was.
+    #[test]
+    fn test_splice_bp4_is_still_dropped_when_ps1_takes_the_pp3_away() {
+        let mut criteria = vec![
+            met(
+                "PS1",
+                EvidenceDirection::Pathogenic,
+                EvidenceStrength::Strong,
+            ),
+            pp3_with_source(EvidenceStrength::Supporting, "revel_missense"),
+            bp4_with_source("spliceai"),
+        ];
+        reconcile_evidence(&mut criteria);
+        assert!(!find(&criteria, "PP3").met);
+        assert!(!find(&criteria, "BP4").met);
+    }
+
+    /// The mirror stays: a benign REVEL score is protein-level evidence, and a
+    /// SpliceAI-driven PP3 beside it is a genuine disagreement between the two
+    /// effects, which this pass does not adjudicate.
+    #[test]
+    fn test_revel_bp4_beside_a_splice_pp3_is_left_alone() {
+        let mut criteria = vec![
+            pp3_with_source(EvidenceStrength::Supporting, "spliceai"),
+            bp4_with_source("revel_missense"),
+        ];
+        reconcile_evidence(&mut criteria);
+        assert!(find(&criteria, "PP3").met);
+        assert!(find(&criteria, "BP4").met);
+    }
+
+    #[test]
+    fn test_splice_bp4_without_a_revel_pp3_is_left_alone() {
+        // No PP3 at all: a splice-assessable variant whose only computational
+        // evidence is SpliceAI saying nothing happens.
+        let mut criteria = vec![bp4_with_source("spliceai")];
+        reconcile_evidence(&mut criteria);
+        assert!(find(&criteria, "BP4").met);
     }
 
     fn find<'a>(criteria: &'a [EvidenceCriterion], code_prefix: &str) -> &'a EvidenceCriterion {

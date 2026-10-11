@@ -71,7 +71,7 @@ CARRIED_COLUMNS = ["reviewed_before", "md_verdict", "md_note"]
 # Identifying columns, pulled to the front so a row can be located at a glance.
 LEAD_COLUMNS = [
     "gene", "variant", "fastvep_HGVSc", "fastvep_HGVSp", "stars",
-    "truth_class", "fastvep_class", "fastvep_met_criteria",
+    "clinvar_class", "fastvep_class", "fastvep_met_criteria",
 ]
 
 HEADER_FILL = PatternFill("solid", start_color="FF1F3864")
@@ -148,7 +148,7 @@ def write_workbook(path: Path, rows: list[dict[str, str]], header: list[str]) ->
             width = 34
         elif name in ("gene", "stars", "reviewed_before"):
             width = 13
-        elif name in ("truth_class", "fastvep_class"):
+        elif name in ("clinvar_class", "truth_class", "fastvep_class"):
             width = 17
         else:
             width = 22
@@ -206,6 +206,11 @@ def main() -> None:
 
     with review_tsv.open() as f:
         review_rows = list(csv.DictReader(f, delimiter="\t"))
+    # Review tables written before the column was renamed call it truth_class; it
+    # has always held ClinVar's classification.
+    for r in review_rows:
+        if "clinvar_class" not in r and "truth_class" in r:
+            r["clinvar_class"] = r.pop("truth_class")
 
     annotations = load_annotations()
 

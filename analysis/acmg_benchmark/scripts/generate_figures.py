@@ -9,14 +9,14 @@ Reads outputs from `03_evaluate_concordance.py` under
 `data/benchmark/output_v7/` (override via `argv[1]`) and emits the
 following figures under `<output_dir>/figures/`:
 
-  fig_concordance_matrix          row-normalised truth × predicted heatmap
-  fig_outcome_breakdown           per-truth-class outcome stack
+  fig_concordance_matrix          row-normalised ClinVar × predicted heatmap
+  fig_outcome_breakdown           per-ClinVar-class outcome stack
                                   (same / off / VUS / opposite)
-  fig_criterion_fire_heatmap      criterion × truth-class fire rate;
+  fig_criterion_fire_heatmap      criterion × ClinVar-class fire rate;
                                   the core "which criteria are diagnostic
                                   for which class" diagnostic
   fig_criterion_signatures_by_class
-                                  top criterion combinations per truth
+                                  top criterion combinations per ClinVar class
                                   class, colored by predicted outcome
   fig_lost_to_vus_signatures      criterion patterns of P/LP→VUS
                                   variants — the dominant failure mode
@@ -25,7 +25,7 @@ following figures under `<output_dir>/figures/`:
   fig_opposite_direction_signatures
                                   for the ~100 opposite-direction cases,
                                   the criterion patterns of
-                                  Pathogenic-truth→Benign-pred and the
+                                  ClinVar-Pathogenic→Benign-pred and the
                                   reverse direction
 
 Usage:
@@ -109,6 +109,9 @@ def read_discrepancies(out_dir: Path) -> list[dict[str, str]]:
     with (out_dir / "discrepancies.tsv").open() as f:
         rdr = csv.DictReader(f, delimiter="\t")
         for row in rdr:
+            # Files written before the column was renamed call it `truth`; it
+            # has always held ClinVar's 2-star+ classification.
+            row.setdefault("truth", row.get("clinvar", ""))
             out.append(row)
     return out
 
@@ -139,7 +142,7 @@ def fig_concordance_matrix(matrix, fig_dir: Path):
     ax.set_yticks(range(len(CLASSES)))
     ax.set_yticklabels([CLASS_SHORT[c] for c in CLASSES], fontsize=13, fontweight="bold")
     ax.set_xlabel("fastVEP predicted", fontweight="bold")
-    ax.set_ylabel("ClinVar 2-star+ truth", fontweight="bold")
+    ax.set_ylabel("ClinVar 2-star+ classification", fontweight="bold")
     ax.set_title("ACMG concordance matrix (row-normalised %)", fontweight="bold")
 
     for i, t in enumerate(CLASSES):
@@ -208,7 +211,7 @@ def fig_outcome_breakdown(matrix, fig_dir: Path):
 
     ax.set_xticks(x)
     ax.set_xticklabels([CLASS_SHORT[c] for c in CLASSES], fontweight="bold", fontsize=13)
-    ax.set_xlabel("ClinVar 2-star+ truth class", fontweight="bold")
+    ax.set_xlabel("ClinVar 2-star+ class", fontweight="bold")
     ax.set_ylabel("% of class")
     ax.set_ylim(0, 110)
     ax.set_title("Per-class outcome breakdown", fontweight="bold")
@@ -227,8 +230,8 @@ def fig_outcome_breakdown(matrix, fig_dir: Path):
 
 
 def fig_criterion_fire_heatmap(fires, totals, fig_dir: Path):
-    """Criterion × truth-class fire rate heatmap. Rows ordered by total
-    fires; cells show % of variants in the truth class where the
+    """Criterion × ClinVar-class fire rate heatmap. Rows ordered by total
+    fires; cells show % of variants in the ClinVar class where the
     criterion fired. The dominant diagnostic of "which criteria are
     informative for which class".
     """
@@ -252,8 +255,8 @@ def fig_criterion_fire_heatmap(fires, totals, fig_dir: Path):
     ax.set_xticklabels([CLASS_SHORT[c] for c in CLASSES], fontweight="bold", fontsize=12)
     ax.set_yticks(range(len(codes)))
     ax.set_yticklabels(codes, fontfamily="monospace", fontsize=10)
-    ax.set_xlabel("ClinVar 2-star+ truth class", fontweight="bold")
-    ax.set_title("Criterion fire rate by truth class\n(% of class where criterion was met)",
+    ax.set_xlabel("ClinVar 2-star+ class", fontweight="bold")
+    ax.set_title("Criterion fire rate by ClinVar class\n(% of class where criterion was met)",
                  fontweight="bold")
 
     for i in range(len(codes)):
@@ -279,8 +282,8 @@ def fig_criterion_fire_heatmap(fires, totals, fig_dir: Path):
 
 
 def fig_criterion_signatures_by_class(disc, fires, totals, fig_dir: Path):
-    """For each non-VUS truth class, the top criterion signatures of
-    *failed* calls (where fastVEP did not match truth direction). Bars
+    """For each non-VUS ClinVar class, the top criterion signatures of
+    *failed* calls (where fastVEP did not match ClinVar's direction). Bars
     are split by the failure mode: → VUS (insufficient evidence) vs
     opposite-direction (real disagreement).
 
@@ -340,7 +343,7 @@ def fig_criterion_signatures_by_class(disc, fires, totals, fig_dir: Path):
         n_truth = totals[tcl]
         n_failed = sum(by_class[tcl].values())
         ax.set_title(
-            f"{CLASS_SHORT[tcl]} truth (n={n_truth:,};  failed={n_failed:,})\n"
+            f"ClinVar {CLASS_SHORT[tcl]} (n={n_truth:,};  failed={n_failed:,})\n"
             f"top 8 criterion signatures of failed calls",
             fontweight="bold", fontsize=13,
         )
@@ -355,7 +358,7 @@ def fig_criterion_signatures_by_class(disc, fires, totals, fig_dir: Path):
                     fontsize=9, color="#374151")
 
     fig.suptitle(
-        "Why fastVEP fails per truth class: criterion signatures of non-matching calls\n"
+        "Why fastVEP fails per ClinVar class: criterion signatures of non-matching calls\n"
         "(Same-direction calls excluded — they aren't in discrepancies.tsv)",
         fontweight="bold", fontsize=14, y=1.01,
     )
@@ -368,7 +371,7 @@ def fig_criterion_signatures_by_class(disc, fires, totals, fig_dir: Path):
 
 
 def fig_lost_to_vus_signatures(disc, fig_dir: Path):
-    """Pathogenic-truth → VUS and Likely_pathogenic-truth → VUS — the
+    """ClinVar-Pathogenic → VUS and ClinVar-Likely_pathogenic → VUS - the
     dominant failure mode. Show the top criterion signatures of these
     "lost" cases. Driven by missing manual-curation evidence (PS3
     functional, PP1 segregation, PP4 phenotype-specific) rather than
@@ -387,8 +390,8 @@ def fig_lost_to_vus_signatures(disc, fig_dir: Path):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7.5))
     for ax, ctr, label, title in (
-        (ax1, p_to_vus, "P→VUS", f"Pathogenic-truth → VUS  (n={sum(p_to_vus.values()):,})"),
-        (ax2, lp_to_vus, "LP→VUS", f"Likely-Pathogenic-truth → VUS  (n={sum(lp_to_vus.values()):,})"),
+        (ax1, p_to_vus, "P→VUS", f"ClinVar Pathogenic → VUS  (n={sum(p_to_vus.values()):,})"),
+        (ax2, lp_to_vus, "LP→VUS", f"ClinVar Likely pathogenic → VUS  (n={sum(lp_to_vus.values()):,})"),
     ):
         sigs = ctr.most_common(15)
         labels = [s if len(s) <= 35 else s[:32] + "…" for s, _ in sigs]
@@ -422,8 +425,8 @@ def fig_opposite_direction_signatures(disc, fig_dir: Path):
     """For the ~100 truly opposite-direction cases, show the criterion
     patterns by reversal direction.
     """
-    PtoB = Counter()  # Pathogenic-truth → Likely_benign or Benign predicted
-    BtoP = Counter()  # Benign-truth → Likely_pathogenic or Pathogenic predicted
+    PtoB = Counter()  # ClinVar Pathogenic → Likely_benign or Benign predicted
+    BtoP = Counter()  # ClinVar Benign → Likely_pathogenic or Pathogenic predicted
     for r in disc:
         truth, pred = r["truth"], r["predicted"]
         sig = "+".join(sorted(set(c for c in r["met_criteria"].split(";") if c))) or "(none)"
@@ -435,9 +438,9 @@ def fig_opposite_direction_signatures(disc, fig_dir: Path):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
     for ax, ctr, label, color, title in (
         (ax1, PtoB, "P/LP→B/LB", C["delta_down"],
-         f"Pathogenic-tier truth → Benign-tier predicted  (n={sum(PtoB.values())})"),
+         f"ClinVar Pathogenic-tier → Benign-tier predicted  (n={sum(PtoB.values())})"),
         (ax2, BtoP, "B/LB→P/LP", "#a855f7",
-         f"Benign-tier truth → Pathogenic-tier predicted  (n={sum(BtoP.values())})"),
+         f"ClinVar Benign-tier → Pathogenic-tier predicted  (n={sum(BtoP.values())})"),
     ):
         sigs = ctr.most_common(15)
         if not sigs:

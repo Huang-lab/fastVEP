@@ -1,6 +1,6 @@
 use fastvep_core::is_canonical_dinucleotide_offset;
 use fastvep_core::{Consequence, Impact};
-use fastvep_core::{GeneAnnotation, SupplementaryAnnotation};
+use fastvep_core::{GeneAnnotation, HgvsPlacement, SpliceContext, SupplementaryAnnotation};
 use serde::Deserialize;
 
 /// gnomAD population frequency data.
@@ -796,12 +796,12 @@ pub struct ClassificationInput {
     /// same base the acceptor already has, so the intron still ends in AG.
     /// `None` when the pipeline did not supply allele shape.
     pub is_pure_insertion: Option<bool>,
-    /// Whether the variant sits at the first base or last 3 bases of an exon
-    /// (the canonical splice region). Per Walker 2023 (ClinGen SVI Splicing
-    /// Subgroup), BP7 must NOT fire for synonymous variants at these positions
-    /// because SpliceAI can miss splice impact in this region. `None` means
-    /// the pipeline didn't populate this signal (BP7 falls back to legacy
-    /// behavior — fire if SpliceAI low + PhyloP low).
+    /// Whether the variant touches the first base of an exon or one of its last
+    /// three (the canonical splice region). Per Walker 2023 (ClinGen SVI
+    /// Splicing Subgroup), BP7 must NOT fire for synonymous variants at these
+    /// positions because SpliceAI can miss splice impact in this region. `None`
+    /// means the pipeline did not work it out, and BP7 falls back to its legacy
+    /// behaviour: fire if SpliceAI is low and PhyloP is low.
     pub at_exon_edge: Option<bool>,
     /// Signed offset in bp from the nearest exon boundary, for intronic
     /// variants. Convention: positive after the donor (e.g. c.123+5 → +5),
@@ -813,34 +813,30 @@ pub struct ClassificationInput {
     /// Measured against the transcript from the unshifted position, which is
     /// also where the consequence terms are decided, so the two agree: a
     /// variant this calls `+8` does not arrive carrying
-    /// `splice_donor_region_variant`. See [`Self::hgvsc_intronic_offset`] for
-    /// the number the HGVSc shows, which is a different one.
+    /// `splice_donor_region_variant`. See [`Self::hgvs_placement`] for where
+    /// HGVS puts the change, which for an indel in a repeat is a different
+    /// answer.
     pub intronic_offset: Option<i64>,
-    /// The same distance measured at the most 3' position HGVS gives the
-    /// change, which is where it is *numbered* rather than where it is.
+    /// Where HGVS places the change against this transcript, which is where it is
+    /// *numbered* and not where the record sits.
     ///
     /// An indel in a repeat can be written at any of several positions, all of
-    /// which produce the same edited sequence. On a donor the 3' end of that
-    /// range is the one furthest into the intron, so an offset past `+2` there
-    /// **proves the canonical `GT` survives**: some alignment of the change
-    /// leaves `+1` and `+2` alone, and every alignment edits the sequence the
-    /// same way. PVS1's splice track assumes that dinucleotide is destroyed, so
-    /// that is exactly when it must stand down - and it is why the number is
-    /// worth carrying beside [`Self::intronic_offset`] rather than collapsing
-    /// the two.
+    /// which produce the same edited sequence, and HGVS names the most 3'. A
+    /// consequence term is decided from the record's own anchor, so the two can
+    /// disagree about whether the change touches an exon at all, and the
+    /// criteria that read those terms - PVS1, PM4, BP3 and the BP4 splice path -
+    /// are asking about the edited sequence. See
+    /// [`Self::placed_beyond_canonical_splice`] for the placement they act on.
     ///
-    /// PTEN `10:87931087 GAGGT>G` is the shape: `splice_donor_variant` in both
-    /// tools, `c.253+4_253+7del` in both, and the intron still opens `GTATGA`
-    /// after the edit. [`Self::intronic_offset`] reads `+1` there, because that
-    /// is where the change sits and where the consequence term was decided, and
-    /// answering PVS1's question with it turns the gate into a tautology: 97
-    /// splice-donor variants of the ClinVar 2-star+ set collect PVS1 that do
-    /// not today, 47 ClinVar Pathogenic and 6 ClinVar Benign.
+    /// MSH6 `2:47806358 G>GGTAT` is `frameshift_variant` because the record
+    /// anchors on the last base of an exon, and `c.3801+3_3801+6dup`, wholly
+    /// intronic, once HGVS has placed it. PTEN `10:87931087 GAGGT>G` is
+    /// `splice_donor_variant` and `c.253+4_253+7del` in both tools, and the
+    /// intron still opens `GTATGA` after the edit.
     ///
-    /// The shift runs toward the exon on an acceptor, so the same number means
-    /// the nearest approach there and the gate does correspondingly little.
-    /// That asymmetry is HGVS's.
-    pub shifted_intronic_offset: Option<i64>,
+    /// `None` means it was not worked out: see [`reads_hgvs_placement`] for the
+    /// alleles it is worked out for.
+    pub hgvs_placement: Option<HgvsPlacement>,
     /// Proband genotype information (from trio VCF)
     pub proband_genotype: Option<GenotypeInfo>,
     /// Mother genotype information (from trio VCF)
@@ -858,6 +854,79 @@ pub struct ClassificationInput {
     /// matching in the pipeline also leaves the classifier consuming typed
     /// evidence, the same as every other criterion.
     pub functional_evidence: Option<crate::functional::FunctionalEvidence>,
+}
+
+impl ClassificationInput {
+    /// Whether HGVS places the change wholly inside an intron, clear of the
+    /// canonical `±1`/`±2` dinucleotides.
+    ///
+    /// Every placement of the change produces the same edited sequence, so one
+    /// that *can* be written there alters no exon base and no canonical splice
+    /// dinucleotide however the record was anchored. A consequence term that says
+    /// otherwise - `frameshift_variant`, `splice_donor_variant`,
+    /// `inframe_deletion` - is describing the anchor, and the criteria that read
+    /// those terms to ask what the edit does to the protein or to the splice
+    /// site must not act on it.
+    pub fn placed_beyond_canonical_splice(&self) -> bool {
+        self.hgvs_placement
+            .is_some_and(|p| p.is_intronic_beyond_canonical())
+    }
+
+    /// Whether HGVS places the change where a canonical splice term describes
+    /// how the record is anchored and not what the edit does: wholly inside an
+    /// intron past `±2`, or wholly inside an exon and in frame.
+    ///
+    /// These are the placements PVS1's splice track stands down for, and PS1's
+    /// splice path stands down for them too, so that a row with only a splice
+    /// term is never a canonical splice variant to one criterion and not to the
+    /// other. PS1 stands down whatever else the row carries: a coding-null term
+    /// beside the splice one keeps PVS1 for that term, because the placement says
+    /// nothing about whether it is real, and does not keep PS1, which compares
+    /// the dinucleotide the placement shows intact. A change placed wholly inside
+    /// an exon and out of frame is left to the record's terms by both. It leaves the dinucleotide intact as well, but it is a frameshift
+    /// whose record anchors on the splice site, PVS1 keeps it as a null variant
+    /// and PS1 stays with PVS1; docs/ACMG.md has what taking PS1 alone away from
+    /// it would have cost.
+    pub fn splice_term_is_an_anchor_artefact(&self) -> bool {
+        self.hgvs_placement.is_some_and(|p| {
+            p.is_intronic_beyond_canonical()
+                || matches!(p, HgvsPlacement::Exonic { in_frame: true })
+        })
+    }
+}
+
+/// Whether some criterion reads where HGVS places the change for an allele with
+/// these consequence terms.
+///
+/// The annotation pass asks, so that the placement - which walks the reference -
+/// is worked out only where it will be used. The terms are the ones a record's
+/// anchor can produce from bases HGVS places elsewhere: the null terms PVS1
+/// grades and BP4's splice path keeps out, the splice terms PS1's splice path
+/// reads, and the protein-altering terms PM1, PM4, BP3 and BP4 read.
+/// `transcript_ablation` is absent, because a change that removes a whole
+/// transcript has no placement inside one intron.
+pub fn reads_hgvs_placement(consequences: &[Consequence]) -> bool {
+    consequences.iter().any(|c| {
+        matches!(
+            c,
+            Consequence::SpliceAcceptorVariant
+                | Consequence::SpliceDonorVariant
+                | Consequence::StopGained
+                | Consequence::FrameshiftVariant
+                | Consequence::StartLost
+                | Consequence::InframeInsertion
+                | Consequence::InframeDeletion
+                | Consequence::StopLost
+                | Consequence::ProteinAlteringVariant
+        )
+    })
+}
+
+/// Whether some criterion reads [`ClassificationInput::at_exon_edge`] for an
+/// allele with these consequence terms: BP7's exon-edge exclusion applies to a
+/// synonymous change and to nothing else.
+pub fn reads_exon_edge(consequences: &[Consequence]) -> bool {
+    consequences.contains(&Consequence::SynonymousVariant)
 }
 
 /// True when the reference allele is the empty/"-" allele, i.e. the variant is
@@ -881,8 +950,7 @@ pub fn extract_classification_input(
     amino_acids: Option<&(String, String)>,
     protein_position: Option<u64>,
     hgvs_c: Option<&str>,
-    intron_offset: Option<i64>,
-    shifted_intronic_offset: Option<i64>,
+    splice: SpliceContext,
     exon: Option<(u32, u32)>,
     protein_length: Option<u64>,
     escapes_nmd: Option<bool>,
@@ -1005,17 +1073,15 @@ pub fn extract_classification_input(
     // already computes (exon rank/total + HGVS c. notation). ────────────────
     // `is_last_exon`: the variant sits in the 3'-most exon (rank == total).
     let is_last_exon = exon.and_then(|(rank, total)| (total > 0).then_some(rank == total));
-    // `intronic_offset`: signed distance from the nearest exon boundary, `None`
-    // for a change that reaches no intronic base.
-    //
-    // Measured against the transcript by the annotation pass, not parsed out of
-    // the HGVSc. BP7's deep-intronic extension is the criterion that reads it,
-    // and the string it used to read is 3'-shifted: POLE
+    // `intronic_offset` is the signed distance from the nearest exon boundary,
+    // `None` for a change that reaches no intronic base, and it comes in with
+    // `splice`: measured against the transcript by the annotation pass, not
+    // parsed out of the HGVSc. BP7's deep-intronic extension is the criterion
+    // that reads it, and the string it used to read is 3'-shifted: POLE
     // `12:132659279 T>TGGGGGGAGCCCTCACCTCTCCGTGAC` inserts at `c.3275+15` and
     // is written as the duplication it is, `c.3265_3275+15dup`, whose span
     // starts in the exon - so the parsed offset read 1 where the change sits at
     // 15, and BP7 declined.
-    let intronic_offset = intron_offset;
 
     // Both NMD signals are carried, and PVS1 picks between them per config.
     // The last-exon proxy is the historical one; the 50-nt measurement is the
@@ -1086,12 +1152,11 @@ pub fn extract_classification_input(
         variant_coordinates,
         in_repeat_region,
         is_pure_insertion,
-        // BP7 exon-edge / deep-intronic signals (Walker 2023). `intronic_offset`
-        // is derived above; `at_exon_edge` awaits exon-coordinate plumbing and
-        // stays None (BP7 exon-edge exclusion falls back to legacy behavior).
-        at_exon_edge: None,
-        intronic_offset,
-        shifted_intronic_offset,
+        // BP7 exon-edge / deep-intronic signals (Walker 2023), and where HGVS
+        // places an indel, all measured by the annotation pass.
+        at_exon_edge: splice.at_exon_edge,
+        intronic_offset: splice.intron_offset,
+        hgvs_placement: splice.hgvs_placement,
         proband_genotype,
         mother_genotype,
         father_genotype,
@@ -1272,8 +1337,7 @@ mod tests {
             None,
             protein_position,
             None,
-            None, // intron_offset: these unit tests are not splice-site cases
-            None, // shifted_intronic_offset: likewise
+            SpliceContext::default(), // these unit tests are not splice-site cases
             exon,
             protein_length,
             escapes_nmd,
@@ -1519,5 +1583,125 @@ mod tests {
             same_splice_position_pathogenic(&both, &anns, None, 101, "C", "T"),
             Some(true)
         );
+    }
+
+    /// What the annotation pass worked out about where the change sits reaches
+    /// the criteria unchanged, and an unasked answer stays unasked.
+    #[test]
+    fn test_splice_context_reaches_the_input() {
+        let extract_splice = |splice| {
+            extract_classification_input(
+                &[Consequence::SynonymousVariant],
+                Impact::Low,
+                Some("TEST"),
+                true,
+                None,
+                None,
+                None,
+                splice,
+                None,
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                vec![],
+            )
+        };
+        let worked_out = extract_splice(SpliceContext {
+            intron_offset: Some(8),
+            hgvs_placement: Some(HgvsPlacement::Intronic { offset: 8 }),
+            at_exon_edge: Some(true),
+        });
+        assert_eq!(worked_out.intronic_offset, Some(8));
+        assert_eq!(
+            worked_out.hgvs_placement,
+            Some(HgvsPlacement::Intronic { offset: 8 })
+        );
+        assert_eq!(worked_out.at_exon_edge, Some(true));
+        assert!(worked_out.placed_beyond_canonical_splice());
+
+        let unasked = extract_splice(SpliceContext::default());
+        assert_eq!(unasked.intronic_offset, None);
+        assert_eq!(unasked.hgvs_placement, None);
+        assert_eq!(unasked.at_exon_edge, None);
+        assert!(!unasked.placed_beyond_canonical_splice());
+    }
+
+    /// Only an intronic placement past the canonical dinucleotide clears the
+    /// exon and the splice site; an unknown placement is not one.
+    #[test]
+    fn test_placed_beyond_canonical_splice() {
+        let placed = |placement| {
+            let input = ClassificationInput {
+                hgvs_placement: placement,
+                ..crate::test_support::minimal_input()
+            };
+            input.placed_beyond_canonical_splice()
+        };
+        assert!(placed(Some(HgvsPlacement::Intronic { offset: 3 })));
+        assert!(placed(Some(HgvsPlacement::Intronic { offset: -21 })));
+        assert!(!placed(Some(HgvsPlacement::Intronic { offset: 2 })));
+        assert!(!placed(Some(HgvsPlacement::Intronic { offset: -1 })));
+        assert!(!placed(Some(HgvsPlacement::Exonic { in_frame: true })));
+        assert!(!placed(Some(HgvsPlacement::Spans)));
+        assert!(!placed(None));
+    }
+
+    /// The pipeline walks the reference only for the alleles a criterion reads
+    /// the placement for. A term missing here is a criterion that would never be
+    /// handed a placement, so the set is pinned: the null terms PVS1 grades, the
+    /// protein-length terms PM4, BP3 and BP4 read, and nothing else.
+    #[test]
+    fn test_reads_hgvs_placement_covers_exactly_the_terms_criteria_read() {
+        for term in [
+            Consequence::SpliceAcceptorVariant,
+            Consequence::SpliceDonorVariant,
+            Consequence::StopGained,
+            Consequence::FrameshiftVariant,
+            Consequence::StartLost,
+            Consequence::InframeInsertion,
+            Consequence::InframeDeletion,
+            Consequence::StopLost,
+            Consequence::ProteinAlteringVariant,
+        ] {
+            assert!(reads_hgvs_placement(&[term]), "{term:?}");
+            // One term among others is enough.
+            assert!(
+                reads_hgvs_placement(&[Consequence::IntronVariant, term]),
+                "{term:?}"
+            );
+        }
+        for term in [
+            Consequence::MissenseVariant,
+            Consequence::SynonymousVariant,
+            Consequence::IntronVariant,
+            Consequence::SpliceRegionVariant,
+            Consequence::TranscriptAblation,
+            Consequence::UpstreamGeneVariant,
+        ] {
+            assert!(!reads_hgvs_placement(&[term]), "{term:?}");
+        }
+        assert!(!reads_hgvs_placement(&[]));
+    }
+
+    #[test]
+    fn test_only_a_synonymous_change_reads_the_exon_edge() {
+        assert!(reads_exon_edge(&[Consequence::SynonymousVariant]));
+        assert!(reads_exon_edge(&[
+            Consequence::SpliceRegionVariant,
+            Consequence::SynonymousVariant
+        ]));
+        assert!(!reads_exon_edge(&[Consequence::MissenseVariant]));
+        assert!(!reads_exon_edge(&[Consequence::IntronVariant]));
+        assert!(!reads_exon_edge(&[]));
     }
 }

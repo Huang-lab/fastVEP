@@ -51,7 +51,10 @@ ROOT = Path(__file__).resolve().parents[3]
 _run = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("FASTVEP_BENCH_OUT", "output_v7"))
 OUT_DIR = ROOT / "data/benchmark" / _run
 DISC = OUT_DIR / "discrepancies.tsv"
-TRUTH = ROOT / "data/benchmark/clinvar_2star_truth.tsv"
+LABELS = ROOT / "data/benchmark/clinvar_2star_labels.tsv"
+if not LABELS.exists():
+    # The file was called clinvar_2star_truth.tsv before it was named for what it holds.
+    LABELS = ROOT / "data/benchmark/clinvar_2star_truth.tsv"
 CLINVAR_VCF = ROOT / "data/benchmark/clinvar_2star.vcf"
 FASTVEP_VCF = OUT_DIR / "clinvar_2star.fastvep.vcf.gz"
 # Override: when present, prefer a smaller VCF re-annotated with `--hgvs`
@@ -427,16 +430,16 @@ def load_fastvep_json(path: Path) -> dict[
     return out
 
 
-def priority_score(stars: str, truth: str, predicted: str, n_crit: int) -> int:
+def priority_score(stars: str, clinvar: str, predicted: str, n_crit: int) -> int:
     star_w = 100 if stars == "3" else 10
-    extremity = 500 if (truth, predicted) in EXTREME_PAIRS else 100
+    extremity = 500 if (clinvar, predicted) in EXTREME_PAIRS else 100
     return star_w * extremity + n_crit
 
 
 def main() -> None:
-    print("Loading truth + ClinVar INFO + fastVEP CSQ ...")
-    with open(TRUTH) as f:
-        truth = {
+    print("Loading ClinVar classifications + ClinVar INFO + fastVEP CSQ ...")
+    with open(LABELS) as f:
+        labels = {
             (r["chrom"], r["pos"], r["ref"], r["alt"]): r
             for r in csv.DictReader(f, delimiter="\t")
         }
@@ -454,14 +457,16 @@ def main() -> None:
     if FASTVEP_JSON.exists():
         json_idx = load_fastvep_json(FASTVEP_JSON)
         print(f"  loaded JSON score panel for {len(json_idx):,} variants")
-    print(f"  truth: {len(truth):,}  clinvar: {len(clinvar_idx):,}  "
+    print(f"  classifications: {len(labels):,}  clinvar: {len(clinvar_idx):,}  "
           f"fastvep: {len(fastvep_idx):,}")
 
     print("Filtering opposite-direction discrepancies...")
     rows: list[dict[str, object]] = []
     with DISC.open() as f:
         for r in csv.DictReader(f, delimiter="\t"):
-            if (r["truth"], r["predicted"]) not in OPPOSITE_PAIRS:
+            # `truth` is the column's name in files written before it was renamed.
+            r["clinvar"] = r.get("clinvar") or r.get("truth", "")
+            if (r["clinvar"], r["predicted"]) not in OPPOSITE_PAIRS:
                 continue
             rows.append(r)
     print(f"  {len(rows)} opposite-direction discrepancies")
@@ -480,7 +485,7 @@ def main() -> None:
         ["priority_score"]
         + ["previously_reviewed", "prior_reviewer_note"]
         + ["chrom", "pos", "ref", "alt", "variant", "gene", "stars"]
-        + ["truth_class", "fastvep_class", "n_criteria_met", "fastvep_met_criteria"]
+        + ["clinvar_class", "fastvep_class", "n_criteria_met", "fastvep_met_criteria"]
         + ["consequence_top"]
         + [f"clinvar_{k}" for k in CLINVAR_FIELDS]
         + [f"fastvep_{k}" for k in FASTVEP_FIELDS]
@@ -492,7 +497,7 @@ def main() -> None:
     for r in rows:
         key = (r["chrom"], r["pos"], r["ref"], r["alt"])
         n_crit = len([c for c in r["met_criteria"].split(";") if c])
-        score = priority_score(r["stars"], r["truth"], r["predicted"], n_crit)
+        score = priority_score(r["stars"], r["clinvar"], r["predicted"], n_crit)
         cv = clinvar_idx.get(key, {})
         fv = fastvep_idx.get(key, {})
         # JSON index is keyed by VEP-form (pos, ref, alt). For indels
@@ -511,7 +516,7 @@ def main() -> None:
         else:
             review_q = (
                 f"Why does fastVEP call {r['predicted']} when ClinVar "
-                f"({r['stars']}-star) says {r['truth']}? "
+                f"({r['stars']}-star) says {r['clinvar']}? "
                 f"Inspect: {fv.get('HGVSp') or fv.get('HGVSc') or clnhgvs or 'no HGVS'}; "
                 f"criteria fired = {r['met_criteria'] or '(none)'}"
             )
@@ -525,7 +530,7 @@ def main() -> None:
             "ref": r["ref"], "alt": r["alt"],
             "variant": variant_label(r["chrom"], r["pos"], r["ref"], r["alt"], clnhgvs),
             "gene": r["gene"], "stars": r["stars"],
-            "truth_class": r["truth"],
+            "clinvar_class": r["clinvar"],
             "fastvep_class": r["predicted"],
             "n_criteria_met": n_crit,
             "fastvep_met_criteria": r["met_criteria"],
@@ -539,7 +544,7 @@ def main() -> None:
     out_rows.sort(key=lambda d: -d["priority_score"])
 
     with OUT_TSV.open("w") as f:
-        w = csv.DictWriter(f, fieldnames=header, delimiter="\t")
+        w = csv.DictWriter(f, fieldnames=header, delimiter="\t", lineterminator="\n")
         w.writeheader()
         for row in out_rows:
             w.writerow(row)
@@ -550,7 +555,7 @@ def main() -> None:
         hgvs = r["fastvep_HGVSp"] or r["fastvep_HGVSc"]
         cv_dn = (r["clinvar_CLNDN"] or "").split("|")[0].replace("_", " ")[:60]
         print(f"  {r['gene']:<10} {r['stars']}*  "
-              f"{r['truth_class']:<18} → {r['fastvep_class']:<18}  "
+              f"{r['clinvar_class']:<18} → {r['fastvep_class']:<18}  "
               f"{hgvs}  ({cv_dn})")
 
 

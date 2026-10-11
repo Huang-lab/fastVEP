@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -82,7 +83,10 @@ def read_rows(ws, header):
                 "pos": str(r[idx["pos"]]).strip(),
                 "ref": str(r[idx["ref"]]).strip(),
                 "alt": str(r[idx["alt"]]).strip(),
-                "truth": str(r[idx.get("truth_class", -1)] or "") if "truth_class" in idx else "",
+                # The reviewer's workbook may carry either name for the same column.
+                "clinvar": str(r[idx[next(c for c in ("clinvar_class", "truth_class") if c in idx)]] or "")
+                if ("clinvar_class" in idx or "truth_class" in idx)
+                else "",
                 "then": str(r[idx.get("fastvep_class", -1)] or "") if "fastvep_class" in idx else "",
                 "then_criteria": (
                     str(r[idx["fastvep_met_criteria"]] or "")
@@ -207,6 +211,41 @@ def explain(then_class, then_criteria, now_class, now_criteria, all_criteria):
     for code, summary, met, _ in all_criteria:
         if not met and "frequency-exception list" in (summary or ""):
             gates.append(f"{code} blocked: curated frequency-exception list")
+    # Criteria that looked, concluded, and declined for a named reason, which
+    # `evaluated` cannot distinguish from "did not reach its threshold": a
+    # criterion standing down because HGVS places the change away from the exon
+    # its record is anchored in, BS2's carrier-frequency bar, and a splice BP4
+    # set aside beside a damaging missense prediction.
+    #
+    # Reported only for a criterion the earlier call carried. A stand-down is the
+    # reason a criterion is *no longer* met, and a row whose earlier call never
+    # had the criterion has nothing to explain, however the criterion's current
+    # summary reads.
+    def stripped(code: str) -> str:
+        return re.sub(r"_(Supporting|Moderate|Strong|Very_Strong)$", "", code)
+
+    carried_before = {stripped(c) for c in before}
+    # Each placement stand-down says where HGVS put the change in its own words,
+    # and the three are not the same thing, so they are told apart by them. The
+    # most specific comes first: PS1's wording also contains the intronic one.
+    placement_gates = (
+        ("where it leaves the canonical splice dinucleotide intact", "HGVS places the change where it leaves the canonical splice dinucleotide intact, so there is none to abolish"),
+        ("inside an exon as an in-frame indel", "HGVS places the change inside an exon as an in-frame indel, so the record's splice term describes how it is anchored"),
+        ("wholly inside an intron", "HGVS places the change wholly inside an intron, so the record's term describes how it is anchored"),
+    )
+    for code, summary, met, _ in all_criteria:
+        text = summary or ""
+        if met or stripped(code) not in carried_before:
+            continue
+        if text.startswith("HGVS places the change"):
+            for needle, phrase in placement_gates:
+                if needle in text:
+                    gates.append(f"{stripped(code)} stands down: {phrase}")
+                    break
+        elif code == "BS2" and "prevalence bar for a dominant disorder" in text:
+            gates.append("BS2 declined: too few carriers for a dominant disorder's prevalence bar")
+        elif code.startswith("BP4") and text.startswith("Suppressed: REVEL supports a damaging"):
+            gates.append("BP4 (splice) not counted against a damaging missense prediction")
     parts.extend(dict.fromkeys(gates))
 
     if "PVS1" in after and not (after - {"PVS1"}) and status != "unchanged":

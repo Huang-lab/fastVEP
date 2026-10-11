@@ -1,0 +1,8 @@
+guard	additions_kept	exact_delta	same_direction_delta	benign_labelled_vus_resolved	pathogenic_pushed_toward_benign	which
+none: BS2 as the widened run made it	13375	3820	2814	3010	6	NEK1 LP>VUS,DDX41 LP>VUS,VWF VUS>B,SRCAP LP>VUS,TTR VUS>B,PROKR2 LP>VUS
+carrier bar above 0.0003	13375	3820	2814	3010	6	NEK1 LP>VUS,DDX41 LP>VUS,VWF VUS>B,SRCAP LP>VUS,TTR VUS>B,PROKR2 LP>VUS
+carrier bar above 0.001	8647	2243	1626	1664	1	VWF VUS>B
+carrier bar above 0.003	5134	1130	866	874	1	VWF VUS>B
+BS1 and BA1 not already firing	4756	517	1624	1817	4	NEK1 LP>VUS,DDX41 LP>VUS,SRCAP LP>VUS,PROKR2 LP>VUS
+carrier bar above 0.001 and BS1 and BA1 not already firing	2028	250	805	842	0	-
+carrier bar above 0.003 and BS1 and BA1 not already firing	894	119	411	418	0	-

@@ -35,7 +35,7 @@ use crate::sa_extract::ClassificationInput;
 /// that the relationship does not hold.
 ///
 /// The first version of this gate blocked on absence, and run v10 measured what
-/// that costs: **1,497 truth-pathogenic null variants lost PVS1**, in genes like
+/// that costs: **1,497 ClinVar-Pathogenic null variants lost PVS1**, in genes like
 /// SPAST, ABCB11, FLG and LAMB3 that cause disease and simply are not curated
 /// yet. The genes it was meant to catch (RYK, GIGYF2) are absent from ClinGen
 /// too, so absence-blocking was not even selecting for the right thing - it was
@@ -147,7 +147,7 @@ mod tests {
     fn test_gene_absent_from_the_source_never_blocks() {
         // The rule that matters most. ClinGen has curated ~2,400 genes, so a
         // gene it has not reached says nothing about the gene. Blocking on
-        // absence cost 1,497 truth-pathogenic PVS1 firings in run v10.
+        // absence cost 1,497 ClinVar-Pathogenic PVS1 firings in run v10.
         let input = minimal_input();
         assert!(input.omim.is_none());
         assert!(validity_blocker(&input, &AcmgConfig::default()).is_none());

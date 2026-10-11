@@ -21,8 +21,8 @@ pub mod types;
 pub use config::{AcmgConfig, TrioConfig};
 pub use functional::{FunctionalCriterion, FunctionalEvidence, FunctionalEvidenceIndex};
 pub use sa_extract::{
-    extract_classification_input, is_pure_insertion, same_splice_position_pathogenic,
-    ClassificationInput, CompanionVariant, GenotypeInfo,
+    extract_classification_input, is_pure_insertion, reads_exon_edge, reads_hgvs_placement,
+    same_splice_position_pathogenic, ClassificationInput, CompanionVariant, GenotypeInfo,
 };
 pub use types::{AcmgClassification, AcmgResult, EvidenceCounts, EvidenceCriterion};
 
@@ -221,7 +221,7 @@ mod tests {
         //
         // Point system (the default): 8 points, inside the Likely Pathogenic
         // band. A frameshift in a haploinsufficient disease gene is not an
-        // uncertain finding, and run v10 had 2,319 truth-pathogenic variants
+        // uncertain finding, and run v10 had 2,319 ClinVar-Pathogenic variants
         // sitting in VUS on exactly this signature.
         assert_eq!(
             classify(&input, &AcmgConfig::default()).classification,
@@ -274,5 +274,40 @@ mod tests {
             assert!(c.get("evaluated").is_some());
             assert!(c.get("summary").is_some());
         }
+    }
+
+    /// The whole chain on one variant: a missense in a splice region that REVEL
+    /// calls damaging and SpliceAI calls splice-neutral. PP3 fires from REVEL;
+    /// BP4 fires from SpliceAI, because the splice region keeps the splice path
+    /// open; and the reconciliation pass drops the BP4, so the benign side does
+    /// not collect a criterion that says nothing about the protein.
+    #[test]
+    fn test_classify_damaging_missense_in_a_splice_region_does_not_collect_a_splice_bp4() {
+        let mut input = make_input(
+            vec![
+                Consequence::MissenseVariant,
+                Consequence::SpliceRegionVariant,
+            ],
+            Impact::Moderate,
+            "TEST",
+        );
+        input.revel = Some(RevelData { score: Some(0.95) });
+        input.splice_ai = Some(SpliceAiData {
+            ds_al: Some(0.0),
+            ..Default::default()
+        });
+        let result = classify(&input, &AcmgConfig::default());
+        let by_code = |prefix: &str| {
+            result
+                .criteria
+                .iter()
+                .find(|c| c.code.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no {prefix}"))
+        };
+        assert!(by_code("PP3").met, "{}", by_code("PP3").summary);
+        let bp4 = by_code("BP4");
+        assert!(!bp4.met, "{}", bp4.summary);
+        assert_eq!(bp4.details["bp4_source"], serde_json::json!("spliceai"));
+        assert!(bp4.details.get("suppressed_by_reconcile").is_some());
     }
 }

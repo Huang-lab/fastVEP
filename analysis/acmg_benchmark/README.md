@@ -23,7 +23,7 @@ input, a database or a bulk output, it belongs in `data/benchmark/`.**
 
 | Path | What |
 |---|---|
-| [`METHODS.md`](METHODS.md) | What the benchmark measures, how the truth set is built, what the numbers mean |
+| [`METHODS.md`](METHODS.md) | What the benchmark measures, how the ClinVar 2-star+ set is built, what the numbers mean (ClinVar's classifications are a reference, not ground truth) |
 | [`RUN_VERSIONS.md`](RUN_VERSIONS.md) | Per-run history: what changed between v1 and v27, with measured effect |
 | [`STATUS.md`](STATUS.md) | On-disk inventory - what is downloaded and built locally |
 | [`scripts/`](scripts/) | Everything executable, plus [its own README](scripts/README.md) |
@@ -41,20 +41,36 @@ instead. This directory is only about clinical concordance.
 # One-time: fetch sources (~30 GB, into data/benchmark/sa_sources/) and build databases
 bash analysis/acmg_benchmark/scripts/sa_sources/download_sa_sources.sh
 
-# One-time: build the truth set
+# One-time: extract ClinVar's 2-star+ classifications
 python3 analysis/acmg_benchmark/scripts/01_extract_clinvar_2star.py
 
 # Each run - the version string names the output directory
 bash analysis/acmg_benchmark/scripts/run_benchmark.sh v15
 
-# Or with a config, to measure one change against the same truth set
+# Or with a config, to measure one change against the same ClinVar 2-star+ set.
+# A variant of a run is a run of its own, so it gets its own version name.
 ACMG_CONFIG=analysis/acmg_benchmark/data/vcep_thresholds.toml \
-  bash analysis/acmg_benchmark/scripts/run_benchmark.sh v17
+  bash analysis/acmg_benchmark/scripts/run_benchmark.sh v15_vcep
+
+# Any other `fastvep annotate` flag, the same way
+EXTRA_ARGS="--pick-order mane_plus_clinical,mane_select,canonical,appris,tsl,biotype,ccds,rank" \
+  bash analysis/acmg_benchmark/scripts/run_benchmark.sh v15_mpc
+
+# Any number of runs against a baseline, call by call
+python3 analysis/acmg_benchmark/scripts/09_compare_runs.py \
+  --baseline v15 --runs v15_vcep v15_mpc --out /tmp/v15_comparison
 ```
 
-The run script takes about 90 seconds to annotate 673,660 variants plus a couple
-of minutes to score, reuses an existing annotated VCF if one is present, and
-writes to `data/benchmark/output_v15/`.
+The run script takes about 2 minutes to annotate 673,660 variants plus a couple
+of minutes to score, and writes to `data/benchmark/output_v15/`.
+It records what produced the annotation in `run_provenance.txt` beside it: the
+flags, the hash of the binary and of every `--acmg-config` and
+`--functional-evidence` file, which inputs were read (by name and size, not
+content) and the commit.
+It reuses an existing annotated VCF only when the same binary, flags,
+configuration and inputs made it, and stops with exit code 3 otherwise, so a
+second run under a name already used cannot be scored against the first run's
+annotation.
 Record what changed, and its measured effect, in [`RUN_VERSIONS.md`](RUN_VERSIONS.md).
 
 To vary one threshold instead of one version, use the sweep harness rather than a

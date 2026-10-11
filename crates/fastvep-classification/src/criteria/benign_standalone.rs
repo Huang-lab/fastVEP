@@ -71,45 +71,20 @@ pub fn evaluate_ba1(input: &ClassificationInput, config: &AcmgConfig) -> Evidenc
     }
 
     let (met, summary) = if let Some(ref gnomad) = input.gnomad {
-        // ClinGen SVI gnomAD v4 guidance (March 2024): require minimum AN
-        // before frequency-based criteria fire — protects against noisy AF
-        // estimates in poorly-covered populations. Treat missing AN the
-        // same as below-minimum: the SVI guidance is a *requirement*, not
-        // an opt-in check, so we cannot fire BA1 without confirming AN.
-        match gnomad.all_an {
-            Some(an) if an >= config.min_an_for_frequency_criteria => {}
-            other => {
-                details.insert(
-                    "min_an_for_frequency_criteria".into(),
-                    serde_json::json!(config.min_an_for_frequency_criteria),
-                );
-                let summary = match other {
-                    Some(an) => {
-                        details.insert("an_below_minimum".into(), serde_json::json!(an));
-                        format!(
-                            "BA1 not evaluated: gnomAD AN={} below minimum {} (gnomAD v4 guidance)",
-                            an, config.min_an_for_frequency_criteria
-                        )
-                    }
-                    None => {
-                        details.insert("an_missing".into(), serde_json::json!(true));
-                        format!(
-                            "BA1 not evaluated: gnomAD AN unavailable; minimum {} required (gnomAD v4 guidance)",
-                            config.min_an_for_frequency_criteria
-                        )
-                    }
-                };
-                return EvidenceCriterion {
-                    code: "BA1".to_string(),
-                    direction: EvidenceDirection::Benign,
-                    strength: EvidenceStrength::Standalone,
-                    default_strength: EvidenceStrength::Standalone,
-                    met: false,
-                    evaluated: false,
-                    summary,
-                    details: serde_json::Value::Object(details),
-                };
-            }
+        // Coverage first: see `insufficient_an` for the gnomAD v4 guidance.
+        if let Some(summary) =
+            super::frequency_gate::insufficient_an("BA1", gnomad.all_an, config, &mut details)
+        {
+            return EvidenceCriterion {
+                code: "BA1".to_string(),
+                direction: EvidenceDirection::Benign,
+                strength: EvidenceStrength::Standalone,
+                default_strength: EvidenceStrength::Standalone,
+                met: false,
+                evaluated: false,
+                summary,
+                details: serde_json::Value::Object(details),
+            };
         }
         let test_af = super::frequency_gate::benign_test_af(gnomad, config);
         if let Some((af, af_label)) = test_af {
@@ -524,6 +499,49 @@ mod tests {
             "{}",
             result.summary
         );
+    }
+
+    /// G6PD p.Val68Met is the one reviewer-named allele that crosses the BA1 bar
+    /// as well as BS1's: its population-maximum frequency is 0.131, so without
+    /// the exception it would collect Standalone benign evidence.
+    #[test]
+    fn test_ba1_reviewer_named_g6pd_allele_is_exempt() {
+        let at = |pos: Option<u64>, hgvs: Option<&str>| ClassificationInput {
+            impact: fastvep_core::Impact::Moderate,
+            gene_symbol: Some("G6PD".to_string()),
+            hgvs_c: hgvs.map(str::to_string),
+            variant_coordinates: pos
+                .map(|p| ("X".to_string(), p, "C".to_string(), "T".to_string())),
+            gnomad: Some(GnomadData {
+                all_af: Some(3.7e-3),
+                all_an: Some(1_098_048),
+                faf95_max: Some(0.131),
+                ..Default::default()
+            }),
+            ..minimal_input()
+        };
+        // Either route alone is enough for a match, so with both supplied a typo
+        // in one is hidden by the other: each is exercised on its own.
+        for (route, input) in [
+            ("by coordinate", at(Some(154_536_002), None)),
+            ("by HGVS", at(None, Some("ENST00000393562.10:c.202G>A"))),
+        ] {
+            let exempt = evaluate_ba1(&input, &AcmgConfig::default());
+            assert!(!exempt.met, "{route}: {}", exempt.summary);
+            assert!(
+                exempt.summary.contains("exception list"),
+                "{route}: {}",
+                exempt.summary
+            );
+        }
+
+        // The exception is the one variant and not the gene: the neighbouring
+        // base is a different coordinate and a different c. token.
+        let neighbour = evaluate_ba1(
+            &at(Some(154_536_003), Some("ENST00000393562.10:c.201G>A")),
+            &AcmgConfig::default(),
+        );
+        assert!(neighbour.met, "{}", neighbour.summary);
     }
 
     #[test]

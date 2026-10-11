@@ -203,18 +203,45 @@ pub struct AcmgConfig {
     /// that coverage.
     #[serde(default = "default_true")]
     pub pm2_absent_when_no_record: bool,
-    /// Minimum allele count (AC) required to fire BS2 on an autosomal-
-    /// dominant or X-linked-dominant gene from heterozygous gnomAD
-    /// observations alone. Singleton / doubleton observations of a
-    /// novel allele in a 100K-cohort are not sufficient evidence that
-    /// the variant is tolerated in healthy adults - Richards 2015 BS2
-    /// requires "observed in unaffected adult". Recessive and X-linked
-    /// genes take the separate null-individual test instead, governed by
-    /// [`Self::bs2_ar_min_hom`] and
-    /// [`Self::bs2_hom_prevalence_threshold`]. Default `5` mirrors common
-    /// ClinGen VCEP practice (e.g. Hereditary Cancer / Lynch).
+    /// Minimum allele count (AC) required to fire BS2 on a dominant gene from
+    /// gnomAD observations alone. Singleton / doubleton observations of a
+    /// novel allele in a 100K-cohort are not sufficient evidence that the
+    /// variant is tolerated in healthy adults - Richards 2015 BS2 requires
+    /// "observed in unaffected adult". Default `5` mirrors common ClinGen VCEP
+    /// practice (e.g. Hereditary Cancer / Lynch).
+    ///
+    /// This is a floor and not the test: it cannot tell nine carriers among
+    /// 1.4 M alleles from nine hundred, which is what
+    /// [`Self::bs2_ad_prevalence_threshold`] is for, and the two apply together.
+    /// Recessive and X-linked genes take the separate null-individual test
+    /// instead, governed by [`Self::bs2_ar_min_hom`] and
+    /// [`Self::bs2_hom_prevalence_threshold`].
     #[serde(default = "default_bs2_ad_min_ac")]
     pub bs2_ad_min_ac: u64,
+    /// Maximum disease prevalence, as a fraction of individuals, that BS2's
+    /// carrier test is asked to rule out for a dominant gene: the dominant
+    /// counterpart of [`Self::bs2_hom_prevalence_threshold`]. BS2 fires only when
+    /// the 95 % lower confidence bound on the *carrier* frequency in gnomAD -
+    /// `AC - nhomalt` individuals, so a homozygote counts once - exceeds this
+    /// value and [`Self::bs2_ad_min_ac`] is also met. `0` switches the bar off and
+    /// leaves the floor as the whole test. It must be finite and not negative;
+    /// [`Self::validate`], which `from_toml_file` calls, rejects anything else.
+    ///
+    /// **Default 3e-4, chosen from measurement.** AC ≥ 5 alone fired BS2 on
+    /// SNRNP200 p.Ser1087Leu with nine carriers among 1.4 M alleles, a
+    /// ClinVar-Pathogenic variant, because the floor ignores how many
+    /// individuals were looked at. The sweep is in `docs/ACMG.md`; its shape is
+    /// that every ClinVar Pathogenic and Likely pathogenic call the bar can
+    /// recover is recovered by 3e-4, and each step above it only gives up
+    /// correct benign calls. That is the rule used to pick it - the smallest bar
+    /// on the swept grid that recovers all of them - and not a claim about a
+    /// disease prevalence, nor that nothing between two grid points would do.
+    ///
+    /// Raise or lower it freely: a lab that reads the asymmetry the other way
+    /// sets a lower value, and a gene-specific prevalence from a VCEP
+    /// specification should override it per gene once that table lands.
+    #[serde(default = "default_bs2_ad_prevalence")]
+    pub bs2_ad_prevalence_threshold: f64,
     /// Absolute floor on homozygous observations before BS2 can fire on a
     /// recessive (or unknown-inheritance) gene. A single homozygote is not
     /// evidence of tolerance: 20 of the 52 BS2 misfires in the round-2
@@ -311,7 +338,7 @@ pub struct AcmgConfig {
     /// row of Table 5 matches it, so the table returns Uncertain Significance.
     ///
     /// Measured on the ClinVar 2-star+ benchmark, run v10 put **2,319
-    /// truth-pathogenic variants in VUS on `PVS1` and nothing else** - nonsense
+    /// ClinVar-Pathogenic variants in VUS on `PVS1` and nothing else** - nonsense
     /// and frameshift variants in haploinsufficient disease genes.
     #[serde(default = "default_true")]
     pub use_point_system: bool,
@@ -728,6 +755,7 @@ impl Default for AcmgConfig {
             pm2_downgrade_to_supporting: true,
             pm2_absent_when_no_record: true,
             bs2_ad_min_ac: 5,
+            bs2_ad_prevalence_threshold: 3e-4,
             bs2_ar_min_hom: 2,
             bs2_hom_prevalence_threshold: 1e-3,
             homology_unreliable_genes: default_homology_unreliable_genes(),
@@ -759,7 +787,34 @@ impl AcmgConfig {
     pub fn from_toml_file(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Reject a value that would change what a criterion means without anyone
+    /// being told.
+    ///
+    /// BS2's two prevalence bars read `0` as "off". A negative bar is not a
+    /// smaller one: the test `bar <= 0` reads it as off as well, so a typo
+    /// (`-3e-4`) fires BS2 on the carrier floor alone, the less cautious
+    /// direction, and a NaN fails every comparison and silently never fires.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        for (name, value) in [
+            (
+                "bs2_ad_prevalence_threshold",
+                self.bs2_ad_prevalence_threshold,
+            ),
+            (
+                "bs2_hom_prevalence_threshold",
+                self.bs2_hom_prevalence_threshold,
+            ),
+        ] {
+            anyhow::ensure!(
+                value.is_finite() && value >= 0.0,
+                "{name} must be a finite number that is not negative (0 switches the bar off), got {value}"
+            );
+        }
+        Ok(())
     }
 
     /// Get gene-specific override, if any.
@@ -870,6 +925,9 @@ fn default_bs2_ar_min_hom() -> u64 {
 }
 fn default_bs2_prevalence() -> f64 {
     1e-3
+}
+fn default_bs2_ad_prevalence() -> f64 {
+    3e-4
 }
 fn default_bp1_max_pathogenic_missense() -> u32 {
     3
@@ -1106,6 +1164,26 @@ fn default_ba1_exceptions() -> Vec<Ba1Exception> {
         hypomorph("SPTA1", "c.4339-99C>T", "1", 158_643_524, "G", "A",
             "the alpha-LELY allele; reduces alpha-spectrin output and causes elliptocytosis only in trans with an SPTA1 mutation, benign homozygous; gnomAD AF 6.6e-3 with 40 homozygotes"),
     ]);
+
+    // Common alleles raised by the round-6 medical-genetics review. Each is on
+    // the list because the reviewer named it, and its reason says so: the
+    // clinical statement is the reviewer's, quoted, and the frequencies are the
+    // values in the gnomAD v4 annotation database the benchmark runs against.
+    // No PMID came with any of them, so none is cited, and no mechanism is
+    // asserted here that the review did not state. Two G6PD alleles are not a
+    // ruling on the gene: the reviewer's "G6PD variants are common" suggests
+    // that every G6PD variant is exempt, but only these two were put forward.
+    // The same shape as a hypomorphic allele - no ClinVar id, BA1, BS1 and BS2
+    // blocked - named for where the entry came from and not for a mechanism.
+    let reviewer_named = hypomorph;
+    entries.extend([
+        reviewer_named("G6PD", "c.563C>T", "X", 154_534_419, "G", "A",
+            "p.Ser188Phe. Round-6 reviewer: 'Mediterranean deficiency variant; G6PD variants are common;exceptions to Benign population criteria'. ClinVar Pathogenic/Likely pathogenic (2 stars); gnomAD v4 AF 1.5e-3, population-maximum AF 4.4e-2, 21 homozygotes"),
+        reviewer_named("G6PD", "c.202G>A", "X", 154_536_002, "C", "T",
+            "p.Val68Met. Round-6 reviewer: 'G6PD variants are common;exceptions to Benign population criteria'. ClinVar Pathogenic/Likely pathogenic (2 stars); gnomAD v4 AF 3.7e-3, population-maximum AF 0.131, 173 homozygotes"),
+        reviewer_named("SERPINC1", "c.439A>G", "1", 173_911_984, "T", "C",
+            "p.Thr147Ala. Round-6 reviewer: 'founder variant in the African population; exceptions to Benign population criteria'. ClinVar Likely pathogenic (3 stars, expert panel); gnomAD v4 population-maximum AF 7.0e-3"),
+    ]);
     entries
 }
 
@@ -1119,6 +1197,64 @@ mod tests {
         assert!((cfg.ba1_af_threshold - 0.05).abs() < 1e-10);
         assert!(cfg.pm2_downgrade_to_supporting);
         assert!(!cfg.use_pp5_bp6);
+    }
+
+    /// Every knob has two defaults: the `Default` impl, and the serde function a
+    /// key missing from a TOML file falls back on. Nothing else makes them agree,
+    /// and a lab that omits `bs2_ad_prevalence_threshold` would otherwise get a
+    /// different bar from the one the docs and the benchmark quote.
+    #[test]
+    fn test_an_empty_toml_is_the_default_config() {
+        let from_empty: AcmgConfig = toml::from_str("").unwrap();
+        assert_eq!(
+            serde_json::to_value(&from_empty).unwrap(),
+            serde_json::to_value(AcmgConfig::default()).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_a_bs2_bar_that_is_negative_or_not_a_number_is_rejected() {
+        assert!(AcmgConfig::default().validate().is_ok());
+        for bar in [0.0, 1e-3, 3e-4] {
+            let cfg = AcmgConfig {
+                bs2_ad_prevalence_threshold: bar,
+                bs2_hom_prevalence_threshold: bar,
+                ..Default::default()
+            };
+            assert!(cfg.validate().is_ok(), "{bar}");
+        }
+        for bad in [-3e-4, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let ad = AcmgConfig {
+                bs2_ad_prevalence_threshold: bad,
+                ..Default::default()
+            };
+            let err = ad.validate().unwrap_err().to_string();
+            assert!(err.contains("bs2_ad_prevalence_threshold"), "{err}");
+            let hom = AcmgConfig {
+                bs2_hom_prevalence_threshold: bad,
+                ..Default::default()
+            };
+            let err = hom.validate().unwrap_err().to_string();
+            assert!(err.contains("bs2_hom_prevalence_threshold"), "{err}");
+        }
+    }
+
+    /// The path a user takes: a typo in the file is an error at load, naming the
+    /// key, and not a BS2 that fires on the floor alone.
+    #[test]
+    fn test_a_negative_bs2_bar_in_a_toml_file_fails_to_load() {
+        let dir = std::env::temp_dir().join(format!("fastvep-acmg-config-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("negative_bar.toml");
+        std::fs::write(&path, "bs2_ad_prevalence_threshold = -3e-4\n").unwrap();
+        let err = AcmgConfig::from_toml_file(path.to_str().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("bs2_ad_prevalence_threshold"), "{err}");
+        std::fs::write(&path, "bs2_ad_prevalence_threshold = 0\n").unwrap();
+        let cfg = AcmgConfig::from_toml_file(path.to_str().unwrap()).unwrap();
+        assert_eq!(cfg.bs2_ad_prevalence_threshold, 0.0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

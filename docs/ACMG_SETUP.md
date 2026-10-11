@@ -194,7 +194,7 @@ fastvep sa-build --source gnomad_genes -i gnomad.v4.1.constraint_metrics.tsv \
 
 The gate this feeds blocks only on positive evidence against a gene, never on absence.
 ClinGen has curated roughly 3,000 genes out of a genome, so "not in the file" means "nobody has reached it yet" and must not suppress PVS1.
-Run v10 of the benchmark measured what the opposite policy costs: blocking on absence stripped PVS1 from 1,497 truth-pathogenic null variants in genes like SPAST, ABCB11, FLG and LAMB3, all of which cause disease and none of which ClinGen has curated.
+Run v10 of the benchmark measured what the opposite policy costs: blocking on absence stripped PVS1 from 1,497 ClinVar-Pathogenic null variants in genes like SPAST, ABCB11, FLG and LAMB3, all of which cause disease and none of which ClinGen has curated.
 
 The converter therefore emits every classification, including Limited, Disputed, Refuted and No Known Disease Relationship, so the classifier can tell "curated and found wanting" apart from "not curated".
 

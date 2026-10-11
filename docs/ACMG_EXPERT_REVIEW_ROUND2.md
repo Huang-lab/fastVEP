@@ -36,8 +36,8 @@ Three things came out of reproducing her cases that she could not have seen from
 
 | Direction | Count |
 |---|---:|
-| Truth P/LP, fastVEP B/LB (false-benign) | 78 |
-| Truth B/LB, fastVEP P/LP (false-pathogenic) | 44 |
+| ClinVar P/LP, fastVEP B/LB (false-benign) | 78 |
+| ClinVar B/LB, fastVEP P/LP (false-pathogenic) | 44 |
 
 Her colour key resolves to:
 
@@ -64,7 +64,7 @@ Two combinations dominate:
 - `PVS1;PM2_Supporting` on 33 rows, all false-pathogenic.
 - `BS2;BP4` and its relatives (`PS1;BS2;BP4`, `PM4;BS2;BP4`, `PS1;PM2_Supporting;BP1;BP4`) across most of the false-benign side.
 
-**Homozygote counts where BS2 fired on a truth-Pathogenic variant:** 20 rows had exactly 1 homozygote in gnomAD, 6 rows had 2.
+**Homozygote counts where BS2 fired on a ClinVar-Pathogenic variant:** 20 rows had exactly 1 homozygote in gnomAD, 6 rows had 2.
 That single observation is 26 of the 52 BS2 false-benign rows, and it is precisely the reviewer's "a couple of homozygotes are possible if disease has later onset or variable expressivity" point.
 
 ## 2. Verified reproductions
@@ -239,7 +239,7 @@ Correctness bugs independent of ACMG. **C1 through C4 are fixed in v9; C5 and C6
 | Capping PP3 at Moderate (her KMT2C comment) | Pejaver 2022 is a ClinGen SVI product and explicitly calibrates REVEL >= 0.932 to Strong. Overriding it would put us outside the guideline. | **Done.** `pp3_max_strength` is exposed in config; a lab following her stricter convention sets `pp3_max_strength = "Moderate"`. Default stays uncapped. The cap is a ceiling only, never a floor. |
 | Detecting whether a predictor was trained on the variant in question | Training-set membership is not published per variant for REVEL or SpliceAI. | Documented as a known limitation in [ACMG.md](ACMG.md). B8's functional-evidence override is the practical mitigation. |
 | Automatically choosing which disorder to classify against for multi-phenotype genes (RYR1 MH vs myopathy, IFIH1 AD vs AR, PKD1 AD vs AR, TP63) | A variant can be genuinely benign for one disorder and pathogenic for another. Picking silently would be worse than not picking. | Phase 2 of B1: emit a per-disorder classification when GDV lists multiple entities with different inheritance, and accept `--disorder MONDO:xxxxxxx` to select one. Never silently pick. |
-| Chasing the 8 rows she marked "both calls are discordant" | Our benchmark truth set is ClinVar; on those rows ClinVar itself is disputed. | Record them as truth-set exclusions in the benchmark and report concordance with and without them. |
+| Chasing the 8 rows she marked "both calls are discordant" | Our benchmark compares against ClinVar's own 2-star+ classifications, which are a reference and not ground truth; on those rows ClinVar itself is disputed. | Record them as exclusions from the benchmark and report concordance with and without them. |
 
 ## 7. Sequencing, and one methodology point
 
@@ -332,7 +332,7 @@ denominator now rather than silently scored.
 | BP1 | 22,567 | 6,471 | mutation-spectrum veto (A1) |
 | PVS1 | 56,088 | 55,904 | splice-evidence gate is precisely targeted, not a blunt cut |
 
-On truth-Pathogenic variants specifically, BS2 misfires fell from 520 to 102
+On ClinVar-Pathogenic variants specifically, BS2 misfires fell from 520 to 102
 (−80 %) and BP1 misfires from 624 to 6 (−99 %).
 
 ### Review-round disposition

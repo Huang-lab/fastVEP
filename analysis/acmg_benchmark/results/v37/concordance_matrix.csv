@@ -1,0 +1,6 @@
+clinvar,Pathogenic,Likely_pathogenic,VUS,Likely_benign,Benign,NoCall
+Pathogenic,3554,48301,27950,18,0,0
+Likely_pathogenic,442,6313,7228,6,0,0
+VUS,21,3591,287070,4371,245,0
+Likely_benign,0,8,62564,63469,1992,5
+Benign,0,17,44373,46282,65463,377

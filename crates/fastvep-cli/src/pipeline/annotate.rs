@@ -30,9 +30,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
-    annotate_intergenic, annotate_sa_only_scaffold, clipped_span, has_canonical_splice,
-    hgvs_allele, hgvsg_clipped, load_gene_providers, load_sa_providers, shifted_intronic_offset,
-    zip_positions,
+    annotate_intergenic, annotate_sa_only_scaffold, hgvs_allele, hgvsg_clipped,
+    load_gene_providers, load_sa_providers, splice_context, zip_positions, RowTranscripts,
 };
 
 const BATCH_SIZE: usize = 1024;
@@ -144,6 +143,10 @@ fn annotate_variant(
         repeat_db_loaded,
     } = ctx;
 
+    // Kept for the classification pass at the end, which runs after `--pick`
+    // has deleted rows and needs the transcript each survivor came from.
+    let mut overlapping = Vec::new();
+
     // In --sa-only mode, skip transcript lookup + consequence
     // prediction + HGVS entirely. Use a neutral scaffold so the SA
     // attachment loop below has per-allele slots to populate.
@@ -157,7 +160,7 @@ fn annotate_variant(
             1
         };
         let query_end = vf.position.end + config.distance;
-        let overlapping = transcript_provider
+        overlapping = transcript_provider
             .get_transcripts(chrom, query_start, query_end)
             .unwrap_or_default();
 
@@ -237,46 +240,7 @@ fn annotate_variant(
                             codons: ac.codons.clone(),
                             exon: ac.exon,
                             intron: ac.intron,
-                            // Off the transcript, not off the HGVSc, and over
-                            // the span the allele actually changes: the bases a
-                            // pair repeats at either end are by definition
-                            // unchanged, and counting them can only make a
-                            // change look nearer a splice site than it is.
-                            //
-                            // Only the classifier reads it, and finding it
-                            // walks the transcript's introns once per end of
-                            // the span, per (variant x transcript x allele).
-                            // So it is found when something is going to ask,
-                            // the way `hgvsc` is built only under `--hgvs`.
-                            intron_offset: acmg_config.and(transcript).and_then(|tr| {
-                                let (s, e) = clipped_span(
-                                    tr.strand,
-                                    vf.position.start,
-                                    vf.position.end,
-                                    &vf.ref_allele,
-                                    &ac.allele,
-                                );
-                                tr.intronic_offset_covered(s, e)
-                            }),
-                            // The same distance where HGVS numbers the change rather
-                            // than where it sits, which is what PVS1's gate is
-                            // calibrated to, and only for the variants that gate
-                            // looks at: walking the reference twice for every indel
-                            // would be work done before knowing it is needed.
-                            shifted_intron_offset: acmg_config
-                                .and(transcript)
-                                .filter(|_| has_canonical_splice(&ac.consequences))
-                                .and_then(|tr| {
-                                    shifted_intronic_offset(
-                                        seq_provider.map(|sp| sp as &dyn SequenceProvider),
-                                        chrom,
-                                        tr,
-                                        vf.position.start,
-                                        vf.position.end,
-                                        &vf.ref_allele,
-                                        &ac.allele,
-                                    )
-                                }),
+                            splice: Default::default(),
                             distance: ac.distance,
                             protein_length: ac.protein_length,
                             escapes_nmd: ac.escapes_nmd,
@@ -737,6 +701,7 @@ fn annotate_variant(
         // `extract_classification_input` is handed a transcript-level
         // view that carries none.
         let query_alleles = vf.query_alleles();
+        let mut row_transcripts = RowTranscripts::new(&overlapping);
 
         for tv in &mut vf.transcript_variations {
             let gene_sym = tv.gene_symbol.as_deref().unwrap_or("");
@@ -745,8 +710,21 @@ fn annotate_variant(
                 .iter()
                 .filter(|ga| ga.gene_symbol == gene_sym)
                 .collect();
+            let transcript = row_transcripts.of(&tv.transcript_id);
             for aa in &mut tv.allele_annotations {
                 let alt_idx = vf.alt_alleles.iter().position(|a| *a == aa.allele);
+                if let Some(tr) = transcript {
+                    aa.splice = splice_context(
+                        seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                        &vf.position.chromosome,
+                        tr,
+                        vf.position.start,
+                        vf.position.end,
+                        &vf.ref_allele,
+                        &aa.allele,
+                        &aa.consequences,
+                    );
+                }
                 let input = fastvep_classification::extract_classification_input(
                     &aa.consequences,
                     aa.impact,
@@ -755,8 +733,7 @@ fn annotate_variant(
                     aa.amino_acids.as_ref(),
                     aa.protein_position.map(|(s, _)| s),
                     aa.hgvsc.as_deref(),
-                    aa.intron_offset,
-                    aa.shifted_intron_offset,
+                    aa.splice,
                     aa.exon,
                     aa.protein_length,
                     aa.escapes_nmd,
@@ -1981,8 +1958,7 @@ fn enrich_compound_het_batch(
                 aa.amino_acids.as_ref(),
                 aa.protein_position.map(|(s, _)| s),
                 aa.hgvsc.as_deref(),
-                aa.intron_offset,
-                aa.shifted_intron_offset,
+                aa.splice,
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,

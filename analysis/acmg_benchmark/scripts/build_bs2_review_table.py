@@ -11,7 +11,7 @@ disorder's onset, penetrance and prevalence allow BS1/BS2 to be applied at all.
 This script produces the seed for that table. It reads an annotated benchmark
 VCF, finds every variant where BS2 fired, aggregates to the gene level, and
 ranks genes by how much BS2 actually matters there - misfires on
-pathogenic truth first, then raw volume. The output has the evidence columns
+variants ClinVar classifies as pathogenic first, then raw volume. The output has the evidence columns
 filled in and the judgement columns left blank for the reviewer.
 
 Usage:
@@ -39,12 +39,12 @@ REVIEW_COLUMNS = [
     "reviewer_notes",
 ]
 
-# ClinVar significance -> the three-way truth bucket used for ranking.
+# ClinVar significance -> the three-way bucket used for ranking.
 PATHOGENIC_TERMS = ("pathogenic",)
 BENIGN_TERMS = ("benign",)
 
 
-def truth_bucket(clnsig):
+def clinvar_bucket(clnsig):
     """Collapse a CLNSIG string to pathogenic / benign / uncertain.
 
     Checked in this order because `Likely_pathogenic` contains "pathogenic"
@@ -79,7 +79,7 @@ def main():
     ap.add_argument("--max-examples", type=int, default=3)
     ap.add_argument("--misfire-vcf",
                     help="also write the variants where the criterion fired on "
-                         "pathogenic truth, as a VCF. Re-annotate it to recover "
+                         "ClinVar-pathogenic variants, as a VCF. Re-annotate it to recover "
                          "the gnomAD counts behind each call.")
     args = ap.parse_args()
     misfires = []
@@ -129,7 +129,7 @@ def main():
                 symbol = rec.get("SYMBOL") or "(no gene)"
                 g = genes[symbol]
                 g["fired"] += 1
-                bucket = truth_bucket(info.get("CLNSIG", ""))
+                bucket = clinvar_bucket(info.get("CLNSIG", ""))
                 g["fired_" + bucket] += 1
                 for dn in info.get("CLNDN", "").split("|"):
                     if dn and dn not in ("not_provided", "not_specified"):
@@ -137,7 +137,7 @@ def main():
                 g["cosignatures"]["+".join(sorted(codes))] += 1
 
                 # Keep the harmful cases as examples: the criterion fired on
-                # pathogenic truth.
+                # a variant ClinVar classifies as pathogenic.
                 if bucket == "pathogenic":
                     if len(g["examples"]) < args.max_examples:
                         g["examples"].append(
@@ -162,9 +162,9 @@ def main():
     evidence_columns = [
         "gene",
         "n_variants_with_" + args.criterion,
-        "n_on_pathogenic_truth",
-        "n_on_benign_truth",
-        "n_on_uncertain_truth",
+        "n_on_clinvar_pathogenic",
+        "n_on_clinvar_benign",
+        "n_on_clinvar_uncertain",
         "clinvar_diseases_top3",
         "example_misfires",
         "most_common_criteria_signature",
@@ -177,9 +177,9 @@ def main():
         rows.append({
             "gene": symbol,
             "n_variants_with_" + args.criterion: g["fired"],
-            "n_on_pathogenic_truth": g["fired_pathogenic"],
-            "n_on_benign_truth": g["fired_benign"],
-            "n_on_uncertain_truth": g["fired_uncertain"],
+            "n_on_clinvar_pathogenic": g["fired_pathogenic"],
+            "n_on_clinvar_benign": g["fired_benign"],
+            "n_on_clinvar_uncertain": g["fired_uncertain"],
             "clinvar_diseases_top3": "; ".join(d for d, _ in top_diseases),
             "example_misfires": " | ".join(g["examples"]),
             "most_common_criteria_signature": top_sig,
@@ -188,7 +188,7 @@ def main():
     # Misfires first (those are where the criterion is actively harmful), then
     # raw volume. A gene where BS2 fires 4,000 times and is never wrong needs
     # far less of the reviewer's attention than one where it is wrong twice.
-    rows.sort(key=lambda r: (-r["n_on_pathogenic_truth"],
+    rows.sort(key=lambda r: (-r["n_on_clinvar_pathogenic"],
                              -r["n_variants_with_" + args.criterion]))
 
     header = evidence_columns + REVIEW_COLUMNS
@@ -214,9 +214,9 @@ def main():
         print(f"wrote {args.misfire_vcf} ({len(misfires)} variants) "
               f"and {args.misfire_vcf}.detail.tsv")
 
-    n_misfire_genes = sum(1 for r in rows if r["n_on_pathogenic_truth"] > 0)
+    n_misfire_genes = sum(1 for r in rows if r["n_on_clinvar_pathogenic"] > 0)
     print(f"{len(rows)} genes with {args.criterion}; "
-          f"{n_misfire_genes} have at least one firing on pathogenic truth")
+          f"{n_misfire_genes} have at least one firing on a ClinVar-pathogenic variant")
     print(f"wrote {args.out}")
 
 

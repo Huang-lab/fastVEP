@@ -47,10 +47,15 @@ wb = Workbook()
 
 # ── Sheet 1: gene-level ─────────────────────────────────────────────────────
 rows = list(csv.DictReader(open(GENE_TSV), delimiter="\t"))
+# Tables written before the columns were renamed call them n_on_<class>_truth.
+# Renamed in place, so an old table keeps its column order and gains no second
+# copy of the three counts.
+RENAMED = {f"n_on_{c}_truth": f"n_on_clinvar_{c}" for c in ("pathogenic", "benign", "uncertain")}
+rows = [{RENAMED.get(k, k): v for k, v in r.items()} for r in rows]
 # Everything with a misfire, plus the highest-volume genes, capped so the
 # reviewer sees a list comparable in size to the 122 she worked through.
-misfire_rows = [r for r in rows if int(r["n_on_pathogenic_truth"]) > 0]
-rest = [r for r in rows if int(r["n_on_pathogenic_truth"]) == 0]
+misfire_rows = [r for r in rows if int(r["n_on_clinvar_pathogenic"]) > 0]
+rest = [r for r in rows if int(r["n_on_clinvar_pathogenic"]) == 0]
 rest.sort(key=lambda r: -int(r["n_variants_with_BS2"]))
 selected = misfire_rows + rest[:70]
 
@@ -63,8 +68,8 @@ for r in selected:
 style(ws, header, {
     "gene": 12, "clinvar_diseases_top3": 46, "example_misfires": 52,
     "most_common_criteria_signature": 26, "reviewer_notes": 40,
-    "n_variants_with_BS2": 11, "n_on_pathogenic_truth": 11,
-    "n_on_benign_truth": 11, "n_on_uncertain_truth": 11,
+    "n_variants_with_BS2": 11, "n_on_clinvar_pathogenic": 11,
+    "n_on_clinvar_benign": 11, "n_on_clinvar_uncertain": 11,
 })
 
 # ── Sheet 2: variant-level misfires ─────────────────────────────────────────
@@ -172,7 +177,7 @@ lines = [
     "                              can see exactly what the criterion was reasoning from.",
     "",
     "Counts are from benchmark run v9 over all 673,660 ClinVar 2-star-or-better variants.",
-    "BS2 fired 67,615 times in total; it fired on pathogenic truth 109 times, in 31 genes.",
+    "BS2 fired 67,615 times in total; it fired on variants ClinVar classifies as pathogenic 109 times, in 31 genes.",
     "",
     "WHERE THE HARM ACTUALLY IS",
     "",

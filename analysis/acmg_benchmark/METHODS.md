@@ -8,6 +8,11 @@ Group refinements, producing a 5-tier classification: Pathogenic (P),
 Likely Pathogenic (LP), Uncertain Significance (VUS), Likely Benign (LB),
 Benign (B).
 
+**A note on the word "truth".**
+The benchmark compares fastVEP with ClinVar's own 2-star-and-better classifications.
+That is a reference, not ground truth: ClinVar's classifications can rest on the same kinds of evidence fastVEP computes (frequency, computational prediction, consequence), so agreement is partly circular, and a disagreement can as well be ClinVar being out of date or fastVEP being wrong.
+Older text in this document, and the `truth` column in older result files, mean ClinVar's classification and nothing stronger; the scripts accept both the old and the new file and column names.
+
 This document reflects the state after the SVI alignment series (PR1–PR10).
 Each criterion section includes the ClinGen reference and any deviations
 from a strict reading of the SVI text. A per-criterion "Limitations"
@@ -49,9 +54,9 @@ that drove each call in `details.pp3_source` / `details.ps1_path` /
 
 | Criterion | Strength | Description | Data Source / Notes |
 |-----------|----------|-------------|---------------------|
-| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population AF, with **AN ≥ 2000** minimum (gnomAD v4 / SVI March 2024). Honors the **curated frequency-exception list** - Ghosh 2018's nine plus three hypomorphic alleles, the latter blocking BS1 and BS2 as well |
+| BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population AF, with **AN ≥ 2000** minimum (gnomAD v4 / SVI March 2024). Honors the **curated frequency-exception list** - Ghosh 2018's nine, three hypomorphic alleles that also block BS1 and BS2, and three more the round-6 review named (G6PD x2, SERPINC1) that do the same |
 | BS1 | Strong | Greater than expected frequency | gnomAD **max-population AF** (mirrors BA1; was cohort `all_af` pre-v7); gene-specific or default 0.01; same AN minimum as BA1 |
-| BS2 | Strong | Observed in healthy adults | gnomAD homozygote count + ClinGen GDV inheritance (or OMIM legacy). For AD-only genes: AC ≥ 5 (default; configurable via `bs2_ad_min_ac`). |
+| BS2 | Strong | Observed in healthy adults | gnomAD counts + ClinGen GDV inheritance (or OMIM legacy). Both branches hold a 95 % lower bound on the frequency of the individuals the disorder would affect against a prevalence bar. Dominant genes: carriers (`AC - nhomalt`) with AC ≥ 5 (`bs2_ad_min_ac`) and a bound above `bs2_ad_prevalence_threshold` (3e-4). Recessive and X-linked genes: individuals with no functional copy, with a bound above `bs2_hom_prevalence_threshold` (1e-3). Not evaluated without an AN, or with an AN of 0. |
 | BS3 | Strong | Functional studies — no damage | Not automatable — NotEvaluated |
 | BS4 | Strong | Lack of segregation | Not automatable — NotEvaluated |
 | BP1 | Supporting | Missense in truncation-disease gene | gnomAD pLI ≥ 0.9 + misZ < 2.0 |
@@ -242,7 +247,8 @@ Concrete pipeline (`analysis/acmg_benchmark/scripts/run_benchmark.sh`):
 
 1. **Input**: ClinVar VCF filtered to review_status ≥ 2 stars
    (`criteria_provided,_multiple_submitters,_no_conflicts` and stricter)
-   on GRCh38, plus a parallel truth TSV (`chrom`, `pos`, `ref`, `alt`,
+   on GRCh38, plus a parallel table of ClinVar's classifications
+   (`clinvar_2star_labels.tsv`: `chrom`, `pos`, `ref`, `alt`,
    `gene`, `clnsig`, `normalized_class`, `review_stars`, `rcv`).
 2. **Annotation**: GFF3 + FASTA cache + supplementary annotation
    directory (`--sa-dir`) loaded once; all 673,660 variants annotated
@@ -251,7 +257,7 @@ Concrete pipeline (`analysis/acmg_benchmark/scripts/run_benchmark.sh`):
    stream-parses the JSON via `ijson` (memory-bounded — output is ~24 GB
    pretty-printed), keys each variant on `(chrom, pos, ref, alt)`,
    reads the picked transcript's `acmg.classification`, and fills a
-   5×6 truth × predicted matrix (extra column for NoCall).
+   5×6 ClinVar-classification × predicted matrix (extra column for NoCall).
 
 Outputs: `concordance_summary.txt` (free-text rollup),
 `concordance_matrix.csv`, `concordance_by_chrom.csv`,
@@ -355,7 +361,7 @@ Diagnosis of the lifts:
 3. **NoCall artefact in v4 was an indel allele-matching bug** (v4 → v5
    fix). The 6.8 % NoCall rate in v4 looked like a `--pick` ↔
    non-coding-transcript trade-off, but it was actually all 48,539
-   indels in the truth set falling into NoCall. VCF and VEP use
+   indels in the ClinVar 2-star+ set falling into NoCall. VCF and VEP use
    different allele conventions: VCF stores REF=`C`/ALT=`CT` for an
    insertion, but VEP's CSQ Allele field for the same variant is `T`
    (just the inserted base; `-` for a deletion). The original
@@ -428,16 +434,16 @@ Truth records: **673,660** · Classified: **673,659** · Truth-not-annotated: **
 | Likely Benign (n=128,038) | 2 | 55 | 73,367 | **47,473** | 7,141 | 0 |
 | Benign (n=156,512) | 5 | 59 | 64,025 | 28,942 | **63,481** | 0 |
 
-(Diagonal = exact-match. Same-direction lumps P+LP for P/LP truth and
-LB+B for LB/B truth.)
+(Diagonal = exact-match. Same-direction lumps P+LP for P/LP ClinVar
+classifications and LB+B for LB/B ones.)
 
 #### Headline metrics
 
 | Metric | Value |
 |--------|------:|
-| Exact-match (truth = predicted) | **58.7 %** |
-| Same-direction (truth & predicted both P-tier or both B-tier or both VUS) | **70.8 %** |
-| Opposite-direction (P/LP truth → B/LB predicted, or vice versa) | **313 / 673,660 = 0.05 %** |
+| Exact-match (ClinVar classification = predicted) | **58.7 %** |
+| Same-direction (ClinVar & predicted both P-tier or both B-tier or both VUS) | **70.8 %** |
+| Opposite-direction (ClinVar P/LP → B/LB predicted, or vice versa) | **313 / 673,660 = 0.05 %** |
 | NoCall after annotation | 0.0 % |
 
 Per-class same-direction recall:
@@ -587,7 +593,7 @@ pm2_downgrade_to_supporting = true
 use_pp5_bp6 = false
 use_clinvar_stars_as_ps4_proxy = false
 
-# Curated frequency-exception list - defaults to Ghosh 2018's nine plus three hypomorphs;
+# Curated frequency-exception list - defaults to Ghosh 2018's nine, three hypomorphs and three reviewer-named alleles;
 # users can extend or replace via TOML.
 [[ba1_exceptions]]
 gene = "HFE"
