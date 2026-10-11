@@ -189,21 +189,25 @@ fn evaluate_bs1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 ///   `bs2_ad_prevalence_threshold`. The floor is the old rule and is kept:
 ///   Richards 2015 says "observed in unaffected adult", and a singleton or
 ///   doubleton is sequencing-noise plausibility, not evidence the variant is
-///   tolerated; ClinGen VCEPs commonly use AC ≥ 5. The prevalence bar is what
-///   the floor alone could not do, which is tell nine carriers among 1.4 M
-///   alleles from nine hundred.
+///   tolerated; ClinGen VCEPs commonly use AC ≥ 5 (Hereditary Cancer VCEP,
+///   Lynch Syndrome curation guide). The prevalence bar is what the floor alone
+///   could not do, which is tell nine carriers among 1.4 M alleles from nine
+///   hundred.
 ///
 /// A gene is dominant here when its disease annotation says so in words: an
 /// OMIM-style inheritance ("autosomal dominant") or "dominant" in the disease
 /// name. ClinGen's own `/AD` tag, which the `.oga` carries on most of its
 /// entries, is not read, so a gene known to ClinGen only by that tag takes the
-/// recessive arm. The predicate is shared with PM2, so widening it is its own
-/// change and needs its own measurement.
+/// recessive arm. Reading it for BS2 was measured and not done: the criterion
+/// asks for full penetrance at an early age, which is a property of the
+/// disorder and not of its inheritance, and six ClinVar Pathogenic or Likely
+/// pathogenic variants moved toward benign (limitation 20 in `docs/ACMG.md`
+/// names them). The predicate is also shared with PM2, PM3 and BP2.
 ///
 /// BS2 is not evaluated for a record with no AN, since there is then no cohort
 /// size to test a count against. It does not take BA1's and BS1's minimum AN:
-/// that is SVI guidance about the noise of a frequency estimate, and the lower
-/// bound used here already accounts for a small cohort.
+/// we read that as SVI guidance about the noise of a frequency estimate, and
+/// the lower bound used here already accounts for a small cohort.
 ///
 /// Inheritance is inferred from the disease-gene `.oga` (ClinGen GDV
 /// preferred, OMIM accepted as legacy).
@@ -256,10 +260,10 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
         // cohort to test a count against: `.max(1)` used to turn that into one
         // individual and make any bar vacuous. A small AN is not that problem.
         // The lower bound already accounts for how few individuals there were,
-        // and BA1's and BS1's minimum AN is SVI guidance about the noise of a
-        // frequency *estimate*, which a count test does not make. Applying it
-        // here, with the carrier bar off, moved 693 ClinVar 2-star+ calls, 690
-        // of them away from the ClinVar classification and 3 toward it.
+        // and we read BA1's and BS1's minimum AN as SVI guidance about the noise
+        // of a frequency *estimate*, which a count test does not make. Applying
+        // it here, with the carrier bar off, moved 693 ClinVar 2-star+ calls,
+        // 690 of them away from the ClinVar classification and 3 toward it.
         if matches!(gnomad.all_an, None | Some(0)) {
             details.insert("an_missing".into(), serde_json::json!(true));
             return EvidenceCriterion {

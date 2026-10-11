@@ -38,6 +38,8 @@ python3 generate_figures.py
 | `01_extract_clinvar_2star.py` | Filter ClinVar `clinvar.vcf.gz` → 2-star+ VCF + parallel TSV of ClinVar's classifications (`clinvar_2star_labels.tsv`, formerly `clinvar_2star_truth.tsv`) |
 | `03_evaluate_concordance.py`  | Stream the bgzipped VCF output of `fastvep annotate --acmg` and emit concordance matrix / per-chrom / per-consequence / per-criterion CSVs |
 | `08_diff_calls.py`            | Diff two runs' ACMG calls variant by variant into a `call_changes_vN_to_vM.tsv`, reusing `03`'s own `pick_csq` so both describe the same transcript |
+| `09_compare_runs.py`          | Compare runs with a baseline call by call: the headline counts, the two error types, and every changed call grouped by the criteria it lost and gained |
+| `10_replay_bs2_guards.py`     | Replay a BS2 widening from the annotated VCFs of two runs and report what a guard on the new BS2 would have kept (limitation 20 in `docs/ACMG.md`) |
 | `generate_figures.py`         | Read the v7 outputs at `data/benchmark/output_v7/` and emit 6 PDF + PNG panels (incl. v1 vs v7 comparisons) |
 | `build_vcep_thresholds.py`    | Read published ClinGen VCEP BA1/BS1/PM2 bars out of the CSpec Registry API into `../data/vcep_thresholds.toml`, plus an audit table carrying the source sentence behind every number and the reason behind every rejection |
 | `build_gene_disease_attributes.py` | Join Orphanet prevalence, age of onset and inheritance to those bars into `../data/gene_disease_attributes.tsv`, one row per gene-disorder pair |

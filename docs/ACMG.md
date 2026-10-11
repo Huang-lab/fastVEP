@@ -389,7 +389,7 @@ What the bar adds is that it scales: 1,000 carriers is a large share of a cohort
 That was true of the false-benign and opposite-direction counts, which is all the sweep behind it looked at, and it is not true of agreement: with the bar off, raising the floor from 5 to 20, 100 and 1,000 recovers 46, 68 and 70 Pathogenic and Likely pathogenic calls.
 
 **Applying BA1's and BS1's minimum AN to BS2 was tried and rejected.**
-The SVI guidance behind that minimum is about the noise of a frequency estimate, and a count test over a small cohort is already as strict as the cohort is small.
+We read the SVI guidance behind that minimum as being about the noise of a frequency estimate, and a count test over a small cohort is already as strict as the cohort is small.
 With the bar off it moved 693 calls, 690 of them away from ClinVar's classification.
 BS2 is not evaluated for a record with no AN or an AN of zero, since the cohort size is then unknown, and takes no other minimum.
 
@@ -1092,7 +1092,7 @@ After per-criterion evaluation, a reconciliation pass suppresses computational e
 | PS1 fires + PP3 driven by REVEL (missense) | Suppress PP3 | Pejaver 2022 (PS1 covers residue) |
 | PM5 fires + PP3 driven by REVEL (missense) | Suppress PP3 | Pejaver 2022 (PM5 covers residue) |
 | PP3 elevated to Strong + PM1 fires | Suppress PM1 (cap combined at Strong = 4 Tavtigian points) | Pejaver 2022 |
-| PP3 driven by REVEL (missense) + BP4 driven by SpliceAI | Suppress BP4 | Walker 2023 (the protein and splicing effects are assessed separately and the more deleterious stands; SpliceAI saying splicing is unaffected is not a vote against a damaging missense prediction) |
+| PP3 driven by REVEL (missense) + BP4 driven by SpliceAI | Suppress BP4 | Walker 2023, as quoted from the medRxiv version because the published text could not be checked here (the protein and splicing effects are assessed separately and the more deleterious stands; SpliceAI saying splicing is unaffected is not a vote against a damaging missense prediction) |
 
 ## Classification Combination Rules
 
@@ -1309,17 +1309,24 @@ Output (JSON / VCF CSQ / TSV)
     The `/AD` in `(ClinGen Definitive/AD, MONDO:...)` is not read, and neither is `/AR`.
     Of the 740 genes with a variant in the benchmark whose established ClinGen tags are AD only, 39 register as dominant, and of the 1,285 that are AR only, 60 register as recessive.
     BS2's dominant branch, PM2's recessive bar, PM3 and BP2 share the predicate, so all of them reach roughly one gene in twenty.
-    Making BS2 read the tag was tried with a locally patched build that is not in the repository, on the stack as it stood before PS1's splice path, PM1 and BP3 followed the placement, which changed the call of no variant.
+    Widening it was measured and not done.
+    Making BS2 read the tag was tried with a locally patched build that is not in the repository (`v37_adtag`, on the stack as it stood before PS1's splice path, PM1 and BP3 followed the placement, which changed the call of no variant).
     It gains 3,809 exact matches and 2,812 same-direction calls.
     The exact Benign matches rise by 4,902, and the Likely benign and VUS classes give back 904 and 189.
-    It also moves two ClinVar Pathogenic or Likely pathogenic variants from VUS to Benign, and four Likely pathogenic calls to VUS.
-    The two are TTR p.Val142Ile, a common dominant allele of hereditary ATTR amyloidosis that is not fully penetrant, and VWF p.Arg854Gln.
-    The VWF allele is a type 2N variant, which the repo's own gene-disease table lists as recessive, in a gene ClinGen tags AD for other subtypes, so a gene-level tag is the wrong grain for it.
-    BS2's "full penetrance at an early age" does not hold for either, and for TTR BS1 already counts the same frequency.
-    The four are loss-of-function alleles in NEK1, DDX41, SRCAP and PROKR2 with about 300 carriers each, whose lower bounds sit between 3.6e-4 and 4.0e-4, just above the bar.
-    The bar was chosen on the name-based set of genes and would need sweeping again on the widened one.
-    Widening the predicate for every criterion changes 26 more calls, 21 of them toward ClinVar, which are PM2's.
-    Whether to widen it is a policy decision about penetrance and about BS1 and BS2 counting one signal twice, so it is not made here.
+    It also moves six variants that ClinVar calls Pathogenic or Likely pathogenic toward benign.
+    TTR p.Val142Ile and VWF p.Arg854Gln go from VUS to Benign, and loss-of-function alleles in NEK1, DDX41, SRCAP and PROKR2, with 295 to 324 carriers each, go from Likely pathogenic to VUS.
+    BS2 asks for full penetrance at an early age, which is a property of the disorder, and the tag only says whether the disorder is dominant or recessive.
+    ClinGen's own labels for NEK1 and DDX41 are a susceptibility ("amyotrophic lateral sclerosis, susceptibility to, 24") and a predisposition syndrome.
+    TTR p.Val142Ile belongs to a disorder that is usually described as incompletely penetrant, which was not checked against a source here, and BS1 already counts the same frequency.
+    The ClinGen file the benchmark reads has two entries for VWF, both tagged AD, while ClinVar lists type 2N among the conditions of the p.Arg854Gln record and Orphanet lists type 2N as recessive (`analysis/acmg_benchmark/data/gene_disease_attributes.tsv`, which the classifier does not read), so a gene-level tag is the wrong grain for it.
+    Why SRCAP and PROKR2 are harmed was not established.
+    A guard on the new BS2 can remove the six, but only a pair of guards does, and the pair was chosen after the six were found.
+    A carrier bar of 1e-3 clears the four alleles and TTR but not VWF, whose lower bound is 9.9e-3.
+    Requiring that BS1 and BA1 are not already firing clears TTR and VWF but not the four, which carry no BS1.
+    Both together clear all six and keep 805 of the 2,814 same-direction calls the widening gains, which is a fit to six variants found by looking at ClinVar and says nothing about the next one.
+    The replay is `analysis/acmg_benchmark/scripts/10_replay_bs2_guards.py`, and `RUN_VERSIONS.md`, "Reading ClinGen's inheritance tag", gives its tables and the counts behind each lower bound.
+    Widening the predicate for every criterion changes PM2 on 9,446 more variants and the call of 26 of them, 21 toward ClinVar's classification and 5 away.
+    What it would need is inheritance and age of onset read per disorder, with a penetrance rule that a clinician supplies, and these six variants as its regression cases.
 ## The frequency dead zone between PM2 and BS1
 
 Both frequency bars are set by measurement, and between them is a range where fastVEP

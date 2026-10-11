@@ -2,7 +2,7 @@
 
 This is the benchmark record for the change that answers `discordant_64_round6.xlsx`.
 What each change did, and what it cost, is in [`RUN_VERSIONS.md`](../../RUN_VERSIONS.md), section "v36 to v37".
-The note sent back to the medical geneticist is [`MD_REVIEW_ROUND7.md`](MD_REVIEW_ROUND7.md).
+The note for the medical geneticist is [`MD_REVIEW_ROUND7.md`](MD_REVIEW_ROUND7.md).
 
 All comparisons are with ClinVar's 2-star+ classifications, which are a reference and not ground truth.
 
@@ -14,13 +14,14 @@ All comparisons are with ClinVar's 2-star+ classifications, which are a referenc
 | `run_summary.tsv`, `summary.md` | `09_compare_runs.py` over `v36`, `v37` and its variants. The headline counts per run, the two error types, how many of the reviewed rows are still opposite-direction, and every changed call grouped by the criteria it lost and gained. |
 | `attribution_v36_to_*.tsv` | The same grouping, one file per run. |
 | `configs/` | The `--acmg-config` of each BS2 sweep run, one TOML named for the run. |
+| `bs2_tag_replay.tsv`, `bs2_tag_additions_pathogenic.tsv` | What `v37_adtag` added and what each guard on its BS2 would have kept, from [`10_replay_bs2_guards.py`](../../scripts/10_replay_bs2_guards.py), and the 13 ClinVar Pathogenic or Likely pathogenic variants that gain BS2 there with the counts each lower bound comes from. They need the annotated outputs of `v37` and `v37_adtag`, and `v37_adtag` cannot be made from this repository (see below). |
 
 ## The runs
 
 `v36` is master at the start of the round, re-run.
 It predates `run_provenance.txt`, so it has none.
 Every run below was made by `run_benchmark.sh` at commit `5d2521f` of this branch, with the binary built from it (hash in each provenance file).
-The two commits above it change documentation and results, and the line endings of the tables `03` and `08` write.
+The commits above it change documentation, comments, results, one analysis script and the line endings of the tables `03` and `08` write.
 The runs that need a configuration or a flag are made with the `ACMG_CONFIG` or `EXTRA_ARGS` in the last column, from the repository root.
 
 | Run | What differs from `v37` | How to make it |

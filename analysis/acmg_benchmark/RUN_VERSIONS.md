@@ -1268,7 +1268,7 @@ The round-6 workbook (`discordant_64_round6.xlsx`) came back with the reviewer's
 This section is what was done about them and what it cost, and, as importantly, what was measured and not done.
 Every run named `v37` below was made by `run_benchmark.sh` at commit `5d2521f` of this branch with the binary built from it.
 The `run_provenance.txt` beside each annotation records the flags, the hash of the binary and of every config, which inputs were read, and that commit.
-The two commits above it change documentation and results, and the line endings of the tables `03` and `08` write.
+The commits above it change documentation, comments, results, one analysis script and the line endings of the tables `03` and `08` write.
 `v34`, `v35` and `v36` are master's runs from before this branch and predate the file, so they have none.
 `v37_adtag` and `v37_moi_global` are the exception, because no flag or config produces them.
 They were run with locally patched builds that are not in the repository, on the stack as it stood before PS1's splice path, PM1 and BP3 learned to follow the placement.
@@ -1393,14 +1393,51 @@ Making BS2 read the tag (`v37_adtag`, a locally patched build run on the stack b
 
 It gains 3,809 exact matches and 2,812 same-direction calls.
 The exact Benign matches rise by 4,902 (65,463 to 70,365), and the Likely benign and VUS classes give back 904 and 189.
-It also moves two ClinVar Pathogenic or Likely pathogenic variants from VUS to Benign: TTR p.Val142Ile and VWF p.Arg854Gln.
-TTR p.Val142Ile is a common dominant allele of hereditary ATTR amyloidosis that is not fully penetrant, and BS1 already counts its frequency.
-VWF p.Arg854Gln is a type 2N allele, which the repo's own gene-disease table lists as recessive, in a gene ClinGen tags AD for other subtypes, so a gene-level tag is the wrong grain for it.
-BS2's "full penetrance expected at an early age" does not hold for either.
-Four Likely pathogenic calls also move to VUS: loss-of-function alleles in NEK1, DDX41, SRCAP and PROKR2 with about 300 carriers each, whose lower bounds sit between 3.6e-4 and 4.0e-4, just above the bar.
-The bar was chosen on the name-based set of genes, and would need sweeping again on the widened one.
-Widening it for every criterion adds only 26 PM2 calls (`v37_moi_global`), 21 of them toward ClinVar.
-Whether to widen it is a decision about penetrance and about BS1 and BS2 counting one signal twice, and it is not made here.
+Widening it for every criterion (`v37_moi_global`) changes PM2 on 9,446 more variants and the call of 26 of them, 21 toward ClinVar's classification and 5 away.
+
+It also moves six variants that ClinVar calls Pathogenic or Likely pathogenic toward benign.
+[`results/v37/bs2_tag_additions_pathogenic.tsv`](results/v37/bs2_tag_additions_pathogenic.tsv) lists them, and the seven other such variants that gain BS2 without a change of call, with the counts each lower bound comes from:
+
+| Variant | gnomAD AC | Homozygotes | AN | Carrier lower bound | Call before, after | BS1 before |
+|---|---:|---:|---:|---:|---|---|
+| NEK1 p.Ser1036Ter | 324 | 0 | 1,461,486 | 4.0e-4 | LP, VUS | no |
+| DDX41 p.Asp140GlyfsTer2 | 314 | 0 | 1,461,874 | 3.9e-4 | LP, VUS | no |
+| SRCAP p.Pro1879ThrfsTer21 | 295 | 0 | 1,446,158 | 3.7e-4 | LP, VUS | no |
+| PROKR2 p.His20MetfsTer24 | 298 | 0 | 1,461,894 | 3.7e-4 | LP, VUS | no |
+| TTR p.Val142Ile | 722 | 3 | 1,461,852 | 9.2e-4 | VUS, B | yes |
+| VWF p.Arg854Gln | 7,432 | 23 | 1,461,860 | 9.9e-3 | VUS, B | yes |
+
+The lower bound is the classifier's own `poisson_lower_95` divided by the individuals surveyed, with carriers counted as `AC - nhomalt`, and the shipped bar is 3e-4.
+BS2 asks for full penetrance at an early age, which is a property of the disorder, and the tag only says whether the disorder is dominant or recessive.
+ClinGen's own labels for NEK1 and DDX41 are "amyotrophic lateral sclerosis, susceptibility to, 24" and "DDX41-related hematologic malignancy predisposition syndrome".
+TTR p.Val142Ile belongs to a disorder that is usually described as incompletely penetrant, which was not checked against a source here, and BS1 already fires on it.
+The ClinGen file the benchmark reads has two entries for VWF, both tagged AD.
+ClinVar lists type 2N among the conditions of the p.Arg854Gln record, and Orphanet lists type 2N as recessive ([`data/gene_disease_attributes.tsv`](data/gene_disease_attributes.tsv), which the classifier does not read), so a gene-level tag is the wrong grain for it.
+Why SRCAP and PROKR2 are harmed was not established.
+
+Whether a guard could make the widening safe is what [`10_replay_bs2_guards.py`](scripts/10_replay_bs2_guards.py) answers.
+It reads the annotated VCFs of `v37` and `v37_adtag` and finds the 13,375 variants that gain BS2.
+The call of one of them without its BS2 is `v37`'s, because BS2 is the only criterion the two runs differ in for those variants, which the script checks.
+Only the additions are replayed.
+The 22 further calls that differ lose BS2, and net -11 exact and -2 same-direction, which is why the run totals above are 3,809 and 2,812 and the first row below is 3,820 and 2,814.
+Every addition already clears the shipped bar, which is also the check that the script's port of the lower bound agrees with the classifier's.
+
+| Guard on the new BS2 | Additions kept | Exact | Same-direction | Benign or Likely benign VUS resolved | Pathogenic or Likely pathogenic pushed toward benign |
+|---|---:|---:|---:|---:|---|
+| none (as run) | 13,375 | +3,820 | +2,814 | 3,010 | 6 |
+| carrier bar above 1e-3 | 8,647 | +2,243 | +1,626 | 1,664 | 1 (VWF) |
+| carrier bar above 3e-3 | 5,134 | +1,130 | +866 | 874 | 1 (VWF) |
+| BS1 and BA1 not already firing | 4,756 | +517 | +1,624 | 1,817 | 4 (NEK1, DDX41, SRCAP, PROKR2) |
+| bar above 1e-3 and BS1 and BA1 not already firing | 2,028 | +250 | +805 | 842 | 0 |
+| bar above 3e-3 and BS1 and BA1 not already firing | 894 | +119 | +411 | 418 | 0 |
+
+"Resolved" counts the variants ClinVar calls Benign or Likely benign whose call moves from VUS to Likely benign or Benign.
+A bar alone cannot remove VWF p.Arg854Gln, whose lower bound is above every bar on the grid, and the BS1 guard alone cannot remove the four alleles, which carry no BS1.
+Together they remove all six and keep 805 of the 2,814 same-direction calls, but both were chosen after the six were found, so the zero is a fit to them and not a measure of safety.
+BS2 would still reach MYOC p.Gln368Ter, which ClinVar calls Pathogenic and whose lower bound is 2.3e-3, and its call stays VUS because BS2 is the only criterion it carries.
+The bar was chosen on the name-based set of genes, and on the same grid the pathogenic harm stops falling at 1e-3, where VWF p.Arg854Gln is still harmed.
+Not widening it is the decision.
+What it would need is inheritance and age of onset read per disorder, with a penetrance rule that a clinician supplies, and these six variants as its regression cases.
 
 **BA1's and BS1's minimum AN on BS2.**
 With the prevalence bar off it moved 693 calls, 690 of them away from ClinVar's classification, so BS2 takes no minimum AN beyond needing one that is not zero.

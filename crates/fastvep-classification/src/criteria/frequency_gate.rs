@@ -114,13 +114,13 @@ pub(crate) fn note_withheld_benign_frequency(
 /// enough.
 ///
 /// ClinGen SVI gnomAD v4 guidance (March 2024) requires a minimum AN before a
-/// frequency-based criterion fires, to protect against noisy estimates at
-/// poorly covered sites. A missing AN is treated as below the minimum: the
-/// guidance is a requirement and not an opt-in check, so a criterion cannot fire
-/// without confirming it. The summary is the criterion's own, so BA1 and BS1
-/// each report under their own code. BS2 does not call this: its test is a count
-/// against the cohort it came from, which needs an AN to exist and not a minimum
-/// one, and `evaluate_bs2` says why.
+/// frequency-based criterion fires, which we read as protection against noisy
+/// estimates at poorly covered sites. A missing AN is treated as below the
+/// minimum: the guidance is a requirement and not an opt-in check, so a
+/// criterion cannot fire without confirming it. The summary is the criterion's
+/// own, so BA1 and BS1 each report under their own code. BS2 does not call
+/// this: its test is a count against the cohort it came from, which needs an AN
+/// to exist and not a minimum one, and `evaluate_bs2` says why.
 pub(crate) fn insufficient_an(
     code: &str,
     an: Option<u64>,
