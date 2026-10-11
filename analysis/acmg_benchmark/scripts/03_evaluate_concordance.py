@@ -2,9 +2,9 @@
 """
 Evaluate ACMG classifier concordance against ClinVar's 2-star+ classifications.
 
-Those classifications are a reference, not ground truth: ClinVar assigns some of
-them partly from the same kinds of evidence the classifier reads, so agreement is
-partly circular. "Exact", "same-direction" and "opposite" below mean agreement
+Those classifications are a reference, not ground truth: ClinVar's
+classifications can rest partly on the same kinds of evidence the classifier reads,
+so agreement is partly circular. "Exact", "same-direction" and "opposite" below mean agreement
 with ClinVar's classification and nothing stronger.
 
 Inputs
@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import sys
 from pathlib import Path
 from collections import defaultdict, Counter
 
@@ -273,6 +274,15 @@ def main():
                 tc_label, pc, top_csq, rule, ";".join(criteria)
             ))
 
+    # An annotation with no ACMG call at all - an empty bgzip, a header and no
+    # records, a run whose annotate failed - is a failed run. Scoring it writes
+    # a matrix of zeros that reads as a result, and `run_benchmark.sh` would
+    # reuse the annotation and score it as zero again.
+    if n_classified == 0:
+        sys.exit(
+            f"error: no variant in {args.predictions} carries an ACMG call, so there is "
+            "nothing to score; an empty or header-only annotation is a failed run"
+        )
     n_labels = len(labels)
     n_unmatched = n_labels - len(matched)
 

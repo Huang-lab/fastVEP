@@ -15,7 +15,7 @@ baseline run and the runs to set against it and it writes
   summary.md                         the same two things as tables
 
 The labels are ClinVar's own 2-star-or-better classifications. They are a
-reference, not the truth: ClinVar assigns some of them partly from the same
+reference, not the truth: ClinVar's classifications can rest partly on the same
 gnomAD frequency and ClinVar-neighbour evidence the classifier reads, so
 agreement with them is partly circular and a threshold fitted to them is partly
 fitted to its own input. "Toward" and "away" below mean "closer to ClinVar's

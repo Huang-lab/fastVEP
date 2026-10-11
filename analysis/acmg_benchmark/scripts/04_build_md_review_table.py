@@ -544,7 +544,7 @@ def main() -> None:
     out_rows.sort(key=lambda d: -d["priority_score"])
 
     with OUT_TSV.open("w") as f:
-        w = csv.DictWriter(f, fieldnames=header, delimiter="\t")
+        w = csv.DictWriter(f, fieldnames=header, delimiter="\t", lineterminator="\n")
         w.writeheader()
         for row in out_rows:
             w.writerow(row)

@@ -52,6 +52,7 @@ import csv
 import gzip
 import re
 import sys
+from itertools import zip_longest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -68,8 +69,11 @@ BARS = (3e-4, 1e-3, 3e-3)
 
 CSQ = re.compile(r"(?:^|;)CSQ=([^;]*)")
 GNOMAD = re.compile(r"(?:^|;)FV_GNOMAD=([^;]*)")
-# CSQ columns this script reads: SYMBOL, HGVSc and HGVSp, then ACMG and ACMG_CRITERIA, the last two.
-SYMBOL, HGVSC, HGVSP = 3, 10, 11
+# The columns this script reads, found by name in each file's own header and not
+# by position, so that a column added to CSQ cannot shift them into a plausible
+# wrong answer.
+CSQ_COLUMNS = ("SYMBOL", "HGVSc", "HGVSp", "ACMG", "ACMG_CRITERIA")
+GNOMAD_COLUMNS = ("ALL_AC", "ALL_AN", "ALL_HC")
 
 
 def poisson_lower_95(observed: int) -> float:
@@ -82,7 +86,8 @@ def poisson_lower_95(observed: int) -> float:
         return table[observed]
     k = float(observed)
     term = 1.0 - 1.0 / (9.0 * k) - 1.645 / (3.0 * k**0.5)
-    return max(k * term**3, 0.0)
+    # The product in the order the Rust writes it, so that the two agree to the last bit.
+    return max(k * term * term * term, 0.0)
 
 
 def carrier_bound(ac: int, an: int, hom: int) -> float:
@@ -96,12 +101,32 @@ def base_code(code: str) -> str:
     return re.sub(r"_(Supporting|Moderate|Strong|Very_Strong)$", "", code)
 
 
+def header_columns(path: Path, header: list[str], info_id: str, wanted: tuple[str, ...]) -> dict[str, int]:
+    """Where each wanted column of an INFO field sits, from the field's `Format: A|B|C` header line."""
+    for line in header:
+        if line.startswith(f"##INFO=<ID={info_id},"):
+            m = re.search(r"Format: ([^\">]+)", line)
+            if m:
+                names = m.group(1).strip().split("|")
+                missing = [w for w in wanted if w not in names]
+                if missing:
+                    sys.exit(f"{path}: the {info_id} header has no column named {', '.join(missing)}")
+                return {w: names.index(w) for w in wanted}
+    sys.exit(f"{path}: no {info_id} header line with a Format, so its columns cannot be found")
+
+
 def stream(path: Path):
     """key -> (gene, hgvsc, hgvsp, call, criteria, ac, an, hom), in file order, for the first CSQ entry."""
+    header: list[str] = []
     with gzip.open(path, "rt") as f:
+        csq_at = gnomad_at = None
         for line in f:
             if line[0] == "#":
+                header.append(line)
                 continue
+            if csq_at is None:
+                csq_at = header_columns(path, header, "CSQ", CSQ_COLUMNS)
+                gnomad_at = header_columns(path, header, "FV_GNOMAD", GNOMAD_COLUMNS)
             t = line.rstrip("\n").split("\t", 8)
             m = CSQ.search(t[7])
             if not m:
@@ -112,13 +137,14 @@ def stream(path: Path):
             if g:
                 p = g.group(1).split("|")
                 try:
-                    counts = (int(p[2]), int(p[3]), int(p[4]))
+                    counts = tuple(int(p[gnomad_at[c]]) for c in GNOMAD_COLUMNS)
                 except (IndexError, ValueError):
                     pass
+            crit = csq[csq_at["ACMG_CRITERIA"]]
             yield (
                 (t[0], t[1], t[3], t[4]),
-                csq[SYMBOL], csq[HGVSC], csq[HGVSP],
-                csq[-2], {base_code(c) for c in csq[-1].split("&") if c},
+                csq[csq_at["SYMBOL"]], csq[csq_at["HGVSc"]], csq[csq_at["HGVSp"]],
+                csq[csq_at["ACMG"]], {base_code(c) for c in crit.split("&") if c},
                 *counts,
             )
 
@@ -149,7 +175,9 @@ def main() -> None:
 
     additions, other_changes, lost = [], 0, 0
     totals = {"baseline": [0, 0], "run": [0, 0]}  # exact and same-direction, over the variants both runs call
-    for a, b in zip(stream(paths[0]), stream(paths[1])):
+    for a, b in zip_longest(stream(paths[0]), stream(paths[1])):
+        if a is None or b is None:
+            sys.exit(f"the two runs do not list the same number of variants: {args.run if b is None else args.baseline} ends first")
         if a[0] != b[0]:
             sys.exit(f"the two runs do not list the same variants in the same order: {a[0]} against {b[0]}")
         (key, gene, hgvsc, hgvsp, call_a, crit_a, ac, an, hom), (_, _, _, _, call_b, crit_b, *_rest) = a, b
