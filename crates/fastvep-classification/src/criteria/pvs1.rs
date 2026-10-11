@@ -24,9 +24,10 @@ use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 /// Strong for a null variant in a LOF-intolerant gene), so a pipeline that
 /// does not populate them behaves exactly as before.
 ///
-/// Two of the tree's branches are still unreachable: `alt_start_codon_distance`
-/// (start-loss) and `same_splice_position_pathogenic` (PS1's splice track) have
-/// no plumbing yet, so start-loss stays at PVS1_Supporting.
+/// One of the tree's branches is still unreachable: `alt_start_codon_distance`
+/// (start-loss) has no plumbing yet, so start-loss stays at PVS1_Supporting.
+/// (`same_splice_position_pathogenic` has it now, but PS1's splice path reads it
+/// and the tree does not.)
 ///
 /// Which NMD prediction feeds the tree is a configuration choice - see
 /// [`AcmgConfig::pvs1_nmd_50nt_rule`], which documents the measured trade

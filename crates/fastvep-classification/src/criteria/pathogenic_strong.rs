@@ -72,10 +72,14 @@ fn evaluate_ps1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
         // nothing to it, whichever term the record's anchor produced: a repeat
         // that straddles the acceptor can be written as deleting the intron's `AG`
         // or as deleting an exon's bases in frame, and it is the same edited
-        // sequence. PVS1's splice track stands down for exactly these placements,
-        // so with PS1 left running the call would read "the splice site is not
-        // abolished" and "the splice site is abolished as it is in this Pathogenic
-        // variant" at once. Where PVS1 keeps the record's term - an exonic
+        // sequence. PVS1's splice track stands down for these placements, so with
+        // PS1 left running a row with only a splice term would read "the splice
+        // site is not abolished" and "the splice site is abolished as it is in
+        // this Pathogenic variant" at once. PS1 stands down whatever else the row
+        // carries: a coding-null term beside the splice one keeps PVS1 for that
+        // term, because the placement says nothing about whether it is real, but
+        // PS1 compares the dinucleotide and not the term, and the placement shows
+        // the dinucleotide intact. Where PVS1 keeps the record's term - an exonic
         // placement out of frame, which is a frameshift with its record anchored
         // on the splice site - PS1 keeps it too.
         if input.splice_term_is_an_anchor_artefact() {
@@ -684,6 +688,31 @@ mod tests {
             ] {
                 input.hgvs_placement = Some(placement);
                 assert!(evaluate_ps1(&input, &config).met, "{term:?} {placement:?}");
+            }
+        }
+    }
+
+    /// PS1's splice path compares what a variant does to the canonical
+    /// dinucleotide, and a placement that leaves it intact leaves nothing to
+    /// match, whatever else the row carries. A coding-null term beside the splice
+    /// one keeps PVS1 for that term (`test_pvs1_in_frame_placement_keeps_a_coding_null_term`),
+    /// and it does not keep PS1, whose premise is the dinucleotide and not the
+    /// term. The two criteria differ here on purpose.
+    #[test]
+    fn test_ps1_splice_path_stands_down_even_when_a_coding_null_term_keeps_pvs1() {
+        use fastvep_core::HgvsPlacement;
+        for coding_null in [Consequence::FrameshiftVariant, Consequence::StopGained] {
+            for placement in [
+                HgvsPlacement::Exonic { in_frame: true },
+                HgvsPlacement::Intronic { offset: 8 },
+            ] {
+                let mut input = make_input(None);
+                input.consequences = vec![Consequence::SpliceAcceptorVariant, coding_null];
+                input.same_splice_position_pathogenic = Some(true);
+                input.hgvs_placement = Some(placement);
+                let r = evaluate_ps1(&input, &AcmgConfig::default());
+                assert!(!r.met, "{coding_null:?} {placement:?}");
+                assert!(r.evaluated, "{coding_null:?} {placement:?}");
             }
         }
     }

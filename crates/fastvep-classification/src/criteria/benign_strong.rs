@@ -977,6 +977,62 @@ mod tests {
         assert!(r.summary.contains("1.5e-3"), "{}", r.summary);
     }
 
+    /// On a non-PAR sex-chromosome site an XY sample contributes one allele to
+    /// AN, so the individuals surveyed are `(AN - AN_XY) / 2 + AN_XY` and not
+    /// `AN / 2`. 200 carriers among 300,000 XX and 400,000 XY individuals have a
+    /// lower bound of 2.5e-4, under the 3e-4 bar; read as 500,000 individuals
+    /// they would have 3.5e-4 and clear it.
+    #[test]
+    fn test_bs2_ad_gene_counts_xy_individuals_once_on_a_non_par_site() {
+        let mut input = dominant_input(200, 0, Some(1_000_000));
+        {
+            let gnomad = input.gnomad.as_mut().unwrap();
+            gnomad.non_par = true;
+            gnomad.all_an_xy = Some(400_000);
+            gnomad.all_ac_xy = Some(0);
+        }
+        let r = evaluate_bs2(&input, &AcmgConfig::default());
+        assert_eq!(r.details["gnomad_individuals"], serde_json::json!(700_000));
+        assert!(!r.met, "{}", r.summary);
+
+        // The same counts on an autosome survey 500,000 individuals.
+        input.gnomad.as_mut().unwrap().non_par = false;
+        let r = evaluate_bs2(&input, &AcmgConfig::default());
+        assert_eq!(r.details["gnomad_individuals"], serde_json::json!(500_000));
+        assert!(r.met, "{}", r.summary);
+    }
+
+    /// Every BS2 verdict rests on this bound: a table up to 20 events and the
+    /// Wilson-Hilferty approximation above it, standing in for
+    /// `0.5 * chi2_{0.05, 2k}`. The values are that quantile, from scipy.
+    #[test]
+    fn test_poisson_lower_95_agrees_with_the_exact_bound() {
+        const EXACT: [f64; 21] = [
+            0.0, 0.051293, 0.355362, 0.817691, 1.366319, 1.970150, 2.613013, 3.285316, 3.980823,
+            4.695228, 5.425405, 6.169007, 6.924246, 7.689641, 8.463899, 9.246259, 10.035990,
+            10.832100, 11.634300, 12.442000, 13.254700,
+        ];
+        for (k, exact) in EXACT.iter().enumerate() {
+            let got = poisson_lower_95(k as u64);
+            assert!((got - exact).abs() < 2e-3, "k={k}: {got} against {exact}");
+        }
+        // Above the table the approximation stays within 0.02% of the exact bound.
+        for (k, exact) in [
+            (21u64, 14.0720),
+            (50, 38.9647),
+            (100, 84.1393),
+            (300, 272.0900),
+            (719, 675.4704),
+            (7409, 7267.9891),
+        ] {
+            let got = poisson_lower_95(k);
+            assert!(
+                (got - exact).abs() / exact < 2e-4,
+                "k={k}: {got} against {exact}"
+            );
+        }
+    }
+
     /// Both arms read the cohort size from AN, and without one a single
     /// individual's worth of cohort made any bar vacuous.
     #[test]

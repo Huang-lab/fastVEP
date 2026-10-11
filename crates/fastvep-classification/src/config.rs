@@ -224,7 +224,8 @@ pub struct AcmgConfig {
     /// the 95 % lower confidence bound on the *carrier* frequency in gnomAD -
     /// `AC - nhomalt` individuals, so a homozygote counts once - exceeds this
     /// value and [`Self::bs2_ad_min_ac`] is also met. `0` switches the bar off and
-    /// leaves the floor as the whole test.
+    /// leaves the floor as the whole test. It must be finite and not negative;
+    /// [`Self::validate`], which `from_toml_file` calls, rejects anything else.
     ///
     /// **Default 3e-4, chosen from measurement.** AC ≥ 5 alone fired BS2 on
     /// SNRNP200 p.Ser1087Leu with nine carriers among 1.4 M alleles, a
@@ -786,7 +787,34 @@ impl AcmgConfig {
     pub fn from_toml_file(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Reject a value that would change what a criterion means without anyone
+    /// being told.
+    ///
+    /// BS2's two prevalence bars read `0` as "off". A negative bar is not a
+    /// smaller one: the test `bar <= 0` reads it as off as well, so a typo
+    /// (`-3e-4`) fires BS2 on the carrier floor alone, the less cautious
+    /// direction, and a NaN fails every comparison and silently never fires.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        for (name, value) in [
+            (
+                "bs2_ad_prevalence_threshold",
+                self.bs2_ad_prevalence_threshold,
+            ),
+            (
+                "bs2_hom_prevalence_threshold",
+                self.bs2_hom_prevalence_threshold,
+            ),
+        ] {
+            anyhow::ensure!(
+                value.is_finite() && value >= 0.0,
+                "{name} must be a finite number that is not negative (0 switches the bar off), got {value}"
+            );
+        }
+        Ok(())
     }
 
     /// Get gene-specific override, if any.
@@ -1169,6 +1197,64 @@ mod tests {
         assert!((cfg.ba1_af_threshold - 0.05).abs() < 1e-10);
         assert!(cfg.pm2_downgrade_to_supporting);
         assert!(!cfg.use_pp5_bp6);
+    }
+
+    /// Every knob has two defaults: the `Default` impl, and the serde function a
+    /// key missing from a TOML file falls back on. Nothing else makes them agree,
+    /// and a lab that omits `bs2_ad_prevalence_threshold` would otherwise get a
+    /// different bar from the one the docs and the benchmark quote.
+    #[test]
+    fn test_an_empty_toml_is_the_default_config() {
+        let from_empty: AcmgConfig = toml::from_str("").unwrap();
+        assert_eq!(
+            serde_json::to_value(&from_empty).unwrap(),
+            serde_json::to_value(AcmgConfig::default()).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_a_bs2_bar_that_is_negative_or_not_a_number_is_rejected() {
+        assert!(AcmgConfig::default().validate().is_ok());
+        for bar in [0.0, 1e-3, 3e-4] {
+            let cfg = AcmgConfig {
+                bs2_ad_prevalence_threshold: bar,
+                bs2_hom_prevalence_threshold: bar,
+                ..Default::default()
+            };
+            assert!(cfg.validate().is_ok(), "{bar}");
+        }
+        for bad in [-3e-4, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let ad = AcmgConfig {
+                bs2_ad_prevalence_threshold: bad,
+                ..Default::default()
+            };
+            let err = ad.validate().unwrap_err().to_string();
+            assert!(err.contains("bs2_ad_prevalence_threshold"), "{err}");
+            let hom = AcmgConfig {
+                bs2_hom_prevalence_threshold: bad,
+                ..Default::default()
+            };
+            let err = hom.validate().unwrap_err().to_string();
+            assert!(err.contains("bs2_hom_prevalence_threshold"), "{err}");
+        }
+    }
+
+    /// The path a user takes: a typo in the file is an error at load, naming the
+    /// key, and not a BS2 that fires on the floor alone.
+    #[test]
+    fn test_a_negative_bs2_bar_in_a_toml_file_fails_to_load() {
+        let dir = std::env::temp_dir().join(format!("fastvep-acmg-config-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("negative_bar.toml");
+        std::fs::write(&path, "bs2_ad_prevalence_threshold = -3e-4\n").unwrap();
+        let err = AcmgConfig::from_toml_file(path.to_str().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("bs2_ad_prevalence_threshold"), "{err}");
+        std::fs::write(&path, "bs2_ad_prevalence_threshold = 0\n").unwrap();
+        let cfg = AcmgConfig::from_toml_file(path.to_str().unwrap()).unwrap();
+        assert_eq!(cfg.bs2_ad_prevalence_threshold, 0.0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

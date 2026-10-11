@@ -877,10 +877,13 @@ impl ClassificationInput {
     /// intron past `±2`, or wholly inside an exon and in frame.
     ///
     /// These are the placements PVS1's splice track stands down for, and PS1's
-    /// splice path stands down with it, so that one row is never a canonical
-    /// splice variant to one criterion and not to the other. A change placed
-    /// wholly inside an exon and out of frame is left to the record's terms by
-    /// both. It leaves the dinucleotide intact as well, but it is a frameshift
+    /// splice path stands down for them too, so that a row with only a splice
+    /// term is never a canonical splice variant to one criterion and not to the
+    /// other. PS1 stands down whatever else the row carries: a coding-null term
+    /// beside the splice one keeps PVS1 for that term, because the placement says
+    /// nothing about whether it is real, and does not keep PS1, which compares
+    /// the dinucleotide the placement shows intact. A change placed wholly inside
+    /// an exon and out of frame is left to the record's terms by both. It leaves the dinucleotide intact as well, but it is a frameshift
     /// whose record anchors on the splice site, PVS1 keeps it as a null variant
     /// and PS1 stays with PVS1; docs/ACMG.md has what taking PS1 alone away from
     /// it would have cost.
