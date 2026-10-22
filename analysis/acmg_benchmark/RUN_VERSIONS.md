@@ -238,8 +238,9 @@ and earlier were silently annotating as real variants.
 
 - **+39 pp LB recall, +25 pp B recall** (v1 → v5): BP7 went from **0**
   → **81,706 fires** once PhyloP+SpliceAI were loaded *and* both
-  wiring bugs were fixed. (Walker 2023: BP7 needs synonymous + low
-  SpliceAI + low PhyloP.)
+  wiring bugs were fixed. (Richards 2015: BP7 needs a synonymous change,
+  no predicted splice impact and a nucleotide that is not highly conserved; Walker 2023 applies it
+  after BP4 and cautions against the conservation test.)
 - **+48 pp Pathogenic recall, +31 pp LP recall** (v5 → v6): the
   classifier's PM2 evaluator previously refused to fire when
   `input.gnomad` was `None` (no gnomAD record at the variant). For
@@ -626,7 +627,7 @@ Two guards earned their place during development, and both stay:
 
 ## v18: the BA1 exception list had never fired, and the benchmark cannot see it
 
-The reviewer supplied Table 1 of Ghosh 2018 (PMID 30311378), the ClinGen SVI list of nine variants that must not be called standalone-benign on frequency.
+The reviewer supplied Table 1 of Ghosh 2018 (PMID 30311383), the ClinGen SVI list of nine variants that must not be called standalone-benign on frequency.
 All nine were already shipped as defaults, cited to the right paper.
 
 **Not one of them had ever matched.**
@@ -654,7 +655,7 @@ BTD is `c.1330G>C` on NM_000060.4 and `c.1270G>C` on the Ensembl canonical, and 
 
 Not one call changed across 673,660 variants, and that is the explanation for how a dead list survived this long rather than a disappointing result.
 
-Seven of the nine are `Conflicting classifications of pathogenicity` in ClinVar, so they carry no consensus label and never enter the truth set.
+Seven of the nine are not in the April 2-star+ set: six are `Conflicting classifications of pathogenicity` in ClinVar, so they carry no consensus label and never enter the reference set, and the seventh (HFE p.Cys282Tyr) was not in the April set and is in the October one.
 Of the two that are scored - GJB2 p.Val37Ile and ACADS p.Arg171Trp - neither call moves.
 The exception list exists precisely for variants where expert opinion is divided, or where a variant is common *and* pathogenic, which is exactly the population a consensus-truth benchmark discards.
 

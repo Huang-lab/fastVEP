@@ -32,7 +32,9 @@ pub fn evaluate_all(input: &ClassificationInput, config: &AcmgConfig) -> Vec<Evi
 ///    which holds only missense entries: a gene with
 ///    `bp1_max_pathogenic_missense` or more pathogenic/likely-pathogenic
 ///    missense records does have a missense mechanism, and BP1 cannot apply
-///    to it no matter what the constraint metrics say.
+///    to it no matter what the constraint metrics say. The count includes the
+///    variant's own record when ClinVar calls it pathogenic, which PS1 and PM1
+///    exclude (3 missed diagnoses on the ClinVar 2-star+ benchmark rest on it).
 ///
 /// Condition 2 was missing before the round-2 medical-genetics review, which
 /// found BP1 firing on ENG, CFH, FGFR3, APC, ANKRD11, PKD1 and a dozen more
@@ -665,6 +667,18 @@ fn evaluate_bp6(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCr
 ///    *outside* the standard splice region — donor-side `offset ≥ 7` or
 ///    acceptor-side `offset ≤ -21` — when SpliceAI shows no impact and the
 ///    position is not highly conserved.
+///
+/// Two departures from Walker 2023, found when the recommendation was read against
+/// this code in October 2026. The paper applies BP7 after BP4, which for SpliceAI is a
+/// score of 0.1 or below, and cautions against a conservation test unless its tool,
+/// depth and cut point have an empirical justification, having found that the extra
+/// filter improved no negative predictive value in its curated dataset. This code
+/// takes a score below `spliceai_pathogenic` (0.2) as "no impact" and keeps Richards
+/// 2015's "not highly conserved" as `phylop` below `phylop_conserved`, which is why
+/// removing PhyloP removes every BP7. Measured on the ClinVar 2-star+ benchmark
+/// (`manuscript/acmg`, Section 3.3): switching the conservation test off adds 16,482
+/// correct benign-side calls and 2 missed diagnoses, and asking for SpliceAI of at
+/// most 0.1 as well removes 402 calls and no error. Neither has been changed.
 ///
 /// The extension also carries a far boundary, which Walker 2023 does not state
 /// and which is set here by measurement rather than assertion: see

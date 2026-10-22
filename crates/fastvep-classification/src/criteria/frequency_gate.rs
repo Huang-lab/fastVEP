@@ -113,11 +113,13 @@ pub(crate) fn note_withheld_benign_frequency(
 /// chromosomes at the site, recorded in `details`; `None` when coverage is
 /// enough.
 ///
-/// ClinGen SVI gnomAD v4 guidance (March 2024) requires a minimum AN before a
-/// frequency-based criterion fires, which we read as protection against noisy
-/// estimates at poorly covered sites. A missing AN is treated as below the
-/// minimum: the guidance is a requirement and not an opt-in check, so a
-/// criterion cannot fire without confirming it. The summary is the criterion's
+/// A minimum AN before a frequency-based criterion fires protects against noisy
+/// estimates at poorly covered sites. Its source is narrower than this use: the
+/// BA1 recommendation (Ghosh et al. 2018) asks for a dataset of at least 2,000
+/// observed alleles, and the ClinGen VCEP Review Committee's gnomAD v4 communication
+/// (March 2024) states no allele-number floor (see `min_an_for_frequency_criteria`).
+/// A missing AN is treated as below the minimum, so a criterion cannot fire
+/// without confirming it. The summary is the criterion's
 /// own, so BA1 and BS1 each report under their own code. BS2 does not call
 /// this: its test is a count against the cohort it came from, which needs an AN
 /// to exist and not a minimum one, and `evaluate_bs2` says why.
