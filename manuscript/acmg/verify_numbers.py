@@ -1039,7 +1039,8 @@ def structure() -> None:
 
     The main figures state conclusions and are cited in order (1 to 5); the supplementary figures (S1 to S4) show how the
     classifier was developed and reviewed. There are fewer than ten supplementary tables, and every other table is in the
-    appendix, so each file of `data/` must be named by exactly one supplementary or appendix table.
+    appendix, so each file of `data/` must be named by exactly one supplementary or appendix table, and the workbook that
+    gathers the tables must hold what those files say.
     """
     text = (HERE / "manuscript.md").read_text()
     body, back = text.split("\n## Figure legends\n", 1)
@@ -1053,6 +1054,11 @@ def structure() -> None:
     check(legends == ["1", "2", "3", "4", "5", "S1", "S2", "S3", "S4"], f"the legends are the main figures 1 to 5 and the supplementary figures S1 to S4 (found {legends})")
     check(len(sup) < 10 and sup == [f"S{i}" for i in range(1, len(sup) + 1)], f"fewer than ten supplementary tables, numbered S1 to S{len(sup)}")
     check(app == [f"A{i}" for i in range(1, len(app) + 1)] and len(app) > 0, f"the appendix tables are numbered A1 to A{len(app)}")
+    main_tables = re.findall(r"^\*\*Table (\d+)\.", body, re.M)
+    check(main_tables == [str(i) for i in range(1, len(main_tables) + 1)] and len(main_tables) > 0, f"the tables of the text are numbered 1 to {len(main_tables)} in the order they stand")
+    prose = "\n".join(line for line in body.splitlines() if not line.startswith("**Table "))
+    first_cited = list(dict.fromkeys(re.findall(r"\bTable (\d+)\b", prose)))
+    check(first_cited == main_tables, f"the tables of the text are first cited in the order they are numbered (cited {first_cited}, numbered {main_tables})")
     for kind, pattern, defined in (("figure", r"Figure (S?\d)", legends), ("supplementary table", r"Supplementary Table (S\d)", sup), ("appendix table", r"Appendix Table (A\d)", app)):
         cited = re.findall(pattern, text)
         missing = sorted(set(cited) - set(defined))
@@ -1068,6 +1074,11 @@ def structure() -> None:
     dup = sorted({f for f in listed if listed.count(f) > 1})
     check(not dup, f"no data file is in two tables (twice: {dup})")
     check(sorted(set(listed)) == files, f"every data file is in a table, and every file named exists (not listed: {sorted(set(files) - set(listed))}; not found: {sorted(set(listed) - set(files))})")
+    # The workbook gathers those files by table, so a change to a file or to a table entry that it has not followed is a stale table.
+    import build_supplement
+
+    stale = build_supplement.differences()
+    check(not stale, f"supplementary_tables.xlsx holds what data/ and the table entries say (rerun build_supplement.py --write; {stale[:1]})")
 
 
 CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, repository, audit, early_trades, criteria_consistency, coverage, structure]

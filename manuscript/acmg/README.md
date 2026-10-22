@@ -11,7 +11,9 @@ ClinVar's 2-star+ classifications are a reference and not ground truth, througho
 | `figures/` | Figures 1 to 5 (the main figures, each stating a conclusion) and S1 to S4 (the process figures: the runs, the ledger of changes, the reviewer's rulings and the frontier of agreement against contradictions) as PNG (300 dpi), written by `generate_figures.py` together with a PDF of each (the repository ignores `*pdf`, so only the PNGs are tracked); every label that names a ClinVar class says "ClinVar 2-star+", and each figure has a footnote that gives the review status, the release and the class abbreviations |
 | `generate_figures.py` | Draws every figure from the tables in `data/` and nothing else |
 | `build_tables.py` | Builds the tables that carry numbers (Tables 3 to 7) from `data/` and keeps `manuscript.md` in step with them |
-| `verify_numbers.py` | Recomputes the numbers quoted in the text from `data/` and fails when a sentence does not contain them; it also checks that every figure and table that the text cites exists and is cited in order, that there are fewer than ten supplementary tables, and that every file of `data/` is in exactly one table |
+| `supplementary_tables.xlsx` | Every supplementary table (S1 to S9) and appendix table (A1 to A9) in one workbook: a sheet of contents and a sheet for each table, which holds the CSV or TSV files of `data/` that make it up, one under another, each under its file name |
+| `build_supplement.py` | Writes `supplementary_tables.xlsx` from `data/`; which file is in which table is read from the table entries of `manuscript.md`, so the workbook cannot disagree with it |
+| `verify_numbers.py` | Recomputes the numbers quoted in the text from `data/` and fails when a sentence does not contain them; it also checks that every figure and table that the text cites exists and is cited in order, that there are fewer than ten supplementary tables, that every file of `data/` is in exactly one table, and that `supplementary_tables.xlsx` holds what those files say |
 | `data/` | The supplementary and appendix tables, 72 small CSV and TSV files (each is named by exactly one table of the manuscript, which `verify_numbers.py` checks), written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py` and `15_clingen_complete_export.py` |
 | `replay_validation/combiner_cutoff_env.patch` | A patch of eight lines that makes the two point cutoffs of the pathogenic side readable from the environment, for the nine cutoff runs of Table 4 |
 | `replay_validation/bp_hooks_env.patch` | A patch that makes BP1's own-record count and BP7's SpliceAI bar readable from the environment, for the runs of Sections 3.3 and 3.4 |
@@ -23,6 +25,7 @@ The commands that regenerate everything are in `analysis/acmg_benchmark/README.m
 
 ```bash
 python3 manuscript/acmg/build_tables.py --check    # the tables in the text are what the data say
+python3 manuscript/acmg/build_supplement.py --check    # the workbook of supplementary tables is what the data say
 python3 manuscript/acmg/verify_numbers.py          # the numbers in the sentences are what the data say
 ```
 

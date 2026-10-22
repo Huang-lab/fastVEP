@@ -227,7 +227,7 @@ We therefore re-derived calls under alternative schemes, and under alternative b
 The replay of the shipped scheme reproduces v37 for 673,641 of 673,660 variants.
 The remaining 19 are variants that the replay calls Likely pathogenic and the classifier holds at VUS by its site-level frequency veto: when gnomAD rejects a site (by its own FILTER, a low-complexity tract or a segmental duplication) and the frequency that was withheld would itself have met BA1 or BS1, a Likely pathogenic call becomes VUS.
 The output does not record the detail the veto needs, so the replay holds those 19 at VUS wherever it would otherwise call them Likely pathogenic.
-The replay was checked against real runs of the same configurations (Appendix Table A2): the Richards 2015 table on both sides, and the point cutoffs of Table 4.
+The replay was checked against real runs of the same configurations (Appendix Table A2): the Richards 2015 table on both sides, and the point cutoffs of Section 3.3.
 It reproduces the table run, the control and 6 of the 8 runs with a changed cutoff cell for cell, and the other two (Likely pathogenic from 4 and from 5 points) within 3 and 1 variants, each a variant that the replay calls Likely pathogenic and the run, through the veto, does not.
 We use the real runs wherever one exists, and the replay only for the benign-side point scales, which have no switch in the shipped code and for which we made no real run (Section 3.3).
 
@@ -347,6 +347,7 @@ Re-measuring them on the final classifier changed what we can say about several 
 
 **Table 3. Thresholds that no guideline states: shipped values, and what the final classifier shows.**
 Exchange rates are extra correct benign-side (or pathogenic-side) calls per extra missed diagnosis (or false-pathogenic call) for the step on either side of the shipped value; "free" means no added error.
+Correct calls, missed diagnoses and false-pathogenic calls are counted against ClinVar 2-star+ classifications (Section 2.2).
 Supplementary Table S4 gives every step of every sweep.
 
 <!-- table:thresholds:begin -->
@@ -452,6 +453,7 @@ The tier boundary therefore falls one point above where a lone null variant with
 **Table 4. The two point cutoffs of the pathogenic side, by real runs.**
 Each row is a run of the final classifier with one of the two cutoffs changed, which the code holds as constants (Section 2.6); the offline replay of Section 2.7 reproduces every row cell for cell except the first two, where it differs by 3 and 1 variants.
 Rates are over 673,660 records.
+ClinVar P/LP, VUS and B/LB are classes of ClinVar 2-star+ records of the release of 4 April 2026 (Section 2.2).
 
 <!-- table:cutoffs:begin -->
 | Setting | ClinVar P/LP called P/LP (recall) | ClinVar VUS called P/LP | ClinVar B/LB called P/LP | ClinVar P/LP called LB/B | Same-direction agreement | Exact agreement |
@@ -649,6 +651,7 @@ Each of the 49 had already been in the table of an earlier round (17 since round
 
 **Table 6. The 49 opposite-direction calls of v37, by the evidence behind the call and the ruling of the last review round.**
 Rulings are our coding of the reviewer's text (Section 2.4), not categories the reviewer assigned, and Supplementary Table S8 lists the 49 calls with their criteria, gnomAD counts and rulings.
+ClinVar here is ClinVar 2-star+ of the release of 4 April 2026 (Section 2.2).
 
 <!-- table:residual:begin -->
 | Evidence behind the call | Calls | ClinVar supported | fastVEP supported | Neither | Needs more evidence | Depends on the disorder |
@@ -702,6 +705,7 @@ Table 7 gives the final classifier, unchanged, on the April set and on each stra
 **Table 7. The final classifier on the April benchmark and on the later ClinVar release, by stratum.**
 A variant is new if it is not in the April set, unchanged if it has the same class in both releases, and has moved within or across a direction if its class changed.
 Opposite-direction calls are given as the total, with missed diagnoses and false-pathogenic calls in brackets.
+ClinVar P/LP, LB/B and VUS are classes of ClinVar 2-star+ records of the release of 4 April 2026 for the April set and of 4 October 2026 for the later release.
 
 <!-- table:temporal:begin -->
 | Set | Variants | Same-direction agreement | ClinVar P/LP called P/LP | ClinVar LB/B called LB/B | ClinVar VUS called VUS | Opposite-direction calls (missed diagnoses and false-pathogenic) |
@@ -959,7 +963,7 @@ Whiffin, N., Minikel, E., Walsh, R., et al. (2017). Using high-resolution varian
 ## Data and code availability
 
 fastVEP is open source under the Apache License 2.0 at https://github.com/Huang-lab/fastVEP.
-The analysis of this paper is in the repository under `analysis/acmg_benchmark/` (the benchmark harness `run_benchmark.sh`, the run record `RUN_VERSIONS.md`, and the scripts `11_manuscript_runs.py`, `12_per_variant_table.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py` and `15_clingen_complete_export.py`) and under `manuscript/acmg/` (this manuscript, the tables it reads in `data/`, `build_tables.py`, `verify_numbers.py`, `generate_figures.py`, the figures, and the patches `replay_validation/combiner_cutoff_env.patch` and `replay_validation/bp_hooks_env.patch` that expose the two point cutoffs, and BP1's own-record count and BP7's SpliceAI bar, for the runs of Table 4 and of Sections 3.3 and 3.4).
+The analysis of this paper is in the repository under `analysis/acmg_benchmark/` (the benchmark harness `run_benchmark.sh`, the run record `RUN_VERSIONS.md`, and the scripts `11_manuscript_runs.py`, `12_per_variant_table.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py` and `15_clingen_complete_export.py`) and under `manuscript/acmg/` (this manuscript, the tables it reads in `data/` and the workbook `supplementary_tables.xlsx` that gathers them, `build_tables.py`, `build_supplement.py`, `verify_numbers.py`, `generate_figures.py`, the figures, and the patches `replay_validation/combiner_cutoff_env.patch` and `replay_validation/bp_hooks_env.patch` that expose the two point cutoffs, and BP1's own-record count and BP7's SpliceAI bar, for the runs of Table 4 and of Sections 3.3 and 3.4).
 The scored concordance matrix, the criterion firing counts and the provenance file of each run made for this paper (89 on the April set and 7 on the October release) are in `analysis/acmg_benchmark/results/v37_manuscript/`; the provenance records the flags, the SHA-256 of the binary and of every configuration, the inputs read and the commit of the checkout that ran the harness (5d8004a for 63 of the 89 runs, and 1dfa488 for 26, the head of the branch that was squash-merged as 5d8004a, whose tree is the same).
 The annotated VCFs (about 250 MB each), the per-variant tables, the annotation databases and the ClinVar, gnomAD, ClinGen and Ensembl inputs are not in the repository.
 Table 2 and Section 2.2 give their sources and versions, and the ClinVar files are the weekly releases dated 4 April and 4 October 2026.
@@ -999,13 +1003,13 @@ The thresholds of Section 3.3, re-measured on the final classifier.
 (B) Recall of ClinVar 2-star+ pathogenic-side variants against the PM2 bar for genes not read as recessive-only, under the SVI point system (shipped) and under the 2015 combining table, and against the bar for genes read as recessive-only under the point system.
 (C) The BS2 carrier bar for genes read as dominant-only: the change in recall of ClinVar 2-star+ pathogenic-side (red) and benign-side (blue) variants from the shipped bar.
 
-**Figure 2. The points that define the classes move the pathogenic side more than any numeric bar that we swept.**
+**Figure 2. The points that define the classes move the pathogenic side more than any numeric bar that we swept on the shipped classifier.**
 (A) For variants with no benign evidence, the ClinVar 2-star+ classes of the variants at each number of pathogenic points; the lines mark Likely pathogenic from 6 points and Pathogenic from 10.
 (B) Real runs with the Likely pathogenic cutoff changed from 4 to 9 points: recall of ClinVar 2-star+ pathogenic-side variants against the number of ClinVar 2-star+ VUS and benign-side variants called pathogenic-side.
 (C) The benign side under the 2015 table (shipped) and under a point scale with Likely benign from -1, -2 and -3 points, replayed from the recorded criteria and not real runs.
 In B and C a filled black marker is the shipped setting.
 
-**Figure 3. Three evidence sources carry the benign side and one the pathogenic side, most design decisions pay for themselves, and each departure from the sources has a price.**
+**Figure 3. Three evidence sources carry the benign side and one carries most of the pathogenic side, most design decisions pay for themselves, and each departure from the sources has a price.**
 What each design decision and each evidence source buys, and what each departure from the sources would change.
 (A) Sixteen settings changed one at a time (switched off, or on for the two opt-in settings): the change from v37 in agreement in direction (percentage points of all records), in recall of ClinVar 2-star+ pathogenic-side variants, in missed diagnoses and in false-pathogenic calls.
 (B) Nine evidence sources removed one at a time from the annotation directory.
@@ -1017,7 +1021,7 @@ The BP1 run, the SpliceAI run, the run with both BP7 changes and the run with th
 (B) What v37 says of each ClinVar 2-star+ class, as P/LP, VUS and B/LB; 382 records with no call (0.13% of the ClinVar 2-star+ benign-side class) are not drawn.
 (C) What ClinVar 2-star+ says behind each v37 call.
 
-**Figure 5. Recall is set by the consequence class and the review status, and on the new variants it falls mostly on the benign side.**
+**Figure 5. Recall varies with the consequence class and the review status, and on the new variants it falls mostly on the benign side.**
 (A, B) The share of ClinVar 2-star+ pathogenic-side and benign-side variants that v37 calls P/LP, VUS and B/LB, by consequence class and by review status; an asterisk marks a row whose bar stops short of 100% because records have no call.
 (C) Recall in direction for each ClinVar 2-star+ class on the April 2026 release, on the October 2026 variants whose class did not change, and on the new October 2026 variants that were not in the April set; whiskers are exact binomial 95% intervals, which treat variants as independent.
 
@@ -1026,14 +1030,15 @@ The BP1 run, the SpliceAI run, the run with both BP7 changes and the run with th
 ## Supplementary materials
 
 The supplementary figures show how the classifier was developed and reviewed, and the nine supplementary tables are the tables that summarise the data best; every other table is in the appendix.
-All tables are CSV or TSV files in `manuscript/acmg/data/` of the repository, and each is written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py` or `15_clingen_complete_export.py` from the scored runs.
+All of them are in one workbook, `manuscript/acmg/supplementary_tables.xlsx`, which has a sheet of contents and a sheet for each table (S1 to S9 and A1 to A9).
+Each table is also a set of CSV or TSV files in `manuscript/acmg/data/` of the repository, which the entries below name, and each of those files is written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py` or `15_clingen_complete_export.py` from the scored runs.
 
 ### Supplementary figures
 
 In Figures S1, S3 and S4 a ClinVar class is that of a ClinVar 2-star+ record of the release of 4 April 2026, as in the main figures, and each figure says so in a footnote.
 Figure S2 shows no ClinVar class.
 
-**Figure S1. Agreement with ClinVar 2-star+ classifications across 37 benchmark runs.**
+**Figure S1. Agreement with ClinVar 2-star+ classifications across the benchmark runs v1 to v37.**
 (A) Same-direction and exact agreement as a percentage of 673,660 variants.
 Open markers are v1, a matrix reconstructed from the documentation of the run, and v2 and v4 to v6, which were recorded at the time; no raw output of them was kept.
 v1 annotated 627,376 of the records, and its 54.7% of those is 51.0% of all records.
@@ -1061,11 +1066,13 @@ The horizontal axis is on a log scale above 10.
 
 ### Supplementary tables
 
+A ClinVar class in these tables is the class of a ClinVar 2-star+ record of the release of 4 April 2026, and of 4 October 2026 where a table says that it is about the later release.
+
 **Supplementary Table S1.** How often each of the 15 computable criteria fires in v37, at which strengths, and on variants of which ClinVar class (`criteria_firing_v37.csv`).
 
-**Supplementary Table S2.** The 37 versions and the runs of this paper.
-For the versions v1 to v37, the agreement, the opposite-direction calls and the recall of each, with the number of variants each committed to, the denominator of each, and the marker of v17 (`trajectory.csv`; v1 is a reconstructed matrix and v2 and v4 to v6 are the figures recorded at the time).
-For the 89 runs made for this paper and the 8 earlier runs of the dominant-gene BS2 settings, the concordance matrix, the firing counts and the settings (`runs_v37_variants.csv`; the run matrix, the matrices of the seven runs on the October release and the provenance files are in `analysis/acmg_benchmark/results/v37_manuscript/`).
+**Supplementary Table S2.** The versions and the runs of this paper.
+For 36 of the 37 versions (v3 was a partial run that was overwritten before it was preserved), the agreement, the opposite-direction calls and the recall of each, with the number of variants each committed to, the denominator of each, and the marker of v17 (`trajectory.csv`; v1 is a reconstructed matrix and v2 and v4 to v6 are the figures recorded at the time).
+For v37 itself, the 89 runs made for this paper and the 8 earlier runs of the dominant-gene BS2 settings (98 rows), the concordance matrix, the firing counts and the settings (`runs_v37_variants.csv`; the run matrix, the matrices of the seven runs on the October release and the provenance files are in `analysis/acmg_benchmark/results/v37_manuscript/`).
 
 **Supplementary Table S3.** The ledger of 64 changes: run, class, route of discovery and source in the project record (`change_ledger.csv`).
 
@@ -1084,6 +1091,7 @@ For the 89 runs made for this paper and the 8 earlier runs of the dominant-gene 
 ## Appendix
 
 Further tables, in the order in which the text cites them.
+A ClinVar class in these tables is, as in the supplementary tables, the class of a ClinVar 2-star+ record.
 
 **Appendix Table A1.** The measurement builds and the provenance of every run: the comparison of the controls of the two builds with v37 (`controls_v37.csv`), the calls that became opposite-direction in the runs that test BP1's veto and BP7 (`hook_new_opposite_v37.csv`), the calls that a stricter count of BP1's veto removes and the records of the protein index behind them (`bp1_veto_count_resolved_v37.csv`, `bp1_index_counts_v37.csv`), and the binary, commit and annotation time of each run (`provenance_v37.csv`).
 
