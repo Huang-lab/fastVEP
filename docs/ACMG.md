@@ -4,7 +4,7 @@ fastVEP implements automated ACMG-AMP variant classification based on the standa
 
 ## Overview
 
-The classifier evaluates all 28 ACMG-AMP evidence criteria for each variant-allele-transcript combination and produces a 5-tier classification:
+The classifier implements all 28 ACMG-AMP evidence criteria and evaluates them for each variant-allele-transcript combination (a default run reports 26, because PP5 and BP6 are off unless `use_pp5_bp6` is set) and produces a 5-tier classification:
 
 | Classification | Shorthand | Color (Web UI) |
 |---|---|---|
@@ -83,13 +83,13 @@ All thresholds are configurable via a TOML file passed with `--acmg-config`. Any
 ba1_af_threshold = 0.05        # BA1: benign standalone (>5% in any population)
 bs1_af_threshold = 0.005       # BS1: benign strong (greater than expected for disorder)
 
-# ── PM2 inheritance-aware thresholds (ClinGen SVI v1.0, Sept 2020) ──
+# ── PM2 inheritance-aware bars (not from ClinGen SVI PM2 v1.0, which sets only the strength) ──
 pm2_ad_af_threshold = 0.00004  # PM2: AD/unknown — "extremely rare", not strictly absent.
                                # Chosen by measurement and sits inside the range published
                                # VCEP specs use for dominant genes; see "Choosing the PM2
                                # bar for dominant genes" below. Set 0.0 for the literal
                                # Richards 2015 strict-absence reading.
-pm2_ar_af_threshold = 0.00007  # PM2: AR — AF ≤ 0.00007 (0.007%)
+pm2_ar_af_threshold = 0.00007  # PM2: recessive-only - AF ≤ 0.00007 (0.007%); equals the Hearing Loss VCEP's bar, swept for the manuscript: flat
 pm2_af_threshold = 0.0001      # Legacy single-threshold field, retained for back-compat
                                # with pre-PR4 configs; not consulted in the default path.
 
@@ -130,7 +130,8 @@ pm1_hotspot_min_pathogenic = 3 # Minimum pathogenic variants in window to call h
 pm1_max_benign_in_window = 0   # Benign/likely-benign ClinVar missense tolerated in the
                                # same window before it stops counting as a hotspot
 
-# ── gnomAD v4 AN minimum (ClinGen SVI March 2024) ──
+# ── Allele-number floor for BA1/BS1 (from the dataset-size condition of the BA1 recommendation,
+#    Ghosh 2018; the March 2024 gnomAD v4 communication states no floor) ──
 min_an_for_frequency_criteria = 2000  # BA1/BS1 require AN ≥ this; below → NotEvaluated
                                       # (BS2 only needs an AN to exist)
 
@@ -460,6 +461,14 @@ It gives no far boundary, and that is coherent for the SVI, whose recommendation
 written for a curator applying BP7 to one variant in a gene they know.
 An automated pipeline applies it to every intronic position in the genome, and the two
 situations are not the same.
+
+Two other departures from the paper, found when it was read against the code in October 2026.
+Walker 2023 applies BP7 after BP4 has been assigned, which for SpliceAI is a score of 0.1 or
+below, and cautions against a conservation test for BP7 unless its tool, depth and cut point
+have an empirical justification.
+This classifier takes a score below 0.2 as "no impact" and keeps Richards 2015's "not highly
+conserved" as a PhyloP below `phylop_conserved`.
+Limitation 21 below gives what aligning it would change.
 
 Out in the deep intron the only evidence BP7 has left is a SpliceAI score, in precisely the
 regime where SpliceAI is weakest.
@@ -843,7 +852,7 @@ manual route.
 
 Two schemes exist for turning met criteria into a classification, and they are encodings of the
 same Bayesian model: the Richards 2015 combining table, and the ClinGen SVI point system
-(Tavtigian et al. 2020, *Genet Med* 22:1735).
+(Tavtigian et al. 2020, *Hum Mutat* 41:1734-1737).
 fastVEP uses **the point system for the pathogenic direction and the 2015 table for the benign
 direction**, which is not a compromise but a measured choice.
 
@@ -982,7 +991,7 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 | **PS3** | Strong | Functional studies show damaging. Read from `--functional-evidence`; suppresses PP3/BP4/BP7 for that variant (SVI ranks experimental evidence above prediction) | Curated TSV | Yes (with file) |
 | **PS4** | Strong | Prevalence in affected >> controls | Case-control statistics (NotEvaluated by default; ClinVar review-stars proxy is invalid per SVI, opt in via `use_clinvar_stars_as_ps4_proxy`) | No (Partial in proxy mode) |
 | **PM1** | Moderate | Mutational hotspot / critical domain **without benign variation** - both halves of Richards 2015's wording are tested, so a window that also holds benign ClinVar missense does not count. NotEvaluated where the gene has no established gene-disease relationship: a cluster of assertions in an uncurated gene is not evidence of a critical region | ClinVar protein density (both directions) + ClinGen GDV | Yes (with .oga) |
-| **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown fires at AF ≤ 0.00004, AR at AF ≤ 0.00007 (SVI v1.0 plus published VCEP practice; see "Choosing the PM2 bar for dominant genes"). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
+| **PM2** | Supporting* | Absent/rare in population databases - inheritance-aware: AD/unknown fires at AF ≤ 0.00004 (published VCEP practice and a sweep; see "Choosing the PM2 bar for dominant genes"), recessive-only at AF ≤ 0.00007 (equal to the Hearing Loss VCEP's recessive bar, swept for the ACMG manuscript and flat; SVI v1.0 lowers PM2 to Supporting and gives no frequency). NotEvaluated wherever BA1/BS1/BS2 are: absence is only evidence when the database could have seen the variant | gnomAD AF + QC flags + OMIM inheritance | Yes |
 | **PM3** | Supporting → Very Strong* | In trans with pathogenic (recessive); points-based per SVI v1.0 (in-trans/P=1.0pt, in-trans/LP=0.5pt, unphased/P=0.5pt, unphased/LP=0.25pt, hom=0.5pt cap 1.0) | Phased VCF + ClinVar | Yes (with trio) |
 | **PM4** | Moderate | Protein length change (in-frame/stop-loss). Not applied where HGVS places the change wholly inside an intron beyond ±2: no exon base is edited, so the protein is unchanged | Consequence type + HGVS placement | Yes |
 | **PM5** | Moderate | Different pathogenic missense at same residue | ClinVar protein index | Yes (with .oga) |
@@ -999,7 +1008,7 @@ The gene-disease validity gate degrades the other way round, and deliberately: w
 
 | Code | Strength | Description | Data Source | Automatable |
 |---|---|---|---|---|
-| **BA1** | Standalone | AF > 5%, AN ≥ 2,000 (gnomAD v4 SVI March 2024). Tested against the **filtering allele frequency** (95% CI lower bound, max across ancestry groups; Whiffin 2017) where the database provides it, else the population maximum. The curated exception list blocks BA1 regardless of AF - Ghosh 2018's nine, three hypomorphic alleles and three the round-6 review named; see [Curated frequency-exception list](#curated-frequency-exception-list) | gnomAD population AFs + FAF + AN + HGVSc | Yes |
+| **BA1** | Standalone | AF > 5%, and AN ≥ 2,000 at the site (the BA1 recommendation of Ghosh 2018 asks for a dataset of at least 2,000 observed alleles; applying it to the site's AN is ours, and the March 2024 gnomAD v4 communication states no floor). Tested against gnomAD's **grpmax filtering allele frequency** (the lower bound of the 95% CI of the allele frequency in the genetic ancestry group where it is highest, as the ClinGen VCEP Review Committee specifies for BA1 and BS1; the filtering allele frequency is the concept of Whiffin 2017) where the database provides it, else the population maximum. The curated exception list blocks BA1 regardless of AF - Ghosh 2018's nine, three hypomorphic alleles and three the round-6 review named; see [Curated frequency-exception list](#curated-frequency-exception-list) | gnomAD population AFs + FAF + AN + HGVSc | Yes |
 | **BS1** | Strong | Cross-population AF > expected, read from the same statistic as BA1 (filtering AF where available, else population maximum). NotEvaluated for homology-confounded genes, for gnomAD-flagged `segdup`/`lcr` sites, for non-PASS gnomAD records, and for ClinVar low-penetrance / risk alleles. Stands down where the gene's own BA1 bar already covers the frequency. Blocked outright by a curated exception whose `blocks` names BS1 | gnomAD per-population AFs + FAF + QC flags + ClinVar terms | Yes |
 | **BS2** | Strong | Observed in healthy adult, for a disorder with full penetrance expected at an early age (Richards 2015). Both branches ask whether more healthy individuals have the allele than the disorder could account for, by holding a 95% lower bound on their frequency against a prevalence bar, so the test scales with cohort size. **Dominant** genes count carriers (`AC - nhomalt`, a homozygote once) and require AC ≥ `bs2_ad_min_ac` (5) **and** a lower bound above `bs2_ad_prevalence_threshold` (default 3e-4, set by measurement). **Recessive / X-linked** genes count individuals with no functional copy (homozygotes **plus hemizygotes** on a non-PAR sex-chromosome site) and require ≥ `bs2_ar_min_hom` of them **and** a lower bound above `bs2_hom_prevalence_threshold` (1e-3). Both bars are set by measurement - see [Choosing the BS2 prevalence bar](#choosing-the-bs2-prevalence-bar). "Dominant" means the gene's disease annotation says so in words; ClinGen's `/AD` tag is not read (see limitation 20). Not evaluated where gnomAD AN is missing, since there is then no cohort size; it does not take BA1's and BS1's minimum AN, which we read as SVI guidance about the noise of a frequency estimate, and the lower bound already accounts for a small cohort. Blocked outright by a curated exception whose `blocks` names BS2, which is how a hypomorphic allele's unaffected homozygotes are kept from reading as tolerance | gnomAD AC + hom + hemizygote counts + AN + inheritance | Yes |
 | **BS3** | Strong | Functional studies show no damage. Read from `--functional-evidence`; suppresses PP3/BP4/BP7 for that variant | Curated TSV | Yes (with file) |
@@ -1026,9 +1035,9 @@ PP3 and BP4 can be elevated beyond Supporting based on REVEL score (Pejaver 2022
 | ≤ 0.016 | — | Strong |
 | ≤ 0.003 | — | **Very Strong** |
 
-### PVS1 Strength Grading (Abou Tayoun 2018)
+### PVS1 Strength Grading (after Abou Tayoun 2018)
 
-PVS1 is graded by a decision tree over null-variant context. The output code carries the strength suffix (e.g. `PVS1_Moderate`).
+PVS1 is graded by a decision tree over null-variant context, after the published one. The output code carries the strength suffix (e.g. `PVS1_Moderate`).
 
 | Variant context | PVS1 strength |
 |---|---|
@@ -1046,6 +1055,12 @@ When the pipeline does not populate the tree signals (`predicted_nmd`, `protein_
 
 One branch remains unreachable because its signal has no plumbing yet: `alt_start_codon_distance` (start-loss), which therefore always lands at `PVS1_Supporting`.
 
+**Where this table departs from the published tree** (Figure 1 of Abou Tayoun 2018, read against the paper in October 2026):
+the tree grades an NMD-escaping truncation outside a critical region `PVS1_Strong` when more than 10 % of the protein is removed and `PVS1_Moderate` when less is, so the two rows above for that case are one step lower than the paper's;
+and it has no last-exon branch for a canonical splice variant, grading by critical region and by the fraction of protein removed (Strong, Strong, Moderate), so the `PVS1_Moderate` row for it is ours.
+The tree has no rule for a truncation in the first coding exon, where translation can re-initiate downstream, and this classifier has none either.
+Regrading the first two would change 7 of 673,660 calls on the ClinVar 2-star+ benchmark (a replay; `manuscript/acmg`, Section 3.2), so it has not been done.
+
 #### Which NMD prediction the tree runs on
 
 Abou Tayoun 2018 predicts nonsense-mediated decay with the **50-nucleotide rule**: a premature termination codon triggers decay only when it sits more than 50 nt upstream of the final exon-exon junction.
@@ -1056,6 +1071,7 @@ The two disagree in one place - a PTC in the 3' end of the penultimate exon, whe
 
 On a 4,000-variant sample of PVS1-carrying ClinVar 2-star records, switching the exact rule on moved 58 calls from Likely Pathogenic to Uncertain: **54 of them ClinVar calls Pathogenic**, 4 Uncertain, none Benign.
 Extrapolated to the full PVS1 population that is roughly 825 correct pathogenic calls given up to correct a single false-pathogenic one.
+On the full benchmark, in a run of the final classifier with only this setting changed (`manuscript/acmg`, Section 3.4), the exact rule loses 603 calls in direction and 0.73 points of pathogenic-side recall to avoid one false-pathogenic call.
 
 Nothing in that trade is a defect in either the rule or the tree.
 A PTC 20 nt before the last junction really does escape decay, and Abou Tayoun really does grade an NMD-escaping truncation in a critical region at `PVS1_Strong` - 4 points, and Uncertain on its own.
@@ -1286,11 +1302,11 @@ Output (JSON / VCF CSQ / TSV)
 9. **BP3** requires a RepeatMasker interval `.osi`. Build it from the UCSC track - see [Building the RepeatMasker track](#building-the-repeatmasker-track-bp3). Without one BP3 reports `evaluated: false` rather than assuming a variant is not in a repeat.
 10. **PS2/PM6/PM3/BP2** require a multi-sample VCF with trio sample names configured
 11. Compound heterozygote detection (PM3/BP2) works per-batch in the CLI; variants in different batches within the same gene may not be cross-referenced
-12. **Multi-disorder genes** (SVI July 2025): the per-disorder override schema (`gene_overrides[GENE].disorders[DISORDER]`) is in place and the generated VCEP table populates it, but the active-disorder selection mechanism is informational scaffolding pending a follow-up PR - the gene-level values are what the classifier reads.
+12. **Multi-disorder genes** (ClinGen guidance, version 1, January 2024): the per-disorder override schema (`gene_overrides[GENE].disorders[DISORDER]`) is in place and the generated VCEP table populates it, but the active-disorder selection mechanism is informational scaffolding pending a follow-up PR - the gene-level values are what the classifier reads.
 13. **The frequency dead zone between PM2 and BS1.** See below - this is the largest known gap on the frequency side and it is open by decision, not oversight.
 14. **Penetrance is unsourced.** BS2's precondition is "full penetrance expected at an early age" and no public resource publishes penetrance per gene-disorder pair. Prevalence, onset and inheritance are covered; see [Per-gene frequency bars](#per-gene-frequency-bars-clingen-vcep-specifications).
 15. **Published VCEP bars are applied without their founder-variant exceptions.** The exclusions are prose in the specification text, and `ba1_exceptions` carries no panel-specific entries beyond Ghosh 2018's nine, which is why the generated threshold table is opt-in rather than a default.
-16. **The ClinVar-concordance benchmark cannot validate the BA1 exception list.** Seven of Ghosh 2018's nine variants are `Conflicting classifications` in ClinVar and carry no consensus classification, so they are not in the ClinVar 2-star+ set; the criterion exists for exactly the population a consensus benchmark discards. It is covered by an end-to-end test over all nine instead. Any future exception entries need the same treatment.
+16. **The ClinVar-concordance benchmark cannot validate the BA1 exception list.** Seven of Ghosh 2018's nine variants are not in the April 2026 ClinVar 2-star+ set: six are `Conflicting classifications` in ClinVar and carry no consensus classification, and the seventh (HFE p.Cys282Tyr) was not in the April set and is in the October one; the criterion exists for exactly the population a consensus benchmark discards. It is covered by an end-to-end test over all nine instead. Any future exception entries need the same treatment.
 17. **The hypomorphic-allele list is three entries long, and the reviewer-named list three more.** GAA `c.-32-13T>G`, CFTR `c.1210-11T>G` and SPTA1 `c.4339-99C>T` ship with `blocks = ["BA1", "BS1", "BS2"]`, because an allele that causes disease only in trans with a rarer null is expected to be common and expected to be tolerated homozygous. The mechanism is general and the list is not; it grows by curation only. G6PD `c.563C>T`, G6PD `c.202G>A` and SERPINC1 `c.439A>G` ship the same way on the round-6 reviewer's word, with no PMID, which each entry says. See [The curated frequency-exception list](#curated-frequency-exception-list).
 18. **A variant at a site where the population data is vetoed cannot reach Likely pathogenic alone.** Where gnomAD's FILTER or a low-complexity / segmental-duplication flag makes the frequency unusable, BA1, BS1, BS2 and PM2 are all withheld while PVS1 - read from the same alignments - is not, so a lone PVS1 call would rest on a one-sided ledger. Such calls are reported Uncertain with the veto named. The rule applies only when the suppressed frequency would itself have met BA1 or BS1; applying it to every flagged site cost 2,630 correct pathogenic calls to remove 18 wrong ones.
 19. **HGVS placement reaches PVS1, PS1's splice path, PM1, PM4, BP3 and BP4's splice path, and no further.**
@@ -1332,6 +1348,37 @@ Output (JSON / VCF CSQ / TSV)
     The replay is `analysis/acmg_benchmark/scripts/10_replay_bs2_guards.py`, and `RUN_VERSIONS.md`, "Reading ClinGen's inheritance tag", gives its tables and the counts behind each lower bound.
     Widening the predicate for every criterion changes PM2 on 9,446 more variants and the call of 26 of them, 21 toward ClinVar's classification and 5 away.
     What it would need is inheritance and age of onset read per disorder, with a penetrance rule that a clinician supplies, and these six variants as its regression cases.
+21. **BP7 keeps the 2015 conservation test and takes SpliceAI below 0.2 as no impact.**
+    Walker 2023 applies BP7 after BP4, which for SpliceAI is a score of 0.1 or below, and cautions against a conservation test unless its tool, depth and cut point have an empirical justification.
+    `phylop_conserved` (2.0) is from the first commit with no source recorded, and nothing but BP7 reads it.
+    On the ClinVar 2-star+ benchmark, switching the test off adds 16,482 correct benign-side calls and 2 missed diagnoses (variants of NF1 and MAPT), and asking for SpliceAI of at most 0.1 as well removes 402 of them and no error (`manuscript/acmg`, Section 3.3).
+    Neither has been changed.
+22. **BP1's veto counts the variant's own ClinVar record.**
+    `exclude_self_from_clinvar_evidence` discounts it for PS1 and PM1, and the veto of `bp1_max_pathogenic_missense` reads the same index without discounting it.
+    Leaving the record out adds 3 missed diagnoses on the benchmark (FBXO28, PCGF2 and SBF1, each a ClinVar-pathogenic missense variant whose own entry is the third of the three that the veto needs; `manuscript/acmg`, Section 3.4).
+    It has not been changed.
+23. **The ClinGen file is a download, and the benchmark's was incomplete.**
+    The export of 30 April 2026 lacked 104 curations that ClinGen dates before that day, among them CFTR (Definitive, autosomal recessive, 2022); seven further rows of the current export only re-label curations that the April file lists, and one is dated after that file was downloaded.
+    A gene with no curation is not blocked from PVS1, but with no other route to loss of function it is not licensed either, so all 558 null variants of CFTR in the benchmark were VUS.
+    With the 112 rows put back, 542 of them are called pathogenic-side (`scripts/15_clingen_complete_export.py`, `manuscript/acmg`, Section 3.5).
+    The check that finds this is mechanical: list the genes in which ClinVar's pathogenic stop-gained and frameshift variants carry no PVS1, and compare them with an independent listing.
+24. **PVS1's gene-level gates cannot see which disease a variant is pathogenic for.**
+    The validity gate withholds PVS1 where every ClinGen curation of the gene is weak, and the mechanism gate where the curated mechanism is gain of function, whatever disease the variant belongs to.
+    RASA1's only curation in the file is a Disputed one for Noonan syndrome, while ClinVar names capillary malformation-arteriovenous malformation for 39 of its 40 truncating variants that carry no PVS1.
+    Item 12 is the answer to this and is not active.
+25. **The validity gate misses a weak-only gene whose ClinGen label contains a semicolon.**
+    The gate reads the tag of each phenotype, and the builder splits phenotypes on `;`, so NSMCE3 (Limited), whose label ends in `;`, leaves an untagged fragment that counts as established and the gene is not withheld from PVS1.
+    It is the only one of the 505 weak-only genes in the file of 30 April 2026 that escapes, and it has no variant in the benchmark.
+    It has not been changed.
+26. **BP1's veto count of 3 was never swept, and a stricter count calls fewer ClinVar-VUS variants benign-side.**
+    The veto withholds BP1 in a gene that has at least `bp1_max_pathogenic_missense` pathogenic missense records in the ClinVar protein index, and the count was set with the veto and not varied.
+    On the ClinVar 2-star+ benchmark a count of 1 gains 1,716 calls in direction (1,865 ClinVar-VUS variants no longer called benign-side, less 149 correct benign-side calls given up) and removes 2 missed diagnoses (IQSEC1 and PRR12, the two BP1 calls of the residual).
+    The removal of PRR12 rests on the variant's own record: the index holds one pathogenic missense record for PRR12, the variant itself.
+    The removal of IQSEC1 does not at a count of 1, because the index holds a second record for it (p.Thr343Met) besides the variant, and does at a count of 2.
+    With the own record left out as well (item 22) a count of 1 removes IQSEC1 only and a count of 2 neither; a count of 2 alone gains 849 calls and removes one.
+    Above 3, a count of 5 adds 3 missed diagnoses, 10 adds 5 and 25 adds 12 (`manuscript/acmg`, Section 3.3).
+    It has not been changed.
+
 ## The frequency dead zone between PM2 and BS1
 
 Both frequency bars are set by measurement, and between them is a range where fastVEP
@@ -1411,7 +1458,7 @@ A per-gene bar answers "how common is too common in this gene".
 It cannot answer "this particular allele's frequency is not evidence about it at all", and
 two classes of allele need exactly that answer.
 
-**Common and pathogenic.** Ghosh 2018 (PMID 30311378) lists nine variants that sit above 5 %
+**Common and pathogenic.** Ghosh 2018 (PMID 30311383) lists nine variants that sit above 5 %
 in at least one population and must not be called standalone-benign on that basis. All nine
 ship as defaults with `blocks = ["BA1"]`, the scope the paper wrote for.
 
@@ -1464,6 +1511,6 @@ mechanism is not one worth adding.
 - ClinGen SVI Recommendation for In-Trans Criterion (PM3) — Version 1.0.
 - Pejaver V, et al. Calibration of computational tools for missense variant pathogenicity classification and ClinGen recommendations for PP3/BP4 criteria. *Am J Hum Genet*. 2022;109(12):2163-2177.
 - Walker LC, et al. (ClinGen SVI Splicing Subgroup). Using the ACMG/AMP framework to capture evidence related to predicted and observed impact on splicing. *Am J Hum Genet*. 2023;110(7):1046-1067.
-- ClinGen SVI Working Group. Guidance to VCEPs Regarding gnomAD v4 (March 2024).
-- ClinGen SVI Working Group. Guidance Classifying Variants in Genes Associated with Multiple Disorders (July 2025).
+- ClinGen VCEP Review Committee. Communication to ClinGen VCEPs regarding gnomAD v4, version 1.0 (8 March 2024); versions of August 2024 and June 2025 keep the recommendation to use the grpmax filtering allele frequency.
+- ClinGen. Guidance: Classifying Variants in Genes Associated with Multiple Disorders, version 1 (January 2024).
 - ClinGen Sequence Variant Interpretation (SVI) recommendations: https://clinicalgenome.org/tools/clingen-variant-classification-guidance/

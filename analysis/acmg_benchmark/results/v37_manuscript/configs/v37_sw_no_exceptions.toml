@@ -1,0 +1,3 @@
+# v37_sw_no_exceptions: the curated frequency-exception list emptied (Ghosh 2018's nine, three hypomorphs, three reviewer-named).
+# Everything else is the shipped default.
+ba1_exceptions = []

@@ -21,7 +21,7 @@ pub fn combine(
     combine_inner(criteria, config.use_point_system)
 }
 
-/// The ClinGen SVI point system (Tavtigian et al. 2020, Genet Med 22:1735).
+/// The ClinGen SVI point system (Tavtigian et al. 2020, Hum Mutat 41:1734-1737).
 ///
 /// The 2015 combining table and this point system are two encodings of the same
 /// Bayesian model, and where they disagree the SVI's own analysis is that the

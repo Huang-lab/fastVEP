@@ -1,0 +1,3 @@
+# v37_sw_bp1veto_1: number of ClinVar pathogenic missense variants in a gene at which BP1's veto applies (no veto at all is v37_sw_no_bp1_veto), set to 1.
+# Everything else is the shipped default.
+bp1_max_pathogenic_missense = 1

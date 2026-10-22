@@ -1,0 +1,3 @@
+# v37_sw_pm2ad_0.0002: PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 0.0002.
+# Everything else is the shipped default.
+pm2_ad_af_threshold = 0.0002

@@ -1,0 +1,3 @@
+# v37_sw_no_mechanism_gate: PVS1 no longer withheld for genes curated as gain-of-function or dominant-negative.
+# Everything else is the shipped default.
+mechanism_gates_pvs1 = false

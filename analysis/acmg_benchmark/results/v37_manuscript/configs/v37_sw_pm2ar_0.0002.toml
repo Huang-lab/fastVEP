@@ -1,0 +1,3 @@
+# v37_sw_pm2ar_0.0002: PM2 allele-frequency bar for genes read as recessive-only, set to 0.0002.
+# Everything else is the shipped default.
+pm2_ar_af_threshold = 0.0002

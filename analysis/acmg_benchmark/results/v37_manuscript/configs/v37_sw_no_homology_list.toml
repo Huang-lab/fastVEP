@@ -1,0 +1,3 @@
+# v37_sw_no_homology_list: no gene is treated as having unreliable population frequencies (Mandelker 2016 list emptied).
+# Everything else is the shipped default.
+homology_unreliable_genes = []

@@ -1,0 +1,42 @@
+knob,from_value,to_value,gain_calls,added_errors,calls_per_error,shipped_between
+BS1 bar,0.02,0.01,6200,0,inf,False
+BS1 bar,0.01,0.005,5289,2,2644.5,True
+BS1 bar,0.005,0.002,5565,6,927.5,True
+BS1 bar,0.002,0.001,3127,5,625.4,False
+BS1 bar,0.001,0.0005,2899,26,111.5,False
+BS1 bar,0.0005,0.0002,3730,44,84.77272727272727,False
+BS2 homozygote bar,0.01,0.001,304,0,inf,True
+BS2 homozygote bar,0.001,0.0001,1389,3,463.0,True
+BS2 homozygote bar,0.0001,1e-05,4651,16,290.6875,False
+BS2 homozygote bar,1e-05,1e-06,5328,10,532.8,False
+BP7 far boundary,0,50,9334,11,848.5454545454545,False
+BP7 far boundary,50,100,986,3,328.6666666666667,False
+BP7 far boundary,100,200,612,3,204.0,False
+BP7 far boundary,200,300,157,1,157.0,True
+BP7 far boundary,300,500,40,1,40.0,True
+BP7 far boundary,500,1000,51,2,25.5,False
+BP7 far boundary,1000,1000000,457,14,32.642857142857146,False
+BP7 PhyloP bar,1,1.5,5520,0,inf,False
+BP7 PhyloP bar,1.5,2.0,4571,3,1523.6666666666667,True
+BP7 PhyloP bar,2.0,3,6539,0,inf,True
+BP7 PhyloP bar,3,4,3520,1,3520.0,False
+BP7 PhyloP bar,4,1000,6423,1,6423.0,False
+BP1 veto count,1,2,132,1,132.0,False
+BP1 veto count,2,3,17,1,17.0,True
+BP1 veto count,3,5,79,3,26.333333333333332,True
+BP1 veto count,5,10,157,2,78.5,False
+BP1 veto count,10,25,388,7,55.42857142857143,False
+"PM2 bar, not recessive-only (point system)",0,1e-06,319,0,inf,False
+"PM2 bar, not recessive-only (point system)",1e-06,5e-06,100,0,inf,False
+"PM2 bar, not recessive-only (point system)",5e-06,1e-05,29,1,29.0,False
+"PM2 bar, not recessive-only (point system)",1e-05,2e-05,18,1,18.0,False
+"PM2 bar, not recessive-only (point system)",2e-05,4e-05,13,1,13.0,True
+"PM2 bar, not recessive-only (point system)",4e-05,0.0001,6,0,inf,True
+"PM2 bar, not recessive-only (point system)",0.0001,0.0002,5,1,5.0,False
+"PM2 bar, not recessive-only (point system)",0.0002,0.0005,0,0,inf,False
+"PM2 bar, recessive-only",0,1e-06,11,0,inf,False
+"PM2 bar, recessive-only",1e-06,1e-05,5,0,inf,False
+"PM2 bar, recessive-only",1e-05,2e-05,3,0,inf,False
+"PM2 bar, recessive-only",2e-05,7e-05,0,0,inf,True
+"PM2 bar, recessive-only",7e-05,0.0002,6,0,inf,True
+"PM2 bar, recessive-only",0.0002,0.0005,0,0,inf,False

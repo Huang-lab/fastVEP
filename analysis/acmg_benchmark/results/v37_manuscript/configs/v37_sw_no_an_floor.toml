@@ -1,0 +1,3 @@
+# v37_sw_no_an_floor: BA1 and BS1 no longer require an allele number of at least 2,000 at the variant's site.
+# Everything else is the shipped default.
+min_an_for_frequency_criteria = 0
