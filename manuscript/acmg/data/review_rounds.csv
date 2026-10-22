@@ -1,0 +1,4 @@
+round,run,rows,rows_with_written_reason,clinvar_supported,neither_supported,fastvep_supported,no_verdict,needs_evidence,homology_marked_rows,homology_marked_on_fastvep_call,rows_with_verdict,clinvar_share_of_verdicts
+1,v7,101,51.0,86,8,3,4,0,,,97,0.8865979381443299
+2,v8,122,,65,8,2,46,1,7.0,6.0,76,0.8552631578947368
+6,v26,64,18.0,43,9,4,0,8,,,64,0.671875

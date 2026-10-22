@@ -1,0 +1,13 @@
+run,gene,clinvar,call_in_v37,call_in_run,criteria_in_run,consequence,popmax_af
+v37_gap_clingen_complete,ALPK1,Benign,VUS,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant,0.0002265
+v37_gap_clingen_complete,ALPK1,Likely_benign,VUS,Likely_pathogenic,PVS1,frameshift_variant,0.0006375
+v37_gap_orphanet_lof,MAP3K6,Likely_benign,VUS,Likely_pathogenic,PVS1,splice_acceptor_variant,0.0080665
+v37_gap_orphanet_lof,ALPK1,Benign,VUS,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant,0.0002265
+v37_gap_orphanet_lof,ALPK1,Likely_benign,VUS,Likely_pathogenic,PVS1,frameshift_variant,0.0006375
+v37_gap_orphanet_lof,VPS13C,Benign,VUS,Likely_pathogenic,PVS1,splice_acceptor_variant,0.008491
+v37_gap_orphanet_lof,LTBP4,Benign,VUS,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant,
+v37_gap_both,MAP3K6,Likely_benign,VUS,Likely_pathogenic,PVS1,splice_acceptor_variant,0.0080665
+v37_gap_both,ALPK1,Benign,VUS,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant,0.0002265
+v37_gap_both,ALPK1,Likely_benign,VUS,Likely_pathogenic,PVS1,frameshift_variant,0.0006375
+v37_gap_both,VPS13C,Benign,VUS,Likely_pathogenic,PVS1,splice_acceptor_variant,0.008491
+v37_gap_both,LTBP4,Benign,VUS,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant,

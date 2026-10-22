@@ -1,0 +1,19 @@
+metric,label,value,ci_lo,ci_hi,numerator,denominator,ci
+exact_match,"Exact match (five-tier), of all variants",0.632172015556809,0.6167377998243867,0.6455391554794607,425869,673660,"gene-cluster bootstrap, 2000 resamples, 95% percentile"
+same_direction,"Same-direction (P/LP, VUS, B/LB), of all variants",0.7761868004631416,0.7681040128347096,0.7836071558065322,522886,673660,"gene-cluster bootstrap, 2000 resamples, 95% percentile"
+plp_recall,ClinVar P/LP called P or LP,0.6247601586151026,0.5823372969299275,0.665892099399789,58610,93812,"gene-cluster bootstrap, 2000 resamples, 95% percentile"
+blb_recall,ClinVar B/LB called LB or B,0.6227587418731331,0.6058159630017246,0.6391774536701385,177206,284550,"gene-cluster bootstrap, 2000 resamples, 95% percentile"
+vus_recall,ClinVar VUS called VUS,0.9721366213113533,0.966050259547011,0.9773840657519098,287070,295298,"gene-cluster bootstrap, 2000 resamples, 95% percentile"
+opposite_rate,"Opposite-direction, of all variants",7.273698898554167e-05,5.0875392414777705e-05,9.7624637993465e-05,49,673660,"gene-cluster bootstrap, 2000 resamples, 95% percentile"
+precision_plp_calls,fastVEP P/LP calls that ClinVar also calls P/LP,0.9415714813565312,0.9257456563214952,0.9550347348579931,58610,62247,"gene-cluster bootstrap, 2000 resamples, 95% percentile"
+precision_blb_calls,fastVEP B/LB calls that ClinVar also calls B/LB,0.9744839039626937,0.9654793760071785,0.9821252088323629,177206,181846,"gene-cluster bootstrap, 2000 resamples, 95% percentile"
+opposite_rate_exact_binomial,"Opposite-direction, of all variants (exact binomial, treating variants as independent)",7.273698898554167e-05,5.3811694155694754e-05,9.61610305457197e-05,49,673660,Clopper-Pearson 95%
+variants_total,"ClinVar 2-star+ variants (SNVs and small indels, GRCh38)",673660.0,,,,,
+variants_scored,Scored (an ACMG call was made),673278.0,,,,,
+variants_no_call,"No call (ClinVar reference-agreement records, ALT is '.')",382.0,,,,,
+genes,Distinct genes among the variants,10232.0,,,,,
+exact,Exact matches,425869.0,,,,,
+same_direction,Same-direction calls,522886.0,,,,,
+opposite,Opposite-direction calls,49.0,,,,,
+false_benign,ClinVar P/LP called LB/B,24.0,,,,,
+false_pathogenic,ClinVar LB/B called P/LP,25.0,,,,,
