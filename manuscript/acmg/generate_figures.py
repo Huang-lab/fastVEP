@@ -14,7 +14,9 @@ Colour follows the data-viz method this repository uses elsewhere:
   * Text wears ink tokens, never a series colour; marks carry identity beside direct labels.
 
 ClinVar's 2-star+ classifications are a reference and not ground truth; every axis that says
-"agreement" means agreement with them and nothing stronger.
+"agreement" means agreement with them and nothing stronger. Every label that names a ClinVar class
+says "ClinVar 2-star+" (the constant `CV`), and `clinvar_note` puts a footnote under each figure that
+gives the review status, the release and what P/LP, B/LB and VUS stand for.
 
 Usage
   generate_figures.py            all figures
@@ -134,6 +136,25 @@ def thousands(x, pos=None) -> str:
     return f"{int(x):,}"
 
 
+# Every ClinVar class in these figures is a class of a record at review status two stars or better, and the figures say so
+# in each label and in a footnote, so that "ClinVar P/LP" is never read as every ClinVar record of that class.
+CV = "ClinVar 2-star+"
+NOTE = ("ClinVar 2-star+: records of review status two stars or better (criteria provided, multiple submitters, no conflicts; "
+        "reviewed by expert panel; practice guideline), release of 4 April 2026.\n"
+        "P/LP: Pathogenic or Likely pathogenic; B/LB: Likely benign or Benign; VUS: uncertain significance.")
+
+
+def clinvar_note(fig, extra: str = "", october: bool = False) -> None:
+    """The footnote under a figure: which ClinVar records, which release, and what P/LP and B/LB stand for."""
+    text = NOTE.replace("release of 4 April 2026.", "release of 4 April 2026 (panel C also the release of 4 October 2026)." if october else "release of 4 April 2026.")
+    if extra:
+        text += "\n" + extra
+    fig.canvas.draw()
+    bb = fig.get_tightbbox(fig.canvas.get_renderer())  # inches
+    w, h = fig.get_size_inches()
+    fig.text(bb.x0 / w, (bb.y0 - 0.08) / h, text, ha="left", va="top", fontsize=6.0, color=INK2, linespacing=1.3)
+
+
 # ------------------------------------------------------------- supplementary figure S1: trajectory
 
 # Version at which each change landed, and the label it carries in the key. The labels name the
@@ -240,9 +261,9 @@ def figS1_trajectory() -> None:
     axB.set_yscale("log")
     opp = main.dropna(subset=["false_benign"])
     axB.plot(opp["order"], opp.false_benign, color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
-             label="ClinVar P/LP called LB or B (missed diagnosis)")
+             label=f"{CV} P/LP called LB or B (missed diagnosis)")
     axB.plot(opp["order"], opp.false_pathogenic, color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
-             label="ClinVar LB or B called P or LP")
+             label=f"{CV} LB or B called P or LP")
     axB.plot(main["order"], main.opposite, color=INK2, lw=1.0, marker="o", ms=MS - 2.5, mec=SURFACE, mew=0.8, zorder=2, label="Total")
     dotted(axB, opened, "opposite", INK2)
     open_marks(axB, opened.dropna(subset=["opposite"]), "opposite", INK2, ms=MS - 1.5)
@@ -274,13 +295,13 @@ def figS1_trajectory() -> None:
     side_marks(axC, "blb_recall", TIER3["B/LB"])
     axC.set_ylim(40, 70)
     axC.set_yticks(range(40, 71, 5))
-    axC.set_ylabel("Same-direction recall\n(% of ClinVar class)")
+    axC.set_ylabel(f"Same-direction recall\n(% of the {CV} class)")
     axC.text(1.0, 41.0, "v1: 10.9% and 19.0%, below the axis", fontsize=6.4, color=INK2, ha="left", va="bottom")
     axC.set_xlabel("Benchmark run (v1 to v37)")
     axC.set_xlim(0, 40)
     axC.set_xticks([1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37])
-    axC.legend(handles=[Line2D([0], [0], color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label="ClinVar P/LP called P or LP"),
-                        Line2D([0], [0], color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label="ClinVar B/LB called LB or B")],
+    axC.legend(handles=[Line2D([0], [0], color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label=f"{CV} P/LP called P or LP"),
+                        Line2D([0], [0], color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label=f"{CV} B/LB called LB or B")],
                loc="lower right", fontsize=6.6)
     panel_letter(axC, "C")
     for ax in (axA, axB):
@@ -300,6 +321,7 @@ def figS1_trajectory() -> None:
         axk.text(x + 0.034, y, label, fontsize=6.6, color=INK2, va="center", ha="left")
     axk.set_xlim(0, 1)
     axk.set_ylim(0, 1)
+    clinvar_note(fig, "Opposite-direction calls: ClinVar 2-star+ P/LP called LB or B (missed diagnoses) or ClinVar 2-star+ B/LB called P or LP.")
     save(fig, "figS1_trajectory")
 
 
@@ -313,7 +335,7 @@ RULING_COLORS = {
     "no_verdict": GRID,
 }
 RULING_LABELS = {
-    "clinvar_supported": "ClinVar's call supported",
+    "clinvar_supported": f"{CV} call supported",
     "fastvep_supported": "fastVEP's call supported",
     "neither_supported": "Neither: the reviewer's call is VUS or another class",
     "needs_evidence": "Needs more evidence, or depends on the disorder",
@@ -354,7 +376,7 @@ def figS3_review() -> None:
     grp = read("opposite_direction_by_group_v37.csv")
 
     fig = plt.figure(figsize=(7.2, 3.6))
-    gs = fig.add_gridspec(2, 2, width_ratios=[1, 1.15], height_ratios=[1, 0.34], hspace=0.55, wspace=0.55)
+    gs = fig.add_gridspec(2, 2, width_ratios=[1, 1.15], height_ratios=[1, 0.34], hspace=0.55, wspace=0.75)
     axA = fig.add_subplot(gs[0, 0])
     axB = fig.add_subplot(gs[0, 1])
     axL = fig.add_subplot(gs[1, :])
@@ -373,9 +395,9 @@ def figS3_review() -> None:
     order = ["PVS1 on a ClinVar benign-side variant", "BP4+BP7 on a ClinVar pathogenic-side variant",
              "PM1 with PP2 and PP3 on a ClinVar benign-side variant", "BS1 on a ClinVar pathogenic-side variant",
              "BP1 on a ClinVar pathogenic-side variant"]
-    short = {order[0]: "PVS1, ClinVar\nbenign-side", order[1]: "BP4 + BP7, ClinVar\npathogenic-side",
-             order[2]: "PM1 + PP2 + PP3,\nClinVar benign-side", order[3]: "BS1, ClinVar\npathogenic-side",
-             order[4]: "BP1, ClinVar\npathogenic-side"}
+    short = {order[0]: f"PVS1, {CV}\nbenign-side", order[1]: f"BP4 + BP7, {CV}\npathogenic-side",
+             order[2]: f"PM1 + PP2 + PP3,\n{CV} benign-side", order[3]: f"BS1, {CV}\npathogenic-side",
+             order[4]: f"BP1, {CV}\npathogenic-side"}
     g = grp.set_index("group").loc[order]
     series = {
         "clinvar_supported": list(g["clinvar"]),
@@ -392,6 +414,7 @@ def figS3_review() -> None:
 
     handles = [Patch(fc=RULING_COLORS[c], ec="none", label=RULING_LABELS[c]) for c in cats]
     axL.legend(handles=handles, loc="center", ncol=3, fontsize=6.8, columnspacing=1.6, handlelength=1.2, handleheight=1.0)
+    clinvar_note(fig, "Pathogenic-side: P/LP; benign-side: B/LB. An opposite-direction call is a ClinVar 2-star+ pathogenic-side class called benign-side, or the reverse.")
     save(fig, "figS3_review")
 
 
@@ -508,7 +531,7 @@ def fig2_points() -> None:
     axA.set_ylim(0, 100)
     axA.set_xticks(range(0, 12))
     axA.set_ylabel("Share of variants with that many points (%)")
-    axA.set_title("Where ClinVar's classes fall on the points scale", loc="left", fontsize=8, pad=28)
+    axA.set_title(f"Where {CV} classes fall on the points scale", loc="left", fontsize=8, pad=28)
     hgrid(axA)
     # the classes the points scale maps to, under the axis
     for lo, hi, lab in ((-0.5, 5.5, "VUS or benign side\n(0 to 5 points)"), (5.5, 9.5, "Likely pathogenic\n(6 to 9)"), (9.5, 11.5, "Pathogenic\n(10 or more)")):
@@ -516,7 +539,7 @@ def fig2_points() -> None:
                      arrowprops=dict(arrowstyle="-", color=INK2, lw=0.9, shrinkA=0, shrinkB=0), annotation_clip=False)
         axA.text((lo + hi) / 2, -0.118, lab, transform=axA.get_xaxis_transform(), ha="center", va="top", fontsize=6.4, color=INK2, linespacing=1.05)
     axA.set_xlabel("Pathogenic evidence points the classifier reached (no benign evidence met)", labelpad=3)
-    axA.legend(handles=[Patch(fc=TIER3[k], ec="none", label=f"ClinVar {k}") for k in ("P/LP", "VUS", "B/LB")],
+    axA.legend(handles=[Patch(fc=TIER3[k], ec="none", label=f"{CV} {k}") for k in ("P/LP", "VUS", "B/LB")],
                loc="upper center", bbox_to_anchor=(0.5, -0.215), ncol=3, fontsize=6.6, columnspacing=1.4, handlelength=1.2)
     panel_letter(axA, "A", x=-0.12, y=1.14)
 
@@ -540,8 +563,8 @@ def fig2_points() -> None:
         if r.lp in lab:
             dx, dy, t = lab[r.lp]
             axB.text(r.wrong / 1000 + dx, r.plp_recall * 100 + dy, t, fontsize=6.6, color=INK2, va="center", ha="left")
-    axB.set_xlabel("ClinVar VUS or B/LB called P/LP\n(thousands)")
-    axB.set_ylabel("ClinVar P/LP called P/LP (%)")
+    axB.set_xlabel(f"{CV} VUS or B/LB called P/LP\n(thousands)")
+    axB.set_ylabel(f"{CV} P/LP\ncalled P/LP (%)")
     axB.set_xlim(-1.0, 22)
     axB.set_ylim(48, 82)
     hgrid(axB)
@@ -566,13 +589,14 @@ def fig2_points() -> None:
                  mec=SURFACE if shipped else CAT[1], mew=1.5 if shipped else 1.4, zorder=5 if shipped else 3)
         dx, dy, ha = place[r.scheme]
         axC.text(r.false_benign + dx, r.blb_recall * 100 + dy, sch[r.scheme], fontsize=6.4, color=INK2, va="center", ha=ha)
-    axC.set_xlabel("ClinVar P/LP called LB/B\n(missed diagnoses, n)")
-    axC.set_ylabel("ClinVar B/LB called LB/B (%)")
+    axC.set_xlabel(f"{CV} P/LP called LB/B\n(missed diagnoses, n)")
+    axC.set_ylabel(f"{CV} B/LB\ncalled LB/B (%)")
     axC.set_xlim(-30, 480)
     axC.set_ylim(30, 80)
     hgrid(axC)
     axC.set_title("Benign side: table or points (replay)", loc="left", fontsize=8, pad=6)
     panel_letter(axC, "C", x=-0.30, y=1.14)
+    clinvar_note(fig)
     save(fig, "fig2_points")
 
 
@@ -587,7 +611,7 @@ def fig4_anatomy() -> None:
     cols = classes + ["NoCall"]
 
     fig = plt.figure(figsize=(7.2, 4.6))
-    gs = fig.add_gridspec(2, 2, width_ratios=[1.12, 1], height_ratios=[1, 1], hspace=0.78, wspace=0.30)
+    gs = fig.add_gridspec(2, 2, width_ratios=[1.12, 1], height_ratios=[1, 1], hspace=0.78, wspace=0.42)
     axA = fig.add_subplot(gs[:, 0])
     axB = fig.add_subplot(gs[0, 1])
     axC = fig.add_subplot(gs[1, 1])
@@ -663,16 +687,17 @@ def fig4_anatomy() -> None:
     # B: by ClinVar class (rows)
     d = c3[c3.fastvep != "NoCall"].rename(columns={"fastvep": "x"})
     bars(axB, d.assign(y=d.clinvar), "y", "x", ["P/LP", "VUS", "B/LB"],
-         [f"ClinVar {k}\n(n = {int(d[d.clinvar == k].row_total.iloc[0]):,})" for k in ("P/LP", "VUS", "B/LB")],
-         "What fastVEP says of each ClinVar class", "Share of the ClinVar class (%)", "fastVEP call:", "row_total")
+         [f"{CV}\n{k} (n = {int(d[d.clinvar == k].row_total.iloc[0]):,})" for k in ("P/LP", "VUS", "B/LB")],
+         f"What fastVEP says of each {CV} class", f"Share of the {CV} class (%)", "fastVEP call:", "row_total")
     panel_letter(axB, "B", x=-0.30, y=1.30)
 
     # C: behind each fastVEP call (columns)
     d = cc.rename(columns={"clinvar": "x"})
     bars(axC, d.assign(y=d.fastvep), "y", "x", ["P/LP", "VUS", "B/LB"],
          [f"fastVEP {k}\n(n = {int(d[d.fastvep == k].column_total.iloc[0]):,})" for k in ("P/LP", "VUS", "B/LB")],
-         "What ClinVar says behind each fastVEP call", "Share of the fastVEP call (%)", "ClinVar class:", "column_total")
+         f"What {CV} says behind each fastVEP call", "Share of the fastVEP call (%)", f"{CV} class:", "column_total")
     panel_letter(axC, "C", x=-0.30, y=1.30)
+    clinvar_note(fig, "Opposite: a ClinVar 2-star+ P/LP variant called LB or B, or a ClinVar 2-star+ B/LB variant called P or LP.")
     save(fig, "fig4_anatomy")
 
 
@@ -718,21 +743,21 @@ def fig5_strata() -> None:
         ax.set_xlim(0, 100)
         ax.set_ylim(len(rows) - 0.5, -0.9)
         ax.set_xticks([0, 50, 100])
-        ax.set_xlabel("Share of ClinVar %s variants (%%)" % cls)
+        ax.set_xlabel("Share of %s %s variants (%%)" % (CV, cls))
         ax.set_title(title, loc="left", fontsize=8, pad=4)
         for sp in ("left",):
             ax.spines[sp].set_visible(False)
         ax.text(103, -0.9, "n", ha="left", va="center", fontsize=5.8, color=INK2)
 
-    one(axA, "P/LP", "ClinVar P/LP", "A")
-    one(axB, "B/LB", "ClinVar B/LB", "B")
+    one(axA, "P/LP", f"{CV} P/LP", "A")
+    one(axB, "B/LB", f"{CV} B/LB", "B")
     panel_letter(axA, "A", x=-0.04, y=1.12)
     panel_letter(axB, "B", x=-0.04, y=1.12)
     fig.legend(handles=[Line2D([0], [0], lw=0, label="fastVEP call:")] + [Patch(fc=TIER3[k], ec="none", label=k) for k in ("P/LP", "VUS", "B/LB")],
                loc="center", bbox_to_anchor=(0.5, 0.437), ncol=4, fontsize=6.8, columnspacing=1.2, handlelength=1.1, handletextpad=0.4)
 
     # C: the same three classes, April set against the October strata
-    order = [("April set (v37)", "April set\n(used for tuning)"), ("October, unchanged", "October,\nunchanged"), ("October, new", "October, new\n(not in the April set)")]
+    order = [("April set (v37)", "April 2026 set\n(used for tuning)"), ("October, unchanged", "October 2026,\nunchanged"), ("October, new", "October 2026, new\n(not in the April set)")]
     classes = [("Pathogenic", "P"), ("Likely_pathogenic", "LP"), ("VUS", "VUS"), ("Likely_benign", "LB"), ("Benign", "B")]
     width = 0.24
     xs = np.arange(len(classes))
@@ -749,11 +774,11 @@ def fig5_strata() -> None:
         for xp, v in zip(pos, vals):
             axC.text(xp, v + 3.2, f"{v:.0f}", ha="center", va="bottom", fontsize=6.0, color=INK2)
     axC.set_xticks(xs)
-    axC.set_xticklabels([f"ClinVar {a}" for _, a in classes])
+    axC.set_xticklabels([f"{CV}\n{a}" for _, a in classes])
     axC.set_ylim(0, 112)
     axC.set_yticks([0, 25, 50, 75, 100])
     axC.spines["left"].set_bounds(0, 100)  # a percentage stops at 100; the room above holds the value labels
-    axC.set_ylabel("Same-direction recall (%)")
+    axC.set_ylabel(f"Same-direction recall\n(% of the {CV} class)")
     hgrid(axC)
     axC.legend(loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.2), fontsize=6.8, columnspacing=1.6)
     nb = tb[(tb.clinvar == "Benign")].set_index("group")
@@ -763,6 +788,7 @@ def fig5_strata() -> None:
              fontsize=6.0, color=INK2, ha="left", va="center", linespacing=1.15)
     panel_letter(axC, "C", x=-0.04, y=1.18)
     axC.set_title("", loc="left")
+    clinvar_note(fig, "Rows of panels A and B: ClinVar 2-star+ records by consequence class, and by review status (2, 3 and 4 stars).", october=True)
     save(fig, "fig5_strata")
 
 
@@ -773,7 +799,7 @@ def fig1_thresholds() -> None:
     r = read("runs_v37_variants.csv")
     base = r[r.name == "v37"].iloc[0]
     fig = plt.figure(figsize=(7.2, 3.9))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.45, 1.0, 0.9], wspace=0.40)
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.45, 1.0, 0.9], wspace=0.55)
     axA = fig.add_subplot(gs[0])
     axB = fig.add_subplot(gs[1])
     axC = fig.add_subplot(gs[2])
@@ -810,8 +836,8 @@ def fig1_thresholds() -> None:
     axA.text(float(base.blb_recall) * 100 - 0.35, int(base.false_benign) + 9, "shipped", fontsize=6.4, color=INK, ha="right", va="center")
     axA.set_xlim(57, 69.4)
     axA.set_ylim(-3, 112)
-    axA.set_xlabel("ClinVar B/LB called LB/B (%)")
-    axA.set_ylabel("ClinVar P/LP called LB/B\n(missed diagnoses, n)")
+    axA.set_xlabel(f"{CV} B/LB called LB/B (%)")
+    axA.set_ylabel(f"{CV} P/LP called LB/B\n(missed diagnoses, n)")
     hgrid(axA)
     axA.legend(handles=[Line2D([0], [0], color=c, lw=LW, label=l) for _, l, c, _, _ in knobs], loc="upper left", fontsize=6.6)
     axA.set_title("Bars on the benign side", loc="left", fontsize=8, pad=6)
@@ -847,7 +873,7 @@ def fig1_thresholds() -> None:
     axB.set_xticklabels(["0", "1e-6", "1e-5", "1e-4"])
     axB.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
     axB.set_xlabel("PM2 bar")
-    axB.set_ylabel("ClinVar P/LP called P/LP (%)")
+    axB.set_ylabel(f"{CV} P/LP\ncalled P/LP (%)")
     hgrid(axB)
     axB.legend(loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=6.0, handlelength=1.8)
     axB.set_title("PM2 bars, by combining rule", loc="left", fontsize=8, pad=6)
@@ -874,13 +900,14 @@ def fig1_thresholds() -> None:
     axC.set_xticklabels(["off", "1e-4", "1e-3"])
     axC.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
     axC.set_xlabel("BS2 carrier bar")
-    axC.set_ylabel("Change in recall (pp)")
+    axC.set_ylabel(f"Change in recall of the\n{CV} class (pp)")
     hgrid(axC)
     axC.text(3e-4 * 1.15, axC.get_ylim()[1] * 0.92, "shipped\n3e-4", fontsize=6.2, color=INK2, va="top", ha="left")
     axC.text(4.6e-3, 0.012, "P/LP", fontsize=6.4, color=INK2, ha="right", va="bottom")
     axC.text(4.6e-3, blb[-1] - 0.012, "B/LB", fontsize=6.4, color=INK2, ha="right", va="top")
     axC.set_title("BS2 carrier bar", loc="left", fontsize=8, pad=6)
     panel_letter(axC, "C", x=-0.30, y=1.10)
+    clinvar_note(fig, "Panel C: P/LP is the recall of ClinVar 2-star+ P/LP variants and B/LB that of ClinVar 2-star+ B/LB variants.")
     save(fig, "fig1_thresholds")
 
 
@@ -956,8 +983,8 @@ def fig3_ablations() -> None:
     for bi, (letter, title, b) in enumerate(blocks):
         axs = [fig.add_subplot(gs[bi, k]) for k in range(4)]
         y = np.arange(len(b))
-        specs = [("d_same_pp", "Same-direction\nagreement (pp)", INK2, True),
-                 ("d_plp_pp", "ClinVar P/LP called\nP/LP (pp)", TIER3["P/LP"], True),
+        specs = [("d_same_pp", f"Same-direction agreement\nwith {CV} (pp)", INK2, True),
+                 ("d_plp_pp", f"{CV} P/LP\ncalled P/LP (pp)", TIER3["P/LP"], True),
                  ("d_missed", "Missed diagnoses (n)\nfewer is better", TIER3["P/LP"], False),
                  ("d_fp", "False-pathogenic (n)\nfewer is better", TIER3["B/LB"], False)]
         for k, (col, xl, color, is_pp) in enumerate(specs):
@@ -981,6 +1008,7 @@ def fig3_ablations() -> None:
             for sp in ("left",):
                 ax.spines[sp].set_visible(False)
         axs[0].set_title(f"{letter}  {title}", loc="left", fontsize=8, x=-1.05, pad=7, fontweight="bold")
+    clinvar_note(fig, "Missed diagnoses: ClinVar 2-star+ P/LP called LB/B. False-pathogenic: ClinVar 2-star+ B/LB called P/LP.")
     save(fig, "fig3_ablations")
 
 
@@ -1063,7 +1091,7 @@ def figS4_frontier() -> None:
     ax.set_xticks([0, 10, 100, 1000, 10000])
     ax.set_xticklabels(["0", "10", "100", "1,000", "10,000"])
     ax.set_xlabel("Opposite-direction calls (n, log scale)")
-    ax.set_ylabel("Agreement in direction\n(% of 673,660 variants)")
+    ax.set_ylabel(f"Agreement in direction with {CV}\n(% of 673,660 variants)")
     handles = [
         Line2D([0], [0], color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, label="fastVEP versions v7 to v37 (scored matrices)"),
         Line2D([0], [0], ls="none", marker="o", ms=3.4, mfc="#b7b6ae", mec="none", label="runs of this paper: v37 with one change"),
@@ -1071,6 +1099,7 @@ def figS4_frontier() -> None:
         Line2D([0], [0], ls="none", marker="s", ms=MS - 1.0, mfc=CAT[3], mec=SURFACE, label="filled: R2, and R2 with R3, with no frequency rule"),
     ]
     ax.legend(handles=handles, loc="lower right", fontsize=6.4, handletextpad=0.5, labelspacing=0.35)
+    clinvar_note(fig, "Opposite-direction calls: ClinVar 2-star+ P/LP called LB/B, or ClinVar 2-star+ B/LB called P/LP.")
     save(fig, "figS4_frontier")
 
 

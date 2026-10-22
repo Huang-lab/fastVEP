@@ -987,33 +987,39 @@ The reviewer's workbooks are not public, and the manuscript paraphrases the revi
 
 ## Figure legends
 
+In every figure, a ClinVar class (P/LP, VUS and B/LB, or pathogenic-side and benign-side) is the class of a ClinVar record of review status two stars or better, which the labels call "ClinVar 2-star+": criteria provided, multiple submitters, no conflicts; reviewed by expert panel; practice guideline.
+The release is that of 4 April 2026, and panel C of Figure 5 also uses the release of 4 October 2026.
+P/LP is Pathogenic or Likely pathogenic, B/LB is Likely benign or Benign, and VUS is uncertain significance.
+Each figure repeats this in a footnote.
+ClinVar's classifications are a reference and not ground truth.
+
 **Figure 1. Thresholds that no guideline states trade calls for errors at different rates, and the PM2 bar matters far more under the 2015 combining table than under the point system.**
 The thresholds of Section 3.3, re-measured on the final classifier.
 (A) Five thresholds on the benign side trade correct benign-side calls for missed diagnoses (the pink line is the count of BP1's veto, from 1 to 25 pathogenic missense variants); open markers are swept values and the filled black marker is the shipped one.
-(B) Recall of ClinVar's pathogenic-side variants against the PM2 bar for genes not read as recessive-only, under the SVI point system (shipped) and under the 2015 combining table, and against the bar for genes read as recessive-only under the point system.
-(C) The BS2 carrier bar for genes read as dominant-only: the change in recall of pathogenic-side (red) and benign-side (blue) variants from the shipped bar.
+(B) Recall of ClinVar 2-star+ pathogenic-side variants against the PM2 bar for genes not read as recessive-only, under the SVI point system (shipped) and under the 2015 combining table, and against the bar for genes read as recessive-only under the point system.
+(C) The BS2 carrier bar for genes read as dominant-only: the change in recall of ClinVar 2-star+ pathogenic-side (red) and benign-side (blue) variants from the shipped bar.
 
 **Figure 2. The points that define the classes move the pathogenic side more than any numeric bar that we swept.**
-(A) For variants with no benign evidence, the ClinVar classes of the variants at each number of pathogenic points; the lines mark Likely pathogenic from 6 points and Pathogenic from 10.
-(B) Real runs with the Likely pathogenic cutoff changed from 4 to 9 points: recall of pathogenic-side variants against the number of ClinVar VUS and benign-side variants called pathogenic-side.
+(A) For variants with no benign evidence, the ClinVar 2-star+ classes of the variants at each number of pathogenic points; the lines mark Likely pathogenic from 6 points and Pathogenic from 10.
+(B) Real runs with the Likely pathogenic cutoff changed from 4 to 9 points: recall of ClinVar 2-star+ pathogenic-side variants against the number of ClinVar 2-star+ VUS and benign-side variants called pathogenic-side.
 (C) The benign side under the 2015 table (shipped) and under a point scale with Likely benign from -1, -2 and -3 points, replayed from the recorded criteria and not real runs.
 In B and C a filled black marker is the shipped setting.
 
 **Figure 3. Three evidence sources carry the benign side and one the pathogenic side, most design decisions pay for themselves, and each departure from the sources has a price.**
 What each design decision and each evidence source buys, and what each departure from the sources would change.
-(A) Sixteen settings changed one at a time (switched off, or on for the two opt-in settings): the change from v37 in agreement in direction (percentage points of all records), in recall of pathogenic-side variants, in missed diagnoses and in false-pathogenic calls.
+(A) Sixteen settings changed one at a time (switched off, or on for the two opt-in settings): the change from v37 in agreement in direction (percentage points of all records), in recall of ClinVar 2-star+ pathogenic-side variants, in missed diagnoses and in false-pathogenic calls.
 (B) Nine evidence sources removed one at a time from the annotation directory.
 (C) Eight runs that test a departure from the sources or an adjustment: BP1's veto leaving out the variant's own ClinVar record, BP7's SpliceAI bar and conservation test (alone and together), the ClinGen file with the curations that its export lacked, PVS1 licensed by Orphanet's loss-of-function label (alone and with the ClinGen file), and the own-record veto, the low-penetrance gate and the exception list removed together.
 The BP1 run, the SpliceAI run, the run with both BP7 changes and the run with the three adjustments use the measurement build of Section 2.6.
 
 **Figure 4. Almost all of the discordance of v37 with ClinVar 2-star+ classifications is one side left undecided, and contradictions are rare.**
-(A) The five-tier concordance matrix: counts, and the share of its ClinVar class (the row) that each cell holds; the outlined cells are opposite-direction calls.
-(B) What v37 says of each ClinVar class, as P/LP, VUS and B/LB; 382 records with no call (0.13% of the ClinVar benign-side class) are not drawn.
-(C) What ClinVar says behind each v37 call.
+(A) The five-tier concordance matrix: counts, and the share of its ClinVar 2-star+ class (the row) that each cell holds; the outlined cells are opposite-direction calls.
+(B) What v37 says of each ClinVar 2-star+ class, as P/LP, VUS and B/LB; 382 records with no call (0.13% of the ClinVar 2-star+ benign-side class) are not drawn.
+(C) What ClinVar 2-star+ says behind each v37 call.
 
 **Figure 5. Recall is set by the consequence class and the review status, and on the new variants it falls mostly on the benign side.**
-(A, B) The share of ClinVar's pathogenic-side and benign-side variants that v37 calls P/LP, VUS and B/LB, by consequence class and by review status; an asterisk marks a row whose bar stops short of 100% because records have no call.
-(C) Recall in direction for each ClinVar class on the April set, on the October variants whose class did not change, and on the new October variants that were not in the April set; whiskers are exact binomial 95% intervals, which treat variants as independent.
+(A, B) The share of ClinVar 2-star+ pathogenic-side and benign-side variants that v37 calls P/LP, VUS and B/LB, by consequence class and by review status; an asterisk marks a row whose bar stops short of 100% because records have no call.
+(C) Recall in direction for each ClinVar 2-star+ class on the April 2026 release, on the October 2026 variants whose class did not change, and on the new October 2026 variants that were not in the April set; whiskers are exact binomial 95% intervals, which treat variants as independent.
 
 ---
 
@@ -1024,13 +1030,16 @@ All tables are CSV or TSV files in `manuscript/acmg/data/` of the repository, an
 
 ### Supplementary figures
 
+In Figures S1, S3 and S4 a ClinVar class is that of a ClinVar 2-star+ record of the release of 4 April 2026, as in the main figures, and each figure says so in a footnote.
+Figure S2 shows no ClinVar class.
+
 **Figure S1. Agreement with ClinVar 2-star+ classifications across 37 benchmark runs.**
 (A) Same-direction and exact agreement as a percentage of 673,660 variants.
 Open markers are v1, a matrix reconstructed from the documentation of the run, and v2 and v4 to v6, which were recorded at the time; no raw output of them was kept.
 v1 annotated 627,376 of the records, and its 54.7% of those is 51.0% of all records.
 The cross marks v17, the opt-in run with the published VCEP bars, which is not a step on the way and is left out of the lines.
-(B) Opposite-direction calls on a log scale: ClinVar pathogenic-side variants called benign-side (missed diagnoses), ClinVar benign-side variants called pathogenic-side, and their total; open markers as in A, and v6 is the recorded total.
-(C) Same-direction recall for ClinVar's pathogenic-side and benign-side variants; the values of v1 (10.9% and 19.0%) are below the axis.
+(B) Opposite-direction calls on a log scale: ClinVar 2-star+ pathogenic-side variants called benign-side (missed diagnoses), ClinVar 2-star+ benign-side variants called pathogenic-side, and their total; open markers as in A, and v6 is the recorded total.
+(C) Same-direction recall for ClinVar 2-star+ pathogenic-side and benign-side variants; the values of v1 (10.9% and 19.0%) are below the axis.
 The 13 numbered markers are the changes listed under the panels.
 Run v3 was a partial run that was overwritten, v21 and v22 repeat v20, and v24 and v25 were intermediate runs.
 ClinVar's classifications are a reference and not ground truth.
@@ -1041,7 +1050,7 @@ The column on the right gives the total of each class, and the row beneath the c
 Classes and routes are our coding of the project's record.
 
 **Figure S3. What the reviewer ruled.**
-(A) The rulings on the rows of the three workbooks the reviewer returned, in rounds 1, 2 and 6, in five categories: ClinVar's call supported, fastVEP's call supported, neither (the reviewer's call is VUS or another class), more evidence needed or dependent on the disorder, and no verdict recorded.
+(A) The rulings on the rows of the three workbooks the reviewer returned, in rounds 1, 2 and 6, in five categories: the ClinVar 2-star+ call supported, fastVEP's call supported, neither (the reviewer's call is VUS or another class), more evidence needed or dependent on the disorder, and no verdict recorded.
 Rounds 1 and 2 are decoded from cell colours against each workbook's key, and round 6 is our coding of the reviewer's text (Appendix Table A4).
 (B) The 49 opposite-direction calls of v37, by the evidence behind the call, with the rulings of the last round.
 
