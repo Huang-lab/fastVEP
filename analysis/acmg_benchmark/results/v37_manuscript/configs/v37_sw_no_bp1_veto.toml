@@ -1,0 +1,3 @@
+# v37_sw_no_bp1_veto: BP1 no longer vetoed in genes with an established pathogenic-missense spectrum.
+# Everything else is the shipped default.
+bp1_max_pathogenic_missense = 1000000

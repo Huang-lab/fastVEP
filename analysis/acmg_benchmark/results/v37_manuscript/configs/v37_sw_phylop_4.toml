@@ -1,0 +1,3 @@
+# v37_sw_phylop_4: PhyloP score at or above which a nucleotide counts as conserved for BP7 (1000 switches the test off), set to 4.
+# Everything else is the shipped default.
+phylop_conserved = 4.0

@@ -1530,3 +1530,30 @@ The machine was otherwise idle.
 The means are 134.6 s and 134.0 s, and the rounds differ from one another by more than the branch differs from master, so there is no measurable change.
 The output without `--acmg` hashes identically to master's in every run, and with `--acmg --pick` the output with its two ACMG columns removed does.
 `crates/fastvep-annotate/tests/splice_context_allocations.rs` holds the allocation behaviour of the new path in a counting-allocator test: the offset and the exon edge allocate nothing, and the placement's cost does not grow with how far the change slides.
+
+
+## After v37: the runs of the ACMG manuscript
+
+`manuscript/acmg/` re-measures the thresholds of v37 and tests the departures from the sources that reading them again turned up.
+Every run is a variant of `v37` made by `scripts/11_manuscript_runs.py`, so each has its own provenance file in `results/v37_manuscript/`, and none of them changes the shipped classifier.
+89 runs on the April set: 41 sweeps, 16 single-switch ablations, 9 leave-one-source-out ablations, 4 PM2 sweeps under the 2015 table, 9 runs of the point cutoffs, 7 runs of two measurement builds and 3 runs that change an input.
+Seven more runs (`v37_oct_*`) apply one change each to the variants of the 4 October 2026 release.
+
+| Run | What it changes | What it shows |
+|---|---|---|
+| `v37_sw_pm2ar_*` (6) | PM2 bar for genes read as recessive-only, strict absence to 5e-4 | Flat: recall within 0.02 points, agreement within 10 calls, no change in errors |
+| `v37_sw_phylop_*` (5) | BP7's PhyloP bar, 1 to 4 and off | No knee; off adds 16,482 benign-side calls and 2 missed diagnoses |
+| `v37_sw_bp1veto_*` (5) | The count of pathogenic missense records at which BP1's veto applies, 1 to 25 (shipped 3) | No knee; a count of 1 gains 1,716 calls in direction (1,865 ClinVar-VUS variants no longer called benign-side, less 149 correct benign-side calls), removes 2 missed diagnoses (IQSEC1, PRR12) and gives up 149 correct benign-side calls |
+| `v37_hk_control` | The measurement build with nothing set | Reproduces v37 in every cell and every criterion's firing count |
+| `v37_hk_bp1_loo` | BP1's veto leaves out the variant's own ClinVar record | 3 more missed diagnoses (FBXO28, PCGF2, SBF1) |
+| `v37_hk_bp1_loo_veto{1,2}` | BP1's veto at a count of 1 or 2 and leaving out the own record | Count 1: the same 1,716 calls and 149 correct benign-side calls as without the change, and 23 missed diagnoses (IQSEC1 removed, PRR12 not: its one pathogenic missense record is its own); count 2: 849 more calls and 24 missed diagnoses |
+| `v37_hk_strict` | BP1's veto leaves out the own record, no low-penetrance gate and no frequency-exception list, together | 10 more missed diagnoses (3, 1 and 6 alone), 59 opposite-direction calls |
+| `v37_hk_bp7_spliceai01` | BP7 needs SpliceAI at most 0.1 | 313 fewer benign-side calls, no change in errors |
+| `v37_hk_bp7_walker` | The two BP7 changes together (no conservation test, SpliceAI at most 0.1) | 15,953 more calls in direction, 2 more missed diagnoses (NF1, MAPT) |
+| `v37_gap_clingen_complete` | The ClinGen file with the 112 rows that complete its export of 30 April (104 curations that it lacked, 7 re-labelled rows and 1 row dated on the day of the export) | PVS1 for 674 more truncating variants (CFTR 439), 2 more false-pathogenic calls |
+| `v37_gap_orphanet_lof` | PVS1 licensed for 1,042 genes that Orphanet labels as loss of function | PVS1 for 1,506 of the 5,184 truncating variants without it, 5 more false-pathogenic calls |
+| `v37_gap_both` | Both of the above | PVS1 for 1,714, 2,053 more calls in direction, 5 more false-pathogenic calls |
+| `v37_oct_*` (7) | The completed ClinGen file, Orphanet's label, both, BP7 as Walker 2023, BP1's veto without the own record, BP1's veto at a count of 1 and no allele-number floor, each on the October release | On the 107,528 new variants BP7 as Walker adds 4,933 calls in direction and no missed diagnosis, the completed file adds 47, Orphanet's label 272 for 2 false-pathogenic calls, both 308 for 2, a count of 1 for BP1's veto 122 (and no missed diagnosis avoided: none of the 6 rests on BP1); the own-record run and the floor change no call |
+
+The two measurement builds are v37 with a patch each (`manuscript/acmg/replay_validation/*.patch`) that reads one setting from the environment: the two point cutoffs, and BP1's own-record count and BP7's SpliceAI bar.
+With nothing set each is the shipped classifier, which the controls check.

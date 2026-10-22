@@ -1,0 +1,3 @@
+# v37_src_nognomad: gnomAD removed, with PM2 told not to read absence as rarity, so no frequency criterion can fire.
+# Everything else is the shipped default.
+pm2_absent_when_no_record = false

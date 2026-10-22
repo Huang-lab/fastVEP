@@ -1,0 +1,3 @@
+# v37_sw_no_region_flags: gnomAD's segmental-duplication and low-complexity flags no longer withhold the frequency criteria.
+# Everything else is the shipped default.
+gnomad_region_flags_block_frequency = false
