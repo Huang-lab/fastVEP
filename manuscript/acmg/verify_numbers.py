@@ -239,7 +239,7 @@ def methods() -> None:
     fact("With nothing set, each measurement build is the shipped classifier",
          *(["every cell"] if all(controls.cells_equal_to_v37 == controls.cells) and all(controls.criteria_firing_equal_to_v37 == controls.criteria) else ["?"]))
     sha = prov.groupby("binary_sha256_prefix").size()
-    fact("All 89 runs (Supplementary Table S1) were made by the same harness", str(len(harness)), str(int(sha["d12c0d8e"])), str(int(sha["dc275d1c"])), str(int(sha["2bccb937"])))
+    fact("All 89 runs (Supplementary Table S2) were made by the same harness", str(len(harness)), str(int(sha["d12c0d8e"])), str(int(sha["dc275d1c"])), str(int(sha["2bccb937"])))
     # 2.8
     nw_n = new_idx["new variants of the covered release"]
     fact("A new variant is not one that ClinVar did not hold in April", p(new_idx["  with a record in the April variant_summary"] / nw_n),
@@ -1034,7 +1034,43 @@ def coverage() -> None:
     fact("Each of these can be measured by the harness of this paper before it is shipped", str(int(hl("opposite").value)))
 
 
-CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, repository, audit, early_trades, criteria_consistency, coverage]
+def structure() -> None:
+    """The figures and tables of the paper: what it cites exists, comes in order, and every data file is in exactly one table.
+
+    The main figures state conclusions and are cited in order (1 to 5); the supplementary figures (S1 to S4) show how the
+    classifier was developed and reviewed. There are fewer than ten supplementary tables, and every other table is in the
+    appendix, so each file of `data/` must be named by exactly one supplementary or appendix table.
+    """
+    text = (HERE / "manuscript.md").read_text()
+    body, back = text.split("\n## Figure legends\n", 1)
+    legends = re.findall(r"^\*\*Figure (S?\d)\. ", back, re.M)
+    sup = re.findall(r"^\*\*Supplementary Table (S\d)\.", back, re.M)
+    app = re.findall(r"^\*\*Appendix Table (A\d)\.", back, re.M)
+
+    def check(ok: bool, what: str) -> None:
+        (passed if ok else failures).append(("structure: " if ok else "structure: ") + what)
+
+    check(legends == ["1", "2", "3", "4", "5", "S1", "S2", "S3", "S4"], f"the legends are the main figures 1 to 5 and the supplementary figures S1 to S4 (found {legends})")
+    check(len(sup) < 10 and sup == [f"S{i}" for i in range(1, len(sup) + 1)], f"fewer than ten supplementary tables, numbered S1 to S{len(sup)}")
+    check(app == [f"A{i}" for i in range(1, len(app) + 1)] and len(app) > 0, f"the appendix tables are numbered A1 to A{len(app)}")
+    for kind, pattern, defined in (("figure", r"Figure (S?\d)", legends), ("supplementary table", r"Supplementary Table (S\d)", sup), ("appendix table", r"Appendix Table (A\d)", app)):
+        cited = re.findall(pattern, text)
+        missing = sorted(set(cited) - set(defined))
+        check(not missing, f"every {kind} that the text cites is defined (undefined: {missing})")
+        in_body = list(dict.fromkeys(re.findall(pattern, body)))
+        check(set(in_body) == set(defined), f"every {kind} is cited in the text before the legends (not cited: {sorted(set(defined) - set(in_body))})")
+        groups = [[x for x in in_body if x.startswith("S")], [x for x in in_body if not x.startswith("S")]] if kind == "figure" else [in_body]
+        for g in groups:
+            check(g == sorted(g, key=lambda x: int(x.lstrip("SA"))), f"{kind}s are first cited in order ({g})")
+    entries = [para for para in back.split("\n\n") if para.startswith(("**Supplementary Table", "**Appendix Table"))]
+    listed = [f for para in entries for f in sorted(set(re.findall(r"`([\w.\-]+\.(?:csv|tsv))`", para)))]
+    files = sorted(f.name for f in DATA.iterdir() if f.suffix in (".csv", ".tsv"))
+    dup = sorted({f for f in listed if listed.count(f) > 1})
+    check(not dup, f"no data file is in two tables (twice: {dup})")
+    check(sorted(set(listed)) == files, f"every data file is in a table, and every file named exists (not listed: {sorted(set(files) - set(listed))}; not found: {sorted(set(listed) - set(files))})")
+
+
+CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, repository, audit, early_trades, criteria_consistency, coverage, structure]
 
 
 def main() -> None:

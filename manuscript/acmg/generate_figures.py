@@ -18,7 +18,11 @@ ClinVar's 2-star+ classifications are a reference and not ground truth; every ax
 
 Usage
   generate_figures.py            all figures
-  generate_figures.py 1 4        figures 1 and 4
+  generate_figures.py 1 S3       figure 1 and supplementary figure S3
+
+Figures 1 to 5 are the main figures, each of which states a conclusion of the paper; Figures S1 to S4
+show how the classifier was developed and reviewed (the runs, the ledger of changes, the reviewer's
+rulings and the frontier of agreement against contradictions) and are in the supplement.
 """
 
 from __future__ import annotations
@@ -130,7 +134,7 @@ def thousands(x, pos=None) -> str:
     return f"{int(x):,}"
 
 
-# ------------------------------------------------------------------------ figure 1: trajectory
+# ------------------------------------------------------------- supplementary figure S1: trajectory
 
 # Version at which each change landed, and the label it carries in the key. The labels name the
 # change that produced the step, as RUN_VERSIONS.md records it.
@@ -151,7 +155,7 @@ EVENTS = [
 ]
 
 
-def fig1_trajectory() -> None:
+def figS1_trajectory() -> None:
     t = read("trajectory.csv")
     t["mainline"] = t["mainline"].astype(bool)
     for c in ("same_direction_rate", "exact_rate", "plp_recall", "blb_recall"):
@@ -296,10 +300,10 @@ def fig1_trajectory() -> None:
         axk.text(x + 0.034, y, label, fontsize=6.6, color=INK2, va="center", ha="left")
     axk.set_xlim(0, 1)
     axk.set_ylim(0, 1)
-    save(fig, "fig1_trajectory")
+    save(fig, "figS1_trajectory")
 
 
-# ------------------------------------------------------------------------ figure 2: expert review
+# --------------------------------------------------------- supplementary figure S3: expert review
 
 RULING_COLORS = {
     "clinvar_supported": CAT[0],
@@ -345,7 +349,7 @@ def stacked_barh(ax, ylabels, series, colors, height=0.55, min_label=0.06, total
     ax.invert_yaxis()
 
 
-def fig2_review() -> None:
+def figS3_review() -> None:
     rr = read("review_rounds.csv")
     grp = read("opposite_direction_by_group_v37.csv")
 
@@ -388,10 +392,10 @@ def fig2_review() -> None:
 
     handles = [Patch(fc=RULING_COLORS[c], ec="none", label=RULING_LABELS[c]) for c in cats]
     axL.legend(handles=handles, loc="center", ncol=3, fontsize=6.8, columnspacing=1.6, handlelength=1.2, handleheight=1.0)
-    save(fig, "fig2_review")
+    save(fig, "figS3_review")
 
 
-# ----------------------------------------------------------------- figure 3: defect classes
+# -------------------------------------------------------- supplementary figure S2: defect classes
 
 CLASS_LABELS = {
     "G": "A condition of the guideline was omitted",
@@ -415,7 +419,7 @@ FOUND_LABELS = {
 }
 
 
-def fig3_ledger() -> None:
+def figS2_ledger() -> None:
     led = read("change_ledger.csv")
     ct = pd.crosstab(led["class"], led["found_by"])
     rows = list(ct.sum(axis=1).sort_values(ascending=False).index)
@@ -463,10 +467,10 @@ def fig3_ledger() -> None:
     for j, c in enumerate(cols):
         ax.text(j, len(rows) - 0.18, str(int(cs[c])), ha="center", va="top", fontsize=7.5, color=INK2, clip_on=False)
     ax.text(-0.62, len(rows) - 0.18, "Total by route", ha="right", va="top", fontsize=7, color=INK2, clip_on=False)
-    save(fig, "fig3_defect_classes")
+    save(fig, "figS2_defect_classes")
 
 
-# ------------------------------------------------------------- figure 5: evidence points and cutoffs
+# ------------------------------------------------------------- figure 2: evidence points and cutoffs
 
 
 def compact(n: float) -> str:
@@ -476,7 +480,7 @@ def compact(n: float) -> str:
     return f"{n/1000:.1f}k" if n >= 1000 else f"{int(n)}"
 
 
-def fig5_points() -> None:
+def fig2_points() -> None:
     pts = read("points_by_clinvar_v37.csv")
     pts = pts[pts.scope == "no benign evidence"]
     pts = pts[pts.pathogenic_points <= 11]
@@ -528,7 +532,7 @@ def fig5_points() -> None:
     axB.plot(cut.wrong / 1000, cut.plp_recall * 100, color=CAT[0], lw=LW, zorder=2)
     for r in cut.itertuples():
         shipped = r.lp == 6
-        # a filled black marker is the shipped setting, here and in Figures 4 and 5C; open markers are the others
+        # a filled black marker is the shipped setting, here and in Figures 1 and 2C; open markers are the others
         axB.plot([r.wrong / 1000], [r.plp_recall * 100], marker="o", ms=MS + (2 if shipped else 0), mfc=INK if shipped else SURFACE,
                  mec=SURFACE if shipped else CAT[0], mew=1.5 if shipped else 1.4, zorder=5 if shipped else 3)
     lab = {4: (0.9, 0, "4"), 5: (-0.9, 2.4, "5"), 6: (0.9, 0.6, "6 (shipped)"), 7: (0.9, -1.6, "7 and 8"), 9: (0.9, 0, "9")}
@@ -569,13 +573,13 @@ def fig5_points() -> None:
     hgrid(axC)
     axC.set_title("Benign side: table or points (replay)", loc="left", fontsize=8, pad=6)
     panel_letter(axC, "C", x=-0.30, y=1.14)
-    save(fig, "fig5_points")
+    save(fig, "fig2_points")
 
 
-# ---------------------------------------------------------------- figures 6 and 7: the discordance
+# ---------------------------------------------------------------- figures 4 and 5: the discordance
 
 
-def fig6_anatomy() -> None:
+def fig4_anatomy() -> None:
     c5 = read("confusion_5x5_v37.csv")
     c3 = read("confusion_3x3_v37.csv")
     cc = read("what_is_behind_each_call_v37.csv")
@@ -669,10 +673,10 @@ def fig6_anatomy() -> None:
          [f"fastVEP {k}\n(n = {int(d[d.fastvep == k].column_total.iloc[0]):,})" for k in ("P/LP", "VUS", "B/LB")],
          "What ClinVar says behind each fastVEP call", "Share of the fastVEP call (%)", "ClinVar class:", "column_total")
     panel_letter(axC, "C", x=-0.30, y=1.30)
-    save(fig, "fig6_anatomy")
+    save(fig, "fig4_anatomy")
 
 
-def fig7_strata() -> None:
+def fig5_strata() -> None:
     bc = read("by_consequence_v37.csv")
     bs = read("by_review_status_v37.csv")
     tb = read("temporal_by_class_v37.csv")
@@ -759,13 +763,13 @@ def fig7_strata() -> None:
              fontsize=6.0, color=INK2, ha="left", va="center", linespacing=1.15)
     panel_letter(axC, "C", x=-0.04, y=1.18)
     axC.set_title("", loc="left")
-    save(fig, "fig7_strata")
+    save(fig, "fig5_strata")
 
 
-# -------------------------------------------------------------------- figure 4: the thresholds
+# -------------------------------------------------------------------- figure 1: the thresholds
 
 
-def fig4_thresholds() -> None:
+def fig1_thresholds() -> None:
     r = read("runs_v37_variants.csv")
     base = r[r.name == "v37"].iloc[0]
     fig = plt.figure(figsize=(7.2, 3.9))
@@ -877,10 +881,10 @@ def fig4_thresholds() -> None:
     axC.text(4.6e-3, blb[-1] - 0.012, "B/LB", fontsize=6.4, color=INK2, ha="right", va="top")
     axC.set_title("BS2 carrier bar", loc="left", fontsize=8, pad=6)
     panel_letter(axC, "C", x=-0.30, y=1.10)
-    save(fig, "fig4_thresholds")
+    save(fig, "fig1_thresholds")
 
 
-# ----------------------------------------------------------------------- figure 8: ablations
+# ----------------------------------------------------------------------- figure 3: ablations
 
 ABLATION_LABELS = {
     "v37_sw_pm2_moderate": "PM2 at Moderate (SVI downgrade off)",
@@ -931,7 +935,7 @@ def _signed(v: float, digits: int = 2) -> str:
     return ("+" if v > 0 else "-") + t
 
 
-def fig8_ablations() -> None:
+def fig3_ablations() -> None:
     r = read("runs_v37_variants.csv")
     base = r[r.name == "v37"].iloc[0]
     labels = {**ABLATION_LABELS, **MEASURED_LABELS}
@@ -977,15 +981,15 @@ def fig8_ablations() -> None:
             for sp in ("left",):
                 ax.spines[sp].set_visible(False)
         axs[0].set_title(f"{letter}  {title}", loc="left", fontsize=8, x=-1.05, pad=7, fontweight="bold")
-    save(fig, "fig8_ablations")
+    save(fig, "fig3_ablations")
 
 
 # ---------------------------------------------------------------------------------- driver
 
-# -------------------------------------------------------------- figure 9: agreement against contradictions
+# ------------------------------------------------ supplementary figure S4: agreement against contradictions
 
 
-def fig9_frontier() -> None:
+def figS4_frontier() -> None:
     """Agreement in direction against opposite-direction calls, for the versions, the runs of this paper and simple rules.
 
     The point of the figure is that agreement does not say how cautious a classifier is: rules with no combining rule,
@@ -1067,15 +1071,18 @@ def fig9_frontier() -> None:
         Line2D([0], [0], ls="none", marker="s", ms=MS - 1.0, mfc=CAT[3], mec=SURFACE, label="filled: R2, and R2 with R3, with no frequency rule"),
     ]
     ax.legend(handles=handles, loc="lower right", fontsize=6.4, handletextpad=0.5, labelspacing=0.35)
-    save(fig, "fig9_frontier")
+    save(fig, "figS4_frontier")
 
 
-FIGS = {1: fig1_trajectory, 2: fig2_review, 3: fig3_ledger, 5: fig5_points, 4: fig4_thresholds, 6: fig6_anatomy, 7: fig7_strata, 8: fig8_ablations, 9: fig9_frontier}
+FIGS = {"1": fig1_thresholds, "2": fig2_points, "3": fig3_ablations, "4": fig4_anatomy, "5": fig5_strata,
+        "S1": figS1_trajectory, "S2": figS2_ledger, "S3": figS3_review, "S4": figS4_frontier}
 
 
 def main() -> None:
-    want = [int(a) for a in sys.argv[1:]] or sorted(FIGS)
+    want = sys.argv[1:] or list(FIGS)
     for n in want:
+        if n not in FIGS:
+            sys.exit(f"no figure {n}; choose from {', '.join(FIGS)}")
         print(f"figure {n}")
         FIGS[n]()
 

@@ -86,7 +86,7 @@ Both per-variant loops of the code base, the shared annotation library and the c
 The engine implements all 28 ACMG/AMP criteria, and a run reports 26 of them, because PP5 and BP6 are off by default, following the SVI's proposal that laboratories stop using them (Biesecker and Harrison, 2018).
 In the benchmark, which has one variant per record and no pedigree or phenotype, 15 of the 26 can fire: PVS1, PS1, PM1, PM2, PM4, PM5, PP2 and PP3 on the pathogenic side, and BA1, BS1, BS2, BP1, BP3, BP4 and BP7 on the benign side.
 PM3 needs the genotype of a proband, which the sites-only benchmark file lacks, so it is never met (it is reported as evaluated in genes that are not read as recessive and as not evaluated in genes that are), and the other 10 need case-level data and are reported as not evaluated: PS2, PS3, PS4, PM6, PP1, PP4, BS3, BS4, BP2 and BP5.
-Supplementary Table S12 gives how often each computable criterion fires in v37, at which strengths, and on which ClinVar classes.
+Supplementary Table S1 gives how often each computable criterion fires in v37, at which strengths, and on which ClinVar classes.
 Two gene-level gates are referred to in the text: BP1 is withheld (the veto) in a gene with at least three pathogenic missense variants in the ClinVar protein index, where missense is an established mechanism, and PVS1 is withheld by a validity gate and a mechanism gate, the validity gate also withholding PP2 and PM1 (Table 1).
 PS3 and BS3 are read from a curated file when one is supplied, PS2 and PM6 from the genotypes of a proband's parents, and PM3 and BP2 from the proband's genotype together with its other variants in the gene; none of these routes is used in the benchmark.
 Strength follows the guidelines where they grade a criterion: PVS1 by a decision tree after that of Abou Tayoun et al. (2018), whose departures from the published tree are listed in Section 3.2, PP3 and BP4 by the REVEL bands of Pejaver et al. (2022), and PM2 at Supporting (ClinGen SVI, 2020).
@@ -214,8 +214,8 @@ To measure what each design decision buys, we also ran 16 single-switch ablation
 The two point cutoffs of the pathogenic side, Likely pathogenic from 6 points and Pathogenic from 10, are constants in the code and not settings, so for 9 further runs we built the binary with a patch that changes eight lines (six added, two removed) and reads them from the environment (`manuscript/acmg/replay_validation/combiner_cutoff_env.patch`).
 Two departures from the sources that we found while reading them again were measured with a second measurement build, made with a patch that exposes through the environment BP1's veto counting a variant's own ClinVar record and BP7's SpliceAI bar (`bp_hooks_env.patch`): a control, BP1 without the own record, BP7 with SpliceAI at most 0.1, and BP7 with that and no conservation test (4 runs); a fifth run with the same build removes together the three adjustments that read the variant's own ClinVar record or followed the reviewer's rows (BP1's veto counting that record, ClinVar's low-penetrance gate and the curated frequency-exception list), each of which had been measured alone; two more runs with that build give BP1's veto a count of 1 and a count of 2 and leave the variant's own record out, the pair that Section 4.5 proposes together.
 Three runs change an input to see what the gap in PVS1 of Section 3.5 is made of: the ClinGen file with the curations that its export lacked put back, PVS1 licensed for genes that Orphanet labels as a loss-of-function disease, and both (3 runs).
-With nothing set, each measurement build is the shipped classifier: the control of each reproduces v37 in every cell of the concordance matrix and in the firing count of every criterion.
-All 89 runs (Supplementary Table S1) were made by the same harness: 73 with the binary of v37 (SHA-256 `d12c0d8e...`), 9 with the build of the first patch and 7 with the build of the second.
+With nothing set, each measurement build is the shipped classifier: the control of each reproduces v37 in every cell of the concordance matrix and in the firing count of every criterion (Appendix Table A1).
+All 89 runs (Supplementary Table S2) were made by the same harness: 73 with the binary of v37 (SHA-256 `d12c0d8e...`), 9 with the build of the first patch and 7 with the build of the second.
 The binary of v37 was built at commit 5d2521f; the commits above it up to the head of that branch add tests, comments and two guards that no benchmark input reaches, and a binary built from the head produced an annotation byte-identical to v37's (RUN_VERSIONS.md).
 The provenance file of each run is in the repository, and records the flags, the hash of the binary and of every configuration, the inputs read (by name and size, not content), and the commit and number of uncommitted files of the checkout that ran the harness.
 The harness refuses to reuse an annotation unless the binary, the flags, the configuration and the inputs are those that made it; the environment variable that sets a run of a patched build is not part of that check and is recorded in the run matrix, not in the provenance file.
@@ -227,7 +227,7 @@ We therefore re-derived calls under alternative schemes, and under alternative b
 The replay of the shipped scheme reproduces v37 for 673,641 of 673,660 variants.
 The remaining 19 are variants that the replay calls Likely pathogenic and the classifier holds at VUS by its site-level frequency veto: when gnomAD rejects a site (by its own FILTER, a low-complexity tract or a segmental duplication) and the frequency that was withheld would itself have met BA1 or BS1, a Likely pathogenic call becomes VUS.
 The output does not record the detail the veto needs, so the replay holds those 19 at VUS wherever it would otherwise call them Likely pathogenic.
-The replay was checked against real runs of the same configurations (Supplementary Table S4): the Richards 2015 table on both sides, and the point cutoffs of Table 4.
+The replay was checked against real runs of the same configurations (Appendix Table A2): the Richards 2015 table on both sides, and the point cutoffs of Table 4.
 It reproduces the table run, the control and 6 of the 8 runs with a changed cutoff cell for cell, and the other two (Likely pathogenic from 4 and from 5 points) within 3 and 1 variants, each a variant that the replay calls Likely pathogenic and the run, through the veto, does not.
 We use the real runs wherever one exists, and the replay only for the benign-side point scales, which have no switch in the shipped code and for which we made no real run (Section 3.3).
 
@@ -249,13 +249,13 @@ To ask whether the higher rate of opposite-direction calls on the new variants i
 Variants within a gene are not independent, so confidence intervals for the headline rates come from a gene-cluster bootstrap with 2,000 resamples (95% percentile interval), and proportions inside one table cell from the exact binomial (Clopper-Pearson) interval (Clopper and Pearson, 1934), which treats variants as independent.
 The study is descriptive and we report no hypothesis tests; the interval of the ratio of the rates in Section 3.7 comes from a bootstrap that resamples genes jointly across the two sets, and so allows for the uncertainty of the April rate, which a Poisson comparison with it would not.
 Analysis used Python 3.9.6 with pandas 2.3.3, NumPy 2.0.2, SciPy 1.13.1 and matplotlib 3.9.4; the binary was built with Rust 1.98.0.
-Every number in the text and every table and figure is produced by `analysis/acmg_benchmark/scripts/11_manuscript_runs.py`, `12_per_variant_table.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py` and `15_clingen_complete_export.py`, and by `manuscript/acmg/generate_figures.py`, from the scored runs.
+Every number in the text and every table and figure is produced by `analysis/acmg_benchmark/scripts/11_manuscript_runs.py`, `12_per_variant_table.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py` and `15_clingen_complete_export.py`, and by `manuscript/acmg/generate_figures.py`, from the scored runs; the aggregates that no other table holds are in Appendix Table A3.
 
 ## 3. Results
 
 ### 3.1 Thirty-seven runs: where agreement came from, and where it stopped
 
-Same-direction agreement with ClinVar rose from 51.0% in v1 (a matrix reconstructed from the run's documentation) to 77.6% in v37 (Figure 1A; Supplementary Table S10 gives every run).
+Same-direction agreement with ClinVar rose from 51.0% in v1 (a matrix reconstructed from the run's documentation) to 77.6% in v37 (Figure S1A; Supplementary Table S2 gives every run).
 Almost all of that rise came in the first 13 runs, and the largest steps were mostly plumbing and not new guidance.
 Agreement rose 8.8 points between v2 and v4, when SpliceAI and PhyloP results finally reached the criteria that read them (items 6 and 7 of the ledger of Section 3.2), and 5.2 points between v5 and v6, when a variant absent from gnomAD began to count as absent for PM2 and BP4's splice path was confined to splice questions (items 9 and 10 of the ledger), two conditions of the guidelines that the criteria had not applied.
 The first review (v7 to v8) added 2.8 points.
@@ -267,21 +267,21 @@ Agreement then rose by 3.2 points at v10, which bundled a rebuilt gnomAD databas
 After v13 the headline stopped moving.
 Across the next 23 runs (v14 to v37, without v17) same-direction agreement stayed between 77.50% and 77.62%, and no run moved it by more than 0.07 points.
 The work did not stop, and its effect shows in the other panels.
-Opposite-direction calls fell from 94 at v13 to 49 at v37, false-benign calls from 50 to 24, and false-pathogenic calls from 44 to 25 (Figure 1B).
+Opposite-direction calls fell from 94 at v13 to 49 at v37, false-benign calls from 50 to 24, and false-pathogenic calls from 44 to 25 (Figure S1B).
 The path was not monotonic.
 Opposite-direction calls had reached a minimum of 25 at v10 and then rose to 56 at v11, when a lone PVS1 became Likely pathogenic under the point system, which gained 6,632 correct pathogenic-side calls for 31 additional false-pathogenic ones.
 They rose again at v13, when BP7's intronic extension started to fire, which gained 11,339 benign-side calls for 36 additional missed diagnoses.
 Both were trades made on purpose and recorded as trades, and Section 3.3 returns to how they were weighed.
 The matrix stored for v1 holds 31 opposite-direction calls, fewer than v37, because v1 committed to only 74,355 variants where v37 commits to 244,093; per committed call, contradictions fell from 0.042% in v1 to 0.020% in v37, with a minimum of 0.011% at v10.
 
-Recall of ClinVar's pathogenic-side variants in direction has stayed between 62.0 and 62.5% since v11, and recall of its benign-side variants between 62.3 and 62.7% since v13 (Figure 1C).
+Recall of ClinVar's pathogenic-side variants in direction has stayed between 62.0 and 62.5% since v11, and recall of its benign-side variants between 62.3 and 62.7% since v13 (Figure S1C).
 That flat line is the structural fact about the benchmark that Section 3.5 examines.
 The agreement figures also have an uneven past: the raw output of v1 to v6 was not kept, and v2 and v4 to v6 are quoted from the figures recorded at the time with denominators that we could not check, so their values carry less weight than the stored runs from v7.
 
 ### 3.2 What review of the discordant calls found
 
 **Review of the discordant calls first identified 30 of the 64 changes, by our coding, and the largest class was a guideline condition left out.**
-The ledger of Section 2.3 holds 64 items, each coded by us for its class and for how it was first found (Figure 3, Supplementary Table S2).
+The ledger of Section 2.3 holds 64 items, each coded by us for its class and for how it was first found (Figure S2, Supplementary Table S3).
 Expert review first found 30 of the 64 (47%), code audit 8, our own reading of the discordant calls 7, the first real-data run 5, an aggregate figure of the benchmark 5, a threshold sweep 4, a comparison with Ensembl VEP 3, and a regression in a later run 2.
 All of the review's input was the benchmark's own list of opposite-direction calls, so this compares the reviewer's reading of that list with other routes and not two independent ways of finding the same thing, and "first" is our reading of the written record.
 Two of the seven that we found by reading the discordant calls ourselves, the self-matches of PS1 and PM1 and the two modes of reporting that followed, came from reproducing the reviewer's rows, which could not have shown them.
@@ -290,7 +290,7 @@ Seventeen were wiring defects, in which a criterion or an input was inert, misre
 Eight concerned how far a population frequency can be trusted, five were annotation differences from Ensembl VEP, five were thresholds set by measurement, four concerned scoring and reporting, two were circularity with ClinVar, and two were combining rules.
 
 **The reviewer supported ClinVar's call far more often than the software's.**
-The medical geneticist returned annotated workbooks in three rounds (Figure 2A).
+The medical geneticist returned annotated workbooks in three rounds (Figure S3A, Appendix Table A4).
 In round 1 the workbook held 101 opposite-direction calls from v7, and the reviewer judged ClinVar's call correct on 86, fastVEP's on 3, neither on 8, and left 4 with a colour that was not in the key.
 Round 2 held 122 calls from v8, of which 93 were new and 29 carried over: ClinVar's call was judged correct on 65, fastVEP's on 2, neither on 8, more evidence was needed on 1, and 46 carried no recorded verdict.
 Seven of the 65 (four in CYP21A2 and three in STRC) carry the marker for a gene with a homology problem, and on six of them it is on fastVEP's call as well as the green on ClinVar's; the project's note of that round counted those six as not marked, which gives 59 and 52 where we count 65 and 46.
@@ -343,11 +343,11 @@ We corrected the citations and the comments in the repository, and Sections 3.3 
 ### 3.3 Where the thresholds sit
 
 Each threshold that no guideline states was set once, in a particular run, against the combining rule and the other criteria as they then stood.
-Re-measuring them on the final classifier changed what we can say about several (Figure 4, Table 3).
+Re-measuring them on the final classifier changed what we can say about several (Figure 1, Table 3).
 
 **Table 3. Thresholds that no guideline states: shipped values, and what the final classifier shows.**
 Exchange rates are extra correct benign-side (or pathogenic-side) calls per extra missed diagnosis (or false-pathogenic call) for the step on either side of the shipped value; "free" means no added error.
-Supplementary Table S3 gives every step of every sweep.
+Supplementary Table S4 gives every step of every sweep.
 
 <!-- table:thresholds:begin -->
 | Threshold: shipped value | How it was set | Last step before the shipped value | First step beyond it | On the final classifier |
@@ -376,7 +376,7 @@ False-pathogenic calls rise from 22 at strict absence to 25 at 4e-5 and 26 at 2e
 The bar for recessive-only genes, which the code attributed to the SVI's recommendation, which gives no frequency, and which equals the recessive bar of the Hearing Loss expert panel, is flat as well: from strict absence to 5e-4, recall of pathogenic-side variants is between 62.46% and 62.48%, agreement in direction varies by 10 calls, and the numbers of missed diagnoses and false-pathogenic calls do not change.
 The two bars therefore act on nearly every gene and on 67 genes, and a flat sweep says what a bar does to the calls it reaches, not what a bar would do if inheritance were read from a correct field.
 The reason the knee disappeared is the combining rule, not the bar.
-Under the 2015 combining table, which is one switch away in the same classifier, the same sweep is steep (Figure 4B).
+Under the 2015 combining table, which is one switch away in the same classifier, the same sweep is steep (Figure 1B).
 Recall of pathogenic-side variants is 38.8% at strict absence, 46.8% at 1e-6, 54.1% at 1e-5, 56.7% at 4e-5 and 57.4% at 1e-4.
 Raising the bar from strict absence to 4e-5 gains 16,785 of 93,812 variants for 7 more false-pathogenic calls, which is the knee that v10 recorded: the sweep then gave 37.8% at strict absence and 56.8% at 4e-5, against 38.8% and 56.7% here.
 Under that table a lone PVS1 matches no row, and a null variant whose only companion is PM2 reaches Likely pathogenic only through the rule that the SVI added with its PM2 recommendation, one Very Strong criterion plus one Supporting criterion (ClinGen SVI, 2020).
@@ -385,7 +385,7 @@ The point system counts a lone PVS1 as 8 points, so under it only 5,493 calls de
 A bar can move only the calls that need the criterion it gates, and the combining rule decides how many do.
 
 **The BS1, BS2 and BP7 bars trade benign-side calls for missed diagnoses, and each has a different shape.**
-All three pass through the shipped point (Figure 4A), and Table 3 gives what each step buys and costs.
+All three pass through the shipped point (Figure 1A), and Table 3 gives what each step buys and costs.
 BP7's far boundary reproduces the knee found in v14.
 Moving it from 200 to 300 nucleotides buys 157 correct benign-side calls for one more missed diagnosis, and moving it from 300 to 500 buys 40 for one more, with 51 for two more beyond that and 457 for fourteen with no bound at all.
 The shipped 300 is at the corner: below it a step is worth 157 to 849 calls per missed diagnosis, above it about 26 to 40.
@@ -399,7 +399,7 @@ By the knee rule that fixed BP7's bound, which looks for the point past which th
 The published bars point the same way.
 In the table of ClinGen VCEP specifications we extracted, the median BS1 bar is 2.5e-4 (107 genes with a usable bar, 102 of them stricter than our 5e-3), and the median BA1 bar is 1e-3 against 5e-2 (115 genes, 111 stricter).
 The median PM2 bar is 4e-5 (64 genes, range 1.3e-6 to 5e-4), which is the value we ship for every gene that is not read as recessive-only.
-That median leaves out the panels that give no single number: of 137 PM2 entries the extraction took 64 as bars, and set aside 37 that require absence, 14 with no threshold, 9 whose bar depends on inheritance (the Hearing Loss panel's recessive bar of 7e-5 among them), 6 in superscript notation, 4 where two panels disagree and 3 that are ambiguous or unspecified.
+That median leaves out the panels that give no single number: of 137 PM2 entries the extraction took 64 as bars, and set aside 37 that require absence, 14 with no threshold, 9 whose bar depends on inheritance (the Hearing Loss panel's recessive bar of 7e-5 among them), 6 in superscript notation, 4 where two panels disagree and 3 that are ambiguous or unspecified (Appendix Table A5).
 Across BA1, BS1 and PM2 together the extraction read 411 criterion entries and took 286 as bars (Table 1).
 We have not changed the shipped value in this work.
 A global frequency bar is a poor stand-in for a bar that depends on a disorder's prevalence and penetrance, which is what "greater than expected for the disorder" asks for, and that is a decision for a reviewer, not for a sweep.
@@ -432,7 +432,7 @@ Switching the bar off, so that an allele count of at least five alone suffices, 
 The shipped 3e-4 recovers 70 pathogenic-side calls relative to no bar (58,540 to 58,610) and gives up 474 benign-side calls (177,680 to 177,206), and nothing above it recovers another.
 
 **On the pathogenic side the points that define the classes move the result more than any numeric bar that we swept on the shipped classifier, and the evidence sits in an awkward place on that scale.**
-Figure 5A shows, for variants that met no benign evidence, where ClinVar's classes fall on the pathogenic points the classifier reached (Supplementary Table S11).
+Figure 2A shows, for variants that met no benign evidence, where ClinVar's classes fall on the pathogenic points the classifier reached (Appendix Table A6).
 Variants with 0 or 1 point (27,027 and 105,989 of them) are 3.9% and 7.9% ClinVar pathogenic-side.
 At 2 points the share is 10.7%, at 3 points 21.9%, and at 4 points 26.5%.
 At 5 points it jumps to 64.0% (10,485 of 16,390), with 35.9% ClinVar VUS; at 6 points the share is 59.1%; from 7 points it is 94.8% or more, reaching 99.5% at 10.
@@ -472,7 +472,7 @@ The benign side shows that the choice of scheme matters more than the choice of 
 The shipped scheme applies the 2015 table to benign evidence.
 Scoring both sides on the point scale with Likely benign from -1 points, as in the published point system, raises recall of ClinVar's benign-side variants from 62.3% to 73.9%, but raises missed diagnoses from 24 to 380, of which 218 are a lone BP4, and lowers recall of ClinVar's VUS variants from 97.2% to 69.2%.
 Tightening the floor to -2 gives 49.6% recall and 62 missed diagnoses, and to -3 gives 37.0% and 26.
-The table therefore does better than the floors of -2 and -3 on recall and on missed diagnoses alike, and the floor of -1 is a trade of 356 more missed diagnoses for 11.6 points of recall (Figure 5C).
+The table therefore does better than the floors of -2 and -3 on recall and on missed diagnoses alike, and the floor of -1 is a trade of 356 more missed diagnoses for 11.6 points of recall (Figure 2C).
 These three are replays of the recorded criteria and not real runs (Section 2.7).
 
 **An allele-number floor whose source is narrower than its use bought nothing.**
@@ -484,7 +484,7 @@ Removing it raises same-direction agreement by 774 calls and changes no opposite
 
 ### 3.4 What each decision and each source buys, and how much of the agreement is circular
 
-Figure 8 shows, for every ablation of Section 2.6, the change from v37 in agreement in direction, in recall of ClinVar's pathogenic-side variants and in opposite-direction calls.
+Figure 3 shows, for every ablation of Section 2.6, the change from v37 in agreement in direction, in recall of ClinVar's pathogenic-side variants and in opposite-direction calls.
 A setting that lowers agreement with ClinVar is not for that reason wrong, because ClinVar rewards calls and a safeguard withholds some.
 We therefore read each safeguard by what it removes in errors and what it costs in calls, as in Section 3.3.
 
@@ -535,7 +535,7 @@ Neither is a clear improvement by the standard of this paper, and the first cont
 ### 3.5 Discordance of the final classifier with ClinVar 2-star+ classifications
 
 On the benchmark snapshot, v37 reproduces ClinVar's class for 425,869 of 673,660 variants (63.2%, 95% interval 61.7 to 64.6) and its direction for 522,886 (77.6%, 76.8 to 78.4; gene-cluster bootstrap over 10,232 groups of variants, which are 10,231 genes and one group of the 4 records that name none).
-Table 5 divides every record by how the call relates to ClinVar's class (Figure 6A).
+Table 5 divides every record by how the call relates to ClinVar's class (Figure 4A; Supplementary Table S5 holds the matrices and the headline rates).
 
 **Table 5. Every ClinVar 2-star+ record, by how the v37 call relates to ClinVar's class.**
 
@@ -562,13 +562,13 @@ Of the 150,774 records that are not in the same direction as ClinVar, 142,115 (9
 The opposite-direction rate is 0.0073% of records (95% interval 0.0051 to 0.0098% by gene-cluster bootstrap; 0.013% of the records whose ClinVar class is pathogenic-side or benign-side), made up of 24 missed diagnoses (0.026% of ClinVar's 93,812 pathogenic-side variants) and 25 false-pathogenic calls (0.009% of its 284,550 benign-side variants).
 A further 97,017 records (14.4%) are in the right direction at the wrong tier, and 94,583 of them are ClinVar Pathogenic called Likely pathogenic (48,301) or ClinVar Benign called Likely benign (46,282): exact agreement measures the tier boundary more than the direction.
 The agreement is also asymmetric in what it says about each call.
-Of the 62,247 variants called pathogenic-side, 94.2% (58,610; 92.6 to 95.5) are ClinVar pathogenic-side and 5.8% ClinVar VUS, and of the 181,846 called benign-side, 97.4% (177,206; 96.5 to 98.2) are ClinVar benign-side (Figure 6C).
+Of the 62,247 variants called pathogenic-side, 94.2% (58,610; 92.6 to 95.5) are ClinVar pathogenic-side and 5.8% ClinVar VUS, and of the 181,846 called benign-side, 97.4% (177,206; 96.5 to 98.2) are ClinVar benign-side (Figure 4C).
 Recall is much lower than precision on both sides: 62.5% of ClinVar's pathogenic-side variants (58.2 to 66.6) and 62.3% of its benign-side variants (60.6 to 63.9) receive a call in the same direction, against 97.2% of its VUS variants (96.6 to 97.7).
 The wide interval of the first is real: recall is a property of the gene.
-Among the 1,273 genes with at least ten ClinVar pathogenic-side variants, 232 (18%) have none called pathogenic-side and 231 (18%) have 90% or more (Supplementary Table S9).
+Among the 1,273 genes with at least ten ClinVar pathogenic-side variants, 232 (18%) have none called pathogenic-side and 231 (18%) have 90% or more (Appendix Table A7).
 
 **Agreement in direction does not separate cautious from aggressive calling.**
-Calling every variant VUS agrees with ClinVar in direction for 43.8%, and rules that read the inputs of some ACMG criteria but apply no combining rule, gene-level gate or safeguard (Supplementary Table S13) reach v37's agreement and more only by making many more contradictions (Figure 9).
+Calling every variant VUS agrees with ClinVar in direction for 43.8%, and rules that read the inputs of some ACMG criteria but apply no combining rule, gene-level gate or safeguard (Supplementary Table S6) reach v37's agreement and more only by making many more contradictions (Figure S4).
 Calling a variant benign-side when its population-maximum allele frequency is 5e-3 or more gives 61.6% with 159 contradictions, and at 1e-3 (the median published BA1 bar) 64.0% with 813; a higher bar has fewer contradictions and agrees less, 52 contradictions at 59.7% for 1e-2 and 22 at 57.1% for 2e-2, so with the number of contradictions that v37 has the rule agrees for about 18 points less.
 Adding a pathogenic-side call for a stop-gained, frameshift, canonical splice or start-lost variant that is absent from gnomAD or below 1e-4 gives 72.8% with 867, and adding a benign-side call for a quiet variant with SpliceAI below 0.2 gives 84.6%, 6.9 points above v37, with 1,730 contradictions (1,676 missed diagnoses and 54 false-pathogenic calls), 35 times as many as v37.
 Without the frequency rule, the last two rules give 77.9%, 0.3 points above v37, with 950 contradictions (896 missed diagnoses and 54 false-pathogenic calls), 19 times as many, and no bar of the first rule brings the three rules below 950 contradictions.
@@ -583,12 +583,12 @@ Its 4,017 Pathogenic calls are ClinVar pathogenic-side for 3,996 (99.5%) and VUS
 **Review status separates the classes, and the highest tier is one gene.**
 The 3-star records, which are expert-panel classifications, are called pathogenic-side more often than the 2-star records (67.8% against 61.7% of their pathogenic-side variants), and called benign-side much less often (36.6% against 62.8% of their benign-side variants, with 63.3% left as VUS).
 Expert-panel benign-side classifications can rest on disease-specific frequency bars, and the published bars are stricter than ours (Section 3.3), which is a possible reason for the difference and one that this benchmark cannot establish.
-All 23 four-star records (practice-guideline classifications) are variants of CFTR, and v37 calls 22 of them VUS (Figure 7A).
+All 23 four-star records (practice-guideline classifications) are variants of CFTR, and v37 calls 22 of them VUS (Figure 5A).
 
 **Pathogenic-side recall is set by the consequence class.**
-Variants called pathogenic-side are almost all null variants: 54,498 of the 58,610 correct pathogenic-side calls (93.0%) are frameshift, nonsense or canonical splice variants, and 4,109 are missense (Figure 7A, Supplementary Table S5).
+Variants called pathogenic-side are almost all null variants: 54,498 of the 58,610 correct pathogenic-side calls (93.0%) are frameshift, nonsense or canonical splice variants, and 4,109 are missense (Figure 5A, Supplementary Table S5).
 Among ClinVar's pathogenic-side variants, 88.4% of canonical splice variants and 82.6% of frameshift and nonsense variants are called pathogenic-side, against 17.8% of missense variants, 0.3% of in-frame variants and none of the start-loss, stop-loss, splice-region, intronic, synonymous, UTR and other variants.
-Among ClinVar's benign-side variants the picture is the reverse: 79.2% of intronic, 65.7% of synonymous, 62.5% of UTR and 49.8% of missense variants are called benign-side (Figure 7B).
+Among ClinVar's benign-side variants the picture is the reverse: 79.2% of intronic, 65.7% of synonymous, 62.5% of UTR and 49.8% of missense variants are called benign-side (Figure 5B).
 
 **Where the 35,178 pathogenic-side variants called VUS come from.**
 They are not an even sample.
@@ -598,7 +598,7 @@ By consequence, 18,992 (54.0%) are missense variants, 9,129 (26.0%) frameshift o
 The concentration in genes is high: the 10 genes with most of them hold 11.7%, the top 100 hold 40.5% and the top 500 hold 74.7%, of 2,716 genes with any (CFTR 778, APC 712, LDLR 517, PAH 453, GCK 344, ABCA4 298, GLA 264, BRCA1 255, NF1 253 and SACS 246).
 
 **A gap in PVS1 accounts for more than half of the truncating variants that are missed, and an incomplete input explains a small part of it.**
-Of the 52,581 ClinVar pathogenic-side stop-gained and frameshift variants, 47,397 carry a PVS1 criterion at some strength and 5,184, in 625 genes (620 by the symbol of the annotation, which differs from ClinVar's first gene symbol for 55 of the variants), carry none (Supplementary Table S6).
+Of the 52,581 ClinVar pathogenic-side stop-gained and frameshift variants, 47,397 carry a PVS1 criterion at some strength and 5,184, in 625 genes (620 by the symbol of the annotation, which differs from ClinVar's first gene symbol for 55 of the variants), carry none (Supplementary Table S7).
 Those 5,184 are 57% of the 9,129 that are called VUS.
 PVS1 asks three questions in order.
 The validity gate asks whether every ClinGen curation of the gene is weak, the mechanism gate whether the curated mechanism excludes loss of function, and the gene must then be taken to act by loss of function, which the classifier reads from one of three routes: gnomAD constraint (pLI at least 0.9 or LOEUF at most 0.35), a curated loss-of-function mechanism, or a ClinGen curation of Moderate strength or better.
@@ -607,7 +607,7 @@ The validity gate has one leak that changes no call: of the 505 genes whose Clin
 For 4,696 of the 5,184 variants (91%, in 575 genes) none of the three routes is met: the gene tolerates heterozygous loss in gnomAD, has no curated mechanism and has no curation of Moderate strength or better in the file.
 For 463 (in 38 genes) the validity gate withholds PVS1, and for 5 (in 4 genes) the mechanism gate does, and 20 meet a route and are not graded as PVS1 for another reason.
 Absence has the effect here that it had in the first version of the validity gate (v10, Table 1), which blocked PVS1 where a gene had no curation and which v11 replaced with a gate that blocks only on curated-negative evidence: a gene with no curation is not blocked now, but with no other route to loss of function it is not licensed either.
-All 76 variants in genes that gnomAD constrains (RASA1 40, TGFB3 13, LRP2 11, VPS13D 5, SLC12A5 3, DMXL2 2 and PTPN11 2) are held by a gate, 74 by the validity gate and 2 by the mechanism gate.
+All 76 variants in genes that gnomAD constrains (RASA1 40, TGFB3 13, LRP2 11, VPS13D 5, SLC12A5 3, DMXL2 2 and PTPN11 2) are held by a gate, 74 by the validity gate and 2 by the mechanism gate (Appendix Table A8).
 A gate that works on the gene cannot see which disease a variant is pathogenic for.
 The only ClinGen curation of RASA1 in the file is a Disputed one for Noonan syndrome, where ClinVar's records name capillary malformation-arteriovenous malformation for 39 of its 40 variants, and the only curation of LRP2 is "no known disease relationship" with congenital heart disease, where ClinVar's records name Donnai-Barrow syndrome for 10 of its 11.
 The ClinGen guidance on genes with several disorders (ClinGen, 2024), whose per-disorder scaffold is in the classifier and is not active, is the answer to that.
@@ -643,12 +643,12 @@ The benchmark cannot say which is right, and Section 3.7 asks whether ClinVar la
 
 ### 3.6 The 49 opposite-direction calls that remain
 
-The last review round (v26) held 64 opposite-direction calls, and every one of the 49 in v37 is among them, so none of the 49 is new since that table was sent (one run, v31, briefly had 65 opposite-direction calls; Table 6, Figure 2B).
+The last review round (v26) held 64 opposite-direction calls, and every one of the 49 in v37 is among them, so none of the 49 is new since that table was sent (one run, v31, briefly had 65 opposite-direction calls; Table 6, Figure S3B).
 The 15 that were repaired all became VUS and none became the other class, and the reviewer had supported ClinVar's call on 13 of them (of the other two, one was coded neither and one depends on the disorder).
 Each of the 49 had already been in the table of an earlier round (17 since round 3, 2 since round 4 and 30 since round 5), so they are the calls that several rounds of changes left standing.
 
 **Table 6. The 49 opposite-direction calls of v37, by the evidence behind the call and the ruling of the last review round.**
-Rulings are our coding of the reviewer's text (Section 2.4), not categories the reviewer assigned.
+Rulings are our coding of the reviewer's text (Section 2.4), not categories the reviewer assigned, and Supplementary Table S8 lists the 49 calls with their criteria, gnomAD counts and rulings.
 
 <!-- table:residual:begin -->
 | Evidence behind the call | Calls | ClinVar supported | fastVEP supported | Neither | Needs more evidence | Depends on the disorder |
@@ -663,7 +663,7 @@ Rulings are our coding of the reviewer's text (Section 2.4), not categories the 
 
 For 30 of the 49 (61%) the reviewer supported ClinVar's call (13 of the 24 missed diagnoses and 17 of the 25 false-pathogenic calls), for 4 (8%) fastVEP's, for 8 the reviewer's own call was VUS, for 6 more evidence was needed and for 1 the answer depends on the disorder.
 So for 30 of the 49 the reviewer judged ClinVar's call the better, which is not the same as the classifier being wrong in each of them, and for the other 19 the reviewer did not side with ClinVar.
-Of the 30 rulings for ClinVar, 11 follow from a class that the reviewer stated, 9 from the reviewer's statement that ClinVar is correct, and 10 from evidence that the reviewer gave for ClinVar's class without naming one (Supplementary Table S7).
+Of the 30 rulings for ClinVar, 11 follow from a class that the reviewer stated, 9 from the reviewer's statement that ClinVar is correct, and 10 from evidence that the reviewer gave for ClinVar's class without naming one (Appendix Table A4).
 Five of the 49 (10%) are no longer in the 2-star+ set in the October release, where ClinVar records them as having conflicting classifications, against 1.3% of all April variants that left it.
 The 49 fall into five groups, and for most of them the reviewer's remarks name what decides the call, which is mostly evidence that a single-sample VCF does not carry.
 
@@ -697,7 +697,7 @@ A further 8,603 of the April variants have left the set, among them five of the 
 The gnomAD extract the classifier reads covers every April variant, and 107,528 of the new ones; the rule of Section 2.8 drops the other 8,550, which is 7.4% of the new records and 1.1% of the release.
 Most of the new variants were already in ClinVar in April, at a lower review status: 105,920 of the 107,528 (98.5%) have a record in the `variant_summary` of 29 April from which the protein index was built, and for 98,623 (92% of all the new variants) it is a single-submitter record.
 They are variants that reached two stars since, and 9,234 of them already had a pathogenic or likely pathogenic record in April.
-Table 7 gives the final classifier, unchanged, on the April set and on each stratum of the covered release (Supplementary Table S8).
+Table 7 gives the final classifier, unchanged, on the April set and on each stratum of the covered release (Supplementary Table S9; Appendix Table A9 holds the rest of this section).
 
 **Table 7. The final classifier on the April benchmark and on the later ClinVar release, by stratum.**
 A variant is new if it is not in the April set, unchanged if it has the same class in both releases, and has moved within or across a direction if its class changed.
@@ -719,7 +719,7 @@ Across the 772,585 covered records, agreement in direction is 76.6% against 77.6
 On the 662,668 variants whose class did not change the figures are those of April (77.7%, 44 opposite), as they should be.
 On the 107,528 new variants agreement in direction is 70.1%, and recall of pathogenic-side variants is 61.0% (April 62.5%), of VUS 97.3% (97.2%) and of benign-side variants 55.2% (62.3%).
 The new variants are a different mix of ClinVar classes (9% pathogenic-side, 34% VUS and 57% benign-side, against 14%, 44% and 42% in April), and at the April recall of each direction their agreement would be 74.2%, so taking the mix first 3.4 of the 7.5 points are the mix and 4.1 are lower recall, nearly all of it benign-side (the other order gives 4.4 and 3.2, splitting the same 7.5 points).
-The fall on the benign side is mostly a change in composition (Figure 7C).
+The fall on the benign side is mostly a change in composition (Figure 5C).
 New Benign variants are much rarer than the old ones (median population-maximum allele frequency 0.28% against 3.6%, and 31% above 0.5% against 70%), and Benign is the class that BA1 can reach by frequency alone: recall of Benign variants falls from 71.4% to 52.3%, while recall of Likely benign variants, which frequency rarely decides, rises from 51.1% to 55.7%.
 At the April recall of each of nine bands of population-maximum allele frequency, the new Benign variants would have a recall of 54.9%, so the mix of bands explains 86% of the fall (16.5 of 19.1 points), and for Likely benign variants it explains most of the rise (expected 54.9%).
 We made the split into nine bands after a split into six, with one band from 1e-2 up and one from 1e-3 to 1e-2, which explained 70%, had shown where the rest lay, so the 86% describes the fall and does not test it.
@@ -853,7 +853,7 @@ The reference is a selection (two stars and above, SNVs and indels of at most 10
 It also has no negative controls, and its mix of classes (25% pathogenic-side among the defined classes) fixes the precision figures: a different mix would give different precision for the same calls.
 A variant's call is the call on one picked transcript, and other transcripts can differ.
 The classifier evaluates 15 of 28 criteria on a single-sample VCF without phenotype, so its recall of ClinVar's classes has a ceiling that is not a fault of the thresholds.
-The classifier reads the gnomAD exomes only, and PM2 reads absence from them as rarity, including at sites that the exomes do not cover; requiring a record costs 0.22 points of agreement and 2.9 points of pathogenic-side recall (Figure 8A), and PM2 fires on 64% of the variants.
+The classifier reads the gnomAD exomes only, and PM2 reads absence from them as rarity, including at sites that the exomes do not cover; requiring a record costs 0.22 points of agreement and 2.9 points of pathogenic-side recall (Figure 3A), and PM2 fires on 64% of the variants.
 The exchange rates of Section 3.3 are counts of differences between deterministic runs and carry no sampling interval: a rate computed from one to three added errors is as uncertain as a count of that size (the 95% Poisson interval of a count of 2 is 0.2 to 7.2).
 The offline replay of the benign-side point scales was not checked by real runs, and the cutoff and measurement builds are patched builds of the shipped code.
 We made no comparison with another tool, and the bulk outputs of the runs (annotated VCFs of 250 to 285 MB and per-variant tables of about 20 MB, compressed) are not archived with the repository; its scored matrices and provenance are.
@@ -987,7 +987,44 @@ The reviewer's workbooks are not public, and the manuscript paraphrases the revi
 
 ## Figure legends
 
-**Figure 1. Agreement with ClinVar 2-star+ classifications across 37 benchmark runs.**
+**Figure 1. Thresholds that no guideline states trade calls for errors at different rates, and the PM2 bar matters far more under the 2015 combining table than under the point system.**
+The thresholds of Section 3.3, re-measured on the final classifier.
+(A) Five thresholds on the benign side trade correct benign-side calls for missed diagnoses (the pink line is the count of BP1's veto, from 1 to 25 pathogenic missense variants); open markers are swept values and the filled black marker is the shipped one.
+(B) Recall of ClinVar's pathogenic-side variants against the PM2 bar for genes not read as recessive-only, under the SVI point system (shipped) and under the 2015 combining table, and against the bar for genes read as recessive-only under the point system.
+(C) The BS2 carrier bar for genes read as dominant-only: the change in recall of pathogenic-side (red) and benign-side (blue) variants from the shipped bar.
+
+**Figure 2. The points that define the classes move the pathogenic side more than any numeric bar that we swept.**
+(A) For variants with no benign evidence, the ClinVar classes of the variants at each number of pathogenic points; the lines mark Likely pathogenic from 6 points and Pathogenic from 10.
+(B) Real runs with the Likely pathogenic cutoff changed from 4 to 9 points: recall of pathogenic-side variants against the number of ClinVar VUS and benign-side variants called pathogenic-side.
+(C) The benign side under the 2015 table (shipped) and under a point scale with Likely benign from -1, -2 and -3 points, replayed from the recorded criteria and not real runs.
+In B and C a filled black marker is the shipped setting.
+
+**Figure 3. Three evidence sources carry the benign side and one the pathogenic side, most design decisions pay for themselves, and each departure from the sources has a price.**
+What each design decision and each evidence source buys, and what each departure from the sources would change.
+(A) Sixteen settings changed one at a time (switched off, or on for the two opt-in settings): the change from v37 in agreement in direction (percentage points of all records), in recall of pathogenic-side variants, in missed diagnoses and in false-pathogenic calls.
+(B) Nine evidence sources removed one at a time from the annotation directory.
+(C) Eight runs that test a departure from the sources or an adjustment: BP1's veto leaving out the variant's own ClinVar record, BP7's SpliceAI bar and conservation test (alone and together), the ClinGen file with the curations that its export lacked, PVS1 licensed by Orphanet's loss-of-function label (alone and with the ClinGen file), and the own-record veto, the low-penetrance gate and the exception list removed together.
+The BP1 run, the SpliceAI run, the run with both BP7 changes and the run with the three adjustments use the measurement build of Section 2.6.
+
+**Figure 4. Almost all of the discordance of v37 with ClinVar 2-star+ classifications is one side left undecided, and contradictions are rare.**
+(A) The five-tier concordance matrix: counts, and the share of its ClinVar class (the row) that each cell holds; the outlined cells are opposite-direction calls.
+(B) What v37 says of each ClinVar class, as P/LP, VUS and B/LB; 382 records with no call (0.13% of the ClinVar benign-side class) are not drawn.
+(C) What ClinVar says behind each v37 call.
+
+**Figure 5. Recall is set by the consequence class and the review status, and on the new variants it falls mostly on the benign side.**
+(A, B) The share of ClinVar's pathogenic-side and benign-side variants that v37 calls P/LP, VUS and B/LB, by consequence class and by review status; an asterisk marks a row whose bar stops short of 100% because records have no call.
+(C) Recall in direction for each ClinVar class on the April set, on the October variants whose class did not change, and on the new October variants that were not in the April set; whiskers are exact binomial 95% intervals, which treat variants as independent.
+
+---
+
+## Supplementary materials
+
+The supplementary figures show how the classifier was developed and reviewed, and the nine supplementary tables are the tables that summarise the data best; every other table is in the appendix.
+All tables are CSV or TSV files in `manuscript/acmg/data/` of the repository, and each is written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py` or `15_clingen_complete_export.py` from the scored runs.
+
+### Supplementary figures
+
+**Figure S1. Agreement with ClinVar 2-star+ classifications across 37 benchmark runs.**
 (A) Same-direction and exact agreement as a percentage of 673,660 variants.
 Open markers are v1, a matrix reconstructed from the documentation of the run, and v2 and v4 to v6, which were recorded at the time; no raw output of them was kept.
 v1 annotated 627,376 of the records, and its 54.7% of those is 51.0% of all records.
@@ -998,66 +1035,54 @@ The 13 numbered markers are the changes listed under the panels.
 Run v3 was a partial run that was overwritten, v21 and v22 repeat v20, and v24 and v25 were intermediate runs.
 ClinVar's classifications are a reference and not ground truth.
 
-**Figure 2. What the reviewer ruled.**
-(A) The rulings on the rows of the three workbooks the reviewer returned, in rounds 1, 2 and 6, in five categories: ClinVar's call supported, fastVEP's call supported, neither (the reviewer's call is VUS or another class), more evidence needed or dependent on the disorder, and no verdict recorded.
-Rounds 1 and 2 are decoded from cell colours against each workbook's key, and round 6 is our coding of the reviewer's text (Supplementary Table S7).
-(B) The 49 opposite-direction calls of v37, by the evidence behind the call, with the rulings of the last round.
-
-**Figure 3. The 64 recorded changes by class and by the route that first found them.**
-Each cell counts changes in the ledger of Supplementary Table S2.
+**Figure S2. The 64 recorded changes by class and by the route that first found them.**
+Each cell counts changes in the ledger of Supplementary Table S3.
 The column on the right gives the total of each class, and the row beneath the cells the total of each route.
 Classes and routes are our coding of the project's record.
 
-**Figure 4. Thresholds re-measured on the final classifier.**
-(A) Five thresholds on the benign side trade correct benign-side calls for missed diagnoses (the pink line is the count of BP1's veto, from 1 to 25 pathogenic missense variants); open markers are swept values and the filled black marker is the shipped one.
-(B) Recall of ClinVar's pathogenic-side variants against the PM2 bar for genes not read as recessive-only, under the SVI point system (shipped) and under the 2015 combining table, and against the bar for genes read as recessive-only under the point system.
-(C) The BS2 carrier bar for genes read as dominant-only: the change in recall of pathogenic-side (red) and benign-side (blue) variants from the shipped bar.
+**Figure S3. What the reviewer ruled.**
+(A) The rulings on the rows of the three workbooks the reviewer returned, in rounds 1, 2 and 6, in five categories: ClinVar's call supported, fastVEP's call supported, neither (the reviewer's call is VUS or another class), more evidence needed or dependent on the disorder, and no verdict recorded.
+Rounds 1 and 2 are decoded from cell colours against each workbook's key, and round 6 is our coding of the reviewer's text (Appendix Table A4).
+(B) The 49 opposite-direction calls of v37, by the evidence behind the call, with the rulings of the last round.
 
-**Figure 5. The points that define the classes.**
-(A) For variants with no benign evidence, the ClinVar classes of the variants at each number of pathogenic points; the lines mark Likely pathogenic from 6 points and Pathogenic from 10.
-(B) Real runs with the Likely pathogenic cutoff changed from 4 to 9 points: recall of pathogenic-side variants against the number of ClinVar VUS and benign-side variants called pathogenic-side.
-(C) The benign side under the 2015 table (shipped) and under a point scale with Likely benign from -1, -2 and -3 points, replayed from the recorded criteria and not real runs.
-In B and C a filled black marker is the shipped setting.
-
-**Figure 6. The anatomy of the discordance of v37 with ClinVar 2-star+ classifications.**
-(A) The five-tier concordance matrix: counts, and the share of its ClinVar class (the row) that each cell holds; the outlined cells are opposite-direction calls.
-(B) What v37 says of each ClinVar class, as P/LP, VUS and B/LB; 382 records with no call (0.13% of the ClinVar benign-side class) are not drawn.
-(C) What ClinVar says behind each v37 call.
-
-**Figure 7. Discordance by consequence class and review status, and the later release.**
-(A, B) The share of ClinVar's pathogenic-side and benign-side variants that v37 calls P/LP, VUS and B/LB, by consequence class and by review status; an asterisk marks a row whose bar stops short of 100% because records have no call.
-(C) Recall in direction for each ClinVar class on the April set, on the October variants whose class did not change, and on the new October variants that were not in the April set; whiskers are exact binomial 95% intervals, which treat variants as independent.
-
-**Figure 8. What each design decision and each evidence source buys, and what each departure from the sources would change.**
-(A) Sixteen settings changed one at a time (switched off, or on for the two opt-in settings): the change from v37 in agreement in direction (percentage points of all records), in recall of pathogenic-side variants, in missed diagnoses and in false-pathogenic calls.
-(B) Nine evidence sources removed one at a time from the annotation directory.
-(C) Eight runs that test a departure from the sources or an adjustment: BP1's veto leaving out the variant's own ClinVar record, BP7's SpliceAI bar and conservation test (alone and together), the ClinGen file with the curations that its export lacked, PVS1 licensed by Orphanet's loss-of-function label (alone and with the ClinGen file), and the own-record veto, the low-penetrance gate and the exception list removed together.
-The BP1 run, the SpliceAI run, the run with both BP7 changes and the run with the three adjustments use the measurement build of Section 2.6.
-
-**Figure 9. Agreement in direction against opposite-direction calls.**
+**Figure S4. Agreement in direction against opposite-direction calls.**
 Each point is a classifier, on 673,660 variants: the versions v7 to v37 with stored scored matrices (blue, joined in order), the runs of this paper and the earlier runs of the dominant-gene BS2 settings, each v37 with one change (grey), every variant called VUS (the diamond at zero), and three rules with no combining rule, gene-level gate or safeguard at nine frequency bars each, with the second rule alone and the second with the third also given with no frequency rule (the filled markers).
 R1 calls a variant benign-side when its population-maximum allele frequency is at or above the bar (the bars at the two ends of each line are labelled, and the point at 0.001 of the last rule is annotated), R2 adds a pathogenic-side call for a stop-gained, frameshift, canonical splice or start-lost variant that is absent from gnomAD or below 1e-4, and R3 adds a benign-side call for a quiet variant (synonymous, intronic, untranslated, flanking or non-coding) with SpliceAI below 0.2.
 The horizontal axis is on a log scale above 10.
 
----
+### Supplementary tables
 
-## Supplementary materials
+**Supplementary Table S1.** How often each of the 15 computable criteria fires in v37, at which strengths, and on variants of which ClinVar class (`criteria_firing_v37.csv`).
 
-All supplementary tables are CSV or TSV files in `manuscript/acmg/data/` of the repository, and each is written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py` or `15_clingen_complete_export.py` from the scored runs.
+**Supplementary Table S2.** The 37 versions and the runs of this paper.
+For the versions v1 to v37, the agreement, the opposite-direction calls and the recall of each, with the number of variants each committed to, the denominator of each, and the marker of v17 (`trajectory.csv`; v1 is a reconstructed matrix and v2 and v4 to v6 are the figures recorded at the time).
+For the 89 runs made for this paper and the 8 earlier runs of the dominant-gene BS2 settings, the concordance matrix, the firing counts and the settings (`runs_v37_variants.csv`; the run matrix, the matrices of the seven runs on the October release and the provenance files are in `analysis/acmg_benchmark/results/v37_manuscript/`).
 
-**Supplementary Table S1.** The 89 runs made for this paper and the 8 earlier runs of the dominant-gene BS2 settings: concordance matrix, firing counts and settings (`runs_v37_variants.csv`; the run matrix, the matrices of the seven runs on the October release and the provenance are in `analysis/acmg_benchmark/results/v37_manuscript/`), the comparison of the controls of the two measurement builds with v37 (`controls_v37.csv`), the calls that became opposite-direction in the runs that test BP1's veto and BP7 (`hook_new_opposite_v37.csv`), the calls that a stricter count of BP1's veto removes, and the records of the protein index behind them (`bp1_veto_count_resolved_v37.csv`, `bp1_index_counts_v37.csv`), and the binary, commit and annotation time of each run (`provenance_v37.csv`).
+**Supplementary Table S3.** The ledger of 64 changes: run, class, route of discovery and source in the project record (`change_ledger.csv`).
 
-**Supplementary Table S2.** The ledger of 64 changes: run, class, route of discovery and source in the project record (`change_ledger.csv`).
+**Supplementary Table S4.** What each step of each threshold sweep buys and costs (`threshold_steps_v37.csv`), and the median, quartiles and range of the published VCEP bars (`vcep_bars_v37.csv`).
 
-**Supplementary Table S3.** What each step of each threshold sweep buys and costs (`threshold_steps_v37.csv`), and the published VCEP bars (`vcep_bars_v37.csv`, `vcep_audit_v37.csv`, `vcep_audit_pm2_v37.csv`).
+**Supplementary Table S5.** Concordance of v37 with ClinVar 2-star+ classifications: the five-tier and three-tier matrices, what ClinVar says behind each call, the concordance by consequence class and by review status, the 23 four-star records, and the headline rates with their intervals (`confusion_5x5_v37.csv`, `confusion_3x3_v37.csv`, `what_is_behind_each_call_v37.csv`, `by_consequence_v37.csv`, `by_review_status_v37.csv`, `four_star_variants_v37.csv`, `headline_v37.csv`).
 
-**Supplementary Table S4.** The offline replay of the combining rules under alternative schemes and cutoffs, its validation against real runs, and the number of calls that the replay cannot reproduce because the site-level frequency veto holds them at VUS (`combining_rules_replay_v37.csv`, `replay_validation_v37.csv`, `pm2_dependence_v37.csv`, `full_points_false_benign_signatures_v37.csv`, `replay_veto_v37.csv`).
+**Supplementary Table S6.** The rules with no combining rule, gene-level gate or safeguard and what they agree with ClinVar on, at one bar and at nine, beside v37; the second rule against the PVS1 gap; and what each tier of the v37 call is worth, with the rate of opposite-direction calls and its interval (`baselines_v37.csv`, `baselines_curve_v37.csv`, `baselines_r2_vs_v37.csv`, `precision_by_tier_v37.csv`).
 
-**Supplementary Table S5.** Concordance of v37 by consequence class and by review status, with the 23 four-star records (`confusion_5x5_v37.csv`, `confusion_3x3_v37.csv`, `what_is_behind_each_call_v37.csv`, `by_consequence_v37.csv`, `by_review_status_v37.csv`, `four_star_variants_v37.csv`).
+**Supplementary Table S7.** The PVS1 gap and the ClinGen file: truncating variants without PVS1, by gene and by the reason PVS1 is absent (`pvs1_gap_v37.csv`, `pvs1_gap_genes_v37.csv`, `pvs1_gap_reasons_v37.csv`); the 112 rows that complete the ClinGen export of 30 April, 104 of them curations that it lacked (`clingen_missing_curations.csv`, `clingen_missing_summary_v37.csv`); and what the three runs that change an input do to the gap (`pvs1_gap_closure_v37.csv`).
 
-**Supplementary Table S6.** The PVS1 gap: truncating variants without PVS1, by gene and by the reason PVS1 is absent (`pvs1_gap_v37.csv`, `pvs1_gap_genes_v37.csv`, `pvs1_gap_reasons_v37.csv`, `pvs1_gap_constrained_v37.csv`); the 112 rows that complete the ClinGen export of 30 April, 104 of them curations that it lacked (`clingen_missing_curations.csv`, `clingen_missing_summary_v37.csv`); what the three runs that change an input do to the gap (`pvs1_gap_closure_v37.csv`, `pvs1_gap_closure_genes_v37.csv`, `pvs1_gap_closure_new_false_pathogenic_v37.csv`); and the composition of the pathogenic-side variants called VUS (`plp_to_vus_points_v37.csv`, `plp_to_vus_by_consequence_v37.csv`, `plp_to_vus_gene_concentration_v37.csv`, `signatures_offdiagonal_v37.csv`).
+**Supplementary Table S8.** The 49 opposite-direction calls of v37 with their criteria, gnomAD counts and rulings, and the rulings by kind of call (`opposite_direction_v37.csv`, `opposite_direction_by_group_v37.csv`).
 
-**Supplementary Table S7.** The 49 opposite-direction calls of v37 with their criteria, gnomAD counts and rulings (`opposite_direction_v37.csv`, `opposite_direction_by_group_v37.csv`), the rulings of the three returned workbooks (`review_rounds.csv`), the 64 rows of the last round and what became of them (`round6_rows_v37.csv`), and the rulings with our coding of them (`round6_rulings.tsv`, `round6_rules_v37.csv`).
+**Supplementary Table S9.** The later ClinVar release: the strata, recall by class, coverage, the opposite-direction rates and their ratio with its interval, the 18 opposite-direction calls on the new variants, and the seven proposed changes run on the new variants (`temporal_v37.csv`, `temporal_by_class_v37.csv`, `temporal_coverage_v37.csv`, `temporal_opposite_rates_v37.csv`, `temporal_ratio_v37.csv`, `temporal_new_opposite_v37.csv`, `temporal_proposals_v37.csv`).
+
+## Appendix
+
+Further tables, in the order in which the text cites them.
+
+**Appendix Table A1.** The measurement builds and the provenance of every run: the comparison of the controls of the two builds with v37 (`controls_v37.csv`), the calls that became opposite-direction in the runs that test BP1's veto and BP7 (`hook_new_opposite_v37.csv`), the calls that a stricter count of BP1's veto removes and the records of the protein index behind them (`bp1_veto_count_resolved_v37.csv`, `bp1_index_counts_v37.csv`), and the binary, commit and annotation time of each run (`provenance_v37.csv`).
+
+**Appendix Table A2.** The offline replay of the combining rules under alternative schemes and cutoffs, its validation against real runs, and the number of calls that the replay cannot reproduce because the site-level frequency veto holds them at VUS (`combining_rules_replay_v37.csv`, `replay_validation_v37.csv`, `replay_veto_v37.csv`, `pm2_dependence_v37.csv`, `full_points_false_benign_signatures_v37.csv`).
+
+**Appendix Table A3.** The aggregates that the text quotes from the per-variant table and that no other table holds (`facts_v37.csv`).
+
+**Appendix Table A4.** The rulings of the three returned workbooks (`review_rounds.csv`), the 64 rows of the last round and what became of them (`round6_rows_v37.csv`), and the rulings with our coding of them (`round6_rulings.tsv`, `round6_rules_v37.csv`).
 We coded the reviewer's round-6 text by five rules, which a row can satisfy in more than one way; the column `rule` of `round6_rulings.tsv` records the one that decided it.
 (1, class, 29 rows) The text states a class: it is compared with the two calls and coded ClinVar when its direction is ClinVar's, fastVEP when it is fastVEP's, and neither when it is VUS; a pair of classes that includes VUS (one row) was coded by its other member.
 (2, stated, 13 rows) The text says who is right, or that both calls are discordant with the reviewer's: coded as stated.
@@ -1067,14 +1092,12 @@ We coded the reviewer's round-6 text by five rules, which a row can satisfy in m
 Of the 49 rows that are still opposite, 11 of the 30 coded ClinVar come from rule 1, 9 from rule 2 and 10 from rule 5.
 The reviewer's text is not reproduced here.
 
-**Supplementary Table S8.** The later ClinVar release: strata, class-wise recall, coverage, opposite-direction rates, the ratio of the rates with its interval and the expected numbers at the April rates, recall standardised for the allele-frequency mix, the new Benign variants of 2% or more and why BA1 and BS1 did not fire on those that were not called benign-side, agreement in direction standardised for the mix of ClinVar classes, how the new variants stand in the April protein index, the seven proposed changes run on the new variants, the 157 variants that changed direction and what became of the 49 residual calls, and the number of genes that the new variants fall in, with the criteria of their opposite-direction calls (`temporal_v37.csv`, `temporal_by_class_v37.csv`, `temporal_coverage_v37.csv`, `temporal_opposite_rates_v37.csv`, `temporal_ratio_v37.csv`, `temporal_standardised_recall_v37.csv`, `temporal_recall_by_af_band_v37.csv`, `temporal_direction_changes_v37.csv`, `temporal_direction_change_variants_v37.csv`, `temporal_new_opposite_v37.csv`, `april_opposite_in_october_v37.csv`, `temporal_new_composition_v37.csv`, `temporal_new_top_genes_v37.csv`, `temporal_new_genes_v37.csv`, `temporal_high_af_benign_v37.csv`, `temporal_high_af_blockers_v37.csv`, `temporal_agreement_mix_v37.csv`, `temporal_new_in_index_v37.csv`, `temporal_proposals_v37.csv`).
+**Appendix Table A5.** What the extraction of the published VCEP bars did with each criterion entry it read, for BA1, BS1 and PM2 together and for PM2 alone (`vcep_audit_v37.csv`, `vcep_audit_pm2_v37.csv`).
 
-**Supplementary Table S9.** Gene-level concordance of v37 (`gene_level_v37.csv`, `plp_recall_by_gene_v37.csv`) and the headline rates with their intervals (`headline_v37.csv`).
+**Appendix Table A6.** The points scale: the ClinVar classes of the variants at each number of pathogenic points, the posterior probability of pathogenicity that the Bayesian framework assigns to each number of points, and the composition of the pathogenic-side variants called VUS (`points_by_clinvar_v37.csv`, `tavtigian_posterior.csv`, `plp_to_vus_points_v37.csv`, `plp_to_vus_by_consequence_v37.csv`, `plp_to_vus_gene_concentration_v37.csv`, `signatures_offdiagonal_v37.csv`).
 
-**Supplementary Table S10.** The runs v1 to v37: agreement, opposite-direction calls and recall of each, with the number of variants each run committed to, the denominator of each, and the marker of v17 (`trajectory.csv`; v1 is a reconstructed matrix and v2 and v4 to v6 are the figures recorded at the time).
+**Appendix Table A7.** Gene-level concordance of v37 (`gene_level_v37.csv`, `plp_recall_by_gene_v37.csv`).
 
-**Supplementary Table S11.** The ClinVar classes of the variants at each number of pathogenic points, and the posterior probability of pathogenicity that the Bayesian framework assigns to each number of points (`points_by_clinvar_v37.csv`, `tavtigian_posterior.csv`), and the aggregates that the text quotes from the per-variant table (`facts_v37.csv`).
+**Appendix Table A8.** The PVS1 gap in detail: the genes that gnomAD constrains, the genes that gain PVS1 in each of the three runs that change an input, and the false-pathogenic calls that those runs add (`pvs1_gap_constrained_v37.csv`, `pvs1_gap_closure_genes_v37.csv`, `pvs1_gap_closure_new_false_pathogenic_v37.csv`).
 
-**Supplementary Table S12.** How often each of the 15 computable criteria fires in v37, at which strengths, and on variants of which ClinVar class (`criteria_firing_v37.csv`).
-
-**Supplementary Table S13.** The rules with no combining rule, gene-level gate or safeguard and what they agree with ClinVar on, at one bar and at nine, beside v37, the second rule against the PVS1 gap, and what each tier of the v37 call is worth, with the rate of opposite-direction calls and its interval (`baselines_v37.csv`, `baselines_curve_v37.csv`, `baselines_r2_vs_v37.csv`, `precision_by_tier_v37.csv`).
+**Appendix Table A9.** The later ClinVar release in detail: recall by band of allele frequency and standardised for the mix of bands, agreement in direction standardised for the mix of ClinVar classes, the new Benign variants of 2% or more and why BA1 and BS1 did not fire on those that were not called benign-side, the composition of the new variants, their genes and how they stand in the April protein index, the 157 variants that changed direction, and what became of the 49 residual calls (`temporal_recall_by_af_band_v37.csv`, `temporal_standardised_recall_v37.csv`, `temporal_agreement_mix_v37.csv`, `temporal_high_af_benign_v37.csv`, `temporal_high_af_blockers_v37.csv`, `temporal_new_composition_v37.csv`, `temporal_new_top_genes_v37.csv`, `temporal_new_genes_v37.csv`, `temporal_new_in_index_v37.csv`, `temporal_direction_changes_v37.csv`, `temporal_direction_change_variants_v37.csv`, `april_opposite_in_october_v37.csv`).
