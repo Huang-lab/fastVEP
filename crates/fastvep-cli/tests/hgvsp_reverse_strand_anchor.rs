@@ -100,6 +100,7 @@ fn annotate(dir: &Path, strand: char) -> String {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        columns: Default::default(),
     })
     .expect("annotation should succeed");
 

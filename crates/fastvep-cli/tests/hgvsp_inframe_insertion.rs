@@ -72,6 +72,7 @@ fn cli_inframe_insertion_hgvsp_is_normalised_not_a_substitution() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        columns: Default::default(),
     })
     .expect("annotation should succeed");
 

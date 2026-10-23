@@ -53,7 +53,9 @@ enum Commands {
         #[arg(long, default_value = "vcf")]
         output_format: String,
 
-        /// Turn on all common annotation flags
+        /// Turn on VEP's `--everything` set, among the flags fastVEP has:
+        /// `--hgvs --symbol --numbers --canonical --biotype --variant-class`.
+        /// VEP's set has no `--hgvsg` or `--show_ref_allele`, and neither does this.
         #[arg(long)]
         everything: bool,
 
@@ -94,17 +96,52 @@ enum Commands {
         #[arg(long, group = "pick_family")]
         flag_pick_allele_gene: bool,
 
-        /// Include gene symbol in output
+        /// Add `SYMBOL`, `SYMBOL_SOURCE` and `HGNC_ID` to tab output. VEP's
+        /// `--symbol`. The VCF `CSQ` always has them.
         #[arg(long)]
         symbol: bool,
 
-        /// Include HGVS notations
+        /// Add HGVS notations: `HGVSc`, `HGVSp` and `HGVS_OFFSET` as tab columns,
+        /// and their values in the VCF and JSON output. VEP's `--hgvs`.
         #[arg(long)]
         hgvs: bool,
 
-        /// Include canonical transcript flag
+        /// Add `HGVSg` (`chr10:g.10414C>A`) to tab and VCF output, and to
+        /// JSON's `hgvsg`. VEP's `--hgvsg`.
+        ///
+        /// Written as VEP writes it: an insertion or deletion at its most 3'
+        /// position along the genome, and an insertion that repeats the bases
+        /// beside it as a `dup`. That reads the reference, so give `--fasta`;
+        /// without one the description is the plain one, where the VCF put the
+        /// variant. See docs/VEP_DIVERGENCE.md.
+        #[arg(long)]
+        hgvsg: bool,
+
+        /// Add `CANONICAL` (`YES`) to tab output. VEP's `--canonical`. The VCF
+        /// `CSQ` always has it.
         #[arg(long)]
         canonical: bool,
+
+        /// Add `BIOTYPE` to tab output. VEP's `--biotype`. The VCF `CSQ`
+        /// always has it.
+        #[arg(long)]
+        biotype: bool,
+
+        /// Add `EXON` and `INTRON` (`3/10`) to tab output. VEP's `--numbers`.
+        /// The VCF `CSQ` always has them.
+        #[arg(long)]
+        numbers: bool,
+
+        /// Add `VARIANT_CLASS` (`SNV`, `insertion`, `deletion`, ...) to tab and
+        /// VCF output. VEP's `--variant_class`.
+        #[arg(long)]
+        variant_class: bool,
+
+        /// Add `REF_ALLELE` to tab output. VEP's `--show_ref_allele`. The VCF
+        /// `CSQ` always has it. (`--explicit-alleles` puts a `REF` column right
+        /// after `Allele` instead.)
+        #[arg(long)]
+        show_ref_allele: bool,
 
         /// Upstream/downstream distance (bp)
         #[arg(long, default_value_t = 5000)]
@@ -351,7 +388,7 @@ fn main() -> Result<()> {
             gff3,
             fasta,
             output_format,
-            everything: _,
+            everything,
             buffer_size: _,
             pick,
             pick_allele,
@@ -359,9 +396,14 @@ fn main() -> Result<()> {
             flag_pick,
             flag_pick_allele,
             flag_pick_allele_gene,
-            symbol: _,
+            symbol,
             hgvs,
-            canonical: _,
+            hgvsg,
+            canonical,
+            biotype,
+            numbers,
+            variant_class,
+            show_ref_allele,
             distance,
             cache_dir,
             transcript_cache,
@@ -393,7 +435,23 @@ fn main() -> Result<()> {
                     flag_pick_allele,
                     flag_pick_allele_gene,
                 },
-                hgvs,
+                // `--everything` is VEP's set of flags (Config.pm `OPTION_SETS`),
+                // restricted to what fastVEP can write.
+                hgvs: hgvs || everything,
+                columns: pipeline::ColumnFlags {
+                    show_ref_allele,
+                    variant_class,
+                    symbol,
+                    biotype,
+                    canonical,
+                    numbers,
+                    hgvsg,
+                }
+                .union(if everything {
+                    pipeline::ColumnFlags::everything()
+                } else {
+                    pipeline::ColumnFlags::default()
+                }),
                 distance,
                 cache_dir,
                 transcript_cache,

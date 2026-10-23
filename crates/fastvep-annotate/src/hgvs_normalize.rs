@@ -390,6 +390,18 @@ pub struct HgvsAllele {
     /// `end`, which is Ensembl's zero-length interval.
     pub start: u64,
     pub end: u64,
+    /// Where `start` would be had the front of the pair been clipped first, which
+    /// is where the VCF anchors the change (the base every allele shares at the
+    /// front is the anchor) and what `HGVS_OFFSET` is measured from.
+    ///
+    /// It is `start` except on the reverse strand, where the pair is clipped from
+    /// the transcript's end of it, and then only where the two clips overlap: `CTGCAC`
+    /// to `C` deletes `TGCAC` from the front and `CTGCA` from the back, one base
+    /// apart. A site that carries a single ALT is clipped of its anchor by the VCF
+    /// parser, so for it the two are the same; a site with several ALTs is not, and
+    /// without this the same deletion would be reported one base short of the shift
+    /// it was given alone.
+    pub anchor_start: u64,
     /// The clipped pair as the genome reads it.
     pub genomic_ref: fastvep_core::Allele,
     pub genomic_alt: fastvep_core::Allele,
@@ -636,6 +648,11 @@ pub fn hgvs_allele(
         _ => (0, 0),
     };
 
+    let anchor_front = match (genomic_ref, genomic_alt) {
+        (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, false).0,
+        _ => 0,
+    };
+
     let clipped = |bases: &[u8]| -> Allele {
         match &bases[front..bases.len() - back] {
             [] => Allele::Deletion,
@@ -664,6 +681,7 @@ pub fn hgvs_allele(
     };
     HgvsAllele {
         start: start + front as u64,
+        anchor_start: start + anchor_front as u64,
         // Saturating because `end` need not belong to these alleles: a sequence
         // ALT beside a symbolic one in the same record takes its `end` from INFO
         // END, which describes the symbolic allele and can be smaller than the
@@ -818,6 +836,49 @@ pub fn hgvsc_shifted(
     coding_start: Option<u64>,
     coding_end: Option<u64>,
 ) -> Option<String> {
+    hgvsc_shifted_with_shift(
+        seq_provider,
+        chrom,
+        transcript,
+        versioned_tid,
+        var_start,
+        var_end,
+        var_start,
+        genomic_ref,
+        genomic_alt,
+        hgvs_ref,
+        hgvs_alt,
+        coding_start,
+        coding_end,
+    )
+    .map(|(hgvsc, _)| hgvsc)
+}
+
+/// [`hgvsc_shifted`], and how many bases the change travelled 3' to be written
+/// where HGVS asks for it. That distance is VEP's `HGVS_OFFSET` (times the
+/// strand): it is what a reader needs to put the description back where the
+/// caller's VCF had the variant.
+///
+/// `anchor_start` is where that is: [`HgvsAllele::anchor_start`], which is
+/// `var_start` unless a clip from the transcript's end of the pair left the change
+/// a base nearer to where it travels to than the VCF had it.
+// The arguments of `hgvsc_shifted` and the anchor, for the same reason.
+#[allow(clippy::too_many_arguments)]
+pub fn hgvsc_shifted_with_shift(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    transcript: &fastvep_genome::Transcript,
+    versioned_tid: &str,
+    var_start: u64,
+    var_end: u64,
+    anchor_start: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+    hgvs_ref: &fastvep_core::Allele,
+    hgvs_alt: &fastvep_core::Allele,
+    coding_start: Option<u64>,
+    coding_end: Option<u64>,
+) -> Option<(String, u64)> {
     use fastvep_core::{Allele, Strand};
 
     let is_insertion = matches!(
@@ -862,6 +923,13 @@ pub fn hgvsc_shifted(
     let shift = match transcript.strand {
         Strand::Forward => shifted_start.saturating_sub(var_start),
         Strand::Reverse => var_start.saturating_sub(shifted_start),
+    };
+    // What is reported counts from where the VCF anchors the change, which on the
+    // reverse strand can be a base short of where the clip left it; the rotation
+    // above must not, because `hgvs_alt` is the string as the clip left it.
+    let reported = match transcript.strand {
+        Strand::Forward => shifted_start.saturating_sub(anchor_start),
+        Strand::Reverse => anchor_start.saturating_sub(shifted_start),
     };
     // `hgvs_alt` is already in transcript orientation, where the shift always
     // travels 3' whichever way the transcript runs, so the string always rotates
@@ -944,11 +1012,449 @@ pub fn hgvsc_shifted(
                 coding_start,
                 coding_end,
             ) {
-                return Some(dup);
+                return Some((dup, reported));
             }
         }
     }
-    Some(hgvsc)
+    Some((hgvsc, reported))
+}
+
+// ---------------------------------------------------------------------------
+// HGVS g., as Ensembl writes it
+// ---------------------------------------------------------------------------
+//
+// `VariationFeature::hgvs_genomic` (ensembl-variation, release/116), transcribed
+// and then held to a run of VEP 116.3 on every allele of a generated world (see
+// `crates/fastvep-cli/fixtures/vep_tab_world`). What it adds to the plain `g.`
+// description is the 3'-rule over the genome: an insertion or deletion is written at
+// its most 3' position, and an insertion that repeats the bases beside it is a `dup`.
+
+/// `trim_sequences($ref, $alt, $start, $end)` of Ensembl's `Utils::Sequence`, with
+/// its defaults: the left first, then the right, and an allele left empty stays empty.
+fn trim_pair(reference: &str, alternate: &str, start: i64, end: i64) -> (String, String, i64, i64) {
+    let (mut r, mut a) = (reference.as_bytes(), alternate.as_bytes());
+    let (mut start, mut end) = (start, end);
+    while let (Some((x, r_rest)), Some((y, a_rest))) = (r.split_first(), a.split_first()) {
+        if x != y {
+            break;
+        }
+        (r, a) = (r_rest, a_rest);
+        start += 1;
+    }
+    while let (Some((x, r_rest)), Some((y, a_rest))) = (r.split_last(), a.split_last()) {
+        if x != y {
+            break;
+        }
+        (r, a) = (r_rest, a_rest);
+        end -= 1;
+    }
+    (
+        String::from_utf8_lossy(r).into_owned(),
+        String::from_utf8_lossy(a).into_owned(),
+        start,
+        end,
+    )
+}
+
+/// Perl's `substr($s, $offset, $length)` for the cases the HGVS code reaches: a
+/// negative offset counts from the end, and whatever lies outside the string is
+/// simply not there.
+fn perl_substr(s: &[u8], offset: i64, length: Option<i64>) -> &[u8] {
+    let total = s.len() as i64;
+    let first = if offset < 0 { total + offset } else { offset };
+    let last = match length {
+        Some(l) => first + l,
+        None => total,
+    };
+    let (first, last) = (first.clamp(0, total), last.clamp(0, total));
+    if first >= last {
+        &[]
+    } else {
+        &s[first as usize..last as usize]
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NotationKind {
+    Sub,
+    Del,
+    Ins,
+    Dup,
+    Inv,
+    Delins,
+    /// `[n]`, an allele that is a whole multiple of the reference
+    Repeat(usize),
+    /// ref and alt equal after clipping
+    Same,
+}
+
+struct Notation {
+    start: i64,
+    end: i64,
+    reference: String,
+    alt: String,
+    kind: NotationKind,
+}
+
+fn reverse_complement_bases(seq: &str) -> String {
+    seq.bytes()
+        .rev()
+        .map(|b| match b {
+            b'A' => 'T',
+            b'C' => 'G',
+            b'G' => 'C',
+            b'T' => 'A',
+            other => other as char,
+        })
+        .collect()
+}
+
+/// `hgvs_variant_notation` of Ensembl's `Utils::Sequence`: what kind of change the
+/// alt is against the reference bases of `ref_start..=ref_end` (1-based, in
+/// `ref_seq`), displayed at `display_start..=display_end`. `None` when they are the
+/// same bases.
+fn hgvs_variant_notation(
+    alt_allele: &str,
+    ref_seq: &[u8],
+    ref_start: i64,
+    ref_end: i64,
+    display_start: i64,
+    display_end: i64,
+) -> Option<Notation> {
+    let ref_length = (ref_end - ref_start + 1).max(0);
+    let alt: String = alt_allele.chars().filter(|&c| c != '-').collect();
+    let alt_length = alt.len() as i64;
+    let ref_allele =
+        String::from_utf8_lossy(perl_substr(ref_seq, ref_start - 1, Some(ref_length))).into_owned();
+    if ref_allele == alt {
+        return None;
+    }
+    let mut n = Notation {
+        start: display_start,
+        end: display_end,
+        reference: ref_allele.clone(),
+        alt: alt.clone(),
+        kind: NotationKind::Delins,
+    };
+    if alt_length == 0 {
+        n.kind = NotationKind::Del;
+        return Some(n);
+    }
+    if ref_length == alt_length {
+        n.kind = if ref_length == 1 {
+            NotationKind::Sub
+        } else if alt == reverse_complement_bases(&ref_allele) {
+            NotationKind::Inv
+        } else {
+            NotationKind::Delins
+        };
+        return Some(n);
+    }
+    if ref_length == 0 {
+        // An insertion that repeats the bases beside it is a duplication: those after
+        // it are looked at first, then those before it. (VEP reverses that for a feature
+        // on the other strand, which a VCF record never is, and for an insertion that
+        // has been shifted 3' only the bases before it can match anyway.)
+        for direction in [1i64, -1] {
+            let neighbour = if direction == 1 {
+                perl_substr(ref_seq, ref_end, Some(alt_length))
+            } else {
+                perl_substr(ref_seq, ref_end - alt_length, Some(alt_length))
+            };
+            if neighbour == alt.as_bytes() {
+                if direction == 1 {
+                    n.end = display_start + alt_length - 1;
+                } else {
+                    n.start = display_end - alt_length + 1;
+                }
+                n.kind = NotationKind::Dup;
+                return Some(n);
+            }
+        }
+        n.start = display_end;
+        n.end = display_start;
+        n.kind = NotationKind::Ins;
+        return Some(n);
+    }
+    if alt_length % ref_length == 0 {
+        let multiple = (alt_length / ref_length) as usize;
+        if alt == ref_allele.repeat(multiple) {
+            n.kind = if multiple == 2 {
+                NotationKind::Dup
+            } else {
+                NotationKind::Repeat(multiple)
+            };
+            return Some(n);
+        }
+    }
+    Some(n)
+}
+
+/// `_clip_alleles` of `VariationFeature.pm`: a delins whose alleles share bases at
+/// either end is clipped of them, and may turn out to be something else.
+fn clip_alleles(mut n: Notation) -> Notation {
+    let mut preseq = String::new();
+    while let (Some(r), Some(a)) = (n.reference.chars().next(), n.alt.chars().next()) {
+        if r != a {
+            break;
+        }
+        preseq.push(r);
+        n.reference.remove(0);
+        n.alt.remove(0);
+        n.start += 1;
+    }
+    while let (Some(r), Some(a)) = (n.reference.chars().last(), n.alt.chars().last()) {
+        if r != a {
+            break;
+        }
+        n.reference.pop();
+        n.alt.pop();
+        n.end -= 1;
+    }
+    if n.reference.is_empty() {
+        n.reference = "-".into();
+    }
+    if n.alt.is_empty() {
+        n.alt = "-".into();
+    }
+    if n.reference == n.alt {
+        n.kind = NotationKind::Same;
+    } else if n.reference != "-" && n.reference.len() == 1 && n.alt.len() == 1 {
+        n.kind = NotationKind::Sub;
+    } else if n.reference == "-" && !n.alt.is_empty() {
+        let keep = preseq.len().saturating_sub(n.alt.len());
+        if n.alt == preseq[keep..] {
+            n.kind = NotationKind::Dup;
+            n.start -= n.alt.len() as i64;
+        } else {
+            n.kind = NotationKind::Ins;
+            n.start -= 1;
+            n.end = n.start + 1;
+        }
+    } else if !n.reference.is_empty() && n.alt == "-" {
+        n.kind = NotationKind::Del;
+    }
+    n
+}
+
+/// `format_hgvs_string` for a genomic description.
+fn format_hgvs_g(chrom: &str, n: &Notation) -> Option<String> {
+    let numbering = if chrom == "MT" { 'm' } else { 'g' };
+    let coordinates = if n.start == n.end {
+        n.start.to_string()
+    } else {
+        format!("{}_{}", n.start, n.end)
+    };
+    let body = match n.kind {
+        NotationKind::Sub => format!("{}{}>{}", n.start, n.reference, n.alt),
+        NotationKind::Inv if n.reference.len() == 1 => {
+            format!("{}{}>{}", n.start, n.reference, n.alt)
+        }
+        NotationKind::Del => format!("{coordinates}del"),
+        NotationKind::Inv => format!("{coordinates}inv"),
+        NotationKind::Dup => format!("{coordinates}dup"),
+        NotationKind::Delins => format!("{coordinates}delins{}", n.alt),
+        NotationKind::Ins => format!("{coordinates}ins{}", n.alt),
+        NotationKind::Repeat(multiple) => format!("{coordinates}[{multiple}]"),
+        // VEP warns and writes nothing for a type it cannot name
+        NotationKind::Same => return None,
+    };
+    Some(format!("{chrom}:{numbering}.{body}"))
+}
+
+/// The HGVS `g.` description of one allele of a record, as Ensembl VEP writes it.
+///
+/// `start`, `end`, `reference` and `alts` are the record as the VCF parser leaves
+/// it. A lone indel alt is minimised first, as VEP does before it annotates one
+/// (`Parser::minimise_alleles`, the same step the known-variant lookup takes).
+///
+/// The description is read off the reference sequence, not off the VCF's REF: where
+/// they differ Ensembl describes the genome, and when the alt is the genome's own
+/// base it writes nothing: `None`. Where the reference cannot be read (no FASTA, a
+/// contig it lacks) the plain description of [`hgvsg_clipped`] stands in, which is
+/// what every run gave before.
+pub fn hgvsg_vep(
+    seq_provider: &dyn SequenceProvider,
+    chrom: &str,
+    start: u64,
+    end: u64,
+    reference: &fastvep_core::Allele,
+    alts: &[fastvep_core::Allele],
+    alt_index: usize,
+) -> Option<String> {
+    use fastvep_core::Allele;
+    let text = |a: &Allele| -> Option<String> {
+        match a {
+            Allele::Deletion => Some("-".to_string()),
+            Allele::Sequence(bases) => Some(String::from_utf8_lossy(bases).to_ascii_uppercase()),
+            _ => None,
+        }
+    };
+    let mut ref_text = text(reference)?;
+    let (record_start, record_end) = (start, end);
+    let mut alt_texts: Vec<String> = alts.iter().map(|a| text(a).unwrap_or_default()).collect();
+    let (mut start, mut end) = (start as i64, end as i64);
+
+    // a lone indel alt is the minimal pair VEP annotates
+    let length = |s: &str| if s == "-" { 0 } else { s.len() };
+    if let [only] = alt_texts.as_slice() {
+        if length(only) != length(&ref_text) {
+            let bare = |s: &str| {
+                if s == "-" {
+                    String::new()
+                } else {
+                    s.to_string()
+                }
+            };
+            let (r, a, s, e) = trim_pair(&bare(&ref_text), &bare(only), start, end);
+            ref_text = if r.is_empty() { "-".into() } else { r };
+            alt_texts = vec![if a.is_empty() { "-".into() } else { a }];
+            (start, end) = (s, e);
+        }
+    }
+    let original_allele = alt_texts.get(alt_index)?.clone();
+    // Only the alt is looked at, as Ensembl does: a VCF REF of `N` still has a genome
+    // base to describe, and it is the genome's base that the description names.
+    let alt_ok = |s: &str| s.chars().all(|c| matches!(c, 'A' | 'C' | 'G' | 'T' | '-'));
+    if original_allele.is_empty() || !alt_ok(&original_allele) {
+        return None;
+    }
+
+    // `_get_flank_seq`: 100 bases either side, more when an allele is long, to
+    // find where the 3'-rule stops and to look for the bases a dup would copy.
+    let mut add_length = 100i64;
+    for al in std::iter::once(&ref_text).chain(alt_texts.iter()) {
+        if al.len() as i64 > 50 {
+            add_length = al.len() as i64 + 50;
+        }
+    }
+    let mut seq_start = start - add_length;
+    let seq_end = end + add_length;
+    let mut ref_start = add_length;
+    let mut ref_end = add_length + end - start;
+    if seq_start < 0 {
+        ref_start += seq_start;
+        ref_end += seq_start;
+        seq_start = 0;
+    }
+    let Ok(ref_seq) =
+        seq_provider.fetch_sequence(chrom, (seq_start + 1) as u64, seq_end.max(1) as u64)
+    else {
+        return Some(hgvsg_clipped(
+            chrom,
+            record_start,
+            record_end,
+            reference,
+            &alts[alt_index],
+        ));
+    };
+
+    let multi = alt_texts.len() > 1;
+    let (mut chr_start, mut chr_end) = (start, end);
+    let mut allele = original_allele;
+    let mut ref_allele = ref_text.clone();
+    let (mut r_start, mut r_end) = (ref_start, ref_end);
+    if multi {
+        let bare = |s: &str| {
+            if s == "-" {
+                String::new()
+            } else {
+                s.to_string()
+            }
+        };
+        let (r, a, s, e) = trim_pair(&bare(&ref_text), &bare(&allele), chr_start, chr_end);
+        r_start = ref_start + (s - chr_start);
+        r_end = ref_end + (e - chr_end);
+        (chr_start, chr_end) = (s, e);
+        allele = if a.is_empty() { "-".into() } else { a };
+        ref_allele = if r.is_empty() { "-".into() } else { r };
+    }
+
+    // only insertions and deletions are 3'-shifted
+    let is_deletion = allele == "-" && ref_allele != "-";
+    let is_insertion = ref_allele == "-" && allele != "-";
+    let (offset, check_allele) = if is_deletion || is_insertion {
+        let mut seq_to_check = if is_deletion {
+            ref_allele.clone().into_bytes()
+        } else {
+            allele.clone().into_bytes()
+        };
+        let downstream = perl_substr(&ref_seq, r_end, None);
+        // `get_3prime_seq_offset`
+        let mut offset = 0i64;
+        for n in 0..=downstream.len() {
+            let next_ref = downstream.get(n).copied();
+            if seq_to_check.first().copied() != next_ref {
+                break;
+            }
+            offset += 1;
+            seq_to_check.remove(0);
+            seq_to_check.push(next_ref.expect("equal to a base"));
+        }
+        let shifted = if is_insertion {
+            String::from_utf8_lossy(&seq_to_check).into_owned()
+        } else {
+            "-".to_string()
+        };
+        (offset, shifted)
+    } else {
+        (0, allele.clone())
+    };
+
+    let mut notation = hgvs_variant_notation(
+        &check_allele,
+        &ref_seq,
+        r_start + offset,
+        r_end + offset,
+        chr_start + offset,
+        chr_end + offset,
+    )?;
+    if notation.kind == NotationKind::Delins {
+        notation = clip_alleles(notation);
+    }
+    format_hgvs_g(chrom, &notation)
+}
+
+/// The `g.` description of each alt allele of a record, which belongs to the
+/// variant and is the same on every transcript row, so it is made once per record
+/// and not once per row.
+///
+/// Ensembl's when there is a reference to read ([`hgvsg_vep`]), the plain
+/// description of [`hgvsg_clipped`] when there is not.
+///
+/// An allele that is not plain bases has none, with or without a reference: `*` (a
+/// deletion that began upstream), a symbolic allele, a base that is not one of
+/// `ACGT`. Ensembl skips those (`next if $allele =~ m/[^ACGT\-]/ig` in
+/// `hgvs_genomic`), and the plain description had nothing to say for them but
+/// `chr10:g.1400?`, which is not HGVS.
+pub fn hgvsg_per_alt(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    start: u64,
+    end: u64,
+    reference: &fastvep_core::Allele,
+    alts: &[fastvep_core::Allele],
+) -> Vec<Option<String>> {
+    use fastvep_core::Allele;
+    let describable = |alt: &Allele| match alt {
+        Allele::Deletion => true,
+        Allele::Sequence(bases) => bases
+            .iter()
+            .all(|b| matches!(b.to_ascii_uppercase(), b'A' | b'C' | b'G' | b'T')),
+        Allele::Missing | Allele::Symbolic(_) => false,
+    };
+    alts.iter()
+        .enumerate()
+        .map(|(i, alt)| {
+            if !describable(alt) {
+                return None;
+            }
+            match seq_provider {
+                Some(sp) => hgvsg_vep(sp, chrom, start, end, reference, alts, i),
+                None => Some(hgvsg_clipped(chrom, start, end, reference, alt)),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1631,5 +2137,200 @@ mod tests {
         assert_eq!(hv.genomic_ref, Allele::Sequence(b"AAG".to_vec()));
         assert_eq!(hv.hgvs_ref, Allele::Sequence(b"CTT".to_vec()));
         assert_eq!(hv.hgvs_alt, Allele::Deletion);
+    }
+
+    /// A multi-allelic record's allele that trims to a substitution is written as the
+    /// substitution it is.
+    ///
+    /// VEP 116.3 writes `g.12delinsAA` for the `TAA` allele of `TGA>TG,TAA`: its
+    /// `hgvs_genomic` trims the reference span to the one base that differs and then
+    /// writes the *untrimmed* alt over it, which is a different change (it inserts a base
+    /// the variant does not have). `g.12G>A` is the change, and what is written here.
+    /// `docs/VEP_DIVERGENCE.md` lists it, and the generated worlds leave such records out.
+    #[test]
+    fn an_allele_that_trims_to_a_substitution_is_a_substitution() {
+        let reference = StrRef("CCCCCCCCCCTGACCCCCCCCCC");
+        // as the VCF parser leaves it: the shared first base taken off, so GA > G, AA
+        let alts = [
+            fastvep_core::Allele::Sequence(b"G".to_vec()),
+            fastvep_core::Allele::Sequence(b"AA".to_vec()),
+        ];
+        let got = hgvsg_per_alt(
+            Some(&reference),
+            "chr1",
+            12,
+            13,
+            &fastvep_core::Allele::Sequence(b"GA".to_vec()),
+            &alts,
+        );
+        assert_eq!(
+            got,
+            vec![
+                Some("chr1:g.13del".to_string()),
+                Some("chr1:g.12G>A".to_string())
+            ]
+        );
+    }
+
+    /// The description is read off the genome, not off the VCF's REF: where they differ
+    /// Ensembl describes the genome, and when the alt is the genome's own base it
+    /// writes nothing.
+    #[test]
+    fn hgvsg_describes_the_genome_and_writes_nothing_for_its_own_base() {
+        let reference = StrRef("ACGTACGTACGTACGT");
+        let alt_t = [fastvep_core::Allele::Sequence(b"T".to_vec())];
+        // position 3 is G in the genome whatever the VCF says its REF is
+        let got = hgvsg_per_alt(
+            Some(&reference),
+            "chr1",
+            3,
+            3,
+            &fastvep_core::Allele::Sequence(b"A".to_vec()),
+            &alt_t,
+        );
+        assert_eq!(got, vec![Some("chr1:g.3G>T".to_string())]);
+        // position 4 is T already
+        let got = hgvsg_per_alt(
+            Some(&reference),
+            "chr1",
+            4,
+            4,
+            &fastvep_core::Allele::Sequence(b"A".to_vec()),
+            &alt_t,
+        );
+        assert_eq!(got, vec![None]);
+        // and a contig named MT is numbered `m.`, as VEP numbers it
+        let got = hgvsg_per_alt(
+            Some(&reference),
+            "MT",
+            3,
+            3,
+            &fastvep_core::Allele::Sequence(b"G".to_vec()),
+            &alt_t,
+        );
+        assert_eq!(got, vec![Some("MT:m.3G>T".to_string())]);
+    }
+
+    /// Without a reference the description is the plain one, where the VCF put the
+    /// variant: what every run gave before the genome was read.
+    #[test]
+    fn hgvsg_without_a_reference_is_the_plain_description() {
+        let alts = [fastvep_core::Allele::Sequence(b"T".to_vec())];
+        let got = hgvsg_per_alt(
+            None,
+            "chr1",
+            3,
+            3,
+            &fastvep_core::Allele::Sequence(b"A".to_vec()),
+            &alts,
+        );
+        assert_eq!(got, vec![Some("chr1:g.3A>T".to_string())]);
+    }
+
+    /// `HGVS_OFFSET` of a deletion counts from where the VCF anchors it, whichever
+    /// way the pair is clipped.
+    ///
+    /// On the reverse strand the pair is clipped from the transcript's end, so
+    /// `CTGCAC` to `C` is the deletion of `CTGCA`, not `TGCAC`, and a record that
+    /// carries a second ALT (which keeps the anchor `C`, where a lone ALT has had it
+    /// taken off) used to report the shift one base short of the one its lone twin
+    /// got: 2 against 3, for the same description. Found by running both through
+    /// Ensembl VEP 116.3, which writes `-` for the multi-allelic one and 3 for the
+    /// lone one.
+    #[test]
+    fn hgvs_offset_counts_from_where_the_vcf_anchors_the_change() {
+        use fastvep_core::Allele;
+        // 36..=43 is `CACTGCAC`, the base before it a `T` that ends the repeat.
+        let mut genome = vec![b'A'; 100];
+        genome[34] = b'T';
+        genome[35..43].copy_from_slice(b"CACTGCAC");
+        let genome = Box::leak(String::from_utf8(genome).unwrap().into_boxed_str());
+        let reference = StrRef(genome);
+        let tr = transcript(Strand::Reverse);
+        let seq = |s: &[u8]| Allele::Sequence(s.to_vec());
+
+        let shift_of = |start: u64, end: u64, r: Allele, a: Allele| {
+            let hv = hgvs_allele(Strand::Reverse, start, end, &r, &a, None);
+            let got = hgvsc_shifted_with_shift(
+                Some(&reference as &dyn SequenceProvider),
+                "1",
+                &tr,
+                "T.1",
+                hv.start,
+                hv.end,
+                hv.anchor_start,
+                &hv.genomic_ref,
+                &hv.genomic_alt,
+                &hv.hgvs_ref,
+                &hv.hgvs_alt,
+                Some(1),
+                Some(40),
+            )
+            .expect("a description");
+            (hv.start, hv.anchor_start, got)
+        };
+
+        // the lone ALT: the parser has taken the anchor off, `TGCAC` at 39..=43
+        let (start, anchor, (lone_hgvs, lone_shift)) =
+            shift_of(39, 43, seq(b"TGCAC"), Allele::Deletion);
+        assert_eq!((start, anchor, lone_shift), (39, 39, 3));
+        // a record with several ALTs: `CTGCAC` to `C` at 38..=43, clipped from the back
+        let (start, anchor, (multi_hgvs, multi_shift)) =
+            shift_of(38, 43, seq(b"CTGCAC"), seq(b"C"));
+        assert_eq!((start, anchor), (38, 39), "clipped at 38, anchored at 39");
+        assert_eq!(multi_hgvs, lone_hgvs, "the same description");
+        assert_eq!(multi_shift, lone_shift, "and the same distance travelled");
+    }
+
+    /// An allele that is not plain bases has no HGVSg, as in Ensembl, whether or not
+    /// there is a reference to read: the plain description would have been `g.3?`.
+    /// The alleles beside it keep theirs.
+    ///
+    /// Ensembl 116.3 on the HG002 sample writes no row at all for a `*` allele, and
+    /// `HGVSg` for the allele beside it as usual (`6:31318928 A>T,*`).
+    #[test]
+    fn an_allele_that_is_not_plain_bases_has_no_hgvsg() {
+        use fastvep_core::Allele;
+        let reference = Allele::Sequence(b"A".to_vec());
+        let alts = [
+            Allele::Sequence(b"T".to_vec()),
+            Allele::Missing,
+            Allele::Symbolic("<DEL>".into()),
+            Allele::Sequence(b"N".to_vec()),
+        ];
+        let genome = StrRef("CCAGG");
+        // a VCF REF of `N` is not a reason to say nothing: Ensembl names the genome's base
+        // (`g.1600C>A` for the REF `N` of a record in which the genome has a `C`), and a
+        // run with no reference can only say what the VCF said
+        let n_ref = Allele::Sequence(b"N".to_vec());
+        let only_t = [Allele::Sequence(b"T".to_vec())];
+        assert_eq!(
+            hgvsg_per_alt(
+                Some(&genome as &dyn SequenceProvider),
+                "chr1",
+                3,
+                3,
+                &n_ref,
+                &only_t
+            ),
+            vec![Some("chr1:g.3A>T".to_string())]
+        );
+        assert_eq!(
+            hgvsg_per_alt(None, "chr1", 3, 3, &n_ref, &only_t),
+            vec![Some("chr1:g.3N>T".to_string())]
+        );
+        for provider in [None, Some(&genome as &dyn SequenceProvider)] {
+            let got = hgvsg_per_alt(provider, "chr1", 3, 3, &reference, &alts);
+            assert_eq!(
+                got,
+                vec![Some("chr1:g.3A>T".to_string()), None, None, None],
+                "{}",
+                if provider.is_some() {
+                    "with a reference"
+                } else {
+                    "without one"
+                }
+            );
+        }
     }
 }

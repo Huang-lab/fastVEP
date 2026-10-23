@@ -81,6 +81,7 @@ fn config(input: &Path, out: &Path) -> AnnotateConfig {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        columns: Default::default(),
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
-use fastvep_core::{Allele, Consequence, Impact};
+use fastvep_core::{so_variation_class, Allele, Consequence, Impact};
 use serde_json::Value;
 use std::fmt::Write as FmtWrite;
 
@@ -93,6 +93,7 @@ enum CsqField {
     Pubmed,
     Source,
     HgvsOffset,
+    VariantClass,
     Acmg,
     AcmgCriteria,
     Unknown,
@@ -146,6 +147,7 @@ impl CsqField {
             "PUBMED" => Self::Pubmed,
             "SOURCE" => Self::Source,
             "HGVS_OFFSET" => Self::HgvsOffset,
+            "VARIANT_CLASS" => Self::VariantClass,
             "ACMG" => Self::Acmg,
             "ACMG_CRITERIA" => Self::AcmgCriteria,
             _ => Self::Unknown,
@@ -226,7 +228,15 @@ fn format_csq_entry_into(
                     escape_csq_str(ev, buf);
                 }
             }
-            CsqField::RefAllele => escape_csq_str(&vf.ref_allele.to_string(), buf),
+            // VEP's VCF writer blanks a `-` in every field but Allele
+            // (`output_hash_to_vcf_info_chunk`), so an insertion has no reference
+            // allele here, where the tab file writes `-`.
+            CsqField::RefAllele => {
+                let reference = vf.ref_allele.to_string();
+                if reference != "-" {
+                    escape_csq_str(&reference, buf);
+                }
+            }
             CsqField::UploadedAllele => {
                 if let Some(ref vcf) = vf.vcf_fields {
                     escape_csq_str(&vcf.ref_allele, buf);
@@ -350,6 +360,12 @@ fn format_csq_entry_into(
             CsqField::HgvsOffset => {
                 if let Some(o) = aa.hgvs_offset {
                     let _ = write!(buf, "{}", o);
+                }
+            }
+            CsqField::VariantClass => {
+                // a structural variant's class comes from the parser in VEP
+                if !vf.variant_type.is_structural() {
+                    buf.push_str(so_variation_class(&vf.allele_string));
                 }
             }
             CsqField::Acmg => {
@@ -602,11 +618,29 @@ pub const DEFAULT_CSQ_FIELDS: &[&str] = &[
 /// tells a reader nothing about whether a pick was even requested. VEP adds
 /// the column only under `--flag_pick*` too, and puts it in this position.
 pub fn csq_fields_with_pick() -> Vec<&'static str> {
-    let mut fields = Vec::with_capacity(DEFAULT_CSQ_FIELDS.len() + 1);
+    csq_fields(true, ColumnFlags::default())
+}
+
+/// The CSQ field list of a run: [`DEFAULT_CSQ_FIELDS`], plus what VEP writes only
+/// on request. `PICK` goes after `FLAGS` for a flagging run (see above), then
+/// `VARIANT_CLASS` for `--variant-class`; `HGVSg` goes after `HGVS_OFFSET` for
+/// `--hgvsg`. That is VEP's relative order, and with neither flag the list is
+/// the 49 fields every reader of the CSQ already parses.
+pub fn csq_fields(pick: bool, flags: ColumnFlags) -> Vec<&'static str> {
+    let mut fields = Vec::with_capacity(DEFAULT_CSQ_FIELDS.len() + 3);
     for &name in DEFAULT_CSQ_FIELDS {
         fields.push(name);
-        if name == "FLAGS" {
-            fields.push("PICK");
+        match name {
+            "FLAGS" => {
+                if pick {
+                    fields.push("PICK");
+                }
+                if flags.variant_class {
+                    fields.push("VARIANT_CLASS");
+                }
+            }
+            "HGVS_OFFSET" if flags.hgvsg => fields.push("HGVSg"),
+            _ => {}
         }
     }
     fields
@@ -2092,6 +2126,282 @@ fn uploaded_allele_for_annotation(vf: &VariationFeature, allele: &Allele) -> Str
         .map_or_else(|| allele.to_string(), str::to_string)
 }
 
+/// The optional columns of VEP's tab output, by the VEP flag that asks for each.
+///
+/// VEP adds a tab column only when its flag is given, and orders the added
+/// columns by the `FLAG_FIELDS` table of `Constants.pm` (ensembl-vep
+/// release/115), not by the order of the flags on the command line.
+/// [`ColumnFlags::columns`] does the same. `--hgvs` is not here: the run
+/// already carries it for the HGVS values themselves.
+///
+/// A run without any of these has the 17 columns the tab output always had.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ColumnFlags {
+    /// `--show-ref-allele`: `REF_ALLELE`.
+    pub show_ref_allele: bool,
+    /// `--variant-class`: `VARIANT_CLASS`.
+    pub variant_class: bool,
+    /// `--symbol`: `SYMBOL`, `SYMBOL_SOURCE`, `HGNC_ID`.
+    pub symbol: bool,
+    /// `--biotype`: `BIOTYPE`.
+    pub biotype: bool,
+    /// `--canonical`: `CANONICAL`.
+    pub canonical: bool,
+    /// `--numbers`: `EXON`, `INTRON`.
+    pub numbers: bool,
+    /// `--hgvsg`: `HGVSg`.
+    pub hgvsg: bool,
+}
+
+impl ColumnFlags {
+    /// What `--everything` turns on, among the columns fastVEP writes: VEP's set
+    /// (`OPTION_SETS` in `Config.pm`) has `--symbol`, `--numbers`, `--canonical`,
+    /// `--biotype` and `--variant_class` (and `--hgvs`, which the caller adds)
+    /// but neither `--hgvsg` nor `--show_ref_allele`.
+    pub fn everything() -> Self {
+        Self {
+            variant_class: true,
+            symbol: true,
+            biotype: true,
+            canonical: true,
+            numbers: true,
+            ..Self::default()
+        }
+    }
+
+    /// Every flag set in either.
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            show_ref_allele: self.show_ref_allele || other.show_ref_allele,
+            variant_class: self.variant_class || other.variant_class,
+            symbol: self.symbol || other.symbol,
+            biotype: self.biotype || other.biotype,
+            canonical: self.canonical || other.canonical,
+            numbers: self.numbers || other.numbers,
+            hgvsg: self.hgvsg || other.hgvsg,
+        }
+    }
+
+    /// The columns to write, in VEP's order. `hgvs` says whether the run has
+    /// `--hgvs`, which adds `HGVSc`, `HGVSp` and `HGVS_OFFSET`.
+    pub fn columns(self, hgvs: bool) -> Vec<OptionalColumn> {
+        let mut columns = Vec::new();
+        if self.show_ref_allele {
+            columns.push(OptionalColumn::RefAllele);
+        }
+        if self.variant_class {
+            columns.push(OptionalColumn::VariantClass);
+        }
+        if self.symbol {
+            columns.extend([
+                OptionalColumn::Symbol,
+                OptionalColumn::SymbolSource,
+                OptionalColumn::HgncId,
+            ]);
+        }
+        if self.biotype {
+            columns.push(OptionalColumn::Biotype);
+        }
+        if self.canonical {
+            columns.push(OptionalColumn::Canonical);
+        }
+        if self.numbers {
+            columns.extend([OptionalColumn::Exon, OptionalColumn::Intron]);
+        }
+        if hgvs {
+            columns.extend([
+                OptionalColumn::Hgvsc,
+                OptionalColumn::Hgvsp,
+                OptionalColumn::HgvsOffset,
+            ]);
+        }
+        if self.hgvsg {
+            columns.push(OptionalColumn::Hgvsg);
+        }
+        columns
+    }
+
+    /// Whether any column is asked for.
+    pub fn any(self) -> bool {
+        self != Self::default()
+    }
+}
+
+/// One of VEP's optional columns. The tab writer and the CSQ writer give each the
+/// same value; `tab_columns_vep_flags.rs` holds one against the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionalColumn {
+    RefAllele,
+    VariantClass,
+    Symbol,
+    SymbolSource,
+    HgncId,
+    Biotype,
+    Canonical,
+    Exon,
+    Intron,
+    Hgvsc,
+    Hgvsp,
+    HgvsOffset,
+    Hgvsg,
+}
+
+impl OptionalColumn {
+    /// The header, which is VEP's name for the column.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::RefAllele => "REF_ALLELE",
+            Self::VariantClass => "VARIANT_CLASS",
+            Self::Symbol => "SYMBOL",
+            Self::SymbolSource => "SYMBOL_SOURCE",
+            Self::HgncId => "HGNC_ID",
+            Self::Biotype => "BIOTYPE",
+            Self::Canonical => "CANONICAL",
+            Self::Exon => "EXON",
+            Self::Intron => "INTRON",
+            Self::Hgvsc => "HGVSc",
+            Self::Hgvsp => "HGVSp",
+            Self::HgvsOffset => "HGVS_OFFSET",
+            Self::Hgvsg => "HGVSg",
+        }
+    }
+
+    /// The cell of a transcript row. `-` for a value the row does not have, and
+    /// the same text the CSQ writer gives the field.
+    fn cell(
+        self,
+        vf: &VariationFeature,
+        tv: &TranscriptVariation,
+        aa: &AlleleAnnotation,
+    ) -> String {
+        fn or_dash(v: Option<&str>) -> String {
+            v.filter(|s| !s.is_empty()).unwrap_or("-").to_string()
+        }
+        fn fraction(v: Option<(u32, u32)>) -> String {
+            v.map_or_else(|| "-".to_string(), |(n, total)| format!("{n}/{total}"))
+        }
+        match self {
+            Self::RefAllele | Self::VariantClass | Self::Hgvsg => self.variant_cell(vf, Some(aa)),
+            Self::Symbol => or_dash(tv.gene_symbol.as_deref()),
+            Self::SymbolSource => or_dash(tv.symbol_source.as_deref()),
+            Self::HgncId => or_dash(tv.hgnc_id.as_deref()),
+            Self::Biotype => or_dash(Some(&tv.biotype)),
+            Self::Canonical => if tv.canonical { "YES" } else { "-" }.to_string(),
+            Self::Exon => fraction(aa.exon),
+            Self::Intron => fraction(aa.intron),
+            Self::Hgvsc => or_dash(aa.hgvsc.as_deref()),
+            // VEP encodes `=` as `%3D` in the tab file as well as in the VCF
+            // (`OutputFactory`, "URI encode =", unless --no_escape)
+            Self::Hgvsp => or_dash(
+                aa.hgvsp
+                    .as_deref()
+                    .map(|h| h.replace('=', "%3D"))
+                    .as_deref(),
+            ),
+            Self::HgvsOffset => aa
+                .hgvs_offset
+                .map_or_else(|| "-".to_string(), |o| o.to_string()),
+        }
+    }
+
+    /// The cell of a row that has no allele annotation at all (the row written for
+    /// a variant with no transcript row): the variant's own values, `-` for the
+    /// rest. A row that does have one passes it, for `HGVSg`.
+    fn variant_cell(self, vf: &VariationFeature, aa: Option<&AlleleAnnotation>) -> String {
+        match self {
+            Self::RefAllele => vf.ref_allele.to_string(),
+            // a structural variant's class comes from the parser in VEP
+            Self::VariantClass if vf.variant_type.is_structural() => "-".to_string(),
+            Self::VariantClass => so_variation_class(&vf.allele_string).to_string(),
+            Self::Hgvsg => aa
+                .and_then(|aa| aa.hgvsg.as_deref())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("-")
+                .to_string(),
+            _ => "-".to_string(),
+        }
+    }
+}
+
+/// The first 17 columns of the tab output, whatever else a run adds: VEP's 13
+/// base columns (`DEFAULT_OUTPUT_COLS` in `Constants.pm`) and the four every
+/// fastVEP tab file has always had after them. The header is written from this
+/// list, and the row writer's 17 cells are held to it by a test.
+pub const TAB_BASE_COLUMNS: [&str; 17] = [
+    "Uploaded_variation",
+    "Location",
+    "Allele",
+    "Gene",
+    "Feature",
+    "Feature_type",
+    "Consequence",
+    "cDNA_position",
+    "CDS_position",
+    "Protein_position",
+    "Amino_acids",
+    "Codons",
+    "Existing_variation",
+    "IMPACT",
+    "DISTANCE",
+    "STRAND",
+    "FLAGS",
+];
+
+/// How many of [`TAB_BASE_COLUMNS`] come before `IMPACT`: VEP's
+/// `DEFAULT_OUTPUT_COLS`. `FLAG_FIELDS` orders `REF_ALLELE` between them and
+/// `IMPACT`, and `PICK` straight after `FLAGS`.
+const COLUMNS_BEFORE_IMPACT: usize = 13;
+
+/// The header line of the tab file, `#` included, for a run with these columns.
+///
+/// The row writer ([`format_tab_line_with`]) writes its cells in this order, and
+/// a test holds the two to each other for every combination of options: the order
+/// is VEP's `FLAG_FIELDS` (`Constants.pm`, release/116), with the columns fastVEP
+/// adds on its own (`REF` after `Allele`, the supplementary sources, `QC_CLASS`)
+/// where it has always put them.
+///
+/// `--sa-only` writes no transcript columns, so it has none of VEP's.
+pub fn tab_header(
+    sa_only: bool,
+    explicit_ref: bool,
+    optional: &[OptionalColumn],
+    pick_column: bool,
+    supplementary: &[&str],
+    qc_class: bool,
+) -> String {
+    let mut names: Vec<&str> = Vec::new();
+    if sa_only {
+        names.extend(&TAB_BASE_COLUMNS[..3]);
+        if explicit_ref {
+            names.push("REF");
+        }
+    } else {
+        names.extend(&TAB_BASE_COLUMNS[..3]);
+        if explicit_ref {
+            names.push("REF");
+        }
+        names.extend(&TAB_BASE_COLUMNS[3..COLUMNS_BEFORE_IMPACT]);
+        let mut optional = optional;
+        if let [OptionalColumn::RefAllele, rest @ ..] = optional {
+            names.push(OptionalColumn::RefAllele.name());
+            optional = rest;
+        }
+        names.extend(&TAB_BASE_COLUMNS[COLUMNS_BEFORE_IMPACT..]);
+        if pick_column {
+            names.push("PICK");
+        }
+        names.extend(optional.iter().map(|c| c.name()));
+    }
+    names.extend(supplementary);
+    if sa_only && pick_column {
+        names.push("PICK");
+    }
+    if qc_class {
+        names.push("QC_CLASS");
+    }
+    format!("#{}", names.join("\t"))
+}
+
 /// Optional knobs that extend the base tab schema. All fields are
 /// no-op by default so the hot path is unchanged unless a caller opts in.
 #[derive(Default, Clone, Copy)]
@@ -2106,10 +2416,15 @@ pub struct TabOptions<'a> {
     /// Append a `QC_CLASS` column carrying the supplied class name. When
     /// `None`, the column is omitted.
     pub qc_class: Option<&'a str>,
-    /// Append a `PICK` column carrying `1` on the flagged (transcript, allele)
-    /// pairs and `-` on the rest. Set by `--flag-pick*`; omitted otherwise,
-    /// for the reason in [`csq_fields_with_pick`].
+    /// Write a `PICK` column carrying `1` on the flagged (transcript, allele)
+    /// pairs and `-` on the rest, straight after `FLAGS` as VEP does. Set by
+    /// `--flag-pick*`; omitted otherwise, for the reason in
+    /// [`csq_fields_with_pick`].
     pub pick_column: bool,
+    /// VEP's optional columns in `FLAG_FIELDS` order ([`ColumnFlags::columns`]):
+    /// `REF_ALLELE` before `IMPACT`, the rest after `FLAGS` (and `PICK`), and
+    /// before the columns of loaded supplementary sources.
+    pub optional: &'a [OptionalColumn],
 }
 
 /// `1` when flagged, `-` when not, so the column is never blank - every other
@@ -2226,7 +2541,7 @@ pub fn format_tab_line_with(
         return lines;
     }
 
-    let row_capacity = 17 + ref_extra + extra_count + qc_extra + pick_extra;
+    let row_capacity = 17 + ref_extra + opts.optional.len() + extra_count + qc_extra + pick_extra;
 
     for tv in &vf.transcript_variations {
         if let Some(set) = opts.gene_set {
@@ -2254,7 +2569,14 @@ pub fn format_tab_line_with(
             } else {
                 format!("{}", tv.strand.as_int())
             };
-            let flags_str = if tv.canonical { "canonical" } else { "-" };
+            // VEP's FLAGS are the transcript's own (`cds_start_NF`, `cds_end_NF`);
+            // whether it is canonical is the CANONICAL column. This wrote the word
+            // `canonical` here and never the flags.
+            let flags_str = if tv.flags.is_empty() {
+                "-".to_string()
+            } else {
+                tv.flags.join(",")
+            };
 
             let mut parts: Vec<String> = Vec::with_capacity(row_capacity);
             parts.push(uploaded_variation.clone());
@@ -2287,19 +2609,28 @@ pub fn format_tab_line_with(
             } else {
                 aa.existing_variation.join(",")
             });
+            // VEP's order (`FLAG_FIELDS`): REF_ALLELE, then IMPACT to FLAGS, then
+            // PICK, then the other optional columns.
+            let mut optional = opts.optional;
+            if let [OptionalColumn::RefAllele, rest @ ..] = optional {
+                parts.push(OptionalColumn::RefAllele.cell(vf, tv, aa));
+                optional = rest;
+            }
             parts.push(impact_str);
             parts.push(distance_str);
             parts.push(strand_str);
-            parts.push(flags_str.to_string());
+            parts.push(flags_str);
+            if opts.pick_column {
+                parts.push(pick_cell(aa.pick));
+            }
+            for col in optional {
+                parts.push(col.cell(vf, tv, aa));
+            }
 
             if extra_count > 0 {
                 parts.extend(format_supplementary_tab_columns_for_allele(
                     vf, tv, aa, specs,
                 ));
-            }
-
-            if opts.pick_column {
-                parts.push(pick_cell(aa.pick));
             }
 
             if let Some(cls) = opts.qc_class {
@@ -2326,15 +2657,23 @@ pub fn format_tab_line_with(
             parts.push(Consequence::IntergenicVariant.so_term().to_string());
             // cDNA, CDS and protein position, amino acids, codons, existing variation
             parts.extend(vec!["-".to_string(); 6]);
+            let mut optional = opts.optional;
+            if let [OptionalColumn::RefAllele, rest @ ..] = optional {
+                parts.push(OptionalColumn::RefAllele.variant_cell(vf, None));
+                optional = rest;
+            }
             // An intergenic variant is MODIFIER, as the placeholder row says; the
             // cells after it (DISTANCE, STRAND, FLAGS) belong to a feature.
             parts.push(Impact::Modifier.as_str().to_string());
             parts.extend(vec!["-".to_string(); 3]);
-            if extra_count > 0 {
-                parts.extend(vec!["-".to_string(); extra_count]);
-            }
             if opts.pick_column {
                 parts.push(pick_cell(false));
+            }
+            for col in optional {
+                parts.push(col.variant_cell(vf, None));
+            }
+            if extra_count > 0 {
+                parts.extend(vec!["-".to_string(); extra_count]);
             }
             if let Some(cls) = opts.qc_class {
                 parts.push(cls.to_string());
@@ -4146,5 +4485,478 @@ mod tests {
     fn only_the_placeholder_is_featureless() {
         assert!(intergenic_variant().transcript_variations[0].is_featureless());
         assert!(!projection_test_variant().transcript_variations[0].is_featureless());
+    }
+
+    // -- VEP's optional columns (issue #139) ----------------------------------
+
+    fn names(columns: &[OptionalColumn]) -> Vec<&'static str> {
+        columns.iter().map(|c| c.name()).collect()
+    }
+
+    /// The order is VEP's `FLAG_FIELDS` table (Constants.pm), not the order the
+    /// flags were typed in, and a flag adds exactly its own columns.
+    #[test]
+    fn the_flags_give_vep_s_columns_in_vep_s_order() {
+        assert!(ColumnFlags::default().columns(false).is_empty());
+        assert!(!ColumnFlags::default().any());
+
+        let all = ColumnFlags {
+            show_ref_allele: true,
+            variant_class: true,
+            symbol: true,
+            biotype: true,
+            canonical: true,
+            numbers: true,
+            hgvsg: true,
+        };
+        assert_eq!(
+            names(&all.columns(true)),
+            [
+                "REF_ALLELE",
+                "VARIANT_CLASS",
+                "SYMBOL",
+                "SYMBOL_SOURCE",
+                "HGNC_ID",
+                "BIOTYPE",
+                "CANONICAL",
+                "EXON",
+                "INTRON",
+                "HGVSc",
+                "HGVSp",
+                "HGVS_OFFSET",
+                "HGVSg",
+            ]
+        );
+        // --hgvs without --hgvsg has no HGVSg, and --hgvsg without --hgvs no HGVSc
+        let only_g = ColumnFlags {
+            hgvsg: true,
+            ..ColumnFlags::default()
+        };
+        assert_eq!(names(&only_g.columns(false)), ["HGVSg"]);
+        assert_eq!(
+            names(&ColumnFlags::default().columns(true)),
+            ["HGVSc", "HGVSp", "HGVS_OFFSET"]
+        );
+    }
+
+    /// VEP's `--everything` (Config.pm OPTION_SETS) has these, among the columns
+    /// fastVEP writes, and neither `--hgvsg` nor `--show_ref_allele`.
+    #[test]
+    fn everything_is_vep_s_set_among_the_columns_fastvep_writes() {
+        let e = ColumnFlags::everything();
+        assert_eq!(
+            names(&e.columns(true)),
+            [
+                "VARIANT_CLASS",
+                "SYMBOL",
+                "SYMBOL_SOURCE",
+                "HGNC_ID",
+                "BIOTYPE",
+                "CANONICAL",
+                "EXON",
+                "INTRON",
+                "HGVSc",
+                "HGVSp",
+                "HGVS_OFFSET",
+            ]
+        );
+        // union keeps what either has
+        let asked = ColumnFlags {
+            hgvsg: true,
+            show_ref_allele: true,
+            ..ColumnFlags::default()
+        };
+        let both = e.union(asked);
+        assert!(both.hgvsg && both.show_ref_allele && both.symbol && both.variant_class);
+    }
+
+    #[test]
+    fn the_csq_field_list_only_grows_on_request() {
+        // nothing asked: the 49 fields every reader already parses
+        assert_eq!(
+            csq_fields(false, ColumnFlags::default()),
+            DEFAULT_CSQ_FIELDS.to_vec()
+        );
+        let both = ColumnFlags {
+            variant_class: true,
+            hgvsg: true,
+            ..ColumnFlags::default()
+        };
+        let fields = csq_fields(true, both);
+        let at = |name: &str| fields.iter().position(|f| *f == name).unwrap();
+        assert_eq!(fields.len(), DEFAULT_CSQ_FIELDS.len() + 3);
+        // PICK then VARIANT_CLASS after FLAGS, HGVSg after HGVS_OFFSET: VEP's order
+        assert_eq!(at("PICK"), at("FLAGS") + 1);
+        assert_eq!(at("VARIANT_CLASS"), at("PICK") + 1);
+        assert_eq!(at("HGVSg"), at("HGVS_OFFSET") + 1);
+        // and the pick-only list is what it was
+        assert_eq!(
+            csq_fields_with_pick(),
+            csq_fields(true, ColumnFlags::default())
+        );
+    }
+
+    fn cells_with(vf: &VariationFeature, flags: ColumnFlags, hgvs: bool) -> Vec<String> {
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+        let optional = flags.columns(hgvs);
+        let opts = TabOptions {
+            optional: &optional,
+            ..TabOptions::default()
+        };
+        let rows = format_tab_line_with(vf, &specs, false, opts);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        rows[0].split('\t').map(String::from).collect()
+    }
+
+    /// The optional cells follow FLAGS, except `REF_ALLELE`, which VEP puts before
+    /// `IMPACT`, and come before everything fastVEP-specific.
+    #[test]
+    fn optional_cells_sit_after_flags_and_before_the_extras() {
+        let mut vf = projection_test_variant();
+        {
+            let tv = &mut vf.transcript_variations[0];
+            tv.canonical = true;
+            tv.symbol_source = Some("HGNC".into());
+            tv.hgnc_id = Some("HGNC:5".into());
+            let aa = &mut tv.allele_annotations[0];
+            aa.exon = Some((3, 10));
+            aa.hgvsc = Some("TX1:c.100A>G".into());
+            aa.hgvsp = Some("ENSP1:p.Ile34Val".into());
+            aa.hgvs_offset = Some(2);
+            aa.hgvsg = Some("1:g.25000A>G".into());
+        }
+        let flags = ColumnFlags {
+            show_ref_allele: true,
+            variant_class: true,
+            symbol: true,
+            biotype: true,
+            canonical: true,
+            numbers: true,
+            hgvsg: true,
+        };
+        let cells = cells_with(&vf, flags, true);
+        assert_eq!(cells.len(), 17 + 13);
+        assert_eq!(
+            cells[13], "A",
+            "REF_ALLELE is the first column after the 13"
+        );
+        assert_eq!(
+            cells[18..].to_vec(),
+            vec![
+                "SNV",
+                "GENE1",
+                "HGNC",
+                "HGNC:5",
+                "protein_coding",
+                "YES",
+                "3/10",
+                "-",
+                "TX1:c.100A>G",
+                "ENSP1:p.Ile34Val",
+                "2",
+                "1:g.25000A>G",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_row_with_none_of_the_optional_values_has_dashes() {
+        let vf = projection_test_variant();
+        let flags = ColumnFlags {
+            symbol: true,
+            canonical: true,
+            numbers: true,
+            ..ColumnFlags::default()
+        };
+        let cells = cells_with(&vf, flags, true);
+        // SYMBOL is GENE1 (the test gene has a symbol); the rest has nothing
+        assert_eq!(
+            cells[17..].to_vec(),
+            vec!["GENE1", "-", "-", "-", "-", "-", "-", "-", "-"]
+        );
+    }
+
+    /// An intergenic row has the variant's own values and no feature's.
+    #[test]
+    fn an_intergenic_row_keeps_the_variant_level_columns_only() {
+        let mut vf = intergenic_variant();
+        vf.transcript_variations[0].allele_annotations[0].hgvsg = Some("1:g.25000A>G".into());
+        let flags = ColumnFlags {
+            show_ref_allele: true,
+            variant_class: true,
+            symbol: true,
+            biotype: true,
+            canonical: true,
+            numbers: true,
+            hgvsg: true,
+        };
+        let cells = cells_with(&vf, flags, false);
+        assert_eq!(cells[13], "A", "REF_ALLELE");
+        assert_eq!(
+            cells[18..].to_vec(),
+            // VARIANT_CLASS, SYMBOL x3, BIOTYPE, CANONICAL, EXON, INTRON, HGVSg
+            vec!["SNV", "-", "-", "-", "-", "-", "-", "-", "1:g.25000A>G"]
+        );
+    }
+
+    /// The row written for a variant with no transcript row at all keeps them too.
+    #[test]
+    fn the_fallback_row_keeps_the_variant_level_columns_only() {
+        let mut vf = projection_test_variant();
+        vf.transcript_variations.clear();
+        let flags = ColumnFlags {
+            show_ref_allele: true,
+            variant_class: true,
+            biotype: true,
+            hgvsg: true,
+            ..ColumnFlags::default()
+        };
+        let cells = cells_with(&vf, flags, false);
+        assert_eq!(cells.len(), 17 + 4);
+        assert_eq!(cells[13], "A", "REF_ALLELE");
+        assert_eq!(cells[18..].to_vec(), vec!["SNV", "-", "-"]);
+    }
+
+    /// A structural variant's class comes from the parser in VEP, not from its
+    /// allele string, so there is nothing to write for it here.
+    #[test]
+    fn a_structural_variant_has_no_variant_class() {
+        let mut vf = projection_test_variant();
+        vf.variant_type = VariantType::CopyNumberLoss;
+        let flags = ColumnFlags {
+            variant_class: true,
+            ..ColumnFlags::default()
+        };
+        assert_eq!(cells_with(&vf, flags, false)[17], "-");
+        let f = csq_by_name_with(&vf, flags);
+        assert_eq!(f["VARIANT_CLASS"], "");
+    }
+
+    fn csq_by_name_with(
+        vf: &VariationFeature,
+        flags: ColumnFlags,
+    ) -> std::collections::HashMap<&'static str, String> {
+        let fields = csq_fields(false, flags);
+        let csq = format_csq(vf, &fields);
+        let entry = csq.split(',').next().expect("one entry");
+        fields
+            .iter()
+            .copied()
+            .zip(entry.split('|').map(String::from))
+            .collect()
+    }
+
+    #[test]
+    fn csq_writes_variant_class_and_hgvsg_when_they_are_in_the_field_list() {
+        let mut vf = projection_test_variant();
+        vf.transcript_variations[0].allele_annotations[0].hgvsg = Some("1:g.25000A>G".into());
+        let flags = ColumnFlags {
+            variant_class: true,
+            hgvsg: true,
+            ..ColumnFlags::default()
+        };
+        let f = csq_by_name_with(&vf, flags);
+        assert_eq!(f["VARIANT_CLASS"], "SNV");
+        assert_eq!(f["HGVSg"], "1:g.25000A>G");
+    }
+
+    /// FLAGS is the transcript's own flags, as in VEP; the word `canonical` it
+    /// used to carry is CANONICAL's job.
+    #[test]
+    fn the_flags_cell_holds_transcript_flags_and_not_the_canonical_marker() {
+        let mut vf = projection_test_variant();
+        vf.transcript_variations[0].canonical = true;
+        assert_eq!(tab_cells(&vf)[16], "-");
+
+        vf.transcript_variations[0].flags = vec!["cds_start_NF".into(), "cds_end_NF".into()];
+        assert_eq!(tab_cells(&vf)[16], "cds_start_NF,cds_end_NF");
+    }
+
+    /// The header and the row writer are two pieces of code that have to agree on
+    /// the base columns; the header is written from this list.
+    #[test]
+    fn the_base_columns_are_the_ones_the_row_writer_writes() {
+        assert_eq!(TAB_BASE_COLUMNS.len(), 17);
+        assert_eq!(
+            tab_cells(&projection_test_variant()).len(),
+            TAB_BASE_COLUMNS.len()
+        );
+        // the first 13 are VEP's DEFAULT_OUTPUT_COLS (Constants.pm)
+        assert_eq!(
+            TAB_BASE_COLUMNS[..13].to_vec(),
+            [
+                "Uploaded_variation",
+                "Location",
+                "Allele",
+                "Gene",
+                "Feature",
+                "Feature_type",
+                "Consequence",
+                "cDNA_position",
+                "CDS_position",
+                "Protein_position",
+                "Amino_acids",
+                "Codons",
+                "Existing_variation",
+            ]
+        );
+    }
+
+    /// What a real VEP 116.3 run writes after the 13 default columns when every
+    /// flag fastVEP has is given: `FLAG_FIELDS` order, `REF_ALLELE` ahead of
+    /// `IMPACT`, `PICK` straight after `FLAGS`.
+    #[test]
+    fn the_header_follows_veps_flag_fields_order() {
+        let optional = ColumnFlags {
+            show_ref_allele: true,
+            variant_class: true,
+            symbol: true,
+            biotype: true,
+            canonical: true,
+            numbers: true,
+            hgvsg: true,
+        }
+        .columns(true);
+        let header = tab_header(false, false, &optional, true, &[], false);
+        let names: Vec<&str> = header.trim_start_matches('#').split('\t').collect();
+        assert_eq!(names[..13], TAB_BASE_COLUMNS[..13]);
+        assert_eq!(
+            names[13..].to_vec(),
+            [
+                "REF_ALLELE",
+                "IMPACT",
+                "DISTANCE",
+                "STRAND",
+                "FLAGS",
+                "PICK",
+                "VARIANT_CLASS",
+                "SYMBOL",
+                "SYMBOL_SOURCE",
+                "HGNC_ID",
+                "BIOTYPE",
+                "CANONICAL",
+                "EXON",
+                "INTRON",
+                "HGVSc",
+                "HGVSp",
+                "HGVS_OFFSET",
+                "HGVSg",
+            ]
+        );
+    }
+
+    /// The header and the rows are written by two pieces of code. For every
+    /// combination of options, each column's header names the cell under it.
+    #[test]
+    fn every_column_of_the_header_has_its_own_cell_under_it() {
+        let mut vf = projection_test_variant();
+        {
+            let tv = &mut vf.transcript_variations[0];
+            tv.canonical = true;
+            tv.symbol_source = Some("HGNC".into());
+            tv.hgnc_id = Some("HGNC:5".into());
+            let aa = &mut tv.allele_annotations[0];
+            aa.pick = true;
+            aa.exon = Some((3, 10));
+            aa.hgvsc = Some("TX1:c.100A>G".into());
+            aa.hgvsp = Some("ENSP1:p.Ile34Val".into());
+            aa.hgvs_offset = Some(2);
+            aa.hgvsg = Some("1:g.25000A>G".into());
+        }
+        let expected = |name: &str| -> Option<&'static str> {
+            Some(match name {
+                "Allele" => "G",
+                "REF" | "REF_ALLELE" => "A",
+                "IMPACT" => "MODERATE",
+                "FLAGS" => "-",
+                "PICK" => "1",
+                "QC_CLASS" => "pass",
+                "VARIANT_CLASS" => "SNV",
+                "SYMBOL" => "GENE1",
+                "SYMBOL_SOURCE" => "HGNC",
+                "HGNC_ID" => "HGNC:5",
+                "BIOTYPE" => "protein_coding",
+                "CANONICAL" => "YES",
+                "EXON" => "3/10",
+                "HGVSc" => "TX1:c.100A>G",
+                "HGVSp" => "ENSP1:p.Ile34Val",
+                "HGVS_OFFSET" => "2",
+                "HGVSg" => "1:g.25000A>G",
+                _ => return None,
+            })
+        };
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+        let mut combinations = 0;
+        for bits in 0u32..(1 << 10) {
+            let on = |i: u32| bits & (1 << i) != 0;
+            let flags = ColumnFlags {
+                show_ref_allele: on(0),
+                variant_class: on(1),
+                symbol: on(2),
+                biotype: on(3),
+                canonical: on(4),
+                numbers: on(5),
+                hgvsg: on(6),
+            };
+            let (hgvs, pick, explicit_ref) = (on(7), on(8), on(9));
+            let optional = flags.columns(hgvs);
+            for qc in [None, Some("pass")] {
+                let opts = TabOptions {
+                    explicit_ref,
+                    qc_class: qc,
+                    pick_column: pick,
+                    optional: &optional,
+                    ..TabOptions::default()
+                };
+                let header = tab_header(false, explicit_ref, &optional, pick, &[], qc.is_some());
+                let names: Vec<&str> = header.trim_start_matches('#').split('\t').collect();
+                let rows = format_tab_line_with(&vf, &specs, false, opts);
+                assert_eq!(rows.len(), 1);
+                let cells: Vec<&str> = rows[0].split('\t').collect();
+                assert_eq!(names.len(), cells.len(), "{names:?} against {cells:?}");
+                for (name, cell) in names.iter().zip(&cells) {
+                    if let Some(want) = expected(name) {
+                        assert_eq!(*cell, want, "column {name} of {names:?}");
+                    }
+                }
+                combinations += 1;
+            }
+        }
+        assert_eq!(combinations, 2048);
+    }
+
+    /// VEP encodes `=` as `%3D` in the HGVSp of the tab file, as it does in the
+    /// VCF: a synonymous change is `p.Thr11%3D` in both.
+    #[test]
+    fn the_tab_hgvsp_encodes_an_equals_sign_as_vep_does() {
+        let mut vf = projection_test_variant();
+        vf.transcript_variations[0].allele_annotations[0].hgvsp = Some("ENSP1:p.Thr11=".into());
+        let cells = cells_with(&vf, ColumnFlags::default(), true);
+        assert_eq!(cells[18], "ENSP1:p.Thr11%3D");
+        // and the CSQ, which already did
+        let flags = ColumnFlags::default();
+        assert_eq!(csq_by_name_with(&vf, flags)["HGVSp"], "ENSP1:p.Thr11%3D");
+    }
+
+    /// An insertion's reference allele is `-` in the tab file and empty in the
+    /// CSQ, where VEP's VCF writer blanks every `-` but the one in `Allele`.
+    #[test]
+    fn an_insertions_ref_allele_is_a_dash_in_tab_and_empty_in_csq() {
+        let mut vf = projection_test_variant();
+        vf.position = GenomicPosition::new("1", 25001, 25000, Strand::Forward);
+        vf.allele_string = "-/T".into();
+        vf.ref_allele = Allele::Deletion;
+        vf.alt_alleles = vec![Allele::from_str("T")];
+        vf.transcript_variations[0].allele_annotations[0].allele = Allele::from_str("T");
+        let flags = ColumnFlags {
+            show_ref_allele: true,
+            ..ColumnFlags::default()
+        };
+        assert_eq!(cells_with(&vf, flags, false)[13], "-");
+        assert_eq!(csq_by_name_with(&vf, flags)["REF_ALLELE"], "");
+        // a base is a base in both
+        let snv = projection_test_variant();
+        assert_eq!(cells_with(&snv, flags, false)[13], "A");
+        assert_eq!(csq_by_name_with(&snv, flags)["REF_ALLELE"], "A");
     }
 }

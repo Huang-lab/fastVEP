@@ -296,6 +296,44 @@ HIRA/C22orf39, GNB1L/RTL10, PI4KA/SERPIND1, CLTCL1/SLC25A1), `--pick-allele-gene
 the comparison is restricted to the genes VEP reports at all - see the `ncRNA_gene` note under
 [What is measured](#what-is-measured).
 
+### 11. An allele of a record with several ALTs is described as it would be alone
+
+**HG002: 35 `HGVSg` cells, 1,717 `HGVSc` cells, 2,070 `HGVS_OFFSET` cells.
+The world: 709, 108 and 78.**
+
+Ensembl 116 no longer splits a multi-allelic record into one variant per ALT, as 115 did (`InputBuffer.pm` has `$self->{minimal}=1 if $vf->{minimised}` commented out), so what it writes for an allele now depends on what else the record holds.
+Splitting every such record into one record per ALT (`validation/split_alts.py`) shows how much.
+The same allele, in the same transcript, differs between its record and a record of its own in **1,071 of 1,879 rows** of VEP's output, and in **280** of fastVEP's.
+For `HGVSg`, `HGVSc` and `HGVS_OFFSET` it is 709, 107 and 80 cells for VEP, and 8, 0 and 0 for fastVEP.
+(What is left of fastVEP's 280 is mostly the span of the untrimmed record - 140 `cDNA_position`, 131 `DISTANCE`, 29 `CDS_position` and 26 `Codons` cells, and 17 `Consequence`, `IMPACT`, `Amino_acids`, `HGVSp` and `EXON` cells that follow from it - which is what Part 2 says, under *Multi-allelic records, and what is still untrimmed on them*, and Ensembl 116 has it as well, in 158 `DISTANCE` and 154 `cDNA_position` cells.
+The 8 `HGVSg` cells are an inversion inside shared bases, `inv` in the record and `delins` alone, as Ensembl writes it alone.)
+
+With every ALT its own record, fastVEP and VEP 116.3 write the same `HGVSg` on all 7,213 rows of the world, and the same `HGVS_OFFSET` on every row on which both write an `HGVSc`.
+
+**`HGVSg`.**
+`hgvs_genomic` trims an allele of a multi-allelic record against the reference and takes its class from the trimmed pair, but a change that is then a substitution or a replacement is described by the *untrimmed* allele (`$check_allele` is copied before the trim, and only an insertion or a deletion has it replaced).
+`5:100381015 CATAA>AATAA,C` is a substitution of one base, and Ensembl 116.3 writes `5:g.100381015delinsAATAA`: the span of the substitution with the five bases of the allele.
+Applied to the genome, that inserts four bases the variant does not have.
+fastVEP writes `5:g.100381015C>A`, which is also the change Ensembl's own `HGVSc` of that allele describes.
+
+That is checked rather than argued, by applying each description to the genome (`validation/check_hgvsg_roundtrip.py`).
+In the world, the 709 cells are **336 (record, allele) pairs, and for all 336 Ensembl's description does not reproduce the allele and fastVEP's does**.
+On HG002 three records are affected, `5:100381015 CATAA>AATAA,C`, `8:86711835 CTATA>ATATA,C` and `10:90497339 AT>TT,A`, and 20,238 of 20,241 records have the same set of descriptions in both tools.
+Nothing else differs, which is what [`hgvsg_vep`](../crates/fastvep-annotate/src/hgvs_normalize.rs) being a transcription of `hgvs_genomic` is for: it agrees with VEP 116.3 on all 1,472 alleles of `crates/fastvep-annotate/fixtures/vep_hgvsg` and on every row of the world that is not this one.
+Both generators keep the records this affects out of the committed fixtures, and `vep_tab_world/gen_world.py --all` puts them back.
+
+**`HGVSc` and `HGVS_OFFSET`.**
+`_return_3prime` (`TranscriptVariationAllele.pm`) returns before it shifts anything `unless ($var_class eq 'insertion' || $var_class eq 'deletion')`, where `$var_class` is `$vf->var_class`: the class of the whole record, not of the allele.
+A record whose ALTs include an indel and anything else, a second ALT or a `*`, is `indel` or `sequence_alteration`, and the shift is never tried.
+In the world, none of the 1,839 rows of multi-allelic records of any class but `insertion` has an `HGVS_OFFSET` in VEP's output, and 5 of the 37 rows of class `insertion` have one.
+So the same deletion is written `c.92-111634del` in its record and `c.92-111619del` alone, fifteen bases from where HGVS places it, in `1:14068799 CTT>CT,C` on ENST00000636203, with `HGVS_OFFSET` empty and 15; and an insertion that repeats its neighbours is `c.600-2233_600-2232insCACACACA` in `1:227162868 A>ATGTGTGTG,G` on ENST00000334218 and `c.600-2240_600-2233dup` alone.
+Both pairs are Ensembl 116.3 run on those records, as they are in HG002 and as split by `split_alts.py`.
+HGVS places a change at its most 3' position and writes a repeat as a duplication whatever else the VCF line holds, so fastVEP gives every allele the description it has alone, and counts `HGVS_OFFSET` from where the VCF anchors the allele (the base all its alleles share is the anchor), which is also the same alone and in the record.
+
+For a user this is the part of #139 that does not go away on migrating.
+On HG002, 1,717 of the 4,780 rows of records with several ALTs (36 %) differ in `HGVSc` because of it, which is 0.92 % of all 186,055 rows.
+A comparison that has to match Ensembl 116 string for string on those rows needs Ensembl's unshifted form, which fastVEP does not write; one that wants the same string whatever the record looks like needs fastVEP's.
+
 ---
 
 ## Part 2 - gaps, where Ensembl is right
@@ -367,25 +405,9 @@ differing region out of the untrimmed pair and agrees with VEP on every row of a
 That is a change to make on its own evidence, not as a side effect of a nomenclature fix, and it
 is not made here.
 
-### HGVSg
-
-`HGVSg` is not in the CSQ field set, so `validation/compare_rows.py` does not rate it and
-`run_divergence.sh` does not produce the number below.
-It was measured separately against the same HG002 sample: VEP run with `--hgvsg` added, fastVEP
-with `--output-format json`, comparing the set of `g.` descriptions each writes per record.
-They agree on **13,525 of 13,535 records (99.926 %)**.
-
-Every one of the ten is the same gap: Ensembl applies the 3'-rule over the genome and fastVEP does
-not, so an insertion sits where the VCF put it rather than where HGVS asks for it, and never
-collapses to a `dup`.
-`9:905488 C>CTGTGTGTG` is `9:g.905488_905489insTGTGTGTG` here and `9:g.905507_905514dup` there.
-That shift is not the transcript-direction one `HGVSc` gets: it runs along the genome whichever
-way the gene points, and it is a separate piece of work.
-
-Two of the ten are a record where VEP's own `HGVSg` disagrees with VEP's own `Allele`: for
-`5:100381015 CATAA>AATAA,C` it writes `Allele` `A` and `HGVSc` `n.188+196G>T` - the substitution
-that it is - beside `HGVSg` `5:g.100381015delinsAATAA`.
-fastVEP writes `5:g.100381015C>A`, which is the same change as its own `HGVSc`.
+That is Ensembl 115.1.
+Release 116 no longer splits a multi-allelic record into one variant per ALT, which changes what it
+writes for them: [Part 3](#part-3---the-tab-output-against-vep-1163) has the measurement.
 
 ### HGVSp
 
@@ -401,6 +423,122 @@ The shape of that list is worth stating.
 Of the 778 `HGVSp` rows on the ClinVar sample, **545 are places fastVEP diverges on purpose and
 has been checked against the sequence**, and 233 are gaps - 196 of which are fastVEP naming a
 change where Ensembl declines to.
+
+---
+
+## Part 3 - the tab output, against VEP 116.3
+
+Everything above was measured against Ensembl VEP 115.1.
+The tab output's optional columns, `HGVSg` and `HGVS_OFFSET` had no measurement at all, and the release most people run now is 116, so they have their own, against **Ensembl VEP 116.3** (Docker `ensemblorg/ensembl-vep:release_116.3`).
+It reads the same GRCh38 Ensembl 115 GFF3 and FASTA as above and is run with `--tab --symbol --biotype --canonical --numbers --variant_class --show_ref_allele --hgvs --hgvsg`.
+`validation/compare_tab.py` compares its file with fastVEP's cell by cell, pairing rows on (`Uploaded_variation`, `Allele`, `Feature`).
+
+| Input | Records | Paired rows | Cells compared | Cells that differ |
+|---|---:|---:|---:|---:|
+| GIAB HG002 WGS, 1-in-200 systematic (the sample above) | 20,241 | 186,055 | 5,581,650 | 4,060 (0.073 %) |
+| A generated world: both strands, coding and non-coding genes, 372 of its 3,000 records with several ALTs | 3,000 | 7,213 | 216,390 | 1,162 (0.54 %) |
+
+The world is built to be hard and not to be representative: it has far more indels in repeats, at transcript ends and at exon edges than any genome, and more multi-allelic sites.
+Its rates are the rates on those shapes, and HG002 is what an ordinary WGS callset looks like.
+Reproduce the world with `bash validation/run_tab_world.sh` (a record count, a seed and an output directory are its optional arguments; the defaults are 3,000 and 139), which prints every number below that is about it, and HG002 with
+
+```bash
+vep --input_file hg002_sample.vcf --gff Homo_sapiens.GRCh38.115.sorted.gff3.gz \
+    --fasta Homo_sapiens.GRCh38.dna.primary_assembly.fa --tab --force_overwrite --no_stats \
+    --symbol --biotype --canonical --numbers --variant_class --show_ref_allele --hgvs --hgvsg \
+    --output_file vep.tab
+fastvep annotate -i hg002_sample.vcf --gff3 Homo_sapiens.GRCh38.115.gff3 \
+    --fasta Homo_sapiens.GRCh38.dna.primary_assembly.fa --output-format tab -o fv.tab \
+    --symbol --biotype --canonical --numbers --variant-class --show-ref-allele --hgvs --hgvsg
+python3 validation/compare_tab.py vep.tab fv.tab \
+    --ignore SOURCE,Homo_sapiens.GRCh38.115.sorted.gff3.gz
+```
+
+On HG002 the 4,060 cells are in five columns: `HGVS_OFFSET` 2,073, `HGVSc` 1,742, `HGVSp` 201, `HGVSg` 35 and `cDNA_position` 9.
+`Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `FLAGS`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row.
+
+Rows that are not paired: 127 are only fastVEP's (121 on transcripts, 6 for a `*` allele) and 7 only VEP's.
+VEP's `--gff` reader keeps only the feature types of `%INCLUDE_FEATURE_TYPES` (`GFF.pm`), its log says it skipped parents "due to invalid types", and `unconfirmed_transcript` and `scRNA`, the types of the three transcripts looked at, are not on that list.
+The three of the seven VEP-only rows looked at are an `intergenic_variant` where fastVEP reports one of those transcripts upstream or downstream.
+Not all 134 were checked, and none of it is new (see [What is measured](#what-is-measured)).
+
+| What differs | HG002 cells | World cells | Who is right |
+|---|---:|---:|---|
+| `HGVSc` and `HGVS_OFFSET` of an allele in a record with several ALTs | 1,717 and 2,070 | 108 and 78 | fastVEP: [divergence 11](#11-an-allele-of-a-record-with-several-alts-is-described-as-it-would-be-alone) |
+| `HGVSg` of an allele in a record with several ALTs | 35 | 709 | fastVEP: divergence 11 |
+| The protein version in `HGVSp` | 184 | 0 | VEP: [a gap](#the-protein-version) |
+| `HGVSc` of an intronic base after the terminator | 12 | 0 | fastVEP: divergence 4 |
+| `cDNA_position`, `CDS_position`, `Protein_position` written `N-?` or `?-N` | 9, 0, 0 | 68, 43, 43 | VEP: [a gap](#positions-and-hgvsc-at-the-edge-of-a-transcript-or-an-exon) |
+| `HGVSc` of a deletion that runs off the end of the transcript | 9 | 16 | VEP: a gap, in the same section |
+| `INTRON` of a change that spans an exon edge | 0 | 16 | VEP: a gap, in the same section |
+| `HGVSc` that one tool writes and the other does not | 4 | 8 | the Part 2 `HGVSc` gap, in fastVEP's direction |
+| `HGVSc` of an inversion padded with bases it shares | 0 | 15 | fastVEP: [`inv` is the form HGVS asks for](#an-inversion-inside-padding) |
+| `Consequence` and `IMPACT` where the change is at the terminator | 0 and 0 | 10 and 5 | not decided: [see below](#a-change-at-the-terminator) |
+| `HGVSp`, other than the protein version | 17 | 32 | divergences 3, 5 and 7 and the Part 2 `HGVSp` rows |
+
+Every line is the cells of one class, and a row can be in more than one.
+
+### The protein version
+
+**184 of the 844 `HGVSp` rows of HG002 differ in nothing but the protein version.**
+
+`ENSP00000363557.3:p.Thr266Met` is what Ensembl 116.3 writes for MYOM3 `1:24094984 G>A` on ENST00000374434, and fastVEP writes `ENSP00000363557.1`.
+The GFF3's CDS records carry the version (`protein_id=ENSP00000363557;version=3`), and 37,293 of the 234,024 proteins in Ensembl 115's file have one other than 1.
+VEP 115's GFF reader gave every translation version 1 (`-VERSION => 1` in `BaseGXF.pm`), and fastVEP matches that; VEP 116 reads the `version` of the first CDS record, with 1 as the default (`my $version = $ordered_cdss->[0]->{attributes}->{version} || 1`).
+`GffCds` parses the version into `protein_version` and nothing reads it: the transcript is built with `Some(1)`, and so is every transcript read back from the cache.
+A version is how an accession says which sequence it means, so a wrong one can send a reader to a different protein.
+
+This is a gap, not a divergence.
+It is not closed here, because the transcript cache would have to carry the version: a format change, and so a new cache magic (see the cache note in `CLAUDE.md`).
+
+### Positions, and `HGVSc`, at the edge of a transcript or an exon
+
+**HG002: 9 `cDNA_position` cells, and the `HGVSc` of the same 9 rows.
+The world: 154 position cells, 16 `INTRON` cells and 16 `HGVSc` cells.**
+
+Where one end of a change is not in an exon, Ensembl writes `?` for it: `?-7` for `2:240646354 CTGTCTTCCTGTGACGT>C` on ENST00000847201 in HG002, a 16-base deletion of which Ensembl's description covers 7, and `199-?` for `chr10_2497_CAGCTGC/C` of the world.
+fastVEP writes the one coordinate it has, `7` and `199`.
+The `HGVSc` of such a change differs in the same rows: Ensembl names the part inside the transcript, `n.1_7del`, and fastVEP names the base at the edge, `n.7del`, or in 10 rows of the world nothing at all.
+One base for a change that removed seven is the less accurate of the two, and it is the same defect as the positions.
+Where a change overlaps an exon and the intron beside it, Ensembl also writes `INTRON` beside `EXON` (`1/2` for `rs544769` of the world), and fastVEP only `EXON`.
+Not closed here.
+
+### An inversion inside padding
+
+**The world: 15 `HGVSc` cells.**
+
+`AAC>AGT` replaces `AC` with `GT`, which is its reverse complement.
+HGVS asks for `inv`, and fastVEP writes `c.198_199inv`.
+Ensembl writes `c.198_199delinsGT`: `hgvs_variant_notation` tests for the inversion on the alleles as it holds them, `AAC` and `AGT`, which are not reverse complements, and `_clip_alleles` afterwards clips the shared `A` and leaves the type as `delins`.
+Both describe the change.
+A replacement that is wholly an inversion (`CA>TG`) is `inv` in both tools, as the 121 of the ClinVar sample are.
+
+### A change at the terminator
+
+**The world: 10 `Consequence` and 5 `IMPACT` cells.
+HG002: none.**
+
+Ten rows of the world, all within a few bases of the terminator codon of ENST00000000001, ENST00000000002 or ENST00000000003, get a different term in each tool.
+`chr10_3245_A/AGCATG` is `frameshift_variant` in Ensembl, with `p.Ter218TrpextTer25`, and `inframe_insertion,stop_retained_variant` in fastVEP, whose five inserted bases are not a multiple of three.
+`chr10_10095_TCAGT/GCGCA` is `coding_sequence_variant` (MODIFIER) in Ensembl and `stop_lost` (HIGH) in fastVEP.
+It was not diagnosed, so it is listed and not argued either way: the in-frame reading of a 5-base insertion looks wrong, and nothing here shows that Ensembl's is right.
+
+### What a `*` allele and a symbolic one get
+
+fastVEP writes no `HGVSg` for them, as Ensembl does not (`next if $allele =~ m/[^ACGT\-]/ig` in `hgvs_genomic`), and used to write `chr10:g.1400?`, which is not HGVS.
+Ensembl writes no row for a `*` allele at all, and none for a record whose only ALT is `*`; fastVEP writes one, with an empty `Consequence` and `MODIFIER`, and 6 rows of HG002 are those.
+An ALT of `N` gets no `HGVSg` in either tool.
+A VCF REF of `N` gets the genome's base in both tools' `HGVSg`, and in Ensembl's `HGVSc` (`c.201+300C>A`) but not in fastVEP's, which writes the REF it was given (`c.201+300N>A`).
+
+### Lone indels that are not minimal
+
+Ensembl minimises a record with one ALT that is an indel from both ends (`minimise_alleles`), where fastVEP strips only the base the alleles share at the front.
+The two are the same for a record that is already minimal and padded by one base, which is every indel of HG002 (0 of its 2,818 are not), and they differ for one that shares bases at the back as well, or two or more at the front.
+`Allele`, `Location`, `REF_ALLELE`, `VARIANT_CLASS` and `DISTANCE` then differ, `HGVSc` and `HGVSg` do not (both clip), and some rows get a different term.
+The world has none of them as it is, and the same world with each ALT its own record has 197 rows of 7,213, in 93 records: for `1306 AG>ACTATAATG` Ensembl writes `Allele` `CTATAAT` at `1306-1307` as an `insertion`, and fastVEP `CTATAATG` at `1307` as an `indel`.
+8 `Consequence` cells differ on those rows (4 of them `IMPACT`), `intron_variant` MODIFIER in Ensembl and `splice_donor_variant` HIGH in fastVEP for an insertion next to a donor that fastVEP reads as replacing it.
+Not closed here: it changes what the whole annotation reads, and wants its own measurement.
+
 
 ---
 
@@ -466,12 +604,13 @@ calls plain missense.
 
 ## Fixed since this document was last measured
 
-Eight defects are gone, and the numbers above are what is left.
+Nine defects are gone, and the numbers above are what is left.
 Each was measured the same way before and after, on the same samples: the row counts below are
 what the fix removed.
 
 | What was wrong | Rows it cost | What it was |
 |---|---:|---|
+| `HGVSg` was the plain description, where Ensembl's 3'-rule over the genome moves an indel and names a repeat a `dup` | 10 of 13,535 records of HG002, against 115.1 | An insertion sat where the VCF put it and never collapsed to a `dup` (`9:905488 C>CTGTGTGTG` was `g.905488_905489insTGTGTGTG` for Ensembl's `g.905507_905514dup`). `hgvsg_vep` transcribes `hgvs_genomic`; what is left is divergence 11 |
 | Each allele of a multi-allelic record kept the bases it shared with the reference | 801 of 824 genome-wide `HGVSc` rows, and 1 of 11 `HGVSg` records | A site is trimmed once for the whole record, so an allele that is a clean deletion arrives as a replacement and was written as one: `c.553-61775_553-61770delinsCTT` for TTC28's `c.553-61772_553-61770del`. Clipped now where the description is built, which is the second of the two places Ensembl clips. What the clip does *not* reach is in Part 2 |
 | The HGVSc 3'-shift ran on the *spliced* sequence | 563 of 602 `HGVSc` rows | It could not follow a repeat out of an exon into the intron (`c.220del` for VEP's `c.220+1del`), and it would walk a deletion over a splice junction into the next exon, naming a block that is contiguous in the mRNA and not in the DNA a `c.` description is numbered against (BRCA1 `c.71_81del` for VEP's `c.70_80del`). The shift now runs on the genome, bounded by the transcript, and each end is written where it lands |
 | A lost terminator was written `p.Glu486ext*?` | 30 `HGVSp` rows | The extension is a fact about the edited transcript, and `ext*?` is the form HGVS keeps for one nobody can measure. Now divergence 7 |

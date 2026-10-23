@@ -494,7 +494,8 @@ for the parsing rules and the escaping table.
 | `--gff3` | GFF3 gene annotation file. May be repeated to replicate VEP's `--merged` cache (Ensembl + RefSeq in a single run); each value may be `LABEL=path` to control the SOURCE column. | -- |
 | `--fasta` | Reference FASTA file | -- |
 | `--output-format` | `vcf`, `tab`, or `json` | `vcf` |
-| `--hgvs` | Include HGVS notations | off |
+| `--hgvs` | Add `HGVSc`, `HGVSp` and `HGVS_OFFSET`: as columns in tab output, as values in the VCF and JSON output. VEP's `--hgvs` | off |
+| `--hgvsg` | Add `HGVSg` (`chr10:g.10414C>A`) to tab and VCF output, and the `hgvsg` key of JSON. VEP's `--hgvsg`: an insertion or deletion is written at its most 3' position along the genome and an insertion that repeats its neighbours is a `dup`, which reads the reference, so give `--fasta`. See [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#11-an-allele-of-a-record-with-several-alts-is-described-as-it-would-be-alone) | off |
 | `--pick` | Report one consequence per variant, chosen by `--pick-order`, keeping that transcript's annotation for every alt allele | off |
 | `--pick-allele` | One consequence per (variant, allele). VEP's `--pick_allele` | off |
 | `--pick-allele-gene` | One consequence per (variant, allele, gene). VEP's `--pick_allele_gene` | off |
@@ -502,9 +503,13 @@ for the parsing rules and the escaping table.
 | `--flag-pick-allele` | As `--flag-pick`, marking the pick per allele | off |
 | `--flag-pick-allele-gene` | As `--flag-pick`, marking the pick per allele and gene | off |
 | `--pick-order` | Criteria order used by `--pick`, VEP `--pick_order` syntax. Severity (`rank`) is last in the default, so this is not "most severe" -- see [docs/ACMG.md](docs/ACMG.md#which-transcript---pick-reports) | VEP's default |
-| `--symbol` | Include gene symbol in output | off |
-| `--canonical` | Include canonical-transcript flag in output | off |
-| `--everything` | Turn on all common annotation flags | off |
+| `--symbol` | Add `SYMBOL`, `SYMBOL_SOURCE` and `HGNC_ID` to tab output (the VCF `CSQ` always has them). VEP's `--symbol` | off |
+| `--canonical` | Add `CANONICAL` (`YES`) to tab output (the VCF `CSQ` always has it). VEP's `--canonical` | off |
+| `--biotype` | Add `BIOTYPE` to tab output (the VCF `CSQ` always has it). VEP's `--biotype` | off |
+| `--numbers` | Add `EXON` and `INTRON` (`3/10`) to tab output (the VCF `CSQ` always has them). VEP's `--numbers` | off |
+| `--variant-class` | Add `VARIANT_CLASS` (`SNV`, `insertion`, `deletion`, ...) to tab and VCF output. VEP's `--variant_class` | off |
+| `--show-ref-allele` | Add `REF_ALLELE` to tab output (the VCF `CSQ` always has it). VEP's `--show_ref_allele`. (`--explicit-alleles` puts `REF` right after `Allele` instead) | off |
+| `--everything` | Turn on `--hgvs --symbol --numbers --canonical --biotype --variant-class`: VEP's `--everything`, restricted to the columns fastVEP writes (not `--hgvsg` or `--show-ref-allele`, which VEP's does not include either) | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--buffer-size` | Variants buffered per parallel batch | `5000` |
 | `--sa-dir` | Directory containing `.osa` / `.osa2` / `.osi` / `.oga` supplementary annotations | -- |
@@ -601,7 +606,7 @@ The VCF output never embeds raw JSON in INFO values. Use `--output-format json` 
 
 One line per variant, transcript and allele.
 The 17 columns are VEP's 13 base columns (`Uploaded_variation`, `Location`, `Allele`, `Gene`, `Feature`, `Feature_type`, `Consequence`, `cDNA_position`, `CDS_position`, `Protein_position`, `Amino_acids`, `Codons`, `Existing_variation`) and `IMPACT`, `DISTANCE`, `STRAND`, `FLAGS`.
-After them come `REF` (with `--explicit-alleles`), one column per loaded supplementary source, `PICK` (with `--flag-pick*`) and `QC_CLASS` (with `--qc-rules`).
+Around them go `REF` (with `--explicit-alleles`, right after `Allele`), `PICK` (with `--flag-pick*`, right after `FLAGS`, as in VEP), one column per loaded supplementary source and `QC_CLASS` (with `--qc-rules`), the last two at the end.
 
 The cells follow VEP's tab writer:
 
@@ -613,7 +618,14 @@ The cells follow VEP's tab writer:
 - A variant with no overlapping transcript has no feature, so `Gene`, `Feature`, `Feature_type`, `DISTANCE`, `STRAND` and `FLAGS` are `-`; `IMPACT` is still `MODIFIER`.
   A VCF `CSQ` entry for it leaves those fields empty.
 
-`--hgvs`, `--symbol` and `--canonical` do not add columns to tab output; use the VCF or JSON output for HGVS, gene symbols and the canonical flag.
+VEP adds further tab columns only when asked, and so does fastVEP, with VEP's flag names (spelled with hyphens here): `--show-ref-allele`, `--variant-class`, `--symbol`, `--biotype`, `--canonical`, `--numbers`, `--hgvs` and `--hgvsg`.
+They are written in the order VEP's own table gives them: `REF_ALLELE` between `Existing_variation` and `IMPACT`, then, after `FLAGS` (and `PICK`), `VARIANT_CLASS`, `SYMBOL`, `SYMBOL_SOURCE`, `HGNC_ID`, `BIOTYPE`, `CANONICAL`, `EXON`, `INTRON`, `HGVSc`, `HGVSp`, `HGVS_OFFSET` and `HGVSg`, and before any supplementary-source column.
+A flag you do not give adds nothing, so a run without any of them has the 17 columns above.
+`FLAGS` holds the transcript's flags (`cds_start_NF`), as in VEP, and `CANONICAL` says whether the transcript is canonical.
+`HGVSp` writes `=` as `%3D`, as VEP does in its tab file and in its VCF, and `HGVS_OFFSET` is how far the HGVS description moved 3' from where the VCF had the variant, signed by the strand.
+
+Not written yet: VEP's frequency columns (`AF`, `AFR_AF`, ...), and `CLIN_SIG`, `SOMATIC` and `PHENO` as VEP computes them.
+The VCF `CSQ` has fields of those names, but they are summarised over the whole variant and not per allele and per known variant as VEP does, and `AF` there is gnomAD-first rather than VEP's 1000 Genomes `AF`.
 
 ### JSON Output
 
@@ -771,9 +783,12 @@ The right-hand column is a systematic 1-in-200 sample of the GIAB HG002 WGS call
 variants, **118,956 matched rows** - and every field that carries a clinical call agrees on all of
 them. The 23 `HGVSc` rows left are 11 where fastVEP names a change VEP declines to name and 12
 where VEP writes a malformed `*` coordinate: no row of any of the three datasets has both tools
-naming a `c.` change and naming it differently. `HGVSg`, which is not in the CSQ field set and is
-rated separately, agrees on 13,525 of 13,535 records (99.93%); the ten are Ensembl's genomic
-3'-rule, which fastVEP does not apply. See [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
+naming a `c.` change and naming it differently. `HGVSg`, which is written only under `--hgvsg`, was
+measured separately against Ensembl VEP 116.3 on the same sample: 20,238 of 20,241 records have the
+same set of descriptions, and the three that differ are multi-allelic records in which Ensembl
+describes an allele by its untrimmed bases, which does not reproduce the variant. The tab
+output's other columns are measured the same way, 4,060 of 5,581,650 cells differing, in
+[Part 3 of docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#part-3---the-tab-output-against-vep-1163).
 
 **HGVSp under in-frame indels.**
 Protein-level normalisation is additionally checked on 400 ClinVar in-frame deletions run through
@@ -788,7 +803,7 @@ Agreement is the evidence that the port is faithful, not the objective. The outp
 a clinician may act on, so where Ensembl is demonstrably wrong in a way that changes a call,
 fastVEP is right instead.
 
-There are nine such places, and one of them matters clinically: Ensembl reports a change that
+There are eleven such places, and one of them matters clinically: Ensembl reports a change that
 introduces a premature stop as `inframe_insertion,stop_retained_variant`, MODERATE. BRCA1
 `c.5030_5033dup` - ClinVar Pathogenic - is one of 52 such variants in the ClinVar 2-star+ set, 38
 of them Pathogenic or Likely pathogenic. fastVEP reports `stop_gained,frameshift_variant`, HIGH,

@@ -12,8 +12,9 @@ pub mod pick;
 
 pub use hgvs_normalize::{
     clipped_span, convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele,
-    hgvs_placement, hgvsc_shifted, hgvsg_clipped, intronic_dup_span, intronic_ins_as_dup,
-    is_shiftable_indel, three_prime_shift_genomic, HgvsAllele,
+    hgvs_placement, hgvsc_shifted, hgvsc_shifted_with_shift, hgvsg_clipped, hgvsg_per_alt,
+    hgvsg_vep, intronic_dup_span, intronic_ins_as_dup, is_shiftable_indel,
+    three_prime_shift_genomic, HgvsAllele,
 };
 
 use anyhow::{Context, Result};
@@ -384,6 +385,24 @@ impl AnnotationContext {
                     ref_seq.as_deref(),
                 );
 
+                // HGVSg is the variant's, the same on every transcript row, and
+                // reading the reference to place it is not free: made once per
+                // record, as `fastvep annotate` does.
+                let hgvsg_by_alt = if self.hgvs {
+                    hgvsg_per_alt(
+                        self.seq_provider
+                            .as_deref()
+                            .map(|sp| sp as &dyn SequenceProvider),
+                        chrom,
+                        vf.position.start,
+                        vf.position.end,
+                        &vf.ref_allele,
+                        &vf.alt_alleles,
+                    )
+                } else {
+                    Vec::new()
+                };
+
                 for (i, tc) in result.transcript_consequences.iter().enumerate() {
                     // `predict` returns one consequence per transcript it was
                     // handed, in that order, so index `i` is the match. The
@@ -432,14 +451,16 @@ impl AnnotationContext {
                                 pick: false,
                             };
 
+                            // How far the HGVS description moved 3' from the VCF's
+                            // own position
+                            let mut shift = 0u64;
+
                             if self.hgvs {
-                                ann.hgvsg = Some(hgvsg_clipped(
-                                    chrom,
-                                    vf.position.start,
-                                    vf.position.end,
-                                    &vf.ref_allele,
-                                    &ac.allele,
-                                ));
+                                ann.hgvsg = vf
+                                    .alt_alleles
+                                    .iter()
+                                    .position(|alt| *alt == ac.allele)
+                                    .and_then(|i| hgvsg_by_alt[i].clone());
                                 if let Some(tr) = transcript {
                                     let versioned_tid = match tr.version {
                                         Some(v) => format!("{}.{}", tc.transcript_id, v),
@@ -486,13 +507,14 @@ impl AnnotationContext {
                                     let shifted = (is_shiftable_indel(&hv.hgvs_ref, &hv.hgvs_alt)
                                         && provider.is_some())
                                     .then(|| {
-                                        hgvsc_shifted(
+                                        hgvsc_shifted_with_shift(
                                             provider,
                                             chrom,
                                             tr,
                                             &versioned_tid,
                                             hv.start,
                                             hv.end,
+                                            hv.anchor_start,
                                             &hv.genomic_ref,
                                             &hv.genomic_alt,
                                             &hv.hgvs_ref,
@@ -503,7 +525,10 @@ impl AnnotationContext {
                                     })
                                     .flatten();
                                     ann.hgvsc = match (shifted, tr.cdna_coding_start) {
-                                        (Some(h), _) => Some(h),
+                                        (Some((h, moved)), _) => {
+                                            shift = moved;
+                                            Some(h)
+                                        }
                                         (None, Some(coding_start)) => match hv.cdna {
                                             Some((cs, ce)) => fastvep_hgvs::hgvsc_with_seq(
                                                 &versioned_tid,
@@ -521,20 +546,25 @@ impl AnnotationContext {
                                             // other in an intron has no exonic
                                             // cDNA pair, and `intron_at` reads
                                             // its first base only.
-                                            None => hgvsc_shifted(
+                                            None => hgvsc_shifted_with_shift(
                                                 provider,
                                                 chrom,
                                                 tr,
                                                 &versioned_tid,
                                                 hv.start,
                                                 hv.end,
+                                                hv.anchor_start,
                                                 &hv.genomic_ref,
                                                 &hv.genomic_alt,
                                                 &hv.hgvs_ref,
                                                 &hv.hgvs_alt,
                                                 Some(coding_start),
                                                 tr.cdna_coding_end,
-                                            ),
+                                            )
+                                            .map(|(h, moved)| {
+                                                shift = moved;
+                                                h
+                                            }),
                                         },
                                         (None, None) => match hv.cdna {
                                             Some((cs, ce)) => fastvep_hgvs::hgvsc_noncoding(
@@ -545,20 +575,25 @@ impl AnnotationContext {
                                                 &hv.hgvs_alt,
                                                 tr.spliced_seq.as_deref(),
                                             ),
-                                            None => hgvsc_shifted(
+                                            None => hgvsc_shifted_with_shift(
                                                 provider,
                                                 chrom,
                                                 tr,
                                                 &versioned_tid,
                                                 hv.start,
                                                 hv.end,
+                                                hv.anchor_start,
                                                 &hv.genomic_ref,
                                                 &hv.genomic_alt,
                                                 &hv.hgvs_ref,
                                                 &hv.hgvs_alt,
                                                 None,
                                                 None,
-                                            ),
+                                            )
+                                            .map(|(h, moved)| {
+                                                shift = moved;
+                                                h
+                                            }),
                                         },
                                     };
 
@@ -740,6 +775,14 @@ impl AnnotationContext {
                                     }
                                 }
                             }
+
+                            // VEP's HGVS_OFFSET: the distance the description moved,
+                            // signed by the strand, and only when there is one.
+                            if shift > 0 && (ann.hgvsc.is_some() || ann.hgvsp.is_some()) {
+                                let strand = transcript.map_or(1, |t| t.strand.as_int());
+                                ann.hgvs_offset = Some(shift as i64 * i64::from(strand));
+                            }
+
                             ann
                         })
                         .collect();

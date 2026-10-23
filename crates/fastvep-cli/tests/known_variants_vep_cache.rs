@@ -74,6 +74,7 @@ fn config(input: &Path, out: &Path) -> AnnotateConfig {
         output_format: "tab".into(),
         pick: PickFlags::default(),
         hgvs: false,
+        columns: Default::default(),
         distance: 5000,
         cache_dir: None,
         transcript_cache: None,

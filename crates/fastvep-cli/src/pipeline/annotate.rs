@@ -18,7 +18,7 @@ use fastvep_consequence::ConsequencePredictor;
 use fastvep_core::{Allele, Consequence};
 use fastvep_genome::Transcript;
 use fastvep_hgvs;
-use fastvep_io::output;
+use fastvep_io::output::{self, ColumnFlags};
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use fastvep_io::vcf::VcfParser;
 use rayon::prelude::*;
@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
-    annotate_intergenic, annotate_sa_only_scaffold, hgvs_allele, hgvsg_clipped,
+    annotate_intergenic, annotate_sa_only_scaffold, hgvs_allele, hgvsg_per_alt,
     load_gene_providers, load_sa_providers, splice_context, zip_positions, RowTranscripts,
 };
 
@@ -49,6 +49,10 @@ pub struct AnnotateConfig {
     /// The `--pick*` / `--flag-pick*` switch this run was given, if any.
     pub pick: PickFlags,
     pub hgvs: bool,
+    /// The optional tab and CSQ columns VEP adds on request (`--hgvsg`,
+    /// `--biotype`, `--numbers`, ...). `hgvs` is separate: it also decides
+    /// whether the HGVS values are computed at all.
+    pub columns: ColumnFlags,
     pub distance: u64,
     pub cache_dir: Option<String>,
     pub transcript_cache: Option<String>,
@@ -167,6 +171,32 @@ fn annotate_variant(
         if overlapping.is_empty() {
             // Intergenic
             annotate_intergenic(vf);
+            // The variant's own HGVSg is there whether or not a transcript is:
+            // VEP's intergenic output ends in the function that writes HGVSg
+            // (`IntergenicVariationAllele_to_output_hash` returns
+            // `VariationFeatureOverlapAllele_to_output_hash`). Only `--hgvsg`
+            // asks for it here: `--hgvs` has never put one on this row, and
+            // `fastvep-annotate`'s loop still does not, so reading it off
+            // `--hgvs` too would make the two disagree.
+            if config.columns.hgvsg {
+                let hgvsg = hgvsg_per_alt(
+                    seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                    &vf.position.chromosome,
+                    vf.position.start,
+                    vf.position.end,
+                    &vf.ref_allele,
+                    &vf.alt_alleles,
+                );
+                for tv in &mut vf.transcript_variations {
+                    for aa in &mut tv.allele_annotations {
+                        aa.hgvsg = vf
+                            .alt_alleles
+                            .iter()
+                            .position(|alt| *alt == aa.allele)
+                            .and_then(|i| hgvsg[i].clone());
+                    }
+                }
+            }
             // Populate existing_variation on intergenic annotations too
             for tv in &mut vf.transcript_variations {
                 for aa in &mut tv.allele_annotations {
@@ -202,6 +232,24 @@ fn annotate_variant(
                 );
                 result.transcript_consequences
             };
+
+            // HGVSg is the variant's, the same on every transcript row, and reading
+            // the reference to place it is not free: made once per record, and only
+            // when an output carries it (the `HGVSg` column or field, or JSON's key,
+            // which `--hgvs` has always filled).
+            let hgvsg_by_alt =
+                if config.columns.hgvsg || (config.hgvs && config.output_format == "json") {
+                    hgvsg_per_alt(
+                        seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                        chrom,
+                        vf.position.start,
+                        vf.position.end,
+                        &vf.ref_allele,
+                        &vf.alt_alleles,
+                    )
+                } else {
+                    Vec::new()
+                };
 
             // Convert prediction results to VariationFeature annotations
             for (i, tc) in transcript_consequences.iter().enumerate() {
@@ -259,16 +307,21 @@ fn annotate_variant(
                             pick: false,
                         };
 
+                        // HGVSg belongs to the variant and needs no transcript, so
+                        // `--hgvsg` has it without `--hgvs`.
+                        if !hgvsg_by_alt.is_empty() {
+                            ann.hgvsg = vf
+                                .alt_alleles
+                                .iter()
+                                .position(|alt| *alt == ac.allele)
+                                .and_then(|i| hgvsg_by_alt[i].clone());
+                        }
+
+                        // How far the HGVS description moved 3' from the VCF's own position
+                        let mut shift = 0u64;
+
                         // Generate HGVS if requested
                         if config.hgvs {
-                            ann.hgvsg = Some(hgvsg_clipped(
-                                chrom,
-                                vf.position.start,
-                                vf.position.end,
-                                &vf.ref_allele,
-                                &ac.allele,
-                            ));
-
                             if let Some(tr) = transcript {
                                 // Build versioned IDs for HGVS notation
                                 let versioned_tid = match tr.version {
@@ -315,13 +368,14 @@ fn annotate_variant(
                                     &hv.hgvs_alt,
                                 ) && seq_provider.is_some())
                                 .then(|| {
-                                    fastvep_annotate::hgvsc_shifted(
+                                    fastvep_annotate::hgvsc_shifted_with_shift(
                                         seq_provider.map(|sp| sp as &dyn SequenceProvider),
                                         chrom,
                                         tr,
                                         &versioned_tid,
                                         hv.start,
                                         hv.end,
+                                        hv.anchor_start,
                                         &hv.genomic_ref,
                                         &hv.genomic_alt,
                                         &hv.hgvs_ref,
@@ -332,7 +386,10 @@ fn annotate_variant(
                                 })
                                 .flatten();
                                 ann.hgvsc = match (shifted, tr.cdna_coding_start) {
-                                    (Some(h), _) => Some(h),
+                                    (Some((h, moved)), _) => {
+                                        shift = moved;
+                                        Some(h)
+                                    }
                                     (None, Some(coding_start)) => match hv.cdna {
                                         Some((cs, ce)) => fastvep_hgvs::hgvsc_with_seq(
                                             &versioned_tid,
@@ -350,20 +407,25 @@ fn annotate_variant(
                                         // other in an intron has no exonic
                                         // cDNA pair, and `intron_at` reads
                                         // its first base only.
-                                        None => fastvep_annotate::hgvsc_shifted(
+                                        None => fastvep_annotate::hgvsc_shifted_with_shift(
                                             seq_provider.map(|sp| sp as &dyn SequenceProvider),
                                             chrom,
                                             tr,
                                             &versioned_tid,
                                             hv.start,
                                             hv.end,
+                                            hv.anchor_start,
                                             &hv.genomic_ref,
                                             &hv.genomic_alt,
                                             &hv.hgvs_ref,
                                             &hv.hgvs_alt,
                                             Some(coding_start),
                                             tr.cdna_coding_end,
-                                        ),
+                                        )
+                                        .map(|(h, moved)| {
+                                            shift = moved;
+                                            h
+                                        }),
                                     },
                                     // Non-coding transcript: use n. notation
                                     (None, None) => match hv.cdna {
@@ -375,20 +437,25 @@ fn annotate_variant(
                                             &hv.hgvs_alt,
                                             tr.spliced_seq.as_deref(),
                                         ),
-                                        None => fastvep_annotate::hgvsc_shifted(
+                                        None => fastvep_annotate::hgvsc_shifted_with_shift(
                                             seq_provider.map(|sp| sp as &dyn SequenceProvider),
                                             chrom,
                                             tr,
                                             &versioned_tid,
                                             hv.start,
                                             hv.end,
+                                            hv.anchor_start,
                                             &hv.genomic_ref,
                                             &hv.genomic_alt,
                                             &hv.hgvs_ref,
                                             &hv.hgvs_alt,
                                             None,
                                             None,
-                                        ),
+                                        )
+                                        .map(|(h, moved)| {
+                                            shift = moved;
+                                            h
+                                        }),
                                     },
                                 };
                             }
@@ -533,6 +600,14 @@ fn annotate_variant(
                                     }
                                 }
                             }
+                        }
+
+                        // VEP's HGVS_OFFSET: the distance the description moved,
+                        // signed by the strand (`offset * strand`), and only when
+                        // there is a description to have moved.
+                        if shift > 0 && (ann.hgvsc.is_some() || ann.hgvsp.is_some()) {
+                            let strand = transcript.map_or(1, |t| t.strand.as_int());
+                            ann.hgvs_offset = Some(shift as i64 * i64::from(strand));
                         }
 
                         ann
@@ -1102,6 +1177,13 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             (config.transcript_cache.is_some(), "--transcript-cache"),
             (config.acmg, "--acmg"),
             (config.hgvs, "--hgvs"),
+            (config.columns.hgvsg, "--hgvsg"),
+            (config.columns.symbol, "--symbol"),
+            (config.columns.biotype, "--biotype"),
+            (config.columns.canonical, "--canonical"),
+            (config.columns.numbers, "--numbers"),
+            (config.columns.variant_class, "--variant-class"),
+            (config.columns.show_ref_allele, "--show-ref-allele"),
             // Names the switch the user actually typed, so the warning is not
             // about `--pick` when they passed `--flag-pick-allele-gene`.
             (pick_switch.is_some(), pick_switch.unwrap_or("--pick")),
@@ -1430,10 +1512,13 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // `PICK` header over a column that is empty on every row, which reads as
     // "every entry lost the pick" rather than "no pick ran".
     let pick_flags_column = !sa_only && pick_request.is_some_and(|r| r.needs_pick_column());
-    let csq_fields: Vec<&'static str> = if pick_flags_column {
-        output::csq_fields_with_pick()
+    let csq_fields: Vec<&'static str> = output::csq_fields(pick_flags_column, config.columns);
+    // The optional tab columns, in VEP's order. `--sa-only` writes no transcript
+    // columns at all, and says so for each flag it ignores.
+    let optional_columns: Vec<output::OptionalColumn> = if sa_only {
+        Vec::new()
     } else {
-        output::DEFAULT_CSQ_FIELDS.to_vec()
+        config.columns.columns(config.hgvs)
     };
 
     let functional_index = match config.functional_evidence.as_deref() {
@@ -1482,33 +1567,14 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             for line in output::tab_supplementary_header_lines(&supplementary_specs) {
                 writeln!(writer, "{}", line)?;
             }
-            let extra_columns = output::tab_supplementary_column_names(&supplementary_specs);
-            let mut header = if sa_only {
-                let mut h = String::from("#Uploaded_variation\tLocation\tAllele");
-                if config.explicit_alleles {
-                    h.push_str("\tREF");
-                }
-                h
-            } else {
-                let mut h = String::from("#Uploaded_variation\tLocation\tAllele");
-                if config.explicit_alleles {
-                    h.push_str("\tREF");
-                }
-                h.push_str(
-                    "\tGene\tFeature\tFeature_type\tConsequence\tcDNA_position\tCDS_position\tProtein_position\tAmino_acids\tCodons\tExisting_variation\tIMPACT\tDISTANCE\tSTRAND\tFLAGS",
-                );
-                h
-            };
-            for col in &extra_columns {
-                header.push('\t');
-                header.push_str(col);
-            }
-            if pick_flags_column {
-                header.push_str("\tPICK");
-            }
-            if qc_rules.is_some() {
-                header.push_str("\tQC_CLASS");
-            }
+            let header = output::tab_header(
+                sa_only,
+                config.explicit_alleles,
+                &optional_columns,
+                pick_flags_column,
+                &output::tab_supplementary_column_names(&supplementary_specs),
+                qc_rules.is_some(),
+            );
             writeln!(writer, "{}", header)?;
         }
         "json" => {
@@ -1661,6 +1727,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                         explicit_ref: config.explicit_alleles,
                         qc_class: qc_label,
                         pick_column: pick_flags_column,
+                        optional: &optional_columns,
                     };
                     for line in
                         output::format_tab_line_with(vf, &supplementary_specs, sa_only, opts)

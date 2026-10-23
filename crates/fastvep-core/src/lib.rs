@@ -4,6 +4,7 @@ mod consequence;
 pub mod hgvs;
 mod placement;
 mod position;
+pub mod variant_class;
 
 pub use annotation_types::{GeneAnnotation, SupplementaryAnnotation};
 pub use chrom::{
@@ -14,3 +15,4 @@ pub use consequence::{Consequence, Impact};
 pub use hgvs::{is_canonical_dinucleotide_offset, parse_intronic_offset};
 pub use placement::{HgvsPlacement, SpliceContext};
 pub use position::{Allele, GenomicPosition, Strand, VariantType};
+pub use variant_class::so_variation_class;
