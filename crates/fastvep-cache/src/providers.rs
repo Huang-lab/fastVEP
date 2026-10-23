@@ -1,11 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use fastvep_core::chrom_aliases;
 use fastvep_genome::{is_mitochondrial, wrap_position_for, Transcript, MT_LENGTH};
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::info::CacheInfo;
-use crate::variation::{self, VariationTabixReader};
+use crate::variation::{self, Matched, VariationCacheRecord, VariationTabixReader};
 
 /// Trait for providing transcript annotations for a genomic region.
 pub trait TranscriptProvider: Send + Sync {
@@ -277,6 +278,8 @@ impl SequenceProvider for MmapFastaSequenceProvider {
 #[derive(Debug, Clone)]
 pub struct MatchedVariant {
     pub name: String,
+    /// The allele as the cache record writes it, the one its per-population
+    /// frequencies are keyed by. Empty for a record that carries no alleles.
     pub matched_allele: String,
     pub minor_allele: Option<String>,
     pub minor_allele_freq: Option<f64>,
@@ -290,33 +293,104 @@ pub struct MatchedVariant {
 
 /// Trait for providing co-located known variant annotations.
 pub trait VariationProvider {
-    /// Look up known variants overlapping a position that match the given alleles.
+    /// The known variants VEP's `--check_existing` reports for one input site,
+    /// one list per alt allele: `result[i]` belongs to `alt_alleles[i]`.
+    ///
+    /// `start` and `end` are Ensembl coordinates (an insertion has
+    /// `end == start - 1`); alleles are written as in an Ensembl allele string,
+    /// `-` for an empty one. Each list is in the order VEP prints
+    /// `Existing_variation`.
+    ///
+    /// An error means the lookup could not be done, and the caller must not
+    /// read it as "no known variants".
     fn get_matched_variants(
         &self,
         chrom: &str,
         start: u64,
         end: u64,
         ref_allele: &str,
-        alt_allele: &str,
-    ) -> Result<Vec<MatchedVariant>>;
+        alt_alleles: &[String],
+    ) -> Result<Vec<Vec<MatchedVariant>>>;
+
+    /// What to tell the user once the run is over, when lookups came back
+    /// empty for a reason that is theirs to fix.
+    fn finish(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Variation provider backed by VEP's tabix-indexed cache files.
 pub struct TabixVariationProvider {
     reader: VariationTabixReader,
+    cache_dir: std::path::PathBuf,
+    /// Sites looked up.
+    sites: AtomicU64,
+    /// Contigs of the input that the cache does not know, with the number of
+    /// sites on each.
+    unresolved: Mutex<BTreeMap<String, u64>>,
 }
 
 impl TabixVariationProvider {
     /// Create a provider from a VEP cache directory.
     ///
-    /// Reads `info.txt` for column definitions and valid chromosomes.
+    /// Reads `info.txt` for column definitions and valid chromosomes. Fails
+    /// when the directory is not a tabix variation cache, or holds a variation
+    /// file that cannot be searched; see [`VariationTabixReader::new`].
     pub fn new(cache_dir: &std::path::Path, cache_info: &CacheInfo) -> Result<Self> {
         let reader = VariationTabixReader::new(
             cache_dir,
             &cache_info.variation_cols,
             &cache_info.valid_chromosomes,
-        )?;
-        Ok(Self { reader })
+        )
+        .with_context(|| {
+            format!(
+                "--cache-dir {} (info.txt: var_type {})",
+                cache_dir.display(),
+                cache_info.var_type.as_deref().unwrap_or("absent")
+            )
+        })?;
+        Ok(Self {
+            reader,
+            cache_dir: cache_dir.to_path_buf(),
+            sites: AtomicU64::new(0),
+            unresolved: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    fn note_unresolved(&self, chrom: &str) {
+        // A poisoned lock only loses a count that feeds a warning.
+        if let Ok(mut unresolved) = self.unresolved.lock() {
+            *unresolved.entry(chrom.to_string()).or_insert(0) += 1;
+        }
+    }
+
+    fn build(record: &VariationCacheRecord, record_allele: &str) -> MatchedVariant {
+        // Per-allele frequencies for the matched allele
+        let mut frequencies = HashMap::new();
+        for (pop, freq_str) in &record.frequencies {
+            if let Some(f) = variation::get_allele_freq(freq_str, record_allele) {
+                frequencies.insert(pop.clone(), f);
+            }
+        }
+
+        // Also include MAF if minor_allele matches
+        if let (Some(ma), Some(maf)) = (&record.minor_allele, record.minor_allele_freq) {
+            if ma.eq_ignore_ascii_case(record_allele) {
+                frequencies.entry("minor_allele_freq".into()).or_insert(maf);
+            }
+        }
+
+        MatchedVariant {
+            name: record.variation_name.clone(),
+            matched_allele: record_allele.to_string(),
+            minor_allele: record.minor_allele.clone(),
+            minor_allele_freq: record.minor_allele_freq,
+            clin_sig: record.clin_sig.clone(),
+            somatic: record.somatic,
+            phenotype_or_disease: record.phenotype_or_disease,
+            pubmed: record.pubmed.clone(),
+            frequencies,
+        }
     }
 }
 
@@ -327,52 +401,96 @@ impl VariationProvider for TabixVariationProvider {
         start: u64,
         end: u64,
         ref_allele: &str,
-        alt_allele: &str,
-    ) -> Result<Vec<MatchedVariant>> {
-        let records = self.reader.query(chrom, start, end)?;
-        let mut matched = Vec::new();
+        alt_alleles: &[String],
+    ) -> Result<Vec<Vec<MatchedVariant>>> {
+        let mut per_alt: Vec<Vec<MatchedVariant>> = vec![Vec::new(); alt_alleles.len()];
+        self.sites.fetch_add(1, Ordering::Relaxed);
+
+        if self.reader.normalize_chrom(chrom).is_none() {
+            self.note_unresolved(chrom);
+            return Ok(per_alt);
+        }
+
+        // VEP asks the index for `start - 1 ..= end + 1` of the input
+        // (VariationTabix::_annotate_pm), and the index holds each record at its
+        // start.
+        let records = self
+            .reader
+            .query(chrom, start.saturating_sub(1), end.saturating_add(1))
+            .with_context(|| format!("known-variant lookup at {chrom}:{start}-{end}"))?;
+        if records.is_empty() {
+            return Ok(per_alt);
+        }
+
+        let alts: Vec<&str> = alt_alleles.iter().map(String::as_str).collect();
+        let site = variation::SiteForms::new(ref_allele, &alts, start, end);
+        // VEP skips a record whose name it has already matched for this site,
+        // whichever allele that match was for.
+        let mut matched_names: Vec<&str> = Vec::new();
 
         for record in &records {
-            // Skip failed variants
-            if record.failed {
+            // Failed variants are out unless asked for (`filter_variation`).
+            if record.failed || matched_names.contains(&record.variation_name.as_str()) {
                 continue;
             }
+            let Some(matched) = site.compare(record) else {
+                continue;
+            };
+            matched_names.push(&record.variation_name);
 
-            // Check allele match
-            if let Some(matched_alt) =
-                variation::match_alleles(ref_allele, alt_allele, start, end, record)
-            {
-                // Extract per-allele frequencies for the matched allele
-                let mut freqs = HashMap::new();
-                for (pop, freq_str) in &record.frequencies {
-                    if let Some(f) = variation::get_allele_freq(freq_str, &matched_alt) {
-                        freqs.insert(pop.clone(), f);
+            for (alt_index, list) in per_alt.iter_mut().enumerate() {
+                match &matched {
+                    Matched::AllAlleles => list.push(Self::build(record, "")),
+                    Matched::Alleles(matches) => {
+                        // The first matching record allele speaks for the input
+                        // allele, as the first of `matched_alleles` does.
+                        if let Some(m) = matches.iter().find(|m| m.alt_index == alt_index) {
+                            list.push(Self::build(record, &m.record_allele));
+                        }
                     }
                 }
-
-                // Also include MAF if minor_allele matches
-                if let (Some(ref ma), Some(maf)) = (&record.minor_allele, record.minor_allele_freq)
-                {
-                    if ma.eq_ignore_ascii_case(&matched_alt) {
-                        freqs.entry("minor_allele_freq".into()).or_insert(maf);
-                    }
-                }
-
-                matched.push(MatchedVariant {
-                    name: record.variation_name.clone(),
-                    matched_allele: matched_alt,
-                    minor_allele: record.minor_allele.clone(),
-                    minor_allele_freq: record.minor_allele_freq,
-                    clin_sig: record.clin_sig.clone(),
-                    somatic: record.somatic,
-                    phenotype_or_disease: record.phenotype_or_disease,
-                    pubmed: record.pubmed.clone(),
-                    frequencies: freqs,
-                });
             }
         }
 
-        Ok(matched)
+        for list in &mut per_alt {
+            list.sort_by_key(|m| variation::existing_variation_rank(&m.name, m.somatic));
+        }
+        Ok(per_alt)
+    }
+
+    fn finish(&self) -> Option<String> {
+        let unresolved = self.unresolved.lock().ok()?;
+        if unresolved.is_empty() {
+            return None;
+        }
+        let sites = self.sites.load(Ordering::Relaxed);
+        let missed: u64 = unresolved.values().sum();
+        let mut examples: Vec<String> = unresolved
+            .iter()
+            .take(5)
+            .map(|(chrom, n)| format!("{chrom} ({n})"))
+            .collect();
+        if unresolved.len() > 5 {
+            examples.push(format!("and {} more", unresolved.len() - 5));
+        }
+        let which = if missed == sites {
+            "none of the input's variants is on a contig".to_string()
+        } else {
+            format!("{missed} of {sites} variants are on contigs")
+        };
+        Some(format!(
+            "warning: {which} that --cache-dir {} knows, so Existing_variation is empty for \
+             {}: {}. The cache has {}. If the names differ, put a chr_synonyms.txt in the cache \
+             directory (the file VEP reads, one line of equivalent names per contig).",
+            self.cache_dir.display(),
+            if missed == sites {
+                "all of them"
+            } else {
+                "those"
+            },
+            examples.join(", "),
+            self.reader.chromosomes().join(", ")
+        ))
     }
 }
 
