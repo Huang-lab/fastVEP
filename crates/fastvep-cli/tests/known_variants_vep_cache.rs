@@ -106,7 +106,24 @@ fn run(dir: &Path, cache_dir: &Path) -> anyhow::Result<String> {
     Ok(std::fs::read_to_string(&out).unwrap())
 }
 
-/// `(Location, Allele)` to the `Existing_variation` of every row with that key,
+/// `chrom:lowest coordinate` of a `Location` cell.
+///
+/// Rows are told apart by where a variant starts, not by how the file spells its
+/// span. An insertion sits between two bases, so its end is below its start, and
+/// a tab writer can put the two in either order (VEP writes the lower first).
+/// This test is about `Existing_variation`; how `Location` is written belongs to
+/// the tab output's own tests, and must not be able to fail this one.
+fn site(location: &str) -> String {
+    let (chrom, span) = location.split_once(':').expect("a Location is chrom:span");
+    let lowest = span
+        .split('-')
+        .map(|n| n.parse::<u64>().expect("a coordinate"))
+        .min()
+        .unwrap();
+    format!("{chrom}:{lowest}")
+}
+
+/// `(site, Allele)` to the `Existing_variation` of every row with that key,
 /// read by the declared column names.
 fn existing_by_site(tab: &str) -> BTreeMap<(String, String), Vec<String>> {
     let header = tab
@@ -125,7 +142,7 @@ fn existing_by_site(tab: &str) -> BTreeMap<(String, String), Vec<String>> {
     for row in tab.lines().filter(|l| !l.starts_with('#')) {
         let f: Vec<&str> = row.split('\t').collect();
         by_site
-            .entry((f[loc].to_string(), f[allele].to_string()))
+            .entry((site(f[loc]), f[allele].to_string()))
             .or_default()
             .push(f[existing].to_string());
     }
@@ -135,13 +152,13 @@ fn existing_by_site(tab: &str) -> BTreeMap<(String, String), Vec<String>> {
 fn expected() -> Vec<((&'static str, &'static str), &'static str)> {
     vec![
         // an anchored deletion in the cache, found from the minimised input
-        (("chr10:10401-10405", "-"), "rsFIX_DEL_ANCH"),
+        (("chr10:10401", "-"), "rsFIX_DEL_ANCH"),
         // a minimal deletion matches only its own record, not the anchored one
-        (("chr10:10400-10404", "-"), "rsFIX_DEL_MIN"),
+        (("chr10:10400", "-"), "rsFIX_DEL_MIN"),
         // an insertion the cache stores with end below start
-        (("chr10:10409-10408", "T"), "rsFIX_INS_MIN"),
+        (("chr10:10408", "T"), "rsFIX_INS_MIN"),
         // an insertion the cache stores anchored
-        (("chr10:10421-10420", "A"), "rsFIX_INS_ANCH"),
+        (("chr10:10420", "A"), "rsFIX_INS_ANCH"),
         // germline first, the somatic record without alleles last, the failed
         // record not at all
         (("chr10:10414", "A"), "rsFIX_SNV,rsFIX_SNV_MULTI,COSVFIX1"),
