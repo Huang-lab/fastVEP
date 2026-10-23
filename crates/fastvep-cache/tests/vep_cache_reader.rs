@@ -27,8 +27,7 @@ fn info(dir: &Path) -> CacheInfo {
 }
 
 fn open_dir(dir: &Path) -> anyhow::Result<VariationTabixReader> {
-    let info = info(dir);
-    VariationTabixReader::new(dir, &info.variation_cols, &info.valid_chromosomes)
+    VariationTabixReader::new(dir, &info(dir).variation_cols)
 }
 
 fn open(kind: &str) -> VariationTabixReader {
@@ -151,6 +150,27 @@ fn a_directory_without_variation_files_is_refused() {
     assert!(
         message.contains("unconverted"),
         "it says what an unconverted cache is: {message}"
+    );
+}
+
+/// The chromosomes are the directories, as in VEP. An info.txt that has a
+/// `valid_chromosomes` line, however it is written, does not change which
+/// directories are read or make a good cache unreadable.
+#[test]
+fn a_valid_chromosomes_line_in_info_txt_is_not_consulted() {
+    let dir = tempfile::tempdir().unwrap();
+    copy_dir(&fixture("csi"), dir.path());
+    let info_path = dir.path().join("info.txt");
+    let mut text = std::fs::read_to_string(&info_path).unwrap();
+    // tab-separated, which info.rs would read as a single name
+    text.push_str("valid_chromosomes\t10\tMT\n");
+    std::fs::write(&info_path, text).unwrap();
+
+    let reader = open_dir(dir.path()).expect("the directories decide, not the line");
+    assert_eq!(reader.chromosomes(), ["10", "MT"]);
+    assert_eq!(
+        names(&reader.query("chrM", 100, 100).unwrap()),
+        ["rsFIX_MT"]
     );
 }
 

@@ -337,18 +337,14 @@ impl TabixVariationProvider {
     /// when the directory is not a tabix variation cache, or holds a variation
     /// file that cannot be searched; see [`VariationTabixReader::new`].
     pub fn new(cache_dir: &std::path::Path, cache_info: &CacheInfo) -> Result<Self> {
-        let reader = VariationTabixReader::new(
-            cache_dir,
-            &cache_info.variation_cols,
-            &cache_info.valid_chromosomes,
-        )
-        .with_context(|| {
-            format!(
-                "--cache-dir {} (info.txt: var_type {})",
-                cache_dir.display(),
-                cache_info.var_type.as_deref().unwrap_or("absent")
-            )
-        })?;
+        let reader = VariationTabixReader::new(cache_dir, &cache_info.variation_cols)
+            .with_context(|| {
+                format!(
+                    "--cache-dir {} (info.txt: var_type {})",
+                    cache_dir.display(),
+                    cache_info.var_type.as_deref().unwrap_or("absent")
+                )
+            })?;
         Ok(Self {
             reader,
             cache_dir: cache_dir.to_path_buf(),

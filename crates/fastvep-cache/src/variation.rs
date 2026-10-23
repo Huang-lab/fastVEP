@@ -427,9 +427,10 @@ impl VariationTabixReader {
     /// Open a VEP cache directory.
     ///
     /// `variation_cols` comes from `info.txt` and defines the column order.
-    /// `valid_chromosomes` lists the chromosome directories; real caches do not
-    /// carry that line (VEP takes the sub-directories, `CacheDir.pm`), so when
-    /// it is empty the sub-directories are scanned.
+    /// The chromosomes are the sub-directories that hold an `all_vars.gz`, as in
+    /// VEP, which takes them from the file system and overwrites whatever
+    /// `info.txt` says (`CacheDir::info`); a `valid_chromosomes` line there is not
+    /// consulted.
     ///
     /// Fails, here and not once per variant later, when the directory holds no
     /// variation file or a variation file has no index: either would otherwise
@@ -439,29 +440,19 @@ impl VariationTabixReader {
     /// (`CacheDir.pm` loads it automatically), so an input that names a contig
     /// differently from the directory (`chrM` and `MT`, or an accession) still
     /// finds it.
-    pub fn new(
-        cache_dir: &Path,
-        variation_cols: &[String],
-        valid_chromosomes: &[String],
-    ) -> Result<Self> {
+    pub fn new(cache_dir: &Path, variation_cols: &[String]) -> Result<Self> {
         let layout = ColumnLayout::new(variation_cols)?;
 
-        let mut chromosomes: Vec<String> = if valid_chromosomes.is_empty() {
-            let mut found = Vec::new();
-            let entries = std::fs::read_dir(cache_dir)
-                .with_context(|| format!("Reading cache directory: {}", cache_dir.display()))?;
-            for entry in entries.flatten() {
-                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                if is_dir && entry.path().join(DATA_FILE).is_file() {
-                    found.push(entry.file_name().to_string_lossy().to_string());
-                }
+        let mut chromosomes = Vec::new();
+        let entries = std::fs::read_dir(cache_dir)
+            .with_context(|| format!("Reading cache directory: {}", cache_dir.display()))?;
+        for entry in entries.flatten() {
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir && entry.path().join(DATA_FILE).is_file() {
+                chromosomes.push(entry.file_name().to_string_lossy().to_string());
             }
-            found
-        } else {
-            valid_chromosomes.to_vec()
-        };
+        }
         chromosomes.sort();
-        chromosomes.dedup();
 
         let mut indexes = HashMap::new();
         for dir in &chromosomes {
@@ -471,8 +462,8 @@ impl VariationTabixReader {
                 // Open it once now and drop it. An index that cannot be read, or
                 // was built on the wrong column, would otherwise surface on the
                 // first variant of that chromosome, possibly hours into a run, or
-                // not at all if the lookup error were ever swallowed. Indexes are
-                // small (a CSI over a whole chromosome is about a megabyte).
+                // not at all if the lookup error were ever swallowed. An index is
+                // small next to the data file it indexes.
                 Source::open(dir, &data, &index, &layout)?;
                 indexes.insert(dir.clone(), index);
             }
@@ -944,8 +935,7 @@ mod tests {
     fn eviction_and_reopening_keep_every_answer() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/vep_cache/csi");
         let info = crate::info::CacheInfo::from_file(&dir.join("info.txt")).unwrap();
-        let reader =
-            VariationTabixReader::new(&dir, &info.variation_cols, &info.valid_chromosomes).unwrap();
+        let reader = VariationTabixReader::new(&dir, &info.variation_cols).unwrap();
         *reader.open.lock().unwrap() = OpenSources::with_cap(1);
 
         for _ in 0..3 {
@@ -1197,9 +1187,7 @@ mod tests {
 
         let info = crate::info::CacheInfo::from_file(&cache_dir.join("info.txt")).unwrap();
 
-        let reader =
-            VariationTabixReader::new(&cache_dir, &info.variation_cols, &info.valid_chromosomes)
-                .unwrap();
+        let reader = VariationTabixReader::new(&cache_dir, &info.variation_cols).unwrap();
 
         // Query for a known variant: rs879182429 at chr21:8013350
         let records = reader.query("21", 8013350, 8013350).unwrap();
