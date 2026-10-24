@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::info::CacheInfo;
-use crate::variation::{self, Matched, VariationCacheRecord, VariationTabixReader};
+use crate::variation::{self, InputSite, Matched, VariationCacheRecord, VariationTabixReader};
 
 /// Trait for providing transcript annotations for a genomic region.
 pub trait TranscriptProvider: Send + Sync {
@@ -390,36 +390,34 @@ impl TabixVariationProvider {
     }
 }
 
-impl VariationProvider for TabixVariationProvider {
-    fn get_matched_variants(
-        &self,
-        chrom: &str,
-        start: u64,
-        end: u64,
-        ref_allele: &str,
-        alt_alleles: &[String],
-    ) -> Result<Vec<Vec<MatchedVariant>>> {
-        let mut per_alt: Vec<Vec<MatchedVariant>> = vec![Vec::new(); alt_alleles.len()];
-        self.sites.fetch_add(1, Ordering::Relaxed);
-
-        if self.reader.normalize_chrom(chrom).is_none() {
-            self.note_unresolved(chrom);
-            return Ok(per_alt);
-        }
+impl TabixVariationProvider {
+    /// The known variants of one input site, one list per alt of the site, each
+    /// in the order VEP prints them.
+    fn lookup(&self, chrom: &str, site: &InputSite) -> Result<Vec<Vec<MatchedVariant>>> {
+        let mut per_alt: Vec<Vec<MatchedVariant>> = vec![Vec::new(); site.alts.len()];
 
         // VEP asks the index for `start - 1 ..= end + 1` of the input
         // (VariationTabix::_annotate_pm), and the index holds each record at its
         // start.
         let records = self
             .reader
-            .query(chrom, start.saturating_sub(1), end.saturating_add(1))
-            .with_context(|| format!("known-variant lookup at {chrom}:{start}-{end}"))?;
+            .query(
+                chrom,
+                site.start.saturating_sub(1),
+                site.end.saturating_add(1),
+            )
+            .with_context(|| {
+                format!(
+                    "known-variant lookup at {chrom}:{}-{}",
+                    site.start, site.end
+                )
+            })?;
         if records.is_empty() {
             return Ok(per_alt);
         }
 
-        let alts: Vec<&str> = alt_alleles.iter().map(String::as_str).collect();
-        let site = variation::SiteForms::new(ref_allele, &alts, start, end);
+        let alts: Vec<&str> = site.alts.iter().map(String::as_str).collect();
+        let forms = variation::SiteForms::new(&site.reference, &alts, site.start, site.end);
         // VEP skips a record whose name it has already matched for this site,
         // whichever allele that match was for.
         let mut matched_names: Vec<&str> = Vec::new();
@@ -429,7 +427,7 @@ impl VariationProvider for TabixVariationProvider {
             if record.failed || matched_names.contains(&record.variation_name.as_str()) {
                 continue;
             }
-            let Some(matched) = site.compare(record) else {
+            let Some(matched) = forms.compare(record) else {
                 continue;
             };
             matched_names.push(&record.variation_name);
@@ -452,6 +450,32 @@ impl VariationProvider for TabixVariationProvider {
             list.sort_by_key(|m| variation::existing_variation_rank(&m.name, m.somatic));
         }
         Ok(per_alt)
+    }
+}
+
+impl VariationProvider for TabixVariationProvider {
+    fn get_matched_variants(
+        &self,
+        chrom: &str,
+        start: u64,
+        end: u64,
+        ref_allele: &str,
+        alt_alleles: &[String],
+    ) -> Result<Vec<Vec<MatchedVariant>>> {
+        self.sites.fetch_add(1, Ordering::Relaxed);
+
+        if self.reader.normalize_chrom(chrom).is_none() {
+            self.note_unresolved(chrom);
+            return Ok(vec![Vec::new(); alt_alleles.len()]);
+        }
+
+        // A lone indel alt is looked up minimised, as VEP does it; see
+        // `vep_input_site`.
+        let alts: Vec<&str> = alt_alleles.iter().map(String::as_str).collect();
+        self.lookup(
+            chrom,
+            &variation::vep_input_site(ref_allele, &alts, start, end),
+        )
     }
 
     fn finish(&self) -> Option<String> {

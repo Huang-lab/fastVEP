@@ -227,3 +227,89 @@ fn an_unconverted_cache_directory_stops_the_run() {
     );
     assert!(message.contains("unconverted"), "{message}");
 }
+
+/// The known variants of every record of a world that Ensembl's own VEP has
+/// annotated.
+///
+/// `fastvep-cache/fixtures/vep_world` is 1,198 input records, each in a window
+/// of its own against a VEP-format cache, in the spellings that make matching
+/// hard (anchored on either side, in repeats, several alts, the other strand,
+/// failed and somatic records, records with no alleles). `regen.sh` there runs
+/// `vep --tab --check_existing --cache --offline` from the VEP 116.3 image and
+/// keeps what it printed for each record: that is `golden.tsv`, and nothing in it
+/// was worked out here. The golden test of the matcher
+/// (`fastvep-cache/tests/vep_match_golden.rs`) holds one function of VEP's to
+/// account; this holds the whole pipeline of the program to it, including the
+/// parts that decide what the matcher is given. Matching an indel as the VCF
+/// writes it found a known variant that VEP reports as novel, and only a run of
+/// VEP could show that.
+#[test]
+fn every_record_of_the_vep_world_gets_the_known_variants_vep_gave_it() {
+    let world = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fastvep-cache/fixtures/vep_world");
+    let dir = TempDir::new().unwrap();
+    let out = dir.path().join("out.tab");
+    run_annotate(AnnotateConfig {
+        gff3: vec![world.join("genes.gff3").to_string_lossy().into()],
+        cache_dir: Some(
+            world
+                .join("cache/homo_sapiens/116_GRCh38")
+                .to_string_lossy()
+                .into(),
+        ),
+        ..config(&world.join("in.vcf"), &out)
+    })
+    .expect("annotation should succeed");
+    let tab = std::fs::read_to_string(&out).unwrap();
+
+    // Existing_variation of each record, its cells sorted and joined with `|`
+    let header = tab
+        .lines()
+        .find(|l| l.starts_with("#Uploaded_variation"))
+        .unwrap_or_else(|| panic!("no column header in:\n{tab}"));
+    let columns: Vec<&str> = header.trim_start_matches('#').split('\t').collect();
+    let column = |name: &str| columns.iter().position(|c| *c == name).unwrap();
+    let (id, existing) = (column("Uploaded_variation"), column("Existing_variation"));
+    let mut got: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for row in tab.lines().filter(|l| !l.starts_with('#')) {
+        let cells: Vec<&str> = row.split('\t').collect();
+        got.entry(cells[id].to_string())
+            .or_default()
+            .push(cells[existing].to_string());
+    }
+    let got: BTreeMap<String, String> = got
+        .into_iter()
+        .map(|(id, mut cells)| {
+            cells.sort();
+            (id, cells.join("|"))
+        })
+        .collect();
+
+    let golden = std::fs::read_to_string(world.join("golden.tsv")).unwrap();
+    let want: BTreeMap<String, String> = golden
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| {
+            let (id, cells) = l.split_once('\t').expect("id <TAB> cells");
+            (id.to_string(), cells.to_string())
+        })
+        .collect();
+
+    assert_eq!(got.len(), want.len(), "records annotated");
+    let wrong: Vec<String> = want
+        .iter()
+        .filter(|(id, cells)| got.get(*id) != Some(cells))
+        .map(|(id, cells)| format!("{id}: VEP {cells}, here {:?}", got.get(id)))
+        .collect();
+    assert!(
+        wrong.is_empty(),
+        "{} of {} records differ from VEP's answer, first ten:\n{}",
+        wrong.len(),
+        want.len(),
+        wrong
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}

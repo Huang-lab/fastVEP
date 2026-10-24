@@ -58,10 +58,11 @@ docs/index.html
 *.tbi
 *.csi
 # ...except the index files of the VEP-cache fixtures, which are the test input.
-# Without these two lines the fixtures' indexes are dropped by `git add` and the
+# Without these lines the fixtures' indexes are dropped by `git add` and the
 # tests that read them fail on a fresh clone, not on the machine that made them.
 !/crates/fastvep-cache/fixtures/vep_cache/**/*.tbi
 !/crates/fastvep-cache/fixtures/vep_cache/**/*.csi
+!/crates/fastvep-cache/fixtures/vep_world/**/*.csi
 
 # Supplementary-annotation databases emitted by `sa-build` during test runs
 *.osa

@@ -845,6 +845,96 @@ pub fn match_alleles(
     )
 }
 
+/// One input variant as VEP hands it to `compare_existing`: a reference, the
+/// alts that share it, and the coordinates they sit at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputSite {
+    pub reference: String,
+    pub alts: Vec<String>,
+    pub start: u64,
+    pub end: u64,
+}
+
+/// `trim_sequences($ref, $alt, $start, $end, 1)`: common bases off the left,
+/// moving `start`, then off the right, moving `end`; an allele left empty is
+/// `-`.
+fn minimise(reference: &str, alternate: &str, start: u64, end: u64) -> (String, String, u64, u64) {
+    fn bases(allele: &str) -> &[u8] {
+        if allele == "-" {
+            &[]
+        } else {
+            allele.as_bytes()
+        }
+    }
+    let (mut r, mut a) = (bases(reference), bases(alternate));
+    let (mut start, mut end) = (start, end);
+    while let (Some((x, r_rest)), Some((y, a_rest))) = (r.split_first(), a.split_first()) {
+        if !x.eq_ignore_ascii_case(y) {
+            break;
+        }
+        (r, a) = (r_rest, a_rest);
+        start += 1;
+    }
+    while let (Some((x, r_rest)), Some((y, a_rest))) = (r.split_last(), a.split_last()) {
+        if !x.eq_ignore_ascii_case(y) {
+            break;
+        }
+        (r, a) = (r_rest, a_rest);
+        end = end.saturating_sub(1);
+    }
+    let text = |s: &[u8]| {
+        if s.is_empty() {
+            "-".to_string()
+        } else {
+            String::from_utf8_lossy(s).into_owned()
+        }
+    };
+    (text(r), text(a), start, end)
+}
+
+/// The site VEP looks known variants up for, given one VCF record as its
+/// parser leaves it (the first base already taken off where `Parser::VCF`
+/// does).
+///
+/// A record with one alt whose length differs from the reference is what VEP
+/// calls a non-minimised indel (`Parser::post_process_vfs`), and it replaces
+/// the record with the pair trimmed on both sides, left first and then right
+/// (`Parser::minimise_alleles`), before anything is looked up. That is not a
+/// detail. `get_matched_variant_alleles` tries both trim orders on what it is
+/// given, so a pair that is already minimal has only one reading, and an event
+/// written in a repeat (`AC>ACCC`, the insertion of `CC` after the `C`) no
+/// longer matches the same insertion the cache writes one base to the left.
+/// Matching the record as written found a known variant that VEP reports as
+/// novel.
+///
+/// Every other record goes through as it is: SNVs and MNVs, and records with
+/// several alts. VEP 115 split a multi-allelic indel into one variant per alt
+/// and minimised each (`InputBuffer::split_variants`, switched on for the whole
+/// run by the first indel it met), and then lost the known variants of every
+/// alt but the first when it rejoined them. VEP 116 no longer switches that on
+/// (`InputBuffer::next`, the lines are commented out), so it matches the whole
+/// record, and so does this.
+pub fn vep_input_site(ref_allele: &str, alts: &[&str], start: u64, end: u64) -> InputSite {
+    let length = |s: &str| if s == "-" { 0 } else { s.len() };
+    if let [alt] = alts {
+        if length(alt) != length(ref_allele) {
+            let (reference, alt, start, end) = minimise(ref_allele, alt, start, end);
+            return InputSite {
+                reference,
+                alts: vec![alt],
+                start,
+                end,
+            };
+        }
+    }
+    InputSite {
+        reference: ref_allele.to_string(),
+        alts: alts.iter().map(|a| a.to_string()).collect(),
+        start,
+        end,
+    }
+}
+
 /// How VEP orders the known variants of one allele in `Existing_variation`
 /// (`OutputFactory::add_colocated_variant_info`): germline before somatic, then
 /// by the prefix of the name (`rs`, then HGMD's `CM`/`CI`/`CD`, then COSMIC's
@@ -1120,6 +1210,79 @@ mod tests {
         );
         // An insertion one base along is another insertion.
         assert!(match_alleles("-", &["A"], 10421, "-/A", 10422, 1).is_empty());
+    }
+
+    /// VEP's own `trim_sequences($ref, $alt, $start, $end, 1)`, run in the VEP
+    /// 116.3 image, for pairs of the shape a lone indel alt takes: the left is
+    /// trimmed first and moves the start, the right after it and moves the end.
+    #[test]
+    fn a_lone_indel_alt_is_minimised_as_trim_sequences_does() {
+        // ref, alt, start, end => ref, alt, start, end
+        let cases = [
+            ("C", "CCC", 207651, 207651, "-", "CC", 207652, 207651),
+            ("A", "-", 151, 151, "A", "-", 151, 151),
+            ("CG", "G", 5851, 5852, "C", "-", 5851, 5851),
+            ("-", "GG", 780, 779, "-", "GG", 780, 779),
+            ("CA", "G", 100, 101, "CA", "G", 100, 101),
+            ("AT", "ATT", 100, 101, "-", "T", 102, 101),
+            ("ACCCT", "-", 10401, 10405, "ACCCT", "-", 10401, 10405),
+            ("GA", "G", 10899, 10900, "A", "-", 10900, 10900),
+            ("TCG", "TG", 100, 102, "C", "-", 101, 101),
+            ("CAT", "GT", 202850, 202852, "CA", "G", 202850, 202851),
+            ("AAAC", "AC", 50, 53, "AA", "-", 51, 52),
+        ];
+        for (r, a, s, e, want_r, want_a, want_s, want_e) in cases {
+            let site = vep_input_site(r, &[a], s, e);
+            assert_eq!(
+                (site.reference.as_str(), site.alts, site.start, site.end),
+                (want_r, vec![want_a.to_string()], want_s, want_e),
+                "{r}>{a} at {s}-{e}"
+            );
+        }
+    }
+
+    /// An event in a repeat is not the same known variant once it is minimised.
+    /// `AC>ACCC` reaches the matcher as `C/CCC` at 207651; written as it is, its
+    /// right-first reading is the insertion of `CC` at 207651, which is what the
+    /// cache has. VEP minimises the lone indel first (`-/CC` at 207652, the
+    /// insertion after the second `C`) and calls the cache's record novel.
+    #[test]
+    fn a_minimised_insertion_in_a_repeat_does_not_match_its_neighbour() {
+        let cache_record = "-/CC";
+        // matched as written: a match, which VEP does not report
+        assert!(!match_alleles("C", &["CCC"], 207651, cache_record, 207651, 1).is_empty());
+        // as VEP matches it
+        let site = vep_input_site("C", &["CCC"], 207651, 207651);
+        let alts: Vec<&str> = site.alts.iter().map(String::as_str).collect();
+        let forms = SiteForms::new(&site.reference, &alts, site.start, site.end);
+        assert!(forms.match_alleles(cache_record, 207651, 1).is_empty());
+        // the same insertion written in the cache where VEP puts it still matches
+        assert!(!forms.match_alleles(cache_record, 207652, 1).is_empty());
+    }
+
+    /// Only a lone alt is minimised. SNVs and MNVs, and records with several
+    /// alts (VEP 116 matches those whole), go through as they are.
+    #[test]
+    fn everything_but_a_lone_indel_alt_is_looked_up_as_it_is() {
+        for (r, alts, s, e) in [
+            ("C", vec!["A"], 10414, 10414),
+            ("C", vec!["A", "G"], 10414, 10414),
+            ("AAC", vec!["AAT"], 100, 102),
+            ("CAT", vec!["GT", "TAT"], 202850, 202852),
+            ("AT", vec!["G", "GCC"], 100, 101),
+            ("-", vec!["A", "CC"], 100, 99),
+        ] {
+            let site = vep_input_site(r, &alts, s, e);
+            assert_eq!(
+                (
+                    site.reference.as_str(),
+                    site.alts.iter().map(String::as_str).collect::<Vec<_>>(),
+                    site.start,
+                    site.end
+                ),
+                (r, alts, s, e)
+            );
+        }
     }
 
     #[test]
