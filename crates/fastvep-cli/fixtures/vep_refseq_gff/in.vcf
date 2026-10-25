@@ -1,0 +1,21 @@
+##fileformat=VCFv4.2
+##contig=<ID=chrR,length=9000>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chrR	530	r1_1	G	A	.	.	.
+chrR	650	r1_2	T	A	.	.	.
+chrR	1430	r2_1	A	G	.	.	.
+chrR	1550	r2_2	A	C	.	.	.
+chrR	2331	r3_1	A	C	.	.	.
+chrR	2452	r3_2	A	G	.	.	.
+chrR	3231	r4_1	A	C	.	.	.
+chrR	3352	r4_2	T	C	.	.	.
+chrR	4131	r5_1	G	A	.	.	.
+chrR	4252	r5_2	A	T	.	.	.
+chrR	5031	r6_1	C	T	.	.	.
+chrR	5152	r6_2	T	G	.	.	.
+chrR	5931	r7_1	A	T	.	.	.
+chrR	6052	r7_2	T	C	.	.	.
+chrR	6831	r8_1	C	T	.	.	.
+chrR	6952	r8_2	A	T	.	.	.
+chrR	7731	r9_1	C	A	.	.	.
+chrR	7852	r9_2	G	T	.	.	.

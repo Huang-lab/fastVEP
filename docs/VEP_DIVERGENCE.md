@@ -526,6 +526,24 @@ The world has none of them as it is, and the same world with each ALT its own re
 Not closed here: it changes what the whole annotation reads, and wants its own measurement.
 
 
+### A RefSeq GFF3
+
+Everything above is Ensembl's GFF3, and #139 runs RefSeq, so one RefSeq run was measured the same way: Ensembl VEP 116.3 and fastVEP over chr21 and chr22 of RefSeq's GFF3 for GRCh38.p14 (GCF_000001405.40, 134,543 records, the contigs renamed `21` and `22` so that the GRCh38 FASTA above answers for them) and the 527 variants of HG002 on those two chromosomes.
+2,717 rows are paired and 135 of their 81,510 cells differ (0.17 %), all of them divergence 11: `HGVSc` 62 and `HGVS_OFFSET` 73, on the 7 of the 527 records that have several ALTs.
+`Feature`, `Gene`, `BIOTYPE`, `SYMBOL`, `Consequence`, `IMPACT`, the positions, `Amino_acids` and `Codons` agree on every paired row.
+fastVEP writes 8 rows VEP does not: those of the mature microRNA records (`miRNA`, `rna-MIR185`), which hang off a transcript, and which VEP writes nothing for.
+
+That is since fastVEP names a RefSeq record as VEP's GFF reader does (`BaseGXF.pm`, `GFF.pm`), and it did not.
+NCBI's GFF3 gives a transcript the ID `rna-NM_000001.3` and the attribute `transcript_id=NM_000001.3`, a gene the ID `gene-TP53` and its transcripts the Dbxref `GeneID:7157`, and states no biotype.
+VEP names the transcript by its `transcript_id` (its ID as it is where it has none: an NCBI tRNA record has none, and is `rna-TRG-GCC1-5`), the gene by the `GeneID`, and guesses a biotype the record does not state: `protein_coding` for an mRNA, the `ncrna_class` of an ncRNA, `miRNA` for a transcript of a gene described as a microRNA, `IG_V_gene` for a `V_gene_segment`, and the `gbkey` for the rest (`ncRNA` for an lnc_RNA, `misc_RNA`, `rRNA`, `tRNA`).
+fastVEP named them by the ID, by the gene's own ID and by the SO term, so that 175 of the 2,717 rows paired, none of them a transcript row but the tRNA's, and with `rna-` taken off by hand `BIOTYPE` differed on 2,542 of 2,716 rows (`mRNA` for `protein_coding` on 2,130) and `Gene` on every transcript row.
+Where VEP can name no biotype it drops the transcript with a warning, and fastVEP keeps it, named by its SO term.
+
+Two records can now have one name: RefSeq writes a transcript that aligns in two places twice (`rna-NM_x.1` and `rna-NM_x.1-2`, both `transcript_id=NM_x.1`; 6,111 of the 186,133 ids in the file), and VEP gives both the one name.
+
+What this does not measure is the case the reporter runs, VEP's RefSeq *cache* (`--refseq`), which VEP builds from RefSeq by its own pipeline and which carries BAM-edited transcripts; `SOURCE` is the name of the GFF3 in VEP's `--gff` run and `RefSeq` here.
+`fixtures/vep_refseq_gff` holds a RefSeq-style GFF3 with one transcript of each kind a human one has and what VEP 116.3 wrote for it (138 CSQ entries), and `refseq_names_vep.rs` holds fastVEP to it.
+
 ---
 
 ## What is *not* a divergence

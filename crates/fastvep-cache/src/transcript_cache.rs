@@ -13,11 +13,14 @@ use std::time::SystemTime;
 
 /// Magic header for zstd-compressed caches (current format).
 ///
-/// Like V3, V4 and V5 before it, V6 differs from its predecessor in nothing but
-/// the guarantee it carries: every V6 cache was written by a build whose GFF3
-/// parser reads a protein's version from its CDS records. See
+/// Like V3 to V6 before it, V7 differs from its predecessor in nothing but the
+/// guarantee it carries: every V7 cache was written by a build whose GFF3 parser
+/// names transcripts, genes and biotypes as Ensembl VEP's does. See
 /// [`load_cache_zstd`] for why that has to be a format bump rather than a note
 /// in the changelog.
+const CACHE_MAGIC_V7: &[u8; 8] = b"FSTVEP07";
+/// Magic header for zstd caches written before the RefSeq naming fix (rejected,
+/// see [`load_cache_zstd`]).
 const CACHE_MAGIC_V6: &[u8; 8] = b"FSTVEP06";
 /// Magic header for zstd caches written before the protein-version fix
 /// (rejected, see [`load_cache_zstd`]).
@@ -45,6 +48,23 @@ const DETAIL_PRE_90: &str = "Caches written between 2026-06-10 (the tabix read \
      run - the #87 failure, which reported 47,196 of 47,196 chr17 variants as \
      intergenic at exit code 0. Nothing in the file distinguishes the two, so it \
      is rejected rather than read.";
+
+/// One line naming what is wrong with a pre-RefSeq-naming cache.
+const SUMMARY_PRE_REFSEQ_NAMES: &str = "predates the RefSeq naming fix and names \
+     RefSeq transcripts, genes and biotypes as the GFF3's ids and SO terms";
+
+/// The evidence behind [`SUMMARY_PRE_REFSEQ_NAMES`], for the caller that has to
+/// stop.
+const DETAIL_PRE_REFSEQ_NAMES: &str = "The GFF3 parser that wrote it named a \
+     transcript by its ID and a gene by its own ID, and took a transcript's \
+     biotype from its SO term when the record states none. For a RefSeq GFF3 that \
+     is `rna-NM_000001.3` where Ensembl VEP writes `NM_000001.3`, `gene-TP53` \
+     where it writes the GeneID `7157`, and `mRNA` or `lnc_RNA` where it writes \
+     `protein_coding` or `ncRNA`, in the Feature, Gene and BIOTYPE of every row \
+     and the transcript of every HGVSc. An Ensembl GFF3 is named the same by \
+     either rule, so a cache built from one is unchanged by the rebuild; nothing \
+     in the file says which source it came from, so it is rejected rather than \
+     read.";
 
 /// One line naming what is wrong with a pre-protein-version cache.
 const SUMMARY_PRE_PROTEIN_VERSION: &str = "predates the protein-version fix and \
@@ -194,7 +214,7 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
 
     // Write magic header
     use std::io::Write;
-    zst.write_all(CACHE_MAGIC_V6)?;
+    zst.write_all(CACHE_MAGIC_V7)?;
 
     // Serialize with bincode
     bincode::serialize_into(&mut zst, transcripts)
@@ -283,6 +303,12 @@ pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
 /// that nothing downstream can detect. Same trade as #88's decision to error
 /// rather than annotate against an empty transcript set.
 ///
+/// `FSTVEP06` is rejected on the same grounds: the parser that wrote it named a RefSeq
+/// transcript `rna-NM_000001.3`, its gene `gene-TP53` and its biotype `mRNA`, and the
+/// sidecar path reuses a cache whenever it is newer than its GFF3, so without a bump
+/// an upgrade leaves those names in every row. A V6 cache loads cleanly; it just has
+/// the old names, which are indistinguishable from a GFF3 whose ids really are those.
+///
 /// `FSTVEP05` is rejected on the same grounds: the parser that wrote it gave every
 /// protein version 1, and the sidecar path reuses a cache whenever it is newer than
 /// its GFF3, so without a bump an upgrade would leave `ENSP….1` in front of every
@@ -344,8 +370,16 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
         }
         .into());
     }
-    if &magic != CACHE_MAGIC_V6 {
-        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP06)");
+    if &magic == CACHE_MAGIC_V6 {
+        return Err(StaleCacheFormat {
+            found: "FSTVEP06",
+            summary: SUMMARY_PRE_REFSEQ_NAMES,
+            detail: DETAIL_PRE_REFSEQ_NAMES,
+        }
+        .into());
+    }
+    if &magic != CACHE_MAGIC_V7 {
+        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP07)");
     }
 
     let transcripts: Vec<Transcript> = bincode::deserialize_from(&mut zst)
@@ -664,6 +698,15 @@ mod tests {
         zst.finish().unwrap().flush().unwrap();
     }
 
+    fn write_v6_cache(path: &Path, transcripts: &[Transcript]) {
+        use std::io::Write;
+        let file = File::create(path).unwrap();
+        let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+        zst.write_all(CACHE_MAGIC_V6).unwrap();
+        bincode::serialize_into(&mut zst, transcripts).unwrap();
+        zst.finish().unwrap().flush().unwrap();
+    }
+
     fn write_v5_cache(path: &Path, transcripts: &[Transcript]) {
         use std::io::Write;
         let file = File::create(path).unwrap();
@@ -770,6 +813,33 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_refseq_names_cache_is_rejected_rather_than_read() {
+        // A well-formed FSTVEP06 cache: whole-file, loads cleanly, transcript count fine.
+        // What it cannot show is that the parser which wrote it named a RefSeq transcript
+        // `rna-NM_000001.3`, its gene `gene-TP53` and its biotype `mRNA`. The sidecar path
+        // reuses a cache that is newer than its GFF3, so without this rejection upgrading
+        // to the fix would change nothing for anyone who had already run the tool.
+        let tmp = NamedTempFile::new().unwrap();
+        write_v6_cache(tmp.path(), &make_transcripts());
+
+        let err = load_cache(tmp.path()).expect_err("FSTVEP06 must not load");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("FSTVEP06"),
+            "the error should name the format found, got: {msg}"
+        );
+        assert!(
+            msg.contains("rna-NM_000001.3") && msg.contains("BIOTYPE"),
+            "the error should say what goes wrong if it were read, got: {msg}"
+        );
+        assert!(
+            !msg.contains("intergenic"),
+            "V6 is whole-file; the #90 reason would send the user after the wrong \
+             problem, got: {msg}"
+        );
+    }
+
+    #[test]
     fn a_legacy_gzip_cache_is_rejected_with_the_same_reason() {
         // V1 predates the zstd format and therefore predates the tabix read
         // path too, so it carries the same ambiguity. Recognised specifically,
@@ -839,7 +909,7 @@ mod tests {
     }
 
     #[test]
-    fn the_published_magic_is_v6() {
+    fn the_published_magic_is_v7() {
         // Pin the on-disk byte, so a future change to the writer that forgets
         // the reader shows up here rather than in someone's annotation.
         use std::io::Read;
@@ -849,6 +919,6 @@ mod tests {
         let mut zst = zstd::Decoder::new(BufReader::new(File::open(tmp.path()).unwrap())).unwrap();
         let mut magic = [0u8; 8];
         zst.read_exact(&mut magic).unwrap();
-        assert_eq!(&magic, CACHE_MAGIC_V6, "published magic drifted from V6");
+        assert_eq!(&magic, CACHE_MAGIC_V7, "published magic drifted from V7");
     }
 }

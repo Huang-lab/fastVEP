@@ -258,7 +258,7 @@ fn a_pre_90_sidecar_cache_is_rebuilt_rather_than_trusted() {
             .unwrap();
     }
     assert_eq!(
-        &magic, b"FSTVEP06",
+        &magic, b"FSTVEP07",
         "rebuild should publish the current format"
     );
 }
@@ -407,6 +407,78 @@ fn a_pre_protein_version_sidecar_cache_is_rebuilt_rather_than_trusted() {
     assert!(
         second.contains("ENSP_A.3:p.") && !second.contains("ENSP_A.1:p."),
         "the run trusted a pre-protein-version cache; got:\n{second}"
+    );
+}
+
+/// Write a well-formed cache in the pre-RefSeq-naming FSTVEP06 format. Whole-file, APPRIS
+/// read, protein versions right - the only thing wrong with it is that the parser which
+/// filled it named a RefSeq transcript by its ID, its gene by its own ID and its biotype by
+/// its SO term.
+fn write_v6_cache(path: &Path, transcripts: &[fastvep_genome::Transcript]) {
+    use std::io::{BufWriter, Write};
+    let file = File::create(path).unwrap();
+    let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+    zst.write_all(b"FSTVEP06").unwrap();
+    bincode::serialize_into(&mut zst, transcripts).unwrap();
+    zst.finish().unwrap().flush().unwrap();
+}
+
+#[test]
+fn a_pre_refseq_names_sidecar_cache_is_rebuilt_rather_than_trusted() {
+    // Fifth instance of the same gap, and again it shows on the answer: a RefSeq GFF3 names a
+    // transcript `rna-NM_000001.3` by its ID and `NM_000001.3` by its `transcript_id`, its
+    // gene `gene-TP` and `7157` by its Dbxref, and Ensembl VEP writes the second of each. The
+    // sidecar is newer than its GFF3, so a user who upgrades and re-runs the identical
+    // command would keep the old names for ever if the stale cache were read.
+    let dir = TempDir::new().unwrap();
+    let gff3 = dir.path().join("refseq.gff3");
+    let end = CDS + 11;
+    std::fs::write(
+        &gff3,
+        format!(
+            "1\tBestRefSeq\tgene\t{CDS}\t{end}\t.\t+\t.\tID=gene-TP;Dbxref=GeneID:7157;Name=TP;gbkey=Gene;gene=TP;gene_biotype=protein_coding\n\
+             1\tBestRefSeq\tmRNA\t{CDS}\t{end}\t.\t+\t.\tID=rna-NM_000001.3;Parent=gene-TP;Dbxref=GeneID:7157,GenBank:NM_000001.3;gbkey=mRNA;gene=TP;transcript_id=NM_000001.3\n\
+             1\tBestRefSeq\texon\t{CDS}\t{end}\t.\t+\t.\tID=exon-NM_000001.3-1;Parent=rna-NM_000001.3;transcript_id=NM_000001.3\n\
+             1\tBestRefSeq\tCDS\t{CDS}\t{end}\t.\t+\t0\tID=cds-NP_000001.2;Parent=rna-NM_000001.3;gbkey=CDS;gene=TP;protein_id=NP_000001.2\n"
+        ),
+    )
+    .unwrap();
+    let fasta = write_fasta(dir.path());
+    let vcf = write_vcf(dir.path());
+    let run = |out: &Path| {
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3.to_string_lossy().into()],
+            fasta: Some(fasta.to_string_lossy().into()),
+            ..config(&vcf, out)
+        })
+        .expect("annotation should succeed");
+        std::fs::read_to_string(out).unwrap()
+    };
+
+    // the ordinary way: Ensembl VEP's names
+    let first = run(&dir.path().join("first.vcf"));
+    assert!(
+        first.contains("|7157|Transcript|NM_000001.3|protein_coding|"),
+        "a RefSeq transcript is named as VEP names it; got:\n{first}"
+    );
+    assert!(first.contains("NM_000001.3:c.") && first.contains("NP_000001.2:p."));
+
+    // what the old parser would have left beside the GFF3
+    let sidecar = dir.path().join("refseq.gff3.fastvep.cache");
+    let mut transcripts = fastvep_cache::transcript_cache::load_cache(&sidecar).unwrap();
+    for t in &mut transcripts {
+        t.stable_id = format!("rna-{}", t.stable_id).into();
+        t.gene.stable_id = "gene-TP".into();
+        t.biotype = "mRNA".into();
+    }
+    write_v6_cache(&sidecar, &transcripts);
+    make_fresh(&sidecar);
+
+    let second = run(&dir.path().join("second.vcf"));
+    assert!(
+        second.contains("|7157|Transcript|NM_000001.3|protein_coding|")
+            && !second.contains("rna-NM_"),
+        "the run trusted a pre-RefSeq-names cache; got:\n{second}"
     );
 }
 

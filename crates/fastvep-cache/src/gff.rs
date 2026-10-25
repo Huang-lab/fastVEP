@@ -244,6 +244,8 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                         id: gene_id,
                         symbol,
                         biotype,
+                        description: attrs.get("description").cloned(),
+                        gene_id_attr: attrs.get("gene_id").cloned(),
                         chromosome: seqid.to_string(),
                         start,
                         end,
@@ -265,9 +267,14 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                 let parent = parent.strip_prefix("gene:").unwrap_or(&parent).to_string();
                 let biotype = attrs
                     .get("biotype")
+                    .or_else(|| attrs.get("transcript_type"))
                     .or_else(|| attrs.get("transcript_biotype"))
+                    .cloned();
+                let public_id = public_transcript_id(&attrs, &transcript_id);
+                let gene_id_attr = attrs
+                    .get("gene_id")
                     .cloned()
-                    .unwrap_or_else(|| feature_type.to_string());
+                    .or_else(|| gene_id_from_dbxref(&attrs));
                 let tag_str = attrs.get("tag").cloned().unwrap_or_default();
                 let canonical = tag_str.contains("Ensembl_canonical");
                 let mane_select = tag_str.contains("MANE_Select");
@@ -300,8 +307,13 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                     transcript_id.clone(),
                     GffTranscript {
                         id: transcript_id,
+                        public_id,
                         parent_gene: parent,
+                        gene_id_attr,
                         biotype,
+                        feature_type: feature_type.to_string(),
+                        gbkey: attrs.get("gbkey").cloned(),
+                        ncrna_class: attrs.get("ncrna_class").cloned(),
                         chromosome: seqid.to_string(),
                         start,
                         end,
@@ -407,9 +419,14 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                 transcripts.insert(
                     implicit_tid.clone(),
                     GffTranscript {
+                        public_id: implicit_tid.clone(),
                         id: implicit_tid,
                         parent_gene: parent.clone(),
-                        biotype: gene.biotype.clone(),
+                        gene_id_attr: None,
+                        biotype: Some(gene.biotype.clone()),
+                        feature_type: "gene".to_string(),
+                        gbkey: None,
+                        ncrna_class: None,
                         chromosome: gene.chromosome.clone(),
                         start: gene.start,
                         end: gene.end,
@@ -521,7 +538,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
         let gene = genes.get(&gff_tr.parent_gene);
         let gene_model = gene
             .map(|g| Gene {
-                stable_id: Arc::from(g.id.as_str()),
+                stable_id: Arc::from(gene_public_id(gff_tr, g).as_str()),
                 symbol: g.symbol.as_deref().map(Arc::from),
                 symbol_source: None,
                 hgnc_id: None,
@@ -532,7 +549,12 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                 strand: g.strand,
             })
             .unwrap_or_else(|| Gene {
-                stable_id: Arc::from(gff_tr.parent_gene.as_str()),
+                stable_id: Arc::from(
+                    gff_tr
+                        .gene_id_attr
+                        .as_deref()
+                        .unwrap_or(gff_tr.parent_gene.as_str()),
+                ),
                 symbol: None,
                 symbol_source: None,
                 hgnc_id: None,
@@ -711,10 +733,10 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
         };
 
         result.push(Transcript {
-            stable_id: Arc::from(tid.as_str()),
+            stable_id: Arc::from(gff_tr.public_id.as_str()),
             version: gff_tr.version,
             gene: gene_model,
-            biotype: Arc::from(gff_tr.biotype.as_str()),
+            biotype: Arc::from(transcript_biotype(gff_tr, gene).as_str()),
             chromosome: Arc::from(gff_tr.chromosome.as_str()),
             start: gff_tr.start,
             end: gff_tr.end,
@@ -731,7 +753,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             canonical: gff_tr.canonical,
             mane_select: if gff_tr.mane_select {
                 let vid = match gff_tr.version {
-                    Some(v) => format!("{}.{}", tid, v),
+                    Some(v) => format!("{}.{}", gff_tr.public_id, v),
                     None => tid.to_string(),
                 };
                 Some(vid)
@@ -740,7 +762,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             },
             mane_plus_clinical: if gff_tr.mane_plus_clinical {
                 let vid = match gff_tr.version {
-                    Some(v) => format!("{}.{}", tid, v),
+                    Some(v) => format!("{}.{}", gff_tr.public_id, v),
                     None => tid.to_string(),
                 };
                 Some(vid)
@@ -773,9 +795,84 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
 
     // HashMap iteration order is randomized per process, so sort by stable_id
     // to make cache serialization bit-for-bit reproducible across builds.
-    result.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+    result.sort_by(|a, b| {
+        a.stable_id
+            .cmp(&b.stable_id)
+            .then_with(|| a.chromosome.cmp(&b.chromosome))
+            .then_with(|| a.start.cmp(&b.start))
+            .then_with(|| a.end.cmp(&b.end))
+    });
 
     Ok(result)
+}
+
+/// What the output calls a transcript: its `transcript_id` attribute, and its ID where it has none,
+/// with a leading `gene:` or `transcript:` taken off. That is how Ensembl VEP names it
+/// (`_create_transcript`, `BaseGXF.pm`), and it is what makes a RefSeq record `NM_000001.3` and
+/// not `rna-NM_000001.3`. A record with no `transcript_id` keeps its ID as it is: NCBI's tRNA
+/// records have none, and VEP calls one `rna-TRG-GCC1-5`.
+fn public_transcript_id(attrs: &HashMap<String, String>, id: &str) -> String {
+    let named = attrs.get("transcript_id").map_or(id, String::as_str);
+    ["gene:", "transcript:"]
+        .iter()
+        .find_map(|prefix| named.strip_prefix(prefix))
+        .unwrap_or(named)
+        .to_string()
+}
+
+/// The `GeneID` of a record's `Dbxref` (`Dbxref=GeneID:100189284,HGNC:HGNC:34850`), which is how
+/// NCBI says what gene a transcript is of, and so what Ensembl VEP calls the gene (`_add_identifiers`).
+fn gene_id_from_dbxref(attrs: &HashMap<String, String>) -> Option<String> {
+    let dbxref = attrs.get("dbxref").or_else(|| attrs.get("Dbxref"))?;
+    dbxref.split(',').find_map(|pair| {
+        let (key, value) = pair.split_once(':')?;
+        (key == "GeneID").then(|| value.split(':').next().unwrap_or(value).to_string())
+    })
+}
+
+/// What the output calls a gene, in the order Ensembl VEP looks (`_add_identifiers`): the `gene_id`
+/// or the Dbxref `GeneID` of its transcript, then its own record's `gene_id`, then its ID. An NCBI
+/// gene is `100189284` and not `gene-TRG-GCC1-5`; an Ensembl one is the same by any of them.
+fn gene_public_id(transcript: &GffTranscript, gene: &GffGene) -> String {
+    transcript
+        .gene_id_attr
+        .clone()
+        .or_else(|| gene.gene_id_attr.clone())
+        .unwrap_or_else(|| gene.id.clone())
+}
+
+/// A transcript's biotype as Ensembl VEP gets it (`_record_get_biotype`, `GFF.pm`): the one the
+/// record states, and for a record that does not (RefSeq's) a guess from its SO term and what
+/// else it says: an mRNA is `protein_coding`, an ncRNA is its `ncrna_class`, a `V_gene_segment`
+/// is `IG_V_gene`, a transcript of a gene described as a microRNA is a `miRNA`, and any other
+/// is its `gbkey` (`ncRNA` for an lnc_RNA, `misc_RNA`, `rRNA`, `tRNA`).
+///
+/// Where none of that says anything VEP drops the transcript with a warning. This keeps it, named
+/// by its SO term as it always was: a transcript fastVEP annotates and VEP does not is a row
+/// more, and a transcript it drops is a consequence lost.
+fn transcript_biotype(transcript: &GffTranscript, gene: Option<&GffGene>) -> String {
+    if let Some(stated) = &transcript.biotype {
+        return stated.clone();
+    }
+    let kind = transcript.feature_type.to_ascii_lowercase();
+    let guessed = if kind == "mrna" {
+        Some("protein_coding".to_string())
+    } else if kind == "ncrna" {
+        transcript.ncrna_class.clone()
+    } else if let Some(segment) = kind
+        .strip_suffix("_gene_segment")
+        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase()))
+    {
+        Some(format!("IG_{}_gene", segment.to_ascii_uppercase()))
+    } else if gene
+        .and_then(|g| g.description.as_deref())
+        .is_some_and(|d| d.starts_with("microRNA"))
+    {
+        Some("miRNA".to_string())
+    } else {
+        transcript.gbkey.clone()
+    };
+    guessed.unwrap_or_else(|| transcript.feature_type.clone())
 }
 
 /// True when a GFF3 record carries a gene, whichever SO term the file uses.
@@ -969,6 +1066,12 @@ struct GffGene {
     id: String,
     symbol: Option<String>,
     biotype: String,
+    /// The record's `description`: Ensembl VEP calls a transcript of a gene described as a
+    /// microRNA a `miRNA` when the transcript says nothing of its own ([`transcript_biotype`]).
+    description: Option<String>,
+    /// The record's `gene_id` attribute, which names the gene in the output when its transcripts
+    /// do not ([`gene_public_id`]).
+    gene_id_attr: Option<String>,
     chromosome: String,
     start: u64,
     end: u64,
@@ -978,9 +1081,19 @@ struct GffGene {
 #[derive(Debug)]
 #[allow(dead_code)]
 struct GffTranscript {
+    /// What exons and CDS records name as their parent: the record's ID, prefix and all.
     id: String,
+    /// What the output calls it ([`public_transcript_id`]).
+    public_id: String,
     parent_gene: String,
-    biotype: String,
+    /// The `GeneID` of the record's Dbxref, or its `gene_id`: what the output calls its gene.
+    gene_id_attr: Option<String>,
+    /// The biotype the record states (`biotype`, `transcript_type`, `transcript_biotype`), and
+    /// the three things Ensembl VEP guesses one from when it does not ([`transcript_biotype`]).
+    biotype: Option<String>,
+    feature_type: String,
+    gbkey: Option<String>,
+    ncrna_class: Option<String>,
     chromosome: String,
     start: u64,
     end: u64,
@@ -1248,7 +1361,7 @@ NC_000014.9\tCurated Genomic\tenhancer\t105686122\t105686482\t.\t-\t.\tID=id-IGH
         let ids: Vec<&str> = transcripts.iter().map(|t| &*t.stable_id).collect();
         assert_eq!(
             ids,
-            vec!["rna-NM_IGHM"],
+            vec!["NM_IGHM"],
             "a gene-parented regulatory record became a phantom transcript"
         );
     }
@@ -1310,6 +1423,139 @@ NC_000001.11\tRefSeq\tCDS\t1000\t1300\t.\t+\t0\tID=cds-SRP1;Parent=rna-SRP1;prot
         assert_eq!(tr.coding_region_end, Some(4500));
         // cDNA coding start: exon1 starts at 1000, CDS starts at 1050 → offset 50 → cDNA pos 51
         assert_eq!(tr.cdna_coding_start, Some(51));
+    }
+
+    /// A RefSeq GFF3 is named by Ensembl VEP's rules and not by its IDs (`BaseGXF.pm` and `GFF.pm`,
+    /// release/116, and a run of VEP 116.3 over `fixtures/vep_refseq_gff`): a transcript is its
+    /// `transcript_id` (`NM_090001.3`, where its ID is `rna-NM_090001.3`), or its ID as it is where
+    /// it has none (an NCBI tRNA record has none); a gene is the `GeneID` of its transcript's Dbxref
+    /// (`90001`, where its ID is `gene-NB1`); and a biotype the record does not state is guessed.
+    #[test]
+    fn refseq_records_are_named_as_ensembl_vep_names_them() {
+        let gff = "##gff-version 3
+chr1\tBestRefSeq\tgene\t1000\t1239\t.\t+\t.\tID=gene-NB1;Dbxref=GeneID:90001,HGNC:HGNC:90001;Name=NB1;description=test gene;gbkey=Gene;gene=NB1;gene_biotype=protein_coding
+chr1\tBestRefSeq\tmRNA\t1000\t1239\t.\t+\t.\tID=rna-NM_090001.3;Parent=gene-NB1;Dbxref=GeneID:90001,GenBank:NM_090001.3;Name=NM_090001.3;gbkey=mRNA;gene=NB1;transcript_id=NM_090001.3
+chr1\tBestRefSeq\texon\t1000\t1239\t.\t+\t.\tID=exon-NM_090001.3-1;Parent=rna-NM_090001.3;gbkey=mRNA;gene=NB1;transcript_id=NM_090001.3
+chr1\tBestRefSeq\tCDS\t1000\t1239\t.\t+\t0\tID=cds-NP_090001.2;Parent=rna-NM_090001.3;gbkey=CDS;gene=NB1;protein_id=NP_090001.2
+chr1\tBestRefSeq\tgene\t2000\t2239\t.\t+\t.\tID=gene-NB3;Dbxref=GeneID:90003;Name=NB3;gbkey=Gene;gene=NB3;gene_biotype=lncRNA
+chr1\tBestRefSeq\tlnc_RNA\t2000\t2239\t.\t+\t.\tID=rna-NR_090003.1;Parent=gene-NB3;Dbxref=GeneID:90003,GenBank:NR_090003.1;gbkey=ncRNA;gene=NB3;transcript_id=NR_090003.1
+chr1\tBestRefSeq\texon\t2000\t2239\t.\t+\t.\tID=exon-NR_090003.1-1;Parent=rna-NR_090003.1;transcript_id=NR_090003.1
+chr1\tBestRefSeq\tgene\t3000\t3239\t.\t+\t.\tID=gene-MIR5;Dbxref=GeneID:90005;Name=MIR5;description=microRNA 5;gbkey=Gene;gene=MIR5;gene_biotype=miRNA
+chr1\tBestRefSeq\tprimary_transcript\t3000\t3239\t.\t+\t.\tID=rna-NR_090005.1;Parent=gene-MIR5;Dbxref=GeneID:90005,GenBank:NR_090005.1;gbkey=precursor_RNA;gene=MIR5;transcript_id=NR_090005.1
+chr1\tBestRefSeq\texon\t3000\t3239\t.\t+\t.\tID=exon-NR_090005.1-1;Parent=rna-NR_090005.1;transcript_id=NR_090005.1
+chr1\tBestRefSeq\tgene\t4000\t4239\t.\t+\t.\tID=gene-NB8;Dbxref=GeneID:90008;Name=NB8;gbkey=Gene;gene=NB8;gene_biotype=other
+chr1\tBestRefSeq\tncRNA\t4000\t4239\t.\t+\t.\tID=rna-NR_090008.1;Parent=gene-NB8;Dbxref=GeneID:90008;gbkey=ncRNA;gene=NB8;ncrna_class=scaRNA;transcript_id=NR_090008.1
+chr1\tBestRefSeq\texon\t4000\t4239\t.\t+\t.\tID=exon-NR_090008.1-1;Parent=rna-NR_090008.1;transcript_id=NR_090008.1
+chr1\ttRNAscan-SE\tgene\t5000\t5071\t.\t+\t.\tID=gene-TRN9;Dbxref=GeneID:90009;Name=TRN9;gbkey=Gene;gene=TRN9;gene_biotype=tRNA
+chr1\ttRNAscan-SE\ttRNA\t5000\t5071\t.\t+\t.\tID=rna-TRN9;Parent=gene-TRN9;Dbxref=GeneID:90009;gbkey=tRNA;gene=TRN9
+chr1\ttRNAscan-SE\texon\t5000\t5071\t.\t+\t.\tID=exon-TRN9-1;Parent=rna-TRN9;gbkey=tRNA;gene=TRN9
+chr1\tGnomon\tgene\t6000\t6239\t.\t+\t.\tID=gene-LOC90010;Dbxref=GeneID:90010;Name=LOC90010;gbkey=Gene;gene=LOC90010;gene_biotype=C_region
+chr1\tGnomon\tV_gene_segment\t6000\t6239\t.\t+\t.\tID=id-LOC90010;Parent=gene-LOC90010;Dbxref=GeneID:90010;gbkey=V_segment;gene=LOC90010
+chr1\tGnomon\texon\t6000\t6239\t.\t+\t.\tID=exon-id-LOC90010-1;Parent=id-LOC90010;gbkey=V_segment;gene=LOC90010";
+
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        let named = |id: &str| {
+            let t = transcripts
+                .iter()
+                .find(|t| &*t.stable_id == id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "no transcript {id}: {:?}",
+                        transcripts
+                            .iter()
+                            .map(|t| &*t.stable_id)
+                            .collect::<Vec<_>>()
+                    )
+                });
+            (
+                t.gene.stable_id.to_string(),
+                t.gene.symbol.as_deref().map(str::to_string),
+                t.biotype.to_string(),
+            )
+        };
+        let want = |gene: &str, symbol: &str, biotype: &str| {
+            (
+                gene.to_string(),
+                Some(symbol.to_string()),
+                biotype.to_string(),
+            )
+        };
+        assert_eq!(
+            named("NM_090001.3"),
+            want("90001", "NB1", "protein_coding"),
+            "an mRNA"
+        );
+        assert_eq!(
+            named("NR_090003.1"),
+            want("90003", "NB3", "ncRNA"),
+            "an lnc_RNA is its gbkey"
+        );
+        assert_eq!(
+            named("NR_090005.1"),
+            want("90005", "MIR5", "miRNA"),
+            "a microRNA's gene says so"
+        );
+        assert_eq!(
+            named("NR_090008.1"),
+            want("90008", "NB8", "scaRNA"),
+            "an ncRNA is its ncrna_class"
+        );
+        assert_eq!(
+            named("rna-TRN9"),
+            want("90009", "TRN9", "tRNA"),
+            "no transcript_id: the ID as it is"
+        );
+        assert_eq!(
+            named("id-LOC90010"),
+            want("90010", "LOC90010", "IG_V_gene"),
+            "a gene segment"
+        );
+        assert_eq!(transcripts.len(), 6);
+
+        // A biotype the record states wins over every guess, and `transcript_type` (GENCODE's
+        // spelling) counts as stating one.
+        let stated = "##gff-version 3
+chr1\tensembl\tgene\t1000\t1239\t.\t+\t.\tID=gene:ENSG00000001;Name=G;biotype=protein_coding
+chr1\tensembl\tmRNA\t1000\t1239\t.\t+\t.\tID=transcript:ENST00000001;Parent=gene:ENSG00000001;transcript_id=ENST00000001;transcript_type=nonsense_mediated_decay
+chr1\tensembl\texon\t1000\t1239\t.\t+\t.\tID=exon:E1;Parent=transcript:ENST00000001;rank=1";
+        let transcripts = parse_gff3(stated.as_bytes()).unwrap();
+        assert_eq!(&*transcripts[0].stable_id, "ENST00000001");
+        assert_eq!(&*transcripts[0].gene.stable_id, "ENSG00000001");
+        assert_eq!(&*transcripts[0].biotype, "nonsense_mediated_decay");
+    }
+
+    /// RefSeq writes a transcript that aligns in two places twice, `rna-NM_x.1` and `rna-NM_x.1-2`,
+    /// and both are `transcript_id=NM_x.1`. Ensembl VEP names both so, and the cache has to be
+    /// written in one order whichever the hash map yields them in.
+    #[test]
+    fn two_records_with_one_transcript_id_are_two_transcripts_in_a_fixed_order() {
+        let gff = "##gff-version 3
+chr1\tBestRefSeq\tgene\t1000\t1239\t.\t+\t.\tID=gene-A;Dbxref=GeneID:1;Name=A;gene_biotype=lncRNA
+chr1\tBestRefSeq\tlnc_RNA\t1000\t1239\t.\t+\t.\tID=rna-NR_1.1;Parent=gene-A;Dbxref=GeneID:1;gbkey=ncRNA;transcript_id=NR_1.1
+chr1\tBestRefSeq\texon\t1000\t1239\t.\t+\t.\tID=exon-NR_1.1-1;Parent=rna-NR_1.1;transcript_id=NR_1.1
+chr1\tBestRefSeq\tgene\t5000\t5239\t.\t+\t.\tID=gene-A-2;Dbxref=GeneID:1;Name=A;gene_biotype=lncRNA
+chr1\tBestRefSeq\tlnc_RNA\t5000\t5239\t.\t+\t.\tID=rna-NR_1.1-2;Parent=gene-A-2;Dbxref=GeneID:1;gbkey=ncRNA;transcript_id=NR_1.1
+chr1\tBestRefSeq\texon\t5000\t5239\t.\t+\t.\tID=exon-NR_1.1-2-1;Parent=rna-NR_1.1-2;transcript_id=NR_1.1";
+        let first: Vec<(String, u64)> = parse_gff3(gff.as_bytes())
+            .unwrap()
+            .iter()
+            .map(|t| (t.stable_id.to_string(), t.start))
+            .collect();
+        assert_eq!(
+            first,
+            vec![("NR_1.1".to_string(), 1000), ("NR_1.1".to_string(), 5000)]
+        );
+        for _ in 0..20 {
+            let again: Vec<(String, u64)> = parse_gff3(gff.as_bytes())
+                .unwrap()
+                .iter()
+                .map(|t| (t.stable_id.to_string(), t.start))
+                .collect();
+            assert_eq!(
+                again, first,
+                "the order of equal names changed between parses"
+            );
+        }
     }
 
     /// The protein version is the CDS records' `version`, as Ensembl VEP 116 reads it, and 1

@@ -787,7 +787,9 @@ naming a `c.` change and naming it differently. `HGVSg`, which is written only u
 measured separately against Ensembl VEP 116.3 on the same sample: 20,238 of 20,241 records have the
 same set of descriptions, and the three that differ are multi-allelic records in which Ensembl
 describes an allele by its untrimmed bases, which does not reproduce the variant. The tab
-output's other columns are measured the same way, 3,876 of 5,581,650 cells differing, in
+output's other columns are measured the same way, 3,876 of 5,581,650 cells differing, and so is
+a RefSeq GFF3 (chr21 and chr22 of GRCh38.p14), 135 of 81,510 cells, all of them the multi-allelic
+difference of divergence 11, in
 [Part 3 of docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#part-3---the-tab-output-against-vep-1163).
 
 **HGVSp under in-frame indels.**
