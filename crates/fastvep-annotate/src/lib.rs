@@ -612,18 +612,7 @@ impl AnnotationContext {
                                         // both is what the single one meant
                                         // before.
                                         let pe = ac.protein_end.unwrap_or(ps);
-                                        if let Some(ref pid) = tr.protein_id {
-                                            let versioned_pid: String = match tr.protein_version {
-                                                Some(v) => {
-                                                    let suffix = format!(".{}", v);
-                                                    if pid.ends_with(suffix.as_str()) {
-                                                        pid.clone()
-                                                    } else {
-                                                        format!("{}.{}", pid, v)
-                                                    }
-                                                }
-                                                None => pid.clone(),
-                                            };
+                                        if let Some(versioned_pid) = tr.versioned_protein_id() {
                                             let is_fs = ac
                                                 .consequences
                                                 .contains(&Consequence::FrameshiftVariant);

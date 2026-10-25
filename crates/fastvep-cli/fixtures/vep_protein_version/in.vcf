@@ -1,0 +1,32 @@
+##fileformat=VCFv4.2
+##contig=<ID=chrP,length=6000>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chrP	1016	v11_5	T	A	.	.	.
+chrP	1076	v11_25	T	A	.	.	.
+chrP	1122	v11_syn	C	T	.	.	.
+chrP	1152	v11_50	A	C	.	.	.
+chrP	1226	v11_75	A	C	.	.	.
+chrP	1295	v11_98	G	A	.	.	.
+chrP	2015	v12_5	C	A	.	.	.
+chrP	2076	v12_25	G	A	.	.	.
+chrP	2122	v12_syn	A	G	.	.	.
+chrP	2151	v12_50	C	A	.	.	.
+chrP	2226	v12_75	C	A	.	.	.
+chrP	2295	v12_98	T	C	.	.	.
+chrP	3015	v13_5	A	C	.	.	.
+chrP	3076	v13_25	C	A	.	.	.
+chrP	3122	v13_syn	G	A	.	.	.
+chrP	3152	v13_50	G	C	.	.	.
+chrP	3226	v13_75	C	A	.	.	.
+chrP	3295	v13_98	A	C	.	.	.
+chrP	4017	v14_5	G	C	.	.	.
+chrP	4076	v14_25	A	C	.	.	.
+chrP	4150	v14_50	A	C	.	.	.
+chrP	4225	v14_75	T	A	.	.	.
+chrP	4296	v14_98	G	C	.	.	.
+chrP	5015	v15_5	T	A	.	.	.
+chrP	5075	v15_25	C	A	.	.	.
+chrP	5122	v15_syn	C	A	.	.	.
+chrP	5150	v15_50	T	A	.	.	.
+chrP	5226	v15_75	A	C	.	.	.
+chrP	5295	v15_98	G	A	.	.	.

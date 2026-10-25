@@ -469,18 +469,7 @@ fn annotate_variant(
                                 // using it for both is what the single one meant before.
                                 let pe = ac.protein_end.unwrap_or(ps);
                                 if let Some(tr) = transcript {
-                                    if let Some(ref pid) = tr.protein_id {
-                                        let versioned_pid = match tr.protein_version {
-                                            Some(v) => {
-                                                let suffix = format!(".{}", v);
-                                                if pid.ends_with(&suffix) {
-                                                    pid.clone()
-                                                } else {
-                                                    format!("{}.{}", pid, v)
-                                                }
-                                            }
-                                            None => pid.clone(),
-                                        };
+                                    if let Some(versioned_pid) = tr.versioned_protein_id() {
                                         let is_fs = ac.consequences.contains(&Consequence::FrameshiftVariant);
                                         // A lost terminator names how much
                                         // protein the loss adds, which needs the

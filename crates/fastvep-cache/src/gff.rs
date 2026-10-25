@@ -751,7 +751,15 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             appris: gff_tr.appris.clone(),
             ccds: gff_tr.ccds.clone(),
             protein_id: tr_cds.first().map(|c| c.protein_id.clone()),
-            protein_version: if !tr_cds.is_empty() { Some(1) } else { None },
+            // The version of the first CDS record, which is where Ensembl's GFF3 puts a protein's
+            // (`protein_id=ENSP00000363557;version=3`), and 1 where it has none or says 0: Ensembl
+            // VEP 116 reads it so (`$ordered_cdss->[0]->{attributes}->{version} || 1`). VEP 115
+            // gave every translation version 1, and so did this, which put `ENSP….1` in front of
+            // the `HGVSp` of one protein in six of Ensembl 115's: 184 of the 844 `HGVSp` rows of
+            // GIAB HG002 differed from VEP 116.3 in that suffix and nothing else.
+            protein_version: tr_cds
+                .first()
+                .map(|c| c.protein_version.filter(|&v| v != 0).unwrap_or(1)),
             swissprot: vec![],
             trembl: vec![],
             uniparc: vec![],
@@ -1302,6 +1310,37 @@ NC_000001.11\tRefSeq\tCDS\t1000\t1300\t.\t+\t0\tID=cds-SRP1;Parent=rna-SRP1;prot
         assert_eq!(tr.coding_region_end, Some(4500));
         // cDNA coding start: exon1 starts at 1000, CDS starts at 1050 → offset 50 → cDNA pos 51
         assert_eq!(tr.cdna_coding_start, Some(51));
+    }
+
+    /// The protein version is the CDS records' `version`, as Ensembl VEP 116 reads it, and 1
+    /// where they have none or say 0. It was 1 for every protein whatever they said.
+    #[test]
+    fn the_protein_version_is_the_cds_records_version() {
+        let version = |cds_attributes: &str| {
+            let gff = format!(
+                "##gff-version 3\n\
+chr1\tensembl\tgene\t1000\t2000\t.\t+\t.\tID=gene:ENSG00000001;Name=G;biotype=protein_coding\n\
+chr1\tensembl\tmRNA\t1000\t2000\t.\t+\t.\tID=transcript:ENST00000001;Parent=gene:ENSG00000001;biotype=protein_coding;version=2\n\
+chr1\tensembl\texon\t1000\t2000\t.\t+\t.\tID=exon:E1;Parent=transcript:ENST00000001;rank=1\n\
+chr1\tensembl\tCDS\t1000\t1998\t.\t+\t0\tID=CDS:ENSP00000001;Parent=transcript:ENST00000001;protein_id=ENSP00000001{cds_attributes}"
+            );
+            parse_gff3(gff.as_bytes()).unwrap()[0].protein_version
+        };
+        assert_eq!(version(";version=3"), Some(3));
+        assert_eq!(version(";version=12"), Some(12));
+        assert_eq!(version(";version=1"), Some(1));
+        assert_eq!(version(""), Some(1), "a record with no version is 1");
+        assert_eq!(version(";version=0"), Some(1), "VEP's `|| 1` reads 0 as 1");
+
+        // and a transcript with no CDS has no protein, so no version
+        let non_coding = "##gff-version 3
+chr1\tensembl\tgene\t1000\t2000\t.\t+\t.\tID=gene:ENSG00000002;Name=N;biotype=lncRNA
+chr1\tensembl\tlnc_RNA\t1000\t2000\t.\t+\t.\tID=transcript:ENST00000002;Parent=gene:ENSG00000002;biotype=lncRNA
+chr1\tensembl\texon\t1000\t2000\t.\t+\t.\tID=exon:E2;Parent=transcript:ENST00000002;rank=1";
+        assert_eq!(
+            parse_gff3(non_coding.as_bytes()).unwrap()[0].protein_version,
+            None
+        );
     }
 
     #[test]

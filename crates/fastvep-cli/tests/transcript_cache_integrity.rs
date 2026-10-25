@@ -258,7 +258,7 @@ fn a_pre_90_sidecar_cache_is_rebuilt_rather_than_trusted() {
             .unwrap();
     }
     assert_eq!(
-        &magic, b"FSTVEP05",
+        &magic, b"FSTVEP06",
         "rebuild should publish the current format"
     );
 }
@@ -348,6 +348,65 @@ fn a_pre_appris_sidecar_cache_is_rebuilt_rather_than_trusted() {
     assert!(
         annotated.contains("missense_variant"),
         "the run trusted a pre-APPRIS cache and lost the annotation; got:\n{annotated}"
+    );
+}
+
+/// Write a well-formed cache in the pre-protein-version FSTVEP05 format. Whole-file, every
+/// gene named, APPRIS read - the only thing wrong with it is that the parser which filled it
+/// gave every protein version 1, whatever the GFF3's CDS records said.
+fn write_v5_cache(path: &Path, transcripts: &[fastvep_genome::Transcript]) {
+    use std::io::{BufWriter, Write};
+    let file = File::create(path).unwrap();
+    let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+    zst.write_all(b"FSTVEP05").unwrap();
+    bincode::serialize_into(&mut zst, transcripts).unwrap();
+    zst.finish().unwrap().flush().unwrap();
+}
+
+#[test]
+fn a_pre_protein_version_sidecar_cache_is_rebuilt_rather_than_trusted() {
+    // Fourth instance of the same gap, and the one that shows it on the answer: the GFF3's
+    // CDS records say the protein is version 3, the cache the old parser wrote says 1, and
+    // the sidecar is newer than its GFF3, so a user who upgrades and re-runs the identical
+    // command would keep `ENSP_A.1:p.` for ever if the stale cache were read.
+    let dir = TempDir::new().unwrap();
+    let gff3 = write_gff3(dir.path());
+    // `ID=CDS:ENSP_A;Parent=...` is the last line: give the CDS a version
+    let text = std::fs::read_to_string(&gff3).unwrap();
+    std::fs::write(&gff3, format!("{};version=3\n", text.trim_end())).unwrap();
+    let fasta = write_fasta(dir.path());
+    let vcf = write_vcf(dir.path());
+    let run = |out: &Path| {
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3.to_string_lossy().into()],
+            fasta: Some(fasta.to_string_lossy().into()),
+            ..config(&vcf, out)
+        })
+        .expect("annotation should succeed");
+        std::fs::read_to_string(out).unwrap()
+    };
+
+    // the ordinary way: the version is the GFF3's
+    let first = run(&dir.path().join("first.vcf"));
+    assert!(
+        first.contains("ENSP_A.3:p."),
+        "the protein version is the CDS record's; got:\n{first}"
+    );
+
+    // what the old parser would have left beside the GFF3: the same transcripts, version 1
+    let sidecar = dir.path().join("ann.gff3.fastvep.cache");
+    let mut transcripts = fastvep_cache::transcript_cache::load_cache(&sidecar).unwrap();
+    assert!(transcripts.iter().all(|t| t.protein_version == Some(3)));
+    for t in &mut transcripts {
+        t.protein_version = Some(1);
+    }
+    write_v5_cache(&sidecar, &transcripts);
+    make_fresh(&sidecar);
+
+    let second = run(&dir.path().join("second.vcf"));
+    assert!(
+        second.contains("ENSP_A.3:p.") && !second.contains("ENSP_A.1:p."),
+        "the run trusted a pre-protein-version cache; got:\n{second}"
     );
 }
 

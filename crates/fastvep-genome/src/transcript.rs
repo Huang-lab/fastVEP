@@ -174,6 +174,25 @@ impl Transcript {
         self.translation.is_some()
     }
 
+    /// The protein's accession as `HGVSp` writes it: `ENSP00000363557.3`.
+    ///
+    /// Ensembl's GFF3 keeps the version beside the id (`protein_id=ENSP00000363557;version=3`),
+    /// so it is appended. NCBI's carries it in the id (`protein_id=NP_000001.2`), and Ensembl
+    /// VEP writes that as it is (`NP_000001.2:p.Ala6Thr`): appending the version to it would
+    /// make `NP_000001.2.1`, an accession that does not exist, so a version the id already
+    /// has stands. (The old check compared the two versions and only caught an id that ended
+    /// in `.1`, which is the one case where the answer was right anyway.)
+    pub fn versioned_protein_id(&self) -> Option<String> {
+        let id = self.protein_id.as_ref()?;
+        let has_version = id
+            .rsplit_once('.')
+            .is_some_and(|(_, v)| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
+        Some(match self.protein_version {
+            Some(v) if !has_version => format!("{id}.{v}"),
+            _ => id.clone(),
+        })
+    }
+
     /// Total number of exons.
     pub fn exon_count(&self) -> usize {
         self.exons.len()
@@ -1130,6 +1149,51 @@ mod tests {
             peptide.starts_with('M'),
             "peptide starts with: {}",
             &peptide[..1]
+        );
+    }
+    /// `HGVSp` names the protein as `id.version`, and not twice: Ensembl's GFF3 keeps the version
+    /// beside the id, NCBI's in it.
+    #[test]
+    fn the_protein_accession_carries_one_version() {
+        let accession = |id: Option<&str>, version: Option<u32>| {
+            let mut tr = make_test_transcript();
+            tr.protein_id = id.map(String::from);
+            tr.protein_version = version;
+            tr.versioned_protein_id()
+        };
+        // Ensembl: the version is beside the id
+        assert_eq!(
+            accession(Some("ENSP00000363557"), Some(3)).as_deref(),
+            Some("ENSP00000363557.3")
+        );
+        assert_eq!(
+            accession(Some("ENSP00000363557"), Some(12)).as_deref(),
+            Some("ENSP00000363557.12")
+        );
+        // NCBI: it is in the id, and the version GFF3 parsing supplies (1 where a record has none)
+        // must not be put after it. `NP_000001.2.1` is not an accession; `.1.1` was not one either.
+        assert_eq!(
+            accession(Some("NP_000001.2"), Some(1)).as_deref(),
+            Some("NP_000001.2")
+        );
+        assert_eq!(
+            accession(Some("NP_000001.1"), Some(1)).as_deref(),
+            Some("NP_000001.1")
+        );
+        assert_eq!(
+            accession(Some("NP_000001.12"), Some(1)).as_deref(),
+            Some("NP_000001.12")
+        );
+        // no version known, none added; no protein, no accession
+        assert_eq!(
+            accession(Some("ENSP00000363557"), None).as_deref(),
+            Some("ENSP00000363557")
+        );
+        assert_eq!(accession(None, Some(3)), None);
+        // a dot that is not a version is not one
+        assert_eq!(
+            accession(Some("PROT.abc"), Some(2)).as_deref(),
+            Some("PROT.abc.2")
         );
     }
 }
