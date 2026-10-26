@@ -438,6 +438,7 @@ It reads the same GRCh38 Ensembl 115 GFF3 and FASTA as above and is run with `--
 | GIAB HG002 WGS, 1-in-200 systematic (the sample above) | 20,241 | 186,055 | 5,581,650 | 3,867 (0.069 %) |
 | A generated world: both strands, coding and non-coding genes, 372 of its 3,000 records with several ALTs | 3,000 | 7,213 | 216,390 | 988 (0.46 %) |
 | The same world's edges: every shape of change at every position within ten bases of every exon, CDS and transcript boundary, each its own single-ALT record (`fixtures/vep_tab_edges`) | 17,672 | 36,958 | 1,108,740 | 2,689 (0.24 %), before the position fix 7,828 |
+| The same world's lone indels written with shared bases (`fixtures/vep_tab_lone_indels`) | 1,500 | 3,176 | 95,280 | 59 (0.06 %), before the minimisation 14,526 |
 
 The world is built to be hard and not to be representative: it has far more indels in repeats, at transcript ends and at exon edges than any genome, and more multi-allelic sites.
 Its rates are the rates on those shapes, and HG002 is what an ordinary WGS callset looks like.
@@ -556,13 +557,19 @@ Two things are left as they were and are not claimed to be VEP's: an ambiguous a
 
 ### Lone indels that are not minimal
 
-Ensembl minimises a record with one ALT that is an indel from both ends (`minimise_alleles`), where fastVEP strips only the base the alleles share at the front.
-The two are the same for a record that is already minimal and padded by one base, which is every indel of HG002 (0 of its 2,818 are not), and they differ for one that shares bases at the back as well, or two or more at the front.
-`Allele`, `Location`, `REF_ALLELE`, `VARIANT_CLASS` and `DISTANCE` then differ, `HGVSc` and `HGVSg` do not (both clip), and some rows get a different term.
-The world has none of them as it is, and the same world with each ALT its own record has 197 rows of 7,213, in 93 records: for `1306 AG>ACTATAATG` Ensembl writes `Allele` `CTATAAT` at `1306-1307` as an `insertion`, and fastVEP `CTATAATG` at `1307` as an `indel`.
-8 `Consequence` cells differ on those rows (4 of them `IMPACT`), `intron_variant` MODIFIER in Ensembl and `splice_donor_variant` HIGH in fastVEP for an insertion next to a donor that fastVEP reads as replacing it.
-Not closed here: it changes what the whole annotation reads, and wants its own measurement.
+**The world with each ALT its own record: 197 rows of 7,213 had another `Allele`, `Location`, `REF_ALLELE` and `VARIANT_CLASS`, in 93 records, and 8 `Consequence` cells differed on them (4 of them `IMPACT`).
+The lone-indel set: 14,526 of 95,280 cells differed.
+After: none of those, and 59 cells, all of the start-codon, stop-codon and transcript-end classes below.**
 
+Ensembl minimises a record with one ALT that is an indel from both ends (`Parser::post_process_vfs`, `minimise_alleles`, `trim_sequences`): the bases the alleles share at the front, then at the back, until one of them is empty.
+fastVEP stripped only the first base they share.
+The two are the same for a record that is already minimal and padded by one base, which is every indel of HG002 (0 of its 2,818 are not), and they differed for one that shares bases at the back as well, or two or more at the front.
+`CAGT>CT` is the deletion of `AG`, and `CCAT>CCT` the deletion of `A`, not a deletion of `AGT` and of `CAT`; `Allele`, `Location`, `REF_ALLELE`, `VARIANT_CLASS` and `DISTANCE` follow from it, and so does what the consequence step sees: for `1306 AG>ACTATAATG` Ensembl writes `Allele` `CTATAAT` at `1306-1307` as an `insertion`, and fastVEP wrote `CTATAATG` at `1307` as an `indel`, with `splice_donor_variant` HIGH for an insertion next to a donor that it read as replacing it.
+`HGVSc` and `HGVSg` were not affected (both clip), and still are not.
+
+A record with several ALTs is not minimised in release 116, and is not here: in 115 a minimised indel switched on `split_variants` for the whole input (`InputBuffer::next`), which split such a record into one variant per ALT, and in 116 those lines are commented out, so it is annotated whole.
+`fixtures/vep_tab_lone_indels` is 1,500 records written the way a caller that does not trim writes them, a prefix the alleles share (the anchor and up to two more bases), the bases that change and a suffix they share (none to three), as a deletion, an insertion or a replacement, and what VEP 116.3 wrote for them; `vep_tab_lone_indels_golden.rs` holds fastVEP to it.
+All the columns it compares agree on all 3,176 rows; `Consequence`, `IMPACT`, `HGVSc`, `HGVSp` and `HGVS_OFFSET` are not compared yet, for the classes below, and are 59 of the cells.
 
 ### A RefSeq GFF3
 
@@ -646,7 +653,7 @@ calls plain missense.
 
 ## Fixed since this document was last measured
 
-Twelve defects are gone, and the numbers above are what is left.
+Thirteen defects are gone, and the numbers above are what is left.
 Each was measured the same way before and after, on the same samples: the row counts below are
 what the fix removed.
 
@@ -663,3 +670,4 @@ what the fix removed.
 | An unknown residue silenced `missense_variant` | 1 consequence row, `IMPACT` | `QX/HX` resolves one residue and not the next; Ensembl reports `missense_variant,coding_sequence_variant`, and reporting the second alone made a real missense MODIFIER (IL7R ENST00000515665) |
 | `cDNA_position`, `CDS_position`, `Protein_position`, `EXON` and `INTRON` of a change with an end outside an exon, and of an insertion at an exon's edge | 9 cDNA cells of HG002 against 116.3; on the edge set 1,784, 1,268, 1,229, 255 and 603 cells | The one coordinate a change had was written where Ensembl writes `?-7` or `601-?`, an insertion's flank where it writes the two positions it sits between, and `EXON` and `INTRON` named the exon and intron of the start alone. The rule is Ensembl's mapper's, in Part 3 |
 | An ALT of `*`, `.`, `<NON_REF>` or `<*>`, and an ambiguity code (`N`) in an ALT or a REF | on the allele set 100 rows only fastVEP wrote and 434 cells of 360 rows; HG002 6 rows | `*` was written as a row with no consequence, `.` as a `*`, and `<NON_REF>` or `<*>` beside a real ALT as a `frameshift_variant`; an `N` was a `MODERATE` `missense_variant` with `p.Lys31Xaa` and an `HGVSc` where Ensembl, which cannot translate it, writes `coding_sequence_variant` and nothing else. Part 3 has the table |
+| A lone indel was trimmed of its first shared base only | the world with each ALT its own record 197 rows of 7,213; the lone-indel set 2,950 `Allele` and 2,811 `Location` cells of 3,176 rows | `CAGT>CT` was a deletion of `AGT` at the next base, where Ensembl, which trims every shared base from both ends, writes the deletion of `AG`; the `Allele`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, positions and some consequence terms followed. Part 3 |

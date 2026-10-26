@@ -615,6 +615,7 @@ The cells follow VEP's tab writer:
 - `Uploaded_variation` is the VCF ID (the first, if there are several), or the line itself, `{CHROM}_{POS}_{REF}/{ALT}`, when the record has none: `chr10_10414_C/A`, `chr10_10400_AACCCT/A`, and `chr10_109_CA/C/TA` for a record with two alts.
   It is not built from the minimal alleles of the annotation, as it was.
 - `Amino_acids` is `L/P`, or just `L` when the protein does not change, as in the VCF `CSQ` and in JSON.
+- A record with one ALT that is an indel is minimised from both ends before it is annotated, as VEP does: `CAGT>CT` is the deletion of `AG` and its `Allele` is `-`, whatever the caller left in.
 - An ALT of `*` (a spanning deletion) or one of the placeholders a gVCF carries (`.`, `<NON_REF>`, `<*>`) gets no row, and a record with none but those has none; the real ALTs beside one are annotated as they would be alone.
   An ALT or REF that holds an ambiguity code (`N`) cannot be translated: in the coding sequence it is `coding_sequence_variant` (or `frameshift_variant` when its length moves the frame), with no `Amino_acids`, `HGVSp` or `HGVSc`, as in VEP.
 - `cDNA_position`, `CDS_position` and `Protein_position` are the positions of the first and the last base of the change in transcript order, and an end that is not in an exon (for the cDNA) or not in the coding sequence (for the CDS and the protein) has no coordinate: `?-7` for a deletion that starts in an intron or upstream of the transcript, `601-?` for one that runs out of the exon.

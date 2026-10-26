@@ -194,6 +194,20 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
                 };
                 start += 1;
             }
+
+            // A record with one ALT whose length differs from the REF's is what Ensembl calls a
+            // non-minimised indel, and it replaces the record with the pair trimmed of every base
+            // the two still share, from the left and then from the right (`post_process_vfs`,
+            // `minimise_alleles`, `trim_sequences`). The anchor above is only the first of those
+            // bases: `CAGT>CT` is the deletion of `AG`, and `CCAT>CCT` the deletion of `A`, not a
+            // deletion of `AGT` and of `CAT`. What the two tools then call the allele, the
+            // location, the reference allele and the variant class, and what the consequence step
+            // sees, all follow from it. A record with several ALTs is not minimised in release
+            // 116 and is not here.
+            let (r, a) = trim_shared_ends(&ref_allele_str, &alt_allele_strs[0]);
+            start += r.0 as u64;
+            ref_allele_str = r.1;
+            alt_allele_strs[0] = a;
         }
     }
 
@@ -291,6 +305,41 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     })
+}
+
+/// Ensembl's `trim_sequences` (`Utils::Sequence`) with its default order: the bases the two
+/// alleles share at the front are taken off, then those they share at the back, until one of them
+/// is empty, which is written `-`. Returns how many bases left the front and the trimmed alleles,
+/// `-` standing for none on either side.
+fn trim_shared_ends(reference: &str, alt: &str) -> ((usize, String), String) {
+    let bases = |s: &str| -> Vec<u8> {
+        if s == "-" {
+            Vec::new()
+        } else {
+            s.as_bytes().to_vec()
+        }
+    };
+    let (r, a) = (bases(reference), bases(alt));
+    let mut front = 0;
+    while front < r.len() && front < a.len() && r[front] == a[front] {
+        front += 1;
+    }
+    let (r, a) = (&r[front..], &a[front..]);
+    let mut back = 0;
+    while back < r.len() && back < a.len() && r[r.len() - 1 - back] == a[a.len() - 1 - back] {
+        back += 1;
+    }
+    let text = |s: &[u8]| {
+        if s.is_empty() {
+            "-".to_string()
+        } else {
+            String::from_utf8_lossy(s).into_owned()
+        }
+    };
+    (
+        (front, text(&r[..r.len() - back])),
+        text(&a[..a.len() - back]),
+    )
 }
 
 /// Parse VCF INFO field into key-value pairs.
@@ -510,6 +559,56 @@ mod tests {
         );
         assert_eq!(vf.alt_alleles[0], Allele::Deletion);
         assert_eq!(vf.alt_alleles[1], Allele::Missing);
+    }
+
+    /// Ensembl takes every shared base off both ends of a lone indel (`trim_sequences`), not only the
+    /// anchor: `CAGT>CT` is the deletion of `AG`, and `CCAT>CCT` the deletion of `A`.
+    #[test]
+    fn a_lone_indel_is_trimmed_from_both_ends_as_ensembl_does() {
+        let site = |reference: &str, alt: &str| {
+            let line = format!("1\t100\t.\t{reference}\t{alt}\t.\tPASS\t.");
+            let vf = parse_vcf_line(&line).unwrap();
+            (
+                vf.position.start,
+                vf.position.end,
+                vf.ref_allele.to_string(),
+                vf.alt_alleles[0].to_string(),
+            )
+        };
+        let want = |start, end, reference: &str, alt: &str| {
+            (start, end, reference.to_string(), alt.to_string())
+        };
+
+        // a base shared at the back as well as the anchor
+        assert_eq!(site("CAGT", "CT"), want(101, 102, "AG", "-"));
+        // two bases shared at the front
+        assert_eq!(site("CCAT", "CCT"), want(102, 102, "A", "-"));
+        // an insertion with a base shared on each side of what is added
+        assert_eq!(site("CA", "CTA"), want(101, 100, "-", "T"));
+        assert_eq!(site("CAA", "CATA"), want(102, 101, "-", "T"));
+        // a replacement of one length by another, trimmed at both ends
+        assert_eq!(site("CAGTC", "CACC"), want(102, 103, "GT", "C"));
+        // no anchor shared, a base shared at the back
+        assert_eq!(site("AG", "CAG"), want(100, 99, "-", "C"));
+
+        // what is already minimal and anchored is as it was
+        assert_eq!(site("CAG", "C"), want(101, 102, "AG", "-"));
+        assert_eq!(site("C", "CTG"), want(101, 100, "-", "TG"));
+        // an MNV is not an indel and is not trimmed
+        assert_eq!(site("CAGT", "CTGT"), want(100, 103, "CAGT", "CTGT"));
+    }
+
+    /// A record with several ALTs is not minimised in Ensembl 116, only stripped of a first base
+    /// every allele shares.
+    #[test]
+    fn a_record_with_several_alts_keeps_the_bases_its_alleles_share_at_the_back() {
+        let vf = parse_vcf_line("1\t100\t.\tCAGT\tCT,CAGTT\t.\tPASS\t.").unwrap();
+        assert_eq!(
+            (vf.position.start, vf.ref_allele.to_string()),
+            (101, "AGT".into())
+        );
+        assert_eq!(vf.alt_alleles[0].to_string(), "T");
+        assert_eq!(vf.alt_alleles[1].to_string(), "AGTT");
     }
 
     #[test]
