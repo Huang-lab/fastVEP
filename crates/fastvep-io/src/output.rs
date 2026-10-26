@@ -2633,8 +2633,9 @@ pub fn format_tab_line_with(
     // If no transcript annotations, still output the variant with intergenic
     // — unless a gene-set filter is active, in which case an unannotated
     // variant has nothing to match and is dropped.
+    // `*` and the placeholders get no row, as in VEP, so a record with none but those has none.
     if vf.transcript_variations.is_empty() && opts.gene_set.is_none() {
-        for alt in &vf.alt_alleles {
+        for alt in vf.alt_alleles.iter().filter(|a| **a != Allele::Missing) {
             let mut parts: Vec<String> = Vec::with_capacity(row_capacity);
             parts.push(uploaded_variation.clone());
             parts.push(location.clone());

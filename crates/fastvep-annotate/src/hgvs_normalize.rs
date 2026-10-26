@@ -1415,6 +1415,39 @@ pub fn hgvsg_vep(
     format_hgvs_g(chrom, &notation)
 }
 
+/// The reference allele an HGVS description is written against.
+///
+/// A VCF REF that is not plain bases (`N`) names no base, and Ensembl describes the change against
+/// the genome's: `c.101T>C` for `N>C` at a base that is a `T`, because `hgvs_transcript` reads the
+/// reference allele off the transcript's slice and uses only the alternate from the variant.
+/// fastVEP wrote the REF it was given (`c.101N>C`). The allele is kept as given when it is plain
+/// or when there is no reference to read.
+pub fn reference_for_hgvs<'a>(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    start: u64,
+    end: u64,
+    given: &'a fastvep_core::Allele,
+) -> std::borrow::Cow<'a, fastvep_core::Allele> {
+    use fastvep_core::Allele;
+    use std::borrow::Cow;
+    if given.is_plain_bases() {
+        return Cow::Borrowed(given);
+    }
+    let (Some(sp), Allele::Sequence(bases)) = (seq_provider, given) else {
+        return Cow::Borrowed(given);
+    };
+    if start > end || (end - start + 1) as usize != bases.len() {
+        return Cow::Borrowed(given);
+    }
+    match sp.fetch_sequence(chrom, start, end) {
+        Ok(genome) if genome.len() == bases.len() => {
+            Cow::Owned(Allele::Sequence(genome.to_ascii_uppercase()))
+        }
+        _ => Cow::Borrowed(given),
+    }
+}
+
 /// The `g.` description of each alt allele of a record, which belongs to the
 /// variant and is the same on every transcript row, so it is made once per record
 /// and not once per row.
@@ -1435,18 +1468,10 @@ pub fn hgvsg_per_alt(
     reference: &fastvep_core::Allele,
     alts: &[fastvep_core::Allele],
 ) -> Vec<Option<String>> {
-    use fastvep_core::Allele;
-    let describable = |alt: &Allele| match alt {
-        Allele::Deletion => true,
-        Allele::Sequence(bases) => bases
-            .iter()
-            .all(|b| matches!(b.to_ascii_uppercase(), b'A' | b'C' | b'G' | b'T')),
-        Allele::Missing | Allele::Symbolic(_) => false,
-    };
     alts.iter()
         .enumerate()
         .map(|(i, alt)| {
-            if !describable(alt) {
+            if !alt.is_plain_bases() {
                 return None;
             }
             match seq_provider {
@@ -2332,5 +2357,41 @@ mod tests {
                 }
             );
         }
+    }
+
+    /// An `N` in the VCF names no base, and Ensembl describes the change against the genome's:
+    /// `c.101T>C` for `N>C` where the genome has a `T`.
+    #[test]
+    fn an_unknown_reference_base_is_read_off_the_genome() {
+        let genome = StrRef("ACGTACGTAC");
+        let given = Allele::Sequence(b"N".to_vec());
+        let read = reference_for_hgvs(Some(&genome), "chr1", 3, 3, &given);
+        assert_eq!(*read, Allele::Sequence(b"G".to_vec()));
+
+        let two = Allele::Sequence(b"NN".to_vec());
+        let read = reference_for_hgvs(Some(&genome), "chr1", 4, 5, &two);
+        assert_eq!(*read, Allele::Sequence(b"TA".to_vec()));
+
+        // a plain REF is the REF as given, even where it is not the genome's
+        let plain = Allele::Sequence(b"T".to_vec());
+        let read = reference_for_hgvs(Some(&genome), "chr1", 3, 3, &plain);
+        assert!(matches!(read, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(*read, plain);
+
+        // nothing to read, or a span that does not match the allele: kept as given
+        assert_eq!(*reference_for_hgvs(None, "chr1", 3, 3, &given), given);
+        assert_eq!(
+            *reference_for_hgvs(Some(&genome), "chr1", 3, 4, &given),
+            given
+        );
+        assert_eq!(
+            *reference_for_hgvs(Some(&genome), "chr1", 99, 99, &given),
+            given
+        );
+        // an insertion has no reference bases
+        assert_eq!(
+            *reference_for_hgvs(Some(&genome), "chr1", 4, 3, &Allele::Deletion),
+            Allele::Deletion
+        );
     }
 }

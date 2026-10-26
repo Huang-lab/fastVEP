@@ -13,7 +13,7 @@ pub mod pick;
 pub use hgvs_normalize::{
     clipped_span, convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele,
     hgvs_placement, hgvsc_shifted, hgvsc_shifted_with_shift, hgvsg_clipped, hgvsg_per_alt,
-    hgvsg_vep, intronic_dup_span, intronic_ins_as_dup, is_shiftable_indel,
+    hgvsg_vep, intronic_dup_span, intronic_ins_as_dup, is_shiftable_indel, reference_for_hgvs,
     three_prime_shift_genomic, HgvsAllele,
 };
 
@@ -403,6 +403,18 @@ impl AnnotationContext {
                     Vec::new()
                 };
 
+                // The reference an HGVS description is written against: the genome's base
+                // where the VCF has `N`, as Ensembl does (`reference_for_hgvs`).
+                let hgvs_ref = reference_for_hgvs(
+                    self.seq_provider
+                        .as_deref()
+                        .map(|sp| sp as &dyn SequenceProvider),
+                    chrom,
+                    vf.position.start,
+                    vf.position.end,
+                    &vf.ref_allele,
+                );
+
                 for (i, tc) in result.transcript_consequences.iter().enumerate() {
                     // `predict` returns one consequence per transcript it was
                     // handed, in that order, so index `i` is the match. The
@@ -420,9 +432,12 @@ impl AnnotationContext {
                                 .find(|t| t.stable_id == tc.transcript_id)
                         });
 
+                    // No row for `*` or a placeholder, as in VEP (see the same filter in
+                    // `fastvep annotate`).
                     let allele_annotations: Vec<AlleleAnnotation> = tc
                         .allele_consequences
                         .iter()
+                        .filter(|ac| ac.allele != Allele::Missing)
                         .map(|ac| {
                             let mut ann = AlleleAnnotation {
                                 allele: ac.allele.clone(),
@@ -459,7 +474,11 @@ impl AnnotationContext {
                                     .iter()
                                     .position(|alt| *alt == ac.allele)
                                     .and_then(|i| hgvsg_by_alt[i].clone());
-                                if let Some(tr) = transcript {
+                                // An ALT that is not plain bases (`N`) has no HGVSc, as
+                                // in Ensembl (`return undef if variation_feature_seq =~
+                                // m/[^ACGT\-]/`).
+                                if let Some(tr) = transcript.filter(|_| ac.allele.is_plain_bases())
+                                {
                                     let versioned_tid = match tr.version {
                                         Some(v) => format!("{}.{}", tc.transcript_id, v),
                                         None => tc.transcript_id.to_string(),
@@ -474,7 +493,7 @@ impl AnnotationContext {
                                         tr.strand,
                                         vf.position.start,
                                         vf.position.end,
-                                        &vf.ref_allele,
+                                        &hgvs_ref,
                                         &ac.allele,
                                         // `zip`: a pair with one end mapped is a variant with
                                         // one end in an exon and the other in an intron, which
@@ -774,6 +793,10 @@ impl AnnotationContext {
                         })
                         .collect();
 
+                    if allele_annotations.is_empty() {
+                        continue;
+                    }
+
                     // Collect every transcript here; `pick` runs as a single
                     // post-pass below so it can compare all candidates, the
                     // same way `fastvep annotate --pick` does.
@@ -1012,7 +1035,7 @@ impl AnnotationContext {
 /// per alt allele with empty consequences so the SA attachment loop has a
 /// slot to populate while emitting no default-CSQ annotation.
 pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
-    for alt in &vf.alt_alleles {
+    for alt in vf.alt_alleles.iter().filter(|a| **a != Allele::Missing) {
         vf.transcript_variations.push(TranscriptVariation {
             transcript_id: "-".into(),
             gene_id: "-".into(),
@@ -1060,7 +1083,8 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
 }
 
 pub fn annotate_intergenic(vf: &mut VariationFeature) {
-    for alt in &vf.alt_alleles {
+    // No row for `*` or a placeholder: a record with none but those is not annotated
+    for alt in vf.alt_alleles.iter().filter(|a| **a != Allele::Missing) {
         vf.transcript_variations.push(TranscriptVariation {
             transcript_id: "-".into(),
             gene_id: "-".into(),
@@ -1105,7 +1129,9 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
             flags: Vec::new(),
         });
     }
-    vf.most_severe_consequence = Some(Consequence::IntergenicVariant);
+    if !vf.transcript_variations.is_empty() {
+        vf.most_severe_consequence = Some(Consequence::IntergenicVariant);
+    }
 }
 
 /// The `(cDNA anchor, offset)` pair one genomic position maps to on a

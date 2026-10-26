@@ -251,6 +251,16 @@ fn annotate_variant(
                     Vec::new()
                 };
 
+            // The reference an HGVS description is written against: the genome's base where
+            // the VCF has `N`, as Ensembl does (`reference_for_hgvs`).
+            let hgvs_ref = fastvep_annotate::reference_for_hgvs(
+                seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                chrom,
+                vf.position.start,
+                vf.position.end,
+                &vf.ref_allele,
+            );
+
             // Convert prediction results to VariationFeature annotations
             for (i, tc) in transcript_consequences.iter().enumerate() {
                 // `ConsequencePredictor::predict` emits one consequence per
@@ -273,9 +283,13 @@ fn annotate_variant(
                             .find(|t| t.stable_id == tc.transcript_id)
                     });
 
+                // `*` and the placeholders (`.`, `<NON_REF>`, `<*>`) are not variants of
+                // the transcript, and VEP writes no row for them: a record whose only ALT
+                // is one has no row here, and the real ALTs beside one keep theirs.
                 let allele_annotations: Vec<AlleleAnnotation> = tc
                     .allele_consequences
                     .iter()
+                    .filter(|ac| ac.allele != Allele::Missing)
                     .map(|ac| {
                         let mut ann = AlleleAnnotation {
                             allele: ac.allele.clone(),
@@ -320,7 +334,10 @@ fn annotate_variant(
 
                         // Generate HGVS if requested
                         if config.hgvs {
-                            if let Some(tr) = transcript {
+                            // An ALT that is not plain bases (`N`) has no HGVSc, as in
+                            // Ensembl (`return undef if variation_feature_seq =~
+                            // m/[^ACGT\-]/`).
+                            if let Some(tr) = transcript.filter(|_| ac.allele.is_plain_bases()) {
                                 // Build versioned IDs for HGVS notation
                                 let versioned_tid = match tr.version {
                                     Some(v) => format!("{}.{}", tc.transcript_id, v),
@@ -337,7 +354,7 @@ fn annotate_variant(
                                     tr.strand,
                                     vf.position.start,
                                     vf.position.end,
-                                    &vf.ref_allele,
+                                    &hgvs_ref,
                                     &ac.allele,
                                     // `zip`: a pair with one end mapped is a variant with
                                     // one end in an exon and the other in an intron, which
@@ -600,6 +617,10 @@ fn annotate_variant(
                         ann
                     })
                     .collect();
+
+                if allele_annotations.is_empty() {
+                    continue;
+                }
 
                 // Collect every transcript here; --pick filtering runs as a
                 // single post-pass below so it can compare all candidates

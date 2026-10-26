@@ -119,17 +119,23 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     let mut ref_allele_str = ref_str.to_string();
     let mut alt_allele_strs: Vec<String> = raw_alts.iter().map(|s| s.to_string()).collect();
 
+    // An ALT that asserts no alternate sequence: `.`, and GATK's `<NON_REF>` and `<*>`, which
+    // stand for "any other allele" in a gVCF. Each is its own allele, alone in a record or
+    // beside a real ALT (`C,<NON_REF>`).
+    let non_variant = |alt: &str| matches!(alt, "." | "<NON_REF>" | "<*>");
+
     // Check if any alt makes this an indel
     let is_indel = alt_allele_strs.iter().any(|alt| {
-        alt.starts_with('D') || alt.starts_with('I') || alt.len() != ref_allele_str.len()
+        !non_variant(alt)
+            && (alt.starts_with('D') || alt.starts_with('I') || alt.len() != ref_allele_str.len())
     });
 
-    let is_non_variant = alt_str == "." || alt_str == "<NON_REF>" || alt_str == "<*>";
+    let is_non_variant = raw_alts.iter().all(|alt| non_variant(alt));
 
     // Check for symbolic/structural variant alleles
     let has_symbolic = raw_alts
         .iter()
-        .any(|a| a.starts_with('<') && a.ends_with('>') && *a != "<NON_REF>" && *a != "<*>");
+        .any(|a| a.starts_with('<') && a.ends_with('>') && !non_variant(a));
 
     if !is_non_variant && !has_symbolic && is_indel {
         if alt_allele_strs.len() > 1 {
@@ -138,7 +144,7 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
                 .chain(
                     alt_allele_strs
                         .iter()
-                        .filter(|a| !a.contains('*'))
+                        .filter(|a| !a.contains('*') && !non_variant(a))
                         .map(|s| s.as_str()),
                 )
                 .collect();
@@ -159,7 +165,7 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
                 alt_allele_strs = alt_allele_strs
                     .iter()
                     .map(|alt| {
-                        if alt.contains('*') {
+                        if alt.contains('*') || non_variant(alt) {
                             alt.clone()
                         } else if alt.len() > 1 {
                             alt[1..].to_string()
@@ -213,16 +219,21 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     // reference-agreement records. Left as `Allele::Sequence(b".")` these
     // flow into the consequence caller as a one-base substitution and
     // produce nonsense (`T/.` amino acids, `cgA/cg.` codons) plus a full
-    // ACMG call. Map them to `Allele::Missing`, which the predictor skips.
+    // ACMG call. Map them to `Allele::Missing`, which the predictor skips and
+    // the writers give no row, each one by itself: beside a real ALT,
+    // `<NON_REF>` was read as a symbolic deletion and written as a
+    // `frameshift_variant`.
     let ref_allele = Allele::from_str(&ref_allele_str);
-    let alt_alleles: Vec<Allele> = if is_non_variant {
-        alt_allele_strs.iter().map(|_| Allele::Missing).collect()
-    } else {
-        alt_allele_strs
-            .iter()
-            .map(|s| Allele::from_str(s))
-            .collect()
-    };
+    let alt_alleles: Vec<Allele> = alt_allele_strs
+        .iter()
+        .map(|s| {
+            if non_variant(s) {
+                Allele::Missing
+            } else {
+                Allele::from_str(s)
+            }
+        })
+        .collect();
 
     let variation_name = if id == "." {
         None
@@ -474,6 +485,31 @@ mod tests {
                 alt
             );
         }
+    }
+
+    /// `<NON_REF>` and `<*>` stand for "any other allele" and say nothing about a sequence. Beside a
+    /// real ALT they were read as a symbolic allele of length 0, which is a deletion, and the
+    /// consequence step wrote a `frameshift_variant` for them.
+    #[test]
+    fn a_placeholder_beside_a_real_alt_is_missing_and_the_real_alt_is_not() {
+        for placeholder in ["<NON_REF>", "<*>", "."] {
+            let line = format!("1\t100\t.\tC\tG,{placeholder}\t.\tPASS\t.");
+            let vf = parse_vcf_line(&line).unwrap();
+            assert_eq!(
+                vf.alt_alleles,
+                vec![Allele::Sequence(b"G".to_vec()), Allele::Missing],
+                "ALT=G,{placeholder}"
+            );
+            assert_eq!(vf.variant_type, VariantType::Snv, "ALT=G,{placeholder}");
+        }
+        // an indel beside one is still trimmed of its anchor, as it would be alone
+        let vf = parse_vcf_line("1\t100\t.\tCT\tC,<NON_REF>\t.\tPASS\t.").unwrap();
+        assert_eq!(
+            (vf.position.start, vf.ref_allele.to_string()),
+            (101, "T".into())
+        );
+        assert_eq!(vf.alt_alleles[0], Allele::Deletion);
+        assert_eq!(vf.alt_alleles[1], Allele::Missing);
     }
 
     #[test]

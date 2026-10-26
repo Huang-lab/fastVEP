@@ -656,7 +656,18 @@ impl ConsequencePredictor {
             }
             _ => false,
         };
+        // Ensembl translates an allele only when it and the reference are plain bases (see
+        // `Allele::is_plain_bases`), and every test of the start and the stop codon reads
+        // the edited sequence or the peptide, so for one that is not there is none to make.
+        let plain = ref_allele.is_plain_bases() && alt_allele.is_plain_bases();
         if reaches_past_cds {
+            if !plain {
+                return Some(CodingChange::single(
+                    Consequence::CodingSequenceVariant,
+                    None,
+                    None,
+                ));
+            }
             return self.predict_cds_boundary_consequence(
                 ref_allele, alt_allele, transcript, cdna_start, cdna_end,
             );
@@ -692,6 +703,33 @@ impl ConsequencePredictor {
                 codons: None,
             });
         };
+
+        // An allele that is not plain bases has no peptide in Ensembl (`peptide` is undef
+        // unless `seq_is_unambiguous_dna`), so no `Amino_acids` and no term about the protein.
+        // What is left is `frameshift`, which only needs lengths (`seq_length` counts the
+        // ambiguity codes) and declines on a partial codon, and `coding_unknown`'s
+        // `coding_sequence_variant` for everything else. An `N` was a `missense_variant`
+        // with `p.Lys31Xaa`, and a `<*>` beside a real ALT a `frameshift_variant`.
+        if !plain {
+            let frameshift = !window.partial_codon
+                && alt_allele
+                    .known_length()
+                    .is_some_and(|len| len.abs_diff(window.ref_len) % 3 != 0);
+            return Some(CodingChange {
+                consequence: if frameshift {
+                    Consequence::FrameshiftVariant
+                } else {
+                    Consequence::CodingSequenceVariant
+                },
+                additional: if window.partial_codon {
+                    vec![Consequence::IncompleteTerminalCodonVariant]
+                } else {
+                    Vec::new()
+                },
+                amino_acids: None,
+                codons: Some((window.ref_codons.clone(), window.alt_codons.clone())),
+            });
+        }
 
         // Ensembl's `_overlaps_start_codon`: a cDNA-space overlap with the three
         // bases at `cdna_coding_start`. A `cds_start_NF` transcript, or one whose
@@ -1439,12 +1477,35 @@ impl ConsequencePredictor {
     }
 }
 
+/// The complement of a base, ambiguity codes included, as Ensembl's `reverse_comp` has it
+/// (`tr/acgtrymkswhbvdnACGTRYMKSWHBVDN/tgcayrkmswdvbhnTGCAYRKMSWDVBHN/`): `R` is `Y` on the other
+/// strand, and an `N` stays one.
 fn complement(base: u8) -> u8 {
     match base {
-        b'A' | b'a' => b'T',
-        b'T' | b't' => b'A',
-        b'C' | b'c' => b'G',
-        b'G' | b'g' => b'C',
+        b'A' => b'T',
+        b'T' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        b'R' => b'Y',
+        b'Y' => b'R',
+        b'M' => b'K',
+        b'K' => b'M',
+        b'H' => b'D',
+        b'D' => b'H',
+        b'B' => b'V',
+        b'V' => b'B',
+        b'a' => b't',
+        b't' => b'a',
+        b'c' => b'g',
+        b'g' => b'c',
+        b'r' => b'y',
+        b'y' => b'r',
+        b'm' => b'k',
+        b'k' => b'm',
+        b'h' => b'd',
+        b'd' => b'h',
+        b'b' => b'v',
+        b'v' => b'b',
         other => other,
     }
 }
@@ -2214,6 +2275,86 @@ mod tests {
             "Expected start_lost, got: {:?}",
             ac.consequences
         );
+    }
+
+    /// What Ensembl 116.3 writes for an allele that is not plain bases, checked in
+    /// `fixtures/vep_tab_alleles`: no peptide, so no amino acids and no term about the protein.
+    /// `N` in an SNV was `missense_variant,coding_sequence_variant` with `K/X`.
+    #[test]
+    fn an_allele_with_an_unknown_base_has_no_protein_change() {
+        let predictor = ConsequencePredictor::default();
+        let tr = make_coding_transcript();
+        // CDS 1050.. is ATG GCT TCA AAG CCC: 1053 is the first base of GCT
+        let predict = |start: u64, end: u64, reference: &str, alt: &str| {
+            let pos = GenomicPosition::new("chr1", start, end, Strand::Forward);
+            let result = predictor.predict(
+                &pos,
+                &Allele::from_str(reference),
+                &[Allele::from_str(alt)],
+                &[&tr],
+                None,
+            );
+            result.transcript_consequences[0].allele_consequences[0].clone()
+        };
+
+        let snv = predict(1053, 1053, "G", "N");
+        assert_eq!(snv.consequences, vec![Consequence::CodingSequenceVariant]);
+        assert_eq!(snv.impact, Impact::Modifier);
+        assert_eq!(snv.amino_acids, None);
+        // the codons are still shown, as VEP shows `Aaa/Naa`
+        assert_eq!(snv.codons, Some(("Gct".to_string(), "Nct".to_string())));
+
+        // an unknown REF is the same: the reference is not a base to compare against
+        let unknown_ref = predict(1053, 1053, "N", "A");
+        assert_eq!(
+            unknown_ref.consequences,
+            vec![Consequence::CodingSequenceVariant]
+        );
+        assert_eq!(unknown_ref.amino_acids, None);
+
+        // lengths are still known, so the frame is: one base is a frameshift, three are not
+        let one = predict(1054, 1053, "-", "N");
+        assert_eq!(one.consequences, vec![Consequence::FrameshiftVariant]);
+        assert_eq!(one.amino_acids, None);
+        let three = predict(1056, 1055, "-", "NNN");
+        assert_eq!(three.consequences, vec![Consequence::CodingSequenceVariant]);
+        let replaced = predict(1053, 1055, "GCT", "NN");
+        assert_eq!(replaced.consequences, vec![Consequence::FrameshiftVariant]);
+
+        // a symbolic allele has no length either, so it cannot move the frame
+        let symbolic = predict(1053, 1053, "G", "<*>");
+        assert_eq!(
+            symbolic.consequences,
+            vec![Consequence::CodingSequenceVariant]
+        );
+        assert_eq!(symbolic.amino_acids, None);
+
+        // and a plain allele is untouched
+        let plain = predict(1053, 1053, "G", "C");
+        assert!(plain.amino_acids.is_some());
+        assert_ne!(plain.consequences, vec![Consequence::CodingSequenceVariant]);
+    }
+
+    #[test]
+    fn the_complement_of_an_ambiguity_code_is_ensembls() {
+        // `tr/acgtrymkswhbvdnACGTRYMKSWHBVDN/tgcayrkmswdvbhnTGCAYRKMSWDVBHN/`
+        for (a, b) in [
+            (b'R', b'Y'),
+            (b'Y', b'R'),
+            (b'M', b'K'),
+            (b'K', b'M'),
+            (b'S', b'S'),
+            (b'W', b'W'),
+            (b'H', b'D'),
+            (b'D', b'H'),
+            (b'B', b'V'),
+            (b'V', b'B'),
+            (b'N', b'N'),
+            (b'a', b't'),
+            (b'r', b'y'),
+        ] {
+            assert_eq!(complement(a), b, "{}", a as char);
+        }
     }
 
     #[test]

@@ -458,10 +458,10 @@ python3 validation/compare_tab.py vep.tab fv.tab \
 On HG002 the 3,867 cells are in four columns: `HGVS_OFFSET` 2,073, `HGVSc` 1,742, `HGVSp` 17 and `HGVSg` 35.
 `Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `cDNA_position`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `FLAGS`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row.
 
-Rows that are not paired: 127 are only fastVEP's (121 on transcripts, 6 for a `*` allele) and 7 only VEP's.
+Rows that are not paired: 121 are only fastVEP's, all on transcripts (it also wrote 6 for a `*` allele, which VEP does not, and no longer does), and 7 are only VEP's.
 VEP's `--gff` reader keeps only the feature types of `%INCLUDE_FEATURE_TYPES` (`GFF.pm`), its log says it skipped parents "due to invalid types", and `unconfirmed_transcript` and `scRNA`, the types of the three transcripts looked at, are not on that list.
 The three of the seven VEP-only rows looked at are an `intergenic_variant` where fastVEP reports one of those transcripts upstream or downstream.
-Not all 134 were checked, and none of it is new (see [What is measured](#what-is-measured)).
+Not all 128 were checked, and none of it is new (see [What is measured](#what-is-measured)).
 
 | What differs | HG002 cells | World cells | Who is right |
 |---|---:|---:|---|
@@ -531,12 +531,28 @@ Ten rows of the world, all within a few bases of the terminator codon of ENST000
 `chr10_10095_TCAGT/GCGCA` is `coding_sequence_variant` (MODIFIER) in Ensembl and `stop_lost` (HIGH) in fastVEP.
 It was not diagnosed, so it is listed and not argued either way: the in-frame reading of a 5-base insertion looks wrong, and nothing here shows that Ensembl's is right.
 
-### What a `*` allele and a symbolic one get
+### Alleles that are not plain bases
 
-fastVEP writes no `HGVSg` for them, as Ensembl does not (`next if $allele =~ m/[^ACGT\-]/ig` in `hgvs_genomic`), and used to write `chr10:g.1400?`, which is not HGVS.
-Ensembl writes no row for a `*` allele at all, and none for a record whose only ALT is `*`; fastVEP writes one, with an empty `Consequence` and `MODIFIER`, and 6 rows of HG002 are those.
-An ALT of `N` gets no `HGVSg` in either tool.
-A VCF REF of `N` gets the genome's base in both tools' `HGVSg`, and in Ensembl's `HGVSc` (`c.201+300C>A`) but not in fastVEP's, which writes the REF it was given (`c.201+300N>A`).
+**HG002: the 6 rows written for a `*` allele.
+The allele set (`fixtures/vep_tab_alleles`): 100 rows only fastVEP wrote and 434 of the 10,800 cells of the 360 rows both wrote, before; none, and 10 (divergence 11), now.**
+
+Ensembl translates an allele only when it, and the reference, are runs of `A`, `C`, `G` and `T` (`seq_is_unambiguous_dna`, `^[ACGT-]+$`).
+Anything else has no peptide there, so no `Amino_acids`, no `HGVSp`, no `HGVSc`, and no term that is about the protein.
+Each kind was run through VEP 116.3 at nine kinds of place (both strands of a coding exon, a UTR, an intron, a non-coding exon, and an intergenic base; 171 records) and fastVEP now agrees on every row and every cell but the 10 of divergence 11, except where the last column says otherwise:
+
+| ALT or REF | Ensembl VEP 116.3 | fastVEP before | Now |
+|---|---|---|---|
+| `*`, the spanning deletion | no row for it; a record whose only ALT is `*` has no row at all, in a VCF no `CSQ`, in JSON no consequences | a row for it on every transcript and an intergenic one, `Consequence` empty, `MODIFIER` | the same as VEP |
+| `.` | the record is not annotated, and a VCF output does not have the line | the rows of a `*` allele | no row; the VCF keeps the line, unannotated |
+| an ambiguity code in the ALT (`N`, `R`, `Y`) | in the coding sequence `coding_sequence_variant` MODIFIER, `Amino_acids`, `HGVSc` and `HGVSp` `-`, or `frameshift_variant` HIGH if its length moves the frame; elsewhere the term of the place, with no `HGVSc` | `missense_variant,coding_sequence_variant` MODERATE, `K/X`, `c.91A>N`, `p.Lys31Xaa`; `p.Gln28XaafsTer9` for an insertion | the same as VEP |
+| an ambiguity code in the REF | `coding_sequence_variant`, no `Amino_acids` or `HGVSp`, but `HGVSc` against the genome's base: `c.101T>C` for `N>C` at a `T` | `missense_variant` `V/A`, `c.101N>C` | the same as VEP |
+| `<NON_REF>` | the whole record is skipped, with a warning, even beside a real ALT | beside a real ALT a `frameshift_variant` row for it (it was read as a symbolic deletion) | **no row for it, and the real ALT beside it annotated**: VEP loses a real variant of a gVCF record, and this does not |
+| `<*>` | a `coding_sequence_variant` row for it, which says nothing | beside a real ALT a `frameshift_variant` row | **no row for it**, for the same reason as `<NON_REF>` |
+
+An ambiguity code is complemented on the reverse strand as Ensembl's `reverse_comp` has it (`R` is `Y`), which the `Codons` cell shows; `Allele::is_plain_bases` holds the rule.
+fastVEP also writes no `HGVSg` for them, as Ensembl does not (`next if $allele =~ m/[^ACGT\-]/ig` in `hgvs_genomic`), and used to write `chr10:g.1400?`, which is not HGVS.
+
+Two things are left as they were and are not claimed to be VEP's: an ambiguous allele that overlaps the stop codon (VEP says `stop_retained_variant` for a length change there, because its test of the edited codon declines to run on an unknown base), and the symbolic alleles of a structural variant, which have their own predictor.
 
 ### Lone indels that are not minimal
 
@@ -630,7 +646,7 @@ calls plain missense.
 
 ## Fixed since this document was last measured
 
-Eleven defects are gone, and the numbers above are what is left.
+Twelve defects are gone, and the numbers above are what is left.
 Each was measured the same way before and after, on the same samples: the row counts below are
 what the fix removed.
 
@@ -646,3 +662,4 @@ what the fix removed.
 | `start_lost` stopped at its first test | 4 rows of the in-frame deletion set, all four `IMPACT` | Ensembl falls through to the peptide test when the coordinate test declines because the edit is an in-frame indel, and an in-frame deletion that removes the initiator is a start loss there (KCNA2 `c.3_11del`, ENST00000639048, HIGH not MODERATE) |
 | An unknown residue silenced `missense_variant` | 1 consequence row, `IMPACT` | `QX/HX` resolves one residue and not the next; Ensembl reports `missense_variant,coding_sequence_variant`, and reporting the second alone made a real missense MODIFIER (IL7R ENST00000515665) |
 | `cDNA_position`, `CDS_position`, `Protein_position`, `EXON` and `INTRON` of a change with an end outside an exon, and of an insertion at an exon's edge | 9 cDNA cells of HG002 against 116.3; on the edge set 1,784, 1,268, 1,229, 255 and 603 cells | The one coordinate a change had was written where Ensembl writes `?-7` or `601-?`, an insertion's flank where it writes the two positions it sits between, and `EXON` and `INTRON` named the exon and intron of the start alone. The rule is Ensembl's mapper's, in Part 3 |
+| An ALT of `*`, `.`, `<NON_REF>` or `<*>`, and an ambiguity code (`N`) in an ALT or a REF | on the allele set 100 rows only fastVEP wrote and 434 cells of 360 rows; HG002 6 rows | `*` was written as a row with no consequence, `.` as a `*`, and `<NON_REF>` or `<*>` beside a real ALT as a `frameshift_variant`; an `N` was a `MODERATE` `missense_variant` with `p.Lys31Xaa` and an `HGVSc` where Ensembl, which cannot translate it, writes `coding_sequence_variant` and nothing else. Part 3 has the table |

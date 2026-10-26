@@ -263,11 +263,10 @@ fn only_hgvsg_puts_a_genomic_hgvs_on_the_intergenic_row() {
     );
 }
 
-/// A `*` allele (a deletion that began upstream) has no `HGVSg`, and the allele beside it
-/// has its own: Ensembl VEP 116.3 writes no row for the `*` and `chr10:g.11800G>T` for the
-/// `T`, and an earlier fastVEP wrote `chr10:g.11800?` for the `*`, which is not HGVS.
-/// (fastVEP still writes the `*` row, with an empty `Consequence`; that is not what this
-/// holds.)
+/// A `*` allele (a deletion that began upstream) gets no row at all, and the allele beside it
+/// has its own `HGVSg`: Ensembl VEP 116.3 writes no row for the `*` and `chr10:g.11800G>T` for
+/// the `T`. An earlier fastVEP wrote a row for the `*` with an empty `Consequence`, and before
+/// that one with `chr10:g.11800?`, which is not HGVS.
 #[test]
 fn a_star_allele_has_no_hgvsg_and_the_allele_beside_it_keeps_its_own() {
     let dir = TempDir::new().unwrap();
@@ -294,7 +293,12 @@ fn a_star_allele_has_no_hgvsg_and_the_allele_beside_it_keeps_its_own() {
             .clone()
     };
     assert_eq!(hgvsg("star", "T"), "chr10:g.11800G>T");
-    assert_eq!(hgvsg("star", "*"), "-");
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r["Uploaded_variation"] == "star" && r["Allele"] == "*"),
+        "no row is written for a `*` allele: {rows:#?}"
+    );
     assert_eq!(hgvsg("n_alt", "N"), "-");
 }
 
