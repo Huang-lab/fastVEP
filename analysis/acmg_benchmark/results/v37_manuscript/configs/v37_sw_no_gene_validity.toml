@@ -1,0 +1,3 @@
+# v37_sw_no_gene_validity: PVS1, PP2 and PM1 no longer withheld where every ClinGen curation of the gene is Limited, Disputed or Refuted.
+# Everything else is the shipped default.
+require_gene_disease_validity = false

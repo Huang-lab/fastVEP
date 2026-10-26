@@ -1,0 +1,4 @@
+bar,genes_with_a_bar,median,q1,q3,min,max,fastvep_default,genes_tighter_than_default,genes_looser_than_default
+BA1,115,0.001,0.0005,0.005,1.6e-05,0.163,0.05,111,1
+BS1,107,0.00025,0.0001,0.001,1.6e-06,0.0163,0.005,102,2
+PM2,64,4e-05,2e-05,0.0001,1.32e-06,0.0005,4e-05,24,30

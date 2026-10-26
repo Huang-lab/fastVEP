@@ -1,0 +1,3 @@
+# v37_sw_bs1_0.0005: BS1 allele-frequency bar, set to 0.0005.
+# Everything else is the shipped default.
+bs1_af_threshold = 0.0005

@@ -1,0 +1,14 @@
+consequence_group,has_pvs1_family,n
+Canonical splice site,False,1434
+Canonical splice site,True,12
+Frameshift or nonsense,False,5184
+Frameshift or nonsense,True,3945
+In-frame or protein-altering,False,857
+Intronic,False,402
+Missense,False,18992
+"Other (flank, non-coding, unscored)",False,2041
+Splice region,False,1427
+Start or stop loss,False,107
+Start or stop loss,True,524
+Synonymous,False,108
+UTR,False,145

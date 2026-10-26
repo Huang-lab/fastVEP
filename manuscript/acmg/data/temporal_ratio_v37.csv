@@ -1,0 +1,8 @@
+measure,value,ci_lo,ci_hi,n,k,poisson_p_at_least_observed,new_variants_in_strata_without_april_rate
+"opposite-direction rate, April set",7.273698898554167e-05,5.117355971477001e-05,9.688327263823e-05,673660,49,,
+"opposite-direction rate, new variants",0.0001673982590581058,9.228297481240982e-05,0.00025252785159125216,107528,18,,
+ratio of the new rate to the April rate,2.301418595858848,1.2158285378625795,4.017961068805878,10233,,,
+expected opposite-direction calls among the new variants at the April rate by ClinVar direction,7.9169475347469245,,,107528,18,0.0014259177583110453,0.0
+expected opposite-direction calls among the new variants at the April rate by ClinVar direction by consequence group,5.760234171628648,,,107528,18,3.412537255962329e-05,0.0
+expected opposite-direction calls among the new variants at the April rate by ClinVar class,7.078453945483158,,,107528,18,0.0004112789469751909,0.0
+expected opposite-direction calls among the new variants at the April rate by ClinVar class by consequence group,6.132325572563634,,,107528,18,7.455701939794737e-05,0.0

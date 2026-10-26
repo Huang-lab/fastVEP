@@ -1,0 +1,4 @@
+# v37_hk_strict: BP1's veto no longer counts the variant's own ClinVar record, ClinVar's low-penetrance and risk-allele terms no longer withhold BS1 and BS2, and the curated frequency-exception list is emptied (each of the three was measured alone; none had been run with the others).
+# Everything else is the shipped default.
+clinvar_low_penetrance_blocks_benign_frequency = false
+ba1_exceptions = []

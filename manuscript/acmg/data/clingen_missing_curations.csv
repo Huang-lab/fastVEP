@@ -1,0 +1,113 @@
+gene,disease,moi,classification,classified,panel,established,status
+ADGRL1,complex neurodevelopmental disorder,AD,Definitive,2026-04-15T19:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked
+ALPK1,"retinal dystrophy, optic nerve edema, splenomegaly, anhidrosis, and migraine headache syndrome",AD,Definitive,2024-01-09T05:00:00.000Z,Monogenic Autoinflammatory Diseases Gene Curation Expert Panel,True,lacked
+ARFGEF1,"developmental delay, impaired speech, and behavioral abnormalities, with or without seizures",AD,Definitive,2025-11-21T17:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+ARHGAP29,ARHGAP29-related non-syndromic orofacial cleft,AD,Definitive,2024-08-15T04:00:00.000Z,Craniofacial Malformations Gene Curation Expert Panel,True,relabel
+ATP5F1D,mitochondrial disease,AR,Limited,2026-02-09T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+ATP5F1E,mitochondrial disease,AR,Limited,2026-02-09T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+ATP5MC3,mitochondrial disease,AD,Limited,2026-02-09T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+BLOC1S1,neurodevelopmental disorder,AR,Moderate,2026-04-01T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+BLTP1,Alkuraya-Kucinskas syndrome,AR,Definitive,2026-01-21T17:00:00.000Z,Prenatal Gene Curation Expert Panel,True,lacked
+C4A,systemic lupus erythematosus related to C4A,AR,Moderate,2025-12-10T20:00:00.000Z,Monogenic Systemic and Incomplete Lupus Erythematosus Gene Curation Expert Panel,True,lacked
+C4B,systemic lupus erythematosus,AR,Limited,2026-03-11T19:00:00.000Z,Monogenic Systemic and Incomplete Lupus Erythematosus Gene Curation Expert Panel,False,lacked
+CBFB,cleidocranial dysplasia 2,AD,Definitive,2026-02-19T05:00:00.000Z,Craniofacial Malformations Gene Curation Expert Panel,True,lacked
+CD27,lymphoproliferative syndrome 2,AR,Definitive,2025-12-09T17:00:00.000Z,"Childhood, Adolescent and Young Adult Cancer Predisposition Gene Curation Expert Panel",True,lacked
+CDH2,"agenesis of corpus callosum, cardiac, ocular, and genital syndrome",AD,Definitive,2026-03-20T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+CDKN1C,Beckwith-Wiedemann syndrome due to CDKN1C mutation,AD,Strong,2026-04-24T17:00:00.000Z,Hereditary Cancer Gene Curation Expert Panel,True,lacked
+CEP120,ciliopathy,AR,Definitive,2025-06-25T16:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,True,lacked
+CEP83,ciliopathy,AR,Definitive,2021-09-22T04:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,True,lacked
+CEP89,mitochondrial disease,AR,Disputed,2024-07-29T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+CFTR,cystic fibrosis,AR,Definitive,2022-06-01T04:00:00.000Z,General Gene Curation Expert Panel,True,lacked
+CHRNA1,"myasthenic syndrome, congenital, 1B, fast-channel",AR,Definitive,2024-06-26T04:00:00.000Z,Prenatal Gene Curation Expert Panel,True,lacked
+CILK1,ciliopathy,AR,Definitive,2025-11-26T05:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,True,lacked
+COX7B,mitochondrial disease,XL,Limited,2024-09-30T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+COXFA4,mitochondrial disease,AR,Definitive,2025-03-24T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+CRLS1,mitochondrial disease,AR,Moderate,2025-10-27T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+CYP26B1,lethal occipital encephalocele-skeletal dysplasia syndrome,AR,Moderate,2026-02-19T05:00:00.000Z,Craniofacial Malformations Gene Curation Expert Panel,True,lacked
+CYP27B1,"vitamin D-dependent rickets, type 1A",AR,Definitive,2025-06-04T04:00:00.000Z,Tubulopathy Gene Curation Expert Panel,True,lacked
+DDX59,ciliopathy,AR,Limited,2023-06-28T16:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,False,lacked
+DMRT1,46 XY differences of sex development,AD,Definitive,2026-03-18T16:00:00.000Z,Male Infertility Gene Curation Expert Panel,True,lacked
+DNA2,mitochondrial disease,AD,Moderate,2026-02-09T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+EFL1,Shwachman-Diamond syndrome 2,AR,Definitive,2026-02-10T17:00:00.000Z,"Childhood, Adolescent and Young Adult Cancer Predisposition Gene Curation Expert Panel",True,lacked
+ELP1,Riley-Day syndrome,AR,Moderate,2025-05-29T16:00:00.000Z,Charcot-Marie-Tooth Disease Gene Curation Expert Panel,True,lacked
+ELP2,complex neurodevelopmental disorder with motor features,AR,Definitive,2025-06-23T16:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked
+EVC,Ellis-van Creveld syndrome,AR,Definitive,2025-09-24T04:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,True,lacked
+EXOSC2,retinitis pigmentosa-hearing loss-premature aging-short stature-facial dysmorphism syndrome,AR,Limited,2025-03-21T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,False,lacked
+FAM149B1,Joubert syndrome 36,AR,Moderate,2025-04-18T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+FAS,FAS-related autoimmune lymphoproliferative immune disorder,SD,Definitive,2025-10-14T16:00:00.000Z,"Childhood, Adolescent and Young Adult Cancer Predisposition Gene Curation Expert Panel",True,lacked
+GATM,Fanconi renotubular syndrome 1,AD,Moderate,2026-04-30T04:00:00.000Z,Tubulopathy Gene Curation Expert Panel,True,export day
+GIGYF1,complex neurodevelopmental disorder,AD,Definitive,2023-09-14T16:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked
+GLI3,Greig cephalopolysyndactyly syndrome,AD,Definitive,2026-03-19T04:00:00.000Z,Craniofacial Malformations Gene Curation Expert Panel,True,lacked
+GNB2,complex neurodevelopmental disorder,AD,Moderate,2026-03-26T11:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked
+GNE,thrombocytopenia 12 with or without myopathy,AR,Definitive,2025-06-16T16:00:00.000Z,Hemostasis/Thrombosis Gene Curation Expert Panel,True,relabel
+GOT2,mitochondrial disease,AR,Moderate,2025-10-27T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+GPR161,GPR161-related medulloblastoma predisposition,AD,Strong,2026-01-13T17:00:00.000Z,"Childhood, Adolescent and Young Adult Cancer Predisposition Gene Curation Expert Panel",True,lacked
+GUF1,developmental and epileptic encephalopathy,AR,Limited,2026-04-07T16:00:00.000Z,Epilepsy Gene Curation Expert Panel,False,lacked
+HMGB1,"HMGB1-related brachyphalangy, polydactyly and tibial aplasia syndrome",AD,Moderate,2026-02-24T17:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+IFNAR2,immunodeficiency 45,AR,Definitive,2026-03-19T16:00:00.000Z,SCID-CID Gene Curation Expert Panel,True,lacked
+IFT43,ciliopathy,AR,Moderate,2026-04-22T04:00:00.000Z,Skeletal Disorders Gene Curation Expert Panel,True,lacked
+INPPL1,opsismodysplasia,AR,Definitive,2026-03-24T16:00:00.000Z,Prenatal Gene Curation Expert Panel,True,lacked
+IQSEC1,complex neurodevelopmental disorder,AR,Limited,2026-04-21T10:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,False,lacked
+ITGB3,"bleeding disorder, platelet-type, 24",AD,Definitive,2025-06-04T16:00:00.000Z,Hemostasis/Thrombosis Gene Curation Expert Panel,True,relabel
+JAG1,Alagille syndrome due to a JAG1 point mutation,AD,Definitive,2025-04-14T04:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,True,lacked
+KCNH5,neonatal/infantile epilepsy syndrome,AD,Definitive,2022-11-15T05:00:00.000Z,Epilepsy Gene Curation Expert Panel,True,relabel
+KCTD1,scalp-ear-nipple syndrome,AD,Definitive,2025-06-04T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+KLHL3,pseudohypoaldosteronism type 2D,SD,Definitive,2022-01-20T05:00:00.000Z,Tubulopathy Gene Curation Expert Panel,True,lacked
+LZTR1,LZTR1-related schwannomatosis,AD,Definitive,2025-08-21T05:00:00.000Z,Hereditary Cancer Gene Curation Expert Panel,True,lacked
+MBD4,uveal melanoma,AD,Moderate,2026-02-27T18:00:00.000Z,Hereditary Cancer Gene Curation Expert Panel,True,lacked
+MCM9,MCM9-related gametogenic failure,AR,Definitive,2026-04-01T16:00:00.000Z,Male Infertility Gene Curation Expert Panel,True,lacked
+MEIS1,thrombocytopenia,AD,Limited,2025-11-03T17:00:00.000Z,Hemostasis/Thrombosis Gene Curation Expert Panel,False,lacked
+METTL23,intellectual disability,AR,Definitive,2026-02-17T17:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked
+MOCS3,sulfite oxidase deficiency due to molybdenum cofactor deficiency type B2,AR,Limited,2026-04-24T16:00:00.000Z,General Inborn Errors of Metabolism Gene Curation Expert Panel,False,lacked
+MRPL12,mitochondrial disease,AR,Limited,2025-10-27T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+MRPL24,mitochondrial disease,AR,Limited,2025-01-27T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+MRPL38,mitochondrial disease,AR,Limited,2025-01-27T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+MRPS2,mitochondrial disease,AR,Moderate,2025-01-27T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+MRPS23,mitochondrial disease,AR,Limited,2024-11-04T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+MT-TF,familial juvenile hyperuricemic nephropathy,MT,Moderate,2024-02-12T05:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,True,lacked
+MUSK,congenital myasthenic syndrome 9,AR,Definitive,2026-04-27T16:00:00.000Z,Congenital Myopathies and Myasthenic Syndromes Gene Curation Expert Panel,True,lacked
+MYCN,Feingold syndrome type 1,AD,Definitive,2025-07-02T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+MYCN,megalencephaly-polydactyly syndrome,AD,Moderate,2026-01-07T17:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+NAA20,syndromic intellectual disability,AR,Moderate,2026-04-01T15:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked
+NDUFAF8,mitochondrial disease,AR,Moderate,2024-11-04T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+NDUFV1,mitochondrial disease,AR,Definitive,2024-05-20T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+NODAL,congenital heart disease with heterotaxy syndrome,AD,Definitive,2025-08-05T17:00:00.000Z,Congenital Heart Disease Gene Curation Expert Panel,True,lacked
+NR5A1,NR5A1-related sex development disorder,AD,Definitive,2026-01-21T17:00:00.000Z,Male Infertility Gene Curation Expert Panel,True,lacked
+OGDH,mitochondrial disease,AR,Definitive,2026-02-19T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+P2RX1,"inherited bleeding disorder, platelet-type",AD,Disputed,2026-04-01T16:00:00.000Z,Hemostasis/Thrombosis Gene Curation Expert Panel,False,lacked
+P2RY12,"P2RY12-related platelet disorder, autosomal dominant",AD,Moderate,2025-04-07T16:00:00.000Z,Hemostasis/Thrombosis Gene Curation Expert Panel,True,relabel
+PDE1C,autosomal dominant nonsyndromic hearing loss,AD,Limited,2026-04-15T16:00:00.000Z,Hearing Loss Gene Curation Expert Panel,False,lacked
+PET117,mitochondrial disease,AR,Limited,2024-11-04T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+PIP5K1C,PIP5K1C-related neurodevelopmental disorder,AD,Strong,2025-05-07T10:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked
+PNPLA8,mitochondrial disease,AR,Definitive,2025-03-24T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+POLE2,combined immunodeficiency due to POLE2 deficiency,AR,Limited,2024-05-16T16:00:00.000Z,SCID-CID Gene Curation Expert Panel,False,lacked
+PPP2R5C,complex neurodevelopmental disorder,AD,Definitive,2025-07-16T19:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked
+PTCH1,holoprosencephaly,AD,Limited,2025-07-09T04:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,False,lacked
+RNU12,RNU12-related minor spliceopathy disorder,AR,Moderate,2026-02-20T17:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+SCLT1,ciliopathy,AR,Definitive,2025-12-08T05:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,True,lacked
+SCO2,Charcot-Marie-Tooth disease,AR,Moderate,2026-04-10T16:00:00.000Z,Charcot-Marie-Tooth Disease Gene Curation Expert Panel,True,lacked
+SCO2,mitochondrial disease,AR,Definitive,2024-10-07T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+SH2B3,SH2B3-related immune system disorder,SD,Definitive,2025-08-12T16:00:00.000Z,"Childhood, Adolescent and Young Adult Cancer Predisposition Gene Curation Expert Panel",True,lacked
+SLITRK2,X-linked complex neurodevelopmental disorder,XL,Limited,2025-07-02T10:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,False,lacked
+SMAD6,SMAD6-related disease,AD,Definitive,2023-06-15T04:00:00.000Z,Craniofacial Malformations Gene Curation Expert Panel,True,relabel
+SNORA31,"encephalopathy, acute, infection-induced (herpes-specific), susceptibility to, 10",AD,Limited,2026-03-04T17:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,False,lacked
+SPG7,mitochondrial disease,AR,Definitive,2026-02-19T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+SPG7,mitochondrial disease,AD,Disputed,2026-02-19T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+SUCLA2,mitochondrial disease,AR,Definitive,2024-06-17T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+SYCE1,SYCE1-related gametogenic failure,AR,Definitive,2026-04-15T16:00:00.000Z,Male Infertility Gene Curation Expert Panel,True,lacked
+TAB2,"congenital heart defects, multiple types, 2",AD,Definitive,2026-01-05T17:00:00.000Z,Congenital Heart Disease Gene Curation Expert Panel,True,lacked
+TAMM41,mitochondrial disease,AR,Moderate,2025-10-27T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+TBC1D32,ciliopathy,AR,Definitive,2025-04-18T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+TBX2,vertebral anomalies and variable endocrine and T-cell dysfunction,AD,Limited,2025-04-22T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,False,lacked
+TCTN1,ciliopathy,AR,Definitive,2026-02-25T05:00:00.000Z,Kidney Cystic and Ciliopathy Disorders Gene Curation Expert Panel,True,lacked
+THPO,"amegakaryocytic thrombocytopenia, congenital, 2",SD,Definitive,2024-05-20T16:00:00.000Z,Hemostasis/Thrombosis Gene Curation Expert Panel,True,relabel
+TTN,"TTN-related myopathy, dominant-negative TTNsv",AD,Moderate,2026-02-23T17:00:00.000Z,Congenital Myopathies and Myasthenic Syndromes Gene Curation Expert Panel,True,lacked
+UNC13A,"neurodevelopmental disorder with hypotonia, epilepsy, and absent speech",AR,Definitive,2026-04-17T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+UNC13A,"neurodevelopmental disorder with speech delay, movement abnormalities, and seizures",AD,Definitive,2026-04-17T16:00:00.000Z,Syndromic Disorders Gene Curation Expert Panel,True,lacked
+UQCC2,mitochondrial disease,AR,Moderate,2024-09-30T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+UQCRB,mitochondrial disease,AR,Limited,2024-10-07T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+UQCRC1,mitochondrial disease,AD,Disputed,2025-01-27T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+UQCRFS1,mitochondrial disease,AR,Moderate,2024-11-04T05:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,True,lacked
+UQCRQ,mitochondrial disease,AR,Limited,2024-10-07T04:00:00.000Z,Mitochondrial Diseases Gene Curation Expert Panel,False,lacked
+ZIC3,congenital heart disease with heterotaxy syndrome,XL,Definitive,2025-10-07T16:00:00.000Z,Congenital Heart Disease Gene Curation Expert Panel,True,lacked
+ZMYM2,syndromic complex neurodevelopmental disorder,AD,Definitive,2025-05-22T16:00:00.000Z,Intellectual Disability and Autism Gene Curation Expert Panel,True,lacked

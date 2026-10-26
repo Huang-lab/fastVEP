@@ -1,0 +1,3 @@
+# v37_oct_bp7_walker: BP7 with SpliceAI at most 0.1 and no conservation test, on the variants of the 4 October 2026 release.
+# Everything else is the shipped default.
+phylop_conserved = 1000.0

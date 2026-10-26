@@ -1,0 +1,3 @@
+# v37_sw_no_faf: BA1 and BS1 test the population-maximum point estimate, not the filtering allele frequency.
+# Everything else is the shipped default.
+use_filtering_af = false

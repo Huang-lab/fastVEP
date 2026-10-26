@@ -1,0 +1,6 @@
+gene,variant,kind,pathogenic_missense_records,own_record_among_them,records_other_than_own,the_others
+IQSEC1,p.Arg321Gln,"opposite-direction in v37, with BP1",2,True,1,p.Thr343Met
+PRR12,p.Arg1169Trp,"opposite-direction in v37, with BP1",1,True,0,
+FBXO28,p.Arg348Leu,opposite-direction only when the veto leaves its own record out,3,True,2,p.Leu64Arg;p.Arg348Gly
+PCGF2,p.Pro65Leu,opposite-direction only when the veto leaves its own record out,3,True,2,p.Pro65Arg;p.Pro65Ser
+SBF1,p.Met417Val,opposite-direction only when the veto leaves its own record out,3,True,2,p.Arg763His;p.Leu983Pro

@@ -1,0 +1,3 @@
+# v37_sw_table_both_sides: Richards 2015 combining table on both sides, in place of the SVI point system on the pathogenic side.
+# Everything else is the shipped default.
+use_point_system = false

@@ -1,0 +1,4 @@
+# v37_ix_table_pm2ad_1e-06: PM2 bar for dominant genes set to 1e-06, with the Richards 2015 table on both sides.
+# Everything else is the shipped default.
+use_point_system = false
+pm2_ad_af_threshold = 1e-06

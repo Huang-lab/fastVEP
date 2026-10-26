@@ -1,0 +1,65 @@
+row,gene,chrom,pos,ref,alt,clinvar_class,stars,fastvep_call_at_round6,v37_call,still_opposite,ruling,rule,seen_in_round
+1,MSH6,2,47806358,G,GGTAT,Likely_benign,2,Likely_pathogenic,VUS,False,neither,class,new
+2,LMX1B,9,126693802,GCTGGGCCAGGGTGAGCCGGGGCCGGGGCAGGGC,G,Likely_benign,2,Likely_pathogenic,VUS,False,clinvar,class,new
+3,FOXP2,7,114631524,CCAG,C,Benign,2,Likely_pathogenic,VUS,False,clinvar,class,new
+4,NFKB2,10,102397405,ACGGGTATGGGTGCAGGGGGTGGGT,A,Benign,2,Likely_pathogenic,VUS,False,clinvar,class,new
+5,SERPINC1,1,173911984,T,C,Likely_pathogenic,3,Likely_benign,VUS,False,clinvar,class,round 5
+6,RYR1,19,38580126,CA,C,Likely_benign,3,Likely_pathogenic,Likely_pathogenic,True,disorder_specific,disorder,round 3
+7,BRCA1,17,43095924,T,G,Benign,3,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 5
+8,RUNX1,21,35048959,C,T,Benign,3,Likely_pathogenic,Likely_pathogenic,True,clinvar,evidence,round 5
+9,SNRNP200,2,96287968,G,A,Pathogenic,2,Likely_benign,VUS,False,clinvar,evidence,round 3
+10,G6PD,X,154534419,G,A,Pathogenic,2,Benign,VUS,False,clinvar,class,round 5
+11,NTRK1,1,156873600,T,A,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,evidence,round 5
+12,NPHP1,2,110164630,G,A,Pathogenic,2,Likely_benign,Likely_benign,True,neither,class,round 5
+13,PGM3,6,83191199,G,A,Pathogenic,2,Likely_benign,Likely_benign,True,neither,class,round 5
+14,CDH23,10,71799629,G,A,Pathogenic,2,Likely_benign,VUS,False,clinvar,evidence,round 3
+15,TH,11,2171687,G,GC,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,evidence,round 5
+16,PAH,12,102843629,C,T,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,evidence,round 5
+17,BBS4,15,72715410,T,C,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,evidence,round 5
+18,SLC4A11,20,3237656,TC,T,Pathogenic,2,Likely_benign,Likely_benign,True,neither,class,round 5
+19,RTEL1,20,63662520,C,T,Pathogenic,2,Likely_benign,Likely_benign,True,neither,class,round 5
+20,G6PD,X,154536002,C,T,Pathogenic,2,Benign,VUS,False,clinvar,class,round 5
+21,PADI3,1,17280704,C,T,Pathogenic,2,Likely_benign,Likely_benign,True,needs_evidence,review,round 4
+22,NPHP1,2,110164564,G,A,Pathogenic,2,Likely_benign,Likely_benign,True,neither,class,round 5
+23,SLC39A4,8,144416579,C,T,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,class,round 5
+24,POLR3A,10,78009515,C,T,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,class,round 5
+25,SLC12A3,16,56869762,C,A,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,evidence,round 5
+26,MYO15A,17,18166434,C,T,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,evidence,round 3
+27,LAMA3,18,23773638,C,T,Pathogenic,2,Likely_benign,Likely_benign,True,needs_evidence,review,round 4
+28,PNKP,19,49861542,AGGGGTCAGGGGAGGAGG,A,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,evidence,round 5
+29,NCF4,22,36875833,C,T,Pathogenic,2,Likely_benign,Likely_benign,True,needs_evidence,review,round 5
+30,FBN1,15,48492562,G,C,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 5
+31,DST,6,56642725,G,A,Likely_pathogenic,2,Likely_benign,Likely_benign,True,clinvar,evidence,round 5
+32,TH,11,2171684,C,A,Likely_pathogenic,2,Likely_benign,Likely_benign,True,fastvep,evidence,round 5
+33,MSH6,2,47806651,G,GGTAACTAACTAACTATAATGGAATT,Likely_benign,2,Likely_pathogenic,VUS,False,clinvar,class,round 4
+34,ARMC9,2,231360823,C,CG,Benign,2,Likely_pathogenic,Likely_pathogenic,True,fastvep,class,round 3
+35,COL7A1,3,48580300,C,T,Likely_pathogenic,2,Likely_benign,VUS,False,disorder_specific,disorder,round 3
+36,RYK,3,134250644,G,GC,Benign,2,Likely_pathogenic,Likely_pathogenic,True,neither,class,round 3
+37,TP63,3,189737739,G,C,Likely_benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 3
+38,MOCS1,6,39927576,C,CT,Likely_pathogenic,2,Likely_benign,Likely_benign,True,needs_evidence,review,round 5
+39,CAMK2B,7,44228926,T,A,Likely_benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 5
+40,TH,11,2171684,C,T,Likely_pathogenic,2,Likely_benign,Likely_benign,True,fastvep,class,round 5
+41,TSC2,16,2082471,C,T,Benign,2,Likely_pathogenic,Likely_pathogenic,True,needs_evidence,review,round 5
+42,TBC1D8B,X,106839390,CTG,C,Likely_benign,2,Likely_pathogenic,Likely_pathogenic,True,needs_evidence,review,round 5
+43,AGRN,1,1049050,TGCAGCTCAGGTGGGCGGGGAGGGGACGGGGCCGGG,T,Likely_benign,2,Likely_pathogenic,VUS,False,clinvar,class,round 5
+44,NOTCH2,1,120069388,CGG,C,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,evidence,round 3
+45,RAD21,8,116866762,C,T,Likely_benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 5
+46,KDM2B,12,121580827,CTG,C,Likely_benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 5
+47,PHKB,16,47461389,G,A,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 5
+48,PIEZO1,16,88736406,TACCTGCGCGGCAGAGAGGGCTGCACAGCTGCCCAGCGCACCCCACCCAGGCGATGCCCCAC,T,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 5
+49,EDN3,20,59322388,G,GA,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,class,round 5
+50,PRODH,22,18925164,C,T,Benign,2,Likely_pathogenic,Likely_pathogenic,True,neither,class,round 5
+51,LZTR1,22,20989676,GGAGGAGGTGAGGGGCGTGGGGAGCCAGGGCGCAGGTA,G,Benign,2,Likely_pathogenic,VUS,False,clinvar,evidence,round 5
+52,PTEN,10,87931087,GAGGT,G,Likely_benign,3,Likely_pathogenic,VUS,False,clinvar,stated,round 3
+53,OCA2,15,27990612,G,A,Pathogenic,2,Likely_benign,Likely_benign,True,clinvar,stated,round 3
+54,CHD7,8,60850517,G,A,Likely_benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,stated,round 3
+55,PTCH1,9,95449918,T,A,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,stated,round 3
+56,IQSEC1,3,12936054,C,T,Likely_pathogenic,2,Likely_benign,Likely_benign,True,clinvar,stated,round 3
+57,PRR12,19,49597840,C,T,Likely_pathogenic,2,Likely_benign,Likely_benign,True,clinvar,stated,round 3
+58,DSP,6,7565520,C,CGTAA,Likely_benign,2,Likely_pathogenic,VUS,False,clinvar,stated,round 4
+59,EMG1,12,6971047,A,AG,Benign,2,Likely_pathogenic,Likely_pathogenic,True,neither,stated,round 3
+60,ORAI1,12,121626888,G,GT,Benign,2,Likely_pathogenic,Likely_pathogenic,True,fastvep,stated,round 3
+61,CBS,21,43063062,G,GGATCCACCCCAATGATCTGCAGAGGGCGCGGCTTCAGGGCTCAAGCCCAGCAAAAGCCCCACCTGGAT,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,stated,round 3
+62,CBS,21,43063074,A,ATGATCTGCAGAGGGCGCGGCTTCAGGGCTCAAGCCCAGCAAAAGCCCCACCTGGGTGATCCACCCCAG,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,stated,round 3
+63,CBS,21,43063074,A,ATGATCTGCAGAGGGCGCGGCTTCAGGGCTCAAGCCCAGCAAAAGCCCCACCTGGATGATCCACCCCAG,Benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,stated,round 3
+64,FMR1,X,147938098,G,A,Likely_benign,2,Likely_pathogenic,Likely_pathogenic,True,clinvar,stated,round 3

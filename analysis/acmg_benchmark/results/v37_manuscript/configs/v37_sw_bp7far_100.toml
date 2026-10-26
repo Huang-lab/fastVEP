@@ -1,0 +1,3 @@
+# v37_sw_bp7far_100: BP7 far intron boundary, set to 100.
+# Everything else is the shipped default.
+bp7_max_intron_offset = 100

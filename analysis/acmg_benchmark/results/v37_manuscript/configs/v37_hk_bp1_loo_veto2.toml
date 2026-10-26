@@ -1,0 +1,3 @@
+# v37_hk_bp1_loo_veto2: BP1's veto at 2 pathogenic missense variants in the gene, and no longer counting the variant's own record when it is itself pathogenic or likely pathogenic.
+# Everything else is the shipped default.
+bp1_max_pathogenic_missense = 2

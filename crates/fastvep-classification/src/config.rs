@@ -121,8 +121,15 @@ pub struct AcmgConfig {
     /// published for a dominant gene, to buy a fraction of a point.
     #[serde(default = "default_pm2_ad")]
     pub pm2_ad_af_threshold: f64,
-    /// PM2: AF threshold for autosomal-recessive genes per ClinGen SVI v1.0
-    /// (Sept 2020). Default 0.00007 (0.007%).
+    /// PM2: AF threshold for autosomal-recessive genes. Default 0.00007
+    /// (0.007%). It was documented as "per ClinGen SVI v1.0 (Sept 2020)", but
+    /// that recommendation lowers PM2 to Supporting and gives no frequency for any
+    /// inheritance. The number equals the autosomal-recessive PM2 bar of the
+    /// Hearing Loss VCEP (specifications GN005 and GN023), and the project's
+    /// record does not say where it came from. Swept for the ACMG
+    /// manuscript (`manuscript/acmg`, Section 3.3) from strict absence to 5e-4
+    /// under the point system: flat, with recall within 0.02 points and no change
+    /// in missed diagnoses or false-pathogenic calls.
     #[serde(default = "default_pm2_ar")]
     pub pm2_ar_af_threshold: f64,
 
@@ -163,7 +170,13 @@ pub struct AcmgConfig {
     pub spliceai_benign: f64,
 
     // ── Conservation thresholds ──
-    /// PhyloP threshold for conserved position (default: 2.0)
+    /// PhyloP threshold for conserved position (default: 2.0). BP7 asks for a
+    /// score below it. The number is from the first commit and no source is
+    /// recorded; Richards 2015 gives none. Walker 2023 cautions against a
+    /// conservation test for BP7. Swept for the ACMG manuscript
+    /// (`manuscript/acmg`, Section 3.3): no step of the sweep has a knee, and
+    /// switching the test off (a very large value) adds 16,482 correct
+    /// benign-side calls and 2 missed diagnoses on the ClinVar 2-star+ benchmark.
     #[serde(default = "default_phylop")]
     pub phylop_conserved: f64,
 
@@ -437,12 +450,23 @@ pub struct AcmgConfig {
     /// is circular and inflates any ClinVar-based benchmark. When the variant
     /// itself is ClinVar pathogenic/likely-pathogenic, its own entry is
     /// discounted from the protein-index match count. Default `true`.
+    ///
+    /// BP1's veto (`bp1_max_pathogenic_missense`) counts the same index without
+    /// discounting the variant's own record. Measured for the ACMG manuscript
+    /// (`manuscript/acmg`, Section 3.4): leaving it out would add 3 missed
+    /// diagnoses on the ClinVar 2-star+ benchmark (FBXO28, PCGF2 and SBF1).
     #[serde(default = "default_true")]
     pub exclude_self_from_clinvar_evidence: bool,
-    /// Maximum number of pathogenic/likely-pathogenic missense variants a gene
-    /// may have in the ClinVar protein index before BP1 is ruled out. At or
-    /// above this count, missense is an established disease mechanism for the
-    /// gene and BP1 cannot apply. Default 3.
+    /// Number of pathogenic/likely-pathogenic missense variants in the ClinVar
+    /// protein index at which BP1 is ruled out for a gene: at or above this
+    /// count, missense is an established disease mechanism for the gene and BP1
+    /// cannot apply. Default 3. The count was set with the veto and not swept
+    /// until the ACMG manuscript (`manuscript/acmg`, Section 3.3): a count of 1
+    /// gains 1,716 calls in direction and gives up 149 correct benign-side calls
+    /// on the ClinVar 2-star+ benchmark, and removes 2 missed diagnoses (IQSEC1
+    /// and PRR12), of which PRR12's rests on the variant's own record (the
+    /// gene's only pathogenic missense record), so that 1 is removed when the
+    /// veto leaves the own record out. It has not been changed.
     #[serde(default = "default_bp1_max_pathogenic_missense")]
     pub bp1_max_pathogenic_missense: u32,
     /// Far boundary, in nucleotides from the nearest exon edge, of BP7's
@@ -521,12 +545,22 @@ pub struct AcmgConfig {
     #[serde(default = "default_ba1_exceptions")]
     pub ba1_exceptions: Vec<Ba1Exception>,
 
-    /// Minimum allele number (AN) required for BA1 / BS1 to fire (gnomAD v4
-    /// guidance, ClinGen SVI March 2024). With v4's massive expansion (807k
-    /// exomes, 76k genomes), the overall AN should be ≥ 2000 before a
-    /// frequency-based call is reliable. When the AN drops below this
-    /// threshold, BA1/BS1 are marked NotEvaluated rather than firing on
-    /// noisy frequency estimates. Default 2000.
+    /// Minimum allele number (AN) at the site required for BA1 / BS1 to fire.
+    /// When the AN drops below it, BA1/BS1 are marked NotEvaluated rather than
+    /// firing on a noisy frequency estimate. Default 2000.
+    ///
+    /// Where the number comes from, which this comment used to get wrong: the
+    /// BA1 recommendation (Ghosh et al. 2018) asks for an allele frequency
+    /// above 5 % "in any general continental population dataset of at least
+    /// 2,000 observed alleles", a condition on the size of the dataset. The
+    /// ClinGen VCEP Review Committee's communication on gnomAD v4 (March 2024,
+    /// and its two later versions) states no allele-number floor; it tells
+    /// VCEPs to use the grpmax filtering allele frequency. Applying 2,000 to the
+    /// allele number at the variant's own site, and to BS1 as well, is this
+    /// project's decision and neither source states it. On the ClinVar 2-star+
+    /// benchmark the floor bought nothing: switching it off adds 774
+    /// same-direction calls and no opposite-direction call (manuscript/acmg,
+    /// Section 3.4).
     #[serde(default = "default_min_an")]
     pub min_an_for_frequency_criteria: u64,
 
@@ -706,7 +740,7 @@ pub struct GeneOverride {
     #[serde(default)]
     pub strength_overrides: HashMap<String, EvidenceStrength>,
     /// Per-disorder thresholds for genes associated with multiple disorders
-    /// (ClinGen SVI guidance July 2025). The classifier consumes whichever
+    /// (ClinGen guidance, January 2024). The classifier consumes whichever
     /// disorder context is active for the call; in the absence of explicit
     /// disorder selection, this scaffold is currently informational only —
     /// the active disorder selection mechanism is part of a follow-up PR.
@@ -964,10 +998,14 @@ fn default_homology_unreliable_genes() -> Vec<String> {
 /// it, depends on the distinction. Genes whose mechanism is merely unstudied
 /// are absent, and absence never blocks PVS1.
 ///
-/// The `LOF_and_GOF` entries are inert - they leave PVS1 exactly as it was -
-/// and are listed anyway, because each is a gene someone will reasonably
+/// The `LOF_and_GOF` entries do not block PVS1, which is what a GOF entry
+/// does, and they are listed because each is a gene someone will reasonably
 /// propose adding as GOF. Recording why they are not is cheaper than
-/// re-litigating them.
+/// re-litigating them. They are not inert, though: the string contains "LOF",
+/// so `is_lof_intolerant_gene` takes it as a curated loss-of-function mechanism
+/// and licenses PVS1 for the gene even where constraint and ClinGen do not. In
+/// the ClinVar 2-star+ benchmark each of the five is already licensed by gnomAD
+/// constraint or a ClinGen curation, so the entry changes no call there.
 fn default_gene_mechanisms() -> HashMap<String, String> {
     [
         // ── Gain of function: a null allele is not the disease mechanism ──
@@ -1082,7 +1120,7 @@ fn default_min_an() -> u64 {
 }
 
 /// Default BA1 exception list (Ghosh et al. 2018, Hum Mutat — 9 variants).
-/// The ClinGen SVI BA1 exception list (Ghosh 2018, PMID 30311378, Table 1).
+/// The ClinGen SVI BA1 exception list (Ghosh 2018, PMID 30311383, Table 1).
 ///
 /// Nine variants that sit above 5 % in at least one population and must not be
 /// called standalone-benign on that basis. Some are outright pathogenic (HFE
