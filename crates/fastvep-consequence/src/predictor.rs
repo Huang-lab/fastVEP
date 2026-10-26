@@ -1,4 +1,4 @@
-use fastvep_core::{Allele, Consequence, GenomicPosition, Impact, Strand};
+use fastvep_core::{Allele, Consequence, GenomicPosition, Impact, Strand, TranscriptLocation};
 use fastvep_genome::{is_mitochondrial, mitochondrial_codon_table, CodonTable, Transcript};
 use std::sync::Arc;
 
@@ -56,6 +56,12 @@ pub struct AlleleConsequenceResult {
     pub codons: Option<(String, String)>,
     pub exon: Option<(u32, u32)>,
     pub intron: Option<(u32, u32)>,
+    /// The `cDNA_position`, `CDS_position`, `Protein_position`, `EXON` and `INTRON` cells as
+    /// Ensembl VEP writes them, which differ from the fields above wherever the change has
+    /// an end that is not in an exon (`?-7`) or is an insertion (`601-602`); see
+    /// [`Transcript::location`]. The fields above stay what the criteria read: the
+    /// strand-ordered coordinates the consequence and HGVS code work in.
+    pub location: TranscriptLocation,
     pub distance: Option<i64>,
     /// Full-length peptide of this transcript, in residues. `None` for
     /// non-coding transcripts.
@@ -359,6 +365,7 @@ impl ConsequencePredictor {
                 codons: None,
                 exon: None,
                 intron: None,
+                location: TranscriptLocation::default(),
                 distance: None,
                 protein_length: None,
                 escapes_nmd: None,
@@ -427,6 +434,7 @@ impl ConsequencePredictor {
                 codons: None,
                 exon: None,
                 intron: None,
+                location: TranscriptLocation::default(),
                 distance,
                 protein_length: None,
                 escapes_nmd: None,
@@ -603,6 +611,7 @@ impl ConsequencePredictor {
             codons,
             exon: exon_info,
             intron: intron_info,
+            location: transcript.location(var_start, var_end),
             distance,
             protein_length,
             escapes_nmd,
@@ -1672,6 +1681,7 @@ mod tests {
             codons: None,
             exon: None,
             intron: None,
+            location: TranscriptLocation::default(),
             distance: None,
             protein_length: None,
             escapes_nmd: None,

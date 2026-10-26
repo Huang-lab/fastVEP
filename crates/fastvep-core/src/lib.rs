@@ -2,6 +2,7 @@ mod annotation_types;
 pub mod chrom;
 mod consequence;
 pub mod hgvs;
+mod location;
 mod placement;
 mod position;
 pub mod variant_class;
@@ -13,6 +14,7 @@ pub use chrom::{
 };
 pub use consequence::{Consequence, Impact};
 pub use hgvs::{is_canonical_dinucleotide_offset, parse_intronic_offset};
+pub use location::{Ordinals, TranscriptLocation, TranscriptSpan};
 pub use placement::{HgvsPlacement, SpliceContext};
 pub use position::{Allele, GenomicPosition, Strand, VariantType};
 pub use variant_class::so_variation_class;

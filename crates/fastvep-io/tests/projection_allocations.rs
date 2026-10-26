@@ -31,7 +31,10 @@
 //! a payload-budget regression failing under a name about the empty case
 //! sends the next reader to the wrong function.
 
-use fastvep_core::{Allele, Consequence, GeneAnnotation, Impact, Strand, VariantType};
+use fastvep_core::{
+    Allele, Consequence, GeneAnnotation, Impact, Strand, TranscriptLocation, TranscriptSpan,
+    VariantType,
+};
 use fastvep_io::output::{format_supplementary_vcf_info, LoadedSupplementarySpecs};
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -69,13 +72,16 @@ fn annotation(allele: &str) -> AlleleAnnotation {
         allele: Allele::Sequence(allele.as_bytes().to_vec()),
         consequences: vec![Consequence::MissenseVariant],
         impact: Impact::Moderate,
-        cdna_position: Some((100, 100)),
-        cds_position: Some((90, 90)),
+        location: TranscriptLocation {
+            cdna: TranscriptSpan::new(Some(100), Some(100)),
+            cds: TranscriptSpan::new(Some(90), Some(90)),
+            protein: TranscriptSpan::new(Some(30), Some(30)),
+            ..Default::default()
+        },
         protein_position: Some((30, 30)),
         amino_acids: None,
         codons: None,
         exon: Some((2, 6)),
-        intron: None,
         splice: Default::default(),
         distance: None,
         protein_length: Some(300),

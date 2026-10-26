@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
     annotate_intergenic, annotate_sa_only_scaffold, hgvs_allele, hgvsg_per_alt,
-    load_gene_providers, load_sa_providers, splice_context, zip_positions, RowTranscripts,
+    load_gene_providers, load_sa_providers, splice_context, RowTranscripts,
 };
 
 const BATCH_SIZE: usize = 1024;
@@ -281,13 +281,11 @@ fn annotate_variant(
                             allele: ac.allele.clone(),
                             consequences: ac.consequences.clone(),
                             impact: ac.impact,
-                            cdna_position: zip_positions(ac.cdna_start, ac.cdna_end),
-                            cds_position: zip_positions(ac.cds_start, ac.cds_end),
+                            location: ac.location,
                             protein_position: ac.protein_range(),
                             amino_acids: ac.amino_acids.clone(),
                             codons: ac.codons.clone(),
                             exon: ac.exon,
-                            intron: ac.intron,
                             splice: Default::default(),
                             distance: ac.distance,
                             protein_length: ac.protein_length,
@@ -341,11 +339,11 @@ fn annotate_variant(
                                     vf.position.end,
                                     &vf.ref_allele,
                                     &ac.allele,
-                                    // `zip` and not `zip_positions`: a pair with one end
-                                    // mapped is a variant with one end in an exon and
-                                    // the other in an intron, which has no cDNA span at
-                                    // all. Collapsing it to a point names one base of a
-                                    // change that covers seventeen.
+                                    // `zip`: a pair with one end mapped is a variant with
+                                    // one end in an exon and the other in an intron, which
+                                    // has no cDNA span at all. Collapsing it to a point
+                                    // names one base of a change that covers seventeen.
+                                    // (The `cDNA_position` cell says `601-?` for it.)
                                     ac.cdna_start
                                         .zip(ac.cdna_end)
                                         .map(|(a, b)| (a.min(b), a.max(b))),

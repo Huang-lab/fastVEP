@@ -1,6 +1,6 @@
 use fastvep_core::{
     Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, SpliceContext, Strand,
-    SupplementaryAnnotation, VariantType,
+    SupplementaryAnnotation, TranscriptLocation, VariantType,
 };
 use std::sync::Arc;
 
@@ -100,13 +100,18 @@ pub struct AlleleAnnotation {
     pub allele: Allele,
     pub consequences: Vec<Consequence>,
     pub impact: Impact,
-    pub cdna_position: Option<(u64, u64)>,
-    pub cds_position: Option<(u64, u64)>,
+    /// The `cDNA_position`, `CDS_position`, `Protein_position`, `EXON` and `INTRON`
+    /// cells as Ensembl VEP writes them: `?-7` for a change that begins outside an
+    /// exon, `601-602` for an insertion, `2-3/10` for a change over two exons.
+    pub location: TranscriptLocation,
+    /// The residue span, as the ACMG criteria read it. It is not what the writers
+    /// print; that is `location.protein`.
     pub protein_position: Option<(u64, u64)>,
     pub amino_acids: Option<(String, String)>,
     pub codons: Option<(String, String)>,
+    /// The exon the change starts in, as `(rank, total)`, for the ACMG last-exon
+    /// test. The `EXON` cell is `location.exon`.
     pub exon: Option<(u32, u32)>,
-    pub intron: Option<(u32, u32)>,
     /// Where this allele sits against the transcript's exons and introns, for
     /// the ACMG criteria and for nothing else.
     ///

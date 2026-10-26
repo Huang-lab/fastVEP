@@ -16,7 +16,9 @@ listed in docs/VEP_DIVERGENCE.md ("Cells of the tab output"):
 
   - a change that crosses a boundary of an exon or of the coding sequence. VEP writes
     `501-?` where only one end is inside, and reports both an EXON and an INTRON number for
-    a change that is in both.
+    a change that is in both. fastVEP does the same now, and `../vep_tab_edges` is where it
+    is checked, change by change; they are left out here so that this world stays the
+    baseline of what the rest of the tab output does.
   - an indel in the first or last four codons of a coding sequence, where VEP calls a
     frameshift what fastVEP calls inframe_insertion plus stop_retained, and an indel
     within ten bases of a transcript's end, where VEP writes no HGVSc.

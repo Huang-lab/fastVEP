@@ -435,8 +435,9 @@ It reads the same GRCh38 Ensembl 115 GFF3 and FASTA as above and is run with `--
 
 | Input | Records | Paired rows | Cells compared | Cells that differ |
 |---|---:|---:|---:|---:|
-| GIAB HG002 WGS, 1-in-200 systematic (the sample above) | 20,241 | 186,055 | 5,581,650 | 3,876 (0.069 %) |
-| A generated world: both strands, coding and non-coding genes, 372 of its 3,000 records with several ALTs | 3,000 | 7,213 | 216,390 | 1,162 (0.54 %) |
+| GIAB HG002 WGS, 1-in-200 systematic (the sample above) | 20,241 | 186,055 | 5,581,650 | 3,867 (0.069 %) |
+| A generated world: both strands, coding and non-coding genes, 372 of its 3,000 records with several ALTs | 3,000 | 7,213 | 216,390 | 988 (0.46 %) |
+| The same world's edges: every shape of change at every position within ten bases of every exon, CDS and transcript boundary, each its own single-ALT record (`fixtures/vep_tab_edges`) | 17,672 | 36,958 | 1,108,740 | 2,689 (0.24 %), before the position fix 7,828 |
 
 The world is built to be hard and not to be representative: it has far more indels in repeats, at transcript ends and at exon edges than any genome, and more multi-allelic sites.
 Its rates are the rates on those shapes, and HG002 is what an ordinary WGS callset looks like.
@@ -454,8 +455,8 @@ python3 validation/compare_tab.py vep.tab fv.tab \
     --ignore SOURCE,Homo_sapiens.GRCh38.115.sorted.gff3.gz
 ```
 
-On HG002 the 3,876 cells are in five columns: `HGVS_OFFSET` 2,073, `HGVSc` 1,742, `HGVSp` 17, `HGVSg` 35 and `cDNA_position` 9.
-`Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `FLAGS`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row.
+On HG002 the 3,867 cells are in four columns: `HGVS_OFFSET` 2,073, `HGVSc` 1,742, `HGVSp` 17 and `HGVSg` 35.
+`Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `cDNA_position`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `FLAGS`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row.
 
 Rows that are not paired: 127 are only fastVEP's (121 on transcripts, 6 for a `*` allele) and 7 only VEP's.
 VEP's `--gff` reader keeps only the feature types of `%INCLUDE_FEATURE_TYPES` (`GFF.pm`), its log says it skipped parents "due to invalid types", and `unconfirmed_transcript` and `scRNA`, the types of the three transcripts looked at, are not on that list.
@@ -467,9 +468,7 @@ Not all 134 were checked, and none of it is new (see [What is measured](#what-is
 | `HGVSc` and `HGVS_OFFSET` of an allele in a record with several ALTs | 1,717 and 2,070 | 108 and 78 | fastVEP: [divergence 11](#11-an-allele-of-a-record-with-several-alts-is-described-as-it-would-be-alone) |
 | `HGVSg` of an allele in a record with several ALTs | 35 | 709 | fastVEP: divergence 11 |
 | `HGVSc` of an intronic base after the terminator | 12 | 0 | fastVEP: divergence 4 |
-| `cDNA_position`, `CDS_position`, `Protein_position` written `N-?` or `?-N` | 9, 0, 0 | 68, 43, 43 | VEP: [a gap](#positions-and-hgvsc-at-the-edge-of-a-transcript-or-an-exon) |
-| `HGVSc` of a deletion that runs off the end of the transcript | 9 | 16 | VEP: a gap, in the same section |
-| `INTRON` of a change that spans an exon edge | 0 | 16 | VEP: a gap, in the same section |
+| `HGVSc` of a deletion that runs off the end of the transcript | 9 | 16 | VEP: [a gap](#hgvsc-at-the-edge-of-a-transcript) |
 | `HGVSc` that one tool writes and the other does not | 4 | 8 | the Part 2 `HGVSc` gap, in fastVEP's direction |
 | `HGVSc` of an inversion padded with bases it shares | 0 | 15 | fastVEP: [`inv` is the form HGVS asks for](#an-inversion-inside-padding) |
 | `Consequence` and `IMPACT` where the change is at the terminator | 0 and 0 | 10 and 5 | not decided: [see below](#a-change-at-the-terminator) |
@@ -477,16 +476,39 @@ Not all 134 were checked, and none of it is new (see [What is measured](#what-is
 
 Every line is the cells of one class, and a row can be in more than one.
 
-### Positions, and `HGVSc`, at the edge of a transcript or an exon
+### Positions and `EXON`/`INTRON` at the edge of an exon
 
-**HG002: 9 `cDNA_position` cells, and the `HGVSc` of the same 9 rows.
-The world: 154 position cells, 16 `INTRON` cells and 16 `HGVSc` cells.**
+Before: **HG002 9 `cDNA_position` cells.
+The world 154 position cells and 16 `INTRON` cells.
+The edge set (below) 1,784 `cDNA_position`, 1,268 `CDS_position`, 1,229 `Protein_position`, 255 `EXON` and 603 `INTRON` cells.
+After: none.**
 
-Where one end of a change is not in an exon, Ensembl writes `?` for it: `?-7` for `2:240646354 CTGTCTTCCTGTGACGT>C` on ENST00000847201 in HG002, a 16-base deletion of which Ensembl's description covers 7, and `199-?` for `chr10_2497_CAGCTGC/C` of the world.
-fastVEP writes the one coordinate it has, `7` and `199`.
-The `HGVSc` of such a change differs in the same rows: Ensembl names the part inside the transcript, `n.1_7del`, and fastVEP names the base at the edge, `n.7del`, or in 10 rows of the world nothing at all.
-One base for a change that removed seven is the less accurate of the two, and it is the same defect as the positions.
-Where a change overlaps an exon and the intron beside it, Ensembl also writes `INTRON` beside `EXON` (`1/2` for `rs544769` of the world), and fastVEP only `EXON`.
+Where one end of a change is not in an exon, Ensembl writes `?` for it: `?-7` for `2:240646354 CTGTCTTCCTGTGACGT>C` on ENST00000847201 in HG002, a 16-base deletion of which the transcript has 7, and `199-?` for `chr10_2497_CAGCTGC/C` of the world.
+fastVEP wrote the one coordinate it had, `7` and `199`, which names one base of a change that covers sixteen.
+
+The rule is Ensembl's mapper's, read from `Mapper::map_coordinates`, `map_insert`, `TranscriptMapper::genomic2cds` and `BaseTranscriptVariation::cdna_start` of release 116 and checked against VEP 116.3 itself:
+
+- The span is mapped through the exons in transcript order, which gives coordinates and gaps, and the cell is the start of the first piece and the end of the last (`format_coords`).
+  A gap is any stretch that is not exon, so an end has a coordinate exactly when the 5'-most base (for the start) or the 3'-most (for the end) is in an exon.
+  On the reverse strand the ends swap: the genomically lower end of a change is its 3' end, so the deletion of `2491-2502` on ENST00000000005, whose exon starts at 2500, is `200-?` and not `?-200`.
+- The CDS and the protein are the same test against the coding sequence, with the UTR part of a piece made a gap (`genomic2cds`): a deletion that begins in the 5' UTR and ends in the initiator is `?-3` and `?-1`.
+- An insertion is mapped by its two flanking bases with the gaps dropped, and a flank in an exon contributes its own position and the one across the boundary, whether that exists or not: an insertion in the intron right after exon 1's last base (cDNA 601) is `601-602`, and so is one right before exon 2's first base.
+  For the CDS the piece `(c + 1, c)` is a gap when `c` is before the first coding base or `c + 1` after the last, so an insertion between the last UTR base and the initiator, or after the terminator, has no CDS or protein position.
+- `EXON` and `INTRON` list every exon and intron that the change overlaps by `overlap($vf_start, $vf_end, ...)`, which for an insertion (`start = end + 1`) is true only when it sits between two bases of the feature.
+  A change over two exons is `1-2/3` and the intron between them `1/2`; an insertion at an exon's edge is in neither, and VEP writes `-` for both.
+
+`fixtures/vep_tab_edges` is the evidence: 17,672 single-ALT records at every position within ten bases of every exon and CDS boundary of the world, on both strands, in coding and non-coding transcripts (SNVs, MNVs, deletions of 1 to 30 bases, insertions, delins, and deletions of a whole exon and of a whole intron), and what VEP 116.3 wrote for them (36,958 rows).
+After the change every cell of the six columns agrees on every row; the committed fixture is a sample of 2,271 of them, and `vep_tab_edges_golden.rs` holds fastVEP to it.
+The JSON writer follows VEP's, which splits the cell and leaves out a `?`: `cdna_end` without a `cdna_start`.
+
+### `HGVSc` at the edge of a transcript
+
+**HG002: 9 rows.
+The world: 16.
+The edge set: 973 `HGVSc` cells in all.**
+
+The `HGVSc` of a change that has an end outside the transcript differs in the same rows as the positions did: Ensembl names the part inside the transcript, `n.1_7del`, and fastVEP names the base at the edge, `n.7del`, or in 10 rows of the world nothing at all.
+One base for a change that removed seven is the less accurate of the two.
 Not closed here.
 
 ### An inversion inside padding
@@ -608,7 +630,7 @@ calls plain missense.
 
 ## Fixed since this document was last measured
 
-Ten defects are gone, and the numbers above are what is left.
+Eleven defects are gone, and the numbers above are what is left.
 Each was measured the same way before and after, on the same samples: the row counts below are
 what the fix removed.
 
@@ -623,3 +645,4 @@ what the fix removed.
 | `ref_eq_alt_sequence`'s second clause was read as a position test | 18 consequence rows | It is a comparison of sequences: an insertion whose residues repeat what follows them holds the clause anywhere the repeat reaches the terminator, not only on the last residue (MSH6 `c.4106_4108dup`, ENST00000936511) |
 | `start_lost` stopped at its first test | 4 rows of the in-frame deletion set, all four `IMPACT` | Ensembl falls through to the peptide test when the coordinate test declines because the edit is an in-frame indel, and an in-frame deletion that removes the initiator is a start loss there (KCNA2 `c.3_11del`, ENST00000639048, HIGH not MODERATE) |
 | An unknown residue silenced `missense_variant` | 1 consequence row, `IMPACT` | `QX/HX` resolves one residue and not the next; Ensembl reports `missense_variant,coding_sequence_variant`, and reporting the second alone made a real missense MODIFIER (IL7R ENST00000515665) |
+| `cDNA_position`, `CDS_position`, `Protein_position`, `EXON` and `INTRON` of a change with an end outside an exon, and of an insertion at an exon's edge | 9 cDNA cells of HG002 against 116.3; on the edge set 1,784, 1,268, 1,229, 255 and 603 cells | The one coordinate a change had was written where Ensembl writes `?-7` or `601-?`, an insertion's flank where it writes the two positions it sits between, and `EXON` and `INTRON` named the exon and intron of the start alone. The rule is Ensembl's mapper's, in Part 3 |

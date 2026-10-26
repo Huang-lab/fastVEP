@@ -364,7 +364,7 @@ impl Transcript {
     }
 
     /// Get exons sorted by transcript order (forward for +, reverse for -).
-    fn sorted_exons(&self) -> Vec<&Exon> {
+    pub(crate) fn sorted_exons(&self) -> Vec<&Exon> {
         let mut exons: Vec<&Exon> = self.exons.iter().collect();
         match self.strand {
             Strand::Forward => exons.sort_by_key(|e| e.start),

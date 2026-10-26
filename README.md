@@ -615,6 +615,10 @@ The cells follow VEP's tab writer:
 - `Uploaded_variation` is the VCF ID (the first, if there are several), or the line itself, `{CHROM}_{POS}_{REF}/{ALT}`, when the record has none: `chr10_10414_C/A`, `chr10_10400_AACCCT/A`, and `chr10_109_CA/C/TA` for a record with two alts.
   It is not built from the minimal alleles of the annotation, as it was.
 - `Amino_acids` is `L/P`, or just `L` when the protein does not change, as in the VCF `CSQ` and in JSON.
+- `cDNA_position`, `CDS_position` and `Protein_position` are the positions of the first and the last base of the change in transcript order, and an end that is not in an exon (for the cDNA) or not in the coding sequence (for the CDS and the protein) has no coordinate: `?-7` for a deletion that starts in an intron or upstream of the transcript, `601-?` for one that runs out of the exon.
+  An insertion has the two positions it sits between (`601-602`), also when one of them is across an exon boundary, and no CDS or protein position when it sits just before the initiator or just after the terminator.
+  `EXON` and `INTRON` list every exon and intron the change overlaps, `2-3/10` for a change over two, and an insertion at an exon's edge overlaps neither.
+  The same cells are written to the VCF `CSQ`, and JSON has `cdna_start` and `cdna_end` (and the CDS and protein pairs) for the ends that have one.
 - A variant with no overlapping transcript has no feature, so `Gene`, `Feature`, `Feature_type`, `DISTANCE`, `STRAND` and `FLAGS` are `-`; `IMPACT` is still `MODIFIER`.
   A VCF `CSQ` entry for it leaves those fields empty.
 

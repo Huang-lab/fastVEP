@@ -3,7 +3,9 @@
 /// These tests verify that fastVEP's VCF parsing, allele normalization,
 /// and variant representation matches the behavior documented in
 /// ensembl-vep's Parser_VCF.t test suite.
-use fastvep_core::{Allele, Impact, Strand, VariantType};
+use fastvep_core::{
+    Allele, Impact, Ordinals, Strand, TranscriptLocation, TranscriptSpan, VariantType,
+};
 use fastvep_io::output;
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
 use fastvep_io::vcf::{parse_vcf_line, VcfParser};
@@ -490,13 +492,21 @@ fn mock_vf_missense() -> VariationFeature {
                 allele: Allele::from_str("C"),
                 consequences: vec![Consequence::MissenseVariant],
                 impact: Impact::Moderate,
-                cdna_position: Some((64, 64)),
-                cds_position: Some((4, 4)),
+                location: TranscriptLocation {
+                    cdna: TranscriptSpan::new(Some(64), Some(64)),
+                    cds: TranscriptSpan::new(Some(4), Some(4)),
+                    protein: TranscriptSpan::new(Some(2), Some(2)),
+                    exon: Some(Ordinals {
+                        first: 2,
+                        last: 2,
+                        total: 3,
+                    }),
+                    ..Default::default()
+                },
                 protein_position: Some((2, 2)),
                 amino_acids: Some(("K".into(), "Q".into())),
                 codons: Some(("Aag".into(), "Cag".into())),
                 exon: Some((2, 3)),
-                intron: None,
                 splice: Default::default(),
                 distance: None,
                 protein_length: None,
@@ -597,13 +607,21 @@ fn test_csq_frameshift_codon_format() {
                 allele: Allele::Deletion,
                 consequences: vec![Consequence::FrameshiftVariant],
                 impact: Impact::High,
-                cdna_position: Some((480, 480)),
-                cds_position: Some((5, 5)),
+                location: TranscriptLocation {
+                    cdna: TranscriptSpan::new(Some(480), Some(480)),
+                    cds: TranscriptSpan::new(Some(5), Some(5)),
+                    protein: TranscriptSpan::new(Some(2), Some(2)),
+                    exon: Some(Ordinals {
+                        first: 3,
+                        last: 3,
+                        total: 28,
+                    }),
+                    ..Default::default()
+                },
                 protein_position: Some((2, 2)),
                 amino_acids: Some(("E".into(), "X".into())),
                 codons: Some(("gAg".into(), "gg".into())),
                 exon: Some((3, 28)),
-                intron: None,
                 splice: Default::default(),
                 distance: None,
                 protein_length: None,
@@ -824,13 +842,21 @@ fn test_csq_frameshift_full_42_field_match() {
                 allele: Allele::Deletion,
                 consequences: vec![Consequence::FrameshiftVariant],
                 impact: Impact::High,
-                cdna_position: Some((258, 258)),
-                cds_position: Some((5, 5)),
+                location: TranscriptLocation {
+                    cdna: TranscriptSpan::new(Some(258), Some(258)),
+                    cds: TranscriptSpan::new(Some(5), Some(5)),
+                    protein: TranscriptSpan::new(Some(2), Some(2)),
+                    exon: Some(Ordinals {
+                        first: 3,
+                        last: 3,
+                        total: 5,
+                    }),
+                    ..Default::default()
+                },
                 protein_position: Some((2, 2)),
                 amino_acids: Some(("E".into(), "X".into())),
                 codons: Some(("gAg".into(), "gg".into())),
                 exon: Some((3, 5)),
-                intron: None,
                 splice: Default::default(),
                 distance: None,
                 protein_length: None,
@@ -971,13 +997,11 @@ fn test_csq_downstream_variant_match() {
                 allele: Allele::from_str("C"),
                 consequences: vec![Consequence::DownstreamGeneVariant],
                 impact: Impact::Modifier,
-                cdna_position: None,
-                cds_position: None,
+                location: TranscriptLocation::default(),
                 protein_position: None,
                 amino_acids: None,
                 codons: None,
                 exon: None,
-                intron: None,
                 splice: Default::default(),
                 distance: Some(1681),
                 protein_length: None,
@@ -1065,13 +1089,18 @@ fn test_csq_intron_variant_match() {
                 allele: Allele::from_str("T"),
                 consequences: vec![Consequence::IntronVariant],
                 impact: Impact::Modifier,
-                cdna_position: None,
-                cds_position: None,
+                location: TranscriptLocation {
+                    intron: Some(Ordinals {
+                        first: 1,
+                        last: 1,
+                        total: 5,
+                    }),
+                    ..Default::default()
+                },
                 protein_position: None,
                 amino_acids: None,
                 codons: None,
                 exon: None,
-                intron: Some((1, 5)),
                 splice: Default::default(),
                 distance: None,
                 protein_length: None,

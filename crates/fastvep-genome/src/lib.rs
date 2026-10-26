@@ -1,4 +1,5 @@
 pub mod codon;
+mod location;
 pub mod mitochondrial;
 mod transcript;
 

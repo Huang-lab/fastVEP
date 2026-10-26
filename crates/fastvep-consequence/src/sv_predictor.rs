@@ -144,6 +144,7 @@ fn predict_sv_for_transcript(
             codons: None,
             exon: None,
             intron: None,
+            location: Default::default(),
             distance,
             protein_length: None,
             escapes_nmd: None,
@@ -180,6 +181,7 @@ fn predict_sv_for_transcript(
         codons: None,
         exon: None,
         intron: None,
+        location: Default::default(),
         distance: None,
         // A structural variant has no single position for the 50-nt rule to
         // measure, and PVS1's whole-gene-deletion track does not consult it.

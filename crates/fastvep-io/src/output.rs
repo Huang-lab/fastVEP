@@ -1,5 +1,5 @@
 use crate::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
-use fastvep_core::{so_variation_class, Allele, Consequence, Impact};
+use fastvep_core::{so_variation_class, Allele, Consequence, Impact, Ordinals, TranscriptSpan};
 use serde_json::Value;
 use std::fmt::Write as FmtWrite;
 
@@ -189,21 +189,21 @@ fn format_csq_entry_into(
             CsqField::Biotype if !tv.is_featureless() => escape_csq_str(&tv.biotype, buf),
             CsqField::Gene | CsqField::FeatureType | CsqField::Feature | CsqField::Biotype => {}
             CsqField::Exon => {
-                if let Some((n, t)) = aa.exon {
-                    let _ = write!(buf, "{}/{}", n, t);
+                if let Some(o) = aa.location.exon {
+                    o.write_to(buf);
                 }
             }
             CsqField::Intron => {
-                if let Some((n, t)) = aa.intron {
-                    let _ = write!(buf, "{}/{}", n, t);
+                if let Some(o) = aa.location.intron {
+                    o.write_to(buf);
                 }
             }
             CsqField::Hgvsg => escape_csq_str(aa.hgvsg.as_deref().unwrap_or_default(), buf),
             CsqField::Hgvsc => escape_csq_str(aa.hgvsc.as_deref().unwrap_or_default(), buf),
             CsqField::Hgvsp => escape_csq_str(aa.hgvsp.as_deref().unwrap_or_default(), buf),
-            CsqField::CdnaPosition => write_position_range(aa.cdna_position, buf),
-            CsqField::CdsPosition => write_position_range(aa.cds_position, buf),
-            CsqField::ProteinPosition => write_position_range(aa.protein_position, buf),
+            CsqField::CdnaPosition => aa.location.cdna.write_to(buf),
+            CsqField::CdsPosition => aa.location.cds.write_to(buf),
+            CsqField::ProteinPosition => aa.location.protein.write_to(buf),
             CsqField::AminoAcids => {
                 if let Some((ref r, ref a)) = aa.amino_acids {
                     escape_csq_str(r, buf);
@@ -466,26 +466,16 @@ fn escape_csq_value(value: &str) -> String {
     buf
 }
 
-fn write_position_range(pos: Option<(u64, u64)>, buf: &mut String) {
-    match pos {
-        Some((start, end)) if start == end => {
-            let _ = write!(buf, "{}", start);
-        }
-        Some((start, end)) => {
-            let _ = write!(buf, "{}-{}", start, end);
-        }
-        None => {}
-    }
-}
-
 /// A position cell of the tab format. VEP writes `-` for every value it does
-/// not have (`OutputFactory::Tab::output_hash_to_line`), so an absent position
-/// is `-` here and not the empty string the CSQ field uses.
-fn position_cell(pos: Option<(u64, u64)>) -> String {
-    match pos {
-        Some(_) => format_position_range(pos),
-        None => "-".to_string(),
+/// not have (`OutputFactory::Tab::output_hash_to_line`), so a span with neither
+/// end is `-` here and not the empty string the CSQ field uses.
+fn span_cell(span: TranscriptSpan) -> String {
+    let mut cell = String::new();
+    span.write_to(&mut cell);
+    if cell.is_empty() {
+        cell.push('-');
     }
+    cell
 }
 
 /// VEP's `Uploaded_variation`: the first ID the record carries, otherwise a name
@@ -543,14 +533,6 @@ fn amino_acids_text(reference: &str, alternate: &str) -> String {
         reference.to_string()
     } else {
         format!("{reference}/{alternate}")
-    }
-}
-
-fn format_position_range(pos: Option<(u64, u64)>) -> String {
-    match pos {
-        Some((start, end)) if start == end => start.to_string(),
-        Some((start, end)) => format!("{}-{}", start, end),
-        None => String::new(),
     }
 }
 
@@ -2277,8 +2259,15 @@ impl OptionalColumn {
         fn or_dash(v: Option<&str>) -> String {
             v.filter(|s| !s.is_empty()).unwrap_or("-").to_string()
         }
-        fn fraction(v: Option<(u32, u32)>) -> String {
-            v.map_or_else(|| "-".to_string(), |(n, total)| format!("{n}/{total}"))
+        fn ordinal(v: Option<Ordinals>) -> String {
+            v.map_or_else(
+                || "-".to_string(),
+                |o| {
+                    let mut cell = String::new();
+                    o.write_to(&mut cell);
+                    cell
+                },
+            )
         }
         match self {
             Self::RefAllele | Self::VariantClass | Self::Hgvsg => self.variant_cell(vf, Some(aa)),
@@ -2287,8 +2276,8 @@ impl OptionalColumn {
             Self::HgncId => or_dash(tv.hgnc_id.as_deref()),
             Self::Biotype => or_dash(Some(&tv.biotype)),
             Self::Canonical => if tv.canonical { "YES" } else { "-" }.to_string(),
-            Self::Exon => fraction(aa.exon),
-            Self::Intron => fraction(aa.intron),
+            Self::Exon => ordinal(aa.location.exon),
+            Self::Intron => ordinal(aa.location.intron),
             Self::Hgvsc => or_dash(aa.hgvsc.as_deref()),
             // VEP encodes `=` as `%3D` in the tab file as well as in the VCF
             // (`OutputFactory`, "URI encode =", unless --no_escape)
@@ -2589,9 +2578,9 @@ pub fn format_tab_line_with(
             parts.push(tv.transcript_id.to_string());
             parts.push(if featureless { "-" } else { "Transcript" }.to_string());
             parts.push(consequence_str);
-            parts.push(position_cell(aa.cdna_position));
-            parts.push(position_cell(aa.cds_position));
-            parts.push(position_cell(aa.protein_position));
+            parts.push(span_cell(aa.location.cdna));
+            parts.push(span_cell(aa.location.cds));
+            parts.push(span_cell(aa.location.protein));
             parts.push(
                 aa.amino_acids
                     .as_ref()
@@ -2855,17 +2844,22 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                 if let Some(ref pid) = tv.protein_id {
                     tc.insert("protein_id".into(), serde_json::Value::String(pid.clone()));
                 }
-                if let Some((s, e)) = aa.cdna_position {
-                    tc.insert("cdna_start".into(), serde_json::Value::Number(s.into()));
-                    tc.insert("cdna_end".into(), serde_json::Value::Number(e.into()));
-                }
-                if let Some((s, e)) = aa.cds_position {
-                    tc.insert("cds_start".into(), serde_json::Value::Number(s.into()));
-                    tc.insert("cds_end".into(), serde_json::Value::Number(e.into()));
-                }
-                if let Some((s, e)) = aa.protein_position {
-                    tc.insert("protein_start".into(), serde_json::Value::Number(s.into()));
-                    tc.insert("protein_end".into(), serde_json::Value::Number(e.into()));
+                // VEP's JSON splits the position cell and leaves out an end that is `?`
+                for (prefix, span) in [
+                    ("cdna", aa.location.cdna),
+                    ("cds", aa.location.cds),
+                    ("protein", aa.location.protein),
+                ] {
+                    let (s, e) = span.json_bounds();
+                    if let Some(s) = s {
+                        tc.insert(
+                            format!("{prefix}_start"),
+                            serde_json::Value::Number(s.into()),
+                        );
+                    }
+                    if let Some(e) = e {
+                        tc.insert(format!("{prefix}_end"), serde_json::Value::Number(e.into()));
+                    }
                 }
                 if let Some(ref aas) = aa.amino_acids {
                     tc.insert(
@@ -2879,17 +2873,13 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                         serde_json::Value::String(format!("{}/{}", cdns.0, cdns.1)),
                     );
                 }
-                if let Some((n, t)) = aa.exon {
-                    tc.insert(
-                        "exon".into(),
-                        serde_json::Value::String(format!("{}/{}", n, t)),
-                    );
-                }
-                if let Some((n, t)) = aa.intron {
-                    tc.insert(
-                        "intron".into(),
-                        serde_json::Value::String(format!("{}/{}", n, t)),
-                    );
+                for (key, ordinals) in [("exon", aa.location.exon), ("intron", aa.location.intron)]
+                {
+                    if let Some(o) = ordinals {
+                        let mut cell = String::new();
+                        o.write_to(&mut cell);
+                        tc.insert(key.into(), serde_json::Value::String(cell));
+                    }
                 }
                 if let Some(ref h) = aa.hgvsg {
                     tc.insert("hgvsg".into(), serde_json::Value::String(h.clone()));
@@ -3145,7 +3135,7 @@ mod tests {
     use crate::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature, VcfFields};
     use fastvep_core::{
         Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, Strand,
-        SupplementaryAnnotation, VariantType,
+        SupplementaryAnnotation, TranscriptLocation, VariantType,
     };
     use std::sync::Arc;
 
@@ -3288,10 +3278,15 @@ mod tests {
     }
 
     #[test]
-    fn test_format_position_range() {
-        assert_eq!(format_position_range(Some((100, 100))), "100");
-        assert_eq!(format_position_range(Some((100, 200))), "100-200");
-        assert_eq!(format_position_range(None), "");
+    fn test_span_cell() {
+        let cell = |s, e| span_cell(TranscriptSpan::new(s, e));
+        assert_eq!(cell(Some(100), Some(100)), "100");
+        assert_eq!(cell(Some(100), Some(200)), "100-200");
+        assert_eq!(cell(None, None), "-");
+        // a span with an end outside the transcript, and an insertion
+        assert_eq!(cell(None, Some(7)), "?-7");
+        assert_eq!(cell(Some(601), None), "601-?");
+        assert_eq!(cell(Some(602), Some(601)), "601-602");
     }
 
     fn projection_test_variant() -> VariationFeature {
@@ -3328,13 +3323,11 @@ mod tests {
                     allele: Allele::from_str("G"),
                     consequences: vec![Consequence::MissenseVariant],
                     impact: Impact::Moderate,
-                    cdna_position: None,
-                    cds_position: None,
+                    location: TranscriptLocation::default(),
                     protein_position: None,
                     amino_acids: None,
                     codons: None,
                     exon: None,
-                    intron: None,
                     splice: Default::default(),
                     distance: None,
                     protein_length: None,
@@ -4410,11 +4403,44 @@ mod tests {
         assert_eq!(cells[7..=9].to_vec(), vec!["-", "-", "-"]);
 
         let mut vf = projection_test_variant();
-        let aa = &mut vf.transcript_variations[0].allele_annotations[0];
-        aa.cdna_position = Some((100, 100));
-        aa.cds_position = Some((50, 52));
-        aa.protein_position = Some((17, 17));
+        let location = &mut vf.transcript_variations[0].allele_annotations[0].location;
+        location.cdna = TranscriptSpan::new(Some(100), Some(100));
+        location.cds = TranscriptSpan::new(Some(50), Some(52));
+        location.protein = TranscriptSpan::new(Some(17), Some(17));
         assert_eq!(tab_cells(&vf)[7..=9].to_vec(), vec!["100", "50-52", "17"]);
+
+        // an end the transcript has no coordinate for is a `?`, as in VEP
+        let location = &mut vf.transcript_variations[0].allele_annotations[0].location;
+        location.cdna = TranscriptSpan::new(None, Some(7));
+        location.cds = TranscriptSpan::new(Some(601), None);
+        assert_eq!(tab_cells(&vf)[7..=8].to_vec(), vec!["?-7", "601-?"]);
+    }
+
+    /// VEP's JSON writer splits the position cell on `-` and leaves out an end that is
+    /// `?` (`OutputFactory::JSON`), so a change that begins outside an exon has a
+    /// `cdna_end` and no `cdna_start`, and an insertion's pair is written low to high.
+    #[test]
+    fn json_leaves_out_the_end_of_a_span_that_has_no_coordinate() {
+        let mut vf = projection_test_variant();
+        let location = &mut vf.transcript_variations[0].allele_annotations[0].location;
+        location.cdna = TranscriptSpan::new(None, Some(7));
+        location.cds = TranscriptSpan::new(Some(601), None);
+        location.protein = TranscriptSpan::new(Some(68), Some(67));
+        location.exon = Some(Ordinals {
+            first: 2,
+            last: 3,
+            total: 10,
+        });
+        let json = format_json(&vf, false);
+        let tc = &json["transcript_consequences"][0];
+        assert!(tc.get("cdna_start").is_none(), "{tc}");
+        assert_eq!(tc["cdna_end"], 7);
+        assert_eq!(tc["cds_start"], 601);
+        assert!(tc.get("cds_end").is_none(), "{tc}");
+        assert_eq!(tc["protein_start"], 67);
+        assert_eq!(tc["protein_end"], 68);
+        assert_eq!(tc["exon"], "2-3/10");
+        assert!(tc.get("intron").is_none(), "{tc}");
     }
 
     #[test]
@@ -4619,7 +4645,11 @@ mod tests {
             tv.symbol_source = Some("HGNC".into());
             tv.hgnc_id = Some("HGNC:5".into());
             let aa = &mut tv.allele_annotations[0];
-            aa.exon = Some((3, 10));
+            aa.location.exon = Some(Ordinals {
+                first: 3,
+                last: 3,
+                total: 10,
+            });
             aa.hgvsc = Some("TX1:c.100A>G".into());
             aa.hgvsp = Some("ENSP1:p.Ile34Val".into());
             aa.hgvs_offset = Some(2);
@@ -4857,7 +4887,11 @@ mod tests {
             tv.hgnc_id = Some("HGNC:5".into());
             let aa = &mut tv.allele_annotations[0];
             aa.pick = true;
-            aa.exon = Some((3, 10));
+            aa.location.exon = Some(Ordinals {
+                first: 3,
+                last: 3,
+                total: 10,
+            });
             aa.hgvsc = Some("TX1:c.100A>G".into());
             aa.hgvsp = Some("ENSP1:p.Ile34Val".into());
             aa.hgvs_offset = Some(2);

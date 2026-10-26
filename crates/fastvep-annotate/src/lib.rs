@@ -26,7 +26,7 @@ use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, SequenceProvider, TranscriptProvider,
 };
 use fastvep_consequence::ConsequencePredictor;
-use fastvep_core::{Allele, Consequence, SpliceContext};
+use fastvep_core::{Allele, Consequence, SpliceContext, TranscriptLocation};
 use fastvep_genome::Transcript;
 use fastvep_io::output;
 use fastvep_io::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
@@ -428,13 +428,11 @@ impl AnnotationContext {
                                 allele: ac.allele.clone(),
                                 consequences: ac.consequences.clone(),
                                 impact: ac.impact,
-                                cdna_position: zip_positions(ac.cdna_start, ac.cdna_end),
-                                cds_position: zip_positions(ac.cds_start, ac.cds_end),
+                                location: ac.location,
                                 protein_position: ac.protein_range(),
                                 amino_acids: ac.amino_acids.clone(),
                                 codons: ac.codons.clone(),
                                 exon: ac.exon,
-                                intron: ac.intron,
                                 splice: Default::default(),
                                 distance: ac.distance,
                                 protein_length: ac.protein_length,
@@ -478,11 +476,11 @@ impl AnnotationContext {
                                         vf.position.end,
                                         &vf.ref_allele,
                                         &ac.allele,
-                                        // `zip` and not `zip_positions`: a pair with one end
-                                        // mapped is a variant with one end in an exon and
-                                        // the other in an intron, which has no cDNA span at
-                                        // all. Collapsing it to a point names one base of a
-                                        // change that covers seventeen.
+                                        // `zip`: a pair with one end mapped is a variant with
+                                        // one end in an exon and the other in an intron, which
+                                        // has no cDNA span at all. Collapsing it to a point
+                                        // names one base of a change that covers seventeen.
+                                        // (The `cDNA_position` cell says `601-?` for it.)
                                         ac.cdna_start
                                             .zip(ac.cdna_end)
                                             .map(|(a, b)| (a.min(b), a.max(b))),
@@ -1025,13 +1023,11 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
                 consequences: vec![],
                 impact: fastvep_core::Impact::Modifier,
                 splice: Default::default(),
-                cdna_position: None,
-                cds_position: None,
+                location: TranscriptLocation::default(),
                 protein_position: None,
                 amino_acids: None,
                 codons: None,
                 exon: None,
-                intron: None,
                 distance: None,
                 protein_length: None,
                 escapes_nmd: None,
@@ -1075,13 +1071,11 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
                 consequences: vec![Consequence::IntergenicVariant],
                 impact: fastvep_core::Impact::Modifier,
                 splice: Default::default(),
-                cdna_position: None,
-                cds_position: None,
+                location: TranscriptLocation::default(),
                 protein_position: None,
                 amino_acids: None,
                 codons: None,
                 exon: None,
-                intron: None,
                 distance: None,
                 protein_length: None,
                 escapes_nmd: None,
@@ -1112,15 +1106,6 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
         });
     }
     vf.most_severe_consequence = Some(Consequence::IntergenicVariant);
-}
-
-pub fn zip_positions(start: Option<u64>, end: Option<u64>) -> Option<(u64, u64)> {
-    match (start, end) {
-        (Some(s), Some(e)) => Some((s.min(e), s.max(e))),
-        (Some(s), None) => Some((s, s)),
-        (None, Some(e)) => Some((e, e)),
-        _ => None,
-    }
 }
 
 /// The `(cDNA anchor, offset)` pair one genomic position maps to on a
