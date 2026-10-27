@@ -86,6 +86,38 @@ const KNOWN: &[(&str, &str, &str, &str)] = &[
         "HGVSp",
         "ENSP00000000003.1:p.Leu197TyrfsTer42",
     ),
+    // a change that loses the initiator is `p.Met1?`, where VEP writes a range or two residue
+    // names (`p.Met1_?2`, `p.MetCys1_?2`): not HGVS (divergence 14)
+    (
+        "chr10_1098_AGATGCAC/AGA",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+    ),
+    (
+        "chr10_1098_AGATGCAC/AGA",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+    ),
+    (
+        "chr10_1098_AGATGCAC/AGAC",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+    ),
+    (
+        "chr10_1098_AGATGCAC/AGAC",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+    ),
+    (
+        "chr10_11293_ATGCACATC/ATC",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+    ),
 ];
 
 fn here(name: &str) -> PathBuf {

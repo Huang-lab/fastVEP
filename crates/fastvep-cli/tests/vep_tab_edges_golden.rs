@@ -61,6 +61,11 @@ enum Why {
     /// An insertion past the 3' end of a reverse-strand transcript, written with its two
     /// positions the wrong way round.
     ReversedPair,
+    /// A change that loses the initiator is `p.Met1?`. For a window of more than one residue VEP
+    /// writes the residue names of the whole window sharing one position (`p.MetCys1_?2`) or the
+    /// first one and a range (`p.Met1_?2`), and for an insertion in front of the initiator a range
+    /// that runs backwards and names the last residue of the protein (`p.Ala1_?0`): none is HGVS.
+    StartLoss,
 }
 
 /// Cells where fastVEP and stock VEP 116.3 differ and VEP is the one that is wrong:
@@ -317,6 +322,83 @@ const KNOWN: &[(&str, &str, &str, &str, Why)] = &[
         "Consequence",
         "start_lost,start_retained_variant,5_prime_UTR_variant",
         Why::Utr,
+    ),
+    (
+        "chr10_1099_GATGCACGTACGTGTCGCTACGAGGGGATGT/G",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1099_GATGCACGTACGTGTCGCTACGAGGGGATGT/G",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1100_ATGCA/A",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1100_ATGCA/A",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1101_TGCACG/T",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1101_TGCACG/T",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11293_ATGCAC/A",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11294_TGCACAT/T",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11296_CACA/AG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11297_AC/TCG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11298_C/CATCTGCTCT",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
     ),
 ];
 

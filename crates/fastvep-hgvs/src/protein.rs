@@ -14,9 +14,8 @@
 //! [`EditedTranslation`]. Both are *inputs*: this module knows no coordinates, no strand and no
 //! genome, which is what makes it testable against Ensembl's own rows one at a time.
 //!
-//! Three places differ from Ensembl on purpose. Each is marked where it happens, each is a case
-//! where what Ensembl writes is not what the sequence says, and none of them is a rule about
-//! how a notation should look:
+//! Four places differ from Ensembl on purpose. Each is marked where it happens, and each is a case
+//! where what Ensembl writes is not what the sequence says or is not HGVS:
 //!
 //! 1. **`*` and `X` stay different.** Ensembl rewrites `*` to `X` before it tests the
 //!    peptides and then rewrites every `Xaa` to `Ter`, so an unresolved residue is written as
@@ -35,6 +34,12 @@
 //!    3'-rule has no such bound (#94).
 //! 3. **A synonymous window names its span.** `p.LeuIle2672=` is two residues sharing one
 //!    position, which HGVS does not define; `p.Leu2672_Ile2673=` is what it means.
+//! 4. **A change that loses the initiator is `p.Met1?`.** Ensembl writes that for most of them,
+//!    and for a window of more than one residue two residue names sharing one position
+//!    (`p.MetAsn1_?2`), and for an insertion in front of the initiator a range that runs
+//!    backwards and names the last residue of the protein as if it were the first
+//!    (`p.Asp1_?0`), because `substr` reads the residue in front of residue 1 from the end of
+//!    the string. Neither is HGVS and the second is wrong.
 
 use fastvep_genome::codon::aa_one_to_three;
 use std::fmt::Write;
@@ -317,7 +322,16 @@ fn get_hgvs_peptides(
 
     if change.start_lost {
         // the initiator is gone, so there is probably no translation at all: the alternate
-        // allele is unknown
+        // allele is unknown, and what was lost is residue 1 whatever the window is (#4 of the
+        // module doc)
+        let first = substr(change.protein(), 0, Some(1));
+        n.reference = if first.is_empty() {
+            "Met".to_string()
+        } else {
+            seq3(first)
+        };
+        n.start = 1;
+        n.end = 1;
         n.alt = "?".to_string();
         n.kind = Some(Kind::Unknown);
     } else if n.kind == Some(Kind::Del) {
@@ -595,10 +609,8 @@ fn get_hgvs_protein_format(
         } else {
             hgvs.push_str(&format!("{}{}{}", n.reference, n.start, n.alt));
         }
-    } else if n.start != n.end {
-        // what is left is a change that loses the initiator
-        hgvs.push_str(&format!("{}{}_{}{}", n.reference, n.start, n.alt, n.end));
     } else {
+        // what is left is a change that loses the initiator: `p.Met1?`
         hgvs.push_str(&format!("{}{}{}", n.reference, n.start, n.alt));
     }
     hgvs
@@ -800,34 +812,47 @@ mod tests {
         assert_eq!(hgvs_protein(&c, &NONE), None);
     }
 
-    /// The residue the initiator was is named, with the rest unknown. Two residues share the one
-    /// position, as in Ensembl, for a window of two.
+    /// A change that loses the initiator is `p.Met1?` whatever the window is. Ensembl writes the
+    /// residue names of the whole window for one of more than one residue (`p.MetAla1_?2`), and for
+    /// a frameshift whose first changed residue is a later one a range that runs backwards
+    /// (`p.Ala2_?1`).
     #[test]
-    fn a_change_that_loses_the_initiator_is_unknown() {
+    fn a_change_that_loses_the_initiator_is_met1_unknown() {
         let mut c = change("M", "I", 1, 1, "MAKKKPL*");
         c.start_lost = true;
         assert_eq!(write(&c, &NONE), "P.1:p.Met1?");
         let mut c = change("MA", "I", 1, 2, "MAKKKPL*");
         c.start_lost = true;
-        assert_eq!(write(&c, &NONE), "P.1:p.MetAla1_?2");
+        assert_eq!(write(&c, &NONE), "P.1:p.Met1?");
         // a frameshift that does it reads the same
         let mut c = change("M", "X", 1, 1, "MAKKKPL*");
         c.start_lost = true;
         c.frameshift = true;
         assert_eq!(write(&c, &Edited(Some("NKKL*"))), "P.1:p.Met1?");
-        // unless the first residue the new frame changes is a later one, which leaves the end of
-        // the window behind the start: `Ala2_?1`, as Ensembl writes it
-        assert_eq!(write(&c, &Edited(Some("MIKKL*"))), "P.1:p.Ala2_?1");
+        assert_eq!(write(&c, &Edited(Some("MIKKL*"))), "P.1:p.Met1?");
+        // and so does a deletion of the whole window
+        let mut c = change("MAK", "-", 1, 3, "MAKKKPL*");
+        c.start_lost = true;
+        assert_eq!(write(&c, &NONE), "P.1:p.Met1?");
     }
 
     /// An insertion in front of residue 1 has no residue before it, and Ensembl reads the one that
-    /// is not there from the end of the protein, so `Ala1_?0` names the last residue of the
-    /// protein as if it were the first. It is reproduced because it is what Ensembl writes.
+    /// is not there from the end of the protein, so its `p.Ala1_?0` names the last residue of the
+    /// protein as if it were the first. The residue that was lost is the first one.
     #[test]
-    fn an_insertion_in_front_of_the_initiator_reads_off_the_end_of_the_protein() {
+    fn an_insertion_in_front_of_the_initiator_names_residue_1_and_not_the_last() {
         let mut c = change("M", "IAEM", 1, 1, "MKPA*");
         c.start_lost = true;
-        assert_eq!(write(&c, &NONE), "P.1:p.Ala1_?0");
+        assert_eq!(write(&c, &NONE), "P.1:p.Met1?");
+    }
+
+    /// What residue 1 is called is read off the protein, so a protein whose first residue is not a
+    /// Met (an initiator the annotation gives as something else) is named as it is.
+    #[test]
+    fn the_residue_that_was_lost_is_the_first_of_the_protein() {
+        let mut c = change("L", "I", 1, 1, "LAKKKPL*");
+        c.start_lost = true;
+        assert_eq!(write(&c, &NONE), "P.1:p.Leu1?");
     }
 
     #[test]
