@@ -934,6 +934,10 @@ What was different, and what a cache does:
   A whole file has them.
   A tabix read has the ones that overlap its input, and the longest of those is not the gene's, so a gene across the edge of a region is read again, whole, for the flag (and for it alone: its other transcripts are not added to the run).
   A plain and a bgzipped copy of one sorted file then mark the same transcripts: on the sorted GFF3 of chromosomes 21 and 22 the two runs differed in `CANONICAL` on 4,266 of 212,240 rows before, and on none after.
+  Of equally long transcripts the first in the file is marked, so the order of the file matters: NCBI's is the cache's for 48 of the 49 genes that have a tie for the longest.
+  A copy sorted by position for tabix with a stable sort (`sort -s -k1,1 -k4,4n`) keeps that order (0 of the edge set's 212,240 rows differ from the unsorted file's).
+  A plain `sort -k1,1 -k4,4n -k5,5n`, the command that this repository's tests and issue #87 use, puts records of one start and end in the order of their text and changes the pick for 25 of the 49 genes (1,116 rows).
+  Nothing in a sorted file says which was done, so a run says so when every group of transcripts of one start and end is in the order of its text (505 of 505 groups after the plain sort, in the C and en_US locales, and 122 of 505 in NCBI's order and after the stable sort).
 - **The mature miRNA of a precursor.**
   A record that hangs off a transcript (`rna-MIR185`, `Parent=rna-NR_029706.1`) is where in the precursor the miRNA is, and neither the cache nor the `--gff` reader has a transcript of it: 436 rows of the edge set, and 66 and 240 of the samples, were fastVEP's alone.
 - **`FLAGS`, and the first codon.**

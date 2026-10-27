@@ -534,6 +534,7 @@ fn parse_gff3_lines(
                         gene_id_attr,
                         biotype,
                         feature_type: feature_type.to_string(),
+                        source: fields[1].to_string(),
                         gbkey: attrs.get("gbkey").cloned(),
                         ncrna_class: attrs.get("ncrna_class").cloned(),
                         chromosome: seqid.to_string(),
@@ -673,6 +674,7 @@ fn parse_gff3_lines(
                         gene_id_attr: None,
                         biotype: Some(gene.biotype.clone()),
                         feature_type: "gene".to_string(),
+                        source: String::new(),
                         gbkey: None,
                         ncrna_class: None,
                         chromosome: gene.chromosome.clone(),
@@ -1092,7 +1094,13 @@ fn parse_gff3_lines(
         });
     }
 
-    let partial_genes = derive_refseq_canonical(&mut result, &refseq_genes, scope);
+    let Derived {
+        partial_genes,
+        decided_by_file_order,
+    } = derive_refseq_canonical(&mut result, &refseq_genes, scope);
+    if scope.reports() && decided_by_file_order > 0 {
+        warn_if_equal_transcripts_were_sorted_by_text(&refseq_genes, decided_by_file_order);
+    }
 
     if cds_without_phase > 0 {
         eprintln!(
@@ -1245,13 +1253,22 @@ fn met_recodings(attrs: &HashMap<String, String>) -> Vec<(u64, u64)> {
 /// Select tag is the transcript's own, so a gene with one among the transcripts that were read is
 /// settled by it, wherever the gene's span is.
 ///
+/// Of equally long transcripts the first in the file is marked, and which that is depends on how
+/// the file was sorted: NCBI's order is the cache's for 48 of the 49 genes of chromosomes 21 and 22
+/// that have a tie for the longest, a stable sort (`sort -s`) by position keeps it, and a plain
+/// `sort -k1,1 -k4,4n -k5,5n` puts them in the order of their text and changes the pick of 25 of the
+/// 49. The genes it was decided for are counted for [`warn_if_equal_transcripts_were_sorted_by_text`].
+///
 /// A gene one of whose transcripts is tagged `Ensembl_canonical` is left as it is.
 fn derive_refseq_canonical(
     result: &mut [Transcript],
     genes: &HashMap<&str, RefseqGene<'_>>,
     scope: Scope<'_>,
-) -> Vec<PartialGene> {
-    let mut partial = Vec::new();
+) -> Derived {
+    let mut derived = Derived {
+        partial_genes: Vec::new(),
+        decided_by_file_order: 0,
+    };
     for RefseqGene { gene, transcripts } in genes.values() {
         if transcripts.iter().any(|(_, t)| t.canonical) {
             continue;
@@ -1269,11 +1286,17 @@ fn derive_refseq_canonical(
         let pick = if mane.is_some() {
             mane
         } else if scope.holds_all_of(&gene.chromosome, start, end) {
+            let longest = transcripts.iter().map(|(_, t)| span(t)).max();
+            let tied = transcripts
+                .iter()
+                .filter(|(_, t)| Some(span(t)) == longest)
+                .count();
+            derived.decided_by_file_order += usize::from(tied > 1);
             transcripts
                 .iter()
                 .max_by(|(_, a), (_, b)| span(a).cmp(&span(b)).then_with(|| b.order.cmp(&a.order)))
         } else {
-            partial.push(PartialGene {
+            derived.partial_genes.push(PartialGene {
                 chromosome: gene.chromosome.clone(),
                 start,
                 end,
@@ -1288,7 +1311,75 @@ fn derive_refseq_canonical(
             result[index].canonical = true;
         }
     }
-    partial
+    derived
+}
+
+/// What [`derive_refseq_canonical`] left to the caller.
+struct Derived {
+    partial_genes: Vec<PartialGene>,
+    /// Genes with no MANE Select transcript whose longest transcript is one of several of that
+    /// span, which the order of the file decides.
+    decided_by_file_order: usize,
+}
+
+/// What `sort` compares two records of the same start and end by, which comes after them in the line.
+fn text_key(t: &GffTranscript) -> (&str, &str, &str) {
+    (t.source.as_str(), t.feature_type.as_str(), t.id.as_str())
+}
+
+/// How many groups of transcripts of one gene that have the same start and end there are, and in
+/// how many of them the transcripts are in the order of their text (source, type, ID), which is
+/// the order a `sort` that is not stable leaves records of one start and end in. In NCBI's own file
+/// that is 122 of the 505 groups of chromosomes 21 and 22, and after a stable sort by position the
+/// same 122; after `sort -k1,1 -k4,4n -k5,5n` it is 505 of 505, in the C locale and in en_US.
+fn equal_transcripts_in_text_order(genes: &HashMap<&str, RefseqGene<'_>>) -> (usize, usize) {
+    let (mut groups, mut in_text_order) = (0, 0);
+    for RefseqGene { transcripts, .. } in genes.values() {
+        let mut ordered: Vec<&GffTranscript> = transcripts.iter().map(|(_, t)| *t).collect();
+        ordered.sort_by_key(|t| (t.start, t.end, t.order));
+        for group in ordered.chunk_by(|a, b| (a.start, a.end) == (b.start, b.end)) {
+            if group.len() < 2 {
+                continue;
+            }
+            groups += 1;
+            in_text_order += usize::from(group.windows(2).all(|w| text_key(w[0]) < text_key(w[1])));
+        }
+    }
+    (groups, in_text_order)
+}
+
+/// Say so when the order of the file does not look like the order NCBI wrote, and the order is what
+/// decided a gene's canonical transcript.
+///
+/// Of the transcripts of one gene that have the same start and end, a sort that is not stable
+/// leaves the order of their text, and nothing in the file says that it was done. A few groups in
+/// that order may be luck (half of the pairs are), so this needs 20 of them and nine in ten.
+fn warn_if_equal_transcripts_were_sorted_by_text(
+    genes: &HashMap<&str, RefseqGene<'_>>,
+    decided_by_file_order: usize,
+) {
+    let (groups, in_text_order) = equal_transcripts_in_text_order(genes);
+    if let Some(warning) = text_order_warning(groups, in_text_order, decided_by_file_order) {
+        eprintln!("{warning}");
+    }
+}
+
+fn text_order_warning(
+    groups: usize,
+    in_text_order: usize,
+    decided_by_file_order: usize,
+) -> Option<String> {
+    (groups >= 20 && in_text_order * 10 >= groups * 9).then(|| {
+        format!(
+            "warning: in this GFF3 the transcripts of a gene that have the same start and end are in the \
+             order of their text ({in_text_order} of {groups} such groups), which is how `sort` leaves them \
+             without `-s` and not how NCBI wrote them. For {decided_by_file_order} genes the longest \
+             transcript is one of several of one span, and the first of them in the file is marked as \
+             canonical, which in NCBI's order is the one Ensembl VEP's RefSeq cache marks (48 of 49 genes of \
+             chromosomes 21 and 22): the flag may differ from the cache's for some of these. Sort a copy of \
+             NCBI's file with `sort -s -k1,1 -k4,4n`, which keeps their order, to avoid that"
+        )
+    })
 }
 
 /// A RefSeq gene and the transcripts of it that were read.
@@ -1696,6 +1787,9 @@ struct GffTranscript {
     /// the three things Ensembl VEP guesses one from when it does not ([`transcript_biotype`]).
     biotype: Option<String>,
     feature_type: String,
+    /// The source column (`BestRefSeq`, `Gnomon`): with the type and the ID, what `sort` compares two
+    /// records of the same start and end by ([`equal_transcripts_in_text_order`]).
+    source: String,
     gbkey: Option<String>,
     ncrna_class: Option<String>,
     chromosome: String,
@@ -2615,6 +2709,28 @@ chr1\tensembl\tCDS\t1050\t1200\t.\t+\t0\tID=CDS:P1;Parent=transcript:TX3";
     /// `tests/gff_tabix_canonical.rs` for the read itself).
     fn parse_in_scope(gff: &str, scope: Scope<'_>) -> Parsed {
         parse_gff3_lines(gff.lines().map(|l| Ok(l.to_string())), scope).unwrap()
+    }
+
+    /// 505 groups of transcripts of one gene with the same start and end on chromosomes 21 and 22
+    /// of NCBI's GFF3: 122 are in the order of their text in the file as NCBI writes it and after a
+    /// stable sort by position, and all 505 after `sort -k1,1 -k4,4n -k5,5n` (measured). Half of any
+    /// pairs are in that order whatever was done to the file, so a few groups say nothing.
+    #[test]
+    fn the_text_order_warning_needs_twenty_groups_and_nine_in_ten_of_them_in_text_order() {
+        assert!(text_order_warning(505, 505, 49).is_some(), "a plain sort");
+        assert!(text_order_warning(20, 18, 3).is_some());
+        assert!(text_order_warning(20, 17, 3).is_none(), "85 %");
+        assert!(
+            text_order_warning(19, 19, 3).is_none(),
+            "too few to tell from luck"
+        );
+        assert!(
+            text_order_warning(505, 122, 49).is_none(),
+            "NCBI's own order"
+        );
+        let text = text_order_warning(505, 505, 49).unwrap();
+        assert!(text.contains("505 of 505 such groups") && text.contains("For 49 genes"));
+        assert!(text.contains("sort -s -k1,1 -k4,4n"), "{text}");
     }
 
     #[test]
