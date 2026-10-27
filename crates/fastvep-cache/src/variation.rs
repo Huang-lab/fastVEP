@@ -293,6 +293,41 @@ impl FileIndex {
                 )
             })?)
         };
+        let file = File::open(data)
+            .with_context(|| format!("Opening variation file: {}", data.display()))?;
+        let length = file
+            .metadata()
+            .with_context(|| format!("Reading the size of {}", data.display()))?
+            .len();
+        // An index that says the records go on past the end of the file is the index of another
+        // file: the data was regenerated, replaced or cut short after it was indexed. Seeking into
+        // it is not an error in the bgzf reader, which panics for a seek into a file with no block
+        // there (`slice index starts at 15066 but ends at 0`, exit 101, with nothing to say which
+        // file), so it is said here, once, where the cache is opened, and not on the first variant
+        // of the chromosome. The end of the contig is in the metadata htslib writes into an index;
+        // asking the index for the whole contig instead makes a bin of each of the thousands it could
+        // hold, which made opening a cache a hundred times slower.
+        let last_end = ref_id
+            .and_then(|id| index.reference_sequences().nth(id))
+            .and_then(|reference| reference.metadata())
+            .map(|metadata| metadata.end_position());
+        if let Some(end) = last_end {
+            if end.compressed() > length || (end.compressed() == length && end.uncompressed() > 0) {
+                bail!(
+                    "{} indexes {} up to byte {} of it, and the file has {} bytes: it was \
+                     replaced or cut short after it was indexed. Restore the file, or rebuild \
+                     the index with `tabix -C -s {} -b {} -e {} {}`",
+                    index_path.display(),
+                    data.display(),
+                    end.compressed(),
+                    length,
+                    layout.chr + 1,
+                    layout.start + 1,
+                    layout.start + 1,
+                    data.display()
+                );
+            }
+        }
         Ok(Self { index, ref_id })
     }
 }
@@ -1858,5 +1893,65 @@ mod tests {
         // Query for a non-existent region should return empty
         let records = reader.query("21", 1, 1).unwrap();
         assert!(records.is_empty(), "No variants expected at position 1");
+    }
+
+    /// A copy of the cache of `fixtures/vep_known_columns` in a directory of its own, whose
+    /// `10/all_vars.gz` is made from the intact file by `data`, and the columns of its `info.txt`.
+    fn copied_known_columns_cache(
+        data: impl FnOnce(&[u8]) -> Vec<u8>,
+    ) -> (tempfile::TempDir, PathBuf, Vec<String>) {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/vep_known_columns/cache/homo_sapiens/116_GRCh38");
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("116_GRCh38");
+        std::fs::create_dir_all(cache.join("10")).unwrap();
+        for name in ["info.txt", "10/all_vars.gz.csi"] {
+            std::fs::copy(source.join(name), cache.join(name)).unwrap();
+        }
+        let intact = std::fs::read(source.join("10/all_vars.gz")).unwrap();
+        std::fs::write(cache.join("10/all_vars.gz"), data(&intact)).unwrap();
+        let info = crate::info::CacheInfo::from_file(&cache.join("info.txt")).unwrap();
+        (dir, cache, info.variation_cols)
+    }
+
+    /// An index of a file that is not the one that is there: the data was regenerated, replaced or
+    /// cut short after it was indexed. The bgzf reader panics for a seek into a file that has no
+    /// block there (`slice index starts at 15066 but ends at 0`, exit 101 with nothing to say which
+    /// file), so a file shorter than the index reaches is refused where the cache is opened, with
+    /// the name of the index and the command that rebuilds it.
+    #[test]
+    fn a_data_file_shorter_than_its_index_says_is_refused_when_the_cache_is_opened() {
+        for (what, make) in [
+            (
+                "an empty file",
+                Box::new(|_: &[u8]| Vec::new()) as Box<dyn Fn(&[u8]) -> Vec<u8>>,
+            ),
+            ("a plain-text stub", Box::new(|_: &[u8]| b"x\n".to_vec())),
+            (
+                "a file cut short",
+                Box::new(|all: &[u8]| all[..100].to_vec()),
+            ),
+            (
+                "half of it",
+                Box::new(|all: &[u8]| all[..all.len() / 2].to_vec()),
+            ),
+        ] {
+            let (_dir, cache, cols) = copied_known_columns_cache(|all| make(all));
+            let err = VariationTabixReader::new(&cache, &cols)
+                .err()
+                .unwrap_or_else(|| panic!("{what}: the cache was opened"));
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("replaced or cut short")
+                    && msg.contains("all_vars.gz.csi")
+                    && msg.contains("tabix -C -s 1 -b 5 -e 5"),
+                "{what}: {msg}"
+            );
+        }
+        // the intact file is as it was, and a lookup in it answers
+        let (_dir, cache, cols) = copied_known_columns_cache(<[u8]>::to_vec);
+        let reader = VariationTabixReader::new(&cache, &cols).unwrap();
+        assert!(!reader.query("10", 1, 1_000_000).unwrap().is_empty());
+        assert!(!reader.query("10", 40_000, 40_200).unwrap().is_empty());
     }
 }
