@@ -15,6 +15,8 @@
 # reproduce; they are left out of the comparison. An Ensembl cache is built without readthrough transcripts and
 # transcripts of biotype `artifact`, so fastVEP is told to leave them out too.
 set -euo pipefail
+# `${array[@]+"${array[@]}"}` below, for the arrays that are empty for one of the kinds: macOS's
+# /bin/bash is 3.2, where "${empty[@]}" is an unbound variable under `set -u`.
 kind="$1"; vcf="$2"; out="$3"
 : "${VEP_CACHE:?}" "${GFF3:?}" "${FASTA:?}"
 FASTVEP="${FASTVEP:-fastvep}"
@@ -29,9 +31,9 @@ case "$kind" in
 esac
 docker run --rm -e VEP_DATABASE=0 \
   -v "$(dirname "$FASTA"):/ref:ro" -v "$VEP_CACHE:/cache:ro" -v "$(cd "$(dirname "$vcf")" && pwd):/in:ro" -v "$(cd "$out" && pwd):/out" \
-  "$IMAGE" vep --fork 2 --cache --offline --assembly GRCh38 --dir_cache /cache "${vep_extra[@]}" \
+  "$IMAGE" vep --fork 2 --cache --offline --assembly GRCh38 --dir_cache /cache ${vep_extra[@]+"${vep_extra[@]}"} \
   --fasta "/ref/$(basename "$FASTA")" --input_file "/in/$(basename "$vcf")" --output_file /out/vep.tab \
   --tab --force_overwrite --no_stats "${columns[@]}"
 "$FASTVEP" annotate -i "$vcf" --gff3 "$GFF3" --fasta "$FASTA" --output-format tab -o "$out/fastvep.tab" \
   --symbol --biotype --canonical --numbers --variant-class --show-ref-allele --hgvs --hgvsg "${fv_extra[@]}"
-python3 "$here/compare_cache_run.py" "$out/vep.tab" "$out/fastvep.tab" "$out/diff" "${drop[@]}"
+python3 "$here/compare_cache_run.py" "$out/vep.tab" "$out/fastvep.tab" "$out/diff" ${drop[@]+"${drop[@]}"}
