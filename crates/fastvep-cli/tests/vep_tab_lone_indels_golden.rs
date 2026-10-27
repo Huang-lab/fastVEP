@@ -13,8 +13,8 @@
 //! so is everything that follows. Rows are paired on the record and the transcript, because the
 //! allele is what differs when the two do not agree.
 //!
-//! The columns left out are the ones a later change makes exact: the HGVS notation of a change that
-//! reaches a start codon, a stop codon or the end of a transcript (docs/VEP_DIVERGENCE.md, Part 3).
+//! Every column is compared. The cells where fastVEP is not VEP are listed in `KNOWN`, each
+//! asserted to still differ (docs/VEP_DIVERGENCE.md, Part 3).
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -24,8 +24,69 @@ use fastvep_cli::pipeline::{run_annotate, AnnotateConfig, ColumnFlags, PickFlags
 use flate2::read::GzDecoder;
 use tempfile::TempDir;
 
-/// Columns that are not compared yet.
-const NOT_YET: &[&str] = &["HGVSc", "HGVSp", "HGVS_OFFSET"];
+/// Cells where stock VEP 116.3 is wrong, in a way `docs/VEP_DIVERGENCE.md` (Part 3) explains:
+/// `(record, transcript, column, what fastVEP writes)`.
+///
+/// Eight are the `--gff` reader's UTR of a reverse-strand transcript, which puts a frameshift's
+/// stop 12 residues short of the one the edited transcript has (the same rows, with that
+/// accessor corrected, are fastVEP's); the ninth is a change that moves the frame at the stop
+/// codon, where `frameshift` answers no and VEP's notation is `p.Ala200_Ter201delinsTer`.
+const KNOWN: &[(&str, &str, &str, &str)] = &[
+    (
+        "chr10_10097_AGTTAAGCAA/AGTGGAAGCCA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ter201SerextTer35",
+    ),
+    (
+        "chr10_10098_GTTAAGCA/GGCA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ter201%3D",
+    ),
+    (
+        "chr10_10099_TTAAGCAAGA/TTAGATCTGCA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Leu199AlafsTer38",
+    ),
+    (
+        "chr10_10100_TAAGCAAG/TATAAG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ala200IlefsTer36",
+    ),
+    (
+        "chr10_10102_AGCAAGACCCAAG/AGCAG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Leu197CysfsTer37",
+    ),
+    (
+        "chr10_10108_ACCCAAGGTCCA/ACCA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Thr196SerfsTer38",
+    ),
+    (
+        "chr10_10110_CCAAGG/CCACAGG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Leu197CysfsTer40",
+    ),
+    (
+        "chr10_10111_CAAGGTCC/CAC",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Trp195CysfsTer40",
+    ),
+    (
+        "chr10_10113_AGGT/AGCAGGTATGT",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Leu197TyrfsTer42",
+    ),
+];
 
 fn here(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -140,14 +201,20 @@ fn every_compared_cell_is_vep_s_for_every_row() {
     assert!(missing.is_empty(), "rows only VEP writes: {missing:?}");
     assert!(extra.is_empty(), "rows only fastVEP writes: {extra:?}");
 
-    let (mut wrong, mut compared) = (Vec::new(), 0usize);
+    let (mut wrong, mut compared, mut known) = (Vec::new(), 0usize, 0usize);
     for (key, want) in &vep {
         let have = &fv[key];
         for (column, v) in want {
-            if NOT_YET.contains(&column.as_str()) {
+            compared += 1;
+            if let Some((_, _, _, ours)) = KNOWN
+                .iter()
+                .find(|(rec, tr, c, _)| *rec == key.0 && *tr == key.1 && c == column)
+            {
+                assert_ne!(&have[column], v, "{} {column}: VEP now agrees", key.0);
+                assert_eq!(&have[column], ours, "{} {column}", key.0);
+                known += 1;
                 continue;
             }
-            compared += 1;
             if &have[column] != v {
                 wrong.push(format!(
                     "{} {} {column}: VEP {v:?}, here {:?}",
@@ -156,7 +223,12 @@ fn every_compared_cell_is_vep_s_for_every_row() {
             }
         }
     }
-    assert!(compared > 70_000, "only {compared} cells compared");
+    assert_eq!(
+        known,
+        KNOWN.len(),
+        "a row `KNOWN` names is not in the golden"
+    );
+    assert!(compared > 90_000, "only {compared} cells compared");
     assert!(
         wrong.is_empty(),
         "{} of {compared} cells differ from VEP's, first ten:\n{}",

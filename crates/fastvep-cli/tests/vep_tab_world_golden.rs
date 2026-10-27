@@ -14,12 +14,10 @@
 //! of a value a row does not have, `Amino_acids`, `FLAGS`, `CANONICAL`, the HGVS group and
 //! `HGVS_OFFSET`, `HGVSg`, `VARIANT_CLASS` and `REF_ALLELE`.
 //!
-//! The one place the comparison is not exact is `HGVSp`, and only where fastVEP's
-//! description differs from VEP's *by design*, in a way `docs/VEP_DIVERGENCE.md` lists:
-//! the numbers of a frameshift or an extension (VEP counts to a different stop), the
-//! positions of a delins, and a synonymous change across two codons, which VEP writes
-//! `p.ProLeu145=` and HGVS writes `p.Pro145_Leu146=`. `documented_hgvsp_difference` is the
-//! whole of that exception, and the tests fail if it starts to cover more than a few rows.
+//! The one place the comparison is not exact is `HGVSp`, and only for a synonymous change
+//! across two codons, which VEP writes `p.ProLeu145=` and HGVS writes `p.Pro145_Leu146=`
+//! (`docs/VEP_DIVERGENCE.md`, divergence 3). `documented_hgvsp_difference` is the whole of that
+//! exception, and the tests fail if it starts to cover more than a few rows.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
@@ -130,23 +128,16 @@ fn strip_digits(s: &str) -> String {
     s.chars().filter(|c| !c.is_ascii_digit()).collect()
 }
 
-/// Where fastVEP's `HGVSp` differs from VEP's on purpose. See the module comment; each
-/// arm is a row of `docs/VEP_DIVERGENCE.md`.
+/// Where fastVEP's `HGVSp` differs from VEP's on purpose, in this world: a synonymous change
+/// across two codons, which VEP writes `p.SerGly76=` and HGVS writes `p.Ser76_Gly77=`
+/// (`docs/VEP_DIVERGENCE.md`, divergence 3). The `=` is `%3D` in the tab file.
+///
+/// It used to be wider: the frameshifts and extensions whose numbers differ, and the delins that
+/// are placed differently. With VEP's own notation transcribed (`fastvep_hgvs::protein`) the
+/// first is what Ensembl's `--gff` reader does to the UTR of a reverse-strand transcript and
+/// the second is gone from a world this small, and `vep_tab_edges_golden.rs` lists the rows
+/// of both one by one.
 fn documented_hgvsp_difference(vep: &str, ours: &str) -> bool {
-    // fastVEP names a frameshift where VEP names none (Part 2, HGVSp)
-    if vep == "-" {
-        return ours.contains("fsTer");
-    }
-    // the same description with other numbers: a frameshift or an extension counted to
-    // the stop it creates (divergences 5 and 7), a delins placed where HGVS places it
-    let same_apart_from_numbers = strip_digits(vep) == strip_digits(ours);
-    if same_apart_from_numbers
-        && (ours.contains("fsTer") || ours.contains("extTer") || ours.contains("delins"))
-    {
-        return true;
-    }
-    // a synonymous change across two codons: `p.SerGly76=` against `p.Ser76_Gly77=`
-    // (divergence 3). The `=` is `%3D` in the tab file.
     vep.ends_with("%3D")
         && ours.ends_with("%3D")
         && ours.contains('_')

@@ -2,6 +2,7 @@
 """Compare a tab file written by Ensembl VEP with one written by fastVEP, cell by cell.
 
 usage: compare_tab.py VEP.tab FASTVEP.tab [--ignore COL,COL] [--key COL,COL] [--show N] [--out DIR]
+                      [--vep-where COL=VAL ...] [--vep-where-not COL=VAL ...]
 
 Rows are paired on (Uploaded_variation, Allele, Feature) unless --key says otherwise, so the
 input needs a distinct name per record (an ID of its own, or a distinct VCF line, which VEP 116
@@ -12,6 +13,12 @@ The header is compared first: the columns each has, and whether the shared ones 
 the same order. Then every shared column of every paired row is compared, and a count of
 the cells that differ is printed for each column with the commonest differing values.
 With --out, one TSV per differing column lists every row that differs.
+
+--vep-where and --vep-where-not keep or drop the rows of VEP's file by the value of one of its
+columns, and then only the rows of fastVEP's file that VEP's file has left are compared. That is
+how a run against VEP's own cache is compared: the transcripts the cache calls incomplete at an end
+(`--vep-where FLAGS=-`, since a GFF3 has no `cds_start_NF` or `cds_end_NF` to say so) and the
+RefSeq transcripts it edits (`--vep-where-not BAM_EDIT=OK`, which no GFF3 can reproduce) are left out.
 
 `validation/run_tab_world.sh` runs both tools over a generated world and calls this.
 """
@@ -52,12 +59,27 @@ def main():
     ap.add_argument("--key", default="Uploaded_variation,Allele,Feature")
     ap.add_argument("--show", type=int, default=4)
     ap.add_argument("--out", default="")
+    ap.add_argument("--vep-where", action="append", default=[], metavar="COL=VAL")
+    ap.add_argument("--vep-where-not", action="append", default=[], metavar="COL=VAL")
     a = ap.parse_args()
     ignore = {c for c in a.ignore.split(",") if c}
     key = key_of(a.key.split(","))
 
     vep_header, vep_rows = read(a.vep)
     our_header, our_rows = read(a.fastvep)
+    if a.vep_where or a.vep_where_not:
+        def test(spec):
+            col, _, val = spec.partition("=")
+            if col not in vep_header:
+                sys.exit(f"{a.vep}: no column {col}")
+            return col, val
+
+        keep = [test(x) for x in a.vep_where]
+        drop = [test(x) for x in a.vep_where_not]
+        vep_rows = [r for r in vep_rows
+                    if all(r[c] == v for c, v in keep) and not any(r[c] == v for c, v in drop)]
+        kept = {key(r) for r in vep_rows}
+        our_rows = [r for r in our_rows if key(r) in kept]
     print(f"VEP     : {len(vep_rows):6d} rows, {len(vep_header)} columns")
     print(f"fastVEP : {len(our_rows):6d} rows, {len(our_header)} columns")
 

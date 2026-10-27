@@ -9,9 +9,10 @@
 //! there runs `vep` from the 116.3 image in `--gff` mode over them and keeps what it wrote.
 //! Nothing in the golden was worked out here.
 //!
-//! The columns compared are the ones that are exact; a column joins `COMPARED` when the
-//! change that makes it exact lands. What is left (the HGVS columns) is in
-//! `docs/VEP_DIVERGENCE.md` (Part 3), measured on the full 17,672 records.
+//! Every column is compared. The cells where fastVEP is not VEP are listed in `KNOWN`, each with
+//! what fastVEP writes and why, and each is asserted to still differ: a list that only excused would
+//! stop meaning anything the day VEP changes. `docs/VEP_DIVERGENCE.md` (Part 3) has the reasons
+//! and the measurements on the full 17,672 records.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -21,7 +22,7 @@ use fastvep_cli::pipeline::{run_annotate, AnnotateConfig, ColumnFlags, PickFlags
 use flate2::read::GzDecoder;
 use tempfile::TempDir;
 
-/// The columns whose every cell, on every row, is VEP's.
+/// The columns compared, cell by cell, on every row.
 const COMPARED: &[&str] = &[
     "Location",
     "cDNA_position",
@@ -33,33 +34,291 @@ const COMPARED: &[&str] = &[
     "IMPACT",
     "Amino_acids",
     "Codons",
+    "HGVSc",
+    "HGVSp",
+    "HGVS_OFFSET",
 ];
 
-/// Cells where stock VEP 116.3 in `--gff` mode is wrong and fastVEP is not: `(record, transcript,
-/// column, what fastVEP writes)`.
-///
-/// Every predicate that reads the sequence of a UTR (`_ins_del_start_altered`,
-/// `_ins_del_stop_altered` and their kin, release/116 `VariationEffect.pm`) gets it from
-/// `BaseTranscriptVariation::_generic_utr`, which transfers the transcript to its feature slice
-/// and asks it for `five_prime_utr` / `three_prime_utr`. For a transcript on the reverse strand
-/// built from a GFF3 that returns a sequence of the right length from the wrong place in the
-/// genome (checked by printing it: the 400 bases VEP called the 5' UTR of ENST00000000003 end in
-/// the reverse complement of genome 10001-10014, which is inside its 3' UTR, and its real
-/// `spliced_seq` is right). `start_retained_variant` and `stop_lost` then answer about bases that
-/// are not there. With `_generic_utr` taking the UTR from `spliced_seq`, as the core API's own
-/// accessors do, VEP and fastVEP agree on every `Consequence`, `IMPACT`, `Amino_acids` and
-/// `Codons` cell of all 36,957 rows of the full probe this fixture samples, and on 163 of 163 real
-/// ClinVar rows that moved in this change, so these are VEP's. The same rows are on the forward
-/// strand and agree. A transcript read from a VEP cache has its sequences stored, so what the
-/// cache would say is the corrected answer; that is a claim about the cache not checked here.
-///
-/// Each one is asserted to still differ: if VEP stops doing this, the golden has to be looked at.
-const VEP_GFF_REVERSE_STRAND_UTR_BUG: &[(&str, &str, &str, &str)] = &[(
-    "chr10_11299_ATCTGCTCTG/A",
-    "ENST00000000003",
-    "Consequence",
-    "start_lost,start_retained_variant,5_prime_UTR_variant",
-)];
+/// Why a cell is not VEP's. Each is a section of `docs/VEP_DIVERGENCE.md`, Part 3.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // the reason is documentation: it is read by whoever finds the row
+enum Why {
+    /// VEP's `--gff` reader builds the UTR of a reverse-strand transcript from the wrong place
+    /// (`BaseTranscriptVariation::_generic_utr` transfers the transcript to its feature slice),
+    /// so a stop counted into the 3' UTR, and `start_retained_variant` and `stop_lost`, are
+    /// answers about bases that are not there. With that accessor reading `spliced_seq` as the
+    /// core API's own do, VEP and fastVEP agree on every one of these cells.
+    Utr,
+    /// An insertion on a reverse-strand transcript that the 3'-rule moves further than it is long:
+    /// `shift_feature_seqs` turns the string `seq_length - shift_length` times, which is a
+    /// negative number of times and so none, and the edited CDS holds an insertion that is not
+    /// the variant's. Rows that agree once that is reproduced.
+    Rotation,
+    /// A change that moves the frame at a stop codon, where `frameshift` answers no and the
+    /// notation is built from a window that ends mid-codon: `p.Ter218=` beside `stop_lost`, and
+    /// `p.Ter218delinsTyrTer` where the edited translation has a residue that is not a stop.
+    StopCodon,
+    /// An insertion past the 3' end of a reverse-strand transcript, written with its two
+    /// positions the wrong way round.
+    ReversedPair,
+}
+
+/// Cells where fastVEP and stock VEP 116.3 differ and VEP is the one that is wrong:
+/// `(record, transcript, column, what fastVEP writes, why)`.
+const KNOWN: &[(&str, &str, &str, &str, Why)] = &[
+    (
+        "chr10_10098_GTTAAGCAAGACCCAA/G",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Leu197_Ter201delextTer2",
+        Why::Utr,
+    ),
+    (
+        "chr10_10099_TT/GAA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ter201PheextTer35",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_10099_TTAAG/T",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ala200AspfsTer2",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_10100_T/G",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ter201SerextTer7",
+        Why::Utr,
+    ),
+    (
+        "chr10_10100_TAA/CG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ter201AspextTer1",
+        Why::Utr,
+    ),
+    (
+        "chr10_10102_AGCA/CC",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ala200ValfsTer36",
+        Why::Utr,
+    ),
+    (
+        "chr10_10103_G/GCAAG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ter201CysextTer36",
+        Why::Utr,
+    ),
+    (
+        "chr10_10103_GC/TAA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ala200LeufsTer37",
+        Why::Utr,
+    ),
+    (
+        "chr10_10103_GCAAGA/G",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ala200ThrfsTer35",
+        Why::Utr,
+    ),
+    (
+        "chr10_10104_C/CA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ala200CysfsTer37",
+        Why::Utr,
+    ),
+    (
+        "chr10_10106_AGAC/CA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Gly198ValfsTer38",
+        Why::Utr,
+    ),
+    (
+        "chr10_10108_A/AA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Leu199SerfsTer38",
+        Why::Utr,
+    ),
+    (
+        "chr10_10108_ACC/A",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Gly198SerfsTer38",
+        Why::Utr,
+    ),
+    (
+        "chr10_10109_C/CCCAA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Gly198ValfsTer40",
+        Why::Utr,
+    ),
+    (
+        "chr10_10395_T/TATCGGTTAT",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ile103_Asp105dup",
+        Why::Rotation,
+    ),
+    (
+        "chr10_10395_T/TTAT",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ile103dup",
+        Why::Rotation,
+    ),
+    (
+        "chr10_10399_A/ATGGAA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Thr104ProfsTer2",
+        Why::Rotation,
+    ),
+    (
+        "chr10_10400_G/GGAAG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ile103PhefsTer5",
+        Why::Rotation,
+    ),
+    (
+        "chr10_11294_T/TAT",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ile4Ter",
+        Why::Rotation,
+    ),
+    (
+        "chr10_11295_G/GATTATG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Ile3_Ile4dup",
+        Why::Rotation,
+    ),
+    (
+        "chr10_11299_A/ATGCACA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1_Cys2dup",
+        Why::Rotation,
+    ),
+    (
+        "chr10_3248_ATG/A",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Ter218ArgextTer32",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3248_ATG/A",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Ter151ArgextTer32",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3249_T/TAT",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Ter218TyrextTer24",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3249_T/TAT",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Ter151TyrextTer24",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3249_T/TT",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Ter218LeuextTer33",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3249_T/TT",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Ter151LeuextTer33",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3249_TGA/CG",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Ter218ArgextTer23",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3249_TGA/CG",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Ter151ArgextTer23",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3250_G/GCATG",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Ter218CysextTer34",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3250_G/GCATG",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Ter151CysextTer34",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3250_G/GTTTA",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Ter218CysextTer34",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3250_G/GTTTA",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Ter151CysextTer34",
+        Why::StopCodon,
+    ),
+    (
+        "chr10_3600_ACCT/TA",
+        "ENST00000000001",
+        "HGVSc",
+        "ENST00000000001.1:c.*348_*349insT",
+        Why::ReversedPair,
+    ),
+    (
+        "chr10_3600_ACCT/TA",
+        "ENST00000000002",
+        "HGVSc",
+        "ENST00000000002.1:c.*348_*349insT",
+        Why::ReversedPair,
+    ),
+    (
+        "chr10_11299_ATCTGCTCTG/A",
+        "ENST00000000003",
+        "Consequence",
+        "start_lost,start_retained_variant,5_prime_UTR_variant",
+        Why::Utr,
+    ),
+];
 
 fn here(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -183,20 +442,20 @@ fn the_compared_columns_are_vep_s_for_every_row() {
     let (vep, fv) = (golden(), ours());
     let mut wrong = Vec::new();
     let mut compared = 0usize;
-    let mut known_bug = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::new();
     for (key, vep_rows) in &vep {
         let fv_rows = &fv[key];
         assert_eq!(vep_rows.len(), fv_rows.len(), "{key:?}");
         for (v, f) in vep_rows.iter().zip(fv_rows) {
             for col in COMPARED {
                 compared += 1;
-                let bug = VEP_GFF_REVERSE_STRAND_UTR_BUG
+                let known = KNOWN
                     .iter()
-                    .find(|(rec, tr, c, _)| *rec == key.0 && *tr == key.2 && c == col);
-                if let Some((rec, tr, c, ours)) = bug {
+                    .find(|(rec, tr, c, _, _)| *rec == key.0 && *tr == key.2 && c == col);
+                if let Some((rec, tr, c, ours, _)) = known {
                     assert_ne!(v[*col], f[*col], "{rec} {tr} {c}: VEP now agrees");
                     assert_eq!(&f[*col], ours, "{rec} {tr} {c}");
-                    known_bug.insert((*rec, *tr, *c));
+                    seen.insert((*rec, *tr, *c));
                 } else if v[*col] != f[*col] {
                     wrong.push(format!(
                         "{} {} {col}: VEP {:?}, fastVEP {:?}",
@@ -207,11 +466,11 @@ fn the_compared_columns_are_vep_s_for_every_row() {
         }
     }
     assert_eq!(
-        known_bug.len(),
-        VEP_GFF_REVERSE_STRAND_UTR_BUG.len(),
-        "a row the exceptions name is not in the golden"
+        seen.len(),
+        KNOWN.len(),
+        "a row `KNOWN` names is not in the golden"
     );
-    assert!(compared > 20_000, "only {compared} cells compared");
+    assert!(compared > 50_000, "only {compared} cells compared");
     assert!(
         wrong.is_empty(),
         "{} of {compared} cells differ from VEP, e.g.\n{}",

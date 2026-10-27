@@ -794,7 +794,7 @@ naming a `c.` change and naming it differently. `HGVSg`, which is written only u
 measured separately against Ensembl VEP 116.3 on the same sample: 20,238 of 20,241 records have the
 same set of descriptions, and the three that differ are multi-allelic records in which Ensembl
 describes an allele by its untrimmed bases, which does not reproduce the variant. The tab
-output's other columns are measured the same way, 3,876 of 5,581,650 cells differing, and so is
+output's other columns are measured the same way, 3,834 of 5,581,650 cells differing, none of them in `HGVSp`, and so is
 a RefSeq GFF3 (chr21 and chr22 of GRCh38.p14), 135 of 81,510 cells, all of them the multi-allelic
 difference of divergence 11, in
 [Part 3 of docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#part-3---the-tab-output-against-vep-1163).
@@ -817,7 +817,9 @@ Ensembl reported a change that introduces a premature stop as `inframe_insertion
 BRCA1 `c.5030_5033dup` - ClinVar Pathogenic - is one of 52 such variants in the ClinVar 2-star+ set, 38 of them Pathogenic or Likely pathogenic.
 fastVEP reported `stop_gained,frameshift_variant`, HIGH, so those 52 kept PVS1.
 Release 116 rewrote that clause, and Ensembl VEP 116.3 writes `stop_gained,frameshift_variant` for them too.
-Against 116.3 two of the eleven are gone, that one and the second (a start codon a deletion removes), which fastVEP now reads as VEP does, and nine remain.
+Against 116.3 two of the eleven are gone, that one and the second (a start codon a deletion removes), which fastVEP now reads as VEP does.
+Four more (the count or the first residue of a frameshift or of an extension, 5 to 8) turned out not to be differences with VEP but with its `--gff` reader, which takes the 3' UTR of a reverse-strand transcript from the wrong place and which a VEP cache does not do.
+Two more were found in the protein notation, one in VEP's 3'-shifting of an insertion on the reverse strand and one in how it reads an unresolved residue (12 and 13).
 
 Every divergence, its cause in the Ensembl source, its row count, and the list of fastVEP's own
 remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md)**.

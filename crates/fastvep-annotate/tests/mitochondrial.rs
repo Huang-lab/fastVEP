@@ -5,14 +5,41 @@
 //! pipeline. These tests build a minimal MT transcript + FASTA and exercise
 //! the exact production call chain (`Transcript::build_sequences` ->
 //! `fastvep_cache` sequence provider -> `ConsequencePredictor::predict` ->
-//! `fastvep_hgvs::hgvsp`) rather than calling the codon table directly, so a
+//! `fastvep_annotate::hgvsp_for_allele`) rather than calling the codon table directly, so a
 //! regression in any one of those wiring points fails the test.
 
+use fastvep_annotate::{hgvsp_for_allele, HgvspRequest};
 use fastvep_cache::fasta::FastaReader;
 use fastvep_cache::providers::{FastaSequenceProvider, SequenceProvider};
 use fastvep_consequence::ConsequencePredictor;
 use fastvep_core::{Allele, Consequence, GenomicPosition, Strand};
 use fastvep_genome::{Exon, Gene, Transcript, Translation, MT_LENGTH};
+
+/// The HGVSp the production loops write for one allele of `transcript`.
+fn hgvsp_of(
+    predictor: &ConsequencePredictor,
+    transcript: &Transcript,
+    position: &GenomicPosition,
+    ref_allele: &Allele,
+    ac: &fastvep_consequence::AlleleConsequenceResult,
+) -> Option<String> {
+    hgvsp_for_allele(&HgvspRequest {
+        predictor,
+        transcript,
+        provider: None,
+        chrom: &position.chromosome,
+        start: position.start,
+        end: position.end,
+        ref_allele,
+        alt_allele: &ac.allele,
+        location: &ac.location,
+        consequences: &ac.consequences,
+        amino_acids: ac
+            .amino_acids
+            .as_ref()
+            .map(|(r, a)| (r.as_str(), a.as_str())),
+    })
+}
 
 /// Build a single-exon, fully-coding MT transcript whose CDS is exactly the
 /// concatenation of `exon_start..=exon_end` (using the "extended", possibly
@@ -139,13 +166,7 @@ fn mt_tga_reads_as_tryptophan_not_stop() {
     let (ref_aa, alt_aa) = ac.amino_acids.clone().expect("amino acids computed");
     assert_eq!((ref_aa.as_str(), alt_aa.as_str()), ("W", "W"));
 
-    let hgvsp = fastvep_hgvs::hgvsp(
-        "ENSP_MT_TEST",
-        ac.protein_start.unwrap(),
-        ref_aa.as_bytes()[0],
-        alt_aa.as_bytes()[0],
-        false,
-    );
+    let hgvsp = hgvsp_of(&predictor, &transcript, &position, &ref_allele, ac);
     assert_eq!(hgvsp, Some("ENSP_MT_TEST:p.Trp2=".to_string()));
 }
 
@@ -218,12 +239,6 @@ fn mt_origin_spanning_allele_produces_stop_gained() {
     let (ref_aa, alt_aa) = ac.amino_acids.clone().expect("amino acids computed");
     assert_eq!((ref_aa.as_str(), alt_aa.as_str()), ("R", "*"));
 
-    let hgvsp = fastvep_hgvs::hgvsp(
-        "ENSP_MT_TEST",
-        ac.protein_start.unwrap(),
-        ref_aa.as_bytes()[0],
-        alt_aa.as_bytes()[0],
-        false,
-    );
+    let hgvsp = hgvsp_of(&predictor, &transcript, &position, &ref_allele, ac);
     assert_eq!(hgvsp, Some("ENSP_MT_TEST:p.Arg2Ter".to_string()));
 }

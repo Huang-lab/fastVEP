@@ -4,10 +4,13 @@
 //!
 //! `protein_start` comes from the genomic left edge, which for a shrinking
 //! change on a right-to-left transcript is the end of the affected range. #93
-//! made `hgvsp_inframe_indel` try the other end when the peptide does not
-//! corroborate the first, which fixed the cases where the first end is not a
-//! match at all. It left the case where *both* ends match: `find()` takes the
-//! first, and on the reverse strand the first is the wrong one.
+//! made the notation try the other end when the peptide does not corroborate
+//! the first, which fixed the cases where the first end is not a match at all.
+//! It left the case where *both* ends match: `find()` took the first, and on
+//! the reverse strand the first is the wrong one. (The notation is built from
+//! Ensembl's own protein positions now, `Transcript::location`, and there is no
+//! anchor to guess; the test stays because the property it pins is the
+//! output's.)
 //!
 //! The gene below is built so that both ends match. The peptide is `MEGEGEA`
 //! and the deletion removes `EGE` at residues 2-4 - a reference that also sits

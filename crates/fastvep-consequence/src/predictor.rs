@@ -242,6 +242,15 @@ struct CodonWindow {
     partial_codon: bool,
 }
 
+/// The two peptides Ensembl's `hgvs_protein` starts from, for one allele at one location.
+///
+/// Both are the window of codons the change touches, the reference's and the allele's, with `-`
+/// for a window that holds no residue (an insertion between two codons has no reference residue).
+pub struct ProteinWindow {
+    pub ref_peptide: String,
+    pub alt_peptide: String,
+}
+
 pub struct ConsequencePredictor {
     pub upstream_distance: u64,
     pub downstream_distance: u64,
@@ -1189,6 +1198,78 @@ impl ConsequencePredictor {
             ref_len,
             alt_len: alt_cds.len(),
         })
+    }
+
+    /// The two peptides `hgvs_protein` starts from for `alt_allele` at `location`.
+    ///
+    /// This is the window the consequence code reads, and for the same reason: Ensembl's HGVSp
+    /// is built from the peptides of the *same* codon window `Amino_acids` is, only at the
+    /// location of the 3'-shifted change, so the caller passes the location it shifted to.
+    ///
+    /// `None` when the CDS has no sequence loaded or the span has no CDS coordinate.
+    pub fn protein_window(
+        &self,
+        transcript: &Transcript,
+        alt_allele: &Allele,
+        location: &TranscriptLocation,
+    ) -> Option<ProteinWindow> {
+        let w = self.build_codon_window(transcript, alt_allele, location.cds)?;
+        let or_dash = |aas: String| if aas.is_empty() { "-".to_string() } else { aas };
+        Some(ProteinWindow {
+            ref_peptide: or_dash(w.ref_aas),
+            alt_peptide: or_dash(w.alt_aas),
+        })
+    }
+
+    /// The translation of the CDS with `alt_allele` in place of the CDS span `cds` and the 3' UTR
+    /// after it, which is `_get_alternate_cds()->translate()` of Ensembl: what a frameshift or
+    /// a lost terminator is counted against. Only whole codons are translated, as BioPerl does.
+    ///
+    /// The span is the one the mapper gives the change, counted in the CDS, and the whole allele
+    /// replaces it (see [`Self::build_codon_window`]). `None` when the CDS has no sequence or the
+    /// span has no CDS coordinate.
+    pub fn edited_translation(
+        &self,
+        transcript: &Transcript,
+        alt_allele: &Allele,
+        cds: TranscriptSpan,
+    ) -> Option<String> {
+        let seq = transcript.translateable_seq.as_deref()?.as_bytes();
+        let (cds_start, cds_end) = (cds.start?, cds.end?);
+        if cds_start == 0 || cds_end == 0 {
+            return None;
+        }
+        let ref_len = (cds_end as i64 - cds_start as i64 + 1).max(0) as usize;
+        let first = if ref_len == 0 {
+            cds_end as usize
+        } else {
+            (cds_start - 1) as usize
+        };
+        let alt_cds = oriented(alt_allele.as_bytes(), transcript.strand);
+        // A transcript whose spliced sequence ends before its own coding region does is not one
+        // to describe a frameshift of: what follows the change would be read from nothing.
+        let utr: &[u8] = match (
+            transcript.spliced_seq.as_deref(),
+            transcript.cdna_coding_end,
+        ) {
+            (Some(spliced), Some(coding_end)) => spliced.as_bytes().get(coding_end as usize..)?,
+            _ => &[],
+        };
+        let mut edited = Vec::with_capacity(seq.len() + utr.len() + alt_cds.len());
+        edited.extend_from_slice(&seq[..first.min(seq.len())]);
+        edited.extend_from_slice(&alt_cds);
+        edited.extend_from_slice(seq.get(first + ref_len..).unwrap_or(&[]));
+        edited.extend_from_slice(utr);
+
+        let table = self.codon_table_for(transcript);
+        Some(
+            edited
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|codon| table.translate(codon) as char)
+                .collect(),
+        )
     }
 
     /// Distance from the change to the nearest end of the transcript, `0` when it overlaps.

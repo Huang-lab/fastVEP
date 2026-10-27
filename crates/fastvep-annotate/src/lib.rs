@@ -8,14 +8,17 @@
 //! the same underlying crates.
 
 mod hgvs_normalize;
+mod hgvsp;
 pub mod pick;
 
 pub use hgvs_normalize::{
     clipped_span, convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele,
-    hgvs_placement, hgvsc_shifted, hgvsc_shifted_with_shift, hgvsg_clipped, hgvsg_per_alt,
-    hgvsg_vep, intronic_dup_span, intronic_ins_as_dup, is_shiftable_indel, reference_for_hgvs,
-    three_prime_shift_genomic, HgvsAllele,
+    hgvs_allele_on_transcript, hgvs_placement, hgvsc_shifted, hgvsc_shifted_outcome,
+    hgvsc_shifted_with_shift, hgvsg_clipped, hgvsg_per_alt, hgvsg_vep, intronic_dup_span,
+    intronic_ins_as_dup, is_shiftable_indel, reference_for_hgvs, three_prime_shift_genomic,
+    HgvsAllele, ShiftedHgvsc,
 };
+pub use hgvsp::{hgvsp_for_allele, HgvspRequest};
 
 use anyhow::{Context, Result};
 use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue};
@@ -489,8 +492,14 @@ impl AnnotationContext {
                                     // record is trimmed once for the whole site,
                                     // so an allele that reaches here as a
                                     // replacement may still be a plain deletion.
-                                    let hv = hgvs_allele(
-                                        tr.strand,
+                                    let provider = self
+                                        .seq_provider
+                                        .as_deref()
+                                        .map(|sp| sp as &dyn SequenceProvider);
+                                    let hv = hgvs_allele_on_transcript(
+                                        provider,
+                                        chrom,
+                                        tr,
                                         vf.position.start,
                                         vf.position.end,
                                         &hgvs_ref,
@@ -504,281 +513,145 @@ impl AnnotationContext {
                                             .zip(ac.cdna_end)
                                             .map(|(a, b)| (a.min(b), a.max(b))),
                                     );
-                                    // Every indel is 3'-shifted over the genome,
-                                    // so it routes through `hgvsc_shifted`
-                                    // whether or not both its ends are exonic:
-                                    // the shift crosses splice sites, and the
-                                    // description has to follow it there.
-                                    // Without a reference there is no walk to
-                                    // make, so those fall to the cDNA renderer
-                                    // below, which shifts on the spliced sequence
-                                    // instead - not the same answer across a
-                                    // splice site, but the only one available.
-                                    // `hgvsc_shifted` also returns `None` for a
-                                    // variant it cannot place at all, and that
-                                    // falls the same way.
-                                    let provider = self
-                                        .seq_provider
-                                        .as_deref()
-                                        .map(|sp| sp as &dyn SequenceProvider);
-                                    let shifted = (is_shiftable_indel(&hv.hgvs_ref, &hv.hgvs_alt)
-                                        && provider.is_some())
-                                    .then(|| {
-                                        hgvsc_shifted_with_shift(
-                                            provider,
-                                            chrom,
-                                            tr,
-                                            &versioned_tid,
-                                            hv.start,
-                                            hv.end,
-                                            hv.anchor_start,
-                                            &hv.genomic_ref,
-                                            &hv.genomic_alt,
-                                            &hv.hgvs_ref,
-                                            &hv.hgvs_alt,
-                                            tr.cdna_coding_start,
-                                            tr.cdna_coding_end,
-                                        )
-                                    })
-                                    .flatten();
-                                    ann.hgvsc = match (shifted, tr.cdna_coding_start) {
-                                        (Some((h, moved)), _) => {
-                                            shift = moved;
-                                            Some(h)
-                                        }
-                                        (None, Some(coding_start)) => match hv.cdna {
-                                            Some((cs, ce)) => fastvep_hgvs::hgvsc_with_seq(
-                                                &versioned_tid,
-                                                cs,
-                                                ce,
-                                                &hv.hgvs_ref,
-                                                &hv.hgvs_alt,
-                                                coding_start,
-                                                tr.cdna_coding_end,
-                                                tr.spliced_seq.as_deref(),
-                                                tr.codon_table_start_phase,
-                                            ),
-                                            // Not "is this intronic": a variant
-                                            // with one end in an exon and the
-                                            // other in an intron has no exonic
-                                            // cDNA pair, and `intron_at` reads
-                                            // its first base only.
-                                            None => hgvsc_shifted_with_shift(
-                                                provider,
-                                                chrom,
-                                                tr,
-                                                &versioned_tid,
-                                                hv.start,
-                                                hv.end,
-                                                hv.anchor_start,
-                                                &hv.genomic_ref,
-                                                &hv.genomic_alt,
-                                                &hv.hgvs_ref,
-                                                &hv.hgvs_alt,
+                                    if let Some(hv) = hv {
+                                        // Every indel is 3'-shifted over the genome,
+                                        // so it routes through `hgvsc_shifted`
+                                        // whether or not both its ends are exonic:
+                                        // the shift crosses splice sites, and the
+                                        // description has to follow it there.
+                                        // Without a reference there is no walk to
+                                        // make, so those fall to the cDNA renderer
+                                        // below, which shifts on the spliced sequence
+                                        // instead - not the same answer across a
+                                        // splice site, but the only one available.
+                                        // `hgvsc_shifted` also returns `None` for a
+                                        // variant it cannot place at all, and that
+                                        // falls the same way.
+                                        let shifted =
+                                            (is_shiftable_indel(&hv.hgvs_ref, &hv.hgvs_alt)
+                                                && provider.is_some())
+                                            .then(|| {
+                                                hgvsc_shifted_outcome(
+                                                    provider,
+                                                    chrom,
+                                                    tr,
+                                                    &versioned_tid,
+                                                    hv.start,
+                                                    hv.end,
+                                                    hv.anchor_start,
+                                                    &hv.genomic_ref,
+                                                    &hv.genomic_alt,
+                                                    &hv.hgvs_ref,
+                                                    &hv.hgvs_alt,
+                                                    tr.cdna_coding_start,
+                                                    tr.cdna_coding_end,
+                                                    hv.shift,
+                                                )
+                                            });
+                                        ann.hgvsc = match (shifted, tr.cdna_coding_start) {
+                                            (Some(ShiftedHgvsc::Written(h, moved)), _) => {
+                                                shift = moved;
+                                                Some(h)
+                                            }
+                                            // A description the 3'-rule carries off the end of the transcript, or one for a
+                                            // change that is not a plain overlap of it: Ensembl writes nothing, and the cDNA
+                                            // renderer below must not write what Ensembl would not.
+                                            (Some(ShiftedHgvsc::NoDescription), _) => None,
+                                            (
+                                                Some(ShiftedHgvsc::CannotRender) | None,
                                                 Some(coding_start),
-                                                tr.cdna_coding_end,
-                                            )
-                                            .map(|(h, moved)| {
-                                                shift = moved;
-                                                h
-                                            }),
-                                        },
-                                        (None, None) => match hv.cdna {
-                                            Some((cs, ce)) => fastvep_hgvs::hgvsc_noncoding(
-                                                &versioned_tid,
-                                                cs,
-                                                ce,
-                                                &hv.hgvs_ref,
-                                                &hv.hgvs_alt,
-                                                tr.spliced_seq.as_deref(),
-                                            ),
-                                            None => hgvsc_shifted_with_shift(
-                                                provider,
-                                                chrom,
-                                                tr,
-                                                &versioned_tid,
-                                                hv.start,
-                                                hv.end,
-                                                hv.anchor_start,
-                                                &hv.genomic_ref,
-                                                &hv.genomic_alt,
-                                                &hv.hgvs_ref,
-                                                &hv.hgvs_alt,
-                                                None,
-                                                None,
-                                            )
-                                            .map(|(h, moved)| {
-                                                shift = moved;
-                                                h
-                                            }),
-                                        },
-                                    };
+                                            ) => match hv.cdna {
+                                                Some((cs, ce)) => fastvep_hgvs::hgvsc_with_seq(
+                                                    &versioned_tid,
+                                                    cs,
+                                                    ce,
+                                                    &hv.hgvs_ref,
+                                                    &hv.hgvs_alt,
+                                                    coding_start,
+                                                    tr.cdna_coding_end,
+                                                    tr.spliced_seq.as_deref(),
+                                                    tr.codon_table_start_phase,
+                                                ),
+                                                // Not "is this intronic": a variant
+                                                // with one end in an exon and the
+                                                // other in an intron has no exonic
+                                                // cDNA pair, and `intron_at` reads
+                                                // its first base only.
+                                                None => hgvsc_shifted_with_shift(
+                                                    provider,
+                                                    chrom,
+                                                    tr,
+                                                    &versioned_tid,
+                                                    hv.start,
+                                                    hv.end,
+                                                    hv.anchor_start,
+                                                    &hv.genomic_ref,
+                                                    &hv.genomic_alt,
+                                                    &hv.hgvs_ref,
+                                                    &hv.hgvs_alt,
+                                                    Some(coding_start),
+                                                    tr.cdna_coding_end,
+                                                    hv.shift,
+                                                )
+                                                .map(|(h, moved)| {
+                                                    shift = moved;
+                                                    h
+                                                }),
+                                            },
+                                            (Some(ShiftedHgvsc::CannotRender) | None, None) => {
+                                                match hv.cdna {
+                                                    Some((cs, ce)) => {
+                                                        fastvep_hgvs::hgvsc_noncoding(
+                                                            &versioned_tid,
+                                                            cs,
+                                                            ce,
+                                                            &hv.hgvs_ref,
+                                                            &hv.hgvs_alt,
+                                                            tr.spliced_seq.as_deref(),
+                                                        )
+                                                    }
+                                                    None => hgvsc_shifted_with_shift(
+                                                        provider,
+                                                        chrom,
+                                                        tr,
+                                                        &versioned_tid,
+                                                        hv.start,
+                                                        hv.end,
+                                                        hv.anchor_start,
+                                                        &hv.genomic_ref,
+                                                        &hv.genomic_alt,
+                                                        &hv.hgvs_ref,
+                                                        &hv.hgvs_alt,
+                                                        None,
+                                                        None,
+                                                        hv.shift,
+                                                    )
+                                                    .map(|(h, moved)| {
+                                                        shift = moved;
+                                                        h
+                                                    }),
+                                                }
+                                            }
+                                        };
+                                    }
 
                                     // HGVSp
-                                    if let (Some(ref aa), Some(ps)) =
-                                        (&ac.amino_acids, ac.protein_start)
-                                    {
-                                        // The residue pair is strand-ordered:
-                                        // which of the two is the lower one
-                                        // depends on the strand, and
-                                        // `hgvsp_inframe_indel` needs both to
-                                        // place an insertion between two
-                                        // residues. A variant on an exon's edge
-                                        // has one end outside the CDS and so may
-                                        // have only one coordinate; using it for
-                                        // both is what the single one meant
-                                        // before.
-                                        let pe = ac.protein_end.unwrap_or(ps);
-                                        if let Some(versioned_pid) = tr.versioned_protein_id() {
-                                            let is_fs = ac
-                                                .consequences
-                                                .contains(&Consequence::FrameshiftVariant);
-                                            // A lost terminator names how much
-                                            // protein the loss adds, which needs
-                                            // the sequence past the stop for the
-                                            // same reason a frameshift does.
-                                            // `None` when the change is not an
-                                            // equal-length replacement of the
-                                            // terminator's codon, and then the
-                                            // chain below describes it.
-                                            let stop_lost_extension = (!is_fs
-                                                && ac
-                                                    .consequences
-                                                    .contains(&Consequence::StopLost))
-                                            .then(|| {
-                                                let spliced = tr.spliced_seq.as_deref()?;
-                                                let coding_start = tr.cdna_coding_start?;
-                                                let cds =
-                                                    cds_and_downstream(tr, spliced, coding_start)?;
-                                                fastvep_hgvs::hgvsp_stop_lost_from_cds(
-                                                    &versioned_pid,
-                                                    &cds,
-                                                    ac.cds_start,
-                                                    ac.cds_end,
-                                                    &vf.ref_allele,
-                                                    &ac.allele,
-                                                    tr.strand,
-                                                    &frameshift_codon_table(tr),
-                                                )
-                                            })
-                                            .flatten();
-                                            if stop_lost_extension.is_some() {
-                                                ann.hgvsp = stop_lost_extension;
-                                            } else if is_fs {
-                                                if let (Some(spliced), Some(coding_start)) = (
-                                                    tr.spliced_seq.as_deref(),
-                                                    tr.cdna_coding_start,
-                                                ) {
-                                                    ann.hgvsp = cds_and_downstream(
-                                                        tr,
-                                                        spliced,
-                                                        coding_start,
-                                                    )
-                                                    .and_then(|cds| {
-                                                        fastvep_hgvs::hgvsp_frameshift_from_cds(
-                                                            &versioned_pid,
-                                                            &cds,
-                                                            ac.cds_start,
-                                                            ac.cds_end,
-                                                            &vf.ref_allele,
-                                                            &ac.allele,
-                                                            tr.strand,
-                                                            &frameshift_codon_table(tr),
-                                                        )
-                                                    });
-                                                }
-                                            } else if aa.1 == "-"
-                                                || aa.0.len() != aa.1.len()
-                                                || ac
-                                                    .consequences
-                                                    .contains(&Consequence::StartLost)
-                                                || ac
-                                                    .consequences
-                                                    .contains(&Consequence::InframeDeletion)
-                                                || ac
-                                                    .consequences
-                                                    .contains(&Consequence::InframeInsertion)
-                                                // A window wider than one residue also routes
-                                                // here even when the lengths match: `hgvsp()`
-                                                // compares one residue per side, so `EP/ET`
-                                                // reads as unchanged and renders `p.Glu153=`
-                                                // for a change VEP calls `p.Pro154Thr` - and a
-                                                // synonymous two-residue window needs its whole
-                                                // span named.
-                                            || aa.0.len() > 1
-                                            {
-                                                // In-frame indel / delins (frameshift
-                                                // handled above). aa.0 holds the replaced
-                                                // residues, aa.1 the replacement ("-" for a
-                                                // pure deletion).
-                                                //
-                                                // Insertions must route here too, not to
-                                                // `hgvsp()`: that compares only the first
-                                                // residue of each side, so `W/WR` reads as
-                                                // unchanged and renders `p.Trp185=` for a
-                                                // variant that lengthens the protein.
-                                                //
-                                                // The residue counts decide, not the SO term.
-                                                // A delins that replaces residues earns
-                                                // `protein_altering_variant` or `stop_gained`
-                                                // rather than either in-frame term, and
-                                                // keying on the term alone dropped HGVSp
-                                                // entirely for every one of them - 1,560
-                                                // rows over the ClinVar 2-star in-frame
-                                                // delins, where VEP names
-                                                // `p.Lys666delinsAsnSer`.
-                                                //
-                                                // `start_lost` routes here whatever
-                                                // its residue counts. Losing the
-                                                // initiator makes the downstream
-                                                // protein unknowable, so Ensembl
-                                                // writes `p.Met1?` and not the
-                                                // substitution that `hgvsp()` would
-                                                // name - `p.Met1Asn` claims a protein
-                                                // with an Asn at residue 1, and there
-                                                // may be no protein at all.
-                                                //
-                                                // The peptide lets `hgvsp_inframe_indel`
-                                                // apply the HGVS 3'-rule and collapse a
-                                                // repeat to `dup`, matching Ensembl VEP; it
-                                                // degrades to the unshifted description
-                                                // without one.
-                                                // `tr.strand` says which end
-                                                // of `aa.0` the `ps` above
-                                                // names: on the reverse strand a
-                                                // shrinking change arrives
-                                                // anchored at the end of its
-                                                // span (#89, #96).
-                                                ann.hgvsp = fastvep_hgvs::hgvsp_inframe_indel(
-                                                    &versioned_pid,
-                                                    ps,
-                                                    pe,
-                                                    &aa.0,
-                                                    &aa.1,
-                                                    tr.peptide.as_deref().map(str::as_bytes),
-                                                    tr.strand,
-                                                );
-                                            } else {
-                                                let ref_aa_byte =
-                                                    aa.0.as_bytes()
-                                                        .first()
-                                                        .copied()
-                                                        .unwrap_or(b'X');
-                                                let alt_aa_byte =
-                                                    aa.1.as_bytes()
-                                                        .first()
-                                                        .copied()
-                                                        .unwrap_or(b'X');
-                                                ann.hgvsp = fastvep_hgvs::hgvsp(
-                                                    &versioned_pid,
-                                                    ps,
-                                                    ref_aa_byte,
-                                                    alt_aa_byte,
-                                                    false,
-                                                );
-                                            }
-                                        }
-                                    }
+                                    ann.hgvsp = hgvsp_for_allele(&HgvspRequest {
+                                        predictor: &self.predictor,
+                                        transcript: tr,
+                                        provider,
+                                        chrom,
+                                        start: vf.position.start,
+                                        end: vf.position.end,
+                                        ref_allele: &vf.ref_allele,
+                                        alt_allele: &ac.allele,
+                                        location: &ac.location,
+                                        consequences: &ac.consequences,
+                                        amino_acids: ac
+                                            .amino_acids
+                                            .as_ref()
+                                            .map(|(r, a)| (r.as_str(), a.as_str())),
+                                    });
                                 }
                             }
 
@@ -1149,49 +1022,6 @@ pub fn intronic_or_exonic_cdna(
     transcript
         .genomic_to_intronic_cdna(genomic)
         .or_else(|| transcript.genomic_to_cdna(genomic).map(|c| (c, 0)))
-}
-
-/// The CDS and everything downstream of it, indexed by CDS position.
-///
-/// Byte `n - 1` is CDS position `n`, which is what every coordinate in an
-/// `AlleleConsequenceResult` means, and the slice runs to the end of the
-/// transcript rather than to the annotated terminator - a frameshift's new stop
-/// is usually in what was the 3' UTR, and stopping at the old one would leave it
-/// unfindable.
-///
-/// A CDS annotated as beginning part-way through a codon numbers its first
-/// codon's missing bases anyway, so those are padded with `N` here exactly as
-/// `Transcript::translateable_seq` pads them. Returns `None` when the
-/// transcript's coding start does not fall inside its own spliced sequence,
-/// which a truncated GFF3 can produce.
-pub fn cds_and_downstream(
-    transcript: &fastvep_genome::Transcript,
-    spliced: &str,
-    coding_start: u64,
-) -> Option<Vec<u8>> {
-    let start = usize::try_from(coding_start.checked_sub(1)?).ok()?;
-    let bases = spliced.as_bytes();
-    if start > bases.len() {
-        return None;
-    }
-    let phase = transcript.codon_table_start_phase as usize;
-    let mut cds = vec![b'N'; phase];
-    cds.extend_from_slice(&bases[start..]);
-    Some(cds)
-}
-
-/// The genetic code a frameshift's downstream peptide is read with.
-///
-/// Mitochondrial transcripts use NCBI table 2, where AGA and AGG terminate and
-/// TGA is Trp; reading one with the nuclear table moves the new terminator.
-pub fn frameshift_codon_table(
-    transcript: &fastvep_genome::Transcript,
-) -> fastvep_genome::CodonTable {
-    if fastvep_genome::is_mitochondrial(&transcript.chromosome) {
-        fastvep_genome::mitochondrial_codon_table()
-    } else {
-        fastvep_genome::CodonTable::standard()
-    }
 }
 
 /// Supplementary-annotation lookups that failed, counted per source.
@@ -2747,6 +2577,13 @@ mod tests {
 
         let mut ctx = empty_context();
         ctx.transcript_provider = IndexedTranscriptProvider::new(vec![transcript]);
+        // The 3'-rule needs the reference: Ensembl moves the insertion over the genome before it
+        // describes the protein, and it is that move, three bases on to the stop codon, that
+        // makes this a duplication of the last residue and not an insertion before it.
+        let genome = format!(">1\n{}ATGTGGCGGTAA\n", "N".repeat(50));
+        ctx.seq_provider = Some(Box::new(FastaSequenceProvider::new(
+            fastvep_cache::fasta::FastaReader::from_reader(genome.as_bytes()).unwrap(),
+        )));
 
         // Insert CGG after the Trp codon (genomic 54-56), anchored at 56:
         // Met Trp Arg Ter -> Met Trp Arg Arg Ter, an in-frame duplication

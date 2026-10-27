@@ -1,6 +1,7 @@
 use crate::codon::{reverse_complement, CodonTable};
 use fastvep_core::Strand;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::sync::Arc;
 
 /// A gene model.
@@ -188,7 +189,15 @@ impl Transcript {
             .rsplit_once('.')
             .is_some_and(|(_, v)| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
         Some(match self.protein_version {
-            Some(v) if !has_version => format!("{id}.{v}"),
+            // sized for what it holds: `format!` grows from nothing, and this runs once per
+            // (variant x transcript x allele) with `--hgvs`
+            Some(v) if !has_version => {
+                let mut out = String::with_capacity(id.len() + 11);
+                out.push_str(id);
+                out.push('.');
+                let _ = write!(out, "{v}");
+                out
+            }
             _ => id.clone(),
         })
     }

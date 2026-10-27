@@ -70,6 +70,10 @@ agree on all of it, 10 consequence rows and 9 `HGVSc` rows are the gaps listed i
 Those 43 are 99.17 % agreement counted over the 5,192 rows where both tools name a protein change,
 which is the figure the manuscript reports, and 99.53 % counted over all 9,141 matched rows.
 
+That is release 115.1.
+Against 116.3, which is what most people run, `HGVSp` has its own measurement in [Part 3](#hgvsp-at-a-start-or-a-stop-codon-in-a-repeat-and-at-the-end-of-a-protein).
+None of the 186,055 rows of HG002 differs, and 1,818 cells of the 3,136,295 rows of the ClinVar sample do, of which 1,492 are the `--gff` reader's defect described in divergences 5 to 8 and the other 326 are listed there one by one.
+
 ---
 
 ## Part 1 - deliberate divergences
@@ -156,7 +160,8 @@ Nine of the ten rows are that variant across MLH1's transcripts.
 
 ### 3. A synonymous multi-residue window names the whole span
 
-**60 `HGVSp` rows.**
+**60 `HGVSp` rows against 115.1.
+Against 116.3: 162 of the ClinVar sample, 5 of the generated world and 2 of the edge set.**
 
 A change spanning two codons that leaves both residues unchanged is `p.Leu2672_Ile2673=`
 (FLNC `7:128858463 CATT>TATC`, ENST00000950263).
@@ -190,7 +195,12 @@ Ensembl's form is malformed.
 
 ### 5. A frameshift's terminator distance counts to the stop the frameshift creates
 
-**411 `HGVSp` rows** - the largest `HGVSp` divergence of all.
+**Against release 116.3 this is not a difference with VEP, and the mechanism this section used to give was wrong.**
+It is a defect of VEP's `--gff` reader on the reverse strand, and a cache does not have it (see [Part 3](#hgvsp-at-a-start-or-a-stop-codon-in-a-repeat-and-at-the-end-of-a-protein)).
+On the ClinVar sample 1,492 `HGVSp` cells differ from stock VEP 116.3 in a count or a residue of a frameshift or an extension, every one of them on a reverse-strand transcript, and none differs once the reader is corrected.
+What follows is what release 115.1 wrote and what the table was measured against.
+
+**411 `HGVSp` rows** against 115.1, the largest `HGVSp` divergence of all.
 
 `p.Leu151ProfsTer39` says the new reading frame runs 39 residues from the first changed one before
 it hits a stop.
@@ -221,12 +231,35 @@ In every one the new stop lies past the reference protein's own terminator, whic
 difficulty: the frameshift runs off the end of the annotated CDS and the stop that ends it is in
 what was the 3' UTR.
 fastVEP translates a CDS that continues downstream for exactly that reason.
-Ensembl's `_get_alternate_cds` builds its edited CDS from 3'-shifted coordinates while taking
-consequences from unshifted ones, and the two do not line up.
+
+The reason Ensembl's count is wrong is that it reads that UTR from the wrong place.
+This section used to say that `_get_alternate_cds` builds its edited CDS from 3'-shifted coordinates
+while taking consequences from unshifted ones, and that the two do not line up.
+That was not checked against the code, and it is not what the code does.
+`_get_alternate_cds` appends `$self->transcript_variation->_three_prime_utr`, which is
+`BaseTranscriptVariation::_generic_utr`, which transfers the transcript to its feature slice and
+asks it for its UTR, and for a transcript on the reverse strand built from a GFF3 that returns a
+sequence of the right length from the wrong place in the genome ([Part 3](#coding-consequence-terms)
+shows the printed sequence).
+Every transcript the tables of divergences 5 to 8 name is on the reverse strand but one, DNAH10 in divergence 7, and that is the one row on which VEP agreed.
+
+Four of the six rows were run again on 116.3, stock and with `_generic_utr` taking the UTR from `spliced_seq`, as the core API's own accessors do:
+
+| Gene | Transcript | Stock VEP 116.3 | VEP 116.3 with the UTR corrected | fastVEP |
+|---|---|---:|---:|---:|
+| ARSB | ENST00000264914 | 175 | **48** | 48 |
+| VWF | ENST00000321023 | 56 | **302** | 302 |
+| CFI | ENST00000882820 | 22 | **14** | 14 |
+| NTHL1 | ENST00000651522 | `Ter?` | **55** | 55 |
+
+Stock 116.3 writes the numbers 115.1 did, and corrected it writes fastVEP's, on all four transcripts (and on the 15 others of CFI and 17 others of NTHL1 that carry the variant).
+MPV17 and PCDH15 were not run again.
 
 ### 6. A frame with no stop in the transcript is reported as having none
 
-**51 `HGVSp` rows**, all of them `Ter?` on one side and a distance on the other.
+**Against 116.3 this is divergence 5 again**: the NTHL1 row above is `Ter?` in stock 116.3 and 55 with the UTR corrected, and on the ClinVar sample the `Ter?` of stock VEP against a distance is 106 cells, every one on the reverse strand, and the converse (60 cells) the same.
+
+**51 `HGVSp` rows** against 115.1, all of them `Ter?` on one side and a distance on the other.
 
 The NTHL1 row in the table above is one of them, checked the same way: the stop really is 55
 residues along, and `Ter?` is not an answer about it.
@@ -236,7 +269,9 @@ runs to the end of the transcript without another stop, and there is nothing to 
 
 ### 7. A lost terminator's extension is counted, not written off
 
-**20 `HGVSp` rows on the ClinVar sample, 1 genome-wide.**
+**Against 116.3 this is divergence 5 again**: 205 cells of the ClinVar sample differ from stock VEP in the count of an extension and 38 are `Ter?` on one side, all of them on the reverse strand, and none differs with the UTR corrected.
+
+**20 `HGVSp` rows on the ClinVar sample, 1 genome-wide** against 115.1.
 
 `p.Ter486GluextTer36` says the terminator at 486 became Glu and the protein runs 36 residues
 further before the next stop.
@@ -248,9 +283,10 @@ Both halves are in the sequence, so both are computed:
 | MUTYH | ENST00000674679 | `1:45333589 TC>AA` | **33** | `p.Ter48PheextTer33` | `p.Ter48PheextTer19` |
 | DNAH10 | ENST00000538983 | `12:123932637 A>G` | **3** | `p.Ter82TrpextTer3` | `p.Ter82TrpextTer3` |
 
-VEP's distances here fail for the same reason as divergence 5, and by the same shifted-coordinate
-mechanism: on the TP53 variant it returns 1, 2, 5, 11, 30 and 106 on six different transcripts of
-the same gene, all of which reconstruct to 9.
+VEP's distances here fail for the same reason as divergence 5, which is the UTR it reads and not
+a shift: on the TP53 variant it returns 1, 2, 5, 11, 30 and 106 on six different transcripts of
+the same gene, all of which reconstruct to 9, because each of the six has a different 3' UTR
+and VEP reads each of them from somewhere else.
 The DNAH10 row is included because it is one VEP gets right, and fastVEP now agrees with it -
 fastVEP used to write `p.Trp82ext*?` for every one of these, naming neither the residue that was
 lost nor the protein the loss adds.
@@ -268,13 +304,17 @@ VEP names a residue the edited frame does not produce at that position.
 **This entry was listed as a fastVEP defect before it was computed**; computing it reverses the
 verdict, exactly as it did for divergence 5.
 
+Both are on the reverse strand, and so is the cause: with the UTR corrected, no first residue of the ClinVar sample's frameshifts differs from VEP's but the two mitochondrial rows of divergence 9, where VEP translates the edited sequence with the standard code on chrM.
+Against 116.3 this is divergence 5 as well.
+There is one more way a first residue can differ, and it is not about the UTR: [divergence 12](#12-an-insertion-the-3-rule-carries-further-than-it-is-long-on-the-reverse-strand-is-described-as-another-insertion).
+
 ### 9. The smaller ones
 
 | What | Rows | fastVEP | Ensembl VEP 115.1 | Why ours |
 |---|---:|---|---|---|
-| A two-residue deletion in a poly-Glu C-terminus. NT5C2 `10:103089678 TTCCTCC>T`, ENSP00000502205, protein 561 aa ending `EEEEEEE` | 43 of the in-frame deletion set, on one variant | `p.Glu560_Glu561del` | `p.Glu559_Glu560del` | The 3'-most placement is the one HGVS asks for. VEP's `_shift_3prime` halts *n*-1 residues before the terminus for an *n*-residue change ([#94](https://github.com/Huang-lab/fastVEP/issues/94)) |
+| A two-residue deletion in a poly-Glu C-terminus. NT5C2 `10:103089678 TTCCTCC>T`, ENSP00000502205, protein 561 aa ending `EEEEEEE` | 43 of the in-frame deletion set, on one variant; 31 of the ClinVar sample against 116.3 | `p.Glu560_Glu561del` | `p.Glu559_Glu560del` | The 3'-most placement is the one HGVS asks for. Ensembl stops short of the end of the protein in two ways, both of which are in release 116 as they were in 115: `_shift_3prime` halts *n*-1 residues before the terminus for an *n*-residue change ([#94](https://github.com/Huang-lab/fastVEP/issues/94)), and the residues it looks at come from `_get_surrounding_peptides`, which returns nothing when `length <= position`, so a change that ends one residue short of the end cannot see the last one and is not shifted at all (NT5C2 is that case) |
 | A transcript whose CDS is annotated 5' incomplete (first CDS record carries phase 1 or 2, so no initiator is annotated). TCIRG1 ENST00000698256, NF1 ENST00000696141, NFIA ENST00000496712 | 3 | no `start_lost` | adds `start_lost` | There is no `ATG` to lose. Declining is the lower-impact answer, which is worth saying plainly |
-| `start_lost` and `start_retained_variant` on the same row, where a *substitution* replaces a non-canonical initiator with `ATG`. NBEA `13:35171273 C>T` (`aCg`→`aTg`), ENST00000629018 | 2 | `start_lost` | `start_lost,start_retained_variant` | The pair contradicts itself. `IMPACT` is HIGH either way. Ensembl reaches `start_retained_variant` for a substitution through `_snp_start_altered`, which this window does not model; for a length change both tools can report the pair, and no variant of the ClinVar 2-star+ set does |
+| `start_lost` and `start_retained_variant` on the same row, where a *substitution* replaces a non-canonical initiator with `ATG`. NBEA `13:35171273 C>T` (`aCg`→`aTg`), ENST00000629018 | 2 | `start_lost` | `start_lost,start_retained_variant` | **Gone against 116.3**: the window models `_snp_start_altered` now and both tools write the pair, and `p.Thr1?`. The pair contradicts itself, and `IMPACT` is HIGH either way |
 | The polypyrimidine tract on a transcript carrying a frameshift intron. PTEN `10:87933000 C>CT`, ENST00000693560 | 1 | `splice_polypyrimidine_tract_variant` at -3 to -17 | the term stops at -13 | An intron of 12 bp or less makes VEP treat every exon as 12 bases wider (`_overlapped_exons`, `BaseTranscriptVariation.pm` l. 861). At the same 15 positions the other 14 PTEN transcripts get the full window from VEP, and this is the only one with a 1 bp intron |
 
 ### 10. `--pick` keeps every allele of the transcript it picks
@@ -346,6 +386,44 @@ For a user this is the part of #139 that does not go away on migrating.
 On HG002, 1,717 of the 4,780 rows of records with several ALTs (36 %) differ in `HGVSc` because of it, which is 0.92 % of all 186,055 rows.
 A comparison that has to match Ensembl 116 string for string on those rows needs Ensembl's unshifted form, which fastVEP does not write; one that wants the same string whatever the record looks like needs fastVEP's.
 
+### 12. An insertion the 3'-rule carries further than it is long, on the reverse strand, is described as another insertion
+
+**Against 116.3: 49 `HGVSp` cells of the edge set, 213 of 1,884,993 rows of VEP's own Ensembl cache run and 24 of 203,125 of its RefSeq cache run.
+None on HG002 or on the ClinVar sample.**
+
+To describe the protein, Ensembl moves an insertion to its most 3' position (`_return_3prime`) and then turns the inserted string, with `shift_feature_seqs`, so that it names what is inserted *there*: one base round for each base the change moved.
+The turning is a loop of `seq_length - shift_length` steps on the reverse strand.
+That is the right number of turns when the change has moved no further than the insertion is long, and a negative number, which is none, when it has moved further: `AGA` that has moved four bases along a repeat is still `AGA`, where the insertion it stands for is `AAG`.
+The edited CDS that the peptides and the counts are read from is then made with a string that is not the variant's, and the notation names a different insertion.
+
+Printed from inside VEP 116.3 for `chr10_10108_A/AAGA` on a reverse-strand transcript: shift 4, allele `AGA`, and `_get_alternate_cds` is handed `TCT` (the reverse complement of `AGA`) at the moved position, where the string turned four times is `CTT`.
+VEP writes `p.Leu199_Ala200insSer` (`TCT` is Ser) and fastVEP `p.Leu199dup` (`CTT` is Leu, which Leu199 repeats).
+VEP's own `HGVSc` for that row says it is a duplication (`c.595_597dup`).
+The same on `21:33465378 C>CACC` of ENST00000420455 in the Ensembl cache run, shift 4 of a three-base insertion: VEP `p.Asp83delinsGlyTyr`, fastVEP `p.Gly82dup`, and VEP's `HGVSc` `c.245_247dup` with a `HGVS_OFFSET` of -4.
+
+Reproducing the loop (a throwaway change: no turning on the reverse strand when the shift is longer than the insertion) makes 49 of 49 cells of the edge set agree, which is how the cause was told from the others.
+fastVEP turns the string the number of times it moved, on either strand.
+
+### 13. A change at a stop codon that moves the frame, and an incomplete or ambiguous codon: an unresolved residue is not a terminator
+
+**Against 116.3: 61 `HGVSp` cells of the edge set, 12,356 of 1,884,993 rows of VEP's Ensembl cache run, 5,169 of 203,125 of its RefSeq cache run, and 122 rows of the ClinVar sample.**
+
+Ensembl rewrites the first `*` of each peptide to `X` before it tests them, and then rewrites every `Xaa` to `Ter`.
+The `*` becomes a residue so that the lengths can be compared; the `X` that the window can contain, from a codon that is not complete or that holds an `N`, is then a `Ter` too.
+Two things follow, and both are measured.
+
+- A change at a stop codon that moves the frame (a deletion of one base, an insertion of two) leaves a window that ends part-way through a codon, so its last residue is `X`, and the notation reads it as a stop.
+  Release 116 makes it worse: `frameshift` answers no for a change that starts on the terminator, so the notation is not even the frameshift's.
+  `21:25945913 CT>C` of ENST00001003897 is `stop_lost`, HIGH, in VEP's own `Consequence` and `p.Ter583=` in its `HGVSp`: the protein loses its stop and the notation says nothing changed.
+  VEP's `Consequence` says `stop_lost` on every one of the rows of this kind in the Ensembl cache run, and its `HGVSp` is `p.Ter583=` on 9,166 of them and `p.Ter583delinsTrpTer` or its like on 3,190.
+- A transcript whose CDS ends part-way through its last codon (`incomplete_terminal_codon_variant`), or a codon with an `N` in it, is `Xaa` and not `Ter`: `p.Ter192=` for ClinVar's `17:65558046 G>A` on ENST00000585045, where the residue is the one the CDS does not complete.
+  111 rows of the ClinVar sample are these, 54 of them an incomplete terminal codon and 57 a codon with an `N`, and 11 more are the first kind of change.
+
+fastVEP does not read an unresolved residue as a stop.
+`Ter` is a `*` and `Xaa` an `X`, throughout.
+For a change that moves the frame (its length against its span in the CDS), at the terminator or not, and whose window reaches no stop, it describes the change from the edited translation, as it does a frameshift: `p.Ter583TrpextTer29`, where the stop became a Trp and the protein runs 29 residues on, and `p.Ter583=` only when the edited translation keeps the stop in the same place.
+Where the window does reach a stop, nothing after the stop is protein, and the notation is Ensembl's own.
+
 ---
 
 ## Part 2 - gaps, where Ensembl is right
@@ -372,15 +450,11 @@ It is `stop_retained_variant,3_prime_UTR_variant` in both tools now.
 
 ### HGVSc
 
-| Gap | Rows | What it looks like |
-|---|---:|---|
-| fastVEP names one where VEP names none | 18 on the ClinVar sample, 11 genome-wide, 9 on the in-frame deletion set | fastVEP `c.-66_-60del` for HNF4A `20:44401297 GGGAGGGC>G` on ENST00000415691, a deletion that straddles the transcript's first base; VEP writes nothing |
-
-That is the whole list for `HGVSc`.
-The 23 rows left genome-wide are 11 of those and 12 of divergence 4; the 41 on the ClinVar sample
-are 18 of those and 23 where VEP writes a malformed `*` coordinate.
-There is no row on any of the three inputs where both tools write a description and the two
-disagree.
+None that was measured against release 116.3.
+The one gap this section listed against 115.1, fastVEP naming a change where VEP names none (18 rows of the ClinVar sample, 11 genome-wide and 9 of the in-frame deletion set: `c.-66_-60del` for HNF4A `20:44401297 GGGAGGGC>G` on ENST00000415691, a deletion that straddles the transcript's first base), is closed.
+Ensembl clamps a change that runs past an end of a transcript to the transcript, works out the 3'-rule for the change as it was and adds that distance to the clamped coordinates, and writes nothing for one the shift then carries off the end ([Part 3](#hgvsc-at-the-edge-of-a-transcript)).
+HNF4A is `c.-63_-60del` in both tools now.
+What differs from 116.3 now is divergence 4 (12 cells of HG002, 308 of the ClinVar sample, 390 of VEP's Ensembl cache run), divergence 11, and the 11 cells of the edge set at the ends of a transcript that Part 3 lists.
 
 #### Multi-allelic records, and what is still untrimmed on them
 
@@ -420,18 +494,17 @@ writes for them: [Part 3](#part-3---the-tab-output-against-vep-1163) has the mea
 
 ### HGVSp
 
-| Gap | Rows | What it looks like |
-|---|---:|---|
-| fastVEP names one where VEP names none | 196 on the ClinVar sample, 17 genome-wide | 177 of the 196 are a frameshift that also earns `splice_region_variant`, where VEP declines to name the protein change at all: MSH6 `2:47806357 TG>T` on ENST00000936511, fastVEP `p.Ala1277HisfsTer4` |
-| VEP names one where fastVEP does not | 27 | TRAF3IP1 `2:238332821 TAGTC>T` on ENST00000373327, VEP `p.Ser306GlnfsTer34`; 15 of the 27 are a delins spanning a splice acceptor |
-| A frameshift in the first codons, which VEP writes as unknown | 5 | VEP `p.Ala2_?1` (NF1 ENST00000696141) and `p.Leu2?` (TCIRG1 ENST00000698256), fastVEP `p.Ala2GlnfsTer7` and `p.Leu2CysfsTer25`. Three of the five are the 5' incomplete transcripts of divergence 9; the other two (DYNC2H1 ENST00000528670, SGCB ENST00000514133) have a complete initiator and a frameshift that starts two residues into it |
-| `Amino_acids` of `X` from an ambiguous reference codon | 3 | VEP `p.Ter157=`, fastVEP `p.Xaa157=`. Which is right depends on whether the position is the terminator or genuinely unknown; unresolved |
-| A delins naming an unknown residue the window reaches | 2 | IL7R `5:35860925 GC>TT` on ENST00000515665, fastVEP `p.Gln52_Xaa53delinsHisXaa` where VEP names the resolved change alone, `p.Gln52His`; ATM `11:108310201 A>AT` on ENST00000529588 is the other |
+None that was measured against release 116.3, in either direction.
+The five kinds of gap this section listed against 115.1 are gone.
+The variants that stood for four of them (MSH6, TRAF3IP1, IL7R and ATM, and HNF4A for `HGVSc`) agree with VEP 116.3 on every `HGVSc` and `HGVSp` cell of all 115 rows they have, and the ClinVar sample has no row left in which one tool names a protein change and the other does not.
 
-The shape of that list is worth stating.
-Of the 778 `HGVSp` rows on the ClinVar sample, **545 are places fastVEP diverges on purpose and
-has been checked against the sequence**, and 233 are gaps - 196 of which are fastVEP naming a
-change where Ensembl declines to.
+| Gap against 115.1 | Rows | What closed it |
+|---|---:|---|
+| fastVEP names one where VEP names none | 196 on the ClinVar sample, 17 genome-wide | 177 of them a frameshift that also earns `splice_region_variant` (MSH6 `2:47806357 TG>T`, `c.3828+1del`). Ensembl describes the change after the 3'-rule has moved it, and a change the rule carries out of the coding sequence has no protein position |
+| VEP names one where fastVEP does not | 27 | TRAF3IP1 `2:238332821 TAGTC>T`, `p.Ser306GlnfsTer34` in both. The same rule from the other side: the notation is written for the change where it is moved to, and fastVEP did not have a protein position for the one it was given |
+| A frameshift in the first codons, which VEP writes as unknown | 5 | The notation of a change that loses the initiator is the unknown one (`p.Met1?`), whatever else the change is, and fastVEP writes it. What differs now is the `Consequence` of a transcript annotated 5' incomplete (divergence 9), which has `start_lost` in VEP and not here: 9 rows of the ClinVar sample |
+| `Amino_acids` of `X` from an ambiguous reference codon | 3 | Not closed, and not a gap: `p.Xaa157=` is what the codon is, and [divergence 13](#13-a-change-at-a-stop-codon-that-moves-the-frame-and-an-incomplete-or-ambiguous-codon-an-unresolved-residue-is-not-a-terminator) says why |
+| A delins naming an unknown residue the window reaches | 2 | IL7R `5:35860925 GC>TT` is `p.Gln52His` in both, and ATM `11:108310201 A>AT` `p.Ter1907LeuextTer1121`: the residue both windows share is clipped before the notation is written |
 
 ---
 
@@ -444,11 +517,12 @@ It reads the same GRCh38 Ensembl 115 GFF3 and FASTA as above and is run with `--
 
 | Input | Records | Paired rows | Cells compared | Cells that differ |
 |---|---:|---:|---:|---:|
-| GIAB HG002 WGS, 1-in-200 systematic (the sample above) | 20,241 | 186,055 | 5,581,650 | 3,867 (0.069 %) |
-| A generated world: both strands, coding and non-coding genes, 372 of its 3,000 records with several ALTs | 3,000 | 7,213 | 216,390 | 973 (0.45 %) |
-| The same world's edges: every shape of change at every position within ten bases of every exon, CDS and transcript boundary, each its own single-ALT record (`fixtures/vep_tab_edges`) | 17,672 | 36,958 | 1,108,740 | 2,053 (0.19 %); 2,689 before the coding terms and 7,828 before the position fix |
-| The same world's lone indels written with shared bases (`fixtures/vep_tab_lone_indels`) | 1,500 | 3,176 | 95,280 | 52 (0.05 %); 59 before the coding terms and 14,526 before the minimisation |
+| GIAB HG002 WGS, 1-in-200 systematic (the sample above) | 20,241 | 186,055 | 5,581,650 | 3,834 (0.069 %); 3,867 before the `HGVSp` and the transcript-end `HGVSc` |
+| A generated world: both strands, coding and non-coding genes, 372 of its 3,000 records with several ALTs | 3,000 | 7,213 | 216,390 | 936 (0.43 %); 973 before |
+| The same world's edges: every shape of change at every position within ten bases of every exon, CDS and transcript boundary, each its own single-ALT record (`fixtures/vep_tab_edges`) | 17,672 | 36,958 | 1,108,740 | 263 (0.024 %); 2,053 before the HGVS notation, 2,689 before the coding terms and 7,828 before the position fix |
+| The same world's lone indels written with shared bases (`fixtures/vep_tab_lone_indels`) | 1,500 | 3,176 | 95,280 | 9 (0.009 %); 52 before the HGVS notation, 59 before the coding terms and 14,526 before the minimisation |
 | A 1-in-5 sample of ClinVar 2-star+, without the HGVS columns | 134,732 | 3,136,295 | 81,543,670 | 43 (0.00005 %); 275 before the coding terms |
+| The same sample with them (`--hgvs --hgvsg`) | 134,732 | 3,136,295 | 94,088,850 | 2,169 (0.0023 %), 666 once VEP's UTR is corrected (below); 3,354 before the HGVS notation |
 
 The world is built to be hard and not to be representative: it has far more indels in repeats, at transcript ends and at exon edges than any genome, and more multi-allelic sites.
 Its rates are the rates on those shapes, and HG002 is what an ordinary WGS callset looks like.
@@ -479,11 +553,11 @@ Not all 128 were checked, and none of it is new (see [What is measured](#what-is
 | `HGVSc` and `HGVS_OFFSET` of an allele in a record with several ALTs | 1,717 and 2,070 | 108 and 78 | fastVEP: [divergence 11](#11-an-allele-of-a-record-with-several-alts-is-described-as-it-would-be-alone) |
 | `HGVSg` of an allele in a record with several ALTs | 35 | 709 | fastVEP: divergence 11 |
 | `HGVSc` of an intronic base after the terminator | 12 | 0 | fastVEP: divergence 4 |
-| `HGVSc` of a deletion that runs off the end of the transcript | 9 | 16 | VEP: [a gap](#hgvsc-at-the-edge-of-a-transcript) |
-| `HGVSc` that one tool writes and the other does not | 4 | 8 | the Part 2 `HGVSc` gap, in fastVEP's direction |
+| `HGVSc` of a deletion that runs off the end of the transcript | 9, now none | 16, now none | was a gap, [closed](#hgvsc-at-the-edge-of-a-transcript) |
+| `HGVSc` that one tool writes and the other does not | 4, now none | 8, now none | was the Part 2 `HGVSc` gap, in fastVEP's direction; [closed](#hgvsc-at-the-edge-of-a-transcript) |
 | `HGVSc` of an inversion padded with bases it shares | 0 | 15 | fastVEP: [`inv` is the form HGVS asks for](#an-inversion-inside-padding) |
 | `Consequence` and `IMPACT` of a change at a start or stop codon of a reverse-strand transcript | 0 and 0 | 0 and 0 (9 and 3 on the edge set) | VEP: its `--gff` reader builds the UTR from the wrong place, [see below](#coding-consequence-terms) |
-| `HGVSp` | 17 | 32 | divergences 3, 5 and 7 and the Part 2 `HGVSp` rows |
+| `HGVSp` | 17, now none | 32, now 23 | divergences 3, 12 and 13, and VEP's `--gff` reader: [below](#hgvsp-at-a-start-or-a-stop-codon-in-a-repeat-and-at-the-end-of-a-protein) |
 
 Every line is the cells of one class, and a row can be in more than one.
 
@@ -514,13 +588,100 @@ The JSON writer follows VEP's, which splits the cell and leaves out a `?`: `cdna
 
 ### `HGVSc` at the edge of a transcript
 
-**HG002: 9 rows.
-The world: 16.
-The edge set: 973 `HGVSc` cells in all.**
+**HG002: 9 rows, and 4 more that one tool wrote and the other did not.
+The world: 16 and 8.
+The edge set: 973 `HGVSc` cells and 230 `HGVS_OFFSET`.
+After: none, none, and 11 and 3.**
 
-The `HGVSc` of a change that has an end outside the transcript differs in the same rows as the positions did: Ensembl names the part inside the transcript, `n.1_7del`, and fastVEP names the base at the edge, `n.7del`, or in 10 rows of the world nothing at all.
-One base for a change that removed seven is the less accurate of the two.
-Not closed here.
+The `HGVSc` of a change that has an end outside the transcript differed in the same rows as the positions did: Ensembl names the part inside the transcript, `n.1_7del`, and fastVEP named the base at the edge, `n.7del`, or in 10 rows of the world nothing at all.
+Four rules of `hgvs_transcript`, each read from release 116 and checked on VEP 116.3 with its code instrumented, make up what Ensembl does, and fastVEP now does the same:
+
+- HGVS is written only for a change that is `within_feature`, a plain `overlap` with the transcript.
+  An insertion is `start = end + 1`, so it overlaps only when both of the bases it sits between are inside, and one in front of the first base or behind the last is an `upstream_gene_variant` or a `downstream_gene_variant` and has no `HGVSc`.
+  The 3'-rule used to carry such an insertion into the transcript, and `n.3_4dup` was written for a change that VEP says nothing about.
+- A change that overlaps and runs past an end has its coordinates clamped to the transcript (`_var2transcript_slice_coords`: `1` and the transcript's length).
+  The reference allele is what the clamped span holds and the alternate keeps its whole length, so a replacement of the transcript's first base and the base before it by `GCG` is `n.1delinsGCG`.
+- The 3'-rule is worked out for the change *as it was*, over the chromosome, and its length is added to the clamped coordinates.
+  A deletion of twelve bases of which four are in the transcript, in a repeat that carries it three bases on, is `n.4_7del` with a `HGVS_OFFSET` of 3, where shifting the four that are inside gives `n.1_4del`.
+  It is not a description an HGVS reader would choose, and it is the one a replacement of VEP's output has to reproduce.
+  The walk reads 1,000 bases of the chromosome either side of the change whatever the transcript is.
+- A description the shift carries past the last base of the transcript is not written (`return undef if $slice->length < $slice_end + $offset`): a deletion in the last bases of a transcript, in a repeat that runs on beyond it, has no `HGVSc` in VEP.
+
+HNF4A `20:44401297 GGGAGGGC>G` is `c.-63_-60del` in both tools now.
+
+What is left is 11 `HGVSc` cells and 3 `HGVS_OFFSET` of the edge set, of one shape: a replacement whose ends straddle the first or the last base of a transcript, which reaches Ensembl's arithmetic where it is least defined.
+VEP writes the range of an insertion past the 3' end of a reverse-strand transcript the wrong way round, `c.*349_*348insGT` where fastVEP writes `c.*348_*349insGT`, and writes an insertion (`c.*349_*348insG`, `c.-400_-399insG`) where fastVEP finds a duplication (`c.*348dup`, `c.-397dup`), with no `HGVS_OFFSET` where fastVEP has one.
+A range whose end is before its start is not HGVS, and the duplication is the form HGVS asks for, so these are not reproduced; none of them is on HG002, the ClinVar sample or the Ensembl and RefSeq cache runs.
+
+### `HGVSp` at a start or a stop codon, in a repeat and at the end of a protein
+
+**`HGVSp` cells that differ from stock VEP 116.3, before and after:**
+
+| Input | Before | After | After, with VEP's UTR corrected |
+|---|---:|---:|---:|
+| HG002, 1-in-200 (186,055 rows) | 17 | 0 | 0 |
+| The generated world (7,213 rows) | 32 | 23 | 10 |
+| The edge set (36,958 rows) | 838 | 237 | 113 |
+| The lone-indel set (3,176 rows) | 30 | 9 | 1 |
+| The ClinVar sample (3,136,295 rows) | 2,837 | 1,818 | 326 |
+| VEP's own Ensembl cache, chr21 and chr22: 45,916 changes at the start, the stop, every exon boundary and the ends of every transcript, the 1,884,993 rows of transcripts the cache calls complete | 99,670 | 12,604 | not needed: a cache holds its UTRs |
+| VEP's own RefSeq cache, the same: 21,052 changes, the 203,125 rows of transcripts the cache has no sequence edits for | 22,680 | 5,307 | not needed |
+
+The cache rows are VEP 116.3 run with `--cache --offline --assembly GRCh38` (and `--refseq --exclude_predicted` for RefSeq) over the cache of chr21 and chr22, and compared with `python3 validation/compare_tab.py vep.tab fv.tab --vep-where FLAGS=- --vep-where-not BAM_EDIT=OK`.
+A GFF3 has no `cds_start_NF` or `cds_end_NF`, so the transcripts a cache calls incomplete at an end are left out, and so are the RefSeq transcripts it edits (`_rna_edit`, `BAM_EDIT=OK`), whose sequence no GFF3 holds.
+`validation/classify_hgvsp.py` groups the cells that differ by the shape of what each tool wrote, which is how the causes below were told apart.
+The corrected column is VEP with `BaseTranscriptVariation::_generic_utr` reading the UTR from `spliced_seq`, as the core API's own accessors do.
+
+Each cell that is left has a cause, below.
+
+**What it was.**
+fastVEP wrote the notation from rules read off Ensembl's output: a chain of eight cases (substitution, in-frame indel with an anchor that had to be corroborated against the peptide, frameshift, stop lost to a substitution, and so on), in each of the two per-variant loops.
+They agreed with VEP on nearly every row and failed at the places a rule has no case for.
+Ensembl's notation is not derived from the protein the change makes.
+It is `hgvs_protein`, a sequence of string operations on the peptides of the codon window the change edits, which is the `Amino_acids` pair, of the change *after* the 3'-rule has moved it, and what it writes at a start codon, a stop codon or the end of a protein is the sum of those operations and nothing else:
+
+| Change | Ensembl VEP 116.3 | fastVEP before |
+|---|---|---|
+| ENST00000427445 `21:10538724 A>AA`, a frameshift that loses the initiator | `p.Met1?` | `p.Met1AsnfsTer3` |
+| ENST00001003897 `21:25945916 A>AT`, an insertion between the last codon and the stop | `p.Ter583MetextTer43` | `p.Ter583MetfsTer44` |
+| ENST00001003897 `21:25945913 CTCA>C`, the stop codon deleted in frame | `p.Ter583delextTer23` | `p.Ter583del` |
+| ENST00000346798 `21:25975228 G>GGGT`, an insertion the 3'-rule carries over an exon boundary | `p.Gln433_His434insThr` | none |
+| ENST00000286835 `21:31694203 C>CC`, a frameshift the 3'-rule carries out of the coding sequence | none | `p.Ser442ValfsTer8` |
+
+**What it is.**
+`fastvep_hgvs::protein` is a transcription of `hgvs_protein` and the routines it calls (release 116), one Rust function to each Perl sub and in the same order, so that a difference between the two can be found by reading them side by side.
+`fastvep_annotate::hgvsp_for_allele`, which both per-variant loops call, works out what it is given: the 3'-shift over the genome (the one `HGVSc` uses, 1,000 bases either side), the change's protein position *where it was moved to*, the window of codons there, and the translation of the edited CDS with its 3' UTR when a frameshift or a lost terminator has to be counted.
+Two details of Ensembl's order matter.
+`$pre->{coding}` is asked of the change where it was, and `translation_start` of the change where it was moved to, so a change that the rule carries out of the CDS has no notation and one it carries onto the initiator has one.
+And `frameshift` is the one predicate evaluated afresh at that point, on the CDS span of the moved change, where `start_lost` and `stop_lost` are cached from the first evaluation: a single base inserted in front of the initiator is not a `frameshift_variant`, and once the rule has carried it onto the first codon it is `p.Met1AsnfsTer?`.
+
+It is checked three ways, none of them a reading of the source alone.
+VEP 116.3's own output (above); an in-tree property test that applies each of 6,000 random in-frame descriptions back to the reference protein and requires the protein the variant makes; and the unit tests of each branch.
+
+**What is left, and who is right.**
+
+| Cells | What | Who is right |
+|---|---|---|
+| 1,492 of the ClinVar sample's 1,818, 124 of the edge set's 237 | A count, a residue or `Ter?` of a frameshift or an extension, on a reverse-strand transcript | VEP's `--gff` reader: [divergence 5](#5-a-frameshifts-terminator-distance-counts-to-the-stop-the-frameshift-creates). Not in VEP's caches, which agree with fastVEP on these |
+| 162 of the ClinVar sample, 2 of the edge set | A synonymous change across two codons | fastVEP: [divergence 3](#3-a-synonymous-multi-residue-window-names-the-whole-span) |
+| 111 of the ClinVar sample, 12,356 of VEP's Ensembl cache run, 5,169 of its RefSeq cache run, 61 of the edge set | An unresolved residue read as a terminator, and a change at a stop codon that moves the frame | fastVEP: [divergence 13](#13-a-change-at-a-stop-codon-that-moves-the-frame-and-an-incomplete-or-ambiguous-codon-an-unresolved-residue-is-not-a-terminator) |
+| 49 of the edge set, 213 of the Ensembl cache run, 24 of the RefSeq | An insertion on the reverse strand that the 3'-rule carries further than it is long | fastVEP: [divergence 12](#12-an-insertion-the-3-rule-carries-further-than-it-is-long-on-the-reverse-strand-is-described-as-another-insertion) |
+| 31 of the ClinVar sample, 3 of the Ensembl cache run, 1 of the edge set | A deletion or an insertion in a repeat at the end of a protein, that Ensembl does not shift as far as the end | fastVEP: [divergence 9](#9-the-smaller-ones), NT5C2 |
+| 9 of the ClinVar sample | `start_lost` in VEP and not here, on a transcript annotated 5' incomplete | open: [divergence 9](#9-the-smaller-ones) |
+| 2 of the ClinVar sample | A frameshift on chrM, where VEP translates the edited sequence with the standard code (`_get_alternate_cds` calls `translate()` without a table) and fastVEP with the mitochondrial one | fastVEP |
+| 32 of the Ensembl cache run, 114 of the RefSeq cache run | A transcript whose initiator is not `ATG`: `p.Leu1?` here where VEP writes `p.Met1?` | VEP, and not closed: the caches read the first residue as `M`, as `Amino_acids` shows (`M/X` for `L/X`, 32 cells and 48), through the transcript's own annotation. [Not in this change](#not-in-this-change) |
+
+**What Ensembl writes that is not HGVS, and fastVEP writes too.**
+The notation of a change that loses the initiator is `p.Met1?`, and Ensembl's own cache run has it on 71,797 of the 96,350 `start_lost` rows of the complete transcripts.
+On 11,308 it is a window of more than one residue, `p.MetAsn1_?2`, two residue names sharing one position, which is the form `p.LeuIle2672=` was.
+On 2,028 (2.1 %) the range is inverted and names a residue that is not the first: for an insertion in front of the initiator the window has no residue before it, and Ensembl's `substr` reads one from the end of the protein, so `p.Asp1_?0` names the last residue of the protein as if it were residue 1.
+fastVEP writes all three as Ensembl does, because they are what Ensembl writes and a migration compares them; each is `p.Met1?` as HGVS has it, and which of them fastVEP should write is a decision for the maintainers and not a side effect of this one.
+
+### Not in this change
+
+A transcript whose initiator is not `ATG` (`CTG`, `GTG`; MRTFA's three RefSeq transcripts and ENST00000644773 on chr22 are the examples) reads its first residue as what the codon table says, and VEP's caches read it as `M`.
+The RefSeq GFF3 says so with `transl_except=(pos:...,aa:Met)` and Ensembl's database with the translation's own sequence; neither is read yet.
+The frameshift-intron rule (a transcript with an intron of at most 13 bases stretches every exon by 12 bases for `exon` overlap) is diagnosed in Part 3's coding terms and not implemented.
 
 ### An inversion inside padding
 
@@ -591,6 +752,7 @@ With `_generic_utr` taking the UTR from `spliced_seq`, as the core API's accesso
 On VEP's RefSeq cache, which holds its sequences and does not go through that code, the check is direct: of 203,125 rows on unedited transcripts `--gff` mode disagrees with the cache on 897 (in a term, an impact, a position or a residue), every one of them on the reverse strand, and fastVEP agrees with the cache on 849 of the 897.
 The 48 others are the three RefSeq transcripts of MRTFA, whose start codon is `GUG`: the cache reads the first residue as `M` (the CDS records say `transl_except=(pos:complement(40552344..40552346),aa:Met)`) and a codon table says `V`, which is what `--gff` mode and fastVEP write.
 The committed edge fixture lists the one row of it that its sample holds, and asserts that it still differs.
+The same accessor supplies the 3' UTR that a frameshift's or an extension's count is made against, and that is the whole of what divergences 5 to 8 turned out to be.
 
 On the 134,732-record ClinVar sample 161 of the 164 rows that changed in this commit agree with stock VEP 116.3, and the three that do not are those reverse-strand rows; the build before it agreed with 2 of the 164.
 The 164 rows are 71 variants, 0.005 % of the 3,137,188 rows, and the biggest groups of them are `inframe_insertion,stop_retained_variant` to `frameshift_variant` (24), to `inframe_insertion` (18) and to `stop_retained_variant` (10), `stop_gained,inframe_insertion` to `inframe_insertion,stop_retained_variant` (15), and `non_coding_transcript_exon_variant` to `non_coding_transcript_variant` (28).
@@ -622,7 +784,7 @@ Two things are left as they were and are not claimed to be VEP's: an ambiguous a
 
 **The world with each ALT its own record: 197 rows of 7,213 had another `Allele`, `Location`, `REF_ALLELE` and `VARIANT_CLASS`, in 93 records, and 8 `Consequence` cells differed on them (4 of them `IMPACT`).
 The lone-indel set: 14,526 of 95,280 cells differed.
-After: none of those, and 59 cells, 52 once the coding terms were ported: the `HGVSc`, `HGVSp` and `HGVS_OFFSET` of a change that reaches a start codon, a stop codon or the end of a transcript.**
+After: none of those, and 59 cells, 52 once the coding terms were ported and 9 once the HGVS notation was: the `HGVSp` of eight changes at the stop codon of a reverse-strand transcript, which is VEP's `--gff` reader (divergence 5), and of one that moves the frame there (divergence 13).**
 
 Ensembl minimises a record with one ALT that is an indel from both ends (`Parser::post_process_vfs`, `minimise_alleles`, `trim_sequences`): the bases the alleles share at the front, then at the back, until one of them is empty.
 fastVEP stripped only the first base they share.
@@ -632,7 +794,7 @@ The two are the same for a record that is already minimal and padded by one base
 
 A record with several ALTs is not minimised in release 116, and is not here: in 115 a minimised indel switched on `split_variants` for the whole input (`InputBuffer::next`), which split such a record into one variant per ALT, and in 116 those lines are commented out, so it is annotated whole.
 `fixtures/vep_tab_lone_indels` is 1,500 records written the way a caller that does not trim writes them, a prefix the alleles share (the anchor and up to two more bases), the bases that change and a suffix they share (none to three), as a deletion, an insertion or a replacement, and what VEP 116.3 wrote for them; `vep_tab_lone_indels_golden.rs` holds fastVEP to it.
-All the columns it compares, `Consequence` and `IMPACT` among them, agree on all 3,176 rows; `HGVSc`, `HGVSp` and `HGVS_OFFSET` are not compared yet, and are the 52 cells that differ.
+All the columns it compares, `Consequence`, `IMPACT`, `HGVSc` and `HGVS_OFFSET` among them, agree on all 3,176 rows, and `HGVSp` on all but the 9 cells `vep_tab_lone_indels_golden.rs` lists, each asserted to still differ.
 
 ### A RefSeq GFF3
 
@@ -716,7 +878,7 @@ calls plain missense.
 
 ## Fixed since this document was last measured
 
-Fourteen defects are gone, and the numbers above are what is left.
+Sixteen defects are gone, and the numbers above are what is left.
 Each was measured the same way before and after, on the same samples: the row counts below are
 what the fix removed.
 
@@ -735,3 +897,5 @@ what the fix removed.
 | An ALT of `*`, `.`, `<NON_REF>` or `<*>`, and an ambiguity code (`N`) in an ALT or a REF | on the allele set 100 rows only fastVEP wrote and 434 cells of 360 rows; HG002 6 rows | `*` was written as a row with no consequence, `.` as a `*`, and `<NON_REF>` or `<*>` beside a real ALT as a `frameshift_variant`; an `N` was a `MODERATE` `missense_variant` with `p.Lys31Xaa` and an `HGVSc` where Ensembl, which cannot translate it, writes `coding_sequence_variant` and nothing else. Part 3 has the table |
 | The coding consequence terms were release 115's | 275 cells of the ClinVar sample against 116.3 (191 `Consequence`, 82 `IMPACT`); 447 and 176 of the edge set; 14,109 of 203,125 rows of VEP's RefSeq cache on start and stop codons | Release 116 rewrote `ref_eq_alt_sequence` and changed six more predicates; the port also had a separate path for a change reaching past the CDS and no initiator for a CDS that begins mid-codon. One transcription of `VariationEffect.pm`'s graph and of its edit tests replaces them, with the `include` gates of `Config.pm`, a window measured in the CDS, the UTR interval of `_before_coding` and the 3' UTR on the alternate codon. Part 3 |
 | A lone indel was trimmed of its first shared base only | the world with each ALT its own record 197 rows of 7,213; the lone-indel set 2,950 `Allele` and 2,811 `Location` cells of 3,176 rows | `CAGT>CT` was a deletion of `AGT` at the next base, where Ensembl, which trims every shared base from both ends, writes the deletion of `AG`; the `Allele`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, positions and some consequence terms followed. Part 3 |
+| `HGVSp` was a chain of rules read off Ensembl's output, and failed where a rule had no case: at a start codon, at a stop codon, and where the 3'-rule carries a change over an exon boundary | 99,670 cells of VEP's Ensembl cache run, 22,680 of its RefSeq cache run, 838 of the edge set, 2,837 of the ClinVar sample, 17 of HG002; now 12,604, 5,307, 237, 1,818 and 0, and every one of those has a cause (Part 3) | `fastvep_hgvs::protein` is a transcription of `hgvs_protein` and the routines it calls, and `fastvep_annotate::hgvsp_for_allele` hands it what Ensembl hands it: the change where the 3'-rule moved it, its protein position and codon window there, and the edited translation. The notation of a change that loses the initiator is `p.Met1?`, of a lost terminator `p.Ter583delextTer23`, of an insertion that the rule carries out of the coding sequence none. It also fixed the cause behind divergences 5 to 8, which was not the one this document gave |
+| `HGVSc` at an end of a transcript: a change that overlaps it and runs past an end was written for the part that is inside, and an insertion beside it, which is not `within_feature`, was written all the same | 973 cells of the edge set, 230 `HGVS_OFFSET`, 13 of HG002 (9 and 4), 24 of the world | Ensembl clamps the change to the transcript, works out the 3'-rule for the change as it was and adds its length to the clamped coordinates, writes nothing for a change that is not a plain `overlap` of the transcript, and nothing for one the shift carries off the end. Part 3 |

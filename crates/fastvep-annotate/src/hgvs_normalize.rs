@@ -412,6 +412,11 @@ pub struct HgvsAllele {
     /// clip. Both ends of a cDNA pair are exonic, so the bases clipped off
     /// either end are exonic too and the span moves with them.
     pub cdna: Option<(u64, u64)>,
+    /// How far the 3'-rule moves this change, when it was worked out from a longer one: a change
+    /// that runs past the end of a transcript is clamped, and Ensembl shifts the whole change
+    /// and adds that distance to the clamped coordinates (see
+    /// [`hgvs_allele_on_transcript`]). `None` is "work it out from this allele".
+    pub shift: Option<u64>,
 }
 
 /// How many bases a pair repeats at its front and at its back, clipping the
@@ -695,7 +700,113 @@ pub fn hgvs_allele(
         // the transcript: a change at cDNA position 1 whose back clips away can
         // land at 0, which is not a position, and the renderer refuses it.
         cdna: cdna.map(|(lo, hi)| (lo + cdna_front as u64, hi.saturating_sub(cdna_back as u64))),
+        shift: None,
     }
+}
+
+/// How far Ensembl looks for the 3'-rule: `_genomic_shift` reads 1,000 bases of the chromosome
+/// either side of the change, whatever the transcript is.
+pub(crate) const SHIFT_WINDOW: u64 = 1000;
+
+/// [`hgvs_allele`] as Ensembl reads it for one transcript: the change is put into the
+/// transcript's own extent first.
+///
+/// Three rules of `hgvs_transcript`, all read from release 116 and checked against VEP 116.3
+/// with its code instrumented:
+///
+/// - HGVS is computed only for a change that is `within_feature`, a plain `overlap` of the
+///   change with the transcript. An insertion is `start = end + 1`, so it overlaps only when
+///   both of the bases it sits between are inside: one in front of the first base or behind the
+///   last is an `upstream_gene_variant` or a `downstream_gene_variant` and has no HGVSc.
+///   The 3'-rule used to carry such an insertion into the transcript, and `n.3_4dup` was
+///   written for an insertion that VEP says nothing about. `None` here.
+/// - A change that does overlap but runs past an end has its coordinates clamped to the
+///   transcript (`_var2transcript_slice_coords`: `1` and the transcript's length). The
+///   reference allele is whatever the clamped span holds, and the alternate keeps its whole
+///   length: a replacement of the transcript's first base and the base before it by `GCG` is
+///   `n.1delinsGCG`. The cDNA span of the unclamped change is no longer the change's, so it is
+///   dropped and the renderer maps the clamped ends itself.
+/// - The 3'-rule is worked out for the change *as it was*, over the chromosome, and its length
+///   is then added to the clamped coordinates. A deletion of twelve bases of which four are in
+///   the transcript, in a repeat that carries it three bases on, is `n.4_7del` with a
+///   `HGVS_OFFSET` of 3, where shifting the four bases that are inside gives `n.1_4del`. That is
+///   Ensembl's arithmetic and the description it writes is not one an HGVS reader would choose,
+///   but it is the one a replacement of VEP's output has to reproduce. The shift travels as
+///   [`HgvsAllele::shift`].
+///
+/// `start` and `end` are the record's own, as the VCF parser leaves them: the overlap is the
+/// record's, not the clipped allele's.
+// The arguments are independent coordinates, alleles and the reference, with no natural grouping.
+#[allow(clippy::too_many_arguments)]
+pub fn hgvs_allele_on_transcript(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    transcript: &fastvep_genome::Transcript,
+    start: u64,
+    end: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+    cdna: Option<(u64, u64)>,
+) -> Option<HgvsAllele> {
+    use fastvep_core::Allele;
+
+    // Ensembl's `overlap`, as the pre-consequence predicate `within_feature` asks it
+    if end < transcript.start || start > transcript.end {
+        return None;
+    }
+    let whole = |cdna| {
+        hgvs_allele(
+            transcript.strand,
+            start,
+            end,
+            genomic_ref,
+            genomic_alt,
+            cdna,
+        )
+    };
+    // An insertion that passed has both its flanks inside: nothing to clamp
+    if start > end {
+        return Some(whole(cdna));
+    }
+    let (lo, hi) = (start.max(transcript.start), end.min(transcript.end));
+    if (lo, hi) == (start, end) {
+        return Some(whole(cdna));
+    }
+    // The reference bases of the clamped span, from the record's own REF when it covers the
+    // span (it always does for a plain change; a symbolic one has no bases to cut)
+    let clamped_ref = match genomic_ref {
+        Allele::Sequence(bases) if bases.len() as u64 == end - start + 1 => {
+            let from = (lo - start) as usize;
+            Allele::Sequence(bases[from..from + (hi - lo + 1) as usize].to_vec())
+        }
+        other => other.clone(),
+    };
+    let mut clamped = hgvs_allele(transcript.strand, lo, hi, &clamped_ref, genomic_alt, None);
+    // Only a pure deletion has a 3'-rule to carry over a clamp
+    let full = whole(None);
+    if let (Some(sp), true) = (
+        seq_provider,
+        is_shiftable_indel(&full.hgvs_ref, &full.hgvs_alt),
+    ) {
+        let (s2, e2) = three_prime_shift_genomic(
+            sp,
+            chrom,
+            full.start,
+            full.end,
+            &full.genomic_ref,
+            &full.genomic_alt,
+            transcript.strand,
+            full.start.saturating_sub(SHIFT_WINDOW),
+            full.end.saturating_add(SHIFT_WINDOW),
+        );
+        let travelled = match transcript.strand {
+            fastvep_core::Strand::Forward => s2.saturating_sub(full.start),
+            fastvep_core::Strand::Reverse => full.start.saturating_sub(s2),
+        };
+        let _ = e2;
+        clamped.shift = Some(travelled);
+    }
+    Some(clamped)
 }
 
 /// Do two genomic positions of one transcript sit in the same exon or intron, or
@@ -850,8 +961,70 @@ pub fn hgvsc_shifted(
         hgvs_alt,
         coding_start,
         coding_end,
+        None,
     )
     .map(|(hgvsc, _)| hgvsc)
+}
+
+/// Why [`hgvsc_shifted_outcome`] wrote nothing.
+enum Unwritten {
+    NoDescription,
+    CannotRender,
+}
+
+/// What the 3'-shifting HGVSc renderer made of one allele.
+pub enum ShiftedHgvsc {
+    /// The description, and how many bases the change travelled 3' to be written.
+    Written(String, u64),
+    /// Ensembl writes no HGVSc for this change: it does not overlap the transcript, or the
+    /// shift has carried it past the last base of the transcript, or one end of it has no
+    /// position on the transcript. A caller must *not* fall back to another renderer: that
+    /// is how an unshifted description came to be written where VEP writes nothing.
+    NoDescription,
+    /// This renderer could not put the change into words, which says nothing about whether
+    /// VEP can; the cDNA renderer may still have an answer.
+    CannotRender,
+}
+
+/// [`hgvsc_shifted_with_shift`], keeping the reason there is no description apart.
+// The arguments of `hgvsc_shifted_with_shift`, for the same reason.
+#[allow(clippy::too_many_arguments)]
+pub fn hgvsc_shifted_outcome(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    transcript: &fastvep_genome::Transcript,
+    versioned_tid: &str,
+    var_start: u64,
+    var_end: u64,
+    anchor_start: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+    hgvs_ref: &fastvep_core::Allele,
+    hgvs_alt: &fastvep_core::Allele,
+    coding_start: Option<u64>,
+    coding_end: Option<u64>,
+    shift_override: Option<u64>,
+) -> ShiftedHgvsc {
+    match hgvsc_shifted_inner(
+        seq_provider,
+        chrom,
+        transcript,
+        versioned_tid,
+        var_start,
+        var_end,
+        anchor_start,
+        genomic_ref,
+        genomic_alt,
+        hgvs_ref,
+        hgvs_alt,
+        coding_start,
+        coding_end,
+        shift_override,
+    ) {
+        Ok((hgvsc, moved)) => ShiftedHgvsc::Written(hgvsc, moved),
+        Err(Unwritten::NoDescription) => ShiftedHgvsc::NoDescription,
+        Err(Unwritten::CannotRender) => ShiftedHgvsc::CannotRender,
+    }
 }
 
 /// [`hgvsc_shifted`], and how many bases the change travelled 3' to be written
@@ -878,7 +1051,47 @@ pub fn hgvsc_shifted_with_shift(
     hgvs_alt: &fastvep_core::Allele,
     coding_start: Option<u64>,
     coding_end: Option<u64>,
+    shift_override: Option<u64>,
 ) -> Option<(String, u64)> {
+    match hgvsc_shifted_outcome(
+        seq_provider,
+        chrom,
+        transcript,
+        versioned_tid,
+        var_start,
+        var_end,
+        anchor_start,
+        genomic_ref,
+        genomic_alt,
+        hgvs_ref,
+        hgvs_alt,
+        coding_start,
+        coding_end,
+        shift_override,
+    ) {
+        ShiftedHgvsc::Written(hgvsc, moved) => Some((hgvsc, moved)),
+        ShiftedHgvsc::NoDescription | ShiftedHgvsc::CannotRender => None,
+    }
+}
+
+// the renderer itself
+#[allow(clippy::too_many_arguments)]
+fn hgvsc_shifted_inner(
+    seq_provider: Option<&dyn SequenceProvider>,
+    chrom: &str,
+    transcript: &fastvep_genome::Transcript,
+    versioned_tid: &str,
+    var_start: u64,
+    var_end: u64,
+    anchor_start: u64,
+    genomic_ref: &fastvep_core::Allele,
+    genomic_alt: &fastvep_core::Allele,
+    hgvs_ref: &fastvep_core::Allele,
+    hgvs_alt: &fastvep_core::Allele,
+    coding_start: Option<u64>,
+    coding_end: Option<u64>,
+    shift_override: Option<u64>,
+) -> Result<(String, u64), Unwritten> {
     use fastvep_core::{Allele, Strand};
 
     let is_insertion = matches!(
@@ -899,14 +1112,25 @@ pub fn hgvsc_shifted_with_shift(
     // through here.
     let (var_lo, var_hi) = (var_start.min(var_end), var_start.max(var_end));
     if var_hi < transcript.start || var_lo > transcript.end {
-        return None;
+        return Err(Unwritten::NoDescription);
     }
     // The walk is bounded by the *transcript*, not by the exon or intron the
     // variant starts in. HGVS shifts over the reference sequence a description
     // is numbered against, and for `c.` that sequence is genomic - so a change
     // whose repeat runs on past the splice site travels with it.
-    let (shifted_start, shifted_end) = match seq_provider.filter(|_| is_indel) {
-        Some(sp) => three_prime_shift_genomic(
+    //
+    // Ensembl does not bound it by the transcript at all: `_genomic_shift` reads 1,000 bases of
+    // the chromosome either side of the change and shifts as far as the repeat goes, and a
+    // description that lands past the end of the transcript is then not written
+    // (`_get_cDNA_position` has no exon for it). A deletion in the last bases of a transcript,
+    // in a repeat that runs on beyond it, has no HGVSc in VEP and used to have one here.
+    let (shifted_start, shifted_end) = match (shift_override, seq_provider.filter(|_| is_indel)) {
+        // the distance Ensembl worked out for the change before it was clamped
+        (Some(n), _) => match transcript.strand {
+            Strand::Forward => (var_start + n, var_end + n),
+            Strand::Reverse => (var_start.saturating_sub(n), var_end.saturating_sub(n)),
+        },
+        (None, Some(sp)) => three_prime_shift_genomic(
             sp,
             chrom,
             var_start,
@@ -914,10 +1138,10 @@ pub fn hgvsc_shifted_with_shift(
             genomic_ref,
             genomic_alt,
             transcript.strand,
-            transcript.start,
-            transcript.end,
+            var_start.saturating_sub(SHIFT_WINDOW),
+            var_end.saturating_add(SHIFT_WINDOW),
         ),
-        None => (var_start, var_end),
+        (None, None) => (var_start, var_end),
     };
     // Distance travelled, which is also how far the inserted string rotated.
     let shift = match transcript.strand {
@@ -926,10 +1150,12 @@ pub fn hgvsc_shifted_with_shift(
     };
     // What is reported counts from where the VCF anchors the change, which on the
     // reverse strand can be a base short of where the clip left it; the rotation
-    // above must not, because `hgvs_alt` is the string as the clip left it.
-    let reported = match transcript.strand {
-        Strand::Forward => shifted_start.saturating_sub(anchor_start),
-        Strand::Reverse => anchor_start.saturating_sub(shifted_start),
+    // above must not, because `hgvs_alt` is the string as the clip left it. For a clamped
+    // change it is the distance Ensembl shifted the whole change by.
+    let reported = match (shift_override, transcript.strand) {
+        (Some(n), _) => n,
+        (None, Strand::Forward) => shifted_start.saturating_sub(anchor_start),
+        (None, Strand::Reverse) => anchor_start.saturating_sub(shifted_start),
     };
     // `hgvs_alt` is already in transcript orientation, where the shift always
     // travels 3' whichever way the transcript runs, so the string always rotates
@@ -970,11 +1196,59 @@ pub fn hgvsc_shifted_with_shift(
             (shifted_start != shifted_end).then_some(shifted_end),
         )
     };
-    let (cdna_pos, offset) = crate::intronic_or_exonic_cdna(transcript, anchor_pos)?;
-    let (end_cdna, end_offset) = second_pos
-        .and_then(|p| crate::intronic_or_exonic_cdna(transcript, p))
-        .map(|(c, o)| (Some(c), Some(o)))
-        .unwrap_or((None, None));
+    // Ensembl writes nothing for a description that the shift has carried past the last base of
+    // the transcript: `return undef if ($slice->end - $slice->start + 1) < ($slice_end +
+    // $offset_to_add)`, where `$slice_end` is the end of the change in transcript order (for an
+    // insertion the base before it). The check is on the transcript's genomic extent, not on
+    // its cDNA, so a deletion in an intron that a repeat carries out of the last exon is lost
+    // exactly as one in the exon is.
+    let last_in_transcript_order = match (is_insertion, transcript.strand) {
+        (_, Strand::Forward) => shifted_end,
+        (false, Strand::Reverse) => shifted_start,
+        (true, Strand::Reverse) => shifted_end + 1,
+    };
+    let carried_out = match transcript.strand {
+        Strand::Forward => last_in_transcript_order > transcript.end,
+        Strand::Reverse => last_in_transcript_order < transcript.start,
+    };
+    if carried_out {
+        return Err(Unwritten::NoDescription);
+    }
+    let (cdna_pos, offset) =
+        crate::intronic_or_exonic_cdna(transcript, anchor_pos).ok_or(Unwritten::NoDescription)?;
+    // A second end that the transcript has no position for is no description at all, as in
+    // Ensembl (`return undef unless defined $hgvs_notation->{start} && defined
+    // $hgvs_notation->{end}`): a deletion shifted past the last base of the transcript
+    // used to be written as the one base of it that was left.
+    //
+    // One exception: an insertion whose far flank is past the transcript can still be a
+    // duplication of the block before it, and a duplication is written over that block, which is
+    // inside (`n.994_1002dup` for nine bases inserted at the last nine and shifted nine on, where
+    // the base after the insertion would be `n.1003`). Anything that is not a duplication has
+    // no description.
+    let (end_cdna, end_offset, dup_only) = match second_pos {
+        Some(p) => match crate::intronic_or_exonic_cdna(transcript, p) {
+            Some((c, o)) => (Some(c), Some(o), false),
+            // Ensembl numbers the base just below the lowest exon of a transcript as its last
+            // position plus one: `_get_cDNA_position` looks for the exon that follows the base,
+            // finds the first, and takes "the exon before it" with Perl's index -1, which is the
+            // last. On the reverse strand that is the 3' end, so an insertion between the last
+            // base and the one after it is `n.202_202+1ins...`; on the forward strand the 3' end
+            // is above the last exon, where the same search finds nothing at all.
+            None if is_insertion
+                && transcript.strand == Strand::Reverse
+                && p + 1 == transcript.start =>
+            {
+                let last = transcript
+                    .genomic_to_cdna(transcript.start)
+                    .ok_or(Unwritten::NoDescription)?;
+                (Some(last), Some(1), false)
+            }
+            None if is_insertion => (None, None, true),
+            None => return Err(Unwritten::NoDescription),
+        },
+        None => (None, None, false),
+    };
 
     let hgvsc = match coding_start {
         Some(cs) => fastvep_hgvs::hgvsc_intronic_range(
@@ -997,7 +1271,8 @@ pub fn hgvsc_shifted_with_shift(
             hgvs_ref,
             &shifted_alt,
         ),
-    }?;
+    }
+    .ok_or(Unwritten::CannotRender)?;
 
     if let (true, Allele::Sequence(ins), Some(sp)) = (is_insertion, genomic_alt, seq_provider) {
         if hgvsc.contains("ins") && !ins.is_empty() {
@@ -1012,11 +1287,14 @@ pub fn hgvsc_shifted_with_shift(
                 coding_start,
                 coding_end,
             ) {
-                return Some((dup, reported));
+                return Ok((dup, reported));
             }
         }
     }
-    Some((hgvsc, reported))
+    if dup_only {
+        return Err(Unwritten::NoDescription);
+    }
+    Ok((hgvsc, reported))
 }
 
 // ---------------------------------------------------------------------------
@@ -2290,6 +2568,7 @@ mod tests {
                 &hv.hgvs_alt,
                 Some(1),
                 Some(40),
+                hv.shift,
             )
             .expect("a description");
             (hv.start, hv.anchor_start, got)
@@ -2393,5 +2672,154 @@ mod tests {
             *reference_for_hgvs(Some(&genome), "chr1", 4, 3, &Allele::Deletion),
             Allele::Deletion
         );
+    }
+
+    /// HGVS is computed only for a change that overlaps the transcript (`within_feature`), and an
+    /// insertion overlaps only when both of the bases it sits between are inside it. One in
+    /// front of the first base or behind the last is an `upstream_gene_variant` or a
+    /// `downstream_gene_variant`, and VEP 116.3 writes no HGVSc for it, where the 3'-rule used to
+    /// carry it in as `n.3_4dup`.
+    #[test]
+    fn an_insertion_beside_the_end_of_a_transcript_has_no_hgvs_but_one_inside_has() {
+        let tr = transcript(Strand::Forward); // 1..=100
+        let ins = Allele::Sequence(b"CT".to_vec());
+        let on = |start, end| {
+            hgvs_allele_on_transcript(None, "1", &tr, start, end, &Allele::Deletion, &ins, None)
+        };
+        assert!(on(1, 0).is_none(), "in front of the first base");
+        assert!(on(101, 100).is_none(), "behind the last base");
+        assert!(on(2, 1).is_some(), "between the first and the second");
+        assert!(on(100, 99).is_some(), "between the last two");
+    }
+
+    /// A change that overlaps but runs past an end is clamped to the transcript. The reference is
+    /// what the clamped span holds and the alternate keeps its whole length: VEP 116.3 writes
+    /// `n.1delinsGCG` for a replacement of the transcript's first base and the one before it by
+    /// `GCG`.
+    #[test]
+    fn a_change_past_the_start_of_a_transcript_is_clamped_with_its_alternate_whole() {
+        let mut tr = transcript(Strand::Forward);
+        tr.start = 10;
+        let reference = Allele::Sequence(b"AAAA".to_vec()); // 8..=11
+        let alt = Allele::Sequence(b"CCC".to_vec());
+        let hv = hgvs_allele_on_transcript(None, "1", &tr, 8, 11, &reference, &alt, Some((1, 2)))
+            .expect("it overlaps");
+        assert_eq!((hv.start, hv.end), (10, 11));
+        assert_eq!(hv.genomic_ref, Allele::Sequence(b"AA".to_vec()));
+        assert_eq!(hv.genomic_alt, alt);
+        assert_eq!(
+            hv.cdna, None,
+            "the unclamped span is no longer the change's"
+        );
+        assert_eq!(hv.shift, None, "a replacement has no 3'-rule to carry over");
+    }
+
+    /// The 3'-rule is worked out for the change as it was and its length is added to the clamped
+    /// coordinates: a deletion of `ACAC` of which two bases are in the transcript, in a repeat
+    /// that carries it four bases on, travels four, not the zero that `AC` alone would.
+    #[test]
+    fn the_shift_of_a_clamped_deletion_is_that_of_the_whole_deletion() {
+        let mut genome = vec![b'G'; 40];
+        genome[7..15].copy_from_slice(b"ACACACAC"); // 8..=15
+        genome[15] = b'T';
+        let genome = Box::leak(String::from_utf8(genome).unwrap().into_boxed_str());
+        let reference = StrRef(genome);
+        let mut tr = transcript(Strand::Forward);
+        tr.start = 10;
+        let hv = hgvs_allele_on_transcript(
+            Some(&reference as &dyn SequenceProvider),
+            "1",
+            &tr,
+            8,
+            11,
+            &Allele::Sequence(b"ACAC".to_vec()),
+            &Allele::Deletion,
+            None,
+        )
+        .expect("it overlaps");
+        assert_eq!((hv.start, hv.end), (10, 11));
+        assert_eq!(hv.shift, Some(4));
+    }
+
+    /// Ensembl writes nothing for a description that the shift has carried past the last base of
+    /// the transcript (`return undef if slice length < slice end + offset`): a deletion of the
+    /// last base, in a repeat that runs on beyond it, is shifted out and has no HGVSc. The cDNA
+    /// renderer must not be asked instead, which would write the unshifted one.
+    #[test]
+    fn a_deletion_a_repeat_carries_out_of_the_transcript_has_no_description() {
+        let mut genome = vec![b'G'; 120];
+        genome[97..103].copy_from_slice(b"AAAAAA"); // 98..=103, the transcript ends at 100
+        let genome = Box::leak(String::from_utf8(genome).unwrap().into_boxed_str());
+        let reference = StrRef(genome);
+        let tr = transcript(Strand::Forward);
+        let hv = hgvs_allele(
+            Strand::Forward,
+            100,
+            100,
+            &Allele::Sequence(b"A".to_vec()),
+            &Allele::Deletion,
+            None,
+        );
+        let outcome = hgvsc_shifted_outcome(
+            Some(&reference as &dyn SequenceProvider),
+            "1",
+            &tr,
+            "T.1",
+            hv.start,
+            hv.end,
+            hv.anchor_start,
+            &hv.genomic_ref,
+            &hv.genomic_alt,
+            &hv.hgvs_ref,
+            &hv.hgvs_alt,
+            Some(1),
+            Some(40),
+            hv.shift,
+        );
+        assert!(matches!(outcome, ShiftedHgvsc::NoDescription));
+    }
+
+    /// An insertion whose far flank is past the transcript can still be a duplication of the
+    /// block before it, which is inside, and VEP writes it over that block: `GT` inserted between
+    /// the last two bases of `...GTGT` and shifted two on is `c.39_40dup`, with an offset of 2.
+    #[test]
+    fn an_insertion_carried_to_the_end_is_written_as_the_duplication_it_is() {
+        let mut genome = vec![b'A'; 120];
+        genome[96..100].copy_from_slice(b"GTGT"); // 97..=100
+        let genome = Box::leak(String::from_utf8(genome).unwrap().into_boxed_str());
+        let reference = StrRef(genome);
+        let tr = transcript(Strand::Forward);
+        let hv = hgvs_allele(
+            Strand::Forward,
+            99, // between 98 and 99
+            98,
+            &Allele::Deletion,
+            &Allele::Sequence(b"GT".to_vec()),
+            None,
+        );
+        let outcome = hgvsc_shifted_outcome(
+            Some(&reference as &dyn SequenceProvider),
+            "1",
+            &tr,
+            "T.1",
+            hv.start,
+            hv.end,
+            hv.anchor_start,
+            &hv.genomic_ref,
+            &hv.genomic_alt,
+            &hv.hgvs_ref,
+            &hv.hgvs_alt,
+            Some(1),
+            Some(40),
+            hv.shift,
+        );
+        match outcome {
+            ShiftedHgvsc::Written(hgvsc, moved) => {
+                assert_eq!(hgvsc, "T.1:c.39_40dup");
+                assert_eq!(moved, 2);
+            }
+            ShiftedHgvsc::NoDescription => panic!("no description"),
+            ShiftedHgvsc::CannotRender => panic!("cannot render"),
+        }
     }
 }
