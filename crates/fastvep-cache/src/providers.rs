@@ -93,6 +93,14 @@ pub struct IndexedTranscriptProvider {
     prefix_max_end: HashMap<Arc<str>, Vec<u64>>,
 }
 
+/// The order [`IndexedTranscriptProvider`] keeps transcripts in: by contig, then by start, and
+/// transcripts that tie as the file had them (the sort is stable, which is what makes the transcript
+/// the one that comes first in the file the one a tie-break prefers). A list in this order is one
+/// the provider has nothing to sort, and it is the order the sidecar transcript cache is written in.
+pub fn sort_for_provider(transcripts: &mut [Transcript]) {
+    transcripts.sort_by(|a, b| a.chromosome.cmp(&b.chromosome).then(a.start.cmp(&b.start)));
+}
+
 impl IndexedTranscriptProvider {
     pub fn new(mut transcripts: Vec<Transcript>) -> Self {
         let mut by_chrom: HashMap<Arc<str>, Vec<Transcript>> = HashMap::new();
@@ -102,9 +110,13 @@ impl IndexedTranscriptProvider {
                 .or_default()
                 .push(tr);
         }
-        // Sort each chromosome's transcripts by start position
+        // Sort each chromosome's transcripts by start position, unless they are in that order, which
+        // a sidecar cache is written in ([`sort_for_provider`]): a pass over them, and not a sort of
+        // structs of some 600 bytes each, which was a tenth of the start of a run on the human GFF3
         for trs in by_chrom.values_mut() {
-            trs.sort_by_key(|t| t.start);
+            if !trs.is_sorted_by_key(|t| t.start) {
+                trs.sort_by_key(|t| t.start);
+            }
         }
         // Build prefix-max-end arrays to bound the overlap window
         let mut prefix_max_end = HashMap::new();
@@ -664,6 +676,74 @@ mod tests {
             initiator_met: false,
             cds_flags_from_sequence: false,
             readthrough: false,
+        }
+    }
+
+    /// A list sorted for the provider answers every query as the list in the order the file had
+    /// it does, for transcripts that tie on their start too, on several contigs, and keeps the
+    /// order of the ones that tie.
+    #[test]
+    fn a_list_sorted_for_the_provider_answers_as_the_list_in_file_order_does() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+        let mut in_file_order: Vec<Transcript> = (0..600)
+            .map(|n| {
+                let chrom = ["chr1", "chr2", "chrX", "chrM"][next(4) as usize];
+                // starts from a small range, so that many tie, and some that reach far
+                let start = 1 + next(40) * 100;
+                let mut t = make_transcript(chrom, start, start + next(600));
+                t.stable_id = Arc::from(format!("T{n:03}").as_str());
+                t
+            })
+            .collect();
+        in_file_order.sort_by_key(|t| (t.start % 7, t.stable_id.len())); // not in any useful order
+        let mut sorted = in_file_order.clone();
+        sort_for_provider(&mut sorted);
+        // by contig, then start, and the ties in the order the file had them
+        assert!(sorted
+            .windows(2)
+            .all(|w| (&w[0].chromosome, w[0].start) <= (&w[1].chromosome, w[1].start)));
+        for pair in sorted.windows(2) {
+            if pair[0].chromosome == pair[1].chromosome && pair[0].start == pair[1].start {
+                let at = |t: &Transcript| {
+                    in_file_order
+                        .iter()
+                        .position(|o| o.stable_id == t.stable_id)
+                        .unwrap()
+                };
+                assert!(at(&pair[0]) < at(&pair[1]), "a tie changed places");
+            }
+        }
+
+        let from_file = IndexedTranscriptProvider::new(in_file_order);
+        let from_sorted = IndexedTranscriptProvider::new(sorted);
+        assert_eq!(from_file.transcript_count(), from_sorted.transcript_count());
+        for chrom in ["chr1", "chr2", "chrX", "chrM", "chr9"] {
+            for _ in 0..200 {
+                let start = 1 + next(4200);
+                let end = start + next(300);
+                let ids = |p: &IndexedTranscriptProvider| -> Vec<String> {
+                    p.get_transcripts(chrom, start, end)
+                        .unwrap()
+                        .iter()
+                        .map(|t| t.stable_id.to_string())
+                        .collect()
+                };
+                assert_eq!(ids(&from_file), ids(&from_sorted), "{chrom}:{start}-{end}");
+            }
+            let all = |p: &IndexedTranscriptProvider| -> Vec<String> {
+                p.get_transcripts_by_chrom(chrom)
+                    .unwrap()
+                    .iter()
+                    .map(|t| t.stable_id.to_string())
+                    .collect()
+            };
+            assert_eq!(all(&from_file), all(&from_sorted), "{chrom}");
         }
     }
 

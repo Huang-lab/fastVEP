@@ -1468,6 +1468,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     if needs_seq_build && !region_restricted {
         if let Some(ref cp) = cache_path {
             if single_gff3.is_some() || config.transcript_cache.is_some() {
+                // In the order the provider keeps them in, so that a run that loads this cache has
+                // nothing to sort: that was a tenth of the start of a run on the human GFF3
+                fastvep_cache::providers::sort_for_provider(&mut transcripts);
                 if let Err(e) = fastvep_cache::transcript_cache::save_cache(&transcripts, cp) {
                     eprintln!("Warning: could not save cache: {}", e);
                 } else {

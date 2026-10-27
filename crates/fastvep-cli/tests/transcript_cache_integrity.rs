@@ -606,3 +606,86 @@ fn a_pre_90_explicit_transcript_cache_stops_the_run() {
         "a rejected cache must not leave an all-intergenic output behind"
     );
 }
+
+/// The sidecar cache is written in the order the provider keeps transcripts in (by contig, then by
+/// start, and ties as the file has them), so that a run that loads it has nothing to sort: sorting
+/// some 600-byte structs was a tenth of the start of a run on the human GFF3, and a cache in that
+/// order is also less than half the size, because zstd finds what its neighbours share. A second
+/// run, which loads it, answers as the first did.
+#[test]
+fn a_sidecar_cache_is_written_in_the_providers_order_and_answers_as_the_run_that_wrote_it() {
+    let dir = TempDir::new().unwrap();
+    // five genes on two contigs, in the file in no order, two with the same start
+    let genes = [
+        ("2", 5_000u64),
+        ("1", 9_000),
+        ("2", 1_000),
+        ("1", 3_000),
+        ("1", 3_000),
+    ];
+    let mut gff3 = String::new();
+    for (i, (chrom, start)) in genes.iter().enumerate() {
+        let end = start + 11;
+        gff3.push_str(&format!(
+            "{chrom}\ttest\tgene\t{start}\t{end}\t.\t+\t.\tID=gene:G{i};biotype=protein_coding\n\
+             {chrom}\ttest\tmRNA\t{start}\t{end}\t.\t+\t.\tID=transcript:T{i};Parent=gene:G{i};biotype=protein_coding\n\
+             {chrom}\ttest\texon\t{start}\t{end}\t.\t+\t.\tID=exon:E{i};Parent=transcript:T{i};rank=1\n\
+             {chrom}\ttest\tCDS\t{start}\t{end}\t.\t+\t0\tID=CDS:P{i};Parent=transcript:T{i}\n"
+        ));
+    }
+    let gff3_path = dir.path().join("ann.gff3");
+    std::fs::write(&gff3_path, gff3).unwrap();
+    // both contigs, with a start codon, a codon and a stop at every gene
+    let fasta = dir.path().join("ref.fa");
+    let mut f = File::create(&fasta).unwrap();
+    for chrom in ["1", "2"] {
+        let mut seq = vec![b'N'; 10_000];
+        for (c, start) in genes.iter().filter(|(c, _)| *c == chrom) {
+            let at = (*start - 1) as usize;
+            seq[at..at + 12].copy_from_slice(b"ATGTGGCGGTAA");
+            let _ = c;
+        }
+        writeln!(f, ">{chrom}").unwrap();
+        for chunk in seq.chunks(60) {
+            f.write_all(chunk).unwrap();
+            f.write_all(b"\n").unwrap();
+        }
+    }
+    drop(f);
+    let vcf = write_vcf(dir.path());
+
+    let run = |out: &str| {
+        let out = dir.path().join(out);
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3_path.to_string_lossy().into()],
+            fasta: Some(fasta.to_string_lossy().into()),
+            ..config(&vcf, &out)
+        })
+        .expect("the run succeeds");
+        std::fs::read_to_string(&out).unwrap()
+    };
+    let first = run("first.vcf");
+
+    let sidecar = dir.path().join("ann.gff3.fastvep.cache");
+    let cached = fastvep_cache::transcript_cache::load_cache(&sidecar).expect("a sidecar cache");
+    assert_eq!(cached.len(), genes.len());
+    assert!(
+        cached
+            .windows(2)
+            .all(|w| (&*w[0].chromosome, w[0].start) <= (&*w[1].chromosome, w[1].start)),
+        "the cache is not in the provider's order: {:?}",
+        cached
+            .iter()
+            .map(|t| (t.chromosome.to_string(), t.start))
+            .collect::<Vec<_>>()
+    );
+    // the two that start together are in the order the file has them
+    let ids: Vec<&str> = cached.iter().map(|t| &*t.stable_id).collect();
+    let (t3, t4) = (
+        ids.iter().position(|i| *i == "T3").unwrap(),
+        ids.iter().position(|i| *i == "T4").unwrap(),
+    );
+    assert!(t3 < t4, "a tie changed places: {ids:?}");
+
+    assert_eq!(run("second.vcf"), first);
+}
