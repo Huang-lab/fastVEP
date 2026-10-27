@@ -235,9 +235,8 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
             // VEP's intergenic output ends in the function that writes HGVSg
             // (`IntergenicVariationAllele_to_output_hash` returns
             // `VariationFeatureOverlapAllele_to_output_hash`). Only `--hgvsg`
-            // asks for it here: `--hgvs` has never put one on this row, and
-            // `fastvep-annotate`'s loop still does not, so reading it off
-            // `--hgvs` too would make the two disagree.
+            // asks for it here, as it does on the transcript rows; `fastvep-annotate`'s
+            // loop has no flag of its own for it and writes it under `hgvs` on both.
             if config.columns.hgvsg {
                 let hgvsg = hgvsg_per_alt(
                     seq_provider.map(|sp| sp as &dyn SequenceProvider),

@@ -375,7 +375,35 @@ impl AnnotationContext {
                 .unwrap_or_default();
 
             if overlapping.is_empty() {
+                // The variant's own HGVSg is there whether or not a transcript is (VEP's
+                // intergenic output ends in the function that writes it), and the transcript
+                // rows of this loop have it under `hgvs`, so these do.
+                let hgvsg = if self.hgvs {
+                    hgvsg_per_alt(
+                        self.seq_provider
+                            .as_deref()
+                            .map(|sp| sp as &dyn SequenceProvider),
+                        chrom,
+                        vf.position.start,
+                        vf.position.end,
+                        &vf.ref_allele,
+                        &vf.alt_alleles,
+                    )
+                } else {
+                    Vec::new()
+                };
                 annotate_intergenic(vf);
+                if self.hgvs {
+                    for tv in &mut vf.transcript_variations {
+                        for aa in &mut tv.allele_annotations {
+                            aa.hgvsg = vf
+                                .alt_alleles
+                                .iter()
+                                .position(|alt| *alt == aa.allele)
+                                .and_then(|i| hgvsg[i].clone());
+                        }
+                    }
+                }
             } else {
                 let result = self.predictor.predict(
                     &vf.position,
