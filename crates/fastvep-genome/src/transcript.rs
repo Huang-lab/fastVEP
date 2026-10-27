@@ -169,10 +169,47 @@ impl IntronBounds {
     }
 }
 
+/// How far apart an intron's two ends may be for Ensembl to call it a frameshift intron:
+/// `abs($intron_end - $intron_start) <= 12` in `BaseTranscriptVariation.pm`, which is an intron
+/// of 13 bases or fewer. The comment above that test says 12, and the test is the one that runs.
+pub const FRAMESHIFT_INTRON_SPAN: u64 = 12;
+
+/// How many bases Ensembl widens every exon by, for the question "does this change touch an
+/// exon", in a transcript that has a frameshift intron (`$stretch` in `_overlapped_exons`).
+pub const FRAMESHIFT_EXON_STRETCH: u64 = 12;
+
 impl Transcript {
     /// Whether this transcript is protein-coding.
     pub fn is_coding(&self) -> bool {
         self.translation.is_some()
+    }
+
+    /// Whether some intron is short enough for Ensembl to call it a frameshift intron: it is
+    /// there to make the transcript's sequence agree with an assembly that has an extra or a
+    /// missing base, and Ensembl treats a change in one as exonic ([`FRAMESHIFT_INTRON_SPAN`]).
+    pub fn has_frameshift_intron(&self) -> bool {
+        self.introns()
+            .any(|intron| intron.end - intron.start <= FRAMESHIFT_INTRON_SPAN)
+    }
+
+    /// Ensembl's "overlaps an exon" (`_overlapped_exons` is not empty), the `exon` flag that
+    /// `_bvfo_preds` caches and that the polypyrimidine term and the `coding` flag are gated on.
+    ///
+    /// It is not the same question as "is inside an exon", twice over. The pair it asks about
+    /// is the change's two flanking bases sorted (`min_vf`, `max_vf`), so an insertion touches
+    /// the exon if either of the bases it sits between is in it, where the exon an insertion is
+    /// *in* (`non_coding_exon_variant`, which re-checks with a plain `overlap`) needs both. And
+    /// in a transcript with a frameshift intron every exon is [`FRAMESHIFT_EXON_STRETCH`] bases
+    /// wider on each side, so that a change in or next to the tiny intron "is exonic": which also
+    /// makes every change within 12 bases of any exon of that transcript touch one.
+    pub fn overlaps_exon_flag(&self, start: u64, end: u64) -> bool {
+        let (lo, hi) = (start.min(end), start.max(end));
+        let reaches = |stretch: u64| {
+            self.exons.iter().any(|exon| {
+                lo <= exon.end.saturating_add(stretch) && hi >= exon.start.saturating_sub(stretch)
+            })
+        };
+        reaches(0) || (reaches(FRAMESHIFT_EXON_STRETCH) && self.has_frameshift_intron())
     }
 
     /// The protein's accession as `HGVSp` writes it: `ENSP00000363557.3`.
@@ -1204,5 +1241,65 @@ mod tests {
             accession(Some("PROT.abc"), Some(2)).as_deref(),
             Some("PROT.abc.2")
         );
+    }
+
+    /// The three-exon fixture (`1000-1200`, `2000-2300`, `4000-5000`) with its third exon moved
+    /// to start `gap` bases after the second ends, which makes the second intron `gap` long.
+    fn with_second_intron(gap: u64) -> Transcript {
+        let mut tr = make_test_transcript();
+        tr.exons[2].start = 2301 + gap;
+        tr.exons[2].end = tr.exons[2].start + 999;
+        tr
+    }
+
+    #[test]
+    fn an_intron_is_a_frameshift_intron_up_to_thirteen_bases() {
+        // `abs($intron_end - $intron_start) <= 12` is an intron whose last base is 12 past its
+        // first, which is 13 bases long: the comment beside that test says 12.
+        assert!(with_second_intron(1).has_frameshift_intron());
+        assert!(with_second_intron(13).has_frameshift_intron());
+        assert!(!with_second_intron(14).has_frameshift_intron());
+        assert!(!make_test_transcript().has_frameshift_intron());
+        // the exons of a reverse-strand transcript are stored descending
+        let mut reverse = with_second_intron(13);
+        reverse.strand = Strand::Reverse;
+        reverse.exons.reverse();
+        assert!(reverse.has_frameshift_intron());
+    }
+
+    #[test]
+    fn overlapping_exons_make_no_intron_to_be_short() {
+        // A RefSeq transcript with exons that overlap has an "intron" with start > end, which
+        // Ensembl skips before it asks how long it is.
+        let mut tr = make_test_transcript();
+        tr.exons[2].start = 2250;
+        tr.exons[2].end = 3000;
+        assert!(!tr.has_frameshift_intron());
+    }
+
+    #[test]
+    fn the_exon_flag_widens_every_exon_only_in_a_transcript_with_a_frameshift_intron() {
+        let plain = make_test_transcript();
+        assert!(plain.overlaps_exon_flag(1200, 1200));
+        assert!(!plain.overlaps_exon_flag(1201, 1201));
+        // third exon at 2306 to 3305: the intron 2301-2305 is five bases
+        let short = with_second_intron(5);
+        assert!(short.overlaps_exon_flag(1212, 1212), "12 past exon 1");
+        assert!(!short.overlaps_exon_flag(1213, 1213), "13 past exon 1");
+        assert!(short.overlaps_exon_flag(1988, 1988), "12 before exon 2");
+        assert!(!short.overlaps_exon_flag(1987, 1987), "13 before exon 2");
+        // the far side of the same exon is widened too, and by the same amount
+        assert!(short.overlaps_exon_flag(3317, 3317));
+        assert!(!short.overlaps_exon_flag(3318, 3318));
+    }
+
+    #[test]
+    fn an_insertion_touches_an_exon_when_either_base_it_sits_between_does() {
+        // An insertion arrives as `end = start - 1`. `_overlapped_exons` sorts the pair, so the
+        // base on either side counts, where "inside the exon" needs both.
+        let tr = make_test_transcript();
+        assert!(tr.overlaps_exon_flag(2000, 1999), "between 1999 and 2000");
+        assert!(tr.overlaps_exon_flag(1201, 1200), "between 1200 and 1201");
+        assert!(!tr.overlaps_exon_flag(1501, 1500), "between 1500 and 1501");
     }
 }

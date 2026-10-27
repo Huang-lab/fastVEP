@@ -123,6 +123,11 @@ fn rotate(alt: &Allele, shift: u64, strand: Strand) -> Allele {
 /// is not asked: an insertion in front of the initiator has none and is `coding` all the same,
 /// and the 3'-rule can carry it onto the initiator, which is how Ensembl writes
 /// `p.Met1AsnfsTer?` for one.
+///
+/// "An exon" is [`Transcript::overlaps_exon_flag`], which in a transcript with a frameshift
+/// intron is every base within 12 of an exon: a deletion inside the intron is `coding`, and the
+/// 3'-rule can carry it into the exon, where Ensembl then writes the protein change of it
+/// (`p.Glu56SerfsTer136` for a deletion in SHANK3's two-base intron, `c.166del`).
 fn pre_coding(transcript: &Transcript, start: u64, end: u64) -> bool {
     if end < transcript.start || start > transcript.end {
         return false;
@@ -133,12 +138,7 @@ fn pre_coding(transcript: &Transcript, start: u64, end: u64) -> bool {
         return false;
     };
     let (lo, hi) = (start.min(end), start.max(end));
-    lo <= coding_end
-        && hi >= coding_start
-        && transcript
-            .exons
-            .iter()
-            .any(|exon| exon.start <= hi && exon.end >= lo)
+    lo <= coding_end && hi >= coding_start && transcript.overlaps_exon_flag(lo, hi)
 }
 
 /// The HGVSp of one allele, `None` where Ensembl writes none.

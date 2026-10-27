@@ -548,6 +548,18 @@ impl ConsequencePredictor {
                 consequences.extend(change.consequences);
                 amino_acids = change.amino_acids;
                 codons = change.codons;
+            } else if splice.within_frameshift_intron
+                && var_start <= coding_end
+                && var_end >= coding_start
+            {
+                // `within_cds` has a second way to hold: a change inside a frameshift intron
+                // that lies within the coding region (`VariationEffect.pm`, "we also need to
+                // check if the vf is in a frameshift intron within the CDS"). Such an intron
+                // was skipped by the splice terms, and the change has no CDS coordinate and so
+                // no peptide, which is all `coding_unknown` asks for. Without this the row fell
+                // to the catch-all below and was `coding_transcript_variant`, a term Ensembl
+                // gives only a change that covers the whole transcript.
+                consequences.push(Consequence::CodingSequenceVariant);
             }
             // `intron_variant` is not a fallback. Ensembl reports it whenever
             // the variant reaches the intron's interior, beside whatever exonic
@@ -686,7 +698,9 @@ impl ConsequencePredictor {
         // contributes. The four separate code paths this replaced disagreed with
         // real VEP 115.1 on 16,000 `Amino_acids` values and 18,000 `Codons`
         // values over a 6,600-variant ClinVar sample, each in its own way.
-        let Some(window) = self.build_codon_window(transcript, alt_allele, location.cds) else {
+        let Some(window) =
+            self.build_codon_window(transcript, alt_allele, location.cds, Some(ref_length))
+        else {
             // The CDS has no sequence loaded, so there is no window to read
             return self.terms_without_peptides(transcript, &edits, changes_length, true, location);
         };
@@ -1053,12 +1067,20 @@ impl ConsequencePredictor {
     /// window is the six codons around it (`LLLPSI/X`). A change that is not in one piece was
     /// given no residues at all here before, and so `coding_sequence_variant`.
     ///
+    /// `ref_bases` is how many bases of the reference codons are written in uppercase, which is
+    /// the length of the reference allele *in the genome* (`display_codon` uppercases
+    /// `length($self->feature_seq)` from the codon position on), and not the CDS span the codons
+    /// are cut with. They differ for a change with an intron between its ends: a deletion of
+    /// `CACAC` over a one-base intron replaces four bases of the CDS and Ensembl writes
+    /// `CACCGc`, five. `None` is the CDS span, for a caller that does not show the codons.
+    ///
     /// Returns `None` when the CDS has no sequence loaded or the span has no CDS coordinate.
     fn build_codon_window(
         &self,
         transcript: &Transcript,
         alt_allele: &Allele,
         cds: TranscriptSpan,
+        ref_bases: Option<usize>,
     ) -> Option<CodonWindow> {
         let seq = transcript.translateable_seq.as_deref()?.as_bytes();
         let (cds_start, cds_end) = (cds.start?, cds.end?);
@@ -1188,7 +1210,7 @@ impl ConsequencePredictor {
         Some(CodonWindow {
             ref_aas: translate(&ref_window, true),
             alt_aas: translate(&alt_window, false),
-            ref_codons: render(&ref_window, ref_len),
+            ref_codons: render(&ref_window, ref_bases.unwrap_or(ref_len)),
             alt_codons: render(&alt_window, alt_cds.len()),
             tl_start: win_start / 3 + 1,
             tl_end: win_end.div_ceil(3),
@@ -1213,7 +1235,7 @@ impl ConsequencePredictor {
         alt_allele: &Allele,
         location: &TranscriptLocation,
     ) -> Option<ProteinWindow> {
-        let w = self.build_codon_window(transcript, alt_allele, location.cds)?;
+        let w = self.build_codon_window(transcript, alt_allele, location.cds, None)?;
         let or_dash = |aas: String| if aas.is_empty() { "-".to_string() } else { aas };
         Some(ProteinWindow {
             ref_peptide: or_dash(w.ref_aas),
@@ -3151,5 +3173,94 @@ mod tests {
             None,
         );
         result.transcript_consequences[0].allele_consequences[0].clone()
+    }
+
+    /// The coding fixture with its first intron cut to 13 bases (`1201-1213`), which makes it a
+    /// frameshift intron, and the exon after it moved to follow.
+    fn make_transcript_with_a_frameshift_intron() -> Transcript {
+        let mut tr = make_coding_transcript();
+        tr.exons[1].start = 1214;
+        tr.exons[1].end = 1514;
+        tr
+    }
+
+    #[test]
+    fn a_change_in_a_frameshift_intron_inside_the_cds_is_a_coding_sequence_variant() {
+        // `within_cds` holds for a change in a frameshift intron that lies within the coding
+        // region, so `coding_unknown` does: no splice term, no `intron_variant`, and not the
+        // `coding_transcript_variant` the catch-all would have given it.
+        let tr = make_transcript_with_a_frameshift_intron();
+        let pos = GenomicPosition::new("chr1", 1205, 1205, Strand::Forward);
+        let result = ConsequencePredictor::default().predict(
+            &pos,
+            &Allele::from_str("A"),
+            &[Allele::from_str("G")],
+            &[&tr],
+            None,
+        );
+        let got = &result.transcript_consequences[0].allele_consequences[0].consequences;
+        assert_eq!(got, &vec![Consequence::CodingSequenceVariant]);
+    }
+
+    #[test]
+    fn the_same_change_in_an_ordinary_intron_is_an_intron_variant() {
+        let tr = make_coding_transcript();
+        let pos = GenomicPosition::new("chr1", 1500, 1500, Strand::Forward);
+        let result = ConsequencePredictor::default().predict(
+            &pos,
+            &Allele::from_str("A"),
+            &[Allele::from_str("G")],
+            &[&tr],
+            None,
+        );
+        let got = &result.transcript_consequences[0].allele_consequences[0].consequences;
+        assert_eq!(got, &vec![Consequence::IntronVariant]);
+    }
+
+    #[test]
+    fn a_frameshift_intron_before_the_coding_region_is_not_a_coding_sequence_variant() {
+        // `within_cds` asks that the change overlap the coding region too.
+        let mut tr = make_transcript_with_a_frameshift_intron();
+        tr.coding_region_start = Some(1300);
+        let pos = GenomicPosition::new("chr1", 1205, 1205, Strand::Forward);
+        let result = ConsequencePredictor::default().predict(
+            &pos,
+            &Allele::from_str("A"),
+            &[Allele::from_str("G")],
+            &[&tr],
+            None,
+        );
+        let got = &result.transcript_consequences[0].allele_consequences[0].consequences;
+        assert!(
+            !got.contains(&Consequence::CodingSequenceVariant),
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn a_deletion_over_a_one_base_intron_writes_the_reference_codons_in_uppercase_by_genome_length()
+    {
+        // `display_codon` uppercases `length($self->feature_seq)` of the reference allele from
+        // the codon position on, and that is the five bases of the genome the deletion removes,
+        // though only four of them are in the CDS. The codons are cut with the CDS span (four,
+        // CDS 49 to 52, a window of two codons); the case is not.
+        let mut tr = make_coding_transcript();
+        // exon 1 ends at 1099 (CDS 50 is its last base) and exon 2 starts at 1101: the base
+        // between them is a one-base intron
+        tr.exons[0].end = 1099;
+        tr.exons[1].start = 1101;
+        tr.exons[1].end = 1400;
+        let result = ConsequencePredictor::default().predict(
+            &GenomicPosition::new("chr1", 1098, 1102, Strand::Forward),
+            &Allele::from_str("ACGTA"),
+            &[Allele::Deletion],
+            &[&tr],
+            None,
+        );
+        let ac = &result.transcript_consequences[0].allele_consequences[0];
+        let (ref_codons, _) = ac.codons.clone().expect("a codon window");
+        assert_eq!(ref_codons.len(), 6, "{ref_codons}");
+        let upper: Vec<bool> = ref_codons.chars().map(|c| c.is_ascii_uppercase()).collect();
+        assert_eq!(upper, [true, true, true, true, true, false], "{ref_codons}");
     }
 }

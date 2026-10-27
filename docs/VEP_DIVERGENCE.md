@@ -85,7 +85,7 @@ says, and where matching it would degrade a clinical call.
 
 **Against release 116.3 this is no longer a divergence.**
 `ref_eq_alt_sequence` was rewritten in release 116 and its first clause, quoted below, is gone.
-VEP 116.3 writes `stop_gained,frameshift_variant`, HIGH, for all five variants of the table, and agrees with fastVEP on every `Consequence`, `IMPACT`, `Amino_acids` and `Codons` cell of the 6,021 ClinVar insertions and deletions of the five genes they are in (190,397 rows), and on a 1-in-5 sample of ClinVar 2-star+ (3,136,295 rows) but for the 33 rows of [Part 3](#coding-consequence-terms).
+VEP 116.3 writes `stop_gained,frameshift_variant`, HIGH, for all five variants of the table, and agrees with fastVEP on every `Consequence`, `IMPACT`, `Amino_acids` and `Codons` cell of the 6,021 ClinVar insertions and deletions of the five genes they are in (190,397 rows), and on a 1-in-5 sample of ClinVar 2-star+ (3,136,295 rows) but for the 17 rows of [Part 3](#coding-consequence-terms).
 What follows is what release 115.1 did, which is why fastVEP refused the clause, and what the numbers below were measured against.
 
 **36 consequence rows and all 36 of them `IMPACT`** - the largest divergence, and the one that
@@ -315,7 +315,7 @@ There is one more way a first residue can differ, and it is not about the UTR: [
 | A two-residue deletion in a poly-Glu C-terminus. NT5C2 `10:103089678 TTCCTCC>T`, ENSP00000502205, protein 561 aa ending `EEEEEEE` | 43 of the in-frame deletion set, on one variant; 31 of the ClinVar sample against 116.3 | `p.Glu560_Glu561del` | `p.Glu559_Glu560del` | The 3'-most placement is the one HGVS asks for. Ensembl stops short of the end of the protein in two ways, both of which are in release 116 as they were in 115: `_shift_3prime` halts *n*-1 residues before the terminus for an *n*-residue change ([#94](https://github.com/Huang-lab/fastVEP/issues/94)), and the residues it looks at come from `_get_surrounding_peptides`, which returns nothing when `length <= position`, so a change that ends one residue short of the end cannot see the last one and is not shifted at all (NT5C2 is that case) |
 | A transcript whose CDS is annotated 5' incomplete (first CDS record carries phase 1 or 2, so no initiator is annotated). TCIRG1 ENST00000698256, NF1 ENST00000696141, NFIA ENST00000496712 | 3 | no `start_lost` | adds `start_lost` | There is no `ATG` to lose. Declining is the lower-impact answer, which is worth saying plainly |
 | `start_lost` and `start_retained_variant` on the same row, where a *substitution* replaces a non-canonical initiator with `ATG`. NBEA `13:35171273 C>T` (`aCg`→`aTg`), ENST00000629018 | 2 | `start_lost` | `start_lost,start_retained_variant` | **Gone against 116.3**: the window models `_snp_start_altered` now and both tools write the pair, and `p.Thr1?`. The pair contradicts itself, and `IMPACT` is HIGH either way |
-| The polypyrimidine tract on a transcript carrying a frameshift intron. PTEN `10:87933000 C>CT`, ENST00000693560 | 1 | `splice_polypyrimidine_tract_variant` at -3 to -17 | the term stops at -13 | An intron of 12 bp or less makes VEP treat every exon as 12 bases wider (`_overlapped_exons`, `BaseTranscriptVariation.pm` l. 861). At the same 15 positions the other 14 PTEN transcripts get the full window from VEP, and this is the only one with a 1 bp intron |
+| The polypyrimidine tract on a transcript carrying a frameshift intron. PTEN `10:87933000 C>CT`, ENST00000693560 | 1 | `splice_polypyrimidine_tract_variant` at -3 to -17 | the term stops at -13 | **Gone**: every exon of such a transcript is 12 bases wider for the `exon` test, as in `_overlapped_exons`, and an intron of 13 bases or fewer is one, which is not what this row said (see [Frameshift introns](#frameshift-introns)) |
 
 ### 10. `--pick` keeps every allele of the transcript it picks
 
@@ -681,7 +681,6 @@ fastVEP writes all three as Ensembl does, because they are what Ensembl writes a
 
 A transcript whose initiator is not `ATG` (`CTG`, `GTG`; MRTFA's three RefSeq transcripts and ENST00000644773 on chr22 are the examples) reads its first residue as what the codon table says, and VEP's caches read it as `M`.
 The RefSeq GFF3 says so with `transl_except=(pos:...,aa:Met)` and Ensembl's database with the translation's own sequence; neither is read yet.
-The frameshift-intron rule (a transcript with an intron of at most 13 bases stretches every exon by 12 bases for `exon` overlap) is diagnosed in Part 3's coding terms and not implemented.
 
 ### An inversion inside padding
 
@@ -699,7 +698,7 @@ A replacement that is wholly an inversion (`CA>TG`) is `inv` in both tools, as t
 After: 9, 3, none and none, and those are VEP's.
 The generated world: 10 `Consequence` and 5 `IMPACT` cells, none after, and its 17 default columns agree on all 122,621 cells.
 The lone-indel set: 4 and 3, none after.
-The ClinVar sample: 275 cells of 81,543,670, 43 after (33 rows, below).
+The ClinVar sample: 275 cells of 81,543,670, 43 after (33 rows), and 20 once a frameshift intron is read as Ensembl reads it (17 rows, below, and [Frameshift introns](#frameshift-introns)).
 VEP's own RefSeq cache, 150 transcripts of chr21 and chr22 (21,052 changes at their start codons, their stop codons and one internal exon boundary each; 203,125 rows on the transcripts the cache has no sequence edits for): 14,109 rows differed in a term, an impact, a position or a residue, and 48 do, all of them three transcripts with a non-AUG start codon (below).**
 
 The consequence terms were a port of release 115's `VariationEffect.pm`, and release 116 changed it.
@@ -736,14 +735,12 @@ Six more things that the probes found, each checked against VEP 116.3:
 Two deliberate divergences of Part 1 are gone: the first, because VEP rewrote the clause, and the second, because the faithful rule gives VEP's answer.
 Their headings say so.
 
-What is left on the ClinVar sample is 33 rows, and all of them have a cause:
+What is left on the ClinVar sample is 17 rows, and all of them have a cause (it was 33: the other 16 are on two PTEN transcripts with a frameshift intron, [below](#frameshift-introns)):
 
 | Rows | What | Who is right |
 |---:|---|---|
 | 8 | Reverse-strand transcripts, where a UTR sequence decides `start_retained_variant` or `stop_lost` | VEP's `--gff` reader, which is wrong (below) |
 | 9 | A transcript whose CDS begins part-way through a codon (phase 1 or 2, no `cds_start_NF` tag in the GFF3) and a change in its second codon: VEP `frameshift_variant,start_lost`, fastVEP `frameshift_variant` | open: VEP's `--gff` reader never sets `cds_start_NF` (nothing in `GFF.pm` or `BaseGXF.pm` does), so it runs the start-codon predicates on a codon that is not there; a cache dumped from Ensembl's database keeps the attribute (`Dumper/Core.pm` lists it) and `_overlaps_start_codon` returns 0 for a transcript that has it. That the transcripts of these rows have it in the cache was not checked |
-| 15 | `splice_polypyrimidine_tract_variant` on two transcripts (ENST00000693560, ENST00000850883), each with an intron of one base: VEP reports it only 16 and 17 bases from the intron's end, fastVEP over the whole window | VEP's rule, not implemented: a transcript with an intron of at most 13 bases (a "frameshift intron") has every exon stretched by 12 bases for `exon` overlap (`_overlapped_exons`), and the polypyrimidine term has `exon => 0` |
-| 1 | A deletion inside that one-base intron: VEP `coding_sequence_variant`, fastVEP `coding_transcript_variant` | VEP's rule for the same transcript (`within_frameshift_intron` makes it `within_cds`), not implemented |
 
 **VEP's `--gff` reader builds the UTR of a reverse-strand transcript from the wrong place.**
 `_ins_del_start_altered` and the stop tests read the UTR sequence from `BaseTranscriptVariation::_generic_utr`, which transfers the transcript to its feature slice and asks it for `five_prime_utr` or `three_prime_utr`.
@@ -756,6 +753,46 @@ The same accessor supplies the 3' UTR that a frameshift's or an extension's coun
 
 On the 134,732-record ClinVar sample 161 of the 164 rows that changed in this commit agree with stock VEP 116.3, and the three that do not are those reverse-strand rows; the build before it agreed with 2 of the 164.
 The 164 rows are 71 variants, 0.005 % of the 3,137,188 rows, and the biggest groups of them are `inframe_insertion,stop_retained_variant` to `frameshift_variant` (24), to `inframe_insertion` (18) and to `stop_retained_variant` (10), `stop_gained,inframe_insertion` to `inframe_insertion,stop_retained_variant` (15), and `non_coding_transcript_exon_variant` to `non_coding_transcript_variant` (28).
+
+### Frameshift introns
+
+Ensembl calls an intron a frameshift intron when its last base is at most 12 bases past its first (`abs($intron_end - $intron_start) <= 12` in `BaseTranscriptVariation.pm`), which is an intron of 13 bases or fewer.
+The comment above that test says 12 bases, and the test is what runs; this document said 12 as well, and so did fastVEP's code (`< 12`), which the 13-base intron of the world below showed to be wrong.
+Such an intron is there so that a transcript agrees with an assembly that has an extra or a missing base, and it changes what Ensembl says about the whole transcript.
+Four things follow in release 116, each read from the Perl and each checked by running VEP 116.3:
+
+- **A change inside the intron earns no splice term and no `intron_variant`.**
+  `_intron_effects` sets `within_frameshift_intron` and goes on to the next intron, in each of its two loops.
+  fastVEP did this already, for the introns of 12 bases or fewer.
+- **Inside the coding region it is a `coding_sequence_variant`.**
+  `within_cds` has a second way to hold, for a change in a frameshift intron that overlaps the coding region, and `coding_unknown` follows from it when no peptide is made.
+  fastVEP wrote the catch-all, `coding_transcript_variant`, which in Ensembl is a change that covers a whole transcript.
+- **Every exon is 12 bases wider on each side for the "does it touch an exon" test** (`_overlapped_exons`, `$stretch`), in that transcript and in no other.
+  `splice_polypyrimidine_tract_variant` has `exon => 0`, so it is gone from the 3 to 12 bases before every exon of the transcript, not only the one beside the short intron, and stays at 13 to 17.
+  The test is asked of the change's two flanking bases sorted (`min_vf`, `max_vf`), so an insertion touches an exon if either of the bases it sits between does.
+- **The same test decides whether a change is `coding` for `HGVSp`** (`_bvfo_preds`: the `exon` flag decides whether the mapper is asked, and the mapper answers a change in an intron with a gap, which is a list that is not empty).
+  `hgvs_protein` then moves the change with the 3'-rule, and when that carries it into the exon Ensembl writes the protein change: `p.Glu56SerfsTer136` for the deletion of one base in the two-base intron of the SHANK3 transcript ENST00000673971 (`22:50674581`, `c.166del`).
+  fastVEP wrote none.
+
+One more difference came out of the same rows, and it is not about introns.
+Ensembl writes the reference codons in uppercase over `length($self->feature_seq)` bases from the codon position (`display_codon`), and for the reference allele that is the length of the change in the genome: a deletion of five bases over a one-base intron removes four bases of the CDS, and `CACCGc` has five uppercase letters where fastVEP wrote four (`CACCgc`).
+The codons are cut with the CDS span, as before; only the case follows the genome.
+
+**Measured against VEP 116.3.**
+A world of seven transcripts with introns of 1 to 60 bases, on both strands, coding and not, two of them controls whose introns are all 14 bases or more (`crates/fastvep-cli/fixtures/vep_tab_fsintron`): a substitution, deletions of 1, 3, 5 and 15 bases and insertions of 1 and 3 at every position within 18 bases of an exon edge and in every intron of 40 bases or fewer.
+Over all 11,515 records (31,024 rows) 977 `Consequence`, 574 `IMPACT`, 44 `Codons` and 8 `HGVSp` cells differed from VEP, and none does now.
+The committed fixture is a sample of it, 2,879 records and 7,756 rows (every substitution, every eighth of the rest), on which 234, 136, 6 and 2 cells differed and none does.
+VEP's own caches, over a substitution, deletions of 1 and 3 bases and insertions of 1 and 3 at every position within 25 bases of every exon edge of the transcripts of chr21 and chr22 that have such an intron, and in each of those introns:
+
+| Cache | Transcripts | Rows | Before | After |
+|---|---|---:|---|---|
+| Ensembl 116 | ENST00000673971 and ENST00000692848 (the two SHANK3 isoforms, each with a 2-base intron) and ENST00000624847 (a lncRNA with two) | 124,027 | `Consequence` 2,342, `IMPACT` 946, `HGVSp` 57 | none, and `HGVSp` 2 |
+| RefSeq 116 | NM_001396027.1 (two 1-base introns) and NM_001372044.2 (two 2-base introns) | 15,084 | `Consequence` 1,208, `IMPACT` 484, `Codons` 2, `HGVSp` 39 | none, and `HGVSp` 5 |
+
+The `HGVSp` cells that are left are the stop-codon family of [divergence 13](#13-a-change-at-a-stop-codon-that-moves-the-frame-and-an-incomplete-or-ambiguous-codon-an-unresolved-residue-is-not-a-terminator): on the RefSeq transcript `p.Ter232%3D` against `p.Ter232delextTer?` and `p.Ter232delinsTrpTer` against `p.Ter232TrpextTer?`, and on ENST00000673995 of the Ensembl probe, which has no frameshift intron, `p.Ter1%3D` against `p.Xaa1%3D` and `p.Ter1_Pro2insThr` against `p.Xaa1_Pro2insThr`.
+Both probes are made with `validation/gen_short_intron_probe.py`, and the numbers are `validation/compare_tab.py`'s, restricted to those columns.
+Nothing outside a transcript with such an intron changes: the tab files of HG002 (186,055 rows) and of the edge set (36,958 rows) are byte for byte what they were.
+On the 1-in-5 sample of ClinVar 2-star+ (3,136,295 rows) 16 rows change, 13 on ENST00000693560 and 3 on ENST00000850883, two PTEN transcripts with a one-base intron (16 `Consequence` and 7 `IMPACT` cells), and all 16 are VEP's now.
 
 ### Alleles that are not plain bases
 
