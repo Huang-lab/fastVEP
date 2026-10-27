@@ -102,6 +102,9 @@ fn transcript() -> Transcript {
         source: None,
         gencode_primary: false,
         flags: vec![],
+        initiator_met: false,
+        cds_flags_from_sequence: false,
+        readthrough: false,
         codon_table_start_phase: 0,
     };
     let genome = format!("{EXON_1}{}{EXON_2}", "N".repeat(20));

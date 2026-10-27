@@ -112,6 +112,9 @@ fn transcript() -> Transcript {
         gencode_primary: false,
         flags: vec![],
         codon_table_start_phase: 0,
+        initiator_met: false,
+        cds_flags_from_sequence: false,
+        readthrough: false,
     };
     let fasta = format!(">1\n{GENOME}\n");
     let provider = FastaSequenceProvider::new(FastaReader::from_reader(fasta.as_bytes()).unwrap());

@@ -33,7 +33,7 @@ pub fn parse_gff3_with_source<R: Read>(reader: R, source: &str) -> Result<Vec<Tr
         .lines()
         .enumerate()
         .map(|(i, line)| line.map_err(|e| anyhow::anyhow!("Reading GFF3 line {}: {}", i + 1, e)));
-    let mut trs = parse_gff3_lines(lines)?;
+    let mut trs = parse_gff3_lines(lines, true)?;
     for tr in &mut trs {
         tr.source = Some(source.to_string());
     }
@@ -157,18 +157,31 @@ fn parse_gff3_indexed_inner(
 
     // Lines were already collected into memory by the tabix-chunk loop above,
     // so wrap them in `Ok` to satisfy the streaming-aware parser signature.
-    parse_gff3_lines(all_lines.into_iter().map(Ok))
+    //
+    // That is also why the canonical transcript of a RefSeq gene is only partly derived here: it
+    // is a property of all of a gene's transcripts, and a region read has only the ones that
+    // overlap this input (see `derive_refseq_canonical`).
+    parse_gff3_lines(all_lines.into_iter().map(Ok), false)
 }
 
 /// Core GFF3 parsing logic: takes an iterator of `Result<String>` lines and
 /// builds Transcript models. Each item is either a raw line or a typed IO
 /// error from the underlying reader; the latter aborts parsing immediately
 /// rather than being silently treated as an empty line.
-fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<Transcript>> {
+///
+/// `whole_file` says the lines are every line of the file rather than the ones a tabix read found
+/// for some regions, which is what a gene-wide judgement needs.
+fn parse_gff3_lines(
+    lines: impl Iterator<Item = Result<String>>,
+    whole_file: bool,
+) -> Result<Vec<Transcript>> {
     let mut genes: HashMap<String, GffGene> = HashMap::new();
     let mut transcripts: HashMap<String, GffTranscript> = HashMap::new();
     let mut exons: Vec<GffExon> = Vec::new();
     let mut cds_features: Vec<GffCds> = Vec::new();
+    // The position of a transcript record in the file, which settles which of two equally long
+    // transcripts of a RefSeq gene is canonical ([`derive_refseq_canonical`]).
+    let mut transcript_order = 0usize;
 
     for line in lines {
         let line = line?;
@@ -232,11 +245,12 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                     .unwrap_or(&gene_id)
                     .to_string();
                 let symbol = attrs.get("Name").or_else(|| attrs.get("gene")).cloned();
-                let biotype = attrs
+                let stated_biotype = attrs
                     .get("biotype")
                     .or_else(|| attrs.get("gene_biotype"))
-                    .cloned()
-                    .unwrap_or_else(|| default_gene_biotype(feature_type));
+                    .cloned();
+                let biotype_stated = stated_biotype.is_some();
+                let biotype = stated_biotype.unwrap_or_else(|| default_gene_biotype(feature_type));
 
                 genes.insert(
                     gene_id.clone(),
@@ -244,8 +258,10 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                         id: gene_id,
                         symbol,
                         biotype,
+                        biotype_stated,
                         description: attrs.get("description").cloned(),
                         gene_id_attr: attrs.get("gene_id").cloned(),
+                        entrez_gene_id: sole_gene_id_from_dbxref(&attrs),
                         chromosome: seqid.to_string(),
                         start,
                         end,
@@ -277,18 +293,30 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                     .or_else(|| gene_id_from_dbxref(&attrs));
                 let tag_str = attrs.get("tag").cloned().unwrap_or_default();
                 let canonical = tag_str.contains("Ensembl_canonical");
-                let mane_select = tag_str.contains("MANE_Select");
-                let mane_plus_clinical = tag_str.contains("MANE_Plus_Clinical");
+                // RefSeq writes the tag with a space (`tag=MANE Select`), Ensembl with an
+                // underscore (`tag=...,MANE_Select`): VEP's RefSeq cache has the one as it has
+                // the other, so both are read.
+                let mane_select = has_tag(&tag_str, "MANE_Select");
+                let mane_plus_clinical = has_tag(&tag_str, "MANE_Plus_Clinical");
                 let gencode_primary = tag_str.contains("gencode_primary");
+                let readthrough = has_tag(&tag_str, "readthrough_transcript");
 
-                // Parse CDS completeness flags from tags
+                // Parse CDS completeness flags from tags, in the order VEP writes them
+                // (`cds_start_NF,cds_end_NF`).
                 let mut flags = Vec::new();
-                if tag_str.contains("cds_end_NF") {
-                    flags.push("cds_end_NF".to_string());
-                }
                 if tag_str.contains("cds_start_NF") {
                     flags.push("cds_start_NF".to_string());
                 }
+                if tag_str.contains("cds_end_NF") {
+                    flags.push("cds_end_NF".to_string());
+                }
+                // Ensembl's GFF3 export names a transcript `transcript:ENST...` and carries no
+                // such tag, where GENCODE's names it `ENST...` and does.
+                let ensembl_export = attrs
+                    .get("ID")
+                    .is_some_and(|id| id.starts_with("transcript:"))
+                    && flags.is_empty();
+                let counterpart = ensembl_dbxref(&attrs);
 
                 let version: Option<u32> = attrs.get("version").and_then(|v| v.parse().ok());
                 let ccds = attrs.get("ccdsid").cloned();
@@ -328,6 +356,13 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                         flags,
                         version,
                         provisional: !is_known_transcript_term(feature_type),
+                        readthrough,
+                        ensembl_export,
+                        counterpart,
+                        order: {
+                            transcript_order += 1;
+                            transcript_order
+                        },
                     },
                 );
             }
@@ -394,6 +429,7 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                     end,
                     strand,
                     phase,
+                    met_recodings: met_recodings(&attrs),
                 });
             }
             _ => {}
@@ -444,6 +480,13 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
                         // construction; the implicit-exon step below gives it
                         // exons too.
                         provisional: false,
+                        readthrough: false,
+                        ensembl_export: false,
+                        counterpart: None,
+                        order: {
+                            transcript_order += 1;
+                            transcript_order
+                        },
                     },
                 );
             }
@@ -529,24 +572,38 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             || cds_by_tx.contains_key(tid.as_str())
     });
 
+    // A record that hangs off a transcript is a part of it, not another one: the mature `miRNA`
+    // of a RefSeq precursor (`ID=rna-MIR155`, `Parent=rna-NR_030784.1`) is where in the precursor
+    // the miRNA is, and neither Ensembl VEP's `--gff` reader nor its RefSeq cache has a transcript
+    // of it. The parent is looked up after the whole file is read, because nothing promises it
+    // comes first.
+    let transcript_ids: std::collections::HashSet<String> = transcripts.keys().cloned().collect();
+    transcripts.retain(|_, tr| !transcript_ids.contains(&tr.parent_gene));
+
     // Build transcripts
     let mut result = Vec::with_capacity(transcripts.len());
+    // The transcripts of each RefSeq gene, for [`derive_refseq_canonical`]: where each is in
+    // `result` and what it was read from.
+    let mut refseq_genes: HashMap<&str, Vec<(usize, &GffTranscript)>> = HashMap::new();
     let empty_exons: Vec<GffExon> = Vec::new();
     let empty_cds: Vec<GffCds> = Vec::new();
 
     for (tid, gff_tr) in &transcripts {
         let gene = genes.get(&gff_tr.parent_gene);
         let gene_model = gene
-            .map(|g| Gene {
-                stable_id: Arc::from(gene_public_id(gff_tr, g).as_str()),
-                symbol: g.symbol.as_deref().map(Arc::from),
-                symbol_source: None,
-                hgnc_id: None,
-                biotype: Arc::from(g.biotype.as_str()),
-                chromosome: Arc::from(g.chromosome.as_str()),
-                start: g.start,
-                end: g.end,
-                strand: g.strand,
+            .map(|g| {
+                let (symbol_source, hgnc_id) = g.symbol_origin();
+                Gene {
+                    stable_id: Arc::from(gene_public_id(gff_tr, g).as_str()),
+                    symbol: g.symbol.as_deref().map(Arc::from),
+                    symbol_source,
+                    hgnc_id,
+                    biotype: Arc::from(g.biotype.as_str()),
+                    chromosome: Arc::from(g.chromosome.as_str()),
+                    start: g.start,
+                    end: g.end,
+                    strand: g.strand,
+                }
             })
             .unwrap_or_else(|| Gene {
                 stable_id: Arc::from(
@@ -732,6 +789,23 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             (None, None)
         };
 
+        // `transl_except=(pos:...,aa:Met)` on the first codon: the annotation reads a start that is
+        // not `ATG` as Met, which is the one recoding that changes what VEP calls the reference.
+        let initiator_met = first_cds_ensembl_phase == 0 && {
+            let first_codon = match gff_tr.strand {
+                Strand::Forward => tr_cds.iter().map(|c| c.start).min().map(|s| (s, s + 2)),
+                Strand::Reverse => tr_cds.iter().map(|c| c.end).max().map(|e| (e - 2, e)),
+            };
+            first_codon.is_some_and(|span| tr_cds.iter().any(|c| c.met_recodings.contains(&span)))
+        };
+
+        if let Some(g) = gene.filter(|g| g.entrez_gene_id.is_some()) {
+            refseq_genes
+                .entry(g.id.as_str())
+                .or_default()
+                .push((result.len(), gff_tr));
+        }
+
         result.push(Transcript {
             stable_id: Arc::from(gff_tr.public_id.as_str()),
             version: gff_tr.version,
@@ -751,24 +825,8 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             translateable_seq: None,
             peptide: None,
             canonical: gff_tr.canonical,
-            mane_select: if gff_tr.mane_select {
-                let vid = match gff_tr.version {
-                    Some(v) => format!("{}.{}", gff_tr.public_id, v),
-                    None => tid.to_string(),
-                };
-                Some(vid)
-            } else {
-                None
-            },
-            mane_plus_clinical: if gff_tr.mane_plus_clinical {
-                let vid = match gff_tr.version {
-                    Some(v) => format!("{}.{}", gff_tr.public_id, v),
-                    None => tid.to_string(),
-                };
-                Some(vid)
-            } else {
-                None
-            },
+            mane_select: gff_tr.mane_select.then(|| mane_accession(gff_tr)),
+            mane_plus_clinical: gff_tr.mane_plus_clinical.then(|| mane_accession(gff_tr)),
             tsl: gff_tr.tsl,
             appris: gff_tr.appris.clone(),
             ccds: gff_tr.ccds.clone(),
@@ -790,8 +848,13 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
             gencode_primary: gff_tr.gencode_primary,
             flags: gff_tr.flags.clone(),
             codon_table_start_phase: first_cds_ensembl_phase,
+            initiator_met,
+            cds_flags_from_sequence: gff_tr.ensembl_export,
+            readthrough: gff_tr.readthrough,
         });
     }
+
+    derive_refseq_canonical(&mut result, &refseq_genes, whole_file);
 
     // HashMap iteration order is randomized per process, so sort by stable_id
     // to make cache serialization bit-for-bit reproducible across builds.
@@ -804,6 +867,140 @@ fn parse_gff3_lines(lines: impl Iterator<Item = Result<String>>) -> Result<Vec<T
     });
 
     Ok(result)
+}
+
+/// Whether a `tag=` list names `wanted`, spelling aside: RefSeq writes `MANE Select` and Ensembl
+/// `MANE_Select`.
+fn has_tag(tag_str: &str, wanted: &str) -> bool {
+    tag_str
+        .split(',')
+        .any(|tag| tag.trim().replace(' ', "_") == wanted)
+}
+
+/// The NCBI Gene id a record's `Dbxref` gives when it gives exactly one
+/// (`Dbxref=GeneID:7157,HGNC:HGNC:11998`), which is when Ensembl VEP's RefSeq cache names the
+/// gene's symbol source `EntrezGene` (`prefetch_gene_ids`: `scalar(@entries) eq 1`).
+fn sole_gene_id_from_dbxref(attrs: &HashMap<String, String>) -> Option<String> {
+    let dbxref = attrs.get("dbxref").or_else(|| attrs.get("Dbxref"))?;
+    let mut ids = dbxref
+        .split(',')
+        .filter_map(|pair| pair.strip_prefix("GeneID:"));
+    let first = ids.next()?;
+    ids.next().is_none().then(|| first.to_string())
+}
+
+/// The Ensembl transcript a RefSeq MANE record pairs with: `Dbxref=Ensembl:ENST00000618007.5,...`.
+/// VEP's RefSeq cache writes it as the transcript's `MANE_SELECT`.
+fn ensembl_dbxref(attrs: &HashMap<String, String>) -> Option<String> {
+    let dbxref = attrs.get("dbxref").or_else(|| attrs.get("Dbxref"))?;
+    dbxref
+        .split(',')
+        .find_map(|pair| pair.strip_prefix("Ensembl:"))
+        .map(str::to_string)
+}
+
+/// What a MANE transcript is called in the `MANE_SELECT` and `MANE_PLUS_CLINICAL` columns: the
+/// Ensembl transcript a RefSeq record pairs with, which is what VEP's RefSeq cache holds, and for
+/// a record that says nothing of one the transcript's own accession.
+///
+/// Ensembl VEP's Ensembl cache holds the RefSeq accession instead (`NM_001754.5` on an `ENST`
+/// row), which an Ensembl GFF3 does not carry; there this is the transcript's own, as it has
+/// always been (`docs/VEP_DIVERGENCE.md`).
+fn mane_accession(transcript: &GffTranscript) -> String {
+    if let Some(counterpart) = &transcript.counterpart {
+        return counterpart.clone();
+    }
+    match transcript.version {
+        Some(v) => format!("{}.{}", transcript.public_id, v),
+        None => transcript.public_id.clone(),
+    }
+}
+
+/// Where Ensembl says a gene's symbol is from, in the `description` it ends with:
+/// `... [Source:HGNC Symbol;Acc:HGNC:11998]` is the label of the database (as Ensembl's
+/// `external_db` table displays it) and the accession in it.
+fn described_source(description: &str) -> Option<(&str, &str)> {
+    let rest = description.rsplit_once("[Source:")?.1;
+    let (label, rest) = rest.split_once(";Acc:")?;
+    Some((label, rest.strip_suffix(']')?))
+}
+
+/// The `transl_except` recodings to Met of a CDS record, as genomic spans:
+/// `transl_except=(pos:complement(40552344..40552346),aa:Met)`.
+///
+/// Only Met is kept: it is the one that changes what VEP calls the reference (a start that is not
+/// `ATG` read as Met), and a `Sec` is read through by `resolve_readthrough_selenocysteine` from the
+/// CDS alone. A position that is not one plain `start..end` (a `join`) is skipped.
+fn met_recodings(attrs: &HashMap<String, String>) -> Vec<(u64, u64)> {
+    let Some(value) = attrs.get("transl_except") else {
+        return Vec::new();
+    };
+    value
+        .split("),(")
+        .filter_map(|item| {
+            let item = item.trim_start_matches('(').trim_end_matches(')');
+            let (pos, aa) = item.split_once(",aa:")?;
+            let pos = pos.strip_prefix("pos:")?;
+            let pos = pos
+                .strip_prefix("complement(")
+                .map_or(pos, |p| p.trim_end_matches(')'));
+            let (start, end) = pos.split_once("..")?;
+            (aa == "Met").then_some((start.parse().ok()?, end.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Mark the canonical transcript of each RefSeq gene, which a RefSeq GFF3 never does: Ensembl's
+/// `Ensembl_canonical` tag has no RefSeq counterpart, and Ensembl VEP's RefSeq cache takes the flag
+/// from its database (`gene.canonical_transcript_id`), whose rules are not in VEP.
+///
+/// What the cache holds, read for chr21 and chr22 (3,038 NM_ and NR_ transcripts of 1,099 genes),
+/// is:
+///
+/// - the MANE Select transcript, where the gene has one: 640 genes of 640;
+/// - otherwise the transcript that spans the most of the genome, and of equally long ones the
+///   first in the file (the one the database loaded first): 451 genes of 455. 366 of those genes
+///   have one transcript; of the 89 with more, the cache's is the longest-spanning in 85 and the
+///   first of those in the file in all 85. The other four genes, and four that have no canonical
+///   transcript in the cache at all (coding genes whose transcripts are all `RefSeq Select`), are
+///   not explained by anything in the file. Neither length of the transcript's exons nor of its
+///   CDS does better than the span (63 and 52 of 89), and neither does the `RefSeq Select` tag.
+///
+/// The span rule is a judgement over *all* of a gene's transcripts, so it is made only for a whole
+/// file. A tabix read returns the transcripts that overlap this input, and the longest of those is
+/// not the longest of the gene: it would put `CANONICAL` on a transcript the cache does not, which
+/// is a plausible wrong answer, where leaving it empty is a missing one. The MANE Select tag is
+/// the transcript's own, so a region read marks it wherever it is found, and finds none for a gene
+/// whose MANE transcript is not among those it read, which is right.
+///
+/// A gene one of whose transcripts is tagged `Ensembl_canonical` is left as it is.
+fn derive_refseq_canonical(
+    result: &mut [Transcript],
+    genes: &HashMap<&str, Vec<(usize, &GffTranscript)>>,
+    whole_file: bool,
+) {
+    for transcripts in genes.values() {
+        if transcripts.iter().any(|(_, t)| t.canonical) {
+            continue;
+        }
+        let span = |t: &GffTranscript| t.end - t.start + 1;
+        let pick = transcripts
+            .iter()
+            .filter(|(_, t)| t.mane_select)
+            .min_by_key(|(_, t)| t.order)
+            .or_else(|| {
+                whole_file
+                    .then(|| {
+                        transcripts.iter().max_by(|(_, a), (_, b)| {
+                            span(a).cmp(&span(b)).then_with(|| b.order.cmp(&a.order))
+                        })
+                    })
+                    .flatten()
+            });
+        if let Some(&(index, _)) = pick {
+            result[index].canonical = true;
+        }
+    }
 }
 
 /// What the output calls a transcript: its `transcript_id` attribute, and its ID where it has none,
@@ -855,6 +1052,11 @@ fn transcript_biotype(transcript: &GffTranscript, gene: Option<&GffGene>) -> Str
         return stated.clone();
     }
     let kind = transcript.feature_type.to_ascii_lowercase();
+    // Ensembl's RefSeq cache names some RefSeq transcripts differently from VEP's `--gff` reader
+    // (`lncRNA` for what it guesses `ncRNA`); see `refseq_biotype` for which.
+    if let Some(biotype) = gene.and_then(|g| refseq_biotype(&kind, g)) {
+        return biotype;
+    }
     let guessed = if kind == "mrna" {
         Some("protein_coding".to_string())
     } else if kind == "ncrna" {
@@ -873,6 +1075,45 @@ fn transcript_biotype(transcript: &GffTranscript, gene: Option<&GffGene>) -> Str
         transcript.gbkey.clone()
     };
     guessed.unwrap_or_else(|| transcript.feature_type.clone())
+}
+
+/// The biotype Ensembl VEP's RefSeq cache gives a RefSeq transcript, where it differs from what
+/// VEP's `--gff` reader guesses (`transcript_biotype`): the `gene_biotype` of its gene, except
+/// that a non-coding transcript of a protein-coding gene is `misc_RNA`.
+///
+/// Read for chr21 and chr22, where the cache holds 3,038 NM_ and NR_ transcripts, by the SO term
+/// of the record and the `gene_biotype` of its gene:
+///
+/// | record | `gene_biotype` | cache | `--gff` guesses |
+/// |---|---|---|---|
+/// | `mRNA` (2,199) | `protein_coding` | `protein_coding` | the same |
+/// | `lnc_RNA` (503) | `lncRNA` | `lncRNA` | `ncRNA` |
+/// | `primary_transcript` (75) | `miRNA` | `miRNA` | the same |
+/// | `transcript` (168) | `protein_coding` | `misc_RNA` | the same |
+/// | `transcript` (67) | `transcribed_pseudogene` | `transcribed_pseudogene` | `misc_RNA` |
+/// | `rRNA` (12) | `rRNA` | `rRNA` | the same |
+/// | `snRNA` (1) | `snRNA` | `snRNA` | `ncRNA` |
+/// | `snoRNA` (13) | `snoRNA` | `snoRNA` | `ncRNA` |
+///
+/// Those are the pairs read here, and nothing else is: the other `gene_biotype` values RefSeq
+/// has (`other`, `tRNA`, `scRNA`, `antisense_RNA`, `vault_RNA`, ...) are not on those chromosomes,
+/// so what the cache calls their transcripts has not been measured, and they keep the name
+/// `--gff` gives them. Only a gene that states `gene_biotype` and has an NCBI gene id is read
+/// this way.
+fn refseq_biotype(kind: &str, gene: &GffGene) -> Option<String> {
+    if !gene.biotype_stated || gene.entrez_gene_id.is_none() {
+        return None;
+    }
+    match (kind, gene.biotype.as_str()) {
+        ("lnc_rna", "lncRNA")
+        | ("primary_transcript", "miRNA")
+        | ("transcript", "transcribed_pseudogene")
+        | ("rrna", "rRNA")
+        | ("snrna", "snRNA")
+        | ("snorna", "snoRNA") => Some(gene.biotype.clone()),
+        ("transcript", "protein_coding") => Some("misc_RNA".to_string()),
+        _ => None,
+    }
 }
 
 /// True when a GFF3 record carries a gene, whichever SO term the file uses.
@@ -1066,16 +1307,58 @@ struct GffGene {
     id: String,
     symbol: Option<String>,
     biotype: String,
+    /// Whether the record says what its biotype is (`gene_biotype` in RefSeq's, `biotype` in
+    /// Ensembl's) and `biotype` is not what [`default_gene_biotype`] makes of its SO term.
+    biotype_stated: bool,
     /// The record's `description`: Ensembl VEP calls a transcript of a gene described as a
     /// microRNA a `miRNA` when the transcript says nothing of its own ([`transcript_biotype`]).
     description: Option<String>,
     /// The record's `gene_id` attribute, which names the gene in the output when its transcripts
     /// do not ([`gene_public_id`]).
     gene_id_attr: Option<String>,
+    /// The NCBI Gene id of its `Dbxref`, when there is exactly one ([`sole_gene_id_from_dbxref`]).
+    entrez_gene_id: Option<String>,
     chromosome: String,
     start: u64,
     end: u64,
     strand: Strand,
+}
+
+impl GffGene {
+    /// The symbol source and HGNC id Ensembl VEP's cache holds for the gene.
+    ///
+    /// A gene NCBI gives a gene id is `EntrezGene` with no HGNC id, which is what the RefSeq cache
+    /// writes on every row it has a symbol for (`prefetch_gene_ids`). An Ensembl gene says where
+    /// its symbol is from in its description (`[Source:HGNC Symbol;Acc:HGNC:12023]`), and the
+    /// cache writes the database's name for it and, for HGNC, the accession as `HGNC_ID`.
+    ///
+    /// Checked against 2,031 genes of the Ensembl cache run (chr21 and chr22, three inputs): all
+    /// 1,153 that say `HGNC Symbol` are `HGNC` with their accession, the 27 that say `RFAM` are
+    /// `RFAM` and the 13 that say `NCBI gene (formerly Entrezgene)` are `EntrezGene`, and the 838
+    /// whose description does not say have neither. Ten of the 13 `EntrezGene` genes have an
+    /// `HGNC_ID` in the cache: VEP copies one gene's HGNC id to every other of the same symbol it
+    /// has loaded (`merge_features`), which depends on what else the input holds and is not
+    /// reproduced. A label this does not know gives neither, as one that is not there does.
+    fn symbol_origin(&self) -> (Option<String>, Option<String>) {
+        if self.entrez_gene_id.is_some() {
+            return (Some("EntrezGene".to_string()), None);
+        }
+        let Some((label, accession)) = self.description.as_deref().and_then(described_source)
+        else {
+            return (None, None);
+        };
+        match label {
+            "HGNC Symbol" => (
+                Some("HGNC".to_string()),
+                accession
+                    .starts_with("HGNC:")
+                    .then(|| accession.to_string()),
+            ),
+            "RFAM" => (Some("RFAM".to_string()), None),
+            "NCBI gene (formerly Entrezgene)" => (Some("EntrezGene".to_string()), None),
+            _ => (None, None),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1111,6 +1394,15 @@ struct GffTranscript {
     /// Kept only if exons turn out to claim it — see the `retain` in
     /// [`parse_gff3_lines`] and [`is_provisional_transcript`].
     provisional: bool,
+    /// `tag=readthrough_transcript`.
+    readthrough: bool,
+    /// Named `transcript:ENST...`, and without `cds_start_NF` / `cds_end_NF` tags: an Ensembl
+    /// GFF3 export, which leaves out what its database holds ([`Transcript::cds_flags_from_sequence`]).
+    ensembl_export: bool,
+    /// The Ensembl transcript a RefSeq record pairs with ([`ensembl_dbxref`]).
+    counterpart: Option<String>,
+    /// Where the record is in the file, counting transcripts from 1.
+    order: usize,
 }
 
 #[derive(Debug)]
@@ -1134,6 +1426,8 @@ struct GffCds {
     end: u64,
     strand: Strand,
     phase: i8,
+    /// The genomic spans its `transl_except` recodes to Met ([`met_recodings`]).
+    met_recodings: Vec<(u64, u64)>,
 }
 
 #[cfg(test)]
@@ -1487,8 +1781,9 @@ chr1\tGnomon\texon\t6000\t6239\t.\t+\t.\tID=exon-id-LOC90010-1;Parent=id-LOC9001
         );
         assert_eq!(
             named("NR_090003.1"),
-            want("90003", "NB3", "ncRNA"),
-            "an lnc_RNA is its gbkey"
+            want("90003", "NB3", "lncRNA"),
+            "an lnc_RNA of an lncRNA gene is `lncRNA` in Ensembl's RefSeq cache, `ncRNA` (its \
+             gbkey) to VEP's `--gff`"
         );
         assert_eq!(
             named("NR_090005.1"),
@@ -1793,5 +2088,295 @@ chr1\tensembl\tCDS\t1050\t1200\t.\t+\t0\tID=CDS:P1;Parent=transcript:TX3";
         let bad = ">\nACGT\n";
         let res = crate::fasta::FastaReader::from_reader(bad.as_bytes());
         assert!(res.is_err(), "FASTA with empty header should fail to parse");
+    }
+
+    // The records below are copied, verbatim, from the annotations Ensembl VEP 116.3's caches
+    // were measured against: NCBI's RefSeq GFF3 (GCF_000001405.40, GRCh38.p14, with the contigs
+    // named as Ensembl's FASTA names them) and Ensembl 116's. What each test asserts is what the
+    // cache holds for that record: `docs/VEP_DIVERGENCE.md` Part 3 has the measurements.
+
+    /// TPTE: a MANE Select transcript (`tag=MANE Select`, paired with `ENST00000618007.5`) and a second transcript of the same span.
+    const REFSEQ_TPTE: &str = "21\tBestRefSeq\tgene\t10521583\t10605716\t.\t+\t.\tID=gene-TPTE;Dbxref=GeneID:7179,HGNC:HGNC:12023,MIM:604336;Name=TPTE;description=transmembrane phosphatase with tensin homology;gbkey=Gene;gene=TPTE;gene_biotype=protein_coding;gene_synonym=CT44,PTEN2,TPTE1\n\
+21\tBestRefSeq\tmRNA\t10521583\t10605716\t.\t+\t.\tID=rna-NM_199261.4;Parent=gene-TPTE;Dbxref=Ensembl:ENST00000618007.5,GeneID:7179,GenBank:NM_199261.4,HGNC:HGNC:12023,MIM:604336;Name=NM_199261.4;gbkey=mRNA;gene=TPTE;product=transmembrane phosphatase with tensin homology%2C transcript variant 1;tag=MANE Select;transcript_id=NM_199261.4\n\
+21\tBestRefSeq\texon\t10521583\t10521694\t.\t+\t.\tID=exon-NM_199261.4-1;Parent=rna-NM_199261.4;Dbxref=Ensembl:ENST00000618007.5,GeneID:7179,GenBank:NM_199261.4,HGNC:HGNC:12023,MIM:604336;gbkey=mRNA;gene=TPTE;product=transmembrane phosphatase with tensin homology%2C transcript variant 1;tag=MANE Select;transcript_id=NM_199261.4\n\
+21\tBestRefSeq\tmRNA\t10521583\t10605716\t.\t+\t.\tID=rna-NM_199259.4;Parent=gene-TPTE;Dbxref=GeneID:7179,GenBank:NM_199259.4,HGNC:HGNC:12023,MIM:604336;Name=NM_199259.4;gbkey=mRNA;gene=TPTE;product=transmembrane phosphatase with tensin homology%2C transcript variant 2;transcript_id=NM_199259.4\n\
+21\tBestRefSeq\texon\t10521583\t10521694\t.\t+\t.\tID=exon-NM_199259.4-1;Parent=rna-NM_199259.4;Dbxref=GeneID:7179,GenBank:NM_199259.4,HGNC:HGNC:12023,MIM:604336;gbkey=mRNA;gene=TPTE;product=transmembrane phosphatase with tensin homology%2C transcript variant 2;transcript_id=NM_199259.4\n\
+";
+
+    /// LOC102723475: two transcripts of one span and no MANE Select, `RefSeq Select` first in the file.
+    const REFSEQ_KCNE1B: &str = "21\tBestRefSeq%2CGnomon\tgene\t7816677\t7829632\t.\t-\t.\tID=gene-LOC102723475;Dbxref=GeneID:102723475;Name=LOC102723475;description=potassium voltage-gated channel subfamily E regulatory subunit 1B;gbkey=Gene;gene=LOC102723475;gene_biotype=protein_coding;gene_synonym=KCNE1B\n\
+21\tBestRefSeq\tmRNA\t7816677\t7829632\t.\t-\t.\tID=rna-NM_001369869.1;Parent=gene-LOC102723475;Dbxref=GeneID:102723475,GenBank:NM_001369869.1;Name=NM_001369869.1;gbkey=mRNA;gene=LOC102723475;product=potassium voltage-gated channel subfamily E regulatory subunit 1B%2C transcript variant 2;tag=RefSeq Select;transcript_id=NM_001369869.1\n\
+21\tBestRefSeq\texon\t7829517\t7829632\t.\t-\t.\tID=exon-NM_001369869.1-1;Parent=rna-NM_001369869.1;Dbxref=GeneID:102723475,GenBank:NM_001369869.1;gbkey=mRNA;gene=LOC102723475;product=potassium voltage-gated channel subfamily E regulatory subunit 1B%2C transcript variant 2;tag=RefSeq Select;transcript_id=NM_001369869.1\n\
+21\tBestRefSeq\tmRNA\t7816677\t7829632\t.\t-\t.\tID=rna-NM_001330065.1;Parent=gene-LOC102723475;Dbxref=GeneID:102723475,GenBank:NM_001330065.1;Name=NM_001330065.1;gbkey=mRNA;gene=LOC102723475;product=potassium voltage-gated channel subfamily E regulatory subunit 1B%2C transcript variant 1;transcript_id=NM_001330065.1\n\
+21\tBestRefSeq\texon\t7829517\t7829632\t.\t-\t.\tID=exon-NM_001330065.1-1;Parent=rna-NM_001330065.1;Dbxref=GeneID:102723475,GenBank:NM_001330065.1;gbkey=mRNA;gene=LOC102723475;product=potassium voltage-gated channel subfamily E regulatory subunit 1B%2C transcript variant 1;transcript_id=NM_001330065.1\n\
+";
+
+    /// LINC00310: two lncRNA transcripts, the second (variant 2) shorter than the first.
+    const REFSEQ_LINC00310: &str = "21\tBestRefSeq\tgene\t34180677\t34189919\t.\t+\t.\tID=gene-LINC00310;Dbxref=GeneID:114036,HGNC:HGNC:16414;Name=LINC00310;description=long intergenic non-protein coding RNA 310;gbkey=Gene;gene=LINC00310;gene_biotype=lncRNA;gene_synonym=C21orf82,NCRNA00310\n\
+21\tBestRefSeq\tlnc_RNA\t34180677\t34189919\t.\t+\t.\tID=rna-NR_027266.1;Parent=gene-LINC00310;Dbxref=GeneID:114036,GenBank:NR_027266.1,HGNC:HGNC:16414;Name=NR_027266.1;gbkey=ncRNA;gene=LINC00310;product=long intergenic non-protein coding RNA 310%2C transcript variant 1;transcript_id=NR_027266.1\n\
+21\tBestRefSeq\texon\t34180677\t34180793\t.\t+\t.\tID=exon-NR_027266.1-1;Parent=rna-NR_027266.1;Dbxref=GeneID:114036,GenBank:NR_027266.1,HGNC:HGNC:16414;gbkey=ncRNA;gene=LINC00310;product=long intergenic non-protein coding RNA 310%2C transcript variant 1;transcript_id=NR_027266.1\n\
+21\tBestRefSeq\tlnc_RNA\t34180677\t34183245\t.\t+\t.\tID=rna-NR_027267.1;Parent=gene-LINC00310;Dbxref=GeneID:114036,GenBank:NR_027267.1,HGNC:HGNC:16414;Name=NR_027267.1;gbkey=ncRNA;gene=LINC00310;product=long intergenic non-protein coding RNA 310%2C transcript variant 2;transcript_id=NR_027267.1\n\
+21\tBestRefSeq\texon\t34180677\t34180793\t.\t+\t.\tID=exon-NR_027267.1-1;Parent=rna-NR_027267.1;Dbxref=GeneID:114036,GenBank:NR_027267.1,HGNC:HGNC:16414;gbkey=ncRNA;gene=LINC00310;product=long intergenic non-protein coding RNA 310%2C transcript variant 2;transcript_id=NR_027267.1\n\
+";
+
+    /// A non-coding transcript of a protein-coding gene, of a transcribed pseudogene, and a microRNA precursor with its mature miRNA.
+    const REFSEQ_NONCODING: &str = "21\tBestRefSeq\tgene\t5130871\t5154658\t.\t-\t.\tID=gene-LOC102724159;Dbxref=GeneID:102724159;Name=LOC102724159;description=periodic tryptophan protein 2 homolog;gbkey=Gene;gene=LOC102724159;gene_biotype=protein_coding\n\
+21\tBestRefSeq\ttranscript\t5130871\t5154658\t.\t-\t.\tID=rna-NR_160695.1;Parent=gene-LOC102724159;Dbxref=GeneID:102724159,GenBank:NR_160695.1;Name=NR_160695.1;gbkey=misc_RNA;gene=LOC102724159;product=periodic tryptophan protein 2 homolog%2C transcript variant 2;transcript_id=NR_160695.1\n\
+21\tBestRefSeq\texon\t5154623\t5154658\t.\t-\t.\tID=exon-NR_160695.1-1;Parent=rna-NR_160695.1;Dbxref=GeneID:102724159,GenBank:NR_160695.1;gbkey=misc_RNA;gene=LOC102724159;product=periodic tryptophan protein 2 homolog%2C transcript variant 2;transcript_id=NR_160695.1\n\
+22\tBestRefSeq\tpseudogene\t50757086\t50799637\t.\t+\t.\tID=gene-RPL23AP82;Dbxref=GeneID:284942,HGNC:HGNC:33730;Name=RPL23AP82;description=ribosomal protein L23a pseudogene 82;gbkey=Gene;gene=RPL23AP82;gene_biotype=transcribed_pseudogene;gene_synonym=RPL23A_43_1761;pseudo=true\n\
+22\tBestRefSeq\ttranscript\t50783729\t50799637\t.\t+\t.\tID=rna-NR_026982.1;Parent=gene-RPL23AP82;Dbxref=GeneID:284942,GenBank:NR_026982.1,HGNC:HGNC:33730;Name=NR_026982.1;gbkey=misc_RNA;gene=RPL23AP82;product=ribosomal protein L23a pseudogene 82%2C transcript variant 2;pseudo=true;transcript_id=NR_026982.1\n\
+22\tBestRefSeq\texon\t50783729\t50784072\t.\t+\t.\tID=exon-NR_026982.1-1;Parent=rna-NR_026982.1;Dbxref=GeneID:284942,GenBank:NR_026982.1,HGNC:HGNC:33730;gbkey=misc_RNA;gene=RPL23AP82;product=ribosomal protein L23a pseudogene 82%2C transcript variant 2;pseudo=true;transcript_id=NR_026982.1\n\
+22\tBestRefSeq\tgene\t20033139\t20033220\t.\t+\t.\tID=gene-MIR185;Dbxref=GeneID:406961,HGNC:HGNC:31556,MIM:615576,miRBase:MI0000482;Name=MIR185;description=microRNA 185;gbkey=Gene;gene=MIR185;gene_biotype=miRNA;gene_synonym=miR-185,MIRN185\n\
+22\tBestRefSeq\tprimary_transcript\t20033139\t20033220\t.\t+\t.\tID=rna-NR_029706.1;Parent=gene-MIR185;Dbxref=GeneID:406961,GenBank:NR_029706.1,HGNC:HGNC:31556,MIM:615576,miRBase:MI0000482;Name=NR_029706.1;gbkey=precursor_RNA;gene=MIR185;product=microRNA 185;transcript_id=NR_029706.1\n\
+22\tBestRefSeq\texon\t20033139\t20033220\t.\t+\t.\tID=exon-NR_029706.1-1;Parent=rna-NR_029706.1;Dbxref=GeneID:406961,GenBank:NR_029706.1,HGNC:HGNC:31556,MIM:615576,miRBase:MI0000482;gbkey=precursor_RNA;gene=MIR185;product=microRNA 185;transcript_id=NR_029706.1\n\
+22\tBestRefSeq\tmiRNA\t20033153\t20033174\t.\t+\t.\tID=rna-MIR185;Parent=rna-NR_029706.1;Dbxref=GeneID:406961,miRBase:MIMAT0000455,HGNC:HGNC:31556,MIM:615576,miRBase:MI0000482;gbkey=ncRNA;gene=MIR185;product=hsa-miR-185-5p\n\
+";
+
+    /// MRTFA transcript variant 3: translation starts at a GUG, which `transl_except` reads as Met.
+    const REFSEQ_MRTFA: &str = "22\tBestRefSeq\tgene\t40410289\t40636719\t.\t-\t.\tID=gene-MRTFA;Dbxref=GeneID:57591,HGNC:HGNC:14334,MIM:606078;Name=MRTFA;description=myocardin related transcription factor A;gbkey=Gene;gene=MRTFA;gene_biotype=protein_coding;gene_synonym=BSAC,MAL,MKL,MKL1,MRTF-A\n\
+22\tBestRefSeq\tmRNA\t40410289\t40636719\t.\t-\t.\tID=rna-NM_001282661.3;Parent=gene-MRTFA;Dbxref=GeneID:57591,GenBank:NM_001282661.3,HGNC:HGNC:14334,MIM:606078;Name=NM_001282661.3;gbkey=mRNA;gene=MRTFA;product=myocardin related transcription factor A%2C transcript variant 3;transcript_id=NM_001282661.3\n\
+22\tBestRefSeq\texon\t40552106\t40552367\t.\t-\t.\tID=exon-NM_001282661.3-3;Parent=rna-NM_001282661.3;Dbxref=GeneID:57591,GenBank:NM_001282661.3,HGNC:HGNC:14334,MIM:606078;gbkey=mRNA;gene=MRTFA;product=myocardin related transcription factor A%2C transcript variant 3;transcript_id=NM_001282661.3\n\
+22\tBestRefSeq\tCDS\t40552106\t40552346\t.\t-\t0\tID=cds-NP_001269590.2;Parent=rna-NM_001282661.3;Dbxref=CCDS:CCDS74865.2,GeneID:57591,GenBank:NP_001269590.2,HGNC:HGNC:14334,MIM:606078;Name=NP_001269590.2;Note=isoform 2 is encoded by transcript variant 3%3B non-AUG (GUG) translation initiation codon;gbkey=CDS;gene=MRTFA;product=myocardin-related transcription factor A isoform 2;protein_id=NP_001269590.2;transl_except=(pos:complement(40552344..40552346)%2Caa:Met)\n\
+";
+
+    /// TXNRD2 transcript variant 2: a UGA recoded as selenocysteine, which is not an initiator.
+    const REFSEQ_TXNRD2: &str = "22\tBestRefSeq\tgene\t19875522\t19941818\t.\t-\t.\tID=gene-TXNRD2;Dbxref=GeneID:10587,HGNC:HGNC:18155,MIM:606448;Name=TXNRD2;description=thioredoxin reductase 2;gbkey=Gene;gene=TXNRD2;gene_biotype=protein_coding;gene_synonym=GCCD5,SELZ,TR,TR-BETA,TR3,TRXR2,TXNR2\n\
+22\tBestRefSeq\tmRNA\t19875522\t19941818\t.\t-\t.\tID=rna-NM_001352300.2;Parent=gene-TXNRD2;Dbxref=GeneID:10587,GenBank:NM_001352300.2,HGNC:HGNC:18155,MIM:606448;Name=NM_001352300.2;gbkey=mRNA;gene=TXNRD2;product=thioredoxin reductase 2%2C transcript variant 2;transcript_id=NM_001352300.2\n\
+22\tBestRefSeq\texon\t19941701\t19941818\t.\t-\t.\tID=exon-NM_001352300.2-1;Parent=rna-NM_001352300.2;Dbxref=GeneID:10587,GenBank:NM_001352300.2,HGNC:HGNC:18155,MIM:606448;gbkey=mRNA;gene=TXNRD2;product=thioredoxin reductase 2%2C transcript variant 2;transcript_id=NM_001352300.2\n\
+22\tBestRefSeq\tCDS\t19941701\t19941803\t.\t-\t0\tID=cds-NP_001339229.1;Parent=rna-NM_001352300.2;Dbxref=CCDS:CCDS87001.1,GeneID:10587,GenBank:NP_001339229.1,HGNC:HGNC:18155,MIM:606448;Name=NP_001339229.1;Note=UGA stop codon recoded as selenocysteine%3B isoform 2 precursor is encoded by transcript variant 2;gbkey=CDS;gene=TXNRD2;product=thioredoxin reductase 2%2C mitochondrial isoform 2 precursor;protein_id=NP_001339229.1;transl_except=(pos:complement(19877111..19877113)%2Caa:Sec)\n\
+22\tBestRefSeq\tCDS\t19931030\t19931095\t.\t-\t2\tID=cds-NP_001339229.1;Parent=rna-NM_001352300.2;Dbxref=CCDS:CCDS87001.1,GeneID:10587,GenBank:NP_001339229.1,HGNC:HGNC:18155,MIM:606448;Name=NP_001339229.1;Note=UGA stop codon recoded as selenocysteine%3B isoform 2 precursor is encoded by transcript variant 2;gbkey=CDS;gene=TXNRD2;product=thioredoxin reductase 2%2C mitochondrial isoform 2 precursor;protein_id=NP_001339229.1;transl_except=(pos:complement(19877111..19877113)%2Caa:Sec)\n\
+";
+
+    /// Ensembl genes by where their symbol is from: HGNC Symbol, RFAM, NCBI gene (formerly Entrezgene), and none.
+    const ENSEMBL_GENES: &str = "21\tensembl_havana\tgene\t10521553\t10606140\t.\t+\t.\tID=gene:ENSG00000274391;Name=TPTE;biotype=protein_coding;description=transmembrane phosphatase with tensin homology [Source:HGNC Symbol%3BAcc:HGNC:12023];gene_id=ENSG00000274391;logic_name=ensembl_havana_gene_homo_sapiens;version=6\n\
+22\tensembl\tncRNA_gene\t23132730\t23133005\t.\t-\t.\tID=gene:ENSG00000283438;Name=Metazoa_SRP;biotype=misc_RNA;description=Metazoan signal recognition particle RNA [Source:RFAM%3BAcc:RF00017];gene_id=ENSG00000283438;logic_name=ncrna_homo_sapiens;version=1\n\
+22\thavana\tncRNA_gene\t22559343\t22566602\t.\t+\t.\tID=gene:ENSG00000220891;Name=LL22NC03-63E9.3;biotype=lncRNA;description=uncharacterized LOC648691 [Source:NCBI gene (formerly Entrezgene)%3BAcc:648691];gene_id=ENSG00000220891;logic_name=havana_homo_sapiens;version=1\n\
+21\thavana\tncRNA_gene\t25928754\t25952614\t.\t+\t.\tID=gene:ENSG00000233783;biotype=lncRNA;description=novel transcript;gene_id=ENSG00000233783;logic_name=havana_homo_sapiens;version=9\n\
+";
+
+    /// A readthrough transcript (`tag=...,readthrough_transcript`) of SPECC1L-ADORA2A.
+    const ENSEMBL_READTHROUGH: &str = "22\thavana\tgene\t24270898\t24442356\t.\t+\t.\tID=gene:ENSG00000258555;Name=SPECC1L-ADORA2A;biotype=protein_coding;description=SPECC1L-ADORA2A readthrough (NMD candidate) [Source:HGNC Symbol%3BAcc:HGNC:49185];gene_id=ENSG00000258555;logic_name=havana_homo_sapiens;version=6\n\
+22\thavana\tmRNA\t24270898\t24442356\t.\t+\t.\tID=transcript:ENST00000358654;Parent=gene:ENSG00000258555;Name=SPECC1L-ADORA2A-201;biotype=nonsense_mediated_decay;tag=gencode_basic,gencode_primary,Ensembl_canonical,readthrough_transcript;transcript_id=ENST00000358654;transcript_support_level=2;version=2\n\
+22\thavana\texon\t24270898\t24270983\t.\t+\t.\tParent=transcript:ENST00000358654;Name=ENSE00001745229;constitutive=1;ensembl_end_phase=-1;ensembl_phase=-1;exon_id=ENSE00001745229;rank=1;version=1\n\
+";
+
+    fn named<'a>(transcripts: &'a [Transcript], id: &str) -> &'a Transcript {
+        transcripts
+            .iter()
+            .find(|t| &*t.stable_id == id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no transcript {id}: {:?}",
+                    transcripts
+                        .iter()
+                        .map(|t| &*t.stable_id)
+                        .collect::<Vec<_>>()
+                )
+            })
+    }
+
+    /// The lines of a block with two transcripts and a gene (gene, transcript, exon, transcript,
+    /// exon) with the transcripts in the other order.
+    fn swapped(block: &str) -> String {
+        let l: Vec<&str> = block.lines().collect();
+        [l[0], l[3], l[4], l[1], l[2]].join("\n")
+    }
+
+    /// Ensembl VEP's RefSeq cache writes `EntrezGene` as the symbol source of every gene it has a
+    /// symbol for, and no HGNC ID on any row, though the GFF3's `Dbxref` has one (`prefetch_gene_ids`
+    /// takes the gene's EntrezGene cross-reference and nothing else). 16,271 rows of a run over
+    /// chr21 and chr22 have the one and none the other.
+    #[test]
+    fn a_refseq_gene_with_a_gene_id_has_entrezgene_for_its_symbol_source_and_no_hgnc_id() {
+        let transcripts = parse_gff3(REFSEQ_TPTE.as_bytes()).unwrap();
+        let tpte = named(&transcripts, "NM_199261.4");
+        assert_eq!(tpte.gene.symbol.as_deref(), Some("TPTE"));
+        assert_eq!(tpte.gene.symbol_source.as_deref(), Some("EntrezGene"));
+        assert_eq!(tpte.gene.hgnc_id, None);
+    }
+
+    /// An Ensembl gene says where its symbol is from at the end of its description. Of the 2,031
+    /// genes of the Ensembl cache run: 1,153 say `HGNC Symbol` and have symbol source `HGNC` and
+    /// the accession as `HGNC_ID`, 27 say `RFAM`, 13 say `NCBI gene (formerly Entrezgene)` and 838
+    /// say nothing and have neither. The ten `EntrezGene` genes that have an HGNC ID too have it
+    /// from another gene of the same symbol (`merge_features`), which is not in the GFF3.
+    #[test]
+    fn an_ensembl_genes_symbol_source_and_hgnc_id_are_read_from_its_description() {
+        let mut gff = ENSEMBL_GENES.to_string();
+        let mut genes: Vec<(String, String, u64)> = gff
+            .lines()
+            .map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                let id = f[8]
+                    .split(';')
+                    .find_map(|a| a.strip_prefix("ID=gene:"))
+                    .unwrap();
+                (id.to_string(), f[0].to_string(), f[3].parse().unwrap())
+            })
+            .collect();
+        // a label Ensembl has and the cache run did not show: not guessed at
+        gff.push_str(
+            "\n21\tensembl\tgene\t100\t900\t.\t+\t.\tID=gene:ENSG_VEGA;Name=X;biotype=lncRNA;description=x [Source:Clone-based (Vega) gene%3BAcc:OTTHUMG00000001]",
+        );
+        genes.push(("ENSG_VEGA".to_string(), "21".to_string(), 100));
+        for (gene, chrom, start) in &genes {
+            gff.push_str(&format!(
+                "\n{chrom}\tensembl\tmRNA\t{start}\t{end}\t.\t+\t.\tID=transcript:T_{gene};Parent=gene:{gene};biotype=lncRNA;transcript_id=T_{gene}\n{chrom}\tensembl\texon\t{start}\t{end}\t.\t+\t.\tParent=transcript:T_{gene};rank=1",
+                end = start + 50
+            ));
+        }
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        let origin = |gene: &str| {
+            let t = named(&transcripts, &format!("T_{gene}"));
+            (t.gene.symbol_source.clone(), t.gene.hgnc_id.clone())
+        };
+        let some = |a: &str, b: Option<&str>| (Some(a.to_string()), b.map(str::to_string));
+        assert_eq!(
+            origin("ENSG00000274391"),
+            some("HGNC", Some("HGNC:12023")),
+            "HGNC Symbol"
+        );
+        assert_eq!(origin("ENSG00000283438"), some("RFAM", None), "RFAM");
+        assert_eq!(
+            origin("ENSG00000220891"),
+            some("EntrezGene", None),
+            "NCBI gene (formerly Entrezgene)"
+        );
+        assert_eq!(origin("ENSG00000233783"), (None, None), "no source named");
+        assert_eq!(origin("ENSG_VEGA"), (None, None), "a label not measured");
+    }
+
+    /// A RefSeq gene with a MANE Select transcript has it for its canonical one (640 genes of 640
+    /// on chr21 and chr22); RefSeq writes the tag `MANE Select`, with a space, and pairs the
+    /// transcript with Ensembl's in its Dbxref, which VEP's cache writes as `MANE_SELECT`. Without
+    /// one it is the transcript that spans the most of the genome, and of equal ones the first in
+    /// the file (451 genes of 455), which is not the longest in exons or in CDS.
+    #[test]
+    fn the_canonical_transcript_of_a_refseq_gene_is_its_mane_select_else_its_longest_span_else_its_first(
+    ) {
+        let transcripts = parse_gff3(REFSEQ_TPTE.as_bytes()).unwrap();
+        let mane = named(&transcripts, "NM_199261.4");
+        assert!(mane.canonical);
+        assert_eq!(mane.mane_select.as_deref(), Some("ENST00000618007.5"));
+        let other = named(&transcripts, "NM_199259.4");
+        assert!(!other.canonical, "the same span as the MANE transcript");
+        assert_eq!(other.mane_select, None);
+
+        // equal spans: the first in the file, whichever that is
+        let canonical = |gff: &str| -> Vec<String> {
+            let mut c: Vec<String> = parse_gff3(gff.as_bytes())
+                .unwrap()
+                .iter()
+                .filter(|t| t.canonical)
+                .map(|t| t.stable_id.to_string())
+                .collect();
+            c.sort();
+            c
+        };
+        assert_eq!(canonical(REFSEQ_KCNE1B), ["NM_001369869.1"]);
+        assert_eq!(
+            canonical(&swapped(REFSEQ_KCNE1B)),
+            ["NM_001330065.1"],
+            "the other one once it comes first"
+        );
+
+        // unequal spans: the longest, whichever comes first
+        assert_eq!(canonical(REFSEQ_LINC00310), ["NR_027266.1"]);
+        assert_eq!(
+            canonical(&swapped(REFSEQ_LINC00310)),
+            ["NR_027266.1"],
+            "the longer of the two, though it is second in the file"
+        );
+
+        // a tabix read has only the transcripts that overlap the input, so the longest of them is
+        // not the gene's: no judgement is made, and nothing is marked...
+        let lines = REFSEQ_LINC00310.lines().map(|l| Ok(l.to_string()));
+        let region = parse_gff3_lines(lines, false).unwrap();
+        assert!(region.iter().all(|t| !t.canonical));
+        // ...except a MANE Select transcript, which is the gene's wherever it is found
+        let lines = REFSEQ_TPTE.lines().map(|l| Ok(l.to_string()));
+        let region = parse_gff3_lines(lines, false).unwrap();
+        assert!(named(&region, "NM_199261.4").canonical);
+        assert!(!named(&region, "NM_199259.4").canonical);
+    }
+
+    /// What Ensembl VEP's RefSeq cache calls the biotype of a RefSeq transcript, and that the
+    /// mature miRNA of a precursor is not a transcript of its own: neither the cache nor VEP's
+    /// `--gff` reader has one, and fastVEP wrote 115 rows' worth of them on chr21 and chr22.
+    #[test]
+    fn refseq_biotypes_are_the_ones_ensembls_refseq_cache_holds() {
+        let gff = format!("{REFSEQ_LINC00310}\n{REFSEQ_NONCODING}");
+        let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+        let biotype = |id: &str| named(&transcripts, id).biotype.to_string();
+        assert_eq!(
+            biotype("NR_027266.1"),
+            "lncRNA",
+            "an lnc_RNA (`--gff`: ncRNA)"
+        );
+        assert_eq!(
+            biotype("NR_160695.1"),
+            "misc_RNA",
+            "a non-coding transcript of a protein-coding gene"
+        );
+        assert_eq!(
+            biotype("NR_026982.1"),
+            "transcribed_pseudogene",
+            "a transcript of a transcribed pseudogene (`--gff`: misc_RNA)"
+        );
+        assert_eq!(biotype("NR_029706.1"), "miRNA", "a precursor");
+        assert!(
+            transcripts.iter().all(|t| &*t.stable_id != "rna-MIR185"),
+            "the mature miRNA is not a transcript: {:?}",
+            transcripts
+                .iter()
+                .map(|t| &*t.stable_id)
+                .collect::<Vec<_>>()
+        );
+        // the parent can come after the child
+        let reversed: String = gff.lines().rev().collect::<Vec<_>>().join("\n");
+        let transcripts = parse_gff3(reversed.as_bytes()).unwrap();
+        assert!(transcripts.iter().all(|t| &*t.stable_id != "rna-MIR185"));
+    }
+
+    /// A `transl_except` that reads the first codon as Met is the one recoding that changes what
+    /// VEP calls the reference residue (MRTFA's `GUG` start: `M` in the cache, `V` from the code
+    /// table); a selenocysteine is read through from the CDS alone and is not an initiator.
+    #[test]
+    fn a_transl_except_met_on_the_first_codon_is_an_initiator_met() {
+        let mrtfa = parse_gff3(REFSEQ_MRTFA.as_bytes()).unwrap();
+        assert!(named(&mrtfa, "NM_001282661.3").initiator_met);
+        let txnrd2 = parse_gff3(REFSEQ_TXNRD2.as_bytes()).unwrap();
+        assert!(!named(&txnrd2, "NM_001352300.2").initiator_met);
+        // the same recoding anywhere else in the CDS is not the initiator
+        let moved = REFSEQ_MRTFA.replace(
+            "complement(40552344..40552346)",
+            "complement(40552200..40552202)",
+        );
+        let moved = parse_gff3(moved.as_bytes()).unwrap();
+        assert!(!named(&moved, "NM_001282661.3").initiator_met);
+    }
+
+    /// Ensembl VEP's cache has no readthrough transcript (`AnnotationSource::Database::Transcript`
+    /// skips them), and Ensembl's GFF3 export carries neither `cds_start_NF` nor `cds_end_NF`
+    /// where GENCODE's does, so only the first leaves the flags to be read from the sequence. A
+    /// GENCODE record names the flags in VEP's order, start first.
+    #[test]
+    fn readthrough_and_the_origin_of_the_cds_flags_are_read_from_the_record() {
+        let transcripts = parse_gff3(ENSEMBL_READTHROUGH.as_bytes()).unwrap();
+        let t = named(&transcripts, "ENST00000358654");
+        assert!(t.readthrough);
+        assert!(
+            t.canonical,
+            "tagged Ensembl_canonical, which the cache never sees"
+        );
+        assert!(t.cds_flags_from_sequence);
+
+        let gencode = "chr1\thavana\tgene\t100\t900\t.\t+\t.\tID=ENSG1.1;gene_id=ENSG1.1;gene_name=G;gene_type=protein_coding
+chr1\thavana\ttranscript\t100\t900\t.\t+\t.\tID=ENST1.1;Parent=ENSG1.1;gene_id=ENSG1.1;transcript_id=ENST1.1;transcript_type=protein_coding;tag=cds_end_NF,cds_start_NF,basic
+chr1\thavana\texon\t100\t900\t.\t+\t.\tID=exon:ENST1.1:1;Parent=ENST1.1;exon_number=1";
+        let transcripts = parse_gff3(gencode.as_bytes()).unwrap();
+        let t = named(&transcripts, "ENST1.1");
+        assert_eq!(t.flags, ["cds_start_NF", "cds_end_NF"]);
+        assert!(!t.cds_flags_from_sequence && !t.readthrough);
     }
 }

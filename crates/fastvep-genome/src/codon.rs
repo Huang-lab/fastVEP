@@ -3,6 +3,8 @@ use std::collections::HashMap;
 /// Standard genetic code codon translation table.
 pub struct CodonTable {
     table: HashMap<[u8; 3], u8>,
+    /// The NCBI translation table this is (1 or 2), which decides what it lists as a start codon.
+    number: u8,
 }
 
 impl CodonTable {
@@ -100,7 +102,7 @@ impl CodonTable {
         for (codon, aa) in codons {
             table.insert(*codon, aa);
         }
-        Self { table }
+        Self { table, number: 1 }
     }
 
     /// Create a codon table from an NCBI translation table number.
@@ -115,6 +117,7 @@ impl CodonTable {
             table.table.insert(*b"AGG", b'*');
             table.table.insert(*b"ATA", b'M');
             table.table.insert(*b"TGA", b'W');
+            table.number = 2;
         }
         table
     }
@@ -146,6 +149,20 @@ impl CodonTable {
     /// Check if a codon is a stop codon.
     pub fn is_stop(&self, codon: &[u8; 3]) -> bool {
         self.translate(codon) == b'*'
+    }
+
+    /// Whether this table lists `codon` as a start codon, which is more than `ATG`: BioPerl's
+    /// `Bio::Tools::CodonTable::is_start_codon`, read from the table in Ensembl VEP 116.3's own
+    /// image, has `TTG`, `CTG` and `ATG` for table 1 and `ATT`, `ATC`, `ATA`, `ATG` and `GTG` for
+    /// table 2. Ensembl's `Transcript::translate` writes a first codon that is in the list as `M`.
+    pub fn lists_start(&self, codon: &[u8; 3]) -> bool {
+        let upper = codon.map(|b| b.to_ascii_uppercase());
+        let starts: &[&[u8; 3]] = if self.number == 2 {
+            &[b"ATT", b"ATC", b"ATA", b"ATG", b"GTG"]
+        } else {
+            &[b"TTG", b"CTG", b"ATG"]
+        };
+        starts.contains(&&upper)
     }
 
     /// Check if a codon is the standard start codon (ATG).

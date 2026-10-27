@@ -250,6 +250,9 @@ mod tests {
             gencode_primary: false,
             flags: vec![],
             codon_table_start_phase: 0,
+            initiator_met: false,
+            cds_flags_from_sequence: false,
+            readthrough: false,
         };
         if let Some((s, e)) = cds {
             // the first coding base is the low end on the forward strand, the high end on

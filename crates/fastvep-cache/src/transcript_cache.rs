@@ -13,11 +13,16 @@ use std::time::SystemTime;
 
 /// Magic header for zstd-compressed caches (current format).
 ///
-/// Like V3 to V6 before it, V7 differs from its predecessor in nothing but the
-/// guarantee it carries: every V7 cache was written by a build whose GFF3 parser
-/// names transcripts, genes and biotypes as Ensembl VEP's does. See
+/// Like V3 to V7 before it, V8 differs from its predecessor in nothing but the
+/// guarantee it carries: every V8 cache was written by a build that gives a
+/// transcript the symbol source, biotype, canonical flag, MANE accession,
+/// CDS flags and initiator residue Ensembl VEP's own cache gives it. See
 /// [`load_cache_zstd`] for why that has to be a format bump rather than a note
-/// in the changelog.
+/// in the changelog. (V8 also adds three fields to the transcript, so a V7
+/// cache would not deserialize into it as it stands.)
+const CACHE_MAGIC_V8: &[u8; 8] = b"FSTVEP08";
+/// Magic header for zstd caches written before the VEP-cache parity fix (rejected,
+/// see [`load_cache_zstd`]).
 const CACHE_MAGIC_V7: &[u8; 8] = b"FSTVEP07";
 /// Magic header for zstd caches written before the RefSeq naming fix (rejected,
 /// see [`load_cache_zstd`]).
@@ -48,6 +53,29 @@ const DETAIL_PRE_90: &str = "Caches written between 2026-06-10 (the tabix read \
      run - the #87 failure, which reported 47,196 of 47,196 chr17 variants as \
      intergenic at exit code 0. Nothing in the file distinguishes the two, so it \
      is rejected rather than read.";
+
+/// One line naming what is wrong with a pre-parity cache.
+const SUMMARY_PRE_CACHE_PARITY: &str = "predates the VEP-cache parity fix and \
+     names no symbol source, canonical or MANE transcript for a RefSeq gene, no \
+     CDS flags for an Ensembl one, and keeps the transcripts of mature miRNAs";
+
+/// The evidence behind [`SUMMARY_PRE_CACHE_PARITY`], for the caller that has to
+/// stop.
+const DETAIL_PRE_CACHE_PARITY: &str = "Read against Ensembl VEP 116.3's own caches \
+     for chr21 and chr22, the GFF3 parser that wrote it differed in what it made \
+     of a transcript. For a RefSeq GFF3 it gave a gene no symbol source (the cache \
+     writes `EntrezGene`), took the `gbkey` of a non-coding transcript for its \
+     biotype (`ncRNA` where the cache has `lncRNA`, `misc_RNA` for \
+     `transcribed_pseudogene`), marked no transcript canonical, did not read RefSeq's \
+     `tag=MANE Select` (it has a space), kept a transcript for each mature miRNA of \
+     a precursor, and did not read `transl_except ... aa:Met` (a GTG start is `Val` \
+     where the cache has `Met`). For an Ensembl GFF3 it gave a gene neither the \
+     symbol source nor the HGNC ID its description names, and wrote no \
+     `cds_start_NF` or `cds_end_NF` (a GFF3 export has none, and the cache's are \
+     read from the sequence once a run has a FASTA; a cache keeps the sequences it \
+     was built with) or `initial_met`. A cache built from a GFF3 whose genes have \
+     none of these is unchanged by the rebuild; nothing in the file says which \
+     source it came from, so it is rejected rather than read.";
 
 /// One line naming what is wrong with a pre-RefSeq-naming cache.
 const SUMMARY_PRE_REFSEQ_NAMES: &str = "predates the RefSeq naming fix and names \
@@ -214,7 +242,7 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
 
     // Write magic header
     use std::io::Write;
-    zst.write_all(CACHE_MAGIC_V7)?;
+    zst.write_all(CACHE_MAGIC_V8)?;
 
     // Serialize with bincode
     bincode::serialize_into(&mut zst, transcripts)
@@ -303,6 +331,14 @@ pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
 /// that nothing downstream can detect. Same trade as #88's decision to error
 /// rather than annotate against an empty transcript set.
 ///
+/// `FSTVEP07` is rejected on the same grounds: the parser that wrote it left the symbol
+/// source of a RefSeq gene empty, called a long non-coding RNA `ncRNA`, marked no RefSeq
+/// transcript canonical and read no `MANE Select`, and (with a FASTA) wrote no
+/// `cds_start_NF` or `cds_end_NF` for an Ensembl transcript. The sidecar path reuses a cache
+/// whenever it is newer than its GFF3, so without a bump an upgrade leaves every one of them in
+/// every row. A V7 cache loads cleanly; it just has none of these, which is indistinguishable from
+/// a GFF3 that never had them.
+///
 /// `FSTVEP06` is rejected on the same grounds: the parser that wrote it named a RefSeq
 /// transcript `rna-NM_000001.3`, its gene `gene-TP53` and its biotype `mRNA`, and the
 /// sidecar path reuses a cache whenever it is newer than its GFF3, so without a bump
@@ -378,8 +414,16 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
         }
         .into());
     }
-    if &magic != CACHE_MAGIC_V7 {
-        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP07)");
+    if &magic == CACHE_MAGIC_V7 {
+        return Err(StaleCacheFormat {
+            found: "FSTVEP07",
+            summary: SUMMARY_PRE_CACHE_PARITY,
+            detail: DETAIL_PRE_CACHE_PARITY,
+        }
+        .into());
+    }
+    if &magic != CACHE_MAGIC_V8 {
+        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP08)");
     }
 
     let transcripts: Vec<Transcript> = bincode::deserialize_from(&mut zst)
@@ -505,6 +549,9 @@ mod tests {
             gencode_primary: false,
             flags: vec![],
             codon_table_start_phase: 0,
+            initiator_met: false,
+            cds_flags_from_sequence: false,
+            readthrough: false,
         }
     }
 
@@ -698,6 +745,15 @@ mod tests {
         zst.finish().unwrap().flush().unwrap();
     }
 
+    fn write_v7_cache(path: &Path, transcripts: &[Transcript]) {
+        use std::io::Write;
+        let file = File::create(path).unwrap();
+        let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+        zst.write_all(CACHE_MAGIC_V7).unwrap();
+        bincode::serialize_into(&mut zst, transcripts).unwrap();
+        zst.finish().unwrap().flush().unwrap();
+    }
+
     fn write_v6_cache(path: &Path, transcripts: &[Transcript]) {
         use std::io::Write;
         let file = File::create(path).unwrap();
@@ -840,6 +896,33 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_cache_parity_cache_is_rejected_rather_than_read() {
+        // A well-formed FSTVEP07 cache: whole-file, transcript count fine. What it cannot show is
+        // that the parser which wrote it left a RefSeq gene with no symbol source, no canonical
+        // transcript and no MANE Select, and an Ensembl transcript with no CDS flags. The sidecar
+        // path reuses a cache that is newer than its GFF3, so without this rejection upgrading
+        // would change nothing for anyone who had already run the tool.
+        let tmp = NamedTempFile::new().unwrap();
+        write_v7_cache(tmp.path(), &make_transcripts());
+
+        let err = load_cache(tmp.path()).expect_err("FSTVEP07 must not load");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("FSTVEP07"),
+            "the error should name the format found, got: {msg}"
+        );
+        assert!(
+            msg.contains("EntrezGene") && msg.contains("canonical") && msg.contains("cds_start_NF"),
+            "the error should say what goes wrong if it were read, got: {msg}"
+        );
+        assert!(
+            !msg.contains("intergenic"),
+            "V7 is whole-file; the #90 reason would send the user after the wrong \
+             problem, got: {msg}"
+        );
+    }
+
+    #[test]
     fn a_legacy_gzip_cache_is_rejected_with_the_same_reason() {
         // V1 predates the zstd format and therefore predates the tabix read
         // path too, so it carries the same ambiguity. Recognised specifically,
@@ -909,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn the_published_magic_is_v7() {
+    fn the_published_magic_is_v8() {
         // Pin the on-disk byte, so a future change to the writer that forgets
         // the reader shows up here rather than in someone's annotation.
         use std::io::Read;
@@ -919,6 +1002,6 @@ mod tests {
         let mut zst = zstd::Decoder::new(BufReader::new(File::open(tmp.path()).unwrap())).unwrap();
         let mut magic = [0u8; 8];
         zst.read_exact(&mut magic).unwrap();
-        assert_eq!(&magic, CACHE_MAGIC_V7, "published magic drifted from V7");
+        assert_eq!(&magic, CACHE_MAGIC_V8, "published magic drifted from V8");
     }
 }

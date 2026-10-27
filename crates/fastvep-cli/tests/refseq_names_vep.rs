@@ -17,6 +17,13 @@
 //! rRNA, an snRNA, an ncRNA with a class and a tRNA with no `transcript_id`), 18 variants, and what
 //! Ensembl VEP 116.3 wrote for every CSQ entry (`regen.sh`, from the image pinned by digest). This
 //! test runs fastVEP over the same files and holds the names and what depends on them to VEP's.
+//!
+//! The golden is VEP's `--gff` reader, and the reporter runs its *cache*, which names two kinds of
+//! transcript differently: the biotype of an `lnc_RNA` of an lncRNA gene is `lncRNA` there and the
+//! `gbkey`, `ncRNA`, to the GFF reader, and an `snRNA` of an snRNA gene is `snRNA` and `ncRNA`
+//! (`CACHE_BIOTYPES`; measured on chr21 and chr22 of VEP 116.3's RefSeq cache, where all 503 and all
+//! 13 + 12 + 1 of them read so). fastVEP follows the cache, so those two transcripts are listed one
+//! by one, each asserted to still differ from the golden.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -121,6 +128,11 @@ fn entries(annotated: &str) -> BTreeMap<Key, Cells> {
     rows
 }
 
+/// The transcripts whose biotype Ensembl VEP's RefSeq *cache* writes differently from its `--gff`
+/// reader, with what the cache writes. Why: [`gene_biotype`](fastvep_cache) of the gene, as the
+/// module comment says; `Transcript::biotype` has the rule (`refseq_biotype` in `gff.rs`).
+const CACHE_BIOTYPES: [(&str, &str); 2] = [("NR_090003.1", "lncRNA"), ("XR_090007.1", "snRNA")];
+
 fn golden() -> BTreeMap<Key, Cells> {
     std::fs::read_to_string(fixture("golden.tsv"))
         .unwrap()
@@ -174,6 +186,24 @@ fn a_refseq_gff3_is_named_as_vep_names_it() {
             biotypes.contains(biotype),
             "VEP writes no {biotype}: {biotypes:?}"
         );
+    }
+
+    // the cache's names for the two kinds of transcript it names differently
+    let mut want = want;
+    let on_gff_reader: Vec<Key> = want
+        .keys()
+        .filter(|k| CACHE_BIOTYPES.iter().any(|(t, _)| *t == k.2))
+        .cloned()
+        .collect();
+    assert!(
+        !on_gff_reader.is_empty(),
+        "the fixture has the transcripts the cache names differently"
+    );
+    for key in on_gff_reader {
+        let cells = want.get_mut(&key).unwrap();
+        let (_, cache) = CACHE_BIOTYPES.iter().find(|(t, _)| *t == key.2).unwrap();
+        assert_eq!(cells.2, "ncRNA", "VEP's `--gff` reader guesses the gbkey");
+        cells.2 = cache.to_string();
     }
 
     let wrong: Vec<String> = want

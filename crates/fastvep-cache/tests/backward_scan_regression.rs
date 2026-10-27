@@ -70,6 +70,9 @@ fn transcript(id: &str, chrom: &str, start: u64, end: u64) -> Transcript {
         gencode_primary: false,
         flags: vec![],
         codon_table_start_phase: 0,
+        initiator_met: false,
+        cds_flags_from_sequence: false,
+        readthrough: false,
     }
 }
 

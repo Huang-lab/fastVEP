@@ -69,6 +69,29 @@ pub struct Transcript {
     /// Added to the raw CDS position to account for incomplete CDS starts.
     #[serde(default)]
     pub codon_table_start_phase: u64,
+    /// The annotation reads the first codon as Met although it is not `ATG`, so residue 1 is `M`
+    /// where the codon table says `L` or `V`.
+    ///
+    /// Ensembl's database records it as an `initial_met` edit of the translation and RefSeq's
+    /// GFF3 as `transl_except=(pos:...,aa:Met)`; Ensembl VEP applies either to the reference
+    /// residue and to nothing else, so `Amino_acids` reads `M/L` and `HGVSp` `p.Met1?` for a CTG
+    /// start. Set from the `transl_except` by the GFF3 parser, and for an Ensembl GFF3, which has
+    /// no such record, by [`Transcript::build_sequences`] (see `cds_flags_from_sequence`).
+    #[serde(default)]
+    pub initiator_met: bool,
+    /// The GFF3 this transcript came from is Ensembl's export, which leaves out two things
+    /// Ensembl's database (and so VEP's cache) holds: the `cds_start_NF` / `cds_end_NF` flags and
+    /// the `initial_met` edit. [`Transcript::build_sequences`] reads both off the sequence, once
+    /// the CDS is in hand, and sets `flags` and `initiator_met`.
+    ///
+    /// False for a GFF3 that carries its own flags (GENCODE's), which are taken as they are, and
+    /// for RefSeq's, whose cache has none.
+    #[serde(default)]
+    pub cds_flags_from_sequence: bool,
+    /// The annotation tags it a readthrough transcript, one that spans two genes. Ensembl VEP's
+    /// cache leaves these out (`AnnotationSource::Database::Transcript`), a GFF3 does not.
+    #[serde(default)]
+    pub readthrough: bool,
 }
 
 /// Reinterpret an in-frame UGA that the annotation places *inside* the coding
@@ -451,11 +474,75 @@ impl Transcript {
                     translateable.as_bytes(),
                     &codon_table,
                 );
+                // Mitochondrial genes are left alone: their initiators are `ATA` and `ATT` as
+                // often as `ATG` and they have no UTR, which is what the reading below takes for
+                // an unconfirmed start.
+                if self.cds_flags_from_sequence
+                    && !crate::mitochondrial::is_mitochondrial(&self.chromosome)
+                {
+                    self.read_ensembl_cds_state(translateable.as_bytes(), &codon_table);
+                }
+                // `Transcript::translate` writes a first codon the table lists as a start (`CTG` is
+                // one, for the standard table) as `M`, and the translation's `initial_met` edit
+                // does the same for the codons it is given to (`initiator_met`). They are two
+                // things in Ensembl and they are two things here: the first is the protein
+                // `hgvs_protein` reads a frameshift against (`p.Met1?` for a CTG start), the second
+                // is also what `Amino_acids` reads for codon 1 (`resolve_readthrough_residue`).
+                let first_codon_is_start = translateable
+                    .as_bytes()
+                    .first_chunk::<3>()
+                    .is_some_and(|codon| codon_table.lists_start(codon));
+                if first_codon_is_start || self.initiator_met {
+                    if let Some(first) = peptide_bytes.first_mut() {
+                        *first = b'M';
+                    }
+                }
                 self.peptide = Some(String::from_utf8_lossy(&peptide_bytes).to_string());
             }
         }
 
         Ok(())
+    }
+
+    /// Set `flags` and `initiator_met` the way Ensembl's database has them, for a transcript whose
+    /// GFF3 is Ensembl's export and so says neither (`cds_flags_from_sequence`).
+    ///
+    /// Read against VEP 116.3's own cache for chr21 and chr22 (12,867 coding transcripts, the
+    /// Ensembl 116 GFF3 and the genome), the rules below give the cache's `cds_start_NF` on 12,859
+    /// and its `cds_end_NF` on 12,858:
+    ///
+    /// - `cds_end_NF` when the coding sequence does not end in a stop codon in frame. All 621 the
+    ///   cache flags are found, and 9 it does not flag are too (a CDS of 698 bases, say, that the
+    ///   database calls complete).
+    /// - `cds_start_NF` when the first CDS exon starts part-way through a codon (all 229 of
+    ///   those carry the flag), or when its first codon is not `ATG` and there is no 5' UTR above
+    ///   it. A transcript that begins with another codon *and* has a UTR is complete in the
+    ///   cache (18 of 18); one without a UTR is not (128 of 130). The six it flags that start with
+    ///   `ATG` cannot be told from the rest.
+    /// - `initial_met`, the edit that makes residue 1 `M`, for a complete transcript that starts
+    ///   with `CTG`, `GTG` or `ACG`. The cache gives it to all 14 complete transcripts that start
+    ///   so, and not to the six complete ones that start with something else (`GCT`, `GAA`);
+    ///   twelve of the 14 have a UTR and are found, the other two are read as unconfirmed above.
+    ///   `TTG` is the fourth codon of the usual list, and none of the cache's complete transcripts
+    ///   starts with it, so it is not assumed.
+    fn read_ensembl_cds_state(&mut self, translateable: &[u8], table: &CodonTable) {
+        let first = translateable.first_chunk::<3>();
+        let has_five_prime_utr = self.cdna_coding_start.is_some_and(|start| start > 1);
+        let start_unconfirmed =
+            self.codon_table_start_phase > 0 || (first != Some(b"ATG") && !has_five_prime_utr);
+        let end_in_frame_stop = translateable.len().is_multiple_of(3)
+            && translateable
+                .last_chunk::<3>()
+                .is_some_and(|codon| table.is_stop(codon));
+        if start_unconfirmed {
+            self.flags.push("cds_start_NF".to_string());
+        }
+        if !end_in_frame_stop {
+            self.flags.push("cds_end_NF".to_string());
+        }
+        if !start_unconfirmed && matches!(first, Some(b"CTG" | b"GTG" | b"ACG")) {
+            self.initiator_met = true;
+        }
     }
 
     /// Get exons sorted by transcript order, returning owned Exons.
@@ -931,6 +1018,9 @@ mod tests {
             gencode_primary: false,
             flags: vec![],
             codon_table_start_phase: 0,
+            initiator_met: false,
+            cds_flags_from_sequence: false,
+            readthrough: false,
         }
     }
 
@@ -1360,5 +1450,143 @@ mod tests {
         assert!(tr.overlaps_exon_flag(2000, 1999), "between 1999 and 2000");
         assert!(tr.overlaps_exon_flag(1201, 1200), "between 1200 and 1201");
         assert!(!tr.overlaps_exon_flag(1501, 1500), "between 1500 and 1501");
+    }
+
+    /// A one-exon transcript made of `utr5` bases, `cds` and ten bases of 3' UTR, built the way a
+    /// run with a FASTA builds it.
+    fn built(cds: &str, utr5: usize, phase: u64, from_sequence: bool, chrom: &str) -> Transcript {
+        let seq = format!("{}{}{}", "C".repeat(utr5), cds, "C".repeat(10));
+        let mut t = make_test_transcript();
+        t.chromosome = chrom.into();
+        t.exons = vec![Exon {
+            stable_id: "E1".into(),
+            start: 1,
+            end: seq.len() as u64,
+            strand: Strand::Forward,
+            phase: -1,
+            end_phase: -1,
+            rank: 1,
+        }];
+        t.start = 1;
+        t.end = seq.len() as u64;
+        t.cdna_coding_start = Some(utr5 as u64 + 1);
+        t.cdna_coding_end = Some((utr5 + cds.len()) as u64);
+        t.codon_table_start_phase = phase;
+        t.flags = vec![];
+        t.initiator_met = false;
+        t.cds_flags_from_sequence = from_sequence;
+        t.build_sequences(|_chrom, start, end| {
+            Ok(seq.as_bytes()[start as usize - 1..end as usize].to_vec())
+        })
+        .unwrap();
+        t
+    }
+
+    /// Ensembl's GFF3 export has no `cds_start_NF` or `cds_end_NF`, and the cache VEP reads them
+    /// from does. Read off the sequence they agree with it on 12,858 of the 12,867 coding
+    /// transcripts of chr21 and chr22 (the end) and 12,859 (the start): see
+    /// [`Transcript::read_ensembl_cds_state`] for the rules and what they miss.
+    #[test]
+    fn the_cds_flags_of_an_ensembl_export_are_read_from_the_sequence() {
+        // complete: ATG, a 5' UTR, a stop codon in frame at the end
+        let t = built("ATGAAATGGTAA", 5, 0, true, "chr1");
+        assert!(t.flags.is_empty(), "{:?}", t.flags);
+
+        // no stop codon at the end
+        let t = built("ATGAAATGGTTT", 5, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_end_NF"]);
+
+        // ends in a stop codon that is not in frame: the CDS is 13 bases
+        let t = built("ATGAAATGGCTAA", 5, 0, true, "chr1");
+        assert_eq!(
+            t.flags,
+            ["cds_end_NF"],
+            "a stop out of frame is not the end"
+        );
+
+        // the first exon of the CDS starts part-way through a codon (two bases of it are missing,
+        // so the 7 that are there make nine with them)
+        let t = built("GTGGTAA", 5, 2, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF"]);
+
+        // a first codon that is not ATG with nothing above it...
+        let t = built("GCTAAATGGTAA", 0, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF"]);
+        // ...and with a UTR above it, which is how the cache has the 18 that are complete
+        let t = built("GCTAAATGGTAA", 5, 0, true, "chr1");
+        assert!(t.flags.is_empty(), "{:?}", t.flags);
+
+        // both, in VEP's order
+        let t = built("GCTAAATGGTTT", 0, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF", "cds_end_NF"]);
+
+        // a transcript whose GFF3 carries its own flags is left to them
+        let t = built("GCTAAATGGTTT", 0, 0, false, "chr1");
+        assert!(t.flags.is_empty(), "{:?}", t.flags);
+
+        // mitochondrial genes have no UTR and start with ATA and ATT as often as ATG
+        let t = built("ATTAAATGGTAA", 0, 0, true, "chrM");
+        assert!(t.flags.is_empty(), "{:?}", t.flags);
+    }
+
+    /// Residue 1 is `M` in two ways and Ensembl VEP keeps them apart. `Transcript::translate`
+    /// writes a first codon the code table lists as a start (`TTG`, `CTG` and `ATG` for table 1) as
+    /// `M`, which is the protein `hgvs_protein` reads a frameshift against; the translation's
+    /// `initial_met` edit makes `M` of the codons it is given to (`CTG`, `GTG` and `ACG` of the
+    /// complete transcripts of chr21 and chr22), and that is what `Amino_acids` reads.
+    #[test]
+    fn residue_one_is_met_by_the_start_codon_rule_and_by_the_initial_met_edit() {
+        // complete, with a UTR: the edit applies, and the table's rule too for a CTG
+        let t = built("CTGAAATGGTAA", 5, 0, true, "chr1");
+        assert!(t.initiator_met);
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
+        let t = built("GTGAAATGGTAA", 5, 0, true, "chr1");
+        assert!(
+            t.initiator_met,
+            "GTG is not in the table's list; the edit is"
+        );
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
+        let t = built("ACGAAATGGTAA", 5, 0, true, "chr1");
+        assert!(t.initiator_met);
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
+
+        // not a codon the edit is given to
+        let t = built("GCTAAATGGTAA", 5, 0, true, "chr1");
+        assert!(!t.initiator_met);
+        assert_eq!(t.peptide.as_deref(), Some("AKW*"));
+
+        // incomplete at the start: no edit, but `translate` still writes a CTG as M (the cache
+        // has `pep1=M` and `Amino_acids` `L` for these)
+        let t = built("CTGAAATGGTAA", 0, 0, true, "chr1");
+        assert!(!t.initiator_met);
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
+        let t = built("GTGAAATGGTAA", 0, 0, true, "chr1");
+        assert!(!t.initiator_met);
+        assert_eq!(
+            t.peptide.as_deref(),
+            Some("VKW*"),
+            "GTG is not a start of table 1"
+        );
+
+        // RefSeq says so itself with `transl_except ... aa:Met`
+        let mut t = make_test_transcript();
+        t.initiator_met = true;
+        t.cds_flags_from_sequence = false;
+        let seq = "GTGAAATGGTAA";
+        t.cdna_coding_start = Some(1);
+        t.cdna_coding_end = Some(12);
+        t.codon_table_start_phase = 0;
+        t.exons = vec![Exon {
+            stable_id: "E1".into(),
+            start: 1,
+            end: 12,
+            strand: Strand::Forward,
+            phase: 0,
+            end_phase: -1,
+            rank: 1,
+        }];
+        t.build_sequences(|_c, s, e| Ok(seq.as_bytes()[s as usize - 1..e as usize].to_vec()))
+            .unwrap();
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
     }
 }
