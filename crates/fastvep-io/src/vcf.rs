@@ -9,13 +9,21 @@ pub struct VcfParser<R: Read> {
     reader: BufReader<R>,
     header_lines: Vec<String>,
     line_buf: String,
+    /// Lines read so far, for a message that says where.
+    line_no: u64,
+    lenient: bool,
+    skipped: u64,
 }
+
+/// How many skipped records a lenient parser says so for, one by one; the rest are counted.
+const SKIPPED_REPORTED: u64 = 10;
 
 impl<R: Read> VcfParser<R> {
     pub fn new(reader: R) -> Result<Self> {
         let mut buf_reader = BufReader::new(reader);
         let mut header_lines = Vec::new();
         let mut line_buf = String::new();
+        let mut line_no = 0u64;
 
         // Read header lines
         loop {
@@ -24,6 +32,7 @@ impl<R: Read> VcfParser<R> {
             if bytes == 0 {
                 break;
             }
+            line_no += 1;
             // A byte order mark in front of the first line is not part of it (Windows editors
             // write one), and left in place it made `##fileformat` a data line.
             if header_lines.is_empty() {
@@ -44,7 +53,26 @@ impl<R: Read> VcfParser<R> {
             reader: buf_reader,
             header_lines,
             line_buf,
+            line_no,
+            lenient: false,
+            skipped: 0,
         })
+    }
+
+    /// Skip a record that cannot be read, with a message on stderr for the first few and a count
+    /// for the rest ([`Self::skipped`]), instead of stopping at it.
+    ///
+    /// Ensembl VEP does this (a warning, and the next line), and a whole-genome run that is lost
+    /// at its millionth record for a malformed line it could have told the user about is the
+    /// worse of the two. What stops the run is still a file that cannot be read at all.
+    pub fn lenient(mut self) -> Self {
+        self.lenient = true;
+        self
+    }
+
+    /// How many records a lenient parser has skipped.
+    pub fn skipped(&self) -> u64 {
+        self.skipped
     }
 
     /// Get all VCF header lines (including #CHROM line).
@@ -66,6 +94,7 @@ impl<R: Read> VcfParser<R> {
                 if bytes == 0 {
                     return Ok(None);
                 }
+                self.line_no += 1;
             }
 
             // Trim in-place to avoid allocating a new String
@@ -77,9 +106,29 @@ impl<R: Read> VcfParser<R> {
                 continue;
             }
 
-            let result = parse_vcf_line(&self.line_buf).map(Some);
+            let result = parse_vcf_line(&self.line_buf);
             self.line_buf.clear(); // consumed
-            return result;
+            match result {
+                Ok(vf) => return Ok(Some(vf)),
+                Err(e) if self.lenient => {
+                    self.skipped += 1;
+                    if self.skipped <= SKIPPED_REPORTED {
+                        let message = format!("{e:#}");
+                        let shown: String = message.chars().take(240).collect();
+                        eprintln!(
+                            "warning: skipped line {} of the VCF, which could not be read: {}{}",
+                            self.line_no,
+                            shown,
+                            if shown.len() < message.len() {
+                                " ..."
+                            } else {
+                                ""
+                            }
+                        );
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -583,6 +632,31 @@ mod tests {
         let mut parser = VcfParser::new(text.as_bytes()).unwrap();
         assert_eq!(parser.next_variant().unwrap().unwrap().position.start, 100);
         assert!(parser.next_variant().unwrap().is_none());
+    }
+
+    /// A record that cannot be read stops a strict parser, and is skipped, counted and said so
+    /// by a lenient one, which goes on with the next line.
+    #[test]
+    fn a_lenient_parser_skips_a_record_it_cannot_read() {
+        let text = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                    1\t100\t.\tT\tC\t.\t.\t.\n\
+                    1\t0\t.\tT\tC\t.\t.\t.\n\
+                    1\tx\t.\tT\tC\t.\t.\t.\n\
+                    1\t110\t.\tT\t\t.\t.\t.\n\
+                    too few fields\n\
+                    1\t120\t.\tT\tA,\t.\t.\t.\n\
+                    1\t130\t.\tT\tG\t.\t.\t.\n";
+        let mut strict = VcfParser::new(text.as_bytes()).unwrap();
+        assert_eq!(strict.next_variant().unwrap().unwrap().position.start, 100);
+        assert!(strict.next_variant().is_err());
+
+        let mut lenient = VcfParser::new(text.as_bytes()).unwrap().lenient();
+        let mut starts = Vec::new();
+        while let Some(vf) = lenient.next_variant().unwrap() {
+            starts.push(vf.position.start);
+        }
+        assert_eq!(starts, [100, 130]);
+        assert_eq!(lenient.skipped(), 5);
     }
 
     #[test]

@@ -51,6 +51,29 @@ pub fn parse_gff3_indexed(
     parse_gff3_indexed_with_source(gff3_gz_path, regions, "GFF3")
 }
 
+/// The contig names a tabix-indexed GFF3 has features on, from its `.tbi`.
+///
+/// A region read loads only the transcripts that overlap the input, so the transcripts it returns
+/// say nothing about which contigs the file is about: a contig of the input that has genes in the
+/// file but none within reach of a variant is a contig the file knows, and one that is not in the
+/// index is not.
+pub fn tabix_sequence_names(gff3_gz_path: &Path) -> Result<Vec<String>> {
+    use noodles_csi::binning_index::BinningIndex;
+    use noodles_tabix as tabix;
+
+    let tbi_path = format!("{}.tbi", gff3_gz_path.display());
+    let index = tabix::fs::read(&tbi_path)
+        .map_err(|e| anyhow::anyhow!("Reading tabix index {}: {}", tbi_path, e))?;
+    let header = index
+        .header()
+        .ok_or_else(|| anyhow::anyhow!("Missing tabix header"))?;
+    Ok(header
+        .reference_sequence_names()
+        .iter()
+        .map(|n| n.to_string())
+        .collect())
+}
+
 /// Like `parse_gff3_indexed`, but stamps every transcript with `source`.
 pub fn parse_gff3_indexed_with_source(
     gff3_gz_path: &Path,

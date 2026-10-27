@@ -1693,13 +1693,16 @@ pub fn hgvsg_vep(
     format_hgvs_g(chrom, &notation)
 }
 
-/// The reference allele an HGVS description is written against.
+/// The reference allele an HGVS description is written against: the genome's.
 ///
-/// A VCF REF that is not plain bases (`N`) names no base, and Ensembl describes the change against
-/// the genome's: `c.101T>C` for `N>C` at a base that is a `T`, because `hgvs_transcript` reads the
-/// reference allele off the transcript's slice and uses only the alternate from the variant.
-/// fastVEP wrote the REF it was given (`c.101N>C`). The allele is kept as given when it is plain
-/// or when there is no reference to read.
+/// Ensembl reads the reference allele of `hgvs_transcript` off the transcript's slice and uses only
+/// the alternate from the variant, so a VCF REF that is not the genome's base is described by the
+/// genome's: a `T>C` at a base that is an `A` is `c.101A>C`, an `N` is the base it stands for
+/// (`c.101T>C` for `N>C` at a `T`), and a deletion whose REF tail is wrong is moved by the 3'-rule
+/// over the genome's bases and not the VCF's. fastVEP wrote the REF it was given, so that its HGVSc
+/// said a base the reference does not have while its `Codons` and its HGVSg, which read the genome,
+/// said the one it does. A REF that names bases and disagrees is counted ([`ref_mismatches`]) and
+/// said at the end of the run. The allele is kept as given when there is no reference to read.
 pub fn reference_for_hgvs<'a>(
     seq_provider: Option<&dyn SequenceProvider>,
     chrom: &str,
@@ -1709,9 +1712,6 @@ pub fn reference_for_hgvs<'a>(
 ) -> std::borrow::Cow<'a, fastvep_core::Allele> {
     use fastvep_core::Allele;
     use std::borrow::Cow;
-    if given.is_plain_bases() {
-        return Cow::Borrowed(given);
-    }
     let (Some(sp), Allele::Sequence(bases)) = (seq_provider, given) else {
         return Cow::Borrowed(given);
     };
@@ -1720,7 +1720,20 @@ pub fn reference_for_hgvs<'a>(
     }
     match sp.fetch_sequence(chrom, start, end) {
         Ok(genome) if genome.len() == bases.len() => {
-            Cow::Owned(Allele::Sequence(genome.to_ascii_uppercase()))
+            let genome = genome.to_ascii_uppercase();
+            if genome == *bases {
+                return Cow::Borrowed(given);
+            }
+            // `N` and the other ambiguity codes name no base, so they cannot disagree with one
+            if given.is_plain_bases() {
+                crate::ref_mismatches().record(
+                    chrom,
+                    start,
+                    &String::from_utf8_lossy(bases),
+                    &String::from_utf8_lossy(&genome),
+                );
+            }
+            Cow::Owned(Allele::Sequence(genome))
         }
         _ => Cow::Borrowed(given),
     }
@@ -2654,11 +2667,19 @@ mod tests {
         let read = reference_for_hgvs(Some(&genome), "chr1", 4, 5, &two);
         assert_eq!(*read, Allele::Sequence(b"TA".to_vec()));
 
-        // a plain REF is the REF as given, even where it is not the genome's
+        // a plain REF that is the genome's is the REF as given
+        let right = Allele::Sequence(b"G".to_vec());
+        let read = reference_for_hgvs(Some(&genome), "chr1", 3, 3, &right);
+        assert!(matches!(read, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(*read, right);
+
+        // and one that is not is the genome's, as Ensembl describes it, and is counted for the
+        // summary at the end of a run (the counter is the process's, so only that it grew)
+        let before = crate::ref_mismatches().count();
         let plain = Allele::Sequence(b"T".to_vec());
         let read = reference_for_hgvs(Some(&genome), "chr1", 3, 3, &plain);
-        assert!(matches!(read, std::borrow::Cow::Borrowed(_)));
-        assert_eq!(*read, plain);
+        assert_eq!(*read, Allele::Sequence(b"G".to_vec()));
+        assert!(crate::ref_mismatches().count() > before);
 
         // nothing to read, or a span that does not match the allele: kept as given
         assert_eq!(*reference_for_hgvs(None, "chr1", 3, 3, &given), given);

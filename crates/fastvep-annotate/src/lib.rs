@@ -390,6 +390,18 @@ impl AnnotationContext {
                     ref_seq.as_deref(),
                 );
 
+                // The reference an HGVS description is written against: the genome's, where the
+                // VCF has `N` and where its REF is not the reference's (`reference_for_hgvs`).
+                let hgvs_ref = reference_for_hgvs(
+                    self.seq_provider
+                        .as_deref()
+                        .map(|sp| sp as &dyn SequenceProvider),
+                    chrom,
+                    vf.position.start,
+                    vf.position.end,
+                    &vf.ref_allele,
+                );
+
                 // HGVSg is the variant's, the same on every transcript row, and
                 // reading the reference to place it is not free: made once per
                 // record, as `fastvep annotate` does.
@@ -401,24 +413,12 @@ impl AnnotationContext {
                         chrom,
                         vf.position.start,
                         vf.position.end,
-                        &vf.ref_allele,
+                        &hgvs_ref,
                         &vf.alt_alleles,
                     )
                 } else {
                     Vec::new()
                 };
-
-                // The reference an HGVS description is written against: the genome's base
-                // where the VCF has `N`, as Ensembl does (`reference_for_hgvs`).
-                let hgvs_ref = reference_for_hgvs(
-                    self.seq_provider
-                        .as_deref()
-                        .map(|sp| sp as &dyn SequenceProvider),
-                    chrom,
-                    vf.position.start,
-                    vf.position.end,
-                    &vf.ref_allele,
-                );
 
                 for (i, tc) in result.transcript_consequences.iter().enumerate() {
                     // `predict` returns one consequence per transcript it was
@@ -1090,6 +1090,77 @@ impl SaLookupErrors {
 pub fn sa_lookup_errors() -> &'static SaLookupErrors {
     static ERRORS: std::sync::OnceLock<SaLookupErrors> = std::sync::OnceLock::new();
     ERRORS.get_or_init(SaLookupErrors::default)
+}
+
+/// The records whose REF allele is not what the reference has at their position.
+///
+/// A VCF made against another build, or with a wrong REF for any other reason, annotates without
+/// an error: the consequence and the codons come from the transcript's own sequence, and the
+/// description of the change is written against the reference as Ensembl does, which is not
+/// the REF it was given. Nothing says that the file and the reference disagree, so the run says it,
+/// once, with how many and the first.
+#[derive(Default)]
+pub struct RefMismatches {
+    count: std::sync::atomic::AtomicU64,
+    /// The example the summary names: the one that sorts first by contig and position among the
+    /// first thousand seen, so that the message does not depend on which thread got there first.
+    example: std::sync::Mutex<Option<(String, u64, String, String)>>,
+}
+
+impl RefMismatches {
+    pub fn record(&self, chrom: &str, start: u64, given: &str, reference: &str) {
+        let n = self
+            .count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n >= 1_000 {
+            return;
+        }
+        if let Ok(mut example) = self.example.lock() {
+            let earlier = example
+                .as_ref()
+                .is_some_and(|(c, p, _, _)| (c.as_str(), *p) <= (chrom, start));
+            if !earlier {
+                *example = Some((
+                    chrom.to_string(),
+                    start,
+                    given.to_string(),
+                    reference.to_string(),
+                ));
+            }
+        }
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The summary line, if there is anything to say.
+    pub fn report_line(&self) -> Option<String> {
+        let count = self.count();
+        if count == 0 {
+            return None;
+        }
+        let (chrom, start, given, reference) = self.example.lock().ok()?.clone()?;
+        Some(format!(
+            "warning: {count} record(s) have a REF allele that is not the reference's \
+             (for example {chrom}:{start}, where the VCF has REF `{given}` and the reference has `{reference}`); \
+             the HGVS descriptions are written against the reference, as Ensembl VEP writes them. \
+             Check that the VCF and the --fasta are the same assembly."
+        ))
+    }
+}
+
+/// The process-wide collector, for the same reason as [`sa_lookup_errors`].
+pub fn ref_mismatches() -> &'static RefMismatches {
+    static MISMATCHES: std::sync::OnceLock<RefMismatches> = std::sync::OnceLock::new();
+    MISMATCHES.get_or_init(RefMismatches::default)
+}
+
+/// Print the REF mismatch summary, if there is one.
+pub fn report_ref_mismatches() {
+    if let Some(line) = ref_mismatches().report_line() {
+        eprintln!("{line}");
+    }
 }
 
 /// Print the supplementary-annotation failure summary, if there is one.

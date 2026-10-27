@@ -26,6 +26,11 @@ pub trait SequenceProvider: Send + Sync {
     fn fetch_sequence_slice(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<u8>> {
         self.fetch_sequence(chrom, start, end)
     }
+
+    /// The contigs this provider has sequence for, when it can say.
+    fn sequence_names(&self) -> Option<Vec<String>> {
+        None
+    }
 }
 
 /// In-memory transcript provider backed by a Vec<Transcript>.
@@ -248,6 +253,16 @@ impl SequenceProvider for FastaSequenceProvider {
             |c, s, e| self.reader.fetch(c, s, e),
         )
     }
+
+    fn sequence_names(&self) -> Option<Vec<String>> {
+        Some(
+            self.reader
+                .sequence_names()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        )
+    }
 }
 
 /// Sequence provider backed by a memory-mapped FASTA reader.
@@ -270,6 +285,16 @@ impl SequenceProvider for MmapFastaSequenceProvider {
             end,
             self.reader.sequence_length(chrom),
             |c, s, e| self.reader.fetch(c, s, e),
+        )
+    }
+
+    fn sequence_names(&self) -> Option<Vec<String>> {
+        Some(
+            self.reader
+                .sequence_names()
+                .into_iter()
+                .map(String::from)
+                .collect(),
         )
     }
 }

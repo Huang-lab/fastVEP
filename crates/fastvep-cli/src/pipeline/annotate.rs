@@ -293,6 +293,18 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                 result.transcript_consequences
             };
 
+            // The reference an HGVS description is written against: the genome's, where the VCF
+            // has `N` and where its REF is not the reference's, as Ensembl does for a
+            // substitution (`reference_for_hgvs`). The `g.` description reads it too, so that the
+            // two say the same thing about a record whose REF is wrong.
+            let hgvs_ref = fastvep_annotate::reference_for_hgvs(
+                seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                chrom,
+                vf.position.start,
+                vf.position.end,
+                &vf.ref_allele,
+            );
+
             // HGVSg is the variant's, the same on every transcript row, and reading
             // the reference to place it is not free: made once per record, and only
             // when an output carries it (the `HGVSg` column or field, or JSON's key,
@@ -304,22 +316,12 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                         chrom,
                         vf.position.start,
                         vf.position.end,
-                        &vf.ref_allele,
+                        &hgvs_ref,
                         &vf.alt_alleles,
                     )
                 } else {
                     Vec::new()
                 };
-
-            // The reference an HGVS description is written against: the genome's base where
-            // the VCF has `N`, as Ensembl does (`reference_for_hgvs`).
-            let hgvs_ref = fastvep_annotate::reference_for_hgvs(
-                seq_provider.map(|sp| sp as &dyn SequenceProvider),
-                chrom,
-                vf.position.start,
-                vf.position.end,
-                &vf.ref_allele,
-            );
 
             // Convert prediction results to VariationFeature annotations
             for (i, tc) in transcript_consequences.iter().enumerate() {
@@ -1147,6 +1149,141 @@ fn attach_transcript_sequences(
     needs_seq_build
 }
 
+/// The contigs a run's gene models and reference are about, so that a record on any other is
+/// said to be, and not taken for one in an intergenic region.
+///
+/// A VCF whose contigs are spelled another way than the GFF3's (`Chr10` and `chr10`: `chr1` and `1`
+/// are matched, case is not) used to come out as one `intergenic_variant` row per record, at exit
+/// code 0 and with nothing said, which is also the answer for a variant that is nowhere near a
+/// gene, and reads the same. Ensembl VEP skips such a record and warns (`Chromosome chrZ not found
+/// in annotation sources or synonyms`). This warns in the same way, once for each contig and with a
+/// summary at the end, naming the contig of the run that is the same in another case when there is
+/// one, and goes on as before with the record, because a `--sa-dir` or a variation cache can still
+/// say something about a variant on a contig with no gene model, and VEP has neither. A run in which
+/// not one record is on a known contig, and which has no other source to give it a use, is an error:
+/// a run that annotates nothing is a naming mistake.
+/// How many contigs of a VCF that the run does not know it says so for, one by one; the rest are in
+/// the summary. (A GRCh38 analysis set has thousands of alternate contigs.)
+const CONTIGS_SAID: usize = 10;
+
+struct ContigCheck {
+    known: std::collections::HashSet<String>,
+    /// The contig of the last record and whether it is known: a VCF is mostly runs of one contig,
+    /// and the aliases of a name are not worth building for each record.
+    last: Option<(String, bool)>,
+    unknown: std::collections::BTreeMap<String, u64>,
+    on_known: u64,
+}
+
+impl ContigCheck {
+    fn new(
+        transcripts: &[Transcript],
+        gff3_specs: &[Gff3Spec],
+        seq_provider: Option<&dyn SequenceProvider>,
+    ) -> Self {
+        let mut known: std::collections::HashSet<String> = transcripts
+            .iter()
+            .map(|t| t.chromosome.to_string())
+            .collect();
+        // A tabix read keeps only the transcripts near the input's variants, so the ones it has are
+        // not the contigs the file is about: its index is.
+        for spec in gff3_specs {
+            if Path::new(&format!("{}.tbi", spec.path)).exists() {
+                if let Ok(names) = fastvep_cache::gff::tabix_sequence_names(Path::new(&spec.path)) {
+                    known.extend(names);
+                }
+            }
+        }
+        if let Some(names) = seq_provider.and_then(|sp| sp.sequence_names()) {
+            known.extend(names);
+        }
+        Self {
+            known,
+            last: None,
+            unknown: Default::default(),
+            on_known: 0,
+        }
+    }
+
+    fn is_known(&self, chrom: &str) -> bool {
+        fastvep_core::chrom_aliases(chrom)
+            .iter()
+            .any(|alias| self.known.contains(alias))
+    }
+
+    /// Note a record on `chrom`, and say so, once for the contig and for the first few, if the run
+    /// does not know the contig.
+    fn note(&mut self, chrom: &str) {
+        let known = match &self.last {
+            Some((last, known)) if last == chrom => *known,
+            _ => {
+                let known = self.is_known(chrom);
+                self.last = Some((chrom.to_string(), known));
+                known
+            }
+        };
+        if known {
+            self.on_known += 1;
+            return;
+        }
+        let count = self.unknown.entry(chrom.to_string()).or_default();
+        *count += 1;
+        if *count == 1 && self.unknown.len() <= CONTIGS_SAID {
+            let same_name = self
+                .known
+                .iter()
+                .filter(|k| k.eq_ignore_ascii_case(chrom))
+                .min()
+                .map(|k| format!(" (the gene models and the reference have `{k}`; contig names are case-sensitive)"))
+                .unwrap_or_default();
+            eprintln!(
+                "warning: the VCF has records on `{chrom}`, which is not a contig of the gene models or the reference{same_name}; they are annotated as intergenic"
+            );
+        }
+    }
+
+    /// The summary of a run, and the error of one that annotated nothing: `other_source` is whether
+    /// the run has a `--sa-dir` or a variation cache, which can annotate a variant that no gene
+    /// model reaches.
+    fn finish(&self, other_source: bool) -> Result<()> {
+        if self.unknown.is_empty() {
+            return Ok(());
+        }
+        let list = |names: Vec<(&String, String)>| {
+            let mut shown: Vec<String> = names
+                .iter()
+                .take(8)
+                .map(|(n, extra)| format!("{n}{extra}"))
+                .collect();
+            if names.len() > 8 {
+                shown.push(format!("and {} more", names.len() - 8));
+            }
+            shown.join(", ")
+        };
+        let skipped: u64 = self.unknown.values().sum();
+        let unknown = list(
+            self.unknown
+                .iter()
+                .map(|(n, c)| (n, format!(" ({c})")))
+                .collect(),
+        );
+        if self.on_known == 0 && !other_source {
+            let mut known: Vec<&String> = self.known.iter().collect();
+            known.sort();
+            let known = list(known.into_iter().map(|n| (n, String::new())).collect());
+            return Err(anyhow::anyhow!(
+                "none of the {skipped} records of the VCF is on a contig of the gene models or the reference: \
+                 the VCF has {unknown}, and they have {known}. `chr1` and `1`, and `chrM` and `MT`, are \
+                 matched; case is not. Rename the contigs of one of them."
+            ));
+        }
+        eprintln!(
+            "warning: {skipped} record(s) are on contigs that the gene models and the reference do not have, and were called intergenic: {unknown}"
+        );
+        Ok(())
+    }
+}
+
 pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     eprintln!("Annotating: {} -> {}", config.input, config.output);
     // Several ACMG criteria read HGVS c. notation rather than raw coordinates:
@@ -1331,6 +1468,16 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             ));
         }
     }
+
+    let mut contig_check = if sa_only {
+        None
+    } else {
+        Some(ContigCheck::new(
+            &transcripts,
+            &gff3_specs,
+            seq_provider.as_deref(),
+        ))
+    };
 
     let transcript_provider = IndexedTranscriptProvider::new(transcripts);
 
@@ -1519,7 +1666,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
     // Open input VCF (supports plain text or gzipped VCF)
     let input_reader = open_vcf_input_reader(&config.input)?;
-    let mut vcf_parser = VcfParser::new(input_reader)?;
+    // A record that cannot be read is skipped with a message, as Ensembl VEP does, and counted at
+    // the end: one malformed line of a whole-genome VCF is not a reason to lose the run.
+    let mut vcf_parser = VcfParser::new(input_reader)?.lenient();
 
     // Extract sample names from VCF #CHROM header
     let sample_names: Vec<String> = vcf_parser
@@ -1675,6 +1824,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         for _ in 0..BATCH_SIZE {
             match vcf_parser.next_variant()? {
                 Some(mut vf) => {
+                    if let Some(check) = contig_check.as_mut() {
+                        check.note(&vf.position.chromosome);
+                    }
                     // Variation lookup (sequential - it reads the cache's open files).
                     //
                     // A failed lookup stops the run. It used to be read as "no known
@@ -1849,8 +2001,18 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // After the meter, so a run that lost annotations says so last and the
     // warning is not buried in progress output.
     fastvep_annotate::report_sa_lookup_errors();
+    fastvep_annotate::report_ref_mismatches();
     if let Some(note) = var_provider.as_ref().and_then(|vp| vp.finish()) {
         eprintln!("{note}");
+    }
+    if vcf_parser.skipped() > 0 {
+        eprintln!(
+            "warning: {} record(s) of the VCF could not be read and were not annotated (the first are named above)",
+            vcf_parser.skipped()
+        );
+    }
+    if let Some(check) = &contig_check {
+        check.finish(!sa_providers.is_empty() || var_provider.is_some())?;
     }
 
     Ok(())
