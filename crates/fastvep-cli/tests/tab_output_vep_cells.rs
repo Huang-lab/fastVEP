@@ -59,6 +59,7 @@ fn run(dir: &Path, format: &str) -> String {
         show_progress: false,
         compat: Default::default(),
         columns: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
     std::fs::read_to_string(&out).unwrap()

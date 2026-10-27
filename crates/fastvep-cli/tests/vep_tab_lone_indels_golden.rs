@@ -181,6 +181,7 @@ fn ours() -> Table {
         qc_rules: None,
         show_progress: false,
         compat: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
     table(&std::fs::read_to_string(&out).unwrap())

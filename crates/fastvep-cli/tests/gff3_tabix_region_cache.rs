@@ -154,6 +154,7 @@ fn annotate(input: &Path, gff3: &Path, fasta: &Path, out: &Path) {
         show_progress: false,
         compat: Default::default(),
         columns: Default::default(),
+        exclude: Default::default(),
     })
     .unwrap();
 }

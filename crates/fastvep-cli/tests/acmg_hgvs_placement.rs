@@ -152,6 +152,7 @@ fn annotate_over(
         show_progress: false,
         compat: Default::default(),
         columns: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
 

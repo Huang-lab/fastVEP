@@ -87,6 +87,7 @@ fn run_vcf(dir: &Path, vcf: &Path, format: &str, columns: ColumnFlags, hgvs: boo
         qc_rules: None,
         show_progress: false,
         compat: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
     std::fs::read_to_string(&out).unwrap()

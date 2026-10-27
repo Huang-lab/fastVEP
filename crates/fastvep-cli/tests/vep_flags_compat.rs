@@ -78,6 +78,7 @@ fn run(compat: CompatFlags, format: &str) -> String {
             hgvsg: true,
         },
         compat,
+        exclude: Default::default(),
         distance: 5000,
         cache_dir: None,
         transcript_cache: None,

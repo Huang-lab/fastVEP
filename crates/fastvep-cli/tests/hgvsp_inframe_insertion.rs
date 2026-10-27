@@ -74,6 +74,7 @@ fn cli_inframe_insertion_hgvsp_is_normalised_not_a_substitution() {
         show_progress: false,
         compat: Default::default(),
         columns: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
 

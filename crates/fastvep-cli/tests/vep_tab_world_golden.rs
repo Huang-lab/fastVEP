@@ -85,6 +85,7 @@ fn run(dir: &Path, format: &str, columns: ColumnFlags, hgvs: bool) -> String {
         qc_rules: None,
         show_progress: false,
         compat: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
     std::fs::read_to_string(&out).unwrap()

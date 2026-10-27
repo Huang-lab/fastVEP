@@ -105,6 +105,7 @@ fn annotate(dir: &Path, strand: char) -> String {
         show_progress: false,
         compat: Default::default(),
         columns: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
 

@@ -50,6 +50,40 @@ pub struct CompatFlags {
     pub no_escape: bool,
 }
 
+/// Transcripts to leave out of a run, which Ensembl VEP's cache does not hold.
+///
+/// A GFF3 has every transcript of its annotation. VEP's caches are built from a database, and the
+/// build leaves some out (`AnnotationSource::Database::Transcript`): readthrough transcripts and
+/// those of biotype `artifact`, from an Ensembl cache (109 of the 23,382 transcripts of chr21 and
+/// chr22 in Ensembl's GFF3, and the only ones of them the cache lacks), and `--exclude_predicted`
+/// asks VEP for RefSeq's models. None is on by default: dropping real transcripts from a user's
+/// annotation is theirs to decide, where reading the file as it is is not a decision.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TranscriptExclusions {
+    /// `--exclude-predicted`: a stable id that matches `^X._` (`XM_`, `XR_`).
+    pub predicted: bool,
+    /// `--exclude-readthrough`: tagged `readthrough_transcript`.
+    pub readthrough: bool,
+    /// `--exclude-artifact`: biotype `artifact`.
+    pub artifact: bool,
+}
+
+impl TranscriptExclusions {
+    /// Whether any is on.
+    pub fn any(self) -> bool {
+        self != Self::default()
+    }
+
+    /// Whether `transcript` is one of the kinds this run leaves out.
+    pub fn excludes(self, transcript: &Transcript) -> bool {
+        // VEP's pattern: an `X`, any one character, an underscore.
+        let predicted = matches!(transcript.stable_id.as_bytes(), [b'X', _, b'_', ..]);
+        (self.predicted && predicted)
+            || (self.readthrough && transcript.readthrough)
+            || (self.artifact && &*transcript.biotype == "artifact")
+    }
+}
+
 pub struct AnnotateConfig {
     pub input: String,
     pub output: String,
@@ -69,6 +103,8 @@ pub struct AnnotateConfig {
     pub columns: ColumnFlags,
     /// `--total_length` and `--no_escape`.
     pub compat: CompatFlags,
+    /// The kinds of transcript to leave out ([`TranscriptExclusions`]).
+    pub exclude: TranscriptExclusions,
     pub distance: u64,
     pub cache_dir: Option<String>,
     pub transcript_cache: Option<String>,
@@ -1222,6 +1258,35 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                     eprintln!("Saved transcript cache to {}", cp.display());
                 }
             }
+        }
+    }
+
+    // After the sidecar cache is written, and never in the parser: the cache holds the file's
+    // whole transcript set, so a run that leaves some out must not write what it kept as the
+    // cache of the next one, which would not have them.
+    if config.exclude.any() {
+        let before = transcripts.len();
+        transcripts.retain(|t| !config.exclude.excludes(t));
+        eprintln!(
+            "Left out {} of {} transcripts ({})",
+            before - transcripts.len(),
+            before,
+            [
+                (config.exclude.predicted, "--exclude-predicted"),
+                (config.exclude.readthrough, "--exclude-readthrough"),
+                (config.exclude.artifact, "--exclude-artifact"),
+            ]
+            .iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, flag)| *flag)
+            .collect::<Vec<_>>()
+            .join(" "),
+        );
+        if transcripts.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Every transcript was left out by the exclusion flags. Refusing to continue, because \
+                 every variant would be reported as intergenic."
+            ));
         }
     }
 

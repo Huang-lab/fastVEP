@@ -14,7 +14,7 @@ pub mod custom;
 pub mod filter;
 pub mod sa_build;
 
-pub use annotate::{run_annotate, AnnotateConfig, CompatFlags};
+pub use annotate::{run_annotate, AnnotateConfig, CompatFlags, TranscriptExclusions};
 pub use cache_build::{parse_gff3_arg, run_cache_build, Gff3Spec};
 pub use custom::run_oga_build;
 pub use fastvep_io::output::ColumnFlags;

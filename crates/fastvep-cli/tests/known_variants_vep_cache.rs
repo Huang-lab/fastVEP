@@ -76,6 +76,7 @@ fn config(input: &Path, out: &Path) -> AnnotateConfig {
         hgvs: false,
         columns: Default::default(),
         compat: Default::default(),
+        exclude: Default::default(),
         distance: 5000,
         cache_dir: None,
         transcript_cache: None,

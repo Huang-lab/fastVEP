@@ -164,6 +164,22 @@ enum Commands {
         #[arg(long, alias = "force_overwrite")]
         force_overwrite: bool,
 
+        /// Leave out RefSeq's predicted transcripts, `XM_` and `XR_`. VEP's
+        /// `--exclude_predicted`, which is `not stable_id match ^X._`, and so is this.
+        #[arg(long, alias = "exclude_predicted")]
+        exclude_predicted: bool,
+
+        /// Leave out transcripts the annotation tags `readthrough_transcript`, the ones that
+        /// span two genes. VEP's Ensembl cache has none of them (it is built without them);
+        /// a GFF3 has them, and VEP's `--gff` annotates them.
+        #[arg(long, alias = "exclude_readthrough")]
+        exclude_readthrough: bool,
+
+        /// Leave out transcripts of biotype `artifact`. VEP's Ensembl cache has none of them
+        /// (it is built without them); a GFF3 has them, and VEP's `--gff` annotates them.
+        #[arg(long, alias = "exclude_artifact")]
+        exclude_artifact: bool,
+
         /// Upstream/downstream distance (bp)
         #[arg(long, default_value_t = 5000)]
         distance: u64,
@@ -428,6 +444,9 @@ fn main() -> Result<()> {
             total_length,
             no_escape,
             force_overwrite: _,
+            exclude_predicted,
+            exclude_readthrough,
+            exclude_artifact,
             distance,
             cache_dir,
             transcript_cache,
@@ -479,6 +498,11 @@ fn main() -> Result<()> {
                 compat: pipeline::CompatFlags {
                     total_length,
                     no_escape,
+                },
+                exclude: pipeline::TranscriptExclusions {
+                    predicted: exclude_predicted,
+                    readthrough: exclude_readthrough,
+                    artifact: exclude_artifact,
                 },
                 distance,
                 cache_dir,

@@ -66,6 +66,7 @@ fn config(input: &Path, out: &Path) -> AnnotateConfig {
         show_progress: false,
         compat: Default::default(),
         columns: Default::default(),
+        exclude: Default::default(),
     }
 }
 

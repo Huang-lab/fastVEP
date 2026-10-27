@@ -73,6 +73,7 @@ fn annotate(dir: &Path) -> String {
         show_progress: false,
         compat: Default::default(),
         columns: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
     std::fs::read_to_string(&out).unwrap()
