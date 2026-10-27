@@ -92,6 +92,11 @@ impl FastaReader {
                 .ok_or_else(|| not_found_error(chrom, "FASTA"))?,
         };
 
+        // An insertion's span is `start..start - 1`: no bases, which is not an error and not a
+        // slice that runs backwards.
+        if end < start {
+            return Ok(&[]);
+        }
         let start_idx = (start.saturating_sub(1)) as usize;
         let end_idx = (end as usize).min(seq.len());
 
@@ -204,6 +209,13 @@ impl MmapFastaReader {
     pub fn fetch(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<u8>> {
         let entry = self.get_entry(chrom)?;
 
+        // An insertion's span is `start..start - 1`: no bases. Without this the length below was
+        // `end - start + 1` with an `end` before the `start`, which is a subtraction that
+        // overflows (a panic with `--distance 0` for an insertion, in a build that checks, and
+        // a length of nothing by luck in one that wraps).
+        if end < start {
+            return Ok(Vec::new());
+        }
         let start_0 = start.saturating_sub(1);
         let end_0 = end.min(entry.length).saturating_sub(1);
 
@@ -355,6 +367,40 @@ mod tests {
         assert_eq!(reader.fetch("chr1", 9, 16).unwrap(), b"AAAACCCC");
         assert_eq!(reader.fetch("chr2", 1, 4).unwrap(), b"TTTT");
         assert_eq!(reader.sequence_length("chr1"), Some(16));
+    }
+
+    /// An insertion's span is `start..start - 1`, and has no bases. Both readers say so, and neither
+    /// panics or reads a base that is not there (`--distance 0` asked for it with every insertion).
+    #[test]
+    fn a_span_that_ends_before_it_starts_has_no_bases() {
+        let fasta = ">chr1\nACGTACGT\nAAAACCCC\n";
+        let reader = FastaReader::from_reader(fasta.as_bytes()).unwrap();
+        for (start, end) in [(5, 4), (1, 0), (16, 15), (9, 8)] {
+            assert_eq!(
+                reader.fetch("chr1", start, end).unwrap(),
+                b"",
+                "{start}..{end}"
+            );
+        }
+        assert!(
+            reader.fetch("chr99", 5, 4).is_err(),
+            "a missing contig is still an error"
+        );
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("g.fa");
+        std::fs::write(&path, fasta).unwrap();
+        std::fs::write(dir.path().join("g.fa.fai"), "chr1\t16\t6\t8\t9\n").unwrap();
+        let mapped = MmapFastaReader::open(&path).unwrap();
+        for (start, end) in [(5, 4), (1, 0), (16, 15), (9, 8)] {
+            assert_eq!(
+                mapped.fetch("chr1", start, end).unwrap(),
+                b"",
+                "{start}..{end}"
+            );
+        }
+        assert_eq!(mapped.fetch("chr1", 5, 8).unwrap(), b"ACGT");
+        assert!(mapped.fetch("chr99", 5, 4).is_err());
     }
 
     #[test]
