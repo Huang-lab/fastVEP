@@ -1,8 +1,38 @@
-use std::collections::HashMap;
+/// The number of a base in the index of [`CodonTable`]'s table: 0 to 3 for `A`, `C`, `G` and `T` in
+/// either case, and `0xFF` for any other byte, which makes a codon that has one translate to `X`.
+const BASE_CODE: [u8; 256] = {
+    let mut codes = [0xFFu8; 256];
+    codes[b'A' as usize] = 0;
+    codes[b'a' as usize] = 0;
+    codes[b'C' as usize] = 1;
+    codes[b'c' as usize] = 1;
+    codes[b'G' as usize] = 2;
+    codes[b'g' as usize] = 2;
+    codes[b'T' as usize] = 3;
+    codes[b't' as usize] = 3;
+    codes
+};
+
+/// The place of a codon of `ACGT` (in either case) in a table of 64, or `None` for one that has any
+/// other byte in it.
+#[inline]
+fn codon_index(codon: &[u8; 3]) -> Option<usize> {
+    let (a, b, c) = (
+        BASE_CODE[codon[0] as usize],
+        BASE_CODE[codon[1] as usize],
+        BASE_CODE[codon[2] as usize],
+    );
+    // a code that is not a base is 0xFF, and has bits that none of 0 to 3 have
+    ((a | b | c) <= 3).then_some((a as usize) << 4 | (b as usize) << 2 | c as usize)
+}
 
 /// Standard genetic code codon translation table.
+///
+/// The amino acid of each of the 64 codons, found by index: translating a transcript is a
+/// lookup for every codon of it, and a `HashMap` of three-byte keys spent most of that on
+/// hashing them with SipHash.
 pub struct CodonTable {
-    table: HashMap<[u8; 3], u8>,
+    table: [u8; 64],
     /// The NCBI translation table this is (1 or 2), which decides what it lists as a start codon.
     number: u8,
 }
@@ -98,9 +128,9 @@ impl CodonTable {
             (b"GGG", b'G'),
         ];
 
-        let mut table = HashMap::with_capacity(64);
+        let mut table = [b'X'; 64];
         for (codon, aa) in codons {
-            table.insert(*codon, aa);
+            table[codon_index(codon).expect("a codon of the table is of ACGT")] = aa;
         }
         Self { table, number: 1 }
     }
@@ -113,10 +143,14 @@ impl CodonTable {
             // Vertebrate mitochondrial differences:
             // AGA -> Stop (was Arg), AGG -> Stop (was Arg)
             // ATA -> Met (was Ile), TGA -> Trp (was Stop)
-            table.table.insert(*b"AGA", b'*');
-            table.table.insert(*b"AGG", b'*');
-            table.table.insert(*b"ATA", b'M');
-            table.table.insert(*b"TGA", b'W');
+            for (codon, aa) in [
+                (b"AGA", b'*'),
+                (b"AGG", b'*'),
+                (b"ATA", b'M'),
+                (b"TGA", b'W'),
+            ] {
+                table.table[codon_index(codon).expect("a codon of the table is of ACGT")] = aa;
+            }
             table.number = 2;
         }
         table
@@ -125,13 +159,8 @@ impl CodonTable {
     /// Translate a 3-base codon to an amino acid.
     /// Returns 'X' for unknown codons (e.g., containing N).
     pub fn translate(&self, codon: &[u8; 3]) -> u8 {
-        // Uppercase the codon
-        let upper = [
-            codon[0].to_ascii_uppercase(),
-            codon[1].to_ascii_uppercase(),
-            codon[2].to_ascii_uppercase(),
-        ];
-        *self.table.get(&upper).unwrap_or(&b'X')
+        // either case of a base is the base, and a byte that is not one makes the codon unknown
+        codon_index(codon).map_or(b'X', |i| self.table[i])
     }
 
     /// Translate a DNA sequence to a protein sequence.
@@ -280,6 +309,88 @@ mod tests {
         let table = CodonTable::standard();
         let protein = table.translate_seq(b"ATGTTTTAA");
         assert_eq!(protein, b"MF*");
+    }
+
+    /// The table as it was when it was a `HashMap` of upper-cased three-byte keys: the 64 codons of
+    /// `ACGT`, the changes of NCBI table 2, and `X` for anything else.
+    struct MapTable(std::collections::HashMap<[u8; 3], u8>);
+
+    impl MapTable {
+        fn new(table_number: u8) -> Self {
+            let mut map = std::collections::HashMap::new();
+            let bases = *b"TCAG";
+            let aas = *b"FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG";
+            let mut i = 0;
+            for a in bases {
+                for b in bases {
+                    for c in bases {
+                        map.insert([a, b, c], aas[i]);
+                        i += 1;
+                    }
+                }
+            }
+            if table_number == 2 {
+                map.insert(*b"AGA", b'*');
+                map.insert(*b"AGG", b'*');
+                map.insert(*b"ATA", b'M');
+                map.insert(*b"TGA", b'W');
+            }
+            Self(map)
+        }
+
+        fn translate(&self, codon: &[u8; 3]) -> u8 {
+            let upper = codon.map(|b| b.to_ascii_uppercase());
+            *self.0.get(&upper).unwrap_or(&b'X')
+        }
+    }
+
+    /// The table by index answers as the table by map did, for both tables, over every codon that
+    /// can be made of a wide set of bytes: the bases in either case, the ambiguity codes, `U`, the
+    /// gap and stop characters, a digit, a byte past ASCII and zero.
+    #[test]
+    fn the_table_by_index_answers_as_the_table_by_map_did() {
+        let alphabet: Vec<u8> = b"ACGTacgtNnRYKMSWBDHVrykmswbdhvUu.-*X 0 1\t\n"
+            .iter()
+            .copied()
+            .chain([0u8, 127, 128, 200, 255])
+            .collect();
+        let mut checked = 0usize;
+        for number in [1u8, 2] {
+            let (table, before) = (CodonTable::from_ncbi_table(number), MapTable::new(number));
+            for &a in &alphabet {
+                for &b in &alphabet {
+                    for &c in &alphabet {
+                        let codon = [a, b, c];
+                        assert_eq!(
+                            table.translate(&codon),
+                            before.translate(&codon),
+                            "table {number}, codon {codon:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+            // and every codon of ACGT in every mix of cases, none of them unknown
+            for mask in 0u8..8 {
+                for a in *b"ACGT" {
+                    for b in *b"ACGT" {
+                        for c in *b"ACGT" {
+                            let cased = |base: u8, bit: u8| {
+                                if mask >> bit & 1 == 1 {
+                                    base.to_ascii_lowercase()
+                                } else {
+                                    base
+                                }
+                            };
+                            let codon = [cased(a, 0), cased(b, 1), cased(c, 2)];
+                            assert_eq!(table.translate(&codon), before.translate(&codon));
+                            assert_ne!(table.translate(&codon), b'X');
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 90_000, "{checked} codons");
     }
 
     #[test]
