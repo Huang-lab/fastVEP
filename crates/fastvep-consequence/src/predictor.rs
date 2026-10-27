@@ -600,6 +600,45 @@ impl ConsequencePredictor {
             }
         }
 
+        // A change whose span covers the whole transcript (`complete_overlap_feature`) is read
+        // differently from one that reaches part of it, in three ways (`VariationEffect.pm`):
+        //
+        // - a deletion (`deletion`: the alternate is shorter than the reference, `_get_alleles`)
+        //   is `transcript_ablation` (`feature_ablation`), and nothing else: every other term's
+        //   `include` excludes a complete overlap, so the 5' UTR, 3' UTR, `stop_retained_variant`
+        //   and the splice terms the span reaches on the way are not said, and the positions,
+        //   `EXON` and `HGVSc` are written as for any other change;
+        // - any other change is not `coding_unknown` (it returns 0 on a complete overlap) and so
+        //   not a `coding_sequence_variant`, but is a `coding_transcript_variant` beside whatever
+        //   else it earned, if the transcript has a protein;
+        // - and it is not a `non_coding_exon_variant` either, so on a transcript without a protein
+        //   it is `non_coding_transcript_variant`.
+        //
+        // This predictor used to ask the regions the span reaches one by one: a deletion of all of
+        // a 21-base transcript was `stop_retained_variant,5_prime_UTR_variant,3_prime_UTR_variant`,
+        // LOW, a non-coding transcript the same change covered was MODIFIER, and only the
+        // structural-variant predictor said `transcript_ablation` at all.
+        if var_start <= tr_start && var_end >= tr_end {
+            let deletion = matches!(
+                (ref_allele.known_length(), alt_allele.known_length()),
+                (Some(r), Some(a)) if a < r
+            );
+            if deletion {
+                consequences.clear();
+                consequences.push(Consequence::TranscriptAblation);
+                amino_acids = None;
+                codons = None;
+            } else if transcript.is_coding() {
+                consequences.retain(|c| *c != Consequence::CodingSequenceVariant);
+                consequences.push(Consequence::CodingTranscriptVariant);
+            } else if let Some(at) = consequences
+                .iter()
+                .position(|c| *c == Consequence::NonCodingTranscriptExonVariant)
+            {
+                consequences[at] = Consequence::NonCodingTranscriptVariant;
+            }
+        }
+
         // If still no consequences, add catch-all
         if consequences.is_empty() {
             if transcript.is_coding() {
@@ -2819,6 +2858,89 @@ mod tests {
                 without_utr, with_utr,
                 "{strand:?}: the UTR changed the answer"
             );
+        }
+    }
+
+    /// A deletion that covers the whole transcript is `transcript_ablation` and nothing else, on
+    /// either strand, for a coding transcript and a non-coding one. A span one base short of
+    /// either end of it is not.
+    #[test]
+    fn a_deletion_that_covers_the_transcript_is_a_transcript_ablation() {
+        let ablated = |tr: &Transcript, lo: u64, hi: u64, reference: &str, alt: &Allele| {
+            let pos = GenomicPosition::new("chr1", lo, hi, Strand::Forward);
+            let result = ConsequencePredictor::default().predict(
+                &pos,
+                &Allele::from_str(reference),
+                std::slice::from_ref(alt),
+                &[tr],
+                None,
+            );
+            let ac = &result.transcript_consequences[0].allele_consequences[0];
+            (ac.consequences.clone(), ac.impact)
+        };
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let coding = make_boundary_transcript(strand);
+            let non_coding = {
+                let mut t = make_boundary_transcript(strand);
+                t.biotype = "lncRNA".into();
+                t.translation = None;
+                t.cdna_coding_start = None;
+                t.cdna_coding_end = None;
+                t.coding_region_start = None;
+                t.coding_region_end = None;
+                t.translateable_seq = None;
+                t
+            };
+            let long = "A".repeat(230);
+            for tr in [&coding, &non_coding] {
+                for (lo, hi) in [(990, 1210), (1000, 1200), (1000, 1210), (990, 1200)] {
+                    let reference = &long[..(hi - lo + 1) as usize];
+                    let (got, impact) = ablated(tr, lo, hi, reference, &Allele::Deletion);
+                    assert_eq!(
+                        got,
+                        [Consequence::TranscriptAblation],
+                        "{strand:?} {lo}..{hi}"
+                    );
+                    assert_eq!(impact, Impact::High);
+                }
+                // a shorter replacement is a deletion too, as Ensembl's `deletion` has it
+                let (got, _) = ablated(tr, 990, 1210, &long[..221], &Allele::from_str("AA"));
+                assert_eq!(got, [Consequence::TranscriptAblation], "{strand:?} delins");
+                // one base short of an end: an exonic deletion like any other
+                for (lo, hi) in [(1001, 1210), (990, 1199)] {
+                    let reference = &long[..(hi - lo + 1) as usize];
+                    let (got, _) = ablated(tr, lo, hi, reference, &Allele::Deletion);
+                    assert!(
+                        !got.contains(&Consequence::TranscriptAblation),
+                        "{strand:?} {lo}..{hi}: {got:?}"
+                    );
+                }
+                // a change that is not shorter than what it replaces is not a deletion: a
+                // transcript with a protein is a `coding_transcript_variant`, and one without is
+                // `non_coding_transcript_variant`, not an exon variant
+                let (got, _) =
+                    ablated(tr, 990, 1210, &long[..221], &Allele::from_str(&long[..221]));
+                assert!(!got.contains(&Consequence::TranscriptAblation), "{got:?}");
+                assert!(
+                    !got.contains(&Consequence::CodingSequenceVariant),
+                    "{got:?}"
+                );
+                assert!(
+                    !got.contains(&Consequence::NonCodingTranscriptExonVariant),
+                    "{got:?}"
+                );
+                if tr.is_coding() {
+                    assert!(
+                        got.contains(&Consequence::CodingTranscriptVariant),
+                        "{got:?}"
+                    );
+                } else {
+                    assert!(
+                        got.contains(&Consequence::NonCodingTranscriptVariant),
+                        "{got:?}"
+                    );
+                }
+            }
         }
     }
 
