@@ -36,6 +36,12 @@ use fastvep_annotate::{
 
 const BATCH_SIZE: usize = 1024;
 
+/// The fewest records of a batch that one thread looks the known variants of up in a row. A run
+/// starts by finding its place in the cache's file (a question to the index, and a read from
+/// where the index says its first window can begin), so a run of a few records is mostly that.
+/// 16 was chosen, not tuned.
+const MIN_LOOKUP_RUN: usize = 16;
+
 /// VEP flags that change what is written without being a column of their own.
 ///
 /// `--force_overwrite` is not here: VEP refuses to write over an existing file without it
@@ -1925,22 +1931,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                     if let Some(check) = contig_check.as_mut() {
                         check.note(&vf.position.chromosome);
                     }
-                    // Variation lookup (sequential - it reads the cache's open files).
-                    //
-                    // A failed lookup stops the run. It used to be read as "no known
-                    // variants", and a variant reported as novel because the cache
-                    // could not be read cannot be told from one that is novel. The
-                    // SA lookups are counted and reported at the end instead, but they
-                    // run inside the parallel loop where an error cannot propagate;
-                    // this one can, and the cache has already been validated at
-                    // startup, so an error here is a real fault.
-                    let known: KnownLookup = if let Some(ref vp) = var_provider {
-                        known_variants(vp, &vf)?
-                    } else {
-                        KnownLookup::default()
-                    };
-
-                    batch.push((vf, known));
+                    batch.push((vf, KnownLookup::default()));
                 }
                 None => break,
             }
@@ -1948,6 +1939,41 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
         if batch.is_empty() {
             break;
+        }
+
+        // Phase 1.2: The known variants of each record, in runs of consecutive records on every
+        // thread. A run reads the cache's files from a place of its own (`cursor`), so that
+        // each carries on through the stretch of a sorted input it was given. With the
+        // annotation spread over the cores this was most of what a run with `--cache-dir` was
+        // left waiting for, on the one thread that reads the VCF: 4,893 of the 6,854 samples of
+        // a one thread run over chr21 and chr22 of HG002 were in the lookup.
+        //
+        // A failed lookup stops the run. It used to be read as "no known
+        // variants", and a variant reported as novel because the cache
+        // could not be read cannot be told from one that is novel. The
+        // SA lookups are counted and reported at the end instead, but they
+        // run inside the parallel loop where an error cannot propagate;
+        // this one can, and the cache has already been validated at
+        // startup, so an error here is a real fault. The error of the first
+        // record that has one is the one reported, whatever the threads were doing.
+        if let Some(ref vp) = var_provider {
+            let run = batch
+                .len()
+                .div_ceil(2 * rayon::current_num_threads())
+                .max(MIN_LOOKUP_RUN);
+            let outcomes: Vec<Result<()>> = batch
+                .par_chunks_mut(run)
+                .map(|records| {
+                    let cursor = vp.cursor();
+                    records.iter_mut().try_for_each(|(vf, known)| {
+                        *known = known_variants(&cursor, vf)?;
+                        Ok(())
+                    })
+                })
+                .collect();
+            for outcome in outcomes {
+                outcome?;
+            }
         }
 
         // Phase 1.5: Preload SA providers for this batch (sequential)
@@ -2180,7 +2206,7 @@ struct KnownLookup {
 /// `VariationFeature`s), and a symbolic or missing allele has no sequence to
 /// compare, so neither is looked up. Without the first rule a large `END=` would
 /// read every cache record under the span.
-fn known_variants(provider: &TabixVariationProvider, vf: &VariationFeature) -> Result<KnownLookup> {
+fn known_variants(provider: &impl VariationProvider, vf: &VariationFeature) -> Result<KnownLookup> {
     if vf.variant_type.is_structural() {
         return Ok(KnownLookup::default());
     }
