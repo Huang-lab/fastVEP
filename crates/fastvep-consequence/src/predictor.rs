@@ -544,10 +544,17 @@ impl ConsequencePredictor {
             // `3_prime_UTR_variant` alone, MODIFIER where VEP says HIGH, and
             // the mirror case on the forward strand lost `start_lost` the same
             // way (#100). Each region is now its own additive test.
+            //
+            // `within_cdna`, which gates the UTR terms, has a second way to hold that
+            // `within_cds` has for the CDS: a change inside a frameshift intron is within the
+            // transcript, so one in a short intron of the UTR is a UTR variant. It was
+            // `coding_transcript_variant` here, a term Ensembl gives a change that covers a whole
+            // transcript.
+            let in_cdna = in_exon || splice.within_frameshift_intron;
             let hits_coding =
                 in_exon && self.is_in_coding_region(var_start, var_end, coding_start, coding_end);
-            let hits_5_utr = in_exon && self.overlaps_5_utr(var_start, var_end, transcript);
-            let hits_3_utr = in_exon && self.overlaps_3_utr(var_start, var_end, transcript);
+            let hits_5_utr = in_cdna && self.overlaps_5_utr(var_start, var_end, transcript);
+            let hits_3_utr = in_cdna && self.overlaps_3_utr(var_start, var_end, transcript);
 
             if hits_5_utr {
                 consequences.push(Consequence::FivePrimeUtrVariant);
@@ -3565,6 +3572,71 @@ mod tests {
         );
         let got = &result.transcript_consequences[0].allele_consequences[0].consequences;
         assert_eq!(got, &vec![Consequence::IntronVariant]);
+    }
+
+    /// `within_cdna`, which gates the UTR terms, holds for a change in a frameshift intron as
+    /// `within_cds` does for the CDS: one in a short intron of the UTR is a UTR variant, on the side of
+    /// the coding region it is on, and not the `coding_transcript_variant` the catch-all gave it. An
+    /// intron that is not short is `intron_variant`, as before.
+    #[test]
+    fn a_frameshift_intron_in_a_utr_is_a_utr_variant() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            // a 9-base intron inside the 5' UTR (on the low side) and one inside the 3' UTR (high)
+            let mut tr = make_coding_transcript();
+            tr.strand = strand;
+            tr.exons = vec![
+                (1000, 1020),
+                (1030, 1200),
+                (2000, 2300),
+                (4000, 4600),
+                (4610, 5000),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (start, end))| Exon {
+                stable_id: format!("E{i}"),
+                start,
+                end,
+                strand,
+                phase: 0,
+                end_phase: 0,
+                rank: i as u32 + 1,
+            })
+            .collect();
+            let terms = |tr: &Transcript, at: u64| {
+                let result = ConsequencePredictor::default().predict(
+                    &GenomicPosition::new("chr1", at, at, Strand::Forward),
+                    &Allele::from_str("A"),
+                    &[Allele::from_str("G")],
+                    &[tr],
+                    None,
+                );
+                result.transcript_consequences[0].allele_consequences[0]
+                    .consequences
+                    .clone()
+            };
+            let (low, high) = match strand {
+                Strand::Forward => (
+                    Consequence::FivePrimeUtrVariant,
+                    Consequence::ThreePrimeUtrVariant,
+                ),
+                Strand::Reverse => (
+                    Consequence::ThreePrimeUtrVariant,
+                    Consequence::FivePrimeUtrVariant,
+                ),
+            };
+            assert_eq!(terms(&tr, 1025), [low], "{strand:?} in the low UTR");
+            assert_eq!(terms(&tr, 4605), [high], "{strand:?} in the high UTR");
+
+            // an intron of the same place that is long is an intron, not a UTR term
+            tr.exons[1].start = 1100;
+            tr.exons[0].end = 1020;
+            assert_eq!(
+                terms(&tr, 1050),
+                [Consequence::IntronVariant],
+                "{strand:?}: an ordinary intron"
+            );
+        }
     }
 
     #[test]
