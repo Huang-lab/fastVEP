@@ -656,7 +656,15 @@ impl ConsequencePredictor {
             }
         }
 
-        // If still no consequences, add catch-all
+        // If still no consequences, add a catch-all that is a term of the transcript. Ensembl VEP
+        // 116.3 falls back on its default overlap consequence here (`$cons =
+        // [$DEFAULT_OVERLAP_CONSEQUENCE] unless @$cons`), which is `intergenic_variant`, and writes
+        // it on the row of the transcript beside the transcript's own `HGVSc` and `HGVSp`: a delins
+        // that spans a one-base intron from exon to exon gets it (`1:4556 AAG>CGA`). That says the
+        // change is between genes where it is in one, and a filter that drops intergenic rows would
+        // hide a change to the protein, so this does not follow it. Both are `MODIFIER`; none of
+        // the 2,026,951 and 212,240 rows of VEP's own runs over the Ensembl and RefSeq caches' edge
+        // sets has the term on a transcript. `docs/VEP_DIVERGENCE.md` lists it.
         if consequences.is_empty() {
             if transcript.is_coding() {
                 consequences.push(Consequence::CodingTranscriptVariant);
@@ -3860,6 +3868,50 @@ mod tests {
                 "{strand:?}: an ordinary intron"
             );
         }
+    }
+
+    /// A change that reaches coding bases on both sides of a one-base intron and the intron between
+    /// them is neither inside an exon nor inside an intron, and none of Ensembl's predicates holds
+    /// for it. Ensembl VEP 116.3 then falls back on its default overlap consequence
+    /// (`$cons = [$DEFAULT_OVERLAP_CONSEQUENCE] unless @$cons`, `BaseVariationFeatureOverlapAllele.pm`),
+    /// which is `intergenic_variant`, and writes it on the row of the transcript, beside the
+    /// transcript's `HGVSc` and `HGVSp` (`chr1:4556 AAG>CGA` over ENST00000000005 of a differential
+    /// fuzz of the stack: `intergenic_variant` with `c.40_41delinsTCG`). That says the change is
+    /// between genes where it is in one, and a row dropped as intergenic by a filter hides a change to
+    /// the protein, so the catch-all stays what it was, a term of the transcript, and the difference is
+    /// listed in `docs/VEP_DIVERGENCE.md`. None of the 2,026,951 rows of VEP's own run over the Ensembl
+    /// cache's edge set, nor of the 212,240 over the RefSeq cache's, has a transcript row with that term.
+    #[test]
+    fn a_change_that_no_term_applies_to_is_a_transcript_variant_and_not_intergenic() {
+        let mut tr = make_coding_transcript();
+        // exon 1 ends at 1200 and exon 2 starts at 1202: a one-base intron at 1201
+        tr.exons[0].end = 1200;
+        tr.exons[1].start = 1202;
+        tr.exons[1].end = 1514;
+        let pos = GenomicPosition::new("chr1", 1200, 1202, Strand::Forward);
+        let result = ConsequencePredictor::default().predict(
+            &pos,
+            &Allele::from_str("AAG"),
+            &[Allele::from_str("CGA")],
+            &[&tr],
+            None,
+        );
+        let got = &result.transcript_consequences[0].allele_consequences[0].consequences;
+        assert_eq!(got, &vec![Consequence::CodingTranscriptVariant]);
+        // and on a transcript with no protein it is the non-coding term, not the intergenic one
+        let mut tr = make_noncoding_transcript();
+        let span = (tr.exons[0].end, tr.exons[1].start);
+        tr.exons[1].start = span.0 + 2;
+        let pos = GenomicPosition::new("chr1", span.0, span.0 + 2, Strand::Forward);
+        let result = ConsequencePredictor::default().predict(
+            &pos,
+            &Allele::from_str("AAG"),
+            &[Allele::from_str("CGA")],
+            &[&tr],
+            None,
+        );
+        let got = &result.transcript_consequences[0].allele_consequences[0].consequences;
+        assert!(!got.contains(&Consequence::IntergenicVariant), "{got:?}");
     }
 
     #[test]
