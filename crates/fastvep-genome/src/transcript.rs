@@ -4,6 +4,49 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
 
+/// The exons of a transcript in transcript order ([`Transcript::sorted_exons`]).
+pub(crate) enum ExonsInOrder<'a> {
+    /// `exons` as they are stored
+    Stored(&'a [Exon]),
+    /// `exons` from the last to the first
+    Backwards(&'a [Exon]),
+    /// neither, so sorted
+    Sorted(Vec<&'a Exon>),
+}
+
+impl<'a> ExonsInOrder<'a> {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Stored(e) | Self::Backwards(e) => e.len(),
+            Self::Sorted(e) => e.len(),
+        }
+    }
+
+    pub(crate) fn get(&self, i: usize) -> Option<&'a Exon> {
+        match self {
+            Self::Stored(e) => e.get(i),
+            Self::Backwards(e) => e.len().checked_sub(i + 1).and_then(|j| e.get(j)),
+            Self::Sorted(e) => e.get(i).copied(),
+        }
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &'a Exon> + '_ {
+        (0..self.len()).filter_map(move |i| self.get(i))
+    }
+
+    pub(crate) fn last(&self) -> Option<&'a Exon> {
+        self.len().checked_sub(1).and_then(|i| self.get(i))
+    }
+}
+
+impl std::ops::Index<usize> for ExonsInOrder<'_> {
+    type Output = Exon;
+
+    fn index(&self, i: usize) -> &Exon {
+        self.get(i).expect("an exon of the transcript")
+    }
+}
+
 /// A gene model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Gene {
@@ -342,7 +385,7 @@ impl Transcript {
         let mut cdna_pos = 0u64;
         let sorted_exons = self.sorted_exons();
 
-        for exon in &sorted_exons {
+        for exon in sorted_exons.iter() {
             if genomic_pos >= exon.start && genomic_pos <= exon.end {
                 return match self.strand {
                     Strand::Forward => Some(cdna_pos + (genomic_pos - exon.start) + 1),
@@ -556,13 +599,32 @@ impl Transcript {
     }
 
     /// Get exons sorted by transcript order (forward for +, reverse for -).
-    pub(crate) fn sorted_exons(&self) -> Vec<&Exon> {
-        let mut exons: Vec<&Exon> = self.exons.iter().collect();
+    ///
+    /// The GFF3 reader stores them that way, so this is a view of `exons` and not a copy that is
+    /// sorted: it runs for every (variant x transcript x allele), a few times each, and the copy
+    /// was an allocation and a sort of the exons of the transcript every time.
+    pub(crate) fn sorted_exons(&self) -> ExonsInOrder<'_> {
+        let exons = &self.exons[..];
+        let ascending = exons.windows(2).all(|w| w[0].start <= w[1].start);
+        let descending = exons.windows(2).all(|w| w[0].start >= w[1].start);
+        let strictly_ascending = || exons.windows(2).all(|w| w[0].start < w[1].start);
+        let strictly_descending = || exons.windows(2).all(|w| w[0].start > w[1].start);
         match self.strand {
-            Strand::Forward => exons.sort_by_key(|e| e.start),
-            Strand::Reverse => exons.sort_by_key(|e| std::cmp::Reverse(e.start)),
+            // a stable sort of what is already in order is what is in order, and of what is
+            // strictly the other way round is the list read from its end
+            Strand::Forward if ascending => ExonsInOrder::Stored(exons),
+            Strand::Forward if strictly_descending() => ExonsInOrder::Backwards(exons),
+            Strand::Reverse if descending => ExonsInOrder::Stored(exons),
+            Strand::Reverse if strictly_ascending() => ExonsInOrder::Backwards(exons),
+            _ => {
+                let mut sorted: Vec<&Exon> = exons.iter().collect();
+                match self.strand {
+                    Strand::Forward => sorted.sort_by_key(|e| e.start),
+                    Strand::Reverse => sorted.sort_by_key(|e| std::cmp::Reverse(e.start)),
+                }
+                ExonsInOrder::Sorted(sorted)
+            }
         }
-        exons
     }
 
     /// Determine which exon (0-indexed rank) a genomic position falls in.
@@ -936,6 +998,76 @@ mod tests {
     }
 
     use super::*;
+
+    /// The exons in transcript order are what a stable sort of them by start gives (ascending for
+    /// the forward strand, descending for the reverse), however they were stored: in order, the
+    /// other way round, shuffled, with starts that repeat.
+    #[test]
+    fn the_exons_in_transcript_order_are_the_sorted_exons_however_they_were_stored() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+        let mut stored_as_is = 0;
+        let mut stored_backwards = 0;
+        let mut sorted_copy = 0;
+        for round in 0..4000 {
+            let mut t = make_test_transcript();
+            t.strand = if round % 2 == 0 {
+                Strand::Forward
+            } else {
+                Strand::Reverse
+            };
+            let n = next(8) as usize;
+            // starts from a small range, so that some repeat; `rank` says where each began
+            let mut exons: Vec<Exon> = (0..n)
+                .map(|rank| Exon {
+                    stable_id: format!("E{rank}"),
+                    start: 100 + next(12) * 10,
+                    end: 0,
+                    strand: t.strand,
+                    phase: -1,
+                    end_phase: -1,
+                    rank: rank as u32,
+                })
+                .collect();
+            for e in &mut exons {
+                e.end = e.start + 5;
+            }
+            // the shapes a reader can leave them in
+            match round % 4 {
+                0 => exons.sort_by_key(|e| e.start),
+                1 => exons.sort_by_key(|e| std::cmp::Reverse(e.start)),
+                2 => exons.reverse(),
+                _ => {}
+            }
+            t.exons = exons;
+            let mut expected: Vec<&Exon> = t.exons.iter().collect();
+            match t.strand {
+                Strand::Forward => expected.sort_by_key(|e| e.start),
+                Strand::Reverse => expected.sort_by_key(|e| std::cmp::Reverse(e.start)),
+            }
+            let got = t.sorted_exons();
+            match got {
+                ExonsInOrder::Stored(_) => stored_as_is += 1,
+                ExonsInOrder::Backwards(_) => stored_backwards += 1,
+                ExonsInOrder::Sorted(_) => sorted_copy += 1,
+            }
+            assert_eq!(got.len(), expected.len());
+            let ranks: Vec<u32> = got.iter().map(|e| e.rank).collect();
+            let wanted: Vec<u32> = expected.iter().map(|e| e.rank).collect();
+            assert_eq!(ranks, wanted, "{:?} {:?}", t.strand, t.exons);
+            assert_eq!(got.last().map(|e| e.rank), wanted.last().copied());
+            for (i, e) in expected.iter().enumerate() {
+                assert_eq!(got[i].rank, e.rank);
+            }
+        }
+        // all three ways of answering were taken
+        assert!(stored_as_is > 100 && stored_backwards > 100 && sorted_copy > 100);
+    }
 
     fn make_test_transcript() -> Transcript {
         Transcript {

@@ -185,6 +185,6 @@ fn the_annotation_loop_allocates_what_its_budget_says_for_each_record_and_row() 
 
 /// What a row of a run with `--symbol --canonical` and no HGVS costs, over the whole path from the
 /// VCF line to the written line.
-const PLAIN_PER_ROW: f64 = 29.0;
+const PLAIN_PER_ROW: f64 = 26.0;
 /// What a row of a run with `--hgvs --hgvsg` and every optional column costs.
-const FULL_PER_ROW: f64 = 56.0;
+const FULL_PER_ROW: f64 = 52.0;
