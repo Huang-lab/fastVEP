@@ -144,10 +144,29 @@ impl ColumnLayout {
     /// `start` alone, so a line outside the window is rejected without being
     /// parsed in full.
     fn start_of(&self, line: &str) -> Result<u64> {
-        line.split('\t')
-            .nth(self.start)
-            .and_then(|v| v.parse().ok())
+        self.start_field(line)
+            .and_then(|field| field.parse().ok())
             .ok_or_else(|| anyhow!("variation cache line has no usable start: {:?}", line))
+    }
+
+    /// The `start` field of a line.
+    ///
+    /// This runs for every line the reader passes, which for a sorted input is every line of the
+    /// cache between the first variant and the last, so it walks the bytes to the column and does
+    /// not split the line (`split('\t').nth(n)` goes through a char searcher for each field, and
+    /// was 570 of the 4,893 samples of a lookup in a sampled profile of HG002's chr21 and chr22).
+    fn start_field<'a>(&self, line: &'a str) -> Option<&'a str> {
+        let bytes = line.as_bytes();
+        let mut from = 0;
+        for _ in 0..self.start {
+            from += bytes[from..].iter().position(|&b| b == b'\t')? + 1;
+        }
+        let to = bytes[from..]
+            .iter()
+            .position(|&b| b == b'\t')
+            .map_or(bytes.len(), |tab| from + tab);
+        // both ends are on a tab or at an end of the line, so on a char boundary
+        Some(&line[from..to])
     }
 
     /// `parse_variation` (`BaseCacheVariation.pm`): `.` is no value, `failed`,
@@ -1384,6 +1403,58 @@ mod tests {
         // An insertion keeps the end below its start.
         let r = reader.parse_line("1\trs2\t100\t99\t-/T").unwrap();
         assert_eq!((r.start, r.end), (100, 99));
+    }
+
+    /// Walking the bytes to the start column finds the field that splitting the line on tabs
+    /// does, for lines with fewer fields than the column, empty fields, fields that are not
+    /// numbers, a start too long for a `u64` and a column anywhere in the line.
+    #[test]
+    fn the_start_of_a_line_is_the_field_a_split_on_tabs_gives() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = |n: u64| -> u64 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let pieces = [
+            "",
+            "1",
+            "0",
+            "12345",
+            "rs1",
+            "A/G",
+            ".",
+            "-",
+            "18446744073709551615",
+            "18446744073709551616",
+            "1e3",
+            " 7",
+            "+8",
+            "\u{e9}",
+            "9\u{e9}",
+        ];
+        for column in 0..8usize {
+            let layout = ColumnLayout {
+                start: column,
+                ..ColumnLayout::new(&["chr".into(), "start".into(), "allele_string".into()])
+                    .unwrap()
+            };
+            for _ in 0..4_000 {
+                let fields = next(11);
+                let line: Vec<&str> = (0..fields)
+                    .map(|_| pieces[next(pieces.len() as u64) as usize])
+                    .collect();
+                let line = line.join("\t");
+                let by_split: Option<u64> =
+                    line.split('\t').nth(column).and_then(|v| v.parse().ok());
+                match (layout.start_of(&line), by_split) {
+                    (Ok(a), Some(b)) => assert_eq!(a, b, "column {column}, {line:?}"),
+                    (Err(_), None) => {}
+                    (got, want) => panic!("column {column}, {line:?}: {got:?} against {want:?}"),
+                }
+            }
+        }
     }
 
     #[test]
