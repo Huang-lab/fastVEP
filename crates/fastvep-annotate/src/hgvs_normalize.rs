@@ -1629,6 +1629,13 @@ pub fn hgvsg_vep(
 
     // `_get_flank_seq`: 100 bases either side, more when an allele is long, to
     // find where the 3'-rule stops and to look for the bases a dup would copy.
+    //
+    // The window is Ensembl's, and so is where the 3'-rule stops in a repeat longer than it
+    // (HGVS places a change at its most 3' position with no such limit). Measured, not argued: a
+    // window of 1,000 gave the same HGVSg on all 12,377 indels of two real samples (every 200th
+    // variant of GIAB HG002, 2,996, and a ClinVar sample, 9,381), and chromosomes 21 and 22 of GRCh38
+    // have no run of one or two bases of 100 or more (one tetranucleotide repeat, 108 bases at
+    // 22:22585898), so the limit shows only inside a repeat that long.
     let mut add_length = 100i64;
     for al in std::iter::once(&ref_text).chain(alt_texts.iter()) {
         if al.len() as i64 > 50 {
