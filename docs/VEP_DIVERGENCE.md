@@ -517,12 +517,15 @@ It reads the same GRCh38 Ensembl 115 GFF3 and FASTA as above and is run with `--
 
 | Input | Records | Paired rows | Cells compared | Cells that differ |
 |---|---:|---:|---:|---:|
-| GIAB HG002 WGS, 1-in-200 systematic (the sample above) | 20,241 | 186,055 | 5,581,650 | 3,834 (0.069 %); 3,867 before the `HGVSp` and the transcript-end `HGVSc` |
+| GIAB HG002 WGS, 1-in-200 systematic (the sample above) | 20,241 | 186,055 | 5,023,485 | 3,834 (0.076 %); 3,867 before the `HGVSp` and the transcript-end `HGVSc` |
 | A generated world: both strands, coding and non-coding genes, 372 of its 3,000 records with several ALTs | 3,000 | 7,213 | 216,390 | 936 (0.43 %); 973 before |
 | The same world's edges: every shape of change at every position within ten bases of every exon, CDS and transcript boundary, each its own single-ALT record (`fixtures/vep_tab_edges`) | 17,672 | 36,958 | 1,108,740 | 263 (0.024 %); 2,053 before the HGVS notation, 2,689 before the coding terms and 7,828 before the position fix |
 | The same world's lone indels written with shared bases (`fixtures/vep_tab_lone_indels`) | 1,500 | 3,176 | 95,280 | 9 (0.009 %); 52 before the HGVS notation, 59 before the coding terms and 14,526 before the minimisation |
-| A 1-in-5 sample of ClinVar 2-star+, without the HGVS columns | 134,732 | 3,136,295 | 81,543,670 | 43 (0.00005 %); 275 before the coding terms |
-| The same sample with them (`--hgvs --hgvsg`) | 134,732 | 3,136,295 | 94,088,850 | 2,169 (0.0023 %), 666 once VEP's UTR is corrected (below); 3,354 before the HGVS notation |
+| A 1-in-5 sample of ClinVar 2-star+, without the HGVS columns | 134,732 | 3,136,295 | 72,134,785 | 102 (0.00014 %): 20 once a frameshift intron is read as Ensembl reads it and 82 that follow from the CDS flags of VEP's cache (below); 43 and 275 before |
+| The same sample with them (`--hgvs --hgvsg`) | 134,732 | 3,136,295 | 84,679,965 | 2,263 (0.0027 %), 760 once VEP's UTR is corrected (below); 3,354 before the HGVS notation |
+
+Since the change that reads a transcript as VEP's cache holds it ([Against VEP's own cache](#against-veps-own-cache)), the comparisons of HG002 and of the ClinVar sample against a `--gff` run leave out three columns, `SYMBOL_SOURCE`, `HGNC_ID` and `FLAGS` (`--ignore`): a GFF3 carries none of them, VEP's `--gff` writes `-`, and fastVEP now follows the cache.
+That is 27 columns of 30, and 23 of 26 without the HGVS columns, which is what the cell counts above are; the generated worlds have no such metadata and agree in all 30.
 
 The world is built to be hard and not to be representative: it has far more indels in repeats, at transcript ends and at exon edges than any genome, and more multi-allelic sites.
 Its rates are the rates on those shapes, and HG002 is what an ordinary WGS callset looks like.
@@ -669,18 +672,13 @@ VEP 116.3's own output (above); an in-tree property test that applies each of 6,
 | 31 of the ClinVar sample, 3 of the Ensembl cache run, 1 of the edge set | A deletion or an insertion in a repeat at the end of a protein, that Ensembl does not shift as far as the end | fastVEP: [divergence 9](#9-the-smaller-ones), NT5C2 |
 | 9 of the ClinVar sample | `start_lost` in VEP and not here, on a transcript annotated 5' incomplete | open: [divergence 9](#9-the-smaller-ones) |
 | 2 of the ClinVar sample | A frameshift on chrM, where VEP translates the edited sequence with the standard code (`_get_alternate_cds` calls `translate()` without a table) and fastVEP with the mitochondrial one | fastVEP |
-| 32 of the Ensembl cache run, 114 of the RefSeq cache run | A transcript whose initiator is not `ATG`: `p.Leu1?` here where VEP writes `p.Met1?` | VEP, and not closed: the caches read the first residue as `M`, as `Amino_acids` shows (`M/X` for `L/X`, 32 cells and 48), through the transcript's own annotation. [Not in this change](#not-in-this-change) |
+| 32 of the Ensembl cache run, 114 of the RefSeq cache run | A transcript whose initiator is not `ATG`: `p.Leu1?` here where VEP writes `p.Met1?` | was VEP's reading of the transcript's own annotation, and is read now: [against VEP's own cache](#against-veps-own-cache) |
 
 **What Ensembl writes that is not HGVS, and fastVEP writes too.**
 The notation of a change that loses the initiator is `p.Met1?`, and Ensembl's own cache run has it on 71,797 of the 96,350 `start_lost` rows of the complete transcripts.
 On 11,308 it is a window of more than one residue, `p.MetAsn1_?2`, two residue names sharing one position, which is the form `p.LeuIle2672=` was.
 On 2,028 (2.1 %) the range is inverted and names a residue that is not the first: for an insertion in front of the initiator the window has no residue before it, and Ensembl's `substr` reads one from the end of the protein, so `p.Asp1_?0` names the last residue of the protein as if it were residue 1.
 fastVEP writes all three as Ensembl does, because they are what Ensembl writes and a migration compares them; each is `p.Met1?` as HGVS has it, and which of them fastVEP should write is a decision for the maintainers and not a side effect of this one.
-
-### Not in this change
-
-A transcript whose initiator is not `ATG` (`CTG`, `GTG`; MRTFA's three RefSeq transcripts and ENST00000644773 on chr22 are the examples) reads its first residue as what the codon table says, and VEP's caches read it as `M`.
-The RefSeq GFF3 says so with `transl_except=(pos:...,aa:Met)` and Ensembl's database with the translation's own sequence; neither is read yet.
 
 ### An inversion inside padding
 
@@ -698,7 +696,7 @@ A replacement that is wholly an inversion (`CA>TG`) is `inv` in both tools, as t
 After: 9, 3, none and none, and those are VEP's.
 The generated world: 10 `Consequence` and 5 `IMPACT` cells, none after, and its 17 default columns agree on all 122,621 cells.
 The lone-indel set: 4 and 3, none after.
-The ClinVar sample: 275 cells of 81,543,670, 43 after (33 rows), and 20 once a frameshift intron is read as Ensembl reads it (17 rows, below, and [Frameshift introns](#frameshift-introns)).
+The ClinVar sample: 275 cells of 81,543,670, 43 after (33 rows), and 20 once a frameshift intron is read as Ensembl reads it (17 rows, below, and [Frameshift introns](#frameshift-introns)), and 102 against a `--gff` run once the CDS flags of VEP's cache are read, which a GFF3 does not have ([Against VEP's own cache](#against-veps-own-cache)).
 VEP's own RefSeq cache, 150 transcripts of chr21 and chr22 (21,052 changes at their start codons, their stop codons and one internal exon boundary each; 203,125 rows on the transcripts the cache has no sequence edits for): 14,109 rows differed in a term, an impact, a position or a residue, and 48 do, all of them three transcripts with a non-AUG start codon (below).**
 
 The consequence terms were a port of release 115's `VariationEffect.pm`, and release 116 changed it.
@@ -735,7 +733,7 @@ Six more things that the probes found, each checked against VEP 116.3:
 Two deliberate divergences of Part 1 are gone: the first, because VEP rewrote the clause, and the second, because the faithful rule gives VEP's answer.
 Their headings say so.
 
-What is left on the ClinVar sample is 17 rows, and all of them have a cause (it was 33: the other 16 are on two PTEN transcripts with a frameshift intron, [below](#frameshift-introns)):
+What is left on the ClinVar sample is 17 rows, and all of them have a cause (it was 33: the other 16 are on two PTEN transcripts with a frameshift intron, [below](#frameshift-introns); and against a `--gff` run there are 44 more, on transcripts the cache flags incomplete, [below](#against-veps-own-cache)):
 
 | Rows | What | Who is right |
 |---:|---|---|
@@ -895,8 +893,80 @@ Where VEP can name no biotype it drops the transcript with a warning, and fastVE
 
 Two records can now have one name: RefSeq writes a transcript that aligns in two places twice (`rna-NM_x.1` and `rna-NM_x.1-2`, both `transcript_id=NM_x.1`; 6,111 of the 186,133 ids in the file), and VEP gives both the one name.
 
-What this does not measure is the case the reporter runs, VEP's RefSeq *cache* (`--refseq`), which VEP builds from RefSeq by its own pipeline and which carries BAM-edited transcripts; `SOURCE` is the name of the GFF3 in VEP's `--gff` run and `RefSeq` here.
+The case the reporter runs, VEP's RefSeq *cache* (`--refseq`), is measured next.
 `fixtures/vep_refseq_gff` holds a RefSeq-style GFF3 with one transcript of each kind a human one has and what VEP 116.3 wrote for it (138 CSQ entries), and `refseq_names_vep.rs` holds fastVEP to it.
+
+### Against VEP's own cache
+
+A cache is not a GFF3.
+Ensembl builds it from its database, so what it holds of a transcript is the database's: the symbol source, the canonical flag, the biotype, whether the CDS is complete at either end, and whether the first codon is read as Met.
+A GFF3 carries some of that differently and some not at all, and the reporter of #139 runs `vep --cache --offline --refseq`.
+Chromosomes 21 and 22 of VEP 116.3's two human caches (`homo_sapiens/116_GRCh38` and `homo_sapiens_refseq/116_GRCh38`, about 700 MB each, taken from the `indexed_vep_cache` archives) were run through VEP 116.3 itself with `--cache --offline` (and `--refseq --exclude_predicted` for RefSeq's) and the columns above, and through fastVEP over the matching GFF3: Ensembl 116's, and RefSeq's GRCh38.p14 with the contigs renamed and `NM_` and `NR_` records only, which is what `--exclude_predicted` leaves.
+Rows are paired as above.
+`validation/run_cache_oracle.sh` makes both files and `validation/compare_cache_run.py` compares them, by cell and by transcript.
+A RefSeq cache also holds transcripts that VEP edits with an alignment (`_rna_edit`, `BAM_EDIT=OK`: 59 of the edge set's 1,061 and 194 and 57 of the two samples'), which no GFF3 can reproduce, and they are left out of both files.
+
+Four inputs: the edge set of each cache (every shape of change within ten bases of every exon, CDS and transcript boundary: 45,916 variants on the Ensembl cache and 21,052 on the RefSeq one), every 20th variant of HG002 on the two chromosomes (5,275) and the ClinVar 2-star+ sample on them (4,712).
+Cells that differ, by column, with the previous commit's fastVEP (`3082129`) first and this one's second; the Ensembl runs are with `--exclude-readthrough --exclude-artifact`, below.
+
+| Input | Pairs | Rows one tool alone has | Cells that differ |
+|---|---:|---|---|
+| Ensembl cache, edge set | 2,026,951 | fastVEP 18,733 -> 0 | `SYMBOL_SOURCE` 1,994,540 -> 0, `HGNC_ID` 1,994,048 -> 3,264, `FLAGS` 141,958 -> 642, `Consequence` 1,694 -> 0, `IMPACT` 566 -> 0, `Amino_acids` 32 -> 0, `HGVSc` 417 -> 417, `HGVSp` 14,766 -> 13,842 |
+| RefSeq cache, edge set | 203,125 | fastVEP 436 -> 0 | `SYMBOL_SOURCE` 203,125 -> 0, `BIOTYPE` 1,677 -> 0, `CANONICAL` 26,757 -> 150, `Consequence` 6 -> 0, `IMPACT` 3 -> 0, `Amino_acids` 48 -> 0, `HGVSp` 5,307 -> 5,193 |
+| Ensembl cache, HG002 | 81,309 | fastVEP 559 -> 0, VEP 1 -> 0 | `FLAGS` 2,232 -> 35, `SYMBOL_SOURCE` 74,363 -> 0, `HGNC_ID` 74,311 -> 533, `HGVSc` 338 -> 338, `HGVS_OFFSET` 437 -> 437 |
+| RefSeq cache, HG002 | 15,426 | fastVEP 66 -> 2, VEP 1 -> 1 | `SYMBOL_SOURCE` 13,222 -> 0, `BIOTYPE` 1,643 -> 0, `CANONICAL` 3,269 -> 15, `HGVSc` 122 -> 122, `HGVS_OFFSET` 146 -> 146 |
+| Ensembl cache, ClinVar | 168,813 | fastVEP 872 -> 0 | `Consequence` 3 -> 1, `IMPACT` 2 -> 0, `FLAGS` 9,586 -> 384, `SYMBOL_SOURCE` 167,127 -> 0, `HGNC_ID` 167,117 -> 34, `HGVSc` 10 -> 10, `HGVSp` 4 -> 4 |
+| RefSeq cache, ClinVar | 26,383 | fastVEP 240 -> 0 | `SYMBOL_SOURCE` 26,383 -> 0, `BIOTYPE` 471 -> 0, `CANONICAL` 5,903 -> 0: none differ |
+
+What was different, and what a cache does:
+
+- **`SYMBOL_SOURCE` and `HGNC_ID`.**
+  A RefSeq gene with one NCBI gene id is `EntrezGene` on every row of the cache and has no `HGNC_ID`, though its Dbxref has one (`prefetch_gene_ids`).
+  An Ensembl gene says where its symbol is from at the end of its description (`[Source:HGNC Symbol;Acc:HGNC:12023]`): of the 2,031 genes of the Ensembl cache run, the 1,153 that say `HGNC Symbol` are `HGNC` with that accession, the 27 that say `RFAM` are `RFAM`, the 13 that say `NCBI gene (formerly Entrezgene)` are `EntrezGene`, and the 838 that say nothing have neither.
+- **`BIOTYPE`.**
+  The cache gives a RefSeq transcript the `gene_biotype` of its gene, except `misc_RNA` for a non-coding transcript of a protein-coding gene: 503 of 503 `lnc_RNA` records of lncRNA genes are `lncRNA` (VEP's `--gff` reader and fastVEP before wrote their `gbkey`, `ncRNA`), the 67 `transcript` records of transcribed pseudogenes `transcribed_pseudogene`, and an `snRNA` or `snoRNA` its gene's.
+  Only the pairs seen on chr21 and chr22 are changed; the biotypes RefSeq has that are not on them (`tRNA`, `scRNA`, `antisense_RNA`, `vault_RNA`) keep the name the `--gff` reader gives.
+- **`CANONICAL`, `MANE` and `MANE_SELECT`.**
+  RefSeq's GFF3 has no `Ensembl_canonical` tag, and writes `tag=MANE Select` with a space, where Ensembl writes `MANE_Select`; the record names Ensembl's transcript in its Dbxref, which is what the RefSeq cache writes as `MANE_SELECT`.
+  The cache marks the MANE Select transcript of 640 genes of 640, and otherwise the transcript that spans the most of the genome, the first in the file among equals: 451 of the 455 genes that have no MANE Select transcript (366 have one transcript, and of the other 89 the cache's is the longest-spanning in 85, and the first of those in the file in all 85).
+  Neither the length of a transcript's exons nor of its CDS does better than the span (63 and 52 of 89).
+  The rule needs all of a gene's transcripts and is applied to a whole file only: a tabix read has those that overlap its input, and the longest of them is not the gene's.
+- **The mature miRNA of a precursor.**
+  A record that hangs off a transcript (`rna-MIR185`, `Parent=rna-NR_029706.1`) is where in the precursor the miRNA is, and neither the cache nor the `--gff` reader has a transcript of it: 436 rows of the edge set, and 66 and 240 of the samples, were fastVEP's alone.
+- **`FLAGS`, and the first codon.**
+  Ensembl's GFF3 export has no `cds_start_NF` or `cds_end_NF`, and the cache has them on 5 % of its coding transcripts: a change at the last codon of an incomplete transcript was `stop_lost`, a frameshift at its first was `start_lost` (1,694 `Consequence` and 566 `IMPACT` cells of the edge set).
+  They are read off the sequence once a run has the FASTA, and agree with the cache on 12,859 (start) and 12,858 (end) of 12,867 coding transcripts: `cds_end_NF` when the CDS does not end in a stop codon in frame (all 621 the cache flags, and 9 it does not), `cds_start_NF` when the first CDS exon starts part-way through a codon (all 229) or its first codon is not `ATG` and there is no 5' UTR above it (a transcript that begins with another codon and has a UTR is complete in the cache, 18 of 18; one without is not, 128 of 130).
+  A GFF3 that carries the flags (GENCODE's) keeps them.
+  The first codon: where the annotation reads a start that is not `ATG` as Met, residue 1 is `M`: Ensembl's `initial_met` edit, applied to the reference peptide of the codon and to nothing else, which the cache has on all 14 complete transcripts that start with `CTG`, `GTG` or `ACG` and none of the six that start with something else, and RefSeq's `transl_except=(pos:...,aa:Met)` (MRTFA's `GUG`).
+  `Transcript::translate` also writes a first codon that the table lists as a start (`TTG`, `CTG` and `ATG`, read from BioPerl in VEP's image) as `M`, and so does fastVEP, which is the protein a frameshift's `p.Met1?` is read against.
+  `Amino_acids` reads `M/L` for a `CTG` start and `M/V` for MRTFA's, `p.Met1?` replaces `p.Leu1?` and `p.Val1?` (32 and 48 `Amino_acids` cells, 32 and 114 `HGVSp` cells).
+- **Transcripts the cache does not hold.**
+  VEP's Ensembl cache is built without readthrough transcripts and without those of biotype `artifact` (`AnnotationSource::Database::Transcript`): 109 of the 23,382 transcripts of chr21 and chr22 in Ensembl's GFF3, and the only ones of them the cache lacks.
+  `--exclude-readthrough`, `--exclude-artifact` and `--exclude-predicted` (VEP's `--exclude_predicted`: `not stable_id match ^X._`) leave them out of a run on request, and with them the Ensembl runs have the cache's transcript set row for row.
+  None is on by default.
+
+Every cell that is left has a cause:
+
+- **`HGVSc` and `HGVS_OFFSET`**: an allele of a record with several ALTs, which is [divergence 11](#11-an-allele-of-a-record-with-several-alts-is-described-as-it-would-be-alone) (HG002: 121 and 146 on the RefSeq cache, 328 and 437 on the Ensembl one), and the `*` coordinate of an intron beside the last coding base, which is [divergence 4](#4-a--coordinate-keeps-the-exonic-anchor-it-is-counted-from): Ensembl's cache has it too, on 417 cells of the Ensembl edge set (31 of 9,013 transcripts), 10 of the Ensembl HG002 run, 1 of the RefSeq one and 10 of the ClinVar sample.
+- **`HGVSp`**: the classes of divergences 3, 9, 12 and 13 and the stop-codon family, listed in the `HGVSp` section above, and nothing else: of the Ensembl edge set's 13,842, 12,572 are on transcripts the cache calls complete (12,604 before the initiator, less its 32) and 1,270 on incomplete ones, where `p.Ter157%3D` is VEP's `Xaa` read as a terminator; of the RefSeq edge set's 5,193, the stop-codon family.
+  4 of the ClinVar sample's are the same.
+- **`CANONICAL`**: 4 of the 455 genes without a MANE Select transcript, and 4 genes the cache has no canonical transcript for at all (coding genes whose transcripts are all `RefSeq Select`), which nothing in the GFF3 explains and which come from the database's own `canonical_transcript_id`: 4 transcripts of HG002 (15 cells) and 1 of the edge set (150 rows).
+- **`HGNC_ID`**: VEP copies one gene's HGNC ID to every other gene of the same symbol it loaded together (`merge_features`), so `BCRP3` of ENSG00000215481, whose symbol source is `EntrezGene`, has the `HGNC:1016` of ENSG00000284128.
+  That depends on which transcripts are loaded in one call and is not reproduced: 34 transcripts of the edge set, 159 of HG002 and 34 of the ClinVar sample.
+- **`FLAGS`**: 4 transcripts of the edge set, 14 of HG002 and 8 of the ClinVar sample, of 12,867 coding ones: the sequence rules above differ from the database's on 9 transcripts' `cds_end_NF` (a CDS of 698 bases that the database calls complete) and on 8 transcripts' `cds_start_NF` (6 the database flags that start with `ATG`, and 2 the rule flags that it does not).
+- **`Consequence`**: 1 cell, `mature_miRNA_variant` on ENST00000290239: the cache's `miRNA` attribute holds the mature microRNA's coordinates, which Ensembl's GFF3 export does not carry.
+- **Rows one tool alone has**: 2 of fastVEP's, the tRNA `rna-TRG-GCC1-5`, a record with no RefSeq accession, which the cache does not hold, and the intergenic row VEP writes beside it.
+
+A `--gff` run of VEP has none of the first three: a GFF3 has no symbol source, no HGNC ID and no CDS flags, so VEP writes `-` for them.
+Against the HG002 sample's `--gff` run (the first table of this part) fastVEP now differs in `SYMBOL_SOURCE` (153,728 of the 5,581,650 cells), `HGNC_ID` (152,539) and `FLAGS` (8,631), and in nothing else that it did not before: it follows the cache, which is what `vep --cache` writes and what the reporter runs.
+The CDS flags reach the terms as well.
+A transcript the cache flags `cds_start_NF` or `cds_end_NF` has no start or stop codon to lose, and a `--gff` run, which has no flags, calls a change in it `start_lost`, `stop_lost` or `stop_retained_variant`.
+Against the ClinVar 2-star+ sample's `--gff` run (3,136,295 rows) fastVEP therefore differs in the `Consequence` of 61 rows (17 before the flags), the `IMPACT` of 41 (3 before) and the `HGVSp` of 1,853 cells (1,818 before): the 44 rows, 38 `IMPACT` cells and 35 `HGVSp` cells that the flags changed are all on a transcript fastVEP flags incomplete, and against VEP's Ensembl cache the same sample differs in 1 `Consequence` cell.
+HG002 and the generated worlds are unchanged.
+
+Not reproduced, and not in the columns above:
+`APPRIS` (Ensembl's GFF3 has no tag for it: 734 of 3,650 rows of a 150-variant sample carry one in the cache), and the `MANE_SELECT` of an Ensembl transcript, which the Ensembl cache writes as RefSeq's accession (`NM_001754.5`) and the GFF3 does not name (fastVEP writes the transcript's own, as before).
+`TSL`, `CCDS`, `ENSP`, `CANONICAL` and `MANE` of an Ensembl transcript agree on that sample.
 
 ---
 
@@ -962,7 +1032,7 @@ calls plain missense.
 
 ## Fixed since this document was last measured
 
-Sixteen defects are gone, and the numbers above are what is left.
+Eighteen defects are gone, and the numbers above are what is left.
 Each was measured the same way before and after, on the same samples: the row counts below are
 what the fix removed.
 
@@ -983,3 +1053,5 @@ what the fix removed.
 | A lone indel was trimmed of its first shared base only | the world with each ALT its own record 197 rows of 7,213; the lone-indel set 2,950 `Allele` and 2,811 `Location` cells of 3,176 rows | `CAGT>CT` was a deletion of `AGT` at the next base, where Ensembl, which trims every shared base from both ends, writes the deletion of `AG`; the `Allele`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, positions and some consequence terms followed. Part 3 |
 | `HGVSp` was a chain of rules read off Ensembl's output, and failed where a rule had no case: at a start codon, at a stop codon, and where the 3'-rule carries a change over an exon boundary | 99,670 cells of VEP's Ensembl cache run, 22,680 of its RefSeq cache run, 838 of the edge set, 2,837 of the ClinVar sample, 17 of HG002; now 12,604, 5,307, 237, 1,818 and 0, and every one of those has a cause (Part 3) | `fastvep_hgvs::protein` is a transcription of `hgvs_protein` and the routines it calls, and `fastvep_annotate::hgvsp_for_allele` hands it what Ensembl hands it: the change where the 3'-rule moved it, its protein position and codon window there, and the edited translation. The notation of a change that loses the initiator is `p.Met1?`, of a lost terminator `p.Ter583delextTer23`, of an insertion that the rule carries out of the coding sequence none. It also fixed the cause behind divergences 5 to 8, which was not the one this document gave |
 | `HGVSc` at an end of a transcript: a change that overlaps it and runs past an end was written for the part that is inside, and an insertion beside it, which is not `within_feature`, was written all the same | 973 cells of the edge set, 230 `HGVS_OFFSET`, 13 of HG002 (9 and 4), 24 of the world | Ensembl clamps the change to the transcript, works out the 3'-rule for the change as it was and adds its length to the clamped coordinates, writes nothing for a change that is not a plain `overlap` of the transcript, and nothing for one the shift carries off the end. Part 3 |
+| A transcript's symbol source, canonical flag, MANE accession and biotype were a GFF3's and not the cache's, and Ensembl's `cds_start_NF` and `cds_end_NF`, which its GFF3 export drops, were not there | `SYMBOL_SOURCE` 203,125 of 203,125 rows of VEP's RefSeq cache run and 1,994,540 of its 2,026,951 Ensembl rows; `CANONICAL` 26,757; `BIOTYPE` 1,677; `FLAGS` 141,958; `Consequence` 1,694 and `IMPACT` 566 | The RefSeq cache writes `EntrezGene`, the MANE Select transcript as canonical and the `gene_biotype` of the gene, and an Ensembl one the database's flags, which a GFF3 does not have. Read from the records, and from the sequence where there are none; the cache format moved on. [Against VEP's own cache](#against-veps-own-cache) |
+| The first residue of a transcript that the annotation reads a non-ATG initiator as Met was the code table's | 32 `Amino_acids` and 32 `HGVSp` cells of VEP's Ensembl cache run, 48 and 114 of its RefSeq one | `CTG`, `GTG` and `ACG` starts are `M` in the cache (Ensembl's `initial_met`, RefSeq's `transl_except ... aa:Met`) and `L` or `V` in the table, so `Amino_acids` was `L/X` for `M/X` and `p.Leu1?` for `p.Met1?` |
