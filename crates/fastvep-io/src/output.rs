@@ -491,18 +491,6 @@ fn escape_csq_value(value: &str) -> String {
     buf
 }
 
-/// A position cell of the tab format. VEP writes `-` for every value it does
-/// not have (`OutputFactory::Tab::output_hash_to_line`), so a span with neither
-/// end is `-` here and not the empty string the CSQ field uses.
-fn span_cell(span: TranscriptSpan) -> String {
-    let mut cell = String::new();
-    span.write_to(&mut cell);
-    if cell.is_empty() {
-        cell.push('-');
-    }
-    cell
-}
-
 /// VEP's `Uploaded_variation`: the first ID the record carries, otherwise a name
 /// built from the input line itself, `{chr}_{pos}_{ref}/{alt}`.
 ///
@@ -2314,13 +2302,13 @@ impl OptionalColumn {
     fn cell<'a>(
         self,
         vf: &'a VariationFeature,
-        tv: &TranscriptVariation,
+        tv: &'a TranscriptVariation,
         aa: &'a AlleleAnnotation,
         no_escape: bool,
     ) -> Cow<'a, str> {
-        fn or_dash(v: Option<&str>) -> Cow<'static, str> {
+        fn or_dash(v: Option<&str>) -> Cow<'_, str> {
             match v.filter(|s| !s.is_empty()) {
-                Some(v) => Cow::Owned(v.to_string()),
+                Some(v) => Cow::Borrowed(v),
                 None => Cow::Borrowed("-"),
             }
         }
@@ -2346,12 +2334,10 @@ impl OptionalColumn {
             // VEP encodes `=` as `%3D` in the tab file as well as in the VCF
             // (`OutputFactory`, "URI encode =", unless --no_escape)
             Self::Hgvsp if no_escape => or_dash(aa.hgvsp.as_deref()),
-            Self::Hgvsp => or_dash(
-                aa.hgvsp
-                    .as_deref()
-                    .map(|h| h.replace('=', "%3D"))
-                    .as_deref(),
-            ),
+            Self::Hgvsp => match aa.hgvsp.as_deref().filter(|s| !s.is_empty()) {
+                Some(h) if h.contains('=') => Cow::Owned(h.replace('=', "%3D")),
+                other => or_dash(other),
+            },
             Self::HgvsOffset => aa
                 .hgvs_offset
                 .map_or(Cow::Borrowed("-"), |o| Cow::Owned(o.to_string())),
@@ -2493,10 +2479,93 @@ pub struct TabOptions<'a> {
     pub no_escape: bool,
 }
 
+/// One output line, built in place. The row loop runs once per (variant x transcript x allele),
+/// and a cell that was a `String` of its own, collected and joined, made about twenty
+/// allocations a row where this makes one.
+struct TabRow {
+    buf: String,
+    started: bool,
+}
+
+impl TabRow {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            buf: String::with_capacity(capacity),
+            started: false,
+        }
+    }
+
+    /// Starts the next cell, which is the tab after the one before it, and hands back the
+    /// buffer to write it into.
+    fn next(&mut self) -> &mut String {
+        if self.started {
+            self.buf.push('\t');
+        }
+        self.started = true;
+        &mut self.buf
+    }
+
+    fn push(&mut self, cell: &str) {
+        self.next().push_str(cell);
+    }
+
+    /// A position cell of the tab format. VEP writes `-` for every value it does not have
+    /// (`OutputFactory::Tab::output_hash_to_line`), so a span with neither end is `-` here and
+    /// not the empty string the CSQ field uses.
+    fn span(&mut self, span: TranscriptSpan) {
+        let buf = self.next();
+        let before = buf.len();
+        span.write_to(buf);
+        if buf.len() == before {
+            buf.push('-');
+        }
+    }
+
+    fn ordinals(&mut self, ordinals: Option<Ordinals>) {
+        let buf = self.next();
+        match ordinals {
+            Some(o) => o.write_to(buf),
+            None => buf.push('-'),
+        }
+    }
+
+    /// `HGVS_OFFSET`: the shift, or `-`.
+    fn offset(&mut self, offset: Option<i64>) {
+        match offset {
+            Some(o) => {
+                let _ = write!(self.next(), "{o}");
+            }
+            None => self.push("-"),
+        }
+    }
+
+    /// `HGVSp`, with the `=` of a synonymous change as `%3D` unless `--no_escape`, as
+    /// [`OptionalColumn::cell`] writes it, and `-` for none.
+    fn hgvsp(&mut self, hgvsp: Option<&str>, no_escape: bool) {
+        match hgvsp.filter(|s| !s.is_empty()) {
+            Some(h) if !no_escape && h.contains('=') => {
+                let buf = self.next();
+                for (i, part) in h.split('=').enumerate() {
+                    if i > 0 {
+                        buf.push_str("%3D");
+                    }
+                    buf.push_str(part);
+                }
+            }
+            Some(h) => self.push(h),
+            None => self.push("-"),
+        }
+    }
+}
+
 /// `1` when flagged, `-` when not, so the column is never blank - every other
 /// empty cell in this format is `-` too.
-fn pick_cell(flagged: bool) -> String {
-    if flagged { "1" } else { "-" }.to_string()
+fn pick_cell(flagged: bool) -> &'static str {
+    if flagged {
+        "1"
+    } else {
+        "-"
+    }
 }
 
 /// Format a VariationFeature as a tab-delimited VEP output line using the
@@ -2526,7 +2595,13 @@ pub fn format_tab_line_with(
     sa_only: bool,
     opts: TabOptions<'_>,
 ) -> Vec<String> {
-    let mut lines = Vec::new();
+    // One line for each (transcript, allele); an intergenic variant has one for each allele.
+    let rows: usize = vf
+        .transcript_variations
+        .iter()
+        .map(|tv| tv.allele_annotations.len())
+        .sum();
+    let mut lines = Vec::with_capacity(rows.max(vf.alt_alleles.len()));
 
     // `format_coords` of VEP's `Utils.pm`: the lower coordinate first. An
     // insertion has its end below its start (it sits between two bases), and VEP
@@ -2570,7 +2645,7 @@ pub fn format_tab_line_with(
                     ));
                 }
                 if opts.pick_column {
-                    parts.push(pick_cell(aa.pick));
+                    parts.push(pick_cell(aa.pick).to_string());
                 }
                 if let Some(cls) = opts.qc_class {
                     parts.push(cls.to_string());
@@ -2596,7 +2671,7 @@ pub fn format_tab_line_with(
                     parts.extend(vec!["-".to_string(); extra_count]);
                 }
                 if opts.pick_column {
-                    parts.push(pick_cell(false));
+                    parts.push(pick_cell(false).to_string());
                 }
                 if let Some(cls) = opts.qc_class {
                     parts.push(cls.to_string());
@@ -2615,95 +2690,118 @@ pub fn format_tab_line_with(
                 continue;
             }
         }
+        // No feature, no strand: VEP prints `-`, not the placeholder's `1`.
+        let featureless = tv.is_featureless();
         for aa in &tv.allele_annotations {
-            let consequence_str = aa
-                .consequences
-                .iter()
-                .map(|c| c.so_term())
-                .collect::<Vec<_>>()
-                .join(",");
-
-            let impact_str = aa.impact.as_str().to_string();
-            let distance_str = aa
-                .distance
-                .map(|d| d.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            // No feature, no strand: VEP prints `-`, not the placeholder's `1`.
-            let featureless = tv.is_featureless();
-            let strand_str = if featureless {
-                "-".to_string()
-            } else {
-                format!("{}", tv.strand.as_int())
-            };
-            // VEP's FLAGS are the transcript's own (`cds_start_NF`, `cds_end_NF`);
-            // whether it is canonical is the CANONICAL column. This wrote the word
-            // `canonical` here and never the flags.
-            let flags_str = if tv.flags.is_empty() {
-                "-".to_string()
-            } else {
-                tv.flags.join(",")
-            };
-
-            let mut parts: Vec<Cow<'_, str>> = Vec::with_capacity(row_capacity);
-            parts.push(uploaded_variation.clone().into());
-            parts.push(location.clone().into());
-            parts.push(aa.allele.to_string().into());
+            let mut row = TabRow::with_capacity(96 + 24 * (row_capacity - 4));
+            row.push(&uploaded_variation);
+            row.push(&location);
+            let _ = write!(row.next(), "{}", aa.allele);
             if let Some(ref r) = ref_str {
-                parts.push(r.clone().into());
+                row.push(r);
             }
-            parts.push(tv.gene_id.to_string().into());
-            parts.push(tv.transcript_id.to_string().into());
-            parts.push(Cow::Borrowed(if featureless { "-" } else { "Transcript" }));
-            parts.push(consequence_str.into());
-            parts.push(span_cell(aa.location.cdna).into());
-            parts.push(span_cell(aa.location.cds).into());
-            parts.push(span_cell(aa.location.protein).into());
-            parts.push(
-                aa.amino_acids
-                    .as_ref()
-                    .map_or(Cow::Borrowed("-"), |(r, a)| {
-                        Cow::Owned(amino_acids_text(r, a))
-                    }),
-            );
-            parts.push(aa.codons.as_ref().map_or(Cow::Borrowed("-"), |(r, a)| {
-                Cow::Owned(format!("{}/{}", r, a))
-            }));
-            parts.push(if aa.existing_variation.is_empty() {
-                Cow::Borrowed("-")
+            row.push(&tv.gene_id);
+            row.push(&tv.transcript_id);
+            row.push(if featureless { "-" } else { "Transcript" });
+            {
+                let buf = row.next();
+                for (i, c) in aa.consequences.iter().enumerate() {
+                    if i > 0 {
+                        buf.push(',');
+                    }
+                    buf.push_str(c.so_term());
+                }
+            }
+            row.span(aa.location.cdna);
+            row.span(aa.location.cds);
+            row.span(aa.location.protein);
+            match aa.amino_acids.as_ref() {
+                Some((r, a)) if r == a => row.push(r),
+                Some((r, a)) => {
+                    let buf = row.next();
+                    buf.push_str(r);
+                    buf.push('/');
+                    buf.push_str(a);
+                }
+                None => row.push("-"),
+            }
+            match aa.codons.as_ref() {
+                Some((r, a)) => {
+                    let buf = row.next();
+                    buf.push_str(r);
+                    buf.push('/');
+                    buf.push_str(a);
+                }
+                None => row.push("-"),
+            }
+            if aa.existing_variation.is_empty() {
+                row.push("-");
             } else {
-                Cow::Owned(aa.existing_variation.join(","))
-            });
+                let buf = row.next();
+                for (i, name) in aa.existing_variation.iter().enumerate() {
+                    if i > 0 {
+                        buf.push(',');
+                    }
+                    buf.push_str(name);
+                }
+            }
             // VEP's order (`FLAG_FIELDS`): REF_ALLELE, then IMPACT to FLAGS, then
             // PICK, then the other optional columns.
             let mut optional = opts.optional;
             if let [OptionalColumn::RefAllele, rest @ ..] = optional {
-                parts.push(OptionalColumn::RefAllele.cell(vf, tv, aa, opts.no_escape));
+                let _ = write!(row.next(), "{}", vf.ref_allele);
                 optional = rest;
             }
-            parts.push(impact_str.into());
-            parts.push(distance_str.into());
-            parts.push(strand_str.into());
-            parts.push(flags_str.into());
+            row.push(aa.impact.as_str());
+            match aa.distance {
+                Some(d) => {
+                    let _ = write!(row.next(), "{d}");
+                }
+                None => row.push("-"),
+            }
+            if featureless {
+                row.push("-");
+            } else {
+                let _ = write!(row.next(), "{}", tv.strand.as_int());
+            }
+            // VEP's FLAGS are the transcript's own (`cds_start_NF`, `cds_end_NF`);
+            // whether it is canonical is the CANONICAL column. This wrote the word
+            // `canonical` here and never the flags.
+            if tv.flags.is_empty() {
+                row.push("-");
+            } else {
+                let buf = row.next();
+                for (i, flag) in tv.flags.iter().enumerate() {
+                    if i > 0 {
+                        buf.push(',');
+                    }
+                    buf.push_str(flag);
+                }
+            }
             if opts.pick_column {
-                parts.push(pick_cell(aa.pick).into());
+                row.push(pick_cell(aa.pick));
             }
             for col in optional {
-                parts.push(col.cell(vf, tv, aa, opts.no_escape));
+                match col {
+                    OptionalColumn::Exon => row.ordinals(aa.location.exon),
+                    OptionalColumn::Intron => row.ordinals(aa.location.intron),
+                    OptionalColumn::HgvsOffset => row.offset(aa.hgvs_offset),
+                    OptionalColumn::Hgvsp => row.hgvsp(aa.hgvsp.as_deref(), opts.no_escape),
+                    other => row.push(&other.cell(vf, tv, aa, opts.no_escape)),
+                }
             }
 
             if extra_count > 0 {
-                parts.extend(
-                    format_supplementary_tab_columns_for_allele(vf, tv, aa, specs)
-                        .into_iter()
-                        .map(Cow::Owned),
-                );
+                for cell in format_supplementary_tab_columns_for_allele(vf, tv, aa, specs) {
+                    row.push(&cell);
+                }
             }
 
             if let Some(cls) = opts.qc_class {
-                parts.push(cls.to_string().into());
+                row.push(cls);
             }
 
-            lines.push(parts.join("\t"));
+            lines.push(row.buf);
         }
     }
 
@@ -3357,7 +3455,11 @@ mod tests {
 
     #[test]
     fn test_span_cell() {
-        let cell = |s, e| span_cell(TranscriptSpan::new(s, e));
+        let cell = |s, e| {
+            let mut row = TabRow::with_capacity(8);
+            row.span(TranscriptSpan::new(s, e));
+            row.buf
+        };
         assert_eq!(cell(Some(100), Some(100)), "100");
         assert_eq!(cell(Some(100), Some(200)), "100-200");
         assert_eq!(cell(None, None), "-");
