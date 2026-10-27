@@ -189,14 +189,22 @@ fn parallel_queries_do_not_thrash_with_adequate_cache() {
     );
 
     let positions: Vec<u64> = (0..n).step_by(3).map(|i| (1000 + i) as u64).collect();
+    // The same positions in an order with no locality: the first position of every chunk, then the
+    // second of every chunk, and so on. However the threads are scheduled, one thread's next visit
+    // is to another chunk than its last, so a cache that holds a chunk or two misses on nearly
+    // every visit. In the order of `positions` a thread stays in a chunk for 85 visits, how often
+    // the others evict it depends on how the threads interleave, and on a busy machine the count
+    // fell short of the bound below (tiny=79 and tiny=91 against 99).
+    let mut scattered = positions.clone();
+    scattered.sort_by_key(|&p| (p & 0xFF, p >> 8));
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(8)
         .build()
         .unwrap();
-    let sweep = |reader: &Osa2Reader| -> u64 {
+    let sweep = |reader: &Osa2Reader, order: &[u64]| -> u64 {
         reader.preload("chr1", &positions).unwrap();
         pool.install(|| {
-            positions.par_iter().for_each(|&p| {
+            order.par_iter().for_each(|&p| {
                 assert!(reader
                     .annotate_position("chr1", p, "A", "G")
                     .unwrap()
@@ -209,7 +217,7 @@ fn parallel_queries_do_not_thrash_with_adequate_cache() {
     // Chunk cache large enough for every chunk (512 MiB): the parallel phase
     // adds nothing on top of the preload — each chunk built exactly once.
     let big = Osa2Reader::open_with_cache_budget(&path, 512 * 1024 * 1024).unwrap();
-    let big_loads = sweep(&big);
+    let big_loads = sweep(&big, &positions);
     assert_eq!(
         big_loads, total_chunks,
         "adequate cache should build each chunk exactly once"
@@ -219,7 +227,7 @@ fn parallel_queries_do_not_thrash_with_adequate_cache() {
     // evicted before the parallel phase and workers then evict one another's,
     // so chunks are rebuilt many times over.
     let tiny = Osa2Reader::open_with_cache_budget(&path, 4096).unwrap();
-    let tiny_loads = sweep(&tiny);
+    let tiny_loads = sweep(&tiny, &scattered);
     assert!(
         tiny_loads >= big_loads * 3,
         "small cache under parallelism must rebuild chunks: tiny={} big={} chunks={}",
