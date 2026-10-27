@@ -812,11 +812,12 @@ Agreement is the evidence that the port is faithful, not the objective. The outp
 a clinician may act on, so where Ensembl is demonstrably wrong in a way that changes a call,
 fastVEP is right instead.
 
-There are eleven such places, and one of them matters clinically: Ensembl reports a change that
-introduces a premature stop as `inframe_insertion,stop_retained_variant`, MODERATE. BRCA1
-`c.5030_5033dup` - ClinVar Pathogenic - is one of 52 such variants in the ClinVar 2-star+ set, 38
-of them Pathogenic or Likely pathogenic. fastVEP reports `stop_gained,frameshift_variant`, HIGH,
-so those 52 keep PVS1.
+Against release 115.1 there were eleven such places, and one of them mattered clinically.
+Ensembl reported a change that introduces a premature stop as `inframe_insertion,stop_retained_variant`, MODERATE.
+BRCA1 `c.5030_5033dup` - ClinVar Pathogenic - is one of 52 such variants in the ClinVar 2-star+ set, 38 of them Pathogenic or Likely pathogenic.
+fastVEP reported `stop_gained,frameshift_variant`, HIGH, so those 52 kept PVS1.
+Release 116 rewrote that clause, and Ensembl VEP 116.3 writes `stop_gained,frameshift_variant` for them too.
+Against 116.3 two of the eleven are gone, that one and the second (a start codon a deletion removes), which fastVEP now reads as VEP does, and nine remain.
 
 Every divergence, its cause in the Ensembl source, its row count, and the list of fastVEP's own
 remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md)**.

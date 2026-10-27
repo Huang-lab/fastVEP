@@ -10,8 +10,8 @@
 //! Nothing in the golden was worked out here.
 //!
 //! The columns compared are the ones that are exact; a column joins `COMPARED` when the
-//! change that makes it exact lands. What is left is in `docs/VEP_DIVERGENCE.md` (Part 3),
-//! measured on the full 17,672 records.
+//! change that makes it exact lands. What is left (the HGVS columns) is in
+//! `docs/VEP_DIVERGENCE.md` (Part 3), measured on the full 17,672 records.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -29,7 +29,37 @@ const COMPARED: &[&str] = &[
     "Protein_position",
     "EXON",
     "INTRON",
+    "Consequence",
+    "IMPACT",
+    "Amino_acids",
+    "Codons",
 ];
+
+/// Cells where stock VEP 116.3 in `--gff` mode is wrong and fastVEP is not: `(record, transcript,
+/// column, what fastVEP writes)`.
+///
+/// Every predicate that reads the sequence of a UTR (`_ins_del_start_altered`,
+/// `_ins_del_stop_altered` and their kin, release/116 `VariationEffect.pm`) gets it from
+/// `BaseTranscriptVariation::_generic_utr`, which transfers the transcript to its feature slice
+/// and asks it for `five_prime_utr` / `three_prime_utr`. For a transcript on the reverse strand
+/// built from a GFF3 that returns a sequence of the right length from the wrong place in the
+/// genome (checked by printing it: the 400 bases VEP called the 5' UTR of ENST00000000003 end in
+/// the reverse complement of genome 10001-10014, which is inside its 3' UTR, and its real
+/// `spliced_seq` is right). `start_retained_variant` and `stop_lost` then answer about bases that
+/// are not there. With `_generic_utr` taking the UTR from `spliced_seq`, as the core API's own
+/// accessors do, VEP and fastVEP agree on every `Consequence`, `IMPACT`, `Amino_acids` and
+/// `Codons` cell of all 36,957 rows of the full probe this fixture samples, and on 163 of 163 real
+/// ClinVar rows that moved in this change, so these are VEP's. The same rows are on the forward
+/// strand and agree. A transcript read from a VEP cache has its sequences stored, so what the
+/// cache would say is the corrected answer; that is a claim about the cache not checked here.
+///
+/// Each one is asserted to still differ: if VEP stops doing this, the golden has to be looked at.
+const VEP_GFF_REVERSE_STRAND_UTR_BUG: &[(&str, &str, &str, &str)] = &[(
+    "chr10_11299_ATCTGCTCTG/A",
+    "ENST00000000003",
+    "Consequence",
+    "start_lost,start_retained_variant,5_prime_UTR_variant",
+)];
 
 fn here(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -153,13 +183,21 @@ fn the_compared_columns_are_vep_s_for_every_row() {
     let (vep, fv) = (golden(), ours());
     let mut wrong = Vec::new();
     let mut compared = 0usize;
+    let mut known_bug = std::collections::BTreeSet::new();
     for (key, vep_rows) in &vep {
         let fv_rows = &fv[key];
         assert_eq!(vep_rows.len(), fv_rows.len(), "{key:?}");
         for (v, f) in vep_rows.iter().zip(fv_rows) {
             for col in COMPARED {
                 compared += 1;
-                if v[*col] != f[*col] {
+                let bug = VEP_GFF_REVERSE_STRAND_UTR_BUG
+                    .iter()
+                    .find(|(rec, tr, c, _)| *rec == key.0 && *tr == key.2 && c == col);
+                if let Some((rec, tr, c, ours)) = bug {
+                    assert_ne!(v[*col], f[*col], "{rec} {tr} {c}: VEP now agrees");
+                    assert_eq!(&f[*col], ours, "{rec} {tr} {c}");
+                    known_bug.insert((*rec, *tr, *c));
+                } else if v[*col] != f[*col] {
                     wrong.push(format!(
                         "{} {} {col}: VEP {:?}, fastVEP {:?}",
                         key.0, key.2, v[*col], f[*col]
@@ -168,6 +206,11 @@ fn the_compared_columns_are_vep_s_for_every_row() {
             }
         }
     }
+    assert_eq!(
+        known_bug.len(),
+        VEP_GFF_REVERSE_STRAND_UTR_BUG.len(),
+        "a row the exceptions name is not in the golden"
+    );
     assert!(compared > 20_000, "only {compared} cells compared");
     assert!(
         wrong.is_empty(),

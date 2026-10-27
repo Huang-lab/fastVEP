@@ -1,3 +1,4 @@
+mod edits;
 mod predictor;
 mod splice;
 pub mod sv_predictor;

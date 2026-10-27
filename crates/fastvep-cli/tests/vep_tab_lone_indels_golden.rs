@@ -13,7 +13,7 @@
 //! so is everything that follows. Rows are paired on the record and the transcript, because the
 //! allele is what differs when the two do not agree.
 //!
-//! The columns left out are the ones a later change makes exact, each of them where the change
+//! The columns left out are the ones a later change makes exact: the HGVS notation of a change that
 //! reaches a start codon, a stop codon or the end of a transcript (docs/VEP_DIVERGENCE.md, Part 3).
 
 use std::collections::BTreeMap;
@@ -25,7 +25,7 @@ use flate2::read::GzDecoder;
 use tempfile::TempDir;
 
 /// Columns that are not compared yet.
-const NOT_YET: &[&str] = &["Consequence", "IMPACT", "HGVSc", "HGVSp", "HGVS_OFFSET"];
+const NOT_YET: &[&str] = &["HGVSc", "HGVSp", "HGVS_OFFSET"];
 
 fn here(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
