@@ -1,12 +1,15 @@
 use anyhow::{Context, Result};
 use fastvep_core::chrom_aliases;
 use fastvep_genome::{is_mitochondrial, wrap_position_for, Transcript, MT_LENGTH};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::info::CacheInfo;
-use crate::variation::{self, InputSite, Matched, VariationCacheRecord, VariationTabixReader};
+use crate::variation::{
+    self, InputSite, Matched, VariationCacheRecord, VariationCursor, VariationTabixReader,
+};
 
 /// Trait for providing transcript annotations for a genomic region.
 pub trait TranscriptProvider: Send + Sync {
@@ -504,24 +507,39 @@ impl TabixVariationProvider {
 }
 
 impl TabixVariationProvider {
+    /// A place to look the sites of one thread up from, which carries on from its own last site
+    /// and does not share a stream of windows with the provider's other callers.
+    ///
+    /// Run `known_site` on it for sites in input order and a sorted input is read through once,
+    /// by each cursor over the stretch it was given.
+    pub fn cursor(&self) -> TabixCursor<'_> {
+        TabixCursor {
+            provider: self,
+            cursor: RefCell::new(self.reader.cursor()),
+        }
+    }
+
     /// The known variants of one input site, in cache order.
-    fn lookup(&self, chrom: &str, site: &InputSite) -> Result<KnownSite> {
+    fn lookup(
+        &self,
+        query: impl FnOnce(&str, u64, u64) -> Result<Vec<VariationCacheRecord>>,
+        chrom: &str,
+        site: &InputSite,
+    ) -> Result<KnownSite> {
         // VEP asks the index for `start - 1 ..= end + 1` of the input
         // (VariationTabix::_annotate_pm), and the index holds each record at its
         // start.
-        let records = self
-            .reader
-            .query(
-                chrom,
-                site.start.saturating_sub(1),
-                site.end.saturating_add(1),
+        let records = query(
+            chrom,
+            site.start.saturating_sub(1),
+            site.end.saturating_add(1),
+        )
+        .with_context(|| {
+            format!(
+                "known-variant lookup at {chrom}:{}-{}",
+                site.start, site.end
             )
-            .with_context(|| {
-                format!(
-                    "known-variant lookup at {chrom}:{}-{}",
-                    site.start, site.end
-                )
-            })?;
+        })?;
         if records.is_empty() {
             return Ok(KnownSite::default());
         }
@@ -553,9 +571,11 @@ impl TabixVariationProvider {
     }
 }
 
-impl VariationProvider for TabixVariationProvider {
-    fn known_site(
+impl TabixVariationProvider {
+    /// `known_site`, reading the windows by `query`.
+    fn known_site_by(
         &self,
+        query: impl FnOnce(&str, u64, u64) -> Result<Vec<VariationCacheRecord>>,
         chrom: &str,
         start: u64,
         end: u64,
@@ -573,8 +593,57 @@ impl VariationProvider for TabixVariationProvider {
         // `vep_input_site`.
         let alts: Vec<&str> = alt_alleles.iter().map(String::as_str).collect();
         self.lookup(
+            query,
             chrom,
             &variation::vep_input_site(ref_allele, &alts, start, end),
+        )
+    }
+}
+
+/// A [`TabixVariationProvider`] read from one thread, with a stream of windows of its own; see
+/// [`TabixVariationProvider::cursor`]. It answers as the provider does, and counts the sites it
+/// is asked about and the contigs it cannot place in the provider's totals.
+pub struct TabixCursor<'a> {
+    provider: &'a TabixVariationProvider,
+    cursor: RefCell<VariationCursor<'a>>,
+}
+
+impl VariationProvider for TabixCursor<'_> {
+    fn known_site(
+        &self,
+        chrom: &str,
+        start: u64,
+        end: u64,
+        ref_allele: &str,
+        alt_alleles: &[String],
+    ) -> Result<KnownSite> {
+        self.provider.known_site_by(
+            |chrom, lo, hi| self.cursor.borrow_mut().query(chrom, lo, hi),
+            chrom,
+            start,
+            end,
+            ref_allele,
+            alt_alleles,
+        )
+    }
+}
+
+impl VariationProvider for TabixVariationProvider {
+    fn known_site(
+        &self,
+        chrom: &str,
+        start: u64,
+        end: u64,
+        ref_allele: &str,
+        alt_alleles: &[String],
+    ) -> Result<KnownSite> {
+        self.known_site_by(
+            |chrom, lo, hi| self.reader.query(chrom, lo, hi),
+            chrom,
+            start,
+            end,
+            ref_allele,
+            alt_alleles,
         )
     }
 
