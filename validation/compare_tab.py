@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Compare a tab file written by Ensembl VEP with one written by fastVEP, cell by cell.
 
-usage: compare_tab.py VEP.tab FASTVEP.tab [--ignore COL,COL] [--key COL,COL] [--show N] [--out DIR]
+usage: compare_tab.py VEP.tab FASTVEP.tab [--ignore COL,COL] [--only COL,COL] [--unordered COL,COL]
+                      [--key COL,COL] [--show N] [--out DIR]
                       [--vep-where COL=VAL ...] [--vep-where-not COL=VAL ...]
 
 Rows are paired on (Uploaded_variation, Allele, Feature) unless --key says otherwise, so the
@@ -13,6 +14,12 @@ The header is compared first: the columns each has, and whether the shared ones 
 the same order. Then every shared column of every paired row is compared, and a count of
 the cells that differ is printed for each column with the commonest differing values.
 With --out, one TSV per differing column lists every row that differs.
+
+--only compares just the named columns (the header comparison is skipped), which is how one family
+of columns is checked in a run whose other columns are known to differ. --unordered names columns
+whose cells are `;`-separated lists that VEP writes in the order of a Perl hash, which is not the
+same from one run to the next (`CLIN_SIG` with two distinct allele-specific values); their parts
+are compared as a set.
 
 --vep-where and --vep-where-not keep or drop the rows of VEP's file by the value of one of its
 columns, and then only the rows of fastVEP's file that VEP's file has left are compared. That is
@@ -56,6 +63,8 @@ def main():
     ap.add_argument("vep")
     ap.add_argument("fastvep")
     ap.add_argument("--ignore", default="")
+    ap.add_argument("--only", default="")
+    ap.add_argument("--unordered", default="")
     ap.add_argument("--key", default="Uploaded_variation,Allele,Feature")
     ap.add_argument("--show", type=int, default=4)
     ap.add_argument("--out", default="")
@@ -63,6 +72,8 @@ def main():
     ap.add_argument("--vep-where-not", action="append", default=[], metavar="COL=VAL")
     a = ap.parse_args()
     ignore = {c for c in a.ignore.split(",") if c}
+    only = [c for c in a.only.split(",") if c]
+    unordered = {c for c in a.unordered.split(",") if c}
     key = key_of(a.key.split(","))
 
     vep_header, vep_rows = read(a.vep)
@@ -83,9 +94,16 @@ def main():
     print(f"VEP     : {len(vep_rows):6d} rows, {len(vep_header)} columns")
     print(f"fastVEP : {len(our_rows):6d} rows, {len(our_header)} columns")
 
+    if only:
+        # a column in neither file is simply not there, so one list serves every flag set
+        only = [c for c in only if c in vep_header or c in our_header]
+        ignore |= {c for c in vep_header + our_header if c not in only}
     vep_cmp = [c for c in vep_header if c not in ignore]
     print("\n== header ==")
-    if vep_cmp == our_header:
+    if only:
+        print("VEP only    :", [c for c in only if c in vep_header and c not in our_header])
+        print("fastVEP only:", [c for c in only if c in our_header and c not in vep_header])
+    elif vep_cmp == our_header:
         print("identical" + (f" (ignoring {sorted(ignore)})" if ignore else ""))
     else:
         print("VEP only    :", [c for c in vep_cmp if c not in our_header])
@@ -118,7 +136,11 @@ def main():
             pairs += 1
             for c in shared:
                 cells += 1
-                if v[c] != f[c]:
+                if c in unordered:
+                    same = sorted(v[c].split(";")) == sorted(f[c].split(";"))
+                else:
+                    same = v[c] == f[c]
+                if not same:
                     diffs[c].append((k, v[c], f[c]))
     total = sum(len(x) for x in diffs.values())
     print(f"\n== cells: {pairs} paired rows, {cells} cells compared, {total} differ ==")

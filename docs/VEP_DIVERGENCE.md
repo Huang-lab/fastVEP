@@ -968,6 +968,83 @@ Not reproduced, and not in the columns above:
 `APPRIS` (Ensembl's GFF3 has no tag for it: 734 of 3,650 rows of a 150-variant sample carry one in the cache), and the `MANE_SELECT` of an Ensembl transcript, which the Ensembl cache writes as RefSeq's accession (`NM_001754.5`) and the GFF3 does not name (fastVEP writes the transcript's own, as before).
 `TSL`, `CCDS`, `ENSP`, `CANONICAL` and `MANE` of an Ensembl transcript agree on that sample.
 
+### The columns of the known variants
+
+`AF` and the population frequencies, `MAX_AF` and `MAX_AF_POPS`, `CLIN_SIG`, `SOMATIC`, `PHENO` and `PUBMED` come from the known variants of VEP's variation cache (`--cache-dir`).
+The reporter of #139 runs `--af_1kg --check_existing`.
+VEP fills them with two subs of `OutputFactory.pm`, `add_colocated_variant_info` and `add_colocated_frequency_data`, and `crates/fastvep-annotate/src/colocated.rs` is a transcription of them, one function to each.
+They were measured against **Ensembl VEP 116.3** the way the rest of this part is, with `crates/fastvep-cache/fixtures/vep_known_columns/regen.sh` and `validation/compare_known_columns.py`.
+
+What these columns say is a function of the input variant and its allele, not of the transcript.
+The comparison therefore pairs the two files on (`Uploaded_variation`, `Allele`), whatever transcripts each wrote for the variant, and requires every row of a pair to say the same thing within each file (in no run below does a pair have rows that disagree, in either file).
+
+| Input | Flags | (variant, allele) pairs | Cells compared | Not `-` in VEP | Cells that differ |
+|---|---|---:|---:|---:|---:|
+| A generated world over a cache with the 42 real columns: 50 hand-written corners of the Perl and 396 generated pairs with random payloads, on transcript rows and on intergenic ones (`fixtures/vep_known_columns`) | eight sets, one golden file each | 673 rows each | 63,262 | 7,489 | 0 |
+| GIAB HG002, chr21 and chr22 of the whole callset (105,494 records), against VEP's real release-116 Ensembl cache | `--af_1kg --check_existing` | 106,673 | 1,066,730 | 704,150 | 0 |
+| the same | `--af --af_1kg --af_gnomade --af_gnomadg --max_af --pubmed --check_existing` | 106,673 | 3,626,882 | 2,168,576 | 0 (2 before the PubMed fix below) |
+| the same records, VEP in `--refseq --exclude_predicted` cache mode over the RefSeq cache | `--af_1kg --check_existing` | 106,673 | 1,066,730 | 704,150 | 0 |
+| ClinVar 2-star+ on chr21 and chr22 (4,712 records) | all of them, and the reporter's | 4,704 | 159,936 and 47,040 | 102,363 and 23,925 | 0 and 0 |
+| 25,346 records drawn from the rarer shapes of that cache (allele-specific `CLIN_SIG`, records with no alleles, failed and somatic ones, `pubmed`, three or more alleles with gnomAD frequencies, fifteen or more populations, indels with gnomAD frequencies) | all of them | 37,590 | 1,278,060 | 507,658 | 0 |
+
+The RefSeq cache's variation files are byte-identical to the Ensembl cache's (`cmp` on chr21 and chr22), so the reporter's mode reads the same known variants; VEP's `--refseq` run is there to show that nothing in it changes these columns.
+`Existing_variation` agrees in all of these too.
+The real cache of chr21 and chr22 has no record on the minus strand (every one of its 29.7 million `strand` cells is `.`), so that path is measured on the generated world only.
+
+Reproduce the world with `bash crates/fastvep-cache/fixtures/vep_known_columns/regen.sh` (it needs Docker, `bgzip` and `tabix`), and a real run with
+
+```bash
+vep --cache --offline --dir_cache CACHE --assembly GRCh38 --fasta GRCh38.fa --input_file calls.vcf \
+    --tab --af_1kg --check_existing --output_file vep.tab
+fastvep annotate -i calls.vcf --gff3 genes.gff3 --cache-dir CACHE/homo_sapiens/116_GRCh38 \
+    --output-format tab --af-1kg --check-existing -o fv.tab
+python3 validation/compare_known_columns.py vep.tab fv.tab
+```
+
+What VEP does is not what one would write from a description of the columns, and each of these was found in the Perl and then confirmed by a run:
+
+- `AF` is formatted `%.4f` and no other population is: `AFR_AF` is the text the cache has (`1e-05`, `0.00123456789`).
+  An exact tie in binary rounds to even, as `printf` does (`0.03125` is `0.0312`).
+- The frequency of an allele the record does not list is interpolated, as `1 - total`, for `AF` of a record with two alleles only, and printed with 15 significant digits (`0.7`, not `0.7000000000000001`).
+  A record of three alleles that lists one has no `AF` for the others, and no other population is ever interpolated.
+- The frequencies are read from *every* known variant of the site for every allele, in the order the cache holds them, and not in the order `Existing_variation` is sorted into.
+  That includes a known variant that matched only another allele of the site: a record on the other strand, `T/G` with `AF=G:0.3`, attached to the input `A>C,T` through its `G`, gives the input's other allele `T` an `AF` of `0.7` under `--af` and nothing under `--af_1kg` alone, because the unmatched record is read only when `af` is among the groups (or `--max_af` puts it there).
+  The row has an `AF` and no `Existing_variation`.
+- `MAX_AF` leaves out the combined populations (`AF`, `gnomADe`, `gnomADg`) and lists every population that ties for it, once for each known variant that had it: `EUR,gnomADg_NFE,EUR,SAS`.
+  When every population is 0 it is `0` and lists them all.
+- `CLIN_SIG` is what the record says for the allele when it has `clin_sig_allele`, and replaces the list of the variant that `clin_sig` gives; once any known variant of the site has a `clin_sig_allele`, the `clin_sig` of those after it is not read.
+  When the record's reference allele is not the input's, the alleles of `clin_sig_allele` are reverse-complemented first, and a deletion whose `clin_sig_allele` names the deleted bases (`AAGT:pathogenic`) finds nothing for the allele `-`.
+- `SOMATIC` and `PHENO` list one `0` or `1` for each known variant, and are kept whole if any is `1` (`0,0,1`).
+  `PUBMED` is every id of every known variant, not deduplicated.
+- Every `--af*` flag, `--max_af` and `--pubmed` switch `--check_existing` on, which adds `CLIN_SIG`, `SOMATIC` and `PHENO`; the columns come in the order of `@FLAG_FIELDS`, after `HGVSg`, with `AF` once where `--af` and `--af_1kg` both name it.
+- A trailing comma in the cache's `pubmed` (two records of HG002's chr21 and chr22 meet one) is no id: Perl's `split` drops the empty field at the end.
+  fastVEP kept it, and the first real-data run found it.
+
+Where fastVEP differs on purpose:
+
+- **`--cache-dir` is `--check_existing`.**
+  VEP's `--cache` is also its transcript cache, so it needs `--check_existing` to look the known variants up.
+  fastVEP's `--cache-dir` is the variation cache and has no other use (gene models come from a GFF3), so naming one fills `Existing_variation` and, as VEP's `--check_existing` does, `CLIN_SIG`, `SOMATIC` and `PHENO`: a flag that could do nothing without a second one would be a trap.
+  The frequencies and the PubMed ids need their flags, as in VEP.
+- **The CSQ has no summary of the whole variant.**
+  `AF`, `CLIN_SIG`, `SOMATIC`, `PHENO` and `PUBMED` were fields of fastVEP's `CSQ` before these columns, and held a summary of the whole variant: `AF` the first frequency of any known variant of the site (gnomAD's where it had one, which is not VEP's `AF`), `CLIN_SIG` the first clinical significance.
+  For a record with several ALTs that puts one allele's value on every allele's row, which is a plausible-looking wrong answer, so they are gone.
+  The five fields keep their place among the 49 of the default list, so that a reader that finds a field by its position keeps finding it, and hold VEP's per-allele value or nothing.
+  A reader of the old `AF` now gives `--af-1kg` (VEP's `AF`) or `--af-gnomade`; one of the old `CLIN_SIG`, `SOMATIC` or `PHENO` changes only for a record whose alleles differ.
+- **`CLIN_SIG` with two distinct allele-specific values.**
+  VEP joins them with `;` in the order of a Perl hash (`keys %clin_sigs`), which differs from one run to the next, so its own output is not reproducible.
+  fastVEP joins them in the order of the known variants as `Existing_variation` lists them, which is the same every time.
+  The golden tests and the comparison script compare the parts as a set.
+- **A flag that reads the cache, without one,** stops the run with the flag's name and `--cache-dir`: VEP would write `-` for every variant.
+  `--everything` has the frequency flags only when a `--cache-dir` is given.
+- **A cache without the columns of a flag** says so once, where it is opened (`--af-gnomadg asks for the gnomAD genomes frequencies, and this cache's variation_cols has none of their columns`) and then writes empty columns, as VEP does; VEP says nothing, except that `--af_gnomad` against a cache with no `gnomADe` is an error unless `--everything` is given.
+- **JSON** carries none of these columns and says so for each flag given (VEP's JSON has a `colocated_variants` block this does not write).
+
+Not accepted, and rejected as unknown flags where the other tool has them: `--af_esp` and `--af_exac` (VEP 116.3 has neither: `Config.pm` lists `af`, `af_1kg`, `af_gnomade`, `af_gnomad`, `af_gnomadg` and `max_af`, and its cache has no ESP or ExAC column), `--failed`, `--no_check_alleles`, `--exclude_null_alleles`, `--var_synonyms`, `--clinvar_somatic_classification`, `--check_frequency`, `--filter_common`, `--freq_*` and `--old_maf`.
+`--af_gnomad`, VEP's old name for `--af_gnomade`, is accepted, and every flag of fastVEP whose name VEP spells with underscores is accepted in that spelling too.
+
+One difference was found on the way and is not about these columns: the `Allele` cell of an input with lower-case bases is written lower-case by fastVEP and upper-case by VEP, which upper-cases its input.
+
 ---
 
 ## What is *not* a divergence

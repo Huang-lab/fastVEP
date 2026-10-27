@@ -515,12 +515,20 @@ for the parsing rules and the escaping table.
 | `--exclude-predicted` | Leave out RefSeq's predicted transcripts, `XM_` and `XR_`. VEP's `--exclude_predicted`, which is `not stable_id match ^X._`, and so is this. A variant left with no transcript is an `intergenic_variant` | off |
 | `--exclude-readthrough` | Leave out the transcripts the annotation tags `readthrough_transcript`, which span two genes. VEP's Ensembl cache is built without them and a GFF3 has them, so give it to match `vep --cache` | off |
 | `--exclude-artifact` | Leave out transcripts of biotype `artifact`. VEP's Ensembl cache is built without them and a GFF3 has them, so give it to match `vep --cache` | off |
-| `--everything` | Turn on `--hgvs --symbol --numbers --canonical --biotype --variant-class`: VEP's `--everything`, restricted to the columns fastVEP writes (not `--hgvsg` or `--show-ref-allele`, which VEP's does not include either) | off |
+| `--af` | Add `AF`, the 1000 Genomes combined allele frequency of the known variant, to the tab output and the CSQ. VEP's `--af`. Written as VEP writes it: per input allele, to four decimals, with the other allele of a two-allele record taken as `1 - AF`. Reads the variation cache, so it needs `--cache-dir`, as do the six flags below | off |
+| `--af-1kg` | Add `AF`, `AFR_AF`, `AMR_AF`, `EAS_AF`, `EUR_AF` and `SAS_AF`. VEP's `--af_1kg` | off |
+| `--af-gnomade` | Add `gnomADe_AF` and the gnomAD exomes populations (`gnomADe_AFR_AF` ... `gnomADe_SAS_AF`). VEP's `--af_gnomade`; its old name `--af-gnomad` is accepted | off |
+| `--af-gnomadg` | Add `gnomADg_AF` and the gnomAD genomes populations (`gnomADg_AFR_AF` ... `gnomADg_SAS_AF`). VEP's `--af_gnomadg` | off |
+| `--max-af` | Add `MAX_AF`, the highest frequency of any 1000 Genomes or gnomAD population (the combined ones are left out), and `MAX_AF_POPS`, the populations that have it. VEP's `--max_af` | off |
+| `--check-existing` | Add `CLIN_SIG`, `SOMATIC` and `PHENO` from the known variants, to the tab output and the CSQ, as VEP's `--check_existing` does. Every frequency flag and `--pubmed` imply it, and so does `--cache-dir`, which has no other use here, so the flag is only needed to be typed as VEP has it. `Existing_variation` is filled whenever `--cache-dir` is given | on with `--cache-dir` |
+| `--pubmed` | Add `PUBMED`, the publications that cite the known variants, to the tab output and the CSQ. VEP's `--pubmed` | off |
+| `--clin-sig-allele` | `1`: `CLIN_SIG` is what a known variant says about the input allele, where it says it; `0`: what it says about the variant. VEP's `--clin_sig_allele` | `1` |
+| `--everything` | Turn on `--hgvs --symbol --numbers --canonical --biotype --variant-class`: VEP's `--everything`, restricted to the columns fastVEP writes (not `--hgvsg` or `--show-ref-allele`, which VEP's does not include either). With `--cache-dir` it also turns on `--af --af-1kg --af-gnomade --af-gnomadg --max-af --pubmed`, as VEP's does | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--buffer-size` | Variants buffered per parallel batch | `5000` |
 | `--sa-dir` | Directory containing `.osa` / `.osa2` / `.osi` / `.oga` supplementary annotations | -- |
 | `--sa-only` | Skip the default CSQ annotation and emit only supplementary annotations from `--sa-dir` (requires `--sa-dir`) | off |
-| `--cache-dir` | VEP's tabix variation cache, for `Existing_variation`: a directory of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index (what `convert_cache.pl` and the indexed-cache download provide). Only known variants come from it: gene models come from `--gff3`, and VEP's `{start}-{end}.gz` transcript slices are never read. Matching follows VEP's (anchored and minimal indels match, as in `--check_existing`). A directory with no variation file, or a file with no index, stops the run. Contigs are matched through a `chr_synonyms.txt` in the directory and the `chr`/`MT` naming rules | -- |
+| `--cache-dir` | VEP's tabix variation cache, for `Existing_variation`: a directory of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index (what `convert_cache.pl` and the indexed-cache download provide). Only known variants come from it: gene models come from `--gff3`, and VEP's `{start}-{end}.gz` transcript slices are never read. Naming a cache is VEP's `--check_existing`: `Existing_variation`, `CLIN_SIG`, `SOMATIC` and `PHENO`; the frequencies and the PubMed ids need `--af*`, `--max-af` and `--pubmed`, as in VEP. Matching follows VEP's (anchored and minimal indels match, as in `--check_existing`). A directory with no variation file, or a file with no index, stops the run. Contigs are matched through a `chr_synonyms.txt` in the directory and the `chr`/`MT` naming rules | -- |
 | `--transcript-cache` | Path to binary transcript cache file (overrides the auto-managed `<gff3>.fastvep.cache` sidecar) | -- |
 | `--acmg` | Run ACMG-AMP classification (Richards 2015 + ClinGen SVI); adds `ACMG` + `ACMG_CRITERIA` to CSQ | off |
 | `--acmg-config` | TOML file with custom ACMG thresholds | built-in defaults |
@@ -633,15 +641,21 @@ The cells follow VEP's tab writer:
 - A variant with no overlapping transcript has no feature, so `Gene`, `Feature`, `Feature_type`, `DISTANCE`, `STRAND` and `FLAGS` are `-`; `IMPACT` is still `MODIFIER`.
   A VCF `CSQ` entry for it leaves those fields empty.
 
-VEP adds further tab columns only when asked, and so does fastVEP, with VEP's flag names (spelled with hyphens here): `--show-ref-allele`, `--variant-class`, `--symbol`, `--biotype`, `--canonical`, `--numbers`, `--hgvs` and `--hgvsg`.
+VEP adds further tab columns only when asked, and so does fastVEP, with VEP's flag names (spelled with hyphens here): `--show-ref-allele`, `--variant-class`, `--symbol`, `--biotype`, `--canonical`, `--numbers`, `--hgvs`, `--hgvsg` and the known-variant flags below.
 They are written in the order VEP's own table gives them: `REF_ALLELE` between `Existing_variation` and `IMPACT`, then, after `FLAGS` (and `PICK`), `VARIANT_CLASS`, `SYMBOL`, `SYMBOL_SOURCE`, `HGNC_ID`, `BIOTYPE`, `CANONICAL`, `EXON`, `INTRON`, `HGVSc`, `HGVSp`, `HGVS_OFFSET` and `HGVSg`, and before any supplementary-source column.
 A flag you do not give adds nothing, so a run without any of them has the 17 columns above.
 `FLAGS` holds the transcript's flags (`cds_start_NF`), as in VEP, and `CANONICAL` says whether the transcript is canonical.
 `HGVSp` writes `=` as `%3D`, as VEP does in its tab file and in its VCF (`--no-escape` leaves it an `=`), and `HGVS_OFFSET` is how far the HGVS description moved 3' from where the VCF had the variant, signed by the strand.
 The underscore spellings VEP uses for those three flags (`--total_length`, `--no_escape`, `--force_overwrite`) are accepted beside the hyphenated ones.
 
-Not written yet: VEP's frequency columns (`AF`, `AFR_AF`, ...), and `CLIN_SIG`, `SOMATIC` and `PHENO` as VEP computes them.
-The VCF `CSQ` has fields of those names, but they are summarised over the whole variant and not per allele and per known variant as VEP does, and `AF` there is gnomAD-first rather than VEP's 1000 Genomes `AF`.
+The columns of the known variants (`--af`, `--af-1kg`, `--af-gnomade`, `--af-gnomadg`, `--max-af`, `--check-existing`, `--pubmed`) read the variation cache of `--cache-dir` and are worked out as VEP works them out, for each input allele and from every known variant of the site.
+They come after `HGVSg`, in VEP's order: `AF` and the 1000 Genomes populations, the gnomAD exomes and genomes populations, `MAX_AF`, `MAX_AF_POPS`, `CLIN_SIG`, `SOMATIC`, `PHENO`, `PUBMED`.
+A flag that reads the cache without one is an error rather than a column of `-`.
+The VCF `CSQ` keeps `AF`, `CLIN_SIG`, `SOMATIC`, `PHENO` and `PUBMED` among its 49 default fields, so that a reader that finds a field by its position keeps finding it, and the columns of the other flags follow `AF`.
+They hold VEP's per-allele value or nothing: `CLIN_SIG`, `SOMATIC` and `PHENO` whenever there is a `--cache-dir`, `AF` under `--af` or `--af-1kg`, `PUBMED` under `--pubmed`.
+They used to hold a summary of the whole variant (the first frequency of any known variant of the site, gnomAD's where it had one, which is not VEP's `AF`), and for a record with several ALTs that put one allele's number on every allele's row.
+A reader of that `AF` now gives `--af-1kg` (VEP's `AF`) or `--af-gnomade`.
+How the two tools differ, and what was checked against VEP 116.3, is in [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
 
 ### JSON Output
 
