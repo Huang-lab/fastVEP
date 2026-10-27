@@ -83,14 +83,13 @@ pub struct AlleleConsequenceResult {
 
 /// Resolve a codon-table residue against the transcript's own peptide.
 ///
-/// The codon table cannot see readthrough. A selenoprotein's in-frame UGA
-/// translates to `*` here, while `build_sequences` has already resolved it to
-/// selenocysteine from the annotated CDS extent, so a substitution at that codon
-/// reads as `stop_lost` and a synonymous change reads as `stop_retained`.
+/// The codon table cannot see readthrough. A selenoprotein's in-frame UGA translates to `*` here,
+/// while `build_sequences` has already resolved it to selenocysteine from the annotated CDS
+/// extent, so a substitution at that codon reads as `stop_lost` and a synonymous change reads as
+/// `stop_retained`.
 ///
-/// The peptide is consulted only when the table says terminator and the peptide
-/// disagrees, which is exactly the readthrough case; every other position still
-/// decides by the codon table alone.
+/// The peptide is consulted only when the table says terminator and the peptide disagrees, which
+/// is exactly the readthrough case; every other position still decides by the codon table alone.
 ///
 /// This describes the *reference* protein, so it must never be applied to an alt
 /// residue that the variant changed - doing so would rewrite a genuine
@@ -106,6 +105,22 @@ fn resolve_readthrough_residue(transcript: &Transcript, codon_index: usize, tran
         .and_then(|p| p.as_bytes().get(codon_index).copied())
         .filter(|&b| b != b'*')
         .unwrap_or(translated)
+}
+
+/// The reference residue of the first codon, where the annotation reads the initiator as Met
+/// though its codon is not `ATG` (`Transcript::initiator_met`: Ensembl's `initial_met` edit,
+/// RefSeq's `transl_except ... aa:Met`).
+///
+/// Ensembl VEP applies the edit to the *reference* peptide of the codon
+/// (`TranscriptVariationAllele::peptide`, under `is_reference`) and to no other, so `Amino_acids`
+/// reads `M/L` for a CTG start and a change to the codon is a `start_lost`; an alternate codon
+/// is translated plainly, even one that is the same codon. Only codon 1 is recoded.
+fn resolve_initiator_residue(transcript: &Transcript, codon_index: usize, translated: u8) -> u8 {
+    if codon_index == 0 && transcript.initiator_met && translated != b'M' {
+        b'M'
+    } else {
+        translated
+    }
 }
 
 /// Drop the common prefix and the common suffix of two sequences, Ensembl's
@@ -1165,7 +1180,10 @@ impl ConsequencePredictor {
                 .map(|(i, codon)| {
                     let translated = table.translate(codon);
                     let index = win_start / 3 + i;
-                    if anchored || ref_window.get(i * 3..i * 3 + 3) == Some(&codon[..]) {
+                    if anchored {
+                        let residue = resolve_readthrough_residue(transcript, index, translated);
+                        resolve_initiator_residue(transcript, index, residue) as char
+                    } else if ref_window.get(i * 3..i * 3 + 3) == Some(&codon[..]) {
                         resolve_readthrough_residue(transcript, index, translated) as char
                     } else {
                         translated as char
@@ -2576,6 +2594,59 @@ mod tests {
                 "{strand:?}: expected the 5'UTR term alongside it, got {got:?}"
             );
             assert_eq!(Consequence::worst_impact(&got), Some(Impact::High));
+        }
+    }
+
+    /// A first codon that is not `ATG` and that the annotation reads as Met (`initiator_met`) has
+    /// `M` for its reference residue: `Amino_acids` is `M/L` for a change that keeps the codon Leu,
+    /// and the change is a `start_lost` and not also a `synonymous_variant`. That is what Ensembl
+    /// VEP 116.3's cache writes for a complete CTG start (`M/L`, `Ctg/Ttg`, `start_lost`) and for
+    /// RefSeq's GTG one (`M/V`). Without the edit (RefSeq's CTG starts have none) the residue is
+    /// the code table's, `L`, and the cache writes `L`, `ctG/ctT`, `start_lost,synonymous_variant`:
+    /// a change to a start codon is `start_lost` whenever the codon it leaves is not `ATG`, and
+    /// the two peptides are equal. The alternate codon is translated plainly either way.
+    #[test]
+    fn an_initiator_met_makes_the_reference_residue_of_codon_one_m() {
+        let predictor = ConsequencePredictor::default();
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let amino_acids_and_terms = |initiator_met: bool| {
+                let mut tr = make_boundary_transcript(strand);
+                let cds = format!("CTG{}TAA", "GCT".repeat(8));
+                tr.translateable_seq = Some(cds.clone());
+                tr.peptide = Some(format!(
+                    "{}{}*",
+                    if initiator_met { "M" } else { "L" },
+                    "A".repeat(8)
+                ));
+                tr.initiator_met = initiator_met;
+                // the third base of codon 1 (cDNA 13): G to A keeps it Leu
+                let (lo, hi) = genomic_span(strand, 13, 13);
+                let (r, a) = match strand {
+                    Strand::Forward => ("G", "A"),
+                    Strand::Reverse => ("C", "T"),
+                };
+                let pos = GenomicPosition::new("chr1", lo, hi, Strand::Forward);
+                let alt = Allele::from_str(a);
+                let result = predictor.predict(
+                    &pos,
+                    &Allele::from_str(r),
+                    std::slice::from_ref(&alt),
+                    &[&tr],
+                    None,
+                );
+                let ac = &result.transcript_consequences[0].allele_consequences[0];
+                (ac.amino_acids.clone(), ac.consequences.clone())
+            };
+            let (aa, terms) = amino_acids_and_terms(true);
+            assert_eq!(aa, Some(("M".to_string(), "L".to_string())), "{strand:?}");
+            assert_eq!(terms, [Consequence::StartLost], "{strand:?}");
+            let (aa, terms) = amino_acids_and_terms(false);
+            assert_eq!(aa, Some(("L".to_string(), "L".to_string())), "{strand:?}");
+            assert_eq!(
+                terms,
+                [Consequence::StartLost, Consequence::SynonymousVariant],
+                "{strand:?}"
+            );
         }
     }
 
