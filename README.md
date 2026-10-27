@@ -512,6 +512,9 @@ for the parsing rules and the escaping table.
 | `--total-length` | Write the length each position is counted in after `cDNA_position`, `CDS_position` and `Protein_position`, `14/203`, in tab and VCF output (JSON writes numbers). VEP's `--total_length` | off |
 | `--no-escape` | Do not percent-escape HGVS strings: a synonymous `HGVSp` ends in `=` and not `%3D`, and the space of a gene symbol in the VCF `CSQ` is `_` and not `%20`. VEP's `--no_escape` | off |
 | `--force-overwrite` | Accepted so that a `vep` command line is not refused, and does nothing: `fastvep annotate` always writes over its output file, which is what VEP's `--force_overwrite` asks for | -- |
+| `--exclude-predicted` | Leave out RefSeq's predicted transcripts, `XM_` and `XR_`. VEP's `--exclude_predicted`, which is `not stable_id match ^X._`, and so is this. A variant left with no transcript is an `intergenic_variant` | off |
+| `--exclude-readthrough` | Leave out the transcripts the annotation tags `readthrough_transcript`, which span two genes. VEP's Ensembl cache is built without them and a GFF3 has them, so give it to match `vep --cache` | off |
+| `--exclude-artifact` | Leave out transcripts of biotype `artifact`. VEP's Ensembl cache is built without them and a GFF3 has them, so give it to match `vep --cache` | off |
 | `--everything` | Turn on `--hgvs --symbol --numbers --canonical --biotype --variant-class`: VEP's `--everything`, restricted to the columns fastVEP writes (not `--hgvsg` or `--show-ref-allele`, which VEP's does not include either) | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--buffer-size` | Variants buffered per parallel batch | `5000` |
