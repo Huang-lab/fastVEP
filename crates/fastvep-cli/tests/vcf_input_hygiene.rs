@@ -36,8 +36,15 @@ impl Run {
         Self { dir }
     }
 
-    /// `fastvep annotate` over `vcf` with `extra` flags: the process output and what it wrote.
+    /// `fastvep annotate --hgvs` over `vcf` with `extra` flags: the process output and what it wrote.
     fn annotate(&self, vcf: &str, format: &str, extra: &[&str]) -> (Output, String) {
+        let mut flags = vec!["--hgvs"];
+        flags.extend_from_slice(extra);
+        self.annotate_plain(vcf, format, &flags)
+    }
+
+    /// The same with exactly the `flags` given, `--hgvs` among them or not.
+    fn annotate_plain(&self, vcf: &str, format: &str, flags: &[&str]) -> (Output, String) {
         let input = self.dir.path().join("in.vcf");
         std::fs::write(&input, vcf).unwrap();
         let out = self.dir.path().join(format!("out.{format}"));
@@ -52,8 +59,8 @@ impl Run {
             .arg(self.dir.path().join("genes.gff3"))
             .arg("--fasta")
             .arg(self.dir.path().join("genome.fa"))
-            .args(["--output-format", format, "--no-progress", "--hgvs"])
-            .args(extra)
+            .args(["--output-format", format, "--no-progress"])
+            .args(flags)
             .output()
             .expect("the fastvep binary runs");
         let text = std::fs::read_to_string(&out).unwrap_or_default();
@@ -409,4 +416,61 @@ fn a_ref_that_is_not_the_reference_is_described_against_the_reference_and_said()
             && err.contains("same assembly"),
         "{err}"
     );
+}
+
+/// The genome's base is read for a record's REF only by a run that writes a description of it: it is
+/// a read of the FASTA for every record, and nothing a run without HGVS writes says that base. So a
+/// REF that is not the reference's is said by the run that has an HGVSc, HGVSp or HGVSg to write
+/// against the reference, and a run that has none does not look, and writes the same consequence,
+/// codons and amino acids for the record.
+#[test]
+fn a_run_that_writes_no_hgvs_does_not_read_the_reference_for_the_ref() {
+    let run = Run::new();
+    let genome: String = std::fs::read_to_string(fixture("genome.fa"))
+        .unwrap()
+        .lines()
+        .filter(|l| !l.starts_with('>'))
+        .collect();
+    let base = genome.as_bytes()[430 - 1] as char;
+    let wrong = if base == 'A' { 'C' } else { 'A' };
+    let alt = if base == 'G' { 'T' } else { 'G' };
+    let record = format!("chr1\t430\t.\t{wrong}\t{alt}\t.\t.\t.");
+    let input = vcf(&[record.as_str()]);
+
+    let (o, plain) = run.annotate_plain(&input, "tab", &["--variant-class"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    assert!(!stderr(&o).contains("REF allele"), "{}", stderr(&o));
+
+    for flags in [&["--hgvs"][..], &["--hgvsg"][..]] {
+        let (o, with) = run.annotate_plain(&input, "tab", flags);
+        assert!(o.status.success(), "{}", stderr(&o));
+        assert!(
+            stderr(&o).contains("1 record(s) have a REF allele that is not the reference's"),
+            "{flags:?}: {}",
+            stderr(&o)
+        );
+        for name in ["Consequence", "Codons", "Amino_acids", "Protein_position"] {
+            assert_eq!(
+                column(&plain, name),
+                column(&with, name),
+                "{flags:?} {name}"
+            );
+        }
+    }
+}
+
+/// The cells of a column of a tab file, by its name in the header.
+fn column(text: &str, name: &str) -> Vec<String> {
+    let header: Vec<&str> = text
+        .lines()
+        .find(|l| l.starts_with("#Uploaded_variation"))
+        .unwrap()
+        .trim_start_matches('#')
+        .split('\t')
+        .collect();
+    let at = header.iter().position(|c| *c == name).unwrap();
+    text.lines()
+        .filter(|l| !l.starts_with('#'))
+        .map(|l| l.split('\t').nth(at).unwrap().to_string())
+        .collect()
 }

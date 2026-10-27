@@ -415,15 +415,21 @@ impl AnnotationContext {
 
                 // The reference an HGVS description is written against: the genome's, where the
                 // VCF has `N` and where its REF is not the reference's (`reference_for_hgvs`).
-                let hgvs_ref = reference_for_hgvs(
-                    self.seq_provider
-                        .as_deref()
-                        .map(|sp| sp as &dyn SequenceProvider),
-                    chrom,
-                    vf.position.start,
-                    vf.position.end,
-                    &vf.ref_allele,
-                );
+                // Read only for a run that writes a description, as `fastvep annotate` does: it is
+                // a read of the FASTA for every record.
+                let hgvs_ref = if self.hgvs {
+                    reference_for_hgvs(
+                        self.seq_provider
+                            .as_deref()
+                            .map(|sp| sp as &dyn SequenceProvider),
+                        chrom,
+                        vf.position.start,
+                        vf.position.end,
+                        &vf.ref_allele,
+                    )
+                } else {
+                    std::borrow::Cow::Borrowed(&vf.ref_allele)
+                };
 
                 // HGVSg is the variant's, the same on every transcript row, and
                 // reading the reference to place it is not free: made once per

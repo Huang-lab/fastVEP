@@ -296,13 +296,21 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
             // has `N` and where its REF is not the reference's, as Ensembl does for a
             // substitution (`reference_for_hgvs`). The `g.` description reads it too, so that the
             // two say the same thing about a record whose REF is wrong.
-            let hgvs_ref = fastvep_annotate::reference_for_hgvs(
-                seq_provider.map(|sp| sp as &dyn SequenceProvider),
-                chrom,
-                vf.position.start,
-                vf.position.end,
-                &vf.ref_allele,
-            );
+            //
+            // Read only by a run that writes a description: it is a read of the FASTA for every
+            // record, a page of a three-gigabyte file that is nowhere else in a run without HGVS,
+            // and the mismatch it counts is about what those descriptions say.
+            let hgvs_ref = if config.hgvs || config.columns.hgvsg {
+                fastvep_annotate::reference_for_hgvs(
+                    seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                    chrom,
+                    vf.position.start,
+                    vf.position.end,
+                    &vf.ref_allele,
+                )
+            } else {
+                std::borrow::Cow::Borrowed(&vf.ref_allele)
+            };
 
             // HGVSg is the variant's, the same on every transcript row, and reading
             // the reference to place it is not free: made once per record, and only
@@ -374,10 +382,18 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                                 hgvsp: None,
                                 hgvsg: None,
                                 hgvs_offset: None,
-                                existing_variation: matched_by_allele
-                                    .get(&ac.allele.to_string())
-                                    .map(|matches| matches.iter().map(|m| m.name.clone()).collect())
-                                    .unwrap_or_default(),
+                                // Nothing is looked up, and no `String` made to look it up with, in a run
+                                // that has no known variants (the cache is what finds them)
+                                existing_variation: if matched_by_allele.is_empty() {
+                                    Vec::new()
+                                } else {
+                                    matched_by_allele
+                                        .get(&ac.allele.to_string())
+                                        .map(|matches| {
+                                            matches.iter().map(|m| m.name.clone()).collect()
+                                        })
+                                        .unwrap_or_default()
+                                },
                                 sift: None,
                                 polyphen: None,
                                 supplementary: Vec::new(),
