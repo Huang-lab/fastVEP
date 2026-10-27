@@ -1,7 +1,7 @@
 use anyhow::Result;
 use fastvep_core::Strand;
 use fastvep_genome::{Exon, Gene, Transcript, Translation};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ pub fn parse_gff3_with_source<R: Read>(reader: R, source: &str) -> Result<Vec<Tr
         .lines()
         .enumerate()
         .map(|(i, line)| line.map_err(|e| anyhow::anyhow!("Reading GFF3 line {}: {}", i + 1, e)));
-    let mut trs = parse_gff3_lines(lines, true)?;
+    let mut trs = parse_gff3_lines(lines, Scope::WholeFile)?.transcripts;
     for tr in &mut trs {
         tr.source = Some(source.to_string());
     }
@@ -44,6 +44,11 @@ pub fn parse_gff3_with_source<R: Read>(reader: R, source: &str) -> Result<Vec<Tr
 ///
 /// Regions are specified as (chrom, start, end) tuples. This loads gene/transcript/exon/CDS
 /// features from the indexed file for each region, then assembles transcripts.
+///
+/// The transcripts returned are the ones that were read for the regions, and each has the
+/// `canonical` flag a read of the whole file would give it: the canonical transcript of a RefSeq
+/// gene is a property of all of its transcripts, so a gene across the edge of a region is read
+/// again whole for that ([`settle_partial_genes`]).
 pub fn parse_gff3_indexed(
     gff3_gz_path: &Path,
     regions: &[(String, u64, u64)],
@@ -91,9 +96,6 @@ fn parse_gff3_indexed_inner(
     gff3_gz_path: &Path,
     regions: &[(String, u64, u64)],
 ) -> Result<Vec<Transcript>> {
-    use noodles_bgzf as bgzf;
-    use noodles_core::region::Interval;
-    use noodles_core::Position;
     use noodles_csi::binning_index::BinningIndex;
     use noodles_tabix as tabix;
 
@@ -111,80 +113,246 @@ fn parse_gff3_indexed_inner(
         .collect();
 
     let mut all_lines: Vec<String> = Vec::new();
-    let mut seen_lines: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut seen_lines: HashSet<u64> = HashSet::new();
+    // What was read, as the file names its contigs: which genes this read holds whole.
+    let mut read: Vec<(String, u64, u64)> = Vec::new();
 
-    for (chrom, start, end) in regions {
-        // Find reference ID, trying with/without "chr" prefix
-        let ref_id = ref_names.iter().position(|n| n == chrom).or_else(|| {
-            if chrom.starts_with("chr") {
-                ref_names.iter().position(|n| n == &chrom[3..])
-            } else {
-                let with_chr = format!("chr{}", chrom);
-                ref_names.iter().position(|n| *n == with_chr)
-            }
-        });
-
-        let ref_id = match ref_id {
-            Some(id) => id,
-            None => continue,
-        };
-
-        let pos_start = Position::try_from((*start).max(1) as usize).unwrap_or(Position::MIN);
-        let pos_end = Position::try_from(*end as usize).unwrap_or(Position::MIN);
-        let query_interval: Interval = (pos_start..=pos_end).into();
-
-        let chunks = match index.query(ref_id, query_interval) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let file = std::fs::File::open(gff3_gz_path)?;
-        let mut reader = bgzf::io::Reader::new(file);
-
-        for chunk in &chunks {
-            reader.seek(chunk.start())?;
-            let mut line = String::new();
-
-            loop {
-                line.clear();
-                let bytes = reader.read_line(&mut line)?;
-                if bytes == 0 {
-                    break;
-                }
-
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    if reader.virtual_position() >= chunk.end() {
-                        break;
-                    }
-                    continue;
-                }
-
-                // Deduplicate lines by hashing (regions may overlap in tabix chunks)
-                let hash = {
-                    use std::hash::{Hash, Hasher};
-                    let mut h = std::collections::hash_map::DefaultHasher::new();
-                    trimmed.hash(&mut h);
-                    h.finish()
-                };
-                if seen_lines.insert(hash) {
-                    all_lines.push(trimmed.to_string());
-                }
-
-                if reader.virtual_position() >= chunk.end() {
-                    break;
-                }
-            }
-        }
+    for region in regions {
+        read.extend(read_region_lines(
+            gff3_gz_path,
+            &index,
+            &ref_names,
+            region,
+            &mut seen_lines,
+            &mut all_lines,
+        )?);
     }
 
     // Lines were already collected into memory by the tabix-chunk loop above,
     // so wrap them in `Ok` to satisfy the streaming-aware parser signature.
     //
-    // That is also why the canonical transcript of a RefSeq gene is only partly derived here: it
-    // is a property of all of a gene's transcripts, and a region read has only the ones that
-    // overlap this input (see `derive_refseq_canonical`).
-    parse_gff3_lines(all_lines.into_iter().map(Ok), false)
+    // The canonical transcript of a RefSeq gene is a property of all of a gene's transcripts. The
+    // genes a region holds whole have them all; the others (a gene across the edge of a region)
+    // are read again for it below.
+    let mut parsed = parse_gff3_lines(all_lines.into_iter().map(Ok), Scope::Regions(&read))?;
+    if !parsed.partial_genes.is_empty() {
+        settle_partial_genes(gff3_gz_path, &index, &ref_names, &mut parsed)?;
+    }
+    Ok(parsed.transcripts)
+}
+
+/// Read into `lines` the lines the index puts in reach of `chrom:start-end` (`seen` is the hash of
+/// each line already read, because the chunks of two regions overlap), and return the interval
+/// that was read with the contig named as the file names it, or `None` when the file has no such
+/// contig or the index will not answer for the interval.
+///
+/// Every line of every chunk is taken, whether or not it overlaps the interval: a chunk is a
+/// stretch of the file, not a list of features.
+fn read_region_lines(
+    gff3_gz_path: &Path,
+    index: &impl noodles_csi::binning_index::BinningIndex,
+    ref_names: &[String],
+    (chrom, start, end): &(String, u64, u64),
+    seen_lines: &mut HashSet<u64>,
+    lines: &mut Vec<String>,
+) -> Result<Option<(String, u64, u64)>> {
+    use noodles_bgzf as bgzf;
+    use noodles_core::region::Interval;
+    use noodles_core::Position;
+
+    // Find reference ID, trying with/without "chr" prefix
+    let ref_id = ref_names.iter().position(|n| n == chrom).or_else(|| {
+        if chrom.starts_with("chr") {
+            ref_names.iter().position(|n| n == &chrom[3..])
+        } else {
+            let with_chr = format!("chr{}", chrom);
+            ref_names.iter().position(|n| *n == with_chr)
+        }
+    });
+    let Some(ref_id) = ref_id else {
+        return Ok(None);
+    };
+
+    let pos_start = Position::try_from((*start).max(1) as usize).unwrap_or(Position::MIN);
+    let pos_end = Position::try_from(*end as usize).unwrap_or(Position::MIN);
+    let query_interval: Interval = (pos_start..=pos_end).into();
+
+    let Ok(chunks) = index.query(ref_id, query_interval) else {
+        return Ok(None);
+    };
+
+    let file = std::fs::File::open(gff3_gz_path)?;
+    let mut reader = bgzf::io::Reader::new(file);
+
+    for chunk in &chunks {
+        reader.seek(chunk.start())?;
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            let bytes = reader.read_line(&mut line)?;
+            if bytes == 0 {
+                break;
+            }
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                if reader.virtual_position() >= chunk.end() {
+                    break;
+                }
+                continue;
+            }
+
+            // Deduplicate lines by hashing (regions may overlap in tabix chunks)
+            let hash = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                trimmed.hash(&mut h);
+                h.finish()
+            };
+            if seen_lines.insert(hash) {
+                lines.push(trimmed.to_string());
+            }
+
+            if reader.virtual_position() >= chunk.end() {
+                break;
+            }
+        }
+    }
+    Ok(Some((
+        ref_names[ref_id].clone(),
+        pos_start.get() as u64,
+        pos_end.get() as u64,
+    )))
+}
+
+/// What a parse of GFF3 lines may conclude about a gene as a whole, which is what the lines it was
+/// given say about it.
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    /// Every line of the file: every gene is whole.
+    WholeFile,
+    /// The lines a tabix read found for these intervals (contig as the file names it, start, end;
+    /// 1-based, inclusive). A gene is whole when one interval holds its span, because every
+    /// transcript of it then overlaps that interval and was read.
+    Regions(&'a [(String, u64, u64)]),
+    /// Every line in reach of the spans of some genes, read by [`settle_partial_genes`] to decide
+    /// which of their transcripts is canonical and for nothing else: the genes it was asked about
+    /// are whole, it says nothing about the file, and it does not stop on a record it has no use
+    /// for (a CDS phase that is not one). The first read of the same lines has done all of that.
+    GeneSpans,
+}
+
+impl Scope<'_> {
+    fn holds_all_of(&self, chromosome: &str, start: u64, end: u64) -> bool {
+        match self {
+            Scope::WholeFile | Scope::GeneSpans => true,
+            Scope::Regions(regions) => regions
+                .iter()
+                .any(|(c, s, e)| c == chromosome && *s <= start && end <= *e),
+        }
+    }
+
+    fn reports(&self) -> bool {
+        !matches!(self, Scope::GeneSpans)
+    }
+}
+
+/// What [`parse_gff3_lines`] made of its lines.
+struct Parsed {
+    transcripts: Vec<Transcript>,
+    /// The RefSeq genes the lines have some of the transcripts of, no MANE Select transcript among
+    /// them, which no interval of the read holds whole: which of their transcripts is canonical
+    /// depends on the ones that were not read ([`derive_refseq_canonical`]).
+    partial_genes: Vec<PartialGene>,
+}
+
+struct PartialGene {
+    chromosome: String,
+    /// The span of the gene, and of its transcripts where they go beyond it.
+    start: u64,
+    end: u64,
+    /// The transcripts that were read, which is the ones whose flag is to be decided.
+    members: Vec<TranscriptKey>,
+}
+
+/// A transcript as the sort of a transcript list tells it from another: the accession alone is not
+/// enough, because the pseudoautosomal genes are on X and on Y under one accession.
+#[derive(PartialEq, Eq, Hash)]
+struct TranscriptKey {
+    stable_id: String,
+    chromosome: String,
+    start: u64,
+    end: u64,
+}
+
+impl TranscriptKey {
+    fn of(t: &Transcript) -> Self {
+        Self {
+            stable_id: t.stable_id.to_string(),
+            chromosome: t.chromosome.to_string(),
+            start: t.start,
+            end: t.end,
+        }
+    }
+
+    fn names(&self, t: &Transcript) -> bool {
+        *t.stable_id == *self.stable_id
+            && *t.chromosome == *self.chromosome
+            && t.start == self.start
+            && t.end == self.end
+    }
+}
+
+/// Decide which transcript is canonical for the RefSeq genes a region read holds only part of.
+///
+/// The rule needs every transcript of a gene ([`derive_refseq_canonical`]), and a gene across the
+/// edge of a region has only the ones that overlap it. Its span is read again, for the one thing:
+/// which of the transcripts that were read is the gene's canonical one, which may be one that was
+/// not read at all (then none of them is). What comes back of it is not added to the transcripts of
+/// the run: a transcript the input has nothing to do with is not one of its rows.
+fn settle_partial_genes(
+    gff3_gz_path: &Path,
+    index: &impl noodles_csi::binning_index::BinningIndex,
+    ref_names: &[String],
+    parsed: &mut Parsed,
+) -> Result<()> {
+    // Where the spans of two genes meet they are read once.
+    let mut spans: Vec<(String, u64, u64)> = parsed
+        .partial_genes
+        .iter()
+        .map(|g| (g.chromosome.clone(), g.start, g.end))
+        .collect();
+    spans.sort();
+    let mut merged: Vec<(String, u64, u64)> = Vec::new();
+    for (chromosome, start, end) in spans {
+        match merged.last_mut() {
+            Some((c, _, e)) if *c == chromosome && start <= *e => *e = (*e).max(end),
+            _ => merged.push((chromosome, start, end)),
+        }
+    }
+
+    let mut seen: HashSet<u64> = HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for span in &merged {
+        read_region_lines(gff3_gz_path, index, ref_names, span, &mut seen, &mut lines)?;
+    }
+    let whole = parse_gff3_lines(lines.into_iter().map(Ok), Scope::GeneSpans)?;
+    let canonical: HashSet<TranscriptKey> = whole
+        .transcripts
+        .iter()
+        .filter(|t| t.canonical)
+        .map(TranscriptKey::of)
+        .collect();
+
+    for gene in &parsed.partial_genes {
+        for member in &gene.members {
+            if let Some(t) = parsed.transcripts.iter_mut().find(|t| member.names(t)) {
+                t.canonical = canonical.contains(member);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Core GFF3 parsing logic: takes an iterator of `Result<String>` lines and
@@ -192,12 +360,11 @@ fn parse_gff3_indexed_inner(
 /// error from the underlying reader; the latter aborts parsing immediately
 /// rather than being silently treated as an empty line.
 ///
-/// `whole_file` says the lines are every line of the file rather than the ones a tabix read found
-/// for some regions, which is what a gene-wide judgement needs.
+/// `scope` says what the lines are of the file, which is what a gene-wide judgement needs to know.
 fn parse_gff3_lines(
     lines: impl Iterator<Item = Result<String>>,
-    whole_file: bool,
-) -> Result<Vec<Transcript>> {
+    scope: Scope<'_>,
+) -> Result<Parsed> {
     let mut genes: HashMap<String, GffGene> = HashMap::new();
     let mut transcripts: HashMap<String, GffTranscript> = HashMap::new();
     let mut exons: Vec<GffExon> = Vec::new();
@@ -434,6 +601,7 @@ fn parse_gff3_lines(
                 // phase`), and reads `.` as no phase. A CDS record with a phase that is not one of
                 // those is not read as phase 0 and given a reading frame it may not have.
                 match parsed_phase {
+                    None if !scope.reports() => {}
                     None => {
                         return Err(anyhow::anyhow!(
                             "GFF3: the CDS record {seqid}:{start}-{end} of `{parent}` has the phase \
@@ -444,7 +612,7 @@ fn parse_gff3_lines(
                             fields[7]
                         ));
                     }
-                    Some(-1) => cds_without_phase += 1,
+                    Some(-1) if scope.reports() => cds_without_phase += 1,
                     Some(_) => {}
                 }
                 // Protein ID: prefer explicit protein_id attribute (NCBI format),
@@ -626,9 +794,9 @@ fn parse_gff3_lines(
 
     // Build transcripts
     let mut result = Vec::with_capacity(transcripts.len());
-    // The transcripts of each RefSeq gene, for [`derive_refseq_canonical`]: where each is in
-    // `result` and what it was read from.
-    let mut refseq_genes: HashMap<&str, Vec<(usize, &GffTranscript)>> = HashMap::new();
+    // The transcripts of each RefSeq gene, for [`derive_refseq_canonical`]: the gene, and where
+    // each of its transcripts is in `result` and what it was read from.
+    let mut refseq_genes: HashMap<&str, RefseqGene<'_>> = HashMap::new();
     let empty_exons: Vec<GffExon> = Vec::new();
     let empty_cds: Vec<GffCds> = Vec::new();
     // The transcripts left out because two of their exons overlap, with the two.
@@ -868,7 +1036,11 @@ fn parse_gff3_lines(
         if let Some(g) = gene.filter(|g| g.entrez_gene_id.is_some()) {
             refseq_genes
                 .entry(g.id.as_str())
-                .or_default()
+                .or_insert_with(|| RefseqGene {
+                    gene: g,
+                    transcripts: Vec::new(),
+                })
+                .transcripts
                 .push((result.len(), gff_tr));
         }
 
@@ -920,7 +1092,7 @@ fn parse_gff3_lines(
         });
     }
 
-    derive_refseq_canonical(&mut result, &refseq_genes, whole_file);
+    let partial_genes = derive_refseq_canonical(&mut result, &refseq_genes, scope);
 
     if cds_without_phase > 0 {
         eprintln!(
@@ -928,7 +1100,7 @@ fn parse_gff3_lines(
              as phase 0, a coding sequence that starts with a whole codon, as Ensembl VEP reads them"
         );
     }
-    if !overlapping.is_empty() {
+    if scope.reports() && !overlapping.is_empty() {
         // the map the transcripts come out of has no order
         overlapping.sort();
         let shown: Vec<String> = overlapping
@@ -959,7 +1131,10 @@ fn parse_gff3_lines(
             .then_with(|| a.end.cmp(&b.end))
     });
 
-    Ok(result)
+    Ok(Parsed {
+        transcripts: result,
+        partial_genes,
+    })
 }
 
 /// Whether a `tag=` list names `wanted`, spelling aside: RefSeq writes `MANE Select` and Ensembl
@@ -1059,41 +1234,68 @@ fn met_recodings(attrs: &HashMap<String, String>) -> Vec<(u64, u64)> {
 ///   not explained by anything in the file. Neither length of the transcript's exons nor of its
 ///   CDS does better than the span (63 and 52 of 89), and neither does the `RefSeq Select` tag.
 ///
-/// The span rule is a judgement over *all* of a gene's transcripts, so it is made only for a whole
-/// file. A tabix read returns the transcripts that overlap this input, and the longest of those is
-/// not the longest of the gene: it would put `CANONICAL` on a transcript the cache does not, which
-/// is a plausible wrong answer, where leaving it empty is a missing one. The MANE Select tag is
-/// the transcript's own, so a region read marks it wherever it is found, and finds none for a gene
-/// whose MANE transcript is not among those it read, which is right.
+/// The span rule is a judgement over *all* of a gene's transcripts, so it is made for a gene the
+/// lines hold whole: every gene of a whole file, and of a tabix read the ones one of its intervals
+/// holds. For a gene across the edge of an interval the transcripts that were read are not the
+/// gene's, and the longest of them is not the longest of the gene: marking it would put `CANONICAL`
+/// on a transcript the cache does not, which is a plausible wrong answer, where leaving it empty is
+/// a missing one, and which of two equally long ones comes first in the file is not known from the
+/// ones that were read. Such a gene is handed back ([`Parsed::partial_genes`]) for the caller to read
+/// whole, which is how a tabix read comes to give the flag a read of the whole file gives. The MANE
+/// Select tag is the transcript's own, so a gene with one among the transcripts that were read is
+/// settled by it, wherever the gene's span is.
 ///
 /// A gene one of whose transcripts is tagged `Ensembl_canonical` is left as it is.
 fn derive_refseq_canonical(
     result: &mut [Transcript],
-    genes: &HashMap<&str, Vec<(usize, &GffTranscript)>>,
-    whole_file: bool,
-) {
-    for transcripts in genes.values() {
+    genes: &HashMap<&str, RefseqGene<'_>>,
+    scope: Scope<'_>,
+) -> Vec<PartialGene> {
+    let mut partial = Vec::new();
+    for RefseqGene { gene, transcripts } in genes.values() {
         if transcripts.iter().any(|(_, t)| t.canonical) {
             continue;
         }
         let span = |t: &GffTranscript| t.end - t.start + 1;
-        let pick = transcripts
+        let mane = transcripts
             .iter()
             .filter(|(_, t)| t.mane_select)
-            .min_by_key(|(_, t)| t.order)
-            .or_else(|| {
-                whole_file
-                    .then(|| {
-                        transcripts.iter().max_by(|(_, a), (_, b)| {
-                            span(a).cmp(&span(b)).then_with(|| b.order.cmp(&a.order))
-                        })
-                    })
-                    .flatten()
+            .min_by_key(|(_, t)| t.order);
+        let (start, end) = transcripts
+            .iter()
+            .fold((gene.start, gene.end), |(s, e), (_, t)| {
+                (s.min(t.start), e.max(t.end))
             });
+        let pick = if mane.is_some() {
+            mane
+        } else if scope.holds_all_of(&gene.chromosome, start, end) {
+            transcripts
+                .iter()
+                .max_by(|(_, a), (_, b)| span(a).cmp(&span(b)).then_with(|| b.order.cmp(&a.order)))
+        } else {
+            partial.push(PartialGene {
+                chromosome: gene.chromosome.clone(),
+                start,
+                end,
+                members: transcripts
+                    .iter()
+                    .map(|(i, _)| TranscriptKey::of(&result[*i]))
+                    .collect(),
+            });
+            None
+        };
         if let Some(&(index, _)) = pick {
             result[index].canonical = true;
         }
     }
+    partial
+}
+
+/// A RefSeq gene and the transcripts of it that were read.
+struct RefseqGene<'a> {
+    gene: &'a GffGene,
+    /// Where each is in the transcripts that are returned, and what it was read from.
+    transcripts: Vec<(usize, &'a GffTranscript)>,
 }
 
 /// What the output calls a transcript: its `transcript_id` attribute, and its ID where it has none,
@@ -2406,17 +2608,79 @@ chr1\tensembl\tCDS\t1050\t1200\t.\t+\t0\tID=CDS:P1;Parent=transcript:TX3";
             ["NR_027266.1"],
             "the longer of the two, though it is second in the file"
         );
+    }
 
-        // a tabix read has only the transcripts that overlap the input, so the longest of them is
-        // not the gene's: no judgement is made, and nothing is marked...
-        let lines = REFSEQ_LINC00310.lines().map(|l| Ok(l.to_string()));
-        let region = parse_gff3_lines(lines, false).unwrap();
-        assert!(region.iter().all(|t| !t.canonical));
-        // ...except a MANE Select transcript, which is the gene's wherever it is found
-        let lines = REFSEQ_TPTE.lines().map(|l| Ok(l.to_string()));
-        let region = parse_gff3_lines(lines, false).unwrap();
-        assert!(named(&region, "NM_199261.4").canonical);
-        assert!(!named(&region, "NM_199259.4").canonical);
+    /// What a parse of the lines of a tabix read decides about a gene depends on whether the read
+    /// has the whole gene (see `a_tabix_read_gives_each_transcript_the_canonical_flag...` in
+    /// `tests/gff_tabix_canonical.rs` for the read itself).
+    fn parse_in_scope(gff: &str, scope: Scope<'_>) -> Parsed {
+        parse_gff3_lines(gff.lines().map(|l| Ok(l.to_string())), scope).unwrap()
+    }
+
+    #[test]
+    fn a_gene_that_an_interval_of_the_read_holds_whole_is_judged_as_in_a_whole_file() {
+        // LINC00310 is 34,180,677-34,189,919
+        let whole = [("21".to_string(), 34_000_000, 34_300_000)];
+        let parsed = parse_in_scope(REFSEQ_LINC00310, Scope::Regions(&whole));
+        assert!(named(&parsed.transcripts, "NR_027266.1").canonical);
+        assert!(!named(&parsed.transcripts, "NR_027267.1").canonical);
+        assert!(parsed.partial_genes.is_empty());
+        // the interval has to be on the gene's contig
+        let elsewhere = [("22".to_string(), 1, 100_000_000)];
+        let parsed = parse_in_scope(REFSEQ_LINC00310, Scope::Regions(&elsewhere));
+        assert!(parsed.transcripts.iter().all(|t| !t.canonical));
+        assert_eq!(parsed.partial_genes.len(), 1);
+    }
+
+    #[test]
+    fn a_gene_across_the_edge_of_an_interval_is_not_judged_and_is_handed_back() {
+        // the interval ends in the gene: the transcripts that were read are not all of them
+        let edge = [("21".to_string(), 34_000_000, 34_185_000)];
+        let parsed = parse_in_scope(REFSEQ_LINC00310, Scope::Regions(&edge));
+        assert!(
+            parsed.transcripts.iter().all(|t| !t.canonical),
+            "the longest of what was read is not the longest of the gene"
+        );
+        let [gene] = &parsed.partial_genes[..] else {
+            panic!(
+                "one gene is handed back, not {}",
+                parsed.partial_genes.len()
+            );
+        };
+        assert_eq!(
+            (gene.chromosome.as_str(), gene.start, gene.end),
+            ("21", 34_180_677, 34_189_919)
+        );
+        assert_eq!(gene.members.len(), 2);
+        // two intervals that together cover the gene hold it whole in neither
+        let halves = [
+            ("21".to_string(), 34_000_000, 34_185_000),
+            ("21".to_string(), 34_185_001, 34_300_000),
+        ];
+        let parsed = parse_in_scope(REFSEQ_LINC00310, Scope::Regions(&halves));
+        assert_eq!(parsed.partial_genes.len(), 1);
+    }
+
+    /// The MANE Select tag is the transcript's own: where one was read the gene is settled by it,
+    /// whether or not the gene was read whole, and nothing is handed back. Where none was read the
+    /// gene is not settled by what was, because the MANE transcript may be one that was not read.
+    #[test]
+    fn a_mane_select_transcript_that_was_read_settles_its_gene_wherever_the_interval_ends() {
+        let edge = [("21".to_string(), 10_500_000, 10_550_000)];
+        let parsed = parse_in_scope(REFSEQ_TPTE, Scope::Regions(&edge));
+        assert!(named(&parsed.transcripts, "NM_199261.4").canonical);
+        assert!(!named(&parsed.transcripts, "NM_199259.4").canonical);
+        assert!(parsed.partial_genes.is_empty());
+
+        // the same gene with the MANE transcript not among the lines
+        let without: String = REFSEQ_TPTE
+            .lines()
+            .filter(|l| !l.contains("NM_199261.4"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let parsed = parse_in_scope(&without, Scope::Regions(&edge));
+        assert!(parsed.transcripts.iter().all(|t| !t.canonical));
+        assert_eq!(parsed.partial_genes.len(), 1);
     }
 
     /// What Ensembl VEP's RefSeq cache calls the biotype of a RefSeq transcript, and that the

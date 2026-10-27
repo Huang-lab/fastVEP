@@ -930,7 +930,10 @@ What was different, and what a cache does:
   RefSeq's GFF3 has no `Ensembl_canonical` tag, and writes `tag=MANE Select` with a space, where Ensembl writes `MANE_Select`; the record names Ensembl's transcript in its Dbxref, which is what the RefSeq cache writes as `MANE_SELECT`.
   The cache marks the MANE Select transcript of 640 genes of 640, and otherwise the transcript that spans the most of the genome, the first in the file among equals: 451 of the 455 genes that have no MANE Select transcript (366 have one transcript, and of the other 89 the cache's is the longest-spanning in 85, and the first of those in the file in all 85).
   Neither the length of a transcript's exons nor of its CDS does better than the span (63 and 52 of 89).
-  The rule needs all of a gene's transcripts and is applied to a whole file only: a tabix read has those that overlap its input, and the longest of them is not the gene's.
+  The rule needs all of a gene's transcripts.
+  A whole file has them.
+  A tabix read has the ones that overlap its input, and the longest of those is not the gene's, so a gene across the edge of a region is read again, whole, for the flag (and for it alone: its other transcripts are not added to the run).
+  A plain and a bgzipped copy of one sorted file then mark the same transcripts: on the sorted GFF3 of chromosomes 21 and 22 the two runs differed in `CANONICAL` on 4,266 of 212,240 rows before, and on none after.
 - **The mature miRNA of a precursor.**
   A record that hangs off a transcript (`rna-MIR185`, `Parent=rna-NR_029706.1`) is where in the precursor the miRNA is, and neither the cache nor the `--gff` reader has a transcript of it: 436 rows of the edge set, and 66 and 240 of the samples, were fastVEP's alone.
 - **`FLAGS`, and the first codon.**
