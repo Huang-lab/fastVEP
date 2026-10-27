@@ -523,6 +523,13 @@ fn a_run_that_found_no_contig_in_the_cache_says_so() {
         partial.contains("Existing_variation is empty for those"),
         "{partial}"
     );
+    // the variants are on contigs the cache does NOT know: the warning said `knows`, which is what
+    // the other case (below) says of the one contig it is about, and read as the opposite
+    assert!(
+        partial.contains("on contigs that --cache-dir ") && partial.contains(" does not know, so "),
+        "{partial}"
+    );
+    assert!(!partial.contains(" knows"), "{partial}");
     assert!(
         partial.contains("The cache has 10, MT"),
         "the cache's contigs: {partial}"
@@ -539,10 +546,11 @@ fn a_run_with_no_resolvable_contig_at_all_says_that_instead() {
     lookup(&p, "NC_000010.99", (10414, 10414), "C", &["A"]);
     let all = p.finish().unwrap();
     assert!(
-        all.contains("none of the input's variants is on a contig"),
+        all.contains("none of the input's variants is on a contig that --cache-dir ")
+            && all.contains(" knows, so Existing_variation is empty for all of them"),
         "{all}"
     );
-    assert!(all.contains("empty for all of them"), "{all}");
+    assert!(!all.contains("does not know"), "{all}");
 }
 
 // -- errors are errors -------------------------------------------------------

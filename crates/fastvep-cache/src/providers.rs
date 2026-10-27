@@ -662,21 +662,28 @@ impl VariationProvider for TabixVariationProvider {
         if unresolved.len() > 5 {
             examples.push(format!("and {} more", unresolved.len() - 5));
         }
-        let which = if missed == sites {
-            "none of the input's variants is on a contig".to_string()
+        // The two cases say opposite things about the cache and are not one sentence with a word
+        // changed: the variants are on contigs the cache does NOT know (the whole input, or some of
+        // it), and the all-missing one is written as the negation of "knows", which is why the
+        // partial one once said "knows" where it meant "does not know".
+        let dir = self.cache_dir.display();
+        let (what, empty_for) = if missed == sites {
+            (
+                format!("none of the input's variants is on a contig that --cache-dir {dir} knows"),
+                "all of them",
+            )
         } else {
-            format!("{missed} of {sites} variants are on contigs")
+            (
+                format!(
+                    "{missed} of {sites} variants are on contigs that --cache-dir {dir} does not know"
+                ),
+                "those",
+            )
         };
         Some(format!(
-            "warning: {which} that --cache-dir {} knows, so Existing_variation is empty for \
-             {}: {}. The cache has {}. If the names differ, put a chr_synonyms.txt in the cache \
-             directory (the file VEP reads, one line of equivalent names per contig).",
-            self.cache_dir.display(),
-            if missed == sites {
-                "all of them"
-            } else {
-                "those"
-            },
+            "warning: {what}, so Existing_variation is empty for {empty_for}: {}. The cache has {}. \
+             If the names differ, put a chr_synonyms.txt in the cache directory (the file VEP \
+             reads, one line of equivalent names per contig).",
             examples.join(", "),
             self.reader.chromosomes().join(", ")
         ))
