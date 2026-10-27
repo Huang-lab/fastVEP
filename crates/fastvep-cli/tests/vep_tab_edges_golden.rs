@@ -63,9 +63,17 @@ enum Why {
     ReversedPair,
     /// A change that loses the initiator is `p.Met1?`. For a window of more than one residue VEP
     /// writes the residue names of the whole window sharing one position (`p.MetCys1_?2`) or the
-    /// first one and a range (`p.Met1_?2`), and for an insertion in front of the initiator a range
-    /// that runs backwards and names the last residue of the protein (`p.Ala1_?0`): none is HGVS.
+    /// first one and a range (`p.Met1_?2`), for an insertion in front of the initiator a range
+    /// that runs backwards and names the last residue of the protein (`p.Ala1_?0`), and for a
+    /// deletion that begins in the 5' UTR and runs into the start codon, which has no protein start
+    /// (`?-1`), nothing: none is HGVS or says that the initiator is gone.
     StartLoss,
+    /// An insertion between the last base of the 5' UTR and the initiator that the 3'-rule carries
+    /// onto the first codon is written `p.Met1IlefsTer?` on a row whose only term is
+    /// `5_prime_UTR_variant`: the consequence is of the change where the VCF puts it and the
+    /// notation of the change where the 3'-rule moved it, and the row says both. fastVEP writes
+    /// no protein change for a row with no term for the coding sequence.
+    UtrOnly,
 }
 
 /// Cells where fastVEP and stock VEP 116.3 differ and VEP is the one that is wrong:
@@ -399,6 +407,209 @@ const KNOWN: &[(&str, &str, &str, &str, Why)] = &[
         "HGVSp",
         "ENSP00000000003.1:p.Met1?",
         Why::StartLoss,
+    ),
+    (
+        "chr10_1091_GTAGCTGAGA/G",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1091_GTAGCTGAGA/G",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1092_TAGCTGAGATGCA/T",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1092_TAGCTGAGATGCA/T",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1093_AGCTGAGATGCACGTACGTGT/A",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1093_AGCTGAGATGCACGTACGTGT/A",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1094_GCTGAGATGCACGTACGTGTCGCTACGAGGG/G",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1094_GCTGAGATGCACGTACGTGTCGCTACGAGGG/G",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1096_TGAGATG/T",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1096_TGAGATG/T",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1097_GAGATGCACG/G",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1097_GAGATGCACG/G",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1098_AGA/TC",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1098_AGA/TC",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1098_AGATGCACGTACGTGT/A",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1098_AGATGCACGTACGTGT/A",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1099_GA/CT",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1099_GA/CT",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11291_TTATGCACATCTG/T",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11292_TATGCACATCTGCTCTGTATAGTATCCCCTA/T",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11295_GCACATCTGC/G",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11296_CACATCTGCTCTGTATAGTAT/C",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11297_ACATCT/A",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11298_CATCTGC/C",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11299_ATC/CA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_11299_ATCTGCTCTG/A",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+        Why::StartLoss,
+    ),
+    (
+        "chr10_1099_G/GAT",
+        "ENST00000000001",
+        "HGVSp",
+        "-",
+        Why::UtrOnly,
+    ),
+    (
+        "chr10_1099_G/GAT",
+        "ENST00000000002",
+        "HGVSp",
+        "-",
+        Why::UtrOnly,
+    ),
+    (
+        "chr10_11300_T/TAT",
+        "ENST00000000003",
+        "HGVSp",
+        "-",
+        Why::UtrOnly,
     ),
 ];
 

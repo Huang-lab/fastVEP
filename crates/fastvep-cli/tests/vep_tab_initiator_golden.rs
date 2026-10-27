@@ -15,7 +15,7 @@
 //! `Codons`, the positions, `EXON`, `INTRON`, and `HGVSp` of the rows that are a start loss in
 //! either tool. (`HGVSc` and `HGVSp` elsewhere, and the 3'-rule, are the subject of the other
 //! `vep_tab_*_golden.rs` files; this world's repeats would only raise their listed differences
-//! again.) Every difference is one of two documented classes, and each row that is one is checked
+//! again.) Every difference is one of three documented classes, and each row that is one is checked
 //! to have the shape the class says:
 //!
 //! - **A start loss that is not one** (`docs/VEP_DIVERGENCE.md`, divergence 14). VEP calls the
@@ -25,11 +25,13 @@
 //!   UTR that leaves the ATG where it was, because the test that asks "is the ATG still at the
 //!   coding start" is only made `if ($utr)`. fastVEP leaves out `start_lost` (and says
 //!   `start_retained_variant` where VEP's test could not).
-//! - **A start loss written as a range** (divergence 15). `p.Met1?` is what HGVS has for a change
-//!   that loses the initiator, and VEP writes it for most of them; for a window of more than one
-//!   residue it writes the residue names of the whole window sharing one position
-//!   (`p.MetAla1_?2`), and for an insertion in front of the initiator a range that runs backwards
-//!   and names the last residue of the protein (`p.Pro1_?0`).
+//! - **A start loss written as a range, or not written** (divergence 15). `p.Met1?` is what HGVS
+//!   has for a change that loses the initiator, and VEP writes it for most of them; for a window of
+//!   more than one residue it writes the residue names of the whole window sharing one position
+//!   (`p.MetAla1_?2`), for an insertion in front of the initiator a range that runs backwards and
+//!   names the last residue of the protein (`p.Pro1_?0`), and for a deletion that begins in the 5'
+//!   UTR and runs into the start codon, which has no protein position to start from, nothing at
+//!   all. fastVEP writes `p.Met1?` for every one.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -179,6 +181,9 @@ enum Class {
     NoUtr,
     /// Divergence 15: `p.Met1?`, not a range.
     StartLossNotation,
+    /// Divergence 15, the second half: `p.Met1?` where VEP writes no HGVSp at all, for a deletion
+    /// that begins in the 5' UTR and runs into the start codon.
+    StartLossUnwritten,
 }
 
 /// Why a row that is not VEP's is not, or `None` when nothing documented explains it.
@@ -186,9 +191,13 @@ fn explain(v: &Row, f: &Row, differing: &[&str]) -> Option<Class> {
     let hgvsp = |r: &Row| r["HGVSp"].clone();
     // both call it a start loss and only the notation differs
     if has(v, "start_lost") && has(f, "start_lost") && differing == ["HGVSp"] {
-        let protein = v["HGVSp"].split(':').next()?;
+        let protein = f["HGVSp"].split(':').next()?;
+        let met1 = hgvsp(f) == format!("{protein}:p.Met1?");
+        if v["HGVSp"] == "-" {
+            return met1.then_some(Class::StartLossUnwritten);
+        }
         let range = v["HGVSp"].contains("_?");
-        return (range && hgvsp(f) == format!("{protein}:p.Met1?"))
+        return (range && met1 && v["HGVSp"].split(':').next() == Some(protein))
             .then_some(Class::StartLossNotation);
     }
     // VEP's start loss that is not one: the terms are VEP's less `start_lost`, and
@@ -257,7 +266,7 @@ const CORE: &[&str] = &[
 ];
 
 #[test]
-fn the_start_codon_columns_are_vep_s_but_for_two_documented_classes() {
+fn the_start_codon_columns_are_vep_s_but_for_the_documented_classes() {
     let (vep, fv) = (golden(), ours());
     let mut classes: BTreeMap<Class, usize> = BTreeMap::new();
     let mut unexplained = Vec::new();
@@ -303,6 +312,10 @@ fn the_start_codon_columns_are_vep_s_but_for_two_documented_classes() {
     // each class is there, so that a class that stopped happening is noticed too
     assert!(
         classes.get(&Class::StartLossNotation) > Some(&100),
+        "{classes:?}"
+    );
+    assert!(
+        classes.get(&Class::StartLossUnwritten) > Some(&100),
         "{classes:?}"
     );
     assert!(

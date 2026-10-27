@@ -118,6 +118,50 @@ const KNOWN: &[(&str, &str, &str, &str)] = &[
         "HGVSp",
         "ENSP00000000003.1:p.Met1?",
     ),
+    // a start loss that VEP leaves without a notation, and an insertion in front of the initiator
+    // that VEP calls a frameshift on a row that is only a 5' UTR variant (divergences 14 and 15)
+    (
+        "chr10_1093_AGCTGAGATGC/AGC",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+    ),
+    (
+        "chr10_1093_AGCTGAGATGC/AGC",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+    ),
+    (
+        "chr10_1095_CTGAGATG/CTG",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Met1?",
+    ),
+    (
+        "chr10_1095_CTGAGATG/CTG",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Met1?",
+    ),
+    (
+        "chr10_11295_GCACATCTGC/GCCGAAGC",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+    ),
+    (
+        "chr10_11299_ATCTG/ACCTGG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Met1?",
+    ),
+    (
+        "chr10_11299_ATCTG/ATGTGACTTCTG",
+        "ENST00000000003",
+        "HGVSp",
+        "-",
+    ),
 ];
 
 fn here(name: &str) -> PathBuf {

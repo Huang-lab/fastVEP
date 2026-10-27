@@ -12,6 +12,13 @@
 //! own position is in the CDS, and an insertion carried to the far side of a codon boundary is
 //! described against the residues there. The peptide-level shift that follows (HGVS counts from
 //! the first residue that differs) is a second, separate step in `fastvep_hgvs::protein`.
+//!
+//! Two things here are not Ensembl's, because what Ensembl writes in them is not the protein
+//! change of the variant (`docs/VEP_DIVERGENCE.md`):
+//!
+//! - **A change that loses the initiator is `p.Met1?`**, as HGVS has it, where Ensembl writes a
+//!   range, two residue names, or nothing ([`start_loss`]).
+//! - **A row with no term for the coding sequence has no protein notation** ([`is_only_a_utr_variant`]).
 
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -114,7 +121,61 @@ fn rotate(alt: &Allele, shift: u64, strand: Strand) -> Allele {
 }
 
 /// The HGVSp of one allele, `None` where Ensembl writes none.
+///
+/// Except for a change that loses the initiator, which has one whatever Ensembl does: HGVS names
+/// it `p.Met1?`, and Ensembl writes nothing for the ones it cannot place in the protein (a
+/// deletion that begins in the 5' UTR and runs into the start codon has no protein start, `?-1`).
+/// That is 138 of the 2,762 start-loss rows of the ClinVar 2-star+ sample, and 11,217 of the 96,350
+/// of complete transcripts in VEP 116.3's Ensembl cache run over 45,916 changes at the start and
+/// stop codons and exon edges of chr21 and chr22.
 pub fn hgvsp_for_allele(r: &HgvspRequest<'_>) -> Option<String> {
+    hgvsp_as_ensembl_writes_it(r).or_else(|| start_loss(r))
+}
+
+/// `p.Met1?` for a change the consequence code calls `start_lost`, in the protein it is a change of.
+fn start_loss(r: &HgvspRequest<'_>) -> Option<String> {
+    if !r.consequences.contains(&Consequence::StartLost)
+        || !(r.alt_allele.is_plain_bases() && r.ref_allele.is_plain_bases())
+    {
+        return None;
+    }
+    let first = *r.transcript.peptide.as_deref()?.as_bytes().first()?;
+    Some(format!(
+        "{}:p.{}1?",
+        r.transcript.versioned_protein_id()?,
+        fastvep_genome::codon::aa_one_to_three(first)
+    ))
+}
+
+/// Whether the change is in the UTR as it was written and has no term about the coding sequence:
+/// it touches no residue, however a 3'-rule moves it.
+fn is_only_a_utr_variant(consequences: &[Consequence]) -> bool {
+    use Consequence::*;
+    let in_utr = consequences
+        .iter()
+        .any(|c| matches!(c, FivePrimeUtrVariant | ThreePrimeUtrVariant));
+    let in_cds = consequences.iter().any(|c| {
+        matches!(
+            c,
+            StopGained
+                | FrameshiftVariant
+                | StopLost
+                | StartLost
+                | InframeInsertion
+                | InframeDeletion
+                | MissenseVariant
+                | ProteinAlteringVariant
+                | IncompleteTerminalCodonVariant
+                | StartRetainedVariant
+                | StopRetainedVariant
+                | SynonymousVariant
+                | CodingSequenceVariant
+        )
+    });
+    in_utr && !in_cds
+}
+
+fn hgvsp_as_ensembl_writes_it(r: &HgvspRequest<'_>) -> Option<String> {
     let transcript = r.transcript;
     // `return undef if variation_feature_seq =~ m/[^ACGT\-]/` for the allele, and the same
     // for the reference, whose peptide is the other half of the notation: with an `N` for
@@ -124,6 +185,19 @@ pub fn hgvsp_for_allele(r: &HgvspRequest<'_>) -> Option<String> {
         return None;
     }
     if !transcript.pre_coding(r.start, r.end) {
+        return None;
+    }
+    // Ensembl asks `pre_coding` of the two bases an insertion sits between and moves the change
+    // with the 3'-rule afterwards, so an insertion between the last base of the 5' UTR and the
+    // initiator that repeats the codon beside it has a protein change written for it
+    // (`p.Met1AsnfsTer?`, `p.Met1_Ala2insMet`, `p.Met1dup`) on a row whose consequence is
+    // `5_prime_UTR_variant` and nothing else: the consequence is of the change where the VCF puts
+    // it, the notation of the change where the 3'-rule moved it, and the row says both. A row with
+    // no term for the coding sequence gets no protein notation. 3,422 of the 350,819 UTR-only rows
+    // of VEP 116.3's Ensembl cache run (the complete transcripts of chr21 and chr22, 45,916 changes
+    // at the start and stop codons and exon edges) and 386 of the 52,001 of its RefSeq cache run;
+    // none of the 196,229 of the ClinVar 2-star+ sample or of the 1,500 of HG002.
+    if is_only_a_utr_variant(r.consequences) {
         return None;
     }
     let reference_translation = transcript.peptide.as_deref()?;
