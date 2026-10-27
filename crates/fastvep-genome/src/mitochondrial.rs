@@ -8,9 +8,13 @@ use crate::CodonTable;
 pub const MT_LENGTH: u64 = 16569;
 
 /// Returns true if the chromosome name indicates mitochondrial DNA.
+///
+/// Asked of every FASTA fetch and every codon table lookup, so it compares without making a
+/// lower-case copy of the name: the four names are ASCII, and no other string lower-cases to one.
 pub fn is_mitochondrial(chrom: &str) -> bool {
-    let c = chrom.to_lowercase();
-    c == "mt" || c == "chrm" || c == "chrmt" || c == "m"
+    ["mt", "chrm", "chrmt", "m"]
+        .iter()
+        .any(|name| chrom.eq_ignore_ascii_case(name))
 }
 
 /// Wrap a position around a circular genome of the given `length`.
@@ -56,6 +60,58 @@ mod tests {
         assert!(is_mitochondrial("M"));
         assert!(!is_mitochondrial("chr1"));
         assert!(!is_mitochondrial("chrX"));
+    }
+
+    /// What it answered when it lower-cased a copy of the name, for every spelling of the four
+    /// names in either case and for names that are not one.
+    #[test]
+    fn a_name_is_mitochondrial_as_it_was_when_a_lower_case_copy_was_compared() {
+        let before = |chrom: &str| {
+            let c = chrom.to_lowercase();
+            c == "mt" || c == "chrm" || c == "chrmt" || c == "m"
+        };
+        let mut names: Vec<String> = Vec::new();
+        for base in ["mt", "chrm", "chrmt", "m"] {
+            // every case of every letter
+            for mask in 0..(1u32 << base.len()) {
+                names.push(
+                    base.chars()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            if mask >> i & 1 == 1 {
+                                c.to_ascii_uppercase()
+                            } else {
+                                c
+                            }
+                        })
+                        .collect(),
+                );
+            }
+        }
+        for other in [
+            "",
+            "chr1",
+            "1",
+            "X",
+            "chrX",
+            "MTx",
+            "xMT",
+            "chr_M",
+            "M ",
+            " M",
+            "chrUn_KI270442v1",
+            "NC_012920.1",
+            "\u{ff2d}\u{ff34}",
+            "\u{212a}",
+            "m\u{0307}",
+            "chrm\u{0131}",
+        ] {
+            names.push(other.to_string());
+        }
+        for name in &names {
+            assert_eq!(is_mitochondrial(name), before(name), "{name:?}");
+        }
+        assert!(names.iter().filter(|n| is_mitochondrial(n)).count() > 30);
     }
 
     #[test]
