@@ -17,6 +17,25 @@ pub fn is_mitochondrial(chrom: &str) -> bool {
         .any(|name| chrom.eq_ignore_ascii_case(name))
 }
 
+/// Whether the contig is an organelle genome by its name: the mitochondrial names of
+/// [`is_mitochondrial`] and the spellings the other organisms of this repository's test data use
+/// for theirs (`Mito` for yeast, `mitochondrion_genome` for Drosophila, `Mt` and the plastid `Pt` for
+/// Arabidopsis; the case and a `chr` in front are not read).
+///
+/// What is read off the codons of a gene on the assumption of the standard genetic code of the
+/// nuclear genome is not to be trusted on such a contig: a yeast `Mito` gene that starts with `ATA`,
+/// which the standard code reads as Ile, was taken for one whose first codon is part-way through
+/// (`cds_start_NF`). [`is_mitochondrial`] still decides which table translates them, and the
+/// vertebrate mitochondrial table it picks is not every organism's.
+pub fn is_organelle_contig(chrom: &str) -> bool {
+    if is_mitochondrial(chrom) {
+        return true;
+    }
+    let lower = chrom.to_lowercase();
+    let name = lower.strip_prefix("chr").unwrap_or(&lower);
+    matches!(name, "mito" | "mitochondrion_genome" | "pt")
+}
+
 /// Wrap a position around a circular genome of the given `length`.
 ///
 /// Generalization of [`wrap_position`] for circular contigs whose length
@@ -112,6 +131,42 @@ mod tests {
             assert_eq!(is_mitochondrial(name), before(name), "{name:?}");
         }
         assert!(names.iter().filter(|n| is_mitochondrial(n)).count() > 30);
+    }
+
+    #[test]
+    fn test_is_organelle_contig() {
+        // the names of this repository's own test genomes: human and mouse `MT`, Arabidopsis `Mt`
+        // and `Pt`, Drosophila `mitochondrion_genome`, yeast `Mito`
+        for name in [
+            "MT",
+            "Mt",
+            "Pt",
+            "mitochondrion_genome",
+            "Mito",
+            "chrM",
+            "chrMT",
+            "M",
+            "chrMito",
+            "chrPt",
+        ] {
+            assert!(is_organelle_contig(name), "{name}");
+        }
+        for name in [
+            "1",
+            "chr1",
+            "X",
+            "II",
+            "IV",
+            "5",
+            "GL000008.2",
+            "KI270302.1",
+            "2L",
+            "3R",
+        ] {
+            assert!(!is_organelle_contig(name), "{name}");
+        }
+        // what translates with the vertebrate mitochondrial table is unchanged by this
+        assert!(is_mitochondrial("chrM") && !is_mitochondrial("Mito") && !is_mitochondrial("Pt"));
     }
 
     #[test]

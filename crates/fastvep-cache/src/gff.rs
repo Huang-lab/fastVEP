@@ -1426,7 +1426,8 @@ struct GffGene {
     symbol: Option<String>,
     biotype: String,
     /// Whether the record says what its biotype is (`gene_biotype` in RefSeq's, `biotype` in
-    /// Ensembl's) and `biotype` is not what [`default_gene_biotype`] makes of its SO term.
+    /// Ensembl's), as opposed to `biotype` being what [`default_gene_biotype`] makes of its SO term.
+    /// A record that states the biotype it would have been given anyway is stated.
     biotype_stated: bool,
     /// The record's `description`: Ensembl VEP calls a transcript of a gene described as a
     /// microRNA a `miRNA` when the transcript says nothing of its own ([`transcript_biotype`]).

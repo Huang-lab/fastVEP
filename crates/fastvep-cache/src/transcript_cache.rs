@@ -13,11 +13,14 @@ use std::time::SystemTime;
 
 /// Magic header for zstd-compressed caches (current format).
 ///
-/// Like V3 to V8 before it, V9 differs from its predecessor in nothing but the
-/// guarantee it carries: every V9 cache was written by a build that stops on a CDS whose
-/// phase is not one and leaves out a transcript whose exons overlap, where V8's read the first
-/// as a count of `u64::MAX` bases to pad a codon with and kept the second. See
-/// [`load_cache_zstd`] for why that has to be a format bump rather than a note in the changelog.
+/// Like V3 to V9 before it, V10 differs from its predecessor in nothing but the
+/// guarantee it carries: every V10 cache was written by a build that does not read the CDS flags
+/// and the initiator `Met` of an Ensembl export off the codons of an organelle genome with the
+/// standard genetic code, as V9's did. See [`load_cache_zstd`] for why that has to be a format bump
+/// rather than a note in the changelog.
+const CACHE_MAGIC_V10: &[u8; 8] = b"FSTVEP10";
+/// Magic header for zstd caches written before the organelle rule (rejected, see
+/// [`load_cache_zstd`]).
 const CACHE_MAGIC_V9: &[u8; 8] = b"FSTVEP09";
 /// Magic header for zstd caches written before the GFF3 phase and exon checks (rejected, see
 /// [`load_cache_zstd`]).
@@ -54,6 +57,21 @@ const DETAIL_PRE_90: &str = "Caches written between 2026-06-10 (the tabix read \
      run - the #87 failure, which reported 47,196 of 47,196 chr17 variants as \
      intergenic at exit code 0. Nothing in the file distinguishes the two, so it \
      is rejected rather than read.";
+
+/// One line naming what is wrong with a pre-organelle-rule cache.
+const SUMMARY_PRE_ORGANELLE: &str = "predates the organelle rule and may hold CDS flags read off \
+     the codons of a mitochondrial or plastid contig with the standard genetic code";
+
+/// The evidence behind [`SUMMARY_PRE_ORGANELLE`], for the caller that has to stop.
+const DETAIL_PRE_ORGANELLE: &str = "The reader that wrote it set `cds_start_NF`, `cds_end_NF` and \
+     the initiator `Met` of an Ensembl GFF3 export from the codons of every contig but the \
+     vertebrate mitochondrial ones it knew by name (`MT`, `chrM`), with the standard genetic \
+     code. A yeast `Mito` gene that starts with `ATA`, which that genome's code reads as a start \
+     and the standard one as Ile, was flagged `cds_start_NF`, an incomplete transcript, and a \
+     change in its first codon was a `missense_variant` and not a `start_lost`; the contigs \
+     `mitochondrion_genome`, `Mt` and `Pt` were read the same way. A cache built from a GFF3 \
+     with no such contig is unchanged by the rebuild, and nothing in the file says which it \
+     is, so it is rejected rather than read.";
 
 /// One line naming what is wrong with a pre-GFF3-checks cache.
 const SUMMARY_PRE_GFF_CHECKS: &str = "predates the GFF3 phase and exon checks and may hold \
@@ -260,7 +278,7 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
 
     // Write magic header
     use std::io::Write;
-    zst.write_all(CACHE_MAGIC_V9)?;
+    zst.write_all(CACHE_MAGIC_V10)?;
 
     // Serialize with bincode
     bincode::serialize_into(&mut zst, transcripts)
@@ -348,6 +366,12 @@ pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
 /// sidecar path does automatically; reading costs a silently wrong annotation
 /// that nothing downstream can detect. Same trade as #88's decision to error
 /// rather than annotate against an empty transcript set.
+///
+/// `FSTVEP09` is rejected on the same grounds: the reader that wrote it flagged the genes of a
+/// yeast `Mito` contig that start with `ATA` `cds_start_NF`, and the sidecar path reuses a cache
+/// whenever it is newer than its GFF3, so without a bump an upgrade leaves the flag in every row of
+/// them. A V9 cache loads cleanly; it just has the flag, which is indistinguishable from an
+/// annotation that really called the transcript incomplete.
 ///
 /// `FSTVEP08` is rejected on the same grounds: the parser that wrote it read a CDS phase of `.`
 /// as `u64::MAX` bases of padding and kept a transcript whose exons overlap, and the sidecar
@@ -454,8 +478,16 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
         }
         .into());
     }
-    if &magic != CACHE_MAGIC_V9 {
-        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP09)");
+    if &magic == CACHE_MAGIC_V9 {
+        return Err(StaleCacheFormat {
+            found: "FSTVEP09",
+            summary: SUMMARY_PRE_ORGANELLE,
+            detail: DETAIL_PRE_ORGANELLE,
+        }
+        .into());
+    }
+    if &magic != CACHE_MAGIC_V10 {
+        anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP10)");
     }
 
     let transcripts: Vec<Transcript> = bincode::deserialize_from(&mut zst)
@@ -777,6 +809,15 @@ mod tests {
         zst.finish().unwrap().flush().unwrap();
     }
 
+    fn write_v9_cache(path: &Path, transcripts: &[Transcript]) {
+        use std::io::Write;
+        let file = File::create(path).unwrap();
+        let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+        zst.write_all(CACHE_MAGIC_V9).unwrap();
+        bincode::serialize_into(&mut zst, transcripts).unwrap();
+        zst.finish().unwrap().flush().unwrap();
+    }
+
     fn write_v8_cache(path: &Path, transcripts: &[Transcript]) {
         use std::io::Write;
         let file = File::create(path).unwrap();
@@ -964,6 +1005,32 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_organelle_cache_is_rejected_rather_than_read() {
+        // A well-formed FSTVEP09 cache. What it cannot show is that the reader which wrote it
+        // flagged the genes of an organelle contig incomplete by the standard genetic code. The
+        // sidecar path reuses a cache that is newer than its GFF3, so without this rejection
+        // upgrading would change nothing for anyone who had already run the tool on such a file.
+        let tmp = NamedTempFile::new().unwrap();
+        write_v9_cache(tmp.path(), &make_transcripts());
+
+        let err = load_cache(tmp.path()).expect_err("FSTVEP09 must not load");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("FSTVEP09"),
+            "the error should name the format found, got: {msg}"
+        );
+        assert!(
+            msg.contains("Mito") && msg.contains("cds_start_NF"),
+            "the error should say what goes wrong if it were read, got: {msg}"
+        );
+        assert!(
+            !msg.contains("intergenic"),
+            "V9 is whole-file; the #90 reason would send the user after the wrong \
+             problem, got: {msg}"
+        );
+    }
+
+    #[test]
     fn a_pre_gff_checks_cache_is_rejected_rather_than_read() {
         // A well-formed FSTVEP08 cache: whole-file, transcript count fine. What it cannot show is
         // that the parser which wrote it padded a codon with `u64::MAX` bases for a CDS with no
@@ -1060,7 +1127,7 @@ mod tests {
     }
 
     #[test]
-    fn the_published_magic_is_v9() {
+    fn the_published_magic_is_v10() {
         // Pin the on-disk byte, so a future change to the writer that forgets
         // the reader shows up here rather than in someone's annotation.
         use std::io::Read;
@@ -1070,6 +1137,6 @@ mod tests {
         let mut zst = zstd::Decoder::new(BufReader::new(File::open(tmp.path()).unwrap())).unwrap();
         let mut magic = [0u8; 8];
         zst.read_exact(&mut magic).unwrap();
-        assert_eq!(&magic, CACHE_MAGIC_V9, "published magic drifted from V9");
+        assert_eq!(&magic, CACHE_MAGIC_V10, "published magic drifted from V10");
     }
 }

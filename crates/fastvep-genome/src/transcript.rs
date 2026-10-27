@@ -128,7 +128,8 @@ pub struct Transcript {
     /// the CDS is in hand, and sets `flags` and `initiator_met`.
     ///
     /// False for a GFF3 that carries its own flags (GENCODE's), which are taken as they are, and
-    /// for RefSeq's, whose cache has none.
+    /// for RefSeq's, whose cache has none. Also not applied on the contig of an organelle genome
+    /// (`mitochondrial::is_organelle_contig`), whatever the file is.
     #[serde(default)]
     pub cds_flags_from_sequence: bool,
     /// The annotation tags it a readthrough transcript, one that spans two genes. Ensembl VEP's
@@ -530,7 +531,7 @@ impl Transcript {
                 // often as `ATG` and they have no UTR, which is what the reading below takes for
                 // an unconfirmed start.
                 if self.cds_flags_from_sequence
-                    && !crate::mitochondrial::is_mitochondrial(&self.chromosome)
+                    && !crate::mitochondrial::is_organelle_contig(&self.chromosome)
                 {
                     self.read_ensembl_cds_state(translateable.as_bytes(), &codon_table);
                 }
@@ -577,6 +578,16 @@ impl Transcript {
     ///   twelve of the 14 have a UTR and are found, the other two are read as unconfirmed above.
     ///   `TTG` is the fourth codon of the usual list, and none of the cache's complete transcripts
     ///   starts with it, so it is not assumed.
+    ///
+    /// **Where it was checked.** Against the nuclear genes of human GRCh38 chr21 and chr22 and
+    /// nowhere else. It is applied to the nuclear genes of every GFF3 that is an Ensembl export
+    /// (a transcript named `transcript:...` with no NF tag), human or not, and the rules are about
+    /// codons and a UTR, not about an organism, but no other organism's cache has been read
+    /// against them. It is not applied to a contig that is an organelle genome by its name
+    /// ([`crate::mitochondrial::is_organelle_contig`]), whose genes start with `ATA` or `GTG` as
+    /// the code of the organelle says and not as the standard one does: a yeast `Mito` gene that
+    /// starts with `ATA` was flagged `cds_start_NF`. Called again for a transcript that has
+    /// been through it, it says what it said.
     fn read_ensembl_cds_state(&mut self, translateable: &[u8], table: &CodonTable) {
         let first = translateable.first_chunk::<3>();
         let has_five_prime_utr = self.cdna_coding_start.is_some_and(|start| start > 1);
@@ -586,11 +597,15 @@ impl Transcript {
             && translateable
                 .last_chunk::<3>()
                 .is_some_and(|codon| table.is_stop(codon));
-        if start_unconfirmed {
-            self.flags.push("cds_start_NF".to_string());
-        }
-        if !end_in_frame_stop {
-            self.flags.push("cds_end_NF".to_string());
+        // Said once: the sequences of a transcript are built again when a run needs them and the
+        // transcript has been through a build before, and a flag twice is two flags in the FLAGS cell
+        for (unconfirmed, flag) in [
+            (start_unconfirmed, "cds_start_NF"),
+            (!end_in_frame_stop, "cds_end_NF"),
+        ] {
+            if unconfirmed && !self.flags.iter().any(|f| f == flag) {
+                self.flags.push(flag.to_string());
+            }
         }
         if !start_unconfirmed && matches!(first, Some(b"CTG" | b"GTG" | b"ACG")) {
             self.initiator_met = true;
@@ -1668,6 +1683,56 @@ mod tests {
         // mitochondrial genes have no UTR and start with ATA and ATT as often as ATG
         let t = built("ATTAAATGGTAA", 0, 0, true, "chrM");
         assert!(t.flags.is_empty(), "{:?}", t.flags);
+    }
+
+    /// The CDS flags and the initiator `Met` of an Ensembl export are read off the codons with the
+    /// standard genetic code, which an organelle genome does not use: a yeast `Mito` gene that starts
+    /// with `ATA` was flagged `cds_start_NF`, and so was any other that does not start with `ATG`
+    /// with no UTR above it. The contigs of this repository's own test genomes are the ones named.
+    #[test]
+    fn the_flags_of_an_organelle_contig_are_not_read_off_the_standard_code() {
+        for chrom in ["Mito", "Mt", "Pt", "mitochondrion_genome", "MT", "chrM"] {
+            // `ATA` with nothing above it, and a `GTG` with a UTR above it and no stop
+            let t = built("ATAAAATGGTAA", 0, 0, true, chrom);
+            assert!(t.flags.is_empty(), "{chrom}: {:?}", t.flags);
+            let t = built("GTGAAATGGTTT", 5, 0, true, chrom);
+            assert!(t.flags.is_empty(), "{chrom}: {:?}", t.flags);
+            assert!(!t.initiator_met, "{chrom}");
+        }
+        // the same transcripts on a nuclear contig are read as they were
+        let t = built("ATAAAATGGTAA", 0, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF"]);
+        let t = built("GTGAAATGGTTT", 5, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_end_NF"]);
+        assert!(
+            t.initiator_met,
+            "its start is complete, with a UTR above it"
+        );
+        let t = built("GTGAAATGGTAA", 5, 0, true, "II");
+        assert!(t.initiator_met && t.flags.is_empty());
+    }
+
+    /// Building the sequences of a transcript that has been through it says what it said: the flags
+    /// are not said twice.
+    #[test]
+    fn reading_the_cds_state_twice_is_reading_it_once() {
+        let seq = "GCTAAATGGTTTCCCCCCCCCC".to_string();
+        let mut t = built("GCTAAATGGTTT", 0, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF", "cds_end_NF"]);
+        // the second build starts from what the first left, as a cache that is built on does
+        t.build_sequences(|_chrom, start, end| {
+            Ok(seq.as_bytes()[start as usize - 1..end as usize].to_vec())
+        })
+        .unwrap();
+        assert_eq!(t.flags, ["cds_start_NF", "cds_end_NF"]);
+        let mut u = built("CTGAAATGGTAA", 5, 0, true, "chr1");
+        let before = (u.flags.clone(), u.initiator_met);
+        let seq = "CCCCCCTGAAATGGTAACCCCCCCCCC".to_string();
+        u.build_sequences(|_chrom, start, end| {
+            Ok(seq.as_bytes()[start as usize - 1..end as usize].to_vec())
+        })
+        .unwrap();
+        assert_eq!((u.flags, u.initiator_met), before);
     }
 
     /// Residue 1 is `M` in two ways and Ensembl VEP keeps them apart. `Transcript::translate`

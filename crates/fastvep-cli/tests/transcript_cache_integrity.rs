@@ -260,7 +260,7 @@ fn a_pre_90_sidecar_cache_is_rebuilt_rather_than_trusted() {
             .unwrap();
     }
     assert_eq!(
-        &magic, b"FSTVEP09",
+        &magic, b"FSTVEP10",
         "rebuild should publish the current format"
     );
 }
@@ -736,6 +736,16 @@ fn a_pre_gff_checks_sidecar_cache_is_rebuilt_rather_than_trusted() {
         second.contains("ENST_A") && !second.contains("ENST_FROM_THE_STALE_CACHE"),
         "the run trusted a pre-GFF3-checks cache; got:\n{second}"
     );
+
+    // and the one after it, whose reader read the CDS flags of an organelle contig off the
+    // standard genetic code
+    write_cache_in_format(&sidecar, b"FSTVEP09", &transcripts);
+    make_fresh(&sidecar);
+    let third = run(&dir.path().join("third.vcf"));
+    assert!(
+        third.contains("ENST_A") && !third.contains("ENST_FROM_THE_STALE_CACHE"),
+        "the run trusted a pre-organelle cache; got:\n{third}"
+    );
 }
 
 /// A cache named on the command line has no GFF3 to be rebuilt from, so a cache of a format that
@@ -747,6 +757,7 @@ fn an_explicit_transcript_cache_of_a_stale_format_stops_the_run_and_says_why() {
     for (magic, format, reason) in [
         (b"FSTVEP07", "FSTVEP07", "EntrezGene"),
         (b"FSTVEP08", "FSTVEP08", "no phase"),
+        (b"FSTVEP09", "FSTVEP09", "Mito"),
     ] {
         let dir = TempDir::new().unwrap();
         let gff3 = write_gff3(dir.path());
