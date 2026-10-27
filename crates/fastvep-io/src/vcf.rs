@@ -24,6 +24,13 @@ impl<R: Read> VcfParser<R> {
             if bytes == 0 {
                 break;
             }
+            // A byte order mark in front of the first line is not part of it (Windows editors
+            // write one), and left in place it made `##fileformat` a data line.
+            if header_lines.is_empty() {
+                if let Some(rest) = line_buf.strip_prefix('\u{feff}') {
+                    line_buf = rest.to_string();
+                }
+            }
             let trimmed = line_buf.trim_end();
             if trimmed.starts_with('#') {
                 header_lines.push(trimmed.to_string());
@@ -50,26 +57,30 @@ impl<R: Read> VcfParser<R> {
     /// A multi-allelic line may return multiple VariationFeatures if
     /// minimal mode is used in the future.
     pub fn next_variant(&mut self) -> Result<Option<VariationFeature>> {
-        if self.line_buf.is_empty() {
-            self.line_buf.clear();
-            let bytes = self.reader.read_line(&mut self.line_buf)?;
-            if bytes == 0 {
-                return Ok(None);
+        // A blank line or a comment among the records is skipped, however many there are in a
+        // row: this used to call itself for each, and a file with a long run of them was a stack
+        // overflow.
+        loop {
+            if self.line_buf.is_empty() {
+                let bytes = self.reader.read_line(&mut self.line_buf)?;
+                if bytes == 0 {
+                    return Ok(None);
+                }
             }
+
+            // Trim in-place to avoid allocating a new String
+            let trimmed_len = self.line_buf.trim_end().len();
+            self.line_buf.truncate(trimmed_len);
+
+            if self.line_buf.is_empty() || self.line_buf.starts_with('#') {
+                self.line_buf.clear();
+                continue;
+            }
+
+            let result = parse_vcf_line(&self.line_buf).map(Some);
+            self.line_buf.clear(); // consumed
+            return result;
         }
-
-        // Trim in-place to avoid allocating a new String
-        let trimmed_len = self.line_buf.trim_end().len();
-        self.line_buf.truncate(trimmed_len);
-
-        if self.line_buf.is_empty() || self.line_buf.starts_with('#') {
-            self.line_buf.clear();
-            return self.next_variant();
-        }
-
-        let result = parse_vcf_line(&self.line_buf).map(Some);
-        self.line_buf.clear(); // consumed
-        result
     }
 
     /// Read all variants into a Vec.
@@ -97,27 +108,52 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         anyhow::bail!("VCF POS field is 0 (must be 1-based): {}", line);
     }
     let id = fields[2];
-    let ref_str = fields[3];
-    if ref_str.is_empty() {
+    // What the record says, as it was written: it goes back out in a VCF and names the variant in
+    // `Uploaded_variation`. The alleles that are annotated are upper-cased below.
+    let ref_given = fields[3];
+    if ref_given.is_empty() {
         anyhow::bail!("VCF REF field is empty: {}", line);
     }
     let alt_str = fields[4];
     if alt_str.is_empty() {
         anyhow::bail!("VCF ALT field is empty: {}", line);
     }
+    let ref_str = upper_bases(ref_given);
+    let ref_str = ref_str.as_ref();
     let qual = fields[5];
     let filter = fields[6];
     let info = fields[7];
 
     let rest: Vec<String> = fields[8..].iter().map(|s| s.to_string()).collect();
 
-    // Parse alt alleles (split on comma)
-    let raw_alts: Vec<&str> = alt_str.split(',').collect();
+    // Parse alt alleles (split on comma). Ensembl upper-cases the alleles it reads, and so does
+    // this: a lower-case `c` was not the `C` of the genome, so a lone SNV was a
+    // `sequence_alteration`, an indel with a lower-case base was not minimised, and the HGVS
+    // description carried the lower-case letters (`c.-393g>c`).
+    //
+    // An ALT that is empty is not an allele (`A,`), and one that repeats the reference or an
+    // earlier ALT is not another: Ensembl writes no row for the first and one row for the second,
+    // and a placeholder (`.`) here is exactly that, in its place, so that the numbers of the ALTs
+    // that follow it (a genotype's) are the VCF's.
+    let mut raw_alts: Vec<String> = Vec::new();
+    for alt in alt_str.split(',') {
+        if alt.is_empty() {
+            anyhow::bail!("VCF ALT field has an empty allele: {}", line);
+        }
+        let alt = upper_bases(alt);
+        let repeats =
+            alt != "." && (alt == ref_str || raw_alts.iter().any(|earlier| *earlier == alt));
+        raw_alts.push(if repeats {
+            ".".to_string()
+        } else {
+            alt.into_owned()
+        });
+    }
 
     // Determine start/end and normalize alleles
     let mut start = pos;
     let mut ref_allele_str = ref_str.to_string();
-    let mut alt_allele_strs: Vec<String> = raw_alts.iter().map(|s| s.to_string()).collect();
+    let mut alt_allele_strs: Vec<String> = raw_alts.clone();
 
     // An ALT that asserts no alternate sequence: `.`, and GATK's `<NON_REF>` and `<*>`, which
     // stand for "any other allele" in a gVCF. Each is its own allele, alone in a record or
@@ -259,7 +295,7 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         chrom: chrom.to_string(),
         pos,
         id: id.to_string(),
-        ref_allele: ref_str.to_string(),
+        ref_allele: ref_given.to_string(),
         alt: alt_str.to_string(),
         qual: qual.to_string(),
         filter: filter.to_string(),
@@ -306,6 +342,18 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     })
+}
+
+/// An allele written in bases, upper-cased; anything else (`*`, `.`, a symbolic allele, a
+/// breakend) as it is.
+fn upper_bases(allele: &str) -> std::borrow::Cow<'_, str> {
+    if allele.bytes().any(|b| b.is_ascii_lowercase())
+        && allele.bytes().all(|b| b.is_ascii_alphabetic())
+    {
+        std::borrow::Cow::Owned(allele.to_ascii_uppercase())
+    } else {
+        std::borrow::Cow::Borrowed(allele)
+    }
 }
 
 /// Ensembl's `trim_sequences` (`Utils::Sequence`) with its default order: the bases the two
@@ -428,6 +476,113 @@ mod tests {
         assert_eq!(vf.ref_allele, Allele::Sequence(b"A".to_vec()));
         assert_eq!(vf.alt_alleles, vec![Allele::Sequence(b"G".to_vec())]);
         assert_eq!(vf.variation_name, Some("rs1".to_string()));
+    }
+
+    /// Ensembl upper-cases what it reads; the record keeps its own spelling for the file it
+    /// goes back out in and for `Uploaded_variation`.
+    #[test]
+    fn lower_case_alleles_are_annotated_as_upper_case_and_the_record_keeps_its_spelling() {
+        let vf = parse_vcf_line("1\t100\t.\tg\tc\t.\tPASS\t.").unwrap();
+        assert_eq!(vf.allele_string, "G/C");
+        assert_eq!(vf.ref_allele, Allele::Sequence(b"G".to_vec()));
+        assert_eq!(vf.alt_alleles, vec![Allele::Sequence(b"C".to_vec())]);
+        assert_eq!(vf.variant_type, VariantType::Snv);
+        let fields = vf.vcf_fields.unwrap();
+        assert_eq!(
+            (fields.ref_allele.as_str(), fields.alt.as_str()),
+            ("g", "c")
+        );
+
+        // mixed case, a multi-allelic record, and the symbols that are not bases
+        let vf = parse_vcf_line("1\t100\t.\tAc\tat,<DEL>,*,.\t.\tPASS\t.").unwrap();
+        assert_eq!(vf.ref_allele, Allele::Sequence(b"AC".to_vec()));
+        assert_eq!(vf.alt_alleles[0], Allele::Sequence(b"AT".to_vec()));
+        assert_eq!(vf.allele_string, "AC/AT/<DEL>/*/.");
+    }
+
+    /// An indel with a lower-case base is the indel its upper-case twin is, minimised and all:
+    /// it used to keep its anchor and stay a `sequence_alteration`.
+    #[test]
+    fn a_lower_case_indel_is_the_indel_its_upper_case_twin_is() {
+        let site = |reference: &str, alt: &str| {
+            let vf = parse_vcf_line(&format!("1\t100\t.\t{reference}\t{alt}\t.\tPASS\t.")).unwrap();
+            (
+                vf.position.start,
+                vf.position.end,
+                vf.ref_allele.to_string(),
+                vf.alt_alleles[0].to_string(),
+                vf.variant_type,
+            )
+        };
+        for (r, a) in [("C", "cac"), ("cag", "c"), ("CAGT", "cT"), ("ca", "CTA")] {
+            assert_eq!(
+                site(r, a),
+                site(&r.to_ascii_uppercase(), &a.to_ascii_uppercase()),
+                "{r} {a}"
+            );
+        }
+        assert_eq!(
+            site("C", "cac"),
+            (101, 100, "-".into(), "AC".into(), VariantType::Insertion)
+        );
+    }
+
+    /// An ALT that repeats the reference makes no allele (Ensembl writes no row for it) and one that
+    /// repeats an earlier ALT is no other: each is the placeholder, in its place, so the ALTs that
+    /// follow it keep the numbers the VCF gives them.
+    #[test]
+    fn an_alt_that_repeats_the_reference_or_an_earlier_alt_is_a_placeholder() {
+        let vf = parse_vcf_line("1\t100\t.\tT\tT\t.\tPASS\t.").unwrap();
+        assert_eq!(vf.alt_alleles, vec![Allele::Missing]);
+
+        let vf = parse_vcf_line("1\t100\t.\tT\tC,C\t.\tPASS\t.").unwrap();
+        assert_eq!(
+            vf.alt_alleles,
+            vec![Allele::Sequence(b"C".to_vec()), Allele::Missing]
+        );
+
+        // the second ALT is the first in another case, and the third is a real one
+        let vf = parse_vcf_line("1\t100\t.\tT\tc,C,G\t.\tPASS\t.").unwrap();
+        assert_eq!(
+            vf.alt_alleles,
+            vec![
+                Allele::Sequence(b"C".to_vec()),
+                Allele::Missing,
+                Allele::Sequence(b"G".to_vec())
+            ]
+        );
+        // a repeat of the reference beside a real ALT, in an indel record, leaves the real one
+        let vf = parse_vcf_line("1\t100\t.\tCA\tCA,C\t.\tPASS\t.").unwrap();
+        assert_eq!(vf.alt_alleles[0], Allele::Missing);
+        assert_eq!(vf.alt_alleles[1], Allele::Deletion);
+    }
+
+    #[test]
+    fn an_empty_member_of_the_alt_list_is_not_an_allele() {
+        for alt in ["A,", ",A", "A,,C", ","] {
+            let err = parse_vcf_line(&format!("1\t100\t.\tT\t{alt}\t.\tPASS\t.")).unwrap_err();
+            assert!(format!("{err}").contains("empty allele"), "{alt}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_byte_order_mark_is_not_part_of_the_first_line() {
+        let text = "\u{feff}##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n1\t100\t.\tT\tC\t.\t.\t.\n";
+        let mut parser = VcfParser::new(text.as_bytes()).unwrap();
+        assert_eq!(parser.header_lines()[0], "##fileformat=VCFv4.2");
+        assert_eq!(parser.next_variant().unwrap().unwrap().position.start, 100);
+    }
+
+    /// A long run of blank lines and comments among the records is skipped with no depth to it.
+    #[test]
+    fn a_long_run_of_blank_lines_and_comments_is_skipped() {
+        let mut text =
+            String::from("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n");
+        text.push_str(&"\n#a comment\n".repeat(400_000));
+        text.push_str("1\t100\t.\tT\tC\t.\t.\t.\n");
+        let mut parser = VcfParser::new(text.as_bytes()).unwrap();
+        assert_eq!(parser.next_variant().unwrap().unwrap().position.start, 100);
+        assert!(parser.next_variant().unwrap().is_none());
     }
 
     #[test]

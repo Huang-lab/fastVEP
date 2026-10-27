@@ -232,55 +232,99 @@ fn normalised(column: &str, value: &str) -> String {
     }
 }
 
+/// `tab` is what a run with `flags` wrote: its known-variant columns, and their order, are those of
+/// the golden file of the same name, which is what VEP wrote.
+fn assert_vep_s_cells(name: &str, flags_note: &str, tab: &str) {
+    let (want_columns, want) = golden(name);
+    let (got_columns, got) = parse_tab(tab);
+
+    assert_eq!(
+        got_columns, want_columns,
+        "{name} {flags_note}: the known-variant columns, or their order, differ from VEP's"
+    );
+    assert_eq!(got.len(), want.len(), "{name} {flags_note}: rows written");
+
+    let wrong: Vec<String> = want
+        .iter()
+        .filter_map(|(row, cells)| {
+            let ours = got.get(row)?;
+            let differing: Vec<String> = cells
+                .keys()
+                .chain(ours.keys())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .filter(|c| {
+                    normalised(c, cells.get(*c).map_or("-", String::as_str))
+                        != normalised(c, ours.get(*c).map_or("-", String::as_str))
+                })
+                .map(|c| {
+                    format!(
+                        "{c}: VEP {:?}, here {:?}",
+                        cells.get(c.as_str()),
+                        ours.get(c.as_str())
+                    )
+                })
+                .collect();
+            (!differing.is_empty()).then(|| format!("{row:?} {}", differing.join("; ")))
+        })
+        .collect();
+    let missing: Vec<&Row> = want.keys().filter(|k| !got.contains_key(*k)).collect();
+    assert!(
+        missing.is_empty() && wrong.is_empty(),
+        "{name} {flags_note}: {} of {} rows differ from VEP's answer ({} not written), first ten:\n{}",
+        wrong.len() + missing.len(),
+        want.len(),
+        missing.len(),
+        wrong
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
 #[test]
 fn every_set_of_flags_writes_the_cells_vep_wrote_in_the_order_it_wrote_them() {
     for (name, flags) in sets() {
-        let (want_columns, want) = golden(name);
-        let (got_columns, got) = parse_tab(&run("tab", flags));
+        assert_vep_s_cells(name, "", &run("tab", flags));
+    }
+}
 
-        assert_eq!(
-            got_columns, want_columns,
-            "{name}: the known-variant columns, or their order, differ from VEP's"
-        );
-        assert_eq!(got.len(), want.len(), "{name}: rows written");
-
-        let wrong: Vec<String> = want
-            .iter()
-            .filter_map(|(row, cells)| {
-                let ours = got.get(row)?;
-                let differing: Vec<String> = cells
-                    .keys()
-                    .chain(ours.keys())
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .filter(|c| {
-                        normalised(c, cells.get(*c).map_or("-", String::as_str))
-                            != normalised(c, ours.get(*c).map_or("-", String::as_str))
-                    })
-                    .map(|c| {
-                        format!(
-                            "{c}: VEP {:?}, here {:?}",
-                            cells.get(c.as_str()),
-                            ours.get(c.as_str())
-                        )
-                    })
-                    .collect();
-                (!differing.is_empty()).then(|| format!("{row:?} {}", differing.join("; ")))
-            })
-            .collect();
-        let missing: Vec<&Row> = want.keys().filter(|k| !got.contains_key(*k)).collect();
-        assert!(
-            missing.is_empty() && wrong.is_empty(),
-            "{name}: {} of {} rows differ from VEP's answer ({} not written), first ten:\n{}",
-            wrong.len() + missing.len(),
-            want.len(),
-            missing.len(),
-            wrong
-                .iter()
-                .take(10)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\n")
+/// VEP upper-cases the alleles it reads, so a VCF written in lower case (a soft-masked reference
+/// is where they come from) gets the same answer as its upper-case twin: here the cells of every
+/// golden file, for the sets that read the alleles. `known_cells` compares the input's alleles
+/// with the cache's, which are upper case, and used to find `CLIN_SIG` for none of the lower-case
+/// ones that VEP finds it for.
+#[test]
+fn a_vcf_written_in_lower_case_gets_vep_s_cells() {
+    let text = std::fs::read_to_string(world().join("in.vcf")).unwrap();
+    let lowered: String = text
+        .lines()
+        .map(|l| {
+            if l.starts_with('#') {
+                l.to_string()
+            } else {
+                let mut f: Vec<String> = l.split('\t').map(String::from).collect();
+                f[3] = f[3].to_ascii_lowercase();
+                f[4] = f[4].to_ascii_lowercase();
+                f.join("\t")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    assert_ne!(lowered, text);
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("lower.vcf");
+    std::fs::write(&input, lowered).unwrap();
+    for (name, flags) in sets() {
+        let out = dir.path().join(format!("out_{name}.tab"));
+        run_annotate(config(&input, &out, "tab", flags)).expect("annotation");
+        assert_vep_s_cells(
+            name,
+            "on a lower-case input",
+            &std::fs::read_to_string(&out).unwrap(),
         );
     }
 }
