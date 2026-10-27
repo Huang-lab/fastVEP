@@ -205,6 +205,8 @@ fn parse_gff3_lines(
     // The position of a transcript record in the file, which settles which of two equally long
     // transcripts of a RefSeq gene is canonical ([`derive_refseq_canonical`]).
     let mut transcript_order = 0usize;
+    // CDS records with no phase (`.`), which are read as phase 0 and said so once.
+    let mut cds_without_phase = 0usize;
 
     for line in lines {
         let line = line?;
@@ -251,8 +253,10 @@ fn parse_gff3_lines(
             "-" => Strand::Reverse,
             _ => Strand::Forward,
         };
-        // Phase is allowed to be "." in GFF3 (no phase); use -1 sentinel.
-        let phase: i8 = fields[7].parse().unwrap_or(-1);
+        // Phase is allowed to be "." in GFF3 (no phase); use -1 sentinel. What is not a phase at all
+        // is only an error for a CDS record, the only one whose phase is read (below).
+        let parsed_phase = parse_phase(fields[7]);
+        let phase: i8 = parsed_phase.unwrap_or(-1);
         let attrs = parse_attributes(fields[8]);
 
         match feature_type {
@@ -426,6 +430,23 @@ fn parse_gff3_lines(
                     .strip_prefix("transcript:")
                     .unwrap_or(&parent)
                     .to_string();
+                // Ensembl VEP stops on a CDS phase that is not -1, 0, 1 or 2 (`Bad value (x) for exon
+                // phase`), and reads `.` as no phase. A CDS record with a phase that is not one of
+                // those is not read as phase 0 and given a reading frame it may not have.
+                match parsed_phase {
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "GFF3: the CDS record {seqid}:{start}-{end} of `{parent}` has the phase \
+                             `{}`, which is not 0, 1, 2 or `.`. Ensembl VEP stops on it too \
+                             (`Bad value for exon phase. Should only be -1,0,1,2`). Correct the \
+                             file: the phase is what says where the first codon of an incomplete \
+                             CDS begins.",
+                            fields[7]
+                        ));
+                    }
+                    Some(-1) => cds_without_phase += 1,
+                    Some(_) => {}
+                }
                 // Protein ID: prefer explicit protein_id attribute (NCBI format),
                 // then fall back to ID with prefix stripping (Ensembl format)
                 let protein_id = attrs
@@ -610,6 +631,8 @@ fn parse_gff3_lines(
     let mut refseq_genes: HashMap<&str, Vec<(usize, &GffTranscript)>> = HashMap::new();
     let empty_exons: Vec<GffExon> = Vec::new();
     let empty_cds: Vec<GffCds> = Vec::new();
+    // The transcripts left out because two of their exons overlap, with the two.
+    let mut overlapping: Vec<OverlappingExons> = Vec::new();
 
     for (tid, gff_tr) in &transcripts {
         let gene = genes.get(&gff_tr.parent_gene);
@@ -667,6 +690,19 @@ fn parse_gff3_lines(
             Strand::Reverse => tr_exons.sort_by_key(|e| std::cmp::Reverse(e.start)),
         }
 
+        // Exons that overlap have no cDNA position to be mapped to: a base would be in two of
+        // them. Checked on Ensembl VEP 116.3: where the exons carry no `rank`, as RefSeq's do, it
+        // leaves the transcript out with a warning (`Failed to add exon to transcript`); where they
+        // do, as Ensembl's do, it keeps the transcript, calls a coding base `5_prime_UTR_variant,
+        // 3_prime_UTR_variant` and stops with an exception (`First part of exon maps into gap`)
+        // under `--hgvs`. 0 of the 509,650 transcripts of Ensembl 115's GFF3 have any, so this is
+        // a damaged file, and the transcript is left out with a warning, never given a spliced
+        // sequence built over two copies of the bases its exons share.
+        if let Some((a, b)) = first_overlap(&tr_exons) {
+            overlapping.push((gff_tr.public_id.clone(), a, b));
+            continue;
+        }
+
         // Assign ranks if not set
         for (i, exon) in tr_exons.iter_mut().enumerate() {
             if exon.rank == 0 {
@@ -697,10 +733,12 @@ fn parse_gff3_lines(
                     .map(|c| c.phase)
                     .unwrap_or(0),
             };
+            // `-1`, which is no phase (`.`), is a CDS that starts whole, as Ensembl VEP reads it; a
+            // sentinel taken for a count of bases to pad with was `u64::MAX` of them
             match gff_phase {
                 1 => 2,
                 2 => 1,
-                other => other as u64,
+                _ => 0,
             }
         } else {
             0
@@ -817,7 +855,12 @@ fn parse_gff3_lines(
         let initiator_met = first_cds_ensembl_phase == 0 && {
             let first_codon = match gff_tr.strand {
                 Strand::Forward => tr_cds.iter().map(|c| c.start).min().map(|s| (s, s + 2)),
-                Strand::Reverse => tr_cds.iter().map(|c| c.end).max().map(|e| (e - 2, e)),
+                // a CDS that ends in base 1 or 2 has no codon that fits in front of it
+                Strand::Reverse => tr_cds
+                    .iter()
+                    .map(|c| c.end)
+                    .max()
+                    .and_then(|e| e.checked_sub(2).map(|s| (s, e))),
             };
             first_codon.is_some_and(|span| tr_cds.iter().any(|c| c.met_recodings.contains(&span)))
         };
@@ -878,6 +921,33 @@ fn parse_gff3_lines(
     }
 
     derive_refseq_canonical(&mut result, &refseq_genes, whole_file);
+
+    if cds_without_phase > 0 {
+        eprintln!(
+            "warning: {cds_without_phase} CDS record(s) of the GFF3 have no phase (`.` or `-1`) and are read \
+             as phase 0, a coding sequence that starts with a whole codon, as Ensembl VEP reads them"
+        );
+    }
+    if !overlapping.is_empty() {
+        // the map the transcripts come out of has no order
+        overlapping.sort();
+        let shown: Vec<String> = overlapping
+            .iter()
+            .take(5)
+            .map(|(id, a, b)| format!("{id} (exons {}-{} and {}-{})", a.0, a.1, b.0, b.1))
+            .collect();
+        eprintln!(
+            "warning: {} transcript(s) of the GFF3 have exons that overlap and are left out, as Ensembl \
+             VEP leaves them out: {}{}",
+            overlapping.len(),
+            shown.join(", "),
+            if overlapping.len() > shown.len() {
+                format!(" and {} more", overlapping.len() - shown.len())
+            } else {
+                String::new()
+            }
+        );
+    }
 
     // HashMap iteration order is randomized per process, so sort by stable_id
     // to make cache serialization bit-for-bit reproducible across builds.
@@ -1292,6 +1362,31 @@ fn appris_from_tags(tag_str: &str) -> Option<String> {
         });
     }
     None
+}
+
+/// A transcript left out because two of its exons overlap: its name and the two exons.
+type OverlappingExons = (String, (u64, u64), (u64, u64));
+
+/// The phase column of a GFF3 record: `0`, `1` or `2`, and `.` for none, which is `-1` here as it
+/// is in Ensembl, whose `Exon::phase` takes `-1` too. `None` for anything else.
+fn parse_phase(field: &str) -> Option<i8> {
+    match field {
+        "." | "-1" => Some(-1),
+        "0" => Some(0),
+        "1" => Some(1),
+        "2" => Some(2),
+        _ => None,
+    }
+}
+
+/// The first two of the exons, ordered by start, that share a base.
+fn first_overlap(exons: &[Exon]) -> Option<((u64, u64), (u64, u64))> {
+    let mut spans: Vec<(u64, u64)> = exons.iter().map(|e| (e.start, e.end)).collect();
+    spans.sort_unstable();
+    spans
+        .windows(2)
+        .find(|w| w[1].0 <= w[0].1)
+        .map(|w| (w[0], w[1]))
 }
 
 fn parse_attributes(attr_str: &str) -> HashMap<String, String> {
@@ -2401,5 +2496,119 @@ chr1\thavana\texon\t100\t900\t.\t+\t.\tID=exon:ENST1.1:1;Parent=ENST1.1;exon_num
         let t = named(&transcripts, "ENST1.1");
         assert_eq!(t.flags, ["cds_start_NF", "cds_end_NF"]);
         assert!(!t.cds_flags_from_sequence && !t.readthrough);
+    }
+
+    /// A gene with one transcript of the given exons, whose CDS is `cds` on `strand`, each CDS
+    /// record carrying `phase`.
+    fn gff_with(strand: &str, exons: &[(u64, u64)], cds: &[(u64, u64)], phase: &str) -> String {
+        let (lo, hi) = (
+            exons.iter().map(|e| e.0).min().unwrap(),
+            exons.iter().map(|e| e.1).max().unwrap(),
+        );
+        let mut gff = format!(
+            "chr1\tx\tgene\t{lo}\t{hi}\t.\t{strand}\t.\tID=gene-A;Name=A;gene_biotype=protein_coding\n\
+             chr1\tx\tmRNA\t{lo}\t{hi}\t.\t{strand}\t.\tID=rna-NM_1.1;Parent=gene-A;transcript_id=NM_1.1\n"
+        );
+        for (i, (s, e)) in exons.iter().enumerate() {
+            gff.push_str(&format!(
+                "chr1\tx\texon\t{s}\t{e}\t.\t{strand}\t.\tID=exon-{i};Parent=rna-NM_1.1\n"
+            ));
+        }
+        for (s, e) in cds {
+            gff.push_str(&format!(
+                "chr1\tx\tCDS\t{s}\t{e}\t.\t{strand}\t{phase}\tID=cds-1;Parent=rna-NM_1.1;protein_id=NP_1.1\n"
+            ));
+        }
+        gff
+    }
+
+    /// A CDS whose phase is `.` has no phase, which Ensembl VEP reads as a coding sequence that
+    /// starts whole. It was read as -1 and then as `u64::MAX` bases to pad the first codon with:
+    /// a run with a FASTA stopped in `capacity overflow`, one without in an overflow, and a
+    /// release build wrapped.
+    #[test]
+    fn a_cds_with_no_phase_starts_whole_and_the_others_are_moved_as_before() {
+        let start_phase = |phase: &str, strand: &str| {
+            let gff = gff_with(strand, &[(100, 400)], &[(120, 380)], phase);
+            let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+            assert_eq!(transcripts.len(), 1, "{phase}");
+            transcripts[0].codon_table_start_phase
+        };
+        for strand in ["+", "-"] {
+            // no phase: `.`, and `-1`, which VEP accepts as the same
+            assert_eq!(start_phase(".", strand), 0, "`.` on {strand}");
+            assert_eq!(start_phase("-1", strand), 0, "`-1` on {strand}");
+            // GFF3's phase is the bases to skip, Ensembl's the bases the previous exon supplies
+            assert_eq!(start_phase("0", strand), 0);
+            assert_eq!(start_phase("1", strand), 2);
+            assert_eq!(start_phase("2", strand), 1);
+        }
+    }
+
+    /// Ensembl VEP stops on a CDS phase that is not one (`Bad value (x) for exon phase. Should only
+    /// be -1,0,1,2`, checked on 116.3 for `x` and `3`), and so does this, naming the record, because
+    /// a frame it guessed would be a plausible protein for a transcript it is not the frame of. A
+    /// phase that nothing reads, on any other kind of record, is left alone as before.
+    #[test]
+    fn a_cds_phase_that_is_not_a_phase_stops_the_parse_and_names_the_record() {
+        for bad in ["x", "3", "1.5", "", "-2"] {
+            let gff = gff_with("+", &[(100, 400)], &[(120, 380)], bad);
+            let err = parse_gff3(gff.as_bytes()).expect_err(bad);
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("chr1:120-380") && msg.contains("NM_1.1") && msg.contains("phase"),
+                "`{bad}`: {msg}"
+            );
+        }
+        // an exon whose phase column is nonsense is not a CDS: nothing reads it
+        let gff = gff_with("+", &[(100, 400)], &[(120, 380)], "0")
+            .replace("exon\t100\t400\t.\t+\t.", "exon\t100\t400\t.\t+\tx");
+        assert_eq!(parse_gff3(gff.as_bytes()).unwrap().len(), 1);
+    }
+
+    /// Exons that share a base give it two places in the cDNA. Ensembl VEP 116.3 leaves such a
+    /// transcript out where the exons have no `rank` (RefSeq's) and keeps it, reads nonsense off it
+    /// and stops under `--hgvs` where they do. Here the transcript is left out and its neighbours
+    /// are not, in either order and whatever the strand: it used to stop the run in a slice of
+    /// the spliced sequence that started after it ended.
+    #[test]
+    fn a_transcript_whose_exons_overlap_is_left_out_and_the_others_are_kept() {
+        let ok = gff_with("+", &[(100, 400), (600, 900)], &[(120, 380)], "0")
+            .replace("NM_1.1", "NM_2.1")
+            .replace("gene-A", "gene-B")
+            .replace("NP_1.1", "NP_2.1")
+            .replace("cds-1", "cds-2")
+            .replace("exon-", "exonb-");
+        for (strand, exons) in [
+            ("+", [(1000, 1299), (1200, 1500)]),
+            ("-", [(1200, 1500), (1000, 1299)]),
+            // the same exon twice
+            ("+", [(1000, 1299), (1000, 1299)]),
+            // one inside the other
+            ("+", [(1000, 1500), (1100, 1200)]),
+        ] {
+            let bad = gff_with(strand, &exons, &[(1050, 1250)], "0");
+            for gff in [format!("{bad}{ok}"), format!("{ok}{bad}")] {
+                let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+                let ids: Vec<&str> = transcripts.iter().map(|t| &*t.stable_id).collect();
+                assert_eq!(ids, ["NM_2.1"], "{strand} {exons:?}");
+            }
+        }
+        // exons that touch, one base after the other, are not overlapping
+        let adjacent = gff_with("+", &[(1000, 1299), (1300, 1500)], &[(1050, 1450)], "0");
+        assert_eq!(parse_gff3(adjacent.as_bytes()).unwrap().len(), 1);
+    }
+
+    /// The first codon of a reverse-strand CDS is looked up in `transl_except` from the base two
+    /// before its end; a CDS that ends in base 1 or 2 has none, and the subtraction that found it
+    /// stopped a build with overflow checks (the test profile) and wrapped in the release one.
+    #[test]
+    fn a_reverse_strand_cds_that_ends_in_the_first_bases_of_the_contig_is_read() {
+        for end in [1, 2] {
+            let gff = gff_with("-", &[(1, 50)], &[(1, end)], "0");
+            let transcripts = parse_gff3(gff.as_bytes()).unwrap();
+            assert_eq!(transcripts.len(), 1, "CDS 1-{end}");
+            assert!(!transcripts[0].initiator_met);
+        }
     }
 }

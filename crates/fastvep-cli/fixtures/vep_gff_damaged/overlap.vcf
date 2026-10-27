@@ -1,0 +1,19 @@
+##fileformat=VCFv4.2
+##contig=<ID=chrR,length=40000>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chrR	4	v4	G	T	.	.	.
+chrR	100	v100	C	G	.	.	.
+chrR	6000	v6000	T	A	.	.	.
+chrR	6050	v6050	C	G	.	.	.
+chrR	6100	v6100	T	A	.	.	.
+chrR	6150	v6150	G	T	.	.	.
+chrR	6250	v6250	C	G	.	.	.
+chrR	6299	v6299	A	C	.	.	.
+chrR	6300	v6300	C	G	.	.	.
+chrR	6450	v6450	G	T	.	.	.
+chrR	6600	v6600	T	A	.	.	.
+chrR	6700	v6700	T	A	.	.	.
+chrR	6849	v6849	T	A	.	.	.
+chrR	6890	v6890	G	T	.	.	.
+chrR	1100	v1100	A	C	.	.	.
+chrR	1200	v1200	C	G	.	.	.

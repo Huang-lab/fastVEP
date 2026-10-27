@@ -494,6 +494,15 @@ impl Transcript {
             let phase = self.codon_table_start_phase as usize;
             let cs_idx = (cs - 1) as usize;
             let ce_idx = ce as usize;
+            // A coding region that starts after it ends has nothing to be read out of the spliced
+            // sequence: exons that are out of order or overlap put it there, and slicing it
+            // panics, which in the parallel build of a whole GFF3 takes the run down with it.
+            if cs_idx > ce_idx {
+                return Err(format!(
+                    "the coding region of {} starts at cDNA {} and ends at {}, before it starts",
+                    self.stable_id, cs, ce
+                ));
+            }
             if ce_idx <= spliced_str.len() {
                 // For incomplete CDS starts (phase > 0), pad with N bases so
                 // CDS position 1 maps to translateable index phase (aligning codons).

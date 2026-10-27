@@ -1,0 +1,21 @@
+##gff-version 3
+chrR	BestRefSeq	gene	1000	1899	.	+	.	ID=gene-NB1;Dbxref=GeneID:90001,HGNC:HGNC:90001;Name=NB1;description=test gene 90001;gbkey=Gene;gene=NB1;gene_biotype=protein_coding
+chrR	BestRefSeq	mRNA	1000	1899	.	+	.	ID=rna-NM_090001.3;Parent=gene-NB1;Dbxref=GeneID:90001,GenBank:NM_090001.3;Name=NM_090001.3;gbkey=mRNA;gene=NB1;product=test transcript NM_090001.3;transcript_id=NM_090001.3
+chrR	BestRefSeq	exon	1000	1299	.	+	.	ID=exon-NM_090001.3-1;Parent=rna-NM_090001.3;Dbxref=GeneID:90001,GenBank:NM_090001.3;gbkey=mRNA;gene=NB1;transcript_id=NM_090001.3
+chrR	BestRefSeq	exon	1600	1899	.	+	.	ID=exon-NM_090001.3-2;Parent=rna-NM_090001.3;Dbxref=GeneID:90001,GenBank:NM_090001.3;gbkey=mRNA;gene=NB1;transcript_id=NM_090001.3
+chrR	BestRefSeq	CDS	1100	1299	.	+	-1	ID=cds-NP_090001.2;Parent=rna-NM_090001.3;Dbxref=GeneID:90001,GenBank:NP_090001.2;Name=NP_090001.2;gbkey=CDS;gene=NB1;product=test protein;protein_id=NP_090001.2
+chrR	BestRefSeq	CDS	1600	1849	.	+	1	ID=cds-NP_090001.2;Parent=rna-NM_090001.3;Dbxref=GeneID:90001,GenBank:NP_090001.2;Name=NP_090001.2;gbkey=CDS;gene=NB1;product=test protein;protein_id=NP_090001.2
+chrR	BestRefSeq	gene	6000	6899	.	-	.	ID=gene-NB2;Dbxref=GeneID:90002,HGNC:HGNC:90002;Name=NB2;description=test gene 90002;gbkey=Gene;gene=NB2;gene_biotype=protein_coding
+chrR	BestRefSeq	mRNA	6000	6899	.	-	.	ID=rna-NM_090002.2;Parent=gene-NB2;Dbxref=GeneID:90002,GenBank:NM_090002.2;Name=NM_090002.2;gbkey=mRNA;gene=NB2;product=test transcript NM_090002.2;transcript_id=NM_090002.2
+chrR	BestRefSeq	exon	6600	6899	.	-	.	ID=exon-NM_090002.2-1;Parent=rna-NM_090002.2;Dbxref=GeneID:90002,GenBank:NM_090002.2;gbkey=mRNA;gene=NB2;transcript_id=NM_090002.2
+chrR	BestRefSeq	exon	6000	6299	.	-	.	ID=exon-NM_090002.2-2;Parent=rna-NM_090002.2;Dbxref=GeneID:90002,GenBank:NM_090002.2;gbkey=mRNA;gene=NB2;transcript_id=NM_090002.2
+chrR	BestRefSeq	CDS	6600	6849	.	-	0	ID=cds-NP_090002.2;Parent=rna-NM_090002.2;Dbxref=GeneID:90002,GenBank:NP_090002.2;Name=NP_090002.2;gbkey=CDS;gene=NB2;product=test protein;protein_id=NP_090002.2
+chrR	BestRefSeq	CDS	6100	6299	.	-	2	ID=cds-NP_090002.2;Parent=rna-NM_090002.2;Dbxref=GeneID:90002,GenBank:NP_090002.2;Name=NP_090002.2;gbkey=CDS;gene=NB2;product=test protein;protein_id=NP_090002.2
+chrR	BestRefSeq	gene	20000	20599	.	+	.	ID=gene-NB3;Dbxref=GeneID:90003,HGNC:HGNC:90003;Name=NB3;description=test gene 90003;gbkey=Gene;gene=NB3;gene_biotype=lncRNA
+chrR	BestRefSeq	lnc_RNA	20000	20599	.	+	.	ID=rna-NR_090003.1;Parent=gene-NB3;Dbxref=GeneID:90003,GenBank:NR_090003.1;Name=NR_090003.1;gbkey=ncRNA;gene=NB3;product=test transcript NR_090003.1;transcript_id=NR_090003.1
+chrR	BestRefSeq	exon	20000	20199	.	+	.	ID=exon-NR_090003.1-1;Parent=rna-NR_090003.1;Dbxref=GeneID:90003,GenBank:NR_090003.1;gbkey=ncRNA;gene=NB3;transcript_id=NR_090003.1
+chrR	BestRefSeq	exon	20400	20599	.	+	.	ID=exon-NR_090003.1-2;Parent=rna-NR_090003.1;Dbxref=GeneID:90003,GenBank:NR_090003.1;gbkey=ncRNA;gene=NB3;transcript_id=NR_090003.1
+chrR	BestRefSeq	gene	24000	24299	.	+	.	ID=gene-GENE_A;Dbxref=GeneID:90004,HGNC:HGNC:90004;Name=GENE A;description=test gene 90004;gbkey=Gene;gene=GENE A;gene_biotype=protein_coding
+chrR	BestRefSeq	mRNA	24000	24299	.	+	.	ID=rna-NM_090004.1;Parent=gene-GENE_A;Dbxref=GeneID:90004,GenBank:NM_090004.1;Name=NM_090004.1;gbkey=mRNA;gene=GENE A;product=test transcript NM_090004.1;transcript_id=NM_090004.1
+chrR	BestRefSeq	exon	24000	24299	.	+	.	ID=exon-NM_090004.1-1;Parent=rna-NM_090004.1;Dbxref=GeneID:90004,GenBank:NM_090004.1;gbkey=mRNA;gene=GENE A;transcript_id=NM_090004.1
+chrR	BestRefSeq	CDS	24100	24249	.	+	0	ID=cds-NP_090004.1;Parent=rna-NM_090004.1;Dbxref=GeneID:90004,GenBank:NP_090004.1;Name=NP_090004.1;gbkey=CDS;gene=GENE A;product=test protein;protein_id=NP_090004.1

@@ -260,7 +260,7 @@ fn a_pre_90_sidecar_cache_is_rebuilt_rather_than_trusted() {
             .unwrap();
     }
     assert_eq!(
-        &magic, b"FSTVEP08",
+        &magic, b"FSTVEP09",
         "rebuild should publish the current format"
     );
 }
@@ -688,4 +688,106 @@ fn a_sidecar_cache_is_written_in_the_providers_order_and_answers_as_the_run_that
     assert!(t3 < t4, "a tie changed places: {ids:?}");
 
     assert_eq!(run("second.vcf"), first);
+}
+
+/// A well-formed cache in the given older format, holding `transcripts`.
+fn write_cache_in_format(path: &Path, magic: &[u8; 8], transcripts: &[fastvep_genome::Transcript]) {
+    use std::io::{BufWriter, Write};
+    let file = File::create(path).unwrap();
+    let mut zst = zstd::Encoder::new(BufWriter::new(file), 1).unwrap();
+    zst.write_all(magic).unwrap();
+    bincode::serialize_into(&mut zst, transcripts).unwrap();
+    zst.finish().unwrap().flush().unwrap();
+}
+
+#[test]
+fn a_pre_gff_checks_sidecar_cache_is_rebuilt_rather_than_trusted() {
+    // The same gap once more. The parser that wrote a V8 cache read a CDS with no phase as
+    // `u64::MAX` bases of padding and kept a transcript whose exons overlap, and the sidecar is
+    // newer than its GFF3, so a user who upgrades and re-runs the identical command would get
+    // the cache's transcripts again if it were read. A transcript with a name that no GFF3 has
+    // stands in for what it holds: the run has to be about the GFF3's.
+    let dir = TempDir::new().unwrap();
+    let gff3 = write_gff3(dir.path());
+    let fasta = write_fasta(dir.path());
+    let vcf = write_vcf(dir.path());
+    let run = |out: &Path| {
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3.to_string_lossy().into()],
+            fasta: Some(fasta.to_string_lossy().into()),
+            ..config(&vcf, out)
+        })
+        .expect("annotation should succeed");
+        std::fs::read_to_string(out).unwrap()
+    };
+    let first = run(&dir.path().join("first.vcf"));
+    assert!(first.contains("ENST_A"), "{first}");
+
+    let sidecar = dir.path().join("ann.gff3.fastvep.cache");
+    let mut transcripts = fastvep_cache::transcript_cache::load_cache(&sidecar).unwrap();
+    for t in &mut transcripts {
+        t.stable_id = "ENST_FROM_THE_STALE_CACHE".into();
+    }
+    write_cache_in_format(&sidecar, b"FSTVEP08", &transcripts);
+    make_fresh(&sidecar);
+
+    let second = run(&dir.path().join("second.vcf"));
+    assert!(
+        second.contains("ENST_A") && !second.contains("ENST_FROM_THE_STALE_CACHE"),
+        "the run trusted a pre-GFF3-checks cache; got:\n{second}"
+    );
+}
+
+/// A cache named on the command line has no GFF3 to be rebuilt from, so a cache of a format that
+/// cannot be trusted stops the run, and says what is wrong with it at the length the explicit path
+/// owes (the detail) and how to get a good one. Each of the formats since the parity fix, because
+/// each has its own reason, which is what the message is for.
+#[test]
+fn an_explicit_transcript_cache_of_a_stale_format_stops_the_run_and_says_why() {
+    for (magic, format, reason) in [
+        (b"FSTVEP07", "FSTVEP07", "EntrezGene"),
+        (b"FSTVEP08", "FSTVEP08", "no phase"),
+    ] {
+        let dir = TempDir::new().unwrap();
+        let gff3 = write_gff3(dir.path());
+        let fasta = write_fasta(dir.path());
+        let vcf = write_vcf(dir.path());
+        // a cache made by this build, of the GFF3 the stale one stands for
+        let good = dir.path().join("good.cache");
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3.to_string_lossy().into()],
+            transcript_cache: Some(good.to_string_lossy().into()),
+            fasta: Some(fasta.to_string_lossy().into()),
+            ..config(&vcf, &dir.path().join("first.vcf"))
+        })
+        .expect("a cache is written from the GFF3");
+        let transcripts = fastvep_cache::transcript_cache::load_cache(&good).unwrap();
+
+        let stale = dir.path().join("stale.cache");
+        write_cache_in_format(&stale, magic, &transcripts);
+        let out = dir.path().join("out.vcf");
+        let err = run_annotate(AnnotateConfig {
+            transcript_cache: Some(stale.to_string_lossy().into()),
+            fasta: Some(fasta.to_string_lossy().into()),
+            ..config(&vcf, &out)
+        })
+        .expect_err("a stale --transcript-cache must not annotate anyway");
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains(format), "{format}: {msg}");
+        assert!(
+            msg.contains(reason),
+            "{format}: the detail is missing: {msg}"
+        );
+        assert!(msg.contains("fastvep cache"), "{format}: no way out: {msg}");
+        assert!(
+            !msg.contains("let the sidecar rebuild itself")
+                && !msg.contains("truncated or corrupt"),
+            "{format}: {msg}"
+        );
+        assert!(
+            !out.exists() || std::fs::read_to_string(&out).unwrap().is_empty(),
+            "{format}: a rejected cache must not leave an output behind"
+        );
+    }
 }
