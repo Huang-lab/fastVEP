@@ -472,14 +472,22 @@ fn shared_ends(r: &[u8], a: &[u8], back_first: bool) -> (usize, usize) {
 /// 1-in-200 sample of the GIAB HG002 callset the two disagree on 11 of 13,535
 /// records; clipping accounts for part of that and the genomic shift for the
 /// rest.
+///
+/// `None` for a change that begins before the first base of the contig: an insertion there has no
+/// base to its left to be written against, and `g.0_1insT` is not a position of anything. Ensembl
+/// writes nothing for it either ([`hgvsg_vep`]). The other end of the contig is not known here.
 pub fn hgvsg_clipped(
     chrom: &str,
     start: u64,
     end: u64,
     genomic_ref: &fastvep_core::Allele,
     genomic_alt: &fastvep_core::Allele,
-) -> String {
+) -> Option<String> {
     use fastvep_core::Allele;
+    // An insertion's `end` is the base before it, so one before the first base has an end of 0.
+    if start < 1 || end < 1 {
+        return None;
+    }
     let (front, back) = match (genomic_ref, genomic_alt) {
         (Allele::Sequence(r), Allele::Sequence(a)) => shared_ends(r, a, false),
         _ => (0, 0),
@@ -487,7 +495,13 @@ pub fn hgvsg_clipped(
     // Nothing repeats, which is every ordinary variant: answer from the pair
     // the caller already holds rather than building a copy of it to answer from.
     if front + back == 0 {
-        return fastvep_hgvs::hgvsg(chrom, start, end, genomic_ref, genomic_alt);
+        return Some(fastvep_hgvs::hgvsg(
+            chrom,
+            start,
+            end,
+            genomic_ref,
+            genomic_alt,
+        ));
     }
     let clipped = |bases: &[u8]| match &bases[front..bases.len() - back] {
         [] => Allele::Deletion,
@@ -496,14 +510,18 @@ pub fn hgvsg_clipped(
     let (Allele::Sequence(r), Allele::Sequence(a)) = (genomic_ref, genomic_alt) else {
         unreachable!("a non-zero clip needs two sequences")
     };
-    fastvep_hgvs::hgvsg(
+    // Saturating, as in `hgvs_allele`: `end` need not belong to these alleles.
+    let end = end.saturating_sub(back as u64);
+    if end < 1 {
+        return None;
+    }
+    Some(fastvep_hgvs::hgvsg(
         chrom,
         start + front as u64,
-        // Saturating, as in `hgvs_allele`: `end` need not belong to these alleles.
-        end.saturating_sub(back as u64),
+        end,
         &clipped(r),
         &clipped(a),
-    )
+    ))
 }
 
 /// The genomic span one allele actually changes, clipped of the bases its
@@ -1590,6 +1608,17 @@ pub fn hgvsg_vep(
             (start, end) = (s, e);
         }
     }
+    // `hgvs_genomic` (`VariationFeature.pm`) writes nothing for a variation feature that is not
+    // inside the slice it is on: `return {} if ($vf_start < 1 || $vf_end < 1 || $vf_start >
+    // $ref_length || $vf_end > $ref_length)`. An insertion before the first base has an end of 0,
+    // one after the last base has a start past the end, and a reference allele that runs off the
+    // end has an end past it. (Release 116.3 on a contig of 30,000 bases: `G>TG` at 1, `T>TC` at
+    // 30000 and `TTT>T` at 29999 each have `-`; `T>TT` at 30000, which is a `g.30000dup`, has too.)
+    let contig_length = seq_provider.sequence_length(chrom).map(|n| n as i64);
+    let outside = |at: i64| at < 1 || contig_length.is_some_and(|n| at > n);
+    if outside(start) || outside(end) {
+        return None;
+    }
     let original_allele = alt_texts.get(alt_index)?.clone();
     // Only the alt is looked at, as Ensembl does: a VCF REF of `N` still has a genome
     // base to describe, and it is the genome's base that the description names.
@@ -1618,13 +1647,7 @@ pub fn hgvsg_vep(
     let Ok(ref_seq) =
         seq_provider.fetch_sequence(chrom, (seq_start + 1) as u64, seq_end.max(1) as u64)
     else {
-        return Some(hgvsg_clipped(
-            chrom,
-            record_start,
-            record_end,
-            reference,
-            &alts[alt_index],
-        ));
+        return hgvsg_clipped(chrom, record_start, record_end, reference, &alts[alt_index]);
     };
 
     let multi = alt_texts.len() > 1;
@@ -1689,6 +1712,13 @@ pub fn hgvsg_vep(
     )?;
     if notation.kind == NotationKind::Delins {
         notation = clip_alleles(notation);
+    }
+    // The check above is on the record as a whole, so an allele of a record of several alts
+    // passes it whatever it is: Ensembl writes `g.0dup` for `G>TG,A` at the first base of a
+    // contig and `g.30000_30001insC` for `T>TC,A` at the last. A description does not name a
+    // base the contig does not have, which is the rule that check is there for.
+    if outside(notation.start) || outside(notation.end) {
+        return None;
     }
     format_hgvs_g(chrom, &notation)
 }
@@ -1767,7 +1797,7 @@ pub fn hgvsg_per_alt(
             }
             match seq_provider {
                 Some(sp) => hgvsg_vep(sp, chrom, start, end, reference, alts, i),
-                None => Some(hgvsg_clipped(chrom, start, end, reference, alt)),
+                None => hgvsg_clipped(chrom, start, end, reference, alt),
             }
         })
         .collect()
@@ -2544,6 +2574,90 @@ mod tests {
             &alts,
         );
         assert_eq!(got, vec![Some("chr1:g.3A>T".to_string())]);
+    }
+
+    /// A reference that knows how long its contig is, as the FASTA readers do.
+    struct SizedRef(&'static str);
+    impl SequenceProvider for SizedRef {
+        fn fetch_sequence(&self, chrom: &str, start: u64, end: u64) -> Result<Vec<u8>> {
+            StrRef(self.0).fetch_sequence(chrom, start, end)
+        }
+        fn sequence_length(&self, _chrom: &str) -> Option<u64> {
+            Some(self.0.len() as u64)
+        }
+    }
+
+    /// What Ensembl VEP 116.3 writes for a change at the very edge of a contig, record by record
+    /// (`fixtures/vep_hgvsg` has it for 38 alleles at both ends of two contigs): nothing for an
+    /// insertion before the first base, one after the last, or a reference allele that runs off
+    /// the end, because its `hgvs_genomic` returns nothing for a variation feature that is not
+    /// inside the slice it is on.
+    #[test]
+    fn a_change_that_is_not_inside_the_contig_has_no_hgvsg() {
+        use fastvep_core::Allele;
+        let seq = |s: &[u8]| Allele::Sequence(s.to_vec());
+        // 20 bases, `G` first and `TT` last
+        let reference = SizedRef("GCTAAAGACAATTACATATT");
+        let describe = |start: u64, end: u64, r: &[u8], alts: &[&[u8]]| {
+            let alts: Vec<Allele> = alts.iter().map(|a| seq(a)).collect();
+            hgvsg_per_alt(Some(&reference), "c", start, end, &seq(r), &alts)
+        };
+        // before the first base: a base inserted in front of it
+        assert_eq!(describe(1, 1, b"G", &[b"TG"]), [None]);
+        assert_eq!(describe(1, 1, b"G", &[b"ACGTACGTAG"]), [None]);
+        // after the last base: an insertion, a duplication of it, and a reference that runs off
+        assert_eq!(describe(20, 20, b"T", &[b"TC"]), [None]);
+        assert_eq!(describe(20, 20, b"T", &[b"TT"]), [None]);
+        assert_eq!(describe(19, 21, b"TTA", &[b"T"]), [None]);
+        // the first and last bases themselves, and what is inside, are described
+        assert_eq!(describe(1, 1, b"G", &[b"A"]), [Some("c:g.1G>A".into())]);
+        assert_eq!(describe(20, 20, b"T", &[b"C"]), [Some("c:g.20T>C".into())]);
+        assert_eq!(describe(19, 20, b"TT", &[b"T"]), [Some("c:g.20del".into())]);
+        assert_eq!(
+            describe(19, 19, b"T", &[b"TC"]),
+            [Some("c:g.19_20insC".into())]
+        );
+        // a record of several alts passes Ensembl's check whatever its alleles are, and it writes
+        // `g.0dup` and `g.20_21insC` for the alleles that are not inside; they are not written here
+        assert_eq!(
+            describe(1, 1, b"G", &[b"TG", b"A"]),
+            [None, Some("c:g.1G>A".into())]
+        );
+        assert_eq!(
+            describe(20, 20, b"T", &[b"TC", b"A"]),
+            [None, Some("c:g.20T>A".into())]
+        );
+        // a provider that cannot say how long the contig is says nothing about its end, and the
+        // first base is the first base all the same
+        let unsized_reference = StrRef("GCTAAAGACAATTACATATT");
+        let alts = [seq(b"TC")];
+        let got = hgvsg_per_alt(Some(&unsized_reference), "c", 20, 20, &seq(b"T"), &alts);
+        assert_eq!(got, [Some("c:g.20_21insC".into())]);
+        let alts = [seq(b"TG")];
+        let got = hgvsg_per_alt(Some(&unsized_reference), "c", 1, 1, &seq(b"G"), &alts);
+        assert_eq!(got, [None]);
+    }
+
+    /// Without a reference the plain description stands, except where it would name the base
+    /// before the first: `g.0_1insT` is not a position of anything.
+    #[test]
+    fn hgvsg_without_a_reference_writes_nothing_before_the_first_base() {
+        use fastvep_core::Allele;
+        let seq = |s: &[u8]| Allele::Sequence(s.to_vec());
+        let before = [seq(b"TG")];
+        assert_eq!(hgvsg_per_alt(None, "c", 1, 1, &seq(b"G"), &before), [None]);
+        // as the VCF parser leaves a lone insertion, with the shared base already taken off
+        let minimal = [Allele::Sequence(b"T".to_vec())];
+        assert_eq!(
+            hgvsg_per_alt(None, "c", 1, 0, &Allele::Deletion, &minimal),
+            [None]
+        );
+        // after the first base it is an insertion like any other
+        let after = [seq(b"GT")];
+        assert_eq!(
+            hgvsg_per_alt(None, "c", 1, 1, &seq(b"G"), &after),
+            [Some("c:g.1_2insT".into())]
+        );
     }
 
     /// `HGVS_OFFSET` of a deletion counts from where the VCF anchors it, whichever

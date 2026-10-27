@@ -15,7 +15,8 @@ the run and one either side, near both ends of the contig, and records of severa
 A record with an allele that trims to a substitution is left out, as in the tab world
 (see gen_world.py there): VEP writes a delins of the untrimmed alt over the trimmed span.
 
-Writes OUTDIR/{genome.fa, genes.gff3, in.vcf}. Every record has an ID, `v<N>`.
+Writes OUTDIR/{genome.fa, genes.gff3, in.vcf}. Every record has an ID, `v<N>`, and the ones at
+the very edges of a contig come last and are `e<N>`.
 """
 import random
 import sys
@@ -129,6 +130,36 @@ for r in records:
         uniq.append(r)
 order = {"chr10": 0, "MT": 1}
 uniq.sort(key=lambda r: (order[r[0]], r[1], r[2], r[3]))
+# The very edges of each contig, which the events above leave out because they stay inside it: a
+# change *before* the first base, one *after* the last, and a reference allele that runs off the
+# end. Ensembl VEP writes no HGVSg for them (`hgvs_genomic` returns nothing for a variation
+# feature that is not inside the slice), except for a record of several alts, which it describes
+# with a position the contig does not have. They are `e<N>` and come last, with no random choice
+# made for them, so that the ids and the alleles of the records above do not move.
+nxt = lambda b, k=0: [x for x in "ACGT" if x != b][k]
+edges = []
+for contig, n in LEN.items():
+    g = genome[contig]
+    first, last, before_last = g[0], g[-1], g[-2]
+    edges += [
+        (contig, 1, first, [nxt(first) + first]),  # a base inserted before the first
+        (contig, 1, first, [nxt(first, 1) + nxt(first) + first]),  # two bases
+        (contig, 1, first, ["ACGTACGTA" + first]),  # nine bases
+        (contig, 1, first, [first + first]),  # the first base duplicated: inside
+        (contig, 1, first, [nxt(first) + first, nxt(first, 2)]),  # several alts: before, and an SNV
+        (contig, 1, first, [nxt(first) + first, first + nxt(first)]),  # several alts: before, and after
+        (contig, n, last, [last + nxt(last)]),  # a base inserted after the last
+        (contig, n, last, [last + nxt(last) + nxt(last, 1)]),  # two bases
+        (contig, n, last, [last + "ACGTACGTA"]),  # nine bases
+        (contig, n, last, [last + last]),  # the last base duplicated: g.<n>dup, which VEP does not write
+        (contig, n, last, [last + nxt(last), nxt(last, 2)]),  # several alts: after, and an SNV
+        (contig, n, last, [nxt(last)]),  # an SNV at the last base
+        (contig, n - 1, before_last + last, [before_last]),  # the last base deleted: inside
+        (contig, n - 1, before_last + last + "A", [before_last]),  # a reference that runs one base off the end
+        (contig, n - 1, before_last + last + "ACG", [before_last + last]),  # three bases off the end
+        (contig, n - 1, before_last, [before_last + nxt(before_last)]),  # a base inserted before the last: inside
+    ]
+
 with open(f"{OUT}/in.vcf", "w") as v:
     v.write("##fileformat=VCFv4.2\n")
     for c, n in LEN.items():
@@ -136,4 +167,6 @@ with open(f"{OUT}/in.vcf", "w") as v:
     v.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
     for i, (contig, pos, ref, alts) in enumerate(uniq, 1):
         v.write(f"{contig}\t{pos}\tv{i}\t{ref}\t{','.join(alts)}\t.\t.\t.\n")
-print(f"{len(uniq)} records")
+    for i, (contig, pos, ref, alts) in enumerate(edges, 1):
+        v.write(f"{contig}\t{pos}\te{i}\t{ref}\t{','.join(alts)}\t.\t.\t.\n")
+print(f"{len(uniq)} records and {len(edges)} at the edges of the contigs")

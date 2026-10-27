@@ -47,7 +47,7 @@ for line in open(tab):
 with open(out, "w") as f:
     f.write(f"# HGVSg of each allele (ALLELE_NUM, 1 is the first alt) of each record, as Ensembl VEP {version} writes it\n")
     f.write(f"# image {image}; gen_world.py SEED={seed}; `-` is VEP writing nothing\n")
-    for (rid, n), hgvsg in sorted(golden.items(), key=lambda kv: (int(kv[0][0][1:]), kv[0][1])):
+    for (rid, n), hgvsg in sorted(golden.items(), key=lambda kv: (kv[0][0][0] != "v", int(kv[0][0][1:]), kv[0][1])):
         f.write(f"{rid}\t{n}\t{hgvsg}\n")
 print(f"{len(golden)} alleles, VEP {version}")
 PY

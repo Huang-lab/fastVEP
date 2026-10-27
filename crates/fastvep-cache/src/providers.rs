@@ -34,6 +34,12 @@ pub trait SequenceProvider: Send + Sync {
     fn sequence_names(&self) -> Option<Vec<String>> {
         None
     }
+
+    /// The number of bases of a contig, when the provider can say, for the descriptions that must
+    /// not name a base past its end (`HGVSg`).
+    fn sequence_length(&self, _chrom: &str) -> Option<u64> {
+        None
+    }
 }
 
 /// In-memory transcript provider backed by a Vec<Transcript>.
@@ -278,6 +284,10 @@ impl SequenceProvider for FastaSequenceProvider {
                 .collect(),
         )
     }
+
+    fn sequence_length(&self, chrom: &str) -> Option<u64> {
+        self.reader.sequence_length(chrom)
+    }
 }
 
 /// Sequence provider backed by a memory-mapped FASTA reader.
@@ -311,6 +321,10 @@ impl SequenceProvider for MmapFastaSequenceProvider {
                 .map(String::from)
                 .collect(),
         )
+    }
+
+    fn sequence_length(&self, chrom: &str) -> Option<u64> {
+        self.reader.sequence_length(chrom)
     }
 }
 

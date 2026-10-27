@@ -371,8 +371,17 @@ fastVEP writes `5:g.100381015C>A`, which is also the change Ensembl's own `HGVSc
 That is checked rather than argued, by applying each description to the genome (`validation/check_hgvsg_roundtrip.py`).
 In the world, the 709 cells are **336 (record, allele) pairs, and for all 336 Ensembl's description does not reproduce the allele and fastVEP's does**.
 On HG002 three records are affected, `5:100381015 CATAA>AATAA,C`, `8:86711835 CTATA>ATATA,C` and `10:90497339 AT>TT,A`, and 20,238 of 20,241 records have the same set of descriptions in both tools.
-Nothing else differs, which is what [`hgvsg_vep`](../crates/fastvep-annotate/src/hgvs_normalize.rs) being a transcription of `hgvs_genomic` is for: it agrees with VEP 116.3 on all 1,472 alleles of `crates/fastvep-annotate/fixtures/vep_hgvsg` and on every row of the world that is not this one.
+Nothing else differs, which is what [`hgvsg_vep`](../crates/fastvep-annotate/src/hgvs_normalize.rs) being a transcription of `hgvs_genomic` is for: it agrees with VEP 116.3 on 1,504 of the 1,510 alleles of `crates/fastvep-annotate/fixtures/vep_hgvsg`, the six that differ being those of the next paragraph, and on every row of the world that is not this one.
 Both generators keep the records this affects out of the committed fixtures, and `vep_tab_world/gen_world.py --all` puts them back.
+
+**`HGVSg` at the edge of a contig.**
+`hgvs_genomic` returns at once, and writes nothing, for a variation feature that is not inside the contig: `$vf_start < 1 || $vf_end < 1 || $vf_start > $ref_length || $vf_end > $ref_length`.
+An insertion before the first base (`G>TG` at base 1) has an end of 0, one after the last base (`T>TC` at base 30,000 of a contig of 30,000) a start past the end, and a reference allele that runs off the end an end past it, and VEP 116.3 writes `-` for each.
+fastVEP wrote `chr10:g.0dup`, `g.0_1insT` and `g.30000_30001insC`, on the transcript rows and on the upstream and downstream rows of the record alike, which names a base the contig does not have; it writes nothing now, for the 18 alleles at the edges of two contigs in the fixture that VEP writes nothing for.
+The check is on the span of the record, so a record of several ALTs passes it whatever its alleles are: VEP 116.3 writes `g.0dup` for the `TG` of `G>TG,A` at the first base and `g.30000_30001insC` for the `TC` of `T>TC,A` at the last, which is not a description of anything, and writes nothing for the same allele when it is alone.
+fastVEP writes nothing for those six alleles, which `hgvsg_vep_golden.rs` lists with what VEP writes for each and asserts that it still does.
+The duplication of the last base (`T>TT` at the last base, which is `g.30000dup` and names a base the contig has) is left out as VEP leaves it out.
+Without a reference the first base of a contig is known and the last is not, so a change before the first base has none and one after the last keeps the plain description.
 
 **`HGVSc` and `HGVS_OFFSET`.**
 `_return_3prime` (`TranscriptVariationAllele.pm`) returns before it shifts anything `unless ($var_class eq 'insertion' || $var_class eq 'deletion')`, where `$var_class` is `$vf->var_class`: the class of the whole record, not of the allele.
