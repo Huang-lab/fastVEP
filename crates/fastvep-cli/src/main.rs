@@ -20,6 +20,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Annotate variants with predicted consequences
+    ///
+    /// A flag that Ensembl VEP has is accepted in VEP's spelling as well as with
+    /// hyphens: `--af_1kg` is `--af-1kg`, `--check_existing` is `--check-existing`.
     Annotate {
         /// Input file (VCF format). Use "-" for stdin.
         #[arg(short, long)]
@@ -50,7 +53,7 @@ enum Commands {
         fasta: Option<String>,
 
         /// Output format (vcf, tab, json)
-        #[arg(long, default_value = "vcf")]
+        #[arg(long, alias = "output_format", default_value = "vcf")]
         output_format: String,
 
         /// Turn on VEP's `--everything` set, among the flags fastVEP has:
@@ -62,7 +65,7 @@ enum Commands {
         everything: bool,
 
         /// Number of variants to buffer
-        #[arg(long, default_value_t = 5000)]
+        #[arg(long, alias = "buffer_size", default_value_t = 5000)]
         buffer_size: usize,
 
         /// Pick one consequence per variant, by `--pick-order` (not by severity:
@@ -75,27 +78,27 @@ enum Commands {
         pick: bool,
 
         /// Pick one consequence per (variant, allele). VEP's `--pick_allele`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "pick_allele", group = "pick_family")]
         pick_allele: bool,
 
         /// Pick one consequence per (variant, allele, gene).
         /// VEP's `--pick_allele_gene`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "pick_allele_gene", group = "pick_family")]
         pick_allele_gene: bool,
 
         /// Report every consequence, and mark the one `--pick` would have kept
         /// with `PICK=1`. VEP's `--flag_pick`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "flag_pick", group = "pick_family")]
         flag_pick: bool,
 
         /// Report every consequence, and mark the one chosen per allele.
         /// VEP's `--flag_pick_allele`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "flag_pick_allele", group = "pick_family")]
         flag_pick_allele: bool,
 
         /// Report every consequence, and mark the one chosen per allele and
         /// gene. VEP's `--flag_pick_allele_gene`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "flag_pick_allele_gene", group = "pick_family")]
         flag_pick_allele_gene: bool,
 
         /// Add `SYMBOL`, `SYMBOL_SOURCE` and `HGNC_ID` to tab output. VEP's
@@ -136,13 +139,13 @@ enum Commands {
 
         /// Add `VARIANT_CLASS` (`SNV`, `insertion`, `deletion`, ...) to tab and
         /// VCF output. VEP's `--variant_class`.
-        #[arg(long)]
+        #[arg(long, alias = "variant_class")]
         variant_class: bool,
 
         /// Add `REF_ALLELE` to tab output. VEP's `--show_ref_allele`. The VCF
         /// `CSQ` always has it. (`--explicit-alleles` puts a `REF` column right
         /// after `Allele` instead.)
-        #[arg(long)]
+        #[arg(long, alias = "show_ref_allele")]
         show_ref_allele: bool,
 
         /// Write the length each position is counted in after `cDNA_position`,
@@ -192,23 +195,23 @@ enum Commands {
 
         /// Add `AF`, `AFR_AF`, `AMR_AF`, `EAS_AF`, `EUR_AF` and `SAS_AF`, the 1000
         /// Genomes frequencies. VEP's `--af_1kg`. Needs `--cache-dir`.
-        #[arg(long)]
+        #[arg(long, alias = "af_1kg")]
         af_1kg: bool,
 
         /// Add the gnomAD exomes frequencies, `gnomADe_AF` and one column for each
         /// of its populations. VEP's `--af_gnomade`. Needs `--cache-dir`.
-        #[arg(long)]
+        #[arg(long, alias = "af_gnomade", alias = "af-gnomad", alias = "af_gnomad")]
         af_gnomade: bool,
 
         /// Add the gnomAD genomes frequencies, `gnomADg_AF` and one column for
         /// each of its populations. VEP's `--af_gnomadg`. Needs `--cache-dir`.
-        #[arg(long)]
+        #[arg(long, alias = "af_gnomadg")]
         af_gnomadg: bool,
 
         /// Add `MAX_AF`, the highest frequency of any 1000 Genomes or gnomAD
         /// population (not the combined ones), and `MAX_AF_POPS`, the populations
         /// that have it. VEP's `--max_af`. Needs `--cache-dir`.
-        #[arg(long)]
+        #[arg(long, alias = "max_af")]
         max_af: bool,
 
         /// Add `CLIN_SIG`, `SOMATIC` and `PHENO` from the known variants of
@@ -217,7 +220,7 @@ enum Commands {
         /// `--pubmed` imply it, and so does `--cache-dir`: a variation cache is
         /// all it is for here, where VEP's `--cache` is also the transcript
         /// cache, so the flag is only needed to be typed as VEP has it.
-        #[arg(long)]
+        #[arg(long, alias = "check_existing")]
         check_existing: bool,
 
         /// Add `PUBMED`, the publications that cite the known variants, and fill
@@ -230,7 +233,7 @@ enum Commands {
         /// input allele (1, VEP's default) or the list it gives for the variant
         /// (0). VEP's `--clin_sig_allele`.
         #[arg(
-            long,
+            long, alias = "clin_sig_allele",
             value_name = "0|1",
             default_value_t = 1,
             value_parser = clap::value_parser!(u8).range(0..=1)
@@ -287,7 +290,7 @@ enum Commands {
         /// (identical to VEP, where transcript status outranks consequence severity).
         /// For clinical reporting put `rank` first, so a variant that disrupts a
         /// transcript is never reported as merely neighbouring a MANE one.
-        #[arg(long)]
+        #[arg(long, alias = "pick_order")]
         pick_order: Option<String>,
 
         /// Path to a curated functional-evidence TSV supplying PS3/BS3.
@@ -330,7 +333,7 @@ enum Commands {
         qc_rules: Option<String>,
 
         /// Suppress periodic progress output
-        #[arg(long, default_value_t = false)]
+        #[arg(long, alias = "no_progress", default_value_t = false)]
         no_progress: bool,
     },
 

@@ -4,7 +4,8 @@
 //!
 //! `known_variant_columns_golden.rs` holds the columns to VEP's; this holds what
 //! `main.rs` does with the command line, which no call of `run_annotate` can see: that
-//! `--everything` brings the frequency flags
+//! VEP's underscore spellings (`--af_1kg`, `--check_existing`, `--clin_sig_allele`) are
+//! the same flags as the hyphen ones, that `--everything` brings the frequency flags
 //! with it only where there is a cache to read them from, that a flag which reads the
 //! cache without one stops the run, and that the VEP 116 flags this does not have are
 //! refused and not taken for something else.
@@ -64,6 +65,76 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into()
 }
 
+/// VEP's spelling of a flag is the same flag. Each pair is run and its two outputs are
+/// the same file, and each differs from a run without the flags, so that an alias that
+/// parsed and did nothing would not pass for one that worked.
+#[test]
+fn vep_s_underscore_spellings_are_the_hyphen_flags() {
+    let cache = cache();
+    let cases: Vec<(Vec<&str>, Vec<&str>)> = vec![
+        (
+            vec!["--af_1kg", "--check_existing"],
+            vec!["--af-1kg", "--check-existing"],
+        ),
+        (
+            vec!["--af_gnomade", "--af_gnomadg"],
+            vec!["--af-gnomade", "--af-gnomadg"],
+        ),
+        (vec!["--af_gnomad"], vec!["--af-gnomade"]),
+        (vec!["--af-gnomad"], vec!["--af-gnomade"]),
+        (vec!["--max_af"], vec!["--max-af"]),
+        (
+            vec!["--check_existing", "--clin_sig_allele", "0"],
+            vec!["--check-existing", "--clin-sig-allele", "0"],
+        ),
+        (
+            vec!["--show_ref_allele", "--variant_class"],
+            vec!["--show-ref-allele", "--variant-class"],
+        ),
+        (vec!["--flag_pick"], vec!["--flag-pick"]),
+        (vec!["--flag_pick_allele"], vec!["--flag-pick-allele"]),
+        (
+            vec!["--flag_pick_allele_gene"],
+            vec!["--flag-pick-allele-gene"],
+        ),
+        (vec!["--pick_allele"], vec!["--pick-allele"]),
+        (vec!["--pick_allele_gene"], vec!["--pick-allele-gene"]),
+        (
+            vec!["--pick", "--pick_order", "rank,canonical"],
+            vec!["--pick", "--pick-order", "rank,canonical"],
+        ),
+        (vec!["--buffer_size", "100"], vec!["--buffer-size", "100"]),
+    ];
+    let dir = TempDir::new().unwrap();
+    let (output, plain) = annotate(dir.path(), &["--cache-dir", &cache]);
+    assert!(output.status.success(), "{}", stderr(&output));
+
+    for (underscore, hyphen) in cases {
+        let with = |flags: &[&str]| {
+            let mut args = vec!["--cache-dir", cache.as_str()];
+            args.extend_from_slice(flags);
+            args.iter().map(|a| a.to_string()).collect::<Vec<_>>()
+        };
+        let (u, h) = (with(&underscore), with(&hyphen));
+        let (u_out, u_tab) = annotate(
+            dir.path(),
+            &u.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        assert!(u_out.status.success(), "{underscore:?}: {}", stderr(&u_out));
+        let (h_out, h_tab) = annotate(
+            dir.path(),
+            &h.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        assert!(h_out.status.success(), "{hyphen:?}: {}", stderr(&h_out));
+        assert_eq!(u_tab, h_tab, "{underscore:?} is not {hyphen:?}");
+        // `--buffer_size` and `--pick_order` change no cell of this input, which is not what is
+        // under test; the others change the columns or the rows
+        if !matches!(underscore[0], "--buffer_size" | "--pick") {
+            assert_ne!(u_tab, plain, "{underscore:?} did nothing");
+        }
+    }
+}
+
 /// `--everything` is VEP's set. With a cache it has the frequency flags in it, as in VEP; without
 /// one it is the set fastVEP has always had, and not an error for a flag the user never typed.
 #[test]
@@ -107,10 +178,10 @@ fn a_flag_that_reads_the_cache_stops_a_run_that_has_none() {
     for flag in [
         "--af",
         "--af-1kg",
-        "--af-gnomadg",
+        "--af_gnomadg",
         "--max-af",
         "--pubmed",
-        "--check-existing",
+        "--check_existing",
     ] {
         let (output, _) = annotate(dir.path(), &[flag]);
         assert!(!output.status.success(), "{flag} without a cache ran");
