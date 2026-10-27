@@ -404,6 +404,15 @@ fn colocated_frequency_data(
                     .map(|(_, f)| &**f)
             };
             let from_matched = matched_allele.and_then(lookup);
+            // `$freq_data{$this_allele}`: `freq_data` is keyed by the alleles of the record and
+            // `this_allele` is the input's, which for a record on the minus strand is the other
+            // frame (for `A/T` it is the frequency of the other allele). The source of VEP 116.3
+            // does the same (read, not run against such a record), and so does this, so that the
+            // two stay side by side. It cannot be seen on the release-116 cache: every `strand`
+            // cell of the variation files of chromosomes 21 and 22, Ensembl and RefSeq (29,722,991
+            // cells, counted), is `.`, which reads as strand 1, so only a hand-built cache has a
+            // record on the minus strand. If one has to be right, this looks up
+            // `reverse_complement(this_allele)` when `ex.strand == -1`.
             let from_interpolation = if interpolated {
                 lookup(this_allele).filter(|f| perl::is_true(f))
             } else {
