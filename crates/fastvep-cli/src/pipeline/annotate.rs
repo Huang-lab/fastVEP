@@ -1208,10 +1208,20 @@ impl ContigCheck {
         gff3_specs: &[Gff3Spec],
         seq_provider: Option<&dyn SequenceProvider>,
     ) -> Self {
-        let mut known: std::collections::HashSet<String> = transcripts
-            .iter()
-            .map(|t| t.chromosome.to_string())
-            .collect();
+        // The contigs of the gene models, read off the run of transcripts that share one: a `String`
+        // for each of the 500,000 transcripts of the human GFF3, to find the 200 names, was most of
+        // what this cost
+        let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut last: Option<&str> = None;
+        for t in transcripts {
+            let chrom: &str = &t.chromosome;
+            if last != Some(chrom) {
+                if !known.contains(chrom) {
+                    known.insert(chrom.to_string());
+                }
+                last = Some(chrom);
+            }
+        }
         // A tabix read keeps only the transcripts near the input's variants, so the ones it has are
         // not the contigs the file is about: its index is.
         for spec in gff3_specs {
