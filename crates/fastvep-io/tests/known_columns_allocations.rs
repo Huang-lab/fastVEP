@@ -139,7 +139,6 @@ fn known_columns_add_no_allocation_per_row_to_either_writer() {
         transcript_variations: (0..30)
             .map(|i| transcript_variation(&format!("ENST{i:011}"), &alts))
             .collect(),
-        existing_variants: Vec::new(),
         known: Vec::new(),
         minimised: false,
         most_severe_consequence: Some(Consequence::MissenseVariant),

@@ -377,17 +377,12 @@ impl AnnotationContext {
             if overlapping.is_empty() {
                 annotate_intergenic(vf);
             } else {
-                let ref_seq = self
-                    .seq_provider
-                    .as_ref()
-                    .and_then(|sp| sp.fetch_sequence(chrom, query_start, query_end).ok());
-
                 let result = self.predictor.predict(
                     &vf.position,
                     &vf.ref_allele,
                     &vf.alt_alleles,
                     &overlapping,
-                    ref_seq.as_deref(),
+                    None,
                 );
 
                 // The reference an HGVS description is written against: the genome's, where the

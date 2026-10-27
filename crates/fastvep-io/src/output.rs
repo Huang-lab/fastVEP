@@ -3435,7 +3435,6 @@ mod tests {
                 hgnc_id: None,
                 flags: Vec::new(),
             }],
-            existing_variants: Vec::new(),
             known: Vec::new(),
             minimised: false,
             most_severe_consequence: None,

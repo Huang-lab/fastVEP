@@ -266,10 +266,6 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                 }
             }
         } else {
-            // Get reference sequence if available
-            let ref_seq =
-                seq_provider.and_then(|sp| sp.fetch_sequence(chrom, query_start, query_end).ok());
-
             // Run consequence prediction — dispatch SVs to SV predictor
             let transcript_consequences = if vf.variant_type.is_structural() {
                 fastvep_consequence::sv_predictor::predict_sv_consequences(
@@ -283,12 +279,16 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     config.distance,
                 )
             } else {
+                // No reference window is read for the predictor: it is given none to use (the
+                // transcripts carry their own sequence), and reading the variant's window of
+                // `--distance` bases either side for every variant was a few kilobytes copied out
+                // of the FASTA per record for nothing.
                 let result = predictor.predict(
                     &vf.position,
                     &vf.ref_allele,
                     &vf.alt_alleles,
                     &overlapping,
-                    ref_seq.as_deref(),
+                    None,
                 );
                 result.transcript_consequences
             };
@@ -1483,7 +1483,11 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
     // Initialize variation provider from VEP cache if provided.
     // Skipped in --sa-only mode (existing_variation comes from defaults).
-    let var_provider: Option<TabixVariationProvider> = if sa_only {
+    //
+    // Skipped for JSON as well, which has no place for what it finds: `--cache-dir` read every variant's
+    // window of the cache and wrote nothing of it.
+    let var_provider: Option<TabixVariationProvider> = if sa_only || config.output_format == "json"
+    {
         None
     } else if let Some(ref dir) = config.cache_dir {
         let info_path = Path::new(dir).join("info.txt");
@@ -1823,7 +1827,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         let mut batch: Vec<(VariationFeature, KnownLookup)> = Vec::with_capacity(BATCH_SIZE);
         for _ in 0..BATCH_SIZE {
             match vcf_parser.next_variant()? {
-                Some(mut vf) => {
+                Some(vf) => {
                     if let Some(check) = contig_check.as_mut() {
                         check.note(&vf.position.chromosome);
                     }
@@ -1841,29 +1845,6 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                     } else {
                         KnownLookup::default()
                     };
-
-                    // Populate existing_variants on the VF for output access. Only the
-                    // VCF's CSQ reads them (its `AF`, `CLIN_SIG`, `SOMATIC`, `PHENO` and
-                    // `PUBMED` where no flag asked for VEP's values), and cloning every
-                    // field of every matched known variant is not free.
-                    if config.output_format == "vcf" {
-                        for m in known.by_allele.values().flatten() {
-                            if !vf.existing_variants.iter().any(|kv| kv.name == m.name) {
-                                vf.existing_variants
-                                    .push(fastvep_io::variant::KnownVariant {
-                                        name: m.name.clone(),
-                                        allele_string: None,
-                                        minor_allele: m.minor_allele.clone(),
-                                        minor_allele_freq: m.minor_allele_freq,
-                                        clinical_significance: m.clin_sig.clone(),
-                                        somatic: m.somatic,
-                                        phenotype_or_disease: m.phenotype_or_disease,
-                                        pubmed: m.pubmed.clone(),
-                                        frequencies: m.frequencies.clone(),
-                                    });
-                            }
-                        }
-                    }
 
                     batch.push((vf, known));
                 }

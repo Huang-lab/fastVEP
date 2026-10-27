@@ -21,8 +21,6 @@ pub struct VariationFeature {
     pub vcf_fields: Option<VcfFields>,
     /// Transcript-level annotations (populated during annotation).
     pub transcript_variations: Vec<TranscriptVariation>,
-    /// Co-located known variants (populated during annotation).
-    pub existing_variants: Vec<KnownVariant>,
     /// VEP's known-variant columns (`AF`, `MAX_AF`, `CLIN_SIG`, ...) for each alt
     /// allele that has any, worked out once per allele because every transcript
     /// row of the allele reads the same cells. Empty unless a run asks for those
@@ -167,20 +165,6 @@ pub struct AlleleAnnotation {
     /// Always `false` under `--pick*`, which deletes the losers instead of
     /// marking the winner, and under a plain run, which picks nothing.
     pub pick: bool,
-}
-
-/// A known/existing variant from the variation cache.
-#[derive(Debug, Clone)]
-pub struct KnownVariant {
-    pub name: String,
-    pub allele_string: Option<String>,
-    pub minor_allele: Option<String>,
-    pub minor_allele_freq: Option<f64>,
-    pub clinical_significance: Option<String>,
-    pub somatic: bool,
-    pub phenotype_or_disease: bool,
-    pub pubmed: Vec<String>,
-    pub frequencies: std::collections::HashMap<String, f64>,
 }
 
 impl VariationFeature {

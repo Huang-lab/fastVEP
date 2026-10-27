@@ -141,7 +141,6 @@ fn projection_allocations_stay_within_budget_with_and_without_a_payload() {
         transcript_variations: (0..12)
             .map(|i| transcript_variation(&format!("ENST{i:011}"), &alts))
             .collect(),
-        existing_variants: Vec::new(),
         known: Vec::new(),
         minimised: false,
         most_severe_consequence: Some(Consequence::MissenseVariant),
