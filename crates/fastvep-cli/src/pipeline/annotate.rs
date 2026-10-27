@@ -1858,6 +1858,60 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         _ => {}
     }
 
+    // The bytes a record writes in the format the run asked for.
+    let json = config.output_format == "json";
+    let render_record = |vf: &VariationFeature, text: &mut Vec<u8>| -> Result<()> {
+        match config.output_format.as_str() {
+            "vcf" => write_vcf_line(
+                text,
+                vf,
+                sa_only,
+                &supplementary_specs,
+                &csq_fields,
+                csq_options,
+            )?,
+            "tab" => {
+                // Classify variant against QC rules (if any). The
+                // classifier reads the VCF INFO column once via a
+                // streaming view; no HashMap, no allocation.
+                let qc_label: Option<&str> = if let Some(ref rules) = qc_rules {
+                    let (info_str, qual): (&str, Option<f64>) = match &vf.vcf_fields {
+                        Some(f) => (f.info.as_str(), f.qual.parse::<f64>().ok()),
+                        None => ("", None),
+                    };
+                    let view = fastvep_io::qc::InfoView::new(info_str, qual);
+                    let filter = vf
+                        .vcf_fields
+                        .as_ref()
+                        .map(|f| f.filter.as_str())
+                        .unwrap_or("");
+                    Some(rules.classify(&view, filter))
+                } else {
+                    None
+                };
+
+                let opts = output::TabOptions {
+                    gene_set: gene_set.as_ref(),
+                    explicit_ref: config.explicit_alleles,
+                    qc_class: qc_label,
+                    pick_column: pick_flags_column,
+                    optional: &optional_columns,
+                    no_escape: config.compat.no_escape,
+                };
+                for line in output::format_tab_line_with(vf, &supplementary_specs, sa_only, opts) {
+                    text.extend_from_slice(line.as_bytes());
+                    text.push(b'\n');
+                }
+            }
+            "json" => {
+                let record = output::format_json(vf, sa_only);
+                serde_json::to_writer_pretty(&mut *text, &record)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    };
+
     // Process variants in batches for parallel annotation
     let mut meter = crate::progress::ProgressMeter::new(config.show_progress);
     let mut first_json = true;
@@ -1952,61 +2006,39 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             }
         }
 
-        // Phase 3: Write output sequentially (preserves VCF order)
-        for (vf, _) in &batch {
-            match config.output_format.as_str() {
-                "vcf" => write_vcf_line(
-                    &mut writer,
-                    vf,
-                    sa_only,
-                    &supplementary_specs,
-                    &csq_fields,
-                    csq_options,
-                )?,
-                "tab" => {
-                    // Classify variant against QC rules (if any). The
-                    // classifier reads the VCF INFO column once via a
-                    // streaming view; no HashMap, no allocation.
-                    let qc_label: Option<&str> = if let Some(ref rules) = qc_rules {
-                        let (info_str, qual): (&str, Option<f64>) = match &vf.vcf_fields {
-                            Some(f) => (f.info.as_str(), f.qual.parse::<f64>().ok()),
-                            None => ("", None),
-                        };
-                        let view = fastvep_io::qc::InfoView::new(info_str, qual);
-                        let filter = vf
-                            .vcf_fields
-                            .as_ref()
-                            .map(|f| f.filter.as_str())
-                            .unwrap_or("");
-                        Some(rules.classify(&view, filter))
-                    } else {
-                        None
-                    };
+        // Phase 2.7: Render the records into the bytes they write, on every thread. A record is
+        // formatted from itself alone, and once its annotation is spread over the cores the
+        // formatting is most of what is left on the one thread that writes. Each piece is the text
+        // of a run of consecutive records, so the pieces in order are the file the records would
+        // have made written one by one.
+        let pieces: Vec<Result<Vec<u8>>> = batch
+            .par_iter()
+            .fold(
+                || Ok(Vec::new()),
+                |piece: Result<Vec<u8>>, (vf, _)| {
+                    let mut text = piece?;
+                    if json && !text.is_empty() {
+                        text.extend_from_slice(b",\n");
+                    }
+                    render_record(vf, &mut text)?;
+                    Ok(text)
+                },
+            )
+            .collect();
 
-                    let opts = output::TabOptions {
-                        gene_set: gene_set.as_ref(),
-                        explicit_ref: config.explicit_alleles,
-                        qc_class: qc_label,
-                        pick_column: pick_flags_column,
-                        optional: &optional_columns,
-                        no_escape: config.compat.no_escape,
-                    };
-                    for line in
-                        output::format_tab_line_with(vf, &supplementary_specs, sa_only, opts)
-                    {
-                        writeln!(writer, "{}", line)?;
-                    }
-                }
-                "json" => {
-                    if !first_json {
-                        writeln!(writer, ",")?;
-                    }
-                    first_json = false;
-                    let json = output::format_json(vf, sa_only);
-                    write!(writer, "{}", serde_json::to_string_pretty(&json)?)?;
-                }
-                _ => {}
+        // Phase 3: Write output sequentially (preserves VCF order)
+        for piece in pieces {
+            let text = piece?;
+            if text.is_empty() {
+                continue;
             }
+            if json {
+                if !first_json {
+                    writeln!(writer, ",")?;
+                }
+                first_json = false;
+            }
+            writer.write_all(&text)?;
         }
 
         meter.update_n(batch.len() as u64);
