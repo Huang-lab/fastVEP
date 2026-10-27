@@ -10,6 +10,7 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use fastvep_cli::pipeline::{run_annotate, AnnotateConfig, PickFlags, TranscriptExclusions};
 use tempfile::TempDir;
@@ -244,4 +245,42 @@ fn leaving_out_every_transcript_stops_the_run() {
     ))
     .expect_err("nothing left to annotate with");
     assert!(format!("{err:#}").contains("left out"), "{err:#}");
+}
+
+/// `--sa-only` loads no transcripts, so the exclusion flags have nothing to act on, and it says so
+/// as it does for every other flag about transcripts. It used to count `0 of 0` and refuse the run
+/// because "every transcript was left out", which is not what happened and sent the user looking
+/// for a GFF3 they had not given.
+#[test]
+fn sa_only_ignores_the_exclusion_flags_and_says_so() {
+    let dir = TempDir::new().unwrap();
+    let vcf = write_vcf(dir.path());
+    let sa = dir.path().join("sa");
+    std::fs::create_dir(&sa).unwrap();
+    for flag in [
+        "--exclude-predicted",
+        "--exclude-readthrough",
+        "--exclude-artifact",
+    ] {
+        let out = dir.path().join("out.vcf");
+        let output = Command::new(env!("CARGO_BIN_EXE_fastvep"))
+            .arg("annotate")
+            .arg("-i")
+            .arg(&vcf)
+            .arg("-o")
+            .arg(&out)
+            .arg("--sa-only")
+            .arg("--sa-dir")
+            .arg(&sa)
+            .args(["--output-format", "vcf", "--no-progress", flag])
+            .output()
+            .expect("the fastvep binary runs");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{flag}: {stderr}");
+        assert!(
+            stderr.contains(&format!("--sa-only is set; ignoring {flag}")),
+            "{flag}: {stderr}"
+        );
+        assert!(!stderr.contains("left out"), "{flag}: {stderr}");
+    }
 }

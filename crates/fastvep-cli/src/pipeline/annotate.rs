@@ -1373,6 +1373,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             (config.columns.show_ref_allele, "--show-ref-allele"),
             (config.compat.total_length, "--total-length"),
             (config.compat.no_escape, "--no-escape"),
+            (config.exclude.predicted, "--exclude-predicted"),
+            (config.exclude.readthrough, "--exclude-readthrough"),
+            (config.exclude.artifact, "--exclude-artifact"),
             // Names the switch the user actually typed, so the warning is not
             // about `--pick` when they passed `--flag-pick-allele-gene`.
             (pick_switch.is_some(), pick_switch.unwrap_or("--pick")),
@@ -1489,7 +1492,10 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // After the sidecar cache is written, and never in the parser: the cache holds the file's
     // whole transcript set, so a run that leaves some out must not write what it kept as the
     // cache of the next one, which would not have them.
-    if config.exclude.any() {
+    //
+    // Not in `--sa-only`, which loads no transcripts to leave out and has said it ignores the flags:
+    // it would count 0 of 0 and then refuse the run because "every transcript was left out".
+    if config.exclude.any() && !sa_only {
         let before = transcripts.len();
         transcripts.retain(|t| !config.exclude.excludes(t));
         eprintln!(
