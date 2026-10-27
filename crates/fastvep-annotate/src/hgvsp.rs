@@ -22,7 +22,9 @@
 //!   [`walk_the_transcript`] walks the spliced sequence instead.
 //! - **A change that loses the initiator is `p.Met1?`**, as HGVS has it, where Ensembl writes a
 //!   range, two residue names, or nothing ([`start_loss`]).
-//! - **A row with no term for the coding sequence has no protein notation** ([`is_only_a_utr_variant`]).
+//! - **A row with no term for the coding sequence has no protein notation** ([`is_only_a_utr_variant`]),
+//!   and neither has a change that leaves the whole coding sequence behind it, which has no protein
+//!   change to name (`coding_sequence_kept`).
 
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -57,6 +59,9 @@ pub struct HgvspRequest<'a> {
     /// The residue windows of the change as it stands, which are the `Amino_acids` pair
     /// (`-` for none). `None` when it has no window.
     pub amino_acids: Option<(&'a str, &'a str)>,
+    /// The change leaves the whole coding sequence behind it, so the protein is the protein
+    /// (`AlleleConsequenceResult::coding_sequence_kept`).
+    pub coding_sequence_kept: bool,
 }
 
 /// The edited translation, built the first time a notation asks for it.
@@ -327,6 +332,14 @@ fn hgvsp_as_ensembl_writes_it(r: &HgvspRequest<'_>) -> Option<String> {
     // at the start and stop codons and exon edges) and 386 of the 52,001 of its RefSeq cache run;
     // none of the 196,229 of the ClinVar 2-star+ sample or of the 1,500 of HG002.
     if is_only_a_utr_variant(r.consequences) {
+        return None;
+    }
+    // The edited sequence still has the whole coding sequence in it and no ATG where the initiator
+    // was, so the first ATG is the one the transcript had. Ensembl takes the notation from the
+    // window of codons at the old coding start and writes `p.Met1?` or a frameshift for a protein
+    // that has no change (the consequence step leaves `frameshift_variant` and `start_lost` off
+    // such a change, `EditTests::cds_kept`).
+    if r.coding_sequence_kept {
         return None;
     }
     let reference_translation = transcript.peptide.as_deref()?;

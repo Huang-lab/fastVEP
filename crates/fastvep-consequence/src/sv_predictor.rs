@@ -148,6 +148,7 @@ fn predict_sv_for_transcript(
             distance,
             protein_length: None,
             escapes_nmd: None,
+            coding_sequence_kept: false,
         };
     }
 
@@ -187,6 +188,7 @@ fn predict_sv_for_transcript(
         // measure, and PVS1's whole-gene-deletion track does not consult it.
         protein_length: transcript.peptide_length(),
         escapes_nmd: None,
+        coding_sequence_kept: false,
     }
 }
 

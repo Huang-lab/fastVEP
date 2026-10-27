@@ -82,6 +82,12 @@ enum Why {
     /// transcript instead, and writes the notation `vep_tab_intron_repeat` shows is the same as for
     /// the same change in a transcript that has no intron there.
     IntronWalk,
+    /// An edit that leaves the whole coding sequence behind it, one UTR shorter or longer
+    /// (`c.-8_1del` inside a repeat, or bases inserted inside the start codon that repeat the one
+    /// before): Ensembl's `_inv_start_altered` asks the codon at the old coding start and writes
+    /// `start_lost` (HIGH) beside `start_retained_variant`. The edited sequence decides here, and
+    /// the protein is the protein.
+    CdsKept,
 }
 
 /// Cells where fastVEP and stock VEP 116.3 differ and VEP is the one that is wrong:
@@ -336,8 +342,15 @@ const KNOWN: &[(&str, &str, &str, &str, Why)] = &[
         "chr10_11299_ATCTGCTCTG/A",
         "ENST00000000003",
         "Consequence",
-        "start_lost,start_retained_variant,5_prime_UTR_variant",
-        Why::Utr,
+        "start_retained_variant,5_prime_UTR_variant",
+        Why::CdsKept,
+    ),
+    (
+        "chr10_11299_ATCTGCTCTG/A",
+        "ENST00000000003",
+        "IMPACT",
+        "LOW",
+        Why::CdsKept,
     ),
     (
         "chr10_1099_GATGCACGTACGTGTCGCTACGAGGGGATGT/G",
@@ -413,7 +426,7 @@ const KNOWN: &[(&str, &str, &str, &str, Why)] = &[
         "chr10_11298_C/CATCTGCTCT",
         "ENST00000000003",
         "HGVSp",
-        "ENSP00000000003.1:p.Met1?",
+        "-",
         Why::StartLoss,
     ),
     (
@@ -592,13 +605,6 @@ const KNOWN: &[(&str, &str, &str, &str, Why)] = &[
         Why::StartLoss,
     ),
     (
-        "chr10_11299_ATCTGCTCTG/A",
-        "ENST00000000003",
-        "HGVSp",
-        "ENSP00000000003.1:p.Met1?",
-        Why::StartLoss,
-    ),
-    (
         "chr10_1099_G/GAT",
         "ENST00000000001",
         "HGVSp",
@@ -702,6 +708,20 @@ const KNOWN: &[(&str, &str, &str, &str, Why)] = &[
         "HGVSp",
         "ENSP00000000003.1:p.Leu100_Pro101insArgLeu",
         Why::IntronWalk,
+    ),
+    (
+        "chr10_11298_C/CATCTGCTCT",
+        "ENST00000000003",
+        "Consequence",
+        "start_retained_variant",
+        Why::CdsKept,
+    ),
+    (
+        "chr10_11298_C/CATCTGCTCT",
+        "ENST00000000003",
+        "IMPACT",
+        "LOW",
+        Why::CdsKept,
     ),
 ];
 

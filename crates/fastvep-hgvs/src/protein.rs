@@ -14,7 +14,7 @@
 //! [`EditedTranslation`]. Both are *inputs*: this module knows no coordinates, no strand and no
 //! genome, which is what makes it testable against Ensembl's own rows one at a time.
 //!
-//! Four places differ from Ensembl on purpose. Each is marked where it happens, and each is a case
+//! Five places differ from Ensembl on purpose. Each is marked where it happens, and each is a case
 //! where what Ensembl writes is not what the sequence says or is not HGVS:
 //!
 //! 1. **`*` and `X` stay different.** Ensembl rewrites `*` to `X` before it tests the
@@ -40,6 +40,11 @@
 //!    backwards and names the last residue of the protein as if it were the first
 //!    (`p.Asp1_?0`), because `substr` reads the residue in front of residue 1 from the end of
 //!    the string. Neither is HGVS and the second is wrong.
+//! 5. **An insertion in front of residue 1 that does not lose the initiator has no description.**
+//!    The same `substr` reads the residue in front of residue 1 from the end of the protein and
+//!    Ensembl numbers it 0, so `p.Ile0_Ile1insThr` names a residue that does not exist. The edit
+//!    is in front of the start codon, or inside it with the whole coding sequence still behind it,
+//!    and the protein is the protein.
 
 use fastvep_genome::codon::aa_one_to_three;
 use std::fmt::Write;
@@ -187,7 +192,25 @@ pub fn hgvs_protein(change: &ProteinChange<'_>, edited: &dyn EditedTranslation) 
     }
     get_hgvs_protein_type(change, &mut n);
     get_hgvs_peptides(change, edited, &mut n)?;
-    Some(get_hgvs_protein_format(change, edited, n))
+    let description = get_hgvs_protein_format(change, edited, n);
+    // 5. An insertion in front of residue 1 that does not lose the initiator has no description:
+    // it would sit after residue 0.
+    (!names_residue_zero(&description)).then_some(description)
+}
+
+/// Whether a description names a residue 0 (`p.Ile0_Ile1insThr`), which is what an insertion in
+/// front of the first residue of a protein is written as: Ensembl names the residue before it with
+/// `substr($ref, -1, 1)`, the last residue of the protein, and numbers it 0. The edit has no
+/// place in the protein: it is in front of the start codon, or inside it with the coding
+/// sequence still behind it, and HGVS has nothing to call it by.
+fn names_residue_zero(description: &str) -> bool {
+    let Some((_, residues)) = description.split_once(":p.") else {
+        return false;
+    };
+    // the three letters of a residue and a number that is just `0`
+    residues.as_bytes().windows(5).any(|w| {
+        w[..3].iter().all(u8::is_ascii_alphabetic) && w[3] == b'0' && !w[4].is_ascii_digit()
+    })
 }
 
 /// `_clip_alleles` for protein numbering: take what the two peptides share off both ends.
@@ -848,6 +871,25 @@ mod tests {
 
     /// What residue 1 is called is read off the protein, so a protein whose first residue is not a
     /// Met (an initiator the annotation gives as something else) is named as it is.
+    #[test]
+    fn an_insertion_in_front_of_residue_one_that_keeps_the_initiator_has_no_description() {
+        // `M` becomes `NM` and the initiator is not lost: the window of an edit that leaves the
+        // coding sequence behind inserted bases
+        let c = change("M", "NM", 1, 1, "MKPA*");
+        assert_eq!(hgvs_protein(&c, &NONE), None);
+        // an insertion after residue 1 is described as it always was
+        let c = change("MK", "MNK", 1, 2, "MKPA*");
+        assert!(hgvs_protein(&c, &NONE).is_some());
+    }
+
+    #[test]
+    fn a_residue_numbered_ten_or_a_hundred_is_not_residue_zero() {
+        assert!(!names_residue_zero("P.1:p.Met10del"));
+        assert!(!names_residue_zero("P.1:p.Ala100_Pro101insGly"));
+        assert!(!names_residue_zero("ENSP00000000003.1:p.Leu20Ter"));
+        assert!(names_residue_zero("ENSP00000000003.1:p.Ile0_Ile1insThr"));
+    }
+
     #[test]
     fn the_residue_that_was_lost_is_the_first_of_the_protein() {
         let mut c = change("L", "I", 1, 1, "LAKKKPL*");

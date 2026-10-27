@@ -79,6 +79,10 @@ pub struct AlleleConsequenceResult {
     /// variant; the variant's own position is used as the stand-in, which is
     /// the approximation the published PVS1 implementations make.
     pub escapes_nmd: Option<bool>,
+    /// The change touches the start codon and leaves the whole coding sequence behind it, with
+    /// no ATG at the old coding start: the protein is the protein, the consequence terms say so
+    /// (`EditTests::cds_kept`), and there is no protein change for `HGVSp` to name.
+    pub coding_sequence_kept: bool,
 }
 
 /// Resolve a codon-table residue against the transcript's own peptide.
@@ -215,6 +219,8 @@ pub struct CodingChange {
     pub consequences: Vec<Consequence>,
     pub amino_acids: DisplayPair,
     pub codons: DisplayPair,
+    /// `EditTests::cds_kept` of the change.
+    pub coding_sequence_kept: bool,
 }
 
 /// The codon window a CDS-internal change edits, translated on both sides.
@@ -391,6 +397,7 @@ impl ConsequencePredictor {
                 distance: None,
                 protein_length: None,
                 escapes_nmd: None,
+                coding_sequence_kept: false,
             };
         }
 
@@ -406,6 +413,7 @@ impl ConsequencePredictor {
         let mut protein_end = None;
         let mut amino_acids = None;
         let mut codons = None;
+        let mut coding_sequence_kept = false;
         let mut distance = None;
 
         // 1. Check if variant overlaps the transcript at all
@@ -460,6 +468,7 @@ impl ConsequencePredictor {
                 distance,
                 protein_length: None,
                 escapes_nmd: None,
+                coding_sequence_kept: false,
             };
         }
 
@@ -570,6 +579,7 @@ impl ConsequencePredictor {
                 consequences.extend(change.consequences);
                 amino_acids = change.amino_acids;
                 codons = change.codons;
+                coding_sequence_kept = change.coding_sequence_kept;
             } else if splice.within_frameshift_intron
                 && var_start <= coding_end
                 && var_end >= coding_start
@@ -697,6 +707,7 @@ impl ConsequencePredictor {
             distance,
             protein_length,
             escapes_nmd,
+            coding_sequence_kept,
         }
     }
 
@@ -789,6 +800,7 @@ impl ConsequencePredictor {
                 consequences,
                 amino_acids: None,
                 codons: Some((window.ref_codons.clone(), window.alt_codons.clone())),
+                coding_sequence_kept: false,
             };
         }
 
@@ -981,6 +993,14 @@ impl ConsequencePredictor {
         // codon, `CTG` to `CTA` as much as the rest, is a start loss in the cache of Ensembl
         // itself.
         let initiator_kept = w.tl_start == 1 && r.starts_with('M') && a.starts_with('M');
+        // Nor does it hold, and neither does any term that says the protein changed, when the
+        // edited sequence still ends with the whole coding sequence and has no ATG at the old
+        // coding start (`EditTests::cds_kept`): the first ATG is the one the transcript had. The
+        // three start tests do not agree about such an edit, and the terms that follow from the
+        // length of the coding span do not look at the sequence at all, so Ensembl writes
+        // `frameshift_variant,start_lost,start_retained_variant` for the deletion of the first `A`
+        // of `AA|TG` and for `c.1dup`, a frameshift and a loss for a protein that has neither.
+        let cds_kept = e.cds_kept;
         let start_lost = overlaps_initiator
             && !initiator_kept
             && ((e.ins_del_start_altered
@@ -1028,17 +1048,26 @@ impl ConsequencePredictor {
 
         // The `include` of each term, then every term that holds, in rank order
         let consequences = [
-            (stop_gained, Consequence::StopGained),
-            (changes_length && frameshift, Consequence::FrameshiftVariant),
-            (stop_lost, Consequence::StopLost),
-            (start_lost, Consequence::StartLost),
+            (!cds_kept && stop_gained, Consequence::StopGained),
             (
-                insertion && inframe_insertion,
+                !cds_kept && changes_length && frameshift,
+                Consequence::FrameshiftVariant,
+            ),
+            (stop_lost, Consequence::StopLost),
+            (!cds_kept && start_lost, Consequence::StartLost),
+            (
+                !cds_kept && insertion && inframe_insertion,
                 Consequence::InframeInsertion,
             ),
-            (deletion && inframe_deletion, Consequence::InframeDeletion),
+            (
+                !cds_kept && deletion && inframe_deletion,
+                Consequence::InframeDeletion,
+            ),
             (!changes_length && missense, Consequence::MissenseVariant),
-            (protein_altering, Consequence::ProteinAlteringVariant),
+            (
+                !cds_kept && protein_altering,
+                Consequence::ProteinAlteringVariant,
+            ),
             (partial, Consequence::IncompleteTerminalCodonVariant),
             (start_retained, Consequence::StartRetainedVariant),
             (stop_retained, Consequence::StopRetainedVariant),
@@ -1061,6 +1090,7 @@ impl ConsequencePredictor {
             consequences,
             amino_acids: Some((shown(&w.ref_aas), shown(&w.alt_aas))),
             codons: Some((w.ref_codons.clone(), w.alt_codons.clone())),
+            coding_sequence_kept: cds_kept,
         }
     }
 
@@ -1098,7 +1128,8 @@ impl ConsequencePredictor {
             && changes_length
             && e.overlaps_stop_cil
             && !e.ins_del_stop_altered_cil;
-        let start_lost = e.overlaps_initiator && (e.ins_del_start_altered || e.inv_start_altered);
+        let start_lost =
+            e.overlaps_initiator && !e.cds_kept && (e.ins_del_start_altered || e.inv_start_altered);
         let start_retained = e.overlaps_initiator
             && if changes_length {
                 !e.ins_del_start_altered
@@ -1122,6 +1153,7 @@ impl ConsequencePredictor {
             consequences,
             amino_acids: None,
             codons: None,
+            coding_sequence_kept: e.cds_kept,
         }
     }
 
@@ -1757,6 +1789,7 @@ mod tests {
             distance: None,
             protein_length: None,
             escapes_nmd: None,
+            coding_sequence_kept: false,
         }
     }
 
@@ -2715,16 +2748,13 @@ mod tests {
     /// while the CDS is four bases shorter.
     #[test]
     fn start_lost_does_not_depend_on_the_codon_that_lands_at_the_coding_start() {
-        // Deleting cDNA 9..13 leaves cDNA 14 (`GCT`'s `T`) onward at the coding
-        // start; insert `ATG` so an initiator sits there again.
+        // `ATGGATGTC` and seven codons more: two UTR bases and the first four of the CDS deleted
+        // leave `ATGTC` at the coding start, a Met, with the coding sequence four bases short.
+        // `CCATGG` is its own reverse complement, so it reads the same on either strand.
+        let cds = format!("ATGGATGTC{}TAA", "GCT".repeat(6));
         for strand in [Strand::Forward, Strand::Reverse] {
-            let got = consequences_for(
-                strand,
-                9,
-                13,
-                &Allele::from_str("CCATG"),
-                &Allele::from_str("ATG"),
-            );
+            let got =
+                terms_at_the_start_codon(strand, 10, &cds, 9, 14, "CCATGG", &Allele::Deletion);
             assert!(
                 got.contains(&Consequence::StartLost),
                 "{strand:?}: expected start_lost despite an ATG at the coding start, got {got:?}"
@@ -2736,14 +2766,16 @@ mod tests {
     /// it (the 3' UTR is the filler that keeps the transcript 201 bases long), so that a change
     /// at the start codon can be decided against the edited sequence.
     fn make_start_codon_transcript(strand: Strand, utr5: usize, cds: &str) -> Transcript {
+        make_start_codon_transcript_with_utr(strand, &"C".repeat(utr5), cds)
+    }
+
+    /// [`make_start_codon_transcript`] with the 5' UTR given, for a change that depends on what
+    /// stands in front of the initiator (a repeat of its first base).
+    fn make_start_codon_transcript_with_utr(strand: Strand, utr: &str, cds: &str) -> Transcript {
         assert_eq!(cds.len(), 30);
+        let utr5 = utr.len();
         let mut tr = make_boundary_transcript(strand);
-        let spliced = format!(
-            "{}{}{}",
-            "C".repeat(utr5),
-            cds,
-            "G".repeat(201 - utr5 - cds.len())
-        );
+        let spliced = format!("{}{}{}", utr, cds, "G".repeat(201 - utr5 - cds.len()));
         let (crs, cre) = match strand {
             Strand::Forward => (1000 + utr5 as u64, 999 + utr5 as u64 + 30),
             Strand::Reverse => (1171 - utr5 as u64, 1200 - utr5 as u64),
@@ -2773,13 +2805,32 @@ mod tests {
         alt_allele: &Allele,
     ) -> Vec<Consequence> {
         let tr = make_start_codon_transcript(strand, utr5, cds);
+        terms_of_a_change(&tr, strand, cdna_lo, cdna_hi, ref_allele, alt_allele)
+    }
+
+    fn revcomp(bases: &str) -> String {
+        bases
+            .bytes()
+            .rev()
+            .map(|b| crate::edits::complement(b) as char)
+            .collect()
+    }
+
+    fn terms_of_a_change(
+        tr: &Transcript,
+        strand: Strand,
+        cdna_lo: u64,
+        cdna_hi: u64,
+        ref_allele: &str,
+        alt_allele: &Allele,
+    ) -> Vec<Consequence> {
         let (g_start, g_end) = genomic_span(strand, cdna_lo, cdna_hi);
         let pos = GenomicPosition::new("chr1", g_start, g_end, Strand::Forward);
         let result = ConsequencePredictor::default().predict(
             &pos,
             &Allele::from_str(ref_allele),
             std::slice::from_ref(alt_allele),
-            &[&tr],
+            &[tr],
             None,
         );
         result.transcript_consequences[0].allele_consequences[0]
@@ -3087,33 +3138,205 @@ mod tests {
             }
         }
     }
-    /// The same insertion one base further in, between the first and second base of the
-    /// initiator, destroys it: `ATG` becomes `ATTTTG`, and the first codon is no longer an ATG.
-    /// Ensembl's `_inv_start_altered` reads the codon that now sits where the initiator did, so
-    /// this is `start_lost` on either strand, and it must not depend on which genomic side the
-    /// transcript's 5' end is on.
+    /// An insertion between the first and second base of the initiator that does not leave the
+    /// coding sequence behind it destroys it: `ATG` becomes `ACACTG`, and the first codon is no
+    /// longer an ATG. Ensembl's `_inv_start_altered` reads the codon that now sits where the
+    /// initiator did, so this is `start_lost` on either strand, and it must not depend on which
+    /// genomic side the transcript's 5' end is on.
     #[test]
     fn an_insertion_inside_the_initiator_is_a_start_loss_on_either_strand() {
-        let predictor = ConsequencePredictor::default();
+        let cds = format!("ATGGCT{}TAA", "GCT".repeat(7));
         for strand in [Strand::Forward, Strand::Reverse] {
-            let tr = make_boundary_transcript(strand);
-            // between cDNA 11 and 12
-            let genomic = match strand {
-                Strand::Forward => 999 + 12,
-                Strand::Reverse => 1202 - 12,
+            // `CAC` after the A of the initiator, in transcript terms; the other strand reads it
+            // `GTG` and puts it in front of the complement of the A
+            let (r, a) = match strand {
+                Strand::Forward => ("A", "ACAC"),
+                Strand::Reverse => ("T", "GTGT"),
             };
-            let pos = GenomicPosition::new("chr1", genomic, genomic - 1, Strand::Forward);
-            let result = predictor.predict(
-                &pos,
-                &Allele::Deletion,
-                &[Allele::from_str("TTT")],
-                &[&tr],
-                None,
-            );
-            let got = &result.transcript_consequences[0].allele_consequences[0].consequences;
+            let got = terms_at_the_start_codon(strand, 10, &cds, 11, 11, r, &Allele::from_str(a));
             assert!(
                 got.contains(&Consequence::StartLost),
                 "{strand:?} insertion inside the initiator: expected start_lost, got {got:?}"
+            );
+        }
+    }
+
+    /// The same place, and an insertion that is a repeat of the base before it: `A` `AAA` `TG` is
+    /// `AAAATG`, the whole coding sequence behind three more bases of UTR, which is also the
+    /// insertion of `AAA` in front of the `A`. The protein is the protein. Ensembl asks the codon
+    /// that now sits where the initiator did, finds `AAA` there, and writes `start_lost` beside
+    /// `start_retained_variant`, and `inframe_insertion` for the three bases.
+    #[test]
+    fn an_edit_that_leaves_the_whole_coding_sequence_behind_it_is_not_a_start_loss() {
+        let cds = format!("ATGGCT{}TAA", "GCT".repeat(7));
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let (r, a) = match strand {
+                Strand::Forward => ("A", "AAAA"),
+                Strand::Reverse => ("T", "TTTT"),
+            };
+            let got = terms_at_the_start_codon(strand, 10, &cds, 11, 11, r, &Allele::from_str(a));
+            assert_eq!(
+                got,
+                [Consequence::StartRetainedVariant],
+                "{strand:?}: the coding sequence is all there"
+            );
+            // and with no UTR in front of it, which `_inv_start_altered` does not ask about: the
+            // same edit, and the same answer
+            let got = terms_at_the_start_codon(strand, 0, &cds, 1, 1, r, &Allele::from_str(a));
+            assert_eq!(
+                got,
+                [Consequence::StartRetainedVariant],
+                "{strand:?} with no UTR"
+            );
+        }
+    }
+
+    /// A frameshift is not one when the coding sequence is all still there. With an `A` in front
+    /// of the initiator the deletion of the initiator's own `A` (`c.1del` of `AA|TG`) leaves
+    /// `...ATGGCT...` one base further along, and so does `c.1dup` whatever stands in front of the
+    /// initiator: the first ATG of the edited transcript is the one it had. Ensembl takes
+    /// `frameshift_variant` from the length of the coding span and `start_lost` from the codon at
+    /// the old coding start, and writes `frameshift_variant,start_lost,start_retained_variant` for
+    /// a protein that has neither.
+    #[test]
+    fn an_edit_that_leaves_the_whole_coding_sequence_behind_it_is_not_a_frameshift() {
+        let cds = format!("ATGGCT{}TAA", "GCT".repeat(7));
+        for strand in [Strand::Forward, Strand::Reverse] {
+            // a base after the first base of the initiator, in transcript terms: the other strand
+            // reads it in front of the complement of that base
+            let insertion = |x: &str| match strand {
+                Strand::Forward => ("A", format!("A{x}")),
+                Strand::Reverse => ("T", format!("{}T", revcomp(x))),
+            };
+            let a = insertion("").0;
+            let after_an_a = make_start_codon_transcript_with_utr(strand, "CCCCCCCCCA", &cds);
+            let after_a_c = make_start_codon_transcript_with_utr(strand, "CCCCCCCCCC", &cds);
+
+            // the initiator's own `A`, which is also the UTR's last base written one place on
+            let got = terms_of_a_change(&after_an_a, strand, 11, 11, a, &Allele::Deletion);
+            assert_eq!(
+                got,
+                [Consequence::StartRetainedVariant],
+                "{strand:?} c.1del"
+            );
+            assert_eq!(Consequence::worst_impact(&got), Some(Impact::Low));
+            // with a `C` in front of it the same deletion takes the initiator away
+            let got = terms_of_a_change(&after_a_c, strand, 11, 11, a, &Allele::Deletion);
+            assert!(
+                got.contains(&Consequence::StartLost)
+                    && got.contains(&Consequence::FrameshiftVariant),
+                "{strand:?} control, c.1del: {got:?}"
+            );
+
+            // `c.1dup`, with either base in front
+            let (r, alt) = insertion("A");
+            for (tr, what) in [(&after_an_a, "A in front"), (&after_a_c, "C in front")] {
+                let got = terms_of_a_change(tr, strand, 11, 11, r, &Allele::from_str(&alt));
+                assert_eq!(
+                    got,
+                    [Consequence::StartRetainedVariant],
+                    "{strand:?} c.1dup, {what}"
+                );
+            }
+            // a base that is not the initiator's own makes `AGTGGCT`, which is not the coding
+            // sequence behind it
+            let (r, alt) = insertion("G");
+            let got = terms_of_a_change(&after_a_c, strand, 11, 11, r, &Allele::from_str(&alt));
+            assert!(
+                got.contains(&Consequence::StartLost)
+                    && got.contains(&Consequence::FrameshiftVariant),
+                "{strand:?} control, insertion of a G: {got:?}"
+            );
+        }
+    }
+
+    /// A transcript that begins at its initiator has no 5' UTR, and Ensembl asks `_inv_start_altered`
+    /// only `if ($utr)`: the deletion of its whole ATG is an `inframe_deletion` and not a start loss
+    /// (ENST00000398956, `c.1_3del`), for a protein that has lost its first residue and has no start
+    /// codon. The question is the same whether there is a UTR in front of the ATG or not.
+    #[test]
+    fn the_deletion_of_the_whole_initiator_is_a_start_loss_with_no_utr_too() {
+        let cds = format!("ATGGCT{}TAA", "GCT".repeat(7));
+        for strand in [Strand::Forward, Strand::Reverse] {
+            for utr5 in [0, 10] {
+                let got = terms_at_the_start_codon(
+                    strand,
+                    utr5,
+                    &cds,
+                    utr5 as u64 + 1,
+                    utr5 as u64 + 3,
+                    "ATG",
+                    &Allele::Deletion,
+                );
+                assert!(
+                    got.contains(&Consequence::StartLost)
+                        && got.contains(&Consequence::InframeDeletion),
+                    "{strand:?} with {utr5} bases of UTR: {got:?}"
+                );
+            }
+            // codon 2 is not: the Met is still the first residue
+            let got = terms_at_the_start_codon(strand, 0, &cds, 4, 6, "GCT", &Allele::Deletion);
+            assert!(
+                !got.contains(&Consequence::StartLost),
+                "{strand:?} codon 2: {got:?}"
+            );
+        }
+    }
+
+    /// A deletion that begins in the 5' UTR and runs into the initiator inside a repeat (ClinVar's
+    /// 942837, `c.-1_1del` of `AA|ATG`) leaves every base of the coding sequence where it was, one
+    /// UTR base shorter: it is a UTR variant that touches the start codon and keeps it.
+    #[test]
+    fn a_deletion_from_the_utr_into_the_initiator_inside_a_repeat_keeps_the_start() {
+        let cds = format!("ATGGCT{}TAA", "GCT".repeat(7));
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let aa = match strand {
+                Strand::Forward => "AA",
+                Strand::Reverse => "TT",
+            };
+            let in_a_repeat = make_start_codon_transcript_with_utr(strand, "CCCCCCCCAA", &cds);
+            let got = terms_of_a_change(&in_a_repeat, strand, 10, 11, aa, &Allele::Deletion);
+            assert!(
+                got.contains(&Consequence::FivePrimeUtrVariant)
+                    && got.contains(&Consequence::StartRetainedVariant)
+                    && !got.contains(&Consequence::StartLost)
+                    && !got.contains(&Consequence::FrameshiftVariant),
+                "{strand:?}: {got:?}"
+            );
+            // with a `C` in front of the initiator the same two bases take the `A` of `ATG`
+            // away and leave `TGGCT`
+            let ca = match strand {
+                Strand::Forward => "CA",
+                Strand::Reverse => "TG",
+            };
+            let not_in_a_repeat = make_start_codon_transcript(strand, 10, &cds);
+            let got = terms_of_a_change(&not_in_a_repeat, strand, 10, 11, ca, &Allele::Deletion);
+            assert!(
+                got.contains(&Consequence::FivePrimeUtrVariant)
+                    && got.contains(&Consequence::StartLost),
+                "{strand:?} control: {got:?}"
+            );
+        }
+    }
+
+    /// An ATG at the old coding start is not that: `ATG` `AATG` `GCT`, four bases inserted after the
+    /// first base of the initiator, reads the coding sequence behind it from the ATG it had put
+    /// there, in another frame, and that is a frameshift that leaves the start where it was.
+    #[test]
+    fn an_atg_at_the_old_coding_start_means_the_edit_is_read_as_it_always_was() {
+        let cds = format!("ATGGCT{}TAA", "GCT".repeat(7));
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let (r, alt) = match strand {
+                Strand::Forward => ("A", "ATGAA".to_string()),
+                Strand::Reverse => ("T", format!("{}T", revcomp("TGAA"))),
+            };
+            let tr = make_start_codon_transcript_with_utr(strand, "CCCCCCCCCA", &cds);
+            let got = terms_of_a_change(&tr, strand, 11, 11, r, &Allele::from_str(&alt));
+            assert!(
+                got.contains(&Consequence::FrameshiftVariant)
+                    && got.contains(&Consequence::StartRetainedVariant)
+                    && !got.contains(&Consequence::StartLost),
+                "{strand:?}: {got:?}"
             );
         }
     }

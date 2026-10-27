@@ -676,6 +676,7 @@ impl AnnotationContext {
                                             .amino_acids
                                             .as_ref()
                                             .map(|(r, a)| (r.as_str(), a.as_str())),
+                                        coding_sequence_kept: ac.coding_sequence_kept,
                                     });
                                 }
                             }

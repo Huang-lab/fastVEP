@@ -263,6 +263,7 @@ impl World {
                 .amino_acids
                 .as_ref()
                 .map(|(r, a)| (r.as_str(), a.as_str())),
+            coding_sequence_kept: ac.coding_sequence_kept,
         })
     }
 }
@@ -409,5 +410,78 @@ fn a_change_that_is_only_in_the_utr_has_no_protein_notation() {
         let world = one_exon(strand);
         let change = world.insertion(9, "ATG");
         assert_eq!(world.hgvsp(&change, true), None, "{strand:?}");
+    }
+}
+
+/// The UTR here ends in an `A`, so the initiator's own `A` is a repeat of the base before it:
+/// deleting it (`c.1del` of `AA|TG`) or duplicating it (`c.1dup`) leaves the whole coding sequence
+/// behind the edit, one base further along, and the protein is the protein. Ensembl writes
+/// `p.Met1?` for both, beside `frameshift_variant,start_lost,start_retained_variant`; there is no
+/// change of the protein to name.
+#[test]
+fn an_edit_that_leaves_the_whole_coding_sequence_behind_it_has_no_protein_notation() {
+    for strand in [Strand::Forward, Strand::Reverse] {
+        let world = one_exon(strand);
+        // base 9 is the UTR's last base and base 10 the initiator's `A`
+        assert_eq!(
+            world.hgvsp(&world.deletion(10, 10), true),
+            None,
+            "{strand:?} c.1del"
+        );
+        assert_eq!(
+            world.hgvsp(&world.insertion(10, "A"), true),
+            None,
+            "{strand:?} c.1dup"
+        );
+        // the same shapes where the coding sequence is not behind them: the `T` of the initiator
+        // taken away, and a `G` between its first and second base
+        for change in [world.deletion(11, 11), world.insertion(10, "G")] {
+            assert_eq!(
+                world.hgvsp(&change, true).as_deref(),
+                Some("ENSP_WALK.1:p.Met1?"),
+                "{strand:?}"
+            );
+        }
+    }
+}
+
+/// An ATG at the old coding start is not the coding sequence kept: four bases inserted after the
+/// first base of the initiator read `ATG AAT GGC`, a frameshift behind a start that is where it was.
+#[test]
+fn an_atg_where_the_initiator_was_is_still_a_frameshift() {
+    for strand in [Strand::Forward, Strand::Reverse] {
+        let world = one_exon(strand);
+        let got = world.hgvsp(&world.insertion(10, "TGAA"), true);
+        assert!(
+            got.as_deref().is_some_and(|d| d.contains("fsTer")),
+            "{strand:?}: {got:?}"
+        );
+    }
+}
+
+/// A transcript that begins at its initiator has no 5' UTR, and Ensembl asks whether the codon at
+/// the coding start is still an ATG only `if ($utr)`: the deletion of its whole ATG is an
+/// `inframe_deletion` with `p.Met1del`. The protein has lost its first residue and its start
+/// codon, which HGVS names `p.Met1?`.
+#[test]
+fn the_deletion_of_the_whole_initiator_of_a_transcript_with_no_utr_is_met1() {
+    for strand in [Strand::Forward, Strand::Reverse] {
+        let world = World::new(&["ATGGCTAAGACACACCACACGTGGTAAACGTAC"], "", (0, 27), strand);
+        assert_eq!(
+            world.transcript.peptide.as_deref(),
+            Some("MAKTHHTW*"),
+            "{strand:?}"
+        );
+        assert_eq!(
+            world.hgvsp(&world.deletion(1, 3), true).as_deref(),
+            Some("ENSP_WALK.1:p.Met1?"),
+            "{strand:?}"
+        );
+        // codon 2 is only a deletion of its residue
+        assert_eq!(
+            world.hgvsp(&world.deletion(4, 6), true).as_deref(),
+            Some("ENSP_WALK.1:p.Ala2del"),
+            "{strand:?}"
+        );
     }
 }

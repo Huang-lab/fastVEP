@@ -48,6 +48,13 @@ pub(crate) struct EditTests {
     pub ins_del_start_altered: bool,
     pub inv_start_altered: bool,
     pub snp_start_altered: bool,
+    /// Not one of Ensembl's tests: the edit changes the length, touches the start codon, and
+    /// leaves the whole coding sequence behind it with no ATG at the old coding start, so the
+    /// first ATG of the edited transcript is the one it had and the protein is the protein.
+    /// Ensembl's three start tests do not agree about such an edit, and the terms that follow
+    /// from the length of the coding span (`frameshift_variant`, the in-frame ones) do not look
+    /// at the sequence at all; see `terms_for_window`.
+    pub cds_kept: bool,
     /// `_overlaps_stop_codon`, by cDNA position
     pub overlaps_stop: bool,
     /// `_overlaps_stop_codon_cil`, by genomic position with an insertion's length added
@@ -243,11 +250,33 @@ impl EditTests {
                 }
 
                 // `_inv_start_altered`, which despite the name judges every kind of change: is the
-                // codon that now sits where the initiator did an ATG? It needs a 5' UTR and gives
-                // up when the edit reaches past the end of the sequence it edits.
-                tests.inv_start_altered = utr_len > 0
-                    && (cdna_end as usize) <= utr_and_translateable.len()
-                    && !atg(&edited, utr_len);
+                // codon that now sits where the initiator did an ATG? It gives up when the edit
+                // reaches past the end of the sequence it edits.
+                //
+                // Ensembl asks it only `if ($utr)`, as it does `_ins_del_start_altered`, so for a
+                // transcript that begins at its initiator the deletion of the whole ATG is not a
+                // start loss: it is an `inframe_deletion`, MODERATE, with `p.Met1del`, for a protein
+                // that has no start codon (ENST00000398956, `c.1_3del`). An empty UTR is unchanged
+                // like any other.
+                tests.inv_start_altered =
+                    (cdna_end as usize) <= utr_and_translateable.len() && !atg(&edited, utr_len);
+
+                // Asked of a place, `_inv_start_altered` says yes for a length change that has
+                // moved the whole coding sequence along: a deletion that begins in the 5' UTR and
+                // runs into the initiator inside a repeat (`c.-8_1del`, where the nine bases
+                // before the ATG are the nine it takes away) leaves every base of the coding
+                // sequence behind it, one UTR shorter, and the protein is the protein. Ensembl
+                // then writes `start_lost` beside `start_retained_variant`, which contradict each
+                // other, HIGH for a change that is `5_prime_UTR_variant` at most, and where the
+                // change does not reach the UTR (`c.1del` of `AA|TG`, `c.1dup`) a
+                // `frameshift_variant` and a protein change as well, for a protein that has none:
+                // 8,742 of the 96,350 `start_lost` rows of its own Ensembl cache run carry both
+                // terms, and 8 of the 2,762 of the ClinVar sample. `_ins_del_start_altered`
+                // already says the coding sequence is all there. An ATG at the old coding start
+                // is not this: the coding sequence behind it is then read from a first codon that
+                // is not its own (`ATG` `ATG` `GCT`, one Met more).
+                tests.cds_kept =
+                    changes_length && tail_equals_translateable && !atg(&edited, utr_len);
 
                 // `_snp_start_altered`, for a change that keeps the length
                 if !changes_length {

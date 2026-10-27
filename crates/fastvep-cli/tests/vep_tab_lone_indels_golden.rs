@@ -162,6 +162,23 @@ const KNOWN: &[(&str, &str, &str, &str)] = &[
         "HGVSp",
         "-",
     ),
+    // an insertion in the start codon that leaves the whole coding sequence behind it, with no ATG
+    // at the old coding start (`c.2_3insCGAT` is `AT` `CGAT` `G`: the `ATG` and all that follows it
+    // are four bases further along): VEP writes a frameshift and a start loss, and `p.Met1?`, for
+    // a protein that has neither (divergence 14)
+    (
+        "chr10_11297_ACA/ACATCGA",
+        "ENST00000000003",
+        "Consequence",
+        "start_retained_variant",
+    ),
+    ("chr10_11297_ACA/ACATCGA", "ENST00000000003", "HGVSp", "-"),
+    (
+        "chr10_11297_ACA/ACATCGA",
+        "ENST00000000003",
+        "IMPACT",
+        "LOW",
+    ),
     // an insertion at the edge of an exon that the 3'-rule's walk over the genome carries into the
     // intron: VEP writes no HGVSp, fastVEP walks the transcript instead (`vep_tab_intron_repeat`)
     (
