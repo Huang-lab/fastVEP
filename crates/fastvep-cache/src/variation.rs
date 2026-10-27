@@ -233,8 +233,12 @@ struct Source {
     positioned: bool,
     /// `reader` has read the last line of the file.
     at_eof: bool,
+    /// The start of the last line read since the reader was last put somewhere by the index.
+    last_start: u64,
     /// Lines read from the file, for a test that holds a sorted sweep to one read of each.
     lines_read: u64,
+    /// Times the index was asked where to read, for a test that holds a sorted sweep to a few.
+    index_queries: u64,
 }
 
 impl Source {
@@ -301,7 +305,9 @@ impl Source {
             floor: 0,
             positioned: false,
             at_eof: false,
+            last_start: 0,
             lines_read: 0,
+            index_queries: 0,
         })
     }
 
@@ -325,30 +331,48 @@ impl Source {
         if hi < lo {
             return Ok(Vec::new());
         }
-        let interval: Interval = (position(lo)?..=position(hi)?).into();
-        let chunks = self
-            .index
-            .query(ref_id, interval)
-            .context("Tabix query failed")?;
-        // The earliest place a record of the window can be.
-        let Some(first) = chunks.first().map(|c| c.start()) else {
-            return Ok(Vec::new());
-        };
 
         // Carry on from the last query when everything this one needs that is
         // before the reader's position is still in the window: it starts at or after
         // what the window holds, and the index puts its first line no later than
         // where the reader is. Otherwise (an unsorted input, or a jump forward past
         // what is worth reading through) go back to the index.
-        let carry_on =
-            self.positioned && lo >= self.floor && first <= self.reader.virtual_position();
+        //
+        // The index is not asked when the reader has already read a line in the
+        // stretch of `1 << min_shift` bases that `lo` is in, or past it, or the file is
+        // read to its end: there is no first line of the window to jump to that is not
+        // behind the reader. Asking costs a bit set of one bit for every bin of the
+        // index, allocated and cleared, and a cache whose index is eight levels deep
+        // (the real ones: 19 million bins) clears 2.4 MB for every variant of the input.
+        // Which place the reader reads from only changes how much it reads, not which
+        // lines it keeps, so this cannot change an answer.
+        let continues = self.positioned && lo >= self.floor;
+        let shift = u32::from(self.index.min_shift());
+        let in_reach = continues
+            && (self.at_eof || lo.checked_shr(shift) <= self.last_start.checked_shr(shift));
+        let seek_to = if in_reach {
+            None
+        } else {
+            let interval: Interval = (position(lo)?..=position(hi)?).into();
+            self.index_queries += 1;
+            let chunks = self
+                .index
+                .query(ref_id, interval)
+                .context("Tabix query failed")?;
+            // The earliest place a record of the window can be.
+            let Some(first) = chunks.first().map(|c| c.start()) else {
+                return Ok(Vec::new());
+            };
+            (!continues || first > self.reader.virtual_position()).then_some(first)
+        };
         // Not trusted again until this query has read to its end: an error half way
         // leaves the window and the reader out of step.
         self.positioned = false;
-        if !carry_on {
+        if let Some(first) = seek_to {
             self.window.clear();
             self.reader.seek(first)?;
             self.at_eof = false;
+            self.last_start = 0;
         }
         self.floor = lo;
         while self.window.front().is_some_and(|(start, _)| *start < lo) {
@@ -369,6 +393,7 @@ impl Source {
                 continue;
             }
             let start = layout.start_of(text)?;
+            self.last_start = start;
             if start >= lo {
                 self.window.push_back((start, text.to_string()));
             }
@@ -1229,6 +1254,14 @@ mod tests {
             source.lines_read < 12_000,
             "{} lines read for {asked} windows",
             source.lines_read
+        );
+        // and the index is asked where to start once, and again when the sweep goes into the next
+        // stretch of `1 << min_shift` bases that the reader has not reached, not for each window:
+        // every question allocates and clears a bit set of one bit for each bin of the index
+        assert!(
+            source.index_queries <= 4,
+            "{} index queries for {asked} windows",
+            source.index_queries
         );
     }
 
