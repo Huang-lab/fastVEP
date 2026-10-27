@@ -221,10 +221,16 @@ impl EditTests {
 
                 // `_ins_del_start_altered`: an edit that leaves the 5' UTR alone and puts an ATG
                 // at the old coding start is not one, and neither is one that merely brings the
-                // whole coding sequence along behind inserted bases (atg -> aCGAtg)
+                // whole coding sequence along behind inserted bases (atg -> aCGAtg).
+                //
+                // Ensembl asks the first of these only `if ($utr)`, which is a guard against a
+                // missing object and has the effect that a transcript with no 5' UTR is never
+                // told that its ATG is still there: an insertion inside the start codon that
+                // keeps it (`atg` -> `atGg`) is `start_lost` on the transcripts of DYRK1A that
+                // begin at the initiator and `start_retained_variant` on the ones that have a UTR,
+                // for one edit and one codon. An empty UTR is unchanged like any other.
                 if changes_length {
-                    tests.ins_del_start_altered = if utr_len > 0
-                        && edited.len() >= utr_len
+                    tests.ins_del_start_altered = if edited.len() >= utr_len
                         && edited[..utr_len] == utr_and_translateable[..utr_len]
                         && atg(&edited, utr_len)
                     {

@@ -924,7 +924,19 @@ impl ConsequencePredictor {
         // codon after the 5' UTR no longer reading ATG, which is judged for every kind of change
         // and not only inversions; or the peptide test, which Ensembl skips when either side is
         // missing or the alternate is the frameshift placeholder.
+        //
+        // None of the three holds when the window still opens with its Met after the edit: a
+        // protein that begins with Met has not lost its initiator. Ensembl's peptide test (the
+        // third way) cannot see that for a deletion, whose alternate is shorter than the reference
+        // it is compared with, so the loss of residue 2 (`MA/M`) is
+        // `start_lost,inframe_deletion,start_retained_variant`, a pair that contradicts itself,
+        // and `p.Ala2?`, which says residue 2 is unknown when it is gone. Only a Met counts: a
+        // transcript that starts on `CTG` has a Leu for its first residue, and any change to that
+        // codon, `CTG` to `CTA` as much as the rest, is a start loss in the cache of Ensembl
+        // itself.
+        let initiator_kept = w.tl_start == 1 && r.starts_with('M') && a.starts_with('M');
         let start_lost = overlaps_initiator
+            && !initiator_kept
             && ((e.ins_del_start_altered
                 && !(inframe_insertion_before_start_lost || inframe_deletion))
                 || e.inv_start_altered
@@ -2670,6 +2682,142 @@ mod tests {
             assert!(
                 got.contains(&Consequence::StartLost),
                 "{strand:?}: expected start_lost despite an ATG at the coding start, got {got:?}"
+            );
+        }
+    }
+
+    /// [`make_boundary_transcript`] with a CDS of its own and `utr5` bases of 5' UTR in front of
+    /// it (the 3' UTR is the filler that keeps the transcript 201 bases long), so that a change
+    /// at the start codon can be decided against the edited sequence.
+    fn make_start_codon_transcript(strand: Strand, utr5: usize, cds: &str) -> Transcript {
+        assert_eq!(cds.len(), 30);
+        let mut tr = make_boundary_transcript(strand);
+        let spliced = format!(
+            "{}{}{}",
+            "C".repeat(utr5),
+            cds,
+            "G".repeat(201 - utr5 - cds.len())
+        );
+        let (crs, cre) = match strand {
+            Strand::Forward => (1000 + utr5 as u64, 999 + utr5 as u64 + 30),
+            Strand::Reverse => (1171 - utr5 as u64, 1200 - utr5 as u64),
+        };
+        tr.spliced_seq = Some(spliced);
+        tr.translateable_seq = Some(cds.to_string());
+        tr.cdna_coding_start = Some(utr5 as u64 + 1);
+        tr.cdna_coding_end = Some(utr5 as u64 + 30);
+        tr.coding_region_start = Some(crs);
+        tr.coding_region_end = Some(cre);
+        if let Some(t) = tr.translation.as_mut() {
+            t.genomic_start = crs;
+            t.genomic_end = cre;
+            t.start_exon_offset = utr5 as u64;
+            t.end_exon_offset = utr5 as u64 + 30;
+        }
+        tr
+    }
+
+    fn terms_at_the_start_codon(
+        strand: Strand,
+        utr5: usize,
+        cds: &str,
+        cdna_lo: u64,
+        cdna_hi: u64,
+        ref_allele: &str,
+        alt_allele: &Allele,
+    ) -> Vec<Consequence> {
+        let tr = make_start_codon_transcript(strand, utr5, cds);
+        let (g_start, g_end) = genomic_span(strand, cdna_lo, cdna_hi);
+        let pos = GenomicPosition::new("chr1", g_start, g_end, Strand::Forward);
+        let result = ConsequencePredictor::default().predict(
+            &pos,
+            &Allele::from_str(ref_allele),
+            std::slice::from_ref(alt_allele),
+            &[&tr],
+            None,
+        );
+        result.transcript_consequences[0].allele_consequences[0]
+            .consequences
+            .clone()
+    }
+
+    /// A protein that still begins with its Met has not lost its initiator. `GGC` at `c.3_5` of
+    /// `ATG GCG GCT ...` is the deletion of codon 2 written at its leftmost position, which touches
+    /// the start codon and leaves the edited transcript starting `ATGGCT`: Ensembl's peptide test,
+    /// which compares the window `MA` with `M`, calls it `start_lost` beside `start_retained_variant`.
+    #[test]
+    fn the_deletion_of_codon_two_is_not_a_start_loss() {
+        let cds = format!("ATGGCG{}TAA", "GCT".repeat(7));
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let got = terms_at_the_start_codon(strand, 10, &cds, 13, 15, "GGC", &Allele::Deletion);
+            assert!(
+                !got.contains(&Consequence::StartLost),
+                "{strand:?}: the Met is still there, got {got:?}"
+            );
+            assert!(
+                got.contains(&Consequence::InframeDeletion)
+                    && got.contains(&Consequence::StartRetainedVariant),
+                "{strand:?}: {got:?}"
+            );
+            assert_eq!(Consequence::worst_impact(&got), Some(Impact::Moderate));
+        }
+    }
+
+    /// What is still a start loss: the initiator deleted, a base of it changed, and a change that
+    /// leaves a first residue that is not Met.
+    #[test]
+    fn a_change_that_takes_the_met_away_is_still_a_start_loss() {
+        let cds = format!("ATGGCG{}TAA", "GCT".repeat(7));
+        for strand in [Strand::Forward, Strand::Reverse] {
+            // the initiator codon, in frame: codon 2 is the first one now
+            let got = terms_at_the_start_codon(strand, 10, &cds, 11, 13, "ATG", &Allele::Deletion);
+            assert!(got.contains(&Consequence::StartLost), "{strand:?}: {got:?}");
+            // the two codons: the window `MA` becomes `A`
+            let got =
+                terms_at_the_start_codon(strand, 10, &cds, 11, 16, "ATGGCG", &Allele::Deletion);
+            assert!(got.contains(&Consequence::StartLost), "{strand:?}: {got:?}");
+            // two of its bases, a frameshift whose first codon is not ATG
+            let got = terms_at_the_start_codon(strand, 10, &cds, 12, 13, "TG", &Allele::Deletion);
+            assert!(got.contains(&Consequence::StartLost), "{strand:?}: {got:?}");
+            // a substitution
+            let (r, a) = match strand {
+                Strand::Forward => ("G", "C"),
+                Strand::Reverse => ("C", "G"),
+            };
+            let got = terms_at_the_start_codon(strand, 10, &cds, 13, 13, r, &Allele::from_str(a));
+            assert!(got.contains(&Consequence::StartLost), "{strand:?}: {got:?}");
+        }
+    }
+
+    /// An insertion inside the start codon that keeps its ATG (`atg` to `atGg`) is the same edit
+    /// whether the transcript has a 5' UTR or not. Ensembl asks "is the ATG still at the coding
+    /// start" only for a transcript that has a UTR, so on one that begins at the initiator the
+    /// frameshift is also `start_lost` (DYRK1A `c.3dup`: `start_retained_variant` on the
+    /// transcripts with a UTR, `start_lost` on ENST00000398956).
+    #[test]
+    fn a_transcript_with_no_utr_reads_an_insertion_that_keeps_the_atg_as_one_with_a_utr_does() {
+        let cds = format!("ATGGCT{}TAA", "GCT".repeat(7));
+        for strand in [Strand::Forward, Strand::Reverse] {
+            // a G between cDNA 2 and 3 of the start codon, written as T>TG in transcript terms
+            let at = |utr5: usize| {
+                let lo = utr5 as u64 + 2;
+                let (r, a) = match strand {
+                    Strand::Forward => ("T", "TG"),
+                    Strand::Reverse => ("A", "CA"),
+                };
+                terms_at_the_start_codon(strand, utr5, &cds, lo, lo, r, &Allele::from_str(a))
+            };
+            let with_utr = at(10);
+            let without_utr = at(0);
+            assert!(
+                with_utr.contains(&Consequence::StartRetainedVariant)
+                    && with_utr.contains(&Consequence::FrameshiftVariant),
+                "{strand:?}: {with_utr:?}"
+            );
+            assert!(!with_utr.contains(&Consequence::StartLost), "{strand:?}");
+            assert_eq!(
+                without_utr, with_utr,
+                "{strand:?}: the UTR changed the answer"
             );
         }
     }
