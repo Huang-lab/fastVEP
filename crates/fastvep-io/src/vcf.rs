@@ -185,18 +185,33 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     // and a placeholder (`.`) here is exactly that, in its place, so that the numbers of the ALTs
     // that follow it (a genotype's) are the VCF's.
     let mut raw_alts: Vec<String> = Vec::new();
+    // The placeholders that stand for a repeat, each with its place in the list and what it
+    // repeats, for the allele string below. Only a repeat is put here, so the record that has none,
+    // which is nearly every one, allocates nothing for it: this runs once per record, and a list
+    // that held a slot for every ALT cost two allocations a record.
+    let mut repeats: Vec<(usize, Repeat)> = Vec::new();
     for alt in alt_str.split(',') {
         if alt.is_empty() {
             anyhow::bail!("VCF ALT field has an empty allele: {}", line);
         }
         let alt = upper_bases(alt);
-        let repeats =
-            alt != "." && (alt == ref_str || raw_alts.iter().any(|earlier| *earlier == alt));
-        raw_alts.push(if repeats {
-            ".".to_string()
+        let of = if alt == "." {
+            None
+        } else if alt == ref_str {
+            Some(Repeat::Reference)
         } else {
-            alt.into_owned()
-        });
+            raw_alts
+                .iter()
+                .position(|earlier| *earlier == alt)
+                .map(Repeat::Alt)
+        };
+        match of {
+            Some(of) => {
+                repeats.push((raw_alts.len(), of));
+                raw_alts.push(".".to_string());
+            }
+            None => raw_alts.push(alt.into_owned()),
+        }
     }
 
     // Determine start/end and normalize alleles
@@ -304,11 +319,34 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         start + ref_allele_str.len() as u64 - 1
     };
 
-    // Build allele string: "REF/ALT1/ALT2"
+    // Build allele string: "REF/ALT1/ALT2". Ensembl's holds an ALT that repeats the reference or
+    // an earlier ALT as it is, and the class of the variant (`SO_variation_class`) is worked out
+    // from that string, so `T>C,C` is `T/C/C`, an `SNV`, and `AGT>AGT,GA,ACT` is `AGT/AGT/GA/ACT`,
+    // an `indel`. The placeholder, which is for the rows, stood in it, and no class has a `.`: all
+    // ten such records of a differential fuzz of the stack were a `sequence_alteration` here.
     let allele_string = if is_non_variant {
         ref_allele_str.clone()
     } else {
-        format!("{}/{}", ref_allele_str, alt_allele_strs.join("/"))
+        // Written into one string of the length it will have: building the alleles as a list to
+        // join, and the joined string into another by `format!`, was two allocations more for each
+        // record than this is, and a repeat is shown as the allele it repeats.
+        let mut shown = String::with_capacity(
+            ref_allele_str.len()
+                + alt_allele_strs
+                    .iter()
+                    .map(|alt| 1 + alt.len())
+                    .sum::<usize>(),
+        );
+        shown.push_str(&ref_allele_str);
+        for (at, alt) in alt_allele_strs.iter().enumerate() {
+            shown.push('/');
+            shown.push_str(match repeats.iter().find(|(place, _)| *place == at) {
+                Some((_, Repeat::Reference)) => ref_allele_str.as_str(),
+                Some((_, Repeat::Alt(earlier))) => alt_allele_strs[*earlier].as_str(),
+                None => alt.as_str(),
+            });
+        }
+        shown
     };
 
     // Convert to Allele enums.
@@ -390,6 +428,14 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     })
+}
+
+/// What an ALT that is no allele of its own repeats.
+enum Repeat {
+    /// The reference allele.
+    Reference,
+    /// The ALT at this place in the list, which is the first of its spelling.
+    Alt(usize),
 }
 
 /// An allele written in bases, upper-cased; anything else (`*`, `.`, a symbolic allele, a
@@ -603,6 +649,53 @@ mod tests {
         let vf = parse_vcf_line("1\t100\t.\tCA\tCA,C\t.\tPASS\t.").unwrap();
         assert_eq!(vf.alt_alleles[0], Allele::Missing);
         assert_eq!(vf.alt_alleles[1], Allele::Deletion);
+    }
+
+    /// The class of a variant comes from Ensembl's allele string, in which an ALT that repeats the
+    /// reference or an earlier ALT is as it was written. Each pair is what Ensembl VEP 116.3 wrote
+    /// for `VARIANT_CLASS` of the record (run on all of them, with the repeated allele in every
+    /// place it can be); the placeholder in the string, which is for the rows, made all but three
+    /// of them a `sequence_alteration`.
+    #[test]
+    fn a_repeated_alt_is_in_the_allele_string_as_it_is_for_the_class() {
+        let cases = [
+            ("T", "C,C", "T/C/C", "SNV"),
+            ("T", "T,C", "T/T/C", "SNV"),
+            ("T", "C,T,C", "T/C/T/C", "SNV"),
+            ("T", "C,C,G", "T/C/C/G", "SNV"),
+            ("TA", "T,T", "A/-/-", "deletion"),
+            ("T", "TA,TA", "-/A/A", "insertion"),
+            ("AGT", "AGT,GA,ACT", "AGT/AGT/GA/ACT", "indel"),
+            ("GGC", "CGAGG,GGCGC,CGAGG", "GGC/CGAGG/GGCGC/CGAGG", "indel"),
+            ("TA", "T,CA,T", "TA/T/CA/T", "indel"),
+            ("AC", "AC,GT", "AC/AC/GT", "substitution"),
+            ("AC", "GT,GT", "AC/GT/GT", "substitution"),
+            // a mix of a deletion and an insertion: Ensembl's is no more specific either
+            ("TA", "TA,T", "A/A/-", "sequence_alteration"),
+            ("A", "A,AT,AT", "-/-/T/T", "sequence_alteration"),
+            // and the records with no repeat, which were right
+            ("T", "C", "T/C", "SNV"),
+            ("T", "C,G", "T/C/G", "SNV"),
+        ];
+        for (reference, alts, allele_string, class) in cases {
+            let vf =
+                parse_vcf_line(&format!("1\t100\t.\t{reference}\t{alts}\t.\tPASS\t.")).unwrap();
+            assert_eq!(vf.allele_string, allele_string, "{reference}>{alts}");
+            assert_eq!(
+                fastvep_core::so_variation_class(&vf.allele_string),
+                class,
+                "{reference}>{alts}"
+            );
+        }
+        // what the rows are made from is as it was: the placeholder is no allele
+        let vf = parse_vcf_line("1\t100\t.\tT\tC,C\t.\tPASS\t.").unwrap();
+        assert_eq!(
+            vf.alt_alleles,
+            vec![Allele::Sequence(b"C".to_vec()), Allele::Missing]
+        );
+        // a lone ALT that repeats the reference is the reference, and has no class to speak of
+        let vf = parse_vcf_line("1\t100\t.\tT\tT\t.\tPASS\t.").unwrap();
+        assert_eq!(vf.allele_string, "T");
     }
 
     #[test]
