@@ -97,6 +97,7 @@ fn run(input: &Path, format: &str) -> String {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
     })
     .expect("annotation should succeed");
     std::fs::read_to_string(&out).unwrap()

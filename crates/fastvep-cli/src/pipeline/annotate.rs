@@ -36,6 +36,20 @@ use fastvep_annotate::{
 
 const BATCH_SIZE: usize = 1024;
 
+/// VEP flags that change what is written without being a column of their own.
+///
+/// `--force_overwrite` is not here: VEP refuses to write over an existing file without it
+/// and fastVEP always writes over it, so the flag changes nothing and is only accepted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CompatFlags {
+    /// `--total_length`: `cDNA_position`, `CDS_position` and `Protein_position` carry the length
+    /// they are counted in, `14/203`.
+    pub total_length: bool,
+    /// `--no_escape`: the `=` of a synonymous `HGVSp` is not written `%3D` and the space of a VCF
+    /// `SYMBOL` is `_` and not `%20`.
+    pub no_escape: bool,
+}
+
 pub struct AnnotateConfig {
     pub input: String,
     pub output: String,
@@ -53,6 +67,8 @@ pub struct AnnotateConfig {
     /// `--biotype`, `--numbers`, ...). `hgvs` is separate: it also decides
     /// whether the HGVS values are computed at all.
     pub columns: ColumnFlags,
+    /// `--total_length` and `--no_escape`.
+    pub compat: CompatFlags,
     pub distance: u64,
     pub cache_dir: Option<String>,
     pub transcript_cache: Option<String>,
@@ -318,6 +334,20 @@ fn annotate_variant(
                             acmg_classification: None,
                             pick: false,
                         };
+
+                        // `--total_length` is a matter of the cells and of nothing that is
+                        // worked out from them: `ac.location`, which the HGVS code reads, has
+                        // no totals. A structural variant's cells are not written the way
+                        // VEP writes them, with or without the flag, so it gets none.
+                        if config.compat.total_length && !vf.variant_type.is_structural() {
+                            if let Some(tr) = transcript {
+                                tr.apply_total_length(
+                                    &mut ann.location,
+                                    vf.position.start,
+                                    vf.position.end,
+                                );
+                            }
+                        }
 
                         // HGVSg belongs to the variant and needs no transcript, so
                         // `--hgvsg` has it without `--hgvs`.
@@ -1108,6 +1138,8 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             (config.columns.numbers, "--numbers"),
             (config.columns.variant_class, "--variant-class"),
             (config.columns.show_ref_allele, "--show-ref-allele"),
+            (config.compat.total_length, "--total-length"),
+            (config.compat.no_escape, "--no-escape"),
             // Names the switch the user actually typed, so the warning is not
             // about `--pick` when they passed `--flag-pick-allele-gene`.
             (pick_switch.is_some(), pick_switch.unwrap_or("--pick")),
@@ -1359,6 +1391,21 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         );
     }
 
+    // VEP's own JSON writer makes `cdna_start` and `cdna_end` by splitting the position cell at its
+    // first `-`: with `--total_length` that cell is `5-7/1203`, and the `_end` it keeps is the
+    // start, `5`, because `7/1203` is neither a number nor has a `?`, and a single position is
+    // the string `"5/1203"` for both. Reproducing that would write a wrong end on purpose, so the
+    // totals are left out of JSON, as the warning says. Measured on VEP 116.3 over the edge
+    // fixture's 1,723 cDNA positions: without the flag 1,633 have an end that is not their
+    // start, with it 1,525 of those have the start for an end, and the 90 single positions are
+    // the string `"5/1403"`.
+    if config.compat.total_length && config.output_format == "json" {
+        eprintln!(
+            "warning: --total-length applies to tab and VCF output only; \
+             --output-format json writes its positions as numbers, without it."
+        );
+    }
+
     // Create consequence predictor
     let predictor = ConsequencePredictor::new(config.distance, config.distance);
 
@@ -1443,6 +1490,9 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         Vec::new()
     } else {
         config.columns.columns(config.hgvs)
+    };
+    let csq_options = output::CsqOptions {
+        no_escape: config.compat.no_escape,
     };
 
     let functional_index = match config.functional_evidence.as_deref() {
@@ -1623,9 +1673,14 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         // Phase 3: Write output sequentially (preserves VCF order)
         for (vf, _) in &batch {
             match config.output_format.as_str() {
-                "vcf" => {
-                    write_vcf_line(&mut writer, vf, sa_only, &supplementary_specs, &csq_fields)?
-                }
+                "vcf" => write_vcf_line(
+                    &mut writer,
+                    vf,
+                    sa_only,
+                    &supplementary_specs,
+                    &csq_fields,
+                    csq_options,
+                )?,
                 "tab" => {
                     // Classify variant against QC rules (if any). The
                     // classifier reads the VCF INFO column once via a
@@ -1652,6 +1707,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                         qc_class: qc_label,
                         pick_column: pick_flags_column,
                         optional: &optional_columns,
+                        no_escape: config.compat.no_escape,
                     };
                     for line in
                         output::format_tab_line_with(vf, &supplementary_specs, sa_only, opts)
@@ -2021,12 +2077,13 @@ fn write_vcf_line(
     sa_only: bool,
     specs: &output::LoadedSupplementarySpecs,
     csq_fields: &[&str],
+    csq_options: output::CsqOptions,
 ) -> Result<()> {
     if let Some(ref fields) = vf.vcf_fields {
         let csq = if sa_only {
             String::new()
         } else {
-            output::format_csq(vf, csq_fields)
+            output::format_csq_with(vf, csq_fields, csq_options)
         };
         let info = output::format_vcf_info_fields(&fields.info, vf, &csq, specs);
 

@@ -794,6 +794,53 @@ Both probes are made with `validation/gen_short_intron_probe.py`, and the number
 Nothing outside a transcript with such an intron changes: the tab files of HG002 (186,055 rows) and of the edge set (36,958 rows) are byte for byte what they were.
 On the 1-in-5 sample of ClinVar 2-star+ (3,136,295 rows) 16 rows change, 13 on ENST00000693560 and 3 on ENST00000850883, two PTEN transcripts with a one-base intron (16 `Consequence` and 7 `IMPACT` cells), and all 16 are VEP's now.
 
+### `--total_length`, `--no_escape` and `--force_overwrite`
+
+The reporter's command line carries these three, and `fastvep annotate` refused each of them with an error, so a migrated command failed at once.
+They are accepted now, in VEP's spelling (`--total_length`) and in the hyphenated one the rest of the CLI uses (`--total-length`), and each does what VEP 116.3 does.
+That was read from `OutputFactory.pm` and `OutputFactory/VCF.pm` and measured by running VEP on the same input.
+
+**`--total_length`** writes the length each position is counted in after the cell: `451-?/1403` for the cDNA, `51/654` for the coding sequence with its stop codon, `17/217` for the protein without it.
+VEP writes it whether or not the cell has a value.
+`OutputFactory.pm` appends it inside the two branches that test the cached `_bvfo_preds` flags, `exon` for the cDNA and `coding` for the other two, and `format_coords` of a span with no coordinate at either end is `-`, so the cell is `-/1403`.
+That is 76 of the 4,753 rows of the edge fixture for the cDNA and 62 for the CDS and the protein: a change that covers an exon from intron to intron, or from outside the transcript, and an insertion immediately before the initiator or after the terminator.
+In a transcript with a frameshift intron it is also every change within 12 bases of an exon (301 rows for the cDNA and 212 for the CDS in the frameshift-intron world below).
+The two flags are the ones `HGVSp` asks for, `Transcript::pre_exon` and `Transcript::pre_coding`, defined once.
+VEP's VCF writer blanks a cell that is a bare `-` and not `-/1403`, so a CSQ field has the dash over the total and an empty field where there is no total.
+The structural variants fastVEP writes no position for are given no total either.
+
+- **JSON.** VEP's JSON writer makes `cdna_start` and `cdna_end` by splitting the cell at its first `-`, and with a total that gives the wrong answer: 1,525 of the 1,633 ranges of the edge fixture have their start for an end, and the 90 single positions are the string `"5/1403"`, for both.
+  fastVEP does not reproduce that and writes no totals in JSON, and says so on stderr.
+  This is a decision for the maintainers; the conservative reading is that a wrong end is not worth matching.
+- **Without `--fasta`** the lengths are worked out from the coding span and its phase, which is the length of the translateable sequence, and the protein length assumes the coding sequence ends in a stop codon.
+  For a transcript whose coding sequence does not (`cds_end_NF`) that is one residue short.
+  This was read from the code and not measured: the runs below have a FASTA.
+
+**`--no_escape`** leaves the `=` of a synonymous `HGVSp` alone, in the tab file and in the VCF (`p.Val3=`, not `p.Val3%3D`), and changes the space of a gene symbol in the VCF.
+VEP puts `%20` for the space of a `SYMBOL` when it builds the value for VCF output (`$hash->{SYMBOL} =~ s/\s/\%20/g if ... eq 'vcf' && !$self->{no_escape}`), and its VCF writer then turns whatever whitespace is left into `_`: `GENE%20A` by default and `GENE_A` with the flag, measured with a gene named `GENE A`.
+fastVEP wrote `_` always, which is VEP's `--no_escape` and not what it does by default, so the default changed too.
+The tab file never escaped a symbol, in either tool.
+VEP's own JSON writes a raw `=` whatever the flag, as fastVEP's does.
+
+- **GFF3 percent-escapes** came out of testing it and are not part of this change: VEP's GFF reader leaves `Name=GENE%20B` as `GENE%20B`, and fastVEP's decodes it (`GENE B`, which the VCF writes as `GENE%20B`, or `GENE_B` with the flag), as the GFF3 specification asks.
+  A symbol with an escaped comma is `GENE%2CC` in VEP and `GENE&C` in a fastVEP CSQ.
+
+**`--force_overwrite`** is accepted and does nothing: VEP refuses to write over an existing output file without it, and `fastvep annotate` always writes over its output.
+
+Measured against VEP 116.3, cell by cell, with the flags on in both tools:
+
+| Input | Rows | Position cells (cDNA, CDS, protein) | Other columns |
+|---|---:|---|---|
+| The edge fixture, tab (`vep_tab_edges`, 2,271 changes) | 4,753 | **all agree** | the 36 cells listed there |
+| The same, VCF `CSQ` | 4,753 entries | **all 14,259 agree** | |
+| The frameshift-intron world (`vep_tab_fsintron`, 2,879 changes), where 301 rows are `-/N` for the cDNA and 212 for the CDS | 7,756 | **all agree** | all 131,852 cells agree |
+| A RefSeq-style world with a symbol that has a space and synonymous changes (`vep_flags_compat`, 760 records) | 1,418 | all agree | all 42,540 cells agree, with each flag and without |
+| HG002 sample, Ensembl 115 GFF3, `--gff` (20,241 records) | 186,055 | all agree | the 3,834 cells of Part 3 and no others |
+| VEP's Ensembl cache, chr21 and chr22, 45,916 changes, complete transcripts | 1,884,993 | all agree | the `HGVSp`, `HGVSc`, `Amino_acids` and `Consequence` cells of the `HGVSp` section, and the `SYMBOL_SOURCE` and `HGNC_ID` a GFF3 does not carry |
+| VEP's RefSeq cache, the same, unedited transcripts | 203,125 | all agree | those of the `HGVSp` section, and the `SYMBOL_SOURCE`, `BIOTYPE` and `CANONICAL` of a RefSeq GFF3 |
+
+The committed goldens are `crates/fastvep-cli/fixtures/vep_flags_compat/golden_total_length.tsv.gz` and `golden_no_escape.tsv.gz`, with a `regen.sh` that runs VEP in Docker, and `vep_flags_compat_golden.rs` holds fastVEP against them: both fail if the dash over a total is dropped.
+
 ### Alleles that are not plain bases
 
 **HG002: the 6 rows written for a `*` allele.

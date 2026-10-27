@@ -64,6 +64,7 @@ fn annotate(gff3: &str, dir: &Path) -> String {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .expect("annotation should succeed");

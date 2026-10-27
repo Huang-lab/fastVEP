@@ -146,6 +146,29 @@ impl Transcript {
             intron,
         }
     }
+
+    /// Give the cells of `location` the totals `--total_length` writes after them
+    /// (`14/203`), in the rows where Ensembl writes them and no others.
+    ///
+    /// `OutputFactory.pm` appends them inside the two branches that decide whether a cell is
+    /// written at all, and those are the cached `_bvfo_preds` flags and not what the mapper
+    /// found: `cDNA_position` takes the transcript's length when the change is `exon`
+    /// ([`Transcript::pre_exon`]), whatever the cell holds, so a deletion that covers an exon
+    /// from intron to intron, whose ends are both unmapped, is `-/1403`; `CDS_position` and
+    /// `Protein_position` take the length of the coding sequence and of the protein when it
+    /// is `coding` as well ([`Transcript::pre_coding`]), again whatever they hold.
+    /// `start` and `end` are the change as it stands, before the 3'-rule moves it.
+    pub fn apply_total_length(&self, location: &mut TranscriptLocation, start: u64, end: u64) {
+        if !self.pre_exon(start, end) {
+            return;
+        }
+        location.cdna.total = Some(self.cdna_length() as u32);
+        if !self.pre_coding(start, end) {
+            return;
+        }
+        location.cds.total = self.cds_length().map(|n| n as u32);
+        location.protein.total = self.peptide_length().map(|n| n as u32);
+    }
 }
 
 /// The first and last of the numbers `hits` yields, with the count they are out of.
@@ -435,5 +458,104 @@ mod tests {
         let l = forward_coding().location(1291, 2001);
         assert_eq!(ordinal(l.exon), "1-2/3");
         assert_eq!(ordinal(l.intron), "1/2");
+    }
+
+    /// The totals `--total_length` writes, in the rows where Ensembl writes them
+    /// (`OutputFactory.pm`, release/116), checked row by row against VEP 116.3 on the edge
+    /// fixture (`fixtures/vep_tab_edges`).
+    mod totals {
+        use super::*;
+
+        /// Forward, three exons of 601, 201 and 601 bases (1,403 in all), the coding sequence
+        /// from 1100 to 3251: 201 + 201 + 252 = 654 bases, 217 residues and a stop codon.
+        fn gene() -> Transcript {
+            let mut t = transcript(
+                Strand::Forward,
+                &[(700, 1300), (2000, 2200), (3000, 3600)],
+                Some((1100, 3251)),
+            );
+            t.translateable_seq = Some("N".repeat(654));
+            t.peptide = Some(format!("{}*", "M".repeat(217)));
+            t
+        }
+
+        fn cells(t: &Transcript, start: u64, end: u64) -> [String; 3] {
+            let mut loc = t.location(start, end);
+            t.apply_total_length(&mut loc, start, end);
+            [cell(loc.cdna), cell(loc.cds), cell(loc.protein)]
+        }
+
+        #[test]
+        fn an_exonic_coding_change_has_all_three_totals() {
+            assert_eq!(cells(&gene(), 1150, 1150), ["451/1403", "51/654", "17/217"]);
+        }
+
+        #[test]
+        fn a_utr_change_has_the_cdna_total_alone() {
+            // the 5' UTR is `exon` and not `coding`: it overlaps no coding base
+            assert_eq!(cells(&gene(), 720, 720), ["21/1403", "-", "-"]);
+        }
+
+        #[test]
+        fn a_change_outside_every_exon_has_no_total() {
+            assert_eq!(cells(&gene(), 1500, 1500), ["-", "-", "-"]);
+            assert_eq!(cells(&gene(), 500, 500), ["-", "-", "-"]);
+        }
+
+        #[test]
+        fn a_deletion_over_an_exon_from_intron_to_intron_is_dash_over_the_total() {
+            // both ends are in introns, so no end is mapped, and Ensembl appends the total to
+            // the `-` it writes for that
+            assert_eq!(cells(&gene(), 1900, 2300), ["-/1403", "-/654", "-/217"]);
+        }
+
+        #[test]
+        fn a_half_mapped_change_keeps_its_question_mark() {
+            assert_eq!(
+                cells(&gene(), 1250, 1350),
+                ["551-?/1403", "151-?/654", "51-?/217"]
+            );
+        }
+
+        #[test]
+        fn an_insertion_before_the_initiator_is_coding_all_the_same() {
+            // between 1099 and 1100: no CDS position, and `coding` by extent
+            assert_eq!(
+                cells(&gene(), 1100, 1099),
+                ["400-401/1403", "-/654", "-/217"]
+            );
+        }
+
+        #[test]
+        fn a_non_coding_transcript_has_the_cdna_total_alone() {
+            let t = transcript(Strand::Forward, &[(10000, 10500), (11500, 12000)], None);
+            assert_eq!(cells(&t, 10100, 10100), ["101/1002", "-", "-"]);
+        }
+
+        #[test]
+        fn a_frameshift_intron_widens_the_exon_the_total_is_asked_of() {
+            // the second intron is five bases: every exon is 12 bases wider, so a change in
+            // the first intron 10 bases from the exon is `exon` and `coding`, with no
+            // coordinate of its own
+            let mut t = gene();
+            t.exons[2].start = 2206;
+            t.exons[2].end = 2806;
+            assert_eq!(cells(&t, 1310, 1310), ["-/1403", "-/654", "-/217"]);
+            assert_eq!(cells(&gene(), 1310, 1310), ["-", "-", "-"]);
+        }
+
+        #[test]
+        fn the_cds_length_is_the_translateable_sequence_and_without_one_the_span() {
+            let mut t = gene();
+            assert_eq!(t.cds_length(), Some(654));
+            t.translateable_seq = None;
+            assert_eq!(t.cds_length(), Some(654));
+            t.codon_table_start_phase = 2;
+            assert_eq!(t.cds_length(), Some(656));
+            assert_eq!(
+                transcript(Strand::Forward, &[(1, 100)], None).cds_length(),
+                None
+            );
+        }
     }
 }

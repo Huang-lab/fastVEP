@@ -10,6 +10,22 @@ use std::fmt::Write as FmtWrite;
 /// EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|
 /// Amino_acids|Codons|Existing_variation|DISTANCE|STRAND|FLAGS
 pub fn format_csq(vf: &VariationFeature, fields: &[&str]) -> String {
+    format_csq_with(vf, fields, CsqOptions::default())
+}
+
+/// What a run changes about how the text of a CSQ field is written, apart from which fields it
+/// has: VEP's `--no_escape`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CsqOptions {
+    /// `--no_escape`: do not percent-escape HGVS strings. VEP then writes the `=` of a
+    /// synonymous `HGVSp` as it is, `p.Val3=`, where it writes `p.Val3%3D` without the flag; and
+    /// in a VCF the space of a `SYMBOL` is not `%20` but what VEP's VCF writer makes of any
+    /// whitespace, `_` (`OutputFactory.pm`, `OutputFactory/VCF.pm`, release/116).
+    pub no_escape: bool,
+}
+
+/// [`format_csq`] for a run with `--no_escape`.
+pub fn format_csq_with(vf: &VariationFeature, fields: &[&str], opts: CsqOptions) -> String {
     let mut result = String::with_capacity(1024);
 
     // Resolve the column names once for the whole variant. A variant in a
@@ -24,7 +40,7 @@ pub fn format_csq(vf: &VariationFeature, fields: &[&str]) -> String {
                 result.push(',');
             }
             first = false;
-            format_csq_entry_into(vf, tv, aa, &fields, &mut result);
+            format_csq_entry_into(vf, tv, aa, &fields, opts, &mut result);
         }
     }
 
@@ -161,6 +177,7 @@ fn format_csq_entry_into(
     tv: &TranscriptVariation,
     aa: &AlleleAnnotation,
     fields: &[CsqField],
+    opts: CsqOptions,
     buf: &mut String,
 ) {
     for (i, field) in fields.iter().enumerate() {
@@ -180,7 +197,9 @@ fn format_csq_entry_into(
                 }
             }
             CsqField::Impact => buf.push_str(aa.impact.as_str()),
-            CsqField::Symbol => escape_csq_str(tv.gene_symbol.as_deref().unwrap_or_default(), buf),
+            CsqField::Symbol => {
+                escape_symbol(tv.gene_symbol.as_deref().unwrap_or_default(), opts, buf)
+            }
             // A row with no feature (an intergenic variant) leaves these empty, as
             // VEP does; the placeholder's own `-` and `Transcript` are not values.
             CsqField::Gene if !tv.is_featureless() => escape_csq_str(&tv.gene_id, buf),
@@ -200,6 +219,12 @@ fn format_csq_entry_into(
             }
             CsqField::Hgvsg => escape_csq_str(aa.hgvsg.as_deref().unwrap_or_default(), buf),
             CsqField::Hgvsc => escape_csq_str(aa.hgvsc.as_deref().unwrap_or_default(), buf),
+            // VEP escapes the `=` of an `HGVSp` when it builds the value
+            // (`$hgvs_p =~ s/\=/\%3D/g if $hgvs_p && !$self->{no_escape}`), and the VCF
+            // writer does not escape an `=` itself, so with `--no_escape` it stays one.
+            CsqField::Hgvsp if opts.no_escape => {
+                escape_csq_str_keeping_equals(aa.hgvsp.as_deref().unwrap_or_default(), buf)
+            }
             CsqField::Hgvsp => escape_csq_str(aa.hgvsp.as_deref().unwrap_or_default(), buf),
             CsqField::CdnaPosition => aa.location.cdna.write_to(buf),
             CsqField::CdsPosition => aa.location.cds.write_to(buf),
@@ -415,6 +440,40 @@ fn format_csq_entry_into(
 ///
 /// `:` is *not* escaped, by VEP or here: every HGVSc carries one.
 fn escape_csq_str(value: &str, buf: &mut String) {
+    escape_csq_chars(value, buf, true);
+}
+
+/// [`escape_csq_str`] without the `=`, for the `HGVSp` of a run with `--no_escape`.
+fn escape_csq_str_keeping_equals(value: &str, buf: &mut String) {
+    escape_csq_chars(value, buf, false);
+}
+
+/// The `SYMBOL` field of a CSQ entry.
+///
+/// VEP puts `%20` for every whitespace character of a symbol when it builds the value for VCF
+/// output (`$hash->{SYMBOL} =~ s/\s/\%20/g if ... eq 'vcf' && !$self->{no_escape}`), before its VCF
+/// writer turns whatever whitespace is left into `_`. With `--no_escape` nothing is left to
+/// the first, so the space is `_`. fastVEP wrote `_` always, which is VEP's `--no_escape` and not
+/// what VEP does by default. Measured on VEP 116.3 with a gene named `GENE A`: `GENE%20A`
+/// without the flag, `GENE_A` with it.
+fn escape_symbol(value: &str, opts: CsqOptions, buf: &mut String) {
+    let is_space = |c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c');
+    if opts.no_escape || !value.chars().any(is_space) {
+        escape_csq_str(value, buf);
+        return;
+    }
+    let mut encoded = String::with_capacity(value.len() + 8);
+    for c in value.chars() {
+        if is_space(c) {
+            encoded.push_str("%20");
+        } else {
+            encoded.push(c);
+        }
+    }
+    escape_csq_str(&encoded, buf);
+}
+
+fn escape_csq_chars(value: &str, buf: &mut String, escape_equals: bool) {
     // Nearly every value that reaches here - a transcript ID, a gene symbol,
     // an SO term, an HGVS string, a run of bases - contains none of the five
     // characters that need substituting, and copying such a value whole skips
@@ -432,7 +491,7 @@ fn escape_csq_str(value: &str, buf: &mut String) {
         match c {
             ',' | '|' => buf.push('&'),
             ';' => buf.push_str("%3B"),
-            '=' => buf.push_str("%3D"),
+            '=' if escape_equals => buf.push_str("%3D"),
             // VEP substitutes rather than encodes, so a reader cannot recover
             // an original `_` from it either. Matching VEP is worth more than
             // reversibility in a column whose whole point is to be diffable
@@ -2255,6 +2314,7 @@ impl OptionalColumn {
         vf: &VariationFeature,
         tv: &TranscriptVariation,
         aa: &AlleleAnnotation,
+        no_escape: bool,
     ) -> String {
         fn or_dash(v: Option<&str>) -> String {
             v.filter(|s| !s.is_empty()).unwrap_or("-").to_string()
@@ -2281,6 +2341,7 @@ impl OptionalColumn {
             Self::Hgvsc => or_dash(aa.hgvsc.as_deref()),
             // VEP encodes `=` as `%3D` in the tab file as well as in the VCF
             // (`OutputFactory`, "URI encode =", unless --no_escape)
+            Self::Hgvsp if no_escape => or_dash(aa.hgvsp.as_deref()),
             Self::Hgvsp => or_dash(
                 aa.hgvsp
                     .as_deref()
@@ -2414,6 +2475,9 @@ pub struct TabOptions<'a> {
     /// `REF_ALLELE` before `IMPACT`, the rest after `FLAGS` (and `PICK`), and
     /// before the columns of loaded supplementary sources.
     pub optional: &'a [OptionalColumn],
+    /// VEP's `--no_escape`: the `=` of a synonymous `HGVSp` is written as it is and not as
+    /// `%3D`.
+    pub no_escape: bool,
 }
 
 /// `1` when flagged, `-` when not, so the column is never blank - every other
@@ -2602,7 +2666,7 @@ pub fn format_tab_line_with(
             // PICK, then the other optional columns.
             let mut optional = opts.optional;
             if let [OptionalColumn::RefAllele, rest @ ..] = optional {
-                parts.push(OptionalColumn::RefAllele.cell(vf, tv, aa));
+                parts.push(OptionalColumn::RefAllele.cell(vf, tv, aa, opts.no_escape));
                 optional = rest;
             }
             parts.push(impact_str);
@@ -2613,7 +2677,7 @@ pub fn format_tab_line_with(
                 parts.push(pick_cell(aa.pick));
             }
             for col in optional {
-                parts.push(col.cell(vf, tv, aa));
+                parts.push(col.cell(vf, tv, aa, opts.no_escape));
             }
 
             if extra_count > 0 {
@@ -4971,6 +5035,71 @@ mod tests {
         // and the CSQ, which already did
         let flags = ColumnFlags::default();
         assert_eq!(csq_by_name_with(&vf, flags)["HGVSp"], "ENSP1:p.Thr11%3D");
+    }
+
+    /// `--no_escape` leaves the `=` of a synonymous `HGVSp` as it is, in the tab file and in the
+    /// CSQ: VEP escapes it when it builds the value (`$hgvs_p =~ s/\=/\%3D/g if $hgvs_p &&
+    /// !$self->{no_escape}`), and its VCF writer escapes no `=` of its own.
+    #[test]
+    fn no_escape_leaves_the_equals_sign_of_a_synonymous_hgvsp_alone() {
+        let mut vf = projection_test_variant();
+        vf.transcript_variations[0].allele_annotations[0].hgvsp = Some("ENSP1:p.Thr11=".into());
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+        let optional = ColumnFlags::default().columns(true);
+        let rows = format_tab_line_with(
+            &vf,
+            &specs,
+            false,
+            TabOptions {
+                optional: &optional,
+                no_escape: true,
+                ..TabOptions::default()
+            },
+        );
+        let cells: Vec<&str> = rows[0].split('\t').collect();
+        assert_eq!(cells[18], "ENSP1:p.Thr11=");
+
+        let fields = csq_fields(false, ColumnFlags::default());
+        let csq = format_csq_with(&vf, &fields, CsqOptions { no_escape: true });
+        let at = fields.iter().position(|f| *f == "HGVSp").unwrap();
+        assert_eq!(csq.split('|').nth(at), Some("ENSP1:p.Thr11="));
+        // the rest of the escaping is what it was: a `;` and a `,` in another field
+        vf.transcript_variations[0].allele_annotations[0].hgvsc = Some("ENST1:c.1;2,3=".into());
+        let csq = format_csq_with(&vf, &fields, CsqOptions { no_escape: true });
+        let at = fields.iter().position(|f| *f == "HGVSc").unwrap();
+        assert_eq!(csq.split('|').nth(at), Some("ENST1:c.1%3B2&3%3D"));
+    }
+
+    /// The space of a gene symbol: VEP puts `%20` for it when it builds the value for VCF output,
+    /// and what its VCF writer makes of whitespace, `_`, is all that is left with `--no_escape`.
+    /// Measured on VEP 116.3 with a gene named `GENE A`.
+    #[test]
+    fn a_symbol_with_a_space_is_percent_20_in_a_csq_and_an_underscore_with_no_escape() {
+        let mut vf = projection_test_variant();
+        vf.transcript_variations[0].gene_symbol = Some("GENE A".into());
+        let fields = csq_fields(false, ColumnFlags::default());
+        let at = fields.iter().position(|f| *f == "SYMBOL").unwrap();
+        let symbol = |vf: &VariationFeature, opts| {
+            format_csq_with(vf, &fields, opts)
+                .split('|')
+                .nth(at)
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(symbol(&vf, CsqOptions::default()), "GENE%20A");
+        assert_eq!(symbol(&vf, CsqOptions { no_escape: true }), "GENE_A");
+        // every whitespace character of `\s` is the same `%20`, and a symbol without one is whole
+        vf.transcript_variations[0].gene_symbol = Some("A\tB C".into());
+        assert_eq!(symbol(&vf, CsqOptions::default()), "A%20B%20C");
+        vf.transcript_variations[0].gene_symbol = Some("HLA-DRB1".into());
+        assert_eq!(symbol(&vf, CsqOptions::default()), "HLA-DRB1");
+        // the tab file never escaped a symbol, and still does not
+        vf.transcript_variations[0].gene_symbol = Some("GENE A".into());
+        let flags = ColumnFlags {
+            symbol: true,
+            ..ColumnFlags::default()
+        };
+        assert!(cells_with(&vf, flags, false).contains(&"GENE A".to_string()));
     }
 
     /// An insertion's reference allele is `-` in the tab file and empty in the

@@ -281,6 +281,7 @@ fn annotate_vcf_emits_spliceai_from_fastsa() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -384,6 +385,7 @@ chr1\t26011\t2.71
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -466,6 +468,7 @@ fn annotate_vcf_replaces_existing_fastvep_info() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -537,6 +540,7 @@ fn annotate_vcf_emits_fastsa_projection_for_gnomad() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -607,6 +611,7 @@ fn annotate_tab_emits_fastsa_columns_for_clinvar_and_gnomad() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -734,6 +739,7 @@ fn sa_only_vcf_omits_csq_and_default_pipeline() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -798,6 +804,7 @@ fn sa_only_tab_emits_minimal_columns() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -870,6 +877,7 @@ fn sa_only_json_omits_transcript_consequences() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -970,6 +978,7 @@ fn sa_only_requires_sa_dir() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .expect_err("--sa-only without --sa-dir must error");
@@ -1041,6 +1050,7 @@ fn sa_only_multi_allelic_emits_per_alt_rows_with_independent_sa_columns() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -1120,6 +1130,7 @@ fn sa_only_strips_preexisting_csq_from_input_info() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -1193,6 +1204,7 @@ fn sa_only_strips_csq_when_in_middle_of_info_field() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -1290,6 +1302,7 @@ fn intergenic_variant_with_sa_dir_in_default_mode_emits_fv_clinvar() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -1353,6 +1366,7 @@ fn annotate_tab_gene_list_filters_to_panel_genes() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -1408,6 +1422,7 @@ fn annotate_tab_explicit_alleles_inserts_ref_column() {
         explicit_alleles: true,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -1495,6 +1510,7 @@ min_dp = 8
         explicit_alleles: false,
         qc_rules: Some(qc_rules_path.to_string_lossy().into_owned()),
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .unwrap();
@@ -1573,6 +1589,7 @@ fn sa_only_does_not_declare_a_pick_column_for_the_switch_it_ignores() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
         columns: Default::default(),
     })
     .expect("sa-only annotation should succeed");

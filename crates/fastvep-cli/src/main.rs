@@ -143,6 +143,27 @@ enum Commands {
         #[arg(long)]
         show_ref_allele: bool,
 
+        /// Write the length each position is counted in after `cDNA_position`,
+        /// `CDS_position` and `Protein_position` (`14/203`), as VEP's
+        /// `--total_length` does. The cDNA length goes on every row whose change
+        /// touches an exon, the CDS and protein lengths on those that touch the
+        /// coding sequence too, even when the cell itself is `-` (`-/1403`).
+        /// Tab and VCF output; JSON writes its positions as numbers.
+        #[arg(long, alias = "total_length")]
+        total_length: bool,
+
+        /// Do not percent-escape HGVS strings, as VEP's `--no_escape`: a synonymous
+        /// `HGVSp` ends `=` and not `%3D`, and the space of a gene symbol in VCF
+        /// output is `_` and not `%20`.
+        #[arg(long, alias = "no_escape")]
+        no_escape: bool,
+
+        /// Accepted for the sake of a `vep` command line, and does nothing:
+        /// `fastvep annotate` always writes over its output file, which is what
+        /// VEP's `--force_overwrite` asks for.
+        #[arg(long, alias = "force_overwrite")]
+        force_overwrite: bool,
+
         /// Upstream/downstream distance (bp)
         #[arg(long, default_value_t = 5000)]
         distance: u64,
@@ -404,6 +425,9 @@ fn main() -> Result<()> {
             numbers,
             variant_class,
             show_ref_allele,
+            total_length,
+            no_escape,
+            force_overwrite: _,
             distance,
             cache_dir,
             transcript_cache,
@@ -452,6 +476,10 @@ fn main() -> Result<()> {
                 } else {
                     pipeline::ColumnFlags::default()
                 }),
+                compat: pipeline::CompatFlags {
+                    total_length,
+                    no_escape,
+                },
                 distance,
                 cache_dir,
                 transcript_cache,

@@ -113,34 +113,6 @@ fn rotate(alt: &Allele, shift: u64, strand: Strand) -> Allele {
     }
 }
 
-/// `$pre->{coding}` of `_bvfo_preds`, which `hgvs_protein` asks of the change *as it stands*,
-/// before it is moved.
-///
-/// It is a test of extent and not of coordinates. The change has to be `within_feature`, a plain
-/// `overlap` with the transcript, so an insertion needs both of the bases it sits between inside
-/// it; it has to reach the coding region, and an exon, where an insertion counts as the two bases
-/// it sits between (`min_vf` and `max_vf`). Whether the mapper then finds a CDS coordinate for it
-/// is not asked: an insertion in front of the initiator has none and is `coding` all the same,
-/// and the 3'-rule can carry it onto the initiator, which is how Ensembl writes
-/// `p.Met1AsnfsTer?` for one.
-///
-/// "An exon" is [`Transcript::overlaps_exon_flag`], which in a transcript with a frameshift
-/// intron is every base within 12 of an exon: a deletion inside the intron is `coding`, and the
-/// 3'-rule can carry it into the exon, where Ensembl then writes the protein change of it
-/// (`p.Glu56SerfsTer136` for a deletion in SHANK3's two-base intron, `c.166del`).
-fn pre_coding(transcript: &Transcript, start: u64, end: u64) -> bool {
-    if end < transcript.start || start > transcript.end {
-        return false;
-    }
-    let (Some(coding_start), Some(coding_end)) =
-        (transcript.coding_region_start, transcript.coding_region_end)
-    else {
-        return false;
-    };
-    let (lo, hi) = (start.min(end), start.max(end));
-    lo <= coding_end && hi >= coding_start && transcript.overlaps_exon_flag(lo, hi)
-}
-
 /// The HGVSp of one allele, `None` where Ensembl writes none.
 pub fn hgvsp_for_allele(r: &HgvspRequest<'_>) -> Option<String> {
     let transcript = r.transcript;
@@ -151,7 +123,7 @@ pub fn hgvsp_for_allele(r: &HgvspRequest<'_>) -> Option<String> {
     if !(r.alt_allele.is_plain_bases() && r.ref_allele.is_plain_bases()) {
         return None;
     }
-    if !pre_coding(transcript, r.start, r.end) {
+    if !transcript.pre_coding(r.start, r.end) {
         return None;
     }
     let reference_translation = transcript.peptide.as_deref()?;

@@ -180,6 +180,7 @@ fn ours() -> Table {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
     })
     .expect("annotation should succeed");
     table(&std::fs::read_to_string(&out).unwrap())

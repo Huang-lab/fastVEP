@@ -75,6 +75,7 @@ fn config(input: &Path, out: &Path) -> AnnotateConfig {
         pick: PickFlags::default(),
         hgvs: false,
         columns: Default::default(),
+        compat: Default::default(),
         distance: 5000,
         cache_dir: None,
         transcript_cache: None,

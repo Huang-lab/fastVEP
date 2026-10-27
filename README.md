@@ -509,6 +509,9 @@ for the parsing rules and the escaping table.
 | `--numbers` | Add `EXON` and `INTRON` (`3/10`) to tab output (the VCF `CSQ` always has them). VEP's `--numbers` | off |
 | `--variant-class` | Add `VARIANT_CLASS` (`SNV`, `insertion`, `deletion`, ...) to tab and VCF output. VEP's `--variant_class` | off |
 | `--show-ref-allele` | Add `REF_ALLELE` to tab output (the VCF `CSQ` always has it). VEP's `--show_ref_allele`. (`--explicit-alleles` puts `REF` right after `Allele` instead) | off |
+| `--total-length` | Write the length each position is counted in after `cDNA_position`, `CDS_position` and `Protein_position`, `14/203`, in tab and VCF output (JSON writes numbers). VEP's `--total_length` | off |
+| `--no-escape` | Do not percent-escape HGVS strings: a synonymous `HGVSp` ends in `=` and not `%3D`, and the space of a gene symbol in the VCF `CSQ` is `_` and not `%20`. VEP's `--no_escape` | off |
+| `--force-overwrite` | Accepted so that a `vep` command line is not refused, and does nothing: `fastvep annotate` always writes over its output file, which is what VEP's `--force_overwrite` asks for | -- |
 | `--everything` | Turn on `--hgvs --symbol --numbers --canonical --biotype --variant-class`: VEP's `--everything`, restricted to the columns fastVEP writes (not `--hgvsg` or `--show-ref-allele`, which VEP's does not include either) | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--buffer-size` | Variants buffered per parallel batch | `5000` |
@@ -622,6 +625,8 @@ The cells follow VEP's tab writer:
   An insertion has the two positions it sits between (`601-602`), also when one of them is across an exon boundary, and no CDS or protein position when it sits just before the initiator or just after the terminator.
   `EXON` and `INTRON` list every exon and intron the change overlaps, `2-3/10` for a change over two, and an insertion at an exon's edge overlaps neither.
   The same cells are written to the VCF `CSQ`, and JSON has `cdna_start` and `cdna_end` (and the CDS and protein pairs) for the ends that have one.
+  With `--total-length` each cell is followed by the length it is counted in, as in VEP: `451-?/1403`, `51/654`, `17/217` (the cDNA, the coding sequence with its stop codon, the protein without it).
+  The cDNA length goes on every row whose change touches an exon, and the other two on the rows that touch the coding sequence too, whatever the cell holds, so a deletion that covers an exon from intron to intron is `-/1403`, `-/654` and `-/217`.
 - A variant with no overlapping transcript has no feature, so `Gene`, `Feature`, `Feature_type`, `DISTANCE`, `STRAND` and `FLAGS` are `-`; `IMPACT` is still `MODIFIER`.
   A VCF `CSQ` entry for it leaves those fields empty.
 
@@ -629,7 +634,8 @@ VEP adds further tab columns only when asked, and so does fastVEP, with VEP's fl
 They are written in the order VEP's own table gives them: `REF_ALLELE` between `Existing_variation` and `IMPACT`, then, after `FLAGS` (and `PICK`), `VARIANT_CLASS`, `SYMBOL`, `SYMBOL_SOURCE`, `HGNC_ID`, `BIOTYPE`, `CANONICAL`, `EXON`, `INTRON`, `HGVSc`, `HGVSp`, `HGVS_OFFSET` and `HGVSg`, and before any supplementary-source column.
 A flag you do not give adds nothing, so a run without any of them has the 17 columns above.
 `FLAGS` holds the transcript's flags (`cds_start_NF`), as in VEP, and `CANONICAL` says whether the transcript is canonical.
-`HGVSp` writes `=` as `%3D`, as VEP does in its tab file and in its VCF, and `HGVS_OFFSET` is how far the HGVS description moved 3' from where the VCF had the variant, signed by the strand.
+`HGVSp` writes `=` as `%3D`, as VEP does in its tab file and in its VCF (`--no-escape` leaves it an `=`), and `HGVS_OFFSET` is how far the HGVS description moved 3' from where the VCF had the variant, signed by the strand.
+The underscore spellings VEP uses for those three flags (`--total_length`, `--no_escape`, `--force_overwrite`) are accepted beside the hyphenated ones.
 
 Not written yet: VEP's frequency columns (`AF`, `AFR_AF`, ...), and `CLIN_SIG`, `SOMATIC` and `PHENO` as VEP computes them.
 The VCF `CSQ` has fields of those names, but they are summarised over the whole variant and not per allele and per known variant as VEP does, and `AF` there is gnomAD-first rather than VEP's 1000 Genomes `AF`.

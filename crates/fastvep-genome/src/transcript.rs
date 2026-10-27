@@ -212,6 +212,65 @@ impl Transcript {
         reaches(0) || (reaches(FRAMESHIFT_EXON_STRETCH) && self.has_frameshift_intron())
     }
 
+    /// `within_feature` of `_bvfo_preds`: a plain `overlap` of the change with the transcript, so
+    /// an insertion (`end = start - 1`) needs both of the bases it sits between inside it.
+    pub fn within_feature(&self, start: u64, end: u64) -> bool {
+        end >= self.start && start <= self.end
+    }
+
+    /// `$pre->{exon}` of `_bvfo_preds`: the change is within the transcript and touches an exon
+    /// ([`Self::overlaps_exon_flag`]). It decides whether Ensembl writes a `cDNA_position` at all.
+    pub fn pre_exon(&self, start: u64, end: u64) -> bool {
+        self.within_feature(start, end) && self.overlaps_exon_flag(start, end)
+    }
+
+    /// `$pre->{coding}` of `_bvfo_preds`, which `hgvs_protein` and the `CDS_position` and
+    /// `Protein_position` cells ask of the change *as it stands*, before the 3'-rule moves it.
+    ///
+    /// It is a test of extent and not of coordinates. The change has to be `within_feature`, a
+    /// plain `overlap` with the transcript, so an insertion needs both of the bases it sits
+    /// between inside it; it has to reach the coding region, and an exon, where an insertion
+    /// counts as the two bases it sits between (`min_vf` and `max_vf`). Whether the mapper then
+    /// finds a CDS coordinate for it is not asked: an insertion in front of the initiator has
+    /// none and is `coding` all the same, and the 3'-rule can carry it onto the initiator, which
+    /// is how Ensembl writes `p.Met1AsnfsTer?` for one, and `-/654` is what `--total_length`
+    /// writes for the `CDS_position` of a deletion that spans the whole of an exon from intron
+    /// to intron.
+    ///
+    /// "An exon" is [`Self::overlaps_exon_flag`], which in a transcript with a frameshift
+    /// intron is every base within 12 of an exon: a deletion inside the intron is `coding`, and
+    /// the 3'-rule can carry it into the exon, where Ensembl then writes the protein change of it
+    /// (`p.Glu56SerfsTer136` for a deletion in SHANK3's two-base intron, `c.166del`).
+    pub fn pre_coding(&self, start: u64, end: u64) -> bool {
+        if !self.within_feature(start, end) {
+            return false;
+        }
+        let (Some(coding_start), Some(coding_end)) =
+            (self.coding_region_start, self.coding_region_end)
+        else {
+            return false;
+        };
+        let (lo, hi) = (start.min(end), start.max(end));
+        lo <= coding_end && hi >= coding_start && self.overlaps_exon_flag(lo, hi)
+    }
+
+    /// The length of the coding sequence as Ensembl counts it for `--total_length`:
+    /// `length(translateable_seq)`, which includes the stop codon and, for a transcript whose first
+    /// codon is partial, the `N`s in front of it. `None` for a transcript with no coding sequence.
+    ///
+    /// Without a FASTA there is no sequence to measure, and the length is worked out from the
+    /// coding span and the phase instead, which is the same number.
+    pub fn cds_length(&self) -> Option<u64> {
+        if let Some(seq) = self.translateable_seq.as_deref().filter(|s| !s.is_empty()) {
+            return Some(seq.len() as u64);
+        }
+        if !self.is_coding() {
+            return None;
+        }
+        let span = self.cdna_coding_end?.checked_sub(self.cdna_coding_start?)? + 1;
+        Some(span + self.codon_table_start_phase)
+    }
+
     /// The protein's accession as `HGVSp` writes it: `ENSP00000363557.3`.
     ///
     /// Ensembl's GFF3 keeps the version beside the id (`protein_id=ENSP00000363557;version=3`),

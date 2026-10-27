@@ -20,16 +20,33 @@ use std::fmt::Write;
 pub struct TranscriptSpan {
     pub start: Option<u64>,
     pub end: Option<u64>,
+    /// How long the transcript's cDNA, CDS or protein is, for `--total_length`: the cell
+    /// becomes `14/203`. `None` for a run that did not ask, and for a row that VEP gives no
+    /// total (see [`Self::write_to`]).
+    pub total: Option<u32>,
 }
 
 impl TranscriptSpan {
     pub const NONE: Self = Self {
         start: None,
         end: None,
+        total: None,
     };
 
     pub const fn new(start: Option<u64>, end: Option<u64>) -> Self {
-        Self { start, end }
+        Self {
+            start,
+            end,
+            total: None,
+        }
+    }
+
+    /// The same span with `--total_length`'s total.
+    pub const fn with_total(self, total: u32) -> Self {
+        Self {
+            total: Some(total),
+            ..self
+        }
     }
 
     /// Neither end has a coordinate: VEP's cell is `-`.
@@ -40,6 +57,11 @@ impl TranscriptSpan {
     /// Ensembl's `format_coords` (`Bio::EnsEMBL::VEP::Utils`): `a-b` low end first,
     /// `a` when the ends agree, `a-?` or `?-b` when one is unknown. Writes nothing when
     /// neither is known, so the caller chooses between VEP's `-` and the empty CSQ field.
+    ///
+    /// With a total, `/{total}` follows whatever was written, and a span with neither end
+    /// is `-/{total}`: VEP appends the total to `format_coords`' own `-`
+    /// (`$hash->{cDNA_position} .= '/'.$tr->length`), which is not blank, so the VCF writer
+    /// that blanks a bare `-` leaves it. 76 rows of the edge fixture are like that.
     pub fn write_to(&self, buf: &mut String) {
         match (self.start, self.end) {
             (Some(s), Some(e)) if s == e => {
@@ -54,7 +76,11 @@ impl TranscriptSpan {
             (None, Some(e)) => {
                 let _ = write!(buf, "?-{e}");
             }
+            (None, None) if self.total.is_some() => buf.push('-'),
             (None, None) => {}
+        }
+        if let Some(total) = self.total {
+            let _ = write!(buf, "/{total}");
         }
     }
 
@@ -131,6 +157,31 @@ mod tests {
         assert_eq!(cell(Some(7), None), "7-?");
         assert_eq!(cell(None, Some(7)), "?-7");
         assert_eq!(cell(None, None), "");
+    }
+
+    /// `--total_length` appends the transcript's length to `format_coords`' cell, whatever it
+    /// holds, `-` included.
+    #[test]
+    fn a_total_follows_every_form_of_the_cell() {
+        let cell = |start, end| {
+            let mut s = String::new();
+            TranscriptSpan::new(start, end)
+                .with_total(1403)
+                .write_to(&mut s);
+            s
+        };
+        assert_eq!(cell(Some(5), Some(5)), "5/1403");
+        assert_eq!(cell(Some(5), Some(9)), "5-9/1403");
+        assert_eq!(cell(Some(602), Some(601)), "601-602/1403");
+        assert_eq!(cell(Some(7), None), "7-?/1403");
+        assert_eq!(cell(None, Some(7)), "?-7/1403");
+        assert_eq!(cell(None, None), "-/1403");
+    }
+
+    #[test]
+    fn a_span_without_a_total_is_what_it_was() {
+        assert_eq!(cell(None, None), "");
+        assert_eq!(cell(Some(5), None), "5-?");
     }
 
     #[test]
