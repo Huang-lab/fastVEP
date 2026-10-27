@@ -2,9 +2,10 @@
 
 fastVEP is a standalone annotator.
 Its consequence and HGVS engine is a port of Ensembl VEP's, and [VEP_DIVERGENCE.md](VEP_DIVERGENCE.md) measures where the two agree.
-It is not a drop-in for the `vep` command line.
+It is not a drop-in for the `vep` command line: there is no plugin API, no `--custom`, no database mode and no BAM-edited transcript, and gene models come from a GFF3 and not from a VEP cache.
+What it does write is VEP's output: the tab cells and columns, the columns VEP computes from its variation cache (`AF` and the other frequencies, `MAX_AF`, `CLIN_SIG`, `SOMATIC`, `PHENO`, `PUBMED`), and most of the flags that ask for them.
 This page says what carries over from a VEP installation, what does not, and how to check your own sites before you switch.
-It describes fastVEP with the whole of the #139 series merged: the known-variant reader, the tab columns, the protein version and the RefSeq names.
+It describes fastVEP with the whole of the #139 series merged: the known-variant reader and columns, the tab columns, the protein version, the RefSeq names, the positions and terms at the edge of a transcript, the flags below, and the changes that make a GFF3 run read a transcript as VEP's cache holds it.
 
 Each statement below was checked against fastVEP's code, the output of its `--help`, the file it names, the source of Ensembl VEP (release/116), or a run of Ensembl VEP 116.3, the program, on the same input (Docker `ensemblorg/ensembl-vep:release_116.3`).
 Where something was not checked, it says so.
@@ -13,7 +14,7 @@ Where something was not checked, it says so.
 
 | In the VEP cache directory | Read? | How |
 |---|---|---|
-| `{chr}/all_vars.gz` with its `.csi` or `.tbi`, `info.txt`, `chr_synonyms.txt` | yes | `--cache-dir`, for `Existing_variation` only, and only in `fastvep annotate` |
+| `{chr}/all_vars.gz` with its `.csi` or `.tbi`, `info.txt`, `chr_synonyms.txt` | yes | `--cache-dir`, for `Existing_variation` and for the columns VEP computes from the same records, and only in `fastvep annotate` |
 | `{chr}/{start}-{end}.gz` transcript slices (Perl `Storable`) | **no** | gene models come from GFF3 |
 | `{chr}/{start}-{end}_reg.gz` regulatory slices | **no** | |
 | `{chr}/{start}-{end}_var.gz`, the unconverted variation slices | **no**, and the run stops with an error | convert with VEP's `convert_cache.pl`, or use the indexed cache download |
@@ -35,27 +36,36 @@ A contig the cache does not hold is counted, and the run ends with a warning tha
 
 ## Flags
 
-fastVEP spells a multi-word flag with a hyphen (`--pick-allele`), where VEP uses an underscore (`--pick_allele`).
-The underscore spelling is not accepted.
+fastVEP spells a multi-word flag with a hyphen (`--pick-allele`).
+Every flag it shares with VEP is also accepted in VEP's underscore spelling (`--pick_allele`), so those can be pasted as they are.
 
 | VEP | fastVEP | Note |
 |---|---|---|
 | `--cache --offline --dir_cache DIR` | `--cache-dir DIR` | known variants only, see above; there is no database mode |
 | `--fasta FILE` | `--fasta FILE` | |
 | `--tab`, `--vcf`, `--json` | `--output-format tab`, `vcf`, `json` | `vcf` is the default |
-| `--check_existing` | implied by `--cache-dir` | |
 | `--refseq`, `--merged` | `--gff3` | pass the NCBI GFF3, or both, with `LABEL=path`; the `SOURCE` field of the CSQ says which |
+| `--check_existing` | `--check_existing` | adds `CLIN_SIG`, `SOMATIC` and `PHENO`, per allele as VEP computes them; needs `--cache-dir`. `Existing_variation` is filled whenever `--cache-dir` is given, where VEP fills it only under this flag |
+| `--af`, `--af_1kg`, `--af_gnomade`, `--af_gnomadg`, `--max_af`, `--pubmed`, `--clin_sig_allele` | the same | the columns of VEP's `FLAG_FIELDS`, in VEP's order, from the records of the variation cache; every frequency flag, `--max_af` and `--pubmed` imply `--check_existing`, as in VEP; they need `--cache-dir` and stop the run without it. `--af_gnomad`, which VEP keeps as another name for `--af_gnomade`, is accepted |
 | `--hgvs` | `--hgvs` | adds `HGVSc`, `HGVSp` and `HGVS_OFFSET` |
 | `--hgvsg` | `--hgvsg` | written as VEP writes it, an indel 3'-shifted over the genome and a repeat a `dup`, which reads the reference, so give `--fasta` |
-| `--symbol`, `--biotype`, `--canonical`, `--numbers`, `--variant_class`, `--show_ref_allele` | `--symbol`, `--biotype`, `--canonical`, `--numbers`, `--variant-class`, `--show-ref-allele` | tab columns, in VEP's order; the VCF `CSQ` has most of them always |
-| `--everything` | `--everything` | `--hgvs --symbol --numbers --canonical --biotype --variant-class`; VEP's set has more |
-| `--pick`, `--pick_allele`, `--pick_allele_gene`, `--flag_pick`, `--flag_pick_allele`, `--flag_pick_allele_gene`, `--pick_order` | the same, with hyphens | |
+| `--symbol`, `--biotype`, `--canonical`, `--numbers`, `--variant_class`, `--show_ref_allele` | the same | tab columns, in VEP's order; the VCF `CSQ` has most of them always |
+| `--total_length` | `--total_length` | `cDNA_position`, `CDS_position` and `Protein_position` as `14/203`, in tab and VCF output; JSON writes numbers and gives no totals |
+| `--no_escape` | `--no_escape` | a synonymous `HGVSp` ends in `=` and not `%3D`; the space of a gene symbol in the VCF `CSQ` is `_` and not `%20` |
+| `--force_overwrite` | `--force_overwrite` | accepted and does nothing: `fastvep annotate` always writes over its output file |
+| `--exclude_predicted` | `--exclude_predicted` | leaves out `XM_` and `XR_` transcripts (VEP's filter is `not stable_id match ^X._`); a variant left with no transcript is an `intergenic_variant` |
+| (VEP's Ensembl cache is built without them) | `--exclude-readthrough`, `--exclude-artifact` | leave out readthrough transcripts and those of biotype `artifact`, which an Ensembl GFF3 has and VEP's cache does not; give them to get the cache's transcript set. None of the three exclusion flags is on by default |
+| `--everything` | `--everything` | `--hgvs --symbol --numbers --canonical --biotype --variant_class`, and with `--cache-dir` the frequency flags too; VEP's set has more |
+| `--pick`, `--pick_allele`, `--pick_allele_gene`, `--flag_pick`, `--flag_pick_allele`, `--flag_pick_allele_gene`, `--pick_order` | the same | |
 | `--distance` | `--distance` | |
 
-Not accepted, with nothing equivalent: `--af`, `--af_1kg`, `--af_gnomad` and the other `--af_*` and `--max_af`; `--exclude_predicted`; `--use_transcript_ref` and `--bam`; `--total_length`; `--fields`; `--no_escape`; `--plugin`; `--custom`; `--assembly` and `--species`; `--force_overwrite` (the `-o` file is overwritten as it is).
-fastVEP rejects each of them with an error, so a command line that uses one fails at once.
+Any other VEP flag is refused, with `error: unexpected argument`, so a command line that uses one fails at once.
+Of the ones a production command line is likely to carry, that is `--cache`, `--offline` and `--dir_cache`, `--refseq` and `--merged`, `--tab`, `--vcf` and `--json`, `--assembly` and `--species`, `--use_transcript_ref` and `--bam`, `--fields`, `--plugin`, `--custom`, `--fork`, `--no_stats` and `--quiet`, and the annotation flags that have no counterpart here (`--sift`, `--polyphen`, `--mane`, `--tsl`, `--appris`, `--ccds`, `--protein`, `--domains`, `--uniprot`, `--gene_phenotype`, `--regulatory`, `--nearest`, `--shift_3prime`, `--no_intergenic`, `--coding_only`, `--minimal`, `--allele_number`, `--individual`, `--vcf_info_field` and `--terms`).
+`--af_esp` and `--af_exac` are refused as well, and VEP 116.3 has neither.
+That list was run, each flag on its own, against the binary.
 
-Population frequencies come from supplementary databases you build with `sa-build` (gnomAD, 1000 Genomes, TOPMed), and appear as `FV_*` fields and columns, not as VEP's `AF` columns.
+Population frequencies beyond what a variation cache carries come from supplementary databases you build with `sa-build` (gnomAD, 1000 Genomes, TOPMed), and appear as `FV_*` fields and columns.
+The columns above are VEP's own, computed from the cache's records.
 
 ### A worked example
 
@@ -70,16 +80,18 @@ vep --cache --offline --force_overwrite --tab \
     --plugin REVEL,... --custom file=phylop.bw,format=bigwig
 ```
 
-and what carries over to fastVEP:
+and what carries over to fastVEP, the flags typed as VEP spells them:
 
 ```bash
 fastvep annotate -i in.vcf -o out.tab --output-format tab \
     --gff3 refseq.gff3 --fasta $ref --cache-dir $dir_cache \
-    --show-ref-allele --variant-class --biotype --hgvs --hgvsg --numbers
+    --show_ref_allele --variant_class --biotype --af_1kg --check_existing \
+    --hgvs --hgvsg --exclude_predicted --no_escape --numbers --total_length \
+    --force_overwrite
 ```
 
-What is dropped, and why: `--af_1kg` (no VEP-style frequency columns), `--exclude_predicted` (filter the GFF3), `--no_escape` and `--force_overwrite` (not needed), `--use_transcript_ref` and `--bam` (no BAM-edited transcripts), `--total_length` (not implemented), `--assembly` (the assembly is whatever the GFF3 and FASTA are), `--plugin` and `--custom` (see below).
-`--refseq` becomes the choice of GFF3, and `--check_existing` is implied by `--cache-dir`.
+What is dropped, and why: `--cache` and `--offline` (fastVEP never connects to a database), `--refseq` (the choice of GFF3), `--assembly` (the assembly is whatever the GFF3 and FASTA are), `--use_transcript_ref` and `--bam` (no BAM-edited transcripts), `--plugin` and `--custom` (see below).
+`--dir_cache` becomes `--cache-dir`.
 
 ## Plugins and custom tracks
 
@@ -109,37 +121,47 @@ Its sequence names are accessions (`NC_000010.11`) and the FASTA's are `chr10` o
 ```bash
 fastvep cache --gff3 GCF_000001405.40_GRCh38.p14_genomic.gff --fasta GRCh38.fa \
   --synonyms chr_synonyms.txt -o refseq.cache
-fastvep annotate -i in.vcf --transcript-cache refseq.cache --fasta GRCh38.fa ...
+fastvep annotate -i in.vcf --transcript-cache refseq.cache --fasta GRCh38.fa --exclude_predicted ...
 ```
 
 The synonyms file is in the format VEP reads from a cache directory's `chr_synonyms.txt`, one line of equivalent names per contig.
 [README.md](../README.md#chromosome-naming-across-sources---synonyms) has the details.
+Give `--exclude_predicted` as you would to `vep --refseq`: the GFF3 holds the predicted `XM_` and `XR_` models, and without the flag they are annotated.
 
-Two things are not covered, and were not measured:
+fastVEP reads a RefSeq GFF3 as VEP's RefSeq cache holds it.
+A transcript is its `transcript_id` (`NM_000001.3`), a gene is the `GeneID` of its Dbxref (`7157`), and the protein in an `HGVSp` is the id NCBI gives (`NP_000001.2`).
+`SYMBOL_SOURCE` is `EntrezGene`, `BIOTYPE` is the `gene_biotype` of the gene (with `misc_RNA` for a non-coding transcript of a protein-coding gene), and `CANONICAL` marks the MANE Select transcript of a gene that has one and otherwise the transcript that spans the most of the genome.
+A start codon the annotation reads as methionine (`transl_except ... aa:Met`) is `M` in `Amino_acids`.
+The mature microRNA records that hang off a precursor get no row, as in VEP's.
+Those rules were read off VEP's cache run and not off VEP's code, because the cache is built from a database; [VEP_DIVERGENCE.md, Against VEP's own cache](VEP_DIVERGENCE.md#against-veps-own-cache) has the evidence and the cells that are left.
 
-- VEP's RefSeq cache carries transcripts whose sequence differs from the genome, repaired from a BAM (`--bam`, `--use_transcript_ref`).
-  fastVEP builds transcript sequence from the GFF3 and the FASTA and has no equivalent, so its agreement with VEP on those transcripts is unknown.
-- There is no `--exclude_predicted`.
-  Filter the GFF3 to the records you want before you build the cache.
+That comparison is the case this page is about.
+Chromosomes 21 and 22 of VEP 116.3's own RefSeq cache were run through VEP (`--cache --offline --refseq --exclude_predicted`) and through fastVEP over the matching GFF3: 203,125 rows of 21,052 changes at the edges of the transcripts, and the HG002 and ClinVar samples on those two chromosomes.
+After the changes of this series the cells that differ are in four columns, and all of them have a cause: `HGVSp` at a stop codon and in a repeat at the end of a protein (5,193 of the 203,125 rows of the edge set), `CANONICAL` where the span rule misses (150 rows of the edge set, and 15 of the 15,426 rows of HG002), and `HGVSc` and `HGVS_OFFSET` of an allele of a record with several ALTs (122 and 146 rows of HG002).
+On HG002, 2 rows are only fastVEP's and 1 only VEP's.
+On the ClinVar sample, 26,383 rows, no cell differs.
+The `BIOTYPE` rule was read off chr21 and chr22: a biotype that is not on them keeps the name VEP's `--gff` reader gives.
 
-fastVEP names what a RefSeq GFF3 holds as VEP's GFF reader does: a transcript is its `transcript_id` (`NM_000001.3`, not the ID `rna-NM_000001.3`), a gene is the `GeneID` of its Dbxref (`7157`, not `gene-TP53`), and a biotype the record does not state is guessed from its type and its `gbkey` (`protein_coding` for an mRNA, `ncRNA` for an lnc_RNA, `misc_RNA`, `rRNA`, `tRNA`, ...).
-The protein in an `HGVSp` is the id NCBI gives, `NP_000001.2`.
+Two things are not covered:
 
-[VEP_DIVERGENCE.md, Part 3](VEP_DIVERGENCE.md#a-refseq-gff3) compares the two tools on a RefSeq GFF3: chr21 and chr22 of GRCh38.p14 and the 527 HG002 variants on them, run through VEP 116.3 `--gff` and fastVEP.
-135 of 81,510 cells differ, all of them the multi-allelic difference described under [What will differ](#what-will-differ).
-What has not been compared is a run against VEP's RefSeq *cache*, which is what `--refseq` reads: VEP builds it from RefSeq by its own pipeline.
+- VEP's RefSeq cache carries transcripts whose sequence differs from the genome, repaired from a BAM (`--bam`, `--use_transcript_ref`; `_rna_edit` in the cache, `BAM_EDIT=OK` in the output): 59 of the edge set's 1,061 and 194 and 57 of the two samples'.
+  fastVEP builds transcript sequence from the GFF3 and the FASTA and has no equivalent, so those were left out of the comparison and its agreement with VEP on them is unknown.
+- The cache's own columns (`REFSEQ_MATCH`, `REFSEQ_OFFSET`, `GIVEN_REF`, `USED_REF` and `BAM_EDIT`) are not written.
 
 ## The output
 
-The tab file and the VCF `CSQ` follow the cells of VEP 116.3, which was run to check them: `Uploaded_variation` (the VCF line itself for a record with no ID), `Location`, `-` for an absent value, `Amino_acids` as a single letter where the residue is unchanged, `HGVSp` with `=` as `%3D`, and no feature on an intergenic row.
+The tab file and the VCF `CSQ` follow the cells of VEP 116.3, which was run to check them: `Uploaded_variation` (the VCF line itself for a record with no ID), `Location`, `-` for an absent value, `Amino_acids` as a single letter where the residue is unchanged, `HGVSp` with `=` as `%3D` (unless `--no_escape`), and no feature on an intergenic row.
 The columns are the ones you ask for, in VEP's order.
 [README.md](../README.md#tab-output) lists the rules.
-The columns VEP computes per allele and per known variant (`AF` and its populations, `CLIN_SIG`, `SOMATIC`, `PHENO`) are not written as VEP writes them.
-The `CSQ` has fields with those names that summarise the whole variant, and its `AF` takes gnomAD first where VEP's is 1000 Genomes.
+The columns VEP computes per allele and per known variant (`AF` and its populations, `MAX_AF`, `MAX_AF_POPS`, `CLIN_SIG`, `SOMATIC`, `PHENO`, `PUBMED`) are written as VEP writes them when you give the flag that asks for them: 106,673 (variant, allele) pairs of HG002's chr21 and chr22 against VEP's real cache, with `--af_1kg --check_existing` and again with all seven flags, and not one of the 4.7 million cells differs.
+Without the flag the VCF `CSQ` keeps the `AF`, `CLIN_SIG`, `SOMATIC`, `PHENO` and `PUBMED` fields it has always had, which summarise the whole variant: its `AF` is the first frequency of any known variant of the site, gnomAD's where it has one, and not VEP's `AF`.
+JSON carries none of these columns and says so for each flag given.
 
 ### What will differ
 
-On a whole-genome callset, 20,241 records of GIAB HG002 annotated with the same GRCh38 Ensembl 115 GFF3 and FASTA by VEP 116.3 and by fastVEP, 3,876 of 5,581,650 cells of the tab files differ (0.07 %), and every column but five (`HGVS_OFFSET`, `HGVSc`, `HGVSp`, `HGVSg`, `cDNA_position`) is the same on every row.
+Compared with VEP 116.3 run on the same GFF3 (`--gff`), on a whole-genome callset (20,241 records of GIAB HG002, annotated by both with the same GRCh38 Ensembl 115 GFF3 and FASTA), 3,834 of the 5,023,485 cells of 27 columns of the tab files differ (0.08 %), in three columns (`HGVS_OFFSET`, `HGVSc` and `HGVSg`), and every other column is the same on every row.
+The remaining three, `SYMBOL_SOURCE`, `HGNC_ID` and `FLAGS`, are the ones a GFF3 cannot carry and a `--gff` run writes as `-` (below).
+Compared with VEP's own cache, which is what `vep --cache` writes and what this page is about, the rows of HG002 on chr21 and chr22 differ in `HGVSc` and `HGVS_OFFSET` (338 and 437 of 81,309 rows on the Ensembl cache, 122 and 146 of 15,426 on the RefSeq one), in `FLAGS` and `HGNC_ID` on the Ensembl one (35 and 533), and in `CANONICAL` on the RefSeq one (15).
 [VEP_DIVERGENCE.md, Part 3](VEP_DIVERGENCE.md#part-3---the-tab-output-against-vep-1163) lists each class with its size and says which tool is right.
 The ones you are likely to meet:
 
@@ -148,23 +170,28 @@ The ones you are likely to meet:
   fastVEP writes every allele as it would be alone.
   On HG002, 36 % of the rows of such records differ in `HGVSc`, and nothing else does because of it.
   A `*` ALT counts as another allele: `TC>T,*` is shifted by fastVEP and not by VEP.
-- **A `*` allele.**
-  VEP writes no row for it, and fastVEP writes one, with an empty `Consequence`.
-- **A change that runs off the end of a transcript or an exon.**
-  VEP writes `?-7` or `199-?` for its position, `INTRON` beside `EXON`, and an `HGVSc` of the part inside the transcript; fastVEP writes the one coordinate it has.
-- **An indel written with bases the alleles share at the back.**
-  VEP minimises it from both ends and fastVEP from the front only, so `Allele`, `Location` and `REF_ALLELE` differ, and a consequence term can.
-  None of the 2,818 indels of HG002 is like that.
-- **Rows only one tool writes.**
-  fastVEP reads every transcript of the GFF3 and VEP's `--gff` reader keeps only some feature types (`unconfirmed_transcript` and `scRNA` are not among them), so a variant near one is `intergenic_variant` in VEP and an upstream or downstream variant in fastVEP: 127 rows of 186,182 on HG002, and 7 the other way.
+- **`HGVSp` at a stop codon, and for a change that loses the initiator.**
+  VEP writes `p.Ter583=` beside `stop_lost` on 9,166 rows of its own Ensembl cache run, because it reads an unresolved residue as a terminator; and for a change that loses the start codon it writes `p.Met1?`, and on 2,028 of 96,350 such rows an inverted range that names the last residue (`p.Asp1_?0`), which is not HGVS.
+  fastVEP writes the first of those as the edited protein says (`p.Ter583TrpextTer29`) and the second as VEP does.
+  Of the 2,026,951 rows of the Ensembl cache's edge set (45,916 changes at the edges of the transcripts of chr21 and chr22), 13,842 differ in `HGVSp`, all of them in the classes of divergences 3, 9, 12 and 13 of the divergence document.
+- **`SYMBOL_SOURCE`, `HGNC_ID`, `FLAGS` and the terms that depend on them.**
+  fastVEP follows VEP's cache, which has them (`HGNC` with its accession, `cds_start_NF` and `cds_end_NF`), and a `vep --gff` run has `-` in all three, so a comparison against `--gff` output differs in them on most rows and should leave them out.
+  A transcript the cache flags incomplete has no start or stop codon to lose, which a `--gff` run cannot know: on the ClinVar 2-star+ sample (3,136,295 rows) 61 `Consequence` rows differ from a `--gff` run, 54 of them on such a transcript (`start_lost` in VEP, `missense_variant` here), where against VEP's Ensembl cache the same sample differs in 1 `Consequence` cell, a mature microRNA.
+  `HGNC_ID` also differs where VEP copies one gene's ID to every other gene of the same symbol that it loaded.
+- **A transcript the cache does not hold.**
+  An Ensembl GFF3 has readthrough transcripts and transcripts of biotype `artifact`, and VEP's cache does not: give `--exclude-readthrough --exclude-artifact` for the cache's transcript set.
+  A RefSeq GFF3 has the predicted ones: give `--exclude_predicted`.
+  Without them fastVEP writes rows VEP does not.
+- **An unlisted GFF3 feature type.**
+  VEP's `--gff` reader keeps only some feature types (`unconfirmed_transcript` and `scRNA` are not among them), so a variant near one is `intergenic_variant` in VEP's `--gff` run and an upstream or downstream variant in fastVEP: 121 rows only fastVEP writes on HG002, and 7 only VEP writes, besides the 186,055 rows both do.
+- **A replacement across the first or last base of a transcript.**
+  VEP writes an `HGVSc` range the wrong way round (`c.*349_*348insGT`); 11 cells of the 36,958 rows of the edge set.
 
-- **A RefSeq GFF3.**
-  `SOURCE` is `RefSeq` where VEP writes the name of the GFF3, and fastVEP writes rows for the mature microRNA records (`rna-MIR185`), which hang off a transcript and which VEP writes nothing for.
-  Where VEP can name no biotype it drops the transcript, and fastVEP keeps it, named by its SO term.
-
-A RefSeq run against VEP's RefSeq cache has not been compared, and so none of this is known for it.
+The rest of the list that used to be here is gone.
+A change that runs off the end of a transcript or an exon, an indel written with bases the alleles share at the back, and a `*` allele are written as VEP writes them, and so are the position, `EXON` and `INTRON` cells at the edge of an exon, and the consequence terms at a start or stop codon, which were fixed in this series and are measured in the divergence document.
 
 ## Before you switch
 
 Run both tools on a sample of your own sites, with the flags you use, and compare row by row.
 `validation/run_divergence.sh` and `validation/compare_rows.py` do that for the Ensembl GFF3 and write one file per disagreeing field, which is the quickest way to see whether a disagreement touches the fields you read.
+`validation/compare_tab.py` compares two tab files cell by cell, `validation/run_cache_oracle.sh` runs VEP on its own cache beside fastVEP over the matching GFF3 and compares the two (`validation/compare_cache_run.py`), and `validation/run_known_columns.sh` does the same for the known-variant columns.
