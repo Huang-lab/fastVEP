@@ -2023,8 +2023,65 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         check.finish(!sa_providers.is_empty() || var_provider.is_some())?;
     }
 
+    release_in_background(transcript_provider);
     Ok(())
 }
+
+/// Frees `value` on a thread of its own, which nothing waits for.
+///
+/// The transcript models are most of the heap of a run: hundreds of thousands of transcripts of a
+/// few dozen small allocations each, and freeing them one at a time on the way out was about a
+/// second of CPU on the human GFF3, for a process that hands all of it back in the next moment. That
+/// is a fifth of a run of 130,000 records and a third of one of 20,000. A thread still freeing when
+/// `main` returns ends with the process, which is the point; one that finishes first has freed what
+/// it was given, so a caller that runs `run_annotate` again in the same process (the tests do)
+/// leaks nothing. If no thread can be made, the closure is dropped where it stands.
+fn release_in_background<T: Send + 'static>(value: T) {
+    let _ = std::thread::Builder::new()
+        .name("release".into())
+        .spawn(move || drop(value));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_in_background;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// A value that says on which thread it was dropped, once it has been let go.
+    struct Held {
+        permit: mpsc::Receiver<()>,
+        dropped_on: mpsc::Sender<std::thread::ThreadId>,
+    }
+
+    impl Drop for Held {
+        fn drop(&mut self) {
+            // Waits for the test to say go, so that a drop in the caller's own thread would hold
+            // the call up until the wait ran out
+            let _ = self.permit.recv_timeout(Duration::from_secs(5));
+            let _ = self.dropped_on.send(std::thread::current().id());
+        }
+    }
+
+    #[test]
+    fn a_value_is_dropped_on_another_thread_and_the_call_does_not_wait_for_it() {
+        let (go, permit) = mpsc::channel();
+        let (dropped_on, dropped) = mpsc::channel();
+        let started = std::time::Instant::now();
+        release_in_background(Held { permit, dropped_on });
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the call waited for the drop: {:?}",
+            started.elapsed()
+        );
+        go.send(()).unwrap();
+        let thread = dropped
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the value is dropped");
+        assert_ne!(thread, std::thread::current().id());
+    }
+}
+
 /// Say so when the cache has none of the columns a flag asks for.
 ///
 /// VEP answers with empty columns and says nothing, and so does this, because
