@@ -1,0 +1,679 @@
+# the known-variant columns of every row, as Ensembl VEP v116.3 prints them
+# image ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+# gen_world.py N=400 SEED=139; vep --tab --cache --offline --af_1kg --check_existing
+# columns, in VEP's order; each row is Uploaded_variation, Allele, Feature and then the
+# cells that are not `-`, as COLUMN=value, tab separated
+#columns	Existing_variation	AF	AFR_AF	AMR_AF	EAS_AF	EUR_AF	SAS_AF	CLIN_SIG	SOMATIC	PHENO
+g0	-	-	Existing_variation=rsP0	AF=0.9000	EAS_AF=0.117
+g1	-	-
+g10	A	-	Existing_variation=rsP10	EAS_AF=0.1
+g10	G	-	Existing_variation=rsP10	EAS_AF=1	CLIN_SIG=association
+g100	CC	-
+g100	CCC	-
+g100	GC	-	Existing_variation=rsP100	EUR_AF=2.5e-07	PHENO=1
+g101	ACA	-	Existing_variation=rsP101	AFR_AF=0.1	AMR_AF=0.0001	CLIN_SIG=drug_response,likely_benign	SOMATIC=1
+g101	CC	-	Existing_variation=rsP101	AFR_AF=0.0001	EUR_AF=0.03125	CLIN_SIG=drug_response,likely_benign	SOMATIC=1
+g101	TA	-	Existing_variation=rsP101	AFR_AF=8.291e-06	EUR_AF=0.046	SAS_AF=0.75	CLIN_SIG=drug_response,likely_benign	SOMATIC=1
+g102	T	-
+g103	T	-
+g104	-	-	Existing_variation=rsP104	AF=0.2500	AFR_AF=0.0001
+g105	CCT	-	Existing_variation=rsP105,CDQ105	AFR_AF=0.9	EAS_AF=0.99195	PHENO=1,0
+g106	CT	-
+g107	CGA	-
+g108	-	-
+g109	TA	-
+g11	A	-	Existing_variation=rsP11	PHENO=1
+g11	G	-	Existing_variation=rsP11	AF=0.0490	PHENO=1
+g110	AC	-
+g110	CCC	-
+g110	CCTC	-	Existing_variation=rsP110,CMQ110	SAS_AF=0.0001
+g111	CC	-
+g112	CCA	-	Existing_variation=rsP112	CLIN_SIG=benign,drug_response,likely_pathogenic	PHENO=1
+g112	TA	-	Existing_variation=rsP112	CLIN_SIG=benign,drug_response,likely_pathogenic	PHENO=1
+g112	TAA	-	Existing_variation=rsP112	CLIN_SIG=benign,drug_response,likely_pathogenic	PHENO=1
+g113	AGT	-
+g114	ACA	-	Existing_variation=rsP114,CDQ114	AMR_AF=0.00589	SAS_AF=2.5e-07	CLIN_SIG=drug_response,pathogenic	PHENO=1,1
+g114	C	-	Existing_variation=rsP114,CDQ114	CLIN_SIG=drug_response,pathogenic	PHENO=1,1
+g114	T	-	Existing_variation=rsP114,CDQ114	AF=1.0000	AMR_AF=0.9	EUR_AF=1e-05	CLIN_SIG=drug_response,pathogenic	PHENO=1,1
+g115	ACA	-
+g116	-	-
+g117	ACA	-
+g118	TAA	-
+g119	T	-
+g12	ACG	-	Existing_variation=rsP12	AMR_AF=0.15	CLIN_SIG=likely_benign	SOMATIC=1
+g12	G	-
+g120	CG	-
+g120	TAG	-
+g121	-	-	Existing_variation=rsP121	AF=0.9688
+g122	CC	-
+g123	G	-
+g124	G	-
+g125	CC	-
+g126	ACA	-	Existing_variation=rsP126	CLIN_SIG=benign
+g126	CCT	-	Existing_variation=rsP126	CLIN_SIG=benign
+g126	TA	-	Existing_variation=rsP126	AF=0.6940	AMR_AF=0.26796	CLIN_SIG=benign
+g127	CCA	-
+g127	GA	-	Existing_variation=rsP127	AF=0.0012	SAS_AF=0.333333	SOMATIC=1
+g128	GCAA	-
+g128	T	-
+g128	TGC	-
+g129	-	-
+g13	ACG	-
+g13	G	-
+g130	AG	-	Existing_variation=rsP130	AF=0.0312	SAS_AF=0.333333	PHENO=1
+g131	CC	-	Existing_variation=rsP131
+g132	CA	-
+g133	A	-
+g134	GA	-
+g135	A	-
+g135	CC	-
+g135	TA	-
+g136	TCCT	-
+g137	-	-
+g138	-	-
+g139	AT	-
+g14	ACG	-
+g14	G	-	Existing_variation=rsP14,CMQ14	AF=0.0012	AMR_AF=1e-05	PHENO=1,0
+g140	C	-
+g141	-	-
+g142	-	-
+g143	ACA	-
+g144	-	-
+g145	T	-	Existing_variation=rsP145	AF=1	PHENO=1
+g146	ACAA	-
+g146	TA	-	Existing_variation=rsP146	AF=0.3333	SOMATIC=1	PHENO=1
+g147	TA	-
+g147	TAA	-	Existing_variation=rsP147	AF=0.1235	AFR_AF=0.936193	AMR_AF=0.123456	EUR_AF=0.05	SAS_AF=1e-05
+g148	CTC	-
+g149	CC	-
+g149	CCTC	-
+g15	A	-
+g150	TA	-	Existing_variation=rsP150,COSMQ150	AF=0.0000,0.1200	SOMATIC=0,1	PHENO=1,1
+g151	A	-
+g152	C	-
+g153	-	-
+g155	GGTA	-
+g156	G	-
+g157	A	-	Existing_variation=rsP157	PHENO=1
+g157	ACA	-	Existing_variation=rsP157	EUR_AF=0.111992	PHENO=1
+g157	C	-	Existing_variation=rsP157	EUR_AF=0.00123456789	PHENO=1
+g158	CC	-
+g159	CC	-
+g16	T	-	Existing_variation=rsP16
+g160	T	-
+g161	AA	-	Existing_variation=rsP161	AF=0.1300	AFR_AF=1e-05	EAS_AF=0.05	EUR_AF=0.5	SOMATIC=1
+g162	ATTT	-
+g163	CCT	-
+g163	TA	-
+g164	GG	-
+g165	-	-
+g166	ACA	-
+g167	CA	-
+g167	TA	-
+g168	-	-	Existing_variation=rsP168	AF=0.0522	EUR_AF=1e-05
+g169	A	-
+g17	T	-
+g170	-	-
+g170	AAT	-
+g170	GCT	-
+g171	A	-	Existing_variation=rsP171	AF=1.0000
+g171	C	-
+g171	G	-	Existing_variation=rsP171
+g172	A	-
+g173	-	-
+g174	AAG	-
+g175	-	-
+g176	CCT	-
+g177	A	-
+g178	-	-
+g179	A	-
+g18	-	-	Existing_variation=rsP18	AF=0.7500	CLIN_SIG=benign,pathogenic,benign	SOMATIC=1
+g180	-	-
+g181	-	-
+g181	A	-
+g182	CCT	-
+g183	CCC	-
+g183	TC	-
+g184	CC	-
+g185	-	-
+g186	T	-
+g187	AC	-
+g187	CCTC	-	Existing_variation=rsP187,rsQ187	AF=0.0000,0.5000	PHENO=0,1
+g187	TC	-	Existing_variation=rsP187,rsQ187	AMR_AF=0.1	EUR_AF=0.127	PHENO=0,1
+g188	CA	-
+g188	GA	-	Existing_variation=rsP188	AMR_AF=0.9999	EAS_AF=0.029	SAS_AF=0.0001
+g189	C	-
+g189	CCT	-
+g19	A	-
+g190	AT	-
+g191	C	-
+g192	-	-	Existing_variation=rsP192	AMR_AF=2.5e-07	PHENO=1
+g193	CC	-
+g193	G	-
+g194	-	-
+g195	AA	-
+g196	TA	-
+g197	CCT	-	Existing_variation=rsP197	EAS_AF=0.00838	CLIN_SIG=drug_response,association,uncertain_significance
+g197	G	-
+g197	TA	-
+g198	C	-
+g199	-	-	Existing_variation=rsP199,XYZQ199	AF=0.0000	AFR_AF=0.05	AMR_AF=2.5e-07	EUR_AF=0.1	PHENO=1,0
+g2	-	-	Existing_variation=rsP2	AF=0.1235	EAS_AF=0.5	EUR_AF=0.00123456789	SAS_AF=8.291e-06	SOMATIC=1	PHENO=1
+g20	T	-
+g200	ACA	-
+g201	-	-	Existing_variation=rsP201	EUR_AF=0.1	SAS_AF=0.0239	CLIN_SIG=not_provided,uncertain_significance,drug_response	PHENO=1
+g202	-	-
+g203	CC	-
+g204	GGGA	-
+g205	G	-
+g206	TTAC	-	Existing_variation=rsP206	EUR_AF=0.001	CLIN_SIG=drug_response,risk_factor,pathogenic
+g207	CC	-	Existing_variation=rsP207	AF=0.5000
+g207	TA	-
+g208	-	-
+g209	C	-
+g21	AAT	-	Existing_variation=rsP21	AF=0.1700	EUR_AF=8.291e-06
+g210	CAT	-
+g211	A	-	Existing_variation=rsP211	AF=0.5000	AMR_AF=0.25	PHENO=1
+g212	CC	-
+g212	GC	-
+g213	-	-	Existing_variation=rsP213	AF=1.0000	EAS_AF=0	PHENO=1
+g214	CCT	-	Existing_variation=rsP214	AMR_AF=0.285	EAS_AF=0.09968	CLIN_SIG=likely_pathogenic,risk_factor	SOMATIC=1
+g215	A	-
+g215	CC	-
+g215	TA	-
+g216	TA	-
+g217	-	-	Existing_variation=rsP217,COSMQ217	AF=0.7500	AFR_AF=0.5	EAS_AF=0	EUR_AF=0.75	SAS_AF=0.9	CLIN_SIG=association	SOMATIC=1,1	PHENO=1,0
+g218	CTT	-
+g219	CA	-	Existing_variation=rsP219	SOMATIC=1	PHENO=1
+g219	CCA	-	Existing_variation=rsP219	SOMATIC=1	PHENO=1
+g22	T	-
+g220	ACA	-
+g220	TA	-	Existing_variation=rsP220	SAS_AF=0.25
+g221	AAA	-
+g221	ACA	-
+g221	T	-
+g222	T	-	Existing_variation=rsP222	PHENO=1
+g223	CCT	-
+g225	TA	-
+g226	-	-
+g227	ATA	-
+g228	A	-
+g229	CAT	-
+g23	AAT	-	Existing_variation=rsP23	AF=0.5000	EAS_AF=0.0025	SAS_AF=0.75
+g230	C	-
+g231	TT	-	Existing_variation=rsP231,COSMQ231	AF=0.0000	AFR_AF=8.291e-06	EUR_AF=0.5	SOMATIC=0,1	PHENO=0,1
+g232	-	-	Existing_variation=rsP232	PHENO=1
+g233	A	-
+g234	GGTA	-
+g234	GTAG	-
+g234	TCTA	-
+g235	ACA	-	Existing_variation=rsP235	EUR_AF=1e-05
+g235	C	-	Existing_variation=rsP235
+g235	T	-	Existing_variation=rsP235
+g236	ATA	-
+g236	CGTA	-
+g236	G	-
+g237	T	-
+g238	TA	-
+g239	GC	-	Existing_variation=rsP239	AF=0.3333	AMR_AF=0.0
+g24	-	-	Existing_variation=esvQ24	AF=1	EAS_AF=2.5e-07
+g240	A	-
+g241	AT	-
+g242	TC	-
+g243	CG	-
+g244	TTC	-
+g245	T	-
+g246	AAT	-	Existing_variation=rsP246	AMR_AF=0.05
+g247	CC	-	Existing_variation=rsP247,esvQ247	PHENO=1,0
+g247	CCT	-	Existing_variation=rsP247,esvQ247	EUR_AF=0.75	PHENO=1,0
+g248	A	-
+g249	C	-
+g25	-	-	Existing_variation=rsP25	AF=0.9998
+g250	CA	-
+g251	CCT	-
+g252	-	-
+g252	CCG	-
+g252	GG	-
+g253	TA	-	Existing_variation=rsP253,COSVQ253	AF=0.7500	EUR_AF=1e-05	SAS_AF=2.5e-07	SOMATIC=0,1	PHENO=1,0
+g254	T	-
+g255	-	-
+g256	A	-
+g256	ACA	-
+g257	C	-
+g258	CCT	-
+g259	ACA	-
+g259	G	-
+g259	TA	-
+g26	-	-
+g260	T	-
+g261	-	-
+g262	CT	-
+g263	CCT	-
+g264	C	-	Existing_variation=CIQ264,rsP264	AF=0.2187,0.0000	AMR_AF=1	EAS_AF=0.05	EUR_AF=0.18	SAS_AF=0.1	SOMATIC=0,1
+g265	AT	-
+g266	CCT	-
+g266	TA	-
+g267	-	-
+g268	T	-
+g269	AC	-	Existing_variation=rsP269,COSMQ269	CLIN_SIG=drug_response,pathogenic,not_provided	SOMATIC=0,1
+g269	CCC	-	Existing_variation=rsP269,COSMQ269	AF=0.9999	CLIN_SIG=drug_response,pathogenic,not_provided	SOMATIC=0,1
+g27	-	-	Existing_variation=rsP27,COSMQ27	AF=0.5000	AFR_AF=2.5e-07	CLIN_SIG=pathogenic,benign,pathogenic,drug_response,uncertain_significance	SOMATIC=0,1
+g270	ACA	-
+g271	TA	-
+g272	ACA	-	Existing_variation=rsP272	CLIN_SIG=likely_pathogenic,pathogenic
+g273	T	-
+g274	AT	-
+g274	GTCA	-
+g274	T	-
+g275	GCT	-
+g275	TAC	-
+g276	T	-	Existing_variation=rsP276,CDQ276	AMR_AF=0.1	SAS_AF=0.333333
+g277	CC	-
+g278	A	-
+g279	TAA	-	Existing_variation=rsP279	AF=0.3824	CLIN_SIG=drug_response
+g28	-	-
+g280	A	-	Existing_variation=rsP280
+g280	ACA	-	Existing_variation=rsP280	EUR_AF=0.137	SAS_AF=0.1
+g280	CCT	-
+g281	-	-
+g282	A	-
+g282	C	-	Existing_variation=rsP282,CIQ282	AF=0.0359	AFR_AF=0.75
+g282	CC	-
+g283	T	-
+g284	TTC	-
+g285	CC	-	Existing_variation=rsP285,rsQ285	PHENO=1,1
+g285	CCT	-
+g285	T	-	Existing_variation=rsP285,rsQ285	AF=0.9000	PHENO=1,1
+g286	CCTG	-	Existing_variation=rsP286	EAS_AF=0.03125	SOMATIC=1
+g286	TAG	-	Existing_variation=rsP286	AF=0.0312	SOMATIC=1
+g287	AT	-	Existing_variation=rsP287	EUR_AF=2.5e-07	PHENO=1
+g288	A	-
+g288	CC	-	Existing_variation=rsP288	EAS_AF=0.75	PHENO=1
+g288	CCT	-	Existing_variation=rsP288	AF=0.0000	EUR_AF=0.9999	PHENO=1
+g289	CC	-	Existing_variation=rsP289	AMR_AF=0
+g29	-	-	Existing_variation=rsP29	EAS_AF=0.333333	EUR_AF=0.333333
+g290	CT	-
+g291	C	-
+g292	ATC	-
+g292	TCG	-
+g293	-	-	Existing_variation=rsP293	EAS_AF=0.9
+g294	-	-
+g295	CC	-
+g295	CCT	-
+g295	TA	-	Existing_variation=rsP295	AF=0.0170	AFR_AF=0.25
+g296	ACA	-
+g296	G	-
+g296	T	-
+g297	G	-	Existing_variation=rsP297,CMQ297	AF=0.0040	AFR_AF=1e-05	AMR_AF=0.123456	EAS_AF=0	CLIN_SIG=risk_factor,association,drug_response	PHENO=1,1
+g298	-	-
+g299	T	-
+g3	T	-	Existing_variation=rsP3,CIQ3	AF=0.25,0.0300	PHENO=0,1
+g30	T	-	Existing_variation=rsP30	AF=0.3333	SOMATIC=1
+g300	A	-	Existing_variation=rsP300	AF=0.0000	EUR_AF=8.291e-06
+g300	CC	-	Existing_variation=rsP300	EUR_AF=8.291e-06
+g300	G	-	Existing_variation=rsP300	AMR_AF=0.74226	EUR_AF=0.1	SAS_AF=0.5
+g301	-	-
+g302	TA	-	Existing_variation=rsP302	EAS_AF=0.52	CLIN_SIG=benign,uncertain_significance,pathogenic
+g303	A	-	Existing_variation=rsP303	AFR_AF=0.5
+g304	GG	-
+g305	CCT	-	Existing_variation=rsP305	EAS_AF=0.333333	CLIN_SIG=association
+g306	A	-	Existing_variation=rsP306	AFR_AF=8.291e-06	EAS_AF=0.9	PHENO=1
+g306	G	-	Existing_variation=rsP306	AFR_AF=0.9999	EAS_AF=0.123456	SAS_AF=0.75	PHENO=1
+g306	TA	-	Existing_variation=rsP306	AFR_AF=0.0001	EAS_AF=0.9	SAS_AF=0.03125	PHENO=1
+g307	CC	-
+g307	CCT	-
+g308	CC	-	Existing_variation=rsP308	AF=0.0012	AFR_AF=0.01776	AMR_AF=0.333333
+g308	TA	-	Existing_variation=rsP308	AFR_AF=0.123456
+g309	-	-
+g31	T	-
+g310	-	-	Existing_variation=rsP310,COSMQ310	EAS_AF=0.05	SOMATIC=0,1
+g311	GC	-
+g312	TA	-
+g313	C	-	Existing_variation=rsP313
+g313	TA	-
+g314	GT	-
+g315	C	-
+g316	G	-
+g317	AT	-
+g317	TAT	-	Existing_variation=rsP317
+g317	TT	-
+g318	A	-	Existing_variation=rsP318	AF=0.1520	PHENO=1
+g319	AC	-
+g319	GC	-
+g32	T	-	Existing_variation=rsP32	AF=0.1000	AMR_AF=2.5e-07	EAS_AF=0.9
+g320	-	-	Existing_variation=CDQ320,rsP320	AF=0.0001,0.0000	SOMATIC=0,1
+g321	ACAT	-	Existing_variation=rsP321,rsQ321	AF=0.0500	AMR_AF=0.0	EUR_AF=0.4	PHENO=1,0
+g321	GT	-	Existing_variation=rsP321,rsQ321	AMR_AF=0.333333	PHENO=1,0
+g321	TAT	-	Existing_variation=rsP321,rsQ321	AMR_AF=0.25	PHENO=1,0
+g322	-	-
+g323	TA	-
+g324	CC	-
+g325	C	-
+g326	TA	-
+g327	A	-
+g328	CC	-
+g328	G	-
+g329	-	-	Existing_variation=rsP329	AF=0.2500	AMR_AF=0.5
+g33	-	-	Existing_variation=rsP33	AF=0.2500	AMR_AF=0.333333	EUR_AF=0.25
+g330	TA	-	Existing_variation=rsP330	SAS_AF=0.00123456789	CLIN_SIG=not_provided
+g331	-	-	Existing_variation=rsP331	AF=0.0012
+g332	A	-	Existing_variation=rsP332	CLIN_SIG=not_provided
+g333	GAC	-	Existing_variation=rsP333	EUR_AF=1e-05
+g334	-	-	Existing_variation=rsP334	AF=0.0500	EAS_AF=0.7975	SAS_AF=0.9	CLIN_SIG=likely_pathogenic
+g335	GA	-
+g336	TA	-
+g337	CCTA	-
+g337	GA	-
+g338	AT	-
+g339	T	-
+g34	A	-	Existing_variation=rsP34	CLIN_SIG=likely_benign
+g340	CCT	-
+g340	TA	-
+g341	ACA	-	Existing_variation=rsP341	AF=0.7500	PHENO=1
+g342	A	-
+g342	CAGT	-
+g342	GTG	-
+g343	A	-
+g343	TTTT	-
+g344	C	-
+g345	-	-	Existing_variation=rsP345,XYZQ345	AF=0.1000	AMR_AF=0.333333	SOMATIC=0,1
+g346	TGT	-
+g347	AC	-
+g348	T	-
+g349	C	-	Existing_variation=rsP349,COSVQ349	AF=0.0500,0.0000	CLIN_SIG=drug_response,likely_pathogenic	SOMATIC=0,1
+g35	-	-	Existing_variation=rsP35,COSVQ35	AF=0.9999	AFR_AF=8.291e-06	AMR_AF=0.390368	EUR_AF=1	SAS_AF=0.75	CLIN_SIG=association,drug_response	SOMATIC=0,1
+g350	GC	-
+g351	-	-	Existing_variation=rsP351,COSVQ351	AF=0.2500	EAS_AF=1e-05,0.0001	SOMATIC=0,1	PHENO=1,0
+g352	-	-
+g353	CAC	-	Existing_variation=rsP353	SAS_AF=0.70944	PHENO=1
+g354	CCT	-
+g355	AG	-
+g357	ACA	-
+g357	C	-
+g358	-	-
+g359	C	-	Existing_variation=rsP359,CMQ359	AFR_AF=1e-05	SAS_AF=0.9	CLIN_SIG=benign
+g36	-	-	Existing_variation=rsP36	EUR_AF=2.5e-07
+g360	C	-
+g360	CGCG	-
+g361	-	-
+g362	-	-
+g363	AA	-
+g364	CGC	-	Existing_variation=rsP364	AFR_AF=0.25	EAS_AF=0.05
+g364	CTC	-
+g365	-	-
+g366	C	-
+g366	TA	-
+g367	-	-
+g368	CCT	-
+g368	GT	-
+g369	ACAT	-
+g369	CCTT	-
+g369	GT	-
+g37	C	-
+g370	-	-
+g371	GCT	-
+g372	ACAT	-
+g372	AT	-	Existing_variation=rsP372	AF=0.5000	AMR_AF=0.913	EUR_AF=0
+g373	-	-
+g374	-	-
+g375	TA	-
+g376	TA	-
+g376	TAA	-
+g377	CA	-	Existing_variation=rsP377,COSMQ377	EAS_AF=0.25	EUR_AF=0.05	SOMATIC=0,1
+g377	GA	-
+g377	TAA	-	Existing_variation=rsP377,COSMQ377	AF=0.1235	AMR_AF=0	EAS_AF=0.5	EUR_AF=0.0	SOMATIC=0,1
+g378	A	-	Existing_variation=rsP378,XYZQ378	AF=0.4475	SOMATIC=0,1
+g379	C	-
+g38	-	-
+g380	CCTC	-
+g380	TAC	-	Existing_variation=rsP380	SOMATIC=1
+g381	CC	-
+g381	GC	-
+g381	TAC	-
+g382	ACAA	-	Existing_variation=rsP382
+g382	CA	-	Existing_variation=rsP382
+g382	GA	-	Existing_variation=rsP382
+g383	-	-
+g384	C	-	Existing_variation=rsP384	AF=0.9999
+g385	CCC	-
+g386	-	-	Existing_variation=rsP386,rsQ386	AF=0.0700,0.9000	AMR_AF=0.011	EUR_AF=0	PHENO=1,1
+g387	A	-
+g388	CCG	-	Existing_variation=rsP388	AMR_AF=0.077	CLIN_SIG=drug_response,pathogenic
+g388	CCTG	-	Existing_variation=rsP388	CLIN_SIG=drug_response,pathogenic
+g388	TAG	-	Existing_variation=rsP388	CLIN_SIG=drug_response,pathogenic
+g389	-	-
+g389	CA	-
+g39	C	-
+g390	ATC	-	Existing_variation=rsP390,CDQ390	AF=0.9999	EAS_AF=0.25	CLIN_SIG=uncertain_significance,association,uncertain_significance,drug_response	PHENO=1,0
+g391	-	-	Existing_variation=rsP391	AF=0.9688	EAS_AF=0.333333
+g392	CAA	-
+g393	TC	-
+g394	A	-	Existing_variation=rsP394	PHENO=1
+g394	T	-
+g395	-	-
+g395	TCG	-
+g396	-	-
+g397	GG	-
+g398	AC	-
+g398	CCTC	-
+g398	TAC	-
+g399	GTT	-
+g4	A	-	Existing_variation=rsP4,CDQ4	AF=1	EAS_AF=0.123456	SAS_AF=0.1	SOMATIC=0,1
+g40	CA	-
+g40	GA	-
+g41	CCT	-
+g41	G	-
+g41	TA	-
+g42	ACA	-
+g43	T	-
+g44	AA	-
+g44	CCTA	-
+g44	TAA	-
+g45	GA	-	Existing_variation=rsP45,esvQ45	AF=0.0312	EUR_AF=0.25	CLIN_SIG=risk_factor
+g46	CC	-
+g46	CCT	-
+g46	CG	-
+g47	-	-
+g48	TA	-
+g49	-	-
+g5	A	-
+g50	-	-
+g50	ACTC	-
+g50	GTCT	-
+g51	TA	-	Existing_variation=CDQ51	AF=0.0312	AFR_AF=0.9	EAS_AF=1e-05	EUR_AF=0.01
+g52	ACAC	-
+g52	CCC	-
+g52	GC	-
+g53	A	-	Existing_variation=rsP53,CIQ53	AF=1.0000,0.1235	AFR_AF=0.5	SAS_AF=0.03125
+g54	ACAT	-	Existing_variation=rsP54	AF=0.0057	AFR_AF=0.333333
+g54	CCT	-
+g54	CCTT	-	Existing_variation=rsP54
+g55	G	-
+g56	-	-
+g57	CTC	-
+g58	TTC	-
+g59	CCT	-
+g6	A	-	Existing_variation=rsP6	AF=0.3810	EUR_AF=0	SAS_AF=1e-05	CLIN_SIG=likely_pathogenic,benign
+g60	T	-
+g62	C	-
+g63	CC	-
+g63	CCT	-
+g64	AA	-
+g65	-	-
+g66	GTAT	-	Existing_variation=rsP66	AFR_AF=0.9999	EAS_AF=0.00123456789	PHENO=1
+g67	ACA	-	Existing_variation=rsP67	CLIN_SIG=uncertain_significance
+g67	C	-	Existing_variation=rsP67	CLIN_SIG=uncertain_significance
+g67	CCT	-	Existing_variation=rsP67	AMR_AF=0.0001	CLIN_SIG=uncertain_significance
+g68	CC	-	Existing_variation=rsP68	AF=0.0000	AMR_AF=8.291e-06
+g69	-	-
+g7	A	-
+g70	TA	-
+g71	TA	-
+g72	-	-
+g73	CCG	-
+g73	TAG	-	Existing_variation=rsP73
+g73	TG	-	Existing_variation=rsP73	EUR_AF=0.123456
+g74	A	-
+g75	C	-	Existing_variation=rsQ75	AF=1.0000	AFR_AF=0	AMR_AF=0.9999	EAS_AF=1e-05	PHENO=1
+g76	-	-
+g77	TA	-
+g78	TA	-
+g79	CCT	-
+g8	A	-	Existing_variation=rsP8,rsQ8	AF=0.0580	EUR_AF=0,0.1	SAS_AF=0.0001	PHENO=1,1
+g80	CCT	-	Existing_variation=rsP80	EAS_AF=1
+g80	G	-	Existing_variation=rsP80
+g81	G	-
+g82	CTA	-
+g83	CA	-	Existing_variation=rsP83,XYZQ83	EUR_AF=0.123456	SAS_AF=0.6	PHENO=0,1
+g83	GA	-	Existing_variation=rsP83,XYZQ83	AFR_AF=0.03125	EUR_AF=0	SAS_AF=0.00123456789	PHENO=0,1
+g84	CCT	-	Existing_variation=rsP84,XYZQ84	AF=1.0000,0.0500	PHENO=1,0
+g85	-	-
+g86	C	-	Existing_variation=rsP86,rsQ86	AFR_AF=0.03125	EUR_AF=0.9
+g87	-	-
+g88	ACAT	-
+g88	CCT	-
+g88	TAT	-
+g89	TA	-	Existing_variation=rsP89	EAS_AF=0.9
+g9	A	-
+g9	G	-	Existing_variation=rsP9	AF=0.2500	EAS_AF=8.291e-06
+g90	CC	-
+g90	TAT	-
+g91	A	-
+g92	CC	-
+g93	-	-	Existing_variation=rsP93	AMR_AF=0.9999	EUR_AF=0	PHENO=1
+g94	T	-	Existing_variation=rsP94	EUR_AF=0.9999
+g94	TA	-
+g95	ACA	-
+g95	TA	-
+g96	GA	-	Existing_variation=rsP96,esvQ96	AF=0.0012,0.2500	EUR_AF=0.9	CLIN_SIG=drug_response,likely_pathogenic,uncertain_significance	PHENO=1,0
+g97	-	-
+g98	-	-
+g98	ATG	-
+g98	T	-
+g99	-	-
+t01	A	ENST_1	Existing_variation=rsT01	AF=0.1235	AFR_AF=0.5	AMR_AF=0	EAS_AF=0.00005	EUR_AF=1e-05	SAS_AF=0.9999
+t01	A	ENST_2	Existing_variation=rsT01	AF=0.1235	AFR_AF=0.5	AMR_AF=0	EAS_AF=0.00005	EUR_AF=1e-05	SAS_AF=0.9999
+t02	A	ENST_1	Existing_variation=rsT02	AF=0.1000	AFR_AF=0.01
+t02	A	ENST_2	Existing_variation=rsT02	AF=0.1000	AFR_AF=0.01
+t02	G	ENST_1	Existing_variation=rsT02	AF=0.2000	AFR_AF=0.02
+t02	G	ENST_2	Existing_variation=rsT02	AF=0.2000	AFR_AF=0.02
+t03	A	ENST_1	Existing_variation=rsT03	AF=0.1235
+t03	A	ENST_2	Existing_variation=rsT03	AF=0.1235
+t04	C	ENST_1	Existing_variation=rsT04	AF=0.2000
+t04	C	ENST_2	Existing_variation=rsT04	AF=0.2000
+t04	G	ENST_1	Existing_variation=rsT04
+t04	G	ENST_2	Existing_variation=rsT04
+t05	A	ENST_1	Existing_variation=rsT05	AF=0.2500	AFR_AF=0.125	CLIN_SIG=pathogenic
+t05	A	ENST_2	Existing_variation=rsT05	AF=0.2500	AFR_AF=0.125	CLIN_SIG=pathogenic
+t06	C	ENST_1
+t06	C	ENST_2
+t07	A	ENST_1	Existing_variation=rsT07b,rsT07a,CM000100,esvT07,COSV100	AF=0.0500,0.0700	AFR_AF=0.3,0.4	CLIN_SIG=pathogenic	SOMATIC=0,0,0,0,1	PHENO=1,0,0,0,1
+t07	A	ENST_2	Existing_variation=rsT07b,rsT07a,CM000100,esvT07,COSV100	AF=0.0500,0.0700	AFR_AF=0.3,0.4	CLIN_SIG=pathogenic	SOMATIC=0,0,0,0,1	PHENO=1,0,0,0,1
+t08	A	ENST_1	Existing_variation=rsT08	CLIN_SIG=likely_benign,benign	PHENO=1
+t08	A	ENST_2	Existing_variation=rsT08	CLIN_SIG=likely_benign,benign	PHENO=1
+t09	A	ENST_1	Existing_variation=rsT09	CLIN_SIG=pathogenic,likely_pathogenic	PHENO=1
+t09	A	ENST_2	Existing_variation=rsT09	CLIN_SIG=pathogenic,likely_pathogenic	PHENO=1
+t09	C	ENST_1	Existing_variation=rsT09	CLIN_SIG=benign	PHENO=1
+t09	C	ENST_2	Existing_variation=rsT09	CLIN_SIG=benign	PHENO=1
+t10	-	ENST_1
+t10	-	ENST_2
+t10b	-	ENST_1
+t10b	-	ENST_2
+t10m	-	ENST_1
+t10m	-	ENST_2
+t10m	AAGT	ENST_1	Existing_variation=rsT10m	PHENO=1
+t10m	AAGT	ENST_2	Existing_variation=rsT10m	PHENO=1
+t11	A	ENST_1
+t11	A	ENST_2
+t12a	C	ENST_1	Existing_variation=rsT12a	AF=0.5000	AFR_AF=0.01	AMR_AF=0.02	EAS_AF=0.02	EUR_AF=0	SAS_AF=0.005
+t12a	C	ENST_2	Existing_variation=rsT12a	AF=0.5000	AFR_AF=0.01	AMR_AF=0.02	EAS_AF=0.02	EUR_AF=0	SAS_AF=0.005
+t12b	C	ENST_1	Existing_variation=rsT12b	AF=0.0000	AFR_AF=0
+t12b	C	ENST_2	Existing_variation=rsT12b	AF=0.0000	AFR_AF=0
+t12c	A	ENST_1	Existing_variation=rsT12c	PHENO=1
+t12c	A	ENST_2	Existing_variation=rsT12c	PHENO=1
+t12d	A	ENST_1	Existing_variation=rsT12d1,rsT12d2	AF=0.1111,0.2223	AFR_AF=0.3
+t12d	A	ENST_2	Existing_variation=rsT12d1,rsT12d2	AF=0.1111,0.2223	AFR_AF=0.3
+t12e	C	ENST_1	Existing_variation=rsT12e2,rsT12e1,COSV12e	AF=0.2000,0.9000,0.1000	EUR_AF=0.2,0.9,0.1	SOMATIC=0,0,1
+t12e	C	ENST_2	Existing_variation=rsT12e2,rsT12e1,COSV12e	AF=0.2000,0.9000,0.1000	EUR_AF=0.2,0.9,0.1	SOMATIC=0,0,1
+t13	A	ENST_1	Existing_variation=rsT13a,rsT13b
+t13	A	ENST_2	Existing_variation=rsT13a,rsT13b
+t14	A	ENST_1	Existing_variation=COSV14	SOMATIC=1	PHENO=1
+t14	A	ENST_2	Existing_variation=COSV14	SOMATIC=1	PHENO=1
+t14	G	ENST_1	Existing_variation=COSV14	SOMATIC=1	PHENO=1
+t14	G	ENST_2	Existing_variation=COSV14	SOMATIC=1	PHENO=1
+t15	A	ENST_1	Existing_variation=rsT15
+t15	A	ENST_2	Existing_variation=rsT15
+t16	A	ENST_1	Existing_variation=rsT16	AF=0.2500
+t16	A	ENST_2	Existing_variation=rsT16	AF=0.2500
+t17	A	ENST_1
+t17	A	ENST_2
+t18	A	ENST_1	Existing_variation=rsT18	PHENO=1
+t18	A	ENST_2	Existing_variation=rsT18	PHENO=1
+t19	-	ENST_1	Existing_variation=rsT19	PHENO=1
+t19	-	ENST_2	Existing_variation=rsT19	PHENO=1
+t19b	-	ENST_1	Existing_variation=rsT19b	CLIN_SIG=pathogenic	PHENO=1
+t19b	-	ENST_2	Existing_variation=rsT19b	CLIN_SIG=pathogenic	PHENO=1
+t20	A	ENST_1	Existing_variation=rsT20	AF=0.3300
+t20	A	ENST_2	Existing_variation=rsT20	AF=0.3300
+t21	A	ENST_1	Existing_variation=rsT21	AF=0.4000
+t21	A	ENST_2	Existing_variation=rsT21	AF=0.4000
+t22a	A	ENST_1	Existing_variation=rsU1,rsU2	CLIN_SIG=pathogenic;benign
+t22a	A	ENST_2	Existing_variation=rsU1,rsU2	CLIN_SIG=pathogenic;benign
+t22b	C	ENST_1	Existing_variation=rsV1,rsV2	CLIN_SIG=pathogenic
+t22b	C	ENST_2	Existing_variation=rsV1,rsV2	CLIN_SIG=pathogenic
+t22c	C	ENST_1	Existing_variation=rsW1,rsW2	CLIN_SIG=pathogenic
+t22c	C	ENST_2	Existing_variation=rsW1,rsW2	CLIN_SIG=pathogenic
+t22d	A	ENST_1	Existing_variation=rsX1,rsX2	CLIN_SIG=benign
+t22d	A	ENST_2	Existing_variation=rsX1,rsX2	CLIN_SIG=benign
+t22e	A	ENST_1	Existing_variation=rsY1,rsY2
+t22e	A	ENST_2	Existing_variation=rsY1,rsY2
+t23	A	ENST_1
+t23	A	ENST_2
+t23	G	ENST_1
+t23	G	ENST_2
+t24	A	ENST_1
+t24	A	ENST_2
+t24	C	ENST_1
+t24	C	ENST_2
+t25	A	ENST_1	Existing_variation=rsT25a	AF=0.1100	CLIN_SIG=benign
+t25	A	ENST_2	Existing_variation=rsT25a	AF=0.1100	CLIN_SIG=benign
+t25	G	ENST_1	Existing_variation=rsT25a	AF=0.2200	CLIN_SIG=pathogenic
+t25	G	ENST_2	Existing_variation=rsT25a	AF=0.2200	CLIN_SIG=pathogenic
+t25	T	ENST_1	Existing_variation=rsT25b	AF=0.3300	AFR_AF=0.44	PHENO=1
+t25	T	ENST_2	Existing_variation=rsT25b	AF=0.3300	AFR_AF=0.44	PHENO=1
+t26	A	ENST_1	Existing_variation=rsT26	AF=0.1500	AMR_AF=0.35	CLIN_SIG=benign
+t26	A	ENST_2	Existing_variation=rsT26	AF=0.1500	AMR_AF=0.35	CLIN_SIG=benign
+t26	C	ENST_1	Existing_variation=rsT26	AF=0.2500	AMR_AF=0.45	CLIN_SIG=pathogenic
+t26	C	ENST_2	Existing_variation=rsT26	AF=0.2500	AMR_AF=0.45	CLIN_SIG=pathogenic
+t27	A	ENST_1	Existing_variation=rsT27	CLIN_SIG=pathogenic
+t27	A	ENST_2	Existing_variation=rsT27	CLIN_SIG=pathogenic
+t28	C	ENST_1	Existing_variation=rsT28
+t28	C	ENST_2	Existing_variation=rsT28
+t29	A	ENST_1	Existing_variation=rsT29,COSV29	CLIN_SIG=likely_benign	SOMATIC=0,1	PHENO=0,1
+t29	A	ENST_2	Existing_variation=rsT29,COSV29	CLIN_SIG=likely_benign	SOMATIC=0,1	PHENO=0,1
+t30	C	ENST_1	Existing_variation=rsT30
+t30	C	ENST_2	Existing_variation=rsT30
+t30	G	ENST_1	Existing_variation=rsT30	AFR_AF=0.7
+t30	G	ENST_2	Existing_variation=rsT30	AFR_AF=0.7
+t31	A	ENST_1	Existing_variation=rsT31a,rsT31b	EUR_AF=0.25	SAS_AF=0.25
+t31	A	ENST_2	Existing_variation=rsT31a,rsT31b	EUR_AF=0.25	SAS_AF=0.25
+t32	A	ENST_1	Existing_variation=rsT32	AF=0.4000	AFR_AF=0.4
+t32	A	ENST_2	Existing_variation=rsT32	AF=0.4000	AFR_AF=0.4
+t33	A	ENST_1	Existing_variation=rsT33	AF=0.0000	AFR_AF=0
+t33	A	ENST_2	Existing_variation=rsT33	AF=0.0000	AFR_AF=0
+t34	C	ENST_1	Existing_variation=rsT34	AF=0
+t34	C	ENST_2	Existing_variation=rsT34	AF=0
+t35	C	ENST_1	Existing_variation=rsT35	AF=0.0312	AFR_AF=0.09375
+t35	C	ENST_2	Existing_variation=rsT35	AF=0.0312	AFR_AF=0.09375
+t35b	A	ENST_1	Existing_variation=rsT35b	AF=1.0000
+t35b	A	ENST_2	Existing_variation=rsT35b	AF=1.0000
+t36	A	ENST_1	Existing_variation=rsT36	AF=0.3000	AFR_AF=0.2
+t36	A	ENST_2	Existing_variation=rsT36	AF=0.3000	AFR_AF=0.2
+t36	C	ENST_1
+t36	C	ENST_2
+t37	A	ENST_1	Existing_variation=rsT37	AF=0.4
+t37	A	ENST_2	Existing_variation=rsT37	AF=0.4
+t37	G	ENST_1
+t37	G	ENST_2
+t38	A	ENST_1	Existing_variation=rsT38	AFR_AF=0.1	AMR_AF=0.2	CLIN_SIG=benign,likely_benign	PHENO=1
+t38	A	ENST_2	Existing_variation=rsT38	AFR_AF=0.1	AMR_AF=0.2	CLIN_SIG=benign,likely_benign	PHENO=1

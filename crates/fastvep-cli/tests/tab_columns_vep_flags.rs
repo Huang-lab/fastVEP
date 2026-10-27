@@ -168,6 +168,7 @@ fn the_flags_add_vep_s_columns_in_vep_s_order() {
         canonical: true,
         numbers: true,
         hgvsg: true,
+        ..Default::default()
     };
     let tab = run(dir.path(), "tab", all, true);
     let mut want: Vec<&str> = BASE_17[..13].to_vec();
@@ -444,6 +445,7 @@ fn tab_and_csq_agree_on_every_shared_column() {
         canonical: true,
         numbers: true,
         hgvsg: true,
+        ..Default::default()
     };
     let dir = TempDir::new().unwrap();
     let tab = rows(&run(dir.path(), "tab", flags, true));

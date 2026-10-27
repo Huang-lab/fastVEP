@@ -1,0 +1,7 @@
+##gff-version 3
+10	test	gene	1000	5000	.	+	.	ID=gene:ENSG_X;Name=GENEX;biotype=lncRNA
+10	test	lnc_RNA	1000	3000	.	+	.	ID=transcript:ENST_1;Parent=gene:ENSG_X;biotype=lncRNA
+10	test	exon	1000	1500	.	+	.	ID=exon:E1;Parent=transcript:ENST_1;rank=1
+10	test	exon	2000	3000	.	+	.	ID=exon:E2;Parent=transcript:ENST_1;rank=2
+10	test	lnc_RNA	1500	5000	.	+	.	ID=transcript:ENST_2;Parent=gene:ENSG_X;biotype=lncRNA
+10	test	exon	1500	5000	.	+	.	ID=exon:E3;Parent=transcript:ENST_2;rank=1

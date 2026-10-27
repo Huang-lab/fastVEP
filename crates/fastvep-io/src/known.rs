@@ -336,12 +336,6 @@ impl KnownFlags {
         }
     }
 
-    /// Whether `AF` is VEP's value for this run (`--af` or `--af-1kg`); without
-    /// either, the `AF` of the CSQ is the one fastVEP has always written.
-    pub fn writes_af(self) -> bool {
-        self.af || self.af_1kg
-    }
-
     /// The columns the flags add, in VEP's order (`@FLAG_FIELDS`: the frequency
     /// flags, `max_af`, `check_existing`, `pubmed`), each once: `AF` is in both
     /// `--af` and `--af_1kg`, and VEP keeps its first place.

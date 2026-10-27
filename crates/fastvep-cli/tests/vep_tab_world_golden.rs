@@ -50,6 +50,7 @@ const ALL_FLAGS: ColumnFlags = ColumnFlags {
     canonical: true,
     numbers: true,
     hgvsg: true,
+    known: fastvep_io::known::KnownFlags::NONE,
 };
 
 fn run(dir: &Path, format: &str, columns: ColumnFlags, hgvs: bool) -> String {

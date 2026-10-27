@@ -54,7 +54,9 @@ enum Commands {
         output_format: String,
 
         /// Turn on VEP's `--everything` set, among the flags fastVEP has:
-        /// `--hgvs --symbol --numbers --canonical --biotype --variant-class`.
+        /// `--hgvs --symbol --numbers --canonical --biotype --variant-class`, and
+        /// with `--cache-dir` the frequency flags too (`--af --af-1kg --af-gnomade
+        /// --af-gnomadg --max-af --pubmed`).
         /// VEP's set has no `--hgvsg` or `--show_ref_allele`, and neither does this.
         #[arg(long)]
         everything: bool,
@@ -180,13 +182,71 @@ enum Commands {
         #[arg(long, alias = "exclude_artifact")]
         exclude_artifact: bool,
 
+        /// Add `AF`, the 1000 Genomes combined allele frequency of the known
+        /// variant, to the tab output and the CSQ. VEP's `--af`. Reads the
+        /// variation cache, so it needs `--cache-dir`.
+        ///
+        /// Written as VEP writes it, per input allele and to four decimals.
+        #[arg(long)]
+        af: bool,
+
+        /// Add `AF`, `AFR_AF`, `AMR_AF`, `EAS_AF`, `EUR_AF` and `SAS_AF`, the 1000
+        /// Genomes frequencies. VEP's `--af_1kg`. Needs `--cache-dir`.
+        #[arg(long)]
+        af_1kg: bool,
+
+        /// Add the gnomAD exomes frequencies, `gnomADe_AF` and one column for each
+        /// of its populations. VEP's `--af_gnomade`. Needs `--cache-dir`.
+        #[arg(long)]
+        af_gnomade: bool,
+
+        /// Add the gnomAD genomes frequencies, `gnomADg_AF` and one column for
+        /// each of its populations. VEP's `--af_gnomadg`. Needs `--cache-dir`.
+        #[arg(long)]
+        af_gnomadg: bool,
+
+        /// Add `MAX_AF`, the highest frequency of any 1000 Genomes or gnomAD
+        /// population (not the combined ones), and `MAX_AF_POPS`, the populations
+        /// that have it. VEP's `--max_af`. Needs `--cache-dir`.
+        #[arg(long)]
+        max_af: bool,
+
+        /// Add `CLIN_SIG`, `SOMATIC` and `PHENO` from the known variants of
+        /// `--cache-dir`, to the tab output and the CSQ, as VEP's
+        /// `--check_existing` does. Every `--af*` flag, `--max-af` and
+        /// `--pubmed` imply it, and so does `--cache-dir`: a variation cache is
+        /// all it is for here, where VEP's `--cache` is also the transcript
+        /// cache, so the flag is only needed to be typed as VEP has it.
+        #[arg(long)]
+        check_existing: bool,
+
+        /// Add `PUBMED`, the publications that cite the known variants, and fill
+        /// the CSQ's `PUBMED` with VEP's value. VEP's `--pubmed`. Needs
+        /// `--cache-dir`.
+        #[arg(long)]
+        pubmed: bool,
+
+        /// Whether `CLIN_SIG` is the significance a known variant gives for the
+        /// input allele (1, VEP's default) or the list it gives for the variant
+        /// (0). VEP's `--clin_sig_allele`.
+        #[arg(
+            long,
+            value_name = "0|1",
+            default_value_t = 1,
+            value_parser = clap::value_parser!(u8).range(0..=1)
+        )]
+        clin_sig_allele: u8,
+
         /// Upstream/downstream distance (bp)
         #[arg(long, default_value_t = 5000)]
         distance: u64,
 
-        /// VEP's tabix variation cache, for `Existing_variation`: a directory of
-        /// `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index, which
-        /// is what `convert_cache.pl` and the indexed-cache download provide.
+        /// VEP's tabix variation cache, for `Existing_variation`, `CLIN_SIG`,
+        /// `SOMATIC` and `PHENO` (VEP's `--check_existing`; the frequencies and
+        /// the PubMed ids need `--af*`, `--max-af` and `--pubmed`): a directory
+        /// of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index,
+        /// which is what `convert_cache.pl` and the indexed-cache download
+        /// provide.
         ///
         /// Only known variants come from here. Transcripts do not: gene models
         /// are read from `--gff3`, and VEP's `{start}-{end}.gz` transcript
@@ -447,6 +507,14 @@ fn main() -> Result<()> {
             exclude_predicted,
             exclude_readthrough,
             exclude_artifact,
+            af,
+            af_1kg,
+            af_gnomade,
+            af_gnomadg,
+            max_af,
+            check_existing,
+            pubmed,
+            clin_sig_allele,
             distance,
             cache_dir,
             transcript_cache,
@@ -489,11 +557,33 @@ fn main() -> Result<()> {
                     canonical,
                     numbers,
                     hgvsg,
+                    known: fastvep_io::known::KnownFlags {
+                        af,
+                        af_1kg,
+                        af_gnomade,
+                        af_gnomadg,
+                        max_af,
+                        check_existing,
+                        pubmed,
+                        no_clin_sig_allele: clin_sig_allele == 0,
+                    },
                 }
                 .union(if everything {
                     pipeline::ColumnFlags::everything()
                 } else {
                     pipeline::ColumnFlags::default()
+                })
+                // `--everything` has the frequency flags too, and they read a
+                // cache: with `--cache-dir` it is VEP's set, and without one it is
+                // the set fastVEP has always had, instead of an error for a flag
+                // the user did not type.
+                .union(pipeline::ColumnFlags {
+                    known: if everything && cache_dir.is_some() {
+                        fastvep_io::known::KnownFlags::everything()
+                    } else {
+                        Default::default()
+                    },
+                    ..Default::default()
                 }),
                 compat: pipeline::CompatFlags {
                     total_length,

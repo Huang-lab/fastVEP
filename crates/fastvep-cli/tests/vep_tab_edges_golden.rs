@@ -396,6 +396,7 @@ fn ours() -> Table {
             canonical: true,
             numbers: true,
             hgvsg: true,
+            ..Default::default()
         },
         distance: 5000,
         cache_dir: None,

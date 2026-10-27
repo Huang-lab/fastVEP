@@ -76,6 +76,7 @@ fn run(compat: CompatFlags, format: &str) -> String {
             canonical: true,
             numbers: true,
             hgvsg: true,
+            ..ColumnFlags::default()
         },
         compat,
         exclude: Default::default(),

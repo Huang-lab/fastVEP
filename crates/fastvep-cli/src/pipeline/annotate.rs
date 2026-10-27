@@ -10,7 +10,7 @@ use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, GeneAnnotat
 use fastvep_cache::fasta::ReferenceFasta;
 use fastvep_cache::info::CacheInfo;
 use fastvep_cache::providers::{
-    FastaSequenceProvider, IndexedTranscriptProvider, MatchedVariant, SequenceProvider,
+    FastaSequenceProvider, IndexedTranscriptProvider, KnownSite, MatchedVariant, SequenceProvider,
     TabixVariationProvider, TranscriptProvider, VariationProvider,
 };
 use fastvep_cache::transcript_cache::StaleCacheFormat;
@@ -173,13 +173,10 @@ struct AnnotationContext<'a> {
 /// supplementary annotations, `--pick`, and ACMG classification.
 ///
 /// Called once per variant from the parallel phase of `run_annotate`.
-/// `matched_by_allele` carries the co-located known variants the sequential
-/// phase already looked up for this record.
-fn annotate_variant(
-    ctx: &AnnotationContext<'_>,
-    vf: &mut VariationFeature,
-    matched_by_allele: &HashMap<String, Vec<MatchedVariant>>,
-) {
+/// `known` carries the co-located known variants the sequential phase already
+/// looked up for this record.
+fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, known: &KnownLookup) {
+    let matched_by_allele = &known.by_allele;
     // Destructured rather than used through `ctx.` so the body below reads the
     // same as it did when these were the enclosing function's locals.
     let &AnnotationContext {
@@ -198,6 +195,17 @@ fn annotate_variant(
         normalize_gnomad_queries,
         repeat_db_loaded,
     } = ctx;
+
+    // VEP's known-variant columns, worked out once per alt allele: every
+    // transcript row of an allele writes the same cells, so the rows borrow them.
+    if config.columns.known.checks_existing() {
+        vf.known = fastvep_annotate::known_cells(
+            &known.site,
+            &vf.ref_allele.to_string(),
+            &known.alleles,
+            config.columns.known,
+        );
+    }
 
     // Kept for the classification pass at the end, which runs after `--pick`
     // has deleted rows and needs the transcript each survivor came from.
@@ -1151,6 +1159,15 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     if config.acmg && !config.hgvs && !config.sa_only {
         config.hgvs = true;
     }
+    // `--cache-dir` is the variation cache, and the known variants are all fastVEP reads from it,
+    // so naming one is asking for them: it is VEP's `--check_existing`, which adds `CLIN_SIG`,
+    // `SOMATIC` and `PHENO` beside `Existing_variation`. VEP needs the flag because its `--cache`
+    // is also the transcript cache; a flag that cannot do anything without a second one would be
+    // a trap here. The frequencies and PubMed ids still need theirs, as in VEP. JSON has no place
+    // for these columns, and a flag the user did not type is not one to warn about.
+    if config.cache_dir.is_some() && !config.sa_only && config.output_format != "json" {
+        config.columns.known.check_existing = true;
+    }
     let config = config;
     let sa_only = config.sa_only;
     if sa_only {
@@ -1186,6 +1203,31 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             if set {
                 eprintln!("warning: --sa-only is set; ignoring {}", name);
             }
+        }
+        for name in config.columns.known.requested() {
+            eprintln!("warning: --sa-only is set; ignoring {}", name);
+        }
+    } else if config.columns.known.checks_existing() && config.cache_dir.is_none() {
+        // The known variants are only in VEP's variation cache. Writing the
+        // columns without it would print `-` for every variant, which reads as
+        // "none of these is known" and is not an answer.
+        return Err(anyhow::anyhow!(
+            "{} read the known variants of VEP's variation cache, and no cache was given. \
+             Pass --cache-dir DIR, the directory with a {{chr}}/all_vars.gz file for each \
+             chromosome (the indexed cache VEP's own `--cache --offline` runs from).",
+            config.columns.known.requested().join(", ")
+        ));
+    }
+
+    // JSON has no place for them: VEP's own JSON carries the known variants in a
+    // `colocated_variants` block that this does not write, and the tab file and the
+    // VCF `CSQ` are where these columns are.
+    if config.output_format == "json" {
+        for name in config.columns.known.requested() {
+            eprintln!(
+                "warning: --output-format json does not carry the known-variant columns; ignoring {}",
+                name
+            );
         }
     }
 
@@ -1306,6 +1348,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             cache_info.assembly,
             cache_info.variation_cols.len()
         );
+        warn_about_missing_columns(config.columns.known, &cache_info.variation_cols);
         Some(TabixVariationProvider::new(Path::new(dir), &cache_info)?)
     } else {
         None
@@ -1628,8 +1671,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
     loop {
         // Phase 1: Read a batch of variants (sequential - VCF parser is not Sync)
-        let mut batch: Vec<(VariationFeature, HashMap<String, Vec<MatchedVariant>>)> =
-            Vec::with_capacity(BATCH_SIZE);
+        let mut batch: Vec<(VariationFeature, KnownLookup)> = Vec::with_capacity(BATCH_SIZE);
         for _ in 0..BATCH_SIZE {
             match vcf_parser.next_variant()? {
                 Some(mut vf) => {
@@ -1642,16 +1684,18 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                     // run inside the parallel loop where an error cannot propagate;
                     // this one can, and the cache has already been validated at
                     // startup, so an error here is a real fault.
-                    let matched_by_allele: HashMap<String, Vec<MatchedVariant>> =
-                        if let Some(ref vp) = var_provider {
-                            known_variants_by_allele(vp, &vf)?
-                        } else {
-                            HashMap::new()
-                        };
+                    let known: KnownLookup = if let Some(ref vp) = var_provider {
+                        known_variants(vp, &vf)?
+                    } else {
+                        KnownLookup::default()
+                    };
 
-                    // Populate existing_variants on the VF for output access
-                    for matches in matched_by_allele.values() {
-                        for m in matches {
+                    // Populate existing_variants on the VF for output access. Only the
+                    // VCF's CSQ reads them (its `AF`, `CLIN_SIG`, `SOMATIC`, `PHENO` and
+                    // `PUBMED` where no flag asked for VEP's values), and cloning every
+                    // field of every matched known variant is not free.
+                    if config.output_format == "vcf" {
+                        for m in known.by_allele.values().flatten() {
                             if !vf.existing_variants.iter().any(|kv| kv.name == m.name) {
                                 vf.existing_variants
                                     .push(fastvep_io::variant::KnownVariant {
@@ -1669,7 +1713,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                         }
                     }
 
-                    batch.push((vf, matched_by_allele));
+                    batch.push((vf, known));
                 }
                 None => break,
             }
@@ -1718,7 +1762,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         // Phase 2: Annotate batch in parallel (transcript lookup + consequence prediction + HGVS)
         batch
             .par_iter_mut()
-            .for_each(|(vf, matched_by_allele)| annotate_variant(&ctx, vf, matched_by_allele));
+            .for_each(|(vf, known)| annotate_variant(&ctx, vf, known));
 
         // Phase 2.5: Compound-het enrichment pass (sequential, after parallel annotation)
         if let Some(ref acmg_cfg) = acmg_config {
@@ -1811,42 +1855,90 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
     Ok(())
 }
-/// The known variants VEP's `--check_existing` reports for one input record,
-/// keyed by the alt allele as the annotation rows write it.
+/// Say so when the cache has none of the columns a flag asks for.
+///
+/// VEP answers with empty columns and says nothing, and so does this, because
+/// that is what a script that works against VEP expects; but an empty `gnomADg_AF`
+/// column over a cache that never had the data reads as "no variant is in gnomAD",
+/// so the run says it once, here, where the cache is opened.
+fn warn_about_missing_columns(known: fastvep_io::known::KnownFlags, variation_cols: &[String]) {
+    let has = |name: &str| variation_cols.iter().any(|c| c == name);
+    for group in &fastvep_io::known::FREQUENCY_GROUPS {
+        if known.group(group.flag) && !group.keys.iter().any(|k| has(k.key)) {
+            eprintln!(
+                "warning: --{} asks for {} frequencies, and this cache's variation_cols has none \
+                 of their columns ({}): they will be empty for every variant, as VEP writes them.",
+                group.flag.replace('_', "-"),
+                group.description,
+                group
+                    .keys
+                    .iter()
+                    .map(|k| k.key)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    if known.pubmed && !has("pubmed") {
+        eprintln!(
+            "warning: --pubmed asks for PUBMED, and this cache's variation_cols has no `pubmed` \
+             column: it will be empty for every variant, as VEP writes it."
+        );
+    }
+}
+
+/// What the variation cache attached to one input record.
+#[derive(Default)]
+struct KnownLookup {
+    /// The alt alleles the lookup was made with, symbolic ones and `*` left out:
+    /// `AlleleMatch::alt_index` of the site counts into this list.
+    alleles: Vec<Allele>,
+    /// The known variants of each alt allele as the rows write it, in the order
+    /// VEP prints `Existing_variation`.
+    by_allele: HashMap<String, Vec<MatchedVariant>>,
+    /// Every known variant attached to the record, in cache order, with the
+    /// alleles each matched: what VEP's frequency columns are computed from.
+    site: KnownSite,
+}
+
+/// The known variants VEP's `--check_existing` reports for one input record.
 ///
 /// VEP leaves structural variants out of the check
 /// (`VariationTabix::annotate_InputBuffer` keeps only plain
 /// `VariationFeature`s), and a symbolic or missing allele has no sequence to
 /// compare, so neither is looked up. Without the first rule a large `END=` would
 /// read every cache record under the span.
-fn known_variants_by_allele(
-    provider: &TabixVariationProvider,
-    vf: &VariationFeature,
-) -> Result<HashMap<String, Vec<MatchedVariant>>> {
+fn known_variants(provider: &TabixVariationProvider, vf: &VariationFeature) -> Result<KnownLookup> {
     if vf.variant_type.is_structural() {
-        return Ok(HashMap::new());
+        return Ok(KnownLookup::default());
     }
-    let alts: Vec<String> = vf
+    let alleles: Vec<Allele> = vf
         .alt_alleles
         .iter()
         .filter(|a| !matches!(a, Allele::Missing | Allele::Symbolic(_)))
-        .map(ToString::to_string)
+        .cloned()
         .collect();
-    if alts.is_empty() {
-        return Ok(HashMap::new());
+    if alleles.is_empty() {
+        return Ok(KnownLookup::default());
     }
-    let found = provider.get_matched_variants(
+    let alts: Vec<String> = alleles.iter().map(ToString::to_string).collect();
+    let site = provider.known_site(
         &vf.position.chromosome,
         vf.position.start,
         vf.position.end,
         &vf.ref_allele.to_string(),
         &alts,
     )?;
-    Ok(alts
+    let by_allele = alts
         .into_iter()
-        .zip(found)
+        .zip(site.per_alt(alleles.len()))
         .filter(|(_, matches)| !matches.is_empty())
-        .collect())
+        .collect();
+    Ok(KnownLookup {
+        alleles,
+        by_allele,
+        site,
+    })
 }
 
 /// Extract trio genotype information from a VariationFeature's VCF sample columns (CLI path).

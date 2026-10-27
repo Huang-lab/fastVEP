@@ -63,6 +63,7 @@ docs/index.html
 !/crates/fastvep-cache/fixtures/vep_cache/**/*.tbi
 !/crates/fastvep-cache/fixtures/vep_cache/**/*.csi
 !/crates/fastvep-cache/fixtures/vep_world/**/*.csi
+!/crates/fastvep-cache/fixtures/vep_known_columns/**/*.csi
 
 # Supplementary-annotation databases emitted by `sa-build` during test runs
 *.osa
