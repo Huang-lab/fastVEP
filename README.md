@@ -817,7 +817,8 @@ naming a `c.` change and naming it differently. `HGVSg`, which is written only u
 measured separately against Ensembl VEP 116.3 on the same sample: 20,238 of 20,241 records have the
 same set of descriptions, and the three that differ are multi-allelic records in which Ensembl
 describes an allele by its untrimmed bases, which does not reproduce the variant. The tab
-output's other columns are measured the same way, 3,834 of 5,581,650 cells differing, none of them in `HGVSp`, and so is
+output's other columns are measured the same way, 3,851 of 5,581,650 cells differing, 17 of them in `HGVSp` (a protein change
+that Ensembl writes none for, divergence 17), and so is
 a RefSeq GFF3 (chr21 and chr22 of GRCh38.p14), 135 of 81,510 cells, all of them the multi-allelic
 difference of divergence 11, in
 [Part 3 of docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#part-3---the-tab-output-against-vep-1163).
@@ -843,6 +844,7 @@ Release 116 rewrote that clause, and Ensembl VEP 116.3 writes `stop_gained,frame
 Against 116.3 two of the eleven are gone, that one and the second (a start codon a deletion removes), which fastVEP now reads as VEP does.
 Four more (the count or the first residue of a frameshift or of an extension, 5 to 8) turned out not to be differences with VEP but with its `--gff` reader, which takes the 3' UTR of a reverse-strand transcript from the wrong place and which a VEP cache does not do.
 Two more were found in the protein notation, one in VEP's 3'-shifting of an insertion on the reverse strand and one in how it reads an unresolved residue (12 and 13).
+Release 116.3 itself turned up six more, found by reading the start codon, the UTR, the introns and the VCF the way a clinician's pipeline meets them: a start codon is not lost where the protein still begins with its Met or where the whole coding sequence is behind the edit (14), a change that loses the initiator is `p.Met1?` whatever Ensembl writes (15), a row that is only a UTR variant has no protein change (16), a change that the 3'-rule carries over an intron is described as the change it is in the transcript (17), a record the run cannot place is said so and a REF that is not the genome's is described against the genome (18), and an insertion in front of residue 1 has no `HGVSp` (19).
 
 Every divergence, its cause in the Ensembl source, its row count, and the list of fastVEP's own
 remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md)**.
