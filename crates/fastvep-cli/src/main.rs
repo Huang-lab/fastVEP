@@ -477,9 +477,62 @@ enum Commands {
     },
 }
 
+/// `Cli::parse`, except that a flag of Ensembl VEP that fastVEP does not have is told what there
+/// is instead of what clap guesses it was mistaken for (`fastvep_cli::vep_flags`).
+fn parse_cli() -> Cli {
+    use clap::builder::StyledStr;
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+
+    match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(mut err) => {
+            if err.kind() == ErrorKind::UnknownArgument {
+                let tip = match err.get(ContextKind::InvalidArg) {
+                    Some(ContextValue::String(arg)) => fastvep_cli::vep_flags::tip(arg),
+                    _ => None,
+                };
+                if let Some(tip) = tip {
+                    // The usage line clap prints under the error has the guess in it too
+                    // (`Usage: fastvep annotate --input <INPUT> --symbol`), which says that
+                    // `--symbol` is what to type instead. It is the usage of a flag that is not
+                    // anything's near neighbour, which has no guess in it.
+                    err.remove(ContextKind::SuggestedArg);
+                    if let Some(usage) = plain_usage(&err) {
+                        err.insert(ContextKind::Usage, ContextValue::StyledStr(usage));
+                    }
+                    err.insert(
+                        ContextKind::Suggested,
+                        ContextValue::StyledStrs(vec![StyledStr::from(tip)]),
+                    );
+                }
+            }
+            err.exit()
+        }
+    }
+}
+
+/// The usage line of an unknown-flag error that has no guess in it, for an error of the same
+/// command as `err`.
+fn plain_usage(err: &clap::Error) -> Option<clap::builder::StyledStr> {
+    use clap::error::{ContextKind, ContextValue};
+
+    let of_annotate = match err.get(ContextKind::Usage) {
+        Some(ContextValue::StyledStr(usage)) => usage.to_string().contains("annotate"),
+        _ => false,
+    };
+    if !of_annotate {
+        return None;
+    }
+    let plain = Cli::try_parse_from(["fastvep", "annotate", "--no-such-flag-anywhere"]).err()?;
+    match plain.get(ContextKind::Usage) {
+        Some(ContextValue::StyledStr(usage)) => Some(usage.clone()),
+        _ => None,
+    }
+}
+
 fn main() -> Result<()> {
     env_logger::init();
-    let cli = Cli::parse();
+    let cli = parse_cli();
 
     match cli.command {
         Commands::Annotate {

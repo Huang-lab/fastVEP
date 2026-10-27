@@ -5,4 +5,5 @@
 
 pub mod pipeline;
 pub mod progress;
+pub mod vep_flags;
 pub mod webserver;
