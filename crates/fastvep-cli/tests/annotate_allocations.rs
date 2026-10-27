@@ -187,4 +187,4 @@ fn the_annotation_loop_allocates_what_its_budget_says_for_each_record_and_row() 
 /// VCF line to the written line.
 const PLAIN_PER_ROW: f64 = 25.0;
 /// What a row of a run with `--hgvs --hgvsg` and every optional column costs.
-const FULL_PER_ROW: f64 = 50.0;
+const FULL_PER_ROW: f64 = 46.0;

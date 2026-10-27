@@ -120,6 +120,11 @@ impl FastaReader {
 
     /// Get the length of a chromosome (with chr↔bare / mito alias fallback).
     pub fn sequence_length(&self, chrom: &str) -> Option<u64> {
+        // The exact name first, as `fetch_slice` does: the aliases are a `Vec` of `String`s, made for
+        // every fetch of a run
+        if let Some(seq) = self.sequences.get(chrom) {
+            return Some(seq.len() as u64);
+        }
         chrom_aliases(chrom)
             .iter()
             .find_map(|alias| self.sequences.get(alias))
