@@ -33,7 +33,7 @@ const MAX_OPEN_FILES: usize = 8;
 /// Columns that are not population frequencies. Everything else in
 /// `variation_cols` (`AFR`, `gnomADe_NFE`, ...) is a `POP -> "ALLELE:FREQ,..."`
 /// column.
-const NON_FREQUENCY_COLUMNS: [&str; 16] = [
+const NON_FREQUENCY_COLUMNS: [&str; 17] = [
     "chr",
     "variation_name",
     "failed",
@@ -48,6 +48,7 @@ const NON_FREQUENCY_COLUMNS: [&str; 16] = [
     "phenotype_or_disease",
     "pubmed",
     "clin_sig_allele",
+    "clin_sig_ref_allele",
     "clinical_impact",
     "var_synonyms",
 ];
@@ -65,6 +66,13 @@ pub struct VariationCacheRecord {
     pub minor_allele: Option<String>,
     pub minor_allele_freq: Option<f64>,
     pub clin_sig: Option<String>,
+    /// `T:pathogenic;C:benign`: the significance per allele, which VEP prefers
+    /// to `clin_sig` where the record has it (`add_colocated_variant_info`).
+    pub clin_sig_allele: Option<String>,
+    /// The reference allele `clin_sig_allele` is written against. When it is not
+    /// the input's reference, VEP reverse-complements the alleles of
+    /// `clin_sig_allele` before it looks the input allele up in them.
+    pub clin_sig_ref_allele: Option<String>,
     pub phenotype_or_disease: bool,
     pub pubmed: Vec<String>,
     /// Population name → raw frequency string (e.g., "A:0.001,G:0.999")
@@ -88,6 +96,8 @@ struct ColumnLayout {
     minor_allele: Option<usize>,
     minor_allele_freq: Option<usize>,
     clin_sig: Option<usize>,
+    clin_sig_allele: Option<usize>,
+    clin_sig_ref_allele: Option<usize>,
     phenotype_or_disease: Option<usize>,
     pubmed: Option<usize>,
     populations: Vec<(String, usize)>,
@@ -123,6 +133,8 @@ impl ColumnLayout {
             minor_allele: find("minor_allele"),
             minor_allele_freq: find("minor_allele_freq"),
             clin_sig: find("clin_sig"),
+            clin_sig_allele: find("clin_sig_allele"),
+            clin_sig_ref_allele: find("clin_sig_ref_allele"),
             phenotype_or_disease: find("phenotype_or_disease"),
             pubmed: find("pubmed"),
             populations,
@@ -181,9 +193,20 @@ impl ColumnLayout {
             minor_allele: get(self.minor_allele).map(str::to_string),
             minor_allele_freq: get(self.minor_allele_freq).and_then(|v| v.parse().ok()),
             clin_sig: get(self.clin_sig).map(str::to_string),
+            clin_sig_allele: get(self.clin_sig_allele).map(str::to_string),
+            clin_sig_ref_allele: get(self.clin_sig_ref_allele).map(str::to_string),
             phenotype_or_disease: flag(self.phenotype_or_disease),
+            // `split(',', $ex->{pubmed})`: Perl drops the empty fields at the end, and the
+            // real cache has a trailing comma on a few records (two of the 105,494 of a
+            // whole-genome callset on chr21 and chr22 had one in their PUBMED list)
             pubmed: get(self.pubmed)
-                .map(|v| v.split(',').map(str::to_string).collect())
+                .map(|v| {
+                    let mut ids: Vec<String> = v.split(',').map(str::to_string).collect();
+                    while ids.last().is_some_and(String::is_empty) {
+                        ids.pop();
+                    }
+                    ids
+                })
                 .unwrap_or_default(),
             frequencies,
         })
@@ -663,7 +686,7 @@ fn allele_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// `reverse_comp` of `Bio::EnsEMBL::Utils::Sequence`.
-fn reverse_complement(seq: &str) -> String {
+pub fn reverse_complement(seq: &str) -> String {
     seq.chars()
         .rev()
         .map(|c| match c {
@@ -999,6 +1022,8 @@ mod tests {
             minor_allele: None,
             minor_allele_freq: None,
             clin_sig: None,
+            clin_sig_allele: None,
+            clin_sig_ref_allele: None,
             phenotype_or_disease: false,
             pubmed: vec![],
             frequencies: HashMap::new(),
@@ -1105,6 +1130,27 @@ mod tests {
         // Check population frequencies
         assert_eq!(record.frequencies.get("AFR"), Some(&"A:0".to_string()));
         assert_eq!(record.frequencies.get("EAS"), Some(&"A:0.001".to_string()));
+    }
+
+    /// `split(',', ...)` of Perl drops the empty fields at the end, so a trailing comma
+    /// in the cache's `pubmed` is no PubMed id.
+    #[test]
+    fn a_trailing_comma_in_pubmed_is_no_id() {
+        let cols: Vec<String> = "chr,variation_name,start,allele_string,pubmed"
+            .split(',')
+            .map(String::from)
+            .collect();
+        let reader = parsing_reader(&cols).unwrap();
+        let r = reader.parse_line("1\trs1\t100\tA/G\t111,222,").unwrap();
+        assert_eq!(r.pubmed, ["111", "222"]);
+        let r = reader.parse_line("1\trs2\t100\tA/G\t111,,333").unwrap();
+        assert_eq!(
+            r.pubmed,
+            ["111", "", "333"],
+            "a field in the middle is kept"
+        );
+        let r = reader.parse_line("1\trs3\t100\tA/G\t.").unwrap();
+        assert!(r.pubmed.is_empty());
     }
 
     #[test]

@@ -7,10 +7,12 @@
 //! The CLI batch pipeline (`run_annotate`) has its own streaming implementation but shares
 //! the same underlying crates.
 
+mod colocated;
 mod hgvs_normalize;
 mod hgvsp;
 pub mod pick;
 
+pub use colocated::known_cells;
 pub use hgvs_normalize::{
     clipped_span, convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele,
     hgvs_allele_on_transcript, hgvs_placement, hgvsc_shifted, hgvsc_shifted_outcome,

@@ -1,3 +1,4 @@
+use crate::known::{AlleleKnown, KnownCells};
 use fastvep_core::{
     Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, SpliceContext, Strand,
     SupplementaryAnnotation, TranscriptLocation, VariantType,
@@ -22,6 +23,11 @@ pub struct VariationFeature {
     pub transcript_variations: Vec<TranscriptVariation>,
     /// Co-located known variants (populated during annotation).
     pub existing_variants: Vec<KnownVariant>,
+    /// VEP's known-variant columns (`AF`, `MAX_AF`, `CLIN_SIG`, ...) for each alt
+    /// allele that has any, worked out once per allele because every transcript
+    /// row of the allele reads the same cells. Empty unless a run asks for those
+    /// columns and a known variant matched.
+    pub known: Vec<AlleleKnown>,
     /// Whether the alleles were minimised.
     pub minimised: bool,
     /// Most severe consequence across all transcripts/alleles.
@@ -36,6 +42,16 @@ pub struct VariationFeature {
     pub supplementary_annotations: Vec<SupplementaryAnnotation>,
     /// Gene-level annotations (OMIM, pLI, etc.).
     pub gene_annotations: Vec<GeneAnnotation>,
+}
+
+impl VariationFeature {
+    /// The known-variant cells of an alt allele, if it has any.
+    pub fn known_for(&self, allele: &Allele) -> Option<&KnownCells> {
+        self.known
+            .iter()
+            .find(|k| k.allele == *allele)
+            .map(|k| &k.cells)
+    }
 }
 
 /// Parsed VCF fields for output reconstruction.

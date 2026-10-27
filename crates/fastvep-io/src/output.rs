@@ -3423,6 +3423,7 @@ mod tests {
                 flags: Vec::new(),
             }],
             existing_variants: Vec::new(),
+            known: Vec::new(),
             minimised: false,
             most_severe_consequence: None,
             variant_type: VariantType::Snv,

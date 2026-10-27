@@ -275,6 +275,10 @@ impl SequenceProvider for MmapFastaSequenceProvider {
 }
 
 /// A matched known variant with its allele-specific frequency data.
+///
+/// This is the per-allele view `Existing_variation` and fastVEP's own CSQ
+/// summaries read. VEP's frequency columns are not computed from it: they need
+/// the whole record and what it matched, which is [`KnownSite`].
 #[derive(Debug, Clone)]
 pub struct MatchedVariant {
     pub name: String,
@@ -291,18 +295,115 @@ pub struct MatchedVariant {
     pub frequencies: HashMap<String, f64>,
 }
 
+impl MatchedVariant {
+    fn from_record(record: &VariationCacheRecord, record_allele: &str) -> Self {
+        // Per-allele frequencies for the matched allele
+        let mut frequencies = HashMap::new();
+        for (pop, freq_str) in &record.frequencies {
+            if let Some(f) = variation::get_allele_freq(freq_str, record_allele) {
+                frequencies.insert(pop.clone(), f);
+            }
+        }
+
+        // Also include MAF if minor_allele matches
+        if let (Some(ma), Some(maf)) = (&record.minor_allele, record.minor_allele_freq) {
+            if ma.eq_ignore_ascii_case(record_allele) {
+                frequencies.entry("minor_allele_freq".into()).or_insert(maf);
+            }
+        }
+
+        MatchedVariant {
+            name: record.variation_name.clone(),
+            matched_allele: record_allele.to_string(),
+            minor_allele: record.minor_allele.clone(),
+            minor_allele_freq: record.minor_allele_freq,
+            clin_sig: record.clin_sig.clone(),
+            somatic: record.somatic,
+            phenotype_or_disease: record.phenotype_or_disease,
+            pubmed: record.pubmed.clone(),
+            frequencies,
+        }
+    }
+}
+
+/// A known variant VEP attached to an input site, and which input alleles it
+/// matched.
+#[derive(Debug, Clone)]
+pub struct KnownRecord {
+    /// Shared, so that the alleles of a site and the output rows read one copy.
+    pub record: Arc<VariationCacheRecord>,
+    pub matched: Matched,
+}
+
+/// Every known variant attached to one input site, in the order the cache
+/// holds them: `$vf->{existing}` of VEP.
+///
+/// The per-allele lists of [`MatchedVariant`] are not enough for VEP's frequency
+/// columns. `add_colocated_frequency_data` runs over *all* the site's known
+/// variants for every allele, including those that matched only another allele
+/// of a multi-allelic record, and it reads them in this order, not in the order
+/// `Existing_variation` is sorted into.
+#[derive(Debug, Clone, Default)]
+pub struct KnownSite {
+    pub records: Vec<KnownRecord>,
+}
+
+impl KnownSite {
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    /// The known variants of each of the site's `alt_count` alleles, each list in
+    /// the order VEP prints `Existing_variation`: germline before somatic, then by
+    /// the prefix of the name. The sort is stable, so ties keep cache order.
+    pub fn per_alt(&self, alt_count: usize) -> Vec<Vec<MatchedVariant>> {
+        let mut per_alt: Vec<Vec<MatchedVariant>> = vec![Vec::new(); alt_count];
+        for known in &self.records {
+            for (alt_index, list) in per_alt.iter_mut().enumerate() {
+                match &known.matched {
+                    Matched::AllAlleles => {
+                        list.push(MatchedVariant::from_record(&known.record, ""))
+                    }
+                    Matched::Alleles(matches) => {
+                        // The first matching record allele speaks for the input
+                        // allele, as the first of `matched_alleles` does.
+                        if let Some(m) = matches.iter().find(|m| m.alt_index == alt_index) {
+                            list.push(MatchedVariant::from_record(&known.record, &m.record_allele));
+                        }
+                    }
+                }
+            }
+        }
+        for list in &mut per_alt {
+            list.sort_by_key(|m| variation::existing_variation_rank(&m.name, m.somatic));
+        }
+        per_alt
+    }
+}
+
 /// Trait for providing co-located known variant annotations.
 pub trait VariationProvider {
-    /// The known variants VEP's `--check_existing` reports for one input site,
-    /// one list per alt allele: `result[i]` belongs to `alt_alleles[i]`.
+    /// The known variants VEP's `--check_existing` attaches to one input site.
     ///
     /// `start` and `end` are Ensembl coordinates (an insertion has
     /// `end == start - 1`); alleles are written as in an Ensembl allele string,
-    /// `-` for an empty one. Each list is in the order VEP prints
-    /// `Existing_variation`.
+    /// `-` for an empty one. `AlleleMatch::alt_index` of the result counts into
+    /// `alt_alleles`.
     ///
     /// An error means the lookup could not be done, and the caller must not
     /// read it as "no known variants".
+    fn known_site(
+        &self,
+        chrom: &str,
+        start: u64,
+        end: u64,
+        ref_allele: &str,
+        alt_alleles: &[String],
+    ) -> Result<KnownSite>;
+
+    /// [`known_site`](Self::known_site) as one list per alt allele:
+    /// `result[i]` belongs to `alt_alleles[i]`, in the order VEP prints
+    /// `Existing_variation`.
     fn get_matched_variants(
         &self,
         chrom: &str,
@@ -310,7 +411,11 @@ pub trait VariationProvider {
         end: u64,
         ref_allele: &str,
         alt_alleles: &[String],
-    ) -> Result<Vec<Vec<MatchedVariant>>>;
+    ) -> Result<Vec<Vec<MatchedVariant>>> {
+        Ok(self
+            .known_site(chrom, start, end, ref_allele, alt_alleles)?
+            .per_alt(alt_alleles.len()))
+    }
 
     /// What to tell the user once the run is over, when lookups came back
     /// empty for a reason that is theirs to fix.
@@ -359,43 +464,11 @@ impl TabixVariationProvider {
             *unresolved.entry(chrom.to_string()).or_insert(0) += 1;
         }
     }
-
-    fn build(record: &VariationCacheRecord, record_allele: &str) -> MatchedVariant {
-        // Per-allele frequencies for the matched allele
-        let mut frequencies = HashMap::new();
-        for (pop, freq_str) in &record.frequencies {
-            if let Some(f) = variation::get_allele_freq(freq_str, record_allele) {
-                frequencies.insert(pop.clone(), f);
-            }
-        }
-
-        // Also include MAF if minor_allele matches
-        if let (Some(ma), Some(maf)) = (&record.minor_allele, record.minor_allele_freq) {
-            if ma.eq_ignore_ascii_case(record_allele) {
-                frequencies.entry("minor_allele_freq".into()).or_insert(maf);
-            }
-        }
-
-        MatchedVariant {
-            name: record.variation_name.clone(),
-            matched_allele: record_allele.to_string(),
-            minor_allele: record.minor_allele.clone(),
-            minor_allele_freq: record.minor_allele_freq,
-            clin_sig: record.clin_sig.clone(),
-            somatic: record.somatic,
-            phenotype_or_disease: record.phenotype_or_disease,
-            pubmed: record.pubmed.clone(),
-            frequencies,
-        }
-    }
 }
 
 impl TabixVariationProvider {
-    /// The known variants of one input site, one list per alt of the site, each
-    /// in the order VEP prints them.
-    fn lookup(&self, chrom: &str, site: &InputSite) -> Result<Vec<Vec<MatchedVariant>>> {
-        let mut per_alt: Vec<Vec<MatchedVariant>> = vec![Vec::new(); site.alts.len()];
-
+    /// The known variants of one input site, in cache order.
+    fn lookup(&self, chrom: &str, site: &InputSite) -> Result<KnownSite> {
         // VEP asks the index for `start - 1 ..= end + 1` of the input
         // (VariationTabix::_annotate_pm), and the index holds each record at its
         // start.
@@ -413,60 +486,50 @@ impl TabixVariationProvider {
                 )
             })?;
         if records.is_empty() {
-            return Ok(per_alt);
+            return Ok(KnownSite::default());
         }
 
         let alts: Vec<&str> = site.alts.iter().map(String::as_str).collect();
         let forms = variation::SiteForms::new(&site.reference, &alts, site.start, site.end);
-        // VEP skips a record whose name it has already matched for this site,
-        // whichever allele that match was for.
-        let mut matched_names: Vec<&str> = Vec::new();
+        let mut known: Vec<KnownRecord> = Vec::new();
 
-        for record in &records {
-            // Failed variants are out unless asked for (`filter_variation`).
-            if record.failed || matched_names.contains(&record.variation_name.as_str()) {
+        for record in records {
+            // Failed variants are out unless asked for (`filter_variation`), and
+            // VEP skips a record whose name it has already matched for this
+            // site, whichever allele that match was for.
+            if record.failed
+                || known
+                    .iter()
+                    .any(|k| k.record.variation_name == record.variation_name)
+            {
                 continue;
             }
-            let Some(matched) = forms.compare(record) else {
+            let Some(matched) = forms.compare(&record) else {
                 continue;
             };
-            matched_names.push(&record.variation_name);
-
-            for (alt_index, list) in per_alt.iter_mut().enumerate() {
-                match &matched {
-                    Matched::AllAlleles => list.push(Self::build(record, "")),
-                    Matched::Alleles(matches) => {
-                        // The first matching record allele speaks for the input
-                        // allele, as the first of `matched_alleles` does.
-                        if let Some(m) = matches.iter().find(|m| m.alt_index == alt_index) {
-                            list.push(Self::build(record, &m.record_allele));
-                        }
-                    }
-                }
-            }
+            known.push(KnownRecord {
+                record: Arc::new(record),
+                matched,
+            });
         }
-
-        for list in &mut per_alt {
-            list.sort_by_key(|m| variation::existing_variation_rank(&m.name, m.somatic));
-        }
-        Ok(per_alt)
+        Ok(KnownSite { records: known })
     }
 }
 
 impl VariationProvider for TabixVariationProvider {
-    fn get_matched_variants(
+    fn known_site(
         &self,
         chrom: &str,
         start: u64,
         end: u64,
         ref_allele: &str,
         alt_alleles: &[String],
-    ) -> Result<Vec<Vec<MatchedVariant>>> {
+    ) -> Result<KnownSite> {
         self.sites.fetch_add(1, Ordering::Relaxed);
 
         if self.reader.normalize_chrom(chrom).is_none() {
             self.note_unresolved(chrom);
-            return Ok(vec![Vec::new(); alt_alleles.len()]);
+            return Ok(KnownSite::default());
         }
 
         // A lone indel alt is looked up minimised, as VEP does it; see

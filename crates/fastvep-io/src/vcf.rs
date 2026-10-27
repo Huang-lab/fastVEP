@@ -297,6 +297,7 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         vcf_fields: Some(vcf_fields),
         transcript_variations: Vec::new(),
         existing_variants: Vec::new(),
+        known: Vec::new(),
         minimised: false,
         most_severe_consequence: None,
         variant_type,
