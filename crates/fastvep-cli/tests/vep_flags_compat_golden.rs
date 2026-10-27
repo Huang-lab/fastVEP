@@ -266,6 +266,16 @@ fn the_csq_position_fields_with_total_length_are_vep_s_with_the_dash_left_blank(
 
 // --- --no_escape ---------------------------------------------------------------------------
 
+/// Entries where fastVEP and stock VEP 116.3 differ and VEP is the one that is wrong:
+/// `(record, allele, transcript)` and the HGVSp fastVEP writes where VEP writes none. An
+/// insertion at the end of an exon that the intron repeats is carried into the intron by the
+/// 3'-rule's walk over the genome, and VEP then has no protein change for a frameshift; fastVEP
+/// walks the sequence of the transcript (`docs/VEP_DIVERGENCE.md`).
+const KNOWN: &[((&str, &str, &str), &str)] = &[(
+    ("c323", "G", "NM_090002.2"),
+    "NP_090002.2:p.Ile84ThrfsTer31",
+)];
+
 #[test]
 fn the_symbol_and_hgvsp_of_every_csq_entry_are_vep_s_as_they_are_and_with_no_escape() {
     let input = fixtures("vep_flags_compat", "in.vcf");
@@ -297,9 +307,21 @@ fn the_symbol_and_hgvsp_of_every_csq_entry_are_vep_s_as_they_are_and_with_no_esc
             })
             .collect();
         assert_eq!(ours.len(), vep.len(), "{mode}: the entries");
+        let known = |k: &(String, String, String), v: &(String, String)| {
+            KNOWN.iter().any(|((record, allele, transcript), hgvsp)| {
+                (record, allele, transcript) == (&k.0.as_str(), &k.1.as_str(), &k.2.as_str())
+                    && v.1.is_empty()
+                    && ours.get(k).is_some_and(|o| o.0 == v.0 && o.1 == *hgvsp)
+            })
+        };
+        let differing_known = vep
+            .iter()
+            .filter(|(k, v)| ours.get(*k) != Some(*v) && known(k, v))
+            .count();
+        assert_eq!(differing_known, KNOWN.len(), "{mode}: the known entries");
         let wrong: Vec<String> = vep
             .iter()
-            .filter(|(k, v)| ours.get(*k) != Some(*v))
+            .filter(|(k, v)| ours.get(*k) != Some(*v) && !known(k, v))
             .take(10)
             .map(|(k, v)| format!("{k:?}: VEP {v:?}, fastVEP {:?}", ours.get(k)))
             .collect();

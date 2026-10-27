@@ -162,6 +162,20 @@ const KNOWN: &[(&str, &str, &str, &str)] = &[
         "HGVSp",
         "-",
     ),
+    // an insertion at the edge of an exon that the 3'-rule's walk over the genome carries into the
+    // intron: VEP writes no HGVSp, fastVEP walks the transcript instead (`vep_tab_intron_repeat`)
+    (
+        "chr10_10996_CAGCG/CAGCTCG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Pro101ArgfsTer4",
+    ),
+    (
+        "chr10_10997_AGCG/AGCTCGGCCCG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Pro101ArgfsTer8",
+    ),
 ];
 
 fn here(name: &str) -> PathBuf {

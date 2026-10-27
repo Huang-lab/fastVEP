@@ -13,9 +13,13 @@
 //! described against the residues there. The peptide-level shift that follows (HGVS counts from
 //! the first residue that differs) is a second, separate step in `fastvep_hgvs::protein`.
 //!
-//! Two things here are not Ensembl's, because what Ensembl writes in them is not the protein
+//! Three things here are not Ensembl's, because what Ensembl writes in them is not the protein
 //! change of the variant (`docs/VEP_DIVERGENCE.md`):
 //!
+//! - **The walk is over the transcript where it left the exon.** A change in one exon that the
+//!   3'-rule's walk over the genome carries out of it by way of an intron is a different change of
+//!   the transcript where it ends, or none: Ensembl writes no notation, or one for another residue.
+//!   [`walk_the_transcript`] walks the spliced sequence instead.
 //! - **A change that loses the initiator is `p.Met1?`**, as HGVS has it, where Ensembl writes a
 //!   range, two residue names, or nothing ([`start_loss`]).
 //! - **A row with no term for the coding sequence has no protein notation** ([`is_only_a_utr_variant`]).
@@ -25,7 +29,7 @@ use std::cell::OnceCell;
 
 use fastvep_cache::providers::SequenceProvider;
 use fastvep_consequence::ConsequencePredictor;
-use fastvep_core::{Allele, Consequence, Strand, TranscriptLocation};
+use fastvep_core::{Allele, Consequence, Strand, TranscriptLocation, TranscriptSpan};
 use fastvep_genome::Transcript;
 use fastvep_hgvs::{hgvs_protein, EditedTranslation, ProteinChange};
 
@@ -99,6 +103,131 @@ fn shift_length(r: &HgvspRequest<'_>) -> u64 {
     match r.transcript.strand {
         Strand::Forward => s.saturating_sub(r.start),
         Strand::Reverse => r.start.saturating_sub(s),
+    }
+}
+
+/// The index of the exon of `transcript` that holds the genomic base `pos`.
+fn exon_holding(transcript: &Transcript, pos: u64) -> Option<usize> {
+    transcript
+        .exons
+        .iter()
+        .position(|e| e.start <= pos && pos <= e.end)
+}
+
+/// Whether the 3'-rule's walk over the genome, `shift` bases from the change, went out of the exon
+/// the change is in by way of an intron.
+///
+/// The genome and the transcript are the same sequence for as long as the walk stays in the exon,
+/// and they are not once it has crossed an intron: the bases it read in the intron are not in the
+/// transcript, the base after it that did not repeat may not be the one that follows in the
+/// transcript, and the string it rotated was turned once for each base of the genome it passed and
+/// not of the transcript. What the walk ends at is then a different change of the transcript, and
+/// a different protein, from the one the VCF has (a 4-base insertion at the end of an exon that
+/// the intron repeats is `c.24+1_24+2ins`, and Ensembl writes no HGVSp for it; one that crosses the
+/// whole of a short intron is described against the residue after the one it changes, and with
+/// `Ter?` where the stop is there to be counted).
+///
+/// A walk that went past the end of the transcript is not one that crossed an intron: that is
+/// the other half of what Ensembl writes nothing for, and stays as it is.
+fn crossed_an_intron(r: &HgvspRequest<'_>, shift: u64) -> bool {
+    let transcript = r.transcript;
+    let Some(home) = home_exon(r) else {
+        return false;
+    };
+    // the base the walk stopped on, the first that did not repeat
+    let next = match transcript.strand {
+        Strand::Forward => r.end + shift + 1,
+        Strand::Reverse => r.start.saturating_sub(shift + 1),
+    };
+    if next < transcript.start || next > transcript.end {
+        return false;
+    }
+    exon_holding(transcript, next) != Some(home)
+}
+
+/// The exon the change as the VCF has it is in: the one that holds all of it, both bases of an
+/// insertion's pair included, or for an insertion at the edge of an exon the one it is beside, with
+/// the exon's own last base (or first) for one flank and the intron's for the other. Ensembl calls
+/// such an insertion coding (`c.1617+1dup` is `frameshift_variant`) and the transcript has a place
+/// for it: between the exon's last base and the next exon's first.
+fn home_exon(r: &HgvspRequest<'_>) -> Option<usize> {
+    let transcript = r.transcript;
+    let insertion = r.start == r.end + 1;
+    let (lo, hi) = (r.start.min(r.end), r.start.max(r.end));
+    match (exon_holding(transcript, lo), exon_holding(transcript, hi)) {
+        (Some(a), Some(b)) if a == b => Some(a),
+        (Some(a), None) if insertion && lo == transcript.exons[a].end => Some(a),
+        (None, Some(b)) if insertion && hi == transcript.exons[b].start => Some(b),
+        _ => None,
+    }
+}
+
+/// The 3'-rule over the sequence of the transcript instead of the genome: where in the transcript
+/// the change ends up, and how many of its bases it passed to get there. `None` where the
+/// transcript has no spliced sequence or the change has no place in it.
+///
+/// Only for a change [`crossed_an_intron`] says the genome walk is not the transcript's.
+fn walk_the_transcript(r: &HgvspRequest<'_>) -> Option<(TranscriptLocation, u64)> {
+    let transcript = r.transcript;
+    let spliced = transcript.spliced_seq.as_deref()?.as_bytes();
+    let (lo, hi) = (r.start.min(r.end), r.start.max(r.end));
+    let forward = transcript.strand == Strand::Forward;
+    if r.start == r.end + 1 {
+        // The insertion sits after the base `c` of the transcript: after its 5' flank, or, where
+        // that one is the intron's, in front of its 3' flank (`home_exon`)
+        let (five, three) = if forward { (lo, hi) } else { (hi, lo) };
+        let c = match (
+            transcript.genomic_to_cdna(five),
+            transcript.genomic_to_cdna(three),
+        ) {
+            (Some(c), _) => c,
+            (None, Some(c)) => c.checked_sub(1)?,
+            (None, None) => return None,
+        };
+        let inserted = if forward {
+            r.alt_allele.as_bytes().to_vec()
+        } else {
+            fastvep_genome::codon::reverse_complement(r.alt_allele.as_bytes())
+        };
+        if inserted.is_empty() {
+            return None;
+        }
+        // slides over a base that is the next base of the inserted string, which turns it
+        let mut passed = 0u64;
+        while spliced
+            .get((c + passed) as usize)
+            .is_some_and(|b| *b == inserted[passed as usize % inserted.len()].to_ascii_uppercase())
+        {
+            passed += 1;
+        }
+        let at = c + passed;
+        Some((
+            transcript.location_in_cdna(TranscriptSpan::new(Some(at + 1), Some(at)), true),
+            passed,
+        ))
+    } else {
+        // the ends in the order of the transcript, the 5' one first
+        let (c_lo, c_hi) = (
+            transcript.genomic_to_cdna(lo)?,
+            transcript.genomic_to_cdna(hi)?,
+        );
+        let (first, last) = if forward { (c_lo, c_hi) } else { (c_hi, c_lo) };
+        // slides over a base that is the first base of what is deleted
+        let mut passed = 0u64;
+        while spliced
+            .get((last + passed) as usize)
+            .zip(spliced.get((first + passed - 1) as usize))
+            .is_some_and(|(next, front)| next == front)
+        {
+            passed += 1;
+        }
+        Some((
+            transcript.location_in_cdna(
+                TranscriptSpan::new(Some(first + passed), Some(last + passed)),
+                false,
+            ),
+            passed,
+        ))
     }
 }
 
@@ -203,18 +332,37 @@ fn hgvsp_as_ensembl_writes_it(r: &HgvspRequest<'_>) -> Option<String> {
     let reference_translation = transcript.peptide.as_deref()?;
 
     // The change is moved first, and what follows is about the change in its new place.
-    let shift = shift_length(r);
+    let mut shift = shift_length(r);
     let (location, alt): (TranscriptLocation, Cow<'_, Allele>) = if shift == 0 {
         (*r.location, Cow::Borrowed(r.alt_allele))
     } else {
-        let offset = |p: u64| match transcript.strand {
-            Strand::Forward => p + shift,
-            Strand::Reverse => p.saturating_sub(shift),
+        let walked = if crossed_an_intron(r, shift) {
+            Some(walk_the_transcript(r)?)
+        } else {
+            None
         };
-        (
-            transcript.location(offset(r.start), offset(r.end)),
-            Cow::Owned(rotate(r.alt_allele, shift, transcript.strand)),
-        )
+        match walked {
+            Some((location, passed)) => {
+                shift = passed;
+                // not moved at all, in the transcript, is not moved
+                let alt = if passed == 0 {
+                    Cow::Borrowed(r.alt_allele)
+                } else {
+                    Cow::Owned(rotate(r.alt_allele, passed, transcript.strand))
+                };
+                (if passed == 0 { *r.location } else { location }, alt)
+            }
+            None => {
+                let offset = |p: u64| match transcript.strand {
+                    Strand::Forward => p + shift,
+                    Strand::Reverse => p.saturating_sub(shift),
+                };
+                (
+                    transcript.location(offset(r.start), offset(r.end)),
+                    Cow::Owned(rotate(r.alt_allele, shift, transcript.strand)),
+                )
+            }
+        }
     };
     // `translation_start && translation_end`: both ends of the moved change have to be protein
     let (start, end) = (location.protein.start?, location.protein.end?);

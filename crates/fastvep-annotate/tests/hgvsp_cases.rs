@@ -1,5 +1,5 @@
-//! The protein notation of a change that loses the initiator, and of one that touches only the UTR
-//! (issue #139).
+//! The protein notation of a change that the 3'-rule's walk over the genome carries across an
+//! intron, and of one that loses the initiator or touches only the UTR (issue #139).
 //!
 //! A transcript is built from its exons and intron in the order of the transcript and placed on
 //! either strand, and a change is given where it is in the *transcript*, so that the same test
@@ -32,6 +32,7 @@ struct World {
     genome_len: u64,
     /// genomic coordinate of each base of the spliced transcript, in transcript order
     place: Vec<u64>,
+    first_exon_len: usize,
 }
 
 impl World {
@@ -167,6 +168,7 @@ impl World {
             strand,
             genome_len,
             place,
+            first_exon_len: lens[0],
         }
     }
 
@@ -201,6 +203,28 @@ impl World {
             end: hi,
             ref_allele: Allele::from_str(&genome[lo as usize - 1..hi as usize]),
             alt_allele: Allele::Deletion,
+        }
+    }
+
+    /// The change that inserts `bases` (read along the transcript) after the last base of the
+    /// first exon, which in the genome is between that base and the intron's first.
+    fn insertion_after_the_first_exon(&self, bases: &str) -> Change {
+        // the first exon's last base is the one before the intron, and where it is is `place`'s
+        let last = self.place[self.first_exon_len - 1];
+        match self.strand {
+            Strand::Forward => Change {
+                start: last + 1,
+                end: last,
+                ref_allele: Allele::Deletion,
+                alt_allele: Allele::from_str(bases),
+            },
+            // the exon's last base is its lowest, and the intron is below it
+            Strand::Reverse => Change {
+                start: last,
+                end: last - 1,
+                ref_allele: Allele::Deletion,
+                alt_allele: Allele::from_str(&revcomp(bases)),
+            },
         }
     }
 
@@ -251,12 +275,108 @@ struct Change {
 }
 
 const UTR5: &str = "ACGTACGTA";
-/// The same transcript with no intron in it: `ATG GCT AAG`, six bases of a repeat, `CACAC G TGG TAA`
-/// and a 3' UTR.
+/// `ATG GCT AAG` and then six bases of a repeat of `AC`.
+const EXON1: &str = "ACGTACGTAATGGCTAAGACACAC";
+/// ... which the intron goes on with, `A`, and so does the second exon, `CACAC`, before
+/// `G TGG TAA` and a 3' UTR. The genome has `AC` six times in a row; the transcript, with the
+/// intron's `A` not in it, has `ACACACCACAC`.
+const INTRON: &str = "A";
+const EXON2: &str = "CACACGTGGTAAACGTAC";
+/// The same transcript with no intron in it: the exons are one.
 const JOINED: &str = "ACGTACGTAATGGCTAAGACACACCACACGTGGTAAACGTAC";
+
+fn two_exons(strand: Strand) -> World {
+    World::new(&[EXON1, EXON2], INTRON, (UTR5.len(), 36), strand)
+}
 
 fn one_exon(strand: Strand) -> World {
     World::new(&[JOINED], "", (UTR5.len(), 36), strand)
+}
+
+/// An insertion at the start of a repeat the intron goes on with is moved over the whole of it by
+/// the 3'-rule's walk over the genome, which ends in exon 2 as a different change of the
+/// transcript. It is the change the VCF made that is described, and so what it is where the
+/// transcript has no intron there.
+#[test]
+fn an_insertion_the_genome_carries_over_an_intron_is_the_insertion_of_the_transcript() {
+    // `AC` between the `G` of `AAG` (base 18 of the transcript) and the repeat
+    for strand in [Strand::Forward, Strand::Reverse] {
+        let (with, without) = (two_exons(strand), one_exon(strand));
+        assert_eq!(
+            with.transcript.peptide.as_deref(),
+            Some("MAKTHHTW*"),
+            "{strand:?}"
+        );
+        // The same residues, the same change, the repeat broken in the transcript where the
+        // intron's base was: the notation is the one the sequence of the transcript gives
+        let at = |w: &World| w.hgvsp(&w.insertion(18, "AC"), true);
+        let expected = "ENSP_WALK.1:p.His6ThrfsTer?".to_string();
+        assert_eq!(at(&without), Some(expected.clone()), "{strand:?} no intron");
+        assert_eq!(at(&with), Some(expected), "{strand:?} with the intron");
+    }
+}
+
+/// An insertion inside exon 2's part of the repeat, which has no intron behind it to cross.
+#[test]
+fn an_insertion_after_the_intron_is_the_same_whether_or_not_the_transcript_has_one() {
+    for strand in [Strand::Forward, Strand::Reverse] {
+        let (with, without) = (two_exons(strand), one_exon(strand));
+        // between the bases 26 and 27 of the transcript, which are in the second exon of the one
+        // and the same exon of the other
+        for bases in ["CA", "AC", "A"] {
+            let a = with.hgvsp(&with.insertion(26, bases), true);
+            let b = without.hgvsp(&without.insertion(26, bases), true);
+            assert!(a.is_some(), "{strand:?} {bases}");
+            assert_eq!(a, b, "{strand:?} {bases}");
+        }
+    }
+}
+
+/// A deletion of a unit of exon 1's repeat, which the walk over the genome carries on through the
+/// intron's `A` and into exon 2, where the transcript's repeat ended at the intron.
+#[test]
+fn a_deletion_the_genome_carries_over_an_intron_is_the_deletion_of_the_transcript() {
+    for strand in [Strand::Forward, Strand::Reverse] {
+        let (with, without) = (two_exons(strand), one_exon(strand));
+        // the first unit of the repeat, `AC`, bases 19 and 20 of the transcript
+        let a = with.hgvsp(&with.deletion(19, 20), true);
+        let b = without.hgvsp(&without.deletion(19, 20), true);
+        assert!(a.is_some(), "{strand:?}");
+        assert_eq!(a, b, "{strand:?}");
+    }
+}
+
+/// An insertion at the very end of exon 1, which the intron's repeat carries the walk over the
+/// genome into the intron and past it. Ensembl calls it a frameshift and writes no protein change
+/// when the walk ends in the intron (`c.1617+1dup`), and one for another place when it ends beyond.
+#[test]
+fn an_insertion_at_the_end_of_an_exon_that_the_intron_repeats_is_the_insertion_of_the_transcript() {
+    for strand in [Strand::Forward, Strand::Reverse] {
+        let (with, without) = (two_exons(strand), one_exon(strand));
+        let at_the_end = with.hgvsp(&with.insertion_after_the_first_exon("AC"), true);
+        // the same sequence of the transcript as the insertion at the start of the repeat, whose
+        // 3'-most place in the transcript is the end of exon 1: no intron to be walked over
+        let in_front = without.hgvsp(&without.insertion(18, "AC"), true);
+        assert_eq!(
+            at_the_end.as_deref(),
+            Some("ENSP_WALK.1:p.His6ThrfsTer?"),
+            "{strand:?}"
+        );
+        assert_eq!(at_the_end, in_front, "{strand:?}");
+    }
+}
+
+/// A change whose repeat stays in the exon, and one at the end of the transcript where the walk
+/// runs out of it, are not the intron's business: nothing is walked in the transcript instead.
+#[test]
+fn a_change_that_does_not_cross_an_intron_is_described_as_it_always_was() {
+    let with = two_exons(Strand::Forward);
+    // `GCT` after the `AAG`: nothing repeats it, no shift
+    let change = with.insertion(18, "GCT");
+    let walked = with.hgvsp(&change, true);
+    let not_walked = with.hgvsp(&change, false);
+    assert_eq!(walked, not_walked);
+    assert_eq!(walked.as_deref(), Some("ENSP_WALK.1:p.Lys3_Thr4insAla"));
 }
 
 /// A deletion that begins in the 5' UTR and runs into the start codon has no protein position for

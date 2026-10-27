@@ -17,8 +17,13 @@
 //! five transcripts of chr21 and chr22 that have such an intron (SHANK3 among them), and the
 //! numbers are in `docs/VEP_DIVERGENCE.md`.
 //!
-//! Every column is compared, and the cells where fastVEP is not VEP would be listed one by one,
-//! as `vep_tab_edges_golden.rs` does. There are none.
+//! Every column is compared, and the cells where fastVEP is not VEP are listed one by one, as
+//! `vep_tab_edges_golden.rs` does. There are two, and they are one thing: a deletion of the last
+//! base of an exon, in a repeat that the intron goes on with, which the 3'-rule's walk over the
+//! genome carries out of the exon. VEP writes no HGVSp for it. fastVEP walks the sequence of the
+//! transcript instead and writes the notation of the change the VCF makes in it (the next
+//! fixture, `vep_tab_intron_repeat`, shows that this is what the same change is where the
+//! transcript has no intron).
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -43,6 +48,23 @@ const COMPARED: &[&str] = &[
     "HGVSc",
     "HGVSp",
     "HGVS_OFFSET",
+];
+
+/// Cells where fastVEP and stock VEP 116.3 differ and VEP is the one that is wrong:
+/// `(record, transcript, column, what fastVEP writes)`.
+const KNOWN: &[(&str, &str, &str, &str)] = &[
+    (
+        "chr1_16094_ACTAGA/A",
+        "ENST00000000106",
+        "HGVSp",
+        "ENSP00000000106.1:p.Thr19SerfsTer8",
+    ),
+    (
+        "chr1_4276_GTGGGG/G",
+        "ENST00000000102",
+        "HGVSp",
+        "ENSP00000000102.1:p.Pro56ArgfsTer22",
+    ),
 ];
 
 /// The transcripts whose introns include one of 13 bases or fewer, and the two that do not.
@@ -174,13 +196,21 @@ fn the_compared_columns_are_vep_s_for_every_row() {
     let (vep, fv) = (golden(), ours());
     let mut wrong = Vec::new();
     let mut compared = 0usize;
+    let mut seen = std::collections::BTreeSet::new();
     for (key, vep_rows) in &vep {
         let fv_rows = &fv[key];
         assert_eq!(vep_rows.len(), fv_rows.len(), "{key:?}");
         for (v, f) in vep_rows.iter().zip(fv_rows) {
             for col in COMPARED {
                 compared += 1;
-                if v[*col] != f[*col] {
+                let known = KNOWN
+                    .iter()
+                    .find(|(rec, tr, c, _)| *rec == key.0 && *tr == key.2 && c == col);
+                if let Some((rec, tr, c, ours)) = known {
+                    assert_ne!(v[*col], f[*col], "{rec} {tr} {c}: VEP now agrees");
+                    assert_eq!(&f[*col], ours, "{rec} {tr} {c}");
+                    seen.insert((*rec, *tr, *c));
+                } else if v[*col] != f[*col] {
                     wrong.push(format!(
                         "{} {} {col}: VEP {:?}, fastVEP {:?}",
                         key.0, key.2, v[*col], f[*col]
@@ -189,6 +219,11 @@ fn the_compared_columns_are_vep_s_for_every_row() {
             }
         }
     }
+    assert_eq!(
+        seen.len(),
+        KNOWN.len(),
+        "a row `KNOWN` names is not in the golden"
+    );
     assert!(compared > 60_000, "only {compared} cells compared");
     assert!(
         wrong.is_empty(),

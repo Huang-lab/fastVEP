@@ -74,6 +74,14 @@ enum Why {
     /// notation of the change where the 3'-rule moved it, and the row says both. fastVEP writes
     /// no protein change for a row with no term for the coding sequence.
     UtrOnly,
+    /// A change in a repeat that goes on across an intron, which the 3'-rule's walk over the genome
+    /// carries out of the exon: VEP then writes no HGVSp (the walk ended in the intron, which is
+    /// where an insertion at the edge of an exon goes when the intron repeats its bases), or one
+    /// for the residue after the one the change is in (it turned the inserted string once for each
+    /// base of the genome it passed, the intron's included). fastVEP walks the sequence of the
+    /// transcript instead, and writes the notation `vep_tab_intron_repeat` shows is the same as for
+    /// the same change in a transcript that has no intron there.
+    IntronWalk,
 }
 
 /// Cells where fastVEP and stock VEP 116.3 differ and VEP is the one that is wrong:
@@ -610,6 +618,90 @@ const KNOWN: &[(&str, &str, &str, &str, Why)] = &[
         "HGVSp",
         "-",
         Why::UtrOnly,
+    ),
+    (
+        "chr10_1299_C/CATTGC",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Ala68LeufsTer7",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_1299_C/CATTGC",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Asp68LeufsTer6",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_1300_A/ATTGCGA",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Pro67_Ala68insLeuArg",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_1300_A/ATTGCGA",
+        "ENST00000000002",
+        "HGVSp",
+        "ENSP00000000002.1:p.Pro67_Asp68insLeuArg",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_2195_A/ATACAC",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Asp135TyrfsTer6",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_2196_T/TACACTC",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.His134_Asp135insSerHis",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_2198_C/CACTCT",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Asp135SerfsTer6",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_2200_C/CTACAC",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Asp135TyrfsTer6",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_2200_C/CTG",
+        "ENST00000000001",
+        "HGVSp",
+        "ENSP00000000001.1:p.Asp135TrpfsTer5",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_10999_C/CC",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Pro101ArgfsTer6",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_11000_G/GCCATCG",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Leu100_Pro101insArgTrp",
+        Why::IntronWalk,
+    ),
+    (
+        "chr10_11002_A/AAGCGTA",
+        "ENST00000000003",
+        "HGVSp",
+        "ENSP00000000003.1:p.Leu100_Pro101insArgLeu",
+        Why::IntronWalk,
     ),
 ];
 

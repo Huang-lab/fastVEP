@@ -90,29 +90,7 @@ impl Transcript {
             TranscriptSpan::new(c5, c3)
         };
 
-        let (cds, protein) = match (self.cdna_coding_start, self.cdna_coding_end) {
-            (Some(cs), Some(ce)) if self.is_coding() => {
-                let phase = self.codon_table_start_phase;
-                let to_cds = |c: u64| c - cs + 1 + phase;
-                let coding = |c: u64| c >= cs && c <= ce;
-                let cds = match (insertion, cdna.start, cdna.end) {
-                    (true, Some(s), Some(e)) if !(e < cs || s > ce) => {
-                        TranscriptSpan::new(Some(to_cds(s)), Some(to_cds(e)))
-                    }
-                    (true, _, _) => TranscriptSpan::NONE,
-                    (false, s, e) => TranscriptSpan::new(
-                        s.filter(|&c| coding(c)).map(to_cds),
-                        e.filter(|&c| coding(c)).map(to_cds),
-                    ),
-                };
-                let residue = |p: u64| p.div_ceil(3);
-                (
-                    cds,
-                    TranscriptSpan::new(cds.start.map(residue), cds.end.map(residue)),
-                )
-            }
-            _ => (TranscriptSpan::NONE, TranscriptSpan::NONE),
-        };
+        let (cds, protein) = self.coding_spans(cdna, insertion);
 
         // Ensembl's `overlap`: `(f1_end >= f2_start) and (f1_start <= f2_end)`
         let overlaps = |s: u64, e: u64| end >= s && start <= e;
@@ -144,6 +122,55 @@ impl Transcript {
             protein,
             exon,
             intron,
+        }
+    }
+
+    /// The CDS and the protein span of a cDNA span: `to_cds` of each end that is in the coding
+    /// region, and the residue of each. An insertion's pair `(c + 1, c)` is a gap, and so has no
+    /// span, when `c` lies before the first coding base or `c + 1` after the last. Empty for a
+    /// transcript with no coding region.
+    fn coding_spans(
+        &self,
+        cdna: TranscriptSpan,
+        insertion: bool,
+    ) -> (TranscriptSpan, TranscriptSpan) {
+        match (self.cdna_coding_start, self.cdna_coding_end) {
+            (Some(cs), Some(ce)) if self.is_coding() => {
+                let phase = self.codon_table_start_phase;
+                let to_cds = |c: u64| c - cs + 1 + phase;
+                let coding = |c: u64| c >= cs && c <= ce;
+                let cds = match (insertion, cdna.start, cdna.end) {
+                    (true, Some(s), Some(e)) if !(e < cs || s > ce) => {
+                        TranscriptSpan::new(Some(to_cds(s)), Some(to_cds(e)))
+                    }
+                    (true, _, _) => TranscriptSpan::NONE,
+                    (false, s, e) => TranscriptSpan::new(
+                        s.filter(|&c| coding(c)).map(to_cds),
+                        e.filter(|&c| coding(c)).map(to_cds),
+                    ),
+                };
+                let residue = |p: u64| p.div_ceil(3);
+                (
+                    cds,
+                    TranscriptSpan::new(cds.start.map(residue), cds.end.map(residue)),
+                )
+            }
+            _ => (TranscriptSpan::NONE, TranscriptSpan::NONE),
+        }
+    }
+
+    /// The location of a change that is placed by its cDNA coordinates, for a caller that
+    /// walked the spliced sequence and so has no genomic position for it: the CDS and protein
+    /// spans [`Self::location`] gives a change at that cDNA span, and no `EXON` or `INTRON`.
+    /// An insertion between cDNA bases `c` and `c + 1` is the span `(c + 1, c)`, as there.
+    pub fn location_in_cdna(&self, cdna: TranscriptSpan, insertion: bool) -> TranscriptLocation {
+        let (cds, protein) = self.coding_spans(cdna, insertion);
+        TranscriptLocation {
+            cdna,
+            cds,
+            protein,
+            exon: None,
+            intron: None,
         }
     }
 
