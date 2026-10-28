@@ -5,29 +5,34 @@
 //! transcript already has (the exons added up, the translateable sequence, the peptide) and three
 //! tests of extent, so nothing here has a reason to build a `String` or a `Vec`.
 //!
-//! This file installs a counting global allocator, so it deliberately holds exactly ONE test:
-//! `cargo test` runs the tests of a binary concurrently, and a second test allocating on another
-//! thread would be counted here.
+//! This file installs a counting global allocator that counts the allocations of the thread that is
+//! measured and of no other: the test harness has a thread of its own that allocates while a test
+//! runs, and a count of the whole process took those into the window, which failed a test of this
+//! kind on a CI runner.
 
 use fastvep_core::Strand;
 use fastvep_genome::{Exon, Gene, Transcript, Translation};
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    // The allocations of the calling thread only. The test harness has a thread of its own that allocates
+    // while a test runs, and a count of the whole process took those into the window that is measured.
+    static ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
 
 struct Counting;
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        ALLOCS.with(|count| count.set(count.get() + 1));
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        ALLOCS.with(|count| count.set(count.get() + 1));
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -134,7 +139,7 @@ fn giving_a_row_its_totals_allocates_nothing() {
     ];
     let locations: Vec<_> = changes.iter().map(|&(s, e)| t.location(s, e)).collect();
 
-    let before = ALLOCS.load(Ordering::Relaxed);
+    let before = ALLOCS.with(Cell::get);
     let mut totals = 0usize;
     for _ in 0..10_000 {
         for (&(s, e), location) in changes.iter().zip(&locations) {
@@ -145,7 +150,7 @@ fn giving_a_row_its_totals_allocates_nothing() {
                 + usize::from(location.protein.total.is_some());
         }
     }
-    let allocations = ALLOCS.load(Ordering::Relaxed) - before;
+    let allocations = ALLOCS.with(Cell::get) - before;
     assert_eq!(allocations, 0, "{allocations} allocations");
     // the loop did work: five of the seven changes touch an exon, and three of them the CDS
     // too (the two UTR ones are `exon` and not `coding`, the intron one and the one upstream
