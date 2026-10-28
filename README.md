@@ -352,9 +352,9 @@ fastvep annotate -i variants.vcf \
   --fasta GRCh38.fa
 ```
 
-Each transcript carries its source through to all output formats:
-`SOURCE` field in the VCF CSQ string, the `source` key in JSON, and the
-SOURCE column in tab output (with `--canonical` / extended fields).
+Each transcript carries its source through to the VCF and JSON output:
+the `SOURCE` field in the VCF CSQ string and the `source` key in JSON.
+(Tab output has no `SOURCE` column.)
 Transcripts from both sources are queried independently — overlap
 detection, HGVS, and supplementary annotation all run per-transcript,
 so RefSeq NM_… and Ensembl ENST… records appear as separate CSQ entries
@@ -599,7 +599,21 @@ The VCF output never embeds raw JSON in INFO values. Use `--output-format json` 
 
 ### Tab Output
 
-One line per variant-transcript-allele combination with 17 columns.
+One line per variant, transcript and allele.
+The 17 columns are VEP's 13 base columns (`Uploaded_variation`, `Location`, `Allele`, `Gene`, `Feature`, `Feature_type`, `Consequence`, `cDNA_position`, `CDS_position`, `Protein_position`, `Amino_acids`, `Codons`, `Existing_variation`) and `IMPACT`, `DISTANCE`, `STRAND`, `FLAGS`.
+After them come `REF` (with `--explicit-alleles`), one column per loaded supplementary source, `PICK` (with `--flag-pick*`) and `QC_CLASS` (with `--qc-rules`).
+
+The cells follow VEP's tab writer:
+
+- A value a row does not have is `-`, never an empty cell.
+- `Location` runs from the lower coordinate to the higher, so an insertion, which sits between two bases, is `chr10:11950-11951`.
+- `Uploaded_variation` is the VCF ID (the first, if there are several), or the line itself, `{CHROM}_{POS}_{REF}/{ALT}`, when the record has none: `chr10_10414_C/A`, `chr10_10400_AACCCT/A`, and `chr10_109_CA/C/TA` for a record with two alts.
+  It is not built from the minimal alleles of the annotation, as it was.
+- `Amino_acids` is `L/P`, or just `L` when the protein does not change, as in the VCF `CSQ` and in JSON.
+- A variant with no overlapping transcript has no feature, so `Gene`, `Feature`, `Feature_type`, `DISTANCE`, `STRAND` and `FLAGS` are `-`; `IMPACT` is still `MODIFIER`.
+  A VCF `CSQ` entry for it leaves those fields empty.
+
+`--hgvs`, `--symbol` and `--canonical` do not add columns to tab output; use the VCF or JSON output for HGVS, gene symbols and the canonical flag.
 
 ### JSON Output
 

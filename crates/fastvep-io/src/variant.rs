@@ -76,6 +76,24 @@ pub struct TranscriptVariation {
     pub flags: Vec<String>,
 }
 
+impl TranscriptVariation {
+    /// The id the placeholder rows carry (`annotate_intergenic`,
+    /// `annotate_sa_only_scaffold`), which no real transcript has.
+    pub const NO_FEATURE: &'static str = "-";
+
+    /// A placeholder row, pushed so that a variant with no overlapping
+    /// transcript still has something to write. It stands for no feature at all.
+    ///
+    /// VEP leaves every feature cell of such a row empty: its intergenic output
+    /// never reaches the code that sets `Feature_type`, `Gene`, `Feature`,
+    /// `BIOTYPE`, `STRAND`, `FLAGS` or `DISTANCE`
+    /// (`OutputFactory::IntergenicVariationAllele_to_output_hash`). The writers
+    /// have to ask, because the row's own fields hold `-` and a strand.
+    pub fn is_featureless(&self) -> bool {
+        &*self.transcript_id == Self::NO_FEATURE
+    }
+}
+
 /// Annotation for a specific allele against a specific transcript.
 #[derive(Debug, Clone)]
 pub struct AlleleAnnotation {
