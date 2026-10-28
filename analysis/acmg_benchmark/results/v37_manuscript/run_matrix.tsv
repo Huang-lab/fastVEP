@@ -1,0 +1,97 @@
+name	group	knob	value	shipped	description	removed_from_sa_db	replaced_in_sa_db	environment
+v37_sw_pm2ad_0	sweep	pm2_ad_af_threshold	0	4e-05	PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 0			
+v37_sw_pm2ad_1e-06	sweep	pm2_ad_af_threshold	1e-06	4e-05	PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 1e-06			
+v37_sw_pm2ad_5e-06	sweep	pm2_ad_af_threshold	5e-06	4e-05	PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 5e-06			
+v37_sw_pm2ad_1e-05	sweep	pm2_ad_af_threshold	1e-05	4e-05	PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 1e-05			
+v37_sw_pm2ad_2e-05	sweep	pm2_ad_af_threshold	2e-05	4e-05	PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 2e-05			
+v37_sw_pm2ad_0.0001	sweep	pm2_ad_af_threshold	0.0001	4e-05	PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 0.0001			
+v37_sw_pm2ad_0.0002	sweep	pm2_ad_af_threshold	0.0002	4e-05	PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 0.0002			
+v37_sw_pm2ad_0.0005	sweep	pm2_ad_af_threshold	0.0005	4e-05	PM2 allele-frequency bar for dominant or unknown-inheritance genes, set to 0.0005			
+v37_sw_bs1_0.0002	sweep	bs1_af_threshold	0.0002	0.005	BS1 allele-frequency bar, set to 0.0002			
+v37_sw_bs1_0.0005	sweep	bs1_af_threshold	0.0005	0.005	BS1 allele-frequency bar, set to 0.0005			
+v37_sw_bs1_0.001	sweep	bs1_af_threshold	0.001	0.005	BS1 allele-frequency bar, set to 0.001			
+v37_sw_bs1_0.002	sweep	bs1_af_threshold	0.002	0.005	BS1 allele-frequency bar, set to 0.002			
+v37_sw_bs1_0.01	sweep	bs1_af_threshold	0.01	0.005	BS1 allele-frequency bar, set to 0.01			
+v37_sw_bs1_0.02	sweep	bs1_af_threshold	0.02	0.005	BS1 allele-frequency bar, set to 0.02			
+v37_sw_bs2hom_1e-06	sweep	bs2_hom_prevalence_threshold	1e-06	0.001	BS2 prevalence bar for the individuals with no functional copy (every gene not read as dominant-only), set to 1e-06			
+v37_sw_bs2hom_1e-05	sweep	bs2_hom_prevalence_threshold	1e-05	0.001	BS2 prevalence bar for the individuals with no functional copy (every gene not read as dominant-only), set to 1e-05			
+v37_sw_bs2hom_0.0001	sweep	bs2_hom_prevalence_threshold	0.0001	0.001	BS2 prevalence bar for the individuals with no functional copy (every gene not read as dominant-only), set to 0.0001			
+v37_sw_bs2hom_0.01	sweep	bs2_hom_prevalence_threshold	0.01	0.001	BS2 prevalence bar for the individuals with no functional copy (every gene not read as dominant-only), set to 0.01			
+v37_sw_pm2ar_0	sweep	pm2_ar_af_threshold	0	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 0			
+v37_sw_pm2ar_1e-06	sweep	pm2_ar_af_threshold	1e-06	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 1e-06			
+v37_sw_pm2ar_1e-05	sweep	pm2_ar_af_threshold	1e-05	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 1e-05			
+v37_sw_pm2ar_2e-05	sweep	pm2_ar_af_threshold	2e-05	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 2e-05			
+v37_sw_pm2ar_0.0002	sweep	pm2_ar_af_threshold	0.0002	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 0.0002			
+v37_sw_pm2ar_0.0005	sweep	pm2_ar_af_threshold	0.0005	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 0.0005			
+v37_sw_bp1veto_1	sweep	bp1_max_pathogenic_missense	1	3	number of ClinVar pathogenic missense variants in a gene at which BP1's veto applies (no veto at all is v37_sw_no_bp1_veto), set to 1			
+v37_sw_bp1veto_2	sweep	bp1_max_pathogenic_missense	2	3	number of ClinVar pathogenic missense variants in a gene at which BP1's veto applies (no veto at all is v37_sw_no_bp1_veto), set to 2			
+v37_sw_bp1veto_5	sweep	bp1_max_pathogenic_missense	5	3	number of ClinVar pathogenic missense variants in a gene at which BP1's veto applies (no veto at all is v37_sw_no_bp1_veto), set to 5			
+v37_sw_bp1veto_10	sweep	bp1_max_pathogenic_missense	10	3	number of ClinVar pathogenic missense variants in a gene at which BP1's veto applies (no veto at all is v37_sw_no_bp1_veto), set to 10			
+v37_sw_bp1veto_25	sweep	bp1_max_pathogenic_missense	25	3	number of ClinVar pathogenic missense variants in a gene at which BP1's veto applies (no veto at all is v37_sw_no_bp1_veto), set to 25			
+v37_sw_phylop_1	sweep	phylop_conserved	1	2.0	PhyloP score at or above which a nucleotide counts as conserved for BP7 (1000 switches the test off), set to 1			
+v37_sw_phylop_1.5	sweep	phylop_conserved	1.5	2.0	PhyloP score at or above which a nucleotide counts as conserved for BP7 (1000 switches the test off), set to 1.5			
+v37_sw_phylop_3	sweep	phylop_conserved	3	2.0	PhyloP score at or above which a nucleotide counts as conserved for BP7 (1000 switches the test off), set to 3			
+v37_sw_phylop_4	sweep	phylop_conserved	4	2.0	PhyloP score at or above which a nucleotide counts as conserved for BP7 (1000 switches the test off), set to 4			
+v37_sw_phylop_1000	sweep	phylop_conserved	1000	2.0	PhyloP score at or above which a nucleotide counts as conserved for BP7 (1000 switches the test off), set to 1000			
+v37_sw_bp7far_0	sweep	bp7_max_intron_offset	0	300	BP7 far intron boundary, set to 0 (intronic extension off)			
+v37_sw_bp7far_50	sweep	bp7_max_intron_offset	50	300	BP7 far intron boundary, set to 50			
+v37_sw_bp7far_100	sweep	bp7_max_intron_offset	100	300	BP7 far intron boundary, set to 100			
+v37_sw_bp7far_200	sweep	bp7_max_intron_offset	200	300	BP7 far intron boundary, set to 200			
+v37_sw_bp7far_500	sweep	bp7_max_intron_offset	500	300	BP7 far intron boundary, set to 500			
+v37_sw_bp7far_1000	sweep	bp7_max_intron_offset	1000	300	BP7 far intron boundary, set to 1000			
+v37_sw_bp7far_1000000	sweep	bp7_max_intron_offset	1000000	300	BP7 far intron boundary, set to 1000000 (effectively unbounded)			
+v37_sw_pm2_moderate	switch	pm2_downgrade_to_supporting	false	true	PM2 kept at Moderate, as in Richards 2015 (the ClinGen SVI September 2020 downgrade to Supporting off)			
+v37_sw_pm2_needs_record	switch	pm2_absent_when_no_record	false	true	PM2 not evaluated when gnomAD holds no record for the variant (absence is not read as rarity)			
+v37_sw_table_both_sides	switch	use_point_system	false	true	Richards 2015 combining table on both sides, in place of the SVI point system on the pathogenic side			
+v37_sw_no_gene_validity	switch	require_gene_disease_validity	false	true	PVS1, PP2 and PM1 no longer withheld where every ClinGen curation of the gene is Limited, Disputed or Refuted			
+v37_sw_no_mechanism_gate	switch	mechanism_gates_pvs1	false	true	PVS1 no longer withheld for genes curated as gain-of-function or dominant-negative			
+v37_sw_no_lowpen_gate	switch	clinvar_low_penetrance_blocks_benign_frequency	false	true	ClinVar's low-penetrance and risk-allele terms no longer withhold BS1 and BS2 (a ClinVar-derived gate)			
+v37_sw_no_region_flags	switch	gnomad_region_flags_block_frequency	false	true	gnomAD's segmental-duplication and low-complexity flags no longer withhold the frequency criteria			
+v37_sw_no_faf	switch	use_filtering_af	false	true	BA1 and BS1 test the population-maximum point estimate, not the filtering allele frequency			
+v37_sw_clinvar_informed	switch	exclude_self_from_clinvar_evidence	false	true	PS1 and PM1 count the variant's own ClinVar record (the ClinVar-informed mode)			
+v37_sw_no_homology_list	switch	homology_unreliable_genes	[]	29 genes	no gene is treated as having unreliable population frequencies (Mandelker 2016 list emptied)			
+v37_sw_no_exceptions	switch	ba1_exceptions	[]	15 alleles	the curated frequency-exception list emptied (Ghosh 2018's nine, three hypomorphs, three reviewer-named)			
+v37_sw_no_bp1_veto	switch	bp1_max_pathogenic_missense	1000000	3	BP1 no longer vetoed in genes with an established pathogenic-missense spectrum			
+v37_sw_no_pm1_benign_half	switch	pm1_max_benign_in_window	1000000	0	PM1 no longer requires the absence of benign variation in the window			
+v37_sw_no_an_floor	switch	min_an_for_frequency_criteria	0	2000	BA1 and BS1 no longer require an allele number of at least 2,000 at the variant's site			
+v37_sw_pp3_cap_moderate	switch	pp3_max_strength	"""Moderate"""	uncapped	PP3 capped at Moderate (the stricter convention the reviewer described)			
+v37_sw_pvs1_nmd50	switch	pvs1_nmd_50nt_rule	true	false	PVS1 uses the exact 50-nucleotide NMD rule of Abou Tayoun 2018 (opt-in)			
+v37_src_noclinvar_protein	source	noclinvar_protein	removed	loaded	ClinVar protein and splice-position index removed (PS1, PM1, PM5, BP1 veto, PVS1 critical region)	clinvar_protein.oga		
+v37_src_noclinvar_all	source	noclinvar_all	removed	loaded	every ClinVar-derived source removed (the protein index and the allele-level record)	clinvar_protein.oga,clinvar.osa,clinvar.osa.idx		
+v37_src_norevel	source	norevel	removed	loaded	REVEL removed (PP3 and BP4 for missense)	revel_chr*		
+v37_src_nospliceai	source	nospliceai	removed	loaded	SpliceAI removed (PP3 and BP4 for splicing, BP7)	spliceai_chr*		
+v37_src_nophylop	source	nophylop	removed	loaded	PhyloP removed (BP7's conservation test)	phylop_chr*		
+v37_src_noconstraint	source	noconstraint	removed	loaded	gnomAD gene constraint removed (PVS1's loss-of-function-intolerance gate, PP2, BP1)	gnomad_genes.oga		
+v37_src_noclingen	source	noclingen	removed	loaded	ClinGen gene-disease validity and inheritance removed (PVS1 disease gate, inheritance for BS2, PM2 and PM3)	omim.oga		
+v37_src_norepeat	source	norepeat	removed	loaded	RepeatMasker removed (BP3)	repeatmasker.osi		
+v37_src_nognomad	source	nognomad	removed	loaded	gnomAD removed, with PM2 told not to read absence as rarity, so no frequency criterion can fire	gnomad_chr*		
+v37_ix_table_pm2ad_0	interaction	pm2_ad_af_threshold (Richards 2015 table both sides)	0	4e-05	PM2 bar for dominant genes set to 0, with the Richards 2015 table on both sides			
+v37_ix_table_pm2ad_1e-06	interaction	pm2_ad_af_threshold (Richards 2015 table both sides)	1e-06	4e-05	PM2 bar for dominant genes set to 1e-06, with the Richards 2015 table on both sides			
+v37_ix_table_pm2ad_1e-05	interaction	pm2_ad_af_threshold (Richards 2015 table both sides)	1e-05	4e-05	PM2 bar for dominant genes set to 1e-05, with the Richards 2015 table on both sides			
+v37_ix_table_pm2ad_0.0001	interaction	pm2_ad_af_threshold (Richards 2015 table both sides)	0.0001	4e-05	PM2 bar for dominant genes set to 0.0001, with the Richards 2015 table on both sides			
+v37_cut_lp4	cutoff	likely_pathogenic_points	4	6	Likely pathogenic from 4 pathogenic points (6 is shipped)			FASTVEP_LP_CUT=4
+v37_cut_lp5	cutoff	likely_pathogenic_points	5	6	Likely pathogenic from 5 pathogenic points (6 is shipped)			FASTVEP_LP_CUT=5
+v37_cut_lp6	cutoff	likely_pathogenic_points	6	6	Likely pathogenic from 6 pathogenic points (the shipped value: a control that must reproduce v37)			FASTVEP_LP_CUT=6
+v37_cut_lp7	cutoff	likely_pathogenic_points	7	6	Likely pathogenic from 7 pathogenic points (6 is shipped)			FASTVEP_LP_CUT=7
+v37_cut_lp8	cutoff	likely_pathogenic_points	8	6	Likely pathogenic from 8 pathogenic points (6 is shipped)			FASTVEP_LP_CUT=8
+v37_cut_lp9	cutoff	likely_pathogenic_points	9	6	Likely pathogenic from 9 pathogenic points (6 is shipped)			FASTVEP_LP_CUT=9
+v37_cut_p9	cutoff	pathogenic_points	9	10	Pathogenic from 9 pathogenic points (10 is shipped)			FASTVEP_P_CUT=9
+v37_cut_p11	cutoff	pathogenic_points	11	10	Pathogenic from 11 pathogenic points (10 is shipped)			FASTVEP_P_CUT=11
+v37_cut_p12	cutoff	pathogenic_points	12	10	Pathogenic from 12 pathogenic points (10 is shipped)			FASTVEP_P_CUT=12
+v37_hk_control	hook	measurement build, nothing set	-	-	the measurement build with no hook set (a control that must reproduce v37)			
+v37_hk_bp1_loo	hook	BP1 veto, own ClinVar record excluded	on	off	BP1's veto, which counts a gene's pathogenic missense records in the ClinVar protein index, no longer counts the variant's own record when it is itself pathogenic or likely pathogenic (PS1 and PM1 already exclude it)			FASTVEP_BP1_LOO=1
+v37_hk_bp7_spliceai01	hook	BP7 SpliceAI bar	0.1 or below	below 0.2	BP7 requires SpliceAI at most 0.1 (BP4's bar, as Walker 2023 requires) in place of below 0.2			FASTVEP_BP7_SPLICEAI_BENIGN=1
+v37_hk_bp7_walker	hook	BP7 as Walker 2023 describes it	SpliceAI at most 0.1, no conservation test	SpliceAI below 0.2 and PhyloP below 2.0	BP7 requires SpliceAI at most 0.1 and no longer tests conservation (the PhyloP bar set to 1000)			FASTVEP_BP7_SPLICEAI_BENIGN=1
+v37_hk_strict	hook	the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together	BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list	all three in place	BP1's veto no longer counts the variant's own ClinVar record, ClinVar's low-penetrance and risk-allele terms no longer withhold BS1 and BS2, and the curated frequency-exception list is emptied (each of the three was measured alone; none had been run with the others)			FASTVEP_BP1_LOO=1
+v37_hk_bp1_loo_veto1	hook	BP1 veto count, own ClinVar record excluded	1	3, own record counted	BP1's veto at 1 pathogenic missense variant in the gene, and no longer counting the variant's own record when it is itself pathogenic or likely pathogenic			FASTVEP_BP1_LOO=1
+v37_hk_bp1_loo_veto2	hook	BP1 veto count, own ClinVar record excluded	2	3, own record counted	BP1's veto at 2 pathogenic missense variants in the gene, and no longer counting the variant's own record when it is itself pathogenic or likely pathogenic			FASTVEP_BP1_LOO=1
+v37_gap_clingen_complete	gap	ClinGen gene-disease file	the 30 April export plus the curations it lacked	the 30 April export	the ClinGen file with the 112 rows put back that the 11 October 2026 export dates on or before 30 April and whose gene and disease pair the export of that day did not list (104 curations, CFTR among them, 7 re-labelled rows and 1 row dated that day)		omim.oga	
+v37_gap_orphanet_lof	gap	PVS1 licensed by Orphanet's loss-of-function label	1042 genes	none	PVS1 licensed for 1042 genes that Orphanet labels as a loss-of-function disease and that the shipped mechanism table does not name			
+v37_gap_both	gap	the complete ClinGen file and Orphanet's label together	1042 genes	none	both of the above together		omim.oga	
+v37_oct_clingen_complete	holdout	the ClinGen file completed with the rows its 30 April export lacked	-	-	the ClinGen file completed with the rows its 30 April export lacked, on the variants of the 4 October 2026 release		omim.oga	
+v37_oct_orphanet_lof	holdout	PVS1 licensed for 1042 genes that Orphanet labels as a loss-of-function disease	-	-	PVS1 licensed for 1042 genes that Orphanet labels as a loss-of-function disease, on the variants of the 4 October 2026 release			
+v37_oct_both	holdout	the completed ClinGen file and Orphanet's label together	-	-	the completed ClinGen file and Orphanet's label together, on the variants of the 4 October 2026 release		omim.oga	
+v37_oct_bp7_walker	holdout	BP7 with SpliceAI at most 0.1 and no conservation test	-	-	BP7 with SpliceAI at most 0.1 and no conservation test, on the variants of the 4 October 2026 release			FASTVEP_BP7_SPLICEAI_BENIGN=1
+v37_oct_bp1_loo	holdout	BP1's veto leaving out the variant's own ClinVar record	-	-	BP1's veto leaving out the variant's own ClinVar record, on the variants of the 4 October 2026 release			FASTVEP_BP1_LOO=1
+v37_oct_no_an_floor	holdout	BA1 and BS1 without the allele-number floor of 2,000	-	-	BA1 and BS1 without the allele-number floor of 2,000, on the variants of the 4 October 2026 release			
+v37_oct_bp1_veto1	holdout	BP1's veto at a count of 1 pathogenic missense variant in the gene	-	-	BP1's veto at a count of 1 pathogenic missense variant in the gene, on the variants of the 4 October 2026 release			

@@ -1,0 +1,19 @@
+measure,n
+ClinVar P/LP stop-gained and frameshift variants,52581
+with a PVS1 criterion (any strength),47397
+without PVS1,5184
+"without PVS1, genes",625
+"without PVS1, genes by the symbol of the annotation",620
+"without PVS1, variants whose ClinVar gene differs from the symbol of the annotation",55
+"without PVS1, variants in genes constrained by gnomAD",76
+"without PVS1, variants in genes with no established ClinGen curation",5177
+"without PVS1, in the 15 genes with most such variants",1563
+"without PVS1, in CFTR (stop-gained and frameshift)",439
+"CFTR null variants in the benchmark (stop, frameshift, canonical splice)",558
+  of them called VUS,558
+  of them carrying any PVS1,0
+"without PVS1, constrained genes",7
+"without PVS1, validity gate",463
+"without PVS1, mechanism gate",5
+"without PVS1, no route to loss of function",4696
+"without PVS1, no route, genes",575

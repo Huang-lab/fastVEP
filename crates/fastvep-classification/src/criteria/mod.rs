@@ -27,7 +27,9 @@ pub(crate) fn placement_detail(placement: HgvsPlacement) -> serde_json::Value {
     }
 }
 
-/// Evaluate all 28 ACMG-AMP criteria and return the full list.
+/// Evaluate every ACMG-AMP criterion and return the full list: 28, or 26 when
+/// `use_pp5_bp6` is off, which is the default, because PP5 and BP6 are then not
+/// evaluated at all.
 ///
 /// After per-criterion evaluation, a reconciliation pass suppresses
 /// computational evidence (PP3/BP4) that would double-count with criteria

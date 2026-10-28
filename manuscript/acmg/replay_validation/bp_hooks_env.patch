@@ -1,0 +1,43 @@
+diff --git a/crates/fastvep-classification/src/criteria/benign_supporting.rs b/crates/fastvep-classification/src/criteria/benign_supporting.rs
+index 8042758..e96b73e 100644
+--- a/crates/fastvep-classification/src/criteria/benign_supporting.rs
++++ b/crates/fastvep-classification/src/criteria/benign_supporting.rs
+@@ -55,11 +55,22 @@ fn evaluate_bp1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
+     // benign missense record says nothing about that either way.
+     if is_missense {
+         if let Some(ref cpd) = input.clinvar_protein {
++            // MEASUREMENT BUILD ONLY (manuscript/acmg): FASTVEP_BP1_LOO discounts the variant's
++            // own ClinVar record from the veto's count, as PS1 and PM1 already do.
++            let own_record = if std::env::var_os("FASTVEP_BP1_LOO").is_some()
++                && config.exclude_self_from_clinvar_evidence
++                && input.clinvar.as_ref().is_some_and(|c| c.has_pathogenic())
++            {
++                1
++            } else {
++                0
++            };
+             let pathogenic_missense = cpd
+                 .protein_variants
+                 .iter()
+                 .filter(|v| v.sig.to_lowercase().contains("pathogenic"))
+-                .count();
++                .count()
++                .saturating_sub(own_record);
+             details.insert(
+                 "gene_pathogenic_missense_count".into(),
+                 serde_json::json!(pathogenic_missense),
+@@ -783,7 +794,13 @@ fn evaluate_bp7(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
+         };
+     };
+     details.insert("spliceai_max_ds".into(), serde_json::json!(max_ds));
+-    let no_splice_impact = max_ds < config.spliceai_pathogenic;
++    // MEASUREMENT BUILD ONLY (manuscript/acmg): FASTVEP_BP7_SPLICEAI_BENIGN asks for BP4's
++    // SpliceAI bar (at most 0.1), which Walker 2023 requires, in place of a score below 0.2.
++    let no_splice_impact = if std::env::var_os("FASTVEP_BP7_SPLICEAI_BENIGN").is_some() {
++        max_ds <= config.spliceai_benign
++    } else {
++        max_ds < config.spliceai_pathogenic
++    };
+ 
+     // Check PhyloP: not highly conserved
+     let not_conserved = if let Some(phylop) = input.phylop {

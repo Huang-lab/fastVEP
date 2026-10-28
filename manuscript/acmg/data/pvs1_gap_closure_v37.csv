@@ -1,0 +1,4 @@
+run,label,gap_variants,gap_variants_gaining_pvs1,gap_variants_called_plp,genes_gaining_pvs1,pvs1_gained_clinvar_plp,pvs1_gained_clinvar_vus,pvs1_gained_clinvar_blb,calls_changed,plp_vus_to_plp,vus_to_plp,blb_to_plp,blb_lost_a_call,cftr_null_variants,cftr_null_with_pvs1,cftr_null_called_plp,four_star_called_plp,four_star
+v37_gap_clingen_complete,ClinGen file with the omitted curations put back,5184,674,653,23,886,23,3,875,852,19,2,0,558,556,542,12,23
+v37_gap_orphanet_lof,PVS1 licensed by Orphanet's loss-of-function label,5184,1506,1421,154,1929,68,14,1868,1829,31,5,3,558,556,542,12,23
+v37_gap_both,both,5184,1714,1624,170,2215,88,15,2161,2103,48,5,3,558,556,542,12,23

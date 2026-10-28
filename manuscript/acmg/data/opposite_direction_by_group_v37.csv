@@ -1,0 +1,6 @@
+group,clinvar,disorder_specific,fastvep,needs_evidence,neither,total
+BP1 on a ClinVar pathogenic-side variant,2,0,0,0,0,2
+BP4+BP7 on a ClinVar pathogenic-side variant,10,0,2,3,5,20
+BS1 on a ClinVar pathogenic-side variant,1,0,0,1,0,2
+PM1 with PP2 and PP3 on a ClinVar benign-side variant,3,0,0,0,0,3
+PVS1 on a ClinVar benign-side variant,14,1,2,2,3,22

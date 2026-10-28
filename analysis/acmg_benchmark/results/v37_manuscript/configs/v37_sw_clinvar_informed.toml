@@ -1,0 +1,3 @@
+# v37_sw_clinvar_informed: PS1 and PM1 count the variant's own ClinVar record (the ClinVar-informed mode).
+# Everything else is the shipped default.
+exclude_self_from_clinvar_evidence = false

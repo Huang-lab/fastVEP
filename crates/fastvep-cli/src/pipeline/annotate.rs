@@ -15,7 +15,7 @@ use fastvep_cache::providers::{
 };
 use fastvep_cache::transcript_cache::StaleCacheFormat;
 use fastvep_consequence::ConsequencePredictor;
-use fastvep_core::Consequence;
+use fastvep_core::{Allele, Consequence};
 use fastvep_genome::Transcript;
 use fastvep_hgvs;
 use fastvep_io::output;
@@ -1528,27 +1528,18 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         for _ in 0..BATCH_SIZE {
             match vcf_parser.next_variant()? {
                 Some(mut vf) => {
-                    // Variation lookup (sequential - TabixVariationProvider is not Sync)
+                    // Variation lookup (sequential - it reads the cache's open files).
+                    //
+                    // A failed lookup stops the run. It used to be read as "no known
+                    // variants", and a variant reported as novel because the cache
+                    // could not be read cannot be told from one that is novel. The
+                    // SA lookups are counted and reported at the end instead, but they
+                    // run inside the parallel loop where an error cannot propagate;
+                    // this one can, and the cache has already been validated at
+                    // startup, so an error here is a real fault.
                     let matched_by_allele: HashMap<String, Vec<MatchedVariant>> =
                         if let Some(ref vp) = var_provider {
-                            let mut by_allele = HashMap::new();
-                            for alt in &vf.alt_alleles {
-                                let alt_str = alt.to_string();
-                                let ref_str = vf.ref_allele.to_string();
-                                let matches = vp
-                                    .get_matched_variants(
-                                        &vf.position.chromosome,
-                                        vf.position.start,
-                                        vf.position.end,
-                                        &ref_str,
-                                        &alt_str,
-                                    )
-                                    .unwrap_or_default();
-                                if !matches.is_empty() {
-                                    by_allele.insert(alt_str, matches);
-                                }
-                            }
-                            by_allele
+                            known_variants_by_allele(vp, &vf)?
                         } else {
                             HashMap::new()
                         };
@@ -1702,9 +1693,50 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // After the meter, so a run that lost annotations says so last and the
     // warning is not buried in progress output.
     fastvep_annotate::report_sa_lookup_errors();
+    if let Some(note) = var_provider.as_ref().and_then(|vp| vp.finish()) {
+        eprintln!("{note}");
+    }
 
     Ok(())
 }
+/// The known variants VEP's `--check_existing` reports for one input record,
+/// keyed by the alt allele as the annotation rows write it.
+///
+/// VEP leaves structural variants out of the check
+/// (`VariationTabix::annotate_InputBuffer` keeps only plain
+/// `VariationFeature`s), and a symbolic or missing allele has no sequence to
+/// compare, so neither is looked up. Without the first rule a large `END=` would
+/// read every cache record under the span.
+fn known_variants_by_allele(
+    provider: &TabixVariationProvider,
+    vf: &VariationFeature,
+) -> Result<HashMap<String, Vec<MatchedVariant>>> {
+    if vf.variant_type.is_structural() {
+        return Ok(HashMap::new());
+    }
+    let alts: Vec<String> = vf
+        .alt_alleles
+        .iter()
+        .filter(|a| !matches!(a, Allele::Missing | Allele::Symbolic(_)))
+        .map(ToString::to_string)
+        .collect();
+    if alts.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let found = provider.get_matched_variants(
+        &vf.position.chromosome,
+        vf.position.start,
+        vf.position.end,
+        &vf.ref_allele.to_string(),
+        &alts,
+    )?;
+    Ok(alts
+        .into_iter()
+        .zip(found)
+        .filter(|(_, matches)| !matches.is_empty())
+        .collect())
+}
+
 /// Extract trio genotype information from a VariationFeature's VCF sample columns (CLI path).
 fn extract_trio_genotypes_cli(
     vf: &VariationFeature,

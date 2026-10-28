@@ -1,0 +1,8 @@
+measure,n
+pathogenic-side calls of the second rule that ClinVar calls pathogenic-side,61928
+  that v37 leaves as VUS,9967
+"    with a PVS1 criterion in v37, at a lower strength or held back",4218
+    with no PVS1 criterion in v37,5749
+pathogenic-side calls of the second rule that ClinVar calls benign-side,54
+  that v37 leaves as VUS,43
+    with no PVS1 criterion in v37,36

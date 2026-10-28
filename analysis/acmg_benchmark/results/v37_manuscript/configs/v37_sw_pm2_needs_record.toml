@@ -1,0 +1,3 @@
+# v37_sw_pm2_needs_record: PM2 not evaluated when gnomAD holds no record for the variant (absence is not read as rarity).
+# Everything else is the shipped default.
+pm2_absent_when_no_record = false

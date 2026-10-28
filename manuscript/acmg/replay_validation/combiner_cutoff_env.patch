@@ -1,0 +1,20 @@
+diff --git a/crates/fastvep-classification/src/combiner.rs b/crates/fastvep-classification/src/combiner.rs
+index 2268cca..cce1141 100644
+--- a/crates/fastvep-classification/src/combiner.rs
++++ b/crates/fastvep-classification/src/combiner.rs
+@@ -87,9 +87,13 @@ fn pathogenic_call_by_points(
+         })
+         .sum();
+ 
+-    let cls = if points >= 10 {
++    // VALIDATION BUILD ONLY (manuscript/acmg replay check): cutoffs read from the environment.
++    let cut = |name: &str, default: i32| -> i32 {
++        std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
++    };
++    let cls = if points >= cut("FASTVEP_P_CUT", 10) {
+         AcmgClassification::Pathogenic
+-    } else if points >= 6 {
++    } else if points >= cut("FASTVEP_LP_CUT", 6) {
+         AcmgClassification::LikelyPathogenic
+     } else {
+         return None;

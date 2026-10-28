@@ -1,0 +1,3 @@
+rule,calls_depending_on_pm2,of_which_pvs1_and_pm2_only,clinvar_plp,clinvar_vus,clinvar_blb
+shipped: SVI points on the pathogenic side,5493,0,3235,2255,3
+Richards 2015 table,51348,45855,47944,3390,14

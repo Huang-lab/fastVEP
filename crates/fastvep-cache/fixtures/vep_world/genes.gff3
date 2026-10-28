@@ -1,0 +1,4 @@
+##gff-version 3
+chr10	test	gene	100	150	.	+	.	ID=gene:ENSG_X;Name=GENEX;biotype=lncRNA
+chr10	test	lnc_RNA	100	150	.	+	.	ID=transcript:ENST_X;Parent=gene:ENSG_X;biotype=lncRNA
+chr10	test	exon	100	150	.	+	.	ID=exon:E1;Parent=transcript:ENST_X;rank=1

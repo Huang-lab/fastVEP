@@ -1,0 +1,3 @@
+# v37_sw_no_pm1_benign_half: PM1 no longer requires the absence of benign variation in the window.
+# Everything else is the shipped default.
+pm1_max_benign_in_window = 1000000

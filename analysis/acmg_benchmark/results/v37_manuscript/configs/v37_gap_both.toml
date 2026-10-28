@@ -1,0 +1,2086 @@
+# v37_gap_both: both of the above together.
+# Everything else is the shipped default.
+[gene_overrides.AAGAB]
+mechanism = "LOF"
+[gene_overrides.AARS1]
+mechanism = "LOF"
+[gene_overrides.AARS2]
+mechanism = "LOF"
+[gene_overrides.ABCA3]
+mechanism = "LOF"
+[gene_overrides.ABCA5]
+mechanism = "LOF"
+[gene_overrides.ABCB11]
+mechanism = "LOF"
+[gene_overrides.ABCB4]
+mechanism = "LOF"
+[gene_overrides.ABCB7]
+mechanism = "LOF"
+[gene_overrides.ABCC6]
+mechanism = "LOF"
+[gene_overrides.ABCD4]
+mechanism = "LOF"
+[gene_overrides.ACAD8]
+mechanism = "LOF"
+[gene_overrides.ACADSB]
+mechanism = "LOF"
+[gene_overrides.ACAN]
+mechanism = "LOF"
+[gene_overrides.ACP4]
+mechanism = "LOF"
+[gene_overrides.ACTL6A]
+mechanism = "LOF"
+[gene_overrides.ACY1]
+mechanism = "LOF"
+[gene_overrides.ADA2]
+mechanism = "LOF"
+[gene_overrides.ADAM10]
+mechanism = "LOF"
+[gene_overrides.ADAM17]
+mechanism = "LOF"
+[gene_overrides.ADAMTS13]
+mechanism = "LOF"
+[gene_overrides.ADAMTS17]
+mechanism = "LOF"
+[gene_overrides.ADAMTS3]
+mechanism = "LOF"
+[gene_overrides.ADAR]
+mechanism = "LOF"
+[gene_overrides.ADCY1]
+mechanism = "LOF"
+[gene_overrides.ADD3]
+mechanism = "LOF"
+[gene_overrides.ADK]
+mechanism = "LOF"
+[gene_overrides.AEBP1]
+mechanism = "LOF"
+[gene_overrides.AGK]
+mechanism = "LOF"
+[gene_overrides.AGO2]
+mechanism = "LOF"
+[gene_overrides.AGR2]
+mechanism = "LOF"
+[gene_overrides.AIMP1]
+mechanism = "LOF"
+[gene_overrides.AIP]
+mechanism = "LOF"
+[gene_overrides.AIRE]
+mechanism = "LOF"
+[gene_overrides.AK2]
+mechanism = "LOF"
+[gene_overrides.AKAP3]
+mechanism = "LOF"
+[gene_overrides.AKAP4]
+mechanism = "LOF"
+[gene_overrides.AKR1C2]
+mechanism = "LOF"
+[gene_overrides.ALDH18A1]
+mechanism = "LOF"
+[gene_overrides.ALG1]
+mechanism = "LOF"
+[gene_overrides.ALG12]
+mechanism = "LOF"
+[gene_overrides.ALG2]
+mechanism = "LOF"
+[gene_overrides.ALG3]
+mechanism = "LOF"
+[gene_overrides.ALG6]
+mechanism = "LOF"
+[gene_overrides.ALG8]
+mechanism = "LOF"
+[gene_overrides.ALG9]
+mechanism = "LOF"
+[gene_overrides.ALKBH8]
+mechanism = "LOF"
+[gene_overrides.ALPI]
+mechanism = "LOF"
+[gene_overrides.ALPK1]
+mechanism = "LOF"
+[gene_overrides.ALPL]
+mechanism = "LOF"
+[gene_overrides.ALX1]
+mechanism = "LOF"
+[gene_overrides.ALX3]
+mechanism = "LOF"
+[gene_overrides.ALX4]
+mechanism = "LOF"
+[gene_overrides.AMPD2]
+mechanism = "LOF"
+[gene_overrides.AMT]
+mechanism = "LOF"
+[gene_overrides.ANGPT2]
+mechanism = "LOF"
+[gene_overrides.ANGPTL6]
+mechanism = "LOF"
+[gene_overrides.ANKZF1]
+mechanism = "LOF"
+[gene_overrides.ANOS1]
+mechanism = "LOF"
+[gene_overrides.ANTXR1]
+mechanism = "LOF"
+[gene_overrides.AP1B1]
+mechanism = "LOF"
+[gene_overrides.AP1S1]
+mechanism = "LOF"
+[gene_overrides.AP3B1]
+mechanism = "LOF"
+[gene_overrides.AP5Z1]
+mechanism = "LOF"
+[gene_overrides.APC2]
+mechanism = "LOF"
+[gene_overrides.APOC2]
+mechanism = "LOF"
+[gene_overrides.APOC3]
+mechanism = "LOF"
+[gene_overrides.APPL1]
+mechanism = "LOF"
+[gene_overrides.APRT]
+mechanism = "LOF"
+[gene_overrides.ARCN1]
+mechanism = "LOF"
+[gene_overrides.ARHGAP24]
+mechanism = "LOF"
+[gene_overrides.ARHGDIA]
+mechanism = "LOF"
+[gene_overrides.ARHGEF9]
+mechanism = "LOF"
+[gene_overrides.ARID2]
+mechanism = "LOF"
+[gene_overrides.ARMC12]
+mechanism = "LOF"
+[gene_overrides.ARNT2]
+mechanism = "LOF"
+[gene_overrides.ARPC1B]
+mechanism = "LOF"
+[gene_overrides.ARSA]
+mechanism = "LOF"
+[gene_overrides.ARX]
+mechanism = "LOF"
+[gene_overrides.ASL]
+mechanism = "LOF"
+[gene_overrides.ASNS]
+mechanism = "LOF"
+[gene_overrides.ASPA]
+mechanism = "LOF"
+[gene_overrides.ASS1]
+mechanism = "LOF"
+[gene_overrides.ASXL3]
+mechanism = "LOF"
+[gene_overrides.ATF6]
+mechanism = "LOF"
+[gene_overrides.ATM]
+mechanism = "LOF"
+[gene_overrides.ATP13A2]
+mechanism = "LOF"
+[gene_overrides.ATP2A1]
+mechanism = "LOF"
+[gene_overrides.ATP2A2]
+mechanism = "LOF"
+[gene_overrides.ATP6V0A2]
+mechanism = "LOF"
+[gene_overrides.ATP7A]
+mechanism = "LOF"
+[gene_overrides.ATP7B]
+mechanism = "LOF"
+[gene_overrides.AUH]
+mechanism = "LOF"
+[gene_overrides.AURKC]
+mechanism = "LOF"
+[gene_overrides.AVP]
+mechanism = "LOF"
+[gene_overrides.B2M]
+mechanism = "LOF"
+[gene_overrides.B3GALNT2]
+mechanism = "LOF"
+[gene_overrides.B3GALT6]
+mechanism = "LOF"
+[gene_overrides.B4GAT1]
+mechanism = "LOF"
+[gene_overrides.BAG5]
+mechanism = "LOF"
+[gene_overrides.BCAP31]
+mechanism = "LOF"
+[gene_overrides.BCKDHB]
+mechanism = "LOF"
+[gene_overrides.BCKDK]
+mechanism = "LOF"
+[gene_overrides.BCO1]
+mechanism = "LOF"
+[gene_overrides.BGN]
+mechanism = "LOF"
+[gene_overrides.BIN1]
+mechanism = "LOF"
+[gene_overrides.BLTP1]
+mechanism = "LOF"
+[gene_overrides.BMPER]
+mechanism = "LOF"
+[gene_overrides.BMPR1A]
+mechanism = "LOF"
+[gene_overrides.BMPR1B]
+mechanism = "LOF"
+[gene_overrides.BMPR2]
+mechanism = "LOF"
+[gene_overrides.BPGM]
+mechanism = "LOF"
+[gene_overrides.BRCA1]
+mechanism = "LOF"
+[gene_overrides.BRCA2]
+mechanism = "LOF"
+[gene_overrides.BRF1]
+mechanism = "LOF"
+[gene_overrides.BRSK2]
+mechanism = "LOF"
+[gene_overrides.C1R]
+mechanism = "LOF_and_GOF"
+[gene_overrides.C3]
+mechanism = "LOF"
+[gene_overrides.CACNA1A]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CACNA1B]
+mechanism = "LOF"
+[gene_overrides.CACNA1D]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CAMTA1]
+mechanism = "LOF"
+[gene_overrides.CANT1]
+mechanism = "LOF"
+[gene_overrides.CAPN1]
+mechanism = "LOF"
+[gene_overrides.CAPRIN1]
+mechanism = "LOF"
+[gene_overrides.CARD11]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CARD8]
+mechanism = "LOF"
+[gene_overrides.CASK]
+mechanism = "LOF"
+[gene_overrides.CASR]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CAST]
+mechanism = "LOF"
+[gene_overrides.CBX2]
+mechanism = "LOF"
+[gene_overrides.CBY1]
+mechanism = "LOF"
+[gene_overrides.CCDC22]
+mechanism = "LOF"
+[gene_overrides.CCDC88A]
+mechanism = "LOF"
+[gene_overrides.CCM2]
+mechanism = "LOF"
+[gene_overrides.CCNO]
+mechanism = "LOF"
+[gene_overrides.CDC14A]
+mechanism = "LOF"
+[gene_overrides.CDC45]
+mechanism = "LOF"
+[gene_overrides.CDC6]
+mechanism = "LOF"
+[gene_overrides.CDH1]
+mechanism = "LOF"
+[gene_overrides.CDH11]
+mechanism = "LOF"
+[gene_overrides.CDH23]
+mechanism = "LOF"
+[gene_overrides.CDKN1B]
+mechanism = "LOF"
+[gene_overrides.CDKN1C]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CDT1]
+mechanism = "LOF"
+[gene_overrides.CEBPE]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CENPF]
+mechanism = "LOF"
+[gene_overrides.CEP19]
+mechanism = "LOF"
+[gene_overrides.CEP41]
+mechanism = "LOF"
+[gene_overrides.CEP55]
+mechanism = "LOF"
+[gene_overrides.CETP]
+mechanism = "LOF"
+[gene_overrides.CFAP300]
+mechanism = "LOF"
+[gene_overrides.CFAP418]
+mechanism = "LOF"
+[gene_overrides.CFAP43]
+mechanism = "LOF"
+[gene_overrides.CFAP44]
+mechanism = "LOF"
+[gene_overrides.CFTR]
+mechanism = "LOF"
+[gene_overrides.CHAT]
+mechanism = "LOF"
+[gene_overrides.CHD5]
+mechanism = "LOF"
+[gene_overrides.CHD6]
+mechanism = "LOF"
+[gene_overrides.CHD8]
+mechanism = "LOF"
+[gene_overrides.CHMP1A]
+mechanism = "LOF"
+[gene_overrides.CHRM3]
+mechanism = "LOF"
+[gene_overrides.CHRNA1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CHRNB1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CHRND]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CHRNE]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CHST14]
+mechanism = "LOF"
+[gene_overrides.CHST6]
+mechanism = "LOF"
+[gene_overrides.CHST8]
+mechanism = "LOF"
+[gene_overrides.CHSY1]
+mechanism = "LOF"
+[gene_overrides.CIC]
+mechanism = "LOF"
+[gene_overrides.CIDEC]
+mechanism = "LOF"
+[gene_overrides.CKAP2L]
+mechanism = "LOF"
+[gene_overrides.CLCN1]
+mechanism = "LOF"
+[gene_overrides.CLCN2]
+mechanism = "LOF"
+[gene_overrides.CLCN5]
+mechanism = "LOF"
+[gene_overrides.CLCNKA]
+mechanism = "LOF"
+[gene_overrides.CLCNKB]
+mechanism = "LOF"
+[gene_overrides.CLDN1]
+mechanism = "LOF"
+[gene_overrides.CLDN16]
+mechanism = "LOF"
+[gene_overrides.CLIP1]
+mechanism = "LOF"
+[gene_overrides.CLMP]
+mechanism = "LOF"
+[gene_overrides.CLP1]
+mechanism = "LOF"
+[gene_overrides.CLPB]
+mechanism = "LOF"
+[gene_overrides.CMPK2]
+mechanism = "LOF"
+[gene_overrides.CNNM4]
+mechanism = "LOF"
+[gene_overrides.COG2]
+mechanism = "LOF"
+[gene_overrides.COL11A1]
+mechanism = "LOF"
+[gene_overrides.COL11A2]
+mechanism = "LOF"
+[gene_overrides.COL12A1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.COL13A1]
+mechanism = "LOF"
+[gene_overrides.COL7A1]
+mechanism = "LOF"
+[gene_overrides.COL9A2]
+mechanism = "LOF"
+[gene_overrides.COL9A3]
+mechanism = "LOF"
+[gene_overrides.COLEC11]
+mechanism = "LOF"
+[gene_overrides.COQ4]
+mechanism = "LOF"
+[gene_overrides.COQ7]
+mechanism = "LOF"
+[gene_overrides.COQ8B]
+mechanism = "LOF"
+[gene_overrides.COX5A]
+mechanism = "LOF"
+[gene_overrides.COX6A1]
+mechanism = "LOF"
+[gene_overrides.COX8A]
+mechanism = "LOF"
+[gene_overrides.CP]
+mechanism = "LOF"
+[gene_overrides.CPA6]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CPS1]
+mechanism = "LOF"
+[gene_overrides.CPT1A]
+mechanism = "LOF"
+[gene_overrides.CRB2]
+mechanism = "LOF"
+[gene_overrides.CRELD1]
+mechanism = "LOF"
+[gene_overrides.CRPPA]
+mechanism = "LOF"
+[gene_overrides.CSF1R]
+mechanism = "LOF"
+[gene_overrides.CSF3R]
+mechanism = "LOF"
+[gene_overrides.CSNK2B]
+mechanism = "LOF"
+[gene_overrides.CSPP1]
+mechanism = "LOF"
+[gene_overrides.CSTA]
+mechanism = "LOF"
+[gene_overrides.CTDP1]
+mechanism = "LOF"
+[gene_overrides.CTH]
+mechanism = "LOF"
+[gene_overrides.CTNNB1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CTNND1]
+mechanism = "LOF"
+[gene_overrides.CTPS1]
+mechanism = "LOF"
+[gene_overrides.CTSC]
+mechanism = "LOF"
+[gene_overrides.CTSK]
+mechanism = "LOF"
+[gene_overrides.CUL3]
+mechanism = "LOF"
+[gene_overrides.CYBC1]
+mechanism = "LOF"
+[gene_overrides.CYP11A1]
+mechanism = "LOF"
+[gene_overrides.CYP19A1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.CYP24A1]
+mechanism = "LOF"
+[gene_overrides.CYP26B1]
+mechanism = "LOF"
+[gene_overrides.CYP26C1]
+mechanism = "LOF"
+[gene_overrides.DACT1]
+mechanism = "LOF"
+[gene_overrides.DAG1]
+mechanism = "LOF"
+[gene_overrides.DALRD3]
+mechanism = "LOF"
+[gene_overrides.DBT]
+mechanism = "LOF"
+[gene_overrides.DCC]
+mechanism = "LOF"
+[gene_overrides.DCHS1]
+mechanism = "LOF"
+[gene_overrides.DDRGK1]
+mechanism = "LOF"
+[gene_overrides.DDX3X]
+mechanism = "LOF"
+[gene_overrides.DEPDC5]
+mechanism = "LOF"
+[gene_overrides.DGAT1]
+mechanism = "LOF"
+[gene_overrides.DGKE]
+mechanism = "LOF"
+[gene_overrides.DHCR7]
+mechanism = "LOF"
+[gene_overrides.DHODH]
+mechanism = "LOF"
+[gene_overrides.DHTKD1]
+mechanism = "LOF"
+[gene_overrides.DIAPH1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.DICER1]
+mechanism = "LOF"
+[gene_overrides.DLAT]
+mechanism = "LOF"
+[gene_overrides.DLD]
+mechanism = "LOF"
+[gene_overrides.DLL4]
+mechanism = "LOF"
+[gene_overrides.DLX3]
+mechanism = "LOF"
+[gene_overrides.DNAAF11]
+mechanism = "LOF"
+[gene_overrides.DNAAF4]
+mechanism = "LOF"
+[gene_overrides.DNAAF6]
+mechanism = "LOF"
+[gene_overrides.DNAH9]
+mechanism = "LOF"
+[gene_overrides.DNAJB11]
+mechanism = "LOF"
+[gene_overrides.DNAJB13]
+mechanism = "LOF"
+[gene_overrides.DNAJB2]
+mechanism = "LOF"
+[gene_overrides.DNAJC3]
+mechanism = "LOF"
+[gene_overrides.DNAJC30]
+mechanism = "LOF"
+[gene_overrides.DNAJC6]
+mechanism = "LOF"
+[gene_overrides.DNASE1L3]
+mechanism = "LOF"
+[gene_overrides.DNMBP]
+mechanism = "LOF"
+[gene_overrides.DOCK11]
+mechanism = "LOF"
+[gene_overrides.DOCK2]
+mechanism = "LOF"
+[gene_overrides.DOCK3]
+mechanism = "LOF"
+[gene_overrides.DOCK6]
+mechanism = "LOF"
+[gene_overrides.DOCK7]
+mechanism = "LOF"
+[gene_overrides.DOK7]
+mechanism = "LOF"
+[gene_overrides.DOLK]
+mechanism = "LOF"
+[gene_overrides.DONSON]
+mechanism = "LOF"
+[gene_overrides.DPAGT1]
+mechanism = "LOF"
+[gene_overrides.DPP6]
+mechanism = "LOF"
+[gene_overrides.DPYS]
+mechanism = "LOF"
+[gene_overrides.DPYSL5]
+mechanism = "LOF"
+[gene_overrides.DRAM2]
+mechanism = "LOF"
+[gene_overrides.DRC1]
+mechanism = "LOF"
+[gene_overrides.DRC4]
+mechanism = "LOF"
+[gene_overrides.DSE]
+mechanism = "LOF"
+[gene_overrides.DSG1]
+mechanism = "LOF"
+[gene_overrides.DUOX2]
+mechanism = "LOF"
+[gene_overrides.DYM]
+mechanism = "LOF"
+[gene_overrides.DYRK1A]
+mechanism = "LOF"
+[gene_overrides.DZIP1L]
+mechanism = "LOF"
+[gene_overrides.EBP]
+mechanism = "LOF"
+[gene_overrides.ECM1]
+mechanism = "LOF"
+[gene_overrides.EDNRB]
+mechanism = "LOF"
+[gene_overrides.EGLN1]
+mechanism = "LOF"
+[gene_overrides.EHMT1]
+mechanism = "LOF"
+[gene_overrides.EIF2AK4]
+mechanism = "LOF"
+[gene_overrides.EIF4A2]
+mechanism = "LOF"
+[gene_overrides.EIF4A3]
+mechanism = "LOF"
+[gene_overrides.EIF5A]
+mechanism = "LOF"
+[gene_overrides.ELF4]
+mechanism = "LOF"
+[gene_overrides.ELMO2]
+mechanism = "LOF"
+[gene_overrides.ELN]
+mechanism = "LOF"
+[gene_overrides.EMP2]
+mechanism = "LOF"
+[gene_overrides.ENPP1]
+mechanism = "LOF"
+[gene_overrides.EP300]
+mechanism = "LOF"
+[gene_overrides.EPG5]
+mechanism = "LOF"
+[gene_overrides.EPHB4]
+mechanism = "LOF"
+[gene_overrides.EPM2A]
+mechanism = "LOF"
+[gene_overrides.EPS15L1]
+mechanism = "LOF"
+[gene_overrides.EPS8]
+mechanism = "LOF"
+[gene_overrides.ERBB3]
+mechanism = "LOF"
+[gene_overrides.ERBIN]
+mechanism = "LOF"
+[gene_overrides.ERCC6]
+mechanism = "LOF"
+[gene_overrides.ERCC6L2]
+mechanism = "LOF"
+[gene_overrides.ERLIN2]
+mechanism = "LOF"
+[gene_overrides.ESR1]
+mechanism = "LOF"
+[gene_overrides.ESR2]
+mechanism = "LOF"
+[gene_overrides.EXT2]
+mechanism = "LOF"
+[gene_overrides.EZR]
+mechanism = "LOF"
+[gene_overrides.FAAP100]
+mechanism = "LOF"
+[gene_overrides.FAM20C]
+mechanism = "LOF"
+[gene_overrides.FANCB]
+mechanism = "LOF"
+[gene_overrides.FANCM]
+mechanism = "LOF"
+[gene_overrides.FARS2]
+mechanism = "LOF"
+[gene_overrides.FASTKD2]
+mechanism = "LOF"
+[gene_overrides.FBXL4]
+mechanism = "LOF"
+[gene_overrides.FBXO31]
+mechanism = "LOF"
+[gene_overrides.FECH]
+mechanism = "LOF"
+[gene_overrides.FERMT1]
+mechanism = "LOF"
+[gene_overrides.FERMT3]
+mechanism = "LOF"
+[gene_overrides.FEZF1]
+mechanism = "LOF"
+[gene_overrides.FGD4]
+mechanism = "LOF"
+[gene_overrides.FGF20]
+mechanism = "LOF"
+[gene_overrides.FGF23]
+mechanism = "LOF_and_GOF"
+[gene_overrides.FGF8]
+mechanism = "LOF"
+[gene_overrides.FGFR1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.FH]
+mechanism = "LOF"
+[gene_overrides.FIBP]
+mechanism = "LOF"
+[gene_overrides.FIG4]
+mechanism = "LOF"
+[gene_overrides.FKBP10]
+mechanism = "LOF"
+[gene_overrides.FKRP]
+mechanism = "LOF"
+[gene_overrides.FKTN]
+mechanism = "LOF"
+[gene_overrides.FLAD1]
+mechanism = "LOF"
+[gene_overrides.FLG2]
+mechanism = "LOF"
+[gene_overrides.FLNA]
+mechanism = "LOF_and_GOF"
+[gene_overrides.FLNB]
+mechanism = "LOF_and_GOF"
+[gene_overrides.FLT4]
+mechanism = "LOF"
+[gene_overrides.FMO3]
+mechanism = "LOF"
+[gene_overrides.FMR1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.FNIP1]
+mechanism = "LOF"
+[gene_overrides.FOLR1]
+mechanism = "LOF"
+[gene_overrides.FOXE1]
+mechanism = "LOF"
+[gene_overrides.FOXG1]
+mechanism = "LOF"
+[gene_overrides.FOXJ1]
+mechanism = "LOF"
+[gene_overrides.FREM1]
+mechanism = "LOF"
+[gene_overrides.FREM2]
+mechanism = "LOF"
+[gene_overrides.FSHB]
+mechanism = "LOF"
+[gene_overrides.FSHR]
+mechanism = "LOF"
+[gene_overrides.FTL]
+mechanism = "LOF_and_GOF"
+[gene_overrides.FTO]
+mechanism = "LOF"
+[gene_overrides.FTSJ1]
+mechanism = "LOF"
+[gene_overrides.FXN]
+mechanism = "LOF"
+[gene_overrides.GALK1]
+mechanism = "LOF"
+[gene_overrides.GALNT3]
+mechanism = "LOF"
+[gene_overrides.GATA1]
+mechanism = "LOF"
+[gene_overrides.GATA3]
+mechanism = "LOF"
+[gene_overrides.GATA4]
+mechanism = "LOF"
+[gene_overrides.GATA5]
+mechanism = "LOF"
+[gene_overrides.GATA6]
+mechanism = "LOF"
+[gene_overrides.GATAD2B]
+mechanism = "LOF"
+[gene_overrides.GBA2]
+mechanism = "LOF"
+[gene_overrides.GCDH]
+mechanism = "LOF"
+[gene_overrides.GCM2]
+mechanism = "LOF"
+[gene_overrides.GDF5]
+mechanism = "LOF_and_GOF"
+[gene_overrides.GEMIN5]
+mechanism = "LOF"
+[gene_overrides.GET3]
+mechanism = "LOF"
+[gene_overrides.GINS1]
+mechanism = "LOF"
+[gene_overrides.GJA8]
+mechanism = "LOF"
+[gene_overrides.GLI1]
+mechanism = "LOF"
+[gene_overrides.GLI2]
+mechanism = "LOF"
+[gene_overrides.GLI3]
+mechanism = "LOF"
+[gene_overrides.GLIS2]
+mechanism = "LOF"
+[gene_overrides.GLS]
+mechanism = "LOF"
+[gene_overrides.GLUL]
+mechanism = "LOF"
+[gene_overrides.GMPPA]
+mechanism = "LOF"
+[gene_overrides.GNA11]
+mechanism = "LOF_and_GOF"
+[gene_overrides.GNMT]
+mechanism = "LOF"
+[gene_overrides.GNPTAB]
+mechanism = "LOF"
+[gene_overrides.GNPTG]
+mechanism = "LOF"
+[gene_overrides.GNRHR]
+mechanism = "LOF"
+[gene_overrides.GNS]
+mechanism = "LOF"
+[gene_overrides.GOSR2]
+mechanism = "LOF"
+[gene_overrides.GP6]
+mechanism = "LOF"
+[gene_overrides.GPC3]
+mechanism = "LOF"
+[gene_overrides.GPC6]
+mechanism = "LOF"
+[gene_overrides.GPNMB]
+mechanism = "LOF"
+[gene_overrides.GPR68]
+mechanism = "LOF"
+[gene_overrides.GREB1L]
+mechanism = "LOF"
+[gene_overrides.GRIA3]
+mechanism = "LOF"
+[gene_overrides.GRID2]
+mechanism = "LOF"
+[gene_overrides.GRIK2]
+mechanism = "LOF"
+[gene_overrides.GRIN1]
+mechanism = "LOF"
+[gene_overrides.GRK1]
+mechanism = "LOF"
+[gene_overrides.GRXCR2]
+mechanism = "LOF"
+[gene_overrides.GSC]
+mechanism = "LOF"
+[gene_overrides.GSS]
+mechanism = "LOF"
+[gene_overrides.GUCY1A1]
+mechanism = "LOF"
+[gene_overrides.GUCY2D]
+mechanism = "LOF"
+[gene_overrides.GYG1]
+mechanism = "LOF"
+[gene_overrides.H6PD]
+mechanism = "LOF"
+[gene_overrides.HAAO]
+mechanism = "LOF"
+[gene_overrides.HACD1]
+mechanism = "LOF"
+[gene_overrides.HACE1]
+mechanism = "LOF"
+[gene_overrides.HAMP]
+mechanism = "LOF"
+[gene_overrides.HAND2]
+mechanism = "LOF"
+[gene_overrides.HARS1]
+mechanism = "LOF"
+[gene_overrides.HDAC8]
+mechanism = "LOF"
+[gene_overrides.HERC1]
+mechanism = "LOF"
+[gene_overrides.HERC2]
+mechanism = "LOF"
+[gene_overrides.HEXB]
+mechanism = "LOF"
+[gene_overrides.HEY2]
+mechanism = "LOF"
+[gene_overrides.HGD]
+mechanism = "LOF"
+[gene_overrides.HGSNAT]
+mechanism = "LOF"
+[gene_overrides.HHAT]
+mechanism = "LOF"
+[gene_overrides.HINT1]
+mechanism = "LOF"
+[gene_overrides.HIVEP2]
+mechanism = "LOF"
+[gene_overrides.HJV]
+mechanism = "LOF"
+[gene_overrides.HLCS]
+mechanism = "LOF"
+[gene_overrides.HMGCS2]
+mechanism = "LOF"
+[gene_overrides.HMX1]
+mechanism = "LOF"
+[gene_overrides.HNF1B]
+mechanism = "LOF"
+[gene_overrides.HNRNPK]
+mechanism = "LOF"
+[gene_overrides.HOXC13]
+mechanism = "LOF"
+[gene_overrides.HPD]
+mechanism = "LOF"
+[gene_overrides.HPRT1]
+mechanism = "LOF"
+[gene_overrides.HS6ST1]
+mechanism = "LOF"
+[gene_overrides.HSD11B1]
+mechanism = "LOF"
+[gene_overrides.HSD11B2]
+mechanism = "LOF"
+[gene_overrides.HSD17B3]
+mechanism = "LOF"
+[gene_overrides.HSPA9]
+mechanism = "LOF"
+[gene_overrides.HSPG2]
+mechanism = "LOF"
+[gene_overrides.HYDIN]
+mechanism = "LOF"
+[gene_overrides.IARS2]
+mechanism = "LOF"
+[gene_overrides.IFNG]
+mechanism = "LOF"
+[gene_overrides.IFT140]
+mechanism = "LOF"
+[gene_overrides.IFT27]
+mechanism = "LOF"
+[gene_overrides.IFT54]
+mechanism = "LOF"
+[gene_overrides.IFT74]
+mechanism = "LOF"
+[gene_overrides.IGHMBP2]
+mechanism = "LOF"
+[gene_overrides.IGSF1]
+mechanism = "LOF"
+[gene_overrides.IKBKB]
+mechanism = "LOF_and_GOF"
+[gene_overrides.IL10]
+mechanism = "LOF"
+[gene_overrides.IL10RA]
+mechanism = "LOF"
+[gene_overrides.IL10RB]
+mechanism = "LOF"
+[gene_overrides.IL11RA]
+mechanism = "LOF"
+[gene_overrides.IL17RC]
+mechanism = "LOF"
+[gene_overrides.IL21R]
+mechanism = "LOF"
+[gene_overrides.IL36RN]
+mechanism = "LOF"
+[gene_overrides.IL6ST]
+mechanism = "LOF"
+[gene_overrides.IMPA1]
+mechanism = "LOF"
+[gene_overrides.IMPDH2]
+mechanism = "LOF"
+[gene_overrides.INSR]
+mechanism = "LOF"
+[gene_overrides.IPO8]
+mechanism = "LOF"
+[gene_overrides.IQCB1]
+mechanism = "LOF"
+[gene_overrides.IQSEC2]
+mechanism = "LOF"
+[gene_overrides.ITGA3]
+mechanism = "LOF"
+[gene_overrides.ITGB6]
+mechanism = "LOF"
+[gene_overrides.ITPR2]
+mechanism = "LOF"
+[gene_overrides.JAM2]
+mechanism = "LOF"
+[gene_overrides.KANSL1]
+mechanism = "LOF"
+[gene_overrides.KATNIP]
+mechanism = "LOF"
+[gene_overrides.KCNA2]
+mechanism = "LOF_and_GOF"
+[gene_overrides.KCNA5]
+mechanism = "LOF"
+[gene_overrides.KCNC1]
+mechanism = "LOF"
+[gene_overrides.KCNC2]
+mechanism = "LOF"
+[gene_overrides.KCNE1]
+mechanism = "LOF"
+[gene_overrides.KCNE2]
+mechanism = "LOF_and_GOF"
+[gene_overrides.KCNH2]
+mechanism = "LOF_and_GOF"
+[gene_overrides.KCNK3]
+mechanism = "LOF"
+[gene_overrides.KCNMA1]
+mechanism = "LOF"
+[gene_overrides.KCTD1]
+mechanism = "LOF"
+[gene_overrides.KDM6B]
+mechanism = "LOF"
+[gene_overrides.KDSR]
+mechanism = "LOF"
+[gene_overrides.KERA]
+mechanism = "LOF"
+[gene_overrides.KIAA0586]
+mechanism = "LOF"
+[gene_overrides.KIF14]
+mechanism = "LOF"
+[gene_overrides.KIF15]
+mechanism = "LOF"
+[gene_overrides.KIF1A]
+mechanism = "LOF"
+[gene_overrides.KIF1B]
+mechanism = "LOF"
+[gene_overrides.KIF1C]
+mechanism = "LOF"
+[gene_overrides.KIF20A]
+mechanism = "LOF"
+[gene_overrides.KIF21A]
+mechanism = "LOF"
+[gene_overrides.KIFBP]
+mechanism = "LOF"
+[gene_overrides.KISS1]
+mechanism = "LOF"
+[gene_overrides.KISS1R]
+mechanism = "LOF"
+[gene_overrides.KIT]
+mechanism = "LOF_and_GOF"
+[gene_overrides.KIZ]
+mechanism = "LOF"
+[gene_overrides.KL]
+mechanism = "LOF"
+[gene_overrides.KLHL40]
+mechanism = "LOF"
+[gene_overrides.KLHL41]
+mechanism = "LOF"
+[gene_overrides.KLHL7]
+mechanism = "LOF"
+[gene_overrides.KMT2C]
+mechanism = "LOF"
+[gene_overrides.KPTN]
+mechanism = "LOF"
+[gene_overrides.KRIT1]
+mechanism = "LOF"
+[gene_overrides.KRT5]
+mechanism = "LOF"
+[gene_overrides.KRT74]
+mechanism = "LOF"
+[gene_overrides.KRT83]
+mechanism = "LOF"
+[gene_overrides.KYNU]
+mechanism = "LOF"
+[gene_overrides.LAMA1]
+mechanism = "LOF"
+[gene_overrides.LAMB2]
+mechanism = "LOF"
+[gene_overrides.LARP7]
+mechanism = "LOF"
+[gene_overrides.LCAT]
+mechanism = "LOF"
+[gene_overrides.LEMD3]
+mechanism = "LOF"
+[gene_overrides.LEPR]
+mechanism = "LOF"
+[gene_overrides.LGI1]
+mechanism = "LOF"
+[gene_overrides.LGI4]
+mechanism = "LOF"
+[gene_overrides.LHCGR]
+mechanism = "LOF"
+[gene_overrides.LHX4]
+mechanism = "LOF"
+[gene_overrides.LIFR]
+mechanism = "LOF"
+[gene_overrides.LIPA]
+mechanism = "LOF"
+[gene_overrides.LMAN1]
+mechanism = "LOF"
+[gene_overrides.LMOD1]
+mechanism = "LOF"
+[gene_overrides.LMOD3]
+mechanism = "LOF"
+[gene_overrides.LOX]
+mechanism = "LOF"
+[gene_overrides.LPL]
+mechanism = "LOF"
+[gene_overrides.LRBA]
+mechanism = "LOF"
+[gene_overrides.LRP1]
+mechanism = "LOF"
+[gene_overrides.LRP4]
+mechanism = "LOF"
+[gene_overrides.LRP5]
+mechanism = "LOF_and_GOF"
+[gene_overrides.LRP6]
+mechanism = "LOF"
+[gene_overrides.LRPAP1]
+mechanism = "LOF"
+[gene_overrides.LTBP4]
+mechanism = "LOF_and_GOF"
+[gene_overrides.LYST]
+mechanism = "LOF"
+[gene_overrides.MAFB]
+mechanism = "LOF"
+[gene_overrides.MAG]
+mechanism = "LOF"
+[gene_overrides.MAGEL2]
+mechanism = "LOF"
+[gene_overrides.MAP1B]
+mechanism = "LOF"
+[gene_overrides.MAP3K14]
+mechanism = "LOF"
+[gene_overrides.MAP3K6]
+mechanism = "LOF"
+[gene_overrides.MAPKBP1]
+mechanism = "LOF"
+[gene_overrides.MARS1]
+mechanism = "LOF"
+[gene_overrides.MASP1]
+mechanism = "LOF"
+[gene_overrides.MBOAT7]
+mechanism = "LOF"
+[gene_overrides.MBTPS2]
+mechanism = "LOF"
+[gene_overrides.MCIDAS]
+mechanism = "LOF"
+[gene_overrides.MCM9]
+mechanism = "LOF"
+[gene_overrides.MCOLN1]
+mechanism = "LOF"
+[gene_overrides.MECP2]
+mechanism = "LOF"
+[gene_overrides.MED12]
+mechanism = "LOF"
+[gene_overrides.MED13L]
+mechanism = "LOF"
+[gene_overrides.MEF2C]
+mechanism = "LOF"
+[gene_overrides.MEN1]
+mechanism = "LOF"
+[gene_overrides.MESD]
+mechanism = "LOF"
+[gene_overrides.MFAP5]
+mechanism = "LOF"
+[gene_overrides.MFF]
+mechanism = "LOF"
+[gene_overrides.MFN2]
+mechanism = "LOF"
+[gene_overrides.MFRP]
+mechanism = "LOF"
+[gene_overrides.MFSD2A]
+mechanism = "LOF"
+[gene_overrides.MGAT2]
+mechanism = "LOF"
+[gene_overrides.MGME1]
+mechanism = "LOF"
+[gene_overrides.MGP]
+mechanism = "LOF"
+[gene_overrides.MIB1]
+mechanism = "LOF"
+[gene_overrides.MICU1]
+mechanism = "LOF"
+[gene_overrides.MME]
+mechanism = "LOF"
+[gene_overrides.MMP13]
+mechanism = "LOF_and_GOF"
+[gene_overrides.MMP21]
+mechanism = "LOF"
+[gene_overrides.MMP9]
+mechanism = "LOF"
+[gene_overrides.MMUT]
+mechanism = "LOF"
+[gene_overrides.MOCS1]
+mechanism = "LOF"
+[gene_overrides.MOCS2]
+mechanism = "LOF"
+[gene_overrides.MOGS]
+mechanism = "LOF"
+[gene_overrides.MPL]
+mechanism = "LOF"
+[gene_overrides.MRE11]
+mechanism = "LOF"
+[gene_overrides.MSH3]
+mechanism = "LOF"
+[gene_overrides.MSX2]
+mechanism = "LOF"
+[gene_overrides.MT-CO2]
+mechanism = "LOF"
+[gene_overrides.MTM1]
+mechanism = "LOF"
+[gene_overrides.MUSK]
+mechanism = "LOF"
+[gene_overrides.MYCBP2]
+mechanism = "LOF"
+[gene_overrides.MYH11]
+mechanism = "LOF"
+[gene_overrides.MYH2]
+mechanism = "LOF"
+[gene_overrides.MYL1]
+mechanism = "LOF"
+[gene_overrides.MYLK]
+mechanism = "LOF"
+[gene_overrides.MYMX]
+mechanism = "LOF"
+[gene_overrides.MYO18B]
+mechanism = "LOF"
+[gene_overrides.MYO5B]
+mechanism = "LOF"
+[gene_overrides.MYO7A]
+mechanism = "LOF"
+[gene_overrides.MYOD1]
+mechanism = "LOF"
+[gene_overrides.MYPN]
+mechanism = "LOF"
+[gene_overrides.MYT1L]
+mechanism = "LOF"
+[gene_overrides.NAA15]
+mechanism = "LOF"
+[gene_overrides.NAA20]
+mechanism = "LOF"
+[gene_overrides.NAA60]
+mechanism = "LOF"
+[gene_overrides.NADK2]
+mechanism = "LOF"
+[gene_overrides.NAGLU]
+mechanism = "LOF"
+[gene_overrides.NANS]
+mechanism = "LOF"
+[gene_overrides.NBAS]
+mechanism = "LOF"
+[gene_overrides.NBEAL2]
+mechanism = "LOF"
+[gene_overrides.NDP]
+mechanism = "LOF"
+[gene_overrides.NDUFA2]
+mechanism = "LOF"
+[gene_overrides.NDUFB11]
+mechanism = "LOF"
+[gene_overrides.NECAP1]
+mechanism = "LOF"
+[gene_overrides.NEK2]
+mechanism = "LOF"
+[gene_overrides.NEK8]
+mechanism = "LOF"
+[gene_overrides.NEK9]
+mechanism = "LOF"
+[gene_overrides.NEUROG3]
+mechanism = "LOF"
+[gene_overrides.NEXMIF]
+mechanism = "LOF"
+[gene_overrides.NEXN]
+mechanism = "LOF"
+[gene_overrides.NF1]
+mechanism = "LOF"
+[gene_overrides.NGLY1]
+mechanism = "LOF"
+[gene_overrides.NHLRC1]
+mechanism = "LOF"
+[gene_overrides.NKAP]
+mechanism = "LOF"
+[gene_overrides.NKX2-5]
+mechanism = "LOF"
+[gene_overrides.NONO]
+mechanism = "LOF"
+[gene_overrides.NPHP1]
+mechanism = "LOF"
+[gene_overrides.NPHP3]
+mechanism = "LOF"
+[gene_overrides.NPM1]
+mechanism = "LOF"
+[gene_overrides.NPRL2]
+mechanism = "LOF"
+[gene_overrides.NPRL3]
+mechanism = "LOF"
+[gene_overrides.NR0B1]
+mechanism = "LOF"
+[gene_overrides.NR1H4]
+mechanism = "LOF"
+[gene_overrides.NR2F1]
+mechanism = "LOF"
+[gene_overrides.NR3C2]
+mechanism = "LOF"
+[gene_overrides.NR4A2]
+mechanism = "LOF"
+[gene_overrides.NR5A1]
+mechanism = "LOF"
+[gene_overrides.NSD1]
+mechanism = "LOF"
+[gene_overrides.NSD2]
+mechanism = "LOF"
+[gene_overrides.NSDHL]
+mechanism = "LOF"
+[gene_overrides.NSMCE2]
+mechanism = "LOF"
+[gene_overrides.NT5E]
+mechanism = "LOF"
+[gene_overrides.NTHL1]
+mechanism = "LOF"
+[gene_overrides.NTRK1]
+mechanism = "LOF"
+[gene_overrides.NUDT2]
+mechanism = "LOF"
+[gene_overrides.NUP133]
+mechanism = "LOF"
+[gene_overrides.NUP155]
+mechanism = "LOF"
+[gene_overrides.NUP88]
+mechanism = "LOF"
+[gene_overrides.NUP93]
+mechanism = "LOF"
+[gene_overrides.NXN]
+mechanism = "LOF"
+[gene_overrides.OCLN]
+mechanism = "LOF"
+[gene_overrides.OCRL]
+mechanism = "LOF"
+[gene_overrides.ODAD1]
+mechanism = "LOF"
+[gene_overrides.ODAD2]
+mechanism = "LOF"
+[gene_overrides.ODAD3]
+mechanism = "LOF"
+[gene_overrides.ODAD4]
+mechanism = "LOF"
+[gene_overrides.ODAPH]
+mechanism = "LOF"
+[gene_overrides.OFD1]
+mechanism = "LOF"
+[gene_overrides.OGDH]
+mechanism = "LOF"
+[gene_overrides.ORC1]
+mechanism = "LOF"
+[gene_overrides.ORC4]
+mechanism = "LOF"
+[gene_overrides.ORC6]
+mechanism = "LOF"
+[gene_overrides.OTUD6B]
+mechanism = "LOF"
+[gene_overrides.OTULIN]
+mechanism = "LOF"
+[gene_overrides.PADI3]
+mechanism = "LOF"
+[gene_overrides.PAK2]
+mechanism = "LOF"
+[gene_overrides.PAK3]
+mechanism = "LOF"
+[gene_overrides.PAPSS2]
+mechanism = "LOF"
+[gene_overrides.PATL2]
+mechanism = "LOF"
+[gene_overrides.PAX2]
+mechanism = "LOF"
+[gene_overrides.PAX6]
+mechanism = "LOF"
+[gene_overrides.PAX8]
+mechanism = "LOF"
+[gene_overrides.PBX1]
+mechanism = "LOF"
+[gene_overrides.PCDH15]
+mechanism = "LOF"
+[gene_overrides.PCNT]
+mechanism = "LOF"
+[gene_overrides.PCYT1A]
+mechanism = "LOF"
+[gene_overrides.PDE4D]
+mechanism = "LOF"
+[gene_overrides.PDE6D]
+mechanism = "LOF"
+[gene_overrides.PDGFB]
+mechanism = "LOF"
+[gene_overrides.PDP1]
+mechanism = "LOF"
+[gene_overrides.PEPD]
+mechanism = "LOF"
+[gene_overrides.PEX1]
+mechanism = "LOF"
+[gene_overrides.PEX5]
+mechanism = "LOF"
+[gene_overrides.PEX6]
+mechanism = "LOF"
+[gene_overrides.PGAP1]
+mechanism = "LOF"
+[gene_overrides.PGAP3]
+mechanism = "LOF"
+[gene_overrides.PHEX]
+mechanism = "LOF"
+[gene_overrides.PHF6]
+mechanism = "LOF"
+[gene_overrides.PHGDH]
+mechanism = "LOF"
+[gene_overrides.PIGG]
+mechanism = "LOF"
+[gene_overrides.PIGQ]
+mechanism = "LOF"
+[gene_overrides.PIGY]
+mechanism = "LOF"
+[gene_overrides.PIK3C2A]
+mechanism = "LOF"
+[gene_overrides.PIKFYVE]
+mechanism = "LOF"
+[gene_overrides.PITX2]
+mechanism = "LOF_and_GOF"
+[gene_overrides.PKHD1]
+mechanism = "LOF"
+[gene_overrides.PKP1]
+mechanism = "LOF"
+[gene_overrides.PLA2G4A]
+mechanism = "LOF"
+[gene_overrides.PLAA]
+mechanism = "LOF"
+[gene_overrides.PLAAT3]
+mechanism = "LOF"
+[gene_overrides.PLK4]
+mechanism = "LOF"
+[gene_overrides.PLOD2]
+mechanism = "LOF"
+[gene_overrides.PLS3]
+mechanism = "LOF"
+[gene_overrides.PLVAP]
+mechanism = "LOF"
+[gene_overrides.PNP]
+mechanism = "LOF"
+[gene_overrides.PNPLA6]
+mechanism = "LOF"
+[gene_overrides.PNPO]
+mechanism = "LOF"
+[gene_overrides.POC1B]
+mechanism = "LOF"
+[gene_overrides.PODXL]
+mechanism = "LOF"
+[gene_overrides.POGZ]
+mechanism = "LOF"
+[gene_overrides.POLA1]
+mechanism = "LOF"
+[gene_overrides.POLE]
+mechanism = "LOF"
+[gene_overrides.POLR3H]
+mechanism = "LOF"
+[gene_overrides.POMGNT1]
+mechanism = "LOF"
+[gene_overrides.POMGNT2]
+mechanism = "LOF"
+[gene_overrides.POMK]
+mechanism = "LOF"
+[gene_overrides.POMT1]
+mechanism = "LOF"
+[gene_overrides.POMT2]
+mechanism = "LOF"
+[gene_overrides.POP1]
+mechanism = "LOF"
+[gene_overrides.POR]
+mechanism = "LOF"
+[gene_overrides.POU4F1]
+mechanism = "LOF"
+[gene_overrides.PPP1R15B]
+mechanism = "LOF"
+[gene_overrides.PRDM13]
+mechanism = "LOF"
+[gene_overrides.PRDM6]
+mechanism = "LOF"
+[gene_overrides.PRKACG]
+mechanism = "LOF"
+[gene_overrides.PRKAR1A]
+mechanism = "LOF_and_GOF"
+[gene_overrides.PRKCD]
+mechanism = "LOF"
+[gene_overrides.PRLR]
+mechanism = "LOF"
+[gene_overrides.PRMT7]
+mechanism = "LOF"
+[gene_overrides.PROK2]
+mechanism = "LOF"
+[gene_overrides.PROKR2]
+mechanism = "LOF"
+[gene_overrides.PRORP]
+mechanism = "LOF"
+[gene_overrides.PRPF4]
+mechanism = "LOF"
+[gene_overrides.PRPF8]
+mechanism = "LOF"
+[gene_overrides.PRPS1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.PRR12]
+mechanism = "LOF"
+[gene_overrides.PRRX1]
+mechanism = "LOF"
+[gene_overrides.PRX]
+mechanism = "LOF"
+[gene_overrides.PTCH1]
+mechanism = "LOF"
+[gene_overrides.PTEN]
+mechanism = "LOF"
+[gene_overrides.PTH1R]
+mechanism = "LOF_and_GOF"
+[gene_overrides.PTHLH]
+mechanism = "LOF"
+[gene_overrides.PTPN14]
+mechanism = "LOF"
+[gene_overrides.PTPRF]
+mechanism = "LOF"
+[gene_overrides.PUF60]
+mechanism = "LOF"
+[gene_overrides.PXDN]
+mechanism = "LOF"
+[gene_overrides.PYCR1]
+mechanism = "LOF"
+[gene_overrides.PYCR2]
+mechanism = "LOF"
+[gene_overrides.QARS1]
+mechanism = "LOF"
+[gene_overrides.RAB18]
+mechanism = "LOF"
+[gene_overrides.RAB23]
+mechanism = "LOF"
+[gene_overrides.RAB39B]
+mechanism = "LOF"
+[gene_overrides.RAB3GAP1]
+mechanism = "LOF"
+[gene_overrides.RAB3GAP2]
+mechanism = "LOF"
+[gene_overrides.RAPSN]
+mechanism = "LOF"
+[gene_overrides.RASA2]
+mechanism = "LOF"
+[gene_overrides.RASGRP1]
+mechanism = "LOF"
+[gene_overrides.RB1]
+mechanism = "LOF"
+[gene_overrides.RBCK1]
+mechanism = "LOF"
+[gene_overrides.RBM28]
+mechanism = "LOF"
+[gene_overrides.RBP4]
+mechanism = "LOF"
+[gene_overrides.RBSN]
+mechanism = "LOF"
+[gene_overrides.RDH11]
+mechanism = "LOF"
+[gene_overrides.RDH12]
+mechanism = "LOF"
+[gene_overrides.REEP2]
+mechanism = "LOF"
+[gene_overrides.REEP6]
+mechanism = "LOF"
+[gene_overrides.RELB]
+mechanism = "LOF"
+[gene_overrides.RELT]
+mechanism = "LOF"
+[gene_overrides.RERE]
+mechanism = "LOF"
+[gene_overrides.RET]
+mechanism = "LOF"
+[gene_overrides.RETREG1]
+mechanism = "LOF"
+[gene_overrides.RFC4]
+mechanism = "LOF"
+[gene_overrides.RHOH]
+mechanism = "LOF"
+[gene_overrides.RIN2]
+mechanism = "LOF"
+[gene_overrides.RIPK1]
+mechanism = "LOF"
+[gene_overrides.RIPK4]
+mechanism = "LOF"
+[gene_overrides.RLBP1]
+mechanism = "LOF"
+[gene_overrides.RMND1]
+mechanism = "LOF"
+[gene_overrides.RNASEH1]
+mechanism = "LOF"
+[gene_overrides.RNF216]
+mechanism = "LOF"
+[gene_overrides.ROBO1]
+mechanism = "LOF"
+[gene_overrides.ROGDI]
+mechanism = "LOF"
+[gene_overrides.ROR2]
+mechanism = "LOF_and_GOF"
+[gene_overrides.RPGRIP1]
+mechanism = "LOF"
+[gene_overrides.RPL10]
+mechanism = "LOF"
+[gene_overrides.RPL10L]
+mechanism = "LOF"
+[gene_overrides.RPL13]
+mechanism = "LOF"
+[gene_overrides.RPL8]
+mechanism = "LOF"
+[gene_overrides.RPS15A]
+mechanism = "LOF"
+[gene_overrides.RPS28]
+mechanism = "LOF"
+[gene_overrides.RPS29]
+mechanism = "LOF"
+[gene_overrides.RSPH1]
+mechanism = "LOF"
+[gene_overrides.RSPRY1]
+mechanism = "LOF"
+[gene_overrides.RXYLT1]
+mechanism = "LOF"
+[gene_overrides.RYR2]
+mechanism = "LOF"
+[gene_overrides.S1PR2]
+mechanism = "LOF"
+[gene_overrides.SAG]
+mechanism = "LOF"
+[gene_overrides.SALL1]
+mechanism = "LOF"
+[gene_overrides.SALL2]
+mechanism = "LOF"
+[gene_overrides.SAMD9]
+mechanism = "LOF"
+[gene_overrides.SAMHD1]
+mechanism = "LOF"
+[gene_overrides.SARS2]
+mechanism = "LOF"
+[gene_overrides.SASH3]
+mechanism = "LOF"
+[gene_overrides.SAT1]
+mechanism = "LOF"
+[gene_overrides.SCAF4]
+mechanism = "LOF"
+[gene_overrides.SCAPER]
+mechanism = "LOF"
+[gene_overrides.SCARB2]
+mechanism = "LOF"
+[gene_overrides.SCGN]
+mechanism = "LOF"
+[gene_overrides.SCN1B]
+mechanism = "LOF"
+[gene_overrides.SCN2B]
+mechanism = "LOF"
+[gene_overrides.SCN3B]
+mechanism = "LOF"
+[gene_overrides.SCN9A]
+mechanism = "LOF_and_GOF"
+[gene_overrides.SCNN1A]
+mechanism = "LOF_and_GOF"
+[gene_overrides.SCNN1B]
+mechanism = "LOF_and_GOF"
+[gene_overrides.SCNN1G]
+mechanism = "LOF_and_GOF"
+[gene_overrides.SDCCAG8]
+mechanism = "LOF"
+[gene_overrides.SDHA]
+mechanism = "LOF"
+[gene_overrides.SDHB]
+mechanism = "LOF"
+[gene_overrides.SDHC]
+mechanism = "LOF"
+[gene_overrides.SDHD]
+mechanism = "LOF"
+[gene_overrides.SEC23A]
+mechanism = "LOF"
+[gene_overrides.SEC23B]
+mechanism = "LOF"
+[gene_overrides.SELENOI]
+mechanism = "LOF"
+[gene_overrides.SEMA3A]
+mechanism = "LOF"
+[gene_overrides.SEPTIN4]
+mechanism = "LOF"
+[gene_overrides.SERPINB7]
+mechanism = "LOF"
+[gene_overrides.SERPINB8]
+mechanism = "LOF"
+[gene_overrides.SETBP1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.SETX]
+mechanism = "LOF"
+[gene_overrides.SF3B4]
+mechanism = "LOF"
+[gene_overrides.SFRP4]
+mechanism = "LOF"
+[gene_overrides.SFTPB]
+mechanism = "LOF"
+[gene_overrides.SFXN4]
+mechanism = "LOF"
+[gene_overrides.SGSH]
+mechanism = "LOF"
+[gene_overrides.SH2B1]
+mechanism = "LOF"
+[gene_overrides.SH3PXD2B]
+mechanism = "LOF"
+[gene_overrides.SHANK3]
+mechanism = "LOF"
+[gene_overrides.SHOX]
+mechanism = "LOF"
+[gene_overrides.SIL1]
+mechanism = "LOF"
+[gene_overrides.SIM1]
+mechanism = "LOF"
+[gene_overrides.SIN3B]
+mechanism = "LOF"
+[gene_overrides.SIRT6]
+mechanism = "LOF"
+[gene_overrides.SLC12A3]
+mechanism = "LOF"
+[gene_overrides.SLC12A5]
+mechanism = "LOF"
+[gene_overrides.SLC16A1]
+mechanism = "LOF"
+[gene_overrides.SLC18A2]
+mechanism = "LOF"
+[gene_overrides.SLC1A1]
+mechanism = "LOF"
+[gene_overrides.SLC22A12]
+mechanism = "LOF"
+[gene_overrides.SLC25A15]
+mechanism = "LOF"
+[gene_overrides.SLC25A26]
+mechanism = "LOF"
+[gene_overrides.SLC25A4]
+mechanism = "LOF"
+[gene_overrides.SLC25A46]
+mechanism = "LOF"
+[gene_overrides.SLC26A2]
+mechanism = "LOF"
+[gene_overrides.SLC26A3]
+mechanism = "LOF"
+[gene_overrides.SLC26A4]
+mechanism = "LOF"
+[gene_overrides.SLC2A1]
+mechanism = "LOF"
+[gene_overrides.SLC2A10]
+mechanism = "LOF"
+[gene_overrides.SLC2A9]
+mechanism = "LOF"
+[gene_overrides.SLC30A9]
+mechanism = "LOF"
+[gene_overrides.SLC34A1]
+mechanism = "LOF"
+[gene_overrides.SLC34A2]
+mechanism = "LOF"
+[gene_overrides.SLC34A3]
+mechanism = "LOF"
+[gene_overrides.SLC35D1]
+mechanism = "LOF"
+[gene_overrides.SLC38A8]
+mechanism = "LOF"
+[gene_overrides.SLC39A4]
+mechanism = "LOF"
+[gene_overrides.SLC40A1]
+mechanism = "LOF_and_GOF"
+[gene_overrides.SLC4A3]
+mechanism = "LOF"
+[gene_overrides.SLC5A1]
+mechanism = "LOF"
+[gene_overrides.SLC6A1]
+mechanism = "LOF"
+[gene_overrides.SLC6A2]
+mechanism = "LOF"
+[gene_overrides.SLC9A1]
+mechanism = "LOF"
+[gene_overrides.SLC9A3]
+mechanism = "LOF"
+[gene_overrides.SLCO2A1]
+mechanism = "LOF"
+[gene_overrides.SLITRK6]
+mechanism = "LOF"
+[gene_overrides.SMAD2]
+mechanism = "LOF"
+[gene_overrides.SMARCAD1]
+mechanism = "LOF"
+[gene_overrides.SMARCB1]
+mechanism = "LOF"
+[gene_overrides.SMARCD2]
+mechanism = "LOF"
+[gene_overrides.SMARCE1]
+mechanism = "LOF"
+[gene_overrides.SMC1A]
+mechanism = "LOF"
+[gene_overrides.SMPD1]
+mechanism = "LOF"
+[gene_overrides.SMPD4]
+mechanism = "LOF"
+[gene_overrides.SMS]
+mechanism = "LOF"
+[gene_overrides.SNAP29]
+mechanism = "LOF"
+[gene_overrides.SNX14]
+mechanism = "LOF"
+[gene_overrides.SOCS1]
+mechanism = "LOF"
+[gene_overrides.SON]
+mechanism = "LOF"
+[gene_overrides.SORD]
+mechanism = "LOF"
+[gene_overrides.SOST]
+mechanism = "LOF"
+[gene_overrides.SOX10]
+mechanism = "LOF"
+[gene_overrides.SOX3]
+mechanism = "LOF_and_GOF"
+[gene_overrides.SOX9]
+mechanism = "LOF"
+[gene_overrides.SPEF2]
+mechanism = "LOF"
+[gene_overrides.SPIDR]
+mechanism = "LOF"
+[gene_overrides.SPINK1]
+mechanism = "LOF"
+[gene_overrides.SPINT2]
+mechanism = "LOF"
+[gene_overrides.SPOP]
+mechanism = "LOF_and_GOF"
+[gene_overrides.SPRTN]
+mechanism = "LOF"
+[gene_overrides.SPTBN2]
+mechanism = "LOF"
+[gene_overrides.SRD5A2]
+mechanism = "LOF"
+[gene_overrides.SRP54]
+mechanism = "LOF"
+[gene_overrides.SRY]
+mechanism = "LOF"
+[gene_overrides.ST3GAL5]
+mechanism = "LOF"
+[gene_overrides.STAG2]
+mechanism = "LOF"
+[gene_overrides.STAR]
+mechanism = "LOF"
+[gene_overrides.STAT2]
+mechanism = "LOF"
+[gene_overrides.STK36]
+mechanism = "LOF"
+[gene_overrides.STN1]
+mechanism = "LOF"
+[gene_overrides.STRADA]
+mechanism = "LOF"
+[gene_overrides.STUB1]
+mechanism = "LOF"
+[gene_overrides.STX3]
+mechanism = "LOF"
+[gene_overrides.SUFU]
+mechanism = "LOF"
+[gene_overrides.SULT2B1]
+mechanism = "LOF"
+[gene_overrides.SUZ12]
+mechanism = "LOF"
+[gene_overrides.SVBP]
+mechanism = "LOF"
+[gene_overrides.SYT2]
+mechanism = "LOF"
+[gene_overrides.TAB2]
+mechanism = "LOF"
+[gene_overrides.TAC3]
+mechanism = "LOF"
+[gene_overrides.TACR3]
+mechanism = "LOF"
+[gene_overrides.TAF4]
+mechanism = "LOF"
+[gene_overrides.TAFAZZIN]
+mechanism = "LOF"
+[gene_overrides.TANGO2]
+mechanism = "LOF"
+[gene_overrides.TAOK1]
+mechanism = "LOF"
+[gene_overrides.TAT]
+mechanism = "LOF"
+[gene_overrides.TBC1D20]
+mechanism = "LOF"
+[gene_overrides.TBC1D24]
+mechanism = "LOF"
+[gene_overrides.TBC1D32]
+mechanism = "LOF"
+[gene_overrides.TBC1D7]
+mechanism = "LOF"
+[gene_overrides.TBC1D8B]
+mechanism = "LOF"
+[gene_overrides.TBCD]
+mechanism = "LOF"
+[gene_overrides.TBK1]
+mechanism = "LOF"
+[gene_overrides.TBX15]
+mechanism = "LOF"
+[gene_overrides.TBX20]
+mechanism = "LOF_and_GOF"
+[gene_overrides.TBX3]
+mechanism = "LOF"
+[gene_overrides.TBXT]
+mechanism = "LOF"
+[gene_overrides.TCF12]
+mechanism = "LOF"
+[gene_overrides.TCF4]
+mechanism = "LOF"
+[gene_overrides.TCIRG1]
+mechanism = "LOF"
+[gene_overrides.TCTN1]
+mechanism = "LOF"
+[gene_overrides.TCTN3]
+mechanism = "LOF"
+[gene_overrides.TEK]
+mechanism = "LOF_and_GOF"
+[gene_overrides.TENT5A]
+mechanism = "LOF"
+[gene_overrides.TET2]
+mechanism = "LOF"
+[gene_overrides.TEX11]
+mechanism = "LOF"
+[gene_overrides.TFR2]
+mechanism = "LOF"
+[gene_overrides.TGFB1]
+mechanism = "LOF"
+[gene_overrides.TGFB3]
+mechanism = "LOF"
+[gene_overrides.TGFBR1]
+mechanism = "LOF"
+[gene_overrides.TGM3]
+mechanism = "LOF"
+[gene_overrides.THOC2]
+mechanism = "LOF"
+[gene_overrides.THOC6]
+mechanism = "LOF"
+[gene_overrides.TIAM1]
+mechanism = "LOF"
+[gene_overrides.TIMM8A]
+mechanism = "LOF"
+[gene_overrides.TIMMDC1]
+mechanism = "LOF"
+[gene_overrides.TLCD3B]
+mechanism = "LOF"
+[gene_overrides.TMC6]
+mechanism = "LOF"
+[gene_overrides.TMC8]
+mechanism = "LOF"
+[gene_overrides.TMCO1]
+mechanism = "LOF"
+[gene_overrides.TMEM107]
+mechanism = "LOF"
+[gene_overrides.TMEM126B]
+mechanism = "LOF"
+[gene_overrides.TMEM138]
+mechanism = "LOF"
+[gene_overrides.TMEM216]
+mechanism = "LOF"
+[gene_overrides.TMEM218]
+mechanism = "LOF"
+[gene_overrides.TMEM231]
+mechanism = "LOF"
+[gene_overrides.TMEM237]
+mechanism = "LOF"
+[gene_overrides.TMEM260]
+mechanism = "LOF"
+[gene_overrides.TMEM43]
+mechanism = "LOF"
+[gene_overrides.TMEM94]
+mechanism = "LOF"
+[gene_overrides.TMPRSS6]
+mechanism = "LOF"
+[gene_overrides.TMTC3]
+mechanism = "LOF"
+[gene_overrides.TNFAIP3]
+mechanism = "LOF"
+[gene_overrides.TNFRSF4]
+mechanism = "LOF"
+[gene_overrides.TNIK]
+mechanism = "LOF"
+[gene_overrides.TOE1]
+mechanism = "LOF"
+[gene_overrides.TONSL]
+mechanism = "LOF"
+[gene_overrides.TOR1AIP1]
+mechanism = "LOF"
+[gene_overrides.TPK1]
+mechanism = "LOF"
+[gene_overrides.TPM4]
+mechanism = "LOF"
+[gene_overrides.TPP2]
+mechanism = "LOF"
+[gene_overrides.TRAIP]
+mechanism = "LOF"
+[gene_overrides.TRAK1]
+mechanism = "LOF"
+[gene_overrides.TRAPPC9]
+mechanism = "LOF"
+[gene_overrides.TREM2]
+mechanism = "LOF"
+[gene_overrides.TREX1]
+mechanism = "LOF"
+[gene_overrides.TRHR]
+mechanism = "LOF"
+[gene_overrides.TRIM2]
+mechanism = "LOF"
+[gene_overrides.TRIO]
+mechanism = "LOF"
+[gene_overrides.TRIP11]
+mechanism = "LOF"
+[gene_overrides.TRIP13]
+mechanism = "LOF"
+[gene_overrides.TRNT1]
+mechanism = "LOF"
+[gene_overrides.TRPV4]
+mechanism = "LOF_and_GOF"
+[gene_overrides.TSEN15]
+mechanism = "LOF"
+[gene_overrides.TSFM]
+mechanism = "LOF"
+[gene_overrides.TSHR]
+mechanism = "LOF"
+[gene_overrides.TSHZ1]
+mechanism = "LOF"
+[gene_overrides.TSPOAP1]
+mechanism = "LOF"
+[gene_overrides.TSPYL1]
+mechanism = "LOF"
+[gene_overrides.TSR2]
+mechanism = "LOF"
+[gene_overrides.TTC12]
+mechanism = "LOF"
+[gene_overrides.TTC5]
+mechanism = "LOF"
+[gene_overrides.TTC7A]
+mechanism = "LOF"
+[gene_overrides.TTLL5]
+mechanism = "LOF"
+[gene_overrides.TTN]
+mechanism = "LOF"
+[gene_overrides.TUB]
+mechanism = "LOF"
+[gene_overrides.TWIST1]
+mechanism = "LOF"
+[gene_overrides.TXN2]
+mechanism = "LOF"
+[gene_overrides.TXNDC15]
+mechanism = "LOF"
+[gene_overrides.TXNL4A]
+mechanism = "LOF"
+[gene_overrides.TXNRD2]
+mechanism = "LOF"
+[gene_overrides.TYK2]
+mechanism = "LOF"
+[gene_overrides.TYMP]
+mechanism = "LOF"
+[gene_overrides.TYR]
+mechanism = "LOF"
+[gene_overrides.TYROBP]
+mechanism = "LOF"
+[gene_overrides.UBA1]
+mechanism = "LOF"
+[gene_overrides.UBA5]
+mechanism = "LOF"
+[gene_overrides.UBE3A]
+mechanism = "LOF"
+[gene_overrides.UBE3B]
+mechanism = "LOF"
+[gene_overrides.UBE4A]
+mechanism = "LOF"
+[gene_overrides.UBR1]
+mechanism = "LOF"
+[gene_overrides.UCHL1]
+mechanism = "LOF"
+[gene_overrides.UCP2]
+mechanism = "LOF"
+[gene_overrides.UFSP2]
+mechanism = "LOF"
+[gene_overrides.UGT1A1]
+mechanism = "LOF"
+[gene_overrides.UMPS]
+mechanism = "LOF"
+[gene_overrides.UNC80]
+mechanism = "LOF"
+[gene_overrides.UROD]
+mechanism = "LOF"
+[gene_overrides.UROS]
+mechanism = "LOF"
+[gene_overrides.USH1C]
+mechanism = "LOF"
+[gene_overrides.USH1G]
+mechanism = "LOF"
+[gene_overrides.USP18]
+mechanism = "LOF"
+[gene_overrides.USP9X]
+mechanism = "LOF"
+[gene_overrides.VHL]
+mechanism = "LOF"
+[gene_overrides.VMA12]
+mechanism = "LOF"
+[gene_overrides.VMA22]
+mechanism = "LOF"
+[gene_overrides.VPS11]
+mechanism = "LOF"
+[gene_overrides.VPS13C]
+mechanism = "LOF"
+[gene_overrides.VPS4A]
+mechanism = "LOF"
+[gene_overrides.VPS4B]
+mechanism = "LOF"
+[gene_overrides.WAC]
+mechanism = "LOF"
+[gene_overrides.WDFY3]
+mechanism = "LOF"
+[gene_overrides.WDR26]
+mechanism = "LOF"
+[gene_overrides.WDR35]
+mechanism = "LOF"
+[gene_overrides.WDR37]
+mechanism = "LOF"
+[gene_overrides.WDR73]
+mechanism = "LOF"
+[gene_overrides.WEE2]
+mechanism = "LOF"
+[gene_overrides.WFS1]
+mechanism = "LOF"
+[gene_overrides.WNK1]
+mechanism = "LOF"
+[gene_overrides.WNT1]
+mechanism = "LOF"
+[gene_overrides.WNT3]
+mechanism = "LOF"
+[gene_overrides.WNT4]
+mechanism = "LOF"
+[gene_overrides.WNT7A]
+mechanism = "LOF"
+[gene_overrides.WNT9B]
+mechanism = "LOF"
+[gene_overrides.WWOX]
+mechanism = "LOF"
+[gene_overrides.XYLT1]
+mechanism = "LOF"
+[gene_overrides.XYLT2]
+mechanism = "LOF"
+[gene_overrides.YAP1]
+mechanism = "LOF"
+[gene_overrides.YIF1B]
+mechanism = "LOF"
+[gene_overrides.YY1]
+mechanism = "LOF"
+[gene_overrides.ZEB1]
+mechanism = "LOF"
+[gene_overrides.ZMYM2]
+mechanism = "LOF"
+[gene_overrides.ZMYND10]
+mechanism = "LOF"
+[gene_overrides.ZNF408]
+mechanism = "LOF"
+[gene_overrides.ZNHIT3]
+mechanism = "LOF"
+[gene_overrides.ZP3]
+mechanism = "LOF"
+[gene_overrides.ZPR1]
+mechanism = "LOF"
