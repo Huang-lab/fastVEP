@@ -283,6 +283,39 @@ impl ChromSynonyms {
         }
         out
     }
+
+    /// Invert [`ChromSynonyms::aliases`] over a known set of contig names, the
+    /// way [`chrom_alias_map`] inverts [`chrom_aliases`]: every accepted
+    /// spelling mapped to the canonical name actually present in `canonical`.
+    ///
+    /// Built once when a source is opened, so a lookup in a loop is one hash
+    /// probe rather than a `Vec` of aliases per query.
+    ///
+    /// A spelling that is itself a canonical name always maps to itself, so a
+    /// synonyms file cannot redirect a contig the caller really has onto
+    /// another one. Beyond that the first canonical name to claim a spelling
+    /// keeps it, so pass a sorted sequence when the result has to be
+    /// reproducible.
+    pub fn alias_map<I, S>(&self, canonical: I) -> HashMap<String, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let names: Vec<String> = canonical
+            .into_iter()
+            .map(|s| s.as_ref().to_string())
+            .collect();
+        let mut map: HashMap<String, String> = HashMap::with_capacity(names.len() * 4);
+        for name in &names {
+            map.insert(name.clone(), name.clone());
+        }
+        for name in &names {
+            for alias in self.aliases(name) {
+                map.entry(alias).or_insert_with(|| name.clone());
+            }
+        }
+        map
+    }
 }
 
 #[cfg(test)]
@@ -437,6 +470,49 @@ mod synonym_tests {
     fn single_token_lines_ignored() {
         let syn = ChromSynonyms::parse("17\n\nchr17\n");
         assert!(syn.is_empty());
+    }
+
+    #[test]
+    fn alias_map_reaches_canonical_names_through_the_file_and_the_mechanical_rules() {
+        // A cache directory is named `MT` and `10`; the VCF says `chrM`, `chr10`
+        // or the RefSeq accession. The file supplies the accession, the rules
+        // supply the rest.
+        let syn = ChromSynonyms::parse("10\tchr10\tNC_000010.11\nMT\tchrM\tNC_012920.1\n");
+        let map = syn.alias_map(["10", "MT"]);
+        for (query, want) in [
+            ("10", "10"),
+            ("chr10", "10"),
+            ("NC_000010.11", "10"),
+            ("MT", "MT"),
+            ("chrM", "MT"),
+            ("M", "MT"),
+            ("NC_012920.1", "MT"),
+        ] {
+            assert_eq!(
+                map.get(query).map(String::as_str),
+                Some(want),
+                "query {query}"
+            );
+        }
+        assert!(!map.contains_key("11"));
+        assert!(!map.contains_key("NC_000011.10"));
+    }
+
+    #[test]
+    fn alias_map_without_a_file_is_the_mechanical_map() {
+        let from_table = ChromSynonyms::new().alias_map(["1", "MT"]);
+        let mechanical = super::chrom_alias_map(["1", "MT"]);
+        assert_eq!(from_table, mechanical);
+    }
+
+    #[test]
+    fn alias_map_never_redirects_a_contig_the_caller_has() {
+        // A file that equates `1` with `chr2` must not make a cache that holds
+        // both directories answer `chr2` queries from directory `1`.
+        let syn = ChromSynonyms::parse("1\tchr2\n");
+        let map = syn.alias_map(["1", "chr2"]);
+        assert_eq!(map.get("1").map(String::as_str), Some("1"));
+        assert_eq!(map.get("chr2").map(String::as_str), Some("chr2"));
     }
 
     #[test]
