@@ -1,0 +1,7 @@
+##gff-version 3
+chr10	test	gene	1000	1100	.	+	.	ID=gene:Gchr10;Name=Gchr10;biotype=lncRNA
+chr10	test	lnc_RNA	1000	1100	.	+	.	ID=transcript:Tchr10;Parent=gene:Gchr10;biotype=lncRNA
+chr10	test	exon	1000	1100	.	+	.	ID=exon:Echr10;Parent=transcript:Tchr10;rank=1
+MT	test	gene	950	990	.	+	.	ID=gene:GMT;Name=GMT;biotype=lncRNA
+MT	test	lnc_RNA	950	990	.	+	.	ID=transcript:TMT;Parent=gene:GMT;biotype=lncRNA
+MT	test	exon	950	990	.	+	.	ID=exon:EMT;Parent=transcript:TMT;rank=1

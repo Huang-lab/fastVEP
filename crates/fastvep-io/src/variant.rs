@@ -1,6 +1,7 @@
+use crate::known::{AlleleKnown, KnownCells};
 use fastvep_core::{
     Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, SpliceContext, Strand,
-    SupplementaryAnnotation, VariantType,
+    SupplementaryAnnotation, TranscriptLocation, VariantType,
 };
 use std::sync::Arc;
 
@@ -20,8 +21,11 @@ pub struct VariationFeature {
     pub vcf_fields: Option<VcfFields>,
     /// Transcript-level annotations (populated during annotation).
     pub transcript_variations: Vec<TranscriptVariation>,
-    /// Co-located known variants (populated during annotation).
-    pub existing_variants: Vec<KnownVariant>,
+    /// VEP's known-variant columns (`AF`, `MAX_AF`, `CLIN_SIG`, ...) for each alt
+    /// allele that has any, worked out once per allele because every transcript
+    /// row of the allele reads the same cells. Empty unless a run asks for those
+    /// columns and a known variant matched.
+    pub known: Vec<AlleleKnown>,
     /// Whether the alleles were minimised.
     pub minimised: bool,
     /// Most severe consequence across all transcripts/alleles.
@@ -36,6 +40,16 @@ pub struct VariationFeature {
     pub supplementary_annotations: Vec<SupplementaryAnnotation>,
     /// Gene-level annotations (OMIM, pLI, etc.).
     pub gene_annotations: Vec<GeneAnnotation>,
+}
+
+impl VariationFeature {
+    /// The known-variant cells of an alt allele, if it has any.
+    pub fn known_for(&self, allele: &Allele) -> Option<&KnownCells> {
+        self.known
+            .iter()
+            .find(|k| k.allele == *allele)
+            .map(|k| &k.cells)
+    }
 }
 
 /// Parsed VCF fields for output reconstruction.
@@ -100,13 +114,18 @@ pub struct AlleleAnnotation {
     pub allele: Allele,
     pub consequences: Vec<Consequence>,
     pub impact: Impact,
-    pub cdna_position: Option<(u64, u64)>,
-    pub cds_position: Option<(u64, u64)>,
+    /// The `cDNA_position`, `CDS_position`, `Protein_position`, `EXON` and `INTRON`
+    /// cells as Ensembl VEP writes them: `?-7` for a change that begins outside an
+    /// exon, `601-602` for an insertion, `2-3/10` for a change over two exons.
+    pub location: TranscriptLocation,
+    /// The residue span, as the ACMG criteria read it. It is not what the writers
+    /// print; that is `location.protein`.
     pub protein_position: Option<(u64, u64)>,
     pub amino_acids: Option<(String, String)>,
     pub codons: Option<(String, String)>,
+    /// The exon the change starts in, as `(rank, total)`, for the ACMG last-exon
+    /// test. The `EXON` cell is `location.exon`.
     pub exon: Option<(u32, u32)>,
-    pub intron: Option<(u32, u32)>,
     /// Where this allele sits against the transcript's exons and introns, for
     /// the ACMG criteria and for nothing else.
     ///
@@ -146,20 +165,6 @@ pub struct AlleleAnnotation {
     /// Always `false` under `--pick*`, which deletes the losers instead of
     /// marking the winner, and under a plain run, which picks nothing.
     pub pick: bool,
-}
-
-/// A known/existing variant from the variation cache.
-#[derive(Debug, Clone)]
-pub struct KnownVariant {
-    pub name: String,
-    pub allele_string: Option<String>,
-    pub minor_allele: Option<String>,
-    pub minor_allele_freq: Option<f64>,
-    pub clinical_significance: Option<String>,
-    pub somatic: bool,
-    pub phenotype_or_disease: bool,
-    pub pubmed: Vec<String>,
-    pub frequencies: std::collections::HashMap<String, f64>,
 }
 
 impl VariationFeature {

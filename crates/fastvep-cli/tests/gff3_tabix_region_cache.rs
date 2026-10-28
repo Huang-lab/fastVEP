@@ -152,6 +152,9 @@ fn annotate(input: &Path, gff3: &Path, fasta: &Path, out: &Path) {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
+        columns: Default::default(),
+        exclude: Default::default(),
     })
     .unwrap();
 }

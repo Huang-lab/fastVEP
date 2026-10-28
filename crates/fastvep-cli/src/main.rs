@@ -20,6 +20,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Annotate variants with predicted consequences
+    ///
+    /// A flag that Ensembl VEP has is accepted in VEP's spelling as well as with
+    /// hyphens: `--af_1kg` is `--af-1kg`, `--check_existing` is `--check-existing`.
     Annotate {
         /// Input file (VCF format). Use "-" for stdin.
         #[arg(short, long)]
@@ -50,15 +53,19 @@ enum Commands {
         fasta: Option<String>,
 
         /// Output format (vcf, tab, json)
-        #[arg(long, default_value = "vcf")]
+        #[arg(long, alias = "output_format", default_value = "vcf")]
         output_format: String,
 
-        /// Turn on all common annotation flags
+        /// Turn on VEP's `--everything` set, among the flags fastVEP has:
+        /// `--hgvs --symbol --numbers --canonical --biotype --variant-class`, and
+        /// with `--cache-dir` the frequency flags too (`--af --af-1kg --af-gnomade
+        /// --af-gnomadg --max-af --pubmed`).
+        /// VEP's set has no `--hgvsg` or `--show_ref_allele`, and neither does this.
         #[arg(long)]
         everything: bool,
 
         /// Number of variants to buffer
-        #[arg(long, default_value_t = 5000)]
+        #[arg(long, alias = "buffer_size", default_value_t = 5000)]
         buffer_size: usize,
 
         /// Pick one consequence per variant, by `--pick-order` (not by severity:
@@ -71,48 +78,178 @@ enum Commands {
         pick: bool,
 
         /// Pick one consequence per (variant, allele). VEP's `--pick_allele`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "pick_allele", group = "pick_family")]
         pick_allele: bool,
 
         /// Pick one consequence per (variant, allele, gene).
         /// VEP's `--pick_allele_gene`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "pick_allele_gene", group = "pick_family")]
         pick_allele_gene: bool,
 
         /// Report every consequence, and mark the one `--pick` would have kept
         /// with `PICK=1`. VEP's `--flag_pick`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "flag_pick", group = "pick_family")]
         flag_pick: bool,
 
         /// Report every consequence, and mark the one chosen per allele.
         /// VEP's `--flag_pick_allele`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "flag_pick_allele", group = "pick_family")]
         flag_pick_allele: bool,
 
         /// Report every consequence, and mark the one chosen per allele and
         /// gene. VEP's `--flag_pick_allele_gene`.
-        #[arg(long, group = "pick_family")]
+        #[arg(long, alias = "flag_pick_allele_gene", group = "pick_family")]
         flag_pick_allele_gene: bool,
 
-        /// Include gene symbol in output
+        /// Add `SYMBOL`, `SYMBOL_SOURCE` and `HGNC_ID` to tab output. VEP's
+        /// `--symbol`. The VCF `CSQ` always has them.
         #[arg(long)]
         symbol: bool,
 
-        /// Include HGVS notations
+        /// Add HGVS notations: `HGVSc`, `HGVSp` and `HGVS_OFFSET` as tab columns,
+        /// and their values in the VCF and JSON output. VEP's `--hgvs`.
         #[arg(long)]
         hgvs: bool,
 
-        /// Include canonical transcript flag
+        /// Add `HGVSg` (`chr10:g.10414C>A`) to tab and VCF output, and to
+        /// JSON's `hgvsg`. VEP's `--hgvsg`.
+        ///
+        /// Written as VEP writes it: an insertion or deletion at its most 3'
+        /// position along the genome, and an insertion that repeats the bases
+        /// beside it as a `dup`. That reads the reference, so give `--fasta`;
+        /// without one the description is the plain one, where the VCF put the
+        /// variant. See docs/VEP_DIVERGENCE.md.
+        #[arg(long)]
+        hgvsg: bool,
+
+        /// Add `CANONICAL` (`YES`) to tab output. VEP's `--canonical`. The VCF
+        /// `CSQ` always has it.
         #[arg(long)]
         canonical: bool,
+
+        /// Add `BIOTYPE` to tab output. VEP's `--biotype`. The VCF `CSQ`
+        /// always has it.
+        #[arg(long)]
+        biotype: bool,
+
+        /// Add `EXON` and `INTRON` (`3/10`) to tab output. VEP's `--numbers`.
+        /// The VCF `CSQ` always has them.
+        #[arg(long)]
+        numbers: bool,
+
+        /// Add `VARIANT_CLASS` (`SNV`, `insertion`, `deletion`, ...) to tab and
+        /// VCF output. VEP's `--variant_class`.
+        #[arg(long, alias = "variant_class")]
+        variant_class: bool,
+
+        /// Add `REF_ALLELE` to tab output. VEP's `--show_ref_allele`. The VCF
+        /// `CSQ` always has it. (`--explicit-alleles` puts a `REF` column right
+        /// after `Allele` instead.)
+        #[arg(long, alias = "show_ref_allele")]
+        show_ref_allele: bool,
+
+        /// Write the length each position is counted in after `cDNA_position`,
+        /// `CDS_position` and `Protein_position` (`14/203`), as VEP's
+        /// `--total_length` does. The cDNA length goes on every row whose change
+        /// touches an exon, the CDS and protein lengths on those that touch the
+        /// coding sequence too, even when the cell itself is `-` (`-/1403`).
+        /// Tab and VCF output; JSON writes its positions as numbers.
+        #[arg(long, alias = "total_length")]
+        total_length: bool,
+
+        /// Do not percent-escape HGVS strings, as VEP's `--no_escape`: a synonymous
+        /// `HGVSp` ends `=` and not `%3D`, and the space of a gene symbol in VCF
+        /// output is `_` and not `%20`.
+        #[arg(long, alias = "no_escape")]
+        no_escape: bool,
+
+        /// Accepted for the sake of a `vep` command line, and does nothing:
+        /// `fastvep annotate` always writes over its output file, which is what
+        /// VEP's `--force_overwrite` asks for.
+        #[arg(long, alias = "force_overwrite")]
+        force_overwrite: bool,
+
+        /// Leave out RefSeq's predicted transcripts, `XM_` and `XR_`. VEP's
+        /// `--exclude_predicted`, which is `not stable_id match ^X._`, and so is this.
+        #[arg(long, alias = "exclude_predicted")]
+        exclude_predicted: bool,
+
+        /// Leave out transcripts the annotation tags `readthrough_transcript`, the ones that
+        /// span two genes. VEP's Ensembl cache has none of them (it is built without them);
+        /// a GFF3 has them, and VEP's `--gff` annotates them.
+        #[arg(long, alias = "exclude_readthrough")]
+        exclude_readthrough: bool,
+
+        /// Leave out transcripts of biotype `artifact`. VEP's Ensembl cache has none of them
+        /// (it is built without them); a GFF3 has them, and VEP's `--gff` annotates them.
+        #[arg(long, alias = "exclude_artifact")]
+        exclude_artifact: bool,
+
+        /// Add `AF`, the 1000 Genomes combined allele frequency of the known
+        /// variant, to the tab output and the CSQ. VEP's `--af`. Reads the
+        /// variation cache, so it needs `--cache-dir`.
+        ///
+        /// Written as VEP writes it, per input allele and to four decimals.
+        #[arg(long)]
+        af: bool,
+
+        /// Add `AF`, `AFR_AF`, `AMR_AF`, `EAS_AF`, `EUR_AF` and `SAS_AF`, the 1000
+        /// Genomes frequencies. VEP's `--af_1kg`. Needs `--cache-dir`.
+        #[arg(long, alias = "af_1kg")]
+        af_1kg: bool,
+
+        /// Add the gnomAD exomes frequencies, `gnomADe_AF` and one column for each
+        /// of its populations. VEP's `--af_gnomade`. Needs `--cache-dir`.
+        #[arg(long, alias = "af_gnomade", alias = "af-gnomad", alias = "af_gnomad")]
+        af_gnomade: bool,
+
+        /// Add the gnomAD genomes frequencies, `gnomADg_AF` and one column for
+        /// each of its populations. VEP's `--af_gnomadg`. Needs `--cache-dir`.
+        #[arg(long, alias = "af_gnomadg")]
+        af_gnomadg: bool,
+
+        /// Add `MAX_AF`, the highest frequency of any 1000 Genomes or gnomAD
+        /// population (not the combined ones), and `MAX_AF_POPS`, the populations
+        /// that have it. VEP's `--max_af`. Needs `--cache-dir`.
+        #[arg(long, alias = "max_af")]
+        max_af: bool,
+
+        /// Add `CLIN_SIG`, `SOMATIC` and `PHENO` from the known variants of
+        /// `--cache-dir`, to the tab output and the CSQ, as VEP's
+        /// `--check_existing` does. Every `--af*` flag, `--max-af` and
+        /// `--pubmed` imply it, and so does `--cache-dir`: a variation cache is
+        /// all it is for here, where VEP's `--cache` is also the transcript
+        /// cache, so the flag is only needed to be typed as VEP has it.
+        #[arg(long, alias = "check_existing")]
+        check_existing: bool,
+
+        /// Add `PUBMED`, the publications that cite the known variants, and fill
+        /// the CSQ's `PUBMED` with VEP's value. VEP's `--pubmed`. Needs
+        /// `--cache-dir`.
+        #[arg(long)]
+        pubmed: bool,
+
+        /// Whether `CLIN_SIG` is the significance a known variant gives for the
+        /// input allele (1, VEP's default) or the list it gives for the variant
+        /// (0). VEP's `--clin_sig_allele`.
+        #[arg(
+            long, alias = "clin_sig_allele",
+            value_name = "0|1",
+            default_value_t = 1,
+            value_parser = clap::value_parser!(u8).range(0..=1)
+        )]
+        clin_sig_allele: u8,
 
         /// Upstream/downstream distance (bp)
         #[arg(long, default_value_t = 5000)]
         distance: u64,
 
-        /// VEP's tabix variation cache, for `Existing_variation`: a directory of
-        /// `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index, which
-        /// is what `convert_cache.pl` and the indexed-cache download provide.
+        /// VEP's tabix variation cache, for `Existing_variation`, `CLIN_SIG`,
+        /// `SOMATIC` and `PHENO` (VEP's `--check_existing`; the frequencies and
+        /// the PubMed ids need `--af*`, `--max-af` and `--pubmed`): a directory
+        /// of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index,
+        /// which is what `convert_cache.pl` and the indexed-cache download
+        /// provide.
         ///
         /// Only known variants come from here. Transcripts do not: gene models
         /// are read from `--gff3`, and VEP's `{start}-{end}.gz` transcript
@@ -153,7 +290,7 @@ enum Commands {
         /// (identical to VEP, where transcript status outranks consequence severity).
         /// For clinical reporting put `rank` first, so a variant that disrupts a
         /// transcript is never reported as merely neighbouring a MANE one.
-        #[arg(long)]
+        #[arg(long, alias = "pick_order")]
         pick_order: Option<String>,
 
         /// Path to a curated functional-evidence TSV supplying PS3/BS3.
@@ -196,7 +333,7 @@ enum Commands {
         qc_rules: Option<String>,
 
         /// Suppress periodic progress output
-        #[arg(long, default_value_t = false)]
+        #[arg(long, alias = "no_progress", default_value_t = false)]
         no_progress: bool,
     },
 
@@ -340,9 +477,62 @@ enum Commands {
     },
 }
 
+/// `Cli::parse`, except that a flag of Ensembl VEP that fastVEP does not have is told what there
+/// is instead of what clap guesses it was mistaken for (`fastvep_cli::vep_flags`).
+fn parse_cli() -> Cli {
+    use clap::builder::StyledStr;
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+
+    match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(mut err) => {
+            if err.kind() == ErrorKind::UnknownArgument {
+                let tip = match err.get(ContextKind::InvalidArg) {
+                    Some(ContextValue::String(arg)) => fastvep_cli::vep_flags::tip(arg),
+                    _ => None,
+                };
+                if let Some(tip) = tip {
+                    // The usage line clap prints under the error has the guess in it too
+                    // (`Usage: fastvep annotate --input <INPUT> --symbol`), which says that
+                    // `--symbol` is what to type instead. It is the usage of a flag that is not
+                    // anything's near neighbour, which has no guess in it.
+                    err.remove(ContextKind::SuggestedArg);
+                    if let Some(usage) = plain_usage(&err) {
+                        err.insert(ContextKind::Usage, ContextValue::StyledStr(usage));
+                    }
+                    err.insert(
+                        ContextKind::Suggested,
+                        ContextValue::StyledStrs(vec![StyledStr::from(tip)]),
+                    );
+                }
+            }
+            err.exit()
+        }
+    }
+}
+
+/// The usage line of an unknown-flag error that has no guess in it, for an error of the same
+/// command as `err`.
+fn plain_usage(err: &clap::Error) -> Option<clap::builder::StyledStr> {
+    use clap::error::{ContextKind, ContextValue};
+
+    let of_annotate = match err.get(ContextKind::Usage) {
+        Some(ContextValue::StyledStr(usage)) => usage.to_string().contains("annotate"),
+        _ => false,
+    };
+    if !of_annotate {
+        return None;
+    }
+    let plain = Cli::try_parse_from(["fastvep", "annotate", "--no-such-flag-anywhere"]).err()?;
+    match plain.get(ContextKind::Usage) {
+        Some(ContextValue::StyledStr(usage)) => Some(usage.clone()),
+        _ => None,
+    }
+}
+
 fn main() -> Result<()> {
     env_logger::init();
-    let cli = Cli::parse();
+    let cli = parse_cli();
 
     match cli.command {
         Commands::Annotate {
@@ -351,7 +541,7 @@ fn main() -> Result<()> {
             gff3,
             fasta,
             output_format,
-            everything: _,
+            everything,
             buffer_size: _,
             pick,
             pick_allele,
@@ -359,9 +549,28 @@ fn main() -> Result<()> {
             flag_pick,
             flag_pick_allele,
             flag_pick_allele_gene,
-            symbol: _,
+            symbol,
             hgvs,
-            canonical: _,
+            hgvsg,
+            canonical,
+            biotype,
+            numbers,
+            variant_class,
+            show_ref_allele,
+            total_length,
+            no_escape,
+            force_overwrite: _,
+            exclude_predicted,
+            exclude_readthrough,
+            exclude_artifact,
+            af,
+            af_1kg,
+            af_gnomade,
+            af_gnomadg,
+            max_af,
+            check_existing,
+            pubmed,
+            clin_sig_allele,
             distance,
             cache_dir,
             transcript_cache,
@@ -393,7 +602,54 @@ fn main() -> Result<()> {
                     flag_pick_allele,
                     flag_pick_allele_gene,
                 },
-                hgvs,
+                // `--everything` is VEP's set of flags (Config.pm `OPTION_SETS`),
+                // restricted to what fastVEP can write.
+                hgvs: hgvs || everything,
+                columns: pipeline::ColumnFlags {
+                    show_ref_allele,
+                    variant_class,
+                    symbol,
+                    biotype,
+                    canonical,
+                    numbers,
+                    hgvsg,
+                    known: fastvep_io::known::KnownFlags {
+                        af,
+                        af_1kg,
+                        af_gnomade,
+                        af_gnomadg,
+                        max_af,
+                        check_existing,
+                        pubmed,
+                        no_clin_sig_allele: clin_sig_allele == 0,
+                    },
+                }
+                .union(if everything {
+                    pipeline::ColumnFlags::everything()
+                } else {
+                    pipeline::ColumnFlags::default()
+                })
+                // `--everything` has the frequency flags too, and they read a
+                // cache: with `--cache-dir` it is VEP's set, and without one it is
+                // the set fastVEP has always had, instead of an error for a flag
+                // the user did not type.
+                .union(pipeline::ColumnFlags {
+                    known: if everything && cache_dir.is_some() {
+                        fastvep_io::known::KnownFlags::everything()
+                    } else {
+                        Default::default()
+                    },
+                    ..Default::default()
+                }),
+                compat: pipeline::CompatFlags {
+                    total_length,
+                    no_escape,
+                },
+                exclude: pipeline::TranscriptExclusions {
+                    predicted: exclude_predicted,
+                    readthrough: exclude_readthrough,
+                    artifact: exclude_artifact,
+                },
                 distance,
                 cache_dir,
                 transcript_cache,

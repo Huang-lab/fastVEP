@@ -111,7 +111,14 @@ fastVEP generates HGVS nomenclature following the Human Genome Variation Society
 
 Notation types include substitutions, deletions, insertions, deletion-insertions (delins), duplications, frameshifts with termination position, stop-lost extensions carrying the extension length (`p.Ter100GlnextTer17`, falling back to `extTer?` only where the extended frame reaches the end of the transcript without another stop), and synonymous variants (`p.Arg41=`).
 
-For frameshift variants, the `hgvsp_frameshift` function constructs both the reference and alternative translateable sequences from the CDS start through the 3' UTR, applies the indel to produce the frameshifted coding sequence, and then translates both in parallel. It identifies the first amino acid position where the reference and alternative peptides diverge, then scans the alternative peptide downstream to locate the new termination codon. The resulting notation follows the format `p.Ala498ProfsTer28`, indicating the first changed residue (Ala498), the new amino acid at that position (Pro), and the distance to the new stop codon (Ter28). When the frameshifted sequence contains unresolved regions (e.g., due to incomplete 3' UTR coverage), the function reports `fsTer?` to indicate an indeterminate termination position.
+HGVSp is a transcription of Ensembl VEP's own `hgvs_protein` (release 116), one function to each of the routines it calls, so that its output can be compared with VEP's string by string.
+Ensembl's notation is not derived from the protein the change produces.
+The change is first moved to its most 3' position over the genome, as for HGVSc, and the notation is then a sequence of operations on two short peptides: the residues of the codon window the change edits there, before and after.
+The residues the two share at either end are clipped, the type (substitution, deletion, insertion, duplication, delins, frameshift, extension) follows from what is left, and an insertion or a deletion is moved along the protein while it repeats the residue after it.
+For a frameshift the first residue whose translation differs is found by translating the CDS with the change applied and the 3' UTR appended, and the new stop is counted from there: `p.Ala498ProfsTer28` names the first changed residue (Ala498), the residue now at that position (Pro) and the distance to the new stop (Ter28).
+The same translation counts the extension of a lost terminator (`p.Ter100GlnextTer17`).
+When the frame runs to the end of the transcript without another stop the count is `?` (`fsTer?`, `extTer?`).
+A change that loses the initiator is written `p.Met1?`, as Ensembl writes it.
 
 ### 2.6 Output Formats
 

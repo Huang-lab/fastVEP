@@ -1,5 +1,5 @@
 use fastvep_core::{Allele, Strand};
-use fastvep_genome::Transcript;
+use fastvep_genome::{Transcript, FRAMESHIFT_INTRON_SPAN};
 
 // Splice site boundaries relative to the intron, in genomic coordinates.
 // `intron_start` is the intron's first base and `intron_end` its last, so
@@ -42,6 +42,11 @@ pub struct SpliceEffects {
     pub donor_region: bool,
     pub polypyrimidine_tract: bool,
     pub region: bool,
+    /// Ensembl's `within_frameshift_intron`: the change reaches an intron short enough to be a
+    /// frameshift intron ([`FRAMESHIFT_INTRON_SPAN`]). Such an intron is skipped whole above, so
+    /// it earns no splice term and no `intron_variant`; what Ensembl says about the change
+    /// instead is a question of the coding sequence, and the caller answers it.
+    pub within_frameshift_intron: bool,
 }
 
 /// Whether `[var_start, var_end]` overlaps `[site_start, site_end]`.
@@ -87,11 +92,12 @@ pub fn splice_effects(
     // `splice_polypyrimidine_tract_variant` is gated once more, before any
     // predicate runs: `include => { exon => 0, intron => 1 }` in
     // `Utils/Config.pm`, so a delins that starts in an exon and runs into the
-    // tract earns an acceptor term and no tract term.
-    let mut touches_exon = false;
-    for exon in &transcript.exons {
-        touches_exon |= overlaps(var_start, var_end, exon.start, exon.end);
-    }
+    // tract earns an acceptor term and no tract term. The `exon` flag is
+    // `_overlapped_exons`, which is not a plain overlap: see
+    // `Transcript::overlaps_exon_flag`. In a transcript with a frameshift intron it
+    // is true for every change within 12 bases of an exon, which takes the tract
+    // (3 to 17 bases from the exon) away from all but its far end.
+    let touches_exon = transcript.overlaps_exon_flag(var_start, var_end);
 
     let mut start_site = false;
     let mut end_site = false;
@@ -103,6 +109,7 @@ pub fn splice_effects(
     let mut polypy_rev = false;
     let mut region = false;
     let mut intronic = false;
+    let mut within_frameshift_intron = false;
 
     // Regions outside, introns inside - the nesting Ensembl uses, and it is
     // observable. `splice_region` is *assigned* rather than or-assigned on each
@@ -122,12 +129,16 @@ pub fn splice_effects(
             let insertion = r_end + 1 == r_start;
             let (lo, hi) = (r_start.min(r_end), r_start.max(r_end));
             for_each_intron(transcript, |intron_start, intron_end| {
-                // An intron short enough to be a frameshift intron - 12 bases or
-                // fewer - is skipped whole: Ensembl treats a variant inside one as
-                // exonic rather than spliced.
-                if intron_end - intron_start < 12
+                // An intron short enough to be a frameshift intron is skipped whole:
+                // Ensembl treats a variant inside one as exonic rather than spliced
+                // (`_intron_effects` sets `within_frameshift_intron` and goes on to the
+                // next intron, in both of its loops). "Short enough" is `end - start <=
+                // 12`, so an intron of 13 bases is one; the comment beside Ensembl's
+                // test says 12 bases, and this code said `< 12` for that reason.
+                if intron_end - intron_start <= FRAMESHIFT_INTRON_SPAN
                     && overlaps(r_start, r_end, intron_start, intron_end)
                 {
+                    within_frameshift_intron = true;
                     return;
                 }
                 let back = |n: u64| intron_end.saturating_sub(n);
@@ -211,6 +222,7 @@ pub fn splice_effects(
         donor_region,
         polypyrimidine_tract,
         region,
+        within_frameshift_intron,
     }
 }
 
@@ -463,6 +475,9 @@ mod tests {
             gencode_primary: false,
             flags: vec![],
             codon_table_start_phase: 0,
+            initiator_met: false,
+            cds_flags_from_sequence: false,
+            readthrough: false,
         }
     }
 
@@ -643,6 +658,9 @@ mod tests {
             gencode_primary: false,
             flags: vec![],
             codon_table_start_phase: 0,
+            initiator_met: false,
+            cds_flags_from_sequence: false,
+            readthrough: false,
         }
     }
 
@@ -874,5 +892,89 @@ mod tests {
         // `ATAT/TAAT` differs at offsets 0 and 1 only, both inside it.
         let leading = splice_effects(&tr, 2000, 2003, &seq("ATAT"), &seq("TAAT"));
         assert!(leading.region, "every differing region is inside it");
+    }
+
+    /// The forward fixture (`1000-1200`, then an exon of 301 bases) with the intron between them
+    /// `len` bases long.
+    fn forward_with_intron(len: u64) -> Transcript {
+        let mut tr = make_forward_transcript();
+        tr.exons[1].start = 1201 + len;
+        tr.exons[1].end = tr.exons[1].start + 300;
+        tr.end = tr.exons[1].end;
+        tr.coding_region_end = Some(tr.end);
+        tr
+    }
+
+    #[test]
+    fn a_change_in_an_intron_of_thirteen_bases_earns_no_splice_term() {
+        // `_intron_effects` skips a frameshift intron whole once the change is in it, and
+        // 13 bases is one (`end - start <= 12`); 14 is an ordinary intron.
+        let short = effects(&forward_with_intron(13), 1205, 1205);
+        assert!(short.within_frameshift_intron);
+        assert!(
+            !(short.intronic
+                || short.donor
+                || short.acceptor
+                || short.donor_5th_base
+                || short.donor_region
+                || short.region),
+            "{short:?}"
+        );
+        let ordinary = effects(&forward_with_intron(14), 1205, 1205);
+        assert!(!ordinary.within_frameshift_intron);
+        assert!(ordinary.donor_5th_base, "{ordinary:?}");
+    }
+
+    #[test]
+    fn a_change_beside_a_frameshift_intron_is_not_in_it() {
+        // The last base of the exon before it keeps its splice region term.
+        let e = effects(&forward_with_intron(13), 1200, 1200);
+        assert!(!e.within_frameshift_intron);
+        assert!(e.region, "{e:?}");
+    }
+
+    #[test]
+    fn a_frameshift_intron_takes_the_polypyrimidine_tract_from_the_bases_near_any_exon() {
+        // Exon 2 starts at 2000. The tract is 3 to 17 bases before it: 1983 to 1997.
+        let mut tr = make_forward_transcript();
+        assert!(polypy(&tr, 1983) && polypy(&tr, 1990) && polypy(&tr, 1997));
+        // A third exon after a 13-base intron: every exon is 12 bases wider for the "touches an
+        // exon" test, `include => { exon => 0 }` on the tract, so only 13 to 17 bases is left.
+        let mut third = tr.exons[1].clone();
+        third.stable_id = "E3".into();
+        third.start = 2314;
+        third.end = 2400;
+        third.rank = 3;
+        tr.exons.push(third);
+        assert!(
+            polypy(&tr, 1983) && polypy(&tr, 1987),
+            "17 and 13 bases before"
+        );
+        assert!(!polypy(&tr, 1988), "12 bases before");
+        assert!(!polypy(&tr, 1997), "3 bases before");
+    }
+
+    #[test]
+    fn an_insertion_beside_the_widened_exon_is_judged_by_its_two_flanks() {
+        // Between 1987 and 1988, where 1988 is the first base the widened exon 2 reaches: the
+        // sorted pair touches it, so there is no tract term; one base further out it has.
+        let mut tr = make_forward_transcript();
+        let mut third = tr.exons[1].clone();
+        third.stable_id = "E3".into();
+        third.start = 2314;
+        third.end = 2400;
+        tr.exons.push(third);
+        let at = |before: u64| {
+            splice_effects(
+                &tr,
+                before + 1,
+                before,
+                &Allele::Deletion,
+                &Allele::Sequence(b"A".to_vec()),
+            )
+            .polypyrimidine_tract
+        };
+        assert!(at(1986), "flanks 1986 and 1987 are both outside");
+        assert!(!at(1987), "flank 1988 is inside");
     }
 }

@@ -1,0 +1,15 @@
+species	homo_sapiens
+assembly	GRCh38
+sift	b
+polyphen	b
+source_sift	6.2.1
+source_genebuild	GENCODE50
+source_gencode	GENCODE 50
+source_assembly	GRCh38.p14
+source_polyphen	2.2.3
+variation_cols	chr,variation_name,failed,somatic,start,end,allele_string,strand,clin_sig,phenotype_or_disease,clin_sig_allele,clin_sig_ref_allele,clinical_impact,pubmed,var_synonyms,AF,AFR,AMR,EAS,EUR,SAS,gnomADe,gnomADe_AFR,gnomADe_AMR,gnomADe_ASJ,gnomADe_EAS,gnomADe_FIN,gnomADe_NFE,gnomADe_REMAINING,gnomADe_SAS,gnomADe_MID,gnomADg,gnomADg_AFR,gnomADg_AMI,gnomADg_AMR,gnomADg_ASJ,gnomADg_EAS,gnomADg_FIN,gnomADg_MID,gnomADg_NFE,gnomADg_REMAINING,gnomADg_SAS
+source_dbSNP	156
+source_1000genomes	phase3
+source_gnomADe	v4.1
+source_gnomADg	v4.1
+var_type	tabix

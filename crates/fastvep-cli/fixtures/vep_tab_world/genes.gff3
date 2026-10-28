@@ -1,0 +1,29 @@
+##gff-version 3
+##sequence-region   chr10 1 30000
+chr10	test	gene	700	3600	.	+	.	ID=gene:ENSG00000000001;Name=GENEA;biotype=protein_coding;gene_id=ENSG00000000001;version=1
+chr10	test	mRNA	700	3600	.	+	.	ID=transcript:ENST00000000001;Parent=gene:ENSG00000000001;Name=GENEA-001;biotype=protein_coding;tag=Ensembl_canonical;transcript_id=ENST00000000001;version=1
+chr10	test	exon	700	1300	.	+	.	Parent=transcript:ENST00000000001;Name=ENSE00000000001;exon_id=ENSE00000000001;rank=1;version=1
+chr10	test	exon	2000	2200	.	+	.	Parent=transcript:ENST00000000001;Name=ENSE00000000002;exon_id=ENSE00000000002;rank=2;version=1
+chr10	test	exon	3000	3600	.	+	.	Parent=transcript:ENST00000000001;Name=ENSE00000000003;exon_id=ENSE00000000003;rank=3;version=1
+chr10	test	CDS	1100	1300	.	+	0	ID=CDS:ENSP00000000001;Parent=transcript:ENST00000000001;protein_id=ENSP00000000001;version=1
+chr10	test	CDS	2000	2200	.	+	0	ID=CDS:ENSP00000000001;Parent=transcript:ENST00000000001;protein_id=ENSP00000000001;version=1
+chr10	test	CDS	3000	3251	.	+	0	ID=CDS:ENSP00000000001;Parent=transcript:ENST00000000001;protein_id=ENSP00000000001;version=1
+chr10	test	mRNA	700	3600	.	+	.	ID=transcript:ENST00000000002;Parent=gene:ENSG00000000001;Name=GENEA-002;biotype=protein_coding;transcript_id=ENST00000000002;version=1
+chr10	test	exon	700	1300	.	+	.	Parent=transcript:ENST00000000002;Name=ENSE00000000004;exon_id=ENSE00000000004;rank=1;version=1
+chr10	test	exon	3000	3600	.	+	.	Parent=transcript:ENST00000000002;Name=ENSE00000000005;exon_id=ENSE00000000005;rank=2;version=1
+chr10	test	CDS	1100	1300	.	+	0	ID=CDS:ENSP00000000002;Parent=transcript:ENST00000000002;protein_id=ENSP00000000002;version=1
+chr10	test	CDS	3000	3251	.	+	0	ID=CDS:ENSP00000000002;Parent=transcript:ENST00000000002;protein_id=ENSP00000000002;version=1
+chr10	test	gene	9700	11700	.	-	.	ID=gene:ENSG00000000002;Name=GENEB;biotype=protein_coding;gene_id=ENSG00000000002;version=1
+chr10	test	mRNA	9700	11700	.	-	.	ID=transcript:ENST00000000003;Parent=gene:ENSG00000000002;Name=GENEB-003;biotype=protein_coding;tag=Ensembl_canonical;transcript_id=ENST00000000003;version=1
+chr10	test	exon	11000	11700	.	-	.	Parent=transcript:ENST00000000003;Name=ENSE00000000006;exon_id=ENSE00000000006;rank=1;version=1
+chr10	test	exon	9700	10400	.	-	.	Parent=transcript:ENST00000000003;Name=ENSE00000000007;exon_id=ENSE00000000007;rank=2;version=1
+chr10	test	CDS	11000	11300	.	-	0	ID=CDS:ENSP00000000003;Parent=transcript:ENST00000000003;protein_id=ENSP00000000003;version=1
+chr10	test	CDS	10099	10400	.	-	2	ID=CDS:ENSP00000000003;Parent=transcript:ENST00000000003;protein_id=ENSP00000000003;version=1
+chr10	test	gene	20000	21500	.	+	.	ID=gene:ENSG00000000003;Name=GENEC;biotype=lncRNA;gene_id=ENSG00000000003;version=1
+chr10	test	lnc_RNA	20000	21500	.	+	.	ID=transcript:ENST00000000004;Parent=gene:ENSG00000000003;Name=GENEC-004;biotype=lncRNA;tag=Ensembl_canonical;transcript_id=ENST00000000004;version=1
+chr10	test	exon	20000	20500	.	+	.	Parent=transcript:ENST00000000004;Name=ENSE00000000008;exon_id=ENSE00000000008;rank=1;version=1
+chr10	test	exon	21000	21500	.	+	.	Parent=transcript:ENST00000000004;Name=ENSE00000000009;exon_id=ENSE00000000009;rank=2;version=1
+chr10	test	gene	2500	3800	.	-	.	ID=gene:ENSG00000000004;Name=GENEE;biotype=lncRNA;gene_id=ENSG00000000004;version=1
+chr10	test	lnc_RNA	2500	3800	.	-	.	ID=transcript:ENST00000000005;Parent=gene:ENSG00000000004;Name=GENEE-005;biotype=lncRNA;tag=Ensembl_canonical;transcript_id=ENST00000000005;version=1
+chr10	test	exon	3700	3800	.	-	.	Parent=transcript:ENST00000000005;Name=ENSE00000000010;exon_id=ENSE00000000010;rank=1;version=1
+chr10	test	exon	2500	2600	.	-	.	Parent=transcript:ENST00000000005;Name=ENSE00000000011;exon_id=ENSE00000000011;rank=2;version=1

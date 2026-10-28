@@ -72,6 +72,9 @@ fn cli_inframe_insertion_hgvsp_is_normalised_not_a_substitution() {
         explicit_alleles: false,
         qc_rules: None,
         show_progress: false,
+        compat: Default::default(),
+        columns: Default::default(),
+        exclude: Default::default(),
     })
     .expect("annotation should succeed");
 
@@ -96,10 +99,10 @@ fn cli_inframe_insertion_hgvsp_is_normalised_not_a_substitution() {
     // `CGG` inserted after the Trp codon repeats the Arg that follows it, so
     // the HGVS 3'-rule shifts the insertion right and writes the repeat as a
     // duplication -- the value Ensembl VEP reports. Asserting the normalised
-    // form rather than a literal `delinsArgArg` also guards the peptide
-    // reaching this call site: `hgvsp_inframe_indel` falls back to the
-    // unshifted description whenever it has no usable peptide, so a pipeline
-    // that stopped passing `tr.peptide` would fail here.
+    // form rather than a literal `delinsArgArg` also guards the reference
+    // reaching this call site: the 3'-rule is worked out over the genome and
+    // then over the protein, so a pipeline that stopped passing either would
+    // write `p.Trp2_Arg3insArg` here.
     assert!(
         out.contains("p.Arg3dup"),
         "expected a normalised duplication for the in-frame insertion, got:\n{}",

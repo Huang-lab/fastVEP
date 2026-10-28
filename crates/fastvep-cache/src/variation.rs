@@ -15,11 +15,11 @@ use noodles_bgzf as bgzf;
 use noodles_core::region::Interval;
 use noodles_core::Position;
 use noodles_csi::binning_index::BinningIndex;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// The variation file of a chromosome directory.
 const DATA_FILE: &str = "all_vars.gz";
@@ -33,7 +33,7 @@ const MAX_OPEN_FILES: usize = 8;
 /// Columns that are not population frequencies. Everything else in
 /// `variation_cols` (`AFR`, `gnomADe_NFE`, ...) is a `POP -> "ALLELE:FREQ,..."`
 /// column.
-const NON_FREQUENCY_COLUMNS: [&str; 16] = [
+const NON_FREQUENCY_COLUMNS: [&str; 17] = [
     "chr",
     "variation_name",
     "failed",
@@ -48,6 +48,7 @@ const NON_FREQUENCY_COLUMNS: [&str; 16] = [
     "phenotype_or_disease",
     "pubmed",
     "clin_sig_allele",
+    "clin_sig_ref_allele",
     "clinical_impact",
     "var_synonyms",
 ];
@@ -65,6 +66,13 @@ pub struct VariationCacheRecord {
     pub minor_allele: Option<String>,
     pub minor_allele_freq: Option<f64>,
     pub clin_sig: Option<String>,
+    /// `T:pathogenic;C:benign`: the significance per allele, which VEP prefers
+    /// to `clin_sig` where the record has it (`add_colocated_variant_info`).
+    pub clin_sig_allele: Option<String>,
+    /// The reference allele `clin_sig_allele` is written against. When it is not
+    /// the input's reference, VEP reverse-complements the alleles of
+    /// `clin_sig_allele` before it looks the input allele up in them.
+    pub clin_sig_ref_allele: Option<String>,
     pub phenotype_or_disease: bool,
     pub pubmed: Vec<String>,
     /// Population name → raw frequency string (e.g., "A:0.001,G:0.999")
@@ -88,6 +96,8 @@ struct ColumnLayout {
     minor_allele: Option<usize>,
     minor_allele_freq: Option<usize>,
     clin_sig: Option<usize>,
+    clin_sig_allele: Option<usize>,
+    clin_sig_ref_allele: Option<usize>,
     phenotype_or_disease: Option<usize>,
     pubmed: Option<usize>,
     populations: Vec<(String, usize)>,
@@ -123,6 +133,8 @@ impl ColumnLayout {
             minor_allele: find("minor_allele"),
             minor_allele_freq: find("minor_allele_freq"),
             clin_sig: find("clin_sig"),
+            clin_sig_allele: find("clin_sig_allele"),
+            clin_sig_ref_allele: find("clin_sig_ref_allele"),
             phenotype_or_disease: find("phenotype_or_disease"),
             pubmed: find("pubmed"),
             populations,
@@ -132,10 +144,29 @@ impl ColumnLayout {
     /// `start` alone, so a line outside the window is rejected without being
     /// parsed in full.
     fn start_of(&self, line: &str) -> Result<u64> {
-        line.split('\t')
-            .nth(self.start)
-            .and_then(|v| v.parse().ok())
+        self.start_field(line)
+            .and_then(|field| field.parse().ok())
             .ok_or_else(|| anyhow!("variation cache line has no usable start: {:?}", line))
+    }
+
+    /// The `start` field of a line.
+    ///
+    /// This runs for every line the reader passes, which for a sorted input is every line of the
+    /// cache between the first variant and the last, so it walks the bytes to the column and does
+    /// not split the line (`split('\t').nth(n)` goes through a char searcher for each field, and
+    /// was 570 of the 4,893 samples of a lookup in a sampled profile of HG002's chr21 and chr22).
+    fn start_field<'a>(&self, line: &'a str) -> Option<&'a str> {
+        let bytes = line.as_bytes();
+        let mut from = 0;
+        for _ in 0..self.start {
+            from += bytes[from..].iter().position(|&b| b == b'\t')? + 1;
+        }
+        let to = bytes[from..]
+            .iter()
+            .position(|&b| b == b'\t')
+            .map_or(bytes.len(), |tab| from + tab);
+        // both ends are on a tab or at an end of the line, so on a char boundary
+        Some(&line[from..to])
     }
 
     /// `parse_variation` (`BaseCacheVariation.pm`): `.` is no value, `failed`,
@@ -181,26 +212,37 @@ impl ColumnLayout {
             minor_allele: get(self.minor_allele).map(str::to_string),
             minor_allele_freq: get(self.minor_allele_freq).and_then(|v| v.parse().ok()),
             clin_sig: get(self.clin_sig).map(str::to_string),
+            clin_sig_allele: get(self.clin_sig_allele).map(str::to_string),
+            clin_sig_ref_allele: get(self.clin_sig_ref_allele).map(str::to_string),
             phenotype_or_disease: flag(self.phenotype_or_disease),
+            // `split(',', $ex->{pubmed})`: Perl drops the empty fields at the end, and the
+            // real cache has a trailing comma on a few records (two of the 105,494 of a
+            // whole-genome callset on chr21 and chr22 had one in their PUBMED list)
             pubmed: get(self.pubmed)
-                .map(|v| v.split(',').map(str::to_string).collect())
+                .map(|v| {
+                    let mut ids: Vec<String> = v.split(',').map(str::to_string).collect();
+                    while ids.last().is_some_and(String::is_empty) {
+                        ids.pop();
+                    }
+                    ids
+                })
                 .unwrap_or_default(),
             frequencies,
         })
     }
 }
 
-/// One chromosome's `all_vars.gz`, open, with its index in memory.
-struct Source {
+/// The index of one chromosome's `all_vars.gz`, read and checked against the columns of
+/// `info.txt`. It does not change, so any number of readers of the file share one.
+struct FileIndex {
     index: Box<dyn BinningIndex + Send + Sync>,
     /// Position of this chromosome in the index. `None` when the index lists no
     /// contig at all, which is what an empty file's index looks like.
     ref_id: Option<usize>,
-    reader: bgzf::io::Reader<File>,
 }
 
-impl Source {
-    fn open(dir: &str, data: &Path, index_path: &Path, layout: &ColumnLayout) -> Result<Self> {
+impl FileIndex {
+    fn load(dir: &str, data: &Path, index_path: &Path, layout: &ColumnLayout) -> Result<Self> {
         let index = read_index(index_path)?;
 
         let header = index.header().ok_or_else(|| {
@@ -251,64 +293,184 @@ impl Source {
                 )
             })?)
         };
+        let file = File::open(data)
+            .with_context(|| format!("Opening variation file: {}", data.display()))?;
+        let length = file
+            .metadata()
+            .with_context(|| format!("Reading the size of {}", data.display()))?
+            .len();
+        // An index that says the records go on past the end of the file is the index of another
+        // file: the data was regenerated, replaced or cut short after it was indexed. Seeking into
+        // it is not an error in the bgzf reader, which panics for a seek into a file with no block
+        // there (`slice index starts at 15066 but ends at 0`, exit 101, with nothing to say which
+        // file), so it is said here, once, where the cache is opened, and not on the first variant
+        // of the chromosome. The end of the contig is in the metadata htslib writes into an index;
+        // asking the index for the whole contig instead makes a bin of each of the thousands it could
+        // hold, which made opening a cache a hundred times slower.
+        let last_end = ref_id
+            .and_then(|id| index.reference_sequences().nth(id))
+            .and_then(|reference| reference.metadata())
+            .map(|metadata| metadata.end_position());
+        if let Some(end) = last_end {
+            if end.compressed() > length || (end.compressed() == length && end.uncompressed() > 0) {
+                bail!(
+                    "{} indexes {} up to byte {} of it, and the file has {} bytes: it was \
+                     replaced or cut short after it was indexed. Restore the file, or rebuild \
+                     the index with `tabix -C -s {} -b {} -e {} {}`",
+                    index_path.display(),
+                    data.display(),
+                    end.compressed(),
+                    length,
+                    layout.chr + 1,
+                    layout.start + 1,
+                    layout.start + 1,
+                    data.display()
+                );
+            }
+        }
+        Ok(Self { index, ref_id })
+    }
+}
 
+/// One chromosome's `all_vars.gz`, open, with its index in memory.
+struct Source {
+    index: Arc<FileIndex>,
+    reader: bgzf::io::Reader<File>,
+    /// Lines read for the last query and not yet past, in file order, each with its
+    /// start. A sorted input asks for a window that overlaps the one before it, so
+    /// these are served again and the reader goes on from where it stopped,
+    /// instead of seeking back to the index's chunk start (which inflates the
+    /// block again and splits every line up to `lo` again, for every variant).
+    window: VecDeque<(u64, String)>,
+    /// Every line of the file that was read and has a start of at least this is in
+    /// `window`.
+    floor: u64,
+    /// `reader` sits right after the last line of `window`.
+    positioned: bool,
+    /// `reader` has read the last line of the file.
+    at_eof: bool,
+    /// The start of the last line read since the reader was last put somewhere by the index.
+    last_start: u64,
+    /// Lines read from the file, for a test that holds a sorted sweep to one read of each.
+    lines_read: u64,
+    /// Times the index was asked where to read, for a test that holds a sorted sweep to a few.
+    index_queries: u64,
+}
+
+impl Source {
+    fn open(data: &Path, index: Arc<FileIndex>) -> Result<Self> {
         let reader = File::open(data)
             .map(bgzf::io::Reader::new)
             .with_context(|| format!("Opening variation file: {}", data.display()))?;
         Ok(Self {
             index,
-            ref_id,
             reader,
+            window: VecDeque::new(),
+            floor: 0,
+            positioned: false,
+            at_eof: false,
+            last_start: 0,
+            lines_read: 0,
+            index_queries: 0,
         })
     }
 
     /// The records whose start lies in `lo..=hi`, in file order.
+    ///
+    /// The file is sorted by start, so what a query needs is the run of lines from
+    /// the first with a start of at least `lo` to the first past `hi`. The index
+    /// only says where a run that long can begin (`chunks[0].start()`), and a
+    /// window that follows the one before it needs no index at all: the lines are
+    /// the ones already read, and the reader carries on from the last of them.
     fn query(
         &mut self,
         lo: u64,
         hi: u64,
         layout: &ColumnLayout,
     ) -> Result<Vec<VariationCacheRecord>> {
-        let Some(ref_id) = self.ref_id else {
+        let Some(ref_id) = self.index.ref_id else {
             return Ok(Vec::new());
         };
         let lo = lo.max(1);
         if hi < lo {
             return Ok(Vec::new());
         }
-        let interval: Interval = (position(lo)?..=position(hi)?).into();
-        let chunks = self
-            .index
-            .query(ref_id, interval)
-            .context("Tabix query failed")?;
 
-        let mut records = Vec::new();
+        // Carry on from the last query when everything this one needs that is
+        // before the reader's position is still in the window: it starts at or after
+        // what the window holds, and the index puts its first line no later than
+        // where the reader is. Otherwise (an unsorted input, or a jump forward past
+        // what is worth reading through) go back to the index.
+        //
+        // The index is not asked when the reader has already read a line in the
+        // stretch of `1 << min_shift` bases that `lo` is in, or past it, or the file is
+        // read to its end: there is no first line of the window to jump to that is not
+        // behind the reader. Asking costs a bit set of one bit for every bin of the
+        // index, allocated and cleared, and a cache whose index is eight levels deep
+        // (the real ones: 19 million bins) clears 2.4 MB for every variant of the input.
+        // Which place the reader reads from only changes how much it reads, not which
+        // lines it keeps, so this cannot change an answer.
+        let continues = self.positioned && lo >= self.floor;
+        let shift = u32::from(self.index.index.min_shift());
+        let in_reach = continues
+            && (self.at_eof || lo.checked_shr(shift) <= self.last_start.checked_shr(shift));
+        let seek_to = if in_reach {
+            None
+        } else {
+            let interval: Interval = (position(lo)?..=position(hi)?).into();
+            self.index_queries += 1;
+            let chunks = self
+                .index
+                .index
+                .query(ref_id, interval)
+                .context("Tabix query failed")?;
+            // The earliest place a record of the window can be.
+            let Some(first) = chunks.first().map(|c| c.start()) else {
+                return Ok(Vec::new());
+            };
+            (!continues || first > self.reader.virtual_position()).then_some(first)
+        };
+        // Not trusted again until this query has read to its end: an error half way
+        // leaves the window and the reader out of step.
+        self.positioned = false;
+        if let Some(first) = seek_to {
+            self.window.clear();
+            self.reader.seek(first)?;
+            self.at_eof = false;
+            self.last_start = 0;
+        }
+        self.floor = lo;
+        while self.window.front().is_some_and(|(start, _)| *start < lo) {
+            self.window.pop_front();
+        }
+
+        // Read on until a line is past `hi`, keeping the lines that are not before `lo`.
         let mut line = String::new();
-
-        // The index hands back chunks sorted and merged (`optimize_chunks`), so no
-        // record is read twice.
-        for chunk in &chunks {
-            self.reader.seek(chunk.start())?;
-            loop {
-                line.clear();
-                if self.reader.read_line(&mut line)? == 0 {
-                    break;
-                }
-                let text = line.trim_end_matches(['\n', '\r']);
-                if !text.is_empty() {
-                    // Sorted by start: the first record past the window ends the chunk.
-                    let start = layout.start_of(text)?;
-                    if start > hi {
-                        break;
-                    }
-                    if start >= lo {
-                        records.push(layout.parse(text)?);
-                    }
-                }
-                if self.reader.virtual_position() >= chunk.end() {
-                    break;
-                }
+        while !self.at_eof && self.window.back().is_none_or(|(start, _)| *start <= hi) {
+            line.clear();
+            if self.reader.read_line(&mut line)? == 0 {
+                self.at_eof = true;
+                break;
             }
+            self.lines_read += 1;
+            let text = line.trim_end_matches(['\n', '\r']);
+            if text.is_empty() {
+                continue;
+            }
+            let start = layout.start_of(text)?;
+            self.last_start = start;
+            if start >= lo {
+                self.window.push_back((start, text.to_string()));
+            }
+        }
+
+        self.positioned = true;
+        let mut records = Vec::new();
+        for (start, text) in &self.window {
+            if *start > hi {
+                break;
+            }
+            records.push(layout.parse(text)?);
         }
         Ok(records)
     }
@@ -420,7 +582,29 @@ pub struct VariationTabixReader {
     indexes: HashMap<String, PathBuf>,
     /// The directory names, sorted, for messages.
     chromosomes: Vec<String>,
+    /// The indexes read so far, each one once, whoever reads the file.
+    loaded: Mutex<HashMap<String, Arc<FileIndex>>>,
+    /// The files [`query`](Self::query) reads, which every caller of it shares.
     open: Mutex<OpenSources>,
+}
+
+/// A place to look up from that belongs to one thread: its own open files, each with the lines it
+/// has read ahead, over the indexes of the reader it came from.
+///
+/// A sorted input is read by carrying on from the last window, which is why one reader's
+/// [`query`](VariationTabixReader::query) is a single stream of windows that every caller of it
+/// shares. A run of consecutive sites on another thread needs a stream of its own.
+pub struct VariationCursor<'a> {
+    reader: &'a VariationTabixReader,
+    open: OpenSources,
+}
+
+impl VariationCursor<'_> {
+    /// [`VariationTabixReader::query`], carrying on from this cursor's last window and not the
+    /// reader's.
+    pub fn query(&mut self, chrom: &str, lo: u64, hi: u64) -> Result<Vec<VariationCacheRecord>> {
+        self.reader.query_with(&mut self.open, chrom, lo, hi)
+    }
 }
 
 impl VariationTabixReader {
@@ -464,7 +648,7 @@ impl VariationTabixReader {
                 // first variant of that chromosome, possibly hours into a run, or
                 // not at all if the lookup error were ever swallowed. An index is
                 // small next to the data file it indexes.
-                Source::open(dir, &data, &index, &layout)?;
+                FileIndex::load(dir, &data, &index, &layout)?;
                 indexes.insert(dir.clone(), index);
             }
         }
@@ -494,6 +678,7 @@ impl VariationTabixReader {
             contigs,
             indexes,
             chromosomes,
+            loaded: Mutex::new(HashMap::new()),
             open: Mutex::new(OpenSources::default()),
         })
     }
@@ -521,6 +706,28 @@ impl VariationTabixReader {
     /// [`normalize_chrom`](Self::normalize_chrom) first to tell that from a
     /// window with nothing in it.
     pub fn query(&self, chrom: &str, lo: u64, hi: u64) -> Result<Vec<VariationCacheRecord>> {
+        let mut open = self
+            .open
+            .lock()
+            .map_err(|_| anyhow!("the variation cache reader's lock was poisoned"))?;
+        self.query_with(&mut open, chrom, lo, hi)
+    }
+
+    /// A [`VariationCursor`] with no file open yet.
+    pub fn cursor(&self) -> VariationCursor<'_> {
+        VariationCursor {
+            reader: self,
+            open: OpenSources::default(),
+        }
+    }
+
+    fn query_with(
+        &self,
+        open: &mut OpenSources,
+        chrom: &str,
+        lo: u64,
+        hi: u64,
+    ) -> Result<Vec<VariationCacheRecord>> {
         let Some(dir) = self.contigs.get(chrom) else {
             return Ok(Vec::new());
         };
@@ -528,17 +735,9 @@ impl VariationTabixReader {
             // The contig is known but the cache holds no variants for it.
             return Ok(Vec::new());
         };
-        let mut open = self
-            .open
-            .lock()
-            .map_err(|_| anyhow!("the variation cache reader's lock was poisoned"))?;
         let source = open.get_or_open(dir, || {
-            Source::open(
-                dir,
-                &self.cache_dir.join(dir).join(DATA_FILE),
-                index_path,
-                &self.layout,
-            )
+            let data = self.cache_dir.join(dir).join(DATA_FILE);
+            Source::open(&data, self.file_index(dir, &data, index_path)?)
         })?;
         source.query(lo, hi, &self.layout).with_context(|| {
             format!(
@@ -547,6 +746,20 @@ impl VariationTabixReader {
                 self.cache_dir.display()
             )
         })
+    }
+
+    /// The index of a chromosome's file, read the first time it is asked for.
+    fn file_index(&self, dir: &str, data: &Path, index_path: &Path) -> Result<Arc<FileIndex>> {
+        let mut loaded = self
+            .loaded
+            .lock()
+            .map_err(|_| anyhow!("the variation cache reader's lock was poisoned"))?;
+        if let Some(index) = loaded.get(dir) {
+            return Ok(Arc::clone(index));
+        }
+        let index = Arc::new(FileIndex::load(dir, data, index_path, &self.layout)?);
+        loaded.insert(dir.to_string(), Arc::clone(&index));
+        Ok(index)
     }
 
     /// Parse a single tab-separated line from the variation cache.
@@ -663,7 +876,7 @@ fn allele_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// `reverse_comp` of `Bio::EnsEMBL::Utils::Sequence`.
-fn reverse_complement(seq: &str) -> String {
+pub fn reverse_complement(seq: &str) -> String {
     seq.chars()
         .rev()
         .map(|c| match c {
@@ -999,6 +1212,8 @@ mod tests {
             minor_allele: None,
             minor_allele_freq: None,
             clin_sig: None,
+            clin_sig_allele: None,
+            clin_sig_ref_allele: None,
             phenotype_or_disease: false,
             pubmed: vec![],
             frequencies: HashMap::new(),
@@ -1013,6 +1228,7 @@ mod tests {
             contigs: HashMap::new(),
             indexes: HashMap::new(),
             chromosomes: Vec::new(),
+            loaded: Mutex::new(HashMap::new()),
             open: Mutex::new(OpenSources::default()),
         })
     }
@@ -1021,6 +1237,229 @@ mod tests {
     /// chromosome: each change of chromosome evicts the open file and reopens
     /// the other. The cap only bites with more than `MAX_OPEN_FILES`
     /// chromosomes, which no fixture here has, so lower it.
+    /// The cache of `fixtures/vep_cache_window`: 10,040 records on one chromosome in the densities a
+    /// real one has (a record every few bases, three hundred at one position, a sparse stretch, a
+    /// gap of a megabase) and some that are indels with an end before their start.
+    fn window_cache() -> (PathBuf, Vec<String>) {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/vep_cache_window");
+        let info = crate::info::CacheInfo::from_file(&dir.join("info.txt")).unwrap();
+        (dir, info.variation_cols)
+    }
+
+    /// Every record of the file as `(start, name)`, read with no index at all.
+    fn window_cache_records() -> Vec<(u64, String)> {
+        let (dir, cols) = window_cache();
+        let layout = ColumnLayout::new(&cols).unwrap();
+        let mut reader = bgzf::io::Reader::new(File::open(dir.join("7/all_vars.gz")).unwrap());
+        let mut all = Vec::new();
+        let mut line = String::new();
+        while reader.read_line(&mut line).unwrap() > 0 {
+            let text = line.trim_end();
+            let record = layout.parse(text).unwrap();
+            all.push((layout.start_of(text).unwrap(), record.variation_name));
+            line.clear();
+        }
+        all
+    }
+
+    /// The `(start, name)` of each record of an answer.
+    type Answer = Vec<(u64, String)>;
+
+    fn answer(records: &[VariationCacheRecord]) -> Answer {
+        records
+            .iter()
+            .map(|r| (r.start, r.variation_name.clone()))
+            .collect()
+    }
+
+    /// A reader that carries on from the last query answers every window as one that starts from
+    /// the index each time, and as a scan of the whole file does, whatever order the windows come
+    /// in: a sweep, a sweep with jumps back and forward, the same window again, windows that
+    /// start before the first record, in the gap, at the hot site and past the last.
+    #[test]
+    fn a_reader_that_carries_on_from_the_last_query_answers_as_one_that_does_not() {
+        let (dir, cols) = window_cache();
+        let all = window_cache_records();
+        assert_eq!(all.len(), 10_040);
+        let by_scan = |lo: u64, hi: u64| -> Vec<(u64, String)> {
+            all.iter()
+                .filter(|(s, _)| *s >= lo.max(1) && *s <= hi)
+                .cloned()
+                .collect()
+        };
+        let carrying = VariationTabixReader::new(&dir, &cols).unwrap();
+
+        // a deterministic stream of windows
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = |n: u64| -> u64 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) % n
+        };
+        let mut windows: Vec<(u64, u64)> = Vec::new();
+        // a sweep through the dense region with the windows an input would ask for
+        let mut p = 99_990;
+        for _ in 0..3_000 {
+            p += next(12);
+            windows.push((p.saturating_sub(1), p + next(30) + 1));
+        }
+        // the same windows again, and with jumps among them
+        windows.extend_from_slice(&windows.clone()[..200]);
+        for _ in 0..1_500 {
+            let at = 99_000 + next(1_600_000);
+            windows.push((at, at + next(200)));
+        }
+        // the hot site, the sparse stretch, the gap, before the first record, past the last
+        for (lo, hi) in [
+            (140_000, 140_000),
+            (139_999, 140_001),
+            (140_000, 140_000),
+            (199_990, 400_000),
+            (300_000, 300_100),
+            (700_000, 1_400_000),
+            (1, 50),
+            (0, 10),
+            (1_000_000_000, 1_000_000_100),
+            (99_000, 99_001),
+            (1_500_000, 1_900_000),
+        ] {
+            windows.push((lo, hi));
+        }
+        // and a long sorted sweep through the second dense region
+        let mut p = 1_499_990;
+        for _ in 0..2_500 {
+            p += next(3);
+            windows.push((p, p + next(8)));
+        }
+
+        for (i, (lo, hi)) in windows.iter().enumerate() {
+            let carried = answer(&carrying.query("7", *lo, *hi).unwrap());
+            let fresh = answer(
+                &VariationTabixReader::new(&dir, &cols)
+                    .unwrap()
+                    .query("7", *lo, *hi)
+                    .unwrap(),
+            );
+            assert_eq!(carried, fresh, "window {i}: {lo}..={hi}");
+            assert_eq!(
+                carried,
+                by_scan(*lo, *hi),
+                "window {i}: {lo}..={hi}, against a scan"
+            );
+        }
+    }
+
+    /// What makes the lookup fast is that a sorted input reads each line of the cache about once
+    /// and not once for every variant: sweeping the dense region with a window for each of 3,000
+    /// variants read the lines from the index's chunk start for every one of them, thousands of
+    /// lines a time, before the window carried on.
+    #[test]
+    fn a_sorted_sweep_reads_each_line_about_once() {
+        let (dir, cols) = window_cache();
+        let reader = VariationTabixReader::new(&dir, &cols).unwrap();
+        let mut p = 100_000u64;
+        let mut asked = 0usize;
+        while p < 120_000 {
+            p += 3;
+            reader.query("7", p - 1, p + 1).unwrap();
+            asked += 1;
+        }
+        assert!(asked > 6_000);
+        let open = reader.open.lock().unwrap();
+        let source = open.by_dir.values().next().expect("an open source");
+        // the dense region holds about 5,000 records below 120,000; every one of them, and the
+        // line past the last window, and the ones the first seek landed before: a few thousand
+        assert!(
+            source.lines_read < 12_000,
+            "{} lines read for {asked} windows",
+            source.lines_read
+        );
+        // and the index is asked where to start once, and again when the sweep goes into the next
+        // stretch of `1 << min_shift` bases that the reader has not reached, not for each window:
+        // every question allocates and clears a bit set of one bit for each bin of the index
+        assert!(
+            source.index_queries <= 4,
+            "{} index queries for {asked} windows",
+            source.index_queries
+        );
+    }
+
+    /// A cursor answers every window as a scan of the file does, and so do several at once, each
+    /// reading the runs of consecutive windows it was given, as the threads of a run do, alongside
+    /// the reader's own stream of windows.
+    #[test]
+    fn cursors_answer_as_a_scan_of_the_file_does_on_every_thread() {
+        let (dir, cols) = window_cache();
+        let all = window_cache_records();
+        let reader = VariationTabixReader::new(&dir, &cols).unwrap();
+        let by_scan = |lo: u64, hi: u64| -> Vec<(u64, String)> {
+            all.iter()
+                .filter(|(s, _)| *s >= lo.max(1) && *s <= hi)
+                .cloned()
+                .collect()
+        };
+
+        let mut state = 0x853C_49E6_748F_EA9Bu64;
+        let mut next = |n: u64| -> u64 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) % n
+        };
+        // 80 runs of 50 windows, each a sorted sweep from somewhere in one of the two dense
+        // regions of the file, as the runs of a sorted input are
+        let mut windows: Vec<(u64, u64)> = Vec::new();
+        for _ in 0..80 {
+            let mut p = if next(2) == 0 {
+                99_990 + next(30_000)
+            } else {
+                1_499_990 + next(15_000)
+            };
+            for _ in 0..50 {
+                p += next(40);
+                windows.push((p.saturating_sub(1), p + next(6) + 1));
+            }
+        }
+        let expected: Vec<Answer> = windows.iter().map(|&(lo, hi)| by_scan(lo, hi)).collect();
+        assert!(expected.iter().filter(|e| !e.is_empty()).count() > 500);
+
+        let per_thread: Vec<Vec<(usize, Answer)>> = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..4)
+                .map(|t| {
+                    let (reader, windows) = (&reader, &windows);
+                    scope.spawn(move || {
+                        let mut got = Vec::new();
+                        for (r, run) in windows.chunks(50).enumerate().filter(|(r, _)| r % 4 == t) {
+                            let mut cursor = reader.cursor();
+                            for (i, &(lo, hi)) in run.iter().enumerate() {
+                                got.push((r * 50 + i, answer(&cursor.query("7", lo, hi).unwrap())));
+                            }
+                        }
+                        got
+                    })
+                })
+                .collect();
+            // the reader's own stream goes on in the meantime, over windows that jump about
+            for _ in 0..300 {
+                let at = 99_990 + next(30_000);
+                let (lo, hi) = (at, at + next(60));
+                assert_eq!(
+                    answer(&reader.query("7", lo, hi).unwrap()),
+                    by_scan(lo, hi),
+                    "the reader's window {lo}..={hi}"
+                );
+            }
+            threads.into_iter().map(|t| t.join().unwrap()).collect()
+        });
+        let mut seen = 0;
+        for (i, got) in per_thread.into_iter().flatten() {
+            assert_eq!(got, expected[i], "window {i}: {:?}", windows[i]);
+            seen += 1;
+        }
+        assert_eq!(seen, windows.len());
+    }
+
     #[test]
     fn eviction_and_reopening_keep_every_answer() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/vep_cache/csi");
@@ -1107,6 +1546,27 @@ mod tests {
         assert_eq!(record.frequencies.get("EAS"), Some(&"A:0.001".to_string()));
     }
 
+    /// `split(',', ...)` of Perl drops the empty fields at the end, so a trailing comma
+    /// in the cache's `pubmed` is no PubMed id.
+    #[test]
+    fn a_trailing_comma_in_pubmed_is_no_id() {
+        let cols: Vec<String> = "chr,variation_name,start,allele_string,pubmed"
+            .split(',')
+            .map(String::from)
+            .collect();
+        let reader = parsing_reader(&cols).unwrap();
+        let r = reader.parse_line("1\trs1\t100\tA/G\t111,222,").unwrap();
+        assert_eq!(r.pubmed, ["111", "222"]);
+        let r = reader.parse_line("1\trs2\t100\tA/G\t111,,333").unwrap();
+        assert_eq!(
+            r.pubmed,
+            ["111", "", "333"],
+            "a field in the middle is kept"
+        );
+        let r = reader.parse_line("1\trs3\t100\tA/G\t.").unwrap();
+        assert!(r.pubmed.is_empty());
+    }
+
     #[test]
     fn a_zero_end_is_no_end() {
         let cols: Vec<String> = "chr,variation_name,start,end,allele_string"
@@ -1119,6 +1579,58 @@ mod tests {
         // An insertion keeps the end below its start.
         let r = reader.parse_line("1\trs2\t100\t99\t-/T").unwrap();
         assert_eq!((r.start, r.end), (100, 99));
+    }
+
+    /// Walking the bytes to the start column finds the field that splitting the line on tabs
+    /// does, for lines with fewer fields than the column, empty fields, fields that are not
+    /// numbers, a start too long for a `u64` and a column anywhere in the line.
+    #[test]
+    fn the_start_of_a_line_is_the_field_a_split_on_tabs_gives() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = |n: u64| -> u64 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let pieces = [
+            "",
+            "1",
+            "0",
+            "12345",
+            "rs1",
+            "A/G",
+            ".",
+            "-",
+            "18446744073709551615",
+            "18446744073709551616",
+            "1e3",
+            " 7",
+            "+8",
+            "\u{e9}",
+            "9\u{e9}",
+        ];
+        for column in 0..8usize {
+            let layout = ColumnLayout {
+                start: column,
+                ..ColumnLayout::new(&["chr".into(), "start".into(), "allele_string".into()])
+                    .unwrap()
+            };
+            for _ in 0..4_000 {
+                let fields = next(11);
+                let line: Vec<&str> = (0..fields)
+                    .map(|_| pieces[next(pieces.len() as u64) as usize])
+                    .collect();
+                let line = line.join("\t");
+                let by_split: Option<u64> =
+                    line.split('\t').nth(column).and_then(|v| v.parse().ok());
+                match (layout.start_of(&line), by_split) {
+                    (Ok(a), Some(b)) => assert_eq!(a, b, "column {column}, {line:?}"),
+                    (Err(_), None) => {}
+                    (got, want) => panic!("column {column}, {line:?}: {got:?} against {want:?}"),
+                }
+            }
+        }
     }
 
     #[test]
@@ -1381,5 +1893,65 @@ mod tests {
         // Query for a non-existent region should return empty
         let records = reader.query("21", 1, 1).unwrap();
         assert!(records.is_empty(), "No variants expected at position 1");
+    }
+
+    /// A copy of the cache of `fixtures/vep_known_columns` in a directory of its own, whose
+    /// `10/all_vars.gz` is made from the intact file by `data`, and the columns of its `info.txt`.
+    fn copied_known_columns_cache(
+        data: impl FnOnce(&[u8]) -> Vec<u8>,
+    ) -> (tempfile::TempDir, PathBuf, Vec<String>) {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/vep_known_columns/cache/homo_sapiens/116_GRCh38");
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("116_GRCh38");
+        std::fs::create_dir_all(cache.join("10")).unwrap();
+        for name in ["info.txt", "10/all_vars.gz.csi"] {
+            std::fs::copy(source.join(name), cache.join(name)).unwrap();
+        }
+        let intact = std::fs::read(source.join("10/all_vars.gz")).unwrap();
+        std::fs::write(cache.join("10/all_vars.gz"), data(&intact)).unwrap();
+        let info = crate::info::CacheInfo::from_file(&cache.join("info.txt")).unwrap();
+        (dir, cache, info.variation_cols)
+    }
+
+    /// An index of a file that is not the one that is there: the data was regenerated, replaced or
+    /// cut short after it was indexed. The bgzf reader panics for a seek into a file that has no
+    /// block there (`slice index starts at 15066 but ends at 0`, exit 101 with nothing to say which
+    /// file), so a file shorter than the index reaches is refused where the cache is opened, with
+    /// the name of the index and the command that rebuilds it.
+    #[test]
+    fn a_data_file_shorter_than_its_index_says_is_refused_when_the_cache_is_opened() {
+        for (what, make) in [
+            (
+                "an empty file",
+                Box::new(|_: &[u8]| Vec::new()) as Box<dyn Fn(&[u8]) -> Vec<u8>>,
+            ),
+            ("a plain-text stub", Box::new(|_: &[u8]| b"x\n".to_vec())),
+            (
+                "a file cut short",
+                Box::new(|all: &[u8]| all[..100].to_vec()),
+            ),
+            (
+                "half of it",
+                Box::new(|all: &[u8]| all[..all.len() / 2].to_vec()),
+            ),
+        ] {
+            let (_dir, cache, cols) = copied_known_columns_cache(|all| make(all));
+            let err = VariationTabixReader::new(&cache, &cols)
+                .err()
+                .unwrap_or_else(|| panic!("{what}: the cache was opened"));
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("replaced or cut short")
+                    && msg.contains("all_vars.gz.csi")
+                    && msg.contains("tabix -C -s 1 -b 5 -e 5"),
+                "{what}: {msg}"
+            );
+        }
+        // the intact file is as it was, and a lookup in it answers
+        let (_dir, cache, cols) = copied_known_columns_cache(<[u8]>::to_vec);
+        let reader = VariationTabixReader::new(&cache, &cols).unwrap();
+        assert!(!reader.query("10", 1, 1_000_000).unwrap().is_empty());
+        assert!(!reader.query("10", 40_000, 40_200).unwrap().is_empty());
     }
 }

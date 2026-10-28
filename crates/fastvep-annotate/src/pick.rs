@@ -577,7 +577,7 @@ fn appris_rank(appris: Option<&str>) -> u32 {
 #[cfg(test)]
 mod pick_tests {
     use super::*;
-    use fastvep_core::{Allele, Consequence, Impact, Strand};
+    use fastvep_core::{Allele, Consequence, Impact, Strand, TranscriptLocation};
     use fastvep_io::variant::AlleleAnnotation;
     use std::sync::Arc;
 
@@ -604,13 +604,11 @@ mod pick_tests {
                 allele: Allele::from_str("A"),
                 consequences,
                 impact: Impact::Modifier,
-                cdna_position: None,
-                cds_position: None,
+                location: TranscriptLocation::default(),
                 protein_position: None,
                 amino_acids: None,
                 codons: None,
                 exon: None,
-                intron: None,
                 splice: Default::default(),
                 distance: None,
                 protein_length: None,

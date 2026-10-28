@@ -1,0 +1,4 @@
+1	x	gene	1	50	.	-	.	ID=gene-A;Dbxref=GeneID:1;Name=A;gene_biotype=protein_coding
+1	x	mRNA	1	50	.	-	.	ID=rna-NM_1.1;Parent=gene-A;transcript_id=NM_1.1
+1	x	exon	1	50	.	-	.	ID=e1;Parent=rna-NM_1.1
+1	x	CDS	1	1	.	-	0	ID=c1;Parent=rna-NM_1.1;protein_id=NP_1.1;transl_except=(pos:complement(1..1),aa:Met)

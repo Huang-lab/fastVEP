@@ -427,6 +427,79 @@ fn a_matched_variant_carries_its_record_and_the_frequencies_of_the_matched_allel
     assert_eq!(cosmic.matched_allele, "");
 }
 
+// -- a cursor ----------------------------------------------------------------
+
+/// What a lookup answers, as something two answers can be compared by (a frequency map has no
+/// order to print it in).
+fn shape(per_alt: &[Vec<MatchedVariant>]) -> Vec<Vec<String>> {
+    per_alt
+        .iter()
+        .map(|list| {
+            list.iter()
+                .map(|m| {
+                    let mut frequencies: Vec<(&String, u64)> = m
+                        .frequencies
+                        .iter()
+                        .map(|(population, f)| (population, f.to_bits()))
+                        .collect();
+                    frequencies.sort();
+                    format!(
+                        "{} {} {} {:?} {frequencies:?}",
+                        m.name, m.matched_allele, m.somatic, m.clin_sig
+                    )
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The cursor that one thread of a run looks up from answers every site as the provider does,
+/// whatever order the sites come in, and what it could not place is in the totals of the provider
+/// it came from, so the warning at the end of the run still says what was missed.
+#[test]
+fn a_cursor_answers_as_the_provider_does_and_counts_into_its_totals() {
+    let sites = [
+        ("chr10", (10401, 10405), "ACCCT", vec!["-"]),
+        ("chr10", (10400, 10404), "AACCC", vec!["-"]),
+        ("chr10", (10409, 10408), "-", vec!["T"]),
+        ("chr10", (10421, 10420), "-", vec!["A"]),
+        ("chr10", (10414, 10414), "C", vec!["A", "G"]),
+        ("chr10", (10500, 10500), "A", vec!["C"]),
+        // back to a window that is behind the one before it
+        ("chr10", (10414, 10414), "C", vec!["T"]),
+        ("chrM", (100, 100), "A", vec!["G"]),
+        ("chr10", (10409, 10408), "-", vec!["T"]),
+        ("chrUn_KI270742v1", (500, 500), "A", vec!["C"]),
+        ("chrUn_KI270742v1", (900, 900), "A", vec!["C"]),
+    ];
+    let by_provider = provider("csi");
+    let by_cursor = provider("csi");
+    let cursor = by_cursor.cursor();
+    let mut found = 0;
+    for (chrom, (start, end), reference, alt) in &sites {
+        let (start, end) = (*start, *end);
+        let want = by_provider
+            .get_matched_variants(chrom, start, end, reference, &alts(alt))
+            .unwrap();
+        let got = cursor
+            .get_matched_variants(chrom, start, end, reference, &alts(alt))
+            .unwrap();
+        assert_eq!(shape(&got), shape(&want), "{chrom}:{start}-{end}");
+        found += want.iter().map(Vec::len).sum::<usize>();
+    }
+    // or two empty answers would be the same
+    assert!(found >= 10, "only {found} known variants were found");
+    let said = by_cursor
+        .finish()
+        .expect("two sites were on a contig the cache does not hold");
+    assert!(
+        said.starts_with("warning: 2 of 11 variants are on contigs"),
+        "{said}"
+    );
+    assert!(said.contains("chrUn_KI270742v1 (2)"), "{said}");
+    assert_eq!(said, by_provider.finish().unwrap());
+}
+
 // -- what the run tells the user ---------------------------------------------
 
 #[test]
@@ -450,6 +523,13 @@ fn a_run_that_found_no_contig_in_the_cache_says_so() {
         partial.contains("Existing_variation is empty for those"),
         "{partial}"
     );
+    // the variants are on contigs the cache does NOT know: the warning said `knows`, which is what
+    // the other case (below) says of the one contig it is about, and read as the opposite
+    assert!(
+        partial.contains("on contigs that --cache-dir ") && partial.contains(" does not know, so "),
+        "{partial}"
+    );
+    assert!(!partial.contains(" knows"), "{partial}");
     assert!(
         partial.contains("The cache has 10, MT"),
         "the cache's contigs: {partial}"
@@ -466,10 +546,11 @@ fn a_run_with_no_resolvable_contig_at_all_says_that_instead() {
     lookup(&p, "NC_000010.99", (10414, 10414), "C", &["A"]);
     let all = p.finish().unwrap();
     assert!(
-        all.contains("none of the input's variants is on a contig"),
+        all.contains("none of the input's variants is on a contig that --cache-dir ")
+            && all.contains(" knows, so Existing_variation is empty for all of them"),
         "{all}"
     );
-    assert!(all.contains("empty for all of them"), "{all}");
+    assert!(!all.contains("does not know"), "{all}");
 }
 
 // -- errors are errors -------------------------------------------------------

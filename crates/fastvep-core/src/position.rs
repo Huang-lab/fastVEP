@@ -164,6 +164,59 @@ impl Allele {
     pub fn is_symbolic(&self) -> bool {
         matches!(self, Allele::Symbolic(_))
     }
+
+    /// Whether this allele is something Ensembl can translate: a run of `A`, `C`, `G` and `T`
+    /// in either case, or the `-` of a deletion (`seq_is_unambiguous_dna`, `^[ACGT-]+$`).
+    ///
+    /// `N` and the other ambiguity codes are not, and neither are `*` and a symbolic allele.
+    /// For an allele that fails this, Ensembl has no peptide, so no `Amino_acids`, no
+    /// `HGVSp`, no `HGVSc`, and no consequence term that is about the protein: a change
+    /// that moves the frame is a `frameshift_variant` and anything else in the coding
+    /// sequence is `coding_sequence_variant`.
+    pub fn is_plain_bases(&self) -> bool {
+        match self {
+            Allele::Deletion => true,
+            Allele::Sequence(bases) => bases
+                .iter()
+                .all(|b| matches!(b.to_ascii_uppercase(), b'A' | b'C' | b'G' | b'T')),
+            Allele::Missing | Allele::Symbolic(_) => false,
+        }
+    }
+
+    /// The length Ensembl gives this allele (`seq_length`): the number of bases, ambiguity
+    /// codes included (`^[ACGTUMRWSYKVHDBXN-]+$`), 0 for `-`, and none for `*` and a
+    /// symbolic allele, whose length nobody can say.
+    pub fn known_length(&self) -> Option<usize> {
+        match self {
+            Allele::Deletion => Some(0),
+            Allele::Sequence(bases)
+                if bases.iter().all(|b| {
+                    matches!(
+                        b.to_ascii_uppercase(),
+                        b'A' | b'C'
+                            | b'G'
+                            | b'T'
+                            | b'U'
+                            | b'M'
+                            | b'R'
+                            | b'W'
+                            | b'S'
+                            | b'Y'
+                            | b'K'
+                            | b'V'
+                            | b'H'
+                            | b'D'
+                            | b'B'
+                            | b'X'
+                            | b'N'
+                    )
+                }) =>
+            {
+                Some(bases.len())
+            }
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for Allele {
@@ -201,6 +254,24 @@ mod tests {
         assert_eq!(Allele::from_str("-"), Allele::Deletion);
         assert_eq!(Allele::from_str("*"), Allele::Missing);
         assert_eq!(Allele::from_str("ACGT"), Allele::Sequence(b"ACGT".to_vec()));
+    }
+
+    #[test]
+    fn only_a_run_of_acgt_or_a_deletion_is_plain_bases() {
+        let is = |s: &str| Allele::from_str(s).is_plain_bases();
+        assert!(is("ACGT") && is("acgt") && is("-") && is("T"));
+        assert!(!is("N") && !is("ACGN") && !is("R") && !is("*") && !is("<DEL>"));
+    }
+
+    #[test]
+    fn a_length_is_known_for_bases_with_ambiguity_codes_and_not_for_star_or_symbolic() {
+        let len = |s: &str| Allele::from_str(s).known_length();
+        assert_eq!(len("ACGTN"), Some(5));
+        assert_eq!(len("-"), Some(0));
+        assert_eq!(len("NN"), Some(2));
+        assert_eq!(len("*"), None);
+        assert_eq!(len("<*>"), None);
+        assert_eq!(len("<INS>"), None);
     }
 
     #[test]

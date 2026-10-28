@@ -1,0 +1,679 @@
+# the known-variant columns of every row, as Ensembl VEP v116.3 prints them
+# image ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+# gen_world.py N=400 SEED=139; vep --tab --cache --offline --max_af
+# columns, in VEP's order; each row is Uploaded_variation, Allele, Feature and then the
+# cells that are not `-`, as COLUMN=value, tab separated
+#columns	Existing_variation	MAX_AF	MAX_AF_POPS	CLIN_SIG	SOMATIC	PHENO
+g0	-	-	Existing_variation=rsP0	MAX_AF=0.75	MAX_AF_POPS=gnomADe_REMAINING
+g1	-	-
+g10	A	-	Existing_variation=rsP10	MAX_AF=0.9	MAX_AF_POPS=gnomADg_AMI
+g10	G	-	Existing_variation=rsP10	MAX_AF=1	MAX_AF_POPS=EAS,gnomADg_AMI	CLIN_SIG=association
+g100	CC	-
+g100	CCC	-
+g100	GC	-	Existing_variation=rsP100	MAX_AF=0.5	MAX_AF_POPS=gnomADg_EAS	PHENO=1
+g101	ACA	-	Existing_variation=rsP101	MAX_AF=0.1	MAX_AF_POPS=AFR	CLIN_SIG=drug_response,likely_benign	SOMATIC=1
+g101	CC	-	Existing_variation=rsP101	MAX_AF=1	MAX_AF_POPS=gnomADe_ASJ	CLIN_SIG=drug_response,likely_benign	SOMATIC=1
+g101	TA	-	Existing_variation=rsP101	MAX_AF=0.75	MAX_AF_POPS=SAS	CLIN_SIG=drug_response,likely_benign	SOMATIC=1
+g102	T	-
+g103	T	-
+g104	-	-	Existing_variation=rsP104	MAX_AF=0.77882	MAX_AF_POPS=gnomADg_NFE
+g105	CCT	-	Existing_variation=rsP105,CDQ105	MAX_AF=1	MAX_AF_POPS=gnomADg_REMAINING	PHENO=1,0
+g106	CT	-
+g107	CGA	-
+g108	-	-
+g109	TA	-
+g11	A	-	Existing_variation=rsP11	MAX_AF=0.333333	MAX_AF_POPS=gnomADg_MID	PHENO=1
+g11	G	-	Existing_variation=rsP11	MAX_AF=1	MAX_AF_POPS=gnomADe_ASJ	PHENO=1
+g110	AC	-
+g110	CCC	-
+g110	CCTC	-	Existing_variation=rsP110,CMQ110	MAX_AF=0.333333	MAX_AF_POPS=gnomADe_MID
+g111	CC	-
+g112	CCA	-	Existing_variation=rsP112	MAX_AF=0.1812	MAX_AF_POPS=gnomADe_FIN	CLIN_SIG=benign,drug_response,likely_pathogenic	PHENO=1
+g112	TA	-	Existing_variation=rsP112	MAX_AF=0.9	MAX_AF_POPS=gnomADe_MID	CLIN_SIG=benign,drug_response,likely_pathogenic	PHENO=1
+g112	TAA	-	Existing_variation=rsP112	MAX_AF=0.9999	MAX_AF_POPS=gnomADg_NFE	CLIN_SIG=benign,drug_response,likely_pathogenic	PHENO=1
+g113	AGT	-
+g114	ACA	-	Existing_variation=rsP114,CDQ114	MAX_AF=0.05	MAX_AF_POPS=gnomADe_REMAINING	CLIN_SIG=drug_response,pathogenic	PHENO=1,1
+g114	C	-	Existing_variation=rsP114,CDQ114	MAX_AF=0.9	MAX_AF_POPS=gnomADe_ASJ,gnomADg_SAS,gnomADe_AFR	CLIN_SIG=drug_response,pathogenic	PHENO=1,1
+g114	T	-	Existing_variation=rsP114,CDQ114	MAX_AF=1	MAX_AF_POPS=gnomADe_FIN	CLIN_SIG=drug_response,pathogenic	PHENO=1,1
+g115	ACA	-
+g116	-	-
+g117	ACA	-
+g118	TAA	-
+g119	T	-
+g12	ACG	-	Existing_variation=rsP12	MAX_AF=1	MAX_AF_POPS=gnomADe_AMR	CLIN_SIG=likely_benign	SOMATIC=1
+g12	G	-
+g120	CG	-
+g120	TAG	-
+g121	-	-	Existing_variation=rsP121	MAX_AF=0.9999	MAX_AF_POPS=gnomADg_AMR
+g122	CC	-
+g123	G	-
+g124	G	-
+g125	CC	-
+g126	ACA	-	Existing_variation=rsP126	MAX_AF=0.0001	MAX_AF_POPS=gnomADe_FIN	CLIN_SIG=benign
+g126	CCT	-	Existing_variation=rsP126	MAX_AF=0.6489	MAX_AF_POPS=gnomADe_FIN	CLIN_SIG=benign
+g126	TA	-	Existing_variation=rsP126	MAX_AF=0.26796	MAX_AF_POPS=AMR	CLIN_SIG=benign
+g127	CCA	-
+g127	GA	-	Existing_variation=rsP127	MAX_AF=0.333333	MAX_AF_POPS=SAS	SOMATIC=1
+g128	GCAA	-
+g128	T	-
+g128	TGC	-
+g129	-	-
+g13	ACG	-
+g13	G	-
+g130	AG	-	Existing_variation=rsP130	MAX_AF=0.3988	MAX_AF_POPS=gnomADe_FIN	PHENO=1
+g131	CC	-	Existing_variation=rsP131	MAX_AF=0.25	MAX_AF_POPS=gnomADg_EAS
+g132	CA	-
+g133	A	-
+g134	GA	-
+g135	A	-
+g135	CC	-
+g135	TA	-
+g136	TCCT	-
+g137	-	-
+g138	-	-
+g139	AT	-
+g14	ACG	-
+g14	G	-	Existing_variation=rsP14,CMQ14	MAX_AF=0.9	MAX_AF_POPS=gnomADg_REMAINING	PHENO=1,0
+g140	C	-
+g141	-	-
+g142	-	-
+g143	ACA	-
+g144	-	-
+g145	T	-	Existing_variation=rsP145	MAX_AF=0.123456	MAX_AF_POPS=gnomADe_ASJ	PHENO=1
+g146	ACAA	-
+g146	TA	-	Existing_variation=rsP146	MAX_AF=0.9	MAX_AF_POPS=gnomADe_ASJ,gnomADg_AFR	SOMATIC=1	PHENO=1
+g147	TA	-
+g147	TAA	-	Existing_variation=rsP147	MAX_AF=0.9999	MAX_AF_POPS=gnomADe_ASJ
+g148	CTC	-
+g149	CC	-
+g149	CCTC	-
+g15	A	-
+g150	TA	-	Existing_variation=rsP150,COSMQ150	MAX_AF=0.9999	MAX_AF_POPS=gnomADe_AFR	SOMATIC=0,1	PHENO=1,1
+g151	A	-
+g152	C	-
+g153	-	-
+g155	GGTA	-
+g156	G	-
+g157	A	-	Existing_variation=rsP157	MAX_AF=0.9	MAX_AF_POPS=gnomADe_FIN	PHENO=1
+g157	ACA	-	Existing_variation=rsP157	MAX_AF=0.333333	MAX_AF_POPS=gnomADe_FIN,gnomADe_MID	PHENO=1
+g157	C	-	Existing_variation=rsP157	MAX_AF=0.1	MAX_AF_POPS=gnomADe_FIN	PHENO=1
+g158	CC	-
+g159	CC	-
+g16	T	-	Existing_variation=rsP16	MAX_AF=0.26	MAX_AF_POPS=gnomADg_NFE
+g160	T	-
+g161	AA	-	Existing_variation=rsP161	MAX_AF=1	MAX_AF_POPS=gnomADe_NFE	SOMATIC=1
+g162	ATTT	-
+g163	CCT	-
+g163	TA	-
+g164	GG	-
+g165	-	-
+g166	ACA	-
+g167	CA	-
+g167	TA	-
+g168	-	-	Existing_variation=rsP168	MAX_AF=0.25	MAX_AF_POPS=gnomADe_AMR
+g169	A	-
+g17	T	-
+g170	-	-
+g170	AAT	-
+g170	GCT	-
+g171	A	-	Existing_variation=rsP171	MAX_AF=1	MAX_AF_POPS=gnomADe_MID,gnomADe_REMAINING
+g171	C	-
+g171	G	-	Existing_variation=rsP171	MAX_AF=0.5	MAX_AF_POPS=gnomADg_AFR
+g172	A	-
+g173	-	-
+g174	AAG	-
+g175	-	-
+g176	CCT	-
+g177	A	-
+g178	-	-
+g179	A	-
+g18	-	-	Existing_variation=rsP18	MAX_AF=1	MAX_AF_POPS=gnomADe_EAS,gnomADg_SAS	CLIN_SIG=benign,pathogenic,benign	SOMATIC=1
+g180	-	-
+g181	-	-
+g181	A	-
+g182	CCT	-
+g183	CCC	-
+g183	TC	-
+g184	CC	-
+g185	-	-
+g186	T	-
+g187	AC	-
+g187	CCTC	-	Existing_variation=rsP187,rsQ187	MAX_AF=0.9999	MAX_AF_POPS=gnomADg_AMR	PHENO=0,1
+g187	TC	-	Existing_variation=rsP187,rsQ187	MAX_AF=0.127	MAX_AF_POPS=EUR	PHENO=0,1
+g188	CA	-
+g188	GA	-	Existing_variation=rsP188	MAX_AF=0.9999	MAX_AF_POPS=AMR
+g189	C	-
+g189	CCT	-
+g19	A	-
+g190	AT	-
+g191	C	-
+g192	-	-	Existing_variation=rsP192	MAX_AF=0.25	MAX_AF_POPS=gnomADg_FIN	PHENO=1
+g193	CC	-
+g193	G	-
+g194	-	-
+g195	AA	-
+g196	TA	-
+g197	CCT	-	Existing_variation=rsP197	MAX_AF=0.15	MAX_AF_POPS=gnomADe_AMR	CLIN_SIG=drug_response,association,uncertain_significance
+g197	G	-
+g197	TA	-
+g198	C	-
+g199	-	-	Existing_variation=rsP199,XYZQ199	MAX_AF=1	MAX_AF_POPS=gnomADe_EAS	PHENO=1,0
+g2	-	-	Existing_variation=rsP2	MAX_AF=0.5	MAX_AF_POPS=EAS	SOMATIC=1	PHENO=1
+g20	T	-
+g200	ACA	-
+g201	-	-	Existing_variation=rsP201	MAX_AF=0.1	MAX_AF_POPS=EUR	CLIN_SIG=not_provided,uncertain_significance,drug_response	PHENO=1
+g202	-	-
+g203	CC	-
+g204	GGGA	-
+g205	G	-
+g206	TTAC	-	Existing_variation=rsP206	MAX_AF=0.5	MAX_AF_POPS=gnomADe_AMR	CLIN_SIG=drug_response,risk_factor,pathogenic
+g207	CC	-	Existing_variation=rsP207	MAX_AF=0.75	MAX_AF_POPS=gnomADe_AMR
+g207	TA	-
+g208	-	-
+g209	C	-
+g21	AAT	-	Existing_variation=rsP21	MAX_AF=0.75	MAX_AF_POPS=gnomADg_FIN
+g210	CAT	-
+g211	A	-	Existing_variation=rsP211	MAX_AF=0.25	MAX_AF_POPS=AMR	PHENO=1
+g212	CC	-
+g212	GC	-
+g213	-	-	Existing_variation=rsP213	MAX_AF=0.9	MAX_AF_POPS=gnomADg_EAS	PHENO=1
+g214	CCT	-	Existing_variation=rsP214	MAX_AF=0.9	MAX_AF_POPS=gnomADg_AMR	CLIN_SIG=likely_pathogenic,risk_factor	SOMATIC=1
+g215	A	-
+g215	CC	-
+g215	TA	-
+g216	TA	-
+g217	-	-	Existing_variation=rsP217,COSMQ217	MAX_AF=1	MAX_AF_POPS=gnomADe_MID	CLIN_SIG=association	SOMATIC=1,1	PHENO=1,0
+g218	CTT	-
+g219	CA	-	Existing_variation=rsP219	SOMATIC=1	PHENO=1
+g219	CCA	-	Existing_variation=rsP219	SOMATIC=1	PHENO=1
+g22	T	-
+g220	ACA	-
+g220	TA	-	Existing_variation=rsP220	MAX_AF=0.333333	MAX_AF_POPS=gnomADe_MID
+g221	AAA	-
+g221	ACA	-
+g221	T	-
+g222	T	-	Existing_variation=rsP222	MAX_AF=1	MAX_AF_POPS=gnomADg_SAS	PHENO=1
+g223	CCT	-
+g225	TA	-
+g226	-	-
+g227	ATA	-
+g228	A	-
+g229	CAT	-
+g23	AAT	-	Existing_variation=rsP23	MAX_AF=1	MAX_AF_POPS=gnomADg_EAS
+g230	C	-
+g231	TT	-	Existing_variation=rsP231,COSMQ231	MAX_AF=0.9999	MAX_AF_POPS=gnomADg_FIN	SOMATIC=0,1	PHENO=0,1
+g232	-	-	Existing_variation=rsP232	MAX_AF=0.9	MAX_AF_POPS=gnomADe_EAS	PHENO=1
+g233	A	-
+g234	GGTA	-
+g234	GTAG	-
+g234	TCTA	-
+g235	ACA	-	Existing_variation=rsP235	MAX_AF=1	MAX_AF_POPS=gnomADg_AMI
+g235	C	-	Existing_variation=rsP235	MAX_AF=0.9	MAX_AF_POPS=gnomADg_AMI
+g235	T	-	Existing_variation=rsP235	MAX_AF=0.455342	MAX_AF_POPS=gnomADg_AMI
+g236	ATA	-
+g236	CGTA	-
+g236	G	-
+g237	T	-
+g238	TA	-
+g239	GC	-	Existing_variation=rsP239	MAX_AF=0.893	MAX_AF_POPS=gnomADg_FIN
+g24	-	-	Existing_variation=esvQ24	MAX_AF=2.5e-07	MAX_AF_POPS=EAS
+g240	A	-
+g241	AT	-
+g242	TC	-
+g243	CG	-
+g244	TTC	-
+g245	T	-
+g246	AAT	-	Existing_variation=rsP246	MAX_AF=0.75	MAX_AF_POPS=gnomADe_SAS
+g247	CC	-	Existing_variation=rsP247,esvQ247	MAX_AF=0.75	MAX_AF_POPS=gnomADg_FIN	PHENO=1,0
+g247	CCT	-	Existing_variation=rsP247,esvQ247	MAX_AF=0.75	MAX_AF_POPS=EUR	PHENO=1,0
+g248	A	-
+g249	C	-
+g25	-	-	Existing_variation=rsP25	MAX_AF=0.980315	MAX_AF_POPS=gnomADe_AMR
+g250	CA	-
+g251	CCT	-
+g252	-	-
+g252	CCG	-
+g252	GG	-
+g253	TA	-	Existing_variation=rsP253,COSVQ253	MAX_AF=0.9999	MAX_AF_POPS=gnomADg_NFE	SOMATIC=0,1	PHENO=1,0
+g254	T	-
+g255	-	-
+g256	A	-
+g256	ACA	-
+g257	C	-
+g258	CCT	-
+g259	ACA	-
+g259	G	-
+g259	TA	-
+g26	-	-
+g260	T	-
+g261	-	-
+g262	CT	-
+g263	CCT	-
+g264	C	-	Existing_variation=CIQ264,rsP264	MAX_AF=1	MAX_AF_POPS=AMR	SOMATIC=0,1
+g265	AT	-
+g266	CCT	-
+g266	TA	-
+g267	-	-
+g268	T	-
+g269	AC	-	Existing_variation=rsP269,COSMQ269	MAX_AF=0.9999	MAX_AF_POPS=gnomADe_ASJ,gnomADe_FIN	CLIN_SIG=drug_response,pathogenic,not_provided	SOMATIC=0,1
+g269	CCC	-	Existing_variation=rsP269,COSMQ269	MAX_AF=0.002	MAX_AF_POPS=gnomADg_NFE	CLIN_SIG=drug_response,pathogenic,not_provided	SOMATIC=0,1
+g27	-	-	Existing_variation=rsP27,COSMQ27	MAX_AF=0.9	MAX_AF_POPS=gnomADg_NFE	CLIN_SIG=pathogenic,benign,pathogenic,drug_response,uncertain_significance	SOMATIC=0,1
+g270	ACA	-
+g271	TA	-
+g272	ACA	-	Existing_variation=rsP272	MAX_AF=0.995845	MAX_AF_POPS=gnomADe_AFR	CLIN_SIG=likely_pathogenic,pathogenic
+g273	T	-
+g274	AT	-
+g274	GTCA	-
+g274	T	-
+g275	GCT	-
+g275	TAC	-
+g276	T	-	Existing_variation=rsP276,CDQ276	MAX_AF=0.66	MAX_AF_POPS=gnomADe_EAS
+g277	CC	-
+g278	A	-
+g279	TAA	-	Existing_variation=rsP279	MAX_AF=0.00123456789	MAX_AF_POPS=gnomADe_NFE,gnomADg_MID	CLIN_SIG=drug_response
+g28	-	-
+g280	A	-	Existing_variation=rsP280	MAX_AF=0.05	MAX_AF_POPS=gnomADe_NFE
+g280	ACA	-	Existing_variation=rsP280	MAX_AF=0.137	MAX_AF_POPS=EUR
+g280	CCT	-
+g281	-	-
+g282	A	-
+g282	C	-	Existing_variation=rsP282,CIQ282	MAX_AF=0.75	MAX_AF_POPS=AFR
+g282	CC	-
+g283	T	-
+g284	TTC	-
+g285	CC	-	Existing_variation=rsP285,rsQ285	MAX_AF=0.75	MAX_AF_POPS=gnomADg_MID	PHENO=1,1
+g285	CCT	-
+g285	T	-	Existing_variation=rsP285,rsQ285	MAX_AF=1	MAX_AF_POPS=gnomADg_FIN	PHENO=1,1
+g286	CCTG	-	Existing_variation=rsP286	MAX_AF=0.123456	MAX_AF_POPS=gnomADe_REMAINING	SOMATIC=1
+g286	TAG	-	Existing_variation=rsP286	MAX_AF=0.5	MAX_AF_POPS=gnomADe_NFE	SOMATIC=1
+g287	AT	-	Existing_variation=rsP287	MAX_AF=0.75	MAX_AF_POPS=gnomADg_SAS	PHENO=1
+g288	A	-
+g288	CC	-	Existing_variation=rsP288	MAX_AF=1	MAX_AF_POPS=gnomADe_AMR	PHENO=1
+g288	CCT	-	Existing_variation=rsP288	MAX_AF=0.9999	MAX_AF_POPS=EUR	PHENO=1
+g289	CC	-	Existing_variation=rsP289	MAX_AF=0.123456	MAX_AF_POPS=gnomADe_NFE
+g29	-	-	Existing_variation=rsP29	MAX_AF=0.333333	MAX_AF_POPS=EAS,EUR
+g290	CT	-
+g291	C	-
+g292	ATC	-
+g292	TCG	-
+g293	-	-	Existing_variation=rsP293	MAX_AF=0.9	MAX_AF_POPS=EAS
+g294	-	-
+g295	CC	-
+g295	CCT	-
+g295	TA	-	Existing_variation=rsP295	MAX_AF=1	MAX_AF_POPS=gnomADe_ASJ
+g296	ACA	-
+g296	G	-
+g296	T	-
+g297	G	-	Existing_variation=rsP297,CMQ297	MAX_AF=0.9	MAX_AF_POPS=gnomADg_EAS	CLIN_SIG=risk_factor,association,drug_response	PHENO=1,1
+g298	-	-
+g299	T	-
+g3	T	-	Existing_variation=rsP3,CIQ3	MAX_AF=0.9999	MAX_AF_POPS=gnomADg_NFE,gnomADe_AFR	PHENO=0,1
+g30	T	-	Existing_variation=rsP30	MAX_AF=1	MAX_AF_POPS=gnomADg_FIN	SOMATIC=1
+g300	A	-	Existing_variation=rsP300	MAX_AF=8.291e-06	MAX_AF_POPS=EUR
+g300	CC	-	Existing_variation=rsP300	MAX_AF=0.1	MAX_AF_POPS=gnomADe_FIN
+g300	G	-	Existing_variation=rsP300	MAX_AF=0.74226	MAX_AF_POPS=AMR
+g301	-	-
+g302	TA	-	Existing_variation=rsP302	MAX_AF=0.52	MAX_AF_POPS=EAS	CLIN_SIG=benign,uncertain_significance,pathogenic
+g303	A	-	Existing_variation=rsP303	MAX_AF=0.5	MAX_AF_POPS=AFR,gnomADg_AMI
+g304	GG	-
+g305	CCT	-	Existing_variation=rsP305	MAX_AF=0.333333	MAX_AF_POPS=EAS	CLIN_SIG=association
+g306	A	-	Existing_variation=rsP306	MAX_AF=1	MAX_AF_POPS=gnomADe_SAS	PHENO=1
+g306	G	-	Existing_variation=rsP306	MAX_AF=0.9999	MAX_AF_POPS=AFR	PHENO=1
+g306	TA	-	Existing_variation=rsP306	MAX_AF=0.9	MAX_AF_POPS=EAS	PHENO=1
+g307	CC	-
+g307	CCT	-
+g308	CC	-	Existing_variation=rsP308	MAX_AF=1	MAX_AF_POPS=gnomADe_FIN,gnomADg_AMR
+g308	TA	-	Existing_variation=rsP308	MAX_AF=0.123456	MAX_AF_POPS=AFR
+g309	-	-
+g31	T	-
+g310	-	-	Existing_variation=rsP310,COSMQ310	MAX_AF=0.75	MAX_AF_POPS=gnomADg_AFR	SOMATIC=0,1
+g311	GC	-
+g312	TA	-
+g313	C	-	Existing_variation=rsP313	MAX_AF=0.9	MAX_AF_POPS=gnomADe_REMAINING
+g313	TA	-
+g314	GT	-
+g315	C	-
+g316	G	-
+g317	AT	-
+g317	TAT	-	Existing_variation=rsP317	MAX_AF=0.9999	MAX_AF_POPS=gnomADe_FIN
+g317	TT	-
+g318	A	-	Existing_variation=rsP318	MAX_AF=1	MAX_AF_POPS=gnomADe_EAS	PHENO=1
+g319	AC	-
+g319	GC	-
+g32	T	-	Existing_variation=rsP32	MAX_AF=0.9	MAX_AF_POPS=EAS
+g320	-	-	Existing_variation=CDQ320,rsP320	MAX_AF=0.87	MAX_AF_POPS=gnomADg_AFR	SOMATIC=0,1
+g321	ACAT	-	Existing_variation=rsP321,rsQ321	MAX_AF=0.518	MAX_AF_POPS=gnomADg_NFE	PHENO=1,0
+g321	GT	-	Existing_variation=rsP321,rsQ321	MAX_AF=0.75	MAX_AF_POPS=gnomADe_FIN	PHENO=1,0
+g321	TAT	-	Existing_variation=rsP321,rsQ321	MAX_AF=1	MAX_AF_POPS=gnomADg_NFE	PHENO=1,0
+g322	-	-
+g323	TA	-
+g324	CC	-
+g325	C	-
+g326	TA	-
+g327	A	-
+g328	CC	-
+g328	G	-
+g329	-	-	Existing_variation=rsP329	MAX_AF=0.75	MAX_AF_POPS=gnomADg_NFE
+g33	-	-	Existing_variation=rsP33	MAX_AF=0.7618	MAX_AF_POPS=gnomADg_REMAINING
+g330	TA	-	Existing_variation=rsP330	MAX_AF=1	MAX_AF_POPS=gnomADe_FIN	CLIN_SIG=not_provided
+g331	-	-	Existing_variation=rsP331	MAX_AF=1	MAX_AF_POPS=gnomADe_AMR,gnomADe_REMAINING
+g332	A	-	Existing_variation=rsP332	MAX_AF=0.63	MAX_AF_POPS=gnomADe_AMR	CLIN_SIG=not_provided
+g333	GAC	-	Existing_variation=rsP333	MAX_AF=0.123456	MAX_AF_POPS=gnomADg_ASJ
+g334	-	-	Existing_variation=rsP334	MAX_AF=0.9	MAX_AF_POPS=SAS	CLIN_SIG=likely_pathogenic
+g335	GA	-
+g336	TA	-
+g337	CCTA	-
+g337	GA	-
+g338	AT	-
+g339	T	-
+g34	A	-	Existing_variation=rsP34	MAX_AF=0	MAX_AF_POPS=gnomADe_MID,gnomADg_FIN	CLIN_SIG=likely_benign
+g340	CCT	-
+g340	TA	-
+g341	ACA	-	Existing_variation=rsP341	MAX_AF=0.9	MAX_AF_POPS=gnomADe_EAS	PHENO=1
+g342	A	-
+g342	CAGT	-
+g342	GTG	-
+g343	A	-
+g343	TTTT	-
+g344	C	-
+g345	-	-	Existing_variation=rsP345,XYZQ345	MAX_AF=0.333333	MAX_AF_POPS=AMR	SOMATIC=0,1
+g346	TGT	-
+g347	AC	-
+g348	T	-
+g349	C	-	Existing_variation=rsP349,COSVQ349	MAX_AF=1	MAX_AF_POPS=gnomADg_ASJ	CLIN_SIG=drug_response,likely_pathogenic	SOMATIC=0,1
+g35	-	-	Existing_variation=rsP35,COSVQ35	MAX_AF=1	MAX_AF_POPS=EUR,gnomADe_AFR	CLIN_SIG=association,drug_response	SOMATIC=0,1
+g350	GC	-
+g351	-	-	Existing_variation=rsP351,COSVQ351	MAX_AF=1	MAX_AF_POPS=gnomADe_REMAINING	SOMATIC=0,1	PHENO=1,0
+g352	-	-
+g353	CAC	-	Existing_variation=rsP353	MAX_AF=1	MAX_AF_POPS=gnomADg_ASJ	PHENO=1
+g354	CCT	-
+g355	AG	-
+g357	ACA	-
+g357	C	-
+g358	-	-
+g359	C	-	Existing_variation=rsP359,CMQ359	MAX_AF=0.9	MAX_AF_POPS=SAS	CLIN_SIG=benign
+g36	-	-	Existing_variation=rsP36	MAX_AF=1	MAX_AF_POPS=gnomADg_REMAINING
+g360	C	-
+g360	CGCG	-
+g361	-	-
+g362	-	-
+g363	AA	-
+g364	CGC	-	Existing_variation=rsP364	MAX_AF=1	MAX_AF_POPS=gnomADg_REMAINING
+g364	CTC	-
+g365	-	-
+g366	C	-
+g366	TA	-
+g367	-	-
+g368	CCT	-
+g368	GT	-
+g369	ACAT	-
+g369	CCTT	-
+g369	GT	-
+g37	C	-
+g370	-	-
+g371	GCT	-
+g372	ACAT	-
+g372	AT	-	Existing_variation=rsP372	MAX_AF=0.913	MAX_AF_POPS=AMR
+g373	-	-
+g374	-	-
+g375	TA	-
+g376	TA	-
+g376	TAA	-
+g377	CA	-	Existing_variation=rsP377,COSMQ377	MAX_AF=0.25	MAX_AF_POPS=EAS	SOMATIC=0,1
+g377	GA	-
+g377	TAA	-	Existing_variation=rsP377,COSMQ377	MAX_AF=0.75	MAX_AF_POPS=gnomADe_FIN	SOMATIC=0,1
+g378	A	-	Existing_variation=rsP378,XYZQ378	MAX_AF=1	MAX_AF_POPS=gnomADe_ASJ	SOMATIC=0,1
+g379	C	-
+g38	-	-
+g380	CCTC	-
+g380	TAC	-	Existing_variation=rsP380	SOMATIC=1
+g381	CC	-
+g381	GC	-
+g381	TAC	-
+g382	ACAA	-	Existing_variation=rsP382	MAX_AF=0.033	MAX_AF_POPS=gnomADe_SAS
+g382	CA	-	Existing_variation=rsP382	MAX_AF=0.19737	MAX_AF_POPS=gnomADg_AFR
+g382	GA	-	Existing_variation=rsP382	MAX_AF=0.9	MAX_AF_POPS=gnomADg_SAS
+g383	-	-
+g384	C	-	Existing_variation=rsP384	MAX_AF=0.75	MAX_AF_POPS=gnomADe_AMR
+g385	CCC	-
+g386	-	-	Existing_variation=rsP386,rsQ386	MAX_AF=1	MAX_AF_POPS=gnomADe_NFE	PHENO=1,1
+g387	A	-
+g388	CCG	-	Existing_variation=rsP388	MAX_AF=1	MAX_AF_POPS=gnomADg_FIN	CLIN_SIG=drug_response,pathogenic
+g388	CCTG	-	Existing_variation=rsP388	MAX_AF=0.9	MAX_AF_POPS=gnomADe_NFE	CLIN_SIG=drug_response,pathogenic
+g388	TAG	-	Existing_variation=rsP388	MAX_AF=0.00123456789	MAX_AF_POPS=gnomADe_AFR	CLIN_SIG=drug_response,pathogenic
+g389	-	-
+g389	CA	-
+g39	C	-
+g390	ATC	-	Existing_variation=rsP390,CDQ390	MAX_AF=0.891253	MAX_AF_POPS=gnomADe_AFR	CLIN_SIG=uncertain_significance,association,uncertain_significance,drug_response	PHENO=1,0
+g391	-	-	Existing_variation=rsP391	MAX_AF=1	MAX_AF_POPS=gnomADe_NFE
+g392	CAA	-
+g393	TC	-
+g394	A	-	Existing_variation=rsP394	MAX_AF=0.123456	MAX_AF_POPS=gnomADe_MID	PHENO=1
+g394	T	-
+g395	-	-
+g395	TCG	-
+g396	-	-
+g397	GG	-
+g398	AC	-
+g398	CCTC	-
+g398	TAC	-
+g399	GTT	-
+g4	A	-	Existing_variation=rsP4,CDQ4	MAX_AF=0.9	MAX_AF_POPS=gnomADe_MID,gnomADe_NFE,gnomADg_AFR	SOMATIC=0,1
+g40	CA	-
+g40	GA	-
+g41	CCT	-
+g41	G	-
+g41	TA	-
+g42	ACA	-
+g43	T	-
+g44	AA	-
+g44	CCTA	-
+g44	TAA	-
+g45	GA	-	Existing_variation=rsP45,esvQ45	MAX_AF=1	MAX_AF_POPS=gnomADg_AMI	CLIN_SIG=risk_factor
+g46	CC	-
+g46	CCT	-
+g46	CG	-
+g47	-	-
+g48	TA	-
+g49	-	-
+g5	A	-
+g50	-	-
+g50	ACTC	-
+g50	GTCT	-
+g51	TA	-	Existing_variation=CDQ51	MAX_AF=1.0	MAX_AF_POPS=gnomADg_FIN
+g52	ACAC	-
+g52	CCC	-
+g52	GC	-
+g53	A	-	Existing_variation=rsP53,CIQ53	MAX_AF=0.9	MAX_AF_POPS=gnomADe_MID
+g54	ACAT	-	Existing_variation=rsP54	MAX_AF=0.333333	MAX_AF_POPS=AFR
+g54	CCT	-
+g54	CCTT	-	Existing_variation=rsP54	MAX_AF=0.123456	MAX_AF_POPS=gnomADe_EAS
+g55	G	-
+g56	-	-
+g57	CTC	-
+g58	TTC	-
+g59	CCT	-
+g6	A	-	Existing_variation=rsP6	MAX_AF=0.9	MAX_AF_POPS=gnomADg_EAS	CLIN_SIG=likely_pathogenic,benign
+g60	T	-
+g62	C	-
+g63	CC	-
+g63	CCT	-
+g64	AA	-
+g65	-	-
+g66	GTAT	-	Existing_variation=rsP66	MAX_AF=0.9999	MAX_AF_POPS=AFR	PHENO=1
+g67	ACA	-	Existing_variation=rsP67	MAX_AF=0.75	MAX_AF_POPS=gnomADe_SAS	CLIN_SIG=uncertain_significance
+g67	C	-	Existing_variation=rsP67	MAX_AF=1	MAX_AF_POPS=gnomADg_REMAINING	CLIN_SIG=uncertain_significance
+g67	CCT	-	Existing_variation=rsP67	MAX_AF=0.9999	MAX_AF_POPS=gnomADg_REMAINING	CLIN_SIG=uncertain_significance
+g68	CC	-	Existing_variation=rsP68	MAX_AF=0.9	MAX_AF_POPS=gnomADg_SAS
+g69	-	-
+g7	A	-
+g70	TA	-
+g71	TA	-
+g72	-	-
+g73	CCG	-
+g73	TAG	-	Existing_variation=rsP73	MAX_AF=0.9	MAX_AF_POPS=gnomADg_NFE
+g73	TG	-	Existing_variation=rsP73	MAX_AF=0.9	MAX_AF_POPS=gnomADg_ASJ
+g74	A	-
+g75	C	-	Existing_variation=rsQ75	MAX_AF=0.9999	MAX_AF_POPS=AMR,gnomADe_AMR,gnomADg_ASJ	PHENO=1
+g76	-	-
+g77	TA	-
+g78	TA	-
+g79	CCT	-
+g8	A	-	Existing_variation=rsP8,rsQ8	MAX_AF=0.9999	MAX_AF_POPS=gnomADg_ASJ	PHENO=1,1
+g80	CCT	-	Existing_variation=rsP80	MAX_AF=1	MAX_AF_POPS=EAS
+g80	G	-	Existing_variation=rsP80	MAX_AF=8.291e-06	MAX_AF_POPS=gnomADe_AMR
+g81	G	-
+g82	CTA	-
+g83	CA	-	Existing_variation=rsP83,XYZQ83	MAX_AF=0.6	MAX_AF_POPS=SAS	PHENO=0,1
+g83	GA	-	Existing_variation=rsP83,XYZQ83	MAX_AF=0.1	MAX_AF_POPS=gnomADe_AMR	PHENO=0,1
+g84	CCT	-	Existing_variation=rsP84,XYZQ84	MAX_AF=1	MAX_AF_POPS=gnomADe_MID	PHENO=1,0
+g85	-	-
+g86	C	-	Existing_variation=rsP86,rsQ86	MAX_AF=1	MAX_AF_POPS=gnomADe_AMR
+g87	-	-
+g88	ACAT	-
+g88	CCT	-
+g88	TAT	-
+g89	TA	-	Existing_variation=rsP89	MAX_AF=0.9	MAX_AF_POPS=EAS
+g9	A	-
+g9	G	-	Existing_variation=rsP9	MAX_AF=0.9999	MAX_AF_POPS=gnomADe_AFR
+g90	CC	-
+g90	TAT	-
+g91	A	-
+g92	CC	-
+g93	-	-	Existing_variation=rsP93	MAX_AF=0.9999	MAX_AF_POPS=AMR	PHENO=1
+g94	T	-	Existing_variation=rsP94	MAX_AF=1	MAX_AF_POPS=gnomADe_REMAINING
+g94	TA	-
+g95	ACA	-
+g95	TA	-
+g96	GA	-	Existing_variation=rsP96,esvQ96	MAX_AF=0.9	MAX_AF_POPS=EUR,gnomADe_SAS	CLIN_SIG=drug_response,likely_pathogenic,uncertain_significance	PHENO=1,0
+g97	-	-
+g98	-	-
+g98	ATG	-
+g98	T	-
+g99	-	-
+t01	A	ENST_1	Existing_variation=rsT01	MAX_AF=0.9999	MAX_AF_POPS=SAS
+t01	A	ENST_2	Existing_variation=rsT01	MAX_AF=0.9999	MAX_AF_POPS=SAS
+t02	A	ENST_1	Existing_variation=rsT02	MAX_AF=0.01	MAX_AF_POPS=AFR
+t02	A	ENST_2	Existing_variation=rsT02	MAX_AF=0.01	MAX_AF_POPS=AFR
+t02	G	ENST_1	Existing_variation=rsT02	MAX_AF=0.02	MAX_AF_POPS=AFR
+t02	G	ENST_2	Existing_variation=rsT02	MAX_AF=0.02	MAX_AF_POPS=AFR
+t03	A	ENST_1	Existing_variation=rsT03
+t03	A	ENST_2	Existing_variation=rsT03
+t04	C	ENST_1	Existing_variation=rsT04
+t04	C	ENST_2	Existing_variation=rsT04
+t04	G	ENST_1	Existing_variation=rsT04
+t04	G	ENST_2	Existing_variation=rsT04
+t05	A	ENST_1	Existing_variation=rsT05	MAX_AF=0.125	MAX_AF_POPS=AFR	CLIN_SIG=pathogenic
+t05	A	ENST_2	Existing_variation=rsT05	MAX_AF=0.125	MAX_AF_POPS=AFR	CLIN_SIG=pathogenic
+t06	C	ENST_1
+t06	C	ENST_2
+t07	A	ENST_1	Existing_variation=rsT07b,rsT07a,CM000100,esvT07,COSV100	MAX_AF=0.4	MAX_AF_POPS=AFR	CLIN_SIG=pathogenic	SOMATIC=0,0,0,0,1	PHENO=1,0,0,0,1
+t07	A	ENST_2	Existing_variation=rsT07b,rsT07a,CM000100,esvT07,COSV100	MAX_AF=0.4	MAX_AF_POPS=AFR	CLIN_SIG=pathogenic	SOMATIC=0,0,0,0,1	PHENO=1,0,0,0,1
+t08	A	ENST_1	Existing_variation=rsT08	CLIN_SIG=likely_benign,benign	PHENO=1
+t08	A	ENST_2	Existing_variation=rsT08	CLIN_SIG=likely_benign,benign	PHENO=1
+t09	A	ENST_1	Existing_variation=rsT09	CLIN_SIG=pathogenic,likely_pathogenic	PHENO=1
+t09	A	ENST_2	Existing_variation=rsT09	CLIN_SIG=pathogenic,likely_pathogenic	PHENO=1
+t09	C	ENST_1	Existing_variation=rsT09	CLIN_SIG=benign	PHENO=1
+t09	C	ENST_2	Existing_variation=rsT09	CLIN_SIG=benign	PHENO=1
+t10	-	ENST_1
+t10	-	ENST_2
+t10b	-	ENST_1
+t10b	-	ENST_2
+t10m	-	ENST_1
+t10m	-	ENST_2
+t10m	AAGT	ENST_1	Existing_variation=rsT10m	MAX_AF=7.423e-05	MAX_AF_POPS=gnomADg_NFE	PHENO=1
+t10m	AAGT	ENST_2	Existing_variation=rsT10m	MAX_AF=7.423e-05	MAX_AF_POPS=gnomADg_NFE	PHENO=1
+t11	A	ENST_1
+t11	A	ENST_2
+t12a	C	ENST_1	Existing_variation=rsT12a	MAX_AF=0.02	MAX_AF_POPS=AMR,EAS,gnomADg_AMR
+t12a	C	ENST_2	Existing_variation=rsT12a	MAX_AF=0.02	MAX_AF_POPS=AMR,EAS,gnomADg_AMR
+t12b	C	ENST_1	Existing_variation=rsT12b	MAX_AF=0	MAX_AF_POPS=AFR,gnomADg_NFE
+t12b	C	ENST_2	Existing_variation=rsT12b	MAX_AF=0	MAX_AF_POPS=AFR,gnomADg_NFE
+t12c	A	ENST_1	Existing_variation=rsT12c	PHENO=1
+t12c	A	ENST_2	Existing_variation=rsT12c	PHENO=1
+t12d	A	ENST_1	Existing_variation=rsT12d1,rsT12d2	MAX_AF=0.3	MAX_AF_POPS=AFR,AFR
+t12d	A	ENST_2	Existing_variation=rsT12d1,rsT12d2	MAX_AF=0.3	MAX_AF_POPS=AFR,AFR
+t12e	C	ENST_1	Existing_variation=rsT12e2,rsT12e1,COSV12e	MAX_AF=0.9	MAX_AF_POPS=EUR	SOMATIC=0,0,1
+t12e	C	ENST_2	Existing_variation=rsT12e2,rsT12e1,COSV12e	MAX_AF=0.9	MAX_AF_POPS=EUR	SOMATIC=0,0,1
+t13	A	ENST_1	Existing_variation=rsT13a,rsT13b
+t13	A	ENST_2	Existing_variation=rsT13a,rsT13b
+t14	A	ENST_1	Existing_variation=COSV14	SOMATIC=1	PHENO=1
+t14	A	ENST_2	Existing_variation=COSV14	SOMATIC=1	PHENO=1
+t14	G	ENST_1	Existing_variation=COSV14	SOMATIC=1	PHENO=1
+t14	G	ENST_2	Existing_variation=COSV14	SOMATIC=1	PHENO=1
+t15	A	ENST_1	Existing_variation=rsT15	MAX_AF=0.5	MAX_AF_POPS=gnomADg_AMI
+t15	A	ENST_2	Existing_variation=rsT15	MAX_AF=0.5	MAX_AF_POPS=gnomADg_AMI
+t16	A	ENST_1	Existing_variation=rsT16
+t16	A	ENST_2	Existing_variation=rsT16
+t17	A	ENST_1
+t17	A	ENST_2
+t18	A	ENST_1	Existing_variation=rsT18	PHENO=1
+t18	A	ENST_2	Existing_variation=rsT18	PHENO=1
+t19	-	ENST_1	Existing_variation=rsT19	PHENO=1
+t19	-	ENST_2	Existing_variation=rsT19	PHENO=1
+t19b	-	ENST_1	Existing_variation=rsT19b	CLIN_SIG=pathogenic	PHENO=1
+t19b	-	ENST_2	Existing_variation=rsT19b	CLIN_SIG=pathogenic	PHENO=1
+t20	A	ENST_1	Existing_variation=rsT20
+t20	A	ENST_2	Existing_variation=rsT20
+t21	A	ENST_1	Existing_variation=rsT21
+t21	A	ENST_2	Existing_variation=rsT21
+t22a	A	ENST_1	Existing_variation=rsU1,rsU2	CLIN_SIG=pathogenic;benign
+t22a	A	ENST_2	Existing_variation=rsU1,rsU2	CLIN_SIG=pathogenic;benign
+t22b	C	ENST_1	Existing_variation=rsV1,rsV2	CLIN_SIG=pathogenic
+t22b	C	ENST_2	Existing_variation=rsV1,rsV2	CLIN_SIG=pathogenic
+t22c	C	ENST_1	Existing_variation=rsW1,rsW2	CLIN_SIG=pathogenic
+t22c	C	ENST_2	Existing_variation=rsW1,rsW2	CLIN_SIG=pathogenic
+t22d	A	ENST_1	Existing_variation=rsX1,rsX2	CLIN_SIG=benign
+t22d	A	ENST_2	Existing_variation=rsX1,rsX2	CLIN_SIG=benign
+t22e	A	ENST_1	Existing_variation=rsY1,rsY2
+t22e	A	ENST_2	Existing_variation=rsY1,rsY2
+t23	A	ENST_1
+t23	A	ENST_2
+t23	G	ENST_1
+t23	G	ENST_2
+t24	A	ENST_1
+t24	A	ENST_2
+t24	C	ENST_1
+t24	C	ENST_2
+t25	A	ENST_1	Existing_variation=rsT25a	CLIN_SIG=benign
+t25	A	ENST_2	Existing_variation=rsT25a	CLIN_SIG=benign
+t25	G	ENST_1	Existing_variation=rsT25a	CLIN_SIG=pathogenic
+t25	G	ENST_2	Existing_variation=rsT25a	CLIN_SIG=pathogenic
+t25	T	ENST_1	Existing_variation=rsT25b	MAX_AF=0.44	MAX_AF_POPS=AFR	PHENO=1
+t25	T	ENST_2	Existing_variation=rsT25b	MAX_AF=0.44	MAX_AF_POPS=AFR	PHENO=1
+t26	A	ENST_1	Existing_variation=rsT26	MAX_AF=0.35	MAX_AF_POPS=AMR	CLIN_SIG=benign
+t26	A	ENST_2	Existing_variation=rsT26	MAX_AF=0.35	MAX_AF_POPS=AMR	CLIN_SIG=benign
+t26	C	ENST_1	Existing_variation=rsT26	MAX_AF=0.45	MAX_AF_POPS=AMR	CLIN_SIG=pathogenic
+t26	C	ENST_2	Existing_variation=rsT26	MAX_AF=0.45	MAX_AF_POPS=AMR	CLIN_SIG=pathogenic
+t27	A	ENST_1	Existing_variation=rsT27	CLIN_SIG=pathogenic
+t27	A	ENST_2	Existing_variation=rsT27	CLIN_SIG=pathogenic
+t28	C	ENST_1	Existing_variation=rsT28
+t28	C	ENST_2	Existing_variation=rsT28
+t29	A	ENST_1	Existing_variation=rsT29,COSV29	CLIN_SIG=likely_benign	SOMATIC=0,1	PHENO=0,1
+t29	A	ENST_2	Existing_variation=rsT29,COSV29	CLIN_SIG=likely_benign	SOMATIC=0,1	PHENO=0,1
+t30	C	ENST_1	Existing_variation=rsT30	MAX_AF=2e-05	MAX_AF_POPS=gnomADg_FIN
+t30	C	ENST_2	Existing_variation=rsT30	MAX_AF=2e-05	MAX_AF_POPS=gnomADg_FIN
+t30	G	ENST_1	Existing_variation=rsT30	MAX_AF=0.7	MAX_AF_POPS=AFR
+t30	G	ENST_2	Existing_variation=rsT30	MAX_AF=0.7	MAX_AF_POPS=AFR
+t31	A	ENST_1	Existing_variation=rsT31a,rsT31b	MAX_AF=0.25	MAX_AF_POPS=EUR,gnomADg_NFE,EUR,SAS
+t31	A	ENST_2	Existing_variation=rsT31a,rsT31b	MAX_AF=0.25	MAX_AF_POPS=EUR,gnomADg_NFE,EUR,SAS
+t32	A	ENST_1	Existing_variation=rsT32	MAX_AF=0.4	MAX_AF_POPS=AFR
+t32	A	ENST_2	Existing_variation=rsT32	MAX_AF=0.4	MAX_AF_POPS=AFR
+t33	A	ENST_1	Existing_variation=rsT33	MAX_AF=0	MAX_AF_POPS=AFR
+t33	A	ENST_2	Existing_variation=rsT33	MAX_AF=0	MAX_AF_POPS=AFR
+t34	C	ENST_1	Existing_variation=rsT34
+t34	C	ENST_2	Existing_variation=rsT34
+t35	C	ENST_1	Existing_variation=rsT35	MAX_AF=0.09375	MAX_AF_POPS=AFR
+t35	C	ENST_2	Existing_variation=rsT35	MAX_AF=0.09375	MAX_AF_POPS=AFR
+t35b	A	ENST_1	Existing_variation=rsT35b
+t35b	A	ENST_2	Existing_variation=rsT35b
+t36	A	ENST_1	Existing_variation=rsT36	MAX_AF=0.2	MAX_AF_POPS=AFR
+t36	A	ENST_2	Existing_variation=rsT36	MAX_AF=0.2	MAX_AF_POPS=AFR
+t36	C	ENST_1
+t36	C	ENST_2
+t37	A	ENST_1	Existing_variation=rsT37
+t37	A	ENST_2	Existing_variation=rsT37
+t37	G	ENST_1
+t37	G	ENST_2
+t38	A	ENST_1	Existing_variation=rsT38	MAX_AF=0.3	MAX_AF_POPS=gnomADg_NFE	CLIN_SIG=benign,likely_benign	PHENO=1
+t38	A	ENST_2	Existing_variation=rsT38	MAX_AF=0.3	MAX_AF_POPS=gnomADg_NFE	CLIN_SIG=benign,likely_benign	PHENO=1

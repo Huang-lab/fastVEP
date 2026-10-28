@@ -9,12 +9,14 @@
 //! order.
 //!
 //! The committed sample is small enough to run everywhere. To run the same
-//! check on a much larger set, make one and point the second test at it; without
-//! the variable that test does nothing, so CI stays hermetic:
+//! check on a much larger set, make one and point the second test at it. That
+//! test is `#[ignore]`d, so that CI stays hermetic and says it did not run it,
+//! and with `--ignored` and no file it stops and says what to set, where it used
+//! to pass without having checked anything:
 //!
 //! ```text
 //! crates/fastvep-cache/fixtures/vep_match/regen.sh big 200000 /tmp/pairs.tsv
-//! FASTVEP_MATCH_CASES=/tmp/pairs.tsv cargo test -p fastvep-cache --test vep_match_golden
+//! FASTVEP_MATCH_CASES=/tmp/pairs.tsv cargo test -p fastvep-cache --test vep_match_golden -- --ignored
 //! ```
 
 use fastvep_cache::variation::match_alleles;
@@ -102,11 +104,12 @@ fn the_matcher_reproduces_vep_on_the_committed_pairs() {
 }
 
 #[test]
+#[ignore = "needs FASTVEP_MATCH_CASES, a file made by fixtures/vep_match/regen.sh (see the module docs)"]
 fn the_matcher_reproduces_vep_on_a_large_generated_set() {
-    let Some(path) = std::env::var_os("FASTVEP_MATCH_CASES") else {
-        eprintln!("FASTVEP_MATCH_CASES not set; skipping (see the module docs)");
-        return;
-    };
+    let path = std::env::var_os("FASTVEP_MATCH_CASES").expect(
+        "set FASTVEP_MATCH_CASES to a file of pairs made by \
+         crates/fastvep-cache/fixtures/vep_match/regen.sh big N FILE",
+    );
     let checked = check_file(Path::new(&path));
     eprintln!("{checked} pairs agree with VEP");
 }

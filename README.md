@@ -494,7 +494,8 @@ for the parsing rules and the escaping table.
 | `--gff3` | GFF3 gene annotation file. May be repeated to replicate VEP's `--merged` cache (Ensembl + RefSeq in a single run); each value may be `LABEL=path` to control the SOURCE column. | -- |
 | `--fasta` | Reference FASTA file | -- |
 | `--output-format` | `vcf`, `tab`, or `json` | `vcf` |
-| `--hgvs` | Include HGVS notations | off |
+| `--hgvs` | Add `HGVSc`, `HGVSp` and `HGVS_OFFSET`: as columns in tab output, as values in the VCF and JSON output. VEP's `--hgvs` | off |
+| `--hgvsg` | Add `HGVSg` (`chr10:g.10414C>A`) to tab and VCF output, and the `hgvsg` key of JSON. VEP's `--hgvsg`: an insertion or deletion is written at its most 3' position along the genome and an insertion that repeats its neighbours is a `dup`, which reads the reference, so give `--fasta`. See [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#11-an-allele-of-a-record-with-several-alts-is-described-as-it-would-be-alone) | off |
 | `--pick` | Report one consequence per variant, chosen by `--pick-order`, keeping that transcript's annotation for every alt allele | off |
 | `--pick-allele` | One consequence per (variant, allele). VEP's `--pick_allele` | off |
 | `--pick-allele-gene` | One consequence per (variant, allele, gene). VEP's `--pick_allele_gene` | off |
@@ -502,14 +503,32 @@ for the parsing rules and the escaping table.
 | `--flag-pick-allele` | As `--flag-pick`, marking the pick per allele | off |
 | `--flag-pick-allele-gene` | As `--flag-pick`, marking the pick per allele and gene | off |
 | `--pick-order` | Criteria order used by `--pick`, VEP `--pick_order` syntax. Severity (`rank`) is last in the default, so this is not "most severe" -- see [docs/ACMG.md](docs/ACMG.md#which-transcript---pick-reports) | VEP's default |
-| `--symbol` | Include gene symbol in output | off |
-| `--canonical` | Include canonical-transcript flag in output | off |
-| `--everything` | Turn on all common annotation flags | off |
+| `--symbol` | Add `SYMBOL`, `SYMBOL_SOURCE` and `HGNC_ID` to tab output (the VCF `CSQ` always has them). VEP's `--symbol` | off |
+| `--canonical` | Add `CANONICAL` (`YES`) to tab output (the VCF `CSQ` always has it). VEP's `--canonical` | off |
+| `--biotype` | Add `BIOTYPE` to tab output (the VCF `CSQ` always has it). VEP's `--biotype` | off |
+| `--numbers` | Add `EXON` and `INTRON` (`3/10`) to tab output (the VCF `CSQ` always has them). VEP's `--numbers` | off |
+| `--variant-class` | Add `VARIANT_CLASS` (`SNV`, `insertion`, `deletion`, ...) to tab and VCF output. VEP's `--variant_class` | off |
+| `--show-ref-allele` | Add `REF_ALLELE` to tab output (the VCF `CSQ` always has it). VEP's `--show_ref_allele`. (`--explicit-alleles` puts `REF` right after `Allele` instead) | off |
+| `--total-length` | Write the length each position is counted in after `cDNA_position`, `CDS_position` and `Protein_position`, `14/203`, in tab and VCF output (JSON writes numbers). VEP's `--total_length` | off |
+| `--no-escape` | Do not percent-escape HGVS strings: a synonymous `HGVSp` ends in `=` and not `%3D`, and the space of a gene symbol in the VCF `CSQ` is `_` and not `%20`. VEP's `--no_escape` | off |
+| `--force-overwrite` | Accepted so that a `vep` command line is not refused, and does nothing: `fastvep annotate` always writes over its output file, which is what VEP's `--force_overwrite` asks for | -- |
+| `--exclude-predicted` | Leave out RefSeq's predicted transcripts, `XM_` and `XR_`. VEP's `--exclude_predicted`, which is `not stable_id match ^X._`, and so is this. A variant left with no transcript is an `intergenic_variant` | off |
+| `--exclude-readthrough` | Leave out the transcripts the annotation tags `readthrough_transcript`, which span two genes. VEP's Ensembl cache is built without them and a GFF3 has them, so give it to match `vep --cache` | off |
+| `--exclude-artifact` | Leave out transcripts of biotype `artifact`. VEP's Ensembl cache is built without them and a GFF3 has them, so give it to match `vep --cache` | off |
+| `--af` | Add `AF`, the 1000 Genomes combined allele frequency of the known variant, to the tab output and the CSQ. VEP's `--af`. Written as VEP writes it: per input allele, to four decimals, with the other allele of a two-allele record taken as `1 - AF`. Reads the variation cache, so it needs `--cache-dir`, as do the six flags below | off |
+| `--af-1kg` | Add `AF`, `AFR_AF`, `AMR_AF`, `EAS_AF`, `EUR_AF` and `SAS_AF`. VEP's `--af_1kg` | off |
+| `--af-gnomade` | Add `gnomADe_AF` and the gnomAD exomes populations (`gnomADe_AFR_AF` ... `gnomADe_SAS_AF`). VEP's `--af_gnomade`; its old name `--af-gnomad` is accepted | off |
+| `--af-gnomadg` | Add `gnomADg_AF` and the gnomAD genomes populations (`gnomADg_AFR_AF` ... `gnomADg_SAS_AF`). VEP's `--af_gnomadg` | off |
+| `--max-af` | Add `MAX_AF`, the highest frequency of any 1000 Genomes or gnomAD population (the combined ones are left out), and `MAX_AF_POPS`, the populations that have it. VEP's `--max_af` | off |
+| `--check-existing` | Add `CLIN_SIG`, `SOMATIC` and `PHENO` from the known variants, to the tab output and the CSQ, as VEP's `--check_existing` does. Every frequency flag and `--pubmed` imply it, and so does `--cache-dir`, which has no other use here, so the flag is only needed to be typed as VEP has it. `Existing_variation` is filled whenever `--cache-dir` is given | on with `--cache-dir` |
+| `--pubmed` | Add `PUBMED`, the publications that cite the known variants, to the tab output and the CSQ. VEP's `--pubmed` | off |
+| `--clin-sig-allele` | `1`: `CLIN_SIG` is what a known variant says about the input allele, where it says it; `0`: what it says about the variant. VEP's `--clin_sig_allele` | `1` |
+| `--everything` | Turn on `--hgvs --symbol --numbers --canonical --biotype --variant-class`: VEP's `--everything`, restricted to the columns fastVEP writes (not `--hgvsg` or `--show-ref-allele`, which VEP's does not include either). With `--cache-dir` it also turns on `--af --af-1kg --af-gnomade --af-gnomadg --max-af --pubmed`, as VEP's does | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--buffer-size` | Variants buffered per parallel batch | `5000` |
 | `--sa-dir` | Directory containing `.osa` / `.osa2` / `.osi` / `.oga` supplementary annotations | -- |
 | `--sa-only` | Skip the default CSQ annotation and emit only supplementary annotations from `--sa-dir` (requires `--sa-dir`) | off |
-| `--cache-dir` | VEP's tabix variation cache, for `Existing_variation`: a directory of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index (what `convert_cache.pl` and the indexed-cache download provide). Only known variants come from it: gene models come from `--gff3`, and VEP's `{start}-{end}.gz` transcript slices are never read. Matching follows VEP's (anchored and minimal indels match, as in `--check_existing`). A directory with no variation file, or a file with no index, stops the run. Contigs are matched through a `chr_synonyms.txt` in the directory and the `chr`/`MT` naming rules | -- |
+| `--cache-dir` | VEP's tabix variation cache, for `Existing_variation`: a directory of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index (what `convert_cache.pl` and the indexed-cache download provide). Only known variants come from it: gene models come from `--gff3`, and VEP's `{start}-{end}.gz` transcript slices are never read. Naming a cache is VEP's `--check_existing`: `Existing_variation`, `CLIN_SIG`, `SOMATIC` and `PHENO`; the frequencies and the PubMed ids need `--af*`, `--max-af` and `--pubmed`, as in VEP. Matching follows VEP's (anchored and minimal indels match, as in `--check_existing`). A directory with no variation file, or a file with no index, stops the run. Contigs are matched through a `chr_synonyms.txt` in the directory and the `chr`/`MT` naming rules | -- |
 | `--transcript-cache` | Path to binary transcript cache file (overrides the auto-managed `<gff3>.fastvep.cache` sidecar) | -- |
 | `--acmg` | Run ACMG-AMP classification (Richards 2015 + ClinGen SVI); adds `ACMG` + `ACMG_CRITERIA` to CSQ | off |
 | `--acmg-config` | TOML file with custom ACMG thresholds | built-in defaults |
@@ -601,7 +620,7 @@ The VCF output never embeds raw JSON in INFO values. Use `--output-format json` 
 
 One line per variant, transcript and allele.
 The 17 columns are VEP's 13 base columns (`Uploaded_variation`, `Location`, `Allele`, `Gene`, `Feature`, `Feature_type`, `Consequence`, `cDNA_position`, `CDS_position`, `Protein_position`, `Amino_acids`, `Codons`, `Existing_variation`) and `IMPACT`, `DISTANCE`, `STRAND`, `FLAGS`.
-After them come `REF` (with `--explicit-alleles`), one column per loaded supplementary source, `PICK` (with `--flag-pick*`) and `QC_CLASS` (with `--qc-rules`).
+Around them go `REF` (with `--explicit-alleles`, right after `Allele`), `PICK` (with `--flag-pick*`, right after `FLAGS`, as in VEP), one column per loaded supplementary source and `QC_CLASS` (with `--qc-rules`), the last two at the end.
 
 The cells follow VEP's tab writer:
 
@@ -610,10 +629,33 @@ The cells follow VEP's tab writer:
 - `Uploaded_variation` is the VCF ID (the first, if there are several), or the line itself, `{CHROM}_{POS}_{REF}/{ALT}`, when the record has none: `chr10_10414_C/A`, `chr10_10400_AACCCT/A`, and `chr10_109_CA/C/TA` for a record with two alts.
   It is not built from the minimal alleles of the annotation, as it was.
 - `Amino_acids` is `L/P`, or just `L` when the protein does not change, as in the VCF `CSQ` and in JSON.
+- A record with one ALT that is an indel is minimised from both ends before it is annotated, as VEP does: `CAGT>CT` is the deletion of `AG` and its `Allele` is `-`, whatever the caller left in.
+- An ALT of `*` (a spanning deletion) or one of the placeholders a gVCF carries (`.`, `<NON_REF>`, `<*>`) gets no row, and a record with none but those has none; the real ALTs beside one are annotated as they would be alone.
+  An ALT or REF that holds an ambiguity code (`N`) cannot be translated: in the coding sequence it is `coding_sequence_variant` (or `frameshift_variant` when its length moves the frame), with no `Amino_acids`, `HGVSp` or `HGVSc`, as in VEP.
+- `cDNA_position`, `CDS_position` and `Protein_position` are the positions of the first and the last base of the change in transcript order, and an end that is not in an exon (for the cDNA) or not in the coding sequence (for the CDS and the protein) has no coordinate: `?-7` for a deletion that starts in an intron or upstream of the transcript, `601-?` for one that runs out of the exon.
+  An insertion has the two positions it sits between (`601-602`), also when one of them is across an exon boundary, and no CDS or protein position when it sits just before the initiator or just after the terminator.
+  `EXON` and `INTRON` list every exon and intron the change overlaps, `2-3/10` for a change over two, and an insertion at an exon's edge overlaps neither.
+  The same cells are written to the VCF `CSQ`, and JSON has `cdna_start` and `cdna_end` (and the CDS and protein pairs) for the ends that have one.
+  With `--total-length` each cell is followed by the length it is counted in, as in VEP: `451-?/1403`, `51/654`, `17/217` (the cDNA, the coding sequence with its stop codon, the protein without it).
+  The cDNA length goes on every row whose change touches an exon, and the other two on the rows that touch the coding sequence too, whatever the cell holds, so a deletion that covers an exon from intron to intron is `-/1403`, `-/654` and `-/217`.
 - A variant with no overlapping transcript has no feature, so `Gene`, `Feature`, `Feature_type`, `DISTANCE`, `STRAND` and `FLAGS` are `-`; `IMPACT` is still `MODIFIER`.
   A VCF `CSQ` entry for it leaves those fields empty.
 
-`--hgvs`, `--symbol` and `--canonical` do not add columns to tab output; use the VCF or JSON output for HGVS, gene symbols and the canonical flag.
+VEP adds further tab columns only when asked, and so does fastVEP, with VEP's flag names (spelled with hyphens here): `--show-ref-allele`, `--variant-class`, `--symbol`, `--biotype`, `--canonical`, `--numbers`, `--hgvs`, `--hgvsg` and the known-variant flags below.
+They are written in the order VEP's own table gives them: `REF_ALLELE` between `Existing_variation` and `IMPACT`, then, after `FLAGS` (and `PICK`), `VARIANT_CLASS`, `SYMBOL`, `SYMBOL_SOURCE`, `HGNC_ID`, `BIOTYPE`, `CANONICAL`, `EXON`, `INTRON`, `HGVSc`, `HGVSp`, `HGVS_OFFSET` and `HGVSg`, and before any supplementary-source column.
+A flag you do not give adds nothing, so a run without any of them has the 17 columns above.
+`FLAGS` holds the transcript's flags (`cds_start_NF`), as in VEP, and `CANONICAL` says whether the transcript is canonical.
+`HGVSp` writes `=` as `%3D`, as VEP does in its tab file and in its VCF (`--no-escape` leaves it an `=`), and `HGVS_OFFSET` is how far the HGVS description moved 3' from where the VCF had the variant, signed by the strand.
+The underscore spellings VEP uses for those three flags (`--total_length`, `--no_escape`, `--force_overwrite`) are accepted beside the hyphenated ones.
+
+The columns of the known variants (`--af`, `--af-1kg`, `--af-gnomade`, `--af-gnomadg`, `--max-af`, `--check-existing`, `--pubmed`) read the variation cache of `--cache-dir` and are worked out as VEP works them out, for each input allele and from every known variant of the site.
+They come after `HGVSg`, in VEP's order: `AF` and the 1000 Genomes populations, the gnomAD exomes and genomes populations, `MAX_AF`, `MAX_AF_POPS`, `CLIN_SIG`, `SOMATIC`, `PHENO`, `PUBMED`.
+A flag that reads the cache without one is an error rather than a column of `-`.
+The VCF `CSQ` keeps `AF`, `CLIN_SIG`, `SOMATIC`, `PHENO` and `PUBMED` among its 49 default fields, so that a reader that finds a field by its position keeps finding it, and the columns of the other flags follow `AF`.
+They hold VEP's per-allele value or nothing: `CLIN_SIG`, `SOMATIC` and `PHENO` whenever there is a `--cache-dir`, `AF` under `--af` or `--af-1kg`, `PUBMED` under `--pubmed`.
+They used to hold a summary of the whole variant (the first frequency of any known variant of the site, gnomAD's where it had one, which is not VEP's `AF`), and for a record with several ALTs that put one allele's number on every allele's row.
+A reader of that `AF` now gives `--af-1kg` (VEP's `AF`) or `--af-gnomade`.
+How the two tools differ, and what was checked against VEP 116.3, is in [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
 
 ### JSON Output
 
@@ -771,9 +813,15 @@ The right-hand column is a systematic 1-in-200 sample of the GIAB HG002 WGS call
 variants, **118,956 matched rows** - and every field that carries a clinical call agrees on all of
 them. The 23 `HGVSc` rows left are 11 where fastVEP names a change VEP declines to name and 12
 where VEP writes a malformed `*` coordinate: no row of any of the three datasets has both tools
-naming a `c.` change and naming it differently. `HGVSg`, which is not in the CSQ field set and is
-rated separately, agrees on 13,525 of 13,535 records (99.93%); the ten are Ensembl's genomic
-3'-rule, which fastVEP does not apply. See [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md).
+naming a `c.` change and naming it differently. `HGVSg`, which is written only under `--hgvsg`, was
+measured separately against Ensembl VEP 116.3 on the same sample: 20,238 of 20,241 records have the
+same set of descriptions, and the three that differ are multi-allelic records in which Ensembl
+describes an allele by its untrimmed bases, which does not reproduce the variant. The tab
+output's other columns are measured the same way, 3,851 of 5,581,650 cells differing, 17 of them in `HGVSp` (a protein change
+that Ensembl writes none for, divergence 17), and so is
+a RefSeq GFF3 (chr21 and chr22 of GRCh38.p14), 135 of 81,510 cells, all of them the multi-allelic
+difference of divergence 11, in
+[Part 3 of docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#part-3---the-tab-output-against-vep-1163).
 
 **HGVSp under in-frame indels.**
 Protein-level normalisation is additionally checked on 400 ClinVar in-frame deletions run through
@@ -788,11 +836,15 @@ Agreement is the evidence that the port is faithful, not the objective. The outp
 a clinician may act on, so where Ensembl is demonstrably wrong in a way that changes a call,
 fastVEP is right instead.
 
-There are nine such places, and one of them matters clinically: Ensembl reports a change that
-introduces a premature stop as `inframe_insertion,stop_retained_variant`, MODERATE. BRCA1
-`c.5030_5033dup` - ClinVar Pathogenic - is one of 52 such variants in the ClinVar 2-star+ set, 38
-of them Pathogenic or Likely pathogenic. fastVEP reports `stop_gained,frameshift_variant`, HIGH,
-so those 52 keep PVS1.
+Against release 115.1 there were eleven such places, and one of them mattered clinically.
+Ensembl reported a change that introduces a premature stop as `inframe_insertion,stop_retained_variant`, MODERATE.
+BRCA1 `c.5030_5033dup` - ClinVar Pathogenic - is one of 52 such variants in the ClinVar 2-star+ set, 38 of them Pathogenic or Likely pathogenic.
+fastVEP reported `stop_gained,frameshift_variant`, HIGH, so those 52 kept PVS1.
+Release 116 rewrote that clause, and Ensembl VEP 116.3 writes `stop_gained,frameshift_variant` for them too.
+Against 116.3 two of the eleven are gone, that one and the second (a start codon a deletion removes), which fastVEP now reads as VEP does.
+Four more (the count or the first residue of a frameshift or of an extension, 5 to 8) turned out not to be differences with VEP but with its `--gff` reader, which takes the 3' UTR of a reverse-strand transcript from the wrong place and which a VEP cache does not do.
+Two more were found in the protein notation, one in VEP's 3'-shifting of an insertion on the reverse strand and one in how it reads an unresolved residue (12 and 13).
+Release 116.3 itself turned up six more, found by reading the start codon, the UTR, the introns and the VCF the way a clinician's pipeline meets them: a start codon is not lost where the protein still begins with its Met or where the whole coding sequence is behind the edit (14), a change that loses the initiator is `p.Met1?` whatever Ensembl writes (15), a row that is only a UTR variant has no protein change (16), a change that the 3'-rule carries over an intron is described as the change it is in the transcript (17), a record the run cannot place is said so and a REF that is not the genome's is described against the genome (18), and an insertion in front of residue 1 has no `HGVSp` (19).
 
 Every divergence, its cause in the Ensembl source, its row count, and the list of fastVEP's own
 remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md)**.

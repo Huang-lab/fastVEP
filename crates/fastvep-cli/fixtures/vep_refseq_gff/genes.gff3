@@ -1,0 +1,30 @@
+##gff-version 3
+chrR	BestRefSeq	gene	500	739	.	+	.	ID=gene-NB1;Dbxref=GeneID:90001,HGNC:HGNC:90001;Name=NB1;description=NCBI test gene 1;gbkey=Gene;gene=NB1;gene_biotype=protein_coding
+chrR	BestRefSeq	mRNA	500	739	.	+	.	ID=rna-NM_090001.3;Parent=gene-NB1;Dbxref=GeneID:90001,GenBank:NM_090001.3;Name=NM_090001.3;gbkey=mRNA;gene=NB1;product=test protein 1;transcript_id=NM_090001.3
+chrR	BestRefSeq	exon	500	739	.	+	.	ID=exon-NM_090001.3-1;Parent=rna-NM_090001.3;Dbxref=GeneID:90001;gbkey=mRNA;gene=NB1;transcript_id=NM_090001.3
+chrR	BestRefSeq	CDS	500	739	.	+	0	ID=cds-NP_090001.2;Parent=rna-NM_090001.3;Dbxref=GeneID:90001,GenBank:NP_090001.2;Name=NP_090001.2;gbkey=CDS;gene=NB1;product=test protein 0;protein_id=NP_090001.2
+chrR	Gnomon	gene	1400	1639	.	+	.	ID=gene-LOC90002;Dbxref=GeneID:90002,HGNC:HGNC:90002;Name=LOC90002;description=uncharacterized LOC90002;gbkey=Gene;gene=LOC90002;gene_biotype=protein_coding
+chrR	Gnomon	mRNA	1400	1639	.	+	.	ID=rna-XM_090002.1;Parent=gene-LOC90002;Dbxref=GeneID:90002,GenBank:XM_090002.1;Name=XM_090002.1;gbkey=mRNA;gene=LOC90002;product=uncharacterized protein LOC90002;transcript_id=XM_090002.1
+chrR	Gnomon	exon	1400	1639	.	+	.	ID=exon-XM_090002.1-1;Parent=rna-XM_090002.1;Dbxref=GeneID:90002;gbkey=mRNA;gene=LOC90002;transcript_id=XM_090002.1
+chrR	Gnomon	CDS	1400	1639	.	+	0	ID=cds-XP_090002.1;Parent=rna-XM_090002.1;Dbxref=GeneID:90002,GenBank:XP_090002.1;Name=XP_090002.1;gbkey=CDS;gene=LOC90002;product=test protein 1;protein_id=XP_090002.1
+chrR	BestRefSeq	gene	2300	2539	.	+	.	ID=gene-NB3;Dbxref=GeneID:90003,HGNC:HGNC:90003;Name=NB3;description=NCBI test long non-coding RNA 3;gbkey=Gene;gene=NB3;gene_biotype=lncRNA
+chrR	BestRefSeq	lnc_RNA	2300	2539	.	+	.	ID=rna-NR_090003.1;Parent=gene-NB3;Dbxref=GeneID:90003,GenBank:NR_090003.1;Name=NR_090003.1;gbkey=ncRNA;gene=NB3;product=NCBI test long non-coding RNA 3;transcript_id=NR_090003.1
+chrR	BestRefSeq	exon	2300	2539	.	+	.	ID=exon-NR_090003.1-1;Parent=rna-NR_090003.1;Dbxref=GeneID:90003;gbkey=ncRNA;gene=NB3;transcript_id=NR_090003.1
+chrR	Gnomon	gene	3200	3439	.	+	.	ID=gene-LOC90004;Dbxref=GeneID:90004,HGNC:HGNC:90004;Name=LOC90004;description=uncharacterized LOC90004;gbkey=Gene;gene=LOC90004;gene_biotype=lncRNA
+chrR	Gnomon	transcript	3200	3439	.	+	.	ID=rna-XR_090004.1;Parent=gene-LOC90004;Dbxref=GeneID:90004,GenBank:XR_090004.1;Name=XR_090004.1;gbkey=misc_RNA;gene=LOC90004;product=uncharacterized LOC90004;transcript_id=XR_090004.1
+chrR	Gnomon	exon	3200	3439	.	+	.	ID=exon-XR_090004.1-1;Parent=rna-XR_090004.1;Dbxref=GeneID:90004;gbkey=misc_RNA;gene=LOC90004;transcript_id=XR_090004.1
+chrR	BestRefSeq	gene	4100	4339	.	+	.	ID=gene-MIR90005;Dbxref=GeneID:90005,HGNC:HGNC:90005;Name=MIR90005;description=microRNA 90005;gbkey=Gene;gene=MIR90005;gene_biotype=miRNA
+chrR	BestRefSeq	primary_transcript	4100	4339	.	+	.	ID=rna-NR_090005.1;Parent=gene-MIR90005;Dbxref=GeneID:90005,GenBank:NR_090005.1;Name=NR_090005.1;gbkey=precursor_RNA;gene=MIR90005;product=microRNA 90005;transcript_id=NR_090005.1
+chrR	BestRefSeq	exon	4100	4339	.	+	.	ID=exon-NR_090005.1-1;Parent=rna-NR_090005.1;Dbxref=GeneID:90005;gbkey=precursor_RNA;gene=MIR90005;transcript_id=NR_090005.1
+chrR	BestRefSeq	gene	5000	5239	.	+	.	ID=gene-NB6;Dbxref=GeneID:90006,HGNC:HGNC:90006;Name=NB6;description=NCBI test rRNA 6;gbkey=Gene;gene=NB6;gene_biotype=rRNA
+chrR	BestRefSeq	rRNA	5000	5239	.	+	.	ID=rna-NR_090006.1;Parent=gene-NB6;Dbxref=GeneID:90006,GenBank:NR_090006.1;Name=NR_090006.1;gbkey=rRNA;gene=NB6;product=RNA, test pre-ribosomal 6;transcript_id=NR_090006.1
+chrR	BestRefSeq	exon	5000	5239	.	+	.	ID=exon-NR_090006.1-1;Parent=rna-NR_090006.1;Dbxref=GeneID:90006;gbkey=rRNA;gene=NB6;transcript_id=NR_090006.1
+chrR	cmsearch	gene	5900	6139	.	+	.	ID=gene-LOC90007;Dbxref=GeneID:90007,HGNC:HGNC:90007;Name=LOC90007;description=U2 spliceosomal RNA;gbkey=Gene;gene=LOC90007;gene_biotype=snRNA
+chrR	cmsearch	snRNA	5900	6139	.	+	.	ID=rna-XR_090007.1;Parent=gene-LOC90007;Dbxref=GeneID:90007,GenBank:XR_090007.1;Name=XR_090007.1;gbkey=ncRNA;gene=LOC90007;product=U2 spliceosomal RNA;transcript_id=XR_090007.1
+chrR	cmsearch	exon	5900	6139	.	+	.	ID=exon-XR_090007.1-1;Parent=rna-XR_090007.1;Dbxref=GeneID:90007;gbkey=ncRNA;gene=LOC90007;transcript_id=XR_090007.1
+chrR	BestRefSeq	gene	6800	7039	.	+	.	ID=gene-NB8;Dbxref=GeneID:90008,HGNC:HGNC:90008;Name=NB8;description=NCBI test small Cajal body RNA 8;gbkey=Gene;gene=NB8;gene_biotype=other
+chrR	BestRefSeq	ncRNA	6800	7039	.	+	.	ID=rna-NR_090008.1;Parent=gene-NB8;Dbxref=GeneID:90008,GenBank:NR_090008.1;Name=NR_090008.1;gbkey=ncRNA;gene=NB8;ncrna_class=scaRNA;product=small Cajal body-specific RNA 8;transcript_id=NR_090008.1
+chrR	BestRefSeq	exon	6800	7039	.	+	.	ID=exon-NR_090008.1-1;Parent=rna-NR_090008.1;Dbxref=GeneID:90008;gbkey=ncRNA;gene=NB8;transcript_id=NR_090008.1
+chrR	tRNAscan-SE	gene	7700	7939	.	+	.	ID=gene-TRN9;Dbxref=GeneID:90009,HGNC:HGNC:90009;Name=TRN9;description=tRNA-Gly (anticodon GCC) 9;gbkey=Gene;gene=TRN9;gene_biotype=tRNA
+chrR	tRNAscan-SE	tRNA	7700	7939	.	+	.	ID=rna-TRN9;Parent=gene-TRN9;Dbxref=GeneID:90009,HGNC:HGNC:90009;gbkey=tRNA;gene=TRN9;product=tRNA-Gly
+chrR	tRNAscan-SE	exon	7700	7939	.	+	.	ID=exon-TRN9-1;Parent=rna-TRN9;Dbxref=GeneID:90009;gbkey=tRNA;gene=TRN9

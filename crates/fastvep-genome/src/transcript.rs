@@ -1,7 +1,51 @@
 use crate::codon::{reverse_complement, CodonTable};
 use fastvep_core::Strand;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::sync::Arc;
+
+/// The exons of a transcript in transcript order ([`Transcript::sorted_exons`]).
+pub(crate) enum ExonsInOrder<'a> {
+    /// `exons` as they are stored
+    Stored(&'a [Exon]),
+    /// `exons` from the last to the first
+    Backwards(&'a [Exon]),
+    /// neither, so sorted
+    Sorted(Vec<&'a Exon>),
+}
+
+impl<'a> ExonsInOrder<'a> {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Stored(e) | Self::Backwards(e) => e.len(),
+            Self::Sorted(e) => e.len(),
+        }
+    }
+
+    pub(crate) fn get(&self, i: usize) -> Option<&'a Exon> {
+        match self {
+            Self::Stored(e) => e.get(i),
+            Self::Backwards(e) => e.len().checked_sub(i + 1).and_then(|j| e.get(j)),
+            Self::Sorted(e) => e.get(i).copied(),
+        }
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &'a Exon> + '_ {
+        (0..self.len()).filter_map(move |i| self.get(i))
+    }
+
+    pub(crate) fn last(&self) -> Option<&'a Exon> {
+        self.len().checked_sub(1).and_then(|i| self.get(i))
+    }
+}
+
+impl std::ops::Index<usize> for ExonsInOrder<'_> {
+    type Output = Exon;
+
+    fn index(&self, i: usize) -> &Exon {
+        self.get(i).expect("an exon of the transcript")
+    }
+}
 
 /// A gene model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +112,30 @@ pub struct Transcript {
     /// Added to the raw CDS position to account for incomplete CDS starts.
     #[serde(default)]
     pub codon_table_start_phase: u64,
+    /// The annotation reads the first codon as Met although it is not `ATG`, so residue 1 is `M`
+    /// where the codon table says `L` or `V`.
+    ///
+    /// Ensembl's database records it as an `initial_met` edit of the translation and RefSeq's
+    /// GFF3 as `transl_except=(pos:...,aa:Met)`; Ensembl VEP applies either to the reference
+    /// residue and to nothing else, so `Amino_acids` reads `M/L` and `HGVSp` `p.Met1?` for a CTG
+    /// start. Set from the `transl_except` by the GFF3 parser, and for an Ensembl GFF3, which has
+    /// no such record, by [`Transcript::build_sequences`] (see `cds_flags_from_sequence`).
+    #[serde(default)]
+    pub initiator_met: bool,
+    /// The GFF3 this transcript came from is Ensembl's export, which leaves out two things
+    /// Ensembl's database (and so VEP's cache) holds: the `cds_start_NF` / `cds_end_NF` flags and
+    /// the `initial_met` edit. [`Transcript::build_sequences`] reads both off the sequence, once
+    /// the CDS is in hand, and sets `flags` and `initiator_met`.
+    ///
+    /// False for a GFF3 that carries its own flags (GENCODE's), which are taken as they are, and
+    /// for RefSeq's, whose cache has none. Also not applied on the contig of an organelle genome
+    /// (`mitochondrial::is_organelle_contig`), whatever the file is.
+    #[serde(default)]
+    pub cds_flags_from_sequence: bool,
+    /// The annotation tags it a readthrough transcript, one that spans two genes. Ensembl VEP's
+    /// cache leaves these out (`AnnotationSource::Database::Transcript`), a GFF3 does not.
+    #[serde(default)]
+    pub readthrough: bool,
 }
 
 /// Reinterpret an in-frame UGA that the annotation places *inside* the coding
@@ -168,10 +236,133 @@ impl IntronBounds {
     }
 }
 
+/// How far apart an intron's two ends may be for Ensembl to call it a frameshift intron:
+/// `abs($intron_end - $intron_start) <= 12` in `BaseTranscriptVariation.pm`, which is an intron
+/// of 13 bases or fewer. The comment above that test says 12, and the test is the one that runs.
+pub const FRAMESHIFT_INTRON_SPAN: u64 = 12;
+
+/// How many bases Ensembl widens every exon by, for the question "does this change touch an
+/// exon", in a transcript that has a frameshift intron (`$stretch` in `_overlapped_exons`).
+pub const FRAMESHIFT_EXON_STRETCH: u64 = 12;
+
 impl Transcript {
     /// Whether this transcript is protein-coding.
     pub fn is_coding(&self) -> bool {
         self.translation.is_some()
+    }
+
+    /// Whether some intron is short enough for Ensembl to call it a frameshift intron: it is
+    /// there to make the transcript's sequence agree with an assembly that has an extra or a
+    /// missing base, and Ensembl treats a change in one as exonic ([`FRAMESHIFT_INTRON_SPAN`]).
+    pub fn has_frameshift_intron(&self) -> bool {
+        self.introns()
+            .any(|intron| intron.end - intron.start <= FRAMESHIFT_INTRON_SPAN)
+    }
+
+    /// Ensembl's "overlaps an exon" (`_overlapped_exons` is not empty), the `exon` flag that
+    /// `_bvfo_preds` caches and that the polypyrimidine term and the `coding` flag are gated on.
+    ///
+    /// It is not the same question as "is inside an exon", twice over. The pair it asks about
+    /// is the change's two flanking bases sorted (`min_vf`, `max_vf`), so an insertion touches
+    /// the exon if either of the bases it sits between is in it, where the exon an insertion is
+    /// *in* (`non_coding_exon_variant`, which re-checks with a plain `overlap`) needs both. And
+    /// in a transcript with a frameshift intron every exon is [`FRAMESHIFT_EXON_STRETCH`] bases
+    /// wider on each side, so that a change in or next to the tiny intron "is exonic": which also
+    /// makes every change within 12 bases of any exon of that transcript touch one.
+    pub fn overlaps_exon_flag(&self, start: u64, end: u64) -> bool {
+        let (lo, hi) = (start.min(end), start.max(end));
+        let reaches = |stretch: u64| {
+            self.exons.iter().any(|exon| {
+                lo <= exon.end.saturating_add(stretch) && hi >= exon.start.saturating_sub(stretch)
+            })
+        };
+        reaches(0) || (reaches(FRAMESHIFT_EXON_STRETCH) && self.has_frameshift_intron())
+    }
+
+    /// `within_feature` of `_bvfo_preds`: a plain `overlap` of the change with the transcript, so
+    /// an insertion (`end = start - 1`) needs both of the bases it sits between inside it.
+    pub fn within_feature(&self, start: u64, end: u64) -> bool {
+        end >= self.start && start <= self.end
+    }
+
+    /// `$pre->{exon}` of `_bvfo_preds`: the change is within the transcript and touches an exon
+    /// ([`Self::overlaps_exon_flag`]). It decides whether Ensembl writes a `cDNA_position` at all.
+    pub fn pre_exon(&self, start: u64, end: u64) -> bool {
+        self.within_feature(start, end) && self.overlaps_exon_flag(start, end)
+    }
+
+    /// `$pre->{coding}` of `_bvfo_preds`, which `hgvs_protein` and the `CDS_position` and
+    /// `Protein_position` cells ask of the change *as it stands*, before the 3'-rule moves it.
+    ///
+    /// It is a test of extent and not of coordinates. The change has to be `within_feature`, a
+    /// plain `overlap` with the transcript, so an insertion needs both of the bases it sits
+    /// between inside it; it has to reach the coding region, and an exon, where an insertion
+    /// counts as the two bases it sits between (`min_vf` and `max_vf`). Whether the mapper then
+    /// finds a CDS coordinate for it is not asked: an insertion in front of the initiator has
+    /// none and is `coding` all the same, and the 3'-rule can carry it onto the initiator, which
+    /// is how Ensembl writes `p.Met1AsnfsTer?` for one, and `-/654` is what `--total_length`
+    /// writes for the `CDS_position` of a deletion that spans the whole of an exon from intron
+    /// to intron.
+    ///
+    /// "An exon" is [`Self::overlaps_exon_flag`], which in a transcript with a frameshift
+    /// intron is every base within 12 of an exon: a deletion inside the intron is `coding`, and
+    /// the 3'-rule can carry it into the exon, where Ensembl then writes the protein change of it
+    /// (`p.Glu56SerfsTer136` for a deletion in SHANK3's two-base intron, `c.166del`).
+    pub fn pre_coding(&self, start: u64, end: u64) -> bool {
+        if !self.within_feature(start, end) {
+            return false;
+        }
+        let (Some(coding_start), Some(coding_end)) =
+            (self.coding_region_start, self.coding_region_end)
+        else {
+            return false;
+        };
+        let (lo, hi) = (start.min(end), start.max(end));
+        lo <= coding_end && hi >= coding_start && self.overlaps_exon_flag(lo, hi)
+    }
+
+    /// The length of the coding sequence as Ensembl counts it for `--total_length`:
+    /// `length(translateable_seq)`, which includes the stop codon and, for a transcript whose first
+    /// codon is partial, the `N`s in front of it. `None` for a transcript with no coding sequence.
+    ///
+    /// Without a FASTA there is no sequence to measure, and the length is worked out from the
+    /// coding span and the phase instead, which is the same number.
+    pub fn cds_length(&self) -> Option<u64> {
+        if let Some(seq) = self.translateable_seq.as_deref().filter(|s| !s.is_empty()) {
+            return Some(seq.len() as u64);
+        }
+        if !self.is_coding() {
+            return None;
+        }
+        let span = self.cdna_coding_end?.checked_sub(self.cdna_coding_start?)? + 1;
+        Some(span + self.codon_table_start_phase)
+    }
+
+    /// The protein's accession as `HGVSp` writes it: `ENSP00000363557.3`.
+    ///
+    /// Ensembl's GFF3 keeps the version beside the id (`protein_id=ENSP00000363557;version=3`),
+    /// so it is appended. NCBI's carries it in the id (`protein_id=NP_000001.2`), and Ensembl
+    /// VEP writes that as it is (`NP_000001.2:p.Ala6Thr`): appending the version to it would
+    /// make `NP_000001.2.1`, an accession that does not exist, so a version the id already
+    /// has stands. (The old check compared the two versions and only caught an id that ended
+    /// in `.1`, which is the one case where the answer was right anyway.)
+    pub fn versioned_protein_id(&self) -> Option<String> {
+        let id = self.protein_id.as_ref()?;
+        let has_version = id
+            .rsplit_once('.')
+            .is_some_and(|(_, v)| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
+        Some(match self.protein_version {
+            // sized for what it holds: `format!` grows from nothing, and this runs once per
+            // (variant x transcript x allele) with `--hgvs`
+            Some(v) if !has_version => {
+                let mut out = String::with_capacity(id.len() + 11);
+                out.push_str(id);
+                out.push('.');
+                let _ = write!(out, "{v}");
+                out
+            }
+            _ => id.clone(),
+        })
     }
 
     /// Total number of exons.
@@ -195,7 +386,7 @@ impl Transcript {
         let mut cdna_pos = 0u64;
         let sorted_exons = self.sorted_exons();
 
-        for exon in &sorted_exons {
+        for exon in sorted_exons.iter() {
             if genomic_pos >= exon.start && genomic_pos <= exon.end {
                 return match self.strand {
                     Strand::Forward => Some(cdna_pos + (genomic_pos - exon.start) + 1),
@@ -304,6 +495,15 @@ impl Transcript {
             let phase = self.codon_table_start_phase as usize;
             let cs_idx = (cs - 1) as usize;
             let ce_idx = ce as usize;
+            // A coding region that starts after it ends has nothing to be read out of the spliced
+            // sequence: exons that are out of order or overlap put it there, and slicing it
+            // panics, which in the parallel build of a whole GFF3 takes the run down with it.
+            if cs_idx > ce_idx {
+                return Err(format!(
+                    "the coding region of {} starts at cDNA {} and ends at {}, before it starts",
+                    self.stable_id, cs, ce
+                ));
+            }
             if ce_idx <= spliced_str.len() {
                 // For incomplete CDS starts (phase > 0), pad with N bases so
                 // CDS position 1 maps to translateable index phase (aligning codons).
@@ -327,11 +527,89 @@ impl Transcript {
                     translateable.as_bytes(),
                     &codon_table,
                 );
+                // Mitochondrial genes are left alone: their initiators are `ATA` and `ATT` as
+                // often as `ATG` and they have no UTR, which is what the reading below takes for
+                // an unconfirmed start.
+                if self.cds_flags_from_sequence
+                    && !crate::mitochondrial::is_organelle_contig(&self.chromosome)
+                {
+                    self.read_ensembl_cds_state(translateable.as_bytes(), &codon_table);
+                }
+                // `Transcript::translate` writes a first codon the table lists as a start (`CTG` is
+                // one, for the standard table) as `M`, and the translation's `initial_met` edit
+                // does the same for the codons it is given to (`initiator_met`). They are two
+                // things in Ensembl and they are two things here: the first is the protein
+                // `hgvs_protein` reads a frameshift against (`p.Met1?` for a CTG start), the second
+                // is also what `Amino_acids` reads for codon 1 (`resolve_readthrough_residue`).
+                let first_codon_is_start = translateable
+                    .as_bytes()
+                    .first_chunk::<3>()
+                    .is_some_and(|codon| codon_table.lists_start(codon));
+                if first_codon_is_start || self.initiator_met {
+                    if let Some(first) = peptide_bytes.first_mut() {
+                        *first = b'M';
+                    }
+                }
                 self.peptide = Some(String::from_utf8_lossy(&peptide_bytes).to_string());
             }
         }
 
         Ok(())
+    }
+
+    /// Set `flags` and `initiator_met` the way Ensembl's database has them, for a transcript whose
+    /// GFF3 is Ensembl's export and so says neither (`cds_flags_from_sequence`).
+    ///
+    /// Read against VEP 116.3's own cache for chr21 and chr22 (12,867 coding transcripts, the
+    /// Ensembl 116 GFF3 and the genome), the rules below give the cache's `cds_start_NF` on 12,859
+    /// and its `cds_end_NF` on 12,858:
+    ///
+    /// - `cds_end_NF` when the coding sequence does not end in a stop codon in frame. All 621 the
+    ///   cache flags are found, and 9 it does not flag are too (a CDS of 698 bases, say, that the
+    ///   database calls complete).
+    /// - `cds_start_NF` when the first CDS exon starts part-way through a codon (all 229 of
+    ///   those carry the flag), or when its first codon is not `ATG` and there is no 5' UTR above
+    ///   it. A transcript that begins with another codon *and* has a UTR is complete in the
+    ///   cache (18 of 18); one without a UTR is not (128 of 130). The six it flags that start with
+    ///   `ATG` cannot be told from the rest.
+    /// - `initial_met`, the edit that makes residue 1 `M`, for a complete transcript that starts
+    ///   with `CTG`, `GTG` or `ACG`. The cache gives it to all 14 complete transcripts that start
+    ///   so, and not to the six complete ones that start with something else (`GCT`, `GAA`);
+    ///   twelve of the 14 have a UTR and are found, the other two are read as unconfirmed above.
+    ///   `TTG` is the fourth codon of the usual list, and none of the cache's complete transcripts
+    ///   starts with it, so it is not assumed.
+    ///
+    /// **Where it was checked.** Against the nuclear genes of human GRCh38 chr21 and chr22 and
+    /// nowhere else. It is applied to the nuclear genes of every GFF3 that is an Ensembl export
+    /// (a transcript named `transcript:...` with no NF tag), human or not, and the rules are about
+    /// codons and a UTR, not about an organism, but no other organism's cache has been read
+    /// against them. It is not applied to a contig that is an organelle genome by its name
+    /// ([`crate::mitochondrial::is_organelle_contig`]), whose genes start with `ATA` or `GTG` as
+    /// the code of the organelle says and not as the standard one does: a yeast `Mito` gene that
+    /// starts with `ATA` was flagged `cds_start_NF`. Called again for a transcript that has
+    /// been through it, it says what it said.
+    fn read_ensembl_cds_state(&mut self, translateable: &[u8], table: &CodonTable) {
+        let first = translateable.first_chunk::<3>();
+        let has_five_prime_utr = self.cdna_coding_start.is_some_and(|start| start > 1);
+        let start_unconfirmed =
+            self.codon_table_start_phase > 0 || (first != Some(b"ATG") && !has_five_prime_utr);
+        let end_in_frame_stop = translateable.len().is_multiple_of(3)
+            && translateable
+                .last_chunk::<3>()
+                .is_some_and(|codon| table.is_stop(codon));
+        // Said once: the sequences of a transcript are built again when a run needs them and the
+        // transcript has been through a build before, and a flag twice is two flags in the FLAGS cell
+        for (unconfirmed, flag) in [
+            (start_unconfirmed, "cds_start_NF"),
+            (!end_in_frame_stop, "cds_end_NF"),
+        ] {
+            if unconfirmed && !self.flags.iter().any(|f| f == flag) {
+                self.flags.push(flag.to_string());
+            }
+        }
+        if !start_unconfirmed && matches!(first, Some(b"CTG" | b"GTG" | b"ACG")) {
+            self.initiator_met = true;
+        }
     }
 
     /// Get exons sorted by transcript order, returning owned Exons.
@@ -345,13 +623,32 @@ impl Transcript {
     }
 
     /// Get exons sorted by transcript order (forward for +, reverse for -).
-    fn sorted_exons(&self) -> Vec<&Exon> {
-        let mut exons: Vec<&Exon> = self.exons.iter().collect();
+    ///
+    /// The GFF3 reader stores them that way, so this is a view of `exons` and not a copy that is
+    /// sorted: it runs for every (variant x transcript x allele), a few times each, and the copy
+    /// was an allocation and a sort of the exons of the transcript every time.
+    pub(crate) fn sorted_exons(&self) -> ExonsInOrder<'_> {
+        let exons = &self.exons[..];
+        let ascending = exons.windows(2).all(|w| w[0].start <= w[1].start);
+        let descending = exons.windows(2).all(|w| w[0].start >= w[1].start);
+        let strictly_ascending = || exons.windows(2).all(|w| w[0].start < w[1].start);
+        let strictly_descending = || exons.windows(2).all(|w| w[0].start > w[1].start);
         match self.strand {
-            Strand::Forward => exons.sort_by_key(|e| e.start),
-            Strand::Reverse => exons.sort_by_key(|e| std::cmp::Reverse(e.start)),
+            // a stable sort of what is already in order is what is in order, and of what is
+            // strictly the other way round is the list read from its end
+            Strand::Forward if ascending => ExonsInOrder::Stored(exons),
+            Strand::Forward if strictly_descending() => ExonsInOrder::Backwards(exons),
+            Strand::Reverse if descending => ExonsInOrder::Stored(exons),
+            Strand::Reverse if strictly_ascending() => ExonsInOrder::Backwards(exons),
+            _ => {
+                let mut sorted: Vec<&Exon> = exons.iter().collect();
+                match self.strand {
+                    Strand::Forward => sorted.sort_by_key(|e| e.start),
+                    Strand::Reverse => sorted.sort_by_key(|e| std::cmp::Reverse(e.start)),
+                }
+                ExonsInOrder::Sorted(sorted)
+            }
         }
-        exons
     }
 
     /// Determine which exon (0-indexed rank) a genomic position falls in.
@@ -726,6 +1023,76 @@ mod tests {
 
     use super::*;
 
+    /// The exons in transcript order are what a stable sort of them by start gives (ascending for
+    /// the forward strand, descending for the reverse), however they were stored: in order, the
+    /// other way round, shuffled, with starts that repeat.
+    #[test]
+    fn the_exons_in_transcript_order_are_the_sorted_exons_however_they_were_stored() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+        let mut stored_as_is = 0;
+        let mut stored_backwards = 0;
+        let mut sorted_copy = 0;
+        for round in 0..4000 {
+            let mut t = make_test_transcript();
+            t.strand = if round % 2 == 0 {
+                Strand::Forward
+            } else {
+                Strand::Reverse
+            };
+            let n = next(8) as usize;
+            // starts from a small range, so that some repeat; `rank` says where each began
+            let mut exons: Vec<Exon> = (0..n)
+                .map(|rank| Exon {
+                    stable_id: format!("E{rank}"),
+                    start: 100 + next(12) * 10,
+                    end: 0,
+                    strand: t.strand,
+                    phase: -1,
+                    end_phase: -1,
+                    rank: rank as u32,
+                })
+                .collect();
+            for e in &mut exons {
+                e.end = e.start + 5;
+            }
+            // the shapes a reader can leave them in
+            match round % 4 {
+                0 => exons.sort_by_key(|e| e.start),
+                1 => exons.sort_by_key(|e| std::cmp::Reverse(e.start)),
+                2 => exons.reverse(),
+                _ => {}
+            }
+            t.exons = exons;
+            let mut expected: Vec<&Exon> = t.exons.iter().collect();
+            match t.strand {
+                Strand::Forward => expected.sort_by_key(|e| e.start),
+                Strand::Reverse => expected.sort_by_key(|e| std::cmp::Reverse(e.start)),
+            }
+            let got = t.sorted_exons();
+            match got {
+                ExonsInOrder::Stored(_) => stored_as_is += 1,
+                ExonsInOrder::Backwards(_) => stored_backwards += 1,
+                ExonsInOrder::Sorted(_) => sorted_copy += 1,
+            }
+            assert_eq!(got.len(), expected.len());
+            let ranks: Vec<u32> = got.iter().map(|e| e.rank).collect();
+            let wanted: Vec<u32> = expected.iter().map(|e| e.rank).collect();
+            assert_eq!(ranks, wanted, "{:?} {:?}", t.strand, t.exons);
+            assert_eq!(got.last().map(|e| e.rank), wanted.last().copied());
+            for (i, e) in expected.iter().enumerate() {
+                assert_eq!(got[i].rank, e.rank);
+            }
+        }
+        // all three ways of answering were taken
+        assert!(stored_as_is > 100 && stored_backwards > 100 && sorted_copy > 100);
+    }
+
     fn make_test_transcript() -> Transcript {
         Transcript {
             stable_id: "ENST00000001".into(),
@@ -807,6 +1174,9 @@ mod tests {
             gencode_primary: false,
             flags: vec![],
             codon_table_start_phase: 0,
+            initiator_met: false,
+            cds_flags_from_sequence: false,
+            readthrough: false,
         }
     }
 
@@ -1131,5 +1501,298 @@ mod tests {
             "peptide starts with: {}",
             &peptide[..1]
         );
+    }
+    /// `HGVSp` names the protein as `id.version`, and not twice: Ensembl's GFF3 keeps the version
+    /// beside the id, NCBI's in it.
+    #[test]
+    fn the_protein_accession_carries_one_version() {
+        let accession = |id: Option<&str>, version: Option<u32>| {
+            let mut tr = make_test_transcript();
+            tr.protein_id = id.map(String::from);
+            tr.protein_version = version;
+            tr.versioned_protein_id()
+        };
+        // Ensembl: the version is beside the id
+        assert_eq!(
+            accession(Some("ENSP00000363557"), Some(3)).as_deref(),
+            Some("ENSP00000363557.3")
+        );
+        assert_eq!(
+            accession(Some("ENSP00000363557"), Some(12)).as_deref(),
+            Some("ENSP00000363557.12")
+        );
+        // NCBI: it is in the id, and the version GFF3 parsing supplies (1 where a record has none)
+        // must not be put after it. `NP_000001.2.1` is not an accession; `.1.1` was not one either.
+        assert_eq!(
+            accession(Some("NP_000001.2"), Some(1)).as_deref(),
+            Some("NP_000001.2")
+        );
+        assert_eq!(
+            accession(Some("NP_000001.1"), Some(1)).as_deref(),
+            Some("NP_000001.1")
+        );
+        assert_eq!(
+            accession(Some("NP_000001.12"), Some(1)).as_deref(),
+            Some("NP_000001.12")
+        );
+        // no version known, none added; no protein, no accession
+        assert_eq!(
+            accession(Some("ENSP00000363557"), None).as_deref(),
+            Some("ENSP00000363557")
+        );
+        assert_eq!(accession(None, Some(3)), None);
+        // a dot that is not a version is not one
+        assert_eq!(
+            accession(Some("PROT.abc"), Some(2)).as_deref(),
+            Some("PROT.abc.2")
+        );
+    }
+
+    /// The three-exon fixture (`1000-1200`, `2000-2300`, `4000-5000`) with its third exon moved
+    /// to start `gap` bases after the second ends, which makes the second intron `gap` long.
+    fn with_second_intron(gap: u64) -> Transcript {
+        let mut tr = make_test_transcript();
+        tr.exons[2].start = 2301 + gap;
+        tr.exons[2].end = tr.exons[2].start + 999;
+        tr
+    }
+
+    #[test]
+    fn an_intron_is_a_frameshift_intron_up_to_thirteen_bases() {
+        // `abs($intron_end - $intron_start) <= 12` is an intron whose last base is 12 past its
+        // first, which is 13 bases long: the comment beside that test says 12.
+        assert!(with_second_intron(1).has_frameshift_intron());
+        assert!(with_second_intron(13).has_frameshift_intron());
+        assert!(!with_second_intron(14).has_frameshift_intron());
+        assert!(!make_test_transcript().has_frameshift_intron());
+        // the exons of a reverse-strand transcript are stored descending
+        let mut reverse = with_second_intron(13);
+        reverse.strand = Strand::Reverse;
+        reverse.exons.reverse();
+        assert!(reverse.has_frameshift_intron());
+    }
+
+    #[test]
+    fn overlapping_exons_make_no_intron_to_be_short() {
+        // A RefSeq transcript with exons that overlap has an "intron" with start > end, which
+        // Ensembl skips before it asks how long it is.
+        let mut tr = make_test_transcript();
+        tr.exons[2].start = 2250;
+        tr.exons[2].end = 3000;
+        assert!(!tr.has_frameshift_intron());
+    }
+
+    #[test]
+    fn the_exon_flag_widens_every_exon_only_in_a_transcript_with_a_frameshift_intron() {
+        let plain = make_test_transcript();
+        assert!(plain.overlaps_exon_flag(1200, 1200));
+        assert!(!plain.overlaps_exon_flag(1201, 1201));
+        // third exon at 2306 to 3305: the intron 2301-2305 is five bases
+        let short = with_second_intron(5);
+        assert!(short.overlaps_exon_flag(1212, 1212), "12 past exon 1");
+        assert!(!short.overlaps_exon_flag(1213, 1213), "13 past exon 1");
+        assert!(short.overlaps_exon_flag(1988, 1988), "12 before exon 2");
+        assert!(!short.overlaps_exon_flag(1987, 1987), "13 before exon 2");
+        // the far side of the same exon is widened too, and by the same amount
+        assert!(short.overlaps_exon_flag(3317, 3317));
+        assert!(!short.overlaps_exon_flag(3318, 3318));
+    }
+
+    #[test]
+    fn an_insertion_touches_an_exon_when_either_base_it_sits_between_does() {
+        // An insertion arrives as `end = start - 1`. `_overlapped_exons` sorts the pair, so the
+        // base on either side counts, where "inside the exon" needs both.
+        let tr = make_test_transcript();
+        assert!(tr.overlaps_exon_flag(2000, 1999), "between 1999 and 2000");
+        assert!(tr.overlaps_exon_flag(1201, 1200), "between 1200 and 1201");
+        assert!(!tr.overlaps_exon_flag(1501, 1500), "between 1500 and 1501");
+    }
+
+    /// A one-exon transcript made of `utr5` bases, `cds` and ten bases of 3' UTR, built the way a
+    /// run with a FASTA builds it.
+    fn built(cds: &str, utr5: usize, phase: u64, from_sequence: bool, chrom: &str) -> Transcript {
+        let seq = format!("{}{}{}", "C".repeat(utr5), cds, "C".repeat(10));
+        let mut t = make_test_transcript();
+        t.chromosome = chrom.into();
+        t.exons = vec![Exon {
+            stable_id: "E1".into(),
+            start: 1,
+            end: seq.len() as u64,
+            strand: Strand::Forward,
+            phase: -1,
+            end_phase: -1,
+            rank: 1,
+        }];
+        t.start = 1;
+        t.end = seq.len() as u64;
+        t.cdna_coding_start = Some(utr5 as u64 + 1);
+        t.cdna_coding_end = Some((utr5 + cds.len()) as u64);
+        t.codon_table_start_phase = phase;
+        t.flags = vec![];
+        t.initiator_met = false;
+        t.cds_flags_from_sequence = from_sequence;
+        t.build_sequences(|_chrom, start, end| {
+            Ok(seq.as_bytes()[start as usize - 1..end as usize].to_vec())
+        })
+        .unwrap();
+        t
+    }
+
+    /// Ensembl's GFF3 export has no `cds_start_NF` or `cds_end_NF`, and the cache VEP reads them
+    /// from does. Read off the sequence they agree with it on 12,858 of the 12,867 coding
+    /// transcripts of chr21 and chr22 (the end) and 12,859 (the start): see
+    /// [`Transcript::read_ensembl_cds_state`] for the rules and what they miss.
+    #[test]
+    fn the_cds_flags_of_an_ensembl_export_are_read_from_the_sequence() {
+        // complete: ATG, a 5' UTR, a stop codon in frame at the end
+        let t = built("ATGAAATGGTAA", 5, 0, true, "chr1");
+        assert!(t.flags.is_empty(), "{:?}", t.flags);
+
+        // no stop codon at the end
+        let t = built("ATGAAATGGTTT", 5, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_end_NF"]);
+
+        // ends in a stop codon that is not in frame: the CDS is 13 bases
+        let t = built("ATGAAATGGCTAA", 5, 0, true, "chr1");
+        assert_eq!(
+            t.flags,
+            ["cds_end_NF"],
+            "a stop out of frame is not the end"
+        );
+
+        // the first exon of the CDS starts part-way through a codon (two bases of it are missing,
+        // so the 7 that are there make nine with them)
+        let t = built("GTGGTAA", 5, 2, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF"]);
+
+        // a first codon that is not ATG with nothing above it...
+        let t = built("GCTAAATGGTAA", 0, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF"]);
+        // ...and with a UTR above it, which is how the cache has the 18 that are complete
+        let t = built("GCTAAATGGTAA", 5, 0, true, "chr1");
+        assert!(t.flags.is_empty(), "{:?}", t.flags);
+
+        // both, in VEP's order
+        let t = built("GCTAAATGGTTT", 0, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF", "cds_end_NF"]);
+
+        // a transcript whose GFF3 carries its own flags is left to them
+        let t = built("GCTAAATGGTTT", 0, 0, false, "chr1");
+        assert!(t.flags.is_empty(), "{:?}", t.flags);
+
+        // mitochondrial genes have no UTR and start with ATA and ATT as often as ATG
+        let t = built("ATTAAATGGTAA", 0, 0, true, "chrM");
+        assert!(t.flags.is_empty(), "{:?}", t.flags);
+    }
+
+    /// The CDS flags and the initiator `Met` of an Ensembl export are read off the codons with the
+    /// standard genetic code, which an organelle genome does not use: a yeast `Mito` gene that starts
+    /// with `ATA` was flagged `cds_start_NF`, and so was any other that does not start with `ATG`
+    /// with no UTR above it. The contigs of this repository's own test genomes are the ones named.
+    #[test]
+    fn the_flags_of_an_organelle_contig_are_not_read_off_the_standard_code() {
+        for chrom in ["Mito", "Mt", "Pt", "mitochondrion_genome", "MT", "chrM"] {
+            // `ATA` with nothing above it, and a `GTG` with a UTR above it and no stop
+            let t = built("ATAAAATGGTAA", 0, 0, true, chrom);
+            assert!(t.flags.is_empty(), "{chrom}: {:?}", t.flags);
+            let t = built("GTGAAATGGTTT", 5, 0, true, chrom);
+            assert!(t.flags.is_empty(), "{chrom}: {:?}", t.flags);
+            assert!(!t.initiator_met, "{chrom}");
+        }
+        // the same transcripts on a nuclear contig are read as they were
+        let t = built("ATAAAATGGTAA", 0, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF"]);
+        let t = built("GTGAAATGGTTT", 5, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_end_NF"]);
+        assert!(
+            t.initiator_met,
+            "its start is complete, with a UTR above it"
+        );
+        let t = built("GTGAAATGGTAA", 5, 0, true, "II");
+        assert!(t.initiator_met && t.flags.is_empty());
+    }
+
+    /// Building the sequences of a transcript that has been through it says what it said: the flags
+    /// are not said twice.
+    #[test]
+    fn reading_the_cds_state_twice_is_reading_it_once() {
+        let seq = "GCTAAATGGTTTCCCCCCCCCC".to_string();
+        let mut t = built("GCTAAATGGTTT", 0, 0, true, "chr1");
+        assert_eq!(t.flags, ["cds_start_NF", "cds_end_NF"]);
+        // the second build starts from what the first left, as a cache that is built on does
+        t.build_sequences(|_chrom, start, end| {
+            Ok(seq.as_bytes()[start as usize - 1..end as usize].to_vec())
+        })
+        .unwrap();
+        assert_eq!(t.flags, ["cds_start_NF", "cds_end_NF"]);
+        let mut u = built("CTGAAATGGTAA", 5, 0, true, "chr1");
+        let before = (u.flags.clone(), u.initiator_met);
+        let seq = "CCCCCCTGAAATGGTAACCCCCCCCCC".to_string();
+        u.build_sequences(|_chrom, start, end| {
+            Ok(seq.as_bytes()[start as usize - 1..end as usize].to_vec())
+        })
+        .unwrap();
+        assert_eq!((u.flags, u.initiator_met), before);
+    }
+
+    /// Residue 1 is `M` in two ways and Ensembl VEP keeps them apart. `Transcript::translate`
+    /// writes a first codon the code table lists as a start (`TTG`, `CTG` and `ATG` for table 1) as
+    /// `M`, which is the protein `hgvs_protein` reads a frameshift against; the translation's
+    /// `initial_met` edit makes `M` of the codons it is given to (`CTG`, `GTG` and `ACG` of the
+    /// complete transcripts of chr21 and chr22), and that is what `Amino_acids` reads.
+    #[test]
+    fn residue_one_is_met_by_the_start_codon_rule_and_by_the_initial_met_edit() {
+        // complete, with a UTR: the edit applies, and the table's rule too for a CTG
+        let t = built("CTGAAATGGTAA", 5, 0, true, "chr1");
+        assert!(t.initiator_met);
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
+        let t = built("GTGAAATGGTAA", 5, 0, true, "chr1");
+        assert!(
+            t.initiator_met,
+            "GTG is not in the table's list; the edit is"
+        );
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
+        let t = built("ACGAAATGGTAA", 5, 0, true, "chr1");
+        assert!(t.initiator_met);
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
+
+        // not a codon the edit is given to
+        let t = built("GCTAAATGGTAA", 5, 0, true, "chr1");
+        assert!(!t.initiator_met);
+        assert_eq!(t.peptide.as_deref(), Some("AKW*"));
+
+        // incomplete at the start: no edit, but `translate` still writes a CTG as M (the cache
+        // has `pep1=M` and `Amino_acids` `L` for these)
+        let t = built("CTGAAATGGTAA", 0, 0, true, "chr1");
+        assert!(!t.initiator_met);
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
+        let t = built("GTGAAATGGTAA", 0, 0, true, "chr1");
+        assert!(!t.initiator_met);
+        assert_eq!(
+            t.peptide.as_deref(),
+            Some("VKW*"),
+            "GTG is not a start of table 1"
+        );
+
+        // RefSeq says so itself with `transl_except ... aa:Met`
+        let mut t = make_test_transcript();
+        t.initiator_met = true;
+        t.cds_flags_from_sequence = false;
+        let seq = "GTGAAATGGTAA";
+        t.cdna_coding_start = Some(1);
+        t.cdna_coding_end = Some(12);
+        t.codon_table_start_phase = 0;
+        t.exons = vec![Exon {
+            stable_id: "E1".into(),
+            start: 1,
+            end: 12,
+            strand: Strand::Forward,
+            phase: 0,
+            end_phase: -1,
+            rank: 1,
+        }];
+        t.build_sequences(|_c, s, e| Ok(seq.as_bytes()[s as usize - 1..e as usize].to_vec()))
+            .unwrap();
+        assert_eq!(t.peptide.as_deref(), Some("MKW*"));
     }
 }

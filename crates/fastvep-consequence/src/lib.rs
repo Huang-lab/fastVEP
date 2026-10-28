@@ -1,5 +1,9 @@
+mod edits;
 mod predictor;
 mod splice;
 pub mod sv_predictor;
 
-pub use predictor::{ConsequencePredictor, PredictionResult, TranscriptConsequence};
+pub use predictor::{
+    AlleleConsequenceResult, ConsequencePredictor, PredictionResult, ProteinWindow,
+    TranscriptConsequence,
+};

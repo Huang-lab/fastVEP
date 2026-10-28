@@ -1,0 +1,140 @@
+# Ensembl VEP v116.3 for in.vcf over genes.gff3: record, Allele, Feature, Gene, SYMBOL, BIOTYPE, Consequence, HGVSc, HGVSp
+# image ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+r1_1	A	NM_090001.3	90001	NB1	protein_coding	missense_variant	NM_090001.3:c.31G>A	NP_090001.2:p.Val11Met
+r1_1	A	NR_090003.1	90003	NB3	ncRNA	upstream_gene_variant		
+r1_1	A	NR_090005.1	90005	MIR90005	miRNA	upstream_gene_variant		
+r1_1	A	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r1_1	A	XM_090002.1	90002	LOC90002	protein_coding	upstream_gene_variant		
+r1_1	A	XR_090004.1	90004	LOC90004	misc_RNA	upstream_gene_variant		
+r1_2	A	NM_090001.3	90001	NB1	protein_coding	missense_variant	NM_090001.3:c.151T>A	NP_090001.2:p.Cys51Ser
+r1_2	A	NR_090003.1	90003	NB3	ncRNA	upstream_gene_variant		
+r1_2	A	NR_090005.1	90005	MIR90005	miRNA	upstream_gene_variant		
+r1_2	A	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r1_2	A	XM_090002.1	90002	LOC90002	protein_coding	upstream_gene_variant		
+r1_2	A	XR_090004.1	90004	LOC90004	misc_RNA	upstream_gene_variant		
+r2_1	G	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r2_1	G	NR_090003.1	90003	NB3	ncRNA	upstream_gene_variant		
+r2_1	G	NR_090005.1	90005	MIR90005	miRNA	upstream_gene_variant		
+r2_1	G	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r2_1	G	XM_090002.1	90002	LOC90002	protein_coding	missense_variant	XM_090002.1:c.31A>G	XP_090002.1:p.Arg11Gly
+r2_1	G	XR_090004.1	90004	LOC90004	misc_RNA	upstream_gene_variant		
+r2_1	G	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r2_2	C	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r2_2	C	NR_090003.1	90003	NB3	ncRNA	upstream_gene_variant		
+r2_2	C	NR_090005.1	90005	MIR90005	miRNA	upstream_gene_variant		
+r2_2	C	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r2_2	C	XM_090002.1	90002	LOC90002	protein_coding	missense_variant	XM_090002.1:c.151A>C	XP_090002.1:p.Met51Leu
+r2_2	C	XR_090004.1	90004	LOC90004	misc_RNA	upstream_gene_variant		
+r2_2	C	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r3_1	C	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r3_1	C	NR_090003.1	90003	NB3	ncRNA	non_coding_transcript_exon_variant	NR_090003.1:n.32A>C	
+r3_1	C	NR_090005.1	90005	MIR90005	miRNA	upstream_gene_variant		
+r3_1	C	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r3_1	C	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r3_1	C	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r3_1	C	XR_090004.1	90004	LOC90004	misc_RNA	upstream_gene_variant		
+r3_1	C	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r3_2	G	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r3_2	G	NR_090003.1	90003	NB3	ncRNA	non_coding_transcript_exon_variant	NR_090003.1:n.153A>G	
+r3_2	G	NR_090005.1	90005	MIR90005	miRNA	upstream_gene_variant		
+r3_2	G	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r3_2	G	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r3_2	G	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r3_2	G	XR_090004.1	90004	LOC90004	misc_RNA	upstream_gene_variant		
+r3_2	G	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r4_1	C	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r4_1	C	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r4_1	C	NR_090005.1	90005	MIR90005	miRNA	upstream_gene_variant		
+r4_1	C	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r4_1	C	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r4_1	C	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r4_1	C	XR_090004.1	90004	LOC90004	misc_RNA	non_coding_transcript_exon_variant	XR_090004.1:n.32A>C	
+r4_1	C	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r4_1	C	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r4_2	C	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r4_2	C	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r4_2	C	NR_090005.1	90005	MIR90005	miRNA	upstream_gene_variant		
+r4_2	C	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r4_2	C	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r4_2	C	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r4_2	C	XR_090004.1	90004	LOC90004	misc_RNA	non_coding_transcript_exon_variant	XR_090004.1:n.153T>C	
+r4_2	C	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r4_2	C	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r5_1	A	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r5_1	A	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r5_1	A	NR_090005.1	90005	MIR90005	miRNA	non_coding_transcript_exon_variant	NR_090005.1:n.32G>A	
+r5_1	A	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r5_1	A	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r5_1	A	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r5_1	A	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r5_1	A	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r5_1	A	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r5_2	T	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r5_2	T	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r5_2	T	NR_090005.1	90005	MIR90005	miRNA	non_coding_transcript_exon_variant	NR_090005.1:n.153A>T	
+r5_2	T	NR_090006.1	90006	NB6	rRNA	upstream_gene_variant		
+r5_2	T	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r5_2	T	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r5_2	T	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r5_2	T	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r5_2	T	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r6_1	T	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r6_1	T	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r6_1	T	NR_090005.1	90005	MIR90005	miRNA	downstream_gene_variant		
+r6_1	T	NR_090006.1	90006	NB6	rRNA	non_coding_transcript_exon_variant	NR_090006.1:n.32C>T	
+r6_1	T	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r6_1	T	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r6_1	T	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r6_1	T	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r6_1	T	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r6_2	G	NM_090001.3	90001	NB1	protein_coding	downstream_gene_variant		
+r6_2	G	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r6_2	G	NR_090005.1	90005	MIR90005	miRNA	downstream_gene_variant		
+r6_2	G	NR_090006.1	90006	NB6	rRNA	non_coding_transcript_exon_variant	NR_090006.1:n.153T>G	
+r6_2	G	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r6_2	G	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r6_2	G	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r6_2	G	XR_090007.1	90007	LOC90007	ncRNA	upstream_gene_variant		
+r6_2	G	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r7_1	T	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r7_1	T	NR_090005.1	90005	MIR90005	miRNA	downstream_gene_variant		
+r7_1	T	NR_090006.1	90006	NB6	rRNA	downstream_gene_variant		
+r7_1	T	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r7_1	T	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r7_1	T	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r7_1	T	XR_090007.1	90007	LOC90007	ncRNA	non_coding_transcript_exon_variant	XR_090007.1:n.32A>T	
+r7_1	T	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r7_2	C	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r7_2	C	NR_090005.1	90005	MIR90005	miRNA	downstream_gene_variant		
+r7_2	C	NR_090006.1	90006	NB6	rRNA	downstream_gene_variant		
+r7_2	C	NR_090008.1	90008	NB8	scaRNA	upstream_gene_variant		
+r7_2	C	XM_090002.1	90002	LOC90002	protein_coding	downstream_gene_variant		
+r7_2	C	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r7_2	C	XR_090007.1	90007	LOC90007	ncRNA	non_coding_transcript_exon_variant	XR_090007.1:n.153T>C	
+r7_2	C	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r8_1	T	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r8_1	T	NR_090005.1	90005	MIR90005	miRNA	downstream_gene_variant		
+r8_1	T	NR_090006.1	90006	NB6	rRNA	downstream_gene_variant		
+r8_1	T	NR_090008.1	90008	NB8	scaRNA	non_coding_transcript_exon_variant	NR_090008.1:n.32C>T	
+r8_1	T	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r8_1	T	XR_090007.1	90007	LOC90007	ncRNA	downstream_gene_variant		
+r8_1	T	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r8_2	T	NR_090003.1	90003	NB3	ncRNA	downstream_gene_variant		
+r8_2	T	NR_090005.1	90005	MIR90005	miRNA	downstream_gene_variant		
+r8_2	T	NR_090006.1	90006	NB6	rRNA	downstream_gene_variant		
+r8_2	T	NR_090008.1	90008	NB8	scaRNA	non_coding_transcript_exon_variant	NR_090008.1:n.153A>T	
+r8_2	T	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r8_2	T	XR_090007.1	90007	LOC90007	ncRNA	downstream_gene_variant		
+r8_2	T	rna-TRN9	90009	TRN9	tRNA	upstream_gene_variant		
+r9_1	A	NR_090005.1	90005	MIR90005	miRNA	downstream_gene_variant		
+r9_1	A	NR_090006.1	90006	NB6	rRNA	downstream_gene_variant		
+r9_1	A	NR_090008.1	90008	NB8	scaRNA	downstream_gene_variant		
+r9_1	A	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r9_1	A	XR_090007.1	90007	LOC90007	ncRNA	downstream_gene_variant		
+r9_1	A	rna-TRN9	90009	TRN9	tRNA	non_coding_transcript_exon_variant	rna-TRN9:n.32C>A	
+r9_2	T	NR_090005.1	90005	MIR90005	miRNA	downstream_gene_variant		
+r9_2	T	NR_090006.1	90006	NB6	rRNA	downstream_gene_variant		
+r9_2	T	NR_090008.1	90008	NB8	scaRNA	downstream_gene_variant		
+r9_2	T	XR_090004.1	90004	LOC90004	misc_RNA	downstream_gene_variant		
+r9_2	T	XR_090007.1	90007	LOC90007	ncRNA	downstream_gene_variant		
+r9_2	T	rna-TRN9	90009	TRN9	tRNA	non_coding_transcript_exon_variant	rna-TRN9:n.153G>T	

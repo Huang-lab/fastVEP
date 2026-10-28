@@ -1,0 +1,22 @@
+##gff-version 3
+##sequence-region   chrP 1 6000
+chrP	test	gene	1000	1299	.	+	.	ID=gene:ENSG00000000011;Name=GENE11;biotype=protein_coding;gene_id=ENSG00000000011;version=1
+chrP	test	mRNA	1000	1299	.	+	.	ID=transcript:ENST00000000011;Parent=gene:ENSG00000000011;Name=GENE11-201;biotype=protein_coding;tag=Ensembl_canonical;transcript_id=ENST00000000011;version=2
+chrP	test	exon	1000	1299	.	+	.	ID=exon:ENST00000000011.1;Parent=transcript:ENST00000000011;Name=ENST00000000011.1;exon_id=ENST00000000011.1;rank=1;version=1
+chrP	test	CDS	1000	1299	.	+	0	ID=CDS:ENSP00000000011;Parent=transcript:ENST00000000011;protein_id=ENSP00000000011;version=3
+chrP	test	gene	2000	2299	.	+	.	ID=gene:ENSG00000000012;Name=GENE12;biotype=protein_coding;gene_id=ENSG00000000012;version=1
+chrP	test	mRNA	2000	2299	.	+	.	ID=transcript:ENST00000000012;Parent=gene:ENSG00000000012;Name=GENE12-201;biotype=protein_coding;tag=Ensembl_canonical;transcript_id=ENST00000000012;version=2
+chrP	test	exon	2000	2299	.	+	.	ID=exon:ENST00000000012.1;Parent=transcript:ENST00000000012;Name=ENST00000000012.1;exon_id=ENST00000000012.1;rank=1;version=1
+chrP	test	CDS	2000	2299	.	+	0	ID=CDS:ENSP00000000012;Parent=transcript:ENST00000000012;protein_id=ENSP00000000012;version=1
+chrP	test	gene	3000	3299	.	+	.	ID=gene:ENSG00000000013;Name=GENE13;biotype=protein_coding;gene_id=ENSG00000000013;version=1
+chrP	test	mRNA	3000	3299	.	+	.	ID=transcript:ENST00000000013;Parent=gene:ENSG00000000013;Name=GENE13-201;biotype=protein_coding;tag=Ensembl_canonical;transcript_id=ENST00000000013;version=2
+chrP	test	exon	3000	3299	.	+	.	ID=exon:ENST00000000013.1;Parent=transcript:ENST00000000013;Name=ENST00000000013.1;exon_id=ENST00000000013.1;rank=1;version=1
+chrP	test	CDS	3000	3299	.	+	0	ID=CDS:ENSP00000000013;Parent=transcript:ENST00000000013;protein_id=ENSP00000000013
+chrP	test	gene	4000	4299	.	+	.	ID=gene:ENSG00000000014;Name=GENE14;biotype=protein_coding;gene_id=ENSG00000000014;version=1
+chrP	test	mRNA	4000	4299	.	+	.	ID=transcript:ENST00000000014;Parent=gene:ENSG00000000014;Name=GENE14-201;biotype=protein_coding;tag=Ensembl_canonical;transcript_id=ENST00000000014;version=2
+chrP	test	exon	4000	4299	.	+	.	ID=exon:ENST00000000014.1;Parent=transcript:ENST00000000014;Name=ENST00000000014.1;exon_id=ENST00000000014.1;rank=1;version=1
+chrP	test	CDS	4000	4299	.	+	0	ID=CDS:ENSP00000000014;Parent=transcript:ENST00000000014;protein_id=ENSP00000000014;version=12
+chrP	BestRefSeq	gene	5000	5299	.	+	.	ID=gene-NB15;Name=NB15;gbkey=Gene;gene=NB15;gene_biotype=protein_coding
+chrP	BestRefSeq	mRNA	5000	5299	.	+	.	ID=rna-NM_000015.3;Parent=gene-NB15;gbkey=mRNA;gene=NB15;transcript_id=NM_000015.3
+chrP	BestRefSeq	exon	5000	5299	.	+	.	ID=exon-NM_000015.3-1;Parent=rna-NM_000015.3;gbkey=mRNA;gene=NB15;transcript_id=NM_000015.3
+chrP	BestRefSeq	CDS	5000	5299	.	+	0	ID=cds-NP_000015.2;Parent=rna-NM_000015.3;gbkey=CDS;gene=NB15;protein_id=NP_000015.2

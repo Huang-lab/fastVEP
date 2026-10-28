@@ -144,9 +144,11 @@ fn predict_sv_for_transcript(
             codons: None,
             exon: None,
             intron: None,
+            location: Default::default(),
             distance,
             protein_length: None,
             escapes_nmd: None,
+            coding_sequence_kept: false,
         };
     }
 
@@ -180,11 +182,13 @@ fn predict_sv_for_transcript(
         codons: None,
         exon: None,
         intron: None,
+        location: Default::default(),
         distance: None,
         // A structural variant has no single position for the 50-nt rule to
         // measure, and PVS1's whole-gene-deletion track does not consult it.
         protein_length: transcript.peptide_length(),
         escapes_nmd: None,
+        coding_sequence_kept: false,
     }
 }
 
@@ -369,6 +373,9 @@ mod tests {
             gencode_primary: false,
             flags: vec![],
             codon_table_start_phase: 0,
+            initiator_met: false,
+            cds_flags_from_sequence: false,
+            readthrough: false,
         }
     }
 
