@@ -1,0 +1,3 @@
+# v37_sw_bs2hom_1e-06: BS2 prevalence bar for the individuals with no functional copy (recessive and X-linked genes), set to 1e-06.
+# Everything else is the shipped default.
+bs2_hom_prevalence_threshold = 1e-06

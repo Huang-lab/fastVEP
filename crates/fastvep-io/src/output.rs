@@ -1,5 +1,5 @@
 use crate::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
-use fastvep_core::{Allele, Consequence};
+use fastvep_core::{Allele, Consequence, Impact};
 use serde_json::Value;
 use std::fmt::Write as FmtWrite;
 
@@ -179,10 +179,13 @@ fn format_csq_entry_into(
             }
             CsqField::Impact => buf.push_str(aa.impact.as_str()),
             CsqField::Symbol => escape_csq_str(tv.gene_symbol.as_deref().unwrap_or_default(), buf),
-            CsqField::Gene => escape_csq_str(&tv.gene_id, buf),
-            CsqField::FeatureType => buf.push_str("Transcript"),
-            CsqField::Feature => escape_csq_str(&tv.transcript_id, buf),
-            CsqField::Biotype => escape_csq_str(&tv.biotype, buf),
+            // A row with no feature (an intergenic variant) leaves these empty, as
+            // VEP does; the placeholder's own `-` and `Transcript` are not values.
+            CsqField::Gene if !tv.is_featureless() => escape_csq_str(&tv.gene_id, buf),
+            CsqField::FeatureType if !tv.is_featureless() => buf.push_str("Transcript"),
+            CsqField::Feature if !tv.is_featureless() => escape_csq_str(&tv.transcript_id, buf),
+            CsqField::Biotype if !tv.is_featureless() => escape_csq_str(&tv.biotype, buf),
+            CsqField::Gene | CsqField::FeatureType | CsqField::Feature | CsqField::Biotype => {}
             CsqField::Exon => {
                 if let Some((n, t)) = aa.exon {
                     let _ = write!(buf, "{}/{}", n, t);
@@ -241,7 +244,9 @@ fn format_csq_entry_into(
                 }
             }
             CsqField::Strand => {
-                let _ = write!(buf, "{}", tv.strand.as_int());
+                if !tv.is_featureless() {
+                    let _ = write!(buf, "{}", tv.strand.as_int());
+                }
             }
             CsqField::Flags => {
                 for (j, f) in tv.flags.iter().enumerate() {
@@ -454,6 +459,74 @@ fn write_position_range(pos: Option<(u64, u64)>, buf: &mut String) {
             let _ = write!(buf, "{}-{}", start, end);
         }
         None => {}
+    }
+}
+
+/// A position cell of the tab format. VEP writes `-` for every value it does
+/// not have (`OutputFactory::Tab::output_hash_to_line`), so an absent position
+/// is `-` here and not the empty string the CSQ field uses.
+fn position_cell(pos: Option<(u64, u64)>) -> String {
+    match pos {
+        Some(_) => format_position_range(pos),
+        None => "-".to_string(),
+    }
+}
+
+/// VEP's `Uploaded_variation`: the first ID the record carries, otherwise a name
+/// built from the input line itself, `{chr}_{pos}_{ref}/{alt}`.
+///
+/// For VCF input that is the line as it was written: the POS column, REF, and
+/// ALT with the commas of several alts turned into slashes. `chr10_150_CA/C` for
+/// `chr10 150 . CA C`, and `chr10_109_CA/C/TA` for `CA C,TA`, not the minimal
+/// `chr10_151_A/-` of the annotation (`OutputFactory::VariationFeature_to_output_hash`,
+/// VEP 116). A reader that joins on this name, as the reporter of #139 does, gets
+/// the key the caller's own file gives it.
+///
+/// VEP 115 mixed the two, the trimmed start with the original alleles
+/// (`chr10_151_CA/C`), and 116 is the release this follows.
+///
+/// Input that did not come from a VCF line has only the annotation to name it:
+/// `{chr}_{start}_{allele_string}`.
+pub fn uploaded_variation(vf: &VariationFeature) -> String {
+    let id = vf
+        .variation_name
+        .as_deref()
+        .and_then(|names| names.split(';').next())
+        .filter(|id| !id.is_empty() && *id != ".");
+    if let Some(id) = id {
+        return id.to_string();
+    }
+    match &vf.vcf_fields {
+        Some(line) => {
+            let mut name = String::with_capacity(
+                line.chrom.len() + line.ref_allele.len() + line.alt.len() + 16,
+            );
+            name.push_str(&line.chrom);
+            name.push('_');
+            name.push_str(&line.pos.to_string());
+            name.push('_');
+            name.push_str(&line.ref_allele);
+            for alt in line.alt.split(',') {
+                name.push('/');
+                name.push_str(alt);
+            }
+            name
+        }
+        None => format!(
+            "{}_{}_{}",
+            vf.position.chromosome, vf.position.start, vf.allele_string
+        ),
+    }
+}
+
+/// VEP's `pep_allele_string`: `L/P`, or just `L` when the protein does not
+/// change. The VCF `CSQ` writer already did this; the tab and JSON writers wrote
+/// `L/L`.
+fn amino_acids_text(reference: &str, alternate: &str) -> String {
+    if reference == alternate {
+        reference.to_string()
+    } else {
+        format!("{reference}/{alternate}")
     }
 }
 
@@ -2074,19 +2147,20 @@ pub fn format_tab_line_with(
 ) -> Vec<String> {
     let mut lines = Vec::new();
 
-    let location = if vf.position.start == vf.position.end {
-        format!("{}:{}", vf.position.chromosome, vf.position.start)
+    // `format_coords` of VEP's `Utils.pm`: the lower coordinate first. An
+    // insertion has its end below its start (it sits between two bases), and VEP
+    // writes it as `chr10:11950-11951`, not `chr10:11951-11950`.
+    let (low, high) = (
+        vf.position.start.min(vf.position.end),
+        vf.position.start.max(vf.position.end),
+    );
+    let location = if low == high {
+        format!("{}:{}", vf.position.chromosome, low)
     } else {
-        format!(
-            "{}:{}-{}",
-            vf.position.chromosome, vf.position.start, vf.position.end
-        )
+        format!("{}:{}-{}", vf.position.chromosome, low, high)
     };
 
-    let uploaded_variation = vf
-        .variation_name
-        .clone()
-        .unwrap_or_else(|| format!("{}_{}", location, vf.allele_string));
+    let uploaded_variation = uploaded_variation(vf);
 
     let extra_count = specs.column_count();
     let ref_str: Option<String> = if opts.explicit_ref {
@@ -2173,7 +2247,13 @@ pub fn format_tab_line_with(
                 .distance
                 .map(|d| d.to_string())
                 .unwrap_or_else(|| "-".to_string());
-            let strand_str = format!("{}", tv.strand.as_int());
+            // No feature, no strand: VEP prints `-`, not the placeholder's `1`.
+            let featureless = tv.is_featureless();
+            let strand_str = if featureless {
+                "-".to_string()
+            } else {
+                format!("{}", tv.strand.as_int())
+            };
             let flags_str = if tv.canonical { "canonical" } else { "-" };
 
             let mut parts: Vec<String> = Vec::with_capacity(row_capacity);
@@ -2185,15 +2265,15 @@ pub fn format_tab_line_with(
             }
             parts.push(tv.gene_id.to_string());
             parts.push(tv.transcript_id.to_string());
-            parts.push("Transcript".to_string());
+            parts.push(if featureless { "-" } else { "Transcript" }.to_string());
             parts.push(consequence_str);
-            parts.push(format_position_range(aa.cdna_position));
-            parts.push(format_position_range(aa.cds_position));
-            parts.push(format_position_range(aa.protein_position));
+            parts.push(position_cell(aa.cdna_position));
+            parts.push(position_cell(aa.cds_position));
+            parts.push(position_cell(aa.protein_position));
             parts.push(
                 aa.amino_acids
                     .as_ref()
-                    .map(|(r, a)| format!("{}/{}", r, a))
+                    .map(|(r, a)| amino_acids_text(r, a))
                     .unwrap_or_else(|| "-".to_string()),
             );
             parts.push(
@@ -2244,7 +2324,12 @@ pub fn format_tab_line_with(
             }
             parts.extend(vec!["-".to_string(); 3]);
             parts.push(Consequence::IntergenicVariant.so_term().to_string());
-            parts.extend(vec!["-".to_string(); 10]);
+            // cDNA, CDS and protein position, amino acids, codons, existing variation
+            parts.extend(vec!["-".to_string(); 6]);
+            // An intergenic variant is MODIFIER, as the placeholder row says; the
+            // cells after it (DISTANCE, STRAND, FLAGS) belong to a feature.
+            parts.push(Impact::Modifier.as_str().to_string());
+            parts.extend(vec!["-".to_string(); 3]);
             if extra_count > 0 {
                 parts.extend(vec!["-".to_string(); extra_count]);
             }
@@ -2446,7 +2531,7 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                 if let Some(ref aas) = aa.amino_acids {
                     tc.insert(
                         "amino_acids".into(),
-                        serde_json::Value::String(format!("{}/{}", aas.0, aas.1)),
+                        serde_json::Value::String(amino_acids_text(&aas.0, &aas.1)),
                     );
                 }
                 if let Some(ref cdns) = aa.codons {
@@ -2718,7 +2803,7 @@ mod tests {
     }
 
     use super::*;
-    use crate::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature};
+    use crate::variant::{AlleleAnnotation, TranscriptVariation, VariationFeature, VcfFields};
     use fastvep_core::{
         Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, Strand,
         SupplementaryAnnotation, VariantType,
@@ -3793,5 +3878,273 @@ mod tests {
         let with_default = format_tab_line_with(&vf, &specs, false, TabOptions::default());
         assert_eq!(baseline, with_default);
         assert_eq!(baseline[0].split('\t').count(), 17);
+    }
+
+    // -- the cell rules VEP's tab and CSQ writers follow (issue #139) ----------
+
+    /// What `annotate_intergenic` pushes when no transcript overlaps.
+    fn intergenic_variant() -> VariationFeature {
+        let mut vf = projection_test_variant();
+        let tv = &mut vf.transcript_variations[0];
+        tv.transcript_id = Arc::from("-");
+        tv.gene_id = Arc::from("-");
+        tv.gene_symbol = None;
+        tv.biotype = Arc::from("-");
+        let aa = &mut tv.allele_annotations[0];
+        aa.consequences = vec![Consequence::IntergenicVariant];
+        aa.impact = Impact::Modifier;
+        aa.supplementary.clear();
+        vf
+    }
+
+    fn tab_cells(vf: &VariationFeature) -> Vec<String> {
+        let specs = LoadedSupplementarySpecs::new(&[], &[]);
+        let rows = format_tab_line(vf, &specs, false);
+        assert_eq!(rows.len(), 1, "one allele on one row: {rows:?}");
+        rows[0].split('\t').map(String::from).collect()
+    }
+
+    fn csq_by_name(vf: &VariationFeature) -> std::collections::HashMap<&'static str, String> {
+        let csq = format_csq(vf, DEFAULT_CSQ_FIELDS);
+        let entry = csq.split(',').next().expect("one entry");
+        DEFAULT_CSQ_FIELDS
+            .iter()
+            .copied()
+            .zip(entry.split('|').map(String::from))
+            .collect()
+    }
+
+    /// `Uploaded_variation` for a VCF record without an ID is the line as it was
+    /// written, `{CHROM}_{POS}_{REF}/{ALT}`, whatever the annotation trimmed it
+    /// to. The expected names are what Ensembl VEP 116.3 printed for these lines,
+    /// run in Docker (`crates/fastvep-cli/fixtures/vep_tab_world`).
+    #[test]
+    fn uploaded_variation_of_a_vcf_record_is_the_line_as_written() {
+        let line = |chrom: &str, pos: u64, reference: &str, alt: &str| VcfFields {
+            chrom: chrom.into(),
+            pos,
+            id: ".".into(),
+            ref_allele: reference.into(),
+            alt: alt.into(),
+            qual: ".".into(),
+            filter: ".".into(),
+            info: ".".into(),
+            rest: vec![],
+        };
+        // (the line's POS, REF, ALT) against the minimal coordinates and
+        // alleles the annotation works with
+        for (fields, start, end, minimal, want) in [
+            (
+                line("chr10", 10400, "AACCCT", "A"),
+                10401,
+                10405,
+                "ACCCT/-",
+                "chr10_10400_AACCCT/A",
+            ),
+            (
+                line("chr10", 10408, "C", "CT"),
+                10409,
+                10408,
+                "-/T",
+                "chr10_10408_C/CT",
+            ),
+            (
+                line("chr10", 10414, "C", "A"),
+                10414,
+                10414,
+                "C/A",
+                "chr10_10414_C/A",
+            ),
+            (
+                line("chr10", 10414, "C", "A,G"),
+                10414,
+                10414,
+                "C/A/G",
+                "chr10_10414_C/A/G",
+            ),
+            (
+                line("chr10", 109, "CA", "C,TA"),
+                109,
+                110,
+                "CA/C/TA",
+                "chr10_109_CA/C/TA",
+            ),
+            (line("chrM", 100, "A", "G"), 100, 100, "A/G", "chrM_100_A/G"),
+        ] {
+            let mut vf = projection_test_variant();
+            vf.position = GenomicPosition::new(fields.chrom.as_str(), start, end, Strand::Forward);
+            vf.allele_string = minimal.into();
+            vf.vcf_fields = Some(fields);
+            assert_eq!(uploaded_variation(&vf), want);
+            assert_eq!(
+                tab_cells(&vf)[0],
+                want,
+                "and the tab row's first cell is that name"
+            );
+        }
+    }
+
+    /// An ID wins, the first of several; `.` is no ID.
+    #[test]
+    fn uploaded_variation_prefers_the_first_id() {
+        let mut vf = projection_test_variant();
+        vf.variation_name = Some("rs710322;rs187914".into());
+        assert_eq!(uploaded_variation(&vf), "rs710322");
+        vf.variation_name = Some(".".into());
+        assert_eq!(uploaded_variation(&vf), "1_25000_A/G");
+    }
+
+    /// Input that is not a VCF line has only the annotation to name it: the
+    /// start alone, not a range, and the alleles it has.
+    #[test]
+    fn uploaded_variation_without_a_vcf_line_is_named_from_the_annotation() {
+        let mut vf = projection_test_variant();
+        assert!(vf.vcf_fields.is_none());
+        assert_eq!(uploaded_variation(&vf), "1_25000_A/G");
+
+        vf.position = GenomicPosition::new("chr10", 10401, 10405, Strand::Forward);
+        vf.allele_string = "ACCCT/-".into();
+        assert_eq!(uploaded_variation(&vf), "chr10_10401_ACCCT/-");
+    }
+
+    /// `pep_allele_string`: one letter when the protein does not change. The CSQ
+    /// writer had it; the tab and JSON writers wrote `L/L`. VEP 116.3 prints `L`
+    /// in all three.
+    #[test]
+    fn identical_amino_acids_are_written_once() {
+        assert_eq!(amino_acids_text("L", "L"), "L");
+        assert_eq!(amino_acids_text("L", "P"), "L/P");
+        assert_eq!(amino_acids_text("*", "*"), "*");
+
+        let mut vf = projection_test_variant();
+        vf.transcript_variations[0].allele_annotations[0].amino_acids =
+            Some(("T".into(), "T".into()));
+        assert_eq!(tab_cells(&vf)[10], "T");
+        vf.transcript_variations[0].allele_annotations[0].amino_acids =
+            Some(("T".into(), "M".into()));
+        assert_eq!(tab_cells(&vf)[10], "T/M");
+    }
+
+    /// VEP's `format_coords` puts the lower coordinate first, so an insertion
+    /// (end below start) is `chr10:11950-11951`. It was written `11951-11950`.
+    #[test]
+    fn location_is_written_low_to_high_as_vep_does() {
+        let mut vf = projection_test_variant();
+        for (start, end, want) in [
+            (25000, 25000, "1:25000"),
+            (25000, 25004, "1:25000-25004"),
+            (25001, 25000, "1:25000-25001"), // an insertion
+        ] {
+            vf.position = GenomicPosition::new("1", start, end, Strand::Forward);
+            assert_eq!(tab_cells(&vf)[1], want, "{start}..{end}");
+        }
+    }
+
+    #[test]
+    fn uploaded_variation_is_the_first_id_when_the_record_has_one() {
+        let mut vf = projection_test_variant();
+        for (id, want) in [
+            (Some("rs123"), "rs123"),
+            // VEP keeps `$ids->[0]` of the semicolon-separated column
+            (Some("rs1;rs2"), "rs1"),
+            // no usable ID: the generated name
+            (Some("."), "1_25000_A/G"),
+            (Some(""), "1_25000_A/G"),
+            (None, "1_25000_A/G"),
+        ] {
+            vf.variation_name = id.map(String::from);
+            assert_eq!(uploaded_variation(&vf), want, "ID {id:?}");
+        }
+    }
+
+    /// VEP's tab writer prints `-` for every value it does not have
+    /// (`Tab::output_hash_to_line`). The position cells printed an empty string.
+    #[test]
+    fn an_absent_value_is_a_dash_in_every_tab_cell() {
+        let cells = tab_cells(&projection_test_variant());
+        assert_eq!(cells.len(), 17);
+        assert!(
+            cells.iter().all(|c| !c.is_empty()),
+            "an empty cell where VEP writes `-`: {cells:?}"
+        );
+        // cDNA, CDS and protein position
+        assert_eq!(cells[7..=9].to_vec(), vec!["-", "-", "-"]);
+
+        let mut vf = projection_test_variant();
+        let aa = &mut vf.transcript_variations[0].allele_annotations[0];
+        aa.cdna_position = Some((100, 100));
+        aa.cds_position = Some((50, 52));
+        aa.protein_position = Some((17, 17));
+        assert_eq!(tab_cells(&vf)[7..=9].to_vec(), vec!["100", "50-52", "17"]);
+    }
+
+    #[test]
+    fn a_transcript_row_keeps_its_feature_cells() {
+        let cells = tab_cells(&projection_test_variant());
+        assert_eq!(cells[3], "GENE1");
+        assert_eq!(cells[4], "TX1");
+        assert_eq!(cells[5], "Transcript");
+        assert_eq!(cells[15], "1");
+    }
+
+    /// An intergenic row has no feature, so VEP never sets `Feature_type` or
+    /// `STRAND` for it. fastVEP printed `Transcript` and `1`, which also made
+    /// `Feature_type is Transcript` select intergenic rows.
+    #[test]
+    fn an_intergenic_row_has_no_feature_cells_in_tab() {
+        let cells = tab_cells(&intergenic_variant());
+        // Gene, Feature, Feature_type
+        assert_eq!(cells[3..=5].to_vec(), vec!["-", "-", "-"]);
+        assert_eq!(cells[6], "intergenic_variant");
+        assert_eq!(cells[13], "MODIFIER");
+        // DISTANCE, STRAND, FLAGS
+        assert_eq!(cells[14..=16].to_vec(), vec!["-", "-", "-"]);
+        assert!(cells.iter().all(|c| !c.is_empty()), "{cells:?}");
+    }
+
+    /// The row written when a variant has no transcript rows at all printed `-`
+    /// for IMPACT, where an intergenic variant is MODIFIER.
+    #[test]
+    fn the_row_for_a_variant_with_no_transcript_rows_is_modifier() {
+        let mut vf = projection_test_variant();
+        vf.transcript_variations.clear();
+        let cells = tab_cells(&vf);
+        assert_eq!(cells.len(), 17);
+        assert_eq!(cells[6], "intergenic_variant");
+        assert_eq!(cells[13], "MODIFIER");
+        assert_eq!(cells[3..=5].to_vec(), vec!["-", "-", "-"]);
+        assert_eq!(cells[14..=16].to_vec(), vec!["-", "-", "-"]);
+        assert!(cells.iter().all(|c| !c.is_empty()), "{cells:?}");
+    }
+
+    #[test]
+    fn an_intergenic_csq_entry_leaves_the_feature_fields_empty() {
+        let f = csq_by_name(&intergenic_variant());
+        for name in [
+            "SYMBOL",
+            "Gene",
+            "Feature_type",
+            "Feature",
+            "BIOTYPE",
+            "DISTANCE",
+            "STRAND",
+        ] {
+            assert_eq!(f[name], "", "{name} of an intergenic entry");
+        }
+        assert_eq!(f["Consequence"], "intergenic_variant");
+        assert_eq!(f["IMPACT"], "MODIFIER");
+
+        let g = csq_by_name(&projection_test_variant());
+        assert_eq!(g["Gene"], "GENE1");
+        assert_eq!(g["Feature_type"], "Transcript");
+        assert_eq!(g["Feature"], "TX1");
+        assert_eq!(g["BIOTYPE"], "protein_coding");
+        assert_eq!(g["STRAND"], "1");
+    }
+
+    #[test]
+    fn only_the_placeholder_is_featureless() {
+        assert!(intergenic_variant().transcript_variations[0].is_featureless());
+        assert!(!projection_test_variant().transcript_variations[0].is_featureless());
     }
 }

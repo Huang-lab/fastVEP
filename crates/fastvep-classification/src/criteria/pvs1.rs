@@ -4,8 +4,9 @@ use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
 use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 
-/// PVS1 — strength-graded null-variant evidence per Abou Tayoun 2018
-/// (Hum Mutat 39(11):1517-1524). Possible outcomes:
+/// PVS1 - strength-graded null-variant evidence after Abou Tayoun 2018
+/// (Hum Mutat 39(11):1517-1524), with the departures from the published tree
+/// listed below. Possible outcomes:
 ///
 /// - **PVS1** (Very Strong): nonsense/frameshift predicted to undergo NMD,
 ///   canonical ±1/2 splice causing NMD, or whole-gene deletion in a
@@ -16,6 +17,26 @@ use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 ///   start ≤100 codons + pathogenic variant upstream.
 /// - **PVS1_Supporting**: <10% protein removed in non-critical region;
 ///   start-loss without strong corroborating evidence.
+///
+/// **Departures from the published tree** (Figure 1 of Abou Tayoun 2018, read
+/// against the paper's own figure and text in October 2026; the outcome list
+/// above used to be described as the paper's, and these two grades are not):
+///
+/// - An NMD-escaping truncation outside a critical region: the tree grades it
+///   `PVS1_Strong` when more than 10 % of the protein is removed and
+///   `PVS1_Moderate` when less is. This implementation grades it one step lower
+///   (`Moderate` and `Supporting`).
+/// - A canonical splice variant in the last exon: the tree has no last-exon
+///   branch, and when NMD is not predicted it grades by critical region and by
+///   the fraction of protein removed (Strong, Strong, Moderate). This
+///   implementation gives `PVS1_Moderate` whatever the fraction.
+///
+/// The tree has no rule for a truncation in the first coding exon, where
+/// translation can re-initiate downstream, and neither does this code, which
+/// predicts NMD for every truncation outside the last exon. Regrading the two
+/// grades above would change 7 of 673,660 calls on the ClinVar 2-star+ benchmark
+/// (a replay, manuscript/acmg Section 3.2), so it has not been done here; it
+/// deserves a run of its own.
 ///
 /// The decision tree runs on optional fields the pipeline derives from the
 /// transcript: `predicted_nmd` / `nmd_escape_50nt`, `protein_truncation_pct`,
@@ -511,8 +532,16 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
     // gnomAD constraints don't reach the LOF threshold, accept a
     // curated disease-gene association as evidence the gene is
     // LOF-relevant. The .oga is populated from ClinGen Gene-Disease
-    // Validity (preferred — Strong/Definitive/Moderate only) or OMIM
-    // `genemap2.txt` (legacy). Both share the `omim` json_key.
+    // Validity (preferred) or OMIM `genemap2.txt` (legacy). Both share the
+    // `omim` json_key. The ClinGen build keeps every classification, weak ones
+    // included, so "Moderate or better" holds here only because the validity
+    // gate above has already withheld PVS1 from a gene whose curations are all
+    // weak. That gate reads the tag of each phenotype and the builder splits
+    // phenotypes on ';', so a label that itself ends in ';' (NSMCE3, Limited)
+    // leaves an untagged fragment that counts as established and the gene
+    // escapes the gate. It is the only one of the 505 weak-only genes in the
+    // ClinGen file of 30 April 2026 that does, and it has no variant in the
+    // ClinVar 2-star+ benchmark.
     if let Some(ref omim) = input.omim {
         if omim.phenotypes.as_ref().is_some_and(|p| !p.is_empty()) {
             return true;

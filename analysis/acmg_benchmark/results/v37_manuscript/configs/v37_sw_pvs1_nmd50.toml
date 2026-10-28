@@ -1,0 +1,3 @@
+# v37_sw_pvs1_nmd50: PVS1 uses the exact 50-nucleotide NMD rule of Abou Tayoun 2018 (opt-in).
+# Everything else is the shipped default.
+pvs1_nmd_50nt_rule = true

@@ -1,0 +1,3 @@
+# v37_oct_no_an_floor: BA1 and BS1 without the allele-number floor of 2,000, on the variants of the 4 October 2026 release.
+# Everything else is the shipped default.
+min_an_for_frequency_criteria = 0

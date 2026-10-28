@@ -1,0 +1,8 @@
+run,gene,clinvar,call_in_v37,call_in_run,criteria_in_v37,criteria_in_run,consequence,popmax_af
+v37_hk_bp1_loo,FBXO28,P/LP,VUS,Likely_benign,PM2_Supporting&PM5&BP4_Moderate,PM2_Supporting&PM5&BP1&BP4_Moderate,missense_variant,
+v37_hk_bp1_loo,PCGF2,P/LP,VUS,Likely_benign,PM2_Supporting&PM5&BP4,PM2_Supporting&PM5&BP1&BP4,missense_variant,
+v37_hk_bp1_loo,SBF1,P/LP,VUS,Likely_benign,PM2_Supporting&BP4_Moderate,PM2_Supporting&BP1&BP4_Moderate,missense_variant,0.0009315
+v37_sw_phylop_1000,NF1,P/LP,VUS,Likely_benign,PM2_Supporting&BP4,PM2_Supporting&BP4&BP7,synonymous_variant,5e-07
+v37_sw_phylop_1000,MAPT,P/LP,VUS,Likely_benign,PM2_Supporting&BP4,PM2_Supporting&BP4&BP7,intron_variant,1.75e-05
+v37_hk_bp7_walker,NF1,P/LP,VUS,Likely_benign,PM2_Supporting&BP4,PM2_Supporting&BP4&BP7,synonymous_variant,5e-07
+v37_hk_bp7_walker,MAPT,P/LP,VUS,Likely_benign,PM2_Supporting&BP4,PM2_Supporting&BP4&BP7,intron_variant,1.75e-05

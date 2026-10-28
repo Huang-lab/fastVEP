@@ -1,0 +1,3 @@
+# v37_sw_no_lowpen_gate: ClinVar's low-penetrance and risk-allele terms no longer withhold BS1 and BS2 (a ClinVar-derived gate).
+# Everything else is the shipped default.
+clinvar_low_penetrance_blocks_benign_frequency = false

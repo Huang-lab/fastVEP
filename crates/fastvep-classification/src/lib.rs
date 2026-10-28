@@ -1,6 +1,7 @@
 //! ACMG-AMP variant classification engine for fastVEP.
 //!
-//! Implements the 28 evidence criteria from Richards et al. 2015
+//! Implements the 28 evidence criteria from Richards et al. 2015 (PP5 and BP6
+//! are off by default)
 //! (Standards and guidelines for the interpretation of sequence variants)
 //! and produces a 5-tier classification: Pathogenic, Likely Pathogenic,
 //! Uncertain Significance (VUS), Likely Benign, Benign.
@@ -34,7 +35,7 @@ pub use types::{AcmgClassification, AcmgResult, EvidenceCounts, EvidenceCriterio
 /// Returns an `AcmgResult` containing the classification, all evaluated
 /// criteria, triggered rule, and evidence counts.
 pub fn classify(input: &ClassificationInput, config: &AcmgConfig) -> AcmgResult {
-    // Evaluate all 28 criteria
+    // Evaluate every criterion (26 by default: PP5 and BP6 are off)
     let criteria = criteria::evaluate_all_criteria(input, config);
 
     // Count met criteria by direction/strength

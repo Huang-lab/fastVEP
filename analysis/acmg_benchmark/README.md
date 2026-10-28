@@ -82,6 +82,55 @@ python3 analysis/acmg_benchmark/scripts/sweep_acmg_thresholds.py \
   --sweep "bp7_max_intron_offset=50,100,300,1000"
 ```
 
+## The ACMG manuscript
+
+[`manuscript/acmg/`](../../manuscript/acmg/) holds a manuscript on how the classifier was built, reviewed and measured, and on its discordance with ClinVar 2-star+ classifications in its final version.
+Its tables are produced from the scored runs by the scripts below, in this order, and its text is checked against them.
+
+```bash
+# 1. The sweeps, ablations and interaction runs (about 3 minutes each; --workers 3 is comfortable)
+python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --workers 3
+
+# 2. The point-cutoff runs and the runs of BP1's veto and BP7 need binaries built with the patches in
+#    manuscript/acmg/replay_validation/ (combiner_cutoff_env.patch and bp_hooks_env.patch)
+FASTVEP_CUTOFF_BIN=/path/to/cutoff/fastvep FASTVEP_HOOKS_BIN=/path/to/hooks/fastvep \
+  python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --workers 3
+
+# 2b. The three runs that change an input need the ClinGen file completed first
+#     (the commands are in the docstring of 15_clingen_complete_export.py)
+
+# 3. The later ClinVar release (this also writes its per-variant table), and the seven runs of the changes that
+#    Section 4.5 of the manuscript proposes, made on the variants of that release
+python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py all
+FASTVEP_HOOKS_BIN=/path/to/hooks/fastvep python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --holdout --workers 3
+
+# 3b. The per-variant table of v37 and of each run whose variants the statistics read one by one
+python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
+  --run data/benchmark/output_v37 --out data/benchmark/manuscript_runs/v37_per_variant.tsv.gz
+for run in v37_gap_clingen_complete v37_gap_orphanet_lof v37_gap_both v37_hk_bp1_loo v37_sw_phylop_1000 \
+           v37_hk_bp7_walker v37_sw_bp1veto_1 v37_sw_bp1veto_2 v37_hk_bp1_loo_veto1 v37_hk_bp1_loo_veto2; do
+  python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
+    --run data/benchmark/manuscript_runs/$run --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
+done
+for run in v37_oct_clingen_complete v37_oct_orphanet_lof v37_oct_both v37_oct_bp7_walker v37_oct_bp1_loo v37_oct_bp1_veto1 v37_oct_no_an_floor; do
+  python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
+    --run data/benchmark/manuscript_runs/$run --labels data/benchmark/clinvar_20261004_covered/clinvar_2star_labels.tsv \
+    --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
+done
+
+# 3c. Why BA1 and BS1 did not fire on the Benign variants of 2% or more that are not called benign-side (needs the tables above)
+python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py blockers
+
+# 4. Every table, then the figures, then the checks
+python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py
+python3 manuscript/acmg/generate_figures.py
+python3 manuscript/acmg/build_tables.py --write
+python3 manuscript/acmg/build_tables.py --check
+python3 manuscript/acmg/verify_numbers.py
+```
+
+The run records are in [`results/v37_manuscript/`](results/v37_manuscript/).
+
 ## The classifier itself
 
 Thresholds, criteria and the reasoning behind every value set by measurement are

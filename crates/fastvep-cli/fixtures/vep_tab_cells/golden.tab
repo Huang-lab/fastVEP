@@ -1,0 +1,11 @@
+## the default tab file of Ensembl VEP v116.3, the first 17 columns
+## image ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+#Uploaded_variation	Location	Allele	Gene	Feature	Feature_type	Consequence	cDNA_position	CDS_position	Protein_position	Amino_acids	Codons	Existing_variation	IMPACT	DISTANCE	STRAND	FLAGS
+chr10_10414_C/A	chr10:10414	A	ENSG_X	ENST_X	Transcript	upstream_gene_variant	-	-	-	-	-	-	MODIFIER	1316	1	-
+rs100	chr10:11800	T	ENSG_X	ENST_X	Transcript	non_coding_transcript_exon_variant	71	-	-	-	-	-	MODIFIER	-	1	-
+rs1	chr10:11801	T	ENSG_X	ENST_X	Transcript	non_coding_transcript_exon_variant	72	-	-	-	-	-	MODIFIER	-	1	-
+chr10_11900_GA/G	chr10:11901	-	ENSG_X	ENST_X	Transcript	non_coding_transcript_exon_variant	172	-	-	-	-	-	MODIFIER	-	1	-
+chr10_11950_C/A/G	chr10:11950	A	ENSG_X	ENST_X	Transcript	non_coding_transcript_exon_variant	221	-	-	-	-	-	MODIFIER	-	1	-
+chr10_11950_C/A/G	chr10:11950	G	ENSG_X	ENST_X	Transcript	non_coding_transcript_exon_variant	221	-	-	-	-	-	MODIFIER	-	1	-
+chr10_11960_T/TTT	chr10:11960-11961	TT	ENSG_X	ENST_X	Transcript	non_coding_transcript_exon_variant	231-232	-	-	-	-	-	MODIFIER	-	1	-
+chrM_100_A/G	chrM:100	G	-	-	-	intergenic_variant	-	-	-	-	-	-	MODIFIER	-	-	-

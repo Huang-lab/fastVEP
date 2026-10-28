@@ -1,0 +1,21 @@
+measure,n
+curations in the 30 April export,3546.0
+rows of the 11 October export dated on or before 30 April whose gene and disease pair the April export lacks,112.0
+  of them re-labelled (the April export lists the same assertion under another disease identifier),7.0
+"  of them dated 30 April itself, after the April file was downloaded",1.0
+curations dated before 30 April that the export lacked,104.0
+  in genes,100.0
+"  of Definitive, Strong or Moderate strength",76.0
+  genes with such a curation,73.0
+  genes with such a curation and no other curation in the April export,63.0
+  classified in 2025 or 2026,83.0
+  classified from January to April 2026,45.0
+  classified before 2024,5.0
+curations in the April export classified in 2025 or 2026,664.0
+curations in the April export classified from January to April 2026,159.0
+curations in the April export classified before 2024,2213.0
+  expected in 2025 or 2026 if the omission were independent of the date,19.47433728144388
+  expected from January to April 2026 if the omission were independent of the date,4.6632825719120135
+  expected before 2024 if the omission were independent of the date,64.90468133107727
+"variants of GATM, the gene of the row dated 30 April itself, in the benchmark",163.0
+  whose call or criteria differ in the run that reads the completed file,0.0

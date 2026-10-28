@@ -110,7 +110,18 @@ enum Commands {
         #[arg(long, default_value_t = 5000)]
         distance: u64,
 
-        /// Path to VEP cache directory for known variant annotation
+        /// VEP's tabix variation cache, for `Existing_variation`: a directory of
+        /// `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index, which
+        /// is what `convert_cache.pl` and the indexed-cache download provide.
+        ///
+        /// Only known variants come from here. Transcripts do not: gene models
+        /// are read from `--gff3`, and VEP's `{start}-{end}.gz` transcript
+        /// slices are never read. A directory with no variation file, or a file
+        /// with no index, stops the run rather than annotating nothing.
+        ///
+        /// Contig names are matched through a `chr_synonyms.txt` in the
+        /// directory, as VEP does, and through the `chr` and mitochondrial
+        /// naming rules (`chrM`, `MT`).
         #[arg(long)]
         cache_dir: Option<String>,
 

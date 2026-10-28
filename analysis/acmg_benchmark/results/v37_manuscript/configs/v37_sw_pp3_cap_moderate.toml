@@ -1,0 +1,3 @@
+# v37_sw_pp3_cap_moderate: PP3 capped at Moderate (the stricter convention the reviewer described).
+# Everything else is the shipped default.
+pp3_max_strength = "Moderate"

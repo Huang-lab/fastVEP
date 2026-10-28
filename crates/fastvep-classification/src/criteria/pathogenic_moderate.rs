@@ -258,14 +258,18 @@ fn evaluate_pm1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
     }
 }
 
-/// PM2: Absent from controls (or at extremely low frequency if recessive).
+/// PM2: Absent from controls, or at extremely low frequency.
 ///
-/// Per ClinGen SVI v1.0 (Sept 2020):
-/// - Strength is Supporting (downgraded from Moderate by default).
+/// ClinGen SVI PM2 v1.0 (Sept 2020) downgrades the strength to Supporting (the default
+/// here) and gives no frequency for any inheritance. The bars are this project's
+/// choice, and the recessive-only one equals the Hearing Loss VCEP's (GN005):
 /// - Use raw gnomAD allele frequency (NOT filtering allele frequency / FAF).
-/// - Threshold depends on inheritance:
-///     * AD / unknown: strict absence (AC = 0 or AF = 0).
-///     * AR: AF ≤ 0.00007 (0.007%).
+/// - The bar depends on inheritance:
+///     * every gene not read as recessive-only (dominant, both, unknown):
+///       `pm2_ad_af_threshold`, 4e-5 by default;
+///     * a gene read as recessive-only: `pm2_ar_af_threshold`, 7e-5 by default.
+///
+/// Both bars were swept for the ACMG manuscript (`manuscript/acmg`, Section 3.3).
 ///
 /// Inheritance is inferred from OMIM phenotypes (`OmimData::has_recessive_inheritance` /
 /// `has_dominant_inheritance`). When a per-gene `pm2_af_threshold` override is
