@@ -797,6 +797,9 @@ so those 52 keep PVS1.
 Every divergence, its cause in the Ensembl source, its row count, and the list of fastVEP's own
 remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md)**.
 
+Moving a pipeline from `vep`? What fastVEP reads from a VEP installation, a flag-by-flag table, and what is
+not covered (plugins, `--custom`, RefSeq BAM edits) are in **[docs/VEP_MIGRATION.md](docs/VEP_MIGRATION.md)**.
+
 ## Citation
 
 If you use fastVEP in your research, please cite:
