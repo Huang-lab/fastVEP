@@ -22,30 +22,35 @@
 //! counts the lines read and saw 11,362,930 of them for 6,667 windows with the carry-on disabled,
 //! against a limit of 12,000.
 //!
-//! This file installs a counting global allocator, so it deliberately holds exactly ONE test:
-//! `cargo test` runs the tests of a binary concurrently, and a second one allocating on another
-//! thread would be counted here.
+//! This file installs a counting global allocator that counts the allocations of the thread that is
+//! measured and of no other: the test harness has a thread of its own that allocates while a test
+//! runs, and a count of the whole process took those into the window, which failed a test of this
+//! kind on a CI runner.
 
 use fastvep_cache::info::CacheInfo;
 use fastvep_cache::variation::VariationTabixReader;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    // The allocations of the calling thread only. The test harness has a thread of its own that allocates
+    // while a test runs, and a count of the whole process took those into the window that is measured.
+    static ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
 
 struct Counting;
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        ALLOCS.with(|count| count.set(count.get() + 1));
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        ALLOCS.with(|count| count.set(count.get() + 1));
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -54,9 +59,9 @@ unsafe impl GlobalAlloc for Counting {
 static ALLOCATOR: Counting = Counting;
 
 fn allocations_during<F: FnOnce()>(f: F) -> usize {
-    let before = ALLOCS.load(Ordering::Relaxed);
+    let before = ALLOCS.with(Cell::get);
     f();
-    ALLOCS.load(Ordering::Relaxed) - before
+    ALLOCS.with(Cell::get) - before
 }
 
 #[test]
