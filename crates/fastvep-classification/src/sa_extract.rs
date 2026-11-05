@@ -2,6 +2,8 @@ use fastvep_core::is_canonical_dinucleotide_offset;
 use fastvep_core::{Consequence, Impact};
 use fastvep_core::{GeneAnnotation, HgvsPlacement, SpliceContext, SupplementaryAnnotation};
 use serde::Deserialize;
+use std::cell::RefCell;
+use std::sync::Arc;
 
 /// gnomAD population frequency data.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -408,6 +410,53 @@ pub struct ClinvarProteinData {
     pub splice_positions: Vec<ClinvarSpliceVariant>,
 }
 
+/// How many gene records a thread keeps parsed. A sorted input stays in one gene for a
+/// long run and an unsorted one alternates between a few, and the records that
+/// matter are the large ones, so a handful is enough.
+const PARSED_CLINVAR_PROTEIN_KEPT: usize = 4;
+
+thread_local! {
+    /// The gene records this thread parsed last, most recent first: the JSON string
+    /// each came from, and what it parsed to (`None` for a string that is not a record).
+    static PARSED_CLINVAR_PROTEIN: RefCell<Vec<(String, Option<Arc<ClinvarProteinData>>)>> =
+        const { RefCell::new(Vec::new()) };
+    /// How many strings this thread has parsed rather than found, for the tests that hold
+    /// the line on it.
+    #[cfg(test)]
+    static CLINVAR_PROTEIN_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A gene's ClinVar protein index, parsed from the JSON string that the `.oga` reader returned for it.
+///
+/// Every variant of a gene is handed the same string, and the string is as large as the gene's
+/// ClinVar record, which for CFTR or BRCA1 is some hundreds of kilobytes. Parsing it once for
+/// each variant was, on the ClinVar 2-star+ benchmark with `--acmg`, a quarter of the time
+/// the per-variant loop spent (9,105 of 40,941 profile samples), and freeing what it built a
+/// good deal of the rest of what classification cost; a classification needs the index only to read.
+///
+/// A thread therefore keeps the last few strings it parsed with what each gave, and answers a
+/// string equal to one of them, byte for byte, with the same parsed record. Equal strings parse
+/// to equal records, so the answer is the one a fresh parse would give, and a string that is
+/// not equal to any is parsed: nothing is keyed on the gene's name, which a database that is
+/// replaced while the process runs could attach to a different record, and nothing is shared
+/// between threads, so there is no lock to wait for.
+fn parsed_clinvar_protein(json: &str) -> Option<Arc<ClinvarProteinData>> {
+    PARSED_CLINVAR_PROTEIN.with(|kept| {
+        let mut kept = kept.borrow_mut();
+        if let Some(at) = kept.iter().position(|(seen, _)| seen == json) {
+            // Most recent first, so that a run in one gene finds its record at the front.
+            kept[..=at].rotate_right(1);
+            return kept[0].1.clone();
+        }
+        #[cfg(test)]
+        CLINVAR_PROTEIN_PARSES.with(|n| n.set(n.get() + 1));
+        let parsed = serde_json::from_str(json).ok().map(Arc::new);
+        kept.insert(0, (json.to_owned(), parsed.clone()));
+        kept.truncate(PARSED_CLINVAR_PROTEIN_KEPT);
+        parsed
+    })
+}
+
 /// A single classified ClinVar variant sitting on a canonical splice
 /// dinucleotide (`+1`, `+2`, `-1` or `-2`).
 #[derive(Debug, Clone, Deserialize)]
@@ -478,10 +527,10 @@ pub fn same_splice_position_pathogenic(
         return None;
     }
 
-    let cpd: ClinvarProteinData = gene_annotations
+    let cpd = gene_annotations
         .iter()
         .find(|ga| ga.json_key == "clinvar_protein")
-        .and_then(|ga| serde_json::from_str(&ga.json_string).ok())?;
+        .and_then(|ga| parsed_clinvar_protein(&ga.json_string))?;
     if !cpd.splice_indexed {
         return None;
     }
@@ -646,7 +695,11 @@ pub struct ClassificationInput {
     pub gene_constraints: Option<GnomadGeneData>,
     pub omim: Option<OmimData>,
     /// ClinVar pathogenic variants at protein positions for this gene (from .oga).
-    pub clinvar_protein: Option<ClinvarProteinData>,
+    ///
+    /// Shared between the variants of a gene that a thread classifies in a row, and
+    /// cloned for each mode of inheritance of a gene that has several, so it is read and
+    /// not changed (see `parsed_clinvar_protein`).
+    pub clinvar_protein: Option<Arc<ClinvarProteinData>>,
     /// HGVS c. notation for the variant (e.g. "c.845G>A"). Used by the BA1
     /// exception list lookup (Ghosh 2018) to identify well-known high-AF
     /// pathogenic variants that must not call BA1. `None` if the pipeline
@@ -947,7 +1000,7 @@ pub fn extract_classification_input(
     // Parse gene-level annotations
     let mut gene_constraints = None;
     let mut omim = None;
-    let mut clinvar_protein: Option<ClinvarProteinData> = None;
+    let mut clinvar_protein: Option<Arc<ClinvarProteinData>> = None;
     for ga in gene_annotations {
         match ga.json_key.as_str() {
             "gnomad_genes" | "gnomad_gene" => {
@@ -957,7 +1010,7 @@ pub fn extract_classification_input(
                 omim = serde_json::from_str(&ga.json_string).ok();
             }
             "clinvar_protein" => {
-                clinvar_protein = serde_json::from_str(&ga.json_string).ok();
+                clinvar_protein = parsed_clinvar_protein(&ga.json_string);
             }
             _ => {}
         }
@@ -1271,6 +1324,108 @@ mod tests {
             None,
             vec![],
         )
+    }
+
+    /// A gene record with one pathogenic missense variant at `pos`, so that two
+    /// records differ in what they parse to and not only in their text.
+    fn protein_record(pos: u64) -> String {
+        format!(
+            r#"{{"proteinVariants":[{{"pos":{pos},"refAa":"A","altAa":"G","sig":"Pathogenic","n":1}}],"benignIndexed":true}}"#
+        )
+    }
+
+    fn parses() -> usize {
+        CLINVAR_PROTEIN_PARSES.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn test_a_gene_record_is_parsed_once_for_the_variants_that_share_it() {
+        // Every variant of a gene is handed the same JSON string, and parsing it for
+        // each one was a quarter of the per-variant time with `--acmg`.
+        let json = protein_record(100);
+        let before = parses();
+        let first = parsed_clinvar_protein(&json).expect("a valid record");
+        for _ in 0..1_000 {
+            let again = parsed_clinvar_protein(&json).expect("a valid record");
+            assert!(Arc::ptr_eq(&first, &again), "the same parsed record");
+        }
+        assert_eq!(parses() - before, 1, "one parse for 1,001 variants");
+        assert_eq!(first.protein_variants[0].pos, 100);
+    }
+
+    #[test]
+    fn test_a_different_gene_record_is_never_answered_with_a_kept_one() {
+        // The record is found by its text and not by the name of the gene, so a record
+        // that has changed under the same name, or another gene's, parses afresh.
+        let (a, b) = (protein_record(100), protein_record(200));
+        let first = parsed_clinvar_protein(&a).unwrap();
+        let second = parsed_clinvar_protein(&b).unwrap();
+        assert_eq!(first.protein_variants[0].pos, 100);
+        assert_eq!(second.protein_variants[0].pos, 200);
+        // and going back finds the first again, with its own contents
+        let back = parsed_clinvar_protein(&a).unwrap();
+        assert_eq!(back.protein_variants[0].pos, 100);
+        assert!(Arc::ptr_eq(&first, &back));
+    }
+
+    #[test]
+    fn test_genes_that_alternate_are_each_parsed_once_and_never_mixed_up() {
+        // Input that is not sorted alternates between genes. Within what a thread keeps,
+        // each is parsed once; past it, each is parsed again, and none is ever wrong.
+        let records: Vec<String> = (0..PARSED_CLINVAR_PROTEIN_KEPT as u64)
+            .map(|i| protein_record(100 + i))
+            .collect();
+        let before = parses();
+        for round in 0..5 {
+            for (i, json) in records.iter().enumerate() {
+                let parsed = parsed_clinvar_protein(json).unwrap();
+                assert_eq!(
+                    parsed.protein_variants[0].pos,
+                    100 + i as u64,
+                    "round {round}"
+                );
+            }
+        }
+        assert_eq!(parses() - before, records.len(), "each parsed once");
+
+        let many: Vec<String> = (0..PARSED_CLINVAR_PROTEIN_KEPT as u64 + 2)
+            .map(|i| protein_record(500 + i))
+            .collect();
+        for _ in 0..3 {
+            for (i, json) in many.iter().enumerate() {
+                assert_eq!(
+                    parsed_clinvar_protein(json).unwrap().protein_variants[0].pos,
+                    500 + i as u64
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_a_string_that_is_not_a_gene_record_is_none_and_costs_one_parse() {
+        let before = parses();
+        for _ in 0..10 {
+            assert!(parsed_clinvar_protein("not json").is_none());
+        }
+        assert_eq!(parses() - before, 1);
+        assert!(
+            parsed_clinvar_protein(&protein_record(7)).is_some(),
+            "a record after it parses"
+        );
+    }
+
+    #[test]
+    fn test_the_variants_of_a_gene_share_one_index_through_the_real_entry_point() {
+        let json = protein_record(100);
+        let before = parses();
+        let a = extract(None, None, None, None, Some(&json));
+        let b = extract(None, None, None, None, Some(&json));
+        let (a, b) = (a.clinvar_protein.unwrap(), b.clinvar_protein.unwrap());
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(parses() - before, 1);
+        assert!(extract(None, None, None, None, None)
+            .clinvar_protein
+            .is_none());
     }
 
     #[test]

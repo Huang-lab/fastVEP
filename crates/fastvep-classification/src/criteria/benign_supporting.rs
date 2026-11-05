@@ -1490,7 +1490,9 @@ mod tests {
             None,
             Some(bp1_gene_constraints()),
         );
-        input.clinvar_protein = Some(clinvar_protein_with_pathogenic_missense(12));
+        input.clinvar_protein = Some(std::sync::Arc::new(
+            clinvar_protein_with_pathogenic_missense(12),
+        ));
         let result = evaluate_bp1(&input, &AcmgConfig::default());
         assert!(!result.met);
         assert!(result.evaluated);
@@ -1510,11 +1512,11 @@ mod tests {
             None,
             Some(bp1_gene_constraints()),
         );
-        input.clinvar_protein = Some(ClinvarProteinData {
+        input.clinvar_protein = Some(std::sync::Arc::new(ClinvarProteinData {
             protein_variants: vec![],
             benign_indexed: true,
             ..Default::default()
-        });
+        }));
         let result = evaluate_bp1(&input, &AcmgConfig::default());
         assert!(result.met);
     }

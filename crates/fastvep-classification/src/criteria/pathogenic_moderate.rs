@@ -1545,11 +1545,11 @@ mod tests {
             gene_symbol: Some(gene.to_string()),
             protein_position: Some(100),
             amino_acids: Some(("A".into(), "T".into())),
-            clinvar_protein: Some(ClinvarProteinData {
+            clinvar_protein: Some(std::sync::Arc::new(ClinvarProteinData {
                 protein_variants: neighbours,
                 benign_indexed: true,
                 ..Default::default()
-            }),
+            })),
             ..minimal_input()
         }
     }
@@ -1605,7 +1605,8 @@ mod tests {
     /// Add `n` benign missense entries inside PM1's window.
     fn with_benign_neighbours(mut input: ClassificationInput, n: u64) -> ClassificationInput {
         use crate::sa_extract::ClinvarProteinVariant;
-        let cpd = input.clinvar_protein.as_mut().expect("helper builds one");
+        let cpd =
+            std::sync::Arc::make_mut(input.clinvar_protein.as_mut().expect("helper builds one"));
         for i in 0..n {
             cpd.protein_variants.push(ClinvarProteinVariant {
                 pos: 100 + i,
@@ -1659,7 +1660,7 @@ mod tests {
         // them, not because the gene has none. Testing anyway would pass every
         // window and read as evidence that was never gathered.
         let mut input = hotspot_missense("CHD7");
-        input.clinvar_protein.as_mut().unwrap().benign_indexed = false;
+        std::sync::Arc::make_mut(input.clinvar_protein.as_mut().unwrap()).benign_indexed = false;
         let r = evaluate_pm1(&input, &AcmgConfig::default());
         assert!(r.met);
         assert!(
@@ -1694,10 +1695,7 @@ mod tests {
         use crate::sa_extract::ClinvarProteinVariant;
         let mut input = hotspot_missense("CHD7");
         let window = AcmgConfig::default().pm1_hotspot_window;
-        input
-            .clinvar_protein
-            .as_mut()
-            .unwrap()
+        std::sync::Arc::make_mut(input.clinvar_protein.as_mut().unwrap())
             .protein_variants
             .push(ClinvarProteinVariant {
                 pos: 100 + window + 1,
