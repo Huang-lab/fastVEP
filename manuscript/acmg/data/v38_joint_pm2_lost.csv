@@ -1,0 +1,9 @@
+reason,joint_count_positive,variants,calls_moved,pathogenic_side_calls_moved
+frequency above the bar,True,4876,160,2
+filter AS_VQSR,True,904,12,8
+filter AC0,True,741,11,9
+filter AC0 and AS_VQSR,True,154,1,1
+filter AC0,False,132,6,4
+filter AC0 and AS_VQSR,False,65,3,3
+filter AS_VQSR and InbreedingCoeff,True,1,0,0
+filter InbreedingCoeff,True,1,0,0

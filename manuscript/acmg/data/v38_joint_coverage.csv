@@ -1,0 +1,5 @@
+group,variants,no_exomes_record,median_an_exomes,median_an_joint
+calls that move,13302,4485,1097054,1220556
+intronic variants whose call moves,6476,4242,1031794,1168478
+UTR variants whose call moves,2171,32,394,152416
+calls that do not move,659976,131755,1460948,1613116

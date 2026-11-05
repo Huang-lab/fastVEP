@@ -43,8 +43,10 @@ Three groups:
                           tried until now, by a build of `replay_validation/inheritance_alternatives_env.patch`
                           (FASTVEP_V38_ALT_BIN)
             joint         the benchmark's gnomAD exomes replaced by gnomAD's joint exomes and genomes
-                          callset on chr21 and chr22, and on every chromosome where its database is built
-                          (`build_gnomad_release_per_chrom.sh`), against the same variants with the exomes
+                          callset on every chromosome, once its 24 databases are built
+                          (`build_gnomad_release_per_chrom.sh`), against the same variants with the exomes;
+                          and the pilot of the same on chr21 and chr22 alone, made first and kept as a
+                          check that the runs of every chromosome give its calls
           and each of them also on the variants of the October 2026 release (`--holdout --v38`).
   holdout the changes that Section 4.5 proposes, run on the variants of the ClinVar release of
           4 October 2026 (the covered subset that `14_temporal_holdout.py prepare` writes), so
@@ -712,9 +714,11 @@ def binary_variable(run: Run) -> str:
 def ensure_pilot_inputs() -> None:
     """The April benchmark's variants and labels on chromosomes 21 and 22, for the pilot of gnomAD's joint release.
 
-    A filter of the benchmark's own two files with their headers, so that nothing about the subset is a choice:
-    the joint release was extracted for these two chromosomes only, and a variant elsewhere would read as absent
-    from it. Written whole each time, so that a file left over from a different benchmark cannot be the input.
+    A filter of the benchmark's own two files with their headers, so that nothing about the subset is a choice.
+    The pilot was made before the joint release had been extracted for the other chromosomes, where a variant would
+    have read as absent from it, and it stays because the runs of every chromosome must give its calls on these
+    variants (`13_manuscript_stats.py` checks that). Written whole each time, so that a file left over from a
+    different benchmark cannot be the input.
     """
     PILOT.mkdir(parents=True, exist_ok=True)
     for name, header_prefix in (("clinvar_2star.vcf", "#"), ("clinvar_2star_labels.tsv", "chrom\t")):
@@ -779,8 +783,9 @@ def v38_runs() -> list[Run]:
                        description=f"BS2 carrier floor for genes read as dominant-only, set to {v} alleles with the carrier bar off",
                        toml=["bs2_ad_prevalence_threshold = 0.0", f"bs2_ad_min_ac = {v}"]))
 
-    # gnomAD's joint exomes and genomes against the exomes, on chr21 and chr22 where both are built, with
-    # the same variants and the same binary.
+    # The pilot of gnomAD's joint exomes and genomes against the exomes, on chr21 and chr22, which were the
+    # two chromosomes extracted first, with the same variants and the same binary. The runs of every chromosome
+    # below must give its calls (`13_manuscript_stats.py` checks that), so it stays as a check.
     inputs = {"INPUT": str(PILOT / "clinvar_2star.vcf"), "LABELS": str(PILOT / "clinvar_2star_labels.tsv")}
     pilot_joint = {f"gnomad_chr{c}.osa2": str(SA_JOINT / f"gnomad_chr{c}.osa2") for c in ("21", "22")}
     if all(Path(v).exists() for v in pilot_joint.values()) and (BENCH / "clinvar_2star.vcf").exists():

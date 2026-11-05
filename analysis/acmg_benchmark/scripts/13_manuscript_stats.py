@@ -2679,10 +2679,71 @@ def v38_joint() -> None:
                 for c in sorted(set(gained) | set(lost)):
                     changes.append({"set": scope, "against": ref, "run": other, "consequence_group": "(criterion)", "clinvar": "", "call_before": f"lost {lost[c]}", "call_after": f"gained {gained[c]}", "n": 0, "criterion": c,
                                     "criterion_gained": gained[c], "criterion_lost": lost[c]})
+    # The pilot made the same three runs on the variants of chromosomes 21 and 22 alone, with the databases that the runs of
+    # every chromosome read for those two, and a variant's annotation does not depend on which others the file holds, so
+    # each run of every chromosome has to give the pilot's call and criteria for every variant of the pilot. A subset cut
+    # in another way, a database rebuilt in between or a run of another binary would show here and nowhere else.
+    pilot_check = []
+    for pilot, full in (("v38_chr2122_exomes", "v38"), ("v38_chr2122_exomes_noflags", "v38_noflags"), ("v38_chr2122_joint", "v38_joint")):
+        if not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in (pilot, full)):
+            continue
+        a, b = v38_pv(pilot)[KEY + ["call", "criteria"]], v38_pv(full)[KEY + ["call", "criteria"]]
+        m_ = a.merge(b, on=KEY, how="left", suffixes=("", "_full"), indicator=True)
+        pilot_check.append({"pilot": pilot, "full": full, "variants": len(a), "found_in_full": int((m_._merge == "both").sum()),
+                            "calls_differing": int((m_.call != m_.call_full).sum()), "criteria_differing": int((m_.criteria != m_.criteria_full).sum())})
+    # Does the joint release hold what the exomes hold? It adds the genomes to the exomes, so a variant that the exomes hold is a
+    # record of the joint release too, with an allele count, an allele number and a count of homozygotes that are not lower.
+    # A region cut short, a record lost or a field read from the wrong key would show here and nowhere else.
+    records = []
+    for scope, exomes, joint in (("chr21 and chr22", "v38_chr2122_exomes", "v38_chr2122_joint"), ("every chromosome", "v38", "v38_joint")):
+        if not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in (exomes, joint)):
+            continue
+        counts = ["gnomad_ac", "gnomad_an", "gnomad_hc"]
+        m_ = v38_pv(exomes)[KEY + counts].merge(v38_pv(joint)[KEY + counts], on=KEY, suffixes=("_e", "_j"), validate="one_to_one")
+        number = {c + s: pd.to_numeric(m_[c + s], errors="coerce") for c in counts for s in ("_e", "_j")}
+        in_e, in_j = number["gnomad_an_e"].notna(), number["gnomad_an_j"].notna()
+        both = in_e & in_j
+        records.append({"set": scope, "variants": len(m_), "in_both": int(both.sum()), "exomes_only": int((in_e & ~in_j).sum()),
+                        "joint_only": int((~in_e & in_j).sum()), "neither": int((~in_e & ~in_j).sum()),
+                        **{f"{c[7:]}_lower": int((number[c + "_j"][both] < number[c + "_e"][both]).sum()) for c in counts}})
+    # By chromosome, from the same two tables. The X is where the joint database has to derive the flag of the pseudoautosomal
+    # regions that the release lacks, and Y and the mitochondrial contigs are where nothing is expected to move, so a chromosome
+    # that behaves unlike the rest would show a database or a derivation that went wrong there.
+    by_chrom, coverage = [], []
+    if all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in ("v38", "v38_joint")):
+        x, y = v38_pv("v38"), v38_pv("v38_joint")
+        # Where the calls move, and how much the exomes had there to read: the allele number of a variant's record is the number of
+        # chromosomes behind its frequency, and a variant that the exomes lack has no record. The median is over the records that exist.
+        c_ = x[KEY + ["call", "consequence", "gnomad_an"]].merge(y[KEY + ["call", "gnomad_an"]], on=KEY, suffixes=("", "_j"), validate="one_to_one")
+        an_e, an_j = pd.to_numeric(c_.gnomad_an, errors="coerce"), pd.to_numeric(c_.gnomad_an_j, errors="coerce")
+        group, moved = c_.consequence.map(consequence_group), c_.call != c_.call_j
+        for label, sel in (("calls that move", moved), ("intronic variants whose call moves", moved & (group == "Intronic")),
+                           ("UTR variants whose call moves", moved & (group == "UTR")), ("calls that do not move", ~moved)):
+            has = sel & an_e.notna()
+            coverage.append({"group": label, "variants": int(sel.sum()), "no_exomes_record": int((sel & an_e.isna()).sum()),
+                             "median_an_exomes": int(an_e[has].median()), "median_an_joint": int(an_j[has].median())})
+        z = x[KEY + ["clinvar", "call", "cv3", "fv3"]].merge(y[KEY + ["call", "fv3"]], on=KEY, suffixes=("", "_j"), validate="one_to_one")
+        z["moved"] = z.call != z.call_j
+        z["d_exact"] = (z.clinvar == z.call_j).astype(int) - (z.clinvar == z.call).astype(int)
+        z["d_same_direction"] = (z.cv3 == z.fv3_j).astype(int) - (z.cv3 == z.fv3).astype(int)
+        order = [str(c) for c in range(1, 23)] + ["X", "Y"]
+        for chrom in order + sorted(set(z.chrom) - set(order)):
+            c = z[z.chrom == chrom]
+            if len(c):
+                by_chrom.append({"chrom": chrom, "variants": len(c), "calls_moved": int(c.moved.sum()), "d_exact": int(c.d_exact.sum()),
+                                 "d_same_direction": int(c.d_same_direction.sum())})
     if rows:
         write("v38_joint.csv", rows)
     if changes:
         write("v38_joint_changes.csv", changes)
+    if pilot_check:
+        write("v38_joint_pilot_check.csv", pilot_check)
+    if records:
+        write("v38_joint_records.csv", records)
+    if by_chrom:
+        write("v38_joint_by_chrom.csv", by_chrom)
+    if coverage:
+        write("v38_joint_coverage.csv", coverage)
 
 
 STEPS = {
