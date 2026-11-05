@@ -1,0 +1,25 @@
+scope,kind,reading,group,genes,dominant_only,recessive_only,both,neither,read_dominant_names,read_recessive_names,read_dominant_curated,read_recessive_curated
+every gene of the file,reading,disease names (to v37),all,2924,50,67,12,2795,,,,
+every gene of the file,reading,curated field (v38),all,2924,746,1310,169,699,,,,
+every gene of the file,group,,established tags AD only,746,,,,,40,0,746,0
+every gene of the file,group,,established tags AR only,1310,,,,,0,63,0,1310
+every gene of the file,group,,established tags AD and AR,116,,,,,16,14,116,116
+every gene of the file,group,,other or none,752,,,,,6,2,53,53
+every gene of the file,other,,no established curation,505,,,,,,,,
+every gene of the file,other,,X-linked only,162,,,,,,,,
+every gene of the file,other,,mitochondrial only,32,,,,,,,,
+every gene of the file,other,,with a semidominant curation,53,,,,,,,,
+every gene of the file,other,,another combination,0,,,,,,,,
+every gene of the file,contexts,,genes with more than one mode of inheritance,129,,,,,,,,
+genes with a benchmark variant,reading,disease names (to v37),all,2840,49,64,11,2716,,,,
+genes with a benchmark variant,reading,curated field (v38),all,2840,740,1285,167,648,,,,
+genes with a benchmark variant,group,,established tags AD only,740,,,,,39,0,740,0
+genes with a benchmark variant,group,,established tags AR only,1285,,,,,0,60,0,1285
+genes with a benchmark variant,group,,established tags AD and AR,114,,,,,15,13,114,114
+genes with a benchmark variant,group,,other or none,701,,,,,6,2,53,53
+genes with a benchmark variant,other,,no established curation,454,,,,,,,,
+genes with a benchmark variant,other,,X-linked only,162,,,,,,,,
+genes with a benchmark variant,other,,mitochondrial only,32,,,,,,,,
+genes with a benchmark variant,other,,with a semidominant curation,53,,,,,,,,
+genes with a benchmark variant,other,,another combination,0,,,,,,,,
+genes with a benchmark variant,contexts,,genes with more than one mode of inheritance,127,,,,,,,,

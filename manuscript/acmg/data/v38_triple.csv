@@ -1,0 +1,4 @@
+set,variants,variants_with_pp2_pm1_and_pp3_met,of_them_called_likely_pathogenic,calls_changed,all_likely_pathogenic_to_vus,clinvar_plp_losing_the_call,clinvar_vus_kept_at_vus,clinvar_blb_no_longer_called_plp,clinvar_plp_newly_called_benign,plp_calls_lost_per_false_pathogenic_avoided
+April set,673278,1591,913,910,910,320,587,3,0,106.66666666666667
+"October, all covered",772200,1772,1021,1018,1018,354,660,4,0,88.5
+"October, new variants",107525,213,123,123,123,37,85,1,0,37.0

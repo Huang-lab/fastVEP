@@ -1,0 +1,9 @@
+set,run,variants,exact,same_direction,false_benign,false_pathogenic,plp_correct,blb_correct,vus_called_plp,vus_called_blb,calls_changed_vs_base,plp_lost_a_pathogenic_side_call,plp_gained_a_pathogenic_side_call,plp_called_benign_side
+all covered,v38_oct_base,772200,484630,591581,26,38,64310,210641,4115,4832,0,0,0,26
+all covered,v38_oct_shipped,772200,484891,593343,26,37,64306,212575,4117,4998,2998,4,0,26
+all covered,v38_oct_alt_unguarded,772200,488664,594677,28,37,64306,213914,4117,5003,8499,4,0,28
+all covered,v38_oct_alt_triple_cap,772200,485459,593649,26,33,63952,212575,3457,4998,4016,358,0,26
+new,v38_oct_base,107525,66197,75349,6,12,6123,33588,601,383,0,0,0,6
+new,v38_oct_shipped,107525,66298,75607,6,12,6123,33857,601,394,322,0,0,6
+new,v38_oct_alt_unguarded,107525,66448,75653,6,12,6123,33904,601,395,534,0,0,6
+new,v38_oct_alt_triple_cap,107525,66364,75655,6,11,6086,33857,516,394,445,37,0,6

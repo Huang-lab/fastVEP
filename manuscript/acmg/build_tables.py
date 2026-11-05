@@ -109,6 +109,65 @@ def table_cutoffs() -> str:
 
 
 
+def table_inheritance() -> str:
+    """Table 8: the classifier before and after reading ClinGen's curated inheritance, and the alternatives that were measured."""
+    r = read("v38_runs.csv").set_index("run")
+    order = [
+        ("Before: inheritance read from the disease names", "v38_base"),
+        ("**After (shipped)**: curated inheritance; BS2's carriers not counted beside BS1 or BA1", "v38"),
+        ("Curated inheritance; BS2's carriers counted beside BS1 and BA1", "v38_alt_unguarded"),
+        ("Shipped, and no BS2 carrier arm for a susceptibility or predisposition disorder", "v38_alt_label_guard"),
+        ("Curated inheritance for PM2, PM3 and BP2; BS2 as before", "v38_alt_bs2_as_v37"),
+        ("Shipped, with PP2, PM1 and PP3 capped together at 4 points", "v38_alt_triple_cap"),
+    ]
+    rows = []
+    for label, name in order:
+        x = r.loc[name]
+        rows.append([
+            label,
+            f"{n(x.same_pathogenic)} ({pct(x.plp_recall)})",
+            f"{n(x.same_benign)} ({pct(x.blb_recall)})",
+            n(x.false_benign),
+            n(x.false_pathogenic),
+            f"{n(x.same_direction)} ({pct(x.same_direction / N_ALL)})",
+            f"{n(x.exact)} ({pct(x.exact / N_ALL)})",
+        ])
+    return md(
+        ["Setting", "ClinVar P/LP called P/LP (recall)", "ClinVar B/LB called LB/B (recall)", "Missed diagnoses",
+         "False-pathogenic calls", "Same-direction agreement", "Exact agreement"],
+        rows,
+    )
+
+
+def table_joint() -> str:
+    """Table 9: gnomAD's joint exomes and genomes against the exomes, with the region flags separated out."""
+    r = read("v38_joint.csv")
+    rows = []
+    for x in r.itertuples():
+        reference = x.database == "gnomAD exomes"
+
+        def change(total, delta):
+            return f"{n(total)}" if reference else f"{n(total)} ({int(delta):+,})"
+
+        rows.append([
+            x.set,
+            x.database,
+            n(x.variants),
+            n(x.same_pathogenic),
+            n(x.same_benign),
+            n(x.false_benign),
+            n(x.false_pathogenic),
+            change(x.same_direction, x.d_same_direction),
+            change(x.exact, x.d_exact),
+        ])
+    return md(
+        ["Set", "Source of the counts", "Variants", "ClinVar P/LP called P/LP", "ClinVar B/LB called LB/B", "Missed diagnoses",
+         "False-pathogenic calls", "Same-direction agreement (change)", "Exact agreement (change)"],
+        rows,
+        align=["l", "l"] + ["r"] * 7,
+    )
+
+
 def _step(steps: pd.DataFrame, knob: str, which: int) -> str:
     """One step of a sweep next to the shipped value: calls gained, and the error it cost."""
     sub = steps[(steps.knob == knob) & (steps.shipped_between)].reset_index(drop=True)
@@ -119,7 +178,7 @@ def _step(steps: pd.DataFrame, knob: str, which: int) -> str:
 
 
 def table_thresholds() -> str:
-    """Table 3: the thresholds that no guideline states, and what the final classifier shows."""
+    """Table 3: the thresholds that no guideline states, and what v37 shows."""
     r = read("runs_v37_variants.csv").set_index("name")
     steps = read("threshold_steps_v37.csv")
     vc = read("vcep_bars_v37.csv").set_index("bar")
@@ -194,7 +253,7 @@ def table_thresholds() -> str:
          "Not varied"],
     ]
     return md(
-        ["Threshold: shipped value", "How it was set", "Last step before the shipped value", "First step beyond it", "On the final classifier"],
+        ["Threshold: shipped value", "How it was set", "Last step before the shipped value", "First step beyond it", "On v37"],
         rows, align=["l", "l", "l", "l", "l"],
     )
 
@@ -264,7 +323,7 @@ def table_residual() -> str:
 
 
 def table_temporal() -> str:
-    """Table 7: the final classifier on the April set and on each stratum of the later release."""
+    """Table 7: v37 on the April set and on each stratum of the later release."""
     t = read("temporal_v37.csv")
     bc = read("temporal_by_class_v37.csv")
     c3 = read("confusion_3x3_v37.csv")
@@ -302,6 +361,8 @@ def table_temporal() -> str:
                "Opposite-direction calls (missed diagnoses and false-pathogenic)"], rows)
 
 TABLES = {
+    "inheritance": table_inheritance,
+    "joint": table_joint,
     "thresholds": table_thresholds,
     "cutoffs": table_cutoffs,
     "decomposition": table_decomposition,
