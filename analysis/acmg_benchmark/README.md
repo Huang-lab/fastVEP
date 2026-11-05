@@ -144,17 +144,19 @@ done
 python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py blockers
 
 # 4. The runs of Section 3.8 (what changed after v37: ClinGen's curated mode of inheritance is read), which need the
-#    three binaries of step 0 that are not v37's. The databases of gnomAD's joint exomes and genomes release for the pilot
-#    on chr21 and chr22 come first (a run on every chromosome needs the databases of all 24, which take hours to extract
-#    from gnomAD's public files); the pilot's input, the benchmark's variants on those two chromosomes, is written by
-#    11_manuscript_runs.py from the benchmark's own files
-FASTVEP="$FASTVEP_V38_BIN" analysis/acmg_benchmark/scripts/sa_sources/build_gnomad_release_per_chrom.sh joint 21 22
+#    three binaries of step 0 that are not v37's. The databases of gnomAD's joint exomes and genomes release come first,
+#    for all 24 chromosomes: about 6 hours from gnomAD's public files, limited by the network and not by the script
+#    (JOBS=8 runs eight chromosomes at a time, the default is four), and resumable, so that a run that was stopped
+#    continues after its last finished batch. 11_manuscript_runs.py makes `v38_joint` once all 24 exist; the pilot on
+#    chr21 and chr22 that was made first reads the same two databases, and its input, the benchmark's variants on those
+#    two chromosomes, is written by 11_manuscript_runs.py from the benchmark's own files
+FASTVEP="$FASTVEP_V38_BIN" JOBS=8 analysis/acmg_benchmark/scripts/sa_sources/build_gnomad_release_per_chrom.sh joint
 python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --v38 --workers 3
 python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --v38 --holdout --workers 3
 
 # 4c. The per-variant table of each run whose variants the statistics read one by one
 for run in v38 v38_base v38_alt_unguarded v38_alt_label_guard v38_alt_bs2_as_v37 v38_alt_triple_cap \
-           v38_chr2122_exomes v38_chr2122_exomes_noflags v38_chr2122_joint; do
+           v38_noflags v38_joint v38_chr2122_exomes v38_chr2122_exomes_noflags v38_chr2122_joint; do
   python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
     --run data/benchmark/manuscript_runs/$run --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
 done
@@ -163,6 +165,10 @@ for run in v38_oct_base v38_oct_shipped v38_oct_alt_unguarded v38_oct_alt_triple
     --run data/benchmark/manuscript_runs/$run --labels data/benchmark/clinvar_20261004_covered/clinvar_2star_labels.tsv \
     --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
 done
+
+# 4d. The variants that the joint release turns into errors, or out of a pathogenic-side call, annotated one at a time
+#     through both databases (the filtering allele frequency and the flags are in the json and not in the VCF)
+FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/17_joint_boundary_cases.py
 
 # 5. Every table, then the figures, then the checks
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py

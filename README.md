@@ -218,7 +218,9 @@ fastvep sa-build --source clinvar -i clinvar.vcf.gz -o sa_databases/clinvar --as
 # Per-chromosome sites VCFs. Measured 2026-08-31, chr1-22 X Y: the exomes
 # release is 198 GB and the genomes release is 563 GB, so most setups want
 # tabix-extracted target regions rather than the whole thing. See
-# docs/ACMG_SETUP.md for the region-restricted recipe.
+# docs/ACMG_SETUP.md for the region-restricted recipe, and for the joint release
+# of the exomes and the genomes, which gives more calls in direction on the
+# ACMG benchmark than the exomes alone.
 GNOMAD=https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/exomes
 wget "$GNOMAD/gnomad.exomes.v4.1.sites.chr1.vcf.bgz"
 fastvep sa-build --source gnomad -i gnomad.exomes.v4.1.sites.chr1.vcf.bgz -o sa_databases/gnomad_chr1 --assembly GRCh38

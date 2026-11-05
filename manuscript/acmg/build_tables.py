@@ -141,7 +141,9 @@ def table_inheritance() -> str:
 
 def table_joint() -> str:
     """Table 9: gnomAD's joint exomes and genomes against the exomes, with the region flags separated out."""
+    # The pilot on chromosomes 21 and 22 is in the file and in Appendix Table A16; the table is the runs of every chromosome.
     r = read("v38_joint.csv")
+    r = r[r.set == "every chromosome"]
     rows = []
     for x in r.itertuples():
         reference = x.database == "gnomAD exomes"
@@ -150,7 +152,6 @@ def table_joint() -> str:
             return f"{n(total)}" if reference else f"{n(total)} ({int(delta):+,})"
 
         rows.append([
-            x.set,
             x.database,
             n(x.variants),
             n(x.same_pathogenic),
@@ -161,10 +162,10 @@ def table_joint() -> str:
             change(x.exact, x.d_exact),
         ])
     return md(
-        ["Set", "Source of the counts", "Variants", "ClinVar P/LP called P/LP", "ClinVar B/LB called LB/B", "Missed diagnoses",
+        ["Source of the counts", "Variants", "ClinVar P/LP called P/LP", "ClinVar B/LB called LB/B", "Missed diagnoses",
          "False-pathogenic calls", "Same-direction agreement (change)", "Exact agreement (change)"],
         rows,
-        align=["l", "l"] + ["r"] * 7,
+        align=["l"] + ["r"] * 7,
     )
 
 

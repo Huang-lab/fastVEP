@@ -188,18 +188,29 @@ The counts of two cohorts do not combine into a frequency without the per-group 
 
 **To use the exomes and the genomes together, build from gnomAD's joint release.**
 `gnomad.joint.v4.1.sites` is the two combined by gnomAD itself (`AF_joint`, `AC_joint`, `AN_joint`, `nhomalt_joint`, the per-group frequencies, the filtering allele frequency and `AC_joint_XY`), and the builder reads it.
-The exomes are the right source for coding variants and the genomes for the rest: on the ClinVar 2-star+ variants of chr21 and chr22, the joint callset changed 555 of 23,538 calls, all of them toward a benign class or away from one, and none on a ClinVar pathogenic-side variant (`manuscript/acmg`, Section 3.8).
-Two things about it differ from the exomes and genomes releases, and the first is why the script below exists:
+
+**Which to build.**
+Measured on the benchmark's 673,278 ClinVar 2-star+ variants (`manuscript/acmg`, Section 3.8), the joint release holds a record for every variant that the exomes hold, with counts that are never lower, and a record for 17,382 more.
+A database built from it changes 13,302 calls, 8,647 of them on intronic and UTR variants, and gives 10,190 more exact calls and 9,321 more calls in direction than the exomes (1.5 and 1.4 points), for one more missed diagnosis and two more false-pathogenic calls, which is about 3,100 calls in direction for each added opposite-direction call.
+What it gives up is the region veto (below), and the benchmark can price only part of what the veto does.
+We would build the joint release for classification where no policy requires the region veto, and the exomes where one does.
+The benchmark of the manuscript still reads the exomes, because every other number in it was measured on them.
+Three things about the joint release differ from the exomes and genomes releases, and the first is why the script below exists:
 
 - A joint record carries about 11 KB of INFO (every group by sex, for three callsets), so 200 of the benchmark's regions on chr22 come to 5.1 GB uncompressed.
-  `analysis/acmg_benchmark/scripts/sa_sources/build_gnomad_release_per_chrom.sh joint 21 22` extracts the regions your BED names and keeps only the INFO keys the builder reads, about 3% of that.
-  It retries a batch that fails and builds nothing for a chromosome with a batch that still fails, because a hole in a frequency database reads as "absent from gnomAD".
+  `analysis/acmg_benchmark/scripts/sa_sources/build_gnomad_release_per_chrom.sh joint` extracts the regions your BED names and keeps only the INFO keys the builder reads, about 3% of that; name chromosomes after `joint` to build only those, and `JOBS=8` runs eight at a time (the default is four).
+  The 24,350 regions of the benchmark took about 6 hours on one machine, limited by the network and not by the script (19 chromosomes took 4 hours 46 minutes at about 10 MB/s), and the 24 databases total 610 MB, against 369 MB for the exomes.
+  The script retries a batch that fails and builds nothing for a chromosome with a batch that still fails, because a hole in a frequency database reads as "absent from gnomAD", and a stopped run resumes after the last batch that finished.
 - **The joint release declares no `lcr`, `segdup` or `non_par` flag** (in the headers read on 4 November 2026).
   The exomes and genomes releases mark a site in a low-complexity region or a segmental duplication, and the classifier withholds BA1, BS1, BS2 and PM2 there (`gnomad_region_flags_block_frequency`).
   A database built from the joint release cannot say, so that veto does not act on it, and `sa-build` prints a warning to standard error that it will not.
   The non-PAR flag matters for X-linked genes, where it is what lets BS2 count hemizygotes; the builder derives it for the joint release from the GRCh38 pseudoautosomal coordinates, which agree with gnomAD's own flag at the edges that could be read in the genomes release (`crates/fastvep-sa/src/sources/gnomad.rs` says which).
   A joint database built before v38 has no non-PAR flag, and BS2 counts no hemizygotes from it: rebuild it with the current builder.
-  Whether to give up the region veto for the genomes' coverage is a choice for the run: on chr21 and chr22 the veto's absence is part of what the joint callset changes, and the manuscript separates the two.
+  On every chromosome the veto's absence accounts for 4,075 of the 10,190 more exact calls and 3,473 of the 9,321 more calls in direction, with one more false-pathogenic call; in the exomes the veto also keeps three ClinVar pathogenic-side frameshifts at low-complexity sites (MYO6, and the two PRRT2 frameshifts at Arg217) at Likely pathogenic, where the joint release gives them BS2 and VUS.
+  What the veto prevents at sites that nobody has classified, the benchmark cannot show.
+- **A filter of one callset withholds the frequency criteria of the whole record.**
+  The release's FILTER column says only which side failed, so the builder reads the names of the failed filters from `exomes_filters` and `genomes_filters` and reports one that fired in either callset, as the conservative direction for a guard against trusting a frequency.
+  A site that passes in the exomes with a few alleles and has AC0 in the genomes therefore loses PM2: 741 of the benchmark's variants do against the exomes without the flags, and 11 of them change their call, 9 of them ClinVar pathogenic-side variants (`manuscript/acmg`, Section 3.8).
 
 ### gnomAD gene constraints (gene level)
 

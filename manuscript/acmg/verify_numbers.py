@@ -863,7 +863,7 @@ def discussion() -> None:
     fact("The mode of inheritance that BS2 and PM2 read was the weakest input of v37", n(fv("clingen_genes_in_file")), n(fv("inheritance_read_recessive_only")), n(fv("inheritance_read_dominant_only")),
          n(fv("inheritance_read_both")), n(fv("benchmark_genes_established_tags_ad_only")), n(fv("benchmark_genes_established_tags_ad_only_read_dominant")),
          n(fv("benchmark_genes_established_tags_ar_only")), n(fv("benchmark_genes_established_tags_ar_only_read_recessive")), "established ClinGen tags")
-    fact("The classifier reads the gnomAD exomes only", f"{(base.same_direction - run('v37_sw_pm2_needs_record').same_direction) / N_ALL * 100:.2f}",
+    fact("The benchmark's classifier reads the gnomAD exomes only", f"{(base.same_direction - run('v37_sw_pm2_needs_record').same_direction) / N_ALL * 100:.2f}",
          f"{(base.plp_recall - run('v37_sw_pm2_needs_record').plp_recall) * 100:.1f}", p(base.fire_PM2_Supporting / N_ALL, 0))
     fact("The price of an error was not applied uniformly", n((t.loc[11].plp_recall - t.loc[10].plp_recall) * 93_812 / (t.loc[11].false_pathogenic - t.loc[10].false_pathogenic)),
          n((t.loc[13].blb_recall - t.loc[12].blb_recall) * 284_550 / (t.loc[13].false_benign - t.loc[12].false_benign)), n(steps[steps.knob == "BS2 homozygote bar"].reset_index(drop=True).iloc[1].calls_per_error),
@@ -1098,10 +1098,18 @@ def v38() -> None:
          "all" if ctl.cells_equal_to_v38 == ctl.cells and ctl.criteria_firing_equal_to_v38 == ctl.criteria else "?")
     fact("were swept again on v38 in 26 runs", n(len(sw[sw.group == "sweep"])))
     fact("were applied unchanged to the release of 4 October 2026 (Section 2.8) in 4 runs", n(len(hold38)))
-    fact("Three runs on chromosomes 21 and 22 compare", w(sum(runs38.name.str.startswith("v38_chr2122"))))
-    fact("In all there are 37 runs on the April set and 4 on the October release", n(len(runs38)), n(len(hold38)))
+    every_chromosome = {"v38", "v38_noflags", "v38_joint"}
+    fact("Three runs on every chromosome compare", w(len(every_chromosome & set(runs38.name))),
+         w(sum(runs38.name.str.startswith("v38_chr2122"))), "chromosomes 21 and 22")
+    fact("In all there are 38 runs on the April set and 4 on the October release", n(len(runs38)), n(len(hold38)))
+    res38 = HERE.parents[1] / "analysis/acmg_benchmark/results/v37_manuscript/provenance"
+    once = {f.stem: dict(line.split(": ", 1) for line in f.read_text().splitlines() if ": " in line) for f in (res38 / "v38.txt", res38 / "v38_joint.txt")}
+    fact("All but one of the 42 were made twice", n(len(runs38) + len(hold38)))
+    fact("the run on the joint release on every chromosome was made once, on 5 November 2026, with the binary of the second set",
+         "5 November 2026" if once["v38_joint"]["recorded_at"].startswith("2026-11-05") else "?",
+         "binary of the second set" if once["v38_joint"]["fastvep_sha256"] == once["v38"]["fastvep_sha256"] else "?")
     fact("A later version (v38), which reads the mode of inheritance that ClinGen curates", n(len(runs38) + len(hold38)))
-    fact("The runs of Section 3.8, 37 on the April set and 4 on the October release", n(len(runs38)), n(len(hold38)))
+    fact("The runs of Section 3.8, 38 on the April set and 4 on the October release", n(len(runs38)), n(len(hold38)))
 
     # ----------------------------------------------------------------------------------- Section 3.8, the baseline and the reading
     fact("they reached 67 and 50 genes", n(names_all.recessive_only), n(names_all.dominant_only))
@@ -1233,17 +1241,124 @@ def v38() -> None:
          "both of them old variants" if set(hmv[(hmv.run == "v38_oct_alt_unguarded") & (hmv.call_after == "Benign")].stratum) == {"unchanged"} else "?")
 
     # ----------------------------------------------------------------------------------- gnomAD's joint release
+    from decimal import ROUND_HALF_UP, Decimal
+
+    def pct3(x) -> str:
+        """A frequency as a percentage with three decimals, rounded half up from the digits that the file holds."""
+        return f"{(Decimal(str(x)) * 100).quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)}%"
+
     j = jn.set_index("run")
-    moved = jc[(jc.run == "v38_chr2122_joint") & (jc.consequence_group != "(criterion)")]
-    fact("On chromosomes 21 and 22 (23,538 variants) a database built from it changes 555 calls", n(j.loc["v38_chr2122_joint", "variants"]), n(moved.n.sum()), n(moved[moved.clinvar == "B/LB"].n.sum()),
-         "none" if moved[moved.clinvar == "P/LP"].n.sum() == 0 else "?", n(j.loc["v38_chr2122_joint", "d_exact"]), n(j.loc["v38_chr2122_joint", "d_same_direction"]),
-         "no change in missed diagnoses or false-pathogenic calls" if j.loc["v38_chr2122_joint", "d_false_benign"] == 0 and j.loc["v38_chr2122_joint", "d_false_pathogenic"] == 0 else "?")
-    nf, jt = j.loc["v38_chr2122_exomes_noflags"], j.loc["v38_chr2122_joint"]
-    fact("Part of that gain is the flags that the joint release lacks", n(nf.d_exact), n(nf.d_same_direction), n(jt.d_exact - nf.d_exact), n(jt.d_same_direction - nf.d_same_direction),
-         p((jt.d_exact - nf.d_exact) / jt.variants, 0))
-    fact("On every chromosome the same switch of the flags gives 4,075 more exact calls", n(j.loc["v38_noflags", "d_exact"]), n(j.loc["v38_noflags", "d_same_direction"]),
-         n(j.loc["v38", "false_pathogenic"]), n(j.loc["v38_noflags", "false_pathogenic"]))
-    fact("gnomAD's genomes are not read by the benchmark", n(j.loc["v38_chr2122_joint", "variants"]))
+    ex, nf, jt = j.loc["v38"], j.loc["v38_noflags"], j.loc["v38_joint"]
+    every = jc[(jc.set == "every chromosome") & (jc.run == "v38_joint")]
+    moved = every[every.consequence_group != "(criterion)"]
+    by_class = moved.groupby("clinvar").n.sum()
+    rec = csv("v38_joint_records.csv").set_index("set").loc["every chromosome"]
+    cov = csv("v38_joint_coverage.csv").set_index("group")
+    added_all = (jt.false_benign - ex.false_benign) + (jt.false_pathogenic - ex.false_pathogenic)
+    added_genomes = (jt.false_benign - nf.false_benign) + (jt.false_pathogenic - nf.false_pathogenic)
+    price = lambda gain, cost: n(round(gain / cost, -2))
+
+    fact("On every chromosome (673,278 variants) a database built from it holds a record for every variant that the exomes hold",
+         n(rec.variants), n(rec.in_both), n(rec.joint_only), p(rec.joint_only / rec.variants),
+         "never lower" if (rec.exomes_only, rec.ac_lower, rec.an_lower, rec.hc_lower) == (0, 0, 0, 0) else "?")
+    fact("It changes 13,302 calls (2.0%)", n(moved.n.sum()), p(moved.n.sum() / jt.variants), n(by_class["B/LB"]), n(by_class["VUS"]), n(by_class["P/LP"]),
+         n(jt.d_exact), pp(jt.d_exact / jt.variants, 2), n(jt.d_same_direction), pp(jt.d_same_direction / jt.variants, 2),
+         n(ex.false_benign), n(jt.false_benign), n(ex.false_pathogenic), n(jt.false_pathogenic),
+         "one more missed diagnosis" if jt.false_benign - ex.false_benign == 1 else "?",
+         "two more false-pathogenic calls" if jt.false_pathogenic - ex.false_pathogenic == 2 else "?")
+    fact("ClinVar benign-side variants called benign-side rise from 178,888 to 188,310", n(ex.same_benign), n(jt.same_benign), n(ex.same_pathogenic), n(jt.same_pathogenic))
+    intronic, utr = cov.loc["intronic variants whose call moves"], cov.loc["UTR variants whose call moves"]
+    fact("Of the 13,302 calls that move, 4,485 are on variants that the exomes lack", n(cov.loc["calls that move", "variants"]), n(cov.loc["calls that move", "no_exomes_record"]),
+         n(intronic.no_exomes_record), n(intronic.variants), n(utr.variants), n(utr.median_an_exomes), n(utr.median_an_joint),
+         "of the 6,476" if int(moved[moved.consequence_group == "Intronic"].n.sum()) == intronic.variants else "?",
+         "UTR variants" if int(moved[moved.consequence_group == "UTR"].n.sum()) == utr.variants else "?")
+    ba1 = every[every.criterion == "BA1"].iloc[0]
+    fact("BA1 is gained on 10,115 of the moved calls and lost on 339", n(ba1.criterion_gained), n(ba1.criterion_lost))
+    bc = csv("v38_joint_by_chrom.csv").set_index("chrom")
+    autosomes_and_x = bc.loc[[str(c) for c in range(1, 23)] + ["X"]]
+    share = autosomes_and_x.calls_moved / autosomes_and_x.variants
+    fact("Each of the 22 autosomes and the X gains calls", p(share.min()), p(share.max()), n(bc.loc["Y", "variants"]), n(bc.loc["MT", "variants"]),
+         "gains calls" if bool(((autosomes_and_x.d_exact > 0) & (autosomes_and_x.d_same_direction > 0)).all()) else "?",
+         "nothing moves" if int(bc.loc[["Y", "MT"], "calls_moved"].sum()) == 0 else "?")
+    fact("Part of the gain is the flags that the joint release lacks and not the genomes", n(nf.d_exact), n(nf.d_same_direction), n(jt.d_exact - nf.d_exact),
+         n(jt.d_same_direction - nf.d_same_direction),
+         "one more false-pathogenic call and no more missed diagnosis" if (nf.false_pathogenic - ex.false_pathogenic, nf.false_benign - ex.false_benign) == (1, 0) else "?",
+         "one more of each" if (jt.false_benign - nf.false_benign, jt.false_pathogenic - nf.false_pathogenic) == (1, 1) else "?")
+    pc = csv("v38_joint_pilot_check.csv")
+    fact("A pilot of the same three runs on chromosomes 21 and 22 alone", n(pc.variants.iloc[0]),
+         "gives the same call and the same criteria"
+         if len(pc) == 3 and (pc.variants == pc.found_in_full).all() and not pc.calls_differing.any() and not pc.criteria_differing.any() else "?")
+
+    je = csv("v38_joint_errors.csv")
+    for flag in ("filter_ac0", "filter_vqsr", "lcr", "segdup", "bs2_met", "pm2_met", "bs1_met", "capped_by_veto"):
+        je[flag] = je[flag].eq(True)  # a blank (no gnomAD record) is False
+    errors = je[~je.kind.str.startswith("pathogenic-side")]
+    one = lambda symbol, database: errors[(errors.symbol == symbol) & (errors.database == database)].iloc[0]
+    faf = lambda symbol, database: float(one(symbol, database).faf95_max)
+    kinds = errors.drop_duplicates(["chrom", "pos"]).kind
+    fact("Five variants change their standing as an opposite-direction call, four added and one removed", w(len(kinds)),
+         w(int(kinds.str.startswith("no error").sum())), w(int(kinds.str.endswith("no error").sum())))
+    bar = float(one("KMT2C", "joint").bs1_bar)
+    straddle = {s for s in ("KMT2C", "RAI1", "PIEZO1", "TXNL4A", "NF1") if (faf(s, "exomes") - bar) * (faf(s, "joint") - bar) < 0}
+    fact("Four of the five are at the bar of BS1, a filtering allele frequency of 0.5%", w(len(straddle)), p(bar),
+         "the fifth belongs to the missing flags" if straddle == {"KMT2C", "RAI1", "PIEZO1", "TXNL4A"} else "?")
+    km, ra = one("KMT2C", "exomes"), one("RAI1", "exomes")
+    fact("KMT2C p.Cys391Ter (ClinVar Likely benign) and RAI1 p.Gln280HisfsTer83 (Benign)", km.hgvsp, ra.hgvsp,
+         "variant-quality filter" if all(one(s, d).frequency_withheld_by == "FILTER=AS_VQSR" for s in ("KMT2C", "RAI1") for d in ("exomes", "joint")) else "?",
+         "at VUS" if (km.call, ra.call) == ("VUS", "VUS") and km.capped_by_veto and ra.capped_by_veto and km.criteria == ra.criteria == "PVS1" else "?",
+         "Likely benign" if km.clinvar == "Likely_benign" else "?", "Benign" if ra.clinvar == "Benign" else "?")
+    fact("Their filtering allele frequencies are 0.522% and 0.537% in the exomes", pct3(faf("KMT2C", "exomes")), pct3(faf("RAI1", "exomes")), pct3(faf("KMT2C", "joint")),
+         pct3(faf("RAI1", "joint")),
+         "both are called Likely pathogenic" if all(one(s, "joint").call == "Likely_pathogenic" and not one(s, "joint").capped_by_veto for s in ("KMT2C", "RAI1")) else "?")
+    fact("PIEZO1's splice-acceptor deletion (ClinVar Benign) is the same case in the other direction", pct3(faf("PIEZO1", "exomes")), pct3(faf("PIEZO1", "joint")),
+         "Likely pathogenic" if one("PIEZO1", "exomes").call == "Likely_pathogenic" else "?", "at VUS" if one("PIEZO1", "joint").call == "VUS" and one("PIEZO1", "joint").capped_by_veto else "?",
+         "splice-acceptor" if one("PIEZO1", "exomes").consequence == "splice_acceptor_variant" else "?", "Benign" if one("PIEZO1", "exomes").clinvar == "Benign" else "?")
+    tx_e, tx_j = one("TXNL4A", "exomes"), one("TXNL4A", "joint")
+    fact("TXNL4A's deletion upstream of the gene (ClinVar Pathogenic)", n(tx_e.gnomad_an), pct3(tx_e.faf95_max), n(tx_j.gnomad_an), pct3(tx_j.faf95_max),
+         "BS1 fires" if tx_j.bs1_met and not tx_e.bs1_met else "?", "Likely benign" if tx_j.call == "Likely_benign" else "?",
+         "upstream" if tx_e.consequence == "upstream_gene_variant" else "?", "Pathogenic" if tx_e.clinvar == "Pathogenic" else "?")
+    nf_e, nf_j = one("NF1", "exomes"), one("NF1", "joint")
+    fact("NF1 p.Met895Ile (ClinVar Likely benign) is called Likely pathogenic", nf_e.hgvsp,
+         "segmental-duplication flag" if nf_e.frequency_withheld_by == "segmental duplication" and nf_e.segdup else "?",
+         "fires" if nf_j.pm2_met and not nf_e.pm2_met and nf_j.call == "Likely_pathogenic" else "?", "Likely benign" if nf_e.clinvar == "Likely_benign" else "?")
+
+    lost_rows = je[je.kind.str.startswith("pathogenic-side")]
+    lost_j, lost_e = lost_rows[lost_rows.database == "joint"], lost_rows[lost_rows.database == "exomes"]
+    plp = every[every.clinvar == "P/LP"]
+    is_p = lambda s: s.isin(["Pathogenic", "Likely_pathogenic"])
+    lost_n = int(plp[is_p(plp.call_before) & ~is_p(plp.call_after)].n.sum())
+    gained_n = int(plp[~is_p(plp.call_before) & is_p(plp.call_after)].n.sum())
+    fact("Thirteen ClinVar pathogenic-side variants lose a pathogenic-side call and 39 gain one", w(lost_n), n(gained_n),
+         "lose" if lost_n == len(lost_j) else "?")
+    filtered = lost_j[lost_j.frequency_withheld_by.fillna("").str.startswith("FILTER=")]
+    in_exomes = lost_e.set_index(["chrom", "pos"]).loc[list(zip(filtered.chrom, filtered.pos))]
+    has_record = in_exomes.gnomad_ac.notna()
+    fact("Ten of the 13 are missense variants whose record in the joint release carries a filter of gnomAD's quality control", w(len(filtered)), n(len(lost_j)),
+         w(int((filtered.filter_ac0 & ~filtered.filter_vqsr).sum())), w(int((~filtered.filter_ac0 & filtered.filter_vqsr).sum())),
+         w(int((filtered.filter_ac0 & filtered.filter_vqsr).sum())),
+         w(int(has_record.sum())), w(int((~has_record).sum())),
+         "one to four alleles" if int(in_exomes[has_record].gnomad_ac.min()) == 1 and int(in_exomes[has_record].gnomad_ac.max()) == 4 else "?",
+         "clean record" if not in_exomes[has_record].frequency_withheld_by.fillna("").str.len().any() else "?",
+         "missense" if (filtered.consequence == "missense_variant").all() else "?", "withholds PM2" if not filtered.pm2_met.any() else "?")
+    low = lost_e[lost_e.frequency_withheld_by.fillna("") == "low-complexity region"]
+    fact("Three are frameshifts, MYO6 p.Gln918ThrfsTer24 and PRRT2 p.Arg217ProfsTer8 and p.Arg217GlufsTer12", w(len(low)), *sorted(low.hgvsp),
+         "frameshifts" if (low.consequence == "frameshift_variant").all() else "?",
+         "BS2" if lost_j[lost_j.hgvsp.isin(low.hgvsp)].bs2_met.all() and not lost_j[lost_j.hgvsp.isin(low.hgvsp)].lcr.any() else "?")
+
+    pm2 = csv("v38_joint_pm2_lost.csv")
+    ac0 = pm2[(pm2.reason == "filter AC0") & pm2.joint_count_positive].iloc[0]
+    fact("Against the exomes without the flags, 741 variants with a positive joint count lose PM2 to an AC0 in one callset", n(ac0.variants), n(ac0.calls_moved),
+         n(ac0.pathogenic_side_calls_moved))
+    fact("The change costs about 3,100 calls in direction for each added opposite-direction call", price(jt.d_same_direction, added_all), n(jt.d_same_direction), w(added_all),
+         price(jt.d_same_direction - nf.d_same_direction, added_genomes), n(jt.d_same_direction - nf.d_same_direction), w(added_genomes))
+    fact("What the joint release gives up is the flags", n(nf.d_same_direction), "one false-pathogenic call" if nf.false_pathogenic - ex.false_pathogenic == 1 else "?",
+         "three pathogenic-side frameshifts" if len(low) == 3 else "?")
+    fact("gnomAD's genomes are not read by the benchmark; read through the joint release on every chromosome they give 9,321 more calls in direction",
+         n(jt.d_same_direction), w(added_all))
+    fact("Seventh, gnomAD's genomes, read through the joint release", n(jt.d_same_direction), w(added_all), price(jt.d_same_direction, added_all))
+    fact("Reading gnomAD's genomes through its joint release adds 9,321 calls in direction on every chromosome", n(jt.d_same_direction), w(added_all))
+    fact("Reading gnomAD's genomes as well as its exomes, through its joint release, would add 9,321 calls in direction", n(jt.d_same_direction), pp(jt.d_same_direction / jt.variants, 2),
+         "one more missed diagnosis" if jt.false_benign - ex.false_benign == 1 else "?", "two more false-pathogenic calls" if jt.false_pathogenic - ex.false_pathogenic == 2 else "?")
 
     # ----------------------------------------------------------------------------------- the sentences elsewhere that quote it
     fact("Reading the mode of inheritance that ClinGen curates, which makes 2,056 genes dominant-only or recessive-only", n(names_all.dominant_only + names_all.recessive_only),

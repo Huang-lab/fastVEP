@@ -18,7 +18,7 @@ We describe how the classification engine of fastVEP, an open-source reimplement
 Thirty-seven numbered versions were scored on 673,660 ClinVar variants (release of 4 April 2026; 31 have stored scored output) over six rounds of review, three of which returned rulings.
 For this paper 89 further runs re-measured all but four groups of the thresholds that no guideline states and tested departures from the sources.
 The classifier of that analysis (v37) was applied unchanged to ClinVar's release of 4 October 2026, including 107,528 variants that were not in the April set.
-A later version (v38), which reads the mode of inheritance that ClinGen curates and not the words of the disease name, was measured in 41 further runs on both releases.
+A later version (v38), which reads the mode of inheritance that ClinGen curates and not the words of the disease name, was measured in 42 further runs on both releases.
 
 **Results.**
 On the April set, where every threshold was tuned, agreement in direction rose from 51.0% (v1, reconstructed) to 77.6% (v37) and was flat after the thirteenth version, while opposite-direction calls went from 25 (v10) to 94 and back to 49 (59 under a strict leave-one-out reading, three of the added calls Benign).
@@ -29,6 +29,7 @@ BP7's conservation test, which the splicing recommendation cautions against with
 On the 107,528 new variants agreement in direction was 70.1% and contradictions were 2.3 times as frequent (95% interval 1.2 to 4.0).
 Reading the mode of inheritance that ClinGen curates, which makes 2,056 genes dominant-only or recessive-only where the words of the disease names made 117 (v37), added 1,490 calls in direction (0.22 points) with no added missed diagnosis, but four ClinVar-Pathogenic loss-of-function variants moved from Likely pathogenic to VUS.
 Counting one gnomAD observation as two benign criteria would have added 1,292 more calls in direction and called two ClinVar-Pathogenic variants Benign, so v38 does not.
+Reading gnomAD's genomes as well as its exomes, through its joint release, would add 9,321 calls in direction (1.38 points) on every chromosome for one more missed diagnosis and two more false-pathogenic calls, and the release lacks the flags that withhold the frequency criteria in repeats.
 
 **Conclusions.**
 The largest class of change was a condition that the standards state and a first implementation omitted.
@@ -296,6 +297,7 @@ The call of the gene as a whole is the call it would have without them, and it i
 Fourth, the allele counts that the frequency criteria read can come from gnomAD's joint release of exomes and genomes, and the loader guards what that exposed.
 In the headers read on 4 November 2026 the joint release declares none of the three flags that the exomes carry for regions where gnomAD's counts are unreliable and for the pseudoautosomal regions (`lcr`, `segdup` and `non_par`), so a database built from it cannot withhold BA1, BS1, BS2 and PM2 in a low-complexity region or a segmental duplication, and cannot tell BS2 which hemizygotes to count.
 The database builder now derives the pseudoautosomal flag from the GRCh38 coordinates, which agree with the flag in gnomAD's genomes file at the edges that could be read (exactly at the end of the first region of the X chromosome, and within the gaps between the records at the others), and prints a warning that the other two are missing.
+The builder also reads the names of the filters that failed in each callset from two keys of the joint release (`exomes_filters` and `genomes_filters`), because the FILTER column of the release says only which side failed, and it reports a filter that fired in either callset for the record.
 The annotation loops of the library and of the command line record a source that two databases both answer, which until v38 the later path of the two settled without a message, and the command line says so at the end of the run; the case that exposed it was a second gnomAD database in the same directory.
 A script extracts the benchmark's regions of the exomes, the genomes or the joint release from gnomAD's public files and builds the databases (`analysis/acmg_benchmark/scripts/sa_sources/build_gnomad_release_per_chrom.sh`).
 
@@ -304,10 +306,10 @@ The control of that build, with nothing set, reproduces v38 in all 30 cells of t
 The alternatives are counting BS2's carriers beside BS1 and BA1, as the reading first ran; withholding the carrier arm for a disorder whose label says susceptibility or predisposition; reading the field for PM2, PM3 and BP2 and leaving BS2 as in v37; and capping PP2, PM1 and PP3 together at 4 points (Strong), the cap that the reconciliation pass already applies to PP3 and PM1.
 The four thresholds that read inheritance (the PM2 bar for genes read as recessive-only and the bar for the rest, the BS2 bar for individuals with no functional copy, and the BS2 carrier bar with its floor on the allele count) were swept again on v38 in 26 runs.
 The shipped change, the first and the last alternative and the commit before the change were applied unchanged to the release of 4 October 2026 (Section 2.8) in 4 runs.
-Three runs on chromosomes 21 and 22 compare the gnomAD exomes with the joint release and with the exomes when the region flags withhold nothing, and the run in which the flags withhold nothing was repeated on every chromosome.
-In all there are 37 runs on the April set and 4 on the October release, each with the provenance record of Section 2.6.
-They were made twice, as the runs of Section 2.6 were: first with binaries built from earlier states of the same working tree, before its last edits, and again on 4 November 2026 with binaries built from the final tree by `build_manuscript_binaries.sh` (the commit before the change, the shipped change, and the shipped change with the patch).
-The two sets agree in every scored file of every run and in every record of the annotated VCFs that both keep (RUN_VERSIONS.md).
+Three runs on every chromosome compare the gnomAD exomes with the joint release and with the exomes when the region flags withhold nothing, and a pilot of the same three runs on chromosomes 21 and 22, made before the other chromosomes had been extracted, was kept as a check.
+In all there are 38 runs on the April set and 4 on the October release, each with the provenance record of Section 2.6.
+All but one of the 42 were made twice, as the runs of Section 2.6 were: first with binaries built from earlier states of the same working tree, before its last edits, and again on 4 November 2026 with binaries built from the final tree by `build_manuscript_binaries.sh` (the commit before the change, the shipped change, and the shipped change with the patch).
+The two sets agree in every scored file of every run and in every record of the annotated VCFs that both keep (RUN_VERSIONS.md); the run on the joint release on every chromosome was made once, on 5 November 2026, with the binary of the second set.
 
 ## 3. Results
 
@@ -936,28 +938,48 @@ On the 772,585 covered records v38 gives 261 more exact calls and 1,762 more cal
 On the 107,525 new variants with a call it gives 101 more exact calls and 258 more in direction, with 6 missed diagnoses and 12 false-pathogenic calls before and after.
 Counting BS2 beside BS1 and BA1 adds 4,034 exact calls and 3,096 in direction over the commit before the change, and two missed diagnoses, TTR p.Val142Ile and VWF p.Arg854Gln again, both of them old variants.
 
-**gnomAD's genomes were not read by the frequency criteria, and the joint release lacks the flags that withhold them.**
-The classifier read the exomes only (Section 4.4).
+**gnomAD's genomes were not read by the frequency criteria, and reading them through the joint release gives more calls in direction than any other change of this section, for three more opposite-direction calls.**
+The classifier read the exomes only, in the benchmark (Section 4.4).
 The joint v4.1 release adds the genomes' counts to the exomes', and it declares no `lcr`, `segdup` or `non_par` flag (Section 2.10).
-On chromosomes 21 and 22 (23,538 variants) a database built from it changes 555 calls, 549 of them on ClinVar benign-side variants and none on a ClinVar pathogenic-side variant, and gives 438 more exact calls and 387 more in direction than the exomes, with no change in missed diagnoses or false-pathogenic calls (Table 9, Appendix Table A16).
+On every chromosome (673,278 variants) a database built from it holds a record for every variant that the exomes hold, with an allele count, an allele number and a count of homozygotes that are never lower (537,038 variants), and one for 17,382 more (2.6%) that the exomes lack (Appendix Table A16).
+It changes 13,302 calls (2.0%), 12,983 of them on ClinVar benign-side variants, 209 on VUS and 110 on pathogenic-side variants, and gives 10,190 more exact calls (1.51 points) and 9,321 more in direction (1.38 points) than the exomes, for one more missed diagnosis (24 to 25) and two more false-pathogenic calls (24 to 26) (Table 9).
+ClinVar benign-side variants called benign-side rise from 178,888 to 188,310, and pathogenic-side variants called pathogenic-side from 58,606 to 58,632.
+Of the 13,302 calls that move, 4,485 are on variants that the exomes lack, among them 4,242 of the 6,476 intronic variants whose call moves, and the exomes' records of the 2,171 UTR variants whose call moves rest on a median of 394 alleles, against 152,416 in the joint release (Appendix Table A16).
+BA1 is gained on 10,115 of the moved calls and lost on 339.
+Each of the 22 autosomes and the X gains calls, with 1.3% to 2.7% of its variants changing, and nothing moves on the Y or the mitochondrial contigs, which have 4 and 550 variants.
 
 **Table 9. gnomAD's joint release against its exomes, with the region flags separated out.**
 The joint release declares no `lcr` or `segdup` flag, so its run differs from the exomes in two ways, the genomes' counts and the missing flags, and the run of the exomes with the flags withholding nothing shows the second alone.
-Changes are from the run of the exomes in the same set, and the pilot is on chromosomes 21 and 22.
+Changes are from the run of the exomes.
 
 <!-- table:joint:begin -->
-| Set | Source of the counts | Variants | ClinVar P/LP called P/LP | ClinVar B/LB called LB/B | Missed diagnoses | False-pathogenic calls | Same-direction agreement (change) | Exact agreement (change) |
-|:---|:---|---:|---:|---:|---:|---:|---:|---:|
-| chr21 and chr22 | gnomAD exomes | 23,538 | 1,715 | 6,786 | 1 | 5 | 18,676 | 15,343 |
-| chr21 and chr22 | gnomAD exomes, region flags not withholding | 23,538 | 1,715 | 6,924 | 1 | 5 | 18,811 (+135) | 15,527 (+184) |
-| chr21 and chr22 | gnomAD joint exomes and genomes | 23,538 | 1,715 | 7,175 | 1 | 5 | 19,063 (+387) | 15,781 (+438) |
-| every chromosome | gnomAD exomes | 673,278 | 58,606 | 178,888 | 24 | 24 | 524,380 | 426,022 |
-| every chromosome | gnomAD exomes, region flags not withholding | 673,278 | 58,634 | 182,437 | 24 | 25 | 527,853 (+3,473) | 430,097 (+4,075) |
+| Source of the counts | Variants | ClinVar P/LP called P/LP | ClinVar B/LB called LB/B | Missed diagnoses | False-pathogenic calls | Same-direction agreement (change) | Exact agreement (change) |
+|:---|---:|---:|---:|---:|---:|---:|---:|
+| gnomAD exomes | 673,278 | 58,606 | 178,888 | 24 | 24 | 524,380 | 426,022 |
+| gnomAD exomes, region flags not withholding | 673,278 | 58,634 | 182,437 | 24 | 25 | 527,853 (+3,473) | 430,097 (+4,075) |
+| gnomAD joint exomes and genomes | 673,278 | 58,632 | 188,310 | 25 | 26 | 533,701 (+9,321) | 436,212 (+10,190) |
 <!-- table:joint:end -->
 
-Part of that gain is the flags that the joint release lacks and not the genomes: the exomes with the flags withholding nothing give 184 more exact calls and 135 more in direction, so the genomes add 254 and 252, about 1% of the variants of the two chromosomes.
-On every chromosome the same switch of the flags gives 4,075 more exact calls and 3,473 more in direction and adds a false-pathogenic call (24 to 25), so a release without the flags gains agreement by giving up the safeguard that they are.
-The benchmark of this paper therefore still reads the exomes, and whether to give up the region flags for the genomes' coverage is a choice of the user of a database, whose cost is in `docs/ACMG.md` (limitation 28).
+Part of the gain is the flags that the joint release lacks and not the genomes: the exomes with the flags withholding nothing give 4,075 more exact calls and 3,473 more in direction, with one more false-pathogenic call and no more missed diagnosis, so the genomes add 6,115 and 5,848, with one more of each.
+A pilot of the same three runs on chromosomes 21 and 22 alone, made before the other chromosomes had been extracted, gives the same call and the same criteria for each of its 23,538 variants as the three runs of every chromosome do (Appendix Table A16).
+
+Five variants change their standing as an opposite-direction call, four added and one removed (Appendix Table A16).
+Four of the five are at the bar of BS1, a filtering allele frequency of 0.5%, and the fifth belongs to the missing flags.
+KMT2C p.Cys391Ter (ClinVar Likely benign) and RAI1 p.Gln280HisfsTer83 (Benign) are null variants at sites that failed gnomAD's variant-quality filter, which withholds the frequency criteria, and the site-level frequency veto (Section 2.7) holds a call that rests on PVS1 alone at VUS where the withheld frequency would have met BS1.
+Their filtering allele frequencies are 0.522% and 0.537% in the exomes and 0.495% and 0.498% in the joint release, so the veto does not act there and both are called Likely pathogenic.
+PIEZO1's splice-acceptor deletion (ClinVar Benign) is the same case in the other direction, with 0.198% in the exomes and 0.947% in the joint release, so the veto holds it at VUS where the exomes called it Likely pathogenic.
+TXNL4A's deletion upstream of the gene (ClinVar Pathogenic) is covered by 364,572 alleles in the exomes, with a filtering allele frequency of 0.384%, and by 516,266 in the joint release, with 0.560%, so BS1 fires and the call is Likely benign.
+NF1 p.Met895Ile (ClinVar Likely benign) is called Likely pathogenic because PM2, which the segmental-duplication flag of the exomes had withheld, fires.
+Thirteen ClinVar pathogenic-side variants lose a pathogenic-side call and 39 gain one.
+Ten of the 13 are missense variants whose record in the joint release carries a filter of gnomAD's quality control (AC0 for eight, AS_VQSR for one and both for one), which withholds PM2: five have a clean record in the exomes, with one to four alleles, and the filter is the genomes', which the database reports because it reports a filter that fired in either callset (Section 2.10), and five are not in the exomes at all.
+Three are frameshifts, MYO6 p.Gln918ThrfsTer24 and PRRT2 p.Arg217ProfsTer8 and p.Arg217GlufsTer12, at low-complexity sites, where the flag of the exomes withheld BS2 and the joint release has no flag.
+Against the exomes without the flags, 741 variants with a positive joint count lose PM2 to an AC0 in one callset, and 11 calls move, 9 of them on ClinVar pathogenic-side variants.
+
+The change costs about 3,100 calls in direction for each added opposite-direction call (9,321 for three), where Section 2.5 puts the knee of a curve at about a hundred, and the genomes' share alone costs about 2,900 (5,848 for two).
+The benchmark of this paper still reads the exomes, because every other number in it was measured on them and not because the joint release measures worse.
+What the joint release gives up is the flags, and the benchmark prices only part of what they do: withholding nothing gains 3,473 calls in direction and costs one false-pathogenic call, and the flags keep three pathogenic-side frameshifts at Likely pathogenic.
+It cannot show what they prevent at sites that nobody has classified, and ClinVar's classified variants are all that it measures.
+Which release to build is therefore the choice of the user of a database, and `docs/ACMG_SETUP.md` gives the numbers for it.
 
 **What these measurements do not show.**
 v38 was developed on the April set, and only the 107,525 new variants of the October release were not seen when it was written: the effect on them is 258 calls in direction, against 1,762 on the whole release, and they lie near April variants and were mostly in ClinVar in April (Section 2.8).
@@ -1064,8 +1086,8 @@ The reference is a selection (two stars and above, SNVs and indels of at most 10
 It also has no negative controls, and its mix of classes (25% pathogenic-side among the defined classes) fixes the precision figures: a different mix would give different precision for the same calls.
 A variant's call is the call on one picked transcript, and other transcripts can differ.
 The classifier evaluates 15 of 28 criteria on a single-sample VCF without phenotype, so its recall of ClinVar's classes has a ceiling that is not a fault of the thresholds.
-The classifier reads the gnomAD exomes only, and PM2 reads absence from them as rarity, including at sites that the exomes do not cover; requiring a record costs 0.22 points of agreement and 2.9 points of pathogenic-side recall (Figure 3A), and PM2 fires on 64% of the variants.
-gnomAD's genomes are not read by the benchmark, and the one measurement of them, of the joint release on chromosomes 21 and 22 (23,538 variants), separates their counts from the region flags that the release lacks and has not been repeated on the other chromosomes (Section 3.8).
+The benchmark's classifier reads the gnomAD exomes only, and PM2 reads absence from them as rarity, including at sites that the exomes do not cover; requiring a record costs 0.22 points of agreement and 2.9 points of pathogenic-side recall (Figure 3A), and PM2 fires on 64% of the variants.
+gnomAD's genomes are not read by the benchmark; read through the joint release on every chromosome they give 9,321 more calls in direction and three more opposite-direction calls, and the release lacks the flags of low-complexity regions and segmental duplications, whose protection a benchmark of ClinVar's classified variants cannot measure (Section 3.8).
 The exchange rates of Section 3.3 are counts of differences between deterministic runs and carry no sampling interval: a rate computed from one to three added errors is as uncertain as a count of that size (the 95% Poisson interval of a count of 2 is 0.2 to 7.2).
 The offline replay of the benign-side point scales was not checked by real runs, and the cutoff and measurement builds are patched builds of the shipped code.
 We made no comparison with another tool, and the bulk outputs of the runs (annotated VCFs of 250 to 285 MB and per-variant tables of about 20 MB, compressed) are not archived with the repository; its scored matrices and provenance are.
@@ -1088,7 +1110,8 @@ Third, BP7 as the splicing recommendation describes it, which gains 15,953 calls
 Fourth, BP1's veto leaving out the variant's own record (3 more missed diagnoses on the April set and none on the new variants) with a stricter count: the pair at a count of 1 gives 1,716 more calls in direction and 149 fewer correct benign-side calls on the April set, with 23 missed diagnoses against v37's 24, and the count of 1 alone gives 122 more calls on the new variants and avoids no missed diagnosis there.
 Fifth, a transcript policy for MANE Plus Clinical, a first-exon rule for PVS1, and disease-specific frequency bars for BA1 and BS1 where a VCEP has published one, which the classifier already supports as an opt-in table.
 Sixth, review of the allele-number floor, whose source is narrower than its use and whose removal would add 774 calls in direction on the April set and none on the new variants, and of the two grades and the NMD default of PVS1 (Section 3.2).
-The prices of these steps were measured on v37 and were not repeated on v38, where a completed ClinGen file also changes the inheritance that is read for the genes it adds (CFTR is autosomal recessive).
+Seventh, gnomAD's genomes, read through the joint release, which gives 9,321 more calls in direction for three more opposite-direction calls, about 3,100 for each, and gives up the flags of low-complexity regions and segmental duplications (Section 3.8).
+The prices of the first six steps were measured on v37 and were not repeated on v38, where a completed ClinGen file also changes the inheritance that is read for the genes it adds (CFTR is autosomal recessive); the seventh was measured on v38.
 Each of these can be measured by the harness of this paper before it is shipped, and none should be tuned to the 49, which is why the benefit of a stricter count of BP1's veto, which avoids two of them, is in-sample.
 
 ## 5. Conclusions
@@ -1098,6 +1121,7 @@ On the 673,660 ClinVar 2-star+ variants on which every threshold was tuned, v37 
 On the 107,528 variants that were not in the April set, agreement in direction is 70.1%, mostly because of the benign side, and contradictions are 2.3 times as frequent (interval 1.2 to 4.0), more than their mix predicts at the April rates, and of the same coarse kinds.
 The thresholds that no guideline states are less decisive than the combining rule around them for the PM2 bar, the one we tested under the 2015 table, and two that had never been swept, BP7's conservation test and the count of BP1's veto, each exchange calls and errors at a rate that the maintainers can now weigh, which we have not changed; on the pathogenic side the points that define the classes move the result more than the bars that we swept on the shipped classifier.
 A later version (v38) reads the mode of inheritance that ClinGen curates, which v37 took from the words of the disease names, and gives 1,490 more calls in direction on the April set and 1,762 on the October release, 1,504 of them on April variants and 258 on the new ones, with no added missed diagnosis, though four ClinVar-Pathogenic loss-of-function variants move from Likely pathogenic to VUS; it does not count BS2 beside BS1 or BA1, which would have added 1,292 calls in direction and called two ClinVar-Pathogenic variants Benign.
+Reading gnomAD's genomes through its joint release adds 9,321 calls in direction on every chromosome and three opposite-direction calls, and gives up the flags that withhold the frequency criteria in repeats.
 The remaining discordance is consistent with evidence that a single-sample VCF does not carry and with design choices of the classifier, among them PVS1's condition on mechanism, which is approximated by gene-disease validity or constraint.
 The largest gap, in PVS1, is in part an input of unknown cause that was incomplete (CFTR and 103 other curations, which explain 13% of the gap) and in part a design gap, of which Orphanet's loss-of-function label closes another 20%.
 
@@ -1184,10 +1208,11 @@ The annotated VCFs (about 250 MB each), the per-variant tables, the annotation d
 Table 2 and Section 2.2 give their sources and versions, and the ClinVar files are the weekly releases dated 4 April and 4 October 2026.
 Orphanet's association table is the public Orphadata product 6 (`build_gene_disease_attributes.py` gives the command).
 The ClinGen export that completes the file of 30 April is a public download of 11 October 2026 (`15_clingen_complete_export.py` gives the command), and the 112 rows it adds, 104 of them curations that the April file lacked, are listed with the status of each in `manuscript/acmg/data/clingen_missing_curations.csv`.
-The runs of Section 3.8, 37 on the April set and 4 on the October release, are in the same directory as `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv`, with their provenance files.
+The runs of Section 3.8, 38 on the April set and 4 on the October release, are in the same directory as `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv`, with their provenance files.
 They were made with builds of the working tree that became v38, so the source of those binaries is that tree and not a commit [the commit of v38 is to be added when the change is merged].
 The alternatives of Section 3.8 are read from the environment by a build of `manuscript/acmg/replay_validation/inheritance_alternatives_env.patch`.
 The real ClinGen rows that test the reading of the field are in `crates/fastvep-cli/fixtures/clingen/` and are made by `analysis/acmg_benchmark/scripts/sa_sources/make_clingen_parse_fixture.py`, and the databases of gnomAD's exomes, genomes and joint release are built by `build_gnomad_release_per_chrom.sh` in the same directory.
+`17_joint_boundary_cases.py` annotates the variants that the joint release turns into errors, or out of a pathogenic-side call, through both databases.
 The reviewer's workbooks are not in the repository.
 
 ## Declarations
@@ -1350,4 +1375,4 @@ The reviewer's text is not reproduced here.
 
 **Appendix Table A15.** The October release: the commit before the change, the shipped change and two alternatives on the covered variants and on the new ones, and the ClinVar pathogenic-side variants whose call moved (`v38_holdout.csv`, `v38_holdout_plp_moves.csv`).
 
-**Appendix Table A16.** gnomAD's joint release: the pilot on chromosomes 21 and 22 and the run on every chromosome with the region flags withholding nothing, and the calls and criteria that moved (`v38_joint.csv`, `v38_joint_changes.csv`).
+**Appendix Table A16.** gnomAD's joint release against its exomes: the three runs on every chromosome and the pilot of the same three on chromosomes 21 and 22, the calls and criteria that moved, the check that the joint release holds the records and counts of the exomes, the check that the pilot's calls are those of the runs of every chromosome, the change on each chromosome, the coverage behind the calls that move, the variants whose standing as an error or as a pathogenic-side call changed, annotated through both databases, and the variants that lose PM2 against the exomes without the flags, by the reason (`v38_joint.csv`, `v38_joint_changes.csv`, `v38_joint_records.csv`, `v38_joint_pilot_check.csv`, `v38_joint_by_chrom.csv`, `v38_joint_coverage.csv`, `v38_joint_errors.csv`, `v38_joint_pm2_lost.csv`).
