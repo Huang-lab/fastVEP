@@ -753,65 +753,14 @@ impl AnnotationContext {
             // slot. SA results don't depend on the transcript, so this avoids
             // the T× amplification across overlapping transcripts.
             if !self.sa_providers.is_empty() {
-                let chrom = &vf.position.chromosome;
-                let ref_str = vf.ref_allele.to_string();
-                // Normalize the gnomAD query to its minimal representation so
-                // indels (especially in repeats) match instead of silently
-                // missing — which otherwise makes PM2 misfire on common
-                // variants. Applied only to the gnomAD lookup; every other
-                // source keeps the query unchanged.
-                let mut allele_results: std::collections::HashMap<String, Vec<(String, String)>> =
-                    std::collections::HashMap::new();
-                for tv in &vf.transcript_variations {
-                    for aa in &tv.allele_annotations {
-                        let alt_str = aa.allele.to_string();
-                        if allele_results.contains_key(&alt_str) {
-                            continue;
-                        }
-                        let gnomad_norm = if has_gnomad {
-                            self.seq_provider.as_ref().map(|sp| {
-                                fastvep_cache::normalize::normalize_variant(
-                                    &**sp,
-                                    chrom,
-                                    vf.position.start,
-                                    &ref_str,
-                                    &alt_str,
-                                )
-                            })
-                        } else {
-                            None
-                        };
-                        let mut results: Vec<(String, String)> = Vec::new();
-                        for sa in &self.sa_providers {
-                            let (q_pos, q_ref, q_alt) = if sa.json_key() == "gnomad" {
-                                match &gnomad_norm {
-                                    Some(n) => {
-                                        (n.pos, n.ref_allele.as_str(), n.alt_allele.as_str())
-                                    }
-                                    None => (vf.position.start, ref_str.as_str(), alt_str.as_str()),
-                                }
-                            } else {
-                                (vf.position.start, ref_str.as_str(), alt_str.as_str())
-                            };
-                            // A failed lookup is not a miss: see `SaLookupErrors`.
-                            match sa.annotate_position(chrom, q_pos, q_ref, q_alt) {
-                                Ok(Some(ann)) => {
-                                    let json_str = match ann {
-                                        AnnotationValue::Json(j) => j,
-                                        AnnotationValue::Positional(j) => j,
-                                        AnnotationValue::Interval(v) => {
-                                            format!("[{}]", v.join(","))
-                                        }
-                                    };
-                                    results.push((sa.json_key().to_string(), json_str));
-                                }
-                                Ok(None) => {}
-                                Err(e) => sa_lookup_errors().record(sa.json_key(), &e),
-                            }
-                        }
-                        allele_results.insert(alt_str, results);
-                    }
-                }
+                let allele_results = supplementary_for_alleles(
+                    vf,
+                    &self.sa_providers,
+                    self.seq_provider
+                        .as_ref()
+                        .map(|sp| &**sp as &dyn SequenceProvider),
+                    has_gnomad,
+                );
                 for tv in &mut vf.transcript_variations {
                     for aa in &mut tv.allele_annotations {
                         if let Some(results) = allele_results.get(&aa.allele.to_string()) {
@@ -1128,6 +1077,177 @@ pub fn sa_lookup_errors() -> &'static SaLookupErrors {
     ERRORS.get_or_init(SaLookupErrors::default)
 }
 
+/// The allele lookups that more than one database answered under one JSON key.
+///
+/// An allele's annotation holds one value per key, so when two databases that
+/// share a key both have a record for it the pipeline keeps one and the other is
+/// gone from the output without a word. Which one is not something the user
+/// chose: the databases are read in path order, so `gnomad_exomes_chr1.osa2` and
+/// `gnomad_genomes_chr1.osa2` in one `--sa-dir` leave the genomes frequency, from
+/// a tenth of the individuals, behind every coding variant of the chromosome.
+/// For `gnomad` that is not cosmetic, because BA1, BS1, BS2 and PM2 all read it.
+///
+/// Counted per source and reported once at the end of the run, as
+/// [`SaLookupErrors`] does, because the loop runs millions of times.
+#[derive(Default)]
+pub struct SaDuplicateAnswers {
+    /// `json_key -> (lookups answered twice, chromosome and position of the one among them that sorts first)`.
+    inner: std::sync::Mutex<std::collections::HashMap<String, (u64, String, u64)>>,
+}
+
+impl SaDuplicateAnswers {
+    /// Record one allele at `chrom:pos` that a second database of `source` answered.
+    pub fn record(&self, source: &str, chrom: &str, pos: u64) {
+        let Ok(mut map) = self.inner.lock() else {
+            return; // a poisoned counter must not take the run down with it
+        };
+        match map.get_mut(source) {
+            Some(seen) => {
+                seen.0 += 1;
+                // The site that sorts first and not the first to arrive: the lookups run on
+                // several threads, and the line a run ends with should not depend on which got there first.
+                if (chrom, pos) < (seen.1.as_str(), seen.2) {
+                    seen.1 = chrom.to_string();
+                    seen.2 = pos;
+                }
+            }
+            None => {
+                map.insert(source.to_string(), (1, chrom.to_string(), pos));
+            }
+        }
+    }
+
+    /// One line per source that was answered twice, sorted so the output is
+    /// reproducible.
+    pub fn report_lines(&self) -> Vec<String> {
+        let Ok(map) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let mut rows: Vec<_> = map.iter().collect();
+        rows.sort_by(|a, b| a.0.cmp(b.0));
+        rows.iter()
+            .map(|(source, (count, chrom, pos))| {
+                let consequence = if source.as_str() == "gnomad" {
+                    "the ACMG criteria BA1, BS1, BS2 and PM2 read that one record. gnomAD's \
+                     v4.1 joint release already combines the exomes and the genomes: build one \
+                     database from it instead of loading two"
+                } else {
+                    "keep one database for each source and chromosome"
+                };
+                format!(
+                    "warning: {count} allele lookup(s) were answered by more than one database \
+                     under the key `{source}` (the first, by position, at {chrom}:{pos}). An allele has one \
+                     `{source}` annotation, so the answer from the database that sorts last by \
+                     path was kept and the others were dropped; {consequence}."
+                )
+            })
+            .collect()
+    }
+}
+
+/// The process-wide collector, for the same reason as [`sa_lookup_errors`].
+pub fn sa_duplicate_answers() -> &'static SaDuplicateAnswers {
+    static DUPLICATES: std::sync::OnceLock<SaDuplicateAnswers> = std::sync::OnceLock::new();
+    DUPLICATES.get_or_init(SaDuplicateAnswers::default)
+}
+
+/// What the supplementary-annotation databases hold for each allele of `vf`, as
+/// `(JSON key, JSON)` pairs under the allele as `AlleleAnnotation::allele` prints it.
+///
+/// Asked once per unique allele and not once per (transcript, allele) slot: the
+/// answer does not depend on the transcript, which would otherwise multiply the
+/// lookups by the number of transcripts that overlap the variant.
+///
+/// One function for the annotation loop of the library and the one of the command
+/// line. Each had a copy of this block, and the copies did not ask the same question.
+/// The library's asked with the alleles as the parser trims them for the consequence
+/// step (`-` for an empty allele, the position moved past the anchor), while every
+/// database of alleles is keyed on the form the VCF wrote: so an insertion or a
+/// deletion was found by the command line and missed by both web servers, which
+/// read a miss as "absent from gnomAD" and let PM2 fire on a common variant.
+/// [`VariationFeature::query_alleles`] is the form the databases hold.
+pub fn supplementary_for_alleles(
+    vf: &VariationFeature,
+    sa_providers: &[Box<dyn AnnotationProvider>],
+    seq_provider: Option<&dyn SequenceProvider>,
+    normalize_gnomad_queries: bool,
+) -> std::collections::HashMap<String, Vec<(String, String)>> {
+    let chrom = &vf.position.chromosome;
+    let sa_queries = vf.query_alleles();
+    let mut allele_results: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
+    for tv in &vf.transcript_variations {
+        for aa in &tv.allele_annotations {
+            let allele_key = aa.allele.to_string();
+            if allele_results.contains_key(&allele_key) {
+                continue;
+            }
+            let (query_pos, ref_str, alt_str) = sa_queries
+                .iter()
+                .find(|(allele, _, _, _)| allele == &allele_key)
+                .map(|(_, pos, ref_allele, alt_allele)| {
+                    (*pos, ref_allele.clone(), alt_allele.clone())
+                })
+                .unwrap_or_else(|| {
+                    (
+                        vf.position.start,
+                        vf.ref_allele.to_string(),
+                        allele_key.clone(),
+                    )
+                });
+            // gnomAD stores left-aligned, parsimonious alleles; the representation in
+            // the input can differ for an indel, especially in a repeat, and the lookup
+            // would silently miss, which makes PM2 fire on a common variant. The query is
+            // normalized to gnomAD's minimal representation, only when a gnomAD source
+            // and a reference are present, and only for the gnomAD lookup: every other
+            // source keeps the form the VCF wrote.
+            let gnomad_norm = if normalize_gnomad_queries {
+                seq_provider.map(|sp| {
+                    fastvep_cache::normalize::normalize_variant(
+                        sp, chrom, query_pos, &ref_str, &alt_str,
+                    )
+                })
+            } else {
+                None
+            };
+            let mut results: Vec<(String, String)> = Vec::new();
+            for sa in sa_providers {
+                let (sa_pos, sa_ref, sa_alt) = if !sa.metadata().match_by_allele {
+                    // A source that is not keyed by allele is asked by position alone.
+                    (vf.position.start, "", "")
+                } else if sa.json_key() == "gnomad" {
+                    match &gnomad_norm {
+                        Some(n) => (n.pos, n.ref_allele.as_str(), n.alt_allele.as_str()),
+                        None => (query_pos, ref_str.as_str(), alt_str.as_str()),
+                    }
+                } else {
+                    (query_pos, ref_str.as_str(), alt_str.as_str())
+                };
+                // A failed lookup is not a miss: see `SaLookupErrors`.
+                match sa.annotate_position(chrom, sa_pos, sa_ref, sa_alt) {
+                    Ok(Some(ann)) => {
+                        let json_str = match ann {
+                            AnnotationValue::Json(j) => j,
+                            AnnotationValue::Positional(j) => j,
+                            AnnotationValue::Interval(v) => {
+                                format!("[{}]", v.join(","))
+                            }
+                        };
+                        if results.iter().any(|(key, _)| key == sa.json_key()) {
+                            sa_duplicate_answers().record(sa.json_key(), chrom, query_pos);
+                        }
+                        results.push((sa.json_key().to_string(), json_str));
+                    }
+                    Ok(None) => {}
+                    Err(e) => sa_lookup_errors().record(sa.json_key(), &e),
+                }
+            }
+            allele_results.insert(allele_key, results);
+        }
+    }
+    allele_results
+}
+
 /// The records whose REF allele is not what the reference has at their position.
 ///
 /// A VCF made against another build, or with a wrong REF for any other reason, annotates without
@@ -1199,9 +1319,14 @@ pub fn report_ref_mismatches() {
     }
 }
 
-/// Print the supplementary-annotation failure summary, if there is one.
+/// Print the supplementary-annotation failure summary, if there is one: the
+/// lookups that failed, and the ones that more than one database answered.
 pub fn report_sa_lookup_errors() {
-    for line in sa_lookup_errors().report_lines() {
+    for line in sa_lookup_errors()
+        .report_lines()
+        .into_iter()
+        .chain(sa_duplicate_answers().report_lines())
+    {
         eprintln!("{line}");
     }
 }
@@ -2764,5 +2889,38 @@ mod tests {
             Allele::Deletion
         );
         assert_eq!(reverse_complement_allele(&Allele::Missing), Allele::Missing);
+    }
+
+    #[test]
+    fn test_a_source_answered_twice_is_reported_once_with_the_site_that_sorts_first() {
+        let duplicates = SaDuplicateAnswers::default();
+        assert!(
+            duplicates.report_lines().is_empty(),
+            "nothing recorded, nothing said"
+        );
+        duplicates.record("gnomad", "1", 12_345);
+        duplicates.record("gnomad", "2", 99);
+        duplicates.record("clinvar", "3", 7);
+        let lines = duplicates.report_lines();
+        assert_eq!(lines.len(), 2, "one line per source: {lines:?}");
+        // Sorted by source, so the output does not depend on which thread got there first.
+        assert!(lines[0].contains("`clinvar`"), "{}", lines[0]);
+        assert!(lines[1].contains("`gnomad`"), "{}", lines[1]);
+        assert!(
+            lines[1].starts_with("warning: 2 allele lookup(s)"),
+            "{}",
+            lines[1]
+        );
+        assert!(lines[1].contains("by position, at 1:12345"), "{}", lines[1]);
+        // The site named is the one that sorts first and not the first to arrive, so that
+        // the line does not depend on which thread got there first.
+        let reversed = SaDuplicateAnswers::default();
+        reversed.record("gnomad", "2", 99);
+        reversed.record("gnomad", "1", 12_345);
+        assert_eq!(reversed.report_lines(), vec![lines[1].clone()]);
+        // gnomAD's line says what reads it and what to do instead.
+        assert!(lines[1].contains("BA1, BS1, BS2 and PM2"), "{}", lines[1]);
+        assert!(lines[1].contains("joint release"), "{}", lines[1]);
+        assert!(!lines[0].contains("joint release"), "{}", lines[0]);
     }
 }

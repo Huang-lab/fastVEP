@@ -144,6 +144,12 @@ fn evaluate_bp1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 ///
 /// Two triggers:
 /// 1. Dominant disorders: variant is in trans with a ClinVar pathogenic variant (phased).
+///    The gene's established diseases must be dominant and none of them recessive: a gene
+///    that also has a recessive disease (an AD and an AR curation, or a semidominant one)
+///    explains the same observation as the evidence PM3 counts for that disease, and BP2
+///    would count the companion against it. This is the reading of BS2's carrier arm, and
+///    not the "any recessive disease" that PM3 asks: PM3 is evidence about the variant, and
+///    BP2 is an exclusion that holds only if nothing else explains what was seen.
 /// 2. Any inheritance: variant is in cis with a ClinVar pathogenic variant (phased).
 fn evaluate_bp2(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
@@ -161,11 +167,13 @@ fn evaluate_bp2(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCr
         };
     }
 
-    let is_dominant = input
-        .omim
-        .as_ref()
-        .is_some_and(|o| o.has_dominant_inheritance());
-    details.insert("is_dominant_gene".into(), serde_json::json!(is_dominant));
+    let (dominant, recessive) = input.omim.as_ref().map_or((false, false), |o| {
+        let inheritance = o.inheritance();
+        (inheritance.dominant, inheritance.recessive)
+    });
+    let is_dominant = dominant && !recessive;
+    details.insert("is_dominant_gene".into(), serde_json::json!(dominant));
+    details.insert("is_recessive_gene".into(), serde_json::json!(recessive));
 
     // Check for in-cis with pathogenic (any inheritance pattern)
     let in_cis_pathogenic: Vec<&crate::sa_extract::CompanionVariant> = input
@@ -223,7 +231,7 @@ fn evaluate_bp2(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCr
         };
     }
 
-    // Trigger 2: In trans with pathogenic in dominant gene
+    // Trigger 2: In trans with pathogenic in a gene whose established diseases are dominant only
     if is_dominant && !in_trans_pathogenic.is_empty() {
         return EvidenceCriterion {
             code: "BP2".to_string(),
@@ -1574,5 +1582,84 @@ mod tests {
         );
         let result = evaluate_bp1(&input, &AcmgConfig::default());
         assert!(!result.met);
+    }
+    // ── BP2: the trans arm needs a gene whose established diseases are dominant and none recessive ──
+
+    use crate::sa_extract::{CompanionVariant, OmimData};
+
+    fn bp2_input(phenotypes: &[&str], companions: Vec<CompanionVariant>) -> ClassificationInput {
+        let mut input = minimal_input();
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(phenotypes.iter().map(|p| p.to_string()).collect()),
+        });
+        input.companion_variants = companions;
+        input
+    }
+
+    fn pathogenic_companion(in_trans: Option<bool>) -> CompanionVariant {
+        CompanionVariant {
+            is_clinvar_pathogenic: true,
+            is_clinvar_likely_pathogenic: false,
+            is_in_trans: in_trans,
+            proband_het: true,
+            hgvsc: None,
+        }
+    }
+
+    const AD: &str = "a dominant disease (ClinGen Definitive/AD, MONDO:0000001)";
+    const AR: &str = "a recessive disease (ClinGen Strong/AR, MONDO:0000002)";
+    const AR_LIMITED: &str = "a doubtful recessive disease (ClinGen Limited/AR, MONDO:0000003)";
+    const SD: &str = "a semidominant disease (ClinGen Moderate/SD, MONDO:0000004)";
+    const XL: &str = "an X-linked disease (ClinGen Definitive/XL, MONDO:0000005)";
+
+    #[test]
+    fn test_bp2_trans_arm_applies_to_a_gene_whose_diseases_are_dominant_only() {
+        let input = bp2_input(&[AD], vec![pathogenic_companion(Some(true))]);
+        let r = evaluate_bp2(&input, &AcmgConfig::default());
+        assert!(r.met, "{}", r.summary);
+        assert_eq!(r.details["is_dominant_gene"], true);
+        assert_eq!(r.details["is_recessive_gene"], false);
+    }
+
+    /// A gene with an autosomal dominant disease and an autosomal recessive one: a variant in trans with a
+    /// pathogenic one is what PM3 counts for the recessive disease, so BP2 must not count it against the variant.
+    #[test]
+    fn test_bp2_trans_arm_does_not_apply_when_the_gene_also_has_a_recessive_disease() {
+        for (name, phenotypes) in [("AD and AR", vec![AD, AR]), ("SD", vec![SD])] {
+            let input = bp2_input(&phenotypes, vec![pathogenic_companion(Some(true))]);
+            let r = evaluate_bp2(&input, &AcmgConfig::default());
+            assert!(!r.met, "{name}: {}", r.summary);
+            assert_eq!(r.details["is_recessive_gene"], true, "{name}");
+        }
+    }
+
+    #[test]
+    fn test_bp2_trans_arm_needs_a_dominant_disease_at_all() {
+        for (name, phenotypes) in [("X-linked", vec![XL]), ("recessive", vec![AR])] {
+            let input = bp2_input(&phenotypes, vec![pathogenic_companion(Some(true))]);
+            assert!(!evaluate_bp2(&input, &AcmgConfig::default()).met, "{name}");
+        }
+        let mut unknown = minimal_input();
+        unknown.companion_variants = vec![pathogenic_companion(Some(true))];
+        assert!(!evaluate_bp2(&unknown, &AcmgConfig::default()).met);
+    }
+
+    /// Only the established diseases of a gene say how it is inherited: a recessive disease that ClinGen
+    /// rates Limited does not take the trans arm away from a gene that is otherwise dominant.
+    #[test]
+    fn test_bp2_trans_arm_ignores_a_recessive_disease_that_is_not_established() {
+        let input = bp2_input(&[AD, AR_LIMITED], vec![pathogenic_companion(Some(true))]);
+        assert!(evaluate_bp2(&input, &AcmgConfig::default()).met);
+    }
+
+    /// The cis arm is for any inheritance, so it applies to every gene, annotated or not.
+    #[test]
+    fn test_bp2_cis_arm_applies_whatever_the_inheritance() {
+        for phenotypes in [vec![AD, AR], vec![SD], vec![XL], vec![AR], vec![]] {
+            let input = bp2_input(&phenotypes, vec![pathogenic_companion(Some(false))]);
+            let r = evaluate_bp2(&input, &AcmgConfig::default());
+            assert!(r.met, "{phenotypes:?}: {}", r.summary);
+        }
     }
 }

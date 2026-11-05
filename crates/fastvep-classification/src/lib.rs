@@ -13,6 +13,7 @@
 pub mod combiner;
 pub mod config;
 pub mod criteria;
+pub mod disease;
 pub mod functional;
 pub mod sa_extract;
 #[cfg(test)]
@@ -20,12 +21,16 @@ mod test_support;
 pub mod types;
 
 pub use config::{AcmgConfig, TrioConfig};
+pub use disease::{ClingenTag, DiseaseEntry, DisorderContext, Inheritance, ModeOfInheritance};
 pub use functional::{FunctionalCriterion, FunctionalEvidence, FunctionalEvidenceIndex};
 pub use sa_extract::{
     extract_classification_input, is_pure_insertion, reads_exon_edge, reads_hgvs_placement,
     same_splice_position_pathogenic, ClassificationInput, CompanionVariant, GenotypeInfo,
 };
-pub use types::{AcmgClassification, AcmgResult, EvidenceCounts, EvidenceCriterion};
+pub use types::{
+    AcmgClassification, AcmgResult, DisorderClassification, DisorderRef, EvidenceCounts,
+    EvidenceCriterion,
+};
 
 /// Classify a variant using the ACMG-AMP framework.
 ///
@@ -34,7 +39,20 @@ pub use types::{AcmgClassification, AcmgResult, EvidenceCounts, EvidenceCriterio
 ///
 /// Returns an `AcmgResult` containing the classification, all evaluated
 /// criteria, triggered rule, and evidence counts.
+///
+/// For a gene whose established diseases fall under more than one mode of
+/// inheritance, the result also carries [`AcmgResult::per_disorder`]: the same
+/// variant classified once per mode, against only the diseases that have it.
+/// The headline call is the same either way.
 pub fn classify(input: &ClassificationInput, config: &AcmgConfig) -> AcmgResult {
+    let mut result = classify_against_gene(input, config);
+    result.per_disorder = classify_each_disorder(input, config);
+    result
+}
+
+/// One classification of the variant against everything `input` says about its
+/// gene.
+fn classify_against_gene(input: &ClassificationInput, config: &AcmgConfig) -> AcmgResult {
     // Evaluate every criterion (26 by default: PP5 and BP6 are off)
     let criteria = criteria::evaluate_all_criteria(input, config);
 
@@ -50,7 +68,52 @@ pub fn classify(input: &ClassificationInput, config: &AcmgConfig) -> AcmgResult 
         criteria,
         triggered_rule,
         counts,
+        per_disorder: Vec::new(),
     }
+}
+
+/// The variant classified against each mode of inheritance of its gene, or
+/// nothing when the gene has one.
+///
+/// A disorder context is the gene's disease annotation cut down to the
+/// established diseases that share a mode of inheritance, and every criterion
+/// that reads inheritance or gene-disease validity reads it from that
+/// annotation, so classifying against a context is classifying the same input
+/// with the annotation replaced. Nothing else about the input changes: the
+/// variant, its frequencies and the gene's constraint are not disorder-specific.
+fn classify_each_disorder(
+    input: &ClassificationInput,
+    config: &AcmgConfig,
+) -> Vec<DisorderClassification> {
+    let Some(annotation) = input.omim.as_ref() else {
+        return Vec::new();
+    };
+    // Asked of every variant of every annotated gene, so it is answered before
+    // anything is built.
+    if !annotation.has_several_disorder_contexts() {
+        return Vec::new();
+    }
+    annotation
+        .disorder_contexts()
+        .iter()
+        .map(|context| {
+            let mut contextual = input.clone();
+            contextual.omim = Some(context.restricted_annotation());
+            DisorderClassification {
+                inheritance: context.inheritance_code().to_string(),
+                disorders: context
+                    .entries
+                    .iter()
+                    .map(|entry| DisorderRef {
+                        label: entry.label.to_string(),
+                        mondo: entry.clingen.and_then(|tag| tag.mondo).map(str::to_string),
+                        validity: entry.clingen.map(|tag| tag.classification.to_string()),
+                    })
+                    .collect(),
+                result: classify_against_gene(&contextual, config),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -310,5 +373,291 @@ mod tests {
         assert!(!bp4.met, "{}", bp4.summary);
         assert_eq!(bp4.details["bp4_source"], serde_json::json!("spliceai"));
         assert!(bp4.details.get("suppressed_by_reconcile").is_some());
+    }
+
+    // ── Genes with more than one mode of inheritance ──
+
+    /// A gene with an autosomal dominant disease and an autosomal recessive one,
+    /// as ATM, ABCC8 and BRCA1 are in ClinGen's export.
+    fn dual_inheritance_input(gnomad: GnomadData) -> ClassificationInput {
+        let mut input = make_input(vec![Consequence::MissenseVariant], Impact::Moderate, "DUAL");
+        input.gnomad = Some(gnomad);
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec![
+                "a dominant cancer predisposition (ClinGen Definitive/AD, MONDO:0000001)".into(),
+                "a recessive syndrome (ClinGen Definitive/AR, MONDO:0000002)".into(),
+                "a disputed one (ClinGen Disputed/XL, MONDO:0000003)".into(),
+            ]),
+        });
+        input
+    }
+
+    fn met(result: &AcmgResult, prefix: &str) -> bool {
+        result
+            .criteria
+            .iter()
+            .any(|c| c.met && c.code.starts_with(prefix))
+    }
+
+    #[test]
+    fn test_pm2_takes_the_recessive_bar_in_the_recessive_context_only() {
+        // 5e-5 is above the dominant bar (4e-5) and below the recessive one
+        // (7e-5). The gene is both, so the headline reads it as unknown and
+        // applies the strict bar; each context applies its own.
+        let input = dual_inheritance_input(GnomadData {
+            all_ac: Some(70),
+            all_af: Some(5e-5),
+            all_an: Some(1_400_000),
+            all_hc: Some(0),
+            ..Default::default()
+        });
+        let result = classify(&input, &AcmgConfig::default());
+        assert!(!met(&result, "PM2"), "the headline stays on the strict bar");
+
+        let codes: Vec<_> = result
+            .per_disorder
+            .iter()
+            .map(|d| d.inheritance.as_str())
+            .collect();
+        assert_eq!(
+            codes,
+            ["AD", "AR"],
+            "the disputed X-linked curation is not a context"
+        );
+        let by = |code: &str| {
+            &result
+                .per_disorder
+                .iter()
+                .find(|d| d.inheritance == code)
+                .expect("context")
+                .result
+        };
+        assert!(!met(by("AD"), "PM2"), "5e-5 is above the dominant bar");
+        assert!(met(by("AR"), "PM2"), "5e-5 is below the recessive bar");
+    }
+
+    #[test]
+    fn test_bs2_counts_carriers_in_the_dominant_context_and_homozygotes_in_the_recessive() {
+        // 500 carriers among 500 K individuals: more than a dominant disorder
+        // can account for, and not a single homozygote.
+        let input = dual_inheritance_input(GnomadData {
+            all_ac: Some(500),
+            all_af: Some(5e-4),
+            all_an: Some(1_000_000),
+            all_hc: Some(0),
+            ..Default::default()
+        });
+        let result = classify(&input, &AcmgConfig::default());
+        assert!(
+            !met(&result, "BS2"),
+            "the headline takes the arm for a gene that is both"
+        );
+        let ad = result
+            .per_disorder
+            .iter()
+            .find(|d| d.inheritance == "AD")
+            .unwrap();
+        let ar = result
+            .per_disorder
+            .iter()
+            .find(|d| d.inheritance == "AR")
+            .unwrap();
+        assert!(met(&ad.result, "BS2"), "{:#?}", ad.result.criteria);
+        assert!(
+            !met(&ar.result, "BS2"),
+            "no homozygotes, so nothing for the recessive arm"
+        );
+    }
+
+    #[test]
+    fn test_a_context_names_the_diseases_it_was_made_against() {
+        let input = dual_inheritance_input(GnomadData::default());
+        let result = classify(&input, &AcmgConfig::default());
+        let ad = &result.per_disorder[0];
+        assert_eq!(ad.disorders.len(), 1);
+        assert_eq!(ad.disorders[0].label, "a dominant cancer predisposition");
+        assert_eq!(ad.disorders[0].mondo.as_deref(), Some("MONDO:0000001"));
+        assert_eq!(ad.disorders[0].validity.as_deref(), Some("Definitive"));
+    }
+
+    #[test]
+    fn test_a_gene_with_one_mode_of_inheritance_has_no_per_disorder_results() {
+        let mut input = dual_inheritance_input(GnomadData::default());
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec![
+                "a (ClinGen Definitive/AD, MONDO:0000001)".into(),
+                "b (ClinGen Strong/AD, MONDO:0000002)".into(),
+            ]),
+        });
+        let result = classify(&input, &AcmgConfig::default());
+        assert!(result.per_disorder.is_empty());
+        let json = serde_json::to_value(&result).unwrap();
+        assert!(
+            json.get("per_disorder").is_none(),
+            "an empty list is not written: a reader of the old shape sees the old shape"
+        );
+        // No annotation at all is the same.
+        input.omim = None;
+        assert!(classify(&input, &AcmgConfig::default())
+            .per_disorder
+            .is_empty());
+    }
+
+    #[test]
+    fn test_per_disorder_results_do_not_change_the_headline_call() {
+        // The headline is what it would be without the feature: classifying the
+        // same input with the per-disorder pass skipped gives the same answer.
+        let input = dual_inheritance_input(GnomadData {
+            all_ac: Some(500),
+            all_af: Some(5e-4),
+            all_an: Some(1_000_000),
+            all_hc: Some(0),
+            ..Default::default()
+        });
+        let config = AcmgConfig::default();
+        let with = classify(&input, &config);
+        let without = classify_against_gene(&input, &config);
+        assert_eq!(with.classification, without.classification);
+        assert_eq!(with.shorthand, without.shorthand);
+        assert_eq!(with.triggered_rule, without.triggered_rule);
+        let codes = |r: &AcmgResult| {
+            r.criteria
+                .iter()
+                .map(|c| (c.code.clone(), c.met))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(codes(&with), codes(&without));
+
+        // The comparison above classifies one input twice, so a change that made the headline
+        // one mode's answer would pass it. This pins what the headline is: the gene's diseases
+        // read together, which is neither mode's reading.
+        let reading = |r: &AcmgResult| {
+            let bs2 = r
+                .criteria
+                .iter()
+                .find(|c| c.code.starts_with("BS2"))
+                .expect("BS2 is evaluated");
+            (
+                bs2.details["omim_dominant"].as_bool(),
+                bs2.details["omim_recessive"].as_bool(),
+            )
+        };
+        assert_eq!(reading(&with), (Some(true), Some(true)));
+        assert_eq!(
+            reading(&with.per_disorder[0].result),
+            (Some(true), Some(false))
+        );
+        assert_eq!(
+            reading(&with.per_disorder[1].result),
+            (Some(false), Some(true))
+        );
+    }
+
+    /// One companion in trans with a ClinVar pathogenic variant is PM3's observation for a recessive
+    /// disease and BP2's argument against a variant in a fully penetrant dominant one, and a gene that has
+    /// both does not get both for it: the headline takes PM3, which asks only that one disease be
+    /// recessive, and not BP2, which needs the diseases to be dominant and none recessive; each mode
+    /// takes the criterion that is its own.
+    #[test]
+    fn test_one_companion_in_trans_is_pm3_or_bp2_and_not_both_in_a_gene_with_both_modes() {
+        use crate::sa_extract::{CompanionVariant, GenotypeInfo};
+        let mut input = dual_inheritance_input(GnomadData::default());
+        input.proband_genotype = Some(GenotypeInfo {
+            is_het: true,
+            is_hom_alt: false,
+            is_hom_ref: false,
+            is_missing: false,
+            is_phased: true,
+            depth: Some(30),
+            quality: Some(50),
+            alt_allele_index: Some(1),
+        });
+        input.companion_variants = vec![CompanionVariant {
+            is_clinvar_pathogenic: true,
+            is_clinvar_likely_pathogenic: false,
+            is_in_trans: Some(true),
+            proband_het: true,
+            hgvsc: None,
+        }];
+        let result = classify(&input, &AcmgConfig::default());
+        assert!(met(&result, "PM3"), "the gene has a recessive disease");
+        assert!(
+            !met(&result, "BP2"),
+            "and a recessive disease explains the companion"
+        );
+
+        let (ad, ar) = (&result.per_disorder[0], &result.per_disorder[1]);
+        assert_eq!(
+            (ad.inheritance.as_str(), ar.inheritance.as_str()),
+            ("AD", "AR")
+        );
+        assert!(
+            met(&ad.result, "BP2") && !met(&ad.result, "PM3"),
+            "the dominant disease: BP2"
+        );
+        assert!(
+            met(&ar.result, "PM3") && !met(&ar.result, "BP2"),
+            "the recessive disease: PM3"
+        );
+    }
+
+    #[test]
+    fn test_per_disorder_results_serialise_and_read_back() {
+        let input = dual_inheritance_input(GnomadData::default());
+        let result = classify(&input, &AcmgConfig::default());
+        let json = serde_json::to_value(&result).unwrap();
+        let entries = json["per_disorder"].as_array().expect("an array");
+        assert_eq!(entries.len(), 2);
+        // Flattened: an entry reads like the headline above it.
+        for entry in entries {
+            assert!(entry.get("classification").is_some());
+            assert!(entry.get("shorthand").is_some());
+            assert!(entry["criteria"].as_array().is_some_and(|c| !c.is_empty()));
+            assert!(entry.get("inheritance").is_some());
+            assert!(entry["disorders"].as_array().is_some_and(|d| !d.is_empty()));
+            assert!(entry.get("per_disorder").is_none(), "nothing nests");
+        }
+        let back: AcmgResult = serde_json::from_value(json).unwrap();
+        assert_eq!(back.per_disorder.len(), 2);
+        assert_eq!(back.per_disorder[1].inheritance, "AR");
+    }
+
+    /// The two calls the tag first got wrong, TTR p.Val142Ile (722 gnomAD alleles)
+    /// and VWF p.Arg854Gln (7,432), each a record that fires BS1 and, in a gene
+    /// read as dominant, BS2's carrier arm too. Two Strong benign criteria are
+    /// Benign under the Richards rules, so counting the frequency twice called a
+    /// ClinVar-Pathogenic variant Benign. The record below is a synthetic one of
+    /// that kind, not either variant's own counts; the variant is a VUS, because
+    /// BS1 stands once.
+    #[test]
+    fn test_a_frequency_counted_by_bs1_is_not_counted_again_by_bs2() {
+        let mut input = make_input(vec![Consequence::MissenseVariant], Impact::Moderate, "TTR");
+        input.gnomad = Some(GnomadData {
+            all_ac: Some(15_000),
+            all_hc: Some(50),
+            all_an: Some(1_460_000),
+            all_af: Some(0.0103),
+            afr_af: Some(0.012),
+            ..Default::default()
+        });
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec![
+                "hereditary amyloidosis (ClinGen Definitive/AD, MONDO:0017132)".into(),
+            ]),
+        });
+        let result = classify(&input, &AcmgConfig::default());
+        assert!(met(&result, "BS1"), "{:#?}", result.criteria);
+        let bs2 = result.criteria.iter().find(|c| c.code == "BS2").unwrap();
+        assert!(!bs2.met);
+        assert!(bs2.details.get("suppressed_by_reconcile").is_some());
+        assert_eq!(
+            result.classification,
+            AcmgClassification::UncertainSignificance,
+            "{:?}",
+            result.triggered_rule
+        );
     }
 }

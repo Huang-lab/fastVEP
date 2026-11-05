@@ -362,100 +362,17 @@ pub struct GnomadGeneData {
     pub syn_z: Option<f64>,
 }
 
-/// OMIM gene-disease data.
+/// A gene's disease annotation: the phenotype strings of the `omim` gene database.
+///
+/// Read through the methods in [`crate::disease`], which parse the ClinGen tag
+/// (`(ClinGen Definitive/AD, MONDO:...)`) that each phenotype of a ClinGen build
+/// carries. The strings are kept as the database stores them so that a gene
+/// record round-trips unchanged.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct OmimData {
     #[serde(rename = "mimNumber")]
     pub mim_number: Option<u32>,
     pub phenotypes: Option<Vec<String>>,
-}
-
-impl OmimData {
-    /// True when at least one listed disease meets the SVI evidence threshold -
-    /// a ClinGen classification of Definitive, Strong or Moderate.
-    ///
-    /// The `.oga` carries every classification, including the weak and negative
-    /// ones, because the distinction this method draws is only possible if they
-    /// are present. Reading the classification out of the phenotype string is
-    /// what lets `has_no_valid_relationship` mean "ClinGen looked and found
-    /// little or nothing" rather than "not in the file".
-    ///
-    /// A gene from an OMIM `genemap2` source carries no ClinGen classification
-    /// at all. Those entries count as established: OMIM listing a phenotype is
-    /// the assertion, and the legacy source has no weaker tier to fall back on.
-    pub fn has_established_relationship(&self) -> bool {
-        self.phenotypes.as_ref().is_some_and(|ps| {
-            ps.iter().any(|p| {
-                let t = p.trim();
-                !t.is_empty() && !is_weak_clingen_classification(t)
-            })
-        })
-    }
-
-    /// True when ClinGen curated this gene and concluded there is little or no
-    /// evidence for any of its proposed disease relationships.
-    ///
-    /// This is positive evidence against a gene-disease relationship, and it is
-    /// what the validity gate blocks on. Absence from the file is *not* this:
-    /// ClinGen has reached roughly 2,400 genes, so a gene it has not curated is
-    /// overwhelmingly one nobody got to yet. Treating absence as this cost 1,497
-    /// pathogenic calls in run v10 - SPAST, ABCB11, FLG and LAMB3 among them.
-    pub fn has_no_valid_relationship(&self) -> bool {
-        self.phenotypes
-            .as_ref()
-            .is_some_and(|ps| !ps.is_empty() && !self.has_established_relationship())
-    }
-
-    /// Check if any phenotype suggests autosomal dominant inheritance.
-    ///
-    /// Considers only diseases that met the evidence threshold: the inheritance
-    /// of a relationship ClinGen refuted is not a fact about this gene, and PM2
-    /// and BS2 both branch on it.
-    pub fn has_dominant_inheritance(&self) -> bool {
-        self.phenotypes.as_ref().is_some_and(|ps| {
-            ps.iter()
-                .filter(|p| !is_weak_clingen_classification(p))
-                .any(|p| {
-                    let lower = p.to_lowercase();
-                    lower.contains("autosomal dominant")
-                        || lower.contains("{ad}")
-                        || (lower.contains("dominant") && !lower.contains("recessive"))
-                })
-        })
-    }
-
-    /// Check if any phenotype suggests autosomal recessive inheritance.
-    ///
-    /// Established diseases only, for the same reason as
-    /// [`Self::has_dominant_inheritance`].
-    pub fn has_recessive_inheritance(&self) -> bool {
-        self.phenotypes.as_ref().is_some_and(|ps| {
-            ps.iter()
-                .filter(|p| !is_weak_clingen_classification(p))
-                .any(|p| {
-                    let lower = p.to_lowercase();
-                    lower.contains("autosomal recessive")
-                        || lower.contains("{ar}")
-                        || (lower.contains("recessive") && !lower.contains("dominant"))
-                })
-        })
-    }
-}
-
-/// True for a ClinGen classification that does not meet the SVI evidence
-/// threshold: `Limited`, `Disputed`, `Refuted`, `No Known Disease
-/// Relationship`. Matched inside the `(ClinGen <Class>/<MOI>, MONDO:...)`
-/// suffix the builder writes.
-fn is_weak_clingen_classification(phenotype: &str) -> bool {
-    let Some(rest) = phenotype.split("(ClinGen ").nth(1) else {
-        // No ClinGen tag: an OMIM genemap2 entry. Counts as established.
-        return false;
-    };
-    let class = rest.split('/').next().unwrap_or("").trim();
-    matches!(
-        class,
-        "Limited" | "Disputed" | "Refuted" | "No Known Disease Relationship"
-    )
 }
 
 /// ClinVar variants indexed by protein position (from .oga).

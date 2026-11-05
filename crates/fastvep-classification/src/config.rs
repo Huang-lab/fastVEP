@@ -740,10 +740,17 @@ pub struct GeneOverride {
     #[serde(default)]
     pub strength_overrides: HashMap<String, EvidenceStrength>,
     /// Per-disorder thresholds for genes associated with multiple disorders
-    /// (ClinGen guidance, January 2024). The classifier consumes whichever
-    /// disorder context is active for the call; in the absence of explicit
-    /// disorder selection, this scaffold is currently informational only —
-    /// the active disorder selection mechanism is part of a follow-up PR.
+    /// (ClinGen guidance, January 2024), keyed by MONDO identifier.
+    ///
+    /// **Informational: the classifier does not read these blocks.** A gene
+    /// whose established diseases have more than one mode of inheritance is
+    /// classified against each (`AcmgResult::per_disorder`), and in each the
+    /// criteria that branch on inheritance or on gene-disease validity read
+    /// only that mode's diseases; but the thresholds are the gene-level ones
+    /// above. The generated VCEP table writes the same thresholds under every
+    /// disorder of a gene, so nothing in it tells one disorder's bar from
+    /// another's, and picking a disorder's block over the gene's would be a
+    /// guess about which of them the panel meant for which mode.
     #[serde(default)]
     pub disorders: HashMap<String, DisorderOverride>,
 }

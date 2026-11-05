@@ -176,10 +176,30 @@ done
 ```
 
 To build whole-genome coverage instead, download each `.vcf.bgz` in full and run the same `sa-build` on it.
-Use `.../vcf/genomes/gnomad.genomes.v4.1.sites.chr${chr}.vcf.bgz` for the genomes release.
 
 Every `.osa`/`.osa2` in `--sa-dir` is loaded, and the JSON key comes from the source type rather than the filename, so `gnomad_chr1` and `gnomad_chr2` both register under `gnomad`.
 Per-chromosome files are the easier shape: they make the build resumable and let you add a chromosome later.
+
+**One database for each chromosome, not an exomes one and a genomes one.**
+An allele has one `gnomad` annotation, and the criteria that read it (BA1, BS1, BS2 and PM2) take that one record.
+If two databases both know a variant, the one that sorts last by path is kept and the other is dropped, and the run says so at its end (`allele lookup(s) were answered by more than one database under the key gnomad`).
+Loading `gnomad_exomes_chr1.osa2` beside `gnomad_genomes_chr1.osa2` therefore leaves you with the genomes frequency, from a tenth of the individuals, behind every coding variant of the chromosome, which is the opposite of what asking for both was meant to do.
+The counts of two cohorts do not combine into a frequency without the per-group counts that the database does not hold.
+
+**To use the exomes and the genomes together, build from gnomAD's joint release.**
+`gnomad.joint.v4.1.sites` is the two combined by gnomAD itself (`AF_joint`, `AC_joint`, `AN_joint`, `nhomalt_joint`, the per-group frequencies, the filtering allele frequency and `AC_joint_XY`), and the builder reads it.
+The exomes are the right source for coding variants and the genomes for the rest: on the ClinVar 2-star+ variants of chr21 and chr22, the joint callset changed 555 of 23,538 calls, all of them toward a benign class or away from one, and none on a ClinVar pathogenic-side variant (`manuscript/acmg`, Section 3.8).
+Two things about it differ from the exomes and genomes releases, and the first is why the script below exists:
+
+- A joint record carries about 11 KB of INFO (every group by sex, for three callsets), so 200 of the benchmark's regions on chr22 come to 5.1 GB uncompressed.
+  `analysis/acmg_benchmark/scripts/sa_sources/build_gnomad_release_per_chrom.sh joint 21 22` extracts the regions your BED names and keeps only the INFO keys the builder reads, about 3% of that.
+  It retries a batch that fails and builds nothing for a chromosome with a batch that still fails, because a hole in a frequency database reads as "absent from gnomAD".
+- **The joint release declares no `lcr`, `segdup` or `non_par` flag** (in the headers read on 4 November 2026).
+  The exomes and genomes releases mark a site in a low-complexity region or a segmental duplication, and the classifier withholds BA1, BS1, BS2 and PM2 there (`gnomad_region_flags_block_frequency`).
+  A database built from the joint release cannot say, so that veto does not act on it, and `sa-build` prints a warning to standard error that it will not.
+  The non-PAR flag matters for X-linked genes, where it is what lets BS2 count hemizygotes; the builder derives it for the joint release from the GRCh38 pseudoautosomal coordinates, which agree with gnomAD's own flag at the edges that could be read in the genomes release (`crates/fastvep-sa/src/sources/gnomad.rs` says which).
+  A joint database built before v38 has no non-PAR flag, and BS2 counts no hemizygotes from it: rebuild it with the current builder.
+  Whether to give up the region veto for the genomes' coverage is a choice for the run: on chr21 and chr22 the veto's absence is part of what the joint callset changes, and the manuscript separates the two.
 
 ### gnomAD gene constraints (gene level)
 
@@ -211,6 +231,20 @@ fastvep sa-build --source omim -i clingen_gdv.tsv \
 
 Expect roughly 3,000 genes and an `omim.oga` under 1 MB.
 The run on 2026-08-31 produced 3,030.
+
+**What the classifier reads from it.**
+Each phenotype the converter writes ends in a tag made from the curation's own columns, `<disease label> (ClinGen <classification>/<MOI>, <MONDO id>)`, for instance `Bohring-Opitz syndrome (ClinGen Definitive/AD, MONDO:0011510)`.
+The classifier reads the classification (to tell an established disease from a weak one) and the mode of inheritance, a curated field with six values in the export of 11 October 2026: `AD`, `AR`, `XL`, `SD` (semidominant), `MT` and `UD` (undetermined).
+That mode is what PM2's frequency bar (4e-5 for a gene that is not recessive-only, 7e-5 for one that is), BS2's choice of arm and PM3 and BP2's gates depend on.
+`AD` reads as dominant, `AR` as recessive and `SD` as both; `XL`, `MT` and `UD` as neither, which is the arm for unknown inheritance, because ClinGen's `XL` does not say dominant or recessive.
+An OMIM `genemap2.txt` phenotype carries no tag, and for those the words of the phenotype are read as before (`Autosomal dominant`, `{AD}`, "dominant" in the name).
+Before v38 the tag was ignored and the words were read for ClinGen's phenotypes too, so that a gene curated as AR with a disease name that did not say so (phenylketonuria, for PAH) was read as having no inheritance; `docs/ACMG.md` limitation 20 has the history and what it cost.
+
+**A gene with more than one mode of inheritance** (135 genes in the export of 11 October 2026, 124 of them with both an autosomal dominant and an autosomal recessive established disease, among them ATM, ABCC8, ACTA1, ALPL, ANO5 and BRCA1; counted from the export, which is not in the repository) is classified once against each, in addition to the call for the gene as a whole.
+In JSON the result has a `per_disorder` list, one entry for each mode, each naming the diseases it was made against with their MONDO identifiers and ClinGen classifications and holding everything a classification holds.
+A VCF run with `--acmg` has a last CSQ column, `ACMG_DISORDERS`, with one `INHERITANCE:CLASS:CRITERIA` entry for each mode joined by `&`, the criteria that were met joined by `+` (`AD:LB:BS2+BP4&AR:VUS:BP4`), empty for a gene with one mode.
+The call for the gene as a whole is unchanged by it: it reads the modes of the gene together, which is the cautious reading for PM2's bar, BS2's arm and BP2's trans arm (PM3 asks only that one established disease be recessive), and no disorder is picked on your behalf.
+Only established diseases make a mode, and the `disorders` override blocks of an `--acmg-config` remain informational.
 
 **Using real OMIM instead.** `genemap2.txt` from <https://www.omim.org/downloads> populates the same `.oga` and the same json_key; pass it straight to `--source omim`.
 Access requires a registered account, and an unauthenticated request to that page is refused, so it cannot be scripted the way the ClinGen download can.

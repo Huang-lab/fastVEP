@@ -194,23 +194,32 @@ fn evaluate_bs1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 ///   could not do, which is tell nine carriers among 1.4 M alleles from nine
 ///   hundred.
 ///
-/// A gene is dominant here when its disease annotation says so in words: an
-/// OMIM-style inheritance ("autosomal dominant") or "dominant" in the disease
-/// name. ClinGen's own `/AD` tag, which the `.oga` carries on most of its
-/// entries, is not read, so a gene known to ClinGen only by that tag takes the
-/// recessive arm. Reading it for BS2 was measured and not done: the criterion
-/// asks for full penetrance at an early age, which is a property of the
-/// disorder and not of its inheritance, and six ClinVar Pathogenic or Likely
-/// pathogenic variants moved toward benign (limitation 20 in `docs/ACMG.md`
-/// names them). The predicate is also shared with PM2, PM3 and BP2.
+/// A gene is dominant here when an established disease of it is: ClinGen's
+/// curated `AD` or `SD` for a ClinGen curation, and for a legacy OMIM phenotype
+/// the words that say so. (Until the curated field was read, the arm was reached
+/// only by genes whose disease *name* repeated "dominant": 39 of the 740 genes
+/// whose established curations are all AD, among the genes with a benchmark
+/// variant - `docs/ACMG.md`, limitation 20.) A gene that is both dominant and
+/// recessive, or neither, takes the recessive / X-linked arm, which is the
+/// stricter of the two for a heterozygous allele; for a gene that is both, the
+/// result's `per_disorder` list classifies it against each mode in turn.
+///
+/// Reading the curated field is what made the dominant arm reach the genes it
+/// was calibrated for, and it also reached genes whose disorders are not fully
+/// penetrant, which the criterion's own text excludes. ClinGen does not publish
+/// penetrance, so the arm cannot test the precondition and rests on the
+/// prevalence bar to stand in for it. That is why a carrier count is not added
+/// beside BS1 or BA1, which count the same frequency
+/// (`criteria::suppress_bs2_carriers_beside_frequency`), and why `details`
+/// records which arm decided the criterion in `bs2_basis`.
 ///
 /// BS2 is not evaluated for a record with no AN, since there is then no cohort
 /// size to test a count against. It does not take BA1's and BS1's minimum AN:
 /// we read that as SVI guidance about the noise of a frequency estimate, and
 /// the lower bound used here already accounts for a small cohort.
 ///
-/// Inheritance is inferred from the disease-gene `.oga` (ClinGen GDV
-/// preferred, OMIM accepted as legacy).
+/// Inheritance is read from the disease-gene `.oga` (ClinGen GDV preferred,
+/// OMIM accepted as legacy), through [`crate::disease`].
 fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
@@ -244,14 +253,10 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
         };
     }
 
-    let is_dominant = input
-        .omim
-        .as_ref()
-        .is_some_and(|o| o.has_dominant_inheritance());
-    let is_recessive = input
-        .omim
-        .as_ref()
-        .is_some_and(|o| o.has_recessive_inheritance());
+    let (is_dominant, is_recessive) = input.omim.as_ref().map_or((false, false), |o| {
+        let inheritance = o.inheritance();
+        (inheritance.dominant, inheritance.recessive)
+    });
     details.insert("omim_dominant".into(), serde_json::json!(is_dominant));
     details.insert("omim_recessive".into(), serde_json::json!(is_recessive));
 
@@ -312,6 +317,7 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
             let carriers = ac.saturating_sub(hc);
             let carrier_freq_lower_95 = lower_bound_frequency(carriers, individuals);
             let bar = config.bs2_ad_prevalence_threshold;
+            details.insert("bs2_basis".into(), serde_json::json!("carriers"));
             details.insert("gnomad_carriers".into(), serde_json::json!(carriers));
             details.insert(
                 "carrier_freq_lower_95".into(),
@@ -387,6 +393,7 @@ fn evaluate_bs2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
             // gnomAD had never seen a null individual.
             let null_individuals = hc + hemizygotes;
             let freq_lower_95 = lower_bound_frequency(null_individuals, individuals);
+            details.insert("bs2_basis".into(), serde_json::json!("null_individuals"));
             details.insert(
                 "null_individuals".into(),
                 serde_json::json!(null_individuals),
@@ -1397,5 +1404,97 @@ mod tests {
             r.met,
             "with the FAF disabled BS1 reverts to the point estimate"
         );
+    }
+
+    // ── Inheritance is read from ClinGen's curated field ──
+
+    fn tagged_input(code: &str, ac: u64, hc: u64, an: u64) -> ClassificationInput {
+        use crate::sa_extract::OmimData;
+        make_input_omim(
+            Some(GnomadData {
+                all_ac: Some(ac),
+                all_hc: Some(hc),
+                all_an: Some(an),
+                ..Default::default()
+            }),
+            Some(OmimData {
+                mim_number: None,
+                phenotypes: Some(vec![format!(
+                    "a disease whose label says nothing about inheritance (ClinGen Definitive/{code}, MONDO:0000001)"
+                )]),
+            }),
+        )
+    }
+
+    /// The defect: a gene ClinGen curates as AD reached BS2's dominant arm only
+    /// if its disease name said "dominant". It is the same record as
+    /// `test_bs2_ad_gene_many_carriers_fires`, with the word taken out of the
+    /// name and put in the tag, where it is a curated field.
+    #[test]
+    fn test_bs2_reaches_the_dominant_arm_through_the_curated_tag() {
+        let r = evaluate_bs2(
+            &tagged_input("AD", 500, 0, 1_000_000),
+            &AcmgConfig::default(),
+        );
+        assert!(r.met, "{}", r.summary);
+        assert!(r.summary.contains("carry this allele"), "{}", r.summary);
+        assert_eq!(r.details["bs2_basis"], serde_json::json!("carriers"));
+        assert_eq!(r.details["omim_dominant"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn test_bs2_does_not_count_carriers_of_a_recessive_gene() {
+        // 500 heterozygous carriers of an AR disease's allele are what a
+        // recessive disorder's carriers look like, and not one of them is
+        // someone the disorder would affect.
+        let r = evaluate_bs2(
+            &tagged_input("AR", 500, 0, 1_000_000),
+            &AcmgConfig::default(),
+        );
+        assert!(!r.met, "{}", r.summary);
+        assert_eq!(r.details["omim_recessive"], serde_json::json!(true));
+        assert_eq!(r.details["omim_dominant"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn test_bs2_recessive_arm_records_what_it_counted() {
+        let r = evaluate_bs2(
+            &tagged_input("AR", 2_010, 1_000, 1_460_000),
+            &AcmgConfig::default(),
+        );
+        assert!(r.met, "{}", r.summary);
+        assert_eq!(
+            r.details["bs2_basis"],
+            serde_json::json!("null_individuals")
+        );
+    }
+
+    #[test]
+    fn test_bs2_semidominant_gene_takes_the_recessive_arm() {
+        // Both flags set, so neither "dominant only" nor "recessive only": the
+        // recessive / X-linked arm, which needs individuals with no working copy.
+        let r = evaluate_bs2(
+            &tagged_input("SD", 500, 0, 1_000_000),
+            &AcmgConfig::default(),
+        );
+        assert!(!r.met, "{}", r.summary);
+        assert_eq!(r.details["omim_dominant"], serde_json::json!(true));
+        assert_eq!(r.details["omim_recessive"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn test_bs2_x_linked_curation_counts_hemizygotes() {
+        // ClinGen's `XL` is neither dominant nor recessive here, so the
+        // recessive / X-linked arm decides, and it counts hemizygotes.
+        let mut input = x_linked_input(1275, 1_039_980, 327_798);
+        input.omim = Some(crate::sa_extract::OmimData {
+            mim_number: None,
+            phenotypes: Some(vec![
+                "intellectual disability (ClinGen Definitive/XL, MONDO:0000001)".into(),
+            ]),
+        });
+        let r = evaluate_bs2(&input, &AcmgConfig::default());
+        assert!(r.met, "{}", r.summary);
+        assert!(r.summary.contains("hemizygote"), "{}", r.summary);
     }
 }

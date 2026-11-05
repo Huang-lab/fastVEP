@@ -499,16 +499,24 @@
     .acmg-modal { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:20px; max-width:720px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.3); }
     .acmg-modal h3 { margin:0 0 12px 0; display:flex; align-items:center; gap:10px; }
     .acmg-modal .close-btn { margin-left:auto; cursor:pointer; background:none; border:none; color:var(--text); font-size:20px; }
-    .acmg-criteria-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+    .acmg-criteria-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; }
     .acmg-criterion { padding:6px 10px; border-radius:4px; font-size:12px; border:1px solid var(--border); display:flex; align-items:center; gap:6px; }
     .acmg-criterion.met-pathogenic { background:rgba(239,68,68,0.12); border-color:rgba(239,68,68,0.3); }
     .acmg-criterion.met-benign { background:rgba(16,185,129,0.12); border-color:rgba(16,185,129,0.3); }
     .acmg-criterion.not-met { opacity:0.45; }
     .acmg-criterion.not-evaluated { opacity:0.3; font-style:italic; }
-    .acmg-criterion .code { font-weight:700; font-family:monospace; min-width:80px; }
-    .acmg-criterion .strength { font-size:10px; padding:1px 4px; border-radius:2px; background:var(--surface2); }
-    .acmg-criterion .summary { font-size:11px; color:var(--text-secondary); margin-left:auto; text-align:right; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .acmg-criterion .code { font-weight:700; font-family:monospace; min-width:80px; flex:none; white-space:nowrap; }
+    .acmg-criterion .strength { font-size:10px; padding:1px 4px; border-radius:2px; background:var(--surface2); white-space:nowrap; flex:none; }
+    .acmg-criterion .summary { font-size:11px; color:var(--text-secondary); margin-left:auto; text-align:right; max-width:300px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .acmg-counts { display:flex; gap:12px; margin:10px 0; font-size:12px; flex-wrap:wrap; }
+    /* One row for each mode of inheritance of a gene that has more than one */
+    .acmg-disorders { margin:10px 0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+    .acmg-disorders-title { padding:6px 10px; font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; background:var(--surface2); color:var(--text-secondary); }
+    .acmg-disorders-note { padding:6px 10px; font-size:11px; color:var(--text-secondary); border-top:1px solid var(--border); }
+    .acmg-disorder { display:grid; grid-template-columns:auto 36px minmax(0,1fr); gap:4px 10px; align-items:center; padding:7px 10px; font-size:12px; border-top:1px solid var(--border); }
+    .acmg-disorder .moi { font-weight:700; font-family:monospace; }
+    .acmg-disorder .names { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-secondary); }
+    .acmg-disorder .met { grid-column:1 / -1; font-size:11px; font-family:monospace; color:var(--text-secondary); }
     .acmg-counts .count { padding:2px 8px; border-radius:3px; background:var(--surface2); }
 
     /* Consequence tags */
@@ -2324,6 +2332,28 @@ function showAcmgDetail(event, resultIndex) {
     </div>`;
   }
 
+  // A gene with more than one mode of inheritance is also classified against each, and the call above
+  // reads it as both: say which mode each row is, and the diseases it was made against.
+  let disordersHTML = '';
+  const perDisorder = a.per_disorder || [];
+  if (perDisorder.length) {
+    const rows = perDisorder.map(d => {
+      const names = (d.disorders || []).map(x => x.label).filter(Boolean).join('; ');
+      const met = (d.criteria || []).filter(c => c.met).map(c => c.code).join(', ') || 'None';
+      return `<div class="acmg-disorder">
+        <span class="acmg-badge acmg-${escapeHtml(d.shorthand)}">${escapeHtml(d.classification?.replace(/_/g,' '))}</span>
+        <span class="moi">${escapeHtml(d.inheritance)}</span>
+        <span class="names" title="${escapeHtml(names)}">${escapeHtml(names)}</span>
+        <span class="met">${escapeHtml(met)}</span>
+      </div>`;
+    }).join('');
+    disordersHTML = `<div class="acmg-disorders">
+      <div class="acmg-disorders-title">By mode of inheritance</div>
+      ${rows}
+      <div class="acmg-disorders-note">The call above reads the modes of this gene together. Each row classifies the variant against the diseases ClinGen curates with that mode of inheritance.</div>
+    </div>`;
+  }
+
   const counts = a.counts || {};
   overlay.innerHTML = `<div class="acmg-modal">
     <h3>
@@ -2342,6 +2372,7 @@ function showAcmgDetail(event, resultIndex) {
       <span class="count" style="color:#3b82f6">BP: ${counts.benign_supporting||0}</span>
     </div>
     <div style="margin-bottom:8px;font-size:12px">Met criteria: <strong>${escapeHtml(metCodes)}</strong></div>
+    ${disordersHTML}
     <div class="acmg-criteria-grid">${criteriaHTML}</div>
     <div style="margin-top:12px;font-size:11px;color:var(--text-secondary)">
       Based on ACMG-AMP guidelines (Richards et al. 2015) with ClinGen SVI recommendations.
