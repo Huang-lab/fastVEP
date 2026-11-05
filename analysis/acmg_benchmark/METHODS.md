@@ -125,10 +125,12 @@ compatibility.
 | Recessive-only | AF ≤ 0.00007 (0.007%; swept for the ACMG manuscript: flat) |
 | Per-gene override | Wins over inheritance default |
 
-Uses **raw** gnomAD AF (not FAF / popmax). Inheritance is inferred from
-ClinGen Gene-Disease Validity (preferred per Abou Tayoun 2018) or OMIM
-`genemap2.txt` (legacy). Both populate the same `omim` json_key in the
-`.oga` schema.
+Uses **raw** gnomAD AF (not FAF / popmax).
+Inheritance is read from ClinGen Gene-Disease Validity (preferred per Abou Tayoun 2018) or OMIM `genemap2.txt` (legacy).
+Both populate the same `omim` json_key in the `.oga` schema.
+For a ClinGen curation it is the curated mode of inheritance (`AD`, `AR`, `XL`, `SD`, `MT`, `UD`) that the phenotype string carries in its `(ClinGen <classification>/<MOI>, <MONDO>)` tag; for an OMIM phenotype, which has no tag, it is the words of the phenotype.
+Until v38 the tag was ignored and the words were read for ClinGen's phenotypes as well, so that a gene curated as AR whose disease name did not say so was read as having no inheritance (`docs/ACMG.md`, limitation 20).
+A gene whose established diseases fall under more than one mode of inheritance is also classified against each (`per_disorder` in the JSON, `ACMG_DISORDERS` in the CSQ).
 
 ### PM3 v1.0 Points Scoring (SVI)
 
@@ -168,17 +170,27 @@ VCEPs can extend.
 | MEFV | c.1223G>A | VUS |
 | PIBF1 | c.1214G>A | VUS |
 
-### Anti-Double-Counting (PP3 Reconciliation)
+### Anti-Double-Counting (Reconciliation)
 
-A post-evaluation reconciliation pass suppresses PP3 (or PM1) under
-overlap conditions called out in Pejaver 2022 and Walker 2023:
+A post-evaluation reconciliation pass suppresses a criterion that counts a signal another criterion has already counted, under conditions called out in Abou Tayoun 2018, Pejaver 2022, Walker 2023 and ClinGen SVI, and, for the last row, because two criteria summarise one gnomAD record:
 
 | Trigger | Suppressed | Source |
 |---------|------------|--------|
+| PVS1 fires AND PM1 fires | PM1 | Abou Tayoun 2018 |
+| PS3 or BS3 fires (curated functional evidence) | PP3, BP4 and BP7 | ClinGen SVI: experimental evidence outranks prediction |
 | PVS1 fires AND PP3 was driven by SpliceAI | PP3 | Walker 2023 |
 | PS1 fires AND PP3 was driven by REVEL | PP3 | Pejaver 2022 |
 | PM5 fires AND PP3 was driven by REVEL | PP3 | Pejaver 2022 |
 | PP3_Strong + PM1 (combined > Strong cap) | PM1 | Pejaver 2022 |
+| PP3 was driven by REVEL AND BP4 was driven by SpliceAI | BP4 | Walker 2023 |
+| BS1 or BA1 fires AND BS2 was decided on carriers (a dominant gene) | BS2 | one gnomAD record summarised twice |
+
+One further effect is an upgrade and not a suppression: PS1's splice path is graded against the PVS1 the variant already carries (Walker 2023 Table 3).
+
+BS2's arm for homozygotes and hemizygotes is not reconciled with BS1 and BA1, and on the X chromosome it counts the same frequency twice (`docs/ACMG.md`, limitation 29).
+
+PP2, PM1 and PP3 on one missense variant are not reconciled with each other beyond the PP3_Strong + PM1 row.
+A combined cap at Strong was measured and not adopted (`docs/ACMG.md`, limitation 27).
 
 Suppressed criteria stay in the result with `met=false` and a
 `details.suppressed_by_reconcile` note.

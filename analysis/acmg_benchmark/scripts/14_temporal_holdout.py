@@ -47,6 +47,8 @@ Usage
   14_temporal_holdout.py blockers  why BA1 and BS1 did not fire on the uncalled Benign variants of 2% or more
                                    (needs the per-variant tables; writes temporal_high_af_blockers_v37.csv)
   14_temporal_holdout.py all       prepare, run and table
+
+`run` and `blockers` need FASTVEP_V37_BIN, the binary built at the v37 commit (5d8004a).
 """
 
 from __future__ import annotations
@@ -159,9 +161,23 @@ def prepare() -> None:
         print(f"  {k:26} {st:17} {v:>9,}")
 
 
+def v37_binary() -> Path:
+    """The binary built at the v37 commit, named by FASTVEP_V37_BIN as in `11_manuscript_runs.py`.
+
+    The checkout's own build is its shipped classifier, which is v37 only until the classifier moves on: `run` would
+    score something else under v37's name, and `blockers`, which checks its calls against the per-variant table of v37
+    one by one, would stop on the first call that differs.
+    """
+    binary = os.environ.get("FASTVEP_V37_BIN", "")
+    if not binary or not Path(binary).is_file():
+        sys.exit("FASTVEP_V37_BIN must name the binary built at the v37 commit (5d8004a)")
+    return Path(binary)
+
+
 def run() -> None:
     env = os.environ.copy()
-    env.update(INPUT=str(SUBSET_DIR / "clinvar_2star.vcf"), LABELS=str(SUBSET_DIR / "clinvar_2star_labels.tsv"), OUT_DIR=str(RUN_DIR))
+    env.update(INPUT=str(SUBSET_DIR / "clinvar_2star.vcf"), LABELS=str(SUBSET_DIR / "clinvar_2star_labels.tsv"), OUT_DIR=str(RUN_DIR),
+               FASTVEP=str(v37_binary()))
     subprocess.run(["bash", str(HERE / "run_benchmark.sh"), RUN_NAME], env=env, check=True, cwd=ROOT)
 
 
@@ -219,7 +235,7 @@ def blockers() -> None:
     import tempfile
 
     out_csv = ROOT / "manuscript/acmg/data/temporal_high_af_blockers_v37.csv"
-    fastvep = ROOT / "target/release/fastvep"
+    fastvep = v37_binary()
     gff3 = ROOT / "test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3"
     fasta = ROOT / "test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
     strata = {}

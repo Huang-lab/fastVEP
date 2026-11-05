@@ -1,0 +1,3 @@
+# v38_sw_bs2ad_0.003: BS2 carrier bar for genes read as dominant-only (0 is no bar, so that the allele count of at least 5 alone decides), set to 0.003.
+# Everything else is the shipped default.
+bs2_ad_prevalence_threshold = 0.003

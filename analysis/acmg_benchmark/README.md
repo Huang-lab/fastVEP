@@ -24,7 +24,7 @@ input, a database or a bulk output, it belongs in `data/benchmark/`.**
 | Path | What |
 |---|---|
 | [`METHODS.md`](METHODS.md) | What the benchmark measures, how the ClinVar 2-star+ set is built, what the numbers mean (ClinVar's classifications are a reference, not ground truth) |
-| [`RUN_VERSIONS.md`](RUN_VERSIONS.md) | Per-run history: what changed between v1 and v27, with measured effect |
+| [`RUN_VERSIONS.md`](RUN_VERSIONS.md) | Per-run history: what changed between v1 and v38, with measured effect, and the record of the full rerun of 4 November 2026 |
 | [`STATUS.md`](STATUS.md) | On-disk inventory - what is downloaded and built locally |
 | [`scripts/`](scripts/) | Everything executable, plus [its own README](scripts/README.md) |
 | [`scripts/sa_sources/`](scripts/sa_sources/) | Building the supplementary annotation databases from public sources |
@@ -86,23 +86,45 @@ python3 analysis/acmg_benchmark/scripts/sweep_acmg_thresholds.py \
 
 [`manuscript/acmg/`](../../manuscript/acmg/) holds a manuscript on how the classifier was built, reviewed and measured, and on its discordance with ClinVar 2-star+ classifications in its final version.
 Its tables are produced from the scored runs by the scripts below, in this order, and its text is checked against them.
+Every run is made by a binary that an environment variable names, and not by the checkout's own `target/release/fastvep`.
+The checkout's classifier is v38, and a run called `v37_...` made by it would be a run of v38 under v37's name, which `11_manuscript_runs.py` and `14_temporal_holdout.py` refuse to do.
+The provenance file of a run records the commit and the number of uncommitted files of the checkout that ran the harness, which is not the commit of the binary; `results/v37_manuscript/binaries.tsv` says what each binary was built from.
 
 ```bash
-# 1. The sweeps, ablations and interaction runs (about 3 minutes each; --workers 3 is comfortable)
+# 0. The six binaries: v37; the two measurement builds of v37 (replay_validation/combiner_cutoff_env.patch and
+#    bp_hooks_env.patch); the commit before the change of Section 3.8; the change; and the change with the alternatives
+#    (replay_validation/inheritance_alternatives_env.patch). Each is built from a clean export of its commit in a
+#    target directory of its own, and the script stops if a patched build does not contain its patch.
+#    V38_TREE=. builds the checkout as it is, uncommitted files included; V38_REF=<commit> builds a commit.
+#    It prints the six `export` lines that the steps below read their binaries from.
+V38_TREE=. analysis/acmg_benchmark/scripts/build_manuscript_binaries.sh /path/to/binaries
+export FASTVEP_V37_BIN=/path/to/binaries/fastvep_v37 FASTVEP_CUTOFF_BIN=/path/to/binaries/fastvep_cut \
+       FASTVEP_HOOKS_BIN=/path/to/binaries/fastvep_hook FASTVEP_V38_BASE_BIN=/path/to/binaries/fastvep_base \
+       FASTVEP_V38_BIN=/path/to/binaries/fastvep_v38 FASTVEP_V38_ALT_BIN=/path/to/binaries/fastvep_alt
+
+# 0b. v37 itself, which every run of the April set differs from by one setting, and the ten runs of round 6 that are
+#     v37 with a configuration or a flag changed (the configurations are in results/v37/configs)
+FASTVEP="$FASTVEP_V37_BIN" bash analysis/acmg_benchmark/scripts/run_benchmark.sh v37
+for n in bs2off bs2prev_3e-5 bs2prev_1e-4 bs2prev_1e-3 bs2prev_3e-3 bs2ac_20 bs2ac_100 bs2ac_1000; do
+  ACMG_CONFIG=analysis/acmg_benchmark/results/v37/configs/$n.toml FASTVEP="$FASTVEP_V37_BIN" \
+    bash analysis/acmg_benchmark/scripts/run_benchmark.sh v37_$n
+done
+FASTVEP="$FASTVEP_V37_BIN" EXTRA_ARGS="--pick-order mane_plus_clinical,mane_select,canonical,appris,tsl,biotype,ccds,rank" \
+  bash analysis/acmg_benchmark/scripts/run_benchmark.sh v37_mpc
+FASTVEP="$FASTVEP_V37_BIN" EXTRA_ARGS="--pick-order rank,mane_select,mane_plus_clinical,canonical,appris,tsl,biotype,ccds" \
+  bash analysis/acmg_benchmark/scripts/run_benchmark.sh v37_rank
+
+# 1. The three runs that change an input need the ClinGen file completed first
+#    (the commands are in the docstring of 15_clingen_complete_export.py)
+
+# 2. The sweeps, ablations, interaction and gap runs, and the runs of the two measurement builds, which are skipped
+#    where their variable is not set (about 3 minutes each; --workers 3 is comfortable)
 python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --workers 3
-
-# 2. The point-cutoff runs and the runs of BP1's veto and BP7 need binaries built with the patches in
-#    manuscript/acmg/replay_validation/ (combiner_cutoff_env.patch and bp_hooks_env.patch)
-FASTVEP_CUTOFF_BIN=/path/to/cutoff/fastvep FASTVEP_HOOKS_BIN=/path/to/hooks/fastvep \
-  python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --workers 3
-
-# 2b. The three runs that change an input need the ClinGen file completed first
-#     (the commands are in the docstring of 15_clingen_complete_export.py)
 
 # 3. The later ClinVar release (this also writes its per-variant table), and the seven runs of the changes that
 #    Section 4.5 of the manuscript proposes, made on the variants of that release
 python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py all
-FASTVEP_HOOKS_BIN=/path/to/hooks/fastvep python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --holdout --workers 3
+python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --holdout --workers 3
 
 # 3b. The per-variant table of v37 and of each run whose variants the statistics read one by one
 python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
@@ -121,15 +143,44 @@ done
 # 3c. Why BA1 and BS1 did not fire on the Benign variants of 2% or more that are not called benign-side (needs the tables above)
 python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py blockers
 
-# 4. Every table, then the figures, then the checks
+# 4. The runs of Section 3.8 (what changed after v37: ClinGen's curated mode of inheritance is read), which need the
+#    three binaries of step 0 that are not v37's. The databases of gnomAD's joint exomes and genomes release for the pilot
+#    on chr21 and chr22 come first (a run on every chromosome needs the databases of all 24, which take hours to extract
+#    from gnomAD's public files); the pilot's input, the benchmark's variants on those two chromosomes, is written by
+#    11_manuscript_runs.py from the benchmark's own files
+FASTVEP="$FASTVEP_V38_BIN" analysis/acmg_benchmark/scripts/sa_sources/build_gnomad_release_per_chrom.sh joint 21 22
+python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --v38 --workers 3
+python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --v38 --holdout --workers 3
+
+# 4c. The per-variant table of each run whose variants the statistics read one by one
+for run in v38 v38_base v38_alt_unguarded v38_alt_label_guard v38_alt_bs2_as_v37 v38_alt_triple_cap \
+           v38_chr2122_exomes v38_chr2122_exomes_noflags v38_chr2122_joint; do
+  python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
+    --run data/benchmark/manuscript_runs/$run --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
+done
+for run in v38_oct_base v38_oct_shipped v38_oct_alt_unguarded v38_oct_alt_triple_cap; do
+  python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
+    --run data/benchmark/manuscript_runs/$run --labels data/benchmark/clinvar_20261004_covered/clinvar_2star_labels.tsv \
+    --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
+done
+
+# 5. Every table, then the figures, then the checks
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py
 python3 manuscript/acmg/generate_figures.py
 python3 manuscript/acmg/build_tables.py --write
 python3 manuscript/acmg/build_tables.py --check
+python3 manuscript/acmg/build_supplement.py --write
 python3 manuscript/acmg/verify_numbers.py
 ```
 
+`run_benchmark.sh` and the scripts that start it read the environment, so a run that is made by hand needs `FASTVEP` set the same way.
+The tables and the checks are deterministic: after the statistics script had run under each of two hash seeds (`PYTHONHASHSEED=0` and `1`) the 89 files of `manuscript/acmg/data/` were the same, and the figures are byte for byte the same on a rerun.
+Four of those files are not written by the statistics script: `change_ledger.csv` and `round6_rulings.tsv` are typed from the project's record, `clingen_missing_curations.csv` comes from `15_clingen_complete_export.py` and `temporal_high_af_blockers_v37.csv` from `14_temporal_holdout.py blockers`.
+
+The inputs are dated and none of them is in the repository, and the download scripts fetch the current files and not the dated ones: the ClinVar weekly releases of 4 April 2026 (the benchmark and its labels) and of 4 October 2026, the ClinGen Gene-Disease Validity exports of 30 April 2026 (the file the benchmark reads) and of 11 October 2026, and the ClinVar `variant_summary` and gnomAD files of Section 2.2 of the manuscript.
+A rerun on other releases of them is a rerun of the method and not of the paper's numbers.
 The run records are in [`results/v37_manuscript/`](results/v37_manuscript/).
+`scripts/16_compare_runs.py` compares a rerun with the runs it repeats, file by file and record by record, and writes `results/v37_manuscript/rerun_comparison.csv`; use it when any step above is made again.
 
 ## The classifier itself
 
