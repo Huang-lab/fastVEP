@@ -126,21 +126,31 @@ impl ChunkCache {
         self.lru.get(&key).map(|(arc, _)| Arc::clone(arc))
     }
 
-    fn put(&mut self, key: ChunkKey, value: Arc<Chunk>, bytes: usize) {
-        if let Some((_, old_bytes)) = self.lru.pop(&key) {
+    /// Insert a chunk and hand back every chunk that the insert displaced, for the
+    /// caller to drop once it has released the cache lock: see `BlockCache::put`
+    /// in `reader.rs`, where freeing a displaced block under the lock was found to
+    /// stall the other workers.
+    #[must_use = "dropping the displaced chunks frees them, which must happen after the cache lock is released"]
+    fn put(&mut self, key: ChunkKey, value: Arc<Chunk>, bytes: usize) -> Vec<Arc<Chunk>> {
+        let mut displaced = Vec::new();
+        if let Some((old, old_bytes)) = self.lru.pop(&key) {
             self.total_bytes = self.total_bytes.saturating_sub(old_bytes);
+            displaced.push(old);
         }
         while self.total_bytes + bytes > self.budget_bytes && !self.lru.is_empty() {
-            if let Some((_, (_, ev_bytes))) = self.lru.pop_lru() {
+            if let Some((_, (evicted, ev_bytes))) = self.lru.pop_lru() {
                 self.total_bytes = self.total_bytes.saturating_sub(ev_bytes);
+                displaced.push(evicted);
             } else {
                 break;
             }
         }
-        if let Some((_, (_, ev_bytes))) = self.lru.push(key, (value, bytes)) {
+        if let Some((_, (evicted, ev_bytes))) = self.lru.push(key, (value, bytes)) {
             self.total_bytes = self.total_bytes.saturating_sub(ev_bytes);
+            displaced.push(evicted);
         }
         self.total_bytes = self.total_bytes.saturating_add(bytes);
+        displaced
     }
 }
 
@@ -558,10 +568,14 @@ impl Osa2Reader {
         self.chunk_load_count.fetch_add(1, Ordering::Relaxed);
         let bytes = chunk_bytes(&chunk);
 
-        let mut cache = cache_mutex
-            .lock()
-            .map_err(|_| anyhow::anyhow!("chunk cache mutex poisoned"))?;
-        cache.put(key, Arc::clone(&chunk), bytes);
+        let displaced = {
+            let mut cache = cache_mutex
+                .lock()
+                .map_err(|_| anyhow::anyhow!("chunk cache mutex poisoned"))?;
+            cache.put(key, Arc::clone(&chunk), bytes)
+        };
+        // Freed here, with the lock released: see `ChunkCache::put`.
+        drop(displaced);
         Ok(chunk)
     }
 
@@ -739,5 +753,46 @@ impl AnnotationProvider for Osa2Reader {
             self.get_chunk(chrom, cid)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunk_cache_hands_back_what_it_displaces_without_freeing_it() {
+        // Freeing a chunk under the cache's mutex stalls every other worker (see
+        // `ChunkCache::put`), so a displaced chunk must reach the caller alive:
+        // the caller holds the only reference, which it could not if the cache
+        // had dropped its own.
+        let mut cache = ChunkCache::new(150);
+        let first = Arc::new(Chunk::empty());
+        let weak = Arc::downgrade(&first);
+        assert!(cache.put((0, 0), first, 100).is_empty());
+        let mut displaced = cache.put((0, 1), Arc::new(Chunk::empty()), 100);
+        assert_eq!(displaced.len(), 1, "the eviction is handed back");
+        let chunk = displaced.pop().unwrap();
+        assert_eq!(
+            Arc::strong_count(&chunk),
+            1,
+            "the caller holds the only reference, so the cache has not freed it"
+        );
+        assert!(weak.upgrade().is_some(), "the chunk is still alive");
+        drop(chunk);
+        assert!(
+            weak.upgrade().is_none(),
+            "and is freed when the caller lets go"
+        );
+        assert!(
+            cache.get((0, 0)).is_none(),
+            "the displaced chunk is gone from the cache"
+        );
+        assert!(cache.get((0, 1)).is_some());
+
+        // Replacing a chunk under its own key hands the old one back too.
+        let replaced = cache.put((0, 1), Arc::new(Chunk::empty()), 100);
+        assert_eq!(replaced.len(), 1);
+        assert_eq!(cache.total_bytes, 100);
     }
 }
