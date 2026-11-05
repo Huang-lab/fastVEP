@@ -1,10 +1,16 @@
 # Iterative incorporation of ACMG/AMP and ClinGen SVI guidance into an open-source variant classifier: expert review, how thresholds were chosen, and discordance with ClinVar 2-star+ classifications
 
-**Kuan-lin Huang**^1,*^
+**Mythily Ganapathi**^1^, **Wendy Chung**^2^, **Kuan-lin Huang**^3,*^
 
-^1^ Department of Genetics and Genomic Sciences, Precision Omics Laboratory, Icahn School of Medicine at Mount Sinai, New York, NY, USA
+^1^ Department of Pathology and Cell Biology, Columbia University Irving Medical Center, New York, NY, USA
 
-\* Corresponding author. Website: https://PrecisionOmics.org
+^2^ Department of Pediatrics, Boston Children's Hospital and Harvard Medical School, Boston, MA, USA
+
+^3^ Department of Genetics and Genomic Sciences, Precision Omics Laboratory, Icahn School of Medicine at Mount Sinai, New York, NY, USA
+
+\* Corresponding author: kuan-lin.huang@mssm.edu. Website: https://PrecisionOmics.org
+
+Running title: ACMG/AMP classification in fastVEP
 
 ---
 
@@ -16,6 +22,7 @@ We describe how the classification engine of fastVEP, an open-source reimplement
 
 **Methods.**
 Thirty-seven numbered versions were scored on 673,660 ClinVar variants (release of 4 April 2026; 31 have stored scored output) over six rounds of review, three of which returned rulings.
+The input lists variants only, with no genotype, pedigree or phenotype of any individual (a sites-only VCF), and from it 15 of the 28 ACMG/AMP criteria can be evaluated.
 For this paper 89 further runs re-measured all but four groups of the thresholds that no guideline states and tested departures from the sources.
 The classifier of that analysis (v37) was applied unchanged to ClinVar's release of 4 October 2026, including 107,528 variants that were not in the April set.
 A later version (v38), which reads the mode of inheritance that ClinGen curates and not the words of the disease name, was measured in 42 further runs on both releases.
@@ -23,8 +30,13 @@ A later version (v38), which reads the mode of inheritance that ClinGen curates 
 **Results.**
 On the April set, where every threshold was tuned, agreement in direction rose from 51.0% (v1, reconstructed) to 77.6% (v37) and was flat after the thirteenth version, while opposite-direction calls went from 25 (v10) to 94 and back to 49 (59 under a strict leave-one-out reading, three of the added calls Benign).
 None of the 4,017 Pathogenic or 67,700 Benign calls is among the 49, and rules with no combining rule or safeguard reached 84.6% agreement with 1,730 contradictions.
+Most of the disagreement was not contradiction but a variant that ClinVar classifies as pathogenic-side or benign-side and fastVEP leaves as a variant of uncertain significance (VUS): 142,115 of the 150,774 records that are not in ClinVar's direction, among them 35,178 pathogenic-side and 106,937 benign-side variants.
+These VUS calls have identifiable causes.
+Thirteen criteria are not applied to a sites-only input (PS2, PM6, PM3 and BP2 need the genotypes of a proband; PS3 and BS3 need functional assays; PS4, PP1, BS4, PP4 and BP5 need case-level data; PP5 and BP6 are off by default).
+Of the pathogenic-side variants called VUS, 10,541 sit one point short of Likely pathogenic and 5,184 are truncating variants that carry no PVS1, and 23,053 of the benign-side variants called VUS carry a lone BP4 or BS1, which the 2015 combining rules do not call benign.
 Review of the discordant calls first identified 30 of 64 recorded changes (by our coding), and the largest class (21) was a condition of a guideline that a criterion had not applied.
-The ClinGen file that the benchmark read lacked 104 curations, among them CFTR, all of whose 558 null variants were VUS.
+The reviewer's remarks on the residual 49 opposite-direction calls pointed to what a single-variant annotator does not read: the disease model (a mechanism other than loss of function, and the mode of inheritance), the frequency that a disease allows (a variant's population frequency judged against the prevalence of the disease), the choice of transcript, and the haplotype that a variant lies on.
+The ClinGen file that the benchmark read lacked 104 curations, among them CFTR, all of whose 558 null variants, each null on the gene's MANE Select transcript, were VUS.
 BP7's conservation test, which the splicing recommendation cautions against without an empirical justification, costs 16,482 benign-side calls that agree with ClinVar to avoid two that contradict it.
 On the 107,528 new variants agreement in direction was 70.1% and contradictions were 2.3 times as frequent (95% interval 1.2 to 4.0).
 Reading the mode of inheritance that ClinGen curates, which makes 2,056 genes dominant-only or recessive-only where the words of the disease names made 117 (v37), added 1,490 calls in direction (0.22 points) with no added missed diagnosis, but four ClinVar-Pathogenic loss-of-function variants moved from Likely pathogenic to VUS.
@@ -43,8 +55,8 @@ The remaining discordance is consistent with evidence that a single-sample VCF d
 
 ## 1. Introduction
 
-The interpretation of germline sequence variants rests on the 2015 standards of the American College of Medical Genetics and Genomics and the Association for Molecular Pathology (ACMG/AMP), which define 28 criteria of pathogenic and benign evidence and the rules that combine them into five classes: Pathogenic, Likely pathogenic, Uncertain significance (VUS), Likely benign and Benign (Richards et al., 2015).
-Applied by different laboratories, the same standards can give different answers for the same variant, and the Clinical Genome Resource (ClinGen) has worked to narrow that variation, through general recommendations from its Sequence Variant Interpretation (SVI) Working Group and through gene-specific specifications written by Variant Curation Expert Panels (Rehm et al., 2015; Harrison et al., 2017).
+The interpretation of germline sequence variants rests largely on the 2015 standards of the American College of Medical Genetics and Genomics and the Association for Molecular Pathology (ACMG/AMP), which define 28 criteria of pathogenic and benign evidence and the rules that combine them into five classes: Pathogenic, Likely pathogenic, Uncertain significance (VUS), Likely benign and Benign (Richards et al., 2015).
+Applied by different laboratories, the same standards can give different interpretations of the same variant, and the Clinical Genome Resource (ClinGen) has worked to minimize that variation, through general recommendations from its Sequence Variant Interpretation (SVI) Working Group and through gene-specific specifications written by Variant Curation Expert Panels (Rehm et al., 2015; Harrison et al., 2017).
 
 The general recommendations are many, and they change criteria that looked settled.
 The loss-of-function criterion PVS1 became a decision tree with graded strengths (Abou Tayoun et al., 2018).
@@ -54,13 +66,9 @@ Absence from population databases (PM2) was reduced to Supporting strength (Clin
 Splicing evidence received its own recommendations (Walker et al., 2023), and the SVI proposed that laboratories stop using the reputable-source criteria PP5 and BP6 (Biesecker and Harrison, 2018).
 
 Software that applies the framework at scale must commit to each of these decisions, and to many that no recommendation settles.
-It has to say which numeric frequency counts as "extremely rare", how many carriers make a variant "observed in a healthy adult", and how far into an intron a variant must lie before splicing can be set aside.
+It has to say what frequency counts as "extremely rare", how many carriers make a variant "observed in a healthy adult", and how far into an intron a variant must lie before splicing effects can be discounted.
 Several tools automate part of the framework (Li and Wang, 2017; Nykamp et al., 2017; Kopanos et al., 2019).
-A common way to evaluate one is to compare its output with ClinVar (Landrum et al., 2018), whose classifications are a widely shared reference.
-
-That comparison has limits that are easy to state and easy to forget.
-ClinVar's review status counts submitters and expert panels, not truth.
-Its classifications can rest on the same population-frequency, computational and consequence evidence that the software reads, so agreement can be partly circular.
+A common way to evaluate one is to compare its output with ClinVar (Landrum et al., 2018), whose classifications are a widely shared reference but not ground truth (Section 4.2).
 A single concordance figure cannot say whether a disagreement is a defect in the software, an out-of-date or mistaken ClinVar record, or evidence that no annotator can see.
 And the failure that matters most in a clinical setting is not a crash but a plausible wrong answer, such as a pathogenic variant called benign, or a criterion that silently never fires.
 Neither need show up in an agreement figure.
@@ -83,21 +91,31 @@ Along the way we read each recommendation that the classifier cites for a number
 
 ### 2.1 The classifier and its evidence sources
 
-The classification engine is the `fastvep-classification` crate of fastVEP (version 0.4.0): 14,857 lines of Rust with 340 unit tests at the commit analysed.
+The classification engine is the `fastvep-classification` crate of fastVEP (version 0.4.0): 14,857 lines of Rust with 340 unit tests at the commit analyzed.
 That commit is v37 (5d8004a), and every number of Sections 2 to 3.7 is v37's; Section 3.8 describes what was changed in the classifier afterwards (v38) and measures it with the same harness.
 It is called from the annotation loop after consequence prediction and HGVS naming, once per allele and transcript, and with `--pick`, which was used throughout, one transcript is reported per variant, chosen by VEP's default order (MANE Select, MANE Plus Clinical, canonical, APPRIS, TSL, biotype, CCDS, consequence severity; MANE is described by Morales et al., 2022).
 The Ensembl GFF3 that we used holds no APPRIS attribute, so that step of the order does nothing here.
 Both per-variant loops of the code base, the shared annotation library and the command-line batch path, call the same classifier and the same helper for splice context, and each has end-to-end tests.
 
 The engine implements all 28 ACMG/AMP criteria, and a run reports 26 of them, because PP5 and BP6 are off by default, following the SVI's proposal that laboratories stop using them (Biesecker and Harrison, 2018).
-In the benchmark, which has one variant per record and no pedigree or phenotype, 15 of the 26 can fire: PVS1, PS1, PM1, PM2, PM4, PM5, PP2 and PP3 on the pathogenic side, and BA1, BS1, BS2, BP1, BP3, BP4 and BP7 on the benign side.
-PM3 needs the genotype of a proband, which the sites-only benchmark file lacks, so it is never met (it is reported as evaluated in genes that are not read as recessive and as not evaluated in genes that are), and the other 10 need case-level data and are reported as not evaluated: PS2, PS3, PS4, PM6, PP1, PP4, BS3, BS4, BP2 and BP5.
-Supplementary Table S1 gives how often each computable criterion fires in v37, at which strengths, and on which ClinVar classes.
-Two gene-level gates are referred to in the text: BP1 is withheld (the veto) in a gene with at least three pathogenic missense variants in the ClinVar protein index, where missense is an established mechanism, and PVS1 is withheld by a validity gate and a mechanism gate, the validity gate also withholding PP2 and PM1 (Table 1).
-PS3 and BS3 are read from a curated file when one is supplied, PS2 and PM6 from the genotypes of a proband's parents, and PM3 and BP2 from the proband's genotype together with its other variants in the gene; none of these routes is used in the benchmark.
+The benchmark input is a sites-only VCF: for each variant it gives the position and the alleles, and it carries no genotype, pedigree or phenotype of any individual.
+From it 15 of the 28 criteria can be applied: PVS1, PS1, PM1, PM2, PM4, PM5, PP2 and PP3 on the pathogenic side, and BA1, BS1, BS2, BP1, BP3, BP4 and BP7 on the benign side.
+The other 13 are not applied in this paper, and they fall into four groups.
+Four need the genotypes of a proband and of its parents, or the proband's other variants in the gene: PS2 and PM6 (de novo status), and PM3 and BP2 (in trans or in cis with another variant).
+The engine reads them from a trio VCF (`--proband`, `--mother`, `--father`), which the benchmark does not have.
+Two need functional assays, PS3 and BS3, which the engine reads from a curated file when one is supplied (`--functional-evidence`), and none was.
+Five need case-level data that the engine does not read: PS4 (prevalence in affected individuals against controls), PP1 and BS4 (segregation in a family), PP4 (a phenotype specific to the gene's disease) and BP5 (an alternative cause of the disease in the patient).
+PP5 and BP6 are off by default.
+To check this against the engine and not against its documentation, we annotated every 40th record of the benchmark (16,835 records) to JSON, which reports for each criterion whether it could be evaluated and whether it was met (Supplementary Table S1).
+PS2, PS3, PS4, PM6, PP1, PP4, BS3, BS4, BP2 and BP5 were not evaluated for any of them.
+PM3 was evaluated for 9,918, in genes that are not read as recessive, where the criterion does not apply, and was met for none.
+Each of the other 15 was evaluated for some records and met for some.
+Supplementary Table S1 also gives how often each of the 15 fires in v37, at which strengths, and on which ClinVar classes.
+Two gene-level gates are referred to in the text: BP1 is withheld (the veto) in a gene with at least three pathogenic missense variants in the ClinVar protein index, where missense is an established mechanism, and PVS1 is withheld by a validity gate, which reads ClinGen's gene-disease validity curations, and by a mechanism gate, the validity gate also withholding PP2 and PM1 (Table 1; the sources are in Table 2).
 Strength follows the guidelines where they grade a criterion: PVS1 by a decision tree after that of Abou Tayoun et al. (2018), whose departures from the published tree are listed in Section 3.2, PP3 and BP4 by the REVEL bands of Pejaver et al. (2022), and PM2 at Supporting (ClinGen SVI, 2020).
 Criteria that read the same signal are reconciled in one pass before the call is combined, and a criterion that the pass sets aside stays in the output with the reason.
 PM1 is set aside beside PVS1 and beside PP3 at Strong strength; PP3 beside PVS1 at a canonical splice site, when PP3 was met from SpliceAI, and beside PS1 or PM5, when it was met from REVEL; BP4 from SpliceAI beside PP3 from REVEL; PP3, BP4 and BP7 beside curated functional evidence, which the benchmark does not use; and, from v38, BS2's carrier count beside BS1 or BA1 (Section 2.10).
+Criteria that are met are combined into a class on the point scale of Tavtigian et al. (2020): on the pathogenic side a criterion of Supporting, Moderate, Strong or Very Strong strength adds 1, 2, 4 or 8 points, and a variant with 6 to 9 points is Likely pathogenic and one with 10 or more is Pathogenic, while the benign side keeps the 2015 combining table (Table 1).
 PP2, PM1 and PP3 on one missense variant are otherwise counted as three independent criteria, as the point system counts them, although they can be correlated, and a combined cap on the three was measured and not adopted (Section 3.8).
 Table 1 lists the guidance incorporated, when it first landed, and what the classifier does with it.
 
@@ -107,7 +125,7 @@ A numbered run bundles every change made since the one before it, so the change 
 
 | Source | Criteria | What the classifier does | Written (2026) | Live |
 |---|---|---|---|---|
-| ACMG/AMP standards (Richards et al., 2015) | all 28 | Evaluates every criterion; five classes; the 2015 combining table is kept on the benign side | 21 Apr | v1 |
+| ACMG/AMP standards (Richards et al., 2015) | all 28 | Implements every criterion (a run reports 26, and 15 can be applied to a sites-only input, Section 2.1); five classes; the 2015 combining table is kept on the benign side | 21 Apr | v1 |
 | Bayesian framework and point system (Tavtigian et al., 2018, 2020) | combining rules | Pathogenic side scored 1, 2, 4 and 8 points for Supporting to Very Strong, 10 or more Pathogenic, 6 to 9 Likely pathogenic; a Benign Very Strong counts as two Strong | 12 Aug | v11 |
 | PVS1 recommendations (Abou Tayoun et al., 2018) | PVS1 | A decision tree after the published one, over the prediction of nonsense-mediated decay (NMD), last exon, fraction of protein removed, critical region and start loss; it departs from the tree in two grades and in how it predicts NMD (Section 3.2) | 29 Apr | v8 (graded), v13 (inputs derived) |
 | BA1 exception list (Ghosh et al., 2018) | BA1 | Nine alleles exempt from BA1, matched by genomic coordinate first and HGVS second; extended by three hypomorphic and three reviewer-named alleles, which also block BS1 and BS2 | 29 Apr | v18 |
@@ -148,9 +166,9 @@ We kept records whose review status is at least two stars (criteria provided, mu
 A record's class is read from its CLNSIG by substring match in a fixed order (Pathogenic/Likely pathogenic, then Benign/Likely benign, then Likely pathogenic, Likely benign, a leading Pathogenic or Benign, uncertain significance, and conflicting classifications), and a record that matches none, a drug response for example, is dropped.
 That gives 673,660 records: 79,823 Pathogenic, 13,989 Likely pathogenic, 295,298 VUS, 128,038 Likely benign and 156,512 Benign, of which 652,400 are two-star, 21,237 are three-star and 23 are four-star.
 ClinVar's combined labels are mapped to the first class (Pathogenic/Likely pathogenic to Pathogenic, Benign/Likely benign to Benign), so exact agreement is a strict measure and agreement in direction is the fair one.
-The VUS class is the 295,298 variants that submitters classify as uncertain without conflict, except that two RYR1 records of expert-panel review whose classification is conflicting are labelled VUS by the label script, and fastVEP calls both Likely pathogenic.
-Four records of CFH and CFI whose classifications are Likely pathogenic and Likely pathogenic with low penetrance are labelled Pathogenic by a pattern match of the same script.
-We kept both labels so that the 37 runs stay comparable: relabelling the four changes exact agreement by one variant and agreement in direction by none, and leaving out the two RYR1 records lowers the number of ClinVar VUS called pathogenic-side by two.
+The VUS class is the 295,298 variants that submitters classify as uncertain without conflict, except that two RYR1 records of expert-panel review whose classification is conflicting are labeled VUS by the label script, and fastVEP calls both Likely pathogenic.
+Four records of CFH and CFI whose classifications are Likely pathogenic and Likely pathogenic with low penetrance are labeled Pathogenic by a pattern match of the same script.
+We kept both labels so that the 37 runs stay comparable: relabeling the four changes exact agreement by one variant and agreement in direction by none, and leaving out the two RYR1 records lowers the number of ClinVar VUS called pathogenic-side by two.
 A variant's gene is the first symbol of the GENEINFO field of its ClinVar record, and the population maximum is the highest allele frequency among the ten population groups that the annotation carries, "other" and "remaining" included, which is what the frequency criteria fall back on where there is no filtering allele frequency.
 We call these classifications a reference and not ground truth throughout.
 
@@ -162,7 +180,9 @@ The scorer takes the call on the picked transcript.
 A call is exact if it equals ClinVar's class; same-direction if both are pathogenic-side (Pathogenic or Likely pathogenic), both benign-side, or both VUS; and opposite if ClinVar is pathogenic-side and the call benign-side, or the reverse.
 An opposite call is a false-benign call when ClinVar is pathogenic-side (a missed diagnosis) and a false-pathogenic call when ClinVar is benign-side.
 Rates use all 673,660 records as the denominator, which is the smaller figure: the 295,298 ClinVar VUS cannot be contradicted, so the 49 opposite-direction calls of v37 are 0.0073% of the records, 0.013% of the 378,362 with a pathogenic-side or benign-side class and 0.020% of the 244,093 committed calls.
-Among them, 382 ClinVar reference-agreement records (ALT is `.`) produce no call and count as not concordant.
+Among the 673,660 records, 382 have `.` as their alternative allele.
+Each of them names the reference sequence itself in its HGVS expression (for example `NC_000001.11:g.12358644=`), and ClinVar classifies every one of them as benign-side (377 Benign and 5 Likely benign in the labels of the benchmark).
+There is no alternative allele to annotate, so they receive no call, and the scorer counts them as not concordant, which lowers the recall of benign-side variants by at most 382 of 284,550.
 
 ### 2.3 Iterative development
 
@@ -187,13 +207,14 @@ The coding was done by one coder from the written record, was not repeated indep
 
 ### 2.4 Expert review
 
-A medical geneticist reviewed the calls on which the software and ClinVar disagreed in direction.
+A clinical molecular geneticist (M.G., an author of this paper) reviewed the calls on which the software and ClinVar disagreed in direction.
 Each row of the first workbook carried 75 columns of evidence, and later workbooks carried more: ClinVar's record, the criteria that fired, REVEL, SpliceAI, PhyloP, gnomAD counts and frequencies by ancestry, gene constraint and the gene's ClinGen disease annotations.
 The reviewer saw only the opposite-direction calls, with ClinVar's class and ours both visible, and not the pathogenic-side variants that we left as VUS, nor any concordant call.
-They are a medical geneticist [qualifications and affiliation to be added by the author, with the reviewer's consent]; they were not blind to the software or to its calls, and they supplied two inputs to the classifier (the table of Ghosh et al. and the names of three alleles; ledger items 50 and 63), so they were a contributor as well as an evaluator, and their rulings are one expert's reading of rows on which both calls were visible and not independent evidence of which call is right.
-The reviewer returned annotated workbooks in rounds 1, 2 and 6, with the verdict recorded as a cell colour in rounds 1 and 2 and as text in round 6, and a covering email in round 2; rounds 3 to 5 were tables and notes we sent after re-runs, which were not returned marked.
-The workbook of round 1 carries a list headed "Discordance categories" that names six kinds of discordance, and a key of two colours (a correct call, and both calls discordant with the reviewer's call); the key of round 2 adds a query, a request for more evidence, and a marker for genes whose population frequencies cannot be relied on because of homology.
-We decoded the colours against each workbook's key, and read any green on a call as that call being correct (in round 2 the green on the cells is a different shade from the key's, and in round 1 three greens on fastVEP's call are darker than the key's).
+The reviewer was not blind to the software or to its calls, and supplied two inputs to the classifier (the table of Ghosh et al. and the names of three alleles; ledger items 50 and 63), so they were a contributor as well as an evaluator, and their rulings are one expert's reading of rows on which both calls were visible and not independent evidence of which call is right.
+A second clinical geneticist (W.C., an author) advised on a subset of the cases; the rulings that this paper counts are those of the systematic review by M.G.
+The reviewer returned annotated workbooks in rounds 1, 2 and 6, with the verdict recorded as a cell color in rounds 1 and 2 and as text in round 6, and a covering email in round 2; rounds 3 to 5 were tables and notes we sent after re-runs, which were not returned marked.
+The workbook of round 1 carries a list headed "Discordance categories" that names six kinds of discordance, and a key of two colors (a correct call, and both calls discordant with the reviewer's call); the key of round 2 adds a query, a request for more evidence, and a marker for genes whose population frequencies cannot be relied on because of homology.
+We decoded the colors against each workbook's key, and read any green on a call as that call being correct (in round 2 the green on the cells is a different shade from the key's, and in round 1 three greens on fastVEP's call are darker than the key's).
 In round 6 the workbook asked for the reviewer's class and for who is right in two columns, which came back empty, and the reviewer wrote their ruling as free text in the verdict column of all 64 rows and added a note to 18.
 We mapped the rulings of all three rounds onto five categories (ClinVar's call supported, fastVEP's call supported, neither, needs more evidence or depends on the disorder, and no verdict).
 The round-6 text was coded by us from its content by five rules given in the supplement, and the reviewer did not assign these categories.
@@ -284,7 +305,7 @@ The genes cover every mode of inheritance that the export uses, the three labels
 
 Second, BS2's carrier count is set aside beside BS1 or BA1.
 In a dominant gene BS2 counts carriers, which is the allele count less the homozygotes and so the count that BS1 and BA1 turn into a frequency, and the bar of its carrier arm is lower than theirs.
-BS1 and BA1 test the filtering allele frequency of the population with the highest one and the carrier arm tests the global carrier count, so a lower bar does not make the arm fire wherever they do (it fired on 7,234 of the 7,328 variants that meet BS1, Section 3.8), but where both fire they summarise one gnomAD record twice.
+BS1 and BA1 test the filtering allele frequency of the population with the highest one and the carrier arm tests the global carrier count, so a lower bar does not make the arm fire wherever they do (it fired on 7,234 of the 7,328 variants that meet BS1, Section 3.8), but where both fire they summarize one gnomAD record twice.
 We read that as one observation counted twice, which is our reading and not a statement of the ClinGen SVI, and the 2015 table that the benign side keeps reads two Strong criteria as Benign.
 The reconciliation pass of Section 2.1 now sets the carrier count aside beside either, and the arm acts alone only below BS1's bar.
 The arm for homozygotes and hemizygotes is not set aside: a homozygote is a genotype that an allele frequency does not give, and the hemizygotes of the non-pseudoautosomal X are part of the allele count, so for them the doubling remains (Section 3.8 counts it).
@@ -351,12 +372,12 @@ Eight concerned how far a population frequency can be trusted, five were annotat
 
 **The reviewer supported ClinVar's call far more often than the software's.**
 The medical geneticist returned annotated workbooks in three rounds (Figure S3A, Appendix Table A4).
-In round 1 the workbook held 101 opposite-direction calls from v7, and the reviewer judged ClinVar's call correct on 86, fastVEP's on 3, neither on 8, and left 4 with a colour that was not in the key.
+In round 1 the workbook held 101 opposite-direction calls from v7, and the reviewer judged ClinVar's call correct on 86, fastVEP's on 3, neither on 8, and left 4 with a color that was not in the key.
 Round 2 held 122 calls from v8, of which 93 were new and 29 carried over: ClinVar's call was judged correct on 65, fastVEP's on 2, neither on 8, more evidence was needed on 1, and 46 carried no recorded verdict.
 Seven of the 65 (four in CYP21A2 and three in STRC) carry the marker for a gene with a homology problem, and on six of them it is on fastVEP's call as well as the green on ClinVar's; the project's note of that round counted those six as not marked, which gives 59 and 52 where we count 65 and 46.
 Round 6 held 64 calls from v26: by our coding of the returned text, the reviewer supported ClinVar on 43, fastVEP on 4, neither on 9, and held 8 pending more evidence or by disorder.
 So when the software and ClinVar disagreed in direction, the reviewer sided with ClinVar on 89% of the 97 rows of round 1 that carried a verdict in the key, 86% of the 76 rows of round 2 that carried one, and 67% of the 64 rows of round 6.
-The three percentages come from different instruments, which are colour decoding against a two-colour key (round 1), colour decoding against a richer key (round 2) and our coding of free text (round 6, where 14 rows were coded from the evidence they cite and not from a stated class), so they are not one series and are by our coding.
+The three percentages come from different instruments, which are color decoding against a two-color key (round 1), color decoding against a richer key (round 2) and our coding of free text (round 6, where 14 rows were coded from the evidence they cite and not from a stated class), so they are not one series and are by our coding.
 The list of discordance categories that came with round 1 names six kinds of discordance: the use of PM1, PS1 or PM5 where it does not apply, a pathogenic call that rests on a founder or low-penetrance variant, and loss of function that is not the disease mechanism.
 Three of the kinds match what the ledger later recorded: PM1 and PS1 applied where they did not apply (items 17 and 23), a founder or low-penetrance variant that is an exception to the benign criteria (items 26, 52 and 63), and loss of function that is not the mechanism (item 33).
 
@@ -512,6 +533,7 @@ Of the 58,230 Likely pathogenic calls, 46,718 (80%) are at exactly 9 points, 45,
 The tier boundary therefore falls one point above where a lone null variant with PM2 lands, and we have kept it at the framework's 10, because what lifts such a variant to Pathogenic in laboratory practice is case-level evidence that a single-sample VCF does not carry.
 
 **Table 4. The two point cutoffs of the pathogenic side, by real runs.**
+A point is the unit of the scale that combines pathogenic criteria (Section 2.1): evidence of Supporting, Moderate, Strong or Very Strong strength counts 1, 2, 4 or 8 points, and a variant with 6 to 9 points is Likely pathogenic and one with 10 or more is Pathogenic.
 Each row is a run of v37 with one of the two cutoffs changed, which the code holds as constants (Section 2.6); the offline replay of Section 2.7 reproduces every row cell for cell except the first two, where it differs by 3 and 1 variants.
 Rates are over 673,660 records.
 ClinVar P/LP, VUS and B/LB are classes of ClinVar 2-star+ records of the release of 4 April 2026 (Section 2.2).
@@ -616,12 +638,12 @@ Table 5 divides every record by how the call relates to ClinVar's class (Figure 
 | Opposite direction |  | 49 | 0.007% |
 | &nbsp;&nbsp;ClinVar P/LP called LB/B (missed diagnoses) |  | 24 | 0.004% |
 | &nbsp;&nbsp;ClinVar LB/B called P/LP |  | 25 | 0.004% |
-| No call | reference-agreement records (ALT is a dot) | 382 | 0.06% |
+| No call | records with no alternative allele (ALT is a dot) | 382 | 0.06% |
 | All records |  | 673,660 | 100% |
 <!-- table:decomposition:end -->
 
 **The discordance is almost entirely one side being undecided, and contradictions are rare.**
-Of the 150,774 records that are not in the same direction as ClinVar, 142,115 (94.3%) are a pathogenic-side or benign-side ClinVar class that v37 leaves as VUS, 8,228 (5.5%) are the reverse, 382 have no call, and 49 (0.03%) are opposite.
+Of the 150,774 records that are not in the same direction as ClinVar, 142,115 (94.3%) are a pathogenic-side or benign-side ClinVar class that v37 leaves as VUS, 8,228 (5.5%) are the reverse, 382 (the records with no alternative allele, Section 2.2) have no call, and 49 (0.03%) are opposite.
 The opposite-direction rate is 0.0073% of records (95% interval 0.0051 to 0.0098% by gene-cluster bootstrap; 0.013% of the records whose ClinVar class is pathogenic-side or benign-side), made up of 24 missed diagnoses (0.026% of ClinVar's 93,812 pathogenic-side variants) and 25 false-pathogenic calls (0.009% of its 284,550 benign-side variants).
 A further 97,017 records (14.4%) are in the right direction at the wrong tier, and 94,583 of them are ClinVar Pathogenic called Likely pathogenic (48,301) or ClinVar Benign called Likely benign (46,282): exact agreement measures the tier boundary more than the direction.
 The agreement is also asymmetric in what it says about each call.
@@ -678,6 +700,8 @@ The ClinGen guidance on genes with several disorders (ClinGen, 2024) is the answ
 
 The largest single gene in the gap is an input that was incomplete.
 CFTR holds 439 of the 5,184 variants, and its 558 null variants in the benchmark (stop-gained, frameshift and canonical splice) are all called VUS and none carries PVS1; all 23 four-star records are variants of CFTR, and v37 calls 22 of them VUS.
+All 558 are null on CFTR's MANE Select transcript (ENST00000003084.11), which is the transcript that the pick chose for each of them, so the failure does not come from the choice of transcript.
+ClinVar classifies 556 of the 558 as pathogenic-side (528 Pathogenic and 28 Likely pathogenic) and 2 as VUS, and Supplementary Table S7 lists every one of them with the call that the completed ClinGen file gives.
 ClinGen's export of 11 October 2026 lists CFTR as Definitive for cystic fibrosis (autosomal recessive, classified on 1 June 2022), but the export of 30 April 2026 that the benchmark read does not contain it, and nor do 103 other curations that ClinGen dates before that day: 104 curations in 100 genes, 76 of them Definitive, Strong or Moderate, in 73 genes.
 The completed file adds the 112 rows of the October export that are dated on or before 30 April and whose gene and disease pair the April file lacks: the 104 curations, seven rows that re-label, under another disease identifier, an assertion that the April file lists, and one row (GATM, Moderate) dated 04:00 UTC on 30 April, which is after the April file was saved (02:19 UTC, by its modification time) and changes none of the 163 calls on GATM's variants.
 Their dates are recent: 83 of the 104 (80%) were classified in 2025 or 2026 and 45 (43%) from January to April 2026, against 664 of the 3,546 curations that the file lists (19%) and 159 (4.5%), where an omission independent of the date would leave about 19 and 5, which points to an export that lagged behind ClinGen's curations; five are older than 2024, CFTR (2022) among them, which a lag does not explain, and we have not established the cause.
@@ -765,7 +789,7 @@ They are variants that reached two stars since, and 9,234 of them already had a 
 Table 7 gives v37, unchanged, on the April set and on each stratum of the covered release (Supplementary Table S9; Appendix Table A9 holds the rest of this section).
 
 **Table 7. v37 on the April benchmark and on the later ClinVar release, by stratum.**
-A variant is new if it is not in the April set, unchanged if it has the same class in both releases, and has moved within or across a direction if its class changed.
+A variant is new if it is not in the April set, unchanged if it has the same class in both releases and has moved within or across a direction if its class changed.
 Opposite-direction calls are given as the total, with missed diagnoses and false-pathogenic calls in brackets.
 ClinVar P/LP, LB/B and VUS are classes of ClinVar 2-star+ records of the release of 4 April 2026 for the April set and of 4 October 2026 for the later release.
 
@@ -782,7 +806,7 @@ ClinVar P/LP, LB/B and VUS are classes of ClinVar 2-star+ records of the release
 
 **On variants that were never in the benchmark, agreement in direction is 70.1% against 77.6%, mostly on the benign side, and contradictions are 2.3 times as frequent.**
 Across the 772,585 covered records, agreement in direction is 76.6% against 77.6% in April, with 64 opposite-direction calls (26 missed diagnoses and 38 false-pathogenic).
-On the 662,668 variants whose class did not change the figures are those of April (77.7%, 44 opposite), as they should be.
+On the 662,668 variants whose class did not change, the figures are those of April (77.7%, 44 opposite), as they should be.
 On the 107,528 new variants agreement in direction is 70.1%, and recall of pathogenic-side variants is 61.0% (April 62.5%), of VUS 97.3% (97.2%) and of benign-side variants 55.2% (62.3%).
 The new variants are a different mix of ClinVar classes (9% pathogenic-side, 34% VUS and 57% benign-side, against 14%, 44% and 42% in April), and at the April recall of each direction their agreement would be 74.2%, so taking the mix first 3.4 of the 7.5 points are the mix and 4.1 are lower recall, nearly all of it benign-side (the other order gives 4.4 and 3.2, splitting the same 7.5 points).
 The fall on the benign side is mostly a change in composition (Figure 5C).
@@ -1021,7 +1045,7 @@ It also counts the variant's own record, and 3 of the 27 rest on it: with that a
 Reporting both figures is what makes the claim checkable.
 
 **An input can be incomplete without anything showing, and a check against an independent listing can find it.**
-The ClinGen file that the benchmark read lacked 104 curations, among them CFTR, and the classifier degraded in the way its design implies: a gene with no curation is not blocked, it only has no route to loss of function, so every null variant of CFTR was called VUS.
+The ClinGen file that the benchmark read lacked 104 curations, among them CFTR, and the classifier degraded in the way its design implies: a gene with no curation is not blocked, it only has no route to loss of function, so every null variant of CFTR was called VUS (Supplementary Table S7 lists them).
 The design is the defect worth naming, because a gene that is absent from the curated file silently has no route, and an explicit flag for a gene that is not in the file would have listed it, among 7,391 of the benchmark's 10,231 genes.
 Nothing in an aggregate showed it, and the review could not, because a VUS is not an opposite-direction call; even the benchmark's four-star records, all of them CFTR, were called VUS for 22 of 23.
 We found it by asking why one gene had no PVS1.
@@ -1054,7 +1078,10 @@ They were the frequency a disease model allows, the phase of a variant, a trunca
 Each is evidence or a policy that a single-sample, single-transcript annotator can only approximate, and several can be approximated better (a disease-specific frequency bar, a first-exon rule, a transcript policy).
 We have not done so here, because each is a decision about the classifier and not about this paper's measurements, and because the residual is the sample on which the classifier was reviewed: a fix tuned on it could not be tested on it; the hold-out of Section 3.7 is the test that the data allow, and the changes of Section 4.5 that could be run there do not fail on variants the review never saw.
 
-ClinVar is a reference and not ground truth, and three observations in this work bear on how far to trust it.
+ClinVar is a reference and not ground truth.
+Its review status records how many submitters agree, or that an expert panel reviewed the record, and is not an independent confirmation that a variant is pathogenic or benign.
+Its classifications can rest on the same population-frequency, computational and consequence evidence that the software reads, so agreement can be partly circular, which Section 3.4 measures for the ClinVar-derived inputs and not for REVEL or SpliceAI.
+Three observations in this work bear on how far to trust it.
 Five of the 49 residual variants (10%) had left the 2-star+ set by October, all with conflicting classifications, against 1.3% of all April variants that left it for any reason.
 ClinVar moved 157 of 665,057 variants across a direction in six months.
 And the label of a variant can depend on the haplotype it lies on: for BRCA1 c.594-2A>C the reviewer's note records that the variant is always in cis with c.641A>G and that the haplotype, not the variant, has been shown not to be pathogenic, which no single-variant annotator could reproduce.
@@ -1098,6 +1125,10 @@ The field gives a mode and not a penetrance, so BS2's carrier arm applies to eve
 The calls for each mode of inheritance of a gene are not scored, because a ClinVar record of the benchmark has no disease-specific class.
 BS2's arm for homozygotes and hemizygotes still counts, beside BS1 and without BA1, 1,301 variants that BS1 and BS2 call Benign on one frequency, none of them a ClinVar pathogenic-side variant (Section 3.8).
 And the guard against counting BS2 beside BS1 was written after two of the variants it protects had been seen, so no variant of the benchmark tests it.
+Three limits of the implementation remain in the release that this paper describes (v38, the code of the repository), each to a different degree.
+Inheritance, which v37 took from the words of the disease names, is read from the mode that ClinGen curates for each of the 2,924 genes of the ClinGen file; a gene that is known only from an OMIM phenotype has no tag and is still read by its words, and every number of Sections 3.1 to 3.7 was measured on the words (Section 3.8).
+PM2 still reads a variant with no gnomAD record as absent, including at sites that gnomAD's exomes do not cover, because no coverage is read (the setting `pm2_absent_when_no_record` turns that off, at the cost given above), and reading the genomes through the joint release does not change that.
+And the ClinGen file is an input that the release does not ship: the converter checks the format of the export that it is given and cannot tell that curations are missing from it, so an incomplete export is read as a complete one, which is how the benchmark came to read one that lacked CFTR (Section 3.5); the setup guide tells the user to download ClinGen's current export, and the mechanical check that would have found the gap sooner (Section 4.1) is an analysis of the harness and not a part of the release.
 Where the project's documentation attributed a number or a grade to a published recommendation that we could not find stated there, or where the implementation departs from the recommendation, we say so in Sections 3.2 and 3.3.
 fastVEP's classification is a decision-support output for research use: it is not a laboratory-validated classification and does not replace expert review.
 
@@ -1213,11 +1244,16 @@ They were made with builds of the working tree that became v38, so the source of
 The alternatives of Section 3.8 are read from the environment by a build of `manuscript/acmg/replay_validation/inheritance_alternatives_env.patch`.
 The real ClinGen rows that test the reading of the field are in `crates/fastvep-cli/fixtures/clingen/` and are made by `analysis/acmg_benchmark/scripts/sa_sources/make_clingen_parse_fixture.py`, and the databases of gnomAD's exomes, genomes and joint release are built by `build_gnomad_release_per_chrom.sh` in the same directory.
 `17_joint_boundary_cases.py` annotates the variants that the joint release turns into errors, or out of a pathogenic-side call, through both databases.
+`18_criteria_status.py` annotates every 40th record of the benchmark to JSON and writes the status of the 28 criteria (Supplementary Table S1).
 The reviewer's workbooks are not in the repository.
 
 ## Declarations
 
-**Author contributions.** [To be completed by the author.]
+**Author contributions.** M.G. carried out the clinical review of discordant calls over six rounds and contributed curated variant inputs.
+W.C. advised on the clinical interpretation of a subset of cases.
+K.-L.H. designed and implemented the classifier, ran the benchmark and the measurements, and wrote the manuscript.
+All authors read and approved the final version.
+[To be confirmed by all authors.]
 
 **Use of AI assistance.** [To be completed by the author.
 The analysis scripts, the figures and the first draft of this manuscript were produced with the assistance of Claude (Anthropic) working as a coding agent in the project repository, and the author has not yet reviewed them in full.]
@@ -1226,10 +1262,8 @@ The analysis scripts, the figures and the first draft of this manuscript were pr
 
 **Competing interests.** [To be completed by the author.]
 
-**Acknowledgements.** The medical geneticist who reviewed the calls over six rounds [name and affiliation to be added, with their consent].
-
 **Ethics.** The study uses public records of variants and no patient data, and no human participants were recruited.
-The reviewer's workbooks are not public, and the manuscript paraphrases the reviewer's rulings; whether they may be quoted is for the author to settle with the reviewer.
+The reviewer is an author (M.G.), the review workbooks are not public, and the manuscript paraphrases rather than quotes the rulings they record.
 
 ---
 
@@ -1273,7 +1307,7 @@ The BP1 run, the SpliceAI run, the run with both BP7 changes and the run with th
 
 ## Supplementary materials
 
-The supplementary figures show how the classifier was developed and reviewed, and the nine supplementary tables are the tables that summarise the data best; every other table is in the appendix.
+The supplementary figures show how the classifier was developed and reviewed, and the nine supplementary tables are the tables that summarize the data best; every other table is in the appendix.
 All of them are in one workbook, `manuscript/acmg/supplementary_tables.xlsx`, which has a sheet of contents and a sheet for each table (S1 to S9 and A1 to A16).
 Each table is also a set of CSV or TSV files in `manuscript/acmg/data/` of the repository, which the entries below name, and each of those files is written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py` or `15_clingen_complete_export.py` from the scored runs.
 
@@ -1300,19 +1334,19 @@ Classes and routes are our coding of the project's record.
 
 **Figure S3. What the reviewer ruled.**
 (A) The rulings on the rows of the three workbooks the reviewer returned, in rounds 1, 2 and 6, in five categories: the ClinVar 2-star+ call supported, fastVEP's call supported, neither (the reviewer's call is VUS or another class), more evidence needed or dependent on the disorder, and no verdict recorded.
-Rounds 1 and 2 are decoded from cell colours against each workbook's key, and round 6 is our coding of the reviewer's text (Appendix Table A4).
+Rounds 1 and 2 are decoded from cell colors against each workbook's key, and round 6 is our coding of the reviewer's text (Appendix Table A4).
 (B) The 49 opposite-direction calls of v37, by the evidence behind the call, with the rulings of the last round.
 
 **Figure S4. Agreement in direction against opposite-direction calls.**
-Each point is a classifier, on 673,660 variants: the versions v7 to v37 with stored scored matrices (blue, joined in order), the runs of this paper and the earlier runs of the dominant-gene BS2 settings, each v37 with one change (grey), every variant called VUS (the diamond at zero), and three rules with no combining rule, gene-level gate or safeguard at nine frequency bars each, with the second rule alone and the second with the third also given with no frequency rule (the filled markers).
-R1 calls a variant benign-side when its population-maximum allele frequency is at or above the bar (the bars at the two ends of each line are labelled, and the point at 0.001 of the last rule is annotated), R2 adds a pathogenic-side call for a stop-gained, frameshift, canonical splice or start-lost variant that is absent from gnomAD or below 1e-4, and R3 adds a benign-side call for a quiet variant (synonymous, intronic, untranslated, flanking or non-coding) with SpliceAI below 0.2.
+Each point is a classifier, on 673,660 variants: the versions v7 to v37 with stored scored matrices (blue, joined in order), the runs of this paper and the earlier runs of the dominant-gene BS2 settings, each v37 with one change (gray), every variant called VUS (the diamond at zero), and three rules with no combining rule, gene-level gate or safeguard at nine frequency bars each, with the second rule alone and the second with the third also given with no frequency rule (the filled markers).
+R1 calls a variant benign-side when its population-maximum allele frequency is at or above the bar (the bars at the two ends of each line are labeled, and the point at 0.001 of the last rule is annotated), R2 adds a pathogenic-side call for a stop-gained, frameshift, canonical splice or start-lost variant that is absent from gnomAD or below 1e-4, and R3 adds a benign-side call for a quiet variant (synonymous, intronic, untranslated, flanking or non-coding) with SpliceAI below 0.2.
 The horizontal axis is on a log scale above 10.
 
 ### Supplementary tables
 
 A ClinVar class in these tables is the class of a ClinVar 2-star+ record of the release of 4 April 2026, and of 4 October 2026 where a table says that it is about the later release.
 
-**Supplementary Table S1.** How often each of the 15 computable criteria fires in v37, at which strengths, and on variants of which ClinVar class (`criteria_firing_v37.csv`).
+**Supplementary Table S1.** The 28 criteria and the benchmark: what each needs, whether the benchmark can apply it and, on every 40th record of the benchmark annotated to JSON, how often the engine could evaluate it and how often it met it (`criteria_status.csv`, made by `18_criteria_status.py`); and how often each of the 15 computable criteria fires in v37, at which strengths, and on variants of which ClinVar class (`criteria_firing_v37.csv`).
 
 **Supplementary Table S2.** The versions and the runs of this paper.
 For 36 of the 37 versions (v3 was a partial run that was overwritten before it was preserved), the agreement, the opposite-direction calls and the recall of each, with the number of variants each committed to, the denominator of each, and the marker of v17 (`trajectory.csv`; v1 is a reconstructed matrix and v2 and v4 to v6 are the figures recorded at the time).
@@ -1326,7 +1360,7 @@ For v37 itself, the 89 runs made for this paper and the 8 earlier runs of the do
 
 **Supplementary Table S6.** The rules with no combining rule, gene-level gate or safeguard and what they agree with ClinVar on, at one bar and at nine, beside v37; the second rule against the PVS1 gap; and what each tier of the v37 call is worth, with the rate of opposite-direction calls and its interval (`baselines_v37.csv`, `baselines_curve_v37.csv`, `baselines_r2_vs_v37.csv`, `precision_by_tier_v37.csv`).
 
-**Supplementary Table S7.** The PVS1 gap and the ClinGen file: truncating variants without PVS1, by gene and by the reason PVS1 is absent (`pvs1_gap_v37.csv`, `pvs1_gap_genes_v37.csv`, `pvs1_gap_reasons_v37.csv`); the 112 rows that complete the ClinGen export of 30 April, 104 of them curations that it lacked (`clingen_missing_curations.csv`, `clingen_missing_summary_v37.csv`); and what the three runs that change an input do to the gap (`pvs1_gap_closure_v37.csv`).
+**Supplementary Table S7.** The PVS1 gap and the ClinGen file: truncating variants without PVS1, by gene and by the reason PVS1 is absent (`pvs1_gap_v37.csv`, `pvs1_gap_genes_v37.csv`, `pvs1_gap_reasons_v37.csv`); the 112 rows that complete the ClinGen export of 30 April, 104 of them curations that it lacked (`clingen_missing_curations.csv`, `clingen_missing_summary_v37.csv`); the 558 null variants of CFTR, each with its transcript, its call in v37 and the call that the completed file gives (`cftr_null_variants_v37.csv`); and what the three runs that change an input do to the gap (`pvs1_gap_closure_v37.csv`).
 
 **Supplementary Table S8.** The 49 opposite-direction calls of v37 with their criteria, gnomAD counts and rulings, and the rulings by kind of call (`opposite_direction_v37.csv`, `opposite_direction_by_group_v37.csv`).
 
@@ -1361,7 +1395,7 @@ The reviewer's text is not reproduced here.
 
 **Appendix Table A8.** The PVS1 gap in detail: the genes that gnomAD constrains, the genes that gain PVS1 in each of the three runs that change an input, and the false-pathogenic calls that those runs add (`pvs1_gap_constrained_v37.csv`, `pvs1_gap_closure_genes_v37.csv`, `pvs1_gap_closure_new_false_pathogenic_v37.csv`).
 
-**Appendix Table A9.** The later ClinVar release in detail: recall by band of allele frequency and standardised for the mix of bands, agreement in direction standardised for the mix of ClinVar classes, the new Benign variants of 2% or more and why BA1 and BS1 did not fire on those that were not called benign-side, the composition of the new variants, their genes and how they stand in the April protein index, the 157 variants that changed direction, and what became of the 49 residual calls (`temporal_recall_by_af_band_v37.csv`, `temporal_standardised_recall_v37.csv`, `temporal_agreement_mix_v37.csv`, `temporal_high_af_benign_v37.csv`, `temporal_high_af_blockers_v37.csv`, `temporal_new_composition_v37.csv`, `temporal_new_top_genes_v37.csv`, `temporal_new_genes_v37.csv`, `temporal_new_in_index_v37.csv`, `temporal_direction_changes_v37.csv`, `temporal_direction_change_variants_v37.csv`, `april_opposite_in_october_v37.csv`).
+**Appendix Table A9.** The later ClinVar release in detail: recall by band of allele frequency and standardized for the mix of bands, agreement in direction standardized for the mix of ClinVar classes, the new Benign variants of 2% or more and why BA1 and BS1 did not fire on those that were not called benign-side, the composition of the new variants, their genes and how they stand in the April protein index, the 157 variants that changed direction, and what became of the 49 residual calls (`temporal_recall_by_af_band_v37.csv`, `temporal_standardised_recall_v37.csv`, `temporal_agreement_mix_v37.csv`, `temporal_high_af_benign_v37.csv`, `temporal_high_af_blockers_v37.csv`, `temporal_new_composition_v37.csv`, `temporal_new_top_genes_v37.csv`, `temporal_new_genes_v37.csv`, `temporal_new_in_index_v37.csv`, `temporal_direction_changes_v37.csv`, `temporal_direction_change_variants_v37.csv`, `april_opposite_in_october_v37.csv`).
 
 **Appendix Table A10.** The runs of Section 3.8 and their control: the concordance of the shipped change, of the commit before it and of each alternative, the control of the measurement build against v38, how often each criterion fires, and the facts that the text quotes from the per-variant tables (`v38_runs.csv`, `v38_controls.csv`, `v38_criteria_firing.csv`, `v38_facts.csv`).
 

@@ -14,7 +14,7 @@ ClinVar's 2-star+ classifications are a reference and not ground truth, througho
 | `supplementary_tables.xlsx` | Every supplementary table (S1 to S9) and appendix table (A1 to A16) in one workbook: a sheet of contents and a sheet for each table, which holds the CSV or TSV files of `data/` that make it up, one under another, each under its file name |
 | `build_supplement.py` | Writes `supplementary_tables.xlsx` from `data/`; which file is in which table is read from the table entries of `manuscript.md`, so the workbook cannot disagree with it |
 | `verify_numbers.py` | Recomputes the numbers quoted in the text from `data/` and fails when a sentence does not contain them; it also checks that every figure and table that the text cites exists and is cited in order, that there are fewer than ten supplementary tables, that every file of `data/` is in exactly one table, and that `supplementary_tables.xlsx` holds what those files say |
-| `data/` | The supplementary and appendix tables, 95 small CSV and TSV files (each is named by exactly one table of the manuscript, which `verify_numbers.py` checks), written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py`, `15_clingen_complete_export.py` and `17_joint_boundary_cases.py` |
+| `data/` | The supplementary and appendix tables, 97 small CSV and TSV files (each is named by exactly one table of the manuscript, which `verify_numbers.py` checks), written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py`, `15_clingen_complete_export.py`, `17_joint_boundary_cases.py` and `18_criteria_status.py` |
 | `replay_validation/combiner_cutoff_env.patch` | A patch of eight lines that makes the two point cutoffs of the pathogenic side readable from the environment, for the nine cutoff runs of Table 4 |
 | `replay_validation/bp_hooks_env.patch` | A patch that makes BP1's own-record count and BP7's SpliceAI bar readable from the environment, for the runs of Sections 3.3 and 3.4 |
 | `replay_validation/inheritance_alternatives_env.patch` | A patch, against the tree of v38, that makes the alternatives of Section 3.8 readable from the environment: BS2's carriers counted beside BS1 and BA1, no carrier arm for a susceptibility or predisposition disorder, BS2 read from the disease names as in v37, and a combined cap on PP2, PM1 and PP3 |
@@ -86,15 +86,17 @@ The classifier was not changed for these, because each is a decision that deserv
 These are marked in the manuscript with square brackets or are not in it at all.
 
 1. **The reviewer.**
+   The reviewer is M.G., an author since the co-authors' version of 4 November 2026, and W.C., who advised on a subset of the cases, is an author too; the manuscript names them in the author line and in Sections 2.4 and the Declarations.
    The manuscript describes the reviewer's rulings and paraphrases their reasons.
    It quotes only the heading of the list that came with the round-1 workbook ("Discordance categories") and does not reproduce their notes, and `data/round6_rulings.tsv` holds our coding of the text and not the text.
-   Whether to name them, in the acknowledgements or as an author, and whether the text may be quoted or published as a supplementary column, is for the author to settle with them.
+   Whether the text may be quoted or published as a supplementary column is for the authors to settle.
    The workbooks they returned are not in the repository.
 2. **Disclosure of AI assistance.**
    The scripts, the figures and the first draft were produced with Claude working as a coding agent in this repository.
    The Declarations section holds a placeholder for the author's statement.
-3. **Author contributions, funding and competing interests** are placeholders.
+3. **Author contributions** are the text of the draft that the co-authors read, marked for all authors to confirm, and **funding and competing interests** are placeholders.
 4. **The title and the abstract** state the main findings and should be read by the author before submission.
+   The abstract is about 800 words, the length of a long-form paper, and has to be cut to the limit of the journal chosen; the language-edited version that the co-authors read (a .docx, not in the repository, of v37 only) has a shorter one and another title.
 5. **Pronouns.**
    The manuscript refers to the reviewer as "the reviewer" and "they", because their pronouns are not recorded.
 6. **Whether to change the classifier** on the findings above, and in what order (Section 4.5).
@@ -123,7 +125,7 @@ These are marked in the manuscript with square brackets or are not in it at all.
 A sentence can pass and still say something the data do not support.
 It does not check the following, which are not functions of `data/`.
 
-- Dates, version numbers and constants of the code (the 2,000-allele floor, the pLI and LOEUF bars, the missense z-score bars, the 15 alleles of the exception list, the 26 criteria that a run reports and the 10 that are not evaluated).
+- Dates, version numbers and constants of the code (the 2,000-allele floor, the pLI and LOEUF bars, the missense z-score bars, the 15 alleles of the exception list, the 26 criteria that a run reports; `18_criteria_status.py` checks the criteria that are not applied to a sites-only input against the engine's JSON on a sample of the benchmark, which is not the whole benchmark, and stops when the engine disagrees with the groups it states).
 - The counts read from the project's own record: the split of the 2.7 points that v9 lost (0.6 and 2.0), the 10,000-row cap and the chromosome at which it stopped the first export, the 3,793 Likely pathogenic calls that PS1's splice path turned into Pathogenic, the 14 deletions that lost their PVS1, and the 19-point knee that v10 recorded.
 - What each recommendation says (Section 3.2 and Table 1), which was checked by subagents and by reading, and the release dates of ClinVar and ClinGen inputs.
 - The reviewer's remarks, which are paraphrased in Section 3.6 and coded, not stored.

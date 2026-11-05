@@ -290,7 +290,7 @@ def table_decomposition() -> str:
         ["Opposite direction", "", n(fb + fp), pct((fb + fp) / N_ALL, 3)],
         ["&nbsp;&nbsp;ClinVar P/LP called LB/B (missed diagnoses)", "", n(fb), pct(fb / N_ALL, 3)],
         ["&nbsp;&nbsp;ClinVar LB/B called P/LP", "", n(fp), pct(fp / N_ALL, 3)],
-        ["No call", "reference-agreement records (ALT is a dot)", n(nocall), pct(nocall / N_ALL, 2)],
+        ["No call", "records with no alternative allele (ALT is a dot)", n(nocall), pct(nocall / N_ALL, 2)],
         ["All records", "", n(N_ALL), "100%"],
     ]
     return md(["Kind", "Cells", "Variants", "Share of all records"], rows, align=["l", "l", "r", "r"])

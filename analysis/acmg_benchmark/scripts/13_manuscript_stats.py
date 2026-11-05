@@ -884,9 +884,15 @@ def pvs1_gap(df: pd.DataFrame) -> None:
     ]
     nul = df[df.consequence.isin(["stop_gained", "frameshift_variant", "splice_donor_variant", "splice_acceptor_variant"])]
     c = nul[nul.gene == "CFTR"]
+    # `mane_select` is filled only where the transcript the pick chose is the gene's MANE Select transcript, so a
+    # variant is null on the MANE Select transcript when it is in this table, is null, and has the field filled with
+    # the transcript that was picked (the version is not part of the picked transcript's identifier).
+    on_mane = c.mane_select.str.split(".").str[0] == c.transcript
     rows += [{"measure": "CFTR null variants in the benchmark (stop, frameshift, canonical splice)", "n": len(c)},
              {"measure": "  of them called VUS", "n": int((c.fv3 == "VUS").sum())},
-             {"measure": "  of them carrying any PVS1", "n": int(c.criteria.str.contains("PVS1").sum())}]
+             {"measure": "  of them carrying any PVS1", "n": int(c.criteria.str.contains("PVS1").sum())},
+             {"measure": "  of them null on the MANE Select transcript, the one the pick chose", "n": int(on_mane.sum())},
+             {"measure": "  of them ClinVar pathogenic-side", "n": int((c.cv3 == "P/LP").sum())}]
 
     # Why PVS1 is absent, in the order PVS1 asks its questions (`criteria/pvs1.rs`): the validity gate
     # (every ClinGen curation of the gene is Limited, Disputed, Refuted or No Known Disease
@@ -1087,6 +1093,33 @@ def baselines(df: pd.DataFrame) -> None:
     write("precision_by_tier_v37.csv", out)
 
 
+def cftr_null_variants(base: pd.DataFrame, complete: pd.DataFrame) -> None:
+    """Every CFTR null variant of the benchmark, with its call in v37 and in the run that reads the completed ClinGen file.
+
+    The 558 stop-gained, frameshift and canonical splice variants of CFTR are all VUS in v37, because the ClinGen file that
+    the benchmark read lacked CFTR and PVS1 had no other route to loss of function there. A reader who asks which they
+    are, and whether each is null on the transcript that carries the gene's MANE Select name, needs the variants and not
+    their count: the position and alleles, the consequence and the HGVS on the transcript that the pick chose, whether
+    that transcript is the gene's MANE Select transcript, what ClinVar says, what v37 called with the criteria it met, the
+    gnomAD counts that PM2 and the frequency criteria read, and what the run with the completed file calls.
+    """
+    key = ["chrom", "pos", "ref", "alt"]
+    nulls = ["stop_gained", "frameshift_variant", "splice_donor_variant", "splice_acceptor_variant"]
+    cf = base[(base.gene == "CFTR") & base.consequence.isin(nulls)]
+    cf = cf.merge(complete[key + ["call", "criteria"]], on=key, suffixes=("", "_complete"))
+    out = pd.DataFrame({
+        "chrom": cf.chrom, "pos": cf.pos.astype(int), "ref": cf.ref, "alt": cf.alt,
+        "consequence": cf.consequence, "transcript": cf.transcript,
+        "on_mane_select": (cf.mane_select.str.split(".").str[0] == cf.transcript).map({True: "yes", False: "no"}),
+        "hgvsc": cf.hgvsc, "hgvsp": cf.hgvsp,
+        "clinvar": cf.clinvar, "review_stars": cf.stars,
+        "gnomad_ac": cf.gnomad_ac, "gnomad_an": cf.gnomad_an,
+        "v37_call": cf.call, "v37_criteria": cf.criteria,
+        "complete_clingen_call": cf.call_complete, "complete_clingen_criteria": cf.criteria_complete,
+    }).sort_values("pos")
+    write("cftr_null_variants_v37.csv", out)
+
+
 def gap_runs() -> None:
     """What the gap runs of `11_manuscript_runs.py` do to the variants that carry no PVS1 in v37.
 
@@ -1108,11 +1141,14 @@ def gap_runs() -> None:
              "v37_gap_orphanet_lof": "PVS1 licensed by Orphanet's loss-of-function label",
              "v37_gap_both": "both"}
     rows, new_fp, per_gene = [], [], []
+    complete = None
     for run, label in names.items():
         x = pd.read_csv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz", sep="\t", dtype=str, keep_default_na=False)
         x["cv3"] = x["clinvar"].map(TRI)
         x["fv3"] = x["call"].map(TRI)
         x["pvs1"] = x["criteria"].str.contains("PVS1")
+        if run == "v37_gap_clingen_complete":
+            complete = x
         g = gap[key + ["gene"]].merge(x[key + ["pvs1", "fv3"]], on=key)
         b = base[key + ["gene", "cv3", "fv3", "call", "pvs1", "criteria", "clinvar", "consequence", "gnomad_popmax_af"]].merge(
             x[key + ["call", "fv3", "pvs1", "criteria"]], on=key, suffixes=("", "_new"))
@@ -1147,6 +1183,7 @@ def gap_runs() -> None:
     write("pvs1_gap_closure_v37.csv", rows)
     write("pvs1_gap_closure_new_false_pathogenic_v37.csv", new_fp)
     write("pvs1_gap_closure_genes_v37.csv", per_gene)
+    cftr_null_variants(base, complete)
     # How many curations the April export lacked, from the file `15_clingen_complete_export.py` wrote. The rows it
     # added are not all curations the April export lacked: some re-label an assertion the export does list, and one
     # is dated after the export was downloaded, so the summary keeps the three apart.
@@ -1524,6 +1561,21 @@ def facts(df: pd.DataFrame) -> None:
     pv = res[res.group == "PVS1 on a ClinVar benign-side variant"]
     common = pv[pv.ac >= 600]
     out += [("records_without_gene_symbol", int((df.gene == "").sum()))]
+    # The records whose ALT is "." (the 382 that get no call): what ClinVar says they are, from the VCF. Each names, in its HGVS
+    # expression (CLNHGVS), the reference sequence itself ("NC_000001.11:g.12358644=", the "=" URL-encoded as %3D), so there is no
+    # alternative allele to annotate; ClinVar's class for every one of them is benign-side.
+    alt_dot = df[df.alt == "."]
+    reference_hgvs = 0
+    with (BENCH / "clinvar_2star.vcf").open() as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            fields = line.split("\t", 8)
+            if fields[4] == ".":
+                hgvs = re.search(r"(?:^|;)CLNHGVS=([^;]*)", fields[7])
+                reference_hgvs += bool(hgvs and re.search(r"(?:=|%3D)$", hgvs.group(1)))
+    out += [("alt_dot_records", len(alt_dot)), ("alt_dot_records_called", int((alt_dot.call != "NoCall").sum())),
+            ("alt_dot_clinvar_benign_side", int((alt_dot.cv3 == "B/LB").sum())), ("alt_dot_hgvs_is_reference", reference_hgvs)]
     # The reviewer's rulings on the 49, by kind of contradiction (our coding; Section 3.6): "missed diagnosis" and "false-pathogenic"
     # name the direction of the error against ClinVar and are not a finding that ClinVar is right.
     rul = pd.read_csv(OUT / "opposite_direction_v37.csv", dtype=str)

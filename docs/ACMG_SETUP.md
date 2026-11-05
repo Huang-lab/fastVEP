@@ -424,7 +424,13 @@ When something reads zero, the three usual causes are:
 2. **Assembly.** A GRCh37 source against GRCh38 input produces no matches and no error.
 3. **An empty build.** Check the source file, not the database.
 
-Criteria reported as never evaluated because no supplementary annotation supplies them are working as designed: PS2, PM6, PP1 and BS4 need trio or family data (`--proband`, `--mother`, `--father`), PS3 and BS3 need `--functional-evidence`, and PS4 is `NotEvaluated` by default per ClinGen SVI because review stars are not case-control statistics.
+Criteria reported as never evaluated because no supplementary annotation supplies them are working as designed.
+PS2 and PM6 need the genotypes of a proband and both parents, and PM3 and BP2 the proband's genotype and its other variants in the gene (`--proband`, `--mother`, `--father`); PM3 is reported as evaluated and not met in a gene that is not read as recessive, where it does not apply.
+PS3 and BS3 need `--functional-evidence`.
+PP1 and BS4 need a pedigree with affection status, PP4 a phenotype specific to the gene's disease, and BP5 an alternative cause of the disease in the patient, and none of these is read.
+PS4 is `NotEvaluated` by default per ClinGen SVI because review stars are not case-control statistics.
+PP5 and BP6 are off unless `use_pp5_bp6` is set.
+On a sites-only VCF, which carries none of this, 15 of the 28 criteria can be applied, and the other 13 are those (`manuscript/acmg`, Section 2.1, Supplementary Table S1; `analysis/acmg_benchmark/scripts/18_criteria_status.py` checks it against the engine's JSON output).
 
 ## Run it
 

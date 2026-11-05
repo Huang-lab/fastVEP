@@ -151,6 +151,8 @@ controls = csv("controls_v37.csv").set_index("run")
 veto = csv("replay_veto_v37.csv").iloc[0]
 hooknew = csv("hook_new_opposite_v37.csv")
 crit = csv("criteria_firing_v37.csv")
+status = csv("criteria_status.csv").set_index("criterion")  # the 28 criteria; made by 18_criteria_status.py from a sample of the benchmark annotated to JSON
+cftr_null = csv("cftr_null_variants_v37.csv")
 EARLIER = {"v37_bs2off", "v37_bs2prev_3e-5", "v37_bs2prev_1e-4", "v37_bs2prev_1e-3", "v37_bs2prev_3e-3", "v37_bs2ac_20", "v37_bs2ac_100", "v37_bs2ac_1000"}
 harness = runs[~runs.index.isin(EARLIER | {"v37"})]  # the 81 runs of 11_manuscript_runs.py
 mainline = traj[traj.mainline.astype(str) == "True"]
@@ -206,7 +208,12 @@ def methods() -> None:
     fact("Four records of CFH and CFI", "Four" if fv("labels_lowpen_pair_mapped_to_pathogenic") == 4 else "?")
     fact("We kept both labels so that the 37 runs stay comparable", "by one variant" if fv("labels_lowpen_pair_exact_gain_if_relabelled") == 1 else "?",
          "by two" if fv("labels_conflicting_called_pathogenic_side") == 2 else "?")
-    fact("Among them, 382 ClinVar reference-agreement records", n(hl("variants_no_call").value))
+    fact("Among the 673,660 records, 382 have `.` as their alternative allele", n(N_ALL), n(hl("variants_no_call").value), n(fv("alt_dot_records")))
+    fact("Each of them names the reference sequence itself in its HGVS expression",
+         "every one of them as benign-side" if fv("alt_dot_hgvs_is_reference") == fv("alt_dot_clinvar_benign_side") == fv("alt_dot_records") else "?",
+         n(c5.loc["Benign", "NoCall"]), n(c5.loc["Likely_benign", "NoCall"]))
+    fact("There is no alternative allele to annotate, so they receive no call", n(hl("variants_no_call").value), n(c5.loc[["Likely_benign", "Benign"]].sum().sum()),
+         "no call" if fv("alt_dot_records_called") == 0 else "?")
     pr_bl = cls["Pathogenic"] + cls["Likely_pathogenic"] + cls["Likely_benign"] + cls["Benign"]
     fact("Rates use all 673,660 records as the denominator", f"{hl('opposite_rate').value * 100:.4f}%", f"{hl('opposite').value / pr_bl * 100:.3f}%", n(pr_bl),
          f"{hl('opposite').value / traj.loc[37].committed * 100:.3f}%", n(traj.loc[37].committed))
@@ -214,7 +221,28 @@ def methods() -> None:
          str(int(fv("reviewer_supported_clinvar_false_pathogenic"))), str(int(base.false_pathogenic)))
     fact("scored matrices are stored for 31 of the 37 runs", str(int((traj.source == "scored matrix on disk").sum())))
     # 2.1: the criteria
-    fact("In the benchmark, which has one variant per record and no pedigree or phenotype", str(len(crit)), *list(crit.criterion))
+    # 2.1: the criteria. The status table is the engine's own report on every 40th record of the benchmark, and the script that makes it
+    # stops if the engine disagrees with the groups below, so here the sentences are held to the table.
+    group = status.group
+    codes_of = lambda g: list(status.index[group == g])
+    from_variant, genotypes, functional, case, off = (codes_of(g) for g in ("from the variant", "needs genotypes of a proband", "needs functional assays", "needs case-level data", "off by default"))
+    n_not_applied = len(status) - len(from_variant)
+    fact("The engine implements all 28 ACMG/AMP criteria", str(len(status)), str(len(status) - len(off)))
+    fact("From it 15 of the 28 criteria can be applied", str(len(from_variant)), str(len(status)), *from_variant)
+    assert sorted(from_variant) == sorted(crit.criterion), "the 15 criteria of the benchmark are the 15 of criteria_firing_v37.csv"
+    fact("The other 13 are not applied in this paper, and they fall into four groups", str(n_not_applied), w(len({group[c] for c in status.index if group[c] != "from the variant"}))[1])
+    fact("Four need the genotypes of a proband and of its parents", w(len(genotypes)), *genotypes)
+    fact("Two need functional assays, PS3 and BS3", w(len(functional)), *functional)
+    fact("Five need case-level data that the engine does not read", w(len(case)), *case)
+    fact("PP5 and BP6 are off by default.", *off)
+    sample = int(status.records.max())
+    fact("we annotated every 40th record of the benchmark", n(sample), "40")
+    never = [c for c in status.index if status.records[c] and not status.evaluated[c]]
+    fact("were not evaluated for any of them", *never)
+    assert sorted(never) == sorted(genotypes + functional + case) or sorted(never) == sorted([c for c in genotypes if c != "PM3"] + functional + case), "the criteria never evaluated"
+    fact("PM3 was evaluated for 9,918", n(status.evaluated["PM3"]), "met for none" if status.met["PM3"] == 0 else "?")
+    ok = all(status.evaluated[c] > 0 and status.met[c] > 0 for c in from_variant)
+    fact("Each of the other 15 was evaluated for some records and met for some", "15" if ok and len(from_variant) == 15 else "?")
     fact("takes about two minutes to annotate", str(int(prov.annotation_seconds.median())))
     # 2.3
     v1 = traj.loc[1]
@@ -617,6 +645,13 @@ def discordance() -> None:
     fact("CFTR holds 439 of the 5,184 variants", n(pvs1["without PVS1, in CFTR (stop-gained and frameshift)"]), n(pvs1["CFTR null variants in the benchmark (stop, frameshift, canonical splice)"]),
          str(int(st(4, "P/LP", "VUS").n)), str(int(st(4, "P/LP", "VUS").row_total)))
     c1, c2, c3 = closure.loc["v37_gap_clingen_complete"], closure.loc["v37_gap_orphanet_lof"], closure.loc["v37_gap_both"]
+    versions = {h.split(":")[0] for h in cftr_null.hgvsc}
+    mane = n(pvs1["  of them null on the MANE Select transcript, the one the pick chose"])
+    fact("All 558 are null on CFTR's MANE Select transcript", mane, *versions, "the transcript that the pick chose" if len(versions) == 1 and (cftr_null.on_mane_select == "yes").all() else "?")
+    cv = cftr_null.clinvar.value_counts()
+    fact("ClinVar classifies 556 of the 558 as pathogenic-side", n(pvs1["  of them ClinVar pathogenic-side"]), n(cftr_null.shape[0]), n(cv["Pathogenic"]), n(cv["Likely_pathogenic"]), n(cv["VUS"]),
+         "every one of them" if cftr_null.shape[0] == pvs1["CFTR null variants in the benchmark (stop, frameshift, canonical splice)"] else "?")
+    assert (cftr_null.v37_call == "VUS").all() and int(cftr_null.complete_clingen_call.isin(["Pathogenic", "Likely_pathogenic"]).sum()) == int(c1.cftr_null_called_plp)
     fact("ClinGen's export of 11 October 2026 lists CFTR as Definitive for cystic fibrosis", n(missing[LACKED]), n(missing["  in genes"]),
          n(missing["  of Definitive, Strong or Moderate strength"]), n(missing["  genes with such a curation"]), n(missing[LACKED] - 1))
     fact("The completed file adds the 112 rows of the October export", n(missing[ROWS]), n(missing[LACKED]), "seven" if missing[RELABEL] == 7 else "?",
@@ -887,6 +922,15 @@ def abstract_and_intro() -> None:
          str(int(t.loc[13].opposite)), str(int(t.loc[37].opposite)), str(int(run("v37_hk_strict").opposite)), f"{w(fv('strict_opposite_called_benign'))[1]} of the added calls Benign")
     fact("None of the 4,017 Pathogenic or 67,700 Benign calls is among the 49", n(tiers.loc["Pathogenic", "n"]), n(tiers.loc["Benign", "n"]),
          p(baseline.loc["R1 + R2 + R3", "same_direction_share"]), n(baseline.loc["R1 + R2 + R3", "opposite"]))
+    # What most of the disagreement is, and why (the abstract states in a few words what Sections 2.1 and 3.5 give with their numbers)
+    fact("The input lists variants only, with no genotype, pedigree or phenotype", str(len(crit)), str(len(status)))
+    plp_vus, blb_vus = cell("P/LP", "VUS"), cell("B/LB", "VUS")
+    not_same = N_ALL - (cell("P/LP", "P/LP") + cell("VUS", "VUS") + cell("B/LB", "B/LB"))
+    fact("Most of the disagreement was not contradiction", n(plp_vus + blb_vus), n(not_same), n(plp_vus), n(blb_vus))
+    not_applied = [c for c in status.index if status.group[c] != "from the variant"]
+    fact("Thirteen criteria are not applied to a sites-only input", w(len(not_applied)), *not_applied)
+    bvs = sigs[(sigs.clinvar == "B/LB") & (sigs.fastvep == "VUS")].set_index("signature")
+    fact("Of the pathogenic-side variants called VUS, 10,541 sit one point short of Likely pathogenic", n(plp_pts["n"][5]), n(pvs1["without PVS1"]), n(bvs.loc["BP4", "n"] + bvs.loc["BS1", "n"]))
     ledger_found = ledger.found_by.value_counts()
     fact("Review of the discordant calls first identified 30 of 64 recorded changes", str(int(ledger_found["expert_review"])), str(len(ledger)), str(int(ledger["class"].value_counts()["G"])))
     cc = closure.loc["v37_gap_clingen_complete"]
@@ -920,6 +964,37 @@ def repository() -> None:
         fact("Analysis used Python", f"Rust {rustc}")
     except (OSError, subprocess.CalledProcessError):
         pass
+
+
+def availability() -> None:
+    """Every file and directory that "Data and code availability" names is in the repository.
+
+    The section tells a reader where each script, patch, table and record of the paper is. A name that the repository does not hold,
+    because a script was renamed or a file was never added, is the kind of statement that no number check catches. A bare name is
+    looked for by its file name anywhere in the repository, a path by its place, and a directory by a file under it.
+    """
+    import subprocess
+
+    root = HERE.parents[1]
+    # Tracked files and the files that are not yet but are not ignored either, so that a file added with its text passes before it is committed
+    # and a file under an ignored path (such as the bulk outputs under data/) does not.
+    tracked = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard"], cwd=root, capture_output=True, text=True, check=True).stdout.split("\n")
+    names = {Path(f).name for f in tracked if f}
+    section = (HERE / "manuscript.md").read_text().split("\n## Data and code availability\n", 1)[1].split("\n## ", 1)[0]
+    found = 0
+    for token in dict.fromkeys(re.findall(r"`([^`\s]+)`", section)):
+        if not re.search(r"\.(py|sh|patch|csv|tsv|xlsx|md|toml)$|/$", token):
+            continue
+        if token.endswith("/"):
+            ok = any(f.startswith(token) or f.startswith("manuscript/acmg/" + token) for f in tracked) or (root / token).is_dir()
+        elif "/" in token:
+            ok = token in tracked or ("manuscript/acmg/" + token) in tracked
+        else:
+            ok = token in names
+        found += ok
+        if not ok:
+            failures.append(f"Data and code availability names {token!r}, which the repository does not hold")
+    passed.append(f"Data and code availability: {found} names found in the repository")
 
 
 def audit() -> None:
@@ -1035,6 +1110,7 @@ def coverage() -> None:
     tot = res_by_group[["clinvar", "fastvep"]].sum()
     fact("In the last round the reviewer supported ClinVar on 61% of the 49", p(tot.clinvar / 49, 0), p(tot.fastvep / 49, 0))
     fact("saw only the opposite-direction calls and none of the 35,178", n(cell("P/LP", "VUS")))
+    fact("is read from the mode that ClinGen curates for each of the", n(fv("clingen_genes_in_file")))
     fact("The classifier evaluates 15 of 28 criteria", str(len(crit)))
     fact("The ledger of 64 items and its classes are our own coding", str(len(ledger)))
     fact("Each of these can be measured by the harness of this paper before it is shipped", str(int(hl("opposite").value)))
@@ -1465,7 +1541,7 @@ def binaries() -> None:
     passed.append(f"binaries.tsv: {len(seen)} binaries made {sum(seen.values())} runs")
 
 
-CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, repository, audit, early_trades, criteria_consistency, coverage, v38, binaries, structure]
+CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, repository, availability, audit, early_trades, criteria_consistency, coverage, v38, binaries, structure]
 
 
 def main() -> None:

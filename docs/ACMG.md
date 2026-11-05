@@ -92,6 +92,10 @@ pm2_ad_af_threshold = 0.00004  # PM2: AD/unknown — "extremely rare", not stric
 pm2_ar_af_threshold = 0.00007  # PM2: recessive-only - AF ≤ 0.00007 (0.007%); equals the Hearing Loss VCEP's bar, swept for the manuscript: flat
 pm2_af_threshold = 0.0001      # Legacy single-threshold field, retained for back-compat
                                # with pre-PR4 configs; not consulted in the default path.
+pm2_absent_when_no_record = true  # PM2: a variant with no gnomAD record is read as absent (unless ClinVar's own
+                               # population frequencies say it is not extremely rare). Coverage is not read, so
+                               # this includes sites that gnomAD could not see; false leaves PM2 not evaluated
+                               # wherever there is no record. See limitation 30.
 
 # ── REVEL thresholds (ClinGen SVI calibrated, Pejaver 2022) ──
 pp3_revel_supporting = 0.644   # PP3 Supporting
@@ -1497,6 +1501,14 @@ Output (JSON / VCF CSQ / TSV)
     On the benchmark BS2 is met beside BS1 or BA1 through that arm on 36,818 variants, 1,598 of them on the X chromosome.
     BA1 alone is Benign, so the doubling changes a call only beside BS1 without BA1: 1,301 variants (443 on the X chromosome), all called Benign, of which 1,298 are ClinVar benign-side variants and 3 are ClinVar VUS variants, and none is a ClinVar pathogenic-side variant.
     It was left as it was because the benchmark shows no harm from it, and setting the arm aside would only lower the call of variants that ClinVar also calls benign-side; an X-linked gene with a pathogenic variant at such a frequency would be the case that decides it (`manuscript/acmg`, Section 3.8).
+
+30. **PM2 reads a variant with no gnomAD record as absent, whether or not gnomAD could have seen the site.**
+    The classifier reads no coverage: a database holds the records of the variants that gnomAD called, and a variant that is not among them has no record and no allele number to say whether its site was covered.
+    With `pm2_absent_when_no_record = true`, the default, PM2 is met for such a variant unless ClinVar's own population frequencies show that it is not extremely rare, and that includes sites that the exomes do not cover.
+    The reviewer of the benchmark gave a site covered in under half of gnomAD's exomes (PRODH) as a reason for one of the PVS1 calls on a ClinVar benign-side variant.
+    Setting it to `false` leaves PM2 not evaluated wherever there is no record, which on the benchmark costs 0.22 points of agreement and 2.9 points of pathogenic-side recall (`manuscript/acmg`, Section 3.4 and Figure 3A).
+    The joint release does not change the rule: a variant that is in neither callset is still read as absent, and nothing says whether its site was covered.
+    A PM2 that asked for coverage would need gnomAD's coverage tracks as a source, which is not built (`manuscript/acmg`, Section 4.4).
 
 ## The frequency dead zone between PM2 and BS1
 

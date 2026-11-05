@@ -170,6 +170,11 @@ done
 #     through both databases (the filtering allele frequency and the flags are in the json and not in the VCF)
 FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/17_joint_boundary_cases.py
 
+# 4e. The status of the 28 criteria against the engine's json output, on every 40th record of the benchmark (the VCF lists
+#     only the criteria that were met; the json says whether each could be evaluated). It stops, writing nothing, if the engine
+#     disagrees with the groups of criteria that the script states
+FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/18_criteria_status.py
+
 # 5. Every table, then the figures, then the checks
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py
 python3 manuscript/acmg/generate_figures.py
@@ -181,7 +186,7 @@ python3 manuscript/acmg/verify_numbers.py
 
 `run_benchmark.sh` and the scripts that start it read the environment, so a run that is made by hand needs `FASTVEP` set the same way.
 The tables and the checks are deterministic: after the statistics script had run under each of two hash seeds (`PYTHONHASHSEED=0` and `1`) the 89 files of `manuscript/acmg/data/` were the same, and the figures are byte for byte the same on a rerun.
-Four of those files are not written by the statistics script: `change_ledger.csv` and `round6_rulings.tsv` are typed from the project's record, `clingen_missing_curations.csv` comes from `15_clingen_complete_export.py` and `temporal_high_af_blockers_v37.csv` from `14_temporal_holdout.py blockers`.
+Some files are not written by the statistics script: `change_ledger.csv` and `round6_rulings.tsv` are typed from the project's record, `clingen_missing_curations.csv` comes from `15_clingen_complete_export.py`, `temporal_high_af_blockers_v37.csv` from `14_temporal_holdout.py blockers`, `v38_joint_errors.csv` and `v38_joint_pm2_lost.csv` from `17_joint_boundary_cases.py`, and `criteria_status.csv` from `18_criteria_status.py`.
 
 The inputs are dated and none of them is in the repository, and the download scripts fetch the current files and not the dated ones: the ClinVar weekly releases of 4 April 2026 (the benchmark and its labels) and of 4 October 2026, the ClinGen Gene-Disease Validity exports of 30 April 2026 (the file the benchmark reads) and of 11 October 2026, and the ClinVar `variant_summary` and gnomAD files of Section 2.2 of the manuscript.
 A rerun on other releases of them is a rerun of the method and not of the paper's numbers.
