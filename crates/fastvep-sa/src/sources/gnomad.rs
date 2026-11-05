@@ -162,6 +162,7 @@ fn extended_values(
     filter_column: &str,
     allele_idx: usize,
     field_names: &FieldNames,
+    site: (&str, u32),
 ) -> Vec<(&'static str, ExtValue)> {
     let mut out = Vec::with_capacity(
         XY_ALLELE_INTS.len()
@@ -203,7 +204,12 @@ fn extended_values(
         ));
     }
     for (key, alias, _) in INFO_FLAGS {
-        out.push((*alias, ExtValue::Flag(info_map.contains_key(*key))));
+        let set = if *alias == "nonPar" && field_names.derive_non_par {
+            is_non_par_grch38(site.0, site.1)
+        } else {
+            info_map.contains_key(*key)
+        };
+        out.push((*alias, ExtValue::Flag(set)));
     }
     for (name, alias, _) in FILTER_FLAGS {
         out.push((
@@ -213,6 +219,76 @@ fn extended_values(
     }
 
     out
+}
+
+/// The pseudoautosomal regions of GRCh38, as `(chromosome, first, last)`, 1-based
+/// and inclusive: the GRC definition.
+///
+/// gnomAD's own `non_par` flag, read from the v4.1 *genomes* release at both
+/// edges of each region (the exomes release has no record near any of them),
+/// agrees with these: on chrX the flag is off at 2,781,479 and on at
+/// 2,781,480, on from the start of the data to 155,701,228 and off from
+/// 155,701,918, and off through 156,030,805; on chrY it is on from 2,781,489 and
+/// through 56,887,900, and the PARs of chrY hold no records at all. Only the
+/// first of those edges is exact to the base, the rest falling in gaps without
+/// records.
+const PAR_GRCH38: [(&str, u32, u32); 4] = [
+    ("chrX", 10_001, 2_781_479),
+    ("chrX", 155_701_383, 156_030_895),
+    ("chrY", 10_001, 2_781_479),
+    ("chrY", 56_887_903, 57_217_415),
+];
+
+/// Whether a GRCh38 sex-chromosome position lies outside the pseudoautosomal
+/// regions, which is where XY samples are hemizygous.
+///
+/// Used where the release does not say: the v4.1 joint release declares no
+/// `non_par` flag, and without one `AC_XY` could not be read as a count of
+/// hemizygous individuals, which is the observation BS2 asks for on an X-linked
+/// gene. Every other chromosome is not a sex chromosome, so `false`.
+fn is_non_par_grch38(chrom: &str, pos: u32) -> bool {
+    matches!(chrom, "chrX" | "chrY")
+        && !PAR_GRCH38
+            .iter()
+            .any(|(c, first, last)| *c == chrom && (*first..=*last).contains(&pos))
+}
+
+/// What to say about the region flags the VCF's header does not declare, or `None` when it declares both.
+///
+/// A database built from a VCF with no `lcr` and no `segdup` flag cannot mark a
+/// site as low-complexity or as segmentally duplicated, and the classifier reads
+/// an absent flag as "not flagged" (see `GnomadData`), so
+/// `gnomad_region_flags_block_frequency` would never act on it. That is the case
+/// for the v4.1 joint release and is not a reason to avoid it, but it is a
+/// difference from the exomes and genomes releases that the build should not
+/// leave to be rediscovered.
+fn region_flags_warning(info_ids: &HashSet<String>) -> Option<String> {
+    let missing: Vec<&str> = ["lcr", "segdup"]
+        .into_iter()
+        .filter(|flag| !info_ids.contains(*flag))
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "the gnomAD VCF declares no `{}` INFO flag, so this database cannot mark a site as \
+         low-complexity or segmentally duplicated and the region veto of the ACMG frequency \
+         criteria (`gnomad_region_flags_block_frequency`) will not act on the sites it covers \
+         (in the headers read on 4 November 2026 the v4.1 joint release declares neither, and the \
+         exomes and genomes releases declare both)",
+        missing.join("` or `")
+    ))
+}
+
+/// Say, once per build, which region flags the VCF's header does not declare.
+///
+/// Printed and not logged: the command line installs a logger that shows errors
+/// only, so a `log::warn!` here was a warning nobody saw, and `writer_v2.rs`
+/// records the same trap from an earlier time.
+fn warn_if_region_flags_missing(info_ids: &HashSet<String>) {
+    if let Some(warning) = region_flags_warning(info_ids) {
+        eprintln!("warning: {warning}");
+    }
 }
 
 /// Whether the VCF FILTER column lists `name`.
@@ -277,6 +353,11 @@ struct FieldNames {
     /// Suffix marking this release on the extended INFO keys: empty for the
     /// separate exomes/genomes VCFs, `_joint` for the joint release.
     flavor: String,
+    /// The release declares no `non_par` flag, so a sex-chromosome site's status
+    /// is worked out from the pseudoautosomal coordinates instead. True for the
+    /// v4.1 joint release only: its header has none of `lcr`, `segdup` and
+    /// `non_par`, which the separate exomes and genomes releases all declare.
+    derive_non_par: bool,
 }
 
 impl FieldNames {
@@ -288,6 +369,7 @@ impl FieldNames {
             nhomalt: "nhomalt".into(),
             af_pop_template: "AF_{}".into(),
             flavor: String::new(),
+            derive_non_par: false,
         }
     }
 
@@ -299,6 +381,7 @@ impl FieldNames {
             nhomalt: "nhomalt_joint".into(),
             af_pop_template: "AF_joint_{}".into(),
             flavor: "_joint".into(),
+            derive_non_par: false,
         }
     }
 
@@ -358,7 +441,9 @@ fn detect_field_names(info_ids: &HashSet<String>) -> FieldNames {
         }
         names
     } else if info_ids.contains("AF_joint") {
-        FieldNames::joint()
+        let mut names = FieldNames::joint();
+        names.derive_non_par = !info_ids.contains("non_par");
+        names
     } else {
         FieldNames::standard()
     }
@@ -485,9 +570,10 @@ impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
                 continue;
             }
 
-            let field_names = self
-                .field_names
-                .get_or_insert_with(|| detect_field_names(&self.info_ids));
+            let field_names = self.field_names.get_or_insert_with(|| {
+                warn_if_region_flags_missing(&self.info_ids);
+                detect_field_names(&self.info_ids)
+            });
 
             let fields: Vec<&str> = line.splitn(9, '\t').collect();
             if fields.len() < 8 {
@@ -533,6 +619,7 @@ impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
                     filter_column,
                     i,
                     field_names,
+                    (&chrom, pos),
                 );
                 self.pending.push_back(AnnotationRecord {
                     chrom_idx,
@@ -562,6 +649,7 @@ fn build_gnomad_json(
     filter_column: &str,
     allele_idx: usize,
     field_names: &FieldNames,
+    site: (&str, u32),
 ) -> String {
     let GlobalCounts {
         af,
@@ -616,7 +704,7 @@ fn build_gnomad_json(
     // Extended QC / stratified columns. Absent values and unset flags are
     // omitted entirely, so a site with nothing to report costs no bytes and an
     // older consumer that does not know these keys is unaffected.
-    for (alias, value) in extended_values(info_map, filter_column, allele_idx, field_names) {
+    for (alias, value) in extended_values(info_map, filter_column, allele_idx, field_names, site) {
         match value {
             ExtValue::Int(Some(n)) => parts.push(format!("\"{}\":{}", alias, n)),
             ExtValue::Float(Some(f)) if f.is_finite() => {
@@ -851,9 +939,10 @@ impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
                 continue;
             }
 
-            let field_names = self
-                .field_names
-                .get_or_insert_with(|| detect_field_names(&self.info_ids));
+            let field_names = self.field_names.get_or_insert_with(|| {
+                warn_if_region_flags_missing(&self.info_ids);
+                detect_field_names(&self.info_ids)
+            });
 
             let cols: Vec<&str> = line.splitn(9, '\t').collect();
             if cols.len() < 8 {
@@ -904,9 +993,10 @@ impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
                     ));
                 }
                 let ext_off = extended_offset();
-                for (ei, (_, value)) in extended_values(&info_map, filter_column, ai, field_names)
-                    .into_iter()
-                    .enumerate()
+                for (ei, (_, value)) in
+                    extended_values(&info_map, filter_column, ai, field_names, (&chrom, pos))
+                        .into_iter()
+                        .enumerate()
                 {
                     values.push(encode_ext(&self.fields[ext_off + ei], value));
                 }
@@ -1247,7 +1337,13 @@ chr1\t600\t.\tA\tG\t.\tPASS\tAF=0.2;AN=1000;AC=200;nhomalt=20;non_par;AC_XY=37;A
         // positionally. If they ever fall out of order, every extended column
         // in a v2 database silently holds another column's value.
         let fields = extended_fields();
-        let values = extended_values(&HashMap::new(), "PASS", 0, &FieldNames::standard());
+        let values = extended_values(
+            &HashMap::new(),
+            "PASS",
+            0,
+            &FieldNames::standard(),
+            ("chr1", 1),
+        );
         assert_eq!(fields.len(), values.len());
         for (f, (alias, _)) in fields.iter().zip(values.iter()) {
             assert_eq!(&f.alias, alias, "extended schema and extraction diverged");
@@ -1524,5 +1620,128 @@ chr1\t200\t.\tA\tG\t.\tPASS\tAF=0.5
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].chrom, "chr1");
         assert_eq!(recs[0].position, 200);
+    }
+
+    // ── The region flags a release does not declare ──
+
+    #[test]
+    fn test_a_vcf_without_region_flags_is_warned_about() {
+        let ids = |names: &[&str]| {
+            names
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<HashSet<String>>()
+        };
+        let both = region_flags_warning(&ids(&["AF_joint", "AN_joint"])).unwrap();
+        assert!(both.contains("`lcr` or `segdup`"), "{both}");
+        assert!(
+            both.contains("gnomad_region_flags_block_frequency"),
+            "{both}"
+        );
+        let one = region_flags_warning(&ids(&["AF", "lcr"])).unwrap();
+        assert!(one.contains("`segdup`") && !one.contains("`lcr`"), "{one}");
+        assert!(region_flags_warning(&ids(&["AF", "lcr", "segdup"])).is_none());
+    }
+
+    // ── Non-PAR status of a release that does not declare it ──
+
+    /// The positions the GRCh38 PAR definition is checked at, each read from
+    /// gnomAD's own `non_par` flag in the v4.1 genomes release.
+    #[test]
+    fn test_non_par_follows_the_grch38_pseudoautosomal_regions() {
+        for (chrom, pos, expected) in [
+            // chrX PAR1 is 10,001-2,781,479: off at its last base, on at the next.
+            ("chrX", 10_003, false),
+            ("chrX", 2_781_479, false),
+            ("chrX", 2_781_480, true),
+            // chrX PAR2 is 155,701,383-156,030,895: flagged up to 155,701,228 and
+            // not from 155,701,918, and not at the end of the chromosome.
+            ("chrX", 155_701_228, true),
+            ("chrX", 155_701_918, false),
+            ("chrX", 156_030_805, false),
+            // chrY: flagged from 2,781,489 and through 56,887,900.
+            ("chrY", 2_781_489, true),
+            ("chrY", 56_887_900, true),
+            ("chrY", 57_000_000, false),
+            // Not a sex chromosome.
+            ("chr1", 5_000_000, false),
+            ("chr22", 20_000_000, false),
+        ] {
+            assert_eq!(is_non_par_grch38(chrom, pos), expected, "{chrom}:{pos}");
+        }
+    }
+
+    const JOINT_CHRX_VCF: &str = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF_joint,Number=A,Type=Float,Description=\"Joint AF\">
+##INFO=<ID=AN_joint,Number=1,Type=Integer,Description=\"Joint AN\">
+##INFO=<ID=AC_joint,Number=A,Type=Integer,Description=\"Joint AC\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chrX\t2781479\t.\tA\tG\t.\tPASS\tAF_joint=0.001;AN_joint=1000;AC_joint=1;nhomalt_joint=0;AC_joint_XY=1;AN_joint_XY=400
+chrX\t2781480\t.\tA\tG\t.\tPASS\tAF_joint=0.001;AN_joint=1000;AC_joint=1;nhomalt_joint=0;AC_joint_XY=1;AN_joint_XY=400
+chr1\t10001\t.\tA\tG\t.\tPASS\tAF_joint=0.001;AN_joint=1000;AC_joint=1;nhomalt_joint=0;AC_joint_XY=1;AN_joint_XY=400
+";
+
+    fn chrx_and_chr1_map() -> HashMap<String, u16> {
+        HashMap::from([("chrX".to_string(), 0u16), ("chr1".to_string(), 1u16)])
+    }
+
+    /// The joint release has no `non_par` flag, so before the status was derived
+    /// every sex-chromosome record of a database built from it read as inside a
+    /// PAR, `AC_XY` was never taken as a count of hemizygotes, and BS2 on an
+    /// X-linked gene saw none.
+    #[test]
+    fn test_joint_release_derives_non_par_in_the_json_builder() {
+        let records = parse_gnomad_vcf(JOINT_CHRX_VCF.as_bytes(), &chrx_and_chr1_map()).unwrap();
+        let flag = |i: usize| {
+            serde_json::from_str::<serde_json::Value>(&records[i].json)
+                .unwrap()
+                .get("nonPar")
+                .and_then(|v| v.as_bool())
+        };
+        assert_eq!(flag(0), None, "the last base of PAR1");
+        assert_eq!(flag(1), Some(true), "the first base after PAR1");
+        assert_eq!(flag(2), None, "an autosome");
+    }
+
+    #[test]
+    fn test_joint_release_derives_non_par_in_the_v2_encoder() {
+        let map = chrx_and_chr1_map();
+        let recs: Vec<Osa2Record> = iter_gnomad_osa2(JOINT_CHRX_VCF.as_bytes(), &map)
+            .collect::<Result<_>>()
+            .unwrap();
+        let fields = gnomad_osa2_fields();
+        let col = fields.iter().position(|f| f.alias == "nonPar").unwrap();
+        let set = |i: usize| recs[i].values[col] != 0;
+        assert!(!set(0));
+        assert!(set(1));
+        assert!(!set(2));
+    }
+
+    /// A release that declares `non_par` is read from the flag, not derived: the
+    /// flag is gnomAD's own, and the derivation is only for the release without.
+    #[test]
+    fn test_a_release_that_declares_non_par_is_read_from_its_flag() {
+        let vcf = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"AF\">
+##INFO=<ID=AN,Number=1,Type=Integer,Description=\"AN\">
+##INFO=<ID=AC,Number=A,Type=Integer,Description=\"AC\">
+##INFO=<ID=non_par,Number=0,Type=Flag,Description=\"outside PAR\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chrX\t2781480\t.\tA\tG\t.\tPASS\tAF=0.001;AN=1000;AC=1;nhomalt=0
+chrX\t3000000\t.\tA\tG\t.\tPASS\tAF=0.001;AN=1000;AC=1;nhomalt=0;non_par
+";
+        let records = parse_gnomad_vcf(vcf.as_bytes(), &chrx_and_chr1_map()).unwrap();
+        let flag = |i: usize| {
+            serde_json::from_str::<serde_json::Value>(&records[i].json)
+                .unwrap()
+                .get("nonPar")
+                .and_then(|v| v.as_bool())
+        };
+        // Position 2,781,480 is non-PAR by coordinates; this release did not say
+        // so, and its record is taken at its word.
+        assert_eq!(flag(0), None);
+        assert_eq!(flag(1), Some(true));
     }
 }

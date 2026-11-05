@@ -48,6 +48,13 @@ from collections import defaultdict
 # marked, so the classifier can tell "curated as weak" from "not curated".
 ESTABLISHED = {"Definitive", "Strong", "Moderate"}
 
+# The columns this reads, by the names the export gives them in its header row.
+COLUMNS = ("GENE SYMBOL", "DISEASE LABEL", "DISEASE ID (MONDO)", "MOI", "CLASSIFICATION")
+
+# The modes of inheritance the classifier knows (`ModeOfInheritance::from_code`). Another code, or none, is
+# written as it stands and read as no inheritance information, so it is said here, at the build.
+KNOWN_MOI = {"AD", "AR", "XL", "SD", "MT", "UD"}
+
 
 def main():
     if len(sys.argv) != 3:
@@ -55,28 +62,49 @@ def main():
     src, dst = sys.argv[1], sys.argv[2]
 
     by_gene = defaultdict(list)
+    unknown_moi = defaultdict(int)
+    columns = None  # name -> index, from the header row
     with open(src) as f:
         for row in csv.reader(f):
-            if not row or len(row) < 7:
+            if not row:
+                continue
+            if row[0] == "GENE SYMBOL":
+                # By name and not by position: a column that moved would put another column's value in the
+                # tag, and a tag whose mode of inheritance is wrong is read without a word as a gene with none.
+                missing = [c for c in COLUMNS if c not in row]
+                if missing:
+                    sys.exit(f"{src}: the header row has no column {missing}: {row}")
+                columns = {c: row.index(c) for c in COLUMNS}
                 continue
             gene = row[0].strip('"')
-            if not gene or gene in (
-                "GENE SYMBOL",
-                "CLINGEN GENE DISEASE VALIDITY CURATIONS",
-            ):
+            if not gene or gene == "CLINGEN GENE DISEASE VALIDITY CURATIONS":
                 continue
             if gene.startswith("+") or gene.startswith("FILE") or gene.startswith("WEBPAGE"):
                 continue
-            disease = row[2].strip('"')
-            moi = row[4].strip('"')
-            cls = row[6].strip('"')
+            if columns is None:
+                sys.exit(f"{src}: a curation ({gene}) comes before the header row, so its columns are not known")
+            if len(row) <= max(columns.values()):
+                continue
+            disease = row[columns["DISEASE LABEL"]].strip('"')
+            moi = row[columns["MOI"]].strip('"')
+            cls = row[columns["CLASSIFICATION"]].strip('"')
             if not cls:
                 continue
+            if moi not in KNOWN_MOI:
+                unknown_moi[moi] += 1
             # genemap2 phenotype format: "<disease label>, <MIM>, <inheritance>"
-            # We don't have OMIM MIM numbers, so use MONDO from row[3].
-            mondo = row[3].strip('"') or "."
+            # We don't have OMIM MIM numbers, so use MONDO from the MONDO column.
+            mondo = row[columns["DISEASE ID (MONDO)"]].strip('"') or "."
             phen = f"{disease} (ClinGen {cls}/{moi}, {mondo})"
             by_gene[gene].append(phen)
+    if columns is None:
+        sys.exit(f"{src}: no header row with GENE SYMBOL in it, so this is not a ClinGen Gene-Disease Validity export")
+    if unknown_moi:
+        print(
+            f"warning: curations with a mode of inheritance the classifier does not know are read as having none: "
+            f"{dict(sorted(unknown_moi.items(), key=lambda kv: kv[0]))}",
+            file=sys.stderr,
+        )
 
     with open(dst, "w") as out:
         # genemap2 has a comment header; parse_omim_genemap skips lines

@@ -7,7 +7,7 @@ use crate::common::{GeneRecord, MAX_INDEX_PAYLOAD, OGA_MAGIC, SCHEMA_VERSION};
 use anyhow::Result;
 use fastvep_cache::annotation::GeneAnnotationProvider;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 
 /// Header for .oga files.
@@ -56,10 +56,24 @@ impl GeneIndex {
     }
 
     /// Serialize to a writer.
+    ///
+    /// The genes are written in the order of their symbols. `genes` is a `HashMap`, whose iteration order is
+    /// different in every process, so a database built twice from the same source used to be two files with the
+    /// same content and different bytes, and a rebuilt database could not be checked against the one it replaces
+    /// by its hash. A sorted map is written as its length and its entries, as a `HashMap` is, so the format does
+    /// not change and every reader reads the files of both.
     pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+        #[derive(Serialize)]
+        struct InSymbolOrder<'a> {
+            header: &'a GeneHeader,
+            genes: BTreeMap<&'a String, &'a Vec<String>>,
+        }
         writer.write_all(OGA_MAGIC)?;
         writer.write_all(&SCHEMA_VERSION.to_le_bytes())?;
-        let data = bincode::serialize(self)?;
+        let data = bincode::serialize(&InSymbolOrder {
+            header: &self.header,
+            genes: self.genes.iter().collect(),
+        })?;
         writer.write_all(&(data.len() as u64).to_le_bytes())?;
         writer.write_all(&data)?;
         Ok(())
@@ -153,6 +167,46 @@ mod tests {
         assert_eq!(loaded.header.json_key, "omim");
         assert_eq!(loaded.gene_count(), 2);
         assert_eq!(loaded.get("BRCA1").unwrap().len(), 1);
+    }
+
+    /// The same genes, added in a different order to an index of their own, are the same file. Every `HashMap`
+    /// starts from its own random state, so two maps of 200 genes iterate them in the same order with a
+    /// negligible probability, and a writer that iterates one fails this.
+    #[test]
+    fn test_gene_file_is_the_same_bytes_whatever_the_order_the_genes_were_added_in() {
+        let header = || GeneHeader {
+            schema_version: SCHEMA_VERSION,
+            json_key: "omim".into(),
+            name: "OMIM".into(),
+            version: "1.0".into(),
+            assembly: "GRCh38".into(),
+        };
+        let record = |i: usize, part: usize| GeneRecord {
+            gene_symbol: format!("GENE{i}"),
+            json: format!(r#"{{"part":{part}}}"#),
+        };
+        let mut forward = GeneIndex::new(header());
+        let mut backward = GeneIndex::new(header());
+        for i in 0..200 {
+            forward.add(record(i, 1));
+            forward.add(record(i, 2));
+        }
+        for i in (0..200).rev() {
+            backward.add(record(i, 1));
+            backward.add(record(i, 2));
+        }
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        forward.write_to(&mut a).unwrap();
+        backward.write_to(&mut b).unwrap();
+        assert_eq!(a, b);
+
+        // The order of the annotations of one gene is the order they were added in, and is kept.
+        let loaded = GeneIndex::read_from(&mut std::io::Cursor::new(a)).unwrap();
+        assert_eq!(loaded.gene_count(), 200);
+        assert_eq!(
+            loaded.get("GENE7").unwrap(),
+            &vec![r#"{"part":1}"#.to_string(), r#"{"part":2}"#.to_string()]
+        );
     }
 
     #[test]
