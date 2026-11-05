@@ -39,11 +39,32 @@ scripts/release.sh          # or: scripts/release.sh 0.4.0
 #    the changelog hand-curated (richer than raw commit subjects), so treat the
 #    draft as a starting point, not the final text.
 
-# 3. Commit and tag
+# 3. Commit and tag - but rehearse the build before the tag (next section)
 git commit -am "release: v0.4.0"
 git tag -a v0.4.0 -m "v0.4.0"
 git push && git push --tags
 ```
+
+## Before the tag: rehearse the build
+
+The tag starts the release workflow, and the workflow publishes only if every build job succeeds.
+A runner that never starts, or an archive that does not run, therefore stops the release at the moment it is cut.
+Find that out first, on the commit you are about to tag:
+
+```sh
+gh workflow run release.yml --ref <branch>
+gh run watch
+```
+
+A run started this way builds the archive for every platform, checks each one with `scripts/check-release-tarball.sh`, and publishes nothing.
+Its archives are kept as workflow artifacts (`gh run download <run-id>`), and are named after the commit, not a tag.
+
+The check unpacks the archive, verifies its `.sha256`, starts both binaries, and annotates the README's example.
+On a tag it also requires `fastvep --version` to report the tag's version, so a tag pushed before the version was bumped fails there, and does not publish an archive that names the wrong release.
+
+A Linux archive is run in Rocky Linux 9, whose glibc is 2.34.
+That is what the v0.4.0 x86_64 binary needed, and the check is what keeps it so: a runner image whose toolchain links a newer glibc would otherwise build, pack and publish a binary that fails to start on RHEL 9.
+If the check fails that way, build on an older runner image, or raise the floor on purpose and change the README's note on it with it.
 
 ## After the tag: refresh the conda recipe
 

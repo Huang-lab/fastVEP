@@ -1,10 +1,19 @@
 name: Release
 
 # Build release binaries and publish a GitHub Release when a vX.Y.Z tag is pushed.
+#
+# Started by hand (`gh workflow run release.yml --ref <branch>`) it builds and
+# checks every archive and keeps them as workflow artifacts, but publishes
+# nothing. Do that before tagging: `release` needs every `build` job to succeed,
+# so a runner that never starts, or an archive that does not run, otherwise
+# stops the release at the moment it is cut. The v0.3.0 tag once waited fifteen
+# minutes on an Intel macOS job that was never given a runner, and the whole
+# release with it.
 on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
 
 permissions:
   contents: write # needed to create the GitHub Release
@@ -13,12 +22,22 @@ jobs:
   build:
     name: build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # A build takes a few minutes. Without a limit a hung one holds the release
+    # for the six hours GitHub allows.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          # GitHub's arm64 runner, free for public repositories. The binary is
+          # built where it runs, so the check below runs the very file that is
+          # published, and nothing is cross-compiled or emulated. Without an
+          # archive for it, a Linux arm64 image has to compile fastVEP under QEMU
+          # (24 minutes against 3.5 for x86_64, measured in #166).
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
           - os: macos-latest
             target: aarch64-apple-darwin
     steps:
@@ -34,13 +53,24 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      # A run started by hand has no tag: it is named after its commit, and
+      # there is no version for the binary to be checked against.
+      - name: Name the release
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=dev-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+
       - name: Build binaries
         run: cargo build --release --target ${{ matrix.target }} --bin fastvep --bin fastvep-web
 
       - name: Package tarball
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME}"
           STAGE="fastVEP-${VERSION}-${{ matrix.target }}"
           mkdir "$STAGE"
           cp "target/${{ matrix.target }}/release/fastvep" "$STAGE/"
@@ -48,6 +78,26 @@ jobs:
           cp README.md LICENSE.md CHANGELOG.md "$STAGE/"
           tar -czf "${STAGE}.tar.gz" "$STAGE"
           shasum -a 256 "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+
+      # Run the archive as a user would. A Linux one runs inside Rocky Linux 9
+      # (glibc 2.34), the oldest system the release claims to run on: a binary
+      # that links a newer glibc builds and packs without a word, and is found
+      # out by whoever installs it. The container gets the checkout read-only
+      # and runs as the runner's own user, so it leaves nothing behind that the
+      # runner cannot clean up.
+      - name: Check the tarball
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          ARCHIVE="fastVEP-${VERSION}-${TARGET}.tar.gz"
+          if [[ "$TARGET" == *-linux-* ]]; then
+            docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo:ro" -w /repo \
+              quay.io/rockylinux/rockylinux:9 \
+              scripts/check-release-tarball.sh "$ARCHIVE" "${TAG:-}"
+          else
+            scripts/check-release-tarball.sh "$ARCHIVE" "${TAG:-}"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -60,6 +110,8 @@ jobs:
   release:
     name: publish release
     needs: build
+    # A run started by hand rehearses the builds and publishes nothing, on any ref.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
