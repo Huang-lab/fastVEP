@@ -1700,3 +1700,18 @@ This section is the record of what was repeated and what was not.
 The outputs of the first set were deleted on 4 November 2026, once the comparison above had shown that the second set reproduces them: the run directories, the annotated VCFs and the per-variant tables of its 149 runs (more than 8 GB), and the first copy of the joint databases of chromosomes 21 and 22, which was byte for byte the same as the one kept.
 What remains of the first set is the comparison (`results/v37_manuscript/rerun_comparison.csv`) and the hashes of its binaries where the text above gives them.
 The outputs of the runs under "What was not repeated" were kept, because nothing reproduces them.
+
+## After v38: two speed-ups that change no record (5 November 2026)
+
+Two changes to the code that followed the runs of v38 make the annotation faster and are meant to change no output: the shared block cache of the `.osa` and `.osa2` readers frees the blocks that an insert displaces after it has released its lock, and a thread parses a gene's ClinVar protein record once for the variants that share it (`crates/fastvep-sa/src/reader.rs`, `reader_v2.rs` and `crates/fastvep-classification/src/sa_extract.rs`).
+They were found by profiling `annotate --acmg --pick` over the benchmark, and each commit message gives the measurements.
+The classification code that decides a call was not changed, and the runs of this directory were not repeated.
+
+What was checked is that nothing a run records moved.
+
+- A release build of the tree after both changes (SHA-256 `372dae92...`, built from commit `78b0a0b` with the repository's release profile) annotated the 673,660 records of the benchmark with `annotate --acmg --pick` against the databases of the `v38` run, and its output is the annotated VCF of `v38` (made by the binary `f184277d...`) byte for byte, header included: `cmp` of its output with `gzip -dc data/benchmark/manuscript_runs/v38/clinvar_2star.fastvep.vcf.gz`.
+- Builds of the tree before and after both changes gave the same annotated VCF of the benchmark and the same json for every 100th record of it (6,736 variants, 318 MB), which carries the criteria with their details; the build with the first change alone gave the same annotated VCF of the whole benchmark and of every sixth record.
+- The instructions retired for the annotation of the benchmark fall from 2.75e12 to 2.28e12 (3 runs of each, interleaved) and the user CPU time from 205 s to 173 s; the wall time falls by about 5% on the ten-core machine of the runs, where part of the annotation is serial.
+
+What was not checked: a run with a configuration other than the default, a run of an alternatives build, or the databases of the joint release.
+The binary of the second set remains the one that made the runs of `binaries.tsv`, and the build of the tree after the change made none.
