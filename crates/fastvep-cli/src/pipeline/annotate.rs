@@ -1670,7 +1670,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         .unwrap_or_default();
 
     // Open output
-    let output_writer: Box<dyn io::Write> = if config.output == "-" {
+    let output_writer: Box<dyn io::Write + Send> = if config.output == "-" {
         Box::new(io::stdout())
     } else {
         Box::new(
@@ -1867,9 +1867,10 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
     // Process variants in batches for parallel annotation
     let mut meter = crate::progress::ProgressMeter::new(config.show_progress);
-    let mut first_json = true;
 
-    loop {
+    // The batches are written on a thread of their own, in order, while the next is read and
+    // annotated (see `write_while`).
+    write_while(&mut writer, json, |send| loop {
         // Phase 1: Read a batch of variants (sequential - VCF parser is not Sync)
         let mut batch: Vec<(VariationFeature, KnownLookup)> = Vec::with_capacity(BATCH_SIZE);
         for _ in 0..BATCH_SIZE {
@@ -1885,7 +1886,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         }
 
         if batch.is_empty() {
-            break;
+            return Ok(());
         }
 
         // Phase 1.2: The known variants of each record, in runs of consecutive records on every
@@ -1993,23 +1994,15 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             |(vf, _), text| render_record(vf, text),
         );
 
-        // Phase 3: Write output sequentially (preserves VCF order)
-        for piece in pieces {
-            let text = piece?;
-            if text.is_empty() {
-                continue;
-            }
-            if json {
-                if !first_json {
-                    writeln!(writer, ",")?;
-                }
-                first_json = false;
-            }
-            writer.write_all(&text)?;
+        // Phase 3: Hand the batch to the writer, which writes the batches in the order they come
+        // (preserving VCF order). A writer that has stopped has failed, and says so when it is
+        // joined: there is nothing more to produce for it.
+        if !send(pieces) {
+            return Ok(());
         }
 
         meter.update_n(records);
-    } // end batch loop
+    })?; // end batch loop
 
     // Close JSON array
     if config.output_format == "json" {
@@ -2085,6 +2078,82 @@ where
         .collect()
 }
 
+/// Runs `produce`, which sends the pieces of each batch to be written as it makes them, while a
+/// thread of its own writes the batches already sent, in order.
+///
+/// A batch used to be written by the thread that had read it, once the pool had annotated it, and
+/// the pool's threads did nothing meanwhile: with `--distance 500000` a batch is megabytes. Now the
+/// next batch is read and annotated while it is written. The hand-over has no room in it, so that a
+/// batch that is finished waits for the writer to be done with the one before, and a writer slower
+/// than the annotation stops it, as it always did.
+///
+/// `send` returns `false` once the writer has stopped, which it does at its first error; `produce`
+/// then has nothing more to do. An error of the writer is returned in preference to one of `produce`:
+/// the writer can only have failed on a batch that came before whatever `produce` met, and a
+/// failure that comes first is the one a run that wrote as it went would have reported.
+///
+/// Three things are not as they were when one thread did both:
+/// - The producer learns that the writer has failed at its next `send`, so it finishes the batch it
+///   is on first, which a run that wrote as it went would not have been on: a closed pipe or a
+///   full disk stops the run one batch later, and an error that batch meets (a failed read, a failed
+///   lookup) is not reported, because the writer's came first.
+/// - The writer is a thread of its own, outside rayon's pool, so `RAYON_NUM_THREADS=N` bounds the
+///   annotating threads and not the threads of the process: this one is a thread that writes.
+/// - A message the producer prints to stderr (a progress line, the warning for a record that could
+///   not be read) is no longer printed between two writes of the one thread. With stdout and
+///   stderr the same pipe (`-o - 2>&1`) it can land inside a line of the output, where it fell
+///   between lines before. Output that is meant to be read as the VCF was never safe to merge with
+///   stderr, which carries the `Annotating:` line from the start.
+fn write_while<W: Write + Send>(
+    writer: &mut W,
+    json: bool,
+    produce: impl FnOnce(&mut dyn FnMut(Vec<Result<Vec<u8>>>) -> bool) -> Result<()>,
+) -> Result<()> {
+    std::thread::scope(|scope| {
+        let (batches, written) = std::sync::mpsc::sync_channel(0);
+        let writing = std::thread::Builder::new()
+            .name("write".into())
+            .spawn_scoped(scope, || write_pieces(writer, written, json))
+            .context("Starting the thread that writes the output")?;
+        let produced = produce(&mut |pieces| batches.send(pieces).is_ok());
+        drop(batches);
+        match writing.join() {
+            Ok(Err(written)) => Err(written),
+            Ok(Ok(())) => produced,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
+/// Write the pieces of each batch received, in the order they come: a piece that holds text, and
+/// between the texts of a JSON run the comma of the array.
+///
+/// A piece that failed to render ends the writing at that piece, after every piece before it
+/// was written, as the pieces were once written in a loop that returned at it.
+fn write_pieces(
+    writer: &mut impl Write,
+    batches: std::sync::mpsc::Receiver<Vec<Result<Vec<u8>>>>,
+    json: bool,
+) -> Result<()> {
+    let mut first_json = true;
+    for pieces in batches {
+        for piece in pieces {
+            let text = piece?;
+            if text.is_empty() {
+                continue;
+            }
+            if json {
+                if !first_json {
+                    writeln!(writer, ",")?;
+                }
+                first_json = false;
+            }
+            writer.write_all(&text)?;
+        }
+    }
+    Ok(())
+}
+
 /// Frees `value` on a thread of its own, which nothing waits for.
 ///
 /// The transcript models are most of the heap of a run: hundreds of thousands of transcripts of a
@@ -2102,8 +2171,9 @@ fn release_in_background<T: Send + 'static>(value: T) {
 
 #[cfg(test)]
 mod tests {
-    use super::{release_in_background, render_batch};
+    use super::{release_in_background, render_batch, write_while};
     use std::collections::HashMap;
+    use std::io::Write;
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
 
@@ -2236,18 +2306,250 @@ mod tests {
                 Ok(())
             },
         );
-        // What the write loop does: `,\n` between the pieces that have text.
-        let written = pieces
-            .into_iter()
-            .map(|p| String::from_utf8(p.unwrap()).unwrap())
-            .filter(|piece| !piece.is_empty())
-            .collect::<Vec<_>>()
-            .join(",\n");
+        // The writer puts `,\n` between the pieces that have text.
+        let mut sink = Sink::default();
+        write_while(&mut sink, true, |send| {
+            assert!(send(pieces));
+            Ok(())
+        })
+        .unwrap();
         let one_by_one = (0..5_000)
             .map(|n| format!("{{{n}}}"))
             .collect::<Vec<_>>()
             .join(",\n");
-        assert_eq!(written, one_by_one);
+        assert_eq!(String::from_utf8(sink.bytes).unwrap(), one_by_one);
+    }
+
+    /// An output that notes the threads it was written from, and can fail at a given write.
+    #[derive(Default)]
+    struct Sink {
+        bytes: Vec<u8>,
+        threads: std::collections::HashSet<std::thread::ThreadId>,
+        writes: usize,
+        fail_at: Option<usize>,
+    }
+
+    impl Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            if Some(self.writes) == self.fail_at {
+                return Err(std::io::Error::other("disk full"));
+            }
+            self.threads.insert(std::thread::current().id());
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn text(s: &str) -> anyhow::Result<Vec<u8>> {
+        Ok(s.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn batches_are_written_in_the_order_they_are_sent_on_a_thread_that_is_not_the_producers() {
+        let mut sink = Sink::default();
+        write_while(&mut sink, false, |send| {
+            for batch in 0..40 {
+                assert!(send(
+                    (0..3)
+                        .map(|piece| text(&format!("{batch}.{piece}\n")))
+                        .collect()
+                ));
+            }
+            Ok(())
+        })
+        .unwrap();
+        let expected: String = (0..40)
+            .flat_map(|b| (0..3).map(move |p| format!("{b}.{p}\n")))
+            .collect();
+        assert_eq!(String::from_utf8(sink.bytes).unwrap(), expected);
+        assert_eq!(sink.threads.len(), 1);
+        assert!(!sink.threads.contains(&std::thread::current().id()));
+    }
+
+    #[test]
+    fn json_pieces_are_separated_across_batches_and_an_empty_piece_is_left_out() {
+        let mut sink = Sink::default();
+        write_while(&mut sink, true, |send| {
+            assert!(send(vec![text("{1}"), text("")]));
+            assert!(send(vec![text("{2},\n{3}")]));
+            assert!(send(vec![text("")]));
+            assert!(send(vec![text("{4}")]));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(sink.bytes).unwrap(),
+            "{1},\n{2},\n{3},\n{4}"
+        );
+    }
+
+    #[test]
+    fn a_piece_that_failed_to_render_ends_the_writing_there_and_is_the_error() {
+        let mut sink = Sink::default();
+        let result = write_while(&mut sink, false, |send| {
+            send(vec![text("a"), Err(anyhow::anyhow!("render")), text("c")]);
+            // the writer has stopped, so this one is refused
+            while send(vec![text("d")]) {}
+            Ok(())
+        });
+        assert_eq!(sink.bytes, b"a");
+        assert_eq!(result.unwrap_err().to_string(), "render");
+    }
+
+    #[test]
+    fn a_writer_that_fails_stops_the_producer_and_its_error_is_the_one_returned() {
+        let mut sink = Sink {
+            fail_at: Some(2),
+            ..Default::default()
+        };
+        let mut sent = 0;
+        let result = write_while(&mut sink, false, |send| {
+            for _ in 0..1_000 {
+                if !send(vec![text("x")]) {
+                    break;
+                }
+                sent += 1;
+            }
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err().to_string(), "disk full");
+        assert!(sent < 10, "the producer went on for {sent} batches");
+    }
+
+    #[test]
+    fn an_error_of_the_writer_comes_before_one_of_the_producer_that_came_after_it() {
+        // The writer can only have failed on a batch that came before whatever the producer
+        // met afterwards, and the first failure is the one a run that wrote as it went reported.
+        let mut sink = Sink {
+            fail_at: Some(1),
+            ..Default::default()
+        };
+        let result = write_while(&mut sink, false, |send| {
+            while send(vec![text("x")]) {}
+            Err(anyhow::anyhow!("producer"))
+        });
+        assert_eq!(result.unwrap_err().to_string(), "disk full");
+    }
+
+    #[test]
+    fn an_error_of_the_producer_leaves_every_batch_before_it_written() {
+        let mut sink = Sink::default();
+        let result = write_while(&mut sink, false, |send| {
+            assert!(send(vec![text("a")]));
+            assert!(send(vec![text("b")]));
+            Err(anyhow::anyhow!("read error"))
+        });
+        assert_eq!(sink.bytes, b"ab");
+        assert_eq!(result.unwrap_err().to_string(), "read error");
+    }
+
+    /// An output that holds its first write until it is let go.
+    struct HeldOnce {
+        started: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+        held: bool,
+    }
+
+    impl Write for HeldOnce {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if !self.held {
+                self.held = true;
+                let _ = self.started.send(());
+                let _ = self.release.recv_timeout(Duration::from_secs(10));
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_producer_cannot_hand_over_a_second_batch_while_the_writer_is_held_on_the_first() {
+        // The hand-over has no room in it: with the first batch in the writer's hands and the
+        // writer held, the second batch is made and not taken, which bounds what is in memory.
+        //
+        // Nothing here depends on how fast a thread runs. The producer says that it is about to
+        // send the second batch before it does, so by the time the test looks the producer is at
+        // that send or past it; and the count it looks at can only be more than one if the send
+        // returned, which with the writer held is the bound broken, and not a slow thread.
+        let (started, writer_is_writing) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let (about_to_send, producer_is_at) = mpsc::channel();
+        let mut slow = HeldOnce {
+            started,
+            release: released,
+            held: false,
+        };
+        let sent = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let sent = &sent;
+            let watcher = scope.spawn(move || {
+                writer_is_writing
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("the writer starts on the first batch");
+                assert_eq!(
+                    producer_is_at
+                        .iter()
+                        .take(2)
+                        .last()
+                        .expect("the producer reaches its second send"),
+                    1
+                );
+                // a producer that is not held back has the time to send the others
+                std::thread::sleep(Duration::from_millis(100));
+                let ahead = sent.load(std::sync::atomic::Ordering::SeqCst);
+                release.send(()).unwrap();
+                ahead
+            });
+            write_while(&mut slow, false, |send| {
+                for batch in 0..5 {
+                    let _ = about_to_send.send(batch);
+                    assert!(send(vec![text("x")]));
+                    sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                Ok(())
+            })
+            .unwrap();
+            // one in the writer's hands, and the producer waiting to hand over the next
+            assert_eq!(watcher.join().unwrap(), 1);
+        });
+    }
+
+    /// An output that panics at its first write.
+    struct PanicsOnWrite;
+
+    impl Write for PanicsOnWrite {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            panic!("the writer panicked on purpose")
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_panic_of_the_writer_is_the_callers_and_the_producer_is_let_go() {
+        let mut sent = 0;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            write_while(&mut PanicsOnWrite, false, |send| {
+                // a writer that has panicked has gone, and `send` says so, or this would not end
+                while send(vec![text("x")]) {
+                    sent += 1;
+                }
+                Ok(())
+            })
+        }));
+        let payload = outcome.expect_err("the panic of the writer is resumed in the caller");
+        assert_eq!(
+            payload.downcast_ref::<&str>().copied(),
+            Some("the writer panicked on purpose")
+        );
+        assert!(sent < 10, "the producer went on for {sent} batches");
     }
 
     #[test]
