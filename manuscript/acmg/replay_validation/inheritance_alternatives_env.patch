@@ -1,0 +1,118 @@
+--- a/crates/fastvep-classification/src/disease.rs
++++ b/crates/fastvep-classification/src/disease.rs
+@@ -385,6 +385,26 @@
+     /// curated `AR` or `SD`, or, for an OMIM phenotype, the words that say so.
+     pub fn has_recessive_inheritance(&self) -> bool {
+         self.inheritance().recessive
++    }
++
++    /// MEASUREMENT BUILD ONLY. The reading before ClinGen's curated field was used: every
++    /// established entry read as free text, whatever its tag says.
++    pub fn alt_names_only_inheritance(&self) -> Inheritance {
++        let mut all = Inheritance::default();
++        for entry in self.entries().filter(|e| e.is_established()) {
++            all.merge(Inheritance::from_text(entry.raw));
++        }
++        all
++    }
++
++    /// MEASUREMENT BUILD ONLY. Dominant, but not through a disorder that ClinGen's label calls a
++    /// susceptibility or a predisposition, which BS2's full-penetrance condition excludes.
++    pub fn alt_dominant_without_predisposition(&self) -> bool {
++        self.entries().filter(|e| e.is_established()).any(|e| {
++            e.inheritance().dominant
++                && !(contains_ignore_case(e.label, "susceptib")
++                    || contains_ignore_case(e.label, "predispos"))
++        })
+     }
+ 
+     /// Whether the established diseases fall under more than one mode of
+--- a/crates/fastvep-classification/src/criteria/benign_strong.rs
++++ b/crates/fastvep-classification/src/criteria/benign_strong.rs
+@@ -254,8 +254,15 @@
+     }
+ 
+     let (is_dominant, is_recessive) = input.omim.as_ref().map_or((false, false), |o| {
+-        let inheritance = o.inheritance();
+-        (inheritance.dominant, inheritance.recessive)
++        if super::alt("bs2_names") {
++            let inheritance = o.alt_names_only_inheritance();
++            (inheritance.dominant, inheritance.recessive)
++        } else if super::alt("g3") {
++            (o.alt_dominant_without_predisposition(), o.has_recessive_inheritance())
++        } else {
++            let inheritance = o.inheritance();
++            (inheritance.dominant, inheritance.recessive)
++        }
+     });
+     details.insert("omim_dominant".into(), serde_json::json!(is_dominant));
+     details.insert("omim_recessive".into(), serde_json::json!(is_recessive));
+--- a/crates/fastvep-classification/src/criteria/mod.rs
++++ b/crates/fastvep-classification/src/criteria/mod.rs
+@@ -134,6 +134,52 @@
+         }
+     }
+     criteria.push(c);
++}
++
++/// MEASUREMENT BUILD ONLY. Whether `FASTVEP_ALT` (comma separated) names an alternative; the shipped
++/// classifier reads no environment, and with nothing set this build is the shipped classifier.
++pub(crate) fn alt(name: &str) -> bool {
++    static ALT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    ALT.get_or_init(|| std::env::var("FASTVEP_ALT").unwrap_or_default())
++        .split(',')
++        .any(|a| a == name)
++}
++
++/// MEASUREMENT BUILD ONLY. A combined cap of 4 points (Strong) on PP2, PM1 and PP3 when all three
++/// are met: the weakest of the three, PP2, is withheld when they would otherwise score more.
++fn cap_missense_triple(criteria: &mut [EvidenceCriterion]) {
++    let points = |c: &EvidenceCriterion| match c.strength {
++        EvidenceStrength::Supporting => 1,
++        EvidenceStrength::Moderate => 2,
++        EvidenceStrength::Strong => 4,
++        _ => 8,
++    };
++    let find = |criteria: &[EvidenceCriterion], base: &str| {
++        criteria
++            .iter()
++            .position(|c| c.met && (c.code == base || c.code.starts_with(&format!("{base}_"))))
++    };
++    let (Some(pp2), Some(pm1), Some(pp3)) = (
++        find(criteria, "PP2"),
++        find(criteria, "PM1"),
++        find(criteria, "PP3"),
++    ) else {
++        return;
++    };
++    if points(&criteria[pp2]) + points(&criteria[pm1]) + points(&criteria[pp3]) > 4 {
++        suppress(
++            &mut criteria[pp2],
++            "Suppressed: PP2, PM1 and PP3 together would exceed the Strong cap of 4 points.",
++        );
++    }
++}
++
++/// MEASUREMENT BUILD ONLY. The shipped pass, and the cap on top of it when asked for.
++fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
++    reconcile_evidence_shipped(criteria);
++    if alt("triple_cap") {
++        cap_missense_triple(criteria);
++    }
+ }
+ 
+ /// Suppress double-counted evidence.
+@@ -223,9 +269,11 @@
+ /// gives up 320 correct pathogenic-side calls for 3 false-pathogenic calls
+ /// avoided and 587 ClinVar-VUS variants kept at VUS, and it changes the
+ /// combining rule without correcting a defect (`docs/ACMG.md`, limitation 27).
+-fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
++fn reconcile_evidence_shipped(criteria: &mut [EvidenceCriterion]) {
+     grade_ps1_splice_against_pvs1(criteria);
+-    suppress_bs2_carriers_beside_frequency(criteria);
++    if !alt("g1_off") {
++        suppress_bs2_carriers_beside_frequency(criteria);
++    }
+ 
+     // Collect the firing state of each criterion of interest before we mutate
+     // anything. Using indices avoids borrow issues with mutable iteration.

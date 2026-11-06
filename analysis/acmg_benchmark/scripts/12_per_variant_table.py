@@ -43,7 +43,7 @@ COLUMNS = [
     "call", "criteria", "consequence", "impact", "biotype", "transcript", "mane_select",
     "hgvsc", "hgvsp", "revel", "spliceai_max", "phylop",
     "gnomad_af", "gnomad_ac", "gnomad_an", "gnomad_hc", "gnomad_popmax_af",
-    "pli", "loeuf", "mis_z", "clingen_tags", "symbol",
+    "pli", "loeuf", "mis_z", "clingen_tags", "symbol", "acmg_disorders",
 ]
 
 POP_AF_FIELDS = range(5, 15)  # AFR..SAS in FV_GNOMAD, after ALLELE|ALL_AF|ALL_AC|ALL_AN|ALL_HC
@@ -92,8 +92,10 @@ def clingen_tags(omim: str) -> str:
 
     Reads the `(ClinGen Definitive/AD, MONDO:...)` the annotation carries, counting
     only Definitive, Strong and Moderate curations, and returns `none` for a gene with
-    no such curation. This describes the data for the manuscript's tables; the
-    classifier does not read the tag (limitation 20 in docs/ACMG.md).
+    no such curation. This describes the data for the manuscript's tables. The classifier
+    read disease names and not this tag up to v37 (limitation 20 in docs/ACMG.md) and reads it
+    from v38 on; the table is the same either way, and what the classifier made of the gene is
+    the `acmg_disorders` column.
     """
     tags: set[str] = set()
     for item in omim.replace("%20", " ").replace("%2C", ",").split("&"):
@@ -213,6 +215,9 @@ def build(run: Path, labels_path: Path, out: Path) -> None:
                     # The symbol of the picked transcript, which is not always ClinVar's first GENEINFO symbol
                     # (`gene`, the column the gene-level counts of the manuscript use).
                     f("SYMBOL"),
+                    # The call against each mode of inheritance of the gene, as `AD:LB:BS2+BP4&AR:VUS:BP4`,
+                    # empty for a gene with one mode (and for every run before v38, which has no such column).
+                    f("ACMG_DISORDERS"),
                 ]
             )
             n += 1

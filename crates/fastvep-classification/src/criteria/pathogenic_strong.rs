@@ -766,7 +766,7 @@ mod tests {
         // IS this variant. Firing PS1 off it is circular: ENG c.991G>A did
         // exactly that off `331:G>S:Pathogenic`.
         let mut input = make_input(Some(clinvar_pathogenic()));
-        input.clinvar_protein = Some(protein_index(1));
+        input.clinvar_protein = Some(std::sync::Arc::new(protein_index(1)));
         let r = evaluate_ps1(&input, &AcmgConfig::default());
         assert!(!r.met);
         assert!(r.evaluated);
@@ -778,7 +778,7 @@ mod tests {
         // variant, the other is genuine independent evidence, which is exactly
         // what PS1 means by "regardless of the nucleotide change".
         let mut input = make_input(Some(clinvar_pathogenic()));
-        input.clinvar_protein = Some(protein_index(2));
+        input.clinvar_protein = Some(std::sync::Arc::new(protein_index(2)));
         let r = evaluate_ps1(&input, &AcmgConfig::default());
         assert!(r.met);
     }
@@ -788,7 +788,7 @@ mod tests {
         // A variant with no pathogenic ClinVar record of its own is not in the
         // index, so a single precedent is independent evidence.
         let mut input = make_input(None);
-        input.clinvar_protein = Some(protein_index(1));
+        input.clinvar_protein = Some(std::sync::Arc::new(protein_index(1)));
         let r = evaluate_ps1(&input, &AcmgConfig::default());
         assert!(r.met);
     }
@@ -796,7 +796,7 @@ mod tests {
     #[test]
     fn test_ps1_self_exclusion_can_be_disabled() {
         let mut input = make_input(Some(clinvar_pathogenic()));
-        input.clinvar_protein = Some(protein_index(1));
+        input.clinvar_protein = Some(std::sync::Arc::new(protein_index(1)));
         let cfg = AcmgConfig {
             exclude_self_from_clinvar_evidence: false,
             ..Default::default()

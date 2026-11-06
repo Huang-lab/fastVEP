@@ -151,6 +151,8 @@ controls = csv("controls_v37.csv").set_index("run")
 veto = csv("replay_veto_v37.csv").iloc[0]
 hooknew = csv("hook_new_opposite_v37.csv")
 crit = csv("criteria_firing_v37.csv")
+status = csv("criteria_status.csv").set_index("criterion")  # the 28 criteria; made by 18_criteria_status.py from a sample of the benchmark annotated to JSON
+cftr_null = csv("cftr_null_variants_v37.csv")
 EARLIER = {"v37_bs2off", "v37_bs2prev_3e-5", "v37_bs2prev_1e-4", "v37_bs2prev_1e-3", "v37_bs2prev_3e-3", "v37_bs2ac_20", "v37_bs2ac_100", "v37_bs2ac_1000"}
 harness = runs[~runs.index.isin(EARLIER | {"v37"})]  # the 81 runs of 11_manuscript_runs.py
 mainline = traj[traj.mainline.astype(str) == "True"]
@@ -206,7 +208,12 @@ def methods() -> None:
     fact("Four records of CFH and CFI", "Four" if fv("labels_lowpen_pair_mapped_to_pathogenic") == 4 else "?")
     fact("We kept both labels so that the 37 runs stay comparable", "by one variant" if fv("labels_lowpen_pair_exact_gain_if_relabelled") == 1 else "?",
          "by two" if fv("labels_conflicting_called_pathogenic_side") == 2 else "?")
-    fact("Among them, 382 ClinVar reference-agreement records", n(hl("variants_no_call").value))
+    fact("Among the 673,660 records, 382 have `.` as their alternative allele", n(N_ALL), n(hl("variants_no_call").value), n(fv("alt_dot_records")))
+    fact("Each of them names the reference sequence itself in its HGVS expression",
+         "every one of them as benign-side" if fv("alt_dot_hgvs_is_reference") == fv("alt_dot_clinvar_benign_side") == fv("alt_dot_records") else "?",
+         n(c5.loc["Benign", "NoCall"]), n(c5.loc["Likely_benign", "NoCall"]))
+    fact("There is no alternative allele to annotate, so they receive no call", n(hl("variants_no_call").value), n(c5.loc[["Likely_benign", "Benign"]].sum().sum()),
+         "no call" if fv("alt_dot_records_called") == 0 else "?")
     pr_bl = cls["Pathogenic"] + cls["Likely_pathogenic"] + cls["Likely_benign"] + cls["Benign"]
     fact("Rates use all 673,660 records as the denominator", f"{hl('opposite_rate').value * 100:.4f}%", f"{hl('opposite').value / pr_bl * 100:.3f}%", n(pr_bl),
          f"{hl('opposite').value / traj.loc[37].committed * 100:.3f}%", n(traj.loc[37].committed))
@@ -214,7 +221,28 @@ def methods() -> None:
          str(int(fv("reviewer_supported_clinvar_false_pathogenic"))), str(int(base.false_pathogenic)))
     fact("scored matrices are stored for 31 of the 37 runs", str(int((traj.source == "scored matrix on disk").sum())))
     # 2.1: the criteria
-    fact("In the benchmark, which has one variant per record and no pedigree or phenotype", str(len(crit)), *list(crit.criterion))
+    # 2.1: the criteria. The status table is the engine's own report on every 40th record of the benchmark, and the script that makes it
+    # stops if the engine disagrees with the groups below, so here the sentences are held to the table.
+    group = status.group
+    codes_of = lambda g: list(status.index[group == g])
+    from_variant, genotypes, functional, case, off = (codes_of(g) for g in ("from the variant", "needs genotypes of a proband", "needs functional assays", "needs case-level data", "off by default"))
+    n_not_applied = len(status) - len(from_variant)
+    fact("The engine implements all 28 ACMG/AMP criteria", str(len(status)), str(len(status) - len(off)))
+    fact("From it 15 of the 28 criteria can be applied", str(len(from_variant)), str(len(status)), *from_variant)
+    assert sorted(from_variant) == sorted(crit.criterion), "the 15 criteria of the benchmark are the 15 of criteria_firing_v37.csv"
+    fact("The other 13 are not applied in this paper, and they fall into four groups", str(n_not_applied), w(len({group[c] for c in status.index if group[c] != "from the variant"}))[1])
+    fact("Four need the genotypes of a proband and of its parents", w(len(genotypes)), *genotypes)
+    fact("Two need functional assays, PS3 and BS3", w(len(functional)), *functional)
+    fact("Five need case-level data that the engine does not read", w(len(case)), *case)
+    fact("PP5 and BP6 are off by default.", *off)
+    sample = int(status.records.max())
+    fact("we annotated every 40th record of the benchmark", n(sample), "40")
+    never = [c for c in status.index if status.records[c] and not status.evaluated[c]]
+    fact("were not evaluated for any of them", *never)
+    assert sorted(never) == sorted(genotypes + functional + case) or sorted(never) == sorted([c for c in genotypes if c != "PM3"] + functional + case), "the criteria never evaluated"
+    fact("PM3 was evaluated for 9,918", n(status.evaluated["PM3"]), "met for none" if status.met["PM3"] == 0 else "?")
+    ok = all(status.evaluated[c] > 0 and status.met[c] > 0 for c in from_variant)
+    fact("Each of the other 15 was evaluated for some records and met for some", "15" if ok and len(from_variant) == 15 else "?")
     fact("takes about two minutes to annotate", str(int(prov.annotation_seconds.median())))
     # 2.3
     v1 = traj.loc[1]
@@ -238,8 +266,15 @@ def methods() -> None:
     fact("Three runs change an input", str(int(g["gap"])))
     fact("With nothing set, each measurement build is the shipped classifier",
          *(["every cell"] if all(controls.cells_equal_to_v37 == controls.cells) and all(controls.criteria_firing_equal_to_v37 == controls.criteria) else ["?"]))
-    sha = prov.groupby("binary_sha256_prefix").size()
-    fact("All 89 runs (Supplementary Table S2) were made by the same harness", str(len(harness)), str(int(sha["d12c0d8e"])), str(int(sha["dc275d1c"])), str(int(sha["2bccb937"])))
+    # One binary for each kind of run and a different binary for each kind: the two measurement builds must not be
+    # the plain build under another name, which is what a build made into the target directory of the plain one is.
+    kinds = {"plain": prov[~prov.run.str.startswith(("v37_cut_", "v37_hk_"))], "cutoff": prov[prov.run.str.startswith("v37_cut_")],
+             "hooks": prov[prov.run.str.startswith("v37_hk_")]}
+    prefixes = {k: set(v.binary_sha256_prefix) for k, v in kinds.items()}
+    if any(len(p) != 1 for p in prefixes.values()) or len(set().union(*prefixes.values())) != 3:
+        failures.append(f"the runs were not made by one binary for each of the three kinds, and three different binaries: {prefixes}")
+    fact("All 89 runs (Supplementary Table S2) were made by the same harness", str(len(harness)), str(len(kinds["plain"])),
+         str(len(kinds["cutoff"])), str(len(kinds["hooks"])), next(iter(prefixes["plain"])))
     # 2.8
     nw_n = new_idx["new variants of the covered release"]
     fact("A new variant is not one that ClinVar did not hold in April", p(new_idx["  with a record in the April variant_summary"] / nw_n),
@@ -381,9 +416,9 @@ def thresholds() -> None:
          "neither changing an error" if no_error_change else "?", n(wk.same_direction), p(wk.same_direction / N_ALL, 1),
          n(wk.same_direction - base.same_direction), "two additional" if wk.false_benign - base.false_benign == 2 else "?")
     fact("We have not changed the classifier: the two variants", *[g for g in hooknew[hooknew.run == "v37_hk_bp7_walker"].gene], "16,000")
-    fact("of its 2,924 genes the classifier reads 67 as recessive-only", n(fv("clingen_genes_in_file")), n(fv("inheritance_read_recessive_only")), n(fv("inheritance_read_dominant_only")),
+    fact("of its 2,924 genes v37 read 67 as recessive-only", n(fv("clingen_genes_in_file")), n(fv("inheritance_read_recessive_only")), n(fv("inheritance_read_dominant_only")),
          n(fv("inheritance_read_both")), n(fv("inheritance_read_neither")))
-    fact("The two bars therefore act on nearly every gene and on 67 genes", n(fv("inheritance_read_recessive_only")))
+    fact("The two bars therefore acted on nearly every gene and on 67 genes", n(fv("inheritance_read_recessive_only")))
     fact("That median leaves out the panels that give no single number", n(vaud_pm2.sum()), n(vaud_pm2["ok"]), n(vaud_pm2["absence-required"]), n(vaud_pm2["no-threshold"]),
          n(vaud_pm2["inheritance-conditioned"]), n(vaud_pm2["superscript-notation"]), n(vaud_pm2["conflicting-panels"]),
          n(vaud_pm2["ambiguous"] + vaud_pm2["not-specified"] + vaud_pm2.get("implausible", 0)), "7e-5")
@@ -605,11 +640,18 @@ def discordance() -> None:
          "one is dominant negative" if fv("mechanism_table_dominant_negative") == 1 else "?",
          "five name both" if fv("mechanism_table_lof_and_gof") == 5 else "?",
          "those five are each licensed" if fv("mechanism_lof_genes_licensed_anyway") == fv("mechanism_table_lof_and_gof") else "?")
-    fact("The validity gate has one leak that changes no call", n(fv("clingen_weak_only_genes")), facts["clingen_weak_only_genes_with_semicolon_label"],
+    fact("The validity gate had one leak that changed no call in v37", n(fv("clingen_weak_only_genes")), facts["clingen_weak_only_genes_with_semicolon_label"],
          "no variant in the benchmark" if fv("clingen_weak_only_semicolon_genes_in_benchmark") == 0 else "?")
     fact("CFTR holds 439 of the 5,184 variants", n(pvs1["without PVS1, in CFTR (stop-gained and frameshift)"]), n(pvs1["CFTR null variants in the benchmark (stop, frameshift, canonical splice)"]),
          str(int(st(4, "P/LP", "VUS").n)), str(int(st(4, "P/LP", "VUS").row_total)))
     c1, c2, c3 = closure.loc["v37_gap_clingen_complete"], closure.loc["v37_gap_orphanet_lof"], closure.loc["v37_gap_both"]
+    versions = {h.split(":")[0] for h in cftr_null.hgvsc}
+    mane = n(pvs1["  of them null on the MANE Select transcript, the one the pick chose"])
+    fact("All 558 are null on CFTR's MANE Select transcript", mane, *versions, "the transcript that the pick chose" if len(versions) == 1 and (cftr_null.on_mane_select == "yes").all() else "?")
+    cv = cftr_null.clinvar.value_counts()
+    fact("ClinVar classifies 556 of the 558 as pathogenic-side", n(pvs1["  of them ClinVar pathogenic-side"]), n(cftr_null.shape[0]), n(cv["Pathogenic"]), n(cv["Likely_pathogenic"]), n(cv["VUS"]),
+         "every one of them" if cftr_null.shape[0] == pvs1["CFTR null variants in the benchmark (stop, frameshift, canonical splice)"] else "?")
+    assert (cftr_null.v37_call == "VUS").all() and int(cftr_null.complete_clingen_call.isin(["Pathogenic", "Likely_pathogenic"]).sum()) == int(c1.cftr_null_called_plp)
     fact("ClinGen's export of 11 October 2026 lists CFTR as Definitive for cystic fibrosis", n(missing[LACKED]), n(missing["  in genes"]),
          n(missing["  of Definitive, Strong or Moderate strength"]), n(missing["  genes with such a curation"]), n(missing[LACKED] - 1))
     fact("The completed file adds the 112 rows of the October export", n(missing[ROWS]), n(missing[LACKED]), "seven" if missing[RELABEL] == 7 else "?",
@@ -853,11 +895,10 @@ def discussion() -> None:
          p((c3_.gap_variants_gaining_pvs1 - c1_.gap_variants_gaining_pvs1) / c3_.gap_variants, 0))
     fact("ClinVar moved 157 of 665,057 variants across a direction", str(int(tdir.n.sum())))
     fact("Several lessons are of practical use", "")
-    fact("The gene inheritance mode that BS2 and PM2 read is the weakest input", n(fv("clingen_genes_in_file")), n(fv("inheritance_read_recessive_only")), n(fv("inheritance_read_dominant_only")),
+    fact("The mode of inheritance that BS2 and PM2 read was the weakest input of v37", n(fv("clingen_genes_in_file")), n(fv("inheritance_read_recessive_only")), n(fv("inheritance_read_dominant_only")),
          n(fv("inheritance_read_both")), n(fv("benchmark_genes_established_tags_ad_only")), n(fv("benchmark_genes_established_tags_ad_only_read_dominant")),
          n(fv("benchmark_genes_established_tags_ar_only")), n(fv("benchmark_genes_established_tags_ar_only_read_recessive")), "established ClinGen tags")
-    fact("Making BS2 read the tag gains", "2,812", "six")
-    fact("The classifier reads the gnomAD exomes only", f"{(base.same_direction - run('v37_sw_pm2_needs_record').same_direction) / N_ALL * 100:.2f}",
+    fact("The benchmark's classifier reads the gnomAD exomes only", f"{(base.same_direction - run('v37_sw_pm2_needs_record').same_direction) / N_ALL * 100:.2f}",
          f"{(base.plp_recall - run('v37_sw_pm2_needs_record').plp_recall) * 100:.1f}", p(base.fire_PM2_Supporting / N_ALL, 0))
     fact("The price of an error was not applied uniformly", n((t.loc[11].plp_recall - t.loc[10].plp_recall) * 93_812 / (t.loc[11].false_pathogenic - t.loc[10].false_pathogenic)),
          n((t.loc[13].blb_recall - t.loc[12].blb_recall) * 284_550 / (t.loc[13].false_benign - t.loc[12].false_benign)), n(steps[steps.knob == "BS2 homozygote bar"].reset_index(drop=True).iloc[1].calls_per_error),
@@ -876,11 +917,20 @@ def abstract_and_intro() -> None:
     nw = temporal[temporal.stratum == "new"].iloc[0]
     fact("Thirty-seven numbered versions were scored on 673,660 ClinVar variants", n(N_ALL), str(int((t.source == "scored matrix on disk").sum())))
     fact("For this paper 89 further runs re-measured all but four groups of", str(len(harness)))
-    fact("The final version was applied unchanged to ClinVar's release of 4 October 2026, including", n(nw.stratum_n))
+    fact("The classifier of that analysis (v37) was applied unchanged to ClinVar's release of 4 October 2026, including", n(nw.stratum_n))
     fact("agreement in direction rose from 51.0% (v1, reconstructed) to 77.6%", p(t.loc[1].same_direction_rate), p(t.loc[37].same_direction_rate), str(int(t.loc[10].opposite)),
          str(int(t.loc[13].opposite)), str(int(t.loc[37].opposite)), str(int(run("v37_hk_strict").opposite)), f"{w(fv('strict_opposite_called_benign'))[1]} of the added calls Benign")
     fact("None of the 4,017 Pathogenic or 67,700 Benign calls is among the 49", n(tiers.loc["Pathogenic", "n"]), n(tiers.loc["Benign", "n"]),
          p(baseline.loc["R1 + R2 + R3", "same_direction_share"]), n(baseline.loc["R1 + R2 + R3", "opposite"]))
+    # What most of the disagreement is, and why (the abstract states in a few words what Sections 2.1 and 3.5 give with their numbers)
+    fact("The input lists variants only, with no genotype, pedigree or phenotype", str(len(crit)), str(len(status)))
+    plp_vus, blb_vus = cell("P/LP", "VUS"), cell("B/LB", "VUS")
+    not_same = N_ALL - (cell("P/LP", "P/LP") + cell("VUS", "VUS") + cell("B/LB", "B/LB"))
+    fact("Most of the disagreement was not contradiction", n(plp_vus + blb_vus), n(not_same), n(plp_vus), n(blb_vus))
+    not_applied = [c for c in status.index if status.group[c] != "from the variant"]
+    fact("Thirteen criteria are not applied to a sites-only input", w(len(not_applied)), *not_applied)
+    bvs = sigs[(sigs.clinvar == "B/LB") & (sigs.fastvep == "VUS")].set_index("signature")
+    fact("Of the pathogenic-side variants called VUS, 10,541 sit one point short of Likely pathogenic", n(plp_pts["n"][5]), n(pvs1["without PVS1"]), n(bvs.loc["BP4", "n"] + bvs.loc["BS1", "n"]))
     ledger_found = ledger.found_by.value_counts()
     fact("Review of the discordant calls first identified 30 of 64 recorded changes", str(int(ledger_found["expert_review"])), str(len(ledger)), str(int(ledger["class"].value_counts()["G"])))
     cc = closure.loc["v37_gap_clingen_complete"]
@@ -914,6 +964,37 @@ def repository() -> None:
         fact("Analysis used Python", f"Rust {rustc}")
     except (OSError, subprocess.CalledProcessError):
         pass
+
+
+def availability() -> None:
+    """Every file and directory that "Data and code availability" names is in the repository.
+
+    The section tells a reader where each script, patch, table and record of the paper is. A name that the repository does not hold,
+    because a script was renamed or a file was never added, is the kind of statement that no number check catches. A bare name is
+    looked for by its file name anywhere in the repository, a path by its place, and a directory by a file under it.
+    """
+    import subprocess
+
+    root = HERE.parents[1]
+    # Tracked files and the files that are not yet but are not ignored either, so that a file added with its text passes before it is committed
+    # and a file under an ignored path (such as the bulk outputs under data/) does not.
+    tracked = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard"], cwd=root, capture_output=True, text=True, check=True).stdout.split("\n")
+    names = {Path(f).name for f in tracked if f}
+    section = (HERE / "manuscript.md").read_text().split("\n## Data and code availability\n", 1)[1].split("\n## ", 1)[0]
+    found = 0
+    for token in dict.fromkeys(re.findall(r"`([^`\s]+)`", section)):
+        if not re.search(r"\.(py|sh|patch|csv|tsv|xlsx|md|toml)$|/$", token):
+            continue
+        if token.endswith("/"):
+            ok = any(f.startswith(token) or f.startswith("manuscript/acmg/" + token) for f in tracked) or (root / token).is_dir()
+        elif "/" in token:
+            ok = token in tracked or ("manuscript/acmg/" + token) in tracked
+        else:
+            ok = token in names
+        found += ok
+        if not ok:
+            failures.append(f"Data and code availability names {token!r}, which the repository does not hold")
+    passed.append(f"Data and code availability: {found} names found in the repository")
 
 
 def audit() -> None:
@@ -961,7 +1042,7 @@ def coverage() -> None:
     t = traj
     f = ledger.found_by.value_counts()
     new = temporal[temporal.stratum == "new"].iloc[0]
-    fact("The final version was applied unchanged to ClinVar's release of 4 October 2026", n(new.stratum_n))
+    fact("The classifier of that analysis (v37) was applied unchanged to ClinVar's release of 4 October 2026", n(new.stratum_n))
     fact("we applied it unchanged to ClinVar's release of 4 October 2026, extracted the same way", n(tcov.loc["all", "records"]))
     fact("The output does not record the detail the veto needs", str(int(veto.held_at_vus_by_the_veto)))
     r6row = rounds.loc[6]
@@ -1029,9 +1110,360 @@ def coverage() -> None:
     tot = res_by_group[["clinvar", "fastvep"]].sum()
     fact("In the last round the reviewer supported ClinVar on 61% of the 49", p(tot.clinvar / 49, 0), p(tot.fastvep / 49, 0))
     fact("saw only the opposite-direction calls and none of the 35,178", n(cell("P/LP", "VUS")))
+    fact("is read from the mode that ClinGen curates for each of the", n(fv("clingen_genes_in_file")))
     fact("The classifier evaluates 15 of 28 criteria", str(len(crit)))
     fact("The ledger of 64 items and its classes are our own coding", str(len(ledger)))
     fact("Each of these can be measured by the harness of this paper before it is shipped", str(int(hl("opposite").value)))
+
+
+def v38() -> None:
+    """Section 2.10 and Section 3.8 (the reading of ClinGen's curated inheritance), and the sentences elsewhere that quote them."""
+    res = HERE.parents[1] / "analysis/acmg_benchmark/results/v37_manuscript"
+    runs38 = pd.read_csv(res / "runs_v38.tsv", sep="\t")
+    hold38 = pd.read_csv(res / "holdout_runs_v38.tsv", sep="\t")
+    r = csv("v38_runs.csv").set_index("run")
+    ctl = csv("v38_controls.csv").iloc[0]
+    fire = csv("v38_criteria_firing.csv").set_index("criterion")
+    tr = csv("v38_transitions.csv")
+    mv = csv("v38_clinvar_plp_moves.csv")
+    f38 = csv("v38_facts.csv").set_index("name")["value"]
+    rd = csv("v38_inheritance_reading.csv")
+    pdm = csv("v38_per_disorder.csv")
+    pdg = csv("v38_per_disorder_genes.csv").set_index("symbol")
+    sw = csv("v38_sweeps.csv").set_index("name")
+    st38 = csv("v38_threshold_steps.csv")
+    tp = csv("v38_triple.csv").set_index("set")
+    ho = csv("v38_holdout.csv")
+    hmv = csv("v38_holdout_plp_moves.csv")
+    jn = csv("v38_joint.csv")
+    jc = csv("v38_joint_changes.csv")
+    shipped, before, unguarded = r.loc["v38"], r.loc["v38_base"], r.loc["v38_alt_unguarded"]
+    label, as_v37, triple = r.loc["v38_alt_label_guard"], r.loc["v38_alt_bs2_as_v37"], r.loc["v38_alt_triple_cap"]
+    i = lambda x: int(x)
+
+    def reading(scope: str, kind: str, **match):
+        x = rd[(rd.scope == scope) & (rd.kind == kind)]
+        for k, v in match.items():
+            x = x[x[k] == v]
+        assert len(x) == 1, (scope, kind, match, len(x))
+        return x.iloc[0]
+
+    def pd_row(measure: str, nth: int = 0):
+        return int(pdm[pdm.measure == measure].iloc[nth].n)
+
+    def the_ho(set_: str, name: str):
+        return ho[(ho.set == set_) & (ho.run == name)].iloc[0]
+
+    allf, ben = "every gene of the file", "genes with a benchmark variant"
+    names_all = reading(allf, "reading", reading="disease names (to v37)")
+    field_all = reading(allf, "reading", reading="curated field (v38)")
+    names_b = reading(ben, "reading", reading="disease names (to v37)")
+    field_b = reading(ben, "reading", reading="curated field (v38)")
+    ad_b = reading(ben, "group", group="established tags AD only")
+    ar_b = reading(ben, "group", group="established tags AR only")
+    both_b = reading(ben, "group", group="established tags AD and AR")
+    other = lambda name: i(reading(ben, "other", group=name).genes)
+
+    # ----------------------------------------------------------------------------------- Section 2.10
+    fact("After the 89 runs of Sections 2.5 to 2.8 the classifier was changed in four ways (v38)", str(len(harness)))
+    fixture = (HERE.parents[1] / "crates/fastvep-cli/fixtures/clingen/genemap.tsv").read_text().splitlines()
+    rows = [line for line in fixture if line and not line.startswith("#")]
+    fact("A test builds the gene database with the command-line builder from 263 real curations in 185 genes", n(sum(line.count("(ClinGen ") for line in rows)), n(len(rows)),
+         "2026" if "11 October 2026" in LINES[[k for k, line in enumerate(LINES) if line.startswith("A test builds the gene database")][0]] else "?")
+    fact("The control of that build, with nothing set, reproduces v38 in all 30 cells", n(ctl.cells_equal_to_v38), n(ctl.cells), n(ctl.criteria_firing_equal_to_v38), n(ctl.criteria),
+         "all" if ctl.cells_equal_to_v38 == ctl.cells and ctl.criteria_firing_equal_to_v38 == ctl.criteria else "?")
+    fact("were swept again on v38 in 26 runs", n(len(sw[sw.group == "sweep"])))
+    fact("were applied unchanged to the release of 4 October 2026 (Section 2.8) in 4 runs", n(len(hold38)))
+    every_chromosome = {"v38", "v38_noflags", "v38_joint"}
+    fact("Three runs on every chromosome compare", w(len(every_chromosome & set(runs38.name))),
+         w(sum(runs38.name.str.startswith("v38_chr2122"))), "chromosomes 21 and 22")
+    fact("In all there are 38 runs on the April set and 4 on the October release", n(len(runs38)), n(len(hold38)))
+    res38 = HERE.parents[1] / "analysis/acmg_benchmark/results/v37_manuscript/provenance"
+    once = {f.stem: dict(line.split(": ", 1) for line in f.read_text().splitlines() if ": " in line) for f in (res38 / "v38.txt", res38 / "v38_joint.txt")}
+    fact("All but one of the 42 were made twice", n(len(runs38) + len(hold38)))
+    fact("the run on the joint release on every chromosome was made once, on 5 November 2026, with the binary of the second set",
+         "5 November 2026" if once["v38_joint"]["recorded_at"].startswith("2026-11-05") else "?",
+         "binary of the second set" if once["v38_joint"]["fastvep_sha256"] == once["v38"]["fastvep_sha256"] else "?")
+    fact("A later version (v38), which reads the mode of inheritance that ClinGen curates", n(len(runs38) + len(hold38)))
+    fact("The runs of Section 3.8, 38 on the April set and 4 on the October release", n(len(runs38)), n(len(hold38)))
+
+    # ----------------------------------------------------------------------------------- Section 3.8, the baseline and the reading
+    fact("they reached 67 and 50 genes", n(names_all.recessive_only), n(names_all.dominant_only))
+    fact("Its run differs from v37's in the criteria of 25 indels", n(f38["base_vs_v37_variants_with_other_criteria_or_call"]), n(f38["base_vs_v37_variants_with_another_call"]),
+         n(before.exact), n(before.same_direction), n(base.exact), n(base.same_direction),
+         "indels" if f38["base_vs_v37_differing_variants_that_are_indels"] == f38["base_vs_v37_variants_with_other_criteria_or_call"] else "?",
+         "ClinVar VUS variants" if f38["base_vs_v37_differing_variants_called_lp_by_v37_and_vus_in_clinvar"] == f38["base_vs_v37_variants_with_another_call"] else "?")
+    fact("Rates are over the 673,660 records, as in the rest of the paper", n(N_ALL), n(pd_row("variants scored")))
+    fact("**The field reads 2,056 genes as dominant-only or recessive-only where the names read 117.**",
+         n(field_all.dominant_only + field_all.recessive_only), n(names_all.dominant_only + names_all.recessive_only))
+    fact("Of the 2,924 genes of the ClinGen file, the names gave 50 dominant-only", n(names_all.genes), n(names_all.dominant_only), n(names_all.recessive_only), n(names_all.both), n(names_all.neither),
+         n(field_all.dominant_only), n(field_all.recessive_only), n(field_all.both), n(field_all.neither))
+    fact("Among the 2,840 genes with a benchmark variant, the names read as dominant", n(names_b.genes), n(ad_b.genes), n(ad_b.read_dominant_names), n(ar_b.genes), n(ar_b.read_recessive_names),
+         n(both_b.genes), n(both_b.read_dominant_names), n(both_b.read_recessive_names))
+    fact("Of the other 701 genes, 454 have no established curation", n(reading(ben, "group", group="other or none").genes), n(other("no established curation")), n(other("X-linked only")),
+         n(other("mitochondrial only")), n(other("with a semidominant curation")),
+         n(sum(other(g) for g in ("no established curation", "X-linked only", "mitochondrial only", "with a semidominant curation", "another combination"))))
+    fact("In the file 129 genes, 127 of them with a benchmark variant", n(reading(allf, "contexts").genes), n(reading(ben, "contexts").genes))
+    fact("Against the commit before it, v38 gives 149 more exact calls", n(shipped.d_exact), n(shipped.d_same_direction), pp(shipped.d_same_direction / N_ALL, 2))
+    t_ = tr[(tr.run == "v38") & (tr.against == "v38_base") & (tr.clinvar == "B/LB")]
+    gained = int(t_[(t_.call_before == "VUS") & t_.call_after.isin(["Benign", "Likely_benign"])].n.sum())
+    lost = int(t_[(t_.call_before.isin(["Benign", "Likely_benign"])) & (t_.call_after == "VUS")].n.sum())
+    fact("v38 gives a benign-side call to 1,809 ClinVar benign-side variants that were VUS", n(gained), n(lost), p(before.blb_recall), p(shipped.blb_recall),
+         n(shipped.vus_to_blb - before.vus_to_blb), n(shipped.vus_to_blb), n(before.vus_to_blb), n(shipped.vus_to_plp), "by none" if shipped.vus_to_plp == before.vus_to_plp else "?")
+    fact("Missed diagnoses stay at 24, and false-pathogenic calls fall from 25 to 24", n(before.false_benign), n(before.false_pathogenic), n(shipped.false_pathogenic),
+         "stay" if shipped.false_benign == before.false_benign else "?")
+    fact("PM2 is met by 9,335 more variants", n(fire.loc["PM2_Supporting", "v38"] - fire.loc["PM2_Supporting", "v38_base"]), n(fire.loc["PM2_Supporting", "v38"]),
+         n(fire.loc["PM2_Supporting", "v38_base"]), n(field_all.recessive_only), sci1(float(sw[sw.knob == "pm2_ar_af_threshold"].shipped.iloc[0])),
+         sci1(float(sw[sw.knob == "pm2_ad_af_threshold"].shipped.iloc[0])), n(as_v37.d_exact), n(abs(as_v37.d_same_direction)))
+    fact("Its carrier arm now reaches the 746 genes read as dominant-only and not 50", n(field_all.dominant_only), n(names_all.dominant_only), n(fire.loc["BS2", "v38"]), n(fire.loc["BS2", "v38_base"]),
+         n(fire.loc["BS2", "v38_alt_unguarded"]))
+
+    # ----------------------------------------------------------------------------------- the guard
+    u = tr[(tr.run == "v38_alt_unguarded") & (tr.against == "v38")]
+    from_lb = int(u[u.call_before == "Likely_benign"].n.sum())
+    from_vus = int(u[u.call_before == "VUS"].n.sum())
+    by_class = u.groupby("clinvar").n.sum()
+    fact("The reading as it first ran, with BS2's carriers counted beside BS1 and BA1, gives 3,615", n(unguarded.exact - shipped.exact), n(unguarded.same_direction - shipped.same_direction))
+    fact("It also calls two ClinVar-Pathogenic variants Benign that are VUS in v38", f38["ttr_call_v38_alt_unguarded"], f38["ttr_call_v38"], n(f38["ttr_alleles"]), n(f38["ttr_homozygous"]),
+         n(f38["vwf_alleles"]), n(f38["vwf_homozygous"]), "two" if unguarded.false_benign - shipped.false_benign == 2 else "?")
+    fact("In genes whose established curations are all autosomal dominant the carrier arm is met on 7,234", n(f38["ad_only_variants_with_bs1_and_bs2"]), n(f38["ad_only_variants_with_bs1"]),
+         n(f38["ad_only_variants_with_ba1_and_bs2"]), n(f38["ad_only_variants_with_ba1"]),
+         n(int(f38["ad_only_variants_with_bs1_and_bs2"]) + int(f38["ad_only_variants_with_ba1_and_bs2"])),
+         "all" if f38["ad_only_variants_with_ba1_and_bs2"] == f38["ad_only_variants_with_ba1"] else "?",
+         n(fire.loc["BS2", "v38_alt_unguarded"] - fire.loc["BS2", "v38"]))
+    fact("A stand-alone BA1 is Benign already", n(u.n.sum()), n(from_lb), n(from_vus), n(by_class["B/LB"]), n(by_class["VUS"]), n(by_class["P/LP"]))
+    fact("Against counting both it gives up 3,615 exact calls", n(unguarded.exact - shipped.exact), n(unguarded.same_direction - shipped.same_direction))
+    ns, nu = the_ho("new", "v38_oct_shipped"), the_ho("new", "v38_oct_alt_unguarded")
+    fact("On the 107,525 new variants of the October release it gives up 150 exact calls", n(ns.variants), n(nu.exact - ns.exact), n(nu.same_direction - ns.same_direction),
+         "avoids no contradiction" if (nu.false_benign, nu.false_pathogenic) == (ns.false_benign, ns.false_pathogenic) else "?")
+
+    # ----------------------------------------------------------------------------------- the four variants
+    four = mv[(mv.run == "v38") & (mv.call_after == "VUS")]
+    fact("In four loss-of-function variants, NEK1 p.Ser1036Ter", n(len(four)), *[f"{g} {h.split(':')[1]}" for g, h in zip(four.gene, four.hgvsp)],
+         "PVS1" if set(four.criteria_before) == {"PVS1"} and set(four.criteria_after) == {"PVS1&BS2"} else "?")
+    fact("Each is seen in 295 to 324 gnomAD alleles", n(f38["lp_to_vus_alleles_min"]), n(f38["lp_to_vus_alleles_max"]), "none as a homozygote" if int(f38["lp_to_vus_homozygous_max"]) == 0 else "?")
+    fact("Withholding the arm for a disorder whose label says susceptibility or predisposition restores two", w(label.same_pathogenic - shipped.same_pathogenic), n(shipped.same_benign - label.same_benign),
+         n(shipped.same_direction - label.same_direction))
+    oct4 = hmv[(hmv.run == "v38_oct_shipped") & (hmv.call_after == "VUS")]
+    fact("The same four variants lose the call on the October release", "same" if sorted(oct4.gene) == sorted(four.gene) else "?")
+
+    # ----------------------------------------------------------------------------------- the cap
+    a = tp.loc["April set"]
+    o = tp.loc["October, all covered"]
+    nn = tp.loc["October, new variants"]
+    fact("**A combined cap on PP2, PM1 and PP3 trades 320 correct pathogenic-side calls", n(a.clinvar_plp_losing_the_call), n(a.clinvar_vus_kept_at_vus), n(a.clinvar_blb_no_longer_called_plp))
+    fact("All three are met for 1,591 variants", n(a.variants_with_pp2_pm1_and_pp3_met), n(a.of_them_called_likely_pathogenic))
+    fact("Capping the three together at 4 points changes 910 calls", n(a.calls_changed), n(a.clinvar_plp_losing_the_call), n(a.clinvar_vus_kept_at_vus), n(a.clinvar_blb_no_longer_called_plp),
+         "all from Likely pathogenic to VUS" if a.calls_changed == a.all_likely_pathogenic_to_vus else "?")
+    fact("It raises agreement in direction by 267 calls", n(triple.same_direction - shipped.same_direction), n(triple.exact - shipped.exact), p(shipped.plp_recall), p(triple.plp_recall),
+         n(shipped.false_pathogenic - triple.false_pathogenic), n(shipped.false_pathogenic), n(a.plp_calls_lost_per_false_pathogenic_avoided))
+    fact("On the October release the same cap changes 1,018 calls", n(o.calls_changed), n(o.clinvar_plp_losing_the_call), n(o.clinvar_blb_no_longer_called_plp), n(nn.calls_changed),
+         n(nn.clinvar_plp_losing_the_call), "the one" if nn.clinvar_blb_no_longer_called_plp == 1 else "?")
+    fact("We did not adopt it, because it changes the combining rule", n(a.clinvar_vus_kept_at_vus), n(a.plp_calls_lost_per_false_pathogenic_avoided))
+
+    # ----------------------------------------------------------------------------------- the calls for each mode of inheritance
+    fact("**A gene with more than one mode of inheritance is classified once for each", f"{pd_row('variants whose modes of inheritance give different classes') / pd_row('variants whose gene has more than one mode of inheritance') * 100:.2f}%")
+    fact("Of the 673,278 variants with a call, 87,599 (13.0%) are in 128 genes", n(pd_row("variants scored")), n(pd_row("variants whose gene has more than one mode of inheritance")),
+         p(pd_row("variants whose gene has more than one mode of inheritance") / pd_row("variants scored")), n(pd_row("genes among them")))
+    different = pd_row("variants whose modes of inheritance meet different criteria")
+    by_bs2, by_pm2 = pd_row("  of them, BS2 is met under one mode and not another"), pd_row("  of them, PM2_Supporting is met under one mode and not another")
+    fact("The modes meet different criteria for 4,437 of the variants", n(different), n(by_bs2), n(by_pm2), "always" if by_bs2 + by_pm2 == different else "?")
+    fact("They give different classes for 482 variants (0.55%)", n(pd_row("variants whose modes of inheritance give different classes")),
+         f"{pd_row('variants whose modes of inheritance give different classes') / pd_row('variants whose gene has more than one mode of inheritance') * 100:.2f}%",
+         n(pd_row("variants whose modes of inheritance give different directions")),
+         f"{pd_row('variants whose modes of inheritance give different directions') / pd_row('variants whose gene has more than one mode of inheritance') * 100:.2f}%")
+    c_cls, c_dir = "  of them, modes of inheritance give different classes", "  of them, modes of inheritance give different directions"
+    fact("Among the ClinVar classes of such genes the modes give different classes for 15", n(pd_row(c_cls, 0)), n(pd_row("ClinVar P/LP variants in such genes")), n(pd_row(c_cls, 1)),
+         n(pd_row("ClinVar VUS variants in such genes")), n(pd_row(c_cls, 2)), n(pd_row("ClinVar B/LB variants in such genes")))
+    fact("In no gene do they differ for more than 30 variants", n(pdg.differ_in_class.max()), *[f"{g} {int(pdg.loc[g, 'differ_in_class'])}" for g in ("PKD1", "BRCA2", "RYR1")])
+
+    # ----------------------------------------------------------------------------------- the sweeps
+    pm2_ad = sw[sw.knob == "pm2_ad_af_threshold"]
+    pm2_ar = sw[sw.knob == "pm2_ar_af_threshold"]
+    fact("Raising the PM2 bar for genes that are not read as recessive-only from strict absence to 5e-4",
+         f"{pm2_ad.loc['v38_sw_pm2ad_0', 'plp_recall'] * 100:.2f}%", f"{pm2_ad.loc['v38_sw_pm2ad_0.0005', 'plp_recall'] * 100:.2f}%",
+         f"{run('v37_sw_pm2ad_0').plp_recall * 100:.2f}%", f"{run('v37_sw_pm2ad_0.0005').plp_recall * 100:.2f}%", n(field_all.recessive_only), n(names_all.recessive_only),
+         f"{pm2_ar.loc['v38_sw_pm2ar_0', 'plp_recall'] * 100:.2f}%", f"{pm2_ar.loc['v38_sw_pm2ar_0.0005', 'plp_recall'] * 100:.2f}%")
+    ar_all = pd.concat([pm2_ar, sw.loc[["v38"]]])
+    ad_all = pd.concat([pm2_ad, sw.loc[["v38"]]])
+    fact("Neither changes the number of missed diagnoses", n(ar_all.same_direction.max() - ar_all.same_direction.min()),
+         "no false-pathogenic" if ar_all.false_pathogenic.nunique() == 1 else "?", "Neither" if ad_all.false_benign.nunique() == 1 and ar_all.false_benign.nunique() == 1 else "?")
+    hom = st38[st38.knob == "BS2 bar for individuals with no functional copy"]
+    below = hom[hom.to_value.astype(float) < 0.001]
+    v37_hom = steps[(steps.knob == "BS2 homozygote bar") & (steps.to_value < 0.001)]
+    fact("The BS2 bar for individuals with no functional copy keeps the shape it had", *[n(x) for x in below.calls_per_error], *[n(x) for x in v37_hom.calls_per_error])
+    car = st38[st38.knob == "BS2 carrier bar, dominant-only genes"].reset_index(drop=True)
+    cs = sw[sw.knob == "bs2_ad_prevalence_threshold"]
+    fact("The BS2 carrier bar, which now reaches 746 genes and not 50, is no longer flat.", n(field_all.dominant_only), n(names_all.dominant_only))
+    fact("From 3e-3 to the shipped 3e-4 each step adds benign-side calls and no error",
+         n(car.iloc[0].gain_calls), n(car.iloc[1].gain_calls), n(car.iloc[2].calls_per_error), n(car.iloc[3].calls_per_error), n(car.iloc[4].calls_per_error),
+         n(cs.loc["v38_sw_bs2ad_0.0001", "false_benign"] - shipped.false_benign), n(cs.loc["v38_sw_bs2ad_3e-05", "false_benign"] - shipped.false_benign),
+         n(cs.loc["v38_sw_bs2ad_0", "false_benign"] - shipped.false_benign),
+         "no error" if car.iloc[0].added_errors == 0 and car.iloc[1].added_errors == 0 else "?")
+    fact("With the bar off, a floor of 20 alleles gives 33 missed diagnoses", n(sw.loc["v38_sw_bs2ac_20", "false_benign"]), n(sw.loc["v38_sw_bs2ac_100", "false_benign"]),
+         n(sw.loc["v38_sw_bs2ac_1000", "false_benign"]))
+
+    # ----------------------------------------------------------------------------------- the October release
+    ao, bo = the_ho("all covered", "v38_oct_shipped"), the_ho("all covered", "v38_oct_base")
+    uo = the_ho("all covered", "v38_oct_alt_unguarded")
+    nb = the_ho("new", "v38_oct_base")
+    fact("On the 772,585 covered records v38 gives 261 more exact calls", n(tcov.loc["all", "covered"]), n(ao.exact - bo.exact), n(ao.same_direction - bo.same_direction), n(bo.false_benign), n(ao.false_benign),
+         n(bo.false_pathogenic), n(ao.false_pathogenic))
+    fact("**On the new variants of the October release the effect is", n(ns.same_direction - nb.same_direction))
+    fact("with 26 missed diagnoses before and after and 38 false-pathogenic calls", n((ao.same_direction - bo.same_direction) - (ns.same_direction - nb.same_direction)))
+    fact("On the 107,525 new variants with a call it gives 101 more exact calls", n(ns.variants), n(ns.exact - nb.exact), n(ns.same_direction - nb.same_direction), n(nb.false_benign), n(nb.false_pathogenic),
+         "before and after" if (ns.false_benign, ns.false_pathogenic) == (nb.false_benign, nb.false_pathogenic) else "?")
+    fact("Counting BS2 beside BS1 and BA1 adds 4,034 exact calls", n(uo.exact - bo.exact), n(uo.same_direction - bo.same_direction), "two" if uo.false_benign - bo.false_benign == 2 else "?",
+         "both of them old variants" if set(hmv[(hmv.run == "v38_oct_alt_unguarded") & (hmv.call_after == "Benign")].stratum) == {"unchanged"} else "?")
+
+    # ----------------------------------------------------------------------------------- gnomAD's joint release
+    from decimal import ROUND_HALF_UP, Decimal
+
+    def pct3(x) -> str:
+        """A frequency as a percentage with three decimals, rounded half up from the digits that the file holds."""
+        return f"{(Decimal(str(x)) * 100).quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)}%"
+
+    j = jn.set_index("run")
+    ex, nf, jt = j.loc["v38"], j.loc["v38_noflags"], j.loc["v38_joint"]
+    every = jc[(jc.set == "every chromosome") & (jc.run == "v38_joint")]
+    moved = every[every.consequence_group != "(criterion)"]
+    by_class = moved.groupby("clinvar").n.sum()
+    rec = csv("v38_joint_records.csv").set_index("set").loc["every chromosome"]
+    cov = csv("v38_joint_coverage.csv").set_index("group")
+    added_all = (jt.false_benign - ex.false_benign) + (jt.false_pathogenic - ex.false_pathogenic)
+    added_genomes = (jt.false_benign - nf.false_benign) + (jt.false_pathogenic - nf.false_pathogenic)
+    price = lambda gain, cost: n(round(gain / cost, -2))
+
+    fact("On every chromosome (673,278 variants) a database built from it holds a record for every variant that the exomes hold",
+         n(rec.variants), n(rec.in_both), n(rec.joint_only), p(rec.joint_only / rec.variants),
+         "never lower" if (rec.exomes_only, rec.ac_lower, rec.an_lower, rec.hc_lower) == (0, 0, 0, 0) else "?")
+    fact("It changes 13,302 calls (2.0%)", n(moved.n.sum()), p(moved.n.sum() / jt.variants), n(by_class["B/LB"]), n(by_class["VUS"]), n(by_class["P/LP"]),
+         n(jt.d_exact), pp(jt.d_exact / jt.variants, 2), n(jt.d_same_direction), pp(jt.d_same_direction / jt.variants, 2),
+         n(ex.false_benign), n(jt.false_benign), n(ex.false_pathogenic), n(jt.false_pathogenic),
+         "one more missed diagnosis" if jt.false_benign - ex.false_benign == 1 else "?",
+         "two more false-pathogenic calls" if jt.false_pathogenic - ex.false_pathogenic == 2 else "?")
+    fact("ClinVar benign-side variants called benign-side rise from 178,888 to 188,310", n(ex.same_benign), n(jt.same_benign), n(ex.same_pathogenic), n(jt.same_pathogenic))
+    intronic, utr = cov.loc["intronic variants whose call moves"], cov.loc["UTR variants whose call moves"]
+    fact("Of the 13,302 calls that move, 4,485 are on variants that the exomes lack", n(cov.loc["calls that move", "variants"]), n(cov.loc["calls that move", "no_exomes_record"]),
+         n(intronic.no_exomes_record), n(intronic.variants), n(utr.variants), n(utr.median_an_exomes), n(utr.median_an_joint),
+         "of the 6,476" if int(moved[moved.consequence_group == "Intronic"].n.sum()) == intronic.variants else "?",
+         "UTR variants" if int(moved[moved.consequence_group == "UTR"].n.sum()) == utr.variants else "?")
+    ba1 = every[every.criterion == "BA1"].iloc[0]
+    fact("BA1 is gained on 10,115 of the moved calls and lost on 339", n(ba1.criterion_gained), n(ba1.criterion_lost))
+    bc = csv("v38_joint_by_chrom.csv").set_index("chrom")
+    autosomes_and_x = bc.loc[[str(c) for c in range(1, 23)] + ["X"]]
+    share = autosomes_and_x.calls_moved / autosomes_and_x.variants
+    fact("Each of the 22 autosomes and the X gains calls", p(share.min()), p(share.max()), n(bc.loc["Y", "variants"]), n(bc.loc["MT", "variants"]),
+         "gains calls" if bool(((autosomes_and_x.d_exact > 0) & (autosomes_and_x.d_same_direction > 0)).all()) else "?",
+         "nothing moves" if int(bc.loc[["Y", "MT"], "calls_moved"].sum()) == 0 else "?")
+    fact("Part of the gain is the flags that the joint release lacks and not the genomes", n(nf.d_exact), n(nf.d_same_direction), n(jt.d_exact - nf.d_exact),
+         n(jt.d_same_direction - nf.d_same_direction),
+         "one more false-pathogenic call and no more missed diagnosis" if (nf.false_pathogenic - ex.false_pathogenic, nf.false_benign - ex.false_benign) == (1, 0) else "?",
+         "one more of each" if (jt.false_benign - nf.false_benign, jt.false_pathogenic - nf.false_pathogenic) == (1, 1) else "?")
+    pc = csv("v38_joint_pilot_check.csv")
+    fact("A pilot of the same three runs on chromosomes 21 and 22 alone", n(pc.variants.iloc[0]),
+         "gives the same call and the same criteria"
+         if len(pc) == 3 and (pc.variants == pc.found_in_full).all() and not pc.calls_differing.any() and not pc.criteria_differing.any() else "?")
+
+    je = csv("v38_joint_errors.csv")
+    for flag in ("filter_ac0", "filter_vqsr", "lcr", "segdup", "bs2_met", "pm2_met", "bs1_met", "capped_by_veto"):
+        je[flag] = je[flag].eq(True)  # a blank (no gnomAD record) is False
+    errors = je[~je.kind.str.startswith("pathogenic-side")]
+    one = lambda symbol, database: errors[(errors.symbol == symbol) & (errors.database == database)].iloc[0]
+    faf = lambda symbol, database: float(one(symbol, database).faf95_max)
+    kinds = errors.drop_duplicates(["chrom", "pos"]).kind
+    fact("Five variants change their standing as an opposite-direction call, four added and one removed", w(len(kinds)),
+         w(int(kinds.str.startswith("no error").sum())), w(int(kinds.str.endswith("no error").sum())))
+    bar = float(one("KMT2C", "joint").bs1_bar)
+    straddle = {s for s in ("KMT2C", "RAI1", "PIEZO1", "TXNL4A", "NF1") if (faf(s, "exomes") - bar) * (faf(s, "joint") - bar) < 0}
+    fact("Four of the five are at the bar of BS1, a filtering allele frequency of 0.5%", w(len(straddle)), p(bar),
+         "the fifth belongs to the missing flags" if straddle == {"KMT2C", "RAI1", "PIEZO1", "TXNL4A"} else "?")
+    km, ra = one("KMT2C", "exomes"), one("RAI1", "exomes")
+    fact("KMT2C p.Cys391Ter (ClinVar Likely benign) and RAI1 p.Gln280HisfsTer83 (Benign)", km.hgvsp, ra.hgvsp,
+         "variant-quality filter" if all(one(s, d).frequency_withheld_by == "FILTER=AS_VQSR" for s in ("KMT2C", "RAI1") for d in ("exomes", "joint")) else "?",
+         "at VUS" if (km.call, ra.call) == ("VUS", "VUS") and km.capped_by_veto and ra.capped_by_veto and km.criteria == ra.criteria == "PVS1" else "?",
+         "Likely benign" if km.clinvar == "Likely_benign" else "?", "Benign" if ra.clinvar == "Benign" else "?")
+    fact("Their filtering allele frequencies are 0.522% and 0.537% in the exomes", pct3(faf("KMT2C", "exomes")), pct3(faf("RAI1", "exomes")), pct3(faf("KMT2C", "joint")),
+         pct3(faf("RAI1", "joint")),
+         "both are called Likely pathogenic" if all(one(s, "joint").call == "Likely_pathogenic" and not one(s, "joint").capped_by_veto for s in ("KMT2C", "RAI1")) else "?")
+    fact("PIEZO1's splice-acceptor deletion (ClinVar Benign) is the same case in the other direction", pct3(faf("PIEZO1", "exomes")), pct3(faf("PIEZO1", "joint")),
+         "Likely pathogenic" if one("PIEZO1", "exomes").call == "Likely_pathogenic" else "?", "at VUS" if one("PIEZO1", "joint").call == "VUS" and one("PIEZO1", "joint").capped_by_veto else "?",
+         "splice-acceptor" if one("PIEZO1", "exomes").consequence == "splice_acceptor_variant" else "?", "Benign" if one("PIEZO1", "exomes").clinvar == "Benign" else "?")
+    tx_e, tx_j = one("TXNL4A", "exomes"), one("TXNL4A", "joint")
+    fact("TXNL4A's deletion upstream of the gene (ClinVar Pathogenic)", n(tx_e.gnomad_an), pct3(tx_e.faf95_max), n(tx_j.gnomad_an), pct3(tx_j.faf95_max),
+         "BS1 fires" if tx_j.bs1_met and not tx_e.bs1_met else "?", "Likely benign" if tx_j.call == "Likely_benign" else "?",
+         "upstream" if tx_e.consequence == "upstream_gene_variant" else "?", "Pathogenic" if tx_e.clinvar == "Pathogenic" else "?")
+    nf_e, nf_j = one("NF1", "exomes"), one("NF1", "joint")
+    fact("NF1 p.Met895Ile (ClinVar Likely benign) is called Likely pathogenic", nf_e.hgvsp,
+         "segmental-duplication flag" if nf_e.frequency_withheld_by == "segmental duplication" and nf_e.segdup else "?",
+         "fires" if nf_j.pm2_met and not nf_e.pm2_met and nf_j.call == "Likely_pathogenic" else "?", "Likely benign" if nf_e.clinvar == "Likely_benign" else "?")
+
+    lost_rows = je[je.kind.str.startswith("pathogenic-side")]
+    lost_j, lost_e = lost_rows[lost_rows.database == "joint"], lost_rows[lost_rows.database == "exomes"]
+    plp = every[every.clinvar == "P/LP"]
+    is_p = lambda s: s.isin(["Pathogenic", "Likely_pathogenic"])
+    lost_n = int(plp[is_p(plp.call_before) & ~is_p(plp.call_after)].n.sum())
+    gained_n = int(plp[~is_p(plp.call_before) & is_p(plp.call_after)].n.sum())
+    fact("Thirteen ClinVar pathogenic-side variants lose a pathogenic-side call and 39 gain one", w(lost_n), n(gained_n),
+         "lose" if lost_n == len(lost_j) else "?")
+    filtered = lost_j[lost_j.frequency_withheld_by.fillna("").str.startswith("FILTER=")]
+    in_exomes = lost_e.set_index(["chrom", "pos"]).loc[list(zip(filtered.chrom, filtered.pos))]
+    has_record = in_exomes.gnomad_ac.notna()
+    fact("Ten of the 13 are missense variants whose record in the joint release carries a filter of gnomAD's quality control", w(len(filtered)), n(len(lost_j)),
+         w(int((filtered.filter_ac0 & ~filtered.filter_vqsr).sum())), w(int((~filtered.filter_ac0 & filtered.filter_vqsr).sum())),
+         w(int((filtered.filter_ac0 & filtered.filter_vqsr).sum())),
+         w(int(has_record.sum())), w(int((~has_record).sum())),
+         "one to four alleles" if int(in_exomes[has_record].gnomad_ac.min()) == 1 and int(in_exomes[has_record].gnomad_ac.max()) == 4 else "?",
+         "clean record" if not in_exomes[has_record].frequency_withheld_by.fillna("").str.len().any() else "?",
+         "missense" if (filtered.consequence == "missense_variant").all() else "?", "withholds PM2" if not filtered.pm2_met.any() else "?")
+    low = lost_e[lost_e.frequency_withheld_by.fillna("") == "low-complexity region"]
+    fact("Three are frameshifts, MYO6 p.Gln918ThrfsTer24 and PRRT2 p.Arg217ProfsTer8 and p.Arg217GlufsTer12", w(len(low)), *sorted(low.hgvsp),
+         "frameshifts" if (low.consequence == "frameshift_variant").all() else "?",
+         "BS2" if lost_j[lost_j.hgvsp.isin(low.hgvsp)].bs2_met.all() and not lost_j[lost_j.hgvsp.isin(low.hgvsp)].lcr.any() else "?")
+
+    pm2 = csv("v38_joint_pm2_lost.csv")
+    ac0 = pm2[(pm2.reason == "filter AC0") & pm2.joint_count_positive].iloc[0]
+    fact("Against the exomes without the flags, 741 variants with a positive joint count lose PM2 to an AC0 in one callset", n(ac0.variants), n(ac0.calls_moved),
+         n(ac0.pathogenic_side_calls_moved))
+    fact("The change costs about 3,100 calls in direction for each added opposite-direction call", price(jt.d_same_direction, added_all), n(jt.d_same_direction), w(added_all),
+         price(jt.d_same_direction - nf.d_same_direction, added_genomes), n(jt.d_same_direction - nf.d_same_direction), w(added_genomes))
+    fact("What the joint release gives up is the flags", n(nf.d_same_direction), "one false-pathogenic call" if nf.false_pathogenic - ex.false_pathogenic == 1 else "?",
+         "three pathogenic-side frameshifts" if len(low) == 3 else "?")
+    fact("gnomAD's genomes are not read by the benchmark; read through the joint release on every chromosome they give 9,321 more calls in direction",
+         n(jt.d_same_direction), w(added_all))
+    fact("Seventh, gnomAD's genomes, read through the joint release", n(jt.d_same_direction), w(added_all), price(jt.d_same_direction, added_all))
+    fact("Reading gnomAD's genomes through its joint release adds 9,321 calls in direction on every chromosome", n(jt.d_same_direction), w(added_all))
+    fact("Reading gnomAD's genomes as well as its exomes, through its joint release, would add 9,321 calls in direction", n(jt.d_same_direction), pp(jt.d_same_direction / jt.variants, 2),
+         "one more missed diagnosis" if jt.false_benign - ex.false_benign == 1 else "?", "two more false-pathogenic calls" if jt.false_pathogenic - ex.false_pathogenic == 2 else "?")
+
+    # ----------------------------------------------------------------------------------- the sentences elsewhere that quote it
+    fact("Reading the mode of inheritance that ClinGen curates, which makes 2,056 genes dominant-only or recessive-only", n(names_all.dominant_only + names_all.recessive_only),
+         n(field_all.dominant_only + field_all.recessive_only), n(shipped.d_same_direction), pp(shipped.d_same_direction / N_ALL, 2),
+         "no added missed diagnosis" if shipped.false_benign == before.false_benign else "?", w(len(four)))
+    fact("Counting one gnomAD observation as two benign criteria would have added", n(unguarded.d_same_direction - shipped.d_same_direction),
+         "two ClinVar-Pathogenic variants Benign" if unguarded.false_benign - shipped.false_benign == 2 else "?")
+    fact("**A flat sweep can mean that the setting reaches almost nothing, or that the rule beside it makes the setting irrelevant, and an input read from prose can hide the first.**")
+    fact("The sweep of the BS2 carrier bar was flat in v37 because", n(names_all.dominant_only), n(field_all.dominant_only))
+    fact("The sweeps of the PM2 bars were flat for the other reason", n(names_all.recessive_only), n(field_all.recessive_only))
+    fact("Across the two bars the words made", n(names_all.dominant_only + names_all.recessive_only), n(names_all.genes), n(field_all.dominant_only + field_all.recessive_only))
+    fact("Read the field that a source curates and not the prose beside it", n(names_all.dominant_only + names_all.recessive_only), n(field_all.dominant_only + field_all.recessive_only), n(len(rows)))
+    fact("A later version (v38) reads the mode of inheritance that ClinGen curates, which v37 took", n(shipped.d_same_direction), n(ao.same_direction - bo.same_direction),
+         n((ao.same_direction - bo.same_direction) - (ns.same_direction - nb.same_direction)), n(ns.same_direction - nb.same_direction), w(len(four)),
+         n(unguarded.d_same_direction - shipped.d_same_direction),
+         "no added missed diagnosis" if shipped.false_benign == before.false_benign and ao.false_benign == bo.false_benign else "?")
+    fact("The mode of inheritance that BS2 and PM2 read was the weakest input of v37", "")
+    fact("The field gives a mode and not a penetrance", w(len(four)))
+    # what BS2's arm for homozygotes and hemizygotes still counts beside BS1 and BA1, and the price of the label guard
+    fact("**The arm for homozygotes and hemizygotes is not set aside, and the same doubling remains in it for", n(f38["bs2_beside_bs1_without_ba1_variants"]))
+    fact("BS2 is met beside BS1 or BA1 through that arm on", n(f38["bs2_beside_frequency_variants"]), n(f38["bs2_beside_frequency_variants_on_x"]))
+    fact("BA1 alone is Benign, so the doubling changes a call only beside BS1 without BA1", n(f38["bs2_beside_bs1_without_ba1_variants"]),
+         n(f38["bs2_beside_bs1_without_ba1_on_x"]), n(f38["bs2_beside_bs1_without_ba1_clinvar_benign_side"]), n(f38["bs2_beside_bs1_without_ba1_clinvar_vus"]))
+    fact("No ClinVar pathogenic-side variant is among them, so the benchmark shows no harm from it",
+         "No ClinVar pathogenic-side variant" if int(f38["bs2_beside_bs1_without_ba1_clinvar_pathogenic_side"]) == 0 else "?")
+    fact("BS2's arm for homozygotes and hemizygotes still counts", n(f38["bs2_beside_bs1_without_ba1_variants"]))
+    per_restored = n(round((shipped.same_benign - label.same_benign) / (label.same_pathogenic - shipped.same_pathogenic)))
+    fact("The label guard that restores two of the four gives up about", w(label.same_pathogenic - shipped.same_pathogenic), per_restored)
+    fact("and in v38 we declined the label guard that restores two ClinVar-Pathogenic variants at about", per_restored)
 
 
 def structure() -> None:
@@ -1046,7 +1478,7 @@ def structure() -> None:
     body, back = text.split("\n## Figure legends\n", 1)
     legends = re.findall(r"^\*\*Figure (S?\d)\. ", back, re.M)
     sup = re.findall(r"^\*\*Supplementary Table (S\d)\.", back, re.M)
-    app = re.findall(r"^\*\*Appendix Table (A\d)\.", back, re.M)
+    app = re.findall(r"^\*\*Appendix Table (A\d+)\.", back, re.M)
 
     def check(ok: bool, what: str) -> None:
         (passed if ok else failures).append(("structure: " if ok else "structure: ") + what)
@@ -1059,7 +1491,7 @@ def structure() -> None:
     prose = "\n".join(line for line in body.splitlines() if not line.startswith("**Table "))
     first_cited = list(dict.fromkeys(re.findall(r"\bTable (\d+)\b", prose)))
     check(first_cited == main_tables, f"the tables of the text are first cited in the order they are numbered (cited {first_cited}, numbered {main_tables})")
-    for kind, pattern, defined in (("figure", r"Figure (S?\d)", legends), ("supplementary table", r"Supplementary Table (S\d)", sup), ("appendix table", r"Appendix Table (A\d)", app)):
+    for kind, pattern, defined in (("figure", r"Figure (S?\d)", legends), ("supplementary table", r"Supplementary Table (S\d)", sup), ("appendix table", r"Appendix Table (A\d+)", app)):
         cited = re.findall(pattern, text)
         missing = sorted(set(cited) - set(defined))
         check(not missing, f"every {kind} that the text cites is defined (undefined: {missing})")
@@ -1081,7 +1513,35 @@ def structure() -> None:
     check(not stale, f"supplementary_tables.xlsx holds what data/ and the table entries say (rerun build_supplement.py --write; {stale[:1]})")
 
 
-CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, repository, audit, early_trades, criteria_consistency, coverage, structure]
+def binaries() -> None:
+    """`binaries.tsv` names every binary that made a run of the repository, with the runs it made.
+
+    The provenance file of a run records the SHA-256 of its binary and the commit of the checkout that ran the harness, which is
+    not the commit of the binary; the table is where a hash is tied to what it was built from. A hash that is in a provenance
+    file and not in the table, a hash in the table that made no run, and a count that is not the number of provenance files
+    with the hash are each a failure.
+    """
+    res = HERE.parents[1] / "analysis/acmg_benchmark/results/v37_manuscript"
+    table = pd.read_csv(res / "binaries.tsv", sep="\t", dtype=str)
+    seen: dict[str, int] = {}
+    for f in sorted((res / "provenance").glob("*.txt")):
+        for line in f.read_text().splitlines():
+            if line.startswith("fastvep_sha256: "):
+                sha = line.split(": ", 1)[1].strip()
+                seen[sha] = seen.get(sha, 0) + 1
+    listed = dict(zip(table.sha256, table.runs.astype(int)))
+    for sha, k in sorted(seen.items()):
+        if sha not in listed:
+            failures.append(f"binaries.tsv: {sha[:12]} made {k} runs and is not in the table")
+        elif listed[sha] != k:
+            failures.append(f"binaries.tsv: {sha[:12]} made {k} runs and the table says {listed[sha]}")
+    for sha in listed:
+        if sha not in seen:
+            failures.append(f"binaries.tsv: {sha[:12]} is in the table and made no run")
+    passed.append(f"binaries.tsv: {len(seen)} binaries made {sum(seen.values())} runs")
+
+
+CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, repository, availability, audit, early_trades, criteria_consistency, coverage, v38, binaries, structure]
 
 
 def main() -> None:

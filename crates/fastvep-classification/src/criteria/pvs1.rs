@@ -536,12 +536,10 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
     // `omim` json_key. The ClinGen build keeps every classification, weak ones
     // included, so "Moderate or better" holds here only because the validity
     // gate above has already withheld PVS1 from a gene whose curations are all
-    // weak. That gate reads the tag of each phenotype and the builder splits
-    // phenotypes on ';', so a label that itself ends in ';' (NSMCE3, Limited)
-    // leaves an untagged fragment that counts as established and the gene
-    // escapes the gate. It is the only one of the 505 weak-only genes in the
-    // ClinGen file of 30 April 2026 that does, and it has no variant in the
-    // ClinVar 2-star+ benchmark.
+    // weak. That gate reads the tag of each phenotype through
+    // `OmimData::entries`, which also drops the untagged piece a label
+    // containing ';' leaves behind (the builder splits phenotypes on ';'), so a
+    // weak-only gene such as NSMCE3 no longer escapes it.
     if let Some(ref omim) = input.omim {
         if omim.phenotypes.as_ref().is_some_and(|p| !p.is_empty()) {
             return true;

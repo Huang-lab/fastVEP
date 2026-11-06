@@ -94,18 +94,36 @@ impl BlockCache {
         self.lru.get(&key).map(|(arc, _)| Arc::clone(arc))
     }
 
-    fn put(&mut self, key: CacheKey, value: Arc<Vec<BlockEntry>>, bytes: usize) {
+    /// Insert a block and hand back every block that the insert displaced.
+    ///
+    /// The displaced blocks are returned and not dropped here because `put` runs
+    /// with the cache's mutex held, and dropping the last reference to a block
+    /// frees one `String` for each of its tens of thousands of entries. On a
+    /// profile of `annotate --acmg` over 112,000 ClinVar records with ten
+    /// threads, a third of the time in the per-variant loop was threads waiting
+    /// for this mutex while one of them freed a block it had just evicted. The
+    /// caller drops the result after it has released the lock.
+    #[must_use = "dropping the displaced blocks frees them, which must happen after the cache lock is released"]
+    fn put(
+        &mut self,
+        key: CacheKey,
+        value: Arc<Vec<BlockEntry>>,
+        bytes: usize,
+    ) -> Vec<Arc<Vec<BlockEntry>>> {
+        let mut displaced = Vec::new();
         // Replace-in-place: drop the old bytes first so the budget loop
         // below sees the correct `total_bytes`.
-        if let Some((_, old_bytes)) = self.lru.pop(&key) {
+        if let Some((old, old_bytes)) = self.lru.pop(&key) {
             self.total_bytes = self.total_bytes.saturating_sub(old_bytes);
+            displaced.push(old);
         }
         // Byte-budget eviction: free space for the new block, but always
         // leave room to insert it (cache may go above budget for a single
         // oversized block; parallel workers must not thrash that one).
         while self.total_bytes + bytes > self.budget_bytes && !self.lru.is_empty() {
-            if let Some((_, (_, ev_bytes))) = self.lru.pop_lru() {
+            if let Some((_, (evicted, ev_bytes))) = self.lru.pop_lru() {
                 self.total_bytes = self.total_bytes.saturating_sub(ev_bytes);
+                displaced.push(evicted);
             } else {
                 break;
             }
@@ -113,10 +131,12 @@ impl BlockCache {
         // `push` returns any entry the inner LruCache evicts to make room
         // (capacity overflow); subtract its bytes so `total_bytes` doesn't
         // drift if `CACHE_MAX_ENTRIES` ever bites before the byte budget.
-        if let Some((_, (_, ev_bytes))) = self.lru.push(key, (value, bytes)) {
+        if let Some((_, (evicted, ev_bytes))) = self.lru.push(key, (value, bytes)) {
             self.total_bytes = self.total_bytes.saturating_sub(ev_bytes);
+            displaced.push(evicted);
         }
         self.total_bytes = self.total_bytes.saturating_add(bytes);
+        displaced
     }
 
     /// Number of cached blocks belonging to a specific reader. Test-only:
@@ -316,10 +336,14 @@ impl SaReader {
         let bytes = block_bytes(&entries);
         let arc = Arc::new(entries);
 
-        let mut cache = cache_mutex
-            .lock()
-            .map_err(|_| anyhow::anyhow!("SA block cache mutex poisoned"))?;
-        cache.put(key, Arc::clone(&arc), bytes);
+        let displaced = {
+            let mut cache = cache_mutex
+                .lock()
+                .map_err(|_| anyhow::anyhow!("SA block cache mutex poisoned"))?;
+            cache.put(key, Arc::clone(&arc), bytes)
+        };
+        // Freed here, with the lock released: see `BlockCache::put`.
+        drop(displaced);
         Ok(arc)
     }
 
@@ -755,9 +779,11 @@ mod tests {
                 json: "x".repeat(100),
             }])
         };
-        cache.put((0, 0), mk(0), 100);
-        cache.put((0, 1), mk(1), 100);
-        cache.put((0, 2), mk(2), 100); // evicts offset 0 (LRU)
+        assert!(cache.put((0, 0), mk(0), 100).is_empty());
+        assert!(cache.put((0, 1), mk(1), 100).is_empty());
+        let displaced = cache.put((0, 2), mk(2), 100); // evicts offset 0 (LRU)
+        assert_eq!(displaced.len(), 1, "the eviction is handed back");
+        assert_eq!(displaced[0][0].position, 0, "and it is the LRU block");
         assert!(
             cache.get((0, 0)).is_none(),
             "offset 0 should have been evicted"
@@ -765,6 +791,45 @@ mod tests {
         assert!(cache.get((0, 1)).is_some());
         assert!(cache.get((0, 2)).is_some());
         assert!(cache.total_bytes <= cache.budget_bytes);
+    }
+
+    #[test]
+    fn block_cache_hands_back_what_it_displaces_without_freeing_it() {
+        // Freeing a block under the cache's mutex stalls every other worker (see
+        // `BlockCache::put`), so a displaced block must reach the caller alive:
+        // the caller holds the only reference, which it could not if the cache
+        // had dropped its own.
+        let mut cache = BlockCache::new(150);
+        let mk = |i: u32| {
+            Arc::new(vec![BlockEntry {
+                position: i,
+                ref_allele: "A".into(),
+                alt_allele: "G".into(),
+                json: "x".repeat(100),
+            }])
+        };
+        let first = mk(0);
+        let weak = Arc::downgrade(&first);
+        assert!(cache.put((0, 0), first, 100).is_empty());
+        let mut displaced = cache.put((0, 1), mk(1), 100);
+        assert_eq!(displaced.len(), 1);
+        let block = displaced.pop().unwrap();
+        assert_eq!(
+            Arc::strong_count(&block),
+            1,
+            "the caller holds the only reference, so the cache has not freed it"
+        );
+        assert!(weak.upgrade().is_some(), "the block is still alive");
+        drop(block);
+        assert!(
+            weak.upgrade().is_none(),
+            "and is freed when the caller lets go"
+        );
+
+        // Replacing a block under its own key hands the old one back too.
+        let replaced = cache.put((0, 1), mk(2), 100);
+        assert_eq!(replaced.len(), 1);
+        assert_eq!(replaced[0][0].position, 1);
     }
 
     #[test]
@@ -779,7 +844,7 @@ mod tests {
             alt_allele: "G".into(),
             json: "x".repeat(1000),
         }]);
-        cache.put((0, 0), entry, 1000);
+        assert!(cache.put((0, 0), entry, 1000).is_empty());
         assert!(
             cache.get((0, 0)).is_some(),
             "just-inserted block must be retained"
@@ -799,8 +864,8 @@ mod tests {
                 json: tag.to_string(),
             }])
         };
-        cache.put((0, 0), mk("reader0"), 100);
-        cache.put((1, 0), mk("reader1"), 100);
+        assert!(cache.put((0, 0), mk("reader0"), 100).is_empty());
+        assert!(cache.put((1, 0), mk("reader1"), 100).is_empty());
         assert_eq!(cache.get((0, 0)).unwrap()[0].json, "reader0");
         assert_eq!(cache.get((1, 0)).unwrap()[0].json, "reader1");
         assert_eq!(cache.len_for_reader(0), 1);

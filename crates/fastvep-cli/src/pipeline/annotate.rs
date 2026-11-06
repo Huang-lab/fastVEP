@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use fastvep_annotate::pick::{
     apply_pick, parse_pick_order, PickCriterion, PickFlags, PickRequest, DEFAULT_PICK_ORDER,
 };
-use fastvep_cache::annotation::{AnnotationProvider, AnnotationValue, GeneAnnotationProvider};
+use fastvep_cache::annotation::{AnnotationProvider, GeneAnnotationProvider};
 use fastvep_cache::fasta::ReferenceFasta;
 use fastvep_cache::info::CacheInfo;
 use fastvep_cache::providers::{
@@ -697,77 +697,12 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
     // (intergenic, transcript-overlapping, and sa_only scaffold) so
     // supplementary databases attach to every record that matches.
     if !sa_providers.is_empty() {
-        let chrom = &vf.position.chromosome;
-        let sa_queries = vf.query_alleles();
-        let mut allele_results: HashMap<String, Vec<(String, String)>> = HashMap::new();
-        for tv in &vf.transcript_variations {
-            for aa in &tv.allele_annotations {
-                let allele_key = aa.allele.to_string();
-                if allele_results.contains_key(&allele_key) {
-                    continue;
-                }
-                let (query_pos, ref_str, alt_str) = sa_queries
-                    .iter()
-                    .find(|(allele, _, _, _)| allele == &allele_key)
-                    .map(|(_, pos, ref_allele, alt_allele)| {
-                        (*pos, ref_allele.clone(), alt_allele.clone())
-                    })
-                    .unwrap_or_else(|| {
-                        (
-                            vf.position.start,
-                            vf.ref_allele.to_string(),
-                            allele_key.clone(),
-                        )
-                    });
-                // gnomAD stores left-aligned, parsimonious alleles; the
-                // raw input representation can differ for indels (esp.
-                // in repeats), silently missing the match and making
-                // PM2 misfire on common variants. Normalize the query to
-                // gnomAD's minimal representation — only when a gnomAD
-                // provider and a reference are present, and applied only
-                // to the gnomAD lookup (other sources keep the raw key).
-                let gnomad_norm = if normalize_gnomad_queries {
-                    seq_provider.map(|sp| {
-                        fastvep_cache::normalize::normalize_variant(
-                            sp, chrom, query_pos, &ref_str, &alt_str,
-                        )
-                    })
-                } else {
-                    None
-                };
-                let mut results: Vec<(String, String)> = Vec::new();
-                for sa in sa_providers {
-                    let (sa_pos, sa_ref, sa_alt) = if sa.metadata().match_by_allele {
-                        if sa.json_key() == "gnomad" {
-                            match &gnomad_norm {
-                                Some(n) => (n.pos, n.ref_allele.as_str(), n.alt_allele.as_str()),
-                                None => (query_pos, ref_str.as_str(), alt_str.as_str()),
-                            }
-                        } else {
-                            (query_pos, ref_str.as_str(), alt_str.as_str())
-                        }
-                    } else {
-                        (vf.position.start, "", "")
-                    };
-                    // A failed lookup is not a miss: see `SaLookupErrors`.
-                    match sa.annotate_position(chrom, sa_pos, sa_ref, sa_alt) {
-                        Ok(Some(ann)) => {
-                            let json_str = match ann {
-                                AnnotationValue::Json(j) => j,
-                                AnnotationValue::Positional(j) => j,
-                                AnnotationValue::Interval(v) => {
-                                    format!("[{}]", v.join(","))
-                                }
-                            };
-                            results.push((sa.json_key().to_string(), json_str));
-                        }
-                        Ok(None) => {}
-                        Err(e) => fastvep_annotate::sa_lookup_errors().record(sa.json_key(), &e),
-                    }
-                }
-                allele_results.insert(allele_key, results);
-            }
-        }
+        let allele_results = fastvep_annotate::supplementary_for_alleles(
+            vf,
+            sa_providers,
+            seq_provider.map(|sp| sp as &dyn SequenceProvider),
+            normalize_gnomad_queries,
+        );
         for tv in &mut vf.transcript_variations {
             for aa in &mut tv.allele_annotations {
                 if let Some(results) = allele_results.get(&aa.allele.to_string()) {
@@ -1796,7 +1731,13 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // `PICK` header over a column that is empty on every row, which reads as
     // "every entry lost the pick" rather than "no pick ran".
     let pick_flags_column = !sa_only && pick_request.is_some_and(|r| r.needs_pick_column());
-    let csq_fields: Vec<&'static str> = output::csq_fields(pick_flags_column, config.columns);
+    let mut csq_fields: Vec<&'static str> = output::csq_fields(pick_flags_column, config.columns);
+    // `--sa-only` writes no transcript rows, so there is nothing for the column to
+    // sit on, and a header over a column that no row can fill is the thing the
+    // pick column above is careful not to be.
+    if config.acmg && !sa_only {
+        csq_fields = output::with_acmg_disorders(csq_fields);
+    }
     // The optional tab columns, in VEP's order. `--sa-only` writes no transcript
     // columns at all, and says so for each flag it ignores.
     let optional_columns: Vec<output::OptionalColumn> = if sa_only {

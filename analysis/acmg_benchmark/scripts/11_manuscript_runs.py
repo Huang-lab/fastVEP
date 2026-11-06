@@ -31,6 +31,23 @@ Three groups:
   gap     what the PVS1 gap of Section 3.5 is made of: the ClinGen file with the curations the
           April export lacked put back, and PVS1 licensed by Orphanet's loss-of-function label
           for genes that no other route reaches. Needs the files named in `gap_inputs()`.
+  v38     what changed after v37 (Section 3.8): the classifier reading ClinGen's curated inheritance,
+          classifying a gene against each of its modes of inheritance, and not counting BS2's carriers
+          beside BS1 or BA1. Four kinds of run, kept apart from the rest (their names start `v38`, they
+          are written to `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv`, and the
+          other files are not touched by them), run with `--v38`:
+            inherit       the shipped code; the sweeps of the four thresholds that read inheritance,
+                          re-run now that the field is read (binary in FASTVEP_V38_BIN)
+            inherit_base  the commit before the change, for the comparison (FASTVEP_V38_BASE_BIN)
+            inherit_alt   the alternatives that were measured and not shipped, and one that was not
+                          tried until now, by a build of `replay_validation/inheritance_alternatives_env.patch`
+                          (FASTVEP_V38_ALT_BIN)
+            joint         the benchmark's gnomAD exomes replaced by gnomAD's joint exomes and genomes
+                          callset on every chromosome, once its 24 databases are built
+                          (`build_gnomad_release_per_chrom.sh`), against the same variants with the exomes;
+                          and the pilot of the same on chr21 and chr22 alone, made first and kept as a
+                          check that the runs of every chromosome give its calls
+          and each of them also on the variants of the October 2026 release (`--holdout --v38`).
   holdout the changes that Section 4.5 proposes, run on the variants of the ClinVar release of
           4 October 2026 (the covered subset that `14_temporal_holdout.py prepare` writes), so
           that they are tried on variants that none of them was tuned on. They are run with
@@ -58,7 +75,14 @@ Usage
   11_manuscript_runs.py --collect       rebuild runs.tsv from the scored files and stop
   11_manuscript_runs.py --holdout       the runs of the `holdout` group (the others are not run)
 
+  FASTVEP_V37_BIN=/path/to/v37/fastvep 11_manuscript_runs.py --workers 3
   FASTVEP_CUTOFF_BIN=/path/to/patched/fastvep 11_manuscript_runs.py --only cut
+
+The binary of every run is named by an environment variable, and a run whose variable is not set is not run:
+FASTVEP_V37_BIN for the runs that are v37 with one setting changed (the script stops if it is missing, because the
+checkout's own build is the classifier of the checkout and not v37 once the classifier has moved on), and the
+variable of its group for a patched build or a build of Section 3.8 (FASTVEP_CUTOFF_BIN, FASTVEP_HOOKS_BIN,
+FASTVEP_V38_BIN, FASTVEP_V38_BASE_BIN, FASTVEP_V38_ALT_BIN), which is skipped where it is not set.
 
 Every sweep and ablation is fitted to, and scored against, ClinVar's 2-star+
 classifications, which are a reference and not ground truth.
@@ -105,6 +129,18 @@ KEEP_VCF = {
     "v37_gap_clingen_complete",
     "v37_gap_orphanet_lof",
     "v37_gap_both",
+    # Section 3.8: the comparisons that are read call by call
+    "v38_base",
+    "v38",
+    "v38_alt_unguarded",
+    "v38_alt_label_guard",
+    "v38_alt_bs2_as_v37",
+    "v38_alt_triple_cap",
+    "v38_noflags",
+    "v38_chr2122_exomes",
+    "v38_chr2122_exomes_noflags",
+    "v38_chr2122_joint",
+    "v38_joint",
 }
 
 
@@ -651,6 +687,142 @@ def holdout_runs() -> list[Run]:
     ]
 
 
+V38_BINARIES = {"inherit": "FASTVEP_V38_BIN", "inherit_base": "FASTVEP_V38_BASE_BIN", "inherit_alt": "FASTVEP_V38_ALT_BIN"}
+# The binary of every run that is not made by a patched build or a build of Section 3.8: the shipped classifier of v37,
+# with one setting changed. It is named, and not taken from the checkout's `target/release`, because the checkout's
+# shipped classifier is v37 only until the classifier moves on, and from then on a run called `v37_...` made by the
+# checkout's build would be a run of something else under v37's name.
+V37_BINARY = "FASTVEP_V37_BIN"
+PATCHED_BINARIES = {"cutoff": "FASTVEP_CUTOFF_BIN", "hook": "FASTVEP_HOOKS_BIN", **V38_BINARIES}
+PILOT = BENCH / "pilot_chr2122"
+SA_JOINT = BENCH / "sa_db_joint"
+CHROMS = [str(c) for c in range(1, 23)] + ["X", "Y"]
+
+
+def is_v38(run: Run) -> bool:
+    return run.name.startswith("v38")
+
+
+def binary_variable(run: Run) -> str:
+    """The environment variable that names the binary this run is made by."""
+    kind = run.binary or run.group
+    if kind == "joint":
+        kind = "inherit"
+    return PATCHED_BINARIES.get(kind, V37_BINARY)
+
+
+def ensure_pilot_inputs() -> None:
+    """The April benchmark's variants and labels on chromosomes 21 and 22, for the pilot of gnomAD's joint release.
+
+    A filter of the benchmark's own two files with their headers, so that nothing about the subset is a choice.
+    The pilot was made before the joint release had been extracted for the other chromosomes, where a variant would
+    have read as absent from it, and it stays because the runs of every chromosome must give its calls on these
+    variants (`13_manuscript_stats.py` checks that). Written whole each time, so that a file left over from a
+    different benchmark cannot be the input.
+    """
+    PILOT.mkdir(parents=True, exist_ok=True)
+    for name, header_prefix in (("clinvar_2star.vcf", "#"), ("clinvar_2star_labels.tsv", "chrom\t")):
+        src, dst = BENCH / name, PILOT / name
+        tmp = dst.with_suffix(dst.suffix + ".partial")
+        with src.open() as f, tmp.open("w") as out:
+            for line in f:
+                if line.startswith(header_prefix) or line.split("\t", 1)[0] in ("21", "22"):
+                    out.write(line)
+        tmp.replace(dst)
+
+
+def v38_runs() -> list[Run]:
+    """What changed after v37, on the April set. See the module docstring.
+
+    The alternatives are named for what each one does to the shipped code, not for the experiment:
+    `unguarded` reads the tag and counts BS2's carriers beside BS1 and BA1 (the one-line change of
+    reading the curated field and nothing else), `label_guard` also withholds BS2's carrier arm from a
+    disorder that ClinGen's label calls a susceptibility or a predisposition, `bs2_as_v37` reads the
+    tag for PM2, PM3 and BP2 and leaves BS2 as it was, and `triple_cap` caps PP2, PM1 and PP3 together
+    at 4 points, which no version of the classifier does.
+    """
+    def run(name, group, what, **kw):
+        return Run(name=name, group=group, knob=what, value="-", shipped="-", description=what, **kw)
+
+    out = [
+        run("v38_base", "inherit_base", "the commit before the change: inheritance read from the disease names"),
+        run("v38", "inherit", "the shipped classifier: inheritance read from ClinGen's curated field, a gene classified against each "
+            "of its modes of inheritance, BS2's carriers not counted beside BS1 or BA1"),
+        run("v38_alt_control", "inherit_alt", "the alternatives build with nothing set (a control that must reproduce v38 in every cell)"),
+        run("v38_alt_unguarded", "inherit_alt", "ClinGen's inheritance read, BS2's carriers counted beside BS1 and BA1",
+            env={"FASTVEP_ALT": "g1_off"}),
+        run("v38_alt_label_guard", "inherit_alt", "as shipped, and BS2's carrier arm withheld from a disorder that ClinGen's label calls "
+            "a susceptibility or a predisposition", env={"FASTVEP_ALT": "g3"}),
+        run("v38_alt_bs2_as_v37", "inherit_alt", "ClinGen's inheritance read for PM2, PM3 and BP2, and BS2 as before: dominant by "
+            "disease name, carriers counted beside BS1 and BA1", env={"FASTVEP_ALT": "bs2_names,g1_off"}),
+        run("v38_alt_triple_cap", "inherit_alt", "as shipped, with PP2, PM1 and PP3 capped together at 4 points",
+            env={"FASTVEP_ALT": "triple_cap"}),
+        run("v38_noflags", "inherit", "as shipped, with gnomAD's segmental-duplication and low-complexity flags no longer withholding "
+            "the frequency criteria", toml=["gnomad_region_flags_block_frequency = false"]),
+    ]
+
+    # The four thresholds that read inheritance, re-swept now that the field is read. The grids are the ones
+    # swept on v37, and the shipped value is `v38` itself.
+    grids = [
+        ("pm2_ad_af_threshold", "pm2ad", [0.0, 1e-6, 5e-6, 1e-5, 2e-5, 1e-4, 2e-4, 5e-4], "4e-05",
+         "PM2 allele-frequency bar for genes not read as recessive-only"),
+        ("pm2_ar_af_threshold", "pm2ar", [0.0, 1e-6, 1e-5, 2e-5, 2e-4, 5e-4], "7e-05",
+         "PM2 allele-frequency bar for genes read as recessive-only"),
+        ("bs2_hom_prevalence_threshold", "bs2hom", [1e-6, 1e-5, 1e-4, 1e-2], "0.001",
+         "BS2 prevalence bar for the individuals with no functional copy"),
+        ("bs2_ad_prevalence_threshold", "bs2ad", [0.0, 3e-5, 1e-4, 1e-3, 3e-3], "0.0003",
+         "BS2 carrier bar for genes read as dominant-only (0 is no bar, so that the allele count of at least 5 alone decides)"),
+    ]
+    for knob, short, values, shipped, what in grids:
+        for v in values:
+            label = f"{v:g}"
+            out.append(Run(name=f"v38_sw_{short}_{label}", group="inherit", knob=knob, value=label, shipped=shipped,
+                           description=f"{what}, set to {label}", toml=[f"{knob} = {v!r}"]))
+    for v in (20, 100, 1000):
+        out.append(Run(name=f"v38_sw_bs2ac_{v}", group="inherit", knob="bs2_ad_min_ac (bar off)", value=str(v), shipped="5 (with bar 3e-4)",
+                       description=f"BS2 carrier floor for genes read as dominant-only, set to {v} alleles with the carrier bar off",
+                       toml=["bs2_ad_prevalence_threshold = 0.0", f"bs2_ad_min_ac = {v}"]))
+
+    # The pilot of gnomAD's joint exomes and genomes against the exomes, on chr21 and chr22, which were the
+    # two chromosomes extracted first, with the same variants and the same binary. The runs of every chromosome
+    # below must give its calls (`13_manuscript_stats.py` checks that), so it stays as a check.
+    inputs = {"INPUT": str(PILOT / "clinvar_2star.vcf"), "LABELS": str(PILOT / "clinvar_2star_labels.tsv")}
+    pilot_joint = {f"gnomad_chr{c}.osa2": str(SA_JOINT / f"gnomad_chr{c}.osa2") for c in ("21", "22")}
+    if all(Path(v).exists() for v in pilot_joint.values()) and (BENCH / "clinvar_2star.vcf").exists():
+        out += [
+            run("v38_chr2122_exomes", "joint", "chr21 and chr22 variants, gnomAD v4.1 exomes", inputs=inputs, binary="inherit"),
+            run("v38_chr2122_exomes_noflags", "joint", "chr21 and chr22 variants, gnomAD v4.1 exomes, with its region flags no longer "
+                "withholding the frequency criteria", inputs=inputs, binary="inherit", toml=["gnomad_region_flags_block_frequency = false"]),
+            run("v38_chr2122_joint", "joint", "chr21 and chr22 variants, gnomAD v4.1 joint exomes and genomes", inputs=inputs,
+                binary="inherit", sa_replace=pilot_joint),
+        ]
+    # and on every chromosome, where the joint database has been built for all of them
+    full_joint = {f"gnomad_chr{c}.osa2": str(SA_JOINT / f"gnomad_chr{c}.osa2") for c in CHROMS}
+    if all(Path(v).exists() for v in full_joint.values()):
+        out.append(run("v38_joint", "joint", "gnomAD v4.1 joint exomes and genomes in place of the exomes", binary="inherit",
+                       sa_replace=full_joint))
+    return out
+
+
+def v38_holdout_runs() -> list[Run]:
+    """The same comparisons on the variants of the 4 October 2026 release (the covered subset)."""
+    subset = BENCH / "clinvar_20261004_covered"
+    inputs = {"INPUT": str(subset / "clinvar_2star.vcf"), "LABELS": str(subset / "clinvar_2star_labels.tsv")}
+
+    def hold(short, group, what, **kw):
+        return Run(name=f"v38_oct_{short}", group="holdout", knob=what, value="-", shipped="-",
+                   description=f"{what}, on the variants of the 4 October 2026 release", inputs=inputs, binary=group, **kw)
+
+    return [
+        hold("base", "inherit_base", "the commit before the change"),
+        hold("shipped", "inherit", "the shipped classifier"),
+        hold("alt_unguarded", "inherit_alt", "ClinGen's inheritance read, BS2's carriers counted beside BS1 and BA1",
+             env={"FASTVEP_ALT": "g1_off"}),
+        hold("alt_triple_cap", "inherit_alt", "as shipped, with PP2, PM1 and PP3 capped together at 4 points",
+             env={"FASTVEP_ALT": "triple_cap"}),
+    ]
+
+
 def all_runs() -> list[Run]:
     return sweeps() + switches() + sources() + interactions() + cutoffs() + hooks() + gaps()
 
@@ -740,8 +912,23 @@ def collect(runs: list[Run]) -> None:
                     + [sum(fire.get(c, {}).values()) for c in crit_cols]
                 )
 
-    write_runs(RES / "runs.tsv", [r for r in scored if r[0].group != "holdout"])
-    write_runs(RES / "holdout_runs.tsv", [r for r in scored if r[0].group == "holdout"])
+    # The runs of Section 3.8 have files of their own, so that the tables of the other sections, which read
+    # `runs.tsv` and `holdout_runs.tsv` whole, do not change when they are made.
+    apr = [r for r in scored if r[0].group != "holdout" and not is_v38(r[0])]
+    hold = [r for r in scored if r[0].group == "holdout" and not is_v38(r[0])]
+    write_runs(RES / "runs.tsv", apr)
+    write_runs(RES / "holdout_runs.tsv", hold)
+    if any(is_v38(r[0]) for r in scored):
+        write_runs(RES / "runs_v38.tsv", [r for r in scored if is_v38(r[0]) and r[0].group != "holdout"])
+        write_runs(RES / "holdout_runs_v38.tsv", [r for r in scored if is_v38(r[0]) and r[0].group == "holdout"])
+        with (RES / "run_matrix_v38.tsv").open("w") as f38:
+            w38 = csv.writer(f38, delimiter="\t", lineterminator="\n")
+            w38.writerow(["name", "group", "knob", "value", "shipped", "description", "removed_from_sa_db", "replaced_in_sa_db", "environment"])
+            for run in runs:
+                if is_v38(run):
+                    w38.writerow([run.name, run.group, run.knob, run.value, run.shipped, run.description, ",".join(run.sa_remove),
+                                  ",".join(sorted(run.sa_replace)), " ".join(f"{k}={v}" for k, v in sorted(run.env.items()))])
+    runs = [r for r in runs if not is_v38(r)]
     with (RES / "run_matrix.tsv").open("w") as f:
         w = csv.writer(f, delimiter="\t", lineterminator="\n")
         w.writerow(["name", "group", "knob", "value", "shipped", "description", "removed_from_sa_db",
@@ -752,9 +939,11 @@ def collect(runs: list[Run]) -> None:
                  ",".join(run.sa_remove), ",".join(sorted(run.sa_replace)),
                  " ".join(f"{k}={v}" for k, v in sorted(run.env.items()))]
             )
-    print(f"collected {len([r for r in scored if r[0].group != 'holdout'])} of {len([r for r in runs if r.group != 'holdout'])} runs "
-          f"into {RES / 'runs.tsv'} and {len([r for r in scored if r[0].group == 'holdout'])} of "
-          f"{len([r for r in runs if r.group == 'holdout'])} held-out runs into {RES / 'holdout_runs.tsv'}")
+    print(f"collected {len(apr)} of {len([r for r in runs if r.group != 'holdout'])} runs "
+          f"into {RES / 'runs.tsv'} and {len(hold)} of "
+          f"{len([r for r in runs if r.group == 'holdout'])} held-out runs into {RES / 'holdout_runs.tsv'}"
+          + (f"; {len([r for r in scored if is_v38(r[0])])} runs of Section 3.8 into the files with `v38` in their names"
+             if any(is_v38(r[0]) for r in scored) else ""))
 
 
 _print_lock = threading.Lock()
@@ -765,16 +954,19 @@ def execute(run: Run) -> tuple[str, bool]:
     if (out / "concordance_matrix.csv").exists():
         return run.name, True
     env = os.environ.copy()
-    patched = {"cutoff": "FASTVEP_CUTOFF_BIN", "hook": "FASTVEP_HOOKS_BIN"}
-    kind = run.binary or run.group
-    if kind in patched:
-        binary = env.get(patched[kind], "")
-        if not binary:
-            with _print_lock:
-                print(f"skip {run.name}: {patched[kind]} is not set (see the module docstring)", flush=True)
-            return run.name, True
-        env["FASTVEP"] = binary
-        env.update(run.env)
+    variable = binary_variable(run)
+    binary = env.get(variable, "")
+    if not binary:
+        # `main` has already stopped the run of a script that lacks the binary of v37, so this is a patched build.
+        with _print_lock:
+            print(f"skip {run.name}: {variable} is not set (see the module docstring)", flush=True)
+        return run.name, True
+    if not Path(binary).is_file():
+        with _print_lock:
+            print(f"FAIL {run.name}: {variable} names {binary}, which is not a file", flush=True)
+        return run.name, False
+    env["FASTVEP"] = binary
+    env.update(run.env)
     env.update(run.inputs)
     out.mkdir(parents=True, exist_ok=True)
     env["OUT_DIR"] = str(out)
@@ -808,9 +1000,10 @@ def main() -> None:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--collect", action="store_true")
     ap.add_argument("--holdout", action="store_true", help="run the held-out group (on the 4 October 2026 release) and nothing else")
+    ap.add_argument("--v38", action="store_true", help="run the runs of Section 3.8 (what changed after v37) in place of the others")
     args = ap.parse_args()
 
-    runs = all_runs() + holdout_runs()
+    runs = all_runs() + holdout_runs() + v38_runs() + v38_holdout_runs()
     names = [r.name for r in runs]
     if len(set(names)) != len(names):
         sys.exit("duplicate run names in the matrix")
@@ -823,8 +1016,14 @@ def main() -> None:
         collect(runs)
         return
 
-    todo = [r for r in runs if args.only in r.name and (r.group == "holdout") == args.holdout]
+    todo = [r for r in runs if args.only in r.name and (r.group == "holdout") == args.holdout and is_v38(r) == args.v38]
+    if any(binary_variable(r) == V37_BINARY and not (OUT_ROOT / r.name / "concordance_matrix.csv").exists() for r in todo) \
+            and not os.environ.get(V37_BINARY):
+        sys.exit(f"{V37_BINARY} is not set: it names the binary built at the v37 commit (5d8004a), which makes every run "
+                 "that is not made by a patched build or a build of Section 3.8 (see the module docstring)")
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
+    if any(str(PILOT) in v for r in todo for v in r.inputs.values()):
+        ensure_pilot_inputs()
     failed = []
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         for name, ok in pool.map(execute, todo):

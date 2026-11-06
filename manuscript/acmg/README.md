@@ -1,24 +1,25 @@
 # ACMG classification manuscript
 
-A manuscript on how the ACMG/AMP classifier of fastVEP was built, reviewed by a medical geneticist and measured, how its thresholds were chosen, and what its discordance with ClinVar 2-star+ classifications looks like in the final version (v37) and on a later ClinVar release.
+A manuscript on how the ACMG/AMP classifier of fastVEP was built, reviewed by a medical geneticist and measured, how its thresholds were chosen, and what its discordance with ClinVar 2-star+ classifications looks like in the final version (v37) and on a later ClinVar release, and what changed after v37, when the classifier began to read the mode of inheritance that ClinGen curates (v38, Section 3.8).
 ClinVar's 2-star+ classifications are a reference and not ground truth, throughout.
 
 ## Files
 
 | Path | What |
 |---|---|
-| `manuscript.md` | The manuscript: abstract, methods, results, discussion, references, the legends of the five main figures, and the supplement (four supplementary figures, nine supplementary tables) and appendix (nine further tables) |
+| `manuscript.md` | The manuscript: abstract, methods, results, discussion, references, the legends of the five main figures, and the supplement (four supplementary figures, nine supplementary tables) and appendix (sixteen further tables) |
 | `figures/` | Figures 1 to 5 (the main figures, each stating a conclusion) and S1 to S4 (the process figures: the runs, the ledger of changes, the reviewer's rulings and the frontier of agreement against contradictions) as PNG (300 dpi), written by `generate_figures.py` together with a PDF of each (the repository ignores `*pdf`, so only the PNGs are tracked); every label that names a ClinVar class says "ClinVar 2-star+", and each figure has a footnote that gives the review status, the release and the class abbreviations |
 | `generate_figures.py` | Draws every figure from the tables in `data/` and nothing else |
-| `build_tables.py` | Builds the tables that carry numbers (Tables 3 to 7) from `data/` and keeps `manuscript.md` in step with them |
-| `supplementary_tables.xlsx` | Every supplementary table (S1 to S9) and appendix table (A1 to A9) in one workbook: a sheet of contents and a sheet for each table, which holds the CSV or TSV files of `data/` that make it up, one under another, each under its file name |
+| `build_tables.py` | Builds the tables that carry numbers (Tables 3 to 9) from `data/` and keeps `manuscript.md` in step with them |
+| `supplementary_tables.xlsx` | Every supplementary table (S1 to S9) and appendix table (A1 to A16) in one workbook: a sheet of contents and a sheet for each table, which holds the CSV or TSV files of `data/` that make it up, one under another, each under its file name |
 | `build_supplement.py` | Writes `supplementary_tables.xlsx` from `data/`; which file is in which table is read from the table entries of `manuscript.md`, so the workbook cannot disagree with it |
 | `verify_numbers.py` | Recomputes the numbers quoted in the text from `data/` and fails when a sentence does not contain them; it also checks that every figure and table that the text cites exists and is cited in order, that there are fewer than ten supplementary tables, that every file of `data/` is in exactly one table, and that `supplementary_tables.xlsx` holds what those files say |
-| `data/` | The supplementary and appendix tables, 72 small CSV and TSV files (each is named by exactly one table of the manuscript, which `verify_numbers.py` checks), written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py` and `15_clingen_complete_export.py` |
+| `data/` | The supplementary and appendix tables, 97 small CSV and TSV files (each is named by exactly one table of the manuscript, which `verify_numbers.py` checks), written by `analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, `11_manuscript_runs.py`, `14_temporal_holdout.py`, `15_clingen_complete_export.py`, `17_joint_boundary_cases.py` and `18_criteria_status.py` |
 | `replay_validation/combiner_cutoff_env.patch` | A patch of eight lines that makes the two point cutoffs of the pathogenic side readable from the environment, for the nine cutoff runs of Table 4 |
 | `replay_validation/bp_hooks_env.patch` | A patch that makes BP1's own-record count and BP7's SpliceAI bar readable from the environment, for the runs of Sections 3.3 and 3.4 |
+| `replay_validation/inheritance_alternatives_env.patch` | A patch, against the tree of v38, that makes the alternatives of Section 3.8 readable from the environment: BS2's carriers counted beside BS1 and BA1, no carrier arm for a susceptibility or predisposition disorder, BS2 read from the disease names as in v37, and a combined cap on PP2, PM1 and PP3 |
 
-The scored matrix, firing counts and provenance of every run made for the paper are in `analysis/acmg_benchmark/results/v37_manuscript/`.
+The scored matrix, firing counts and provenance of every run made for the paper are in `analysis/acmg_benchmark/results/v37_manuscript/`, with `binaries.tsv` (what each binary was built from) and `rerun_comparison.csv` (each run and table against the first run it repeats).
 The commands that regenerate everything are in `analysis/acmg_benchmark/README.md`.
 
 ## Checking the manuscript
@@ -50,6 +51,11 @@ Those are listed under "What is not checked" below.
 - A fifth subagent audited those corrections.
   Its five points of meaning held when we recomputed them and are corrected: the removal of IQSEC1 by a stricter count of BP1's veto rests on its own record at a count of 2 and not at a count of 1, the protein index holds the April record only of the new variants that were then classified missense variants (77 of the 94 that BP1 can act on), the rules without a frequency rule agree for 0.3 points more than v37 and not the same, 23 of the 31 new Benign variants that met BS1 and stay at VUS have BS1 alone, and the zero for Benign calls rests on two of the 15 curated alleles and one gate.
 - The ClinGen export of 30 April 2026 was compared with an export downloaded on 11 October 2026, which is how the 104 omitted curations were found.
+- Sections 2.10 and 3.8 (v38) were written after those audits, and were then audited by two further subagents on 4 November 2026: one read the diff of the code for defects, the other read the manuscript and the documents for logic, consistency and honesty.
+  Their findings were checked against the code, the data and the repository's own record before they were acted on.
+  They found, and the code, the documents and the manuscript now correct: the library behind both web servers looked an indel up in the databases in a form that never matches (confirmed end to end on 120 real indels), a warning about missing region flags that the command line never shows, BP2's trans arm opened by a gene's recessive disease, the history of the unread tag (v37 had measured a build that read it and declined), the replication on the October release (258 of the 1,762 calls are on new variants), and a doubling that BS2's arm for homozygotes and hemizygotes still has (measured and documented, not changed).
+  Every number in them is recomputed from `data/v38_*.csv` by `verify_numbers.py`; the statements about the code were checked against it (the classification crate of the commit before v38 differs from v37's in comments only, by `git diff`), the ones about the sources against the ClinGen exports of 30 April and 11 October 2026 (the three labels with a semicolon, the three X-linked disorders whose label says "dominant", the review's counts of modes of inheritance, which are the October export's), and the reading of the field by a test over 185 genes of real ClinGen rows.
+  The runs were made twice, and the binaries of the second set were built from the final tree: the two sets agree in every scored file of every run and in every record of the annotated VCFs that both keep (`analysis/acmg_benchmark/RUN_VERSIONS.md`, "The full rerun of 4 November 2026").
 - Not re-verified: the exact strength grades of PS1 for a splice variant (Walker et al., 2023, Table 3) against our implementation, and the claim that Ensembl VEP and fastVEP agree on each annotation difference that the ledger mentions.
 - The ledger of 64 changes, its classes and its routes of discovery are our coding of `RUN_VERSIONS.md` and the round documents.
   They have not been coded independently.
@@ -57,7 +63,7 @@ Those are listed under "What is not checked" below.
 ## Findings of the verification that are not in the classifier
 
 The manuscript reports these in Sections 3.2 to 3.5, with what each would change, and the repository's comments and documentation were corrected for the citations and for the attributions.
-The classifier was not changed, because each is a decision that deserves its own review.
+The classifier was not changed for these, because each is a decision that deserves its own review, except for two that Section 3.8 describes (v38): the mode of inheritance is read from the field that ClinGen curates, and NSMCE3's label no longer escapes the validity gate.
 
 - PVS1 grades an NMD-escaping truncation outside a critical region one step below the published tree, and a canonical splice variant in the last exon as Moderate whatever the fraction removed (7 calls, by replay).
 - BP7 keeps the 2015 conservation test and uses SpliceAI below 0.2, where Walker et al. apply BP7 after BP4 and caution against a conservation test (the test costs 16,482 correct benign-side calls to avoid 2 missed diagnoses; with SpliceAI at most 0.1 as well, 15,953 more calls in direction for the same 2).
@@ -70,7 +76,7 @@ The classifier was not changed, because each is a decision that deserves its own
 - BP1's veto count of 3 was never swept before this paper, and a stricter count calls fewer ClinVar-VUS variants benign-side: a count of 1 gains 1,716 calls in direction (1,865 ClinVar-VUS variants no longer called benign-side, less 149 correct benign-side calls given up) and removes 2 missed diagnoses (IQSEC1 and PRR12).
   PRR12 owes the veto to the variant's own record, and IQSEC1 does at a count of 2 only (the index holds a second record for it, p.Thr343Met), so with the own record left out a count of 1 removes IQSEC1 only (a real run) and a count of 2 neither.
 - PVS1 predicts NMD by the last-exon proxy where Abou Tayoun et al. use the 50-nucleotide rule, a default chosen on agreement with ClinVar (603 calls in direction and 0.73 points of pathogenic-side recall to avoid one false-pathogenic call).
-- The validity gate misses NSMCE3, a gene whose ClinGen curations are all weak, because its label ends in a semicolon (one of 505 weak-only genes, with no benchmark variant).
+- The validity gate missed NSMCE3 in v37, a gene whose ClinGen curations are all weak, because its label ends in a semicolon (one of 505 weak-only genes, with no benchmark variant); v38 drops an untagged piece of a split label where a tagged one exists.
 - The label script maps two RYR1 expert-panel records with a conflicting classification to VUS and four CFH and CFI records classified Likely pathogenic with low penetrance to Pathogenic.
   We kept the labels so that the 37 runs stay comparable; relabelling changes exact agreement by one variant, and leaving out the two RYR1 records lowers the ClinVar VUS called pathogenic-side by two.
 - Two comments in the classifier were wrong and are corrected: the one that said the `LOF_and_GOF` mechanisms are inert (they license PVS1 through the curated-mechanism route, which changes no call in the benchmark), and the one that said the ClinGen phenotypes are Moderate or better only (they are every classification, and the validity gate is what withholds the weak ones).
@@ -80,20 +86,36 @@ The classifier was not changed, because each is a decision that deserves its own
 These are marked in the manuscript with square brackets or are not in it at all.
 
 1. **The reviewer.**
+   The reviewer is M.G., an author since the co-authors' version of 4 November 2026, and W.C., who advised on a subset of the cases, is an author too; the manuscript names them in the author line and in Sections 2.4 and the Declarations.
    The manuscript describes the reviewer's rulings and paraphrases their reasons.
    It quotes only the heading of the list that came with the round-1 workbook ("Discordance categories") and does not reproduce their notes, and `data/round6_rulings.tsv` holds our coding of the text and not the text.
-   Whether to name them, in the acknowledgements or as an author, and whether the text may be quoted or published as a supplementary column, is for the author to settle with them.
+   Whether the text may be quoted or published as a supplementary column is for the authors to settle.
    The workbooks they returned are not in the repository.
 2. **Disclosure of AI assistance.**
    The scripts, the figures and the first draft were produced with Claude working as a coding agent in this repository.
    The Declarations section holds a placeholder for the author's statement.
-3. **Author contributions, funding and competing interests** are placeholders.
+3. **Author contributions** are the text of the draft that the co-authors read, marked for all authors to confirm, and **funding and competing interests** are placeholders.
 4. **The title and the abstract** state the main findings and should be read by the author before submission.
+   The abstract is about 800 words, the length of a long-form paper, and has to be cut to the limit of the journal chosen; the language-edited version that the co-authors read (a .docx, not in the repository, of v37 only) has a shorter one and another title.
 5. **Pronouns.**
    The manuscript refers to the reviewer as "the reviewer" and "they", because their pronouns are not recorded.
 6. **Whether to change the classifier** on the findings above, and in what order (Section 4.5).
    Each has a price measured in this work, and none should be tuned to the 49 residual calls.
-7. **Archiving.**
+7. **The commit of v38.**
+   The runs of Section 3.8 were made by a binary built from the working tree that became v38, so their provenance records the commit of the checkout that ran the harness (the commit before the change, and for `v38_joint`, made on 5 November 2026 after the change was committed on a local branch, that commit) and a count of uncommitted files, and `analysis/acmg_benchmark/results/v37_manuscript/binaries.tsv` says what each binary was built from.
+   The manuscript marks the place for the commit in square brackets, and the author should fill it in when the change is merged.
+8. **The decisions that v38 took** (Section 3.8).
+   v37 had measured a build that made BS2 read the tag (`v37_adtag`) and left the tag unread, because six ClinVar pathogenic-side variants moved toward benign; v38 reads it, for the reason given in Section 3.8 (the unread field answers a question about the name of a disease, and the guard is stated by what it counts), and accepts that four of the six move from Likely pathogenic to VUS.
+   The guard against counting BS2 beside BS1 or BA1 was adopted at a cost of 3,615 exact calls on the April set.
+   A combined cap on PP2, PM1 and PP3 was not adopted (it raises agreement and lowers recall of pathogenic-side variants).
+   The label guard that restores two of the four was not adopted although its exchange rate, about 32 correct benign-side calls for each variant restored, is below the knee of Section 2.5, because it filters on the name of a disease and was written to repair two variants seen in the results.
+   BS2's arm for homozygotes and hemizygotes was left as it was, with the same doubling on the X chromosome for 1,301 variants none of which is a ClinVar pathogenic-side variant.
+   All are reasoned in the text and measured on the April set and the October release, and each can be reversed with the numbers of Table 8 and Appendix Tables A10 and A12.
+9. **The gnomAD source of the benchmark.**
+   Section 3.8 measures gnomAD's joint release of exomes and genomes on every chromosome: 10,190 more exact calls and 9,321 more in direction than the exomes, for one more missed diagnosis and two more false-pathogenic calls, and without the region flags that withhold the frequency criteria.
+   `docs/ACMG_SETUP.md` recommends it for classification where no policy requires the region veto, and the benchmark of the paper still reads the exomes, because every other number in the paper was measured on them.
+   Moving the benchmark to the joint release would change all of those numbers, so it is left to the author.
+10. **Archiving.**
    The bulk outputs (annotated VCFs, per-variant tables of about 20 MB each) are not in the repository.
    A tagged release with a DOI, and a compressed deposit of the per-variant tables, would let every table in `data/` be re-derived without a re-run.
 
@@ -103,10 +125,15 @@ These are marked in the manuscript with square brackets or are not in it at all.
 A sentence can pass and still say something the data do not support.
 It does not check the following, which are not functions of `data/`.
 
-- Dates, version numbers and constants of the code (the 2,000-allele floor, the pLI and LOEUF bars, the missense z-score bars, the 15 alleles of the exception list, the 26 criteria that a run reports and the 10 that are not evaluated).
+- Dates, version numbers and constants of the code (the 2,000-allele floor, the pLI and LOEUF bars, the missense z-score bars, the 15 alleles of the exception list, the 26 criteria that a run reports; `18_criteria_status.py` checks the criteria that are not applied to a sites-only input against the engine's JSON on a sample of the benchmark, which is not the whole benchmark, and stops when the engine disagrees with the groups it states).
 - The counts read from the project's own record: the split of the 2.7 points that v9 lost (0.6 and 2.0), the 10,000-row cap and the chromosome at which it stopped the first export, the 3,793 Likely pathogenic calls that PS1's splice path turned into Pathogenic, the 14 deletions that lost their PVS1, and the 19-point knee that v10 recorded.
 - What each recommendation says (Section 3.2 and Table 1), which was checked by subagents and by reading, and the release dates of ClinVar and ClinGen inputs.
 - The reviewer's remarks, which are paraphrased in Section 3.6 and coded, not stored.
+- The statements of Sections 2.10 and 3.8 that are facts of the code or of a source file and not of `data/`: that the classification code of the commit before v38 differs from v37's in comments only (`git diff 5d8004a 9d84be0 -- crates/fastvep-classification`), that the three labels with a semicolon and the three X-linked disorders whose label says "dominant" (GJB1, PDK3 and PHEX) are those of the exports of 30 April and 11 October 2026, that the joint release declares no `lcr`, `segdup` or `non_par` flag in the headers read on 4 November 2026, that its FILTER column says only which side failed (the definitions of `EXOMES_FILTERED`, `GENOMES_FILTERED`, `BOTH_FILTERED` and `PASS` in its header, read on 5 November 2026) while the builder reports a filter that fired in either callset (`crates/fastvep-sa/src/sources/gnomad.rs`), and that the pseudoautosomal coordinates agree with the flag in gnomAD's genomes file at the edges that could be read.
+- What the record of v37 says about the build that made BS2 read the tag (`v37_adtag`: 2,812 more calls in direction and 3,809 more exact, six ClinVar pathogenic-side variants moved toward benign), which is in `docs/ACMG.md` (limitation 20) and `RUN_VERSIONS.md` and was recomputed from its stored matrix when Section 3.8 was written.
+- The end-to-end comparison of the library with the command line on 120 ClinVar indels of chromosomes 21 and 22 (gnomAD found for none and for 67 before the change, and the two agree on all 120 after it), which was a one-off with the benchmark's databases and is recorded in `RUN_VERSIONS.md`.
+- That a build of the final tree reproduces the annotated VCF of the `v38` run byte for byte, after the two speed-ups of 5 November 2026 (a one-off `cmp` against the stored VCF, recorded in `RUN_VERSIONS.md`, "After v38").
+- That no multi-mode gene of the ClinGen exports of 30 April and 11 October 2026 has an X-linked, mitochondrial or undetermined curation among its established ones: their modes are AD with AR, AD with SD, AR with SD, and all three.
 
 Other limits:
 

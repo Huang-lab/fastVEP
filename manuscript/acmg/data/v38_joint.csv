@@ -1,0 +1,7 @@
+set,run,database,variants,exact,same_direction,same_pathogenic,same_benign,false_benign,false_pathogenic,d_exact,d_same_direction,d_same_pathogenic,d_same_benign,d_false_benign,d_false_pathogenic
+chr21 and chr22,v38_chr2122_exomes,gnomAD exomes,23538,15343,18676,1715,6786,1,5,0,0,0,0,0,0
+chr21 and chr22,v38_chr2122_exomes_noflags,"gnomAD exomes, region flags not withholding",23538,15527,18811,1715,6924,1,5,184,135,0,138,0,0
+chr21 and chr22,v38_chr2122_joint,gnomAD joint exomes and genomes,23538,15781,19063,1715,7175,1,5,438,387,0,389,0,0
+every chromosome,v38,gnomAD exomes,673278,426022,524380,58606,178888,24,24,0,0,0,0,0,0
+every chromosome,v38_noflags,"gnomAD exomes, region flags not withholding",673278,430097,527853,58634,182437,24,25,4075,3473,28,3549,0,1
+every chromosome,v38_joint,gnomAD joint exomes and genomes,673278,436212,533701,58632,188310,25,26,10190,9321,26,9422,1,2

@@ -75,6 +75,19 @@ before a fresh build.
 | `phylop_chr1..22,X,Y.osa` | ✅ | 24 chrom files | `sa_db/phylop_chr*.osa` |
 | `spliceai_chr1..22,X,Y.osa` | ✅ | 24 chrom files | `sa_db/spliceai_chr*.osa` |
 
+## Files of the manuscript's later runs (under `data/benchmark/`)
+
+Read by `scripts/11_manuscript_runs.py` and `scripts/14_temporal_holdout.py`; none is in the repository.
+
+| Path | Status | What it is | Made by |
+|------|--------|------------|---------|
+| `sa_sources/clinvar_20261004.vcf.gz` | ✅ | the ClinVar release of 4 October 2026 | downloaded; `scripts/14_temporal_holdout.py prepare` extracts its 2-star+ variants to `clinvar_20261004/` and the 772,585 that lie in the regions of the April extract to `clinvar_20261004_covered/` |
+| `sa_sources/clingen_gene_validity_20261011.csv`, `clingen_gene_validity_complete.csv`, `clingen_gdv_complete.tsv` | ✅ | the ClinGen export of 11 October 2026 and the April file completed with the curations it lacked | `scripts/15_clingen_complete_export.py` |
+| `sa_replace/omim_complete.oga` | ✅ | the ClinGen database of the completed file, which the three `gap` runs and three of the October runs use in place of `sa_db/omim.oga` | `fastvep sa-build --source omim` |
+| `sa_db_joint/gnomad_chr*.osa2` | ✅ | gnomAD v4.1 joint exomes and genomes for all 24 chromosomes (610 MB; the extraction took about 6 hours, limited by the network), which `v38_joint` reads and the pilot of Section 3.8 reads for 21 and 22 | `scripts/sa_sources/build_gnomad_release_per_chrom.sh joint` (resumable by batch) |
+| `pilot_chr2122/` | ✅ | the benchmark's variants and labels on chromosomes 21 and 22 | written by `11_manuscript_runs.py` from the benchmark's own files |
+| `manuscript_runs/` | ✅ | one directory per run of the manuscript and the per-variant tables | `11_manuscript_runs.py`, `12_per_variant_table.py` |
+
 ## Benchmark runs
 
 | Run | SA loaded | Outcome | Output |

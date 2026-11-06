@@ -1,0 +1,58 @@
+inheritance,calls,clinvar,n
+AD and AR,VUS / VUS,VUS,31999
+AD and AR,LP / LP,P/LP,15977
+AD and AR,VUS / VUS,B/LB,14957
+AD and AR,LB / LB,B/LB,12728
+AD and AR,VUS / VUS,P/LP,3211
+AD and AR,B / B,B/LB,2441
+AD and SD,VUS / VUS,VUS,908
+AD and AR,P / P,P/LP,856
+AR and SD,VUS / VUS,VUS,749
+AD and SD,LB / LB,B/LB,653
+AD and AR,LP / LP,VUS,412
+AD and SD,VUS / VUS,B/LB,381
+AD and AR and SD,VUS / VUS / VUS,VUS,278
+AD and AR,LB / VUS,B/LB,238
+AR and SD,LB / LB,B/LB,195
+AD and SD,LP / LP,P/LP,194
+AR and SD,LP / LP,P/LP,123
+AR and SD,VUS / VUS,P/LP,115
+AR and SD,VUS / VUS,B/LB,101
+AD and AR and SD,VUS / VUS / VUS,B/LB,98
+AD and SD,B / B,B/LB,98
+AR and SD,B / B,B/LB,97
+AD and AR and SD,LP / LP / LP,P/LP,94
+AD and AR and SD,VUS / VUS / VUS,P/LP,75
+AD and AR,B / VUS,B/LB,73
+AD and AR and SD,LB / LB / LB,B/LB,72
+AD and SD,VUS / VUS,P/LP,65
+AD and SD,LP / LP,VUS,62
+AD and AR,LB / VUS,VUS,55
+AD and AR,LB / LB,VUS,54
+AD and AR,LB / B,B/LB,43
+AD and AR and SD,B / B / B,B/LB,42
+AD and AR,B / VUS,VUS,30
+AR and SD,LP / LP,VUS,23
+AD and AR,B / B,VUS,13
+AD and AR,VUS / LP,P/LP,12
+AD and SD,P / P,P/LP,12
+AR and SD,P / P,P/LP,9
+AD and AR,P / P,VUS,8
+AD and AR and SD,P / P / P,P/LP,8
+AD and SD,LB / VUS,B/LB,8
+AD and AR,VUS / B,B/LB,6
+AD and AR and SD,LB / VUS / VUS,B/LB,4
+AD and AR,LP / LP,B/LB,3
+AD and SD,B / VUS,B/LB,3
+AD and SD,LB / LB,VUS,3
+AD and AR and SD,LP / LP / LP,VUS,2
+AD and SD,LB / B,B/LB,2
+AD and AR,B / VUS,P/LP,1
+AD and AR,LP / P,P/LP,1
+AD and AR,VUS / LP,VUS,1
+AD and AR and SD,B / VUS / VUS,VUS,1
+AD and AR and SD,LB / B / B,B/LB,1
+AD and SD,VUS / B,B/LB,1
+AR and SD,B / B,VUS,1
+AR and SD,LP / VUS,P/LP,1
+AR and SD,LP / VUS,VUS,1

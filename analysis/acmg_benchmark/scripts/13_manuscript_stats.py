@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Every number and table the ACMG manuscript reports about the final classifier.
+"""Every number and table the ACMG manuscript reports about v37 (and, for Section 3.8, about v38).
 
 Reads the per-variant table of the final run (`12_per_variant_table.py`), the
 concordance matrix of every other run on disk, and the sweeps and ablations of
@@ -884,9 +884,15 @@ def pvs1_gap(df: pd.DataFrame) -> None:
     ]
     nul = df[df.consequence.isin(["stop_gained", "frameshift_variant", "splice_donor_variant", "splice_acceptor_variant"])]
     c = nul[nul.gene == "CFTR"]
+    # `mane_select` is filled only where the transcript the pick chose is the gene's MANE Select transcript, so a
+    # variant is null on the MANE Select transcript when it is in this table, is null, and has the field filled with
+    # the transcript that was picked (the version is not part of the picked transcript's identifier).
+    on_mane = c.mane_select.str.split(".").str[0] == c.transcript
     rows += [{"measure": "CFTR null variants in the benchmark (stop, frameshift, canonical splice)", "n": len(c)},
              {"measure": "  of them called VUS", "n": int((c.fv3 == "VUS").sum())},
-             {"measure": "  of them carrying any PVS1", "n": int(c.criteria.str.contains("PVS1").sum())}]
+             {"measure": "  of them carrying any PVS1", "n": int(c.criteria.str.contains("PVS1").sum())},
+             {"measure": "  of them null on the MANE Select transcript, the one the pick chose", "n": int(on_mane.sum())},
+             {"measure": "  of them ClinVar pathogenic-side", "n": int((c.cv3 == "P/LP").sum())}]
 
     # Why PVS1 is absent, in the order PVS1 asks its questions (`criteria/pvs1.rs`): the validity gate
     # (every ClinGen curation of the gene is Limited, Disputed, Refuted or No Known Disease
@@ -934,7 +940,10 @@ def pvs1_gap(df: pd.DataFrame) -> None:
 
     def top_condition(gn):
         cnt = {d: k for d, k in names.get(gn, Counter()).items() if d != "not_provided"}
-        d = max(cnt, key=cnt.get) if cnt else ""
+        # Ties go by name: the conditions were gathered by iterating a set, whose order changes from one run of
+        # Python to the next (string hashing is seeded per process), so `max(cnt, key=cnt.get)` named a different
+        # one of two equally common conditions (PTPN11: RASopathy and Metachondromatosis) on different runs.
+        d = max(cnt, key=lambda name: (cnt[name], name)) if cnt else ""
         return d.replace("_", " "), cnt.get(d, 0)
 
     write("pvs1_gap_constrained_v37.csv", [
@@ -1084,6 +1093,33 @@ def baselines(df: pd.DataFrame) -> None:
     write("precision_by_tier_v37.csv", out)
 
 
+def cftr_null_variants(base: pd.DataFrame, complete: pd.DataFrame) -> None:
+    """Every CFTR null variant of the benchmark, with its call in v37 and in the run that reads the completed ClinGen file.
+
+    The 558 stop-gained, frameshift and canonical splice variants of CFTR are all VUS in v37, because the ClinGen file that
+    the benchmark read lacked CFTR and PVS1 had no other route to loss of function there. A reader who asks which they
+    are, and whether each is null on the transcript that carries the gene's MANE Select name, needs the variants and not
+    their count: the position and alleles, the consequence and the HGVS on the transcript that the pick chose, whether
+    that transcript is the gene's MANE Select transcript, what ClinVar says, what v37 called with the criteria it met, the
+    gnomAD counts that PM2 and the frequency criteria read, and what the run with the completed file calls.
+    """
+    key = ["chrom", "pos", "ref", "alt"]
+    nulls = ["stop_gained", "frameshift_variant", "splice_donor_variant", "splice_acceptor_variant"]
+    cf = base[(base.gene == "CFTR") & base.consequence.isin(nulls)]
+    cf = cf.merge(complete[key + ["call", "criteria"]], on=key, suffixes=("", "_complete"))
+    out = pd.DataFrame({
+        "chrom": cf.chrom, "pos": cf.pos.astype(int), "ref": cf.ref, "alt": cf.alt,
+        "consequence": cf.consequence, "transcript": cf.transcript,
+        "on_mane_select": (cf.mane_select.str.split(".").str[0] == cf.transcript).map({True: "yes", False: "no"}),
+        "hgvsc": cf.hgvsc, "hgvsp": cf.hgvsp,
+        "clinvar": cf.clinvar, "review_stars": cf.stars,
+        "gnomad_ac": cf.gnomad_ac, "gnomad_an": cf.gnomad_an,
+        "v37_call": cf.call, "v37_criteria": cf.criteria,
+        "complete_clingen_call": cf.call_complete, "complete_clingen_criteria": cf.criteria_complete,
+    }).sort_values("pos")
+    write("cftr_null_variants_v37.csv", out)
+
+
 def gap_runs() -> None:
     """What the gap runs of `11_manuscript_runs.py` do to the variants that carry no PVS1 in v37.
 
@@ -1105,11 +1141,14 @@ def gap_runs() -> None:
              "v37_gap_orphanet_lof": "PVS1 licensed by Orphanet's loss-of-function label",
              "v37_gap_both": "both"}
     rows, new_fp, per_gene = [], [], []
+    complete = None
     for run, label in names.items():
         x = pd.read_csv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz", sep="\t", dtype=str, keep_default_na=False)
         x["cv3"] = x["clinvar"].map(TRI)
         x["fv3"] = x["call"].map(TRI)
         x["pvs1"] = x["criteria"].str.contains("PVS1")
+        if run == "v37_gap_clingen_complete":
+            complete = x
         g = gap[key + ["gene"]].merge(x[key + ["pvs1", "fv3"]], on=key)
         b = base[key + ["gene", "cv3", "fv3", "call", "pvs1", "criteria", "clinvar", "consequence", "gnomad_popmax_af"]].merge(
             x[key + ["call", "fv3", "pvs1", "criteria"]], on=key, suffixes=("", "_new"))
@@ -1144,6 +1183,7 @@ def gap_runs() -> None:
     write("pvs1_gap_closure_v37.csv", rows)
     write("pvs1_gap_closure_new_false_pathogenic_v37.csv", new_fp)
     write("pvs1_gap_closure_genes_v37.csv", per_gene)
+    cftr_null_variants(base, complete)
     # How many curations the April export lacked, from the file `15_clingen_complete_export.py` wrote. The rows it
     # added are not all curations the April export lacked: some re-label an assertion the export does list, and one
     # is dated after the export was downloaded, so the summary keeps the three apart.
@@ -1371,6 +1411,28 @@ def runs_tables() -> None:
     write("controls_v37.csv", rows)
 
 
+def sweep_steps(f: pd.DataFrame, base: pd.Series, knobs: list[tuple]) -> list[dict]:
+    """Each adjacent pair of a sweep's runs, with the shipped value among them, as a step with its exchange rate.
+
+    `f` holds the runs (one row each, `knob`, `value`, `group` and the matrix metrics), `base` is the shipped run, and
+    each of `knobs` is `(knob, gain metric, cost metric, label, shipped value)`.
+    """
+    rows = []
+    for knob, gain, cost, label, shipped in knobs:
+        sub = f[(f.knob == knob) & (f.group == "sweep")].copy()
+        sub["x"] = sub["value"].astype(float)
+        sub = pd.concat([sub, pd.DataFrame([{**base.to_dict(), "value": shipped, "x": float(shipped)}])], ignore_index=True)
+        sub = sub.sort_values(gain).reset_index(drop=True)
+        for a, b in zip(sub.index[:-1], sub.index[1:]):
+            ra, rb = sub.loc[a], sub.loc[b]
+            d_gain = int(rb[gain] - ra[gain])
+            d_cost = int(rb[cost] - ra[cost])
+            rows.append({"knob": label, "from_value": ra["value"], "to_value": rb["value"], "gain_calls": d_gain, "added_errors": d_cost,
+                         "calls_per_error": (d_gain / d_cost) if d_cost > 0 else math.inf,
+                         "shipped_between": shipped in (ra["value"], rb["value"])})
+    return rows
+
+
 def threshold_steps() -> None:
     """What each step along a sweep buys and costs, on the final classifier.
 
@@ -1395,20 +1457,7 @@ def threshold_steps() -> None:
         ("pm2_ad_af_threshold", "same_pathogenic", "false_pathogenic", "PM2 bar, not recessive-only (point system)", "4e-05"),
         ("pm2_ar_af_threshold", "same_pathogenic", "false_pathogenic", "PM2 bar, recessive-only", "7e-05"),
     ]
-    rows = []
-    for knob, gain, cost, label, shipped in knobs:
-        sub = f[(f.knob == knob) & (f.group == "sweep")].copy()
-        sub["x"] = sub["value"].astype(float)
-        sub = pd.concat([sub, pd.DataFrame([{**base.to_dict(), "value": shipped, "x": float(shipped)}])], ignore_index=True)
-        sub = sub.sort_values(gain).reset_index(drop=True)
-        for a, b in zip(sub.index[:-1], sub.index[1:]):
-            ra, rb = sub.loc[a], sub.loc[b]
-            d_gain = int(rb[gain] - ra[gain])
-            d_cost = int(rb[cost] - ra[cost])
-            rows.append({"knob": label, "from_value": ra["value"], "to_value": rb["value"], "gain_calls": d_gain, "added_errors": d_cost,
-                         "calls_per_error": (d_gain / d_cost) if d_cost > 0 else math.inf,
-                         "shipped_between": shipped in (ra["value"], rb["value"])})
-    write("threshold_steps_v37.csv", rows)
+    write("threshold_steps_v37.csv", sweep_steps(f, base, knobs))
 
 
 def vcep_bars() -> None:
@@ -1483,9 +1532,10 @@ def facts(df: pd.DataFrame) -> None:
             ("bp7_called_blb", len(called)), ("bp7_called_blb_clinvar_blb", int((called.cv3 == "B/LB").sum())),
             ("bp7_called_blb_clinvar_plp", int((called.cv3 == "P/LP").sum())), ("bp7_called_blb_clinvar_vus", int((called.cv3 == "VUS").sum()))]
 
-    g = df.groupby("gene")
-    gp = pd.DataFrame({"plp": g.apply(lambda x: int((x.cv3 == "P/LP").sum())),
-                       "called": g.apply(lambda x: int(((x.cv3 == "P/LP") & (x.fv3 == "P/LP")).sum()))})
+    # Counted per gene without `groupby.apply`, which pandas deprecates on a frame that holds the grouping column.
+    plp_flag = df.cv3 == "P/LP"
+    gp = pd.DataFrame({"plp": plp_flag.groupby(df["gene"]).sum().astype(int),
+                       "called": (plp_flag & (df.fv3 == "P/LP")).groupby(df["gene"]).sum().astype(int)})
     g10 = gp[gp.plp >= 10]
     out += [("genes_with_10_plp", len(g10)), ("genes_with_10_plp_none_called", int((g10.called == 0).sum())),
             ("genes_with_10_plp_90pct_called", int((g10.called / g10.plp >= 0.9).sum()))]
@@ -1511,6 +1561,21 @@ def facts(df: pd.DataFrame) -> None:
     pv = res[res.group == "PVS1 on a ClinVar benign-side variant"]
     common = pv[pv.ac >= 600]
     out += [("records_without_gene_symbol", int((df.gene == "").sum()))]
+    # The records whose ALT is "." (the 382 that get no call): what ClinVar says they are, from the VCF. Each names, in its HGVS
+    # expression (CLNHGVS), the reference sequence itself ("NC_000001.11:g.12358644=", the "=" URL-encoded as %3D), so there is no
+    # alternative allele to annotate; ClinVar's class for every one of them is benign-side.
+    alt_dot = df[df.alt == "."]
+    reference_hgvs = 0
+    with (BENCH / "clinvar_2star.vcf").open() as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            fields = line.split("\t", 8)
+            if fields[4] == ".":
+                hgvs = re.search(r"(?:^|;)CLNHGVS=([^;]*)", fields[7])
+                reference_hgvs += bool(hgvs and re.search(r"(?:=|%3D)$", hgvs.group(1)))
+    out += [("alt_dot_records", len(alt_dot)), ("alt_dot_records_called", int((alt_dot.call != "NoCall").sum())),
+            ("alt_dot_clinvar_benign_side", int((alt_dot.cv3 == "B/LB").sum())), ("alt_dot_hgvs_is_reference", reference_hgvs)]
     # The reviewer's rulings on the 49, by kind of contradiction (our coding; Section 3.6): "missed diagnosis" and "false-pathogenic"
     # name the direction of the error against ClinVar and are not a finding that ClinVar is right.
     rul = pd.read_csv(OUT / "opposite_direction_v37.csv", dtype=str)
@@ -2206,12 +2271,539 @@ def proposals() -> None:
     write("temporal_proposals_v37.csv", rows)
 
 
+# ------------------------------------------------------------------ Section 3.8: after v37
+#
+# What changed after v37: ClinGen's curated inheritance read, a gene classified against each of its modes of inheritance,
+# BS2's carriers not counted beside BS1 or BA1. The runs are `v38*` of `11_manuscript_runs.py --v38`, kept in files of their own
+# (`runs_v38.tsv`, `holdout_runs_v38.tsv`) so that nothing above reads them, and their per-variant tables are made by
+# `12_per_variant_table.py`. The baseline of every comparison is `v38_base`, the commit before the change, and not v37: a run of
+# that commit differs from v37 in four calls (frameshift variants that also lose the start codon, whose consequence was
+# described differently by the HGVS work that came between), all four ClinVar VUS, which it now calls VUS.
+# Rates are over the 673,660 records of the benchmark as everywhere in this paper, the 382 reference-agreement records included,
+# although the harness now scores 673,278 and counts those 382 apart.
+
+V38_RUNS = RES / "v37_manuscript/runs_v38.tsv"
+V38_HOLD = RES / "v37_manuscript/holdout_runs_v38.tsv"
+N_RECORDS = 673_660
+V38_LABELS = {
+    "v38_base": "before: inheritance read from the disease names",
+    "v38": "shipped: curated inheritance, BS2 carriers not counted beside BS1 or BA1",
+    "v38_alt_unguarded": "curated inheritance, BS2 carriers counted beside BS1 and BA1",
+    "v38_alt_label_guard": "shipped, and no BS2 carrier arm for a susceptibility or predisposition disorder",
+    "v38_alt_bs2_as_v37": "curated inheritance for PM2, PM3 and BP2, BS2 as before",
+    "v38_alt_triple_cap": "shipped, with PP2, PM1 and PP3 capped together at 4 points",
+    "v38_noflags": "shipped, with gnomAD's region flags no longer withholding the frequency criteria",
+}
+KEY = ["chrom", "pos", "ref", "alt"]
+
+
+def v38_pv(run: str) -> pd.DataFrame:
+    x = pd.read_csv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz", sep="\t", dtype=str, keep_default_na=False)
+    x["cv3"] = x["clinvar"].map(TRI)
+    x["fv3"] = x["call"].map(TRI)
+    return x
+
+
+def v38_matrix(row: pd.Series) -> dict[str, dict[str, int]]:
+    return {t: {p: int(row[f"cm_{t}__{p}"]) for p in CALLS} for t in CLASSES}
+
+
+def v38_metrics(m: dict[str, dict[str, int]]) -> dict:
+    mm = matrix_metrics(m)
+    return {"exact": mm["exact"], "same_direction": mm["same_direction"], "same_pathogenic": mm["same_pathogenic"],
+            "same_benign": mm["same_benign"], "vus_exact": mm["vus_exact"], "false_benign": mm["false_benign"],
+            "false_pathogenic": mm["false_pathogenic"], "opposite": mm["opposite"],
+            "plp_recall": mm["plp_recall"], "blb_recall": mm["blb_recall"], "vus_recall": mm["vus_recall"],
+            "plp_to_vus": mm["plp_to_vus"], "blb_to_vus": mm["blb_to_vus"],
+            "vus_to_plp": mm["vus_to_plp"], "vus_to_blb": mm["vus_to_blb"],
+            "exact_rate": mm["exact"] / N_RECORDS, "same_direction_rate": mm["same_direction"] / N_RECORDS}
+
+
+def v38_stats() -> None:
+    """The runs of Section 3.8 on the April set against the commit before, and what moved."""
+    if not V38_RUNS.exists():
+        print("  (no v38 runs yet: skipping)")
+        return
+    r = pd.read_csv(V38_RUNS, sep="\t")
+    rows, base = [], None
+    for name, label in V38_LABELS.items():
+        sel = r[r.name == name]
+        if sel.empty:
+            continue
+        m = v38_metrics(v38_matrix(sel.iloc[0]))
+        if name == "v38_base":
+            base = m
+        rows.append({"run": name, "label": label, **m})
+    for row in rows:
+        for k in ("exact", "same_direction", "false_benign", "false_pathogenic", "same_pathogenic", "same_benign", "vus_exact"):
+            row[f"d_{k}"] = row[k] - base[k]
+    write("v38_runs.csv", rows)
+
+    # The control of the measurement build: with nothing set it must be the shipped classifier, cell for cell.
+    ctl, ship = r[r.name == "v38_alt_control"], r[r.name == "v38"]
+    if not ctl.empty and not ship.empty:
+        a, b = v38_matrix(ctl.iloc[0]), v38_matrix(ship.iloc[0])
+        fires = [c for c in r.columns if c.startswith("fire_")]
+        write("v38_controls.csv", [{"run": "v38_alt_control", "cells_equal_to_v38": sum(a[t][p] == b[t][p] for t in CLASSES for p in CALLS),
+                                    "cells": len(CLASSES) * len(CALLS),
+                                    "criteria_firing_equal_to_v38": sum(int(ctl.iloc[0][c]) == int(ship.iloc[0][c]) for c in fires),
+                                    "criteria": len(fires)}])
+
+    # How often each criterion fires (met), before and after, for the criteria the change reaches.
+    fire = {name: {c.removeprefix("fire_"): int(sel.iloc[0][c]) for c in r.columns if c.startswith("fire_")}
+            for name in ("v38_base", "v38", "v38_alt_unguarded") if not (sel := r[r.name == name]).empty}
+    if "v38_base" in fire and "v38" in fire:
+        rows = []
+        for c in sorted(set(fire["v38_base"]) | set(fire["v38"])):
+            b, s = fire["v38_base"].get(c, 0), fire["v38"].get(c, 0)
+            u = fire.get("v38_alt_unguarded", {}).get(c, 0)
+            rows.append({"criterion": c, "v38_base": b, "v38": s, "v38_alt_unguarded": u, "delta_shipped": s - b, "delta_unguarded": u - b})
+        write("v38_criteria_firing.csv", rows)
+
+    # Which calls moved, by what, and on which ClinVar class; and the ClinVar pathogenic-side variants that moved.
+    pairs = [("v38", "v38_base"), ("v38_alt_unguarded", "v38_base"), ("v38_alt_label_guard", "v38_base"),
+             ("v38_alt_bs2_as_v37", "v38_base"), ("v38_alt_triple_cap", "v38"), ("v38_alt_unguarded", "v38"),
+             ("v38_alt_label_guard", "v38")]
+    if not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for pr in pairs for n in pr):
+        print("  (the v38 per-variant tables are not all made yet: skipping the transitions)")
+        return
+    trans, moves = [], []
+    cache: dict[str, pd.DataFrame] = {}
+    for run, ref in pairs:
+        for n in (run, ref):
+            if n not in cache:
+                cache[n] = v38_pv(n)
+        a, b = cache[ref], cache[run]
+        m = a.merge(b[KEY + ["call", "criteria", "fv3"]], on=KEY, suffixes=("", "_run"))
+        if len(m) != len(a):
+            sys.exit(f"{run} and {ref} do not score the same variants")
+        ch = m[m.call != m.call_run]
+        for (cv, c0, c1), g in ch.groupby(["cv3", "call", "call_run"]):
+            trans.append({"run": run, "against": ref, "clinvar": cv, "call_before": c0, "call_after": c1, "n": len(g)})
+        if run != "v38_alt_triple_cap":
+            for x in ch[ch.cv3 == "P/LP"].itertuples():
+                moves.append({"run": run, "against": ref, "gene": x.symbol or x.gene, "hgvsp": x.hgvsp, "clinvar": x.clinvar,
+                              "call_before": x.call, "call_after": x.call_run, "criteria_before": x.criteria, "criteria_after": x.criteria_run})
+    write("v38_transitions.csv", trans)
+    write("v38_clinvar_plp_moves.csv", moves)
+
+    # Facts that the text quotes and that no table above holds.
+    def has(criteria: str, code: str) -> bool:
+        return any(c == code or c.startswith(code + "_") for c in criteria.split("&"))
+
+    u = cache["v38_alt_unguarded"]
+    ad = u[u.clingen_tags == "AD"]
+    facts = [
+        ("ad_only_variants_with_bs1", int(ad.criteria.map(lambda c: has(c, "BS1")).sum())),
+        ("ad_only_variants_with_bs1_and_bs2", int(ad.criteria.map(lambda c: has(c, "BS1") and has(c, "BS2")).sum())),
+        ("ad_only_variants_with_ba1", int(ad.criteria.map(lambda c: has(c, "BA1")).sum())),
+        ("ad_only_variants_with_ba1_and_bs2", int(ad.criteria.map(lambda c: has(c, "BA1") and has(c, "BS2")).sum())),
+    ]
+    # What BS2's arm for homozygotes and hemizygotes still counts beside BS1 and BA1 in the shipped run: the rule that sets the
+    # carrier count aside does not reach it, so every BS2 that stands beside either is that arm.
+    shipped_pv = cache["v38"]
+    beside = shipped_pv[shipped_pv.criteria.map(lambda c: has(c, "BS2") and (has(c, "BS1") or has(c, "BA1")))]
+    bs1_only = beside[beside.criteria.map(lambda c: not has(c, "BA1"))]
+    facts += [("bs2_beside_frequency_variants", len(beside)),
+              ("bs2_beside_frequency_variants_on_x", int(beside.chrom.isin(["X", "chrX"]).sum())),
+              ("bs2_beside_bs1_without_ba1_variants", len(bs1_only)),
+              ("bs2_beside_bs1_without_ba1_on_x", int(bs1_only.chrom.isin(["X", "chrX"]).sum())),
+              ("bs2_beside_bs1_without_ba1_clinvar_benign_side", int((bs1_only.cv3 == "B/LB").sum())),
+              ("bs2_beside_bs1_without_ba1_clinvar_vus", int((bs1_only.cv3 == "VUS").sum())),
+              ("bs2_beside_bs1_without_ba1_clinvar_pathogenic_side", int((bs1_only.cv3 == "P/LP").sum()))]
+    for gene, hgvsp, short in (("TTR", "p.Val142Ile", "ttr"), ("VWF", "p.Arg854Gln", "vwf")):
+        row = {run: cache[run][(cache[run].gene == gene) & cache[run].hgvsp.str.endswith(hgvsp)] for run in ("v38_base", "v38", "v38_alt_unguarded")}
+        r1 = row["v38_alt_unguarded"].iloc[0]
+        facts += [(f"{short}_alleles", int(r1.gnomad_ac)), (f"{short}_homozygous", int(r1.gnomad_hc))]
+        for run, x in row.items():
+            facts.append((f"{short}_call_{run}", x.iloc[0].call))
+    moved = [m for m in moves if m["run"] == "v38" and m["call_after"] == "VUS"]
+    # the four variants that go from Likely pathogenic to VUS: their gnomAD alleles
+    four = cache["v38"].merge(pd.DataFrame(moved)[["gene", "hgvsp"]].rename(columns={"gene": "symbol"}), on=["symbol", "hgvsp"])
+    facts += [("lp_to_vus_variants", len(four)), ("lp_to_vus_alleles_min", int(four.gnomad_ac.astype(int).min())),
+              ("lp_to_vus_alleles_max", int(four.gnomad_ac.astype(int).max())), ("lp_to_vus_homozygous_max", int(four.gnomad_hc.astype(int).max()))]
+    # The commit before the change has v37's classification code and a newer annotation layer, so its run is not v37's:
+    # where the two differ is what the text says about the baseline.
+    old = v38_pv("v37").merge(cache["v38_base"][KEY + ["call", "criteria"]], on=KEY, suffixes=("", "_base"))
+    differ = old[(old.call != old.call_base) | (old.criteria != old.criteria_base)]
+    facts += [("base_vs_v37_variants_with_other_criteria_or_call", len(differ)),
+              ("base_vs_v37_variants_with_another_call", int((differ.call != differ.call_base).sum())),
+              ("base_vs_v37_differing_variants_that_are_indels", int((differ.ref.str.len() != differ.alt.str.len()).sum())),
+              ("base_vs_v37_differing_variants_called_lp_by_v37_and_vus_in_clinvar",
+               int(((differ.call == "Likely_pathogenic") & (differ.call_base == "VUS") & (differ.clinvar == "VUS")).sum()))]
+    write("v38_facts.csv", [{"name": k, "value": v} for k, v in facts])
+
+
+def clingen_rows(path: Path) -> pd.DataFrame:
+    rows = []
+    with path.open(newline="") as f:
+        for rec in csv.reader(f):
+            if len(rec) < 9 or rec[0] == "GENE SYMBOL" or rec[0].startswith(("+", "CLINGEN", "FILE", "WEBPAGE")):
+                continue
+            rows.append({"gene": rec[0], "label": rec[2], "moi": rec[4], "cls": rec[6]})
+    return pd.DataFrame(rows)
+
+
+def text_flags(label: str) -> tuple[bool, bool]:
+    """What the classifier read from the words of a disease name, up to v37: `Inheritance::from_text` of the Rust."""
+    s = label.lower()
+    dom, rec = "dominant" in s, "recessive" in s
+    return ("autosomal dominant" in s or "{ad}" in s or (dom and not rec),
+            "autosomal recessive" in s or "{ar}" in s or (rec and not dom))
+
+
+def v38_inheritance_reading() -> None:
+    """How the genes of the ClinGen file the benchmark read were read before and after: by the words of their disease names
+    (up to v37) and by ClinGen's curated field (from v38 on), among all of its genes and among those with a benchmark variant."""
+    path = BENCH / "sa_sources/clingen_gene_validity.csv"
+    pv = BENCH / "manuscript_runs/v38_per_variant.tsv.gz"
+    if not (path.exists() and pv.exists()):
+        print("  (no v38 per-variant table yet: skipping)")
+        return
+    cg = clingen_rows(path)
+    est = cg[cg.cls.isin(["Definitive", "Strong", "Moderate"])]
+    genes = list(dict.fromkeys(cg.gene))
+    bench = set(pd.read_csv(pv, sep="\t", dtype=str, keep_default_na=False, usecols=["gene"])["gene"])
+    by = {g: x for g, x in est.groupby("gene")}
+
+    def cat(dom: bool, rec: bool) -> str:
+        return "both" if dom and rec else "dominant only" if dom else "recessive only" if rec else "neither"
+
+    rows = []
+    for scope, members in (("every gene of the file", genes), ("genes with a benchmark variant", [g for g in genes if g in bench])):
+        counts = {"names": Counter(), "curated": Counter()}
+        groups = Counter()
+        group_read = {}
+        for g in members:
+            x = by.get(g)
+            tags = frozenset(x.moi) if x is not None else frozenset()
+            dn = rn = False
+            if x is not None:
+                for lab in x.label:
+                    d, rc = text_flags(lab)
+                    dn |= d
+                    rn |= rc
+            dc = bool(tags & {"AD", "SD"})
+            rc_ = bool(tags & {"AR", "SD"})
+            counts["names"][cat(dn, rn)] += 1
+            counts["curated"][cat(dc, rc_)] += 1
+            grp = "established tags AD only" if tags == {"AD"} else "established tags AR only" if tags == {"AR"} else (
+                "established tags AD and AR" if tags == {"AD", "AR"} else "other or none")
+            groups[grp] += 1
+            gr = group_read.setdefault(grp, Counter())
+            gr["read_dominant_names"] += dn
+            gr["read_recessive_names"] += rn
+            gr["read_dominant_curated"] += dc
+            gr["read_recessive_curated"] += rc_
+        n_ctx = sum(1 for g in members if by.get(g) is not None and len(set(by[g].moi)) >= 2)
+        # what the genes that are neither AD only, AR only nor AD and AR are: the curated field says "neither" for most of them
+        other = Counter()
+        for g in members:
+            x = by.get(g)
+            tags = frozenset(x.moi) if x is not None else frozenset()
+            if tags in (frozenset({"AD"}), frozenset({"AR"}), frozenset({"AD", "AR"})):
+                continue
+            other["with a semidominant curation" if "SD" in tags else "no established curation" if not tags else
+                  "X-linked only" if tags == {"XL"} else "mitochondrial only" if tags == {"MT"} else "another combination"] += 1
+        for reading in ("names", "curated"):
+            rows.append({"scope": scope, "kind": "reading", "reading": "disease names (to v37)" if reading == "names" else "curated field (v38)",
+                         "group": "all", "genes": len(members), "dominant_only": counts[reading]["dominant only"],
+                         "recessive_only": counts[reading]["recessive only"], "both": counts[reading]["both"], "neither": counts[reading]["neither"]})
+        for grp in ("established tags AD only", "established tags AR only", "established tags AD and AR", "other or none"):
+            gr = group_read.get(grp, Counter())
+            rows.append({"scope": scope, "kind": "group", "reading": "", "group": grp, "genes": groups[grp],
+                         "read_dominant_names": gr["read_dominant_names"], "read_recessive_names": gr["read_recessive_names"],
+                         "read_dominant_curated": gr["read_dominant_curated"], "read_recessive_curated": gr["read_recessive_curated"]})
+        for name in ("no established curation", "X-linked only", "mitochondrial only", "with a semidominant curation", "another combination"):
+            rows.append({"scope": scope, "kind": "other", "reading": "", "group": name, "genes": other[name]})
+        rows.append({"scope": scope, "kind": "contexts", "reading": "", "group": "genes with more than one mode of inheritance", "genes": n_ctx})
+    df = pd.DataFrame(rows)
+    for c in df.columns.difference(["scope", "kind", "reading", "group"]):
+        df[c] = df[c].astype("Int64")
+    write("v38_inheritance_reading.csv", df)
+
+
+def v38_holdout() -> None:
+    """The shipped change and the alternatives on the 4 October 2026 release: all covered variants and the new ones."""
+    st = BENCH / "clinvar_20261004_covered/strata.tsv"
+    names = ["v38_oct_base", "v38_oct_shipped", "v38_oct_alt_unguarded", "v38_oct_alt_triple_cap"]
+    if not st.exists() or not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in names):
+        print("  (the held-out v38 runs have no per-variant tables yet: skipping)")
+        return
+    strata = pd.read_csv(st, sep="\t", dtype=str)
+    runs = {n: v38_pv(n).merge(strata, on=KEY, how="left") for n in names}
+    base = runs["v38_oct_base"]
+    rows = []
+    for scope in ("all covered", "new"):
+        sel = (lambda x: x) if scope == "all covered" else (lambda x: x[x.stratum == "new"])
+        b = sel(base).set_index(KEY)
+        for n in names:
+            x = sel(runs[n]).set_index(KEY).reindex(b.index)
+            same = int((x.cv3 == x.fv3).sum())
+            missed = int(((x.cv3 == "P/LP") & (x.fv3 == "B/LB")).sum())
+            fp = int(((x.cv3 == "B/LB") & (x.fv3 == "P/LP")).sum())
+            changed = x[x.call != b.call]
+            rows.append({"set": scope, "run": n, "variants": len(x), "exact": int((x.clinvar == x.call).sum()), "same_direction": same,
+                         "false_benign": missed, "false_pathogenic": fp,
+                         "plp_correct": int(((x.cv3 == "P/LP") & (x.fv3 == "P/LP")).sum()), "blb_correct": int(((x.cv3 == "B/LB") & (x.fv3 == "B/LB")).sum()),
+                         "vus_called_plp": int(((x.cv3 == "VUS") & (x.fv3 == "P/LP")).sum()), "vus_called_blb": int(((x.cv3 == "VUS") & (x.fv3 == "B/LB")).sum()),
+                         "calls_changed_vs_base": len(changed),
+                         "plp_lost_a_pathogenic_side_call": int(((changed.cv3 == "P/LP") & (changed.fv3 != "P/LP") & (b.loc[changed.index, "fv3"] == "P/LP")).sum()),
+                         "plp_gained_a_pathogenic_side_call": int(((changed.cv3 == "P/LP") & (changed.fv3 == "P/LP") & (b.loc[changed.index, "fv3"] != "P/LP")).sum()),
+                         "plp_called_benign_side": missed})
+    write("v38_holdout.csv", rows)
+    # The ClinVar pathogenic-side variants of the October release whose call moved between the commit before and the shipped one.
+    moves = []
+    b = base.set_index(KEY)
+    for n in ("v38_oct_shipped", "v38_oct_alt_unguarded"):
+        x = runs[n].set_index(KEY).reindex(b.index)
+        ch = x[(x.call != b.call) & (x.cv3 == "P/LP")]
+        for k, y in ch.iterrows():
+            moves.append({"run": n, "stratum": y["stratum"], "gene": y["symbol"] or y["gene"], "hgvsp": y["hgvsp"], "clinvar": y["clinvar"],
+                          "call_before": b.loc[k, "call"], "call_after": y["call"], "criteria_before": b.loc[k, "criteria"], "criteria_after": y["criteria"]})
+    write("v38_holdout_plp_moves.csv", moves)
+
+
+def v38_sweeps() -> None:
+    """The four thresholds that read inheritance, re-swept now that the field is read, and what each step buys and costs."""
+    if not V38_RUNS.exists():
+        print("  (no v38 runs yet: skipping)")
+        return
+    r = pd.read_csv(V38_RUNS, sep="\t")
+    base_row = r[r.name == "v38"]
+    if base_row.empty:
+        return
+    sweep = r[r.name.str.startswith("v38_sw_")]
+    f = []
+    for _, row in sweep.iterrows():
+        f.append({"name": row["name"], "group": "sweep", "knob": row["knob"], "value": str(row["value"]), "shipped": str(row["shipped"]),
+                  **{k: v38_metrics(v38_matrix(row))[k] for k in ("exact", "same_direction", "same_pathogenic", "same_benign", "false_benign", "false_pathogenic", "plp_recall", "blb_recall")}})
+    shipped = {k: v38_metrics(v38_matrix(base_row.iloc[0]))[k] for k in ("exact", "same_direction", "same_pathogenic", "same_benign", "false_benign", "false_pathogenic", "plp_recall", "blb_recall")}
+    write("v38_sweeps.csv", [{"name": "v38", "group": "shipped", "knob": "", "value": "shipped", "shipped": "", **shipped}] + f)
+    fdf = pd.DataFrame(f)
+    base = pd.Series({"name": "v38", "group": "sweep", "knob": "", "value": "", "shipped": "", **shipped})
+    knobs = [
+        ("pm2_ad_af_threshold", "same_pathogenic", "false_pathogenic", "PM2 bar, not recessive-only", "4e-05"),
+        ("pm2_ar_af_threshold", "same_pathogenic", "false_pathogenic", "PM2 bar, recessive-only", "7e-05"),
+        ("bs2_hom_prevalence_threshold", "same_benign", "false_benign", "BS2 bar for individuals with no functional copy", "0.001"),
+        ("bs2_ad_prevalence_threshold", "same_benign", "false_benign", "BS2 carrier bar, dominant-only genes", "0.0003"),
+    ]
+    write("v38_threshold_steps.csv", sweep_steps(fdf, base, knobs))
+
+
+def parse_disorders(cell: str) -> list[tuple[str, str, list[str]]]:
+    """`AD:LB:BS2+BP4&AR:VUS:BP4` as (inheritance, call, criteria) entries."""
+    out = []
+    for entry in (cell.split("&") if cell else []):
+        inh, call, crit = (entry.split(":", 2) + ["", ""])[:3]
+        out.append((inh, call, [c for c in crit.split("+") if c]))
+    return out
+
+
+def v38_per_disorder() -> None:
+    """How many variants and genes a gene's modes of inheritance classify separately, and how often they disagree."""
+    pv = BENCH / "manuscript_runs/v38_per_variant.tsv.gz"
+    if not pv.exists():
+        print("  (no v38 per-variant table yet: skipping)")
+        return
+    x = v38_pv("v38")
+    if "acmg_disorders" not in x.columns:
+        sys.exit("the per-variant table of v38 has no acmg_disorders column: rerun 12_per_variant_table.py")
+    x["entries"] = x["acmg_disorders"].map(parse_disorders)
+    has = x[x.entries.map(len) > 0].copy()
+    rows = [{"measure": "variants scored", "n": len(x)},
+            {"measure": "variants whose gene has more than one mode of inheritance", "n": len(has)},
+            {"measure": "genes among them", "n": int(has.symbol.nunique())}]
+    classes = has.entries.map(lambda es: {c for _, c, _ in es})
+    dirs = has.entries.map(lambda es: {TRI[{"P": "Pathogenic", "LP": "Likely_pathogenic", "VUS": "VUS", "LB": "Likely_benign", "B": "Benign"}[c]] for _, c, _ in es})
+    has["differ_in_class"] = classes.map(len) > 1
+    has["differ_in_direction"] = dirs.map(len) > 1
+    # which criteria separate the modes: the symmetric difference of what each mode met
+    differ_by = Counter()
+    n_criteria_differ = 0
+    for es in has.entries:
+        sets = [frozenset(k) for _, _, k in es]
+        if len(set(sets)) > 1:
+            n_criteria_differ += 1
+            differ_by.update(frozenset().union(*sets) - frozenset.intersection(*sets))
+    rows += [{"measure": "variants whose modes of inheritance meet different criteria", "n": n_criteria_differ}]
+    rows += [{"measure": f"  of them, {c} is met under one mode and not another", "n": n} for c, n in sorted(differ_by.items())]
+    rows += [{"measure": "variants whose modes of inheritance give different classes", "n": int(has.differ_in_class.sum())},
+             {"measure": "variants whose modes of inheritance give different directions", "n": int(has.differ_in_direction.sum())}]
+    for cv in ("P/LP", "VUS", "B/LB"):
+        s = has[has.cv3 == cv]
+        rows.append({"measure": f"ClinVar {cv} variants in such genes", "n": len(s)})
+        rows.append({"measure": f"  of them, modes of inheritance give different classes", "n": int(s.differ_in_class.sum())})
+        rows.append({"measure": f"  of them, modes of inheritance give different directions", "n": int(s.differ_in_direction.sum())})
+    write("v38_per_disorder.csv", rows)
+    pairs = Counter()
+    for _, r in has.iterrows():
+        tags = tuple(i for i, _, _ in r.entries)
+        pairs[(" and ".join(tags), " / ".join(c for _, c, _ in r.entries), r.cv3)] += 1
+    write("v38_per_disorder_pairs.csv", [{"inheritance": a, "calls": b, "clinvar": c, "n": n} for (a, b, c), n in sorted(pairs.items(), key=lambda kv: (-kv[1], kv[0]))])
+    genes = (has.groupby("symbol").agg(variants=("pos", "size"), differ_in_direction=("differ_in_direction", "sum"), differ_in_class=("differ_in_class", "sum"),
+                                       modes=("acmg_disorders", lambda s: "+".join(i for i, _, _ in parse_disorders(s.iloc[0])))).reset_index()
+             .sort_values(["variants", "symbol"], ascending=[False, True]))
+    write("v38_per_disorder_genes.csv", genes)
+
+
+def v38_triple() -> None:
+    """A combined cap of 4 points on PP2, PM1 and PP3, by real runs on the April set and on the October release."""
+    out = []
+    spec = [("April set", "v38", "v38_alt_triple_cap", None), ("October, all covered", "v38_oct_shipped", "v38_oct_alt_triple_cap", "all"),
+            ("October, new variants", "v38_oct_shipped", "v38_oct_alt_triple_cap", "new")]
+    for label, a, b, scope in spec:
+        if not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in (a, b)):
+            print(f"  ({label}: no per-variant tables yet)")
+            continue
+        x, y = v38_pv(a), v38_pv(b)
+        if scope == "new":
+            st = pd.read_csv(BENCH / "clinvar_20261004_covered/strata.tsv", sep="\t", dtype=str)
+            x = x.merge(st, on=KEY, how="left")
+            x = x[x.stratum == "new"]
+            y = y.merge(x[KEY], on=KEY)
+        m = x.merge(y[KEY + ["call", "fv3"]], on=KEY, suffixes=("", "_cap"))
+        ch = m[m.call != m.call_cap]
+        trio = m[m.criteria.map(lambda c: all(any(p == k or p.startswith(k + "_") for p in c.split("&")) for k in ("PP2", "PM1", "PP3")))]
+        lost = int(((ch.cv3 == "P/LP") & (ch.fv3_cap != "P/LP")).sum())
+        avoided = int(((m.cv3 == "B/LB") & (m.fv3 == "P/LP") & (m.fv3_cap != "P/LP")).sum())
+        added_missed = int(((m.cv3 == "P/LP") & (m.fv3 != "B/LB") & (m.fv3_cap == "B/LB")).sum())
+        out.append({"set": label, "variants": len(m), "variants_with_pp2_pm1_and_pp3_met": len(trio),
+                    "of_them_called_likely_pathogenic": int((trio.call == "Likely_pathogenic").sum()),
+                    "calls_changed": len(ch), "all_likely_pathogenic_to_vus": int(((ch.call == "Likely_pathogenic") & (ch.call_cap == "VUS")).sum()),
+                    "clinvar_plp_losing_the_call": lost,
+                    "clinvar_vus_kept_at_vus": int(((ch.cv3 == "VUS") & (ch.call_cap == "VUS")).sum()),
+                    "clinvar_blb_no_longer_called_plp": avoided, "clinvar_plp_newly_called_benign": added_missed,
+                    "plp_calls_lost_per_false_pathogenic_avoided": (lost / avoided) if avoided else math.inf})
+    if out:
+        write("v38_triple.csv", out)
+
+
+def v38_joint() -> None:
+    """gnomAD's joint exomes and genomes against the exomes, with the region flags separated out."""
+    if not V38_RUNS.exists():
+        print("  (no v38 runs yet: skipping)")
+        return
+    r = pd.read_csv(V38_RUNS, sep="\t")
+    rows, changes = [], []
+    # the denominators: the variants of chr21 and chr22 are the pilot's, every record of the benchmark is the full run's
+    sets = [("chr21 and chr22", ["v38_chr2122_exomes", "v38_chr2122_exomes_noflags", "v38_chr2122_joint"], "v38_chr2122_exomes"),
+            ("every chromosome", ["v38", "v38_noflags", "v38_joint"], "v38")]
+    labels = {"v38_chr2122_exomes": "gnomAD exomes", "v38_chr2122_exomes_noflags": "gnomAD exomes, region flags not withholding",
+              "v38_chr2122_joint": "gnomAD joint exomes and genomes", "v38": "gnomAD exomes", "v38_noflags": "gnomAD exomes, region flags not withholding",
+              "v38_joint": "gnomAD joint exomes and genomes"}
+    for scope, names, ref in sets:
+        have = [n for n in names if not r[r.name == n].empty]
+        if len(have) < len(names):
+            print(f"  ({scope}: {sorted(set(names) - set(have))} not run yet)")
+            if ref not in have or len(have) < 2:
+                continue
+        base_m = None
+        for n in have:
+            sel = r[r.name == n].iloc[0] if n != "v38" else r[r.name == "v38"].iloc[0]
+            m = v38_metrics(v38_matrix(sel))
+            if n == ref:
+                base_m = m
+            total = sum(sum(v38_matrix(sel)[t].values()) for t in CLASSES)
+            rows.append({"set": scope, "run": n, "database": labels[n], "variants": total, **{k: m[k] for k in ("exact", "same_direction", "same_pathogenic", "same_benign", "false_benign", "false_pathogenic")}})
+        for row in rows:
+            if row["set"] == scope:
+                for k in ("exact", "same_direction", "same_pathogenic", "same_benign", "false_benign", "false_pathogenic"):
+                    row[f"d_{k}"] = row[k] - base_m[k]
+        # calls that moved, by consequence group and by the criterion that was gained or lost
+        if all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in have):
+            pvs = {n: v38_pv(n) for n in have}
+            for other in have:
+                if other == ref:
+                    continue
+                m_ = pvs[ref].merge(pvs[other][KEY + ["call", "criteria", "fv3"]], on=KEY, suffixes=("", "_o"))
+                ch = m_[m_.call != m_.call_o].copy()
+                ch["cgrp"] = ch["consequence"].map(consequence_group)
+                for (g, cv, a_, b_), x in ch.groupby(["cgrp", "cv3", "call", "call_o"]):
+                    changes.append({"set": scope, "against": ref, "run": other, "consequence_group": g, "clinvar": cv, "call_before": a_, "call_after": b_, "n": len(x)})
+                gained, lost = Counter(), Counter()
+                for _, y in ch.iterrows():
+                    c0, c1 = set(y.criteria.split("&")) - {""}, set(y.criteria_o.split("&")) - {""}
+                    for c in c1 - c0:
+                        gained[c] += 1
+                    for c in c0 - c1:
+                        lost[c] += 1
+                for c in sorted(set(gained) | set(lost)):
+                    changes.append({"set": scope, "against": ref, "run": other, "consequence_group": "(criterion)", "clinvar": "", "call_before": f"lost {lost[c]}", "call_after": f"gained {gained[c]}", "n": 0, "criterion": c,
+                                    "criterion_gained": gained[c], "criterion_lost": lost[c]})
+    # The pilot made the same three runs on the variants of chromosomes 21 and 22 alone, with the databases that the runs of
+    # every chromosome read for those two, and a variant's annotation does not depend on which others the file holds, so
+    # each run of every chromosome has to give the pilot's call and criteria for every variant of the pilot. A subset cut
+    # in another way, a database rebuilt in between or a run of another binary would show here and nowhere else.
+    pilot_check = []
+    for pilot, full in (("v38_chr2122_exomes", "v38"), ("v38_chr2122_exomes_noflags", "v38_noflags"), ("v38_chr2122_joint", "v38_joint")):
+        if not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in (pilot, full)):
+            continue
+        a, b = v38_pv(pilot)[KEY + ["call", "criteria"]], v38_pv(full)[KEY + ["call", "criteria"]]
+        m_ = a.merge(b, on=KEY, how="left", suffixes=("", "_full"), indicator=True)
+        pilot_check.append({"pilot": pilot, "full": full, "variants": len(a), "found_in_full": int((m_._merge == "both").sum()),
+                            "calls_differing": int((m_.call != m_.call_full).sum()), "criteria_differing": int((m_.criteria != m_.criteria_full).sum())})
+    # Does the joint release hold what the exomes hold? It adds the genomes to the exomes, so a variant that the exomes hold is a
+    # record of the joint release too, with an allele count, an allele number and a count of homozygotes that are not lower.
+    # A region cut short, a record lost or a field read from the wrong key would show here and nowhere else.
+    records = []
+    for scope, exomes, joint in (("chr21 and chr22", "v38_chr2122_exomes", "v38_chr2122_joint"), ("every chromosome", "v38", "v38_joint")):
+        if not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in (exomes, joint)):
+            continue
+        counts = ["gnomad_ac", "gnomad_an", "gnomad_hc"]
+        m_ = v38_pv(exomes)[KEY + counts].merge(v38_pv(joint)[KEY + counts], on=KEY, suffixes=("_e", "_j"), validate="one_to_one")
+        number = {c + s: pd.to_numeric(m_[c + s], errors="coerce") for c in counts for s in ("_e", "_j")}
+        in_e, in_j = number["gnomad_an_e"].notna(), number["gnomad_an_j"].notna()
+        both = in_e & in_j
+        records.append({"set": scope, "variants": len(m_), "in_both": int(both.sum()), "exomes_only": int((in_e & ~in_j).sum()),
+                        "joint_only": int((~in_e & in_j).sum()), "neither": int((~in_e & ~in_j).sum()),
+                        **{f"{c[7:]}_lower": int((number[c + "_j"][both] < number[c + "_e"][both]).sum()) for c in counts}})
+    # By chromosome, from the same two tables. The X is where the joint database has to derive the flag of the pseudoautosomal
+    # regions that the release lacks, and Y and the mitochondrial contigs are where nothing is expected to move, so a chromosome
+    # that behaves unlike the rest would show a database or a derivation that went wrong there.
+    by_chrom, coverage = [], []
+    if all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in ("v38", "v38_joint")):
+        x, y = v38_pv("v38"), v38_pv("v38_joint")
+        # Where the calls move, and how much the exomes had there to read: the allele number of a variant's record is the number of
+        # chromosomes behind its frequency, and a variant that the exomes lack has no record. The median is over the records that exist.
+        c_ = x[KEY + ["call", "consequence", "gnomad_an"]].merge(y[KEY + ["call", "gnomad_an"]], on=KEY, suffixes=("", "_j"), validate="one_to_one")
+        an_e, an_j = pd.to_numeric(c_.gnomad_an, errors="coerce"), pd.to_numeric(c_.gnomad_an_j, errors="coerce")
+        group, moved = c_.consequence.map(consequence_group), c_.call != c_.call_j
+        for label, sel in (("calls that move", moved), ("intronic variants whose call moves", moved & (group == "Intronic")),
+                           ("UTR variants whose call moves", moved & (group == "UTR")), ("calls that do not move", ~moved)):
+            has = sel & an_e.notna()
+            coverage.append({"group": label, "variants": int(sel.sum()), "no_exomes_record": int((sel & an_e.isna()).sum()),
+                             "median_an_exomes": int(an_e[has].median()), "median_an_joint": int(an_j[has].median())})
+        z = x[KEY + ["clinvar", "call", "cv3", "fv3"]].merge(y[KEY + ["call", "fv3"]], on=KEY, suffixes=("", "_j"), validate="one_to_one")
+        z["moved"] = z.call != z.call_j
+        z["d_exact"] = (z.clinvar == z.call_j).astype(int) - (z.clinvar == z.call).astype(int)
+        z["d_same_direction"] = (z.cv3 == z.fv3_j).astype(int) - (z.cv3 == z.fv3).astype(int)
+        order = [str(c) for c in range(1, 23)] + ["X", "Y"]
+        for chrom in order + sorted(set(z.chrom) - set(order)):
+            c = z[z.chrom == chrom]
+            if len(c):
+                by_chrom.append({"chrom": chrom, "variants": len(c), "calls_moved": int(c.moved.sum()), "d_exact": int(c.d_exact.sum()),
+                                 "d_same_direction": int(c.d_same_direction.sum())})
+    if rows:
+        write("v38_joint.csv", rows)
+    if changes:
+        write("v38_joint_changes.csv", changes)
+    if pilot_check:
+        write("v38_joint_pilot_check.csv", pilot_check)
+    if records:
+        write("v38_joint_records.csv", records)
+    if by_chrom:
+        write("v38_joint_by_chrom.csv", by_chrom)
+    if coverage:
+        write("v38_joint_coverage.csv", coverage)
+
+
 STEPS = {
     "headline": headline, "confusion": confusion, "stars": by_stars, "consequence": by_consequence,
     "offdiagonal": offdiagonal, "points": points_tables, "replay": replay_tables, "pm2dep": pm2_dependence, "criteria": criteria_table, "facts": facts,
     "opposite": opposite_cases, "genes": gene_level, "pvs1gap": pvs1_gap, "baselines": baselines,
 }
-NO_DF = {"vcep": vcep_bars, "gaprun": gap_runs, "hooks": hook_runs, "prov": provenance_summary, "trajectory": trajectory, "runs": runs_tables, "steps": threshold_steps, "rounds": review_rounds, "temporal": temporal, "newindex": new_in_index, "proposals": proposals}
+NO_DF = {"v38": v38_stats, "v38reading": v38_inheritance_reading, "v38holdout": v38_holdout, "v38sweeps": v38_sweeps, "v38disorder": v38_per_disorder, "v38triple": v38_triple, "v38joint": v38_joint, "vcep": vcep_bars, "gaprun": gap_runs, "hooks": hook_runs, "prov": provenance_summary, "trajectory": trajectory, "runs": runs_tables, "steps": threshold_steps, "rounds": review_rounds, "temporal": temporal, "newindex": new_in_index, "proposals": proposals}
 
 
 def main() -> None:

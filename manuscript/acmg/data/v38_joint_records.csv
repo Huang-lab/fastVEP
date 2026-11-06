@@ -1,0 +1,3 @@
+set,variants,in_both,exomes_only,joint_only,neither,ac_lower,an_lower,hc_lower
+chr21 and chr22,23538,18995,0,585,3958,0,0,0
+every chromosome,673278,537038,0,17382,118858,0,0,0

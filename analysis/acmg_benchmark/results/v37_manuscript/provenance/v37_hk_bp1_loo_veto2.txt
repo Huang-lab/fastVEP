@@ -1,7 +1,7 @@
 provenance_version: 2
 args: annotate --acmg --pick --acmg-config <config>
 acmg_config_sha256: 66b602fe1216896b65d97e1b71ca9fd1978a14b2be5f28ee0aafb9de0bace091
-fastvep_sha256: 2bccb9375dc5b0b0686a89b65ed1b00dcf52342992d15883ea9f6d93b9bb7292
+fastvep_sha256: 823086d3976a6e1072e9da6ee800adedc6379ca2b919347aa48edb2e9a2a8cd2
 input: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/clinvar_2star.vcf
 input_bytes: 390168954
 gff3: /Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3
@@ -10,9 +10,9 @@ fasta: /Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sap
 fasta_bytes: 3151425851
 sa_dir: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/sa_db
 sa_dir_signature: e518266aeb3488dbc459d54112a7a685e366fd645ffe5d3600e426f06c1513e1
-fastvep: /private/tmp/claude-502/-Users-kuan-lin-huang-Projects-fastVEP/9c86581a-102d-4745-b0e4-d32716090303/scratchpad/fastvep-hooks
+fastvep: /private/tmp/claude-502/-Users-kuan-lin-huang-Projects-fastVEP/10170078-ab3d-4699-87dd-da5bde169f85/scratchpad/rerun/bin/fastvep_hook
 fastvep_version: fastvep 0.4.0
-repo_commit: 5d8004a72fb779b8f30ef6096c0a998cc4817138
-repo_dirty_files: 20
-annotation_seconds: 1095
-recorded_at: 2026-10-22T05:58:20Z
+repo_commit: 9d84be0c14952243b4c34ffc6f3c179ae77d66ee
+repo_dirty_files: 135
+annotation_seconds: 120
+recorded_at: 2026-11-05T00:18:17Z

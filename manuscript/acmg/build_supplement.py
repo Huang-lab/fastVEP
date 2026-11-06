@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build `supplementary_tables.xlsx`: every supplementary and appendix table of the manuscript, one sheet each.
 
-`manuscript.md` names, in the paragraphs headed "Supplementary Table S1" to "S9" and "Appendix Table A1" to "A9", the
+`manuscript.md` names, in the paragraphs headed "Supplementary Table S1" to "S9" and "Appendix Table A1" to "A16", the
 CSV and TSV files of `data/` that make up each table. Those files are named by what they hold
 (`criteria_firing_v37.csv`) and not by the number of the table, which makes the tables hard to find in a repository,
 so this script gathers them into one workbook: a sheet "Contents", then a sheet for each table, with the files of that
@@ -48,7 +48,7 @@ FLOAT = re.compile(r"-?(?:0|[1-9]\d*)?\.\d+(?:[eE][+-]?\d+)?|-?(?:0|[1-9]\d*)(?:
 
 INTRO = (
     "The tables of the manuscript on building, reviewing and measuring the fastVEP ACMG/AMP classifier. "
-    "Supplementary Tables S1 to S9 are the nine tables that summarise the data best, and Appendix Tables A1 to A9 hold "
+    "Supplementary Tables S1 to S9 are the nine tables that summarise the data best, and Appendix Tables A1 to A16 hold "
     "every other table. Each sheet holds the CSV or TSV files of `manuscript/acmg/data/` that make up its table, one "
     "under another, each under its file name.\n"
     "ClinVar 2-star+: records of review status two stars or better (criteria provided, multiple submitters, no "

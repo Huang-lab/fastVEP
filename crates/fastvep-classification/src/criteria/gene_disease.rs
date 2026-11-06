@@ -333,4 +333,23 @@ mod tests {
         config.mechanism_gates_pvs1 = false;
         assert!(lof_mechanism_blocker(&input, &config).is_none());
     }
+
+    #[test]
+    fn test_a_label_split_on_a_semicolon_does_not_leak_past_the_gate() {
+        // NSMCE3's only ClinGen curation is Limited, and its label ends in ';'.
+        // The converter joins phenotypes with ';' and the reader splits on it,
+        // so the gene arrives as an untagged piece and a tagged one. The
+        // untagged piece used to count as an established disease and the gene
+        // was not withheld from PVS1, PP2 and PM1.
+        let input = with_phenotypes(&[
+            "immunodeficiency 49 and neutropenia;",
+            "NSMCE3-related (ClinGen Limited/AR, MONDO:0044118)",
+        ]);
+        let reason = validity_blocker(&input, &AcmgConfig::default())
+            .expect("a gene whose only curation is Limited must block");
+        assert!(
+            reason.contains("no_valid_gene_disease_relationship"),
+            "{reason}"
+        );
+    }
 }

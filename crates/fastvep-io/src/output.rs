@@ -111,6 +111,8 @@ enum CsqField {
     VariantClass,
     Acmg,
     AcmgCriteria,
+    /// The per-disorder calls of a gene with more than one mode of inheritance.
+    AcmgDisorders,
     /// One of VEP's known-variant columns (`AF`, `CLIN_SIG`, `SOMATIC`, ...), read from the
     /// allele's cells. A run that asked for none of them has no cells, and the column is empty.
     Known(KnownColumn),
@@ -170,6 +172,7 @@ impl CsqField {
             "VARIANT_CLASS" => Self::VariantClass,
             "ACMG" => Self::Acmg,
             "ACMG_CRITERIA" => Self::AcmgCriteria,
+            "ACMG_DISORDERS" => Self::AcmgDisorders,
             // The columns the known-variant flags add (`AFR_AF`, `MAX_AF`, ...). A
             // name is only in the field list when a flag put it there.
             _ => KnownColumn::from_name(name).map_or(Self::Unknown, Self::Known),
@@ -384,7 +387,68 @@ fn format_csq_entry_into(
                     }
                 }
             }
+            CsqField::AcmgDisorders => {
+                if let Some(per) = aa
+                    .acmg_classification
+                    .as_ref()
+                    .and_then(|acmg| acmg.get("per_disorder"))
+                    .and_then(|v| v.as_array())
+                {
+                    write_acmg_disorders(per, buf);
+                }
+            }
             CsqField::Unknown => {}
+        }
+    }
+}
+
+/// The cell of `ACMG_DISORDERS`: one `INHERITANCE:CLASS:CRITERIA` entry for each
+/// mode of inheritance of the gene, joined by `&`, with the criteria that were
+/// met joined by `+` because `&` is spoken for.
+///
+/// `AD:LB:BS2+BP4&AR:VUS:BP4` reads as: against the gene's autosomal dominant
+/// disease the variant is Likely benign on BS2 and BP4, against its autosomal
+/// recessive one it is a VUS on BP4 alone, because the carriers that BS2 counts
+/// in a dominant gene are not an observation of a recessive disease. It is the
+/// commonest pattern in which the modes differ in the ClinVar benchmark, 260
+/// variants. Empty for a gene with one mode of inheritance, which is nearly all
+/// of them, and the `ACMG` column beside it is the call for the gene as a whole
+/// either way.
+fn write_acmg_disorders(per_disorder: &[serde_json::Value], buf: &mut String) {
+    for (i, entry) in per_disorder.iter().enumerate() {
+        if i > 0 {
+            buf.push('&');
+        }
+        escape_csq_str(
+            entry
+                .get("inheritance")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            buf,
+        );
+        buf.push(':');
+        buf.push_str(
+            entry
+                .get("shorthand")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+        );
+        buf.push(':');
+        let mut first = true;
+        for criterion in entry
+            .get("criteria")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter(|c| c.get("met").and_then(|v| v.as_bool()).unwrap_or(false))
+        {
+            if let Some(code) = criterion.get("code").and_then(|v| v.as_str()) {
+                if !first {
+                    buf.push('+');
+                }
+                first = false;
+                buf.push_str(code);
+            }
         }
     }
 }
@@ -658,6 +722,21 @@ pub fn csq_fields(pick: bool, flags: ColumnFlags) -> Vec<&'static str> {
             "HGVS_OFFSET" if flags.hgvsg => fields.push("HGVSg"),
             _ => {}
         }
+    }
+    fields
+}
+
+/// `fields` with `ACMG_DISORDERS` after the ACMG columns, for a run that
+/// classifies.
+///
+/// Not part of [`DEFAULT_CSQ_FIELDS`], whose 49 columns are the ones every reader
+/// of the CSQ already parses and which an ACMG column that exists for one gene in
+/// thirty would widen on every record of every run. A run with `--acmg` has the
+/// column, because that run is the one that can fill it, and it goes last, so
+/// that a reader that finds the fields by position keeps finding them.
+pub fn with_acmg_disorders(mut fields: Vec<&'static str>) -> Vec<&'static str> {
+    if !fields.contains(&"ACMG_DISORDERS") {
+        fields.push("ACMG_DISORDERS");
     }
     fields
 }

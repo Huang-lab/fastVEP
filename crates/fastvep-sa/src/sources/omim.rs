@@ -11,10 +11,15 @@
 //! - **OMIM `genemap2.txt`** — the legacy source (registration-gated at
 //!   omim.org). Supported for back-compat; ClinGen GDV is preferred.
 //!
-//! Both populate the same `omim` json_key. The fastvep PVS1 evaluator
-//! consults this data via `OmimData::has_recessive_inheritance()` /
-//! `has_dominant_inheritance()` and as a disease-gene fallback when
-//! gnomAD constraints don't cross the LOF threshold.
+//! Both populate the same `omim` json_key. The classifier reads this data
+//! through `fastvep_classification::disease`: the validity gate that withholds
+//! PVS1, PP2 and PM1 from a gene whose curations are all weak, PVS1's
+//! disease-gene fallback when gnomAD constraints don't cross the LOF
+//! threshold, and the mode of inheritance that PM2, BS2, PM3 and BP2 branch
+//! on. A ClinGen phenotype ends in a `(ClinGen <classification>/<MOI>, <MONDO
+//! id>)` tag written by the converter, and the classification and the curated
+//! mode of inheritance are read from it; an OMIM phenotype has no tag and its
+//! words are read instead.
 
 use crate::common::{escape_json, GeneRecord};
 use anyhow::{Context, Result};

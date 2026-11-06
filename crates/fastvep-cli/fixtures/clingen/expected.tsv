@@ -1,0 +1,186 @@
+gene	established	no_valid	dominant	recessive	contexts
+AARS1	true	false	true	true	AD:1|AR:1
+AARS2	true	false	false	true	AR:1
+ABCA3	true	false	false	true	AR:1
+ABCA4	true	false	false	true	AR:1
+ABCB4	true	false	false	true	AR:1
+ABCB6	true	false	true	false	AD:1
+ABCB7	true	false	false	false	XL:1
+ABCC6	true	false	true	true	SD:1
+ABCC8	true	false	true	true	AD:2|AR:1|SD:1
+ABCD1	true	false	false	false	XL:1
+ABCG5	true	false	false	true	AR:1
+ABCG8	true	false	false	true	AR:1
+ABHD12	true	false	false	true	AR:1
+ABHD5	true	false	false	true	AR:1
+ACAT2	false	true	false	false	
+ACD	true	false	true	true	SD:1
+ACO2	true	false	true	true	AD:1|AR:1|SD:1
+ACOX1	true	false	true	true	AD:1|AR:1
+ACTA1	true	false	true	true	AD:1|AR:1
+ACTB	true	false	true	false	AD:2
+ACTC1	true	false	true	false	AD:2
+ACTG1	true	false	true	false	AD:2
+ACTN1	true	false	true	false	AD:1
+ACVR1	true	false	true	false	AD:1
+ADAMTS19	false	true	false	false	
+ADAR	true	false	true	true	AD:1|AR:1
+ADCY1	false	true	false	false	
+ADCY5	true	false	true	true	SD:1
+ADRA2B	false	true	false	false	
+AFG2B	false	true	false	false	
+AFG3L2	true	false	true	true	SD:1
+AGO2	true	false	true	false	AD:1
+AHDC1	true	false	true	false	AD:1
+AIFM1	true	false	false	false	XL:2
+AK7	false	true	false	false	
+AKAP9	false	true	false	false	
+AKT3	true	false	true	false	AD:1
+ALAS2	true	false	false	false	XL:1
+ALDH18A1	true	false	true	true	SD:1
+ALG14	false	true	false	false	
+ALPK3	true	false	true	true	AD:1|AR:1
+AMER1	true	false	false	false	XL:1
+ANKZF1	false	true	false	false	
+ANOS1	true	false	false	false	XL:1
+APOB	true	false	true	true	AD:1|SD:1
+AR	true	false	false	false	XL:1
+ARHGEF28	false	true	false	false	
+ARX	true	false	false	false	XL:2
+ATM	true	false	true	true	AD:1|AR:1
+ATP13A3	true	false	true	true	SD:1
+AVPR1A	false	true	false	false	
+BMPR1A	true	false	true	false	AD:1
+BMPR1B	false	true	false	false	
+BRCA1	true	false	true	true	AD:1|AR:1
+C9orf72	true	false	true	false	AD:1
+CCNF	false	true	false	false	
+CCS	false	true	false	false	
+CD46	true	false	true	true	SD:1
+CFAP410	true	false	false	true	AR:1
+CFH	true	false	true	true	AR:1|SD:1
+CHCHD10	true	false	true	false	AD:2
+CHMP2B	true	false	true	false	AD:1
+CHRNA7	false	true	false	false	
+CNNM2	true	false	true	true	SD:1
+COL1A2	true	false	true	true	AD:2|AR:1
+COL4A3	true	false	true	true	SD:1
+COL4A4	true	false	true	true	SD:1
+CPOX	true	false	true	true	SD:1
+CPT1B	false	true	false	false	
+CRKL	false	true	false	false	
+CSRP3	true	false	true	true	SD:1
+CTNNA3	false	true	false	false	
+CYLD	true	false	true	false	AD:1
+DAND5	false	true	false	false	
+DCC	true	false	true	false	AD:1
+DDX41	true	false	true	false	AD:1
+DECR1	false	true	false	false	
+EGR2	true	false	true	true	SD:1
+EIF2AK4	true	false	false	true	AR:1
+ELMOD2	false	true	false	false	
+EWSR1	false	true	false	false	
+F11	true	false	true	true	SD:1
+FAS	true	false	true	true	SD:1
+FGA	true	false	true	true	SD:1
+FGB	true	false	true	true	SD:1
+FGFR3	true	false	true	true	AD:6|SD:1
+FGG	true	false	true	true	SD:1
+FOXE3	true	false	true	true	AD:1|SD:1
+FOXN1	true	false	true	true	SD:1
+GCH1	true	false	true	true	SD:1
+GCK	true	false	true	true	AD:1|SD:1
+GDAP1	true	false	true	true	SD:1
+GJA1	false	true	false	false	
+GJB1	true	false	false	false	XL:1
+HMBS	true	false	true	true	SD:1
+HYKK	false	true	false	false	
+IKZF2	true	false	true	true	SD:1
+KCNJ2	true	false	true	false	AD:1
+KLHL3	true	false	true	true	SD:1
+KMT2D	true	false	true	false	AD:1
+LDLR	true	false	true	true	SD:1
+LGALSL	false	true	false	false	
+LMNA	true	false	true	true	AD:1|SD:1
+MAML2	false	true	false	false	
+MAPK8IP3	true	false	true	false	AD:1
+MEFV	true	false	true	true	SD:1
+MFN2	true	false	true	true	AR:1|SD:1
+MT-ATP6	true	false	false	false	MT:2
+MT-ATP8	false	true	false	false	
+MT-CO1	true	false	false	false	MT:1
+MT-CO2	true	false	false	false	MT:1
+MT-CO3	true	false	false	false	MT:1
+MT-CYB	true	false	false	false	MT:1
+MT-ND1	true	false	false	false	MT:2
+MT-ND2	true	false	false	false	MT:1
+MT-ND3	true	false	false	false	MT:2
+MT-ND4	true	false	false	false	MT:2
+MT-ND4L	false	true	false	false	
+MT-ND5	true	false	false	false	MT:2
+MT-ND6	true	false	false	false	MT:2
+MT-RNR1	true	false	false	false	MT:1
+MT-RNR2	false	true	false	false	
+MT-TA	true	false	false	false	MT:1
+MT-TC	false	true	false	false	
+MT-TD	true	false	false	false	MT:1
+MT-TE	true	false	false	false	MT:1
+MT-TF	true	false	false	false	MT:2
+MT-TG	true	false	false	false	MT:1
+MT-TH	true	false	false	false	MT:1
+MT-TI	true	false	false	false	MT:2
+MT-TK	true	false	false	false	MT:2
+MT-TL1	true	false	false	false	MT:1
+MT-TL2	true	false	false	false	MT:1
+MT-TM	true	false	false	false	MT:1
+MT-TN	true	false	false	false	MT:1
+MT-TP	true	false	false	false	MT:1
+MT-TQ	false	true	false	false	
+MT-TR	true	false	false	false	MT:1
+MT-TS1	true	false	false	false	MT:1
+MT-TS2	true	false	false	false	MT:1
+MT-TT	true	false	false	false	MT:1
+MT-TV	true	false	false	false	MT:2
+MT-TW	true	false	false	false	MT:1
+MT-TY	true	false	false	false	MT:1
+NEK1	true	false	true	false	AD:1
+NSMCE3	false	true	false	false	
+OPA1	true	false	true	true	AR:1|SD:1
+OPTN	true	false	true	true	AD:1|SD:1
+PAH	true	false	false	true	AR:1
+PARN	true	false	true	true	SD:1
+PCSK6	false	true	false	false	
+PDK3	true	false	false	false	XL:1
+PHEX	true	false	false	false	XL:1
+PPARG	true	false	true	true	SD:1
+PPOX	true	false	true	true	SD:1
+PRKAB2	false	true	false	false	
+PROC	true	false	true	true	SD:1
+PROK2	true	false	true	true	SD:1
+PROKR2	true	false	true	false	AD:1
+PROS1	true	false	true	true	SD:1
+PRPH2	true	false	true	true	SD:1
+PTGS1	false	true	false	false	
+RHO	true	false	true	true	SD:1
+RP1	true	false	true	true	AR:1|SD:1
+RTEL1	true	false	true	true	SD:1
+RXRA	false	true	false	false	
+SCAPER	true	false	false	true	AR:1
+SDHC	true	false	true	false	AD:1
+SERPINC1	true	false	true	true	SD:1
+SH2B3	true	false	true	true	SD:1
+SLC12A7	false	true	false	false	
+SLC38A9	false	true	false	false	
+SRCAP	true	false	true	false	AD:1
+TCF21	false	true	false	false	
+TCF3	true	false	true	true	SD:1
+TERT	true	false	true	true	SD:1
+THPO	true	false	true	true	AD:1|SD:1
+TLR5	false	true	false	false	
+TSPAN12	true	false	true	true	SD:1
+TTR	true	false	true	false	AD:1
+UNC93B1	true	false	true	true	SD:1
+UROD	true	false	true	true	SD:1
+VCL	true	false	true	false	AD:1
+VWF	true	false	true	false	AD:2
+WNT10A	true	false	true	true	SD:1

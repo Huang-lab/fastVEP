@@ -271,9 +271,10 @@ fn evaluate_pm1(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 ///
 /// Both bars were swept for the ACMG manuscript (`manuscript/acmg`, Section 3.3).
 ///
-/// Inheritance is inferred from OMIM phenotypes (`OmimData::has_recessive_inheritance` /
-/// `has_dominant_inheritance`). When a per-gene `pm2_af_threshold` override is
-/// configured, that value wins regardless of inheritance.
+/// Inheritance is read from the gene's disease annotation (`OmimData::inheritance`):
+/// ClinGen's curated mode of inheritance for a ClinGen curation, and the words of
+/// the phenotype for a legacy OMIM one. When a per-gene `pm2_af_threshold`
+/// override is configured, that value wins regardless of inheritance.
 fn evaluate_pm2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCriterion {
     // "Absent from population databases" is only evidence when the database
     // could have seen the variant. Where reads pile up on a paralogue, or
@@ -318,7 +319,7 @@ fn evaluate_pm2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
     // Determine the effective threshold and which inheritance rule applied.
     // Order of precedence:
     //   1. Per-gene override (config.gene_overrides[GENE].pm2_af_threshold)
-    //   2. AR inheritance (from OMIM) → config.pm2_ar_af_threshold
+    //   2. AR inheritance (curated by ClinGen, or from an OMIM phenotype) → config.pm2_ar_af_threshold
     //   3. AD or unknown → config.pm2_ad_af_threshold (default 0.0 = strict absence)
     //
     // The legacy single-threshold field `config.pm2_af_threshold` is kept as a
@@ -331,14 +332,13 @@ fn evaluate_pm2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
             .and_then(|o| o.pm2_af_threshold)
     });
 
-    let is_recessive = input
+    // One read of the gene's diseases for both flags.
+    let inheritance = input
         .omim
         .as_ref()
-        .is_some_and(|o| o.has_recessive_inheritance());
-    let is_dominant = input
-        .omim
-        .as_ref()
-        .is_some_and(|o| o.has_dominant_inheritance());
+        .map(|o| o.inheritance())
+        .unwrap_or_default();
+    let (is_recessive, is_dominant) = (inheritance.recessive, inheritance.dominant);
 
     let (threshold, inheritance_basis): (f64, &'static str) =
         if let Some(t) = gene_specific_threshold {
@@ -516,7 +516,8 @@ fn evaluate_pm2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 /// | ≥ 4.0 | PM3_VeryStrong |
 ///
 /// Companions in cis with a pathogenic variant are excluded (those count
-/// toward BP2 instead). Requires AR inheritance from OMIM.
+/// toward BP2 instead). Requires recessive inheritance in the gene's disease
+/// annotation (ClinGen's curated `AR` or `SD`, or the words of an OMIM phenotype).
 fn evaluate_pm3(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
@@ -1544,11 +1545,11 @@ mod tests {
             gene_symbol: Some(gene.to_string()),
             protein_position: Some(100),
             amino_acids: Some(("A".into(), "T".into())),
-            clinvar_protein: Some(ClinvarProteinData {
+            clinvar_protein: Some(std::sync::Arc::new(ClinvarProteinData {
                 protein_variants: neighbours,
                 benign_indexed: true,
                 ..Default::default()
-            }),
+            })),
             ..minimal_input()
         }
     }
@@ -1604,7 +1605,8 @@ mod tests {
     /// Add `n` benign missense entries inside PM1's window.
     fn with_benign_neighbours(mut input: ClassificationInput, n: u64) -> ClassificationInput {
         use crate::sa_extract::ClinvarProteinVariant;
-        let cpd = input.clinvar_protein.as_mut().expect("helper builds one");
+        let cpd =
+            std::sync::Arc::make_mut(input.clinvar_protein.as_mut().expect("helper builds one"));
         for i in 0..n {
             cpd.protein_variants.push(ClinvarProteinVariant {
                 pos: 100 + i,
@@ -1658,7 +1660,7 @@ mod tests {
         // them, not because the gene has none. Testing anyway would pass every
         // window and read as evidence that was never gathered.
         let mut input = hotspot_missense("CHD7");
-        input.clinvar_protein.as_mut().unwrap().benign_indexed = false;
+        std::sync::Arc::make_mut(input.clinvar_protein.as_mut().unwrap()).benign_indexed = false;
         let r = evaluate_pm1(&input, &AcmgConfig::default());
         assert!(r.met);
         assert!(
@@ -1693,10 +1695,7 @@ mod tests {
         use crate::sa_extract::ClinvarProteinVariant;
         let mut input = hotspot_missense("CHD7");
         let window = AcmgConfig::default().pm1_hotspot_window;
-        input
-            .clinvar_protein
-            .as_mut()
-            .unwrap()
+        std::sync::Arc::make_mut(input.clinvar_protein.as_mut().unwrap())
             .protein_variants
             .push(ClinvarProteinVariant {
                 pos: 100 + window + 1,
@@ -1706,5 +1705,116 @@ mod tests {
                 n: 1,
             });
         assert!(evaluate_pm1(&input, &AcmgConfig::default()).met);
+    }
+
+    // ── Inheritance is read from ClinGen's curated field ──
+
+    /// A variant at `af` in a gene with these phenotypes, the labels of which say
+    /// nothing about inheritance.
+    fn at_in_gene(af: f64, phenotypes: &[&str]) -> ClassificationInput {
+        let mut input = make_input(
+            vec![Consequence::MissenseVariant],
+            Some(GnomadData {
+                all_af: Some(af),
+                all_ac: Some(2),
+                ..Default::default()
+            }),
+        );
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(phenotypes.iter().map(|s| s.to_string()).collect()),
+        });
+        input
+    }
+
+    /// PAH's ClinGen curation is "phenylketonuria", tagged AR. The label does not
+    /// say recessive, and before the tag was read PM2 applied the dominant bar to
+    /// it and withheld PM2 from every variant between 4e-5 and 7e-5.
+    #[test]
+    fn test_pm2_takes_the_recessive_bar_from_the_curated_tag() {
+        let config = AcmgConfig::default();
+        let ar = evaluate_pm2(
+            &at_in_gene(
+                6e-5,
+                &["phenylketonuria (ClinGen Definitive/AR, MONDO:0009861)"],
+            ),
+            &config,
+        );
+        assert!(ar.met, "{}", ar.summary);
+        assert_eq!(ar.details["inheritance_basis"], serde_json::json!("AR"));
+
+        // The same frequency in an AD gene is above its bar.
+        let ad = evaluate_pm2(
+            &at_in_gene(
+                6e-5,
+                &["Kabuki syndrome 1 (ClinGen Definitive/AD, MONDO:0008624)"],
+            ),
+            &config,
+        );
+        assert!(!ad.met, "{}", ad.summary);
+        assert_eq!(
+            ad.details["inheritance_basis"],
+            serde_json::json!("AD_or_unknown")
+        );
+    }
+
+    #[test]
+    fn test_pm2_a_gene_that_is_both_takes_the_strict_bar() {
+        // A gene with an AD disease and an AR one is not "recessive only". The
+        // per-disorder results answer each; the headline stays cautious.
+        let result = evaluate_pm2(
+            &at_in_gene(
+                6e-5,
+                &[
+                    "breast cancer (ClinGen Definitive/AD, MONDO:1)",
+                    "Fanconi anemia (ClinGen Definitive/AR, MONDO:2)",
+                ],
+            ),
+            &AcmgConfig::default(),
+        );
+        assert!(!result.met, "{}", result.summary);
+        assert_eq!(
+            result.details["inheritance_basis"],
+            serde_json::json!("AD_or_unknown")
+        );
+    }
+
+    #[test]
+    fn test_pm2_x_linked_and_semidominant_genes_take_the_strict_bar() {
+        // `XL` does not say dominant or recessive, and `SD` is dominant as well
+        // as recessive: neither is "recessive only".
+        for code in ["XL", "SD", "MT", "UD"] {
+            let phenotype = format!("a disease (ClinGen Definitive/{code}, MONDO:1)");
+            let result = evaluate_pm2(
+                &at_in_gene(6e-5, &[phenotype.as_str()]),
+                &AcmgConfig::default(),
+            );
+            assert!(!result.met, "{code}: {}", result.summary);
+        }
+    }
+
+    #[test]
+    fn test_pm3_recognises_a_recessive_gene_by_its_curated_inheritance() {
+        let mut input = make_input(vec![Consequence::MissenseVariant], None);
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec![
+                "phenylketonuria (ClinGen Definitive/AR, MONDO:0009861)".into(),
+            ]),
+        });
+        let result = evaluate_pm3(&input, &AcmgConfig::default());
+        assert_eq!(result.details["is_recessive_gene"], serde_json::json!(true));
+
+        input.omim = Some(OmimData {
+            mim_number: None,
+            phenotypes: Some(vec![
+                "Kabuki syndrome 1 (ClinGen Definitive/AD, MONDO:0008624)".into(),
+            ]),
+        });
+        let result = evaluate_pm3(&input, &AcmgConfig::default());
+        assert_eq!(
+            result.details["is_recessive_gene"],
+            serde_json::json!(false)
+        );
     }
 }

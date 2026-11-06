@@ -1,0 +1,4 @@
+# v38_sw_bs2ac_20: BS2 carrier floor for genes read as dominant-only, set to 20 alleles with the carrier bar off.
+# Everything else is the shipped default.
+bs2_ad_prevalence_threshold = 0.0
+bs2_ad_min_ac = 20

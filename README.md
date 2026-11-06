@@ -218,7 +218,9 @@ fastvep sa-build --source clinvar -i clinvar.vcf.gz -o sa_databases/clinvar --as
 # Per-chromosome sites VCFs. Measured 2026-08-31, chr1-22 X Y: the exomes
 # release is 198 GB and the genomes release is 563 GB, so most setups want
 # tabix-extracted target regions rather than the whole thing. See
-# docs/ACMG_SETUP.md for the region-restricted recipe.
+# docs/ACMG_SETUP.md for the region-restricted recipe, and for the joint release
+# of the exomes and the genomes, which gives more calls in direction on the
+# ACMG benchmark than the exomes alone.
 GNOMAD=https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/exomes
 wget "$GNOMAD/gnomad.exomes.v4.1.sites.chr1.vcf.bgz"
 fastvep sa-build --source gnomad -i gnomad.exomes.v4.1.sites.chr1.vcf.bgz -o sa_databases/gnomad_chr1 --assembly GRCh38
@@ -421,7 +423,7 @@ fastVEP supports direct integration with clinical and population databases throu
 | **PrimateAI** | Allele-specific | Primate-based pathogenicity | `--source primateai` |
 | **dbNSFP** | Allele-specific | SIFT/PolyPhen predictions | `--source dbnsfp` |
 | **AlphaMissense** | Allele-specific | Missense pathogenicity score + class | `--source alphamissense` |
-| **OMIM / ClinGen GDV** | Gene-level (`.oga`) | Disease-gene annotations driving PVS1, BS2, PM3, BP2 in ACMG | `--source omim` |
+| **OMIM / ClinGen GDV** | Gene-level (`.oga`) | Disease-gene validity and mode of inheritance, driving PVS1, PP2, PM1 (validity) and PM2, BS2, PM3, BP2 (inheritance) in ACMG | `--source omim` |
 | **gnomAD constraint** | Gene-level (`.oga`) | gnomAD constraint metrics (pLI, LOEUF) for PVS1, PP2, BP1 | `--source gnomad_genes` |
 | **ClinVar protein index** | Gene-level (`.oga`) | Pathogenic missense by protein position (PS1, PM1, PM5) | `--source clinvar_protein` |
 | **Custom VCF** | Allele-specific (`.osa`) | Any user-supplied VCF, INFO fields become the JSON object | `--source custom_vcf` |
@@ -530,7 +532,7 @@ for the parsing rules and the escaping table.
 | `--sa-only` | Skip the default CSQ annotation and emit only supplementary annotations from `--sa-dir` (requires `--sa-dir`) | off |
 | `--cache-dir` | VEP's tabix variation cache, for `Existing_variation`: a directory of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index (what `convert_cache.pl` and the indexed-cache download provide). Only known variants come from it: gene models come from `--gff3`, and VEP's `{start}-{end}.gz` transcript slices are never read. Naming a cache is VEP's `--check_existing`: `Existing_variation`, `CLIN_SIG`, `SOMATIC` and `PHENO`; the frequencies and the PubMed ids need `--af*`, `--max-af` and `--pubmed`, as in VEP. Matching follows VEP's (anchored and minimal indels match, as in `--check_existing`). A directory with no variation file, or a file with no index, stops the run. Contigs are matched through a `chr_synonyms.txt` in the directory and the `chr`/`MT` naming rules | -- |
 | `--transcript-cache` | Path to binary transcript cache file (overrides the auto-managed `<gff3>.fastvep.cache` sidecar) | -- |
-| `--acmg` | Run ACMG-AMP classification (Richards 2015 + ClinGen SVI); adds `ACMG` + `ACMG_CRITERIA` to CSQ | off |
+| `--acmg` | Run ACMG-AMP classification (Richards 2015 + ClinGen SVI); adds `ACMG` + `ACMG_CRITERIA` to CSQ, and a last `ACMG_DISORDERS` column with the call against each mode of inheritance of a gene that has more than one | off |
 | `--acmg-config` | TOML file with custom ACMG thresholds | built-in defaults |
 | `--proband` / `--mother` / `--father` | Sample names for trio analysis — enables PS2 (de novo), PM6, BP2 | -- |
 | `--gene-list` | Path to a gene-panel file (one symbol or Ensembl gene ID per line). Tab output drops rows whose transcript isn't on the panel. | -- |
@@ -612,7 +614,7 @@ multi-`--gff3` / `LABEL=path` syntax as `annotate`, so a merged Ensembl
 
 ### VCF Output
 
-Consequence annotations are added as a `CSQ` field in the INFO column with 49 pipe-delimited fields matching Ensembl VEP's extended format, plus fastVEP-specific `ACMG` and `ACMG_CRITERIA` slots when `--acmg` is set. When supplementary annotation databases are loaded with `--sa-dir`, fastVEP also emits VCF-compatible INFO projections for supported fastSA sources: standard `SpliceAI` for SpliceAI databases, and fastVEP-specific `FV_*` fields such as `FV_CLINVAR`, `FV_GNOMAD`, `FV_DBSNP`, `FV_REVEL`, and gene-level `FV_OMIM`.
+Consequence annotations are added as a `CSQ` field in the INFO column with 49 pipe-delimited fields matching Ensembl VEP's extended format, plus fastVEP-specific `ACMG` and `ACMG_CRITERIA` slots when `--acmg` is set (a run with `--acmg` also ends with an `ACMG_DISORDERS` field, empty unless the gene has more than one mode of inheritance; see [docs/ACMG.md](docs/ACMG.md#genes-with-more-than-one-mode-of-inheritance)). When supplementary annotation databases are loaded with `--sa-dir`, fastVEP also emits VCF-compatible INFO projections for supported fastSA sources: standard `SpliceAI` for SpliceAI databases, and fastVEP-specific `FV_*` fields such as `FV_CLINVAR`, `FV_GNOMAD`, `FV_DBSNP`, `FV_REVEL`, and gene-level `FV_OMIM`.
 
 The VCF output never embeds raw JSON in INFO values. Use `--output-format json` for the richest structured representation of all supplementary annotation objects.
 

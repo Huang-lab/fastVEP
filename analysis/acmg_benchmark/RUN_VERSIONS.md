@@ -1385,9 +1385,11 @@ The same change moves 32 ClinVar-VUS variants to Likely pathogenic, which is the
 22 of them carry a PVS1 that BS2 had been cancelling, and the other 10 are missense variants on PP3 or PM1 (`PM2_Supporting&PP2&PP3_Strong` four times, `PM1&PM2_Supporting&PP2&PP3_Moderate` four times, `PM1&PM2_Supporting&PM5&PP2` twice).
 The earlier note that `bs2_ad_min_ac` was inert is corrected in `docs/ACMG.md`: it was inert on the false-benign and opposite-direction counts, which is all that sweep looked at, and it decides 46 to 70 Pathogenic and Likely pathogenic calls.
 
-### Measured and not shipped
+### Measured and not shipped (at v37; the tag was shipped in v38)
 
 **Reading ClinGen's inheritance tag.**
+Superseded by v38, at the end of this file: the tag is read there, and BS2's carrier count is set aside beside BS1 and BA1.
+What follows is the measurement on v37 that came first.
 The disease annotation carries `(ClinGen Definitive/AD, MONDO:...)`, and `has_dominant_inheritance` never reads the `/AD`.
 Of the 740 genes with a benchmark variant whose established tags are AD only, 39 register as dominant, and of the 1,285 that are AR only, 60 register as recessive.
 Making BS2 read the tag (`v37_adtag`, a locally patched build run on the stack before PS1's splice path, PM1 and BP3 followed the placement, which changed no call):
@@ -1443,8 +1445,9 @@ A bar alone cannot remove VWF p.Arg854Gln, whose lower bound is above every bar 
 Together they remove all six and keep 805 of the 2,814 same-direction calls, but both were chosen after the six were found, so the zero is a fit to them and not a measure of safety.
 BS2 would still reach MYOC p.Gln368Ter, which ClinVar calls Pathogenic and whose lower bound is 2.3e-3, and its call stays VUS because BS2 is the only criterion it carries.
 The bar was chosen on the name-based set of genes, and on the same grid the pathogenic harm stops falling at 1e-3, where VWF p.Arg854Gln is still harmed.
-Not widening it is the decision.
+Not widening it was the decision at v37.
 What it would need is inheritance and age of onset read per disorder, with a penetrance rule that a clinician supplies, and these six variants as its regression cases.
+v38 widens it without that rule, with the guard of the reconciliation pass and for the reasons in `manuscript/acmg`, Section 3.8: the unread field is a defect in what is read, the guard is stated by what it counts, and the four variants that remain move to VUS and not to a benign-side call.
 
 **BA1's and BS1's minimum AN on BS2.**
 With the prevalence bar off it moved 693 calls, 690 of them away from ClinVar's classification, so BS2 takes no minimum AN beyond needing one that is not zero.
@@ -1557,3 +1560,158 @@ Seven more runs (`v37_oct_*`) apply one change each to the variants of the 4 Oct
 
 The two measurement builds are v37 with a patch each (`manuscript/acmg/replay_validation/*.patch`) that reads one setting from the environment: the two point cutoffs, and BP1's own-record count and BP7's SpliceAI bar.
 With nothing set each is the shipped classifier, which the controls check.
+
+## v38: the curated mode of inheritance is read, and BS2's carriers are not counted beside BS1 or BA1
+
+v37 took a gene's mode of inheritance from the words of its disease names and never read the mode that ClinGen curates, which sits in the same string (`(ClinGen Definitive/AD, MONDO:...)`).
+`manuscript/acmg`, Section 3.8, reports the change; this section is the record of the runs.
+
+### What changed
+
+- **The reading.**
+  `crates/fastvep-classification/src/disease.rs` parses the tag once: AD is dominant, AR recessive, SD both, and XL, MT and UD neither (the arm for unknown inheritance).
+  An untagged phenotype, which is all an OMIM `genemap2.txt` has, is read by its words as before, and an untagged piece of a ClinGen label that the builder split at a `;` is not a disease where a tagged piece exists (NSMCE3).
+  Of the 2,924 genes of the file, v37 read 50 as dominant-only, 67 as recessive-only, 12 as both and 2,795 as neither, and v38 reads 746, 1,310, 169 and 699.
+- **Rule 7 of the reconciliation pass.**
+  BS2's carrier count is set aside beside BS1 or BA1, because it is the allele count that they test.
+- **A call for each mode of inheritance.**
+  A gene whose established curations carry more than one mode is also classified against each mode; the call of the gene as a whole is unchanged.
+- **gnomAD's joint release.**
+  The builder derives `non_par` for the joint release and prints a warning that `lcr` and `segdup` are missing, and both annotation loops record a source that two databases answer, which the command line reports at the end of the run.
+- **BP2's trans arm.**
+  It needs a gene whose established diseases are dominant and none recessive, where it had asked for any dominant one: a recessive disease of the gene explains the same observation as the evidence PM3 counts.
+  BP2 needs a proband, which the benchmark lacks, so no call of the benchmark moves.
+- **One lookup of the supplementary databases for both annotation loops** (`fastvep_annotate::supplementary_for_alleles`).
+  The library behind both web servers had asked the databases of alleles for an indel in the form the parser trims it to (`-` for an empty allele, the position moved past the anchor), and missed every indel in every such database, where the command line asked in the form the VCF wrote and found it.
+  No run of the benchmark reads the library, so no call of the benchmark moves.
+  Reproduced end to end on 120 ClinVar indels of chromosomes 21 and 22 with the benchmark's databases (4 November 2026): the web server before the change found gnomAD for none of them and ClinVar for 5, where the command line found gnomAD for 67 and ClinVar for 120, and after the change the web server and the command line agree on all 120.
+  A variant that gnomAD misses reads as absent, so before the change PM2 could fire on a common indel through either web server.
+- **Smaller.**
+  A gene database is written in the order of its symbols, so that building it twice gives one file (the same content was always written, in the order of a hash map).
+  The converter of the ClinGen export finds its columns by their names and stops if one is missing.
+
+### The runs
+
+38 runs on the April set and 4 on the October release, made by `scripts/11_manuscript_runs.py --v38` and listed in `results/v37_manuscript/README.md`.
+The commit before the change (`9d84be0`) has v37's classification code (the two differ in comments only) and a newer annotation layer, so its run differs from v37's in the criteria of 25 indels and in the call of 4 of them (ClinVar VUS variants that v37 called Likely pathogenic): 425,873 exact calls and 522,890 in direction, against v37's 425,869 and 522,886.
+
+| Run | Exact | Same-direction | P/LP called B/LB | B/LB called P/LP |
+|---|---:|---:|---:|---:|
+| the commit before the change | 425,873 | 522,890 | 24 | 25 |
+| **v38** | 426,022 | 524,380 | 24 | 24 |
+| BS2's carriers counted beside BS1 and BA1 | 429,637 | 525,672 | 26 | 24 |
+| no carrier arm for a susceptibility or predisposition disorder | 426,009 | 524,327 | 24 | 24 |
+| the field read for PM2, PM3 and BP2, BS2 as in v37 | 425,889 | 522,887 | 24 | 25 |
+| PP2, PM1 and PP3 capped together at 4 points | 426,534 | 524,647 | 24 | 21 |
+| gnomAD's joint release in place of the exomes (`v38_joint`, below) | 436,212 | 533,701 | 25 | 26 |
+
+- Against the commit before it, v38 gives 149 more exact calls and 1,490 more in direction.
+  1,809 ClinVar benign-side variants that were VUS gain a benign-side call and 127 lose one; 4 ClinVar pathogenic-side variants lose theirs; 21 go from Likely pathogenic to Pathogenic, because PM2's recessive bar of 7e-5 now reaches 1,310 recessive-only genes and not 67.
+- Counting BS2 beside BS1 and BA1 calls TTR p.Val142Ile and VWF p.Arg854Gln Benign (both ClinVar Pathogenic) and gives 3,615 more exact calls than v38.
+  The carrier arm is met on 7,234 of the 7,328 BS1 variants and on all 8,869 BA1 variants of genes whose established curations are all AD.
+  The guard costs those 3,615 exact calls and 1,292 calls in direction, and on the 107,525 new variants of October 150 and 46 with no contradiction avoided, so it rests on the double counting and on the two variants.
+- The four variants that lose a pathogenic-side call are NEK1 p.Ser1036Ter, DDX41 p.Asp140GlyfsTer2, SRCAP p.Pro1879ThrfsTer21 and PROKR2 p.His20MetfsTer24 (PVS1 with BS2 on 295 to 324 gnomAD alleles, no homozygote).
+  Withholding the carrier arm for a disorder whose label says susceptibility or predisposition restores NEK1 and DDX41 for 65 correct benign-side calls (53 in direction on balance), and was not adopted.
+- The cap on PP2, PM1 and PP3 changes 910 of the 1,591 calls that have all three met, all Likely pathogenic to VUS, and trades 320 correct pathogenic-side calls for 587 ClinVar-VUS variants kept at VUS and 3 false-pathogenic calls avoided (about 107 calls for each).
+  It was not adopted (`docs/ACMG.md`, limitation 27).
+- Swept again on v38, the PM2 bars stay flat (recall 61.98% to 62.48% for the bar of genes not read as recessive-only, 62.43% to 62.48% for the bar of the 1,310 recessive-only genes), the BS2 bar for individuals with no functional copy keeps its shape (401, 272 and 487 calls per added missed diagnosis below the shipped 1e-3), and the BS2 carrier bar, which now reaches 746 genes and not 50, is no longer flat: free from 3e-3 to the shipped 3e-4, then 715, 678 and 315 calls per added missed diagnosis (3, 7 and 23 more missed diagnoses at 1e-4, 3e-5 and no bar).
+- On the October release (772,585 covered records) v38 gives 261 more exact calls and 1,762 more in direction than the commit before it, with 26 missed diagnoses before and after; on the 107,525 new variants with a call, 101 and 258, with 6 missed diagnoses and 12 false-pathogenic calls before and after.
+- A gene with more than one mode: 87,599 of the 673,278 scored variants (13.0%) are in 128 such genes, and the modes give different classes for 482 of them and different directions for 435, always through BS2 (2,976) or PM2 (1,461).
+
+### gnomAD's joint release
+
+`v38_joint` was made on 5 November 2026, once the databases of all 24 chromosomes had been extracted (`scripts/sa_sources/build_gnomad_release_per_chrom.sh joint`: the last 19 chromosomes took 4 hours 46 minutes at about 10 MB/s, limited by the network, and the 24 databases total 610 MB, against 369 MB for the exomes), with the binary of the second set (`f184277d...`); the annotation took 57 seconds.
+673,278 scored variants.
+
+| Run | Exact | Same-direction | P/LP called P/LP | B/LB called LB/B | P/LP called B/LB | B/LB called P/LP |
+|---|---:|---:|---:|---:|---:|---:|
+| gnomAD exomes (`v38`) | 426,022 | 524,380 | 58,606 | 178,888 | 24 | 24 |
+| exomes, the region flags withholding nothing (`v38_noflags`) | 430,097 | 527,853 | 58,634 | 182,437 | 24 | 25 |
+| joint exomes and genomes (`v38_joint`) | 436,212 | 533,701 | 58,632 | 188,310 | 25 | 26 |
+
+- The joint release holds a record for every variant that the exomes hold, with an allele count, an allele number and a count of homozygotes that are never lower (537,038 variants), and a record for 17,382 more (`v38_joint_records.csv`).
+- It changes 13,302 calls: 12,983 on ClinVar benign-side variants, 209 on VUS and 110 on pathogenic-side variants.
+  6,476 are intronic and 2,171 UTR variants, and BA1 is gained on 10,115 of the moved calls and lost on 339.
+  The exomes' records of the UTR variants whose call moves rest on a median of 394 alleles, against 152,416 in the joint release, and 4,242 of the 6,476 intronic variants have no record in the exomes (`v38_joint_coverage.csv`).
+- Each of the 22 autosomes and the X gains calls (1.3% to 2.7% of its variants change), and nothing moves on the Y or the mitochondrial contigs (`v38_joint_by_chrom.csv`).
+- The flags account for 4,075 of the 10,190 more exact calls and 3,473 of the 9,321 more in direction, with one more false-pathogenic call (NF1 p.Met895Ile, where PM2 is no longer withheld at a segmental duplication); the genomes add 6,115 and 5,848, with one more missed diagnosis and one more false-pathogenic call.
+- Five variants change their standing as an opposite-direction call: KMT2C p.Cys391Ter (ClinVar Likely benign), RAI1 p.Gln280HisfsTer83 (Benign), TXNL4A's upstream deletion (Pathogenic) and NF1 p.Met895Ile (Likely benign) are added, and PIEZO1's splice-acceptor deletion (Benign) is removed.
+  Four are at the bar of BS1, a filtering allele frequency of 0.5%.
+  KMT2C (0.522% in the exomes, 0.495% in the joint release) and RAI1 (0.537% and 0.498%) are at sites that failed gnomAD's variant-quality filter, where the site-level frequency veto holds a call that rests on PVS1 alone at VUS if the withheld frequency would have met BS1, and in the joint release it no longer does.
+  PIEZO1 (0.198% and 0.947%) is held at VUS by the same veto in the joint release.
+  TXNL4A (0.384% and 0.560%) gains BS1: the exomes cover it with 364,572 alleles and the joint release with 516,266 (`v38_joint_errors.csv`, made by `scripts/17_joint_boundary_cases.py`).
+- Thirteen ClinVar pathogenic-side variants lose a pathogenic-side call and 39 gain one.
+  Ten of the 13 are missense variants whose joint record carries a filter of gnomAD's quality control (AC0 for eight, AS_VQSR for one and both for one), which withholds PM2: five have a clean record in the exomes, with one to four alleles, and the filter is the genomes', which the builder reports because it reports a filter that fired in either callset, and five are not in the exomes at all; three are frameshifts at low-complexity sites (MYO6 p.Gln918ThrfsTer24, PRRT2 p.Arg217ProfsTer8 and p.Arg217GlufsTer12) that gain BS2, which the flag of the exomes withheld.
+  Against the exomes without the flags, 741 variants with a positive joint count lose PM2 to an AC0 in one callset, and 11 calls move, 9 of them on ClinVar pathogenic-side variants; 4,876 lose it to a frequency above the bar, and 160 calls move (`v38_joint_pm2_lost.csv`).
+- The price is about 3,100 calls in direction for each added opposite-direction call (9,321 for three), where the manuscript's knee is at about a hundred (Section 2.5); the genomes' share alone is about 2,900 (5,848 for two).
+- The pilot on chromosomes 21 and 22 (23,538 variants) was made first, as `v38_chr2122_exomes`, `v38_chr2122_exomes_noflags` and `v38_chr2122_joint`: the joint release gave 438 more exact calls and 387 more in direction, of which 184 and 135 were the flags.
+  It gives the same call and the same criteria for each of its variants as the runs of every chromosome do (`v38_joint_pilot_check.csv`), so it is kept as a check and not as a result.
+
+### Reproduction
+
+All but one of the 42 runs (`v38_joint` is the exception, see above) were made twice.
+The first set used binaries built from earlier states of the working tree (SHA-256 `336fea23...` for the shipped change, `a83a5143...` for the build with the alternatives patch and `0982a653...` for the commit before the change), before the last edits of the tree: two fixes of allocations (rule 7 compared each criterion's code with a string built for the purpose, and PM2 read the inheritance of a gene twice), comments, documentation and a test of the allocations of the disease reading (`crates/fastvep-classification/tests/disease_allocations.rs`), and then the changes that followed two independent reviews (BP2's trans arm, the shared lookup of the supplementary databases, the order of a gene database and the converter's header check; "What changed").
+The second set, made on 4 November 2026 after the last edit, used binaries built by `scripts/build_manuscript_binaries.sh` (the shipped change `f184277d...`, the build with the alternatives patch `a2bb20ee...`, the commit before the change `f6e7f4ca...`), and its provenance is the one in `results/v37_manuscript/provenance/`.
+The two sets agree in every scored file of every run (41 of 41), in every record of the 14 annotated VCFs that both keep, and in every column of the 13 per-variant tables that the first set's tables have (`results/v37_manuscript/rerun_comparison.csv`).
+The control with nothing set reproduces `v38` in all 30 cells and in the 24 firing counts, and each alternative reproduces the first set's.
+
+### What was not done
+
+- The calls for each mode are not scored: a ClinVar record in the benchmark has no disease-specific class.
+- The `disorders` blocks of the VCEP table are still not read, and there is no `--disorder` selector.
+- Penetrance is not an input (`docs/ACMG.md`, limitation 14), so BS2's carrier arm applies to every gene read as dominant.
+
+## The full rerun of 4 November 2026
+
+Every run of the manuscript was made again from clean binaries, to check that the numbers do not depend on how the runs were made.
+This section is the record of what was repeated and what was not.
+
+### What was repeated, and with what
+
+- Six binaries, each built from a clean export of its source in a target directory of its own (`scripts/build_manuscript_binaries.sh`; the first four were built by scripts of the session that apply the same recipe, before the script was written): `v37` at commit `5d8004a`, the cutoff and hook builds (that commit with `replay_validation/*.patch`), the commit before the change of Section 3.8 (`9d84be0`), and `v38` and its alternatives build from the working tree.
+  `results/v37_manuscript/binaries.tsv` lists them with their hashes and the runs each made.
+- The main run of `v37` and the main run of `v37` on the October release; the 89 runs of `11_manuscript_runs.py` on the April set and its 7 on the October release; the 10 runs of round 6 that are `v37` with a configuration or a flag changed (`v37_bs2off`, `v37_bs2prev_*`, `v37_bs2ac_*`, `v37_mpc`, `v37_rank`); the 41 runs of v38; and the 32 per-variant tables that the statistics read.
+  The statistics, the tables, the workbook and the figures were then rebuilt from them.
+- The inputs were those of the first runs: the `sa_dir_signature`, the sizes of the inputs and the flags in every provenance file are the same as in the first runs', and so are the hashes of the configurations but four, the `v37_sw_bs2hom_*` runs, whose configuration files differ from the first runs' in a comment that was reworded (the description now says "every gene not read as dominant-only", which is what the code of v37 does) and not in a setting.
+
+### What was found
+
+- 149 runs agree with the runs they repeat in every scored file, and the 46 annotated VCFs that both sets keep agree record by record.
+  The 32 per-variant tables agree in every column the first table has: the first tables were made by earlier versions of `12_per_variant_table.py` and have 30 or 31 columns, and the repetition has 32 (`results/v37_manuscript/rerun_comparison.csv`; `scripts/16_compare_runs.py` makes it).
+- Of the 89 files of `manuscript/acmg/data/` two differ: `provenance_v37.csv` (the hashes of the binaries, the commit of the checkout and the times) and `v38_facts.csv`, which has seven new rows.
+  The figures of the manuscript are byte for byte the same, and so are its tables but the header of Table 3, which now says "v37" and not "the final classifier".
+- The scored CSV files of the runs of 6 October ended their lines with CR LF and the scoring script now writes LF, which the comparison ignores.
+- Two pitfalls of the rerun became checks.
+  Cargo decides what is fresh by file times, so a patched tree built into the target directory of the unpatched one is judged fresh and gives the unpatched binary; the first attempt at the two measurement builds did that, and the build time of 0.18 seconds showed it.
+  `build_manuscript_binaries.sh` builds each tree apart and looks for each patch's marker in the binary.
+  And a gene database built twice was two files with the same content, because the writer iterated a hash map; it now writes the genes in the order of their symbols.
+- The benchmark scripts took the checkout's own binary when none was named, which after v38 is not v37's: `11_manuscript_runs.py` and `14_temporal_holdout.py` now stop unless `FASTVEP_V37_BIN` is set.
+- Two independent reviews, one of the diff and one of the text, found the changes listed under "What changed" (BP2's gate, the lookup of the databases, a warning that was never displayed, a converter that read columns by position) and corrections to the text: the history of the unread tag (v37 had measured it and left it unread), the wording of v37 and v38, the replication on the October release, and the double counting that BS2's arm for homozygotes and hemizygotes still has (`docs/ACMG.md`, limitation 29).
+
+### What was not repeated
+
+- Versions 1 to 36, and the runs of round 6 that need builds that are not in the repository (`v37_adtag`, `v37_moi_global`, the `_prefix` runs and `v37_head`): they are the record of what was done then.
+- The downloads and the databases built from them (`sa_db`, `sa_replace`, the extracts of gnomAD) are dated inputs and were reused.
+  The ClinGen databases were rebuilt from their source files with the final binary and have the same content as the files the runs read (the order of the genes in the file differs, as it does between two builds of one binary, because the writer iterated a hash map then), and the joint databases of chromosomes 21 and 22 are byte for byte the same as the first.
+- The joint release on every chromosome (`v38_joint`) did not exist yet: it was made once, on 5 November 2026, with the binary of the second set (see v38 above).
+
+### What was deleted afterwards
+
+The outputs of the first set were deleted on 4 November 2026, once the comparison above had shown that the second set reproduces them: the run directories, the annotated VCFs and the per-variant tables of its 149 runs (more than 8 GB), and the first copy of the joint databases of chromosomes 21 and 22, which was byte for byte the same as the one kept.
+What remains of the first set is the comparison (`results/v37_manuscript/rerun_comparison.csv`) and the hashes of its binaries where the text above gives them.
+The outputs of the runs under "What was not repeated" were kept, because nothing reproduces them.
+
+## After v38: two speed-ups that change no record (5 November 2026)
+
+Two changes to the code that followed the runs of v38 make the annotation faster and are meant to change no output: the shared block cache of the `.osa` and `.osa2` readers frees the blocks that an insert displaces after it has released its lock, and a thread parses a gene's ClinVar protein record once for the variants that share it (`crates/fastvep-sa/src/reader.rs`, `reader_v2.rs` and `crates/fastvep-classification/src/sa_extract.rs`).
+They were found by profiling `annotate --acmg --pick` over the benchmark, and each commit message gives the measurements.
+The classification code that decides a call was not changed, and the runs of this directory were not repeated.
+
+What was checked is that nothing a run records moved.
+
+- A release build of the tree after both changes (SHA-256 `372dae92...`, built from commit `78b0a0b` with the repository's release profile) annotated the 673,660 records of the benchmark with `annotate --acmg --pick` against the databases of the `v38` run, and its output is the annotated VCF of `v38` (made by the binary `f184277d...`) byte for byte, header included: `cmp` of its output with `gzip -dc data/benchmark/manuscript_runs/v38/clinvar_2star.fastvep.vcf.gz`.
+- Builds of the tree before and after both changes gave the same annotated VCF of the benchmark and the same json for every 100th record of it (6,736 variants, 318 MB), which carries the criteria with their details; the build with the first change alone gave the same annotated VCF of the whole benchmark and of every sixth record.
+- The instructions retired for the annotation of the benchmark fall from 2.75e12 to 2.28e12 (3 runs of each, interleaved) and the user CPU time from 205 s to 173 s; the wall time falls by about 5% on the ten-core machine of the runs, where part of the annotation is serial.
+
+What was not checked: a run with a configuration other than the default, a run of an alternatives build, or the databases of the joint release.
+The binary of the second set remains the one that made the runs of `binaries.tsv`, and the build of the tree after the change made none.
