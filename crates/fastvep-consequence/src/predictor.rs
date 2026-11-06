@@ -19,6 +19,18 @@ pub struct TranscriptConsequence {
     pub strand: Strand,
 }
 
+/// What a variant is to a transcript it does not overlap: upstream or downstream of it, or
+/// intergenic when it is farther than the upstream distance.
+///
+/// It does not depend on the allele, so every allele of the variant has the same one, which is what
+/// lets a caller choose among transcripts by it without building [`AlleleConsequenceResult`]s for
+/// them. [`ConsequencePredictor::predict_transcript`] builds those from this same value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Flank {
+    pub consequence: Consequence,
+    pub distance: Option<i64>,
+}
+
 /// Consequence result for a single allele against a transcript.
 #[derive(Debug, Clone)]
 pub struct AlleleConsequenceResult {
@@ -340,7 +352,9 @@ impl ConsequencePredictor {
         }
     }
 
-    fn predict_transcript(
+    /// The prediction for one transcript: what [`predict`](Self::predict) holds for each of its
+    /// transcripts, for a caller that needs only some of them.
+    pub fn predict_transcript(
         &self,
         position: &GenomicPosition,
         ref_allele: &Allele,
@@ -414,41 +428,10 @@ impl ConsequencePredictor {
         let mut amino_acids = None;
         let mut codons = None;
         let mut coding_sequence_kept = false;
-        let mut distance = None;
 
         // 1. Check if variant overlaps the transcript at all
-        let overlaps = var_start <= tr_end && var_end >= tr_start;
-
-        if !overlaps {
-            // Check upstream/downstream
-            let dist = self.distance_to_transcript(var_start, var_end, transcript);
-            if let Some(d) = dist {
-                distance = Some(d);
-                let abs_dist = d.unsigned_abs();
-                if abs_dist <= self.upstream_distance {
-                    match transcript.strand {
-                        Strand::Forward => {
-                            if var_end < tr_start {
-                                consequences.push(Consequence::UpstreamGeneVariant);
-                            } else {
-                                consequences.push(Consequence::DownstreamGeneVariant);
-                            }
-                        }
-                        Strand::Reverse => {
-                            if var_start > tr_end {
-                                consequences.push(Consequence::UpstreamGeneVariant);
-                            } else {
-                                consequences.push(Consequence::DownstreamGeneVariant);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if consequences.is_empty() {
-                consequences.push(Consequence::IntergenicVariant);
-            }
-
+        if let Some(flank) = self.flank(position, transcript) {
+            let consequences = vec![flank.consequence];
             let impact = Consequence::worst_impact(&consequences).unwrap_or(Impact::Modifier);
             return AlleleConsequenceResult {
                 allele: alt_allele.clone(),
@@ -465,7 +448,7 @@ impl ConsequencePredictor {
                 exon: None,
                 intron: None,
                 location: TranscriptLocation::default(),
-                distance,
+                distance: flank.distance,
                 protein_length: None,
                 escapes_nmd: None,
                 coding_sequence_kept: false,
@@ -712,7 +695,8 @@ impl ConsequencePredictor {
             exon: exon_info,
             intron: intron_info,
             location,
-            distance,
+            // only a transcript the change is beside has one, and that returned above
+            distance: None,
             protein_length,
             escapes_nmd,
             coding_sequence_kept,
@@ -1410,6 +1394,39 @@ impl ConsequencePredictor {
         )
     }
 
+    /// What the change is to a transcript it does not overlap, or `None` when it overlaps.
+    ///
+    /// The one place that answers this for a small variant. [`predict_allele`](Self::predict_allele)
+    /// answers a transcript the change is beside from it, and a caller that wants to choose among
+    /// the transcripts around a variant before it builds a result for each asks it too. A
+    /// structural variant has an answer of its own (`sv_predictor`), which this does not give.
+    pub fn flank(&self, position: &GenomicPosition, transcript: &Transcript) -> Option<Flank> {
+        let (var_start, var_end) = (position.start, position.end);
+        if var_start <= transcript.end && var_end >= transcript.start {
+            return None;
+        }
+        let mut consequence = None;
+        let distance = self.distance_to_transcript(var_start, var_end, transcript);
+        if let Some(d) = distance {
+            if d.unsigned_abs() <= self.upstream_distance {
+                consequence = Some(match transcript.strand {
+                    Strand::Forward if var_end < transcript.start => {
+                        Consequence::UpstreamGeneVariant
+                    }
+                    Strand::Forward => Consequence::DownstreamGeneVariant,
+                    Strand::Reverse if var_start > transcript.end => {
+                        Consequence::UpstreamGeneVariant
+                    }
+                    Strand::Reverse => Consequence::DownstreamGeneVariant,
+                });
+            }
+        }
+        Some(Flank {
+            consequence: consequence.unwrap_or(Consequence::IntergenicVariant),
+            distance,
+        })
+    }
+
     /// Distance from the change to the nearest end of the transcript, `0` when it overlaps.
     fn distance_to_transcript(
         &self,
@@ -2063,6 +2080,124 @@ mod tests {
 
         let ac = &result.transcript_consequences[0].allele_consequences[0];
         assert!(ac.consequences.contains(&Consequence::IntergenicVariant));
+    }
+
+    #[test]
+    fn flank_answers_a_transcript_the_change_is_beside_as_predict_does_on_either_strand() {
+        // `flank` is what lets a caller choose among the transcripts around a variant before it
+        // builds a result for each, so it has to be what the result holds, for every allele that
+        // has one, and `None` exactly where the change touches the transcript.
+        let predictor = ConsequencePredictor::default();
+        let forward = make_coding_transcript(); // 1000-5000
+        let mut reverse = make_coding_transcript();
+        reverse.strand = Strand::Reverse;
+        let alts = [
+            Allele::from_str("G"),
+            Allele::from_str("*"),
+            Allele::from_str("-"),
+        ];
+        // (start, end, the term on the forward transcript, the distance); the reverse transcript's
+        // upstream and downstream swap
+        let beside = [
+            (500, 500, Consequence::UpstreamGeneVariant, 500),
+            (990, 995, Consequence::UpstreamGeneVariant, 5),
+            (999, 999, Consequence::UpstreamGeneVariant, 1),
+            (5001, 5002, Consequence::DownstreamGeneVariant, 1),
+            (5500, 5500, Consequence::DownstreamGeneVariant, 500),
+            // the distance cutoff itself, which is inclusive: 5,000 bases from the end of the
+            // transcript is beside it, and 5,001 is in no gene's reach
+            (10_000, 10_000, Consequence::DownstreamGeneVariant, 5_000),
+            (10_001, 10_001, Consequence::IntergenicVariant, 5_001),
+            (100_000, 100_000, Consequence::IntergenicVariant, 95_000),
+        ];
+        for (start, end, term, distance) in beside {
+            for (transcript, expected) in [
+                (&forward, term),
+                (
+                    &reverse,
+                    match term {
+                        Consequence::UpstreamGeneVariant => Consequence::DownstreamGeneVariant,
+                        Consequence::DownstreamGeneVariant => Consequence::UpstreamGeneVariant,
+                        other => other,
+                    },
+                ),
+            ] {
+                let pos = GenomicPosition::new("chr1", start, end, Strand::Forward);
+                let flank = predictor
+                    .flank(&pos, transcript)
+                    .unwrap_or_else(|| panic!("{start}-{end} is beside the transcript"));
+                assert_eq!(flank.consequence, expected, "{start}-{end}");
+                assert_eq!(flank.distance, Some(distance), "{start}-{end}");
+
+                let tc = predictor.predict_transcript(
+                    &pos,
+                    &Allele::from_str("A"),
+                    &alts,
+                    transcript,
+                    None,
+                );
+                for ac in &tc.allele_consequences {
+                    if ac.allele == Allele::Missing {
+                        // `*` asserts no alternate sequence, so it has no consequence at all
+                        assert!(ac.consequences.is_empty());
+                        continue;
+                    }
+                    assert_eq!(ac.consequences, vec![flank.consequence], "{start}-{end}");
+                    assert_eq!(ac.distance, flank.distance, "{start}-{end}");
+                }
+            }
+        }
+        // a change that touches the transcript is nothing's flank, at its ends and inside it
+        for (start, end) in [
+            (995, 1000),
+            (1000, 1000),
+            (3000, 3000),
+            (5000, 5000),
+            (5000, 5010),
+        ] {
+            let pos = GenomicPosition::new("chr1", start, end, Strand::Forward);
+            assert_eq!(predictor.flank(&pos, &forward), None, "{start}-{end}");
+            assert_eq!(predictor.flank(&pos, &reverse), None, "{start}-{end}");
+        }
+
+        // An insertion is `end = start - 1`: it sits between two bases and has none of its own.
+        // Whatever it is to the transcript, `flank` and the prediction say the same of it, at the
+        // ends of the transcript and of its reach as much as anywhere.
+        let insertion = [Allele::from_str("T")];
+        let mut beside_insertions = 0;
+        for start in [
+            998, 999, 1000, 1001, 2000, 5000, 5001, 5002, 10_000, 10_001, 10_002,
+        ] {
+            let pos = GenomicPosition::new("chr1", start, start - 1, Strand::Forward);
+            for transcript in [&forward, &reverse] {
+                let tc = predictor.predict_transcript(
+                    &pos,
+                    &Allele::from_str("-"),
+                    &insertion,
+                    transcript,
+                    None,
+                );
+                let ac = &tc.allele_consequences[0];
+                match predictor.flank(&pos, transcript) {
+                    Some(flank) => {
+                        beside_insertions += 1;
+                        assert_eq!(ac.consequences, vec![flank.consequence], "ins {start}");
+                        assert_eq!(ac.distance, flank.distance, "ins {start}");
+                    }
+                    // overlapping: the answer is not a flank's, which has no location in the
+                    // transcript to speak of
+                    None => assert_ne!(
+                        ac.consequences,
+                        vec![Consequence::IntergenicVariant],
+                        "ins {start}: an insertion into a transcript is not intergenic"
+                    ),
+                }
+            }
+        }
+        assert!(
+            beside_insertions >= 6,
+            "{beside_insertions}: the insertions were meant to include some beside the transcript"
+        );
     }
 
     #[test]

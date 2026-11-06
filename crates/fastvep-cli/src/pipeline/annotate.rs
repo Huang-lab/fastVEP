@@ -4,7 +4,8 @@ use super::cache_build::{load_one_gff3, parse_gff3_arg, Gff3Spec};
 use super::open_vcf_input_reader;
 use anyhow::{Context, Result};
 use fastvep_annotate::pick::{
-    apply_pick, parse_pick_order, PickCriterion, PickFlags, PickRequest, DEFAULT_PICK_ORDER,
+    apply_pick, makes_row, parse_pick_order, pick_winners, row_alleles, PickCriterion, PickFlags,
+    PickMode, PickRequest, PredictedRow, DEFAULT_PICK_ORDER,
 };
 use fastvep_cache::annotation::{AnnotationProvider, GeneAnnotationProvider};
 use fastvep_cache::fasta::ReferenceFasta;
@@ -14,7 +15,7 @@ use fastvep_cache::providers::{
     TabixVariationProvider, TranscriptProvider, VariationProvider,
 };
 use fastvep_cache::transcript_cache::StaleCacheFormat;
-use fastvep_consequence::ConsequencePredictor;
+use fastvep_consequence::{ConsequencePredictor, Flank, TranscriptConsequence};
 use fastvep_core::Allele;
 use fastvep_genome::Transcript;
 use fastvep_hgvs;
@@ -175,6 +176,65 @@ struct AnnotationContext<'a> {
     repeat_db_loaded: bool,
 }
 
+/// What the predictor said of one transcript of a variant, or, for a transcript a reducing pick may
+/// leave out and that the variant is merely beside, only what it would say.
+enum Prediction<'a> {
+    Built(TranscriptConsequence, Option<&'a Transcript>),
+    Flank(&'a Transcript, Flank),
+}
+
+impl<'a> Prediction<'a> {
+    fn transcript_id(&self) -> &str {
+        match self {
+            Self::Built(tc, _) => &tc.transcript_id,
+            Self::Flank(transcript, _) => &transcript.stable_id,
+        }
+    }
+
+    /// Whether it makes a row: a transcript with no allele to make a row of makes none, as it never
+    /// did. `flank_alleles` are the alleles of the variant that make a row of a transcript it is
+    /// beside, which are the same for every one of them.
+    ///
+    /// The one place that asks, for the rows a pick chooses among and for the rows then built, so
+    /// that the number a row has in the pick is the number it is given when the rows are made.
+    fn makes_a_row(&self, flank_alleles: &[&Allele]) -> bool {
+        match self {
+            Self::Built(tc, _) => row_alleles(tc).next().is_some(),
+            Self::Flank(..) => !flank_alleles.is_empty(),
+        }
+    }
+
+    /// The row a pick can choose, before it is built.
+    fn as_pickable<'p>(&'p self, flank_alleles: &'p [&'p Allele]) -> PredictedRow<'p> {
+        match self {
+            Self::Built(tc, transcript) => PredictedRow::Built {
+                prediction: tc,
+                transcript: *transcript,
+            },
+            Self::Flank(transcript, flank) => PredictedRow::Flank {
+                transcript,
+                flank: *flank,
+                alleles: flank_alleles,
+            },
+        }
+    }
+}
+
+/// A prediction that becomes a row: with the transcript it was made against, and the alleles of it
+/// a reducing pick chose (`None`: all of them).
+struct Survivor<'a> {
+    prediction: TranscriptConsequence,
+    transcript: Option<&'a Transcript>,
+    chosen: Option<&'a [(usize, usize)]>,
+}
+
+/// The pairs of `winners`, which are sorted, that belong to the row numbered `row`.
+fn winners_of_row(winners: &[(usize, usize)], row: usize) -> &[(usize, usize)] {
+    let start = winners.partition_point(|&(r, _)| r < row);
+    let len = winners[start..].partition_point(|&(r, _)| r == row);
+    &winners[start..start + len]
+}
+
 /// Annotate one variant: transcript overlap, consequence prediction, HGVS,
 /// supplementary annotations, `--pick`, and ACMG classification.
 ///
@@ -216,6 +276,8 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
     // Kept for the classification pass at the end, which runs after `--pick`
     // has deleted rows and needs the transcript each survivor came from.
     let mut overlapping = Vec::new();
+    // Set when the pick was made before the rows were built, so that it is not made again.
+    let mut picked_before_rows = false;
 
     // In --sa-only mode, skip transcript lookup + consequence
     // prediction + HGVS entirely. Use a neutral scaffold so the SA
@@ -271,9 +333,21 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                 }
             }
         } else {
-            // Run consequence prediction — dispatch SVs to SV predictor
-            let transcript_consequences = if vf.variant_type.is_structural() {
-                fastvep_consequence::sv_predictor::predict_sv_consequences(
+            // A `--pick*` that deletes the rows it does not choose is settled below on what the
+            // predictor said, and only the rows it chooses are built. A variant of a run with
+            // `--distance 500000` has hundreds of transcripts around it and the pick keeps a few
+            // tens; the rest were built, every string of them cloned and every HGVS description
+            // written, to be deleted a moment later by `apply_pick`, and that was most of what such
+            // a run did. The flagging picks keep every row, so there is nothing to leave out.
+            let plan = pick
+                .filter(|_| !sa_only)
+                .map(|request| request.plan(pick_order))
+                .filter(|plan| plan.mode == PickMode::Reduce);
+
+            // Consequence prediction, one answer for each transcript with the transcript it was made
+            // against, dispatching structural variants to their own predictor.
+            let predictions: Vec<Prediction<'_>> = if vf.variant_type.is_structural() {
+                let consequences = fastvep_consequence::sv_predictor::predict_sv_consequences(
                     chrom,
                     vf.position.start,
                     vf.position.end,
@@ -282,20 +356,67 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     &overlapping,
                     config.distance,
                     config.distance,
-                )
+                );
+                // The transcript each prediction was made against.
+                //
+                // The structural-variant predictor emits one consequence per transcript it was
+                // handed, in that order, whenever the record has an ALT (`predict_sv_consequences`),
+                // so index `i` is the match and the scan never runs; a miss falls back to a scan
+                // rather than losing the transcript, because nothing else holds the two together.
+                // Before this, every consequence rescanned the whole overlap set, and a variant in
+                // a gene-dense window - a protocadherin or MHC cluster, where `--distance` pulls in
+                // dozens of transcripts - paid for that lookup in proportion to the square of the
+                // overlap.
+                //
+                // Every transcript is predicted in full here, and a reducing pick only leaves rows
+                // out: the structural-variant predictor has its own answer for a transcript the
+                // change is beside, which `ConsequencePredictor::flank` does not give.
+                consequences
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, tc)| {
+                        let transcript = overlapping
+                            .get(i)
+                            .copied()
+                            .filter(|t| t.stable_id == tc.transcript_id)
+                            .or_else(|| {
+                                overlapping
+                                    .iter()
+                                    .copied()
+                                    .find(|t| t.stable_id == tc.transcript_id)
+                            });
+                        Prediction::Built(tc, transcript)
+                    })
+                    .collect()
             } else {
                 // No reference window is read for the predictor: it is given none to use (the
                 // transcripts carry their own sequence), and reading the variant's window of
                 // `--distance` bases either side for every variant was a few kilobytes copied out
                 // of the FASTA per record for nothing.
-                let result = predictor.predict(
-                    &vf.position,
-                    &vf.ref_allele,
-                    &vf.alt_alleles,
-                    &overlapping,
-                    None,
-                );
-                result.transcript_consequences
+                //
+                // A transcript the variant is merely beside has the same answer for every allele,
+                // and when a reducing pick is going to choose among the transcripts it is not
+                // predicted in full unless it is chosen. Around a variant that is most of them.
+                overlapping
+                    .iter()
+                    .map(|&transcript| {
+                        if plan.is_some() {
+                            if let Some(flank) = predictor.flank(&vf.position, transcript) {
+                                return Prediction::Flank(transcript, flank);
+                            }
+                        }
+                        Prediction::Built(
+                            predictor.predict_transcript(
+                                &vf.position,
+                                &vf.ref_allele,
+                                &vf.alt_alleles,
+                                transcript,
+                                None,
+                            ),
+                            Some(transcript),
+                        )
+                    })
+                    .collect()
             };
 
             // The reference an HGVS description is written against: the genome's, where the VCF
@@ -336,27 +457,94 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     Vec::new()
                 };
 
+            // The alleles a transcript that the change is beside gets a row for, which are the
+            // same for every one of them. Only a reducing pick leaves a transcript unbuilt.
+            let flank_alleles: Vec<&Allele> = if plan.is_some() {
+                vf.alt_alleles
+                    .iter()
+                    .filter(|allele| makes_row(allele))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            // The pick of a reducing `--pick*`, made on the predictions before any row exists. The
+            // number a row has in it is its position among the predictions that make a row.
+            let mut rows_picked_among = 0usize;
+            let winners: Option<Vec<(usize, usize)>> = plan.map(|plan| {
+                let rows: Vec<PredictedRow<'_>> = predictions
+                    .iter()
+                    .filter(|prediction| prediction.makes_a_row(&flank_alleles))
+                    .map(|prediction| prediction.as_pickable(&flank_alleles))
+                    .collect();
+                rows_picked_among = rows.len();
+                let mut winners = pick_winners(&rows, &plan);
+                // sorted, so that `winners_of_row` finds a row's winners by search
+                winners.sort_unstable();
+                winners
+            });
+            picked_before_rows = winners.is_some();
+
+            // The predictions that become rows, each with the alleles of it that do. A prediction
+            // that makes no row makes none, as it never did, and a row a reducing pick did not
+            // choose is neither built nor, if it was left unbuilt above, predicted in full.
+            let mut row_number = 0usize;
+            let mut survivors: Vec<Survivor<'_>> = Vec::new();
+            for prediction in predictions {
+                if !prediction.makes_a_row(&flank_alleles) {
+                    continue;
+                }
+                // A row without a feature is no candidate of a pick, which neither chooses nor
+                // deletes it (`apply_pick` does the same with the rows it is given)
+                let featureless = prediction.transcript_id() == TranscriptVariation::NO_FEATURE;
+                let chosen: Option<&[(usize, usize)]> = winners.as_deref().map(|winners| {
+                    let chosen = winners_of_row(winners, row_number);
+                    row_number += 1;
+                    chosen
+                });
+                if matches!(chosen, Some(c) if c.is_empty()) && !featureless {
+                    continue;
+                }
+                let (prediction, transcript) = match prediction {
+                    Prediction::Built(tc, transcript) => (tc, transcript),
+                    Prediction::Flank(transcript, _) => {
+                        let tc = predictor.predict_transcript(
+                            &vf.position,
+                            &vf.ref_allele,
+                            &vf.alt_alleles,
+                            transcript,
+                            None,
+                        );
+                        // the pick numbered this row's alleles from `flank_alleles`, so the
+                        // prediction has to have the same alleles in the same order
+                        debug_assert!(
+                            row_alleles(&tc)
+                                .map(|ac| &ac.allele)
+                                .eq(flank_alleles.iter().copied()),
+                            "{}: the alleles of a transcript the change is beside",
+                            transcript.stable_id
+                        );
+                        (tc, Some(transcript))
+                    }
+                };
+                survivors.push(Survivor {
+                    prediction,
+                    transcript,
+                    chosen,
+                });
+            }
+            debug_assert!(
+                winners.is_none() || row_number == rows_picked_among,
+                "the pick was made among {rows_picked_among} rows and {row_number} were numbered"
+            );
+
             // Convert prediction results to VariationFeature annotations
-            for (i, tc) in transcript_consequences.iter().enumerate() {
-                // `ConsequencePredictor::predict` emits one consequence per
-                // transcript it was handed, in that order, so index `i` is the
-                // match and the scan below never runs. The structural-variant
-                // branch above makes no such promise, so a miss falls back to a
-                // scan rather than losing the transcript. Before this, every
-                // consequence rescanned the whole overlap set, and a variant in
-                // a gene-dense window - a protocadherin or MHC cluster, where
-                // `--distance` pulls in dozens of transcripts - paid for that
-                // lookup in proportion to the square of the overlap.
-                let transcript: Option<&Transcript> = overlapping
-                    .get(i)
-                    .copied()
-                    .filter(|t| t.stable_id == tc.transcript_id)
-                    .or_else(|| {
-                        overlapping
-                            .iter()
-                            .copied()
-                            .find(|t| t.stable_id == tc.transcript_id)
-                    });
+            for survivor in &survivors {
+                let tc = &survivor.prediction;
+                let transcript = survivor.transcript;
+                // Which alleles of this transcript the pick chose, when it was made before the
+                // rows; `None` builds them all.
+                let chosen = survivor.chosen;
 
                 // `*` and the placeholders (`.`, `<NON_REF>`, `<*>`) are not variants of
                 // the transcript, and VEP writes no row for them: a record whose only ALT
@@ -365,12 +553,15 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                 // elements, and an `AlleleAnnotation` is over 600 bytes, so every transcript row of a one-ALT
                 // record asked for 2.5 KB and used 0.6 KB of it.
                 let mut allele_annotations: Vec<AlleleAnnotation> =
-                    Vec::with_capacity(tc.allele_consequences.len());
+                    Vec::with_capacity(chosen.map_or(tc.allele_consequences.len(), <[_]>::len));
                 allele_annotations.extend(
-                    tc.allele_consequences
-                        .iter()
-                        .filter(|ac| ac.allele != Allele::Missing)
-                        .map(|ac| {
+                    row_alleles(tc)
+                        .enumerate()
+                        .filter(|(ai, _)| {
+                            chosen.is_none_or(|chosen| chosen.iter().any(|&(_, a)| a == *ai))
+                                || &*tc.transcript_id == TranscriptVariation::NO_FEATURE
+                        })
+                        .map(|(_, ac)| {
                             let mut ann = AlleleAnnotation {
                                 allele: ac.allele.clone(),
                                 consequences: ac.consequences.clone(),
@@ -685,7 +876,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
     // of them. The order still matters for the reducing modes, and putting
     // the two in the same place keeps the flag and the reduction deciding
     // from identical inputs.
-    if let Some(request) = pick.filter(|_| !sa_only) {
+    if let Some(request) = pick.filter(|_| !sa_only && !picked_before_rows) {
         apply_pick(&mut vf.transcript_variations, &request.plan(pick_order));
     }
 

@@ -4,6 +4,6 @@ mod splice;
 pub mod sv_predictor;
 
 pub use predictor::{
-    AlleleConsequenceResult, ConsequencePredictor, PredictionResult, ProteinWindow,
+    AlleleConsequenceResult, ConsequencePredictor, Flank, PredictionResult, ProteinWindow,
     TranscriptConsequence,
 };

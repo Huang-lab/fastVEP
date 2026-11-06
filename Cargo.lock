@@ -386,6 +386,7 @@ dependencies = [
  "fastvep-hgvs",
  "fastvep-io",
  "fastvep-sa",
+ "foldhash",
  "rayon",
  "serde",
  "serde_json",
