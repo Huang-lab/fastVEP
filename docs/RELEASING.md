@@ -66,6 +66,25 @@ A Linux archive is run in Rocky Linux 9, whose glibc is 2.34.
 That is what the v0.4.0 x86_64 binary needed, and the check is what keeps it so: a runner image whose toolchain links a newer glibc would otherwise build, pack and publish a binary that fails to start on RHEL 9.
 If the check fails that way, build on an older runner image, or raise the floor on purpose and change the README's note on it with it.
 
+## Release candidates
+
+A tag `vX.Y.Z-rc.N` publishes a release candidate: the same archives, as a GitHub pre-release.
+GitHub does not make a pre-release the "Latest" release, so `releases/latest` stays on the last final version.
+Use one to let someone downstream test a build before the final one is cut.
+
+```sh
+scripts/release.sh 0.5.0-rc.1     # sets the version in Cargo.toml to 0.5.0-rc.1
+git commit -am "release: v0.5.0-rc.1"
+git tag -a v0.5.0-rc.1 -m "v0.5.0-rc.1"
+git push && git push --tags
+```
+
+The version in `Cargo.toml` has to be the candidate's, because the check requires the binary to report the tag's version.
+The release body is the one-line fallback: `CHANGELOG.md` gets its section when the final version is cut.
+Skip the conda recipe below, which follows final releases only.
+`cliff.toml` ignores candidate tags, so the draft changelog and the computed version of the final release still count from the last final one.
+The final release sets the version back to `X.Y.Z`.
+
 ## After the tag: refresh the conda recipe
 
 `conda/recipe/meta.yaml` pins the release tarball by checksum, so it must be

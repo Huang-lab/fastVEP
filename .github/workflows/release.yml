@@ -1,6 +1,9 @@
 name: Release
 
 # Build release binaries and publish a GitHub Release when a vX.Y.Z tag is pushed.
+# A vX.Y.Z-rc.N tag publishes a release candidate in the same way, as a
+# pre-release. GitHub does not make a pre-release the "Latest" release, so
+# `releases/latest` stays on the last final version.
 #
 # Started by hand (`gh workflow run release.yml --ref <branch>`) it builds and
 # checks every archive and keeps them as workflow artifacts, but publishes
@@ -13,6 +16,7 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
   workflow_dispatch:
 
 permissions:
@@ -140,6 +144,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: release-notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/fastVEP-*.tar.gz
             dist/fastVEP-*.tar.gz.sha256
