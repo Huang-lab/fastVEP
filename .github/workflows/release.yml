@@ -19,8 +19,11 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
   workflow_dispatch:
 
+# Nothing is written with the token by default. Only the job that publishes the
+# release asks for that, below: the build job compiles every dependency of the
+# workspace, build scripts included, and has no use for a token that can push.
 permissions:
-  contents: write # needed to create the GitHub Release
+  contents: read
 
 jobs:
   build:
@@ -45,7 +48,11 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
     steps:
+      # The checkout does not keep the token in the repository's git config,
+      # where a build script could read it.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -117,8 +124,12 @@ jobs:
     # A run started by hand rehearses the builds and publishes nothing, on any ref.
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to create the GitHub Release
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
