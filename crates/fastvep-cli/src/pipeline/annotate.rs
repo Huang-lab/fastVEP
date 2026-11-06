@@ -1959,45 +1959,39 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             normalize_gnomad_queries,
             repeat_db_loaded,
         };
-        // Phase 2: Annotate batch in parallel (transcript lookup + consequence prediction + HGVS)
-        batch
-            .par_iter_mut()
-            .for_each(|(vf, known)| annotate_variant(&ctx, vf, known));
+        // Phase 2: Annotate the batch (transcript lookup + consequence prediction + HGVS) and
+        // render it into the bytes it writes, in one pass on every thread (see `render_batch`).
+        //
+        // A step that has to see every record annotated before any is rendered cannot share that
+        // pass, and that is the compound-het enrichment of a trio: its batch is annotated first, in
+        // a pass of its own, and `render_batch` then only renders.
+        let trio = acmg_config.as_ref().filter(|c| c.trio.is_some());
+        if let Some(acmg_cfg) = trio {
+            batch
+                .par_iter_mut()
+                .for_each(|(vf, known)| annotate_variant(&ctx, vf, known));
 
-        // Phase 2.5: Compound-het enrichment pass (sequential, after parallel annotation)
-        if let Some(ref acmg_cfg) = acmg_config {
-            if acmg_cfg.trio.is_some() {
-                let mut vfs: Vec<&mut VariationFeature> =
-                    batch.iter_mut().map(|(vf, _)| vf).collect();
-                enrich_compound_het_batch(
-                    &mut vfs,
-                    acmg_cfg,
-                    &sample_names,
-                    functional_evidence,
-                    repeat_db_loaded,
-                );
-            }
+            // Phase 2.5: Compound-het enrichment pass (sequential, after parallel annotation)
+            let mut vfs: Vec<&mut VariationFeature> = batch.iter_mut().map(|(vf, _)| vf).collect();
+            enrich_compound_het_batch(
+                &mut vfs,
+                acmg_cfg,
+                &sample_names,
+                functional_evidence,
+                repeat_db_loaded,
+            );
         }
-
-        // Phase 2.7: Render the records into the bytes they write, on every thread. A record is
-        // formatted from itself alone, and once its annotation is spread over the cores the
-        // formatting is most of what is left on the one thread that writes. Each piece is the text
-        // of a run of consecutive records, so the pieces in order are the file the records would
-        // have made written one by one.
-        let pieces: Vec<Result<Vec<u8>>> = batch
-            .par_iter()
-            .fold(
-                || Ok(Vec::new()),
-                |piece: Result<Vec<u8>>, (vf, _)| {
-                    let mut text = piece?;
-                    if json && !text.is_empty() {
-                        text.extend_from_slice(b",\n");
-                    }
-                    render_record(vf, &mut text)?;
-                    Ok(text)
-                },
-            )
-            .collect();
+        let records = batch.len() as u64;
+        let pieces = render_batch(
+            batch,
+            json,
+            |(vf, known)| {
+                if trio.is_none() {
+                    annotate_variant(&ctx, vf, known);
+                }
+            },
+            |(vf, _), text| render_record(vf, text),
+        );
 
         // Phase 3: Write output sequentially (preserves VCF order)
         for piece in pieces {
@@ -2014,7 +2008,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             writer.write_all(&text)?;
         }
 
-        meter.update_n(batch.len() as u64);
+        meter.update_n(records);
     } // end batch loop
 
     // Close JSON array
@@ -2045,6 +2039,52 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     Ok(())
 }
 
+/// Annotates a batch, renders it into the bytes it writes, and lets each record go, in one pass
+/// over the records on every thread.
+///
+/// A record is annotated, rendered and freed by the one thread that takes it. (It was made by the
+/// VCF parser, on the thread that reads; what is made on the thread that annotates it is the
+/// hundreds of small allocations of its rows.) The batch is not left to be freed by the thread that
+/// reads the VCF, which is what this used to do after a pass to annotate and a pass to render: one
+/// thread freeing the rows of 1,024 variants while the rest waited for the next batch was 11 to 13%
+/// of the time of a batch of HG002 chr1 at 8 threads, on macOS and on Linux.
+///
+/// Freeing them on every thread after the rendering, instead, did not help with glibc: no faster
+/// and more CPU time, most likely because each thread is then freeing what other threads allocated.
+/// Rows that are made and freed by one thread took 11 to 13% off a whole run on Linux, at 1 and at
+/// 8 threads, and 6 to 8% on macOS (100,000 records of HG002 chr1 with the flags of #166, the
+/// output the same bytes). That it is faster on one thread as well says it is less work and not
+/// only less waiting, which looks like the cache: the record is rendered while what annotating it
+/// touched is still in it.
+///
+/// `annotate` is for the caller that has not annotated the batch yet; a caller that has (a trio,
+/// whose compound-het enrichment has to see the whole batch annotated first) passes one that does
+/// nothing. Each piece is the text of a run of consecutive records, so the pieces in order are the
+/// file the records would have made written one by one. A record that fails to render fails its
+/// piece, which the writer reports in order, and the records after it are still annotated.
+fn render_batch<T, A, R>(batch: Vec<T>, json: bool, annotate: A, render: R) -> Vec<Result<Vec<u8>>>
+where
+    T: Send,
+    A: Fn(&mut T) + Sync,
+    R: Fn(&T, &mut Vec<u8>) -> Result<()> + Sync,
+{
+    batch
+        .into_par_iter()
+        .fold(
+            || Ok(Vec::new()),
+            |piece: Result<Vec<u8>>, mut record| {
+                annotate(&mut record);
+                let mut text = piece?;
+                if json && !text.is_empty() {
+                    text.extend_from_slice(b",\n");
+                }
+                render(&record, &mut text)?;
+                Ok(text)
+            },
+        )
+        .collect()
+}
+
 /// Frees `value` on a thread of its own, which nothing waits for.
 ///
 /// The transcript models are most of the heap of a run: hundreds of thousands of transcripts of a
@@ -2062,8 +2102,9 @@ fn release_in_background<T: Send + 'static>(value: T) {
 
 #[cfg(test)]
 mod tests {
-    use super::release_in_background;
-    use std::sync::mpsc;
+    use super::{release_in_background, render_batch};
+    use std::collections::HashMap;
+    use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
 
     /// A value that says on which thread it was dropped, once it has been let go.
@@ -2097,6 +2138,143 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("the value is dropped");
         assert_ne!(thread, std::thread::current().id());
+    }
+
+    /// Where each stage of a record's life happened, in the order it happened: the record, the
+    /// stage, and the thread.
+    type Stages = Arc<Mutex<Vec<(usize, &'static str, std::thread::ThreadId)>>>;
+
+    /// A record that notes the thread it is annotated, rendered and dropped on.
+    struct Probe {
+        id: usize,
+        stages: Stages,
+    }
+
+    impl Probe {
+        fn note(&self, stage: &'static str) {
+            self.stages
+                .lock()
+                .unwrap()
+                .push((self.id, stage, std::thread::current().id()));
+        }
+    }
+
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            self.note("dropped");
+        }
+    }
+
+    fn probes(n: usize, stages: &Stages) -> Vec<Probe> {
+        (0..n)
+            .map(|id| Probe {
+                id,
+                stages: Arc::clone(stages),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_record_is_annotated_rendered_and_dropped_on_one_thread_and_that_is_not_the_callers() {
+        const RECORDS: usize = 4_000;
+        let stages: Stages = Arc::default();
+        render_batch(
+            probes(RECORDS, &stages),
+            false,
+            |p| p.note("annotated"),
+            |p, text| {
+                p.note("rendered");
+                text.push(b'x');
+                Ok(())
+            },
+        );
+
+        // Not the caller's thread: the batch is the reading thread's, and its freeing is what a
+        // pass to annotate and a pass to render left to it.
+        let caller = std::thread::current().id();
+        let mut by_record: HashMap<usize, Vec<(&str, std::thread::ThreadId)>> = HashMap::new();
+        for (id, stage, thread) in stages.lock().unwrap().iter() {
+            by_record.entry(*id).or_default().push((stage, *thread));
+        }
+        assert_eq!(by_record.len(), RECORDS);
+        for (id, events) in &by_record {
+            let order: Vec<&str> = events.iter().map(|e| e.0).collect();
+            assert_eq!(order, ["annotated", "rendered", "dropped"], "record {id}");
+            let thread = events[0].1;
+            assert!(
+                events.iter().all(|e| e.1 == thread),
+                "record {id} changed threads: {events:?}"
+            );
+            assert_ne!(thread, caller, "record {id} was handled by the caller");
+        }
+    }
+
+    #[test]
+    fn the_pieces_in_order_are_the_file_the_records_would_have_made_written_one_by_one() {
+        let pieces = render_batch(
+            (0..10_000).collect::<Vec<usize>>(),
+            false,
+            |_| {},
+            |n, text| {
+                text.extend_from_slice(format!("{n}\n").as_bytes());
+                Ok(())
+            },
+        );
+        let written: Vec<u8> = pieces.into_iter().flat_map(|p| p.unwrap()).collect();
+        let one_by_one: String = (0..10_000).map(|n| format!("{n}\n")).collect();
+        assert_eq!(String::from_utf8(written).unwrap(), one_by_one);
+    }
+
+    #[test]
+    fn json_records_are_separated_inside_a_piece_and_the_writer_separates_the_pieces() {
+        let pieces = render_batch(
+            (0..5_000).collect::<Vec<usize>>(),
+            true,
+            |_| {},
+            |n, text| {
+                text.extend_from_slice(format!("{{{n}}}").as_bytes());
+                Ok(())
+            },
+        );
+        // What the write loop does: `,\n` between the pieces that have text.
+        let written = pieces
+            .into_iter()
+            .map(|p| String::from_utf8(p.unwrap()).unwrap())
+            .filter(|piece| !piece.is_empty())
+            .collect::<Vec<_>>()
+            .join(",\n");
+        let one_by_one = (0..5_000)
+            .map(|n| format!("{{{n}}}"))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        assert_eq!(written, one_by_one);
+    }
+
+    #[test]
+    fn a_record_that_fails_to_render_fails_its_piece_and_the_others_are_still_annotated_and_dropped(
+    ) {
+        let stages: Stages = Arc::default();
+        let pieces = render_batch(
+            probes(1_000, &stages),
+            false,
+            |p| p.note("annotated"),
+            |p, _| {
+                if p.id == 500 {
+                    anyhow::bail!("record 500")
+                }
+                Ok(())
+            },
+        );
+
+        let failed: Vec<String> = pieces
+            .iter()
+            .filter_map(|p| p.as_ref().err().map(|e| e.to_string()))
+            .collect();
+        assert_eq!(failed, ["record 500"]);
+        let stages = stages.lock().unwrap();
+        let count = |stage: &str| stages.iter().filter(|s| s.1 == stage).count();
+        assert_eq!(count("annotated"), 1_000);
+        assert_eq!(count("dropped"), 1_000);
     }
 }
 
