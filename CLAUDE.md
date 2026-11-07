@@ -87,6 +87,21 @@ cache magic in `transcript_cache.rs` bumped alongside it, with the old magic
 moved to the rejected list and a `SUMMARY_PRE_NN` / `DETAIL_PRE_NN` pair saying
 what was wrong with what it holds. `#95` and `#98` are the worked examples.
 
+The sidecar is also a sequence of zstd frames of about 8 MB with a table of them at its end (a
+skippable frame, in the layout of zstd's seekable format), which a run with more than two threads
+reads to decode the frames side by side. The bytes of the stream the frames make are what the one
+frame of earlier builds held, and a decoder passes over the table, so a reader that takes the file
+as one stream, as every build before #166 does, still reads it. A change to how a cache is cut has
+to keep that, or bump the magic. A cache has to be read to its end, where zstd checks the checksum
+of each frame: a loader that stopped at the last transcript let a flipped byte, or a second cache
+joined on behind the first, load without a word. And nothing is allocated on the word of what is
+read before that checksum has been checked: every `bincode` call on a cache has a limit
+(`bounded`), because a damaged byte that decodes to a length of a terabyte is otherwise an abort,
+with no word on which cache it was and no rebuild from the GFF3; so `save_cache` refuses a
+transcript that the limit would refuse at every load. The table is read only by a run that uses
+it (more than two threads), so a cache whose table is damaged loads on two threads and is refused
+on three: the frames have their own checksums, and the table is only where they are.
+
 The pair is two lengths of the same fact, because the two callers are not in
 the same situation. The sidecar path rebuilds from the GFF3 by itself, so it
 prints the summary and stops; the explicit `--transcript-cache` path has to
@@ -110,18 +125,55 @@ another partial-load path, it has to set that flag.
 
 The release profile is already tuned (`lto = "fat"`, `codegen-units = 1`).
 What remains is allocation. A callgrind profile of the annotate path over a
-gene-dense locus puts about a quarter of its instructions in `malloc`/`free`,
-and output formatting — not consequence prediction — accounts for most of the
-rest. When you touch the per-variant loop, the useful question is not "is this
-branch fast" but "does this allocate per variant, per transcript, or per
-allele": the loop runs once per (variant × overlapping transcript × allele), so
-a `String` built there is built millions of times.
+gene-dense locus, with the system allocator, put about a quarter of its
+instructions in `malloc`/`free`, and output formatting, not consequence
+prediction, accounted for most of the rest. When you touch the per-variant
+loop, the useful question is not "is this branch fast" but "does this allocate
+per variant, per transcript, or per allele": the loop runs once per (variant ×
+overlapping transcript × allele), so a `String` built there is built millions of
+times.
 
-Two shapes account for most of what has been found there so far. One is work
-done before deciding whether it is needed — a value built on entry as a fallback
+Three shapes account for most of what has been found there so far. One is work
+done before deciding whether it is needed: a value built on entry as a fallback
 the common path discards. The other is a per-run cost paid per item: resolving
 the same column names, or rescanning the same list, once for every record
-rather than once.
+rather than once. The third is a choice made after the work it was meant to
+save: the pick (`--pick*`) used to run after a row had been built for every
+transcript of the window, which at `--distance 500000` is hundreds a variant,
+and then deleted all but one per gene. It is made now on what the predictor
+said, before any row exists (`crates/fastvep-annotate/src/pick.rs`), and
+`crates/fastvep-cli/tests/pick_allocations.rs` holds that the allocations of a
+record follow the transcripts that are kept and not the ones that are around.
+
+Threads. Free what a thread allocated on that thread: one thread freeing a whole
+batch that the others had built was 11 to 13% of the batch loop at 8 threads, so
+a record is annotated, rendered and freed by the thread that takes it
+(`render_batch`), and each batch is written on a thread of its own. Peak memory
+should not grow with the thread count either: look at 1, 8 and the cores of the
+machine (the parallel decode of the transcript cache is capped at 8 decoders
+because its peak did).
+
+The `fastvep` binary uses mimalloc (`crates/fastvep-cli/src/main.rs`). The
+libraries and their tests, and the `fastvep-web` binary, keep the system
+allocator; `fastvep web`, a subcommand of the same binary, does not. It does
+less work per allocation, and it avoids something glibc does to a thread that
+builds a large structure: glibc grows the arena of each thread a page at a time,
+one `mprotect` for every 4 KB, so decoding the transcript cache on 8 threads
+made 231,689 of them where mimalloc made 62, and under Rosetta 2 that left the
+run no faster than master's one thread. The price is peak memory on Linux, 4 to
+7% (100 to 180 MB) over glibc, and about 1.2 GiB more address space under
+`ulimit -v`. The counting-allocator tests wrap the system allocator, since the
+library crates they test never link mimalloc: they count allocations, and the
+count does not depend on which allocator serves them.
+
+Measuring. Interleave the binaries and take medians, and compare their output
+byte for byte in the same runs: a speed-up that changes an answer is not one. A
+run that needs sequences its sidecar cache lacks (`--hgvs` over a cache built
+without `--fasta`) rewrites the cache, so checksum it before and after a series.
+An `amd64` container on Apple silicon runs under Rosetta 2, which tells you that
+the code runs and gives ratios at best: it aborts on a thread stack of 1 << 50
+bytes, where a kernel answers an error, and it showed the glibc behaviour above
+at its worst.
 
 `crates/fastvep-io/src/output.rs` shows the shape to copy: `format_csq_entry_into`
 writes fields into a caller-owned `String` instead of returning one.

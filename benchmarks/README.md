@@ -52,7 +52,11 @@ directory entirely.
 
 **What it does.** Runs `fastvep annotate --hgvs` end-to-end on a real
 genome-scale VCF for each of yeast, drosophila, arabidopsis, mouse, and
-human (3 runs, median reported, binary GFF3 cache pre-warmed).
+human (3 runs, median reported, binary GFF3 cache pre-warmed), with every
+core and the output written to a file. A run in which `fastvep` exits with
+an error stops the script: it is not timed. `FASTVEP_BIN=/path/to/fastvep`
+benchmarks another binary (a build of a branch, or a release archive) and
+skips the build.
 
 **Run it:**
 
@@ -91,7 +95,30 @@ WBcel235 + [CaeNDR WI.20250625 hard-filter isotype VCF](https://caendr-open-acce
 If you need to exactly reproduce the manuscript variant counts in
 [`benchmarks/output/benchmark_results.csv`](output/benchmark_results.csv),
 the preserved on-disk VCFs in `test_data/organisms/{drosophila,mouse}/`
-are the source of truth.
+are the source of truth: `run_benchmark.sh` uses `mouse_cast_eij_full.vcf`
+(the 26M-variant file the README's table reports) when it is there, and the
+1M-variant `mouse_ensembl_1m.vcf` otherwise.
+
+### Single-thread head-to-head with Ensembl VEP (the fastVEP side)
+
+The README's comparison with Ensembl VEP v115.1 runs each tool on one thread
+over the whole of GIAB HG002 (4,048,342 variants, GRCh38 Ensembl 115 GFF3 and
+FASTA) with `--hgvs --symbol --canonical`. The fastVEP side is:
+
+```bash
+RAYON_NUM_THREADS=1 fastvep annotate -i human_giab_hg002_full.vcf \
+  --gff3 Homo_sapiens.GRCh38.115.gff3 \
+  --fasta Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+  --hgvs --symbol --canonical -o out.vcf        # add --sa-dir DIR for ClinVar, and for gnomAD
+```
+
+Run it three times and take the median. The sidecar cache is written next to
+the GFF3 by the first run, so a run that is timed reads it. Ensembl VEP's side
+(the Docker image, `--gff` mode against a bgzip and tabix copy of the same
+GFF3, the whole genome as the sum of 22 per-chromosome runs because a single
+process runs out of the Docker default memory above about 2.7M variants) is
+described in the manuscript's methods; its times in the README were measured on
+2026-07-29 and were not run again when fastVEP's were.
 
 ---
 

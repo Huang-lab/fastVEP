@@ -17,11 +17,15 @@
 #
 # Each benchmark: 3 runs, median reported, with binary transcript cache.
 #
+# FASTVEP_BIN=/path/to/fastvep benchmarks another binary (a build of a branch, or
+# a release archive) and skips the build; without it the script builds
+# target/release/fastvep.
+#
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-FASTVEP="$PROJECT_DIR/target/release/fastvep"
+FASTVEP="${FASTVEP_BIN:-$PROJECT_DIR/target/release/fastvep}"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 ORG_DATA="$PROJECT_DIR/test_data/organisms"
 HUMAN_DIR="$ORG_DATA/human"
@@ -48,6 +52,11 @@ print_section() {
 }
 
 build_release() {
+    if [[ -n "${FASTVEP_BIN:-}" ]]; then
+        print_section "Using $FASTVEP_BIN"
+        [[ -x "$FASTVEP" ]] || { echo -e "${RED}ERROR: $FASTVEP is not executable.${NC}"; exit 1; }
+        return 0
+    fi
     print_section "Building fastVEP (release mode with LTO)"
     cd "$PROJECT_DIR"
     cargo build --release 2>&1 | tail -1
@@ -74,18 +83,23 @@ time_run() {
         fasta_args=(--fasta "$fasta")
     fi
 
-    local start end
+    local start end rc=0
     start=$(python3 -c 'import time; print(int(time.time()*1e9))')
     "$FASTVEP" annotate \
         --input "$input_vcf" \
         --gff3 "$gff3" \
-        "${fasta_args[@]}" \
+        ${fasta_args[@]+"${fasta_args[@]}"} \
         --output "$outfile" \
         --output-format "$fmt" \
         --hgvs \
-        2>/dev/null || true
+        2>/dev/null || rc=$?
     end=$(python3 -c 'import time; print(int(time.time()*1e9))')
 
+    # A run that failed is not a fast run: say so, rather than time how long it took to fail.
+    if (( rc != 0 )); then
+        echo FAILED
+        return 0
+    fi
     python3 -c "print(f'{($end - $start) / 1e9:.4f}')"
 }
 
@@ -93,8 +107,14 @@ median_time() {
     local n="$1"
     shift
     local times=()
+    local t
     for ((r=1; r<=n; r++)); do
-        times+=( "$(time_run "$@")" )
+        t="$(time_run "$@")"
+        if [[ "$t" == FAILED ]]; then
+            echo FAILED
+            return 0
+        fi
+        times+=( "$t" )
     done
     printf '%s\n' "${times[@]}" | sort -n | python3 -c "
 import sys
@@ -202,7 +222,12 @@ run_benchmarks() {
     if [[ -f "$MD/mouse.gff3" ]]; then
         print_section "Pre-warming: Mouse (GRCm39)"
         warm_cache "$MD/mouse.gff3" "$MD/mouse.fa"
-        add_benchmark "mouse_full" "$MD/mouse_ensembl_1m.vcf" "$MD/mouse.gff3" "$MD/mouse.fa" "Mouse"
+        # The README reports the 26M-variant MGP CAST/EiJ call set, which can no longer be
+        # downloaded (see benchmarks/README.md); a copy of it that is on disk is used in
+        # preference to the 1M-variant file that download_data.sh fetches.
+        local MOUSE_VCF="$MD/mouse_ensembl_1m.vcf"
+        [[ -f "$MD/mouse_cast_eij_full.vcf" ]] && MOUSE_VCF="$MD/mouse_cast_eij_full.vcf"
+        add_benchmark "mouse_full" "$MOUSE_VCF" "$MD/mouse.gff3" "$MD/mouse.fa" "Mouse"
     fi
 
     # ── Human (GRCh38, full genome — 4.05M GIAB HG002 variants) ──
@@ -225,7 +250,8 @@ run_benchmarks() {
 
     print_section "Running benchmarks (median of $RUNS runs each)"
 
-    declare -A RESULTS
+    # by position in ALL_NAMES: an associative array would need bash 4, and macOS ships 3.2
+    declare -a RESULTS=()
 
     for i in "${!ALL_NAMES[@]}"; do
         local name="${ALL_NAMES[$i]}"
@@ -239,6 +265,11 @@ run_benchmarks() {
         printf "  %-25s (%8s variants, %-12s) ... " "$name" "$nvar" "$organism"
         local elapsed
         elapsed=$(median_time "$RUNS" "$vcf" "$gff" "vcf" "$OUTPUT_DIR/${name}.annotated.vcf" "$fasta")
+        if [[ "$elapsed" == FAILED ]]; then
+            echo -e "${RED}FAILED${NC}"
+            echo -e "${RED}ERROR: fastvep exited with an error on $name; run it by hand to see why.${NC}" >&2
+            exit 1
+        fi
 
         local vps
         vps=$(python3 -c "
@@ -247,7 +278,7 @@ n = int('$nvar')
 print(f'{n/e:,.0f}' if e > 0 else 'inf')
 ")
         printf "${GREEN}%8s sec${NC}  (%s v/s)\n" "$elapsed" "$vps"
-        RESULTS["${name}"]="${elapsed} ${nvar} ${vps} ${organism}"
+        RESULTS[$i]="${elapsed} ${nvar} ${vps} ${organism}"
     done
 
     # ═══════════════════════════════════════════════════════════════
@@ -261,9 +292,10 @@ print(f'{n/e:,.0f}' if e > 0 else 'inf')
     printf "${BOLD}%-25s %-12s %10s %10s %15s${NC}\n" "Dataset" "Organism" "Variants" "Time (s)" "Variants/sec"
     printf "%-25s %-12s %10s %10s %15s\n" "-------------------------" "------------" "----------" "----------" "---------------"
 
-    for name in "${ALL_NAMES[@]}"; do
-        if [ -n "${RESULTS[$name]+x}" ]; then
-            local parts=(${RESULTS[$name]})
+    for i in "${!ALL_NAMES[@]}"; do
+        local name="${ALL_NAMES[$i]}"
+        if [ -n "${RESULTS[$i]+x}" ]; then
+            local parts=(${RESULTS[$i]})
             printf "%-25s %-12s %10s %10s %15s\n" "$name" "${parts[3]}" "${parts[1]}" "${parts[0]}" "${parts[2]}"
         fi
     done
@@ -273,10 +305,12 @@ print(f'{n/e:,.0f}' if e > 0 else 'inf')
     # ═══════════════════════════════════════════════════════════════
     local csv_file="$OUTPUT_DIR/benchmark_results.csv"
     echo "dataset,organism,variants,time_seconds,variants_per_second" > "$csv_file"
-    for name in "${ALL_NAMES[@]}"; do
-        if [ -n "${RESULTS[$name]+x}" ]; then
-            local parts=(${RESULTS[$name]})
-            echo "${name},${parts[3]},${parts[1]},${parts[0]},${parts[2]}" >> "$csv_file"
+    for i in "${!ALL_NAMES[@]}"; do
+        local name="${ALL_NAMES[$i]}"
+        if [ -n "${RESULTS[$i]+x}" ]; then
+            local parts=(${RESULTS[$i]})
+            # the throughput is shown with thousands separators, which would make a sixth column of it
+            echo "${name},${parts[3]},${parts[1]},${parts[0]},${parts[2]//,/}" >> "$csv_file"
         fi
     done
 
@@ -294,7 +328,7 @@ echo "Date:     $(date '+%Y-%m-%d %H:%M:%S')"
 echo "System:   $(uname -s) $(uname -m)"
 echo "Rust:     $(rustc --version 2>/dev/null || echo 'not found')"
 echo "Runs:     $RUNS per benchmark (median reported)"
-echo "Data:     $VCF_DATA/"
+echo "Data:     $ORG_DATA/"
 echo ""
 
 build_release

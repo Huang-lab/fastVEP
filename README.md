@@ -38,6 +38,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
 
+Building also needs a C compiler, since the `zstd` and `mimalloc` crates compile C: the command line tools of Xcode on macOS (`xcode-select --install`), `build-essential` on Debian and Ubuntu.
+
 ### 2. Build and install fastVEP
 
 ```bash
@@ -552,7 +554,7 @@ for the parsing rules and the escaping table.
 | `--clin-sig-allele` | `1`: `CLIN_SIG` is what a known variant says about the input allele, where it says it; `0`: what it says about the variant. VEP's `--clin_sig_allele` | `1` |
 | `--everything` | Turn on `--hgvs --symbol --numbers --canonical --biotype --variant-class`: VEP's `--everything`, restricted to the columns fastVEP writes (not `--hgvsg` or `--show-ref-allele`, which VEP's does not include either). With `--cache-dir` it also turns on `--af --af-1kg --af-gnomade --af-gnomadg --max-af --pubmed`, as VEP's does | off |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
-| `--buffer-size` | Variants buffered per parallel batch | `5000` |
+| `--buffer-size` | Accepted for VEP compatibility and ignored: records are annotated in batches of 1,024 | ignored |
 | `--sa-dir` | Directory containing `.osa` / `.osa2` / `.osi` / `.oga` supplementary annotations | -- |
 | `--sa-only` | Skip the default CSQ annotation and emit only supplementary annotations from `--sa-dir` (requires `--sa-dir`) | off |
 | `--cache-dir` | VEP's tabix variation cache, for `Existing_variation`: a directory of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index (what `convert_cache.pl` and the indexed-cache download provide). Only known variants come from it: gene models come from `--gff3`, and VEP's `{start}-{end}.gz` transcript slices are never read. Naming a cache is VEP's `--check_existing`: `Existing_variation`, `CLIN_SIG`, `SOMATIC` and `PHENO`; the frequencies and the PubMed ids need `--af*`, `--max-af` and `--pubmed`, as in VEP. Matching follows VEP's (anchored and minimal indels match, as in `--check_existing`). A directory with no variation file, or a file with no index, stops the run. Contigs are matched through a `chr_synonyms.txt` in the directory and the `chr`/`MT` naming rules | -- |
@@ -627,6 +629,13 @@ IMPACT is HIGH and AF < 0.01
 Pre-builds a binary transcript cache for fast startup. Accepts the same
 multi-`--gff3` / `LABEL=path` syntax as `annotate`, so a merged Ensembl
 + RefSeq cache can be built once and reused via `--transcript-cache`.
+
+The cache is a sequence of zstd frames of about 8 MB, each with a checksum, and a table of them at
+the end. A run with more than two threads decodes the frames side by side; a cache of one frame,
+which earlier builds wrote and which has no table, is read as a stream, as is every cache by a run
+of one or two threads (which does not look at the table). A cache that fails a checksum, that does
+not end where its list does, or whose table does not describe it, is rebuilt from the GFF3 when it
+is the auto-managed sidecar, and stops the run when it is named with `--transcript-cache`.
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -705,7 +714,8 @@ fastVEP predicts 49 consequence types organized by impact:
 crates/
   fastvep-core/         # Core types: Consequence (49 SO terms), VariantType, Allele, Impact
   fastvep-genome/       # Transcript, Exon, Gene, CodonTable, mitochondrial codon table
-  fastvep-cache/        # GFF3 parser, FASTA reader, annotation providers, regulatory regions
+  fastvep-cache/        # GFF3 parser, FASTA reader, annotation providers, regulatory regions,
+                       #   the binary transcript cache (zstd frames, decoded side by side)
   fastvep-consequence/  # Consequence prediction: small variants + SV predictor
   fastvep-hgvs/         # HGVS nomenclature generation (c., p., g.)
   fastvep-io/           # VCF parser (incl. SVs), output formatters, multi-sample parsing
@@ -725,13 +735,13 @@ crates/
                        # PrimateAI, dbNSFP, plus user-supplied custom_vcf / custom_bed.
   fastvep-annotate/     # Shared annotation pipeline (used by CLI batch and web server):
                        #   variant overlap, consequence prediction, HGVS, SA/gene SA
-                       #   provider loading
+                       #   provider loading, and the pick (the --pick criteria)
   fastvep-classification/ # ACMG-AMP variant classification engine (Richards 2015 +
                        #   ClinGen SVI). 28 criteria, trio/compound-het support,
                        #   configurable thresholds via TOML
-  fastvep-cli/          # CLI binary. `src/pipeline/` holds one module per
-                       #   subcommand: annotate, cache_build, sa_build, filter,
-                       #   custom, plus pick (the --pick criteria)
+  fastvep-cli/          # CLI binary (mimalloc is its allocator). `src/pipeline/`
+                       #   holds one module per subcommand: annotate, cache_build,
+                       #   sa_build, filter, custom
   fastvep-web/          # Production web server (axum/tokio): async, multi-connection,
                        #   genome switching, SA integration, rate limiting
 web/                   # Web GUI (HTML/CSS/JS, embedded in both server binaries)
@@ -749,46 +759,61 @@ cargo test -p fastvep-sa           # Supplementary annotation format tests
 
 ## Performance Benchmarks
 
-Benchmarked on Apple M-series (ARM64), release build with LTO. Median of 3 runs, full Ensembl annotations with FASTA and HGVS.
+fastVEP's numbers below were measured on 2026-11-06 on an Apple M4 (10 cores, ARM64, macOS), with the release build (LTO) of this repository at the commit that carries the performance changes of #166.
+Each is the median of 3 runs, with the full Ensembl annotations, the FASTA and HGVS.
+The Ensembl VEP times were measured on 2026-07-29 on the same machine and were not run again, so each speedup is the VEP time of that day over the fastVEP time of this one.
 
 ### Multi-Organism Throughput (Gold-Standard Datasets)
 
+Default threads, `--hgvs`, the output written to a file, the binary transcript cache already built.
+
 | Organism | Transcripts | Variants | Source | Time | Throughput |
 |----------|-------------|----------|--------|------|------------|
-| Yeast (R64, full genome) | 7,036 | 260,526 | Ensembl/SGD | 3.0s | **85,934 v/s** |
-| Drosophila (BDGP6, full) | 35,442 | 4,438,427 | DGRP2 | 57.3s | **77,486 v/s** |
-| Arabidopsis (TAIR10, full) | 54,013 | 12,883,854 | 1001 Genomes | 168.7s | **76,378 v/s** |
-| Mouse (GRCm39, full genome) | 142,626 | 26,062,054 | MGP CAST/EiJ | 338.0s | **77,113 v/s** |
-| Human full WGS (GRCh38) | 508,530 | 4,048,342 | GIAB HG002 | 86.3s | **46,917 v/s** |
+| Yeast (R64, full genome) | 7,036 | 260,526 | Ensembl/SGD | 0.5s | **485,965 v/s** |
+| Drosophila (BDGP6, full) | 35,442 | 4,438,427 | DGRP2 | 9.8s | **450,698 v/s** |
+| Arabidopsis (TAIR10, full) | 54,013 | 12,883,854 | 1001 Genomes | 28.3s | **455,192 v/s** |
+| Mouse (GRCm39, full genome) | 142,626 | 26,062,054 | MGP CAST/EiJ | 73.9s | **352,771 v/s** |
+| Human full WGS (GRCh38) | 508,530 | 4,048,342 | GIAB HG002 | 16.3s | **248,829 v/s** |
 
 ### vs. Ensembl VEP v115.1 (head-to-head, single-thread, GIAB HG002)
 
-Both tools single-threaded on identical GRCh38 Ensembl 115 GFF3 + FASTA with `--hgvs --symbol --canonical`. fastVEP uses its binary transcript cache; Ensembl VEP runs via Docker (`ensemblorg/ensembl-vep:release_115.1`) in `--gff` mode against a bgzip+tabix-indexed GFF3. VEP's full-genome time is measured per chromosome and summed — a single-process whole-genome run OOMs above ~2.7M variants at the 7.65 GiB Docker default, and the per-chromosome sum keeps VEP's memory bounded (its best case).
+Both tools single-threaded on identical GRCh38 Ensembl 115 GFF3 + FASTA with `--hgvs --symbol --canonical`.
+fastVEP uses its binary transcript cache; Ensembl VEP runs via Docker (`ensemblorg/ensembl-vep:release_115.1`) in `--gff` mode against a bgzip+tabix-indexed GFF3.
+VEP's full-genome time is measured per chromosome and summed: a single-process whole-genome run OOMs above ~2.7M variants at the 7.65 GiB Docker default, and the per-chromosome sum keeps VEP's memory bounded (its best case).
 
 **Full human WGS (4,048,342 variants), single-thread:**
 
 | Annotation | fastVEP | Ensembl VEP | Speedup |
 |-----------|---------|-------------|---------|
-| Consequence only | 197.8s | 4,621s (~77 min) | **23.4×** |
-| + ClinVar | 197.4s | 4,803s | **24.3×** |
-| + gnomAD + ClinVar | 218.5s | 4,905s | **22.4×** |
+| Consequence only | 44.7s | 4,621s (~77 min) | **103×** |
+| + ClinVar | 45.9s | 4,803s | **105×** |
+| + gnomAD + ClinVar | 54.1s | 4,905s | **91×** |
 
-With fastVEP's default multi-threading (10 cores), the same full WGS completes in **93s** (consequence-only) to **104.5s** (+gnomAD+ClinVar) on this system.
+With fastVEP's default multi-threading (10 cores), the same full WGS completes in **13.1s** (consequence-only) to **18.2s** (+gnomAD+ClinVar) on this system.
+A whole-genome run on all cores writes 10.6 GB and varies from run to run, between 13s and 18s in the runs behind this section (the multi-organism table above has 16.3s for the same genome with `--hgvs` alone).
 
-**chr22 scaling, single-thread** — fastVEP carries a fixed ~2.7s binary-cache load, so VEP (which tabix-fetches only overlapping GFF regions) is faster below ~1–2K variants; beyond that fastVEP's per-variant throughput dominates:
+**chr22 scaling, single-thread** — fastVEP reads its binary transcript cache of 509,650 transcripts on every run: a run of 200 variants takes about 0.9s on one thread and 0.4s on eight, nearly all of it reading the cache.
+VEP (which tabix-fetches only overlapping GFF regions) is therefore faster at 1,000 variants, and fastVEP from a few thousand on:
 
 | Variants | fastVEP | VEP | Speedup |
 |----------|---------|-----|---------|
-| 1,000 | 2.68s | 0.45s | 0.17× (VEP faster) |
-| 5,000 | 2.86s | 6.29s | 2.2× |
-| 10,000 | 3.25s | 13.41s | 4.1× |
-| 50,284 | 5.09s | 93.95s | **18.5×** |
+| 1,000 | 0.95s | 0.45s | 0.5× (VEP faster) |
+| 5,000 | 1.01s | 6.29s | 6.2× |
+| 10,000 | 1.12s | 13.41s | 12× |
+| 50,284 | 1.65s | 93.95s | **57×** |
 
 | Resource | Ensembl VEP | fastVEP |
 |----------|-------------|---------|
-| Peak memory (100K variants) | ~500 MB | **2.8 MB** |
-| Binary / install size | ~200 MB installed | **3.3 MB** |
-| Dependencies | Perl 5.22+, DBI, 10+ CPAN modules | **None** |
+| Peak memory (100K variants) | ~500 MB | **2.7 GB** (the whole gene model, with its sequences, is in memory) |
+| Binary / install size | ~200 MB installed | **5.8 MB** |
+| Dependencies | Perl 5.22+, DBI, 10+ CPAN modules | **None** at run time (a C compiler to build) |
+
+### Threads and memory
+
+fastVEP uses every core unless `RAYON_NUM_THREADS=N` says otherwise.
+The peak memory of a run is the gene model and not the VCF or the threads: 2,700 MB on one thread and 2,697 MB on eight for 100,000 variants against the human Ensembl GFF3 with sequences (macOS), and 1,171 MB and 1,194 MB with a cache built without a FASTA, which has no sequences (consequence only, no `--hgvs`).
+On Linux (arm64, glibc 2.39, in a container) a run of 200 variants peaks at 2,648 MB on 4 threads and 2,677 MB on 64, where the build before #166 peaked at 2,520 MB on either: the peak does not grow with the threads, and the `fastvep` binary's allocator (mimalloc) holds 4 to 9% more of it than glibc's does, and nothing more on macOS.
+Under an address-space limit (`ulimit -v`, the `h_vmem` of some schedulers) a run of 100,000 variants on 8 threads needs about 1.2 GiB more than before: it ran down to a limit between 7,000 and 7,200 MiB, against 5,800 to 6,000 MiB, and below that it stops with `Cannot allocate memory`.
 
 ### Supplementary annotation format (fastSA v2)
 
