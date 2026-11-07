@@ -98,7 +98,31 @@ impl AnnotationContext {
                     Path::new(gff3_path),
                 );
                 if is_fresh {
-                    fastvep_cache::transcript_cache::load_cache(&cache_path).ok()
+                    match fastvep_cache::transcript_cache::load_cache(&cache_path) {
+                        Ok(transcripts) => Some(transcripts),
+                        // Said the way the CLI says it (`load_transcript_models`): a cache of a
+                        // stale format is what an upgrade leaves, and takes a line, with the
+                        // evidence for it at debug level; any other reason, a failed checksum or
+                        // a cut file, is a warning with the whole chain. Either way the cache is
+                        // rebuilt from the GFF3 below, and written again.
+                        Err(e) => {
+                            match e.downcast_ref::<fastvep_cache::transcript_cache::StaleCacheFormat>() {
+                                Some(stale) => {
+                                    tracing::info!(
+                                        "The transcript cache {} {}; reading {gff3_path} instead",
+                                        cache_path.display(),
+                                        stale.summary()
+                                    );
+                                    tracing::debug!("{}", stale.detail);
+                                }
+                                None => tracing::warn!(
+                                    "Ignoring the transcript cache {}: {e:#}; reading {gff3_path} instead",
+                                    cache_path.display()
+                                ),
+                            }
+                            None
+                        }
+                    }
                 } else {
                     None
                 }
@@ -2043,6 +2067,55 @@ mod tests {
     /// and produces well-formed output.
     fn empty_context() -> AnnotationContext {
         AnnotationContext::new(None, None, None, 0).expect("empty context should build")
+    }
+
+    /// A context built from a sidecar that fails its checksum is built from the GFF3 instead, and
+    /// the sidecar is written again. The library has no run to stop, and what it was given to read
+    /// is the GFF3.
+    #[test]
+    fn a_sidecar_that_fails_its_checksum_is_rebuilt_from_the_gff3() {
+        let dir = tempfile::tempdir().unwrap();
+        let gff3 = dir.path().join("ann.gff3");
+        std::fs::write(
+            &gff3,
+            "1\ttest\tgene\t1001\t1012\t.\t+\t.\tID=gene:ENSG_A;biotype=protein_coding\n\
+             1\ttest\tmRNA\t1001\t1012\t.\t+\t.\tID=transcript:ENST_A;Parent=gene:ENSG_A;biotype=protein_coding\n\
+             1\ttest\texon\t1001\t1012\t.\t+\t.\tID=exon:ENSE_A;Parent=transcript:ENST_A;rank=1\n",
+        )
+        .unwrap();
+        let sidecar = fastvep_cache::transcript_cache::default_cache_path(&gff3);
+        let vcf = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                   1\t1005\t.\tA\tG\t.\tPASS\t.\n";
+        let annotate = || {
+            AnnotationContext::new(Some(gff3.to_str().unwrap()), None, None, 0)
+                .expect("the context should build")
+                .annotate_vcf_text(vcf, None)
+                .unwrap()
+        };
+
+        let first = annotate();
+        let mut damaged = std::fs::read(&sidecar).expect("the first context writes the sidecar");
+        *damaged.last_mut().unwrap() ^= 0xFF;
+        std::fs::write(&sidecar, &damaged).unwrap();
+        // newer than the GFF3, so that it is the cache that is tried
+        std::fs::File::options()
+            .write(true)
+            .open(&sidecar)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+                ),
+            )
+            .unwrap();
+
+        assert_eq!(annotate(), first, "the answer is the one the GFF3 gives");
+        assert_ne!(
+            std::fs::read(&sidecar).unwrap(),
+            damaged,
+            "the sidecar was written again"
+        );
+        assert!(fastvep_cache::transcript_cache::load_cache(&sidecar).is_ok());
     }
 
     #[test]

@@ -415,7 +415,7 @@ pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
 /// empty SYMBOL, because the parser never runs again. A V3 cache is whole-file
 /// and loads cleanly; it just has no name for any `ncRNA_gene` locus, which is
 /// indistinguishable from a genuinely unnamed gene.
-fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
+fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>> {
     let mut zst = zstd::Decoder::new(reader)?;
 
     use std::io::Read;
@@ -490,9 +490,216 @@ fn load_cache_zstd<R: std::io::Read>(reader: R) -> Result<Vec<Transcript>> {
         anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP10)");
     }
 
-    let transcripts: Vec<Transcript> = bincode::deserialize_from(&mut zst)
-        .with_context(|| "Deserializing transcripts from cache")?;
+    deserialize_decoded(zst).with_context(|| "Deserializing transcripts from cache")
+}
+
+/// How much of the decompressed stream goes from the thread that decodes it to the thread that
+/// deserializes it in one piece, and how many pieces the decoder may be ahead by.
+const DECODE_CHUNK: usize = 1 << 20;
+const DECODE_AHEAD: usize = 4;
+
+/// Deserialize the rest of a cache whose header has been read, decompressing it on a thread of its own.
+///
+/// A cache of the 500,000 transcripts of Ensembl's GFF3 is a second or two of one thread, about half of
+/// it zstd and half of it `bincode` building the transcripts, and the two were one after the other
+/// in the thread that wanted the answer: `bincode::deserialize_from` reads a field at a time
+/// and each read went into the decoder. The decoder now runs ahead of it, in pieces of a megabyte, and
+/// the wait for the cache is the longer of the two and not the sum. Nothing on disk changed, so
+/// every cache already written reads this way too.
+///
+/// The stream is then read to its end, and has to end where the list does. The end is where the
+/// decoder checks the checksum `save_cache` records in the frame "so a cache corrupted in place
+/// fails loudly at load instead of deserializing into something subtly wrong", and a decoder that
+/// is not asked for another byte does not reliably get there: the deserializer stops at the last
+/// byte of the last transcript. With the checksum flipped, or a byte in the middle of the cache, or
+/// bytes after the frame, the loader of v0.4.0 read caches of several sizes as the transcripts they
+/// had become. What follows the list is not nothing either: two caches joined into one file by `cat`
+/// loaded as the first alone, with nothing to say that the transcripts of the second had been
+/// left out.
+fn deserialize_decoded<R: std::io::Read + Send>(decoder: R) -> Result<Vec<Transcript>> {
+    deserialize_decoded_with(decoder, || Ok(()))
+}
+
+/// [`deserialize_decoded`] with a request for the decoder's thread that comes before the thread is
+/// spawned, and that a test makes fail: a host that has reached its limit on threads, as a
+/// container with a low limit on its processes has, refuses the spawn and the load has to be made
+/// all the same. A stack that no system can give is not a refusal that every system returns: where
+/// a kernel answers an error, Rosetta (x86_64 images on Apple silicon) aborts the process with
+/// "could not find free space for allocation" for a stack of 1 << 50 bytes, and the test that asked
+/// for one ended the run of every test after it.
+fn deserialize_decoded_with<R: std::io::Read + Send>(
+    decoder: R,
+    ask_for_a_thread: impl FnOnce() -> std::io::Result<()>,
+) -> Result<Vec<Transcript>> {
+    use std::sync::mpsc;
+    let (pieces, decoded) = mpsc::sync_channel(DECODE_AHEAD);
+    let (spare_sender, spare) = mpsc::channel();
+    // The decoder waits here until a thread has it. A closure that held it would take it where it
+    // goes when the thread cannot be spawned, which is nowhere: a refused request, like
+    // `spawn_scoped` when it fails, drops the closure it is given.
+    let waiting = std::sync::Mutex::new(Some(decoder));
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().name("cache-decode".into());
+        let waiting = &waiting;
+        let spawned = ask_for_a_thread().and_then(|()| {
+            thread.spawn_scoped(scope, move || {
+                let decoder = waiting
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take()
+                    .expect("the decoder is taken once, by the thread that decodes");
+                decode_ahead(decoder, pieces, spare)
+            })
+        });
+        match spawned {
+            Ok(_) => deserialize_to_the_end(Decoded {
+                pieces: decoded,
+                spare: spare_sender,
+                piece: Piece {
+                    bytes: Vec::new(),
+                    filled: 0,
+                },
+                at: 0,
+            }),
+            // No thread to be had: read it all in this one, as it was done before.
+            Err(_) => {
+                let decoder = waiting
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take()
+                    .expect("a decoder that no thread took");
+                deserialize_to_the_end(BufReader::with_capacity(DECODE_CHUNK, decoder))
+            }
+        }
+    })
+}
+
+/// The most that `bincode` is allowed to take for one transcript, or for the length of the list: a
+/// transcript of a human gene is a few hundred kilobytes with its sequences.
+const LARGEST_VALUE: u64 = 64 << 20;
+
+/// `bincode` as `save_cache` writes it, with a limit on the bytes that one call may read.
+///
+/// What a loader reads is not known to be what was written until the decoder has checked the
+/// checksum, at the end of the frame, and `bincode` takes the length of a string or of a list from
+/// what it reads and allocates it. A byte that is damaged inside the compressed data can decode to a
+/// length of a terabyte, and with no limit that is an allocation no machine can give: the process
+/// aborts, with no word on which cache it was and no rebuild from the GFF3. With the limit, which is
+/// far above the largest transcript and far below what a corrupt length asks for, the call fails and
+/// the cache is refused like any other that is damaged. It is a limit on one call, so it is one
+/// transcript at a time and not the list, which is hundreds of megabytes.
+fn bounded() -> impl bincode::Options {
+    use bincode::Options;
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .with_limit(LARGEST_VALUE)
+}
+
+/// The transcripts of `stream`, and then the rest of it, which is nothing for a cache that
+/// `save_cache` wrote. Reading it is where a decoder finds a bad checksum.
+///
+/// The list is read as `save_cache` wrote it, its length and then the transcripts one after
+/// another, each with a limit of its own.
+fn deserialize_to_the_end(mut stream: impl std::io::Read) -> Result<Vec<Transcript>> {
+    use bincode::Options;
+    let count: u64 = bounded().deserialize_from(&mut stream)?;
+    // not `with_capacity(count)`: the count is not known to be what was written either
+    let mut transcripts = Vec::new();
+    for _ in 0..count {
+        transcripts.push(bounded().deserialize_from::<_, Transcript>(&mut stream)?);
+    }
+    let after = std::io::copy(&mut stream, &mut std::io::sink())
+        .with_context(|| "Reading the rest of the cache after its transcripts")?;
+    anyhow::ensure!(
+        after == 0,
+        "the cache holds {after} bytes after its {} transcripts, which `save_cache` does not write \
+         (two caches joined into one file?)",
+        transcripts.len()
+    );
     Ok(transcripts)
+}
+
+/// A piece of the decompressed stream: `bytes[..filled]` is what the decoder put in it.
+struct Piece {
+    bytes: Vec<u8>,
+    filled: usize,
+}
+
+/// Read `decoder` to its end, a piece at a time, into `pieces`; an error it meets is the last piece.
+///
+/// The pieces go round: what the deserializer is done with comes back through `spare` to be filled
+/// again, so that a cache of a gigabyte or two goes through half a dozen buffers and not through a
+/// thousand, each a fresh megabyte that the allocator has to find and the kernel to page in.
+fn decode_ahead<R: std::io::Read>(
+    mut decoder: R,
+    pieces: std::sync::mpsc::SyncSender<std::io::Result<Piece>>,
+    spare: std::sync::mpsc::Receiver<Vec<u8>>,
+) {
+    loop {
+        let mut bytes = spare.try_recv().unwrap_or_else(|_| vec![0u8; DECODE_CHUNK]);
+        let mut filled = 0;
+        while filled < bytes.len() {
+            match decoder.read(&mut bytes[filled..]) {
+                // the end of the stream
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => {
+                    // what was read before the error is delivered before it, as a stream does
+                    if filled > 0 && pieces.send(Ok(Piece { bytes, filled })).is_err() {
+                        return;
+                    }
+                    let _ = pieces.send(Err(e));
+                    return;
+                }
+            }
+        }
+        let last = filled < bytes.len();
+        if filled > 0 && pieces.send(Ok(Piece { bytes, filled })).is_err() {
+            // the deserializer has what it wanted, or has failed
+            return;
+        }
+        if last {
+            return;
+        }
+    }
+}
+
+/// The decompressed stream, as the pieces the decoder's thread sent.
+struct Decoded {
+    pieces: std::sync::mpsc::Receiver<std::io::Result<Piece>>,
+    /// Where a piece that has been read goes, to be filled again.
+    spare: std::sync::mpsc::Sender<Vec<u8>>,
+    piece: Piece,
+    at: usize,
+}
+
+impl std::io::Read for Decoded {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if out.is_empty() {
+            return Ok(0);
+        }
+        while self.at == self.piece.filled {
+            match self.pieces.recv() {
+                Ok(Ok(piece)) => {
+                    let done = std::mem::replace(&mut self.piece, piece);
+                    self.at = 0;
+                    // not to the decoder if it has gone
+                    if !done.bytes.is_empty() {
+                        let _ = self.spare.send(done.bytes);
+                    }
+                }
+                Ok(Err(e)) => return Err(e),
+                // the thread has sent the whole stream and gone
+                Err(_) => return Ok(0),
+            }
+        }
+        let n = out.len().min(self.piece.filled - self.at);
+        out[..n].copy_from_slice(&self.piece.bytes[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
 }
 
 /// Legacy gzip caches are recognised and rejected.
@@ -687,6 +894,396 @@ mod tests {
         // everything.
         std::fs::write(&path, &full).unwrap();
         assert_eq!(load_cache(&path).unwrap().len(), transcripts.len());
+    }
+
+    #[test]
+    fn a_cache_of_several_pieces_loads_whole_and_in_order() {
+        // 1,200 transcripts of 4 KB that do not compress: the decoder's thread sends several pieces,
+        // and a field of a transcript now and then lies across the end of one
+        let transcripts = bulky_transcripts(1_200);
+        let decompressed: usize = transcripts
+            .iter()
+            .map(|t| t.spliced_seq.as_ref().map_or(0, |seq| seq.len()))
+            .sum();
+        assert!(
+            decompressed > 3 * DECODE_CHUNK,
+            "the cache is meant to be several pieces long"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_cache(&transcripts, &path).unwrap();
+
+        let loaded = load_cache(&path).unwrap();
+        assert_eq!(loaded.len(), transcripts.len());
+        for (read, written) in loaded.iter().zip(&transcripts) {
+            assert_eq!(read.stable_id, written.stable_id);
+            assert_eq!(read.spliced_seq, written.spliced_seq);
+        }
+    }
+
+    /// What `load_cache` says of a cache that `change` has made of the one `save_cache` wrote, as
+    /// the whole chain of its message.
+    fn what_a_changed_cache_says(
+        transcripts: &[Transcript],
+        change: impl FnOnce(&mut Vec<u8>),
+    ) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_cache(transcripts, &path).unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        change(&mut bytes);
+        std::fs::write(&path, &bytes).unwrap();
+        match load_cache(&path) {
+            Ok(loaded) => panic!("the changed cache loaded, as {} transcripts", loaded.len()),
+            Err(e) => format!("{e:#}"),
+        }
+    }
+
+    #[test]
+    fn a_cache_with_a_flipped_checksum_is_rejected_for_its_checksum() {
+        // `save_cache` records a checksum for the frame so that a cache corrupted in place fails
+        // loudly. Reading the stream to its end is what reads it.
+        let said = what_a_changed_cache_says(&bulky_transcripts(64), |bytes| {
+            let last = bytes.len() - 1;
+            bytes[last] ^= 0xFF;
+        });
+        assert!(said.contains("checksum"), "{said}");
+    }
+
+    #[test]
+    fn a_cache_with_bytes_after_its_frame_is_rejected() {
+        // not the file `save_cache` wrote, whatever else about it reads
+        let said = what_a_changed_cache_says(&bulky_transcripts(8), |bytes| {
+            bytes.extend_from_slice(b"not a zstd frame");
+        });
+        assert!(
+            said.contains("Reading the rest of the cache after its transcripts"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn two_caches_joined_into_one_file_are_not_read_as_the_first_alone() {
+        // What `cat a.cache b.cache` makes. The decoder reads on from the first frame into the
+        // second, the deserializer stops at the end of the first list, and v0.4.0 loaded the
+        // first and said nothing of the second.
+        let transcripts = bulky_transcripts(8);
+        let said = what_a_changed_cache_says(&transcripts, |bytes| {
+            let again = bytes.clone();
+            bytes.extend_from_slice(&again);
+        });
+        assert!(
+            said.contains("bytes after its 8 transcripts"),
+            "the message names what is wrong with it: {said}"
+        );
+    }
+
+    #[test]
+    fn a_byte_flipped_in_the_middle_of_a_cache_is_rejected() {
+        // v0.4.0 loaded this as the transcripts it had become
+        what_a_changed_cache_says(&bulky_transcripts(64), |bytes| {
+            let middle = bytes.len() / 2;
+            bytes[middle] ^= 0xFF;
+        });
+    }
+
+    /// Reads from `inner`, and remembers the threads that read it and the buffers it was asked to
+    /// fill whole.
+    struct Spy {
+        inner: std::io::Cursor<Vec<u8>>,
+        threads: Arc<std::sync::Mutex<Vec<std::thread::ThreadId>>>,
+        buffers: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+
+    impl Spy {
+        #[allow(clippy::type_complexity)] // the three things a test reads back, named where they are made
+        fn over(
+            bytes: Vec<u8>,
+        ) -> (
+            Self,
+            Arc<std::sync::Mutex<Vec<std::thread::ThreadId>>>,
+            Arc<std::sync::Mutex<Vec<usize>>>,
+        ) {
+            let threads = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let buffers = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let spy = Self {
+                inner: std::io::Cursor::new(bytes),
+                threads: threads.clone(),
+                buffers: buffers.clone(),
+            };
+            (spy, threads, buffers)
+        }
+    }
+
+    impl std::io::Read for Spy {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            self.threads
+                .lock()
+                .unwrap()
+                .push(std::thread::current().id());
+            if out.len() == DECODE_CHUNK {
+                self.buffers.lock().unwrap().push(out.as_ptr() as usize);
+            }
+            self.inner.read(out)
+        }
+    }
+
+    /// Runs `f`, which has to answer in `seconds`: a test of something that would hang if it were
+    /// wrong fails, and does not stop the run.
+    fn within<T: Send + 'static>(seconds: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (answer, answered) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = answer.send(f());
+        });
+        match answered.recv_timeout(std::time::Duration::from_secs(seconds)) {
+            Ok(value) => value,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("no answer in {seconds} seconds: it is waiting for something that will not come")
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("the thread that was to answer panicked")
+            }
+        }
+    }
+
+    #[test]
+    fn the_decoder_is_read_on_a_thread_of_its_own() {
+        // What makes the load faster is that the decompression and the deserialization overlap,
+        // and nothing else of a test would notice if they did not: the answers are the same. So
+        // this holds the property itself, that the decoder is read by a thread other than the one
+        // that asked for the transcripts.
+        let transcripts = bulky_transcripts(600);
+        let stream = bincode::serialize(&transcripts).unwrap();
+        assert!(stream.len() > 2 * DECODE_CHUNK, "several pieces long");
+        let (spy, threads, _) = Spy::over(stream);
+        let loaded = deserialize_decoded(spy).unwrap();
+        assert_eq!(loaded.len(), transcripts.len());
+        let threads = threads.lock().unwrap();
+        assert!(threads.len() >= 3, "{} reads", threads.len());
+        let this = std::thread::current().id();
+        assert!(
+            threads.iter().all(|t| *t != this),
+            "the decoder was read by the thread that deserializes"
+        );
+    }
+
+    #[test]
+    fn the_pieces_go_round_through_a_few_buffers() {
+        // 64 pieces and the buffers they went through: the deserializer returns each when it is
+        // done with it, and the decoder fills it again
+        let transcripts = bulky_transcripts(16_000);
+        let stream = bincode::serialize(&transcripts).unwrap();
+        let pieces = stream.len().div_ceil(DECODE_CHUNK);
+        assert!(pieces >= 50, "{pieces} pieces");
+        let (spy, _, buffers) = Spy::over(stream);
+        let loaded = deserialize_decoded(spy).unwrap();
+        assert_eq!(loaded.len(), transcripts.len());
+        let mut distinct = buffers.lock().unwrap().clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert!(
+            distinct.len() <= DECODE_AHEAD + 3,
+            "{} buffers for {pieces} pieces",
+            distinct.len()
+        );
+    }
+
+    #[test]
+    fn a_load_that_cannot_have_a_thread_decodes_on_the_calling_one() {
+        // The host refuses the decoder's thread. The load decodes in the thread that asked for it,
+        // as it did before there was a thread, and the answer is the same. The decoder is not in
+        // what the refused request drops, or there would be nothing to decode.
+        let transcripts = bulky_transcripts(40);
+        let stream = bincode::serialize(&transcripts).unwrap();
+        let (spy, threads, _) = Spy::over(stream);
+        let loaded = deserialize_decoded_with(spy, || {
+            Err(std::io::Error::from(std::io::ErrorKind::WouldBlock))
+        })
+        .unwrap();
+        assert_eq!(loaded.len(), transcripts.len());
+        for (read, written) in loaded.iter().zip(&transcripts) {
+            assert_eq!(read.stable_id, written.stable_id);
+            assert_eq!(read.spliced_seq, written.spliced_seq);
+        }
+        let threads = threads.lock().unwrap();
+        assert!(!threads.is_empty());
+        let this = std::thread::current().id();
+        assert!(
+            threads.iter().all(|t| *t == this),
+            "no thread was to be had, and the decoder was read by one"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_is_a_whole_number_of_pieces_long_loads() {
+        // One more piece would be empty: the decoder's thread has to see the end of the stream
+        // in the read that returns nothing, and not wait for a piece that is not coming
+        let mut transcripts = bulky_transcripts(300);
+        let size = bincode::serialized_size(&transcripts).unwrap() as usize;
+        let pad = DECODE_CHUNK - size % DECODE_CHUNK;
+        transcripts
+            .last_mut()
+            .unwrap()
+            .spliced_seq
+            .as_mut()
+            .unwrap()
+            .push_str(&"A".repeat(pad));
+        let stream = bincode::serialize(&transcripts).unwrap();
+        assert_eq!(stream.len() % DECODE_CHUNK, 0);
+        let loaded = within(60, move || {
+            deserialize_decoded(std::io::Cursor::new(stream))
+        })
+        .unwrap();
+        assert_eq!(loaded.len(), 300);
+    }
+
+    /// Fails with `Interrupted` before every other read, as a read does when a signal arrives.
+    struct Interrupted {
+        inner: std::io::Cursor<Vec<u8>>,
+        calls: usize,
+    }
+
+    impl std::io::Read for Interrupted {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            self.calls += 1;
+            if self.calls % 2 == 1 {
+                return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+            }
+            // and short reads, which a decoder gives
+            let n = out.len().min(100_000);
+            self.inner.read(&mut out[..n])
+        }
+    }
+
+    #[test]
+    fn an_interrupted_read_of_the_decoder_is_read_again() {
+        let transcripts = bulky_transcripts(300);
+        let stream = bincode::serialize(&transcripts).unwrap();
+        let reader = Interrupted {
+            inner: std::io::Cursor::new(stream),
+            calls: 0,
+        };
+        let loaded = deserialize_decoded(reader).unwrap();
+        assert_eq!(loaded.len(), transcripts.len());
+        assert_eq!(loaded[299].spliced_seq, transcripts[299].spliced_seq);
+    }
+
+    /// Reads `good` and then fails, as a decoder does on a corrupt stream.
+    struct FailsAfter {
+        good: usize,
+    }
+
+    impl std::io::Read for FailsAfter {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if self.good == 0 {
+                return Err(std::io::Error::other("corrupt on purpose"));
+            }
+            let n = out.len().min(self.good);
+            out[..n].fill(0);
+            self.good -= n;
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn an_error_of_the_decoder_reaches_the_deserializer_after_the_bytes_before_it() {
+        use std::io::Read;
+        let (pieces, decoded) = std::sync::mpsc::sync_channel(DECODE_AHEAD);
+        let (spare_sender, spare) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            decode_ahead(
+                FailsAfter {
+                    good: 3 * DECODE_CHUNK + 5,
+                },
+                pieces,
+                spare,
+            )
+        });
+        let mut reader = Decoded {
+            pieces: decoded,
+            spare: spare_sender,
+            piece: Piece {
+                bytes: Vec::new(),
+                filled: 0,
+            },
+            at: 0,
+        };
+        let mut got = Vec::new();
+        let error = reader.read_to_end(&mut got).unwrap_err();
+        thread.join().unwrap();
+        assert_eq!(
+            got.len(),
+            3 * DECODE_CHUNK + 5,
+            "every byte before the error is delivered"
+        );
+        assert_eq!(error.to_string(), "corrupt on purpose");
+    }
+
+    #[test]
+    fn a_stream_longer_than_its_list_is_read_over_and_is_an_error() {
+        // An empty list, and then 32 MiB of zeros that decode cleanly: the decoder's thread is
+        // blocked on a full channel when the list is done, and is read to the end all the same,
+        // for what it finds there
+        use std::io::Read;
+        let stream = std::io::Cursor::new(0u64.to_le_bytes().to_vec())
+            .chain(std::io::repeat(0).take(32 << 20));
+        let said = within(60, move || deserialize_decoded(stream)).unwrap_err();
+        assert!(
+            format!("{said:#}").contains("33554432 bytes after its 0 transcripts"),
+            "{said:#}"
+        );
+    }
+
+    #[test]
+    fn a_length_that_is_not_one_is_an_error_and_not_an_allocation() {
+        // The decoder checks the checksum of a frame at its end, after the deserializer has taken
+        // what the frame says, and a damaged byte inside the compressed data can decode to a length
+        // of a gigabyte or an exabyte. The length of the id of the first transcript is made 1 GiB
+        // here: with no limit that is allocated (and filled with zeros) before the missing bytes
+        // are found, and an exabyte would not be an error at all but an abort.
+        let mut stream = bincode::serialize(&bulky_transcripts(4)).unwrap();
+        stream[8..16].copy_from_slice(&(1u64 << 30).to_le_bytes());
+        let said = within(60, move || {
+            deserialize_decoded(std::io::Cursor::new(stream))
+        })
+        .unwrap_err();
+        assert!(format!("{said:#}").contains("size limit"), "{said:#}");
+    }
+
+    #[test]
+    fn a_deserializer_that_fails_does_not_wait_for_a_decoder_that_has_no_end() {
+        use std::io::Read;
+        // A list of one transcript whose first field is a one-byte string that is not UTF-8,
+        // and after it a stream with no end: the deserializer fails on the first byte of the
+        // string, and the thread, blocked on a full channel, has to be let go for this to return
+        // at all.
+        let mut prefix = Vec::new();
+        prefix.extend_from_slice(&1u64.to_le_bytes());
+        prefix.extend_from_slice(&1u64.to_le_bytes());
+        prefix.push(0xFF);
+        let stream = std::io::Cursor::new(prefix).chain(std::io::repeat(0));
+        assert!(within(60, move || deserialize_decoded(stream)).is_err());
+    }
+
+    /// Panics at its first read.
+    struct Panics;
+
+    impl std::io::Read for Panics {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("the decoder panicked on purpose")
+        }
+    }
+
+    #[test]
+    fn a_panic_of_the_decoder_is_the_loads_panic_and_not_a_short_cache() {
+        // To the deserializer a thread that has gone is the end of the stream, which for a stream
+        // that stops short of its list is an error, and for one that stops after it would be a
+        // cache with the rest of it missing. The scope the thread runs in re-raises its panic, so
+        // that neither is what the caller gets.
+        let outcome = within(60, || {
+            std::panic::catch_unwind(|| deserialize_decoded(Panics))
+        });
+        assert!(outcome.is_err(), "the load returned {outcome:?}");
     }
 
     #[test]

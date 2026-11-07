@@ -188,6 +188,94 @@ fn a_sidecar_cache_that_will_not_load_is_rebuilt_from_the_gff3() {
         .contains("missense_variant"));
 }
 
+/// A sidecar written by a first run, which a second run reads.
+fn written_sidecar(dir: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let gff3 = write_gff3(dir);
+    let fasta = write_fasta(dir);
+    let vcf = write_vcf(dir);
+    run_annotate(AnnotateConfig {
+        gff3: vec![gff3.to_string_lossy().into()],
+        fasta: Some(fasta.to_string_lossy().into()),
+        ..config(&vcf, &dir.join("first.vcf"))
+    })
+    .unwrap();
+    let sidecar = dir.join("ann.gff3.fastvep.cache");
+    assert!(sidecar.exists(), "the first run writes the sidecar");
+    (gff3, fasta, vcf, sidecar)
+}
+
+#[test]
+fn a_sidecar_cache_corrupted_in_place_is_rebuilt_and_not_read_as_what_it_became() {
+    // `save_cache` records a checksum in the frame so that a cache corrupted in place fails at
+    // load. The loader never read it: a cache with its last byte, the checksum, flipped, or with
+    // bytes after its frame, loaded as it was and the run annotated from it. So did one with a
+    // byte of its middle flipped, and one with a second cache after it, which a `cat` makes: the
+    // transcripts of the second were left out and nothing said so.
+    for damage in [
+        "the last byte flipped",
+        "a byte of the middle flipped",
+        "bytes after the frame",
+        "a second cache after it",
+    ] {
+        let dir = TempDir::new().unwrap();
+        let (gff3, fasta, vcf, sidecar) = written_sidecar(dir.path());
+        let good = std::fs::read(&sidecar).unwrap();
+        let mut damaged = good.clone();
+        match damage {
+            "the last byte flipped" => *damaged.last_mut().unwrap() ^= 0xFF,
+            "a byte of the middle flipped" => {
+                let middle = damaged.len() / 2;
+                damaged[middle] ^= 0xFF;
+            }
+            "bytes after the frame" => damaged.extend_from_slice(b"not a zstd frame"),
+            _ => damaged.extend_from_slice(&good),
+        }
+        std::fs::write(&sidecar, &damaged).unwrap();
+        make_fresh(&sidecar);
+
+        let out = dir.path().join("second.vcf");
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3.to_string_lossy().into()],
+            fasta: Some(fasta.to_string_lossy().into()),
+            ..config(&vcf, &out)
+        })
+        .unwrap_or_else(|e| panic!("{damage}: rebuilt from the GFF3, not fatal: {e:#}"));
+        assert!(
+            std::fs::read_to_string(&out)
+                .unwrap()
+                .contains("missense_variant"),
+            "{damage}"
+        );
+        // rewritten: it was not the cache that was read
+        assert_ne!(std::fs::read(&sidecar).unwrap(), damaged, "{damage}");
+        assert!(
+            fastvep_cache::transcript_cache::load_cache(&sidecar).is_ok(),
+            "{damage}"
+        );
+    }
+}
+
+#[test]
+fn a_cache_named_on_the_command_line_that_is_corrupted_in_place_stops_the_run() {
+    let dir = TempDir::new().unwrap();
+    let (_, _, vcf, sidecar) = written_sidecar(dir.path());
+    let mut damaged = std::fs::read(&sidecar).unwrap();
+    *damaged.last_mut().unwrap() ^= 0xFF;
+    let named = dir.path().join("named.cache");
+    std::fs::write(&named, &damaged).unwrap();
+
+    let err = run_annotate(AnnotateConfig {
+        transcript_cache: Some(named.to_string_lossy().into()),
+        ..config(&vcf, &dir.path().join("out.vcf"))
+    })
+    .expect_err("a cache that fails its checksum must not be annotated from");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("cannot be used") && msg.contains("checksum"),
+        "unexpected error: {msg}"
+    );
+}
+
 /// Write a well-formed cache in the pre-#90 FSTVEP02 format, holding `n`
 /// transcripts. Deliberately valid: the whole difficulty is that a poisoned
 /// region-restricted cache and a whole-file one are the same bytes with a

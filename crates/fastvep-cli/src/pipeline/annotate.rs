@@ -923,7 +923,7 @@ fn load_transcript_models(
                                          sidecar is built alongside it."
                                     ),
                                     None => format!(
-                                        "it could not be read ({e}), and is most likely \
+                                        "it could not be read ({e:#}), and is most likely \
                                          truncated or corrupt - delete it and rebuild with \
                                          `fastvep cache`."
                                     ),
@@ -951,7 +951,7 @@ fn load_transcript_models(
                                     log::debug!("{}", stale.detail);
                                 }
                                 None => eprintln!(
-                                    "Warning: sidecar cache {} could not be loaded ({e}); rebuilding from GFF3",
+                                    "Warning: sidecar cache {} could not be loaded ({e:#}); rebuilding from GFF3",
                                     cp.display()
                                 ),
                             }
