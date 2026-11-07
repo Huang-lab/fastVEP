@@ -55,7 +55,7 @@ Three groups:
           their matrices are in `holdout_runs.tsv`, and `13_manuscript_stats.py` scores them on
           the new variants from the per-variant tables of `12_per_variant_table.py`.
 
-Outputs
+Outputs (MANUSCRIPT_RUNS_ROOT and MANUSCRIPT_RESULTS_DIR name another root and another results directory, for a rerun)
   data/benchmark/manuscript_runs/<name>/        bulk output, gitignored. The annotated
                                                 VCF is deleted after scoring unless the
                                                 run is in KEEP_VCF: the scored files and
@@ -103,10 +103,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 BENCH = ROOT / "data/benchmark"
-OUT_ROOT = BENCH / "manuscript_runs"
+# A rerun is made into a root and a results directory of its own (MANUSCRIPT_RUNS_ROOT, MANUSCRIPT_RESULTS_DIR), so that it
+# neither finds the first run's directories already scored and skips them nor overwrites the tables the manuscript reads;
+# `16_compare_runs.py` then compares the two roots.
+OUT_ROOT = Path(os.environ.get("MANUSCRIPT_RUNS_ROOT", BENCH / "manuscript_runs"))
 SA_DB = BENCH / "sa_db"
 SA_ABLATE = BENCH / "sa_db_ablate"
-RES = ROOT / "analysis/acmg_benchmark/results/v37_manuscript"
+RES = Path(os.environ.get("MANUSCRIPT_RESULTS_DIR", ROOT / "analysis/acmg_benchmark/results/v37_manuscript"))
 RUNNER = ROOT / "analysis/acmg_benchmark/scripts/run_benchmark.sh"
 
 CLASSES = ["Pathogenic", "Likely_pathogenic", "VUS", "Likely_benign", "Benign"]

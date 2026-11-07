@@ -1,0 +1,3 @@
+# v38_chr2122_exomes_noflags: chr21 and chr22 variants, gnomAD v4.1 exomes, with its region flags no longer withholding the frequency criteria.
+# Everything else is the shipped default.
+gnomad_region_flags_block_frequency = false

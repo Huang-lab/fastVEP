@@ -4,9 +4,8 @@ End-to-end concordance harness against ClinVar 2-star+ variants. Runs the
 **actual classifier** through `fastvep annotate --acmg` against
 real allele- and gene-level annotations — no simulation, no priors.
 
-The orchestrating runner and all intermediate / final outputs live
-under `data/benchmark/`. This directory holds only the analysis
-scripts.
+The runner (`run_benchmark.sh`) and the analysis scripts are in this directory.
+Every input and every bulk output is under `data/benchmark/`, which git ignores.
 
 ## Pipeline
 
@@ -37,6 +36,9 @@ python3 generate_figures.py
 |------|---------|
 | `01_extract_clinvar_2star.py` | Filter ClinVar `clinvar.vcf.gz` → 2-star+ VCF + parallel TSV of ClinVar's classifications (`clinvar_2star_labels.tsv`, formerly `clinvar_2star_truth.tsv`) |
 | `03_evaluate_concordance.py`  | Stream the bgzipped VCF output of `fastvep annotate --acmg` and emit concordance matrix / per-chrom / per-consequence / per-criterion CSVs |
+| `04_build_md_review_table.py` | Build the review table of the medical geneticist's first round: the opposite-direction calls with the ClinVar record and the annotation fields they need |
+| `05_append_current_calls.py`  | Append fastVEP's current call to a reviewer's own annotated workbook, leaving her notes, colours and row order as they are |
+| `06_build_round5_table.py`, `07_build_round6_table.py` | Build the round-5 and round-6 review workbooks: one sheet, every call that still contradicts ClinVar 2-star+, with the reviewer's earlier verdicts carried onto the rows they belong to |
 | `08_diff_calls.py`            | Diff two runs' ACMG calls variant by variant into a `call_changes_vN_to_vM.tsv`, reusing `03`'s own `pick_csq` so both describe the same transcript |
 | `09_compare_runs.py`          | Compare runs with a baseline call by call: the headline counts, the two error types, and every changed call grouped by the criteria it lost and gained |
 | `10_replay_bs2_guards.py`     | Replay a BS2 widening from the annotated VCFs of two runs and report what a guard on the new BS2 would have kept (limitation 20 in `docs/ACMG.md`) |
@@ -48,6 +50,11 @@ python3 generate_figures.py
 | `16_compare_runs.py`          | Compare a rerun with the runs it repeats, file by file and record by record (the annotated VCFs by record, the per-variant tables by column name), and write `results/v37_manuscript/rerun_comparison.csv` |
 | `17_joint_boundary_cases.py`  | Annotate, one at a time and through both databases with `--output-format json`, the variants that gnomAD's joint release turns into an error or out of a pathogenic-side call (the json carries the filtering allele frequency and the flags, which the VCF does not), and count the variants that lose PM2 by the reason, into `manuscript/acmg/data/v38_joint_errors.csv` and `v38_joint_pm2_lost.csv` |
 | `18_criteria_status.py`       | Annotate every 40th record of the benchmark with `--output-format json`, which reports for each criterion whether it could be evaluated and whether it was met, and write the status of all 28 criteria (what each needs, whether a sites-only input can supply it, and how often the engine evaluated and met it) into `manuscript/acmg/data/criteria_status.csv`; it stops without writing if the engine disagrees with the groups it states. Needs `FASTVEP_V38_BIN` |
+| `19_time_annotation.py`       | Time the annotation of the benchmark (`annotate --acmg --pick` over the 673,660 variants, piped to `bgzip`) on every core in rounds and on one thread, with its peak memory, and the scoring after it; writes `annotation_time.tsv` |
+| `run_benchmark.sh`            | Annotate the ClinVar 2-star+ set with `--acmg --pick` and score it (`run_benchmark.sh vNN`); the flags, the hashes of the binary and the configurations, and the inputs it read are written to `run_provenance.txt`, and an annotated VCF is reused only when the same binary, flags, configuration and inputs made it |
+| `sweep_acmg_thresholds.py`    | Run the benchmark once per value of one numeric configuration key and report what each value costs and buys |
+| `build_bs2_review_table.py`, `make_bs2_review_xlsx.py` | Build the BS2 gene-disease review table and its workbook |
+| `sa_sources/`                 | Download the sources and build the supplementary databases: `download_sa_sources.sh`, `build_gnomad_per_chrom.sh` (exomes) and `build_gnomad_release_per_chrom.sh` (exomes, genomes or joint), `build_spliceai_phylop.sh`, `clingen_gdv_to_oga.py`, `repeatmasker_to_bed.py`, `make_clingen_parse_fixture.py` (the fixture of real ClinGen rows that the classifier's parsing test reads) |
 | `build_manuscript_binaries.sh` | Build the six binaries the manuscript's runs are made by (v37, its two patched builds, the commit before v38, v38 and its alternatives build), each from a clean export in a target directory of its own, and print the environment variables the run scripts read them from |
 | `generate_figures.py`         | Read the v7 outputs at `data/benchmark/output_v7/` and emit 6 PDF + PNG panels (incl. v1 vs v7 comparisons) |
 | `build_vcep_thresholds.py`    | Read published ClinGen VCEP BA1/BS1/PM2 bars out of the CSpec Registry API into `../data/vcep_thresholds.toml`, plus an audit table carrying the source sentence behind every number and the reason behind every rejection |
@@ -60,7 +67,7 @@ python3 generate_figures.py
 | Ensembl GFF3 v115 | transcript models | 1.2 GB |
 | Ensembl primary-assembly FASTA | amino acid prediction (PS1/PM5/PM1/PP3/BP4) | 3.2 GB |
 | ClinVar `clinvar.vcf.gz` | PS4, PP5, BP6 (allele-level) | 190 MB |
-| ClinVar `variant_summary.txt.gz` | **PS1 / PM1 / PM5** (protein-position index) | 110 MB |
+| ClinVar `variant_summary.txt.gz` | **PS1 / PM1 / PM5** (protein-position index) | 438 MB |
 | gnomAD v4.1 constraint metrics TSV | PVS1, PP2, BP1 (gene constraints) | 95 MB |
 | gnomAD v4.1 exomes per-chrom VCF | **PM2 / BA1 / BS1 / BS2** + (distilled) PhyloP & SpliceAI | ~12 GB raw / chrom |
 | REVEL `revel-v1.3_all_chromosomes.zip` | **PP3 / BP4 missense** | 637 MB |

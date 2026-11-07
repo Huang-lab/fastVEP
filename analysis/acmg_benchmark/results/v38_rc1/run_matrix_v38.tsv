@@ -1,0 +1,43 @@
+name	group	knob	value	shipped	description	removed_from_sa_db	replaced_in_sa_db	environment
+v38_base	inherit_base	the commit before the change: inheritance read from the disease names	-	-	the commit before the change: inheritance read from the disease names			
+v38	inherit	the shipped classifier: inheritance read from ClinGen's curated field, a gene classified against each of its modes of inheritance, BS2's carriers not counted beside BS1 or BA1	-	-	the shipped classifier: inheritance read from ClinGen's curated field, a gene classified against each of its modes of inheritance, BS2's carriers not counted beside BS1 or BA1			
+v38_alt_control	inherit_alt	the alternatives build with nothing set (a control that must reproduce v38 in every cell)	-	-	the alternatives build with nothing set (a control that must reproduce v38 in every cell)			
+v38_alt_unguarded	inherit_alt	ClinGen's inheritance read, BS2's carriers counted beside BS1 and BA1	-	-	ClinGen's inheritance read, BS2's carriers counted beside BS1 and BA1			FASTVEP_ALT=g1_off
+v38_alt_label_guard	inherit_alt	as shipped, and BS2's carrier arm withheld from a disorder that ClinGen's label calls a susceptibility or a predisposition	-	-	as shipped, and BS2's carrier arm withheld from a disorder that ClinGen's label calls a susceptibility or a predisposition			FASTVEP_ALT=g3
+v38_alt_bs2_as_v37	inherit_alt	ClinGen's inheritance read for PM2, PM3 and BP2, and BS2 as before: dominant by disease name, carriers counted beside BS1 and BA1	-	-	ClinGen's inheritance read for PM2, PM3 and BP2, and BS2 as before: dominant by disease name, carriers counted beside BS1 and BA1			FASTVEP_ALT=bs2_names,g1_off
+v38_alt_triple_cap	inherit_alt	as shipped, with PP2, PM1 and PP3 capped together at 4 points	-	-	as shipped, with PP2, PM1 and PP3 capped together at 4 points			FASTVEP_ALT=triple_cap
+v38_noflags	inherit	as shipped, with gnomAD's segmental-duplication and low-complexity flags no longer withholding the frequency criteria	-	-	as shipped, with gnomAD's segmental-duplication and low-complexity flags no longer withholding the frequency criteria			
+v38_sw_pm2ad_0	inherit	pm2_ad_af_threshold	0	4e-05	PM2 allele-frequency bar for genes not read as recessive-only, set to 0			
+v38_sw_pm2ad_1e-06	inherit	pm2_ad_af_threshold	1e-06	4e-05	PM2 allele-frequency bar for genes not read as recessive-only, set to 1e-06			
+v38_sw_pm2ad_5e-06	inherit	pm2_ad_af_threshold	5e-06	4e-05	PM2 allele-frequency bar for genes not read as recessive-only, set to 5e-06			
+v38_sw_pm2ad_1e-05	inherit	pm2_ad_af_threshold	1e-05	4e-05	PM2 allele-frequency bar for genes not read as recessive-only, set to 1e-05			
+v38_sw_pm2ad_2e-05	inherit	pm2_ad_af_threshold	2e-05	4e-05	PM2 allele-frequency bar for genes not read as recessive-only, set to 2e-05			
+v38_sw_pm2ad_0.0001	inherit	pm2_ad_af_threshold	0.0001	4e-05	PM2 allele-frequency bar for genes not read as recessive-only, set to 0.0001			
+v38_sw_pm2ad_0.0002	inherit	pm2_ad_af_threshold	0.0002	4e-05	PM2 allele-frequency bar for genes not read as recessive-only, set to 0.0002			
+v38_sw_pm2ad_0.0005	inherit	pm2_ad_af_threshold	0.0005	4e-05	PM2 allele-frequency bar for genes not read as recessive-only, set to 0.0005			
+v38_sw_pm2ar_0	inherit	pm2_ar_af_threshold	0	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 0			
+v38_sw_pm2ar_1e-06	inherit	pm2_ar_af_threshold	1e-06	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 1e-06			
+v38_sw_pm2ar_1e-05	inherit	pm2_ar_af_threshold	1e-05	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 1e-05			
+v38_sw_pm2ar_2e-05	inherit	pm2_ar_af_threshold	2e-05	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 2e-05			
+v38_sw_pm2ar_0.0002	inherit	pm2_ar_af_threshold	0.0002	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 0.0002			
+v38_sw_pm2ar_0.0005	inherit	pm2_ar_af_threshold	0.0005	7e-05	PM2 allele-frequency bar for genes read as recessive-only, set to 0.0005			
+v38_sw_bs2hom_1e-06	inherit	bs2_hom_prevalence_threshold	1e-06	0.001	BS2 prevalence bar for the individuals with no functional copy, set to 1e-06			
+v38_sw_bs2hom_1e-05	inherit	bs2_hom_prevalence_threshold	1e-05	0.001	BS2 prevalence bar for the individuals with no functional copy, set to 1e-05			
+v38_sw_bs2hom_0.0001	inherit	bs2_hom_prevalence_threshold	0.0001	0.001	BS2 prevalence bar for the individuals with no functional copy, set to 0.0001			
+v38_sw_bs2hom_0.01	inherit	bs2_hom_prevalence_threshold	0.01	0.001	BS2 prevalence bar for the individuals with no functional copy, set to 0.01			
+v38_sw_bs2ad_0	inherit	bs2_ad_prevalence_threshold	0	0.0003	BS2 carrier bar for genes read as dominant-only (0 is no bar, so that the allele count of at least 5 alone decides), set to 0			
+v38_sw_bs2ad_3e-05	inherit	bs2_ad_prevalence_threshold	3e-05	0.0003	BS2 carrier bar for genes read as dominant-only (0 is no bar, so that the allele count of at least 5 alone decides), set to 3e-05			
+v38_sw_bs2ad_0.0001	inherit	bs2_ad_prevalence_threshold	0.0001	0.0003	BS2 carrier bar for genes read as dominant-only (0 is no bar, so that the allele count of at least 5 alone decides), set to 0.0001			
+v38_sw_bs2ad_0.001	inherit	bs2_ad_prevalence_threshold	0.001	0.0003	BS2 carrier bar for genes read as dominant-only (0 is no bar, so that the allele count of at least 5 alone decides), set to 0.001			
+v38_sw_bs2ad_0.003	inherit	bs2_ad_prevalence_threshold	0.003	0.0003	BS2 carrier bar for genes read as dominant-only (0 is no bar, so that the allele count of at least 5 alone decides), set to 0.003			
+v38_sw_bs2ac_20	inherit	bs2_ad_min_ac (bar off)	20	5 (with bar 3e-4)	BS2 carrier floor for genes read as dominant-only, set to 20 alleles with the carrier bar off			
+v38_sw_bs2ac_100	inherit	bs2_ad_min_ac (bar off)	100	5 (with bar 3e-4)	BS2 carrier floor for genes read as dominant-only, set to 100 alleles with the carrier bar off			
+v38_sw_bs2ac_1000	inherit	bs2_ad_min_ac (bar off)	1000	5 (with bar 3e-4)	BS2 carrier floor for genes read as dominant-only, set to 1000 alleles with the carrier bar off			
+v38_chr2122_exomes	joint	chr21 and chr22 variants, gnomAD v4.1 exomes	-	-	chr21 and chr22 variants, gnomAD v4.1 exomes			
+v38_chr2122_exomes_noflags	joint	chr21 and chr22 variants, gnomAD v4.1 exomes, with its region flags no longer withholding the frequency criteria	-	-	chr21 and chr22 variants, gnomAD v4.1 exomes, with its region flags no longer withholding the frequency criteria			
+v38_chr2122_joint	joint	chr21 and chr22 variants, gnomAD v4.1 joint exomes and genomes	-	-	chr21 and chr22 variants, gnomAD v4.1 joint exomes and genomes		gnomad_chr21.osa2,gnomad_chr22.osa2	
+v38_joint	joint	gnomAD v4.1 joint exomes and genomes in place of the exomes	-	-	gnomAD v4.1 joint exomes and genomes in place of the exomes		gnomad_chr1.osa2,gnomad_chr10.osa2,gnomad_chr11.osa2,gnomad_chr12.osa2,gnomad_chr13.osa2,gnomad_chr14.osa2,gnomad_chr15.osa2,gnomad_chr16.osa2,gnomad_chr17.osa2,gnomad_chr18.osa2,gnomad_chr19.osa2,gnomad_chr2.osa2,gnomad_chr20.osa2,gnomad_chr21.osa2,gnomad_chr22.osa2,gnomad_chr3.osa2,gnomad_chr4.osa2,gnomad_chr5.osa2,gnomad_chr6.osa2,gnomad_chr7.osa2,gnomad_chr8.osa2,gnomad_chr9.osa2,gnomad_chrX.osa2,gnomad_chrY.osa2	
+v38_oct_base	holdout	the commit before the change	-	-	the commit before the change, on the variants of the 4 October 2026 release			
+v38_oct_shipped	holdout	the shipped classifier	-	-	the shipped classifier, on the variants of the 4 October 2026 release			
+v38_oct_alt_unguarded	holdout	ClinGen's inheritance read, BS2's carriers counted beside BS1 and BA1	-	-	ClinGen's inheritance read, BS2's carriers counted beside BS1 and BA1, on the variants of the 4 October 2026 release			FASTVEP_ALT=g1_off
+v38_oct_alt_triple_cap	holdout	as shipped, with PP2, PM1 and PP3 capped together at 4 points	-	-	as shipped, with PP2, PM1 and PP3 capped together at 4 points, on the variants of the 4 October 2026 release			FASTVEP_ALT=triple_cap

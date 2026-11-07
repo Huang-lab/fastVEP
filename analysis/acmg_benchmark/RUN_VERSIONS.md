@@ -51,7 +51,7 @@ explicit Definitive/Strong/Moderate filtering.)
 v9 responds to the second review round (`discordant 122.xlsx` plus the
 reviewer's covering email). Every change traces to a specific point she raised.
 Full write-up in [`../../docs/ACMG_EXPERT_REVIEW_ROUND2.md`](../../docs/ACMG_EXPERT_REVIEW_ROUND2.md);
-run-specific notes in [`output_v9/README.md`](output_v9/README.md).
+run-specific notes in `data/benchmark/output_v9/README.md` (not in the repository).
 
 The SA stack is unchanged except for a rebuild of `clinvar_protein.oga`, which
 now carries `n` per entry: the number of distinct nucleotide changes producing
@@ -300,10 +300,10 @@ and earlier were silently annotating as real variants.
 - v8: `output_v8/` (discordance-review fixes; full outputs +
   `discrepancies_for_md_review.tsv` medical-geneticist review table +
   `README.md`; ClinVar 2026-06-27 refresh check noted in that README)
-- **v14 current: `output_v14/`**, produced by `run_full_benchmark_v14.sh`.
-  v14 is the first run whose `clinvar_protein.oga` indexes benign as well as
+- v14: `output_v14/`, the first run whose `clinvar_protein.oga` indexes benign as well as
   pathogenic missense; a run against an older index is still valid but PM1's
-  benign-variation half is inert in it.
+  benign-variation half is inert in it. It was the current run when this list was written:
+  the classifier of this release is v38 (below), and its runs are those of `results/v37_manuscript/`.
 
 ## v11: SVI point system on the pathogenic side, and B7 corrected
 
@@ -1715,3 +1715,31 @@ What was checked is that nothing a run records moved.
 
 What was not checked: a run with a configuration other than the default, a run of an alternatives build, or the databases of the joint release.
 The binary of the second set remains the one that made the runs of `binaries.tsv`, and the build of the tree after the change made none.
+
+## The release candidate reproduces v38 (7 November 2026)
+
+The runs of Section 3.8 of the manuscript were made by binaries built from the working tree that became v38, which was committed afterwards (`5293cc0`, merged in pull request #167 as `6504819`).
+To check that the code that is merged gives the calls that the manuscript reports, the 38 runs on the April set and the 4 on the October release were made again by binaries built from the tag of the release candidate, `v0.5.0-rc.1` (`c12d9f9`).
+
+### What was done
+
+- `scripts/build_manuscript_binaries.sh` built `base` (the commit before the change, `9d84be0`), `v38` and `alt` (v38 with the patch of the alternatives) from clean exports, with `V38_REF=v0.5.0-rc.1 NAMES="base v38 alt"` (SHA-256 `6d30419c...`, `70b7c684...` and `87ebbc9a...`).
+- `scripts/11_manuscript_runs.py --v38 --workers 3` and `--v38 --holdout --workers 3` ran with `MANUSCRIPT_RUNS_ROOT=data/benchmark/manuscript_runs_rc1` and `MANUSCRIPT_RESULTS_DIR=analysis/acmg_benchmark/results/v38_rc1`, so that nothing the manuscript reads was overwritten.
+  The April set took 12 minutes 54 seconds and the October release 2 minutes, three runs at a time on the ten-core machine.
+
+### What was found
+
+- `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv` of `results/v38_rc1/` are the files of `results/v37_manuscript/` line for line: the concordance matrix, the firing counts and the description of every run.
+- `scripts/16_compare_runs.py` compares the 42 run directories with the stored ones, and 42 of 42 are identical in every scored file; the 15 annotated VCFs that both keep are identical record by record (`results/v38_rc1/rerun_comparison.csv`).
+- The 42 provenance files agree with the stored ones in the flags, the sizes of the inputs, the hash of every configuration and the signature of the database directory (`e518266a...`).
+  They differ in the binary (`fastvep 0.5.0-rc.1` and its hash), in the commit and the number of uncommitted files of the checkout that ran the harness (`aa5e5ee`, with 21), and in the time.
+- `scripts/13_manuscript_stats.py` writes 90 files of `manuscript/acmg/data/` from the stored runs, and none differs from the tracked file; `scripts/17_joint_boundary_cases.py` and `scripts/18_criteria_status.py`, run with the binary built from the tag, write the tracked `v38_joint_errors.csv`, `v38_joint_pm2_lost.csv` and `criteria_status.csv` again byte for byte; `manuscript/acmg/verify_numbers.py` finds its 1,725 values.
+- The annotation of the benchmark (`scripts/19_time_annotation.py`) takes 25.3 seconds on every core (median of 3; 114 seconds of CPU, 5.3 GiB at the peak) and 74 seconds on one thread, and the scoring 11 seconds (`results/v38_rc1/annotation_time.tsv`).
+  The first run of `v38` took 168 seconds, three runs at a time, and the three-at-a-time runs of the release candidate took 51 seconds for `v38` (median over the 42 runs: 47 seconds, longest 89).
+  An earlier run of the timing script, in which a search of the file system of mine ran during the one-thread measurement (85 seconds), was discarded.
+
+### What was not repeated
+
+- The 89 runs of `11_manuscript_runs.py` on the April set and its 7 on the October release (the v37 family), and the runs of round 6 that need builds that are not in the repository: the record of them is above.
+  The per-variant tables of the new runs were not made, so `16_compare_runs.py --tables` compared none.
+- The databases (`sa_db`, `sa_db_joint`) are the dated inputs of the first runs; the signature above shows that they are the same files.

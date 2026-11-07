@@ -61,8 +61,7 @@ python3 analysis/acmg_benchmark/scripts/09_compare_runs.py \
   --baseline v15 --runs v15_vcep v15_mpc --out /tmp/v15_comparison
 ```
 
-The run script takes about 2 minutes to annotate 673,660 variants plus a couple
-of minutes to score, and writes to `data/benchmark/output_v15/`.
+The run script takes about 35 seconds on the ten-core machine of the runs: 25 seconds to annotate 673,660 variants (74 seconds on one thread; `scripts/19_time_annotation.py`, 7 November 2026) and 11 to score, and writes to `data/benchmark/output_v15/`.
 It records what produced the annotation in `run_provenance.txt` beside it: the
 flags, the hash of the binary and of every `--acmg-config` and
 `--functional-evidence` file, which inputs were read (by name and size, not
@@ -185,7 +184,7 @@ python3 manuscript/acmg/verify_numbers.py
 ```
 
 `run_benchmark.sh` and the scripts that start it read the environment, so a run that is made by hand needs `FASTVEP` set the same way.
-The tables and the checks are deterministic: after the statistics script had run under each of two hash seeds (`PYTHONHASHSEED=0` and `1`) the 89 files of `manuscript/acmg/data/` were the same, and the figures are byte for byte the same on a rerun.
+The tables and the checks are deterministic: after the statistics script had run under each of two hash seeds (`PYTHONHASHSEED=0` and `1`) the files of `manuscript/acmg/data/` that it writes were the same, and the figures are byte for byte the same on a rerun.
 Some files are not written by the statistics script: `change_ledger.csv` and `round6_rulings.tsv` are typed from the project's record, `clingen_missing_curations.csv` comes from `15_clingen_complete_export.py`, `temporal_high_af_blockers_v37.csv` from `14_temporal_holdout.py blockers`, `v38_joint_errors.csv` and `v38_joint_pm2_lost.csv` from `17_joint_boundary_cases.py`, and `criteria_status.csv` from `18_criteria_status.py`.
 
 The inputs are dated and none of them is in the repository, and the download scripts fetch the current files and not the dated ones: the ClinVar weekly releases of 4 April 2026 (the benchmark and its labels) and of 4 October 2026, the ClinGen Gene-Disease Validity exports of 30 April 2026 (the file the benchmark reads) and of 11 October 2026, and the ClinVar `variant_summary` and gnomAD files of Section 2.2 of the manuscript.
