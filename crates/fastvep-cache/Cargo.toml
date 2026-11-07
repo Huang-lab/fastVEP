@@ -20,6 +20,9 @@ noodles-csi = { workspace = true }
 bincode = { workspace = true }
 memmap2 = { workspace = true }
 zstd = { workspace = true }
+# The number of threads of the pool says how many frames of a transcript cache are decoded side
+# by side (`rayon::current_num_threads`); the workers are threads of their own.
+rayon = { workspace = true }
 # Cache writes go to a sibling temp file and are renamed into place, so a
 # reader never sees a prefix. tempfile handles the unique name and the
 # cleanup-on-drop if serialization fails partway.

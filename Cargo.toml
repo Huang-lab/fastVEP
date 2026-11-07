@@ -57,6 +57,8 @@ lru = "0.12"
 # lock file, under hashbrown.
 foldhash = "0.1"
 tempfile = "3"
+# The allocator of the `fastvep` binary; its main.rs says why
+mimalloc = { version = "0.1", default-features = false }
 
 # One lint policy for all twelve crates, so a local `cargo clippy` and the CI
 # gate disagree about nothing but the `-D`. Before this block the only
