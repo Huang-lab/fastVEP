@@ -38,10 +38,19 @@ echo "==========================================================================
 echo
 
 # Bump the single workspace version; all crates inherit version.workspace = true.
-sed -i.bak -E "0,/^version = \"[^\"]+\"/s//version = \"${VERSION}\"/" Cargo.toml && rm -f Cargo.toml.bak
-cargo update --workspace >/dev/null 2>&1 || true
+# awk and not `sed -i "0,/re/s//.../"`: BSD sed on macOS exits 0 on that address and
+# changes nothing, so this used to print "Bumped" over a Cargo.toml it had not touched.
+# The first `version = "..."` line of the file is the workspace's.
+awk -v v="${VERSION}" '!done && /^version = "/ { print "version = \"" v "\""; done = 1; next } { print }' \
+  Cargo.toml > Cargo.toml.new
+mv Cargo.toml.new Cargo.toml
+grep -qxF "version = \"${VERSION}\"" Cargo.toml || { echo "could not set the version in Cargo.toml"; exit 1; }
 
-echo "Bumped Cargo.toml -> ${VERSION} and refreshed Cargo.lock."
+if cargo update --workspace >/dev/null 2>&1; then
+  echo "Bumped Cargo.toml -> ${VERSION} and refreshed Cargo.lock."
+else
+  echo "Bumped Cargo.toml -> ${VERSION}, but 'cargo update --workspace' failed: run it before you commit."
+fi
 echo "Next: finalize CHANGELOG.md, then:"
 echo "  git commit -am \"release: v${VERSION}\" && git tag -a \"v${VERSION}\" -m \"v${VERSION}\""
 echo "  git push && git push --tags"

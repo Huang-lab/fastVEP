@@ -64,6 +64,10 @@ commit_parsers = [
 
 protect_breaking_commits = false
 filter_commits = false
-tag_pattern = "v[0-9]*"
+# Final releases only. A release candidate tag (v0.5.0-rc.1) is a tag too, and
+# with the looser pattern it became the baseline: the draft for v0.5.0 listed
+# only what came after the candidate (55 entries of 60 with a candidate four
+# commits behind HEAD), and `--bumped-version` answered v0.5.0-rc.2.
+tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+$'
 topo_order = false
 sort_commits = "oldest"

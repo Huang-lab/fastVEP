@@ -4,7 +4,8 @@ use super::cache_build::{load_one_gff3, parse_gff3_arg, Gff3Spec};
 use super::open_vcf_input_reader;
 use anyhow::{Context, Result};
 use fastvep_annotate::pick::{
-    apply_pick, parse_pick_order, PickCriterion, PickFlags, PickRequest, DEFAULT_PICK_ORDER,
+    apply_pick, makes_row, parse_pick_order, pick_winners, row_alleles, PickCriterion, PickFlags,
+    PickMode, PickRequest, PredictedRow, DEFAULT_PICK_ORDER,
 };
 use fastvep_cache::annotation::{AnnotationProvider, GeneAnnotationProvider};
 use fastvep_cache::fasta::ReferenceFasta;
@@ -14,7 +15,7 @@ use fastvep_cache::providers::{
     TabixVariationProvider, TranscriptProvider, VariationProvider,
 };
 use fastvep_cache::transcript_cache::StaleCacheFormat;
-use fastvep_consequence::ConsequencePredictor;
+use fastvep_consequence::{ConsequencePredictor, Flank, TranscriptConsequence};
 use fastvep_core::Allele;
 use fastvep_genome::Transcript;
 use fastvep_hgvs;
@@ -175,6 +176,65 @@ struct AnnotationContext<'a> {
     repeat_db_loaded: bool,
 }
 
+/// What the predictor said of one transcript of a variant, or, for a transcript a reducing pick may
+/// leave out and that the variant is merely beside, only what it would say.
+enum Prediction<'a> {
+    Built(TranscriptConsequence, Option<&'a Transcript>),
+    Flank(&'a Transcript, Flank),
+}
+
+impl<'a> Prediction<'a> {
+    fn transcript_id(&self) -> &str {
+        match self {
+            Self::Built(tc, _) => &tc.transcript_id,
+            Self::Flank(transcript, _) => &transcript.stable_id,
+        }
+    }
+
+    /// Whether it makes a row: a transcript with no allele to make a row of makes none, as it never
+    /// did. `flank_alleles` are the alleles of the variant that make a row of a transcript it is
+    /// beside, which are the same for every one of them.
+    ///
+    /// The one place that asks, for the rows a pick chooses among and for the rows then built, so
+    /// that the number a row has in the pick is the number it is given when the rows are made.
+    fn makes_a_row(&self, flank_alleles: &[&Allele]) -> bool {
+        match self {
+            Self::Built(tc, _) => row_alleles(tc).next().is_some(),
+            Self::Flank(..) => !flank_alleles.is_empty(),
+        }
+    }
+
+    /// The row a pick can choose, before it is built.
+    fn as_pickable<'p>(&'p self, flank_alleles: &'p [&'p Allele]) -> PredictedRow<'p> {
+        match self {
+            Self::Built(tc, transcript) => PredictedRow::Built {
+                prediction: tc,
+                transcript: *transcript,
+            },
+            Self::Flank(transcript, flank) => PredictedRow::Flank {
+                transcript,
+                flank: *flank,
+                alleles: flank_alleles,
+            },
+        }
+    }
+}
+
+/// A prediction that becomes a row: with the transcript it was made against, and the alleles of it
+/// a reducing pick chose (`None`: all of them).
+struct Survivor<'a> {
+    prediction: TranscriptConsequence,
+    transcript: Option<&'a Transcript>,
+    chosen: Option<&'a [(usize, usize)]>,
+}
+
+/// The pairs of `winners`, which are sorted, that belong to the row numbered `row`.
+fn winners_of_row(winners: &[(usize, usize)], row: usize) -> &[(usize, usize)] {
+    let start = winners.partition_point(|&(r, _)| r < row);
+    let len = winners[start..].partition_point(|&(r, _)| r == row);
+    &winners[start..start + len]
+}
+
 /// Annotate one variant: transcript overlap, consequence prediction, HGVS,
 /// supplementary annotations, `--pick`, and ACMG classification.
 ///
@@ -216,6 +276,8 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
     // Kept for the classification pass at the end, which runs after `--pick`
     // has deleted rows and needs the transcript each survivor came from.
     let mut overlapping = Vec::new();
+    // Set when the pick was made before the rows were built, so that it is not made again.
+    let mut picked_before_rows = false;
 
     // In --sa-only mode, skip transcript lookup + consequence
     // prediction + HGVS entirely. Use a neutral scaffold so the SA
@@ -271,9 +333,21 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                 }
             }
         } else {
-            // Run consequence prediction — dispatch SVs to SV predictor
-            let transcript_consequences = if vf.variant_type.is_structural() {
-                fastvep_consequence::sv_predictor::predict_sv_consequences(
+            // A `--pick*` that deletes the rows it does not choose is settled below on what the
+            // predictor said, and only the rows it chooses are built. A variant of a run with
+            // `--distance 500000` has hundreds of transcripts around it and the pick keeps a few
+            // tens; the rest were built, every string of them cloned and every HGVS description
+            // written, to be deleted a moment later by `apply_pick`, and that was most of what such
+            // a run did. The flagging picks keep every row, so there is nothing to leave out.
+            let plan = pick
+                .filter(|_| !sa_only)
+                .map(|request| request.plan(pick_order))
+                .filter(|plan| plan.mode == PickMode::Reduce);
+
+            // Consequence prediction, one answer for each transcript with the transcript it was made
+            // against, dispatching structural variants to their own predictor.
+            let predictions: Vec<Prediction<'_>> = if vf.variant_type.is_structural() {
+                let consequences = fastvep_consequence::sv_predictor::predict_sv_consequences(
                     chrom,
                     vf.position.start,
                     vf.position.end,
@@ -282,20 +356,67 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     &overlapping,
                     config.distance,
                     config.distance,
-                )
+                );
+                // The transcript each prediction was made against.
+                //
+                // The structural-variant predictor emits one consequence per transcript it was
+                // handed, in that order, whenever the record has an ALT (`predict_sv_consequences`),
+                // so index `i` is the match and the scan never runs; a miss falls back to a scan
+                // rather than losing the transcript, because nothing else holds the two together.
+                // Before this, every consequence rescanned the whole overlap set, and a variant in
+                // a gene-dense window - a protocadherin or MHC cluster, where `--distance` pulls in
+                // dozens of transcripts - paid for that lookup in proportion to the square of the
+                // overlap.
+                //
+                // Every transcript is predicted in full here, and a reducing pick only leaves rows
+                // out: the structural-variant predictor has its own answer for a transcript the
+                // change is beside, which `ConsequencePredictor::flank` does not give.
+                consequences
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, tc)| {
+                        let transcript = overlapping
+                            .get(i)
+                            .copied()
+                            .filter(|t| t.stable_id == tc.transcript_id)
+                            .or_else(|| {
+                                overlapping
+                                    .iter()
+                                    .copied()
+                                    .find(|t| t.stable_id == tc.transcript_id)
+                            });
+                        Prediction::Built(tc, transcript)
+                    })
+                    .collect()
             } else {
                 // No reference window is read for the predictor: it is given none to use (the
                 // transcripts carry their own sequence), and reading the variant's window of
                 // `--distance` bases either side for every variant was a few kilobytes copied out
                 // of the FASTA per record for nothing.
-                let result = predictor.predict(
-                    &vf.position,
-                    &vf.ref_allele,
-                    &vf.alt_alleles,
-                    &overlapping,
-                    None,
-                );
-                result.transcript_consequences
+                //
+                // A transcript the variant is merely beside has the same answer for every allele,
+                // and when a reducing pick is going to choose among the transcripts it is not
+                // predicted in full unless it is chosen. Around a variant that is most of them.
+                overlapping
+                    .iter()
+                    .map(|&transcript| {
+                        if plan.is_some() {
+                            if let Some(flank) = predictor.flank(&vf.position, transcript) {
+                                return Prediction::Flank(transcript, flank);
+                            }
+                        }
+                        Prediction::Built(
+                            predictor.predict_transcript(
+                                &vf.position,
+                                &vf.ref_allele,
+                                &vf.alt_alleles,
+                                transcript,
+                                None,
+                            ),
+                            Some(transcript),
+                        )
+                    })
+                    .collect()
             };
 
             // The reference an HGVS description is written against: the genome's, where the VCF
@@ -336,27 +457,94 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     Vec::new()
                 };
 
+            // The alleles a transcript that the change is beside gets a row for, which are the
+            // same for every one of them. Only a reducing pick leaves a transcript unbuilt.
+            let flank_alleles: Vec<&Allele> = if plan.is_some() {
+                vf.alt_alleles
+                    .iter()
+                    .filter(|allele| makes_row(allele))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            // The pick of a reducing `--pick*`, made on the predictions before any row exists. The
+            // number a row has in it is its position among the predictions that make a row.
+            let mut rows_picked_among = 0usize;
+            let winners: Option<Vec<(usize, usize)>> = plan.map(|plan| {
+                let rows: Vec<PredictedRow<'_>> = predictions
+                    .iter()
+                    .filter(|prediction| prediction.makes_a_row(&flank_alleles))
+                    .map(|prediction| prediction.as_pickable(&flank_alleles))
+                    .collect();
+                rows_picked_among = rows.len();
+                let mut winners = pick_winners(&rows, &plan);
+                // sorted, so that `winners_of_row` finds a row's winners by search
+                winners.sort_unstable();
+                winners
+            });
+            picked_before_rows = winners.is_some();
+
+            // The predictions that become rows, each with the alleles of it that do. A prediction
+            // that makes no row makes none, as it never did, and a row a reducing pick did not
+            // choose is neither built nor, if it was left unbuilt above, predicted in full.
+            let mut row_number = 0usize;
+            let mut survivors: Vec<Survivor<'_>> = Vec::new();
+            for prediction in predictions {
+                if !prediction.makes_a_row(&flank_alleles) {
+                    continue;
+                }
+                // A row without a feature is no candidate of a pick, which neither chooses nor
+                // deletes it (`apply_pick` does the same with the rows it is given)
+                let featureless = prediction.transcript_id() == TranscriptVariation::NO_FEATURE;
+                let chosen: Option<&[(usize, usize)]> = winners.as_deref().map(|winners| {
+                    let chosen = winners_of_row(winners, row_number);
+                    row_number += 1;
+                    chosen
+                });
+                if matches!(chosen, Some(c) if c.is_empty()) && !featureless {
+                    continue;
+                }
+                let (prediction, transcript) = match prediction {
+                    Prediction::Built(tc, transcript) => (tc, transcript),
+                    Prediction::Flank(transcript, _) => {
+                        let tc = predictor.predict_transcript(
+                            &vf.position,
+                            &vf.ref_allele,
+                            &vf.alt_alleles,
+                            transcript,
+                            None,
+                        );
+                        // the pick numbered this row's alleles from `flank_alleles`, so the
+                        // prediction has to have the same alleles in the same order
+                        debug_assert!(
+                            row_alleles(&tc)
+                                .map(|ac| &ac.allele)
+                                .eq(flank_alleles.iter().copied()),
+                            "{}: the alleles of a transcript the change is beside",
+                            transcript.stable_id
+                        );
+                        (tc, Some(transcript))
+                    }
+                };
+                survivors.push(Survivor {
+                    prediction,
+                    transcript,
+                    chosen,
+                });
+            }
+            debug_assert!(
+                winners.is_none() || row_number == rows_picked_among,
+                "the pick was made among {rows_picked_among} rows and {row_number} were numbered"
+            );
+
             // Convert prediction results to VariationFeature annotations
-            for (i, tc) in transcript_consequences.iter().enumerate() {
-                // `ConsequencePredictor::predict` emits one consequence per
-                // transcript it was handed, in that order, so index `i` is the
-                // match and the scan below never runs. The structural-variant
-                // branch above makes no such promise, so a miss falls back to a
-                // scan rather than losing the transcript. Before this, every
-                // consequence rescanned the whole overlap set, and a variant in
-                // a gene-dense window - a protocadherin or MHC cluster, where
-                // `--distance` pulls in dozens of transcripts - paid for that
-                // lookup in proportion to the square of the overlap.
-                let transcript: Option<&Transcript> = overlapping
-                    .get(i)
-                    .copied()
-                    .filter(|t| t.stable_id == tc.transcript_id)
-                    .or_else(|| {
-                        overlapping
-                            .iter()
-                            .copied()
-                            .find(|t| t.stable_id == tc.transcript_id)
-                    });
+            for survivor in &survivors {
+                let tc = &survivor.prediction;
+                let transcript = survivor.transcript;
+                // Which alleles of this transcript the pick chose, when it was made before the
+                // rows; `None` builds them all.
+                let chosen = survivor.chosen;
 
                 // `*` and the placeholders (`.`, `<NON_REF>`, `<*>`) are not variants of
                 // the transcript, and VEP writes no row for them: a record whose only ALT
@@ -365,12 +553,15 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                 // elements, and an `AlleleAnnotation` is over 600 bytes, so every transcript row of a one-ALT
                 // record asked for 2.5 KB and used 0.6 KB of it.
                 let mut allele_annotations: Vec<AlleleAnnotation> =
-                    Vec::with_capacity(tc.allele_consequences.len());
+                    Vec::with_capacity(chosen.map_or(tc.allele_consequences.len(), <[_]>::len));
                 allele_annotations.extend(
-                    tc.allele_consequences
-                        .iter()
-                        .filter(|ac| ac.allele != Allele::Missing)
-                        .map(|ac| {
+                    row_alleles(tc)
+                        .enumerate()
+                        .filter(|(ai, _)| {
+                            chosen.is_none_or(|chosen| chosen.iter().any(|&(_, a)| a == *ai))
+                                || &*tc.transcript_id == TranscriptVariation::NO_FEATURE
+                        })
+                        .map(|(_, ac)| {
                             let mut ann = AlleleAnnotation {
                                 allele: ac.allele.clone(),
                                 consequences: ac.consequences.clone(),
@@ -685,7 +876,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
     // of them. The order still matters for the reducing modes, and putting
     // the two in the same place keeps the flag and the reduction deciding
     // from identical inputs.
-    if let Some(request) = pick.filter(|_| !sa_only) {
+    if let Some(request) = pick.filter(|_| !sa_only && !picked_before_rows) {
         apply_pick(&mut vf.transcript_variations, &request.plan(pick_order));
     }
 
@@ -923,7 +1114,7 @@ fn load_transcript_models(
                                          sidecar is built alongside it."
                                     ),
                                     None => format!(
-                                        "it could not be read ({e}), and is most likely \
+                                        "it could not be read ({e:#}), and is most likely \
                                          truncated or corrupt - delete it and rebuild with \
                                          `fastvep cache`."
                                     ),
@@ -951,7 +1142,7 @@ fn load_transcript_models(
                                     log::debug!("{}", stale.detail);
                                 }
                                 None => eprintln!(
-                                    "Warning: sidecar cache {} could not be loaded ({e}); rebuilding from GFF3",
+                                    "Warning: sidecar cache {} could not be loaded ({e:#}); rebuilding from GFF3",
                                     cp.display()
                                 ),
                             }
@@ -1670,7 +1861,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         .unwrap_or_default();
 
     // Open output
-    let output_writer: Box<dyn io::Write> = if config.output == "-" {
+    let output_writer: Box<dyn io::Write + Send> = if config.output == "-" {
         Box::new(io::stdout())
     } else {
         Box::new(
@@ -1867,9 +2058,10 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
 
     // Process variants in batches for parallel annotation
     let mut meter = crate::progress::ProgressMeter::new(config.show_progress);
-    let mut first_json = true;
 
-    loop {
+    // The batches are written on a thread of their own, in order, while the next is read and
+    // annotated (see `write_while`).
+    write_while(&mut writer, json, |send| loop {
         // Phase 1: Read a batch of variants (sequential - VCF parser is not Sync)
         let mut batch: Vec<(VariationFeature, KnownLookup)> = Vec::with_capacity(BATCH_SIZE);
         for _ in 0..BATCH_SIZE {
@@ -1885,7 +2077,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         }
 
         if batch.is_empty() {
-            break;
+            return Ok(());
         }
 
         // Phase 1.2: The known variants of each record, in runs of consecutive records on every
@@ -1959,63 +2151,49 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             normalize_gnomad_queries,
             repeat_db_loaded,
         };
-        // Phase 2: Annotate batch in parallel (transcript lookup + consequence prediction + HGVS)
-        batch
-            .par_iter_mut()
-            .for_each(|(vf, known)| annotate_variant(&ctx, vf, known));
+        // Phase 2: Annotate the batch (transcript lookup + consequence prediction + HGVS) and
+        // render it into the bytes it writes, in one pass on every thread (see `render_batch`).
+        //
+        // A step that has to see every record annotated before any is rendered cannot share that
+        // pass, and that is the compound-het enrichment of a trio: its batch is annotated first, in
+        // a pass of its own, and `render_batch` then only renders.
+        let trio = acmg_config.as_ref().filter(|c| c.trio.is_some());
+        if let Some(acmg_cfg) = trio {
+            batch
+                .par_iter_mut()
+                .for_each(|(vf, known)| annotate_variant(&ctx, vf, known));
 
-        // Phase 2.5: Compound-het enrichment pass (sequential, after parallel annotation)
-        if let Some(ref acmg_cfg) = acmg_config {
-            if acmg_cfg.trio.is_some() {
-                let mut vfs: Vec<&mut VariationFeature> =
-                    batch.iter_mut().map(|(vf, _)| vf).collect();
-                enrich_compound_het_batch(
-                    &mut vfs,
-                    acmg_cfg,
-                    &sample_names,
-                    functional_evidence,
-                    repeat_db_loaded,
-                );
-            }
+            // Phase 2.5: Compound-het enrichment pass (sequential, after parallel annotation)
+            let mut vfs: Vec<&mut VariationFeature> = batch.iter_mut().map(|(vf, _)| vf).collect();
+            enrich_compound_het_batch(
+                &mut vfs,
+                acmg_cfg,
+                &sample_names,
+                functional_evidence,
+                repeat_db_loaded,
+            );
         }
-
-        // Phase 2.7: Render the records into the bytes they write, on every thread. A record is
-        // formatted from itself alone, and once its annotation is spread over the cores the
-        // formatting is most of what is left on the one thread that writes. Each piece is the text
-        // of a run of consecutive records, so the pieces in order are the file the records would
-        // have made written one by one.
-        let pieces: Vec<Result<Vec<u8>>> = batch
-            .par_iter()
-            .fold(
-                || Ok(Vec::new()),
-                |piece: Result<Vec<u8>>, (vf, _)| {
-                    let mut text = piece?;
-                    if json && !text.is_empty() {
-                        text.extend_from_slice(b",\n");
-                    }
-                    render_record(vf, &mut text)?;
-                    Ok(text)
-                },
-            )
-            .collect();
-
-        // Phase 3: Write output sequentially (preserves VCF order)
-        for piece in pieces {
-            let text = piece?;
-            if text.is_empty() {
-                continue;
-            }
-            if json {
-                if !first_json {
-                    writeln!(writer, ",")?;
+        let records = batch.len() as u64;
+        let pieces = render_batch(
+            batch,
+            json,
+            |(vf, known)| {
+                if trio.is_none() {
+                    annotate_variant(&ctx, vf, known);
                 }
-                first_json = false;
-            }
-            writer.write_all(&text)?;
+            },
+            |(vf, _), text| render_record(vf, text),
+        );
+
+        // Phase 3: Hand the batch to the writer, which writes the batches in the order they come
+        // (preserving VCF order). A writer that has stopped has failed, and says so when it is
+        // joined: there is nothing more to produce for it.
+        if !send(pieces) {
+            return Ok(());
         }
 
-        meter.update_n(batch.len() as u64);
-    } // end batch loop
+        meter.update_n(records);
+    })?; // end batch loop
 
     // Close JSON array
     if config.output_format == "json" {
@@ -2045,6 +2223,128 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     Ok(())
 }
 
+/// Annotates a batch, renders it into the bytes it writes, and lets each record go, in one pass
+/// over the records on every thread.
+///
+/// A record is annotated, rendered and freed by the one thread that takes it. (It was made by the
+/// VCF parser, on the thread that reads; what is made on the thread that annotates it is the
+/// hundreds of small allocations of its rows.) The batch is not left to be freed by the thread that
+/// reads the VCF, which is what this used to do after a pass to annotate and a pass to render: one
+/// thread freeing the rows of 1,024 variants while the rest waited for the next batch was 11 to 13%
+/// of the time of a batch of HG002 chr1 at 8 threads, on macOS and on Linux.
+///
+/// Freeing them on every thread after the rendering, instead, did not help with glibc: no faster
+/// and more CPU time, most likely because each thread is then freeing what other threads allocated.
+/// Rows that are made and freed by one thread took 11 to 13% off a whole run on Linux, at 1 and at
+/// 8 threads, and 6 to 8% on macOS (100,000 records of HG002 chr1 with the flags of #166, the
+/// output the same bytes). That it is faster on one thread as well says it is less work and not
+/// only less waiting, which looks like the cache: the record is rendered while what annotating it
+/// touched is still in it.
+///
+/// `annotate` is for the caller that has not annotated the batch yet; a caller that has (a trio,
+/// whose compound-het enrichment has to see the whole batch annotated first) passes one that does
+/// nothing. Each piece is the text of a run of consecutive records, so the pieces in order are the
+/// file the records would have made written one by one. A record that fails to render fails its
+/// piece, which the writer reports in order, and the records after it are still annotated.
+fn render_batch<T, A, R>(batch: Vec<T>, json: bool, annotate: A, render: R) -> Vec<Result<Vec<u8>>>
+where
+    T: Send,
+    A: Fn(&mut T) + Sync,
+    R: Fn(&T, &mut Vec<u8>) -> Result<()> + Sync,
+{
+    batch
+        .into_par_iter()
+        .fold(
+            || Ok(Vec::new()),
+            |piece: Result<Vec<u8>>, mut record| {
+                annotate(&mut record);
+                let mut text = piece?;
+                if json && !text.is_empty() {
+                    text.extend_from_slice(b",\n");
+                }
+                render(&record, &mut text)?;
+                Ok(text)
+            },
+        )
+        .collect()
+}
+
+/// Runs `produce`, which sends the pieces of each batch to be written as it makes them, while a
+/// thread of its own writes the batches already sent, in order.
+///
+/// A batch used to be written by the thread that had read it, once the pool had annotated it, and
+/// the pool's threads did nothing meanwhile: with `--distance 500000` a batch is megabytes. Now the
+/// next batch is read and annotated while it is written. The hand-over has no room in it, so that a
+/// batch that is finished waits for the writer to be done with the one before, and a writer slower
+/// than the annotation stops it, as it always did.
+///
+/// `send` returns `false` once the writer has stopped, which it does at its first error; `produce`
+/// then has nothing more to do. An error of the writer is returned in preference to one of `produce`:
+/// the writer can only have failed on a batch that came before whatever `produce` met, and a
+/// failure that comes first is the one a run that wrote as it went would have reported.
+///
+/// Three things are not as they were when one thread did both:
+/// - The producer learns that the writer has failed at its next `send`, so it finishes the batch it
+///   is on first, which a run that wrote as it went would not have been on: a closed pipe or a
+///   full disk stops the run one batch later, and an error that batch meets (a failed read, a failed
+///   lookup) is not reported, because the writer's came first.
+/// - The writer is a thread of its own, outside rayon's pool, so `RAYON_NUM_THREADS=N` bounds the
+///   annotating threads and not the threads of the process: this one is a thread that writes.
+/// - A message the producer prints to stderr (a progress line, the warning for a record that could
+///   not be read) is no longer printed between two writes of the one thread. With stdout and
+///   stderr the same pipe (`-o - 2>&1`) it can land inside a line of the output, where it fell
+///   between lines before. Output that is meant to be read as the VCF was never safe to merge with
+///   stderr, which carries the `Annotating:` line from the start.
+fn write_while<W: Write + Send>(
+    writer: &mut W,
+    json: bool,
+    produce: impl FnOnce(&mut dyn FnMut(Vec<Result<Vec<u8>>>) -> bool) -> Result<()>,
+) -> Result<()> {
+    std::thread::scope(|scope| {
+        let (batches, written) = std::sync::mpsc::sync_channel(0);
+        let writing = std::thread::Builder::new()
+            .name("write".into())
+            .spawn_scoped(scope, || write_pieces(writer, written, json))
+            .context("Starting the thread that writes the output")?;
+        let produced = produce(&mut |pieces| batches.send(pieces).is_ok());
+        drop(batches);
+        match writing.join() {
+            Ok(Err(written)) => Err(written),
+            Ok(Ok(())) => produced,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
+/// Write the pieces of each batch received, in the order they come: a piece that holds text, and
+/// between the texts of a JSON run the comma of the array.
+///
+/// A piece that failed to render ends the writing at that piece, after every piece before it
+/// was written, as the pieces were once written in a loop that returned at it.
+fn write_pieces(
+    writer: &mut impl Write,
+    batches: std::sync::mpsc::Receiver<Vec<Result<Vec<u8>>>>,
+    json: bool,
+) -> Result<()> {
+    let mut first_json = true;
+    for pieces in batches {
+        for piece in pieces {
+            let text = piece?;
+            if text.is_empty() {
+                continue;
+            }
+            if json {
+                if !first_json {
+                    writeln!(writer, ",")?;
+                }
+                first_json = false;
+            }
+            writer.write_all(&text)?;
+        }
+    }
+    Ok(())
+}
+
 /// Frees `value` on a thread of its own, which nothing waits for.
 ///
 /// The transcript models are most of the heap of a run: hundreds of thousands of transcripts of a
@@ -2062,8 +2362,10 @@ fn release_in_background<T: Send + 'static>(value: T) {
 
 #[cfg(test)]
 mod tests {
-    use super::release_in_background;
-    use std::sync::mpsc;
+    use super::{release_in_background, render_batch, write_while};
+    use std::collections::HashMap;
+    use std::io::Write;
+    use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
 
     /// A value that says on which thread it was dropped, once it has been let go.
@@ -2097,6 +2399,375 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("the value is dropped");
         assert_ne!(thread, std::thread::current().id());
+    }
+
+    /// Where each stage of a record's life happened, in the order it happened: the record, the
+    /// stage, and the thread.
+    type Stages = Arc<Mutex<Vec<(usize, &'static str, std::thread::ThreadId)>>>;
+
+    /// A record that notes the thread it is annotated, rendered and dropped on.
+    struct Probe {
+        id: usize,
+        stages: Stages,
+    }
+
+    impl Probe {
+        fn note(&self, stage: &'static str) {
+            self.stages
+                .lock()
+                .unwrap()
+                .push((self.id, stage, std::thread::current().id()));
+        }
+    }
+
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            self.note("dropped");
+        }
+    }
+
+    fn probes(n: usize, stages: &Stages) -> Vec<Probe> {
+        (0..n)
+            .map(|id| Probe {
+                id,
+                stages: Arc::clone(stages),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_record_is_annotated_rendered_and_dropped_on_one_thread_and_that_is_not_the_callers() {
+        const RECORDS: usize = 4_000;
+        let stages: Stages = Arc::default();
+        render_batch(
+            probes(RECORDS, &stages),
+            false,
+            |p| p.note("annotated"),
+            |p, text| {
+                p.note("rendered");
+                text.push(b'x');
+                Ok(())
+            },
+        );
+
+        // Not the caller's thread: the batch is the reading thread's, and its freeing is what a
+        // pass to annotate and a pass to render left to it.
+        let caller = std::thread::current().id();
+        let mut by_record: HashMap<usize, Vec<(&str, std::thread::ThreadId)>> = HashMap::new();
+        for (id, stage, thread) in stages.lock().unwrap().iter() {
+            by_record.entry(*id).or_default().push((stage, *thread));
+        }
+        assert_eq!(by_record.len(), RECORDS);
+        for (id, events) in &by_record {
+            let order: Vec<&str> = events.iter().map(|e| e.0).collect();
+            assert_eq!(order, ["annotated", "rendered", "dropped"], "record {id}");
+            let thread = events[0].1;
+            assert!(
+                events.iter().all(|e| e.1 == thread),
+                "record {id} changed threads: {events:?}"
+            );
+            assert_ne!(thread, caller, "record {id} was handled by the caller");
+        }
+    }
+
+    #[test]
+    fn the_pieces_in_order_are_the_file_the_records_would_have_made_written_one_by_one() {
+        let pieces = render_batch(
+            (0..10_000).collect::<Vec<usize>>(),
+            false,
+            |_| {},
+            |n, text| {
+                text.extend_from_slice(format!("{n}\n").as_bytes());
+                Ok(())
+            },
+        );
+        let written: Vec<u8> = pieces.into_iter().flat_map(|p| p.unwrap()).collect();
+        let one_by_one: String = (0..10_000).map(|n| format!("{n}\n")).collect();
+        assert_eq!(String::from_utf8(written).unwrap(), one_by_one);
+    }
+
+    #[test]
+    fn json_records_are_separated_inside_a_piece_and_the_writer_separates_the_pieces() {
+        let pieces = render_batch(
+            (0..5_000).collect::<Vec<usize>>(),
+            true,
+            |_| {},
+            |n, text| {
+                text.extend_from_slice(format!("{{{n}}}").as_bytes());
+                Ok(())
+            },
+        );
+        // The writer puts `,\n` between the pieces that have text.
+        let mut sink = Sink::default();
+        write_while(&mut sink, true, |send| {
+            assert!(send(pieces));
+            Ok(())
+        })
+        .unwrap();
+        let one_by_one = (0..5_000)
+            .map(|n| format!("{{{n}}}"))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        assert_eq!(String::from_utf8(sink.bytes).unwrap(), one_by_one);
+    }
+
+    /// An output that notes the threads it was written from, and can fail at a given write.
+    #[derive(Default)]
+    struct Sink {
+        bytes: Vec<u8>,
+        threads: std::collections::HashSet<std::thread::ThreadId>,
+        writes: usize,
+        fail_at: Option<usize>,
+    }
+
+    impl Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            if Some(self.writes) == self.fail_at {
+                return Err(std::io::Error::other("disk full"));
+            }
+            self.threads.insert(std::thread::current().id());
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn text(s: &str) -> anyhow::Result<Vec<u8>> {
+        Ok(s.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn batches_are_written_in_the_order_they_are_sent_on_a_thread_that_is_not_the_producers() {
+        let mut sink = Sink::default();
+        write_while(&mut sink, false, |send| {
+            for batch in 0..40 {
+                assert!(send(
+                    (0..3)
+                        .map(|piece| text(&format!("{batch}.{piece}\n")))
+                        .collect()
+                ));
+            }
+            Ok(())
+        })
+        .unwrap();
+        let expected: String = (0..40)
+            .flat_map(|b| (0..3).map(move |p| format!("{b}.{p}\n")))
+            .collect();
+        assert_eq!(String::from_utf8(sink.bytes).unwrap(), expected);
+        assert_eq!(sink.threads.len(), 1);
+        assert!(!sink.threads.contains(&std::thread::current().id()));
+    }
+
+    #[test]
+    fn json_pieces_are_separated_across_batches_and_an_empty_piece_is_left_out() {
+        let mut sink = Sink::default();
+        write_while(&mut sink, true, |send| {
+            assert!(send(vec![text("{1}"), text("")]));
+            assert!(send(vec![text("{2},\n{3}")]));
+            assert!(send(vec![text("")]));
+            assert!(send(vec![text("{4}")]));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(sink.bytes).unwrap(),
+            "{1},\n{2},\n{3},\n{4}"
+        );
+    }
+
+    #[test]
+    fn a_piece_that_failed_to_render_ends_the_writing_there_and_is_the_error() {
+        let mut sink = Sink::default();
+        let result = write_while(&mut sink, false, |send| {
+            send(vec![text("a"), Err(anyhow::anyhow!("render")), text("c")]);
+            // the writer has stopped, so this one is refused
+            while send(vec![text("d")]) {}
+            Ok(())
+        });
+        assert_eq!(sink.bytes, b"a");
+        assert_eq!(result.unwrap_err().to_string(), "render");
+    }
+
+    #[test]
+    fn a_writer_that_fails_stops_the_producer_and_its_error_is_the_one_returned() {
+        let mut sink = Sink {
+            fail_at: Some(2),
+            ..Default::default()
+        };
+        let mut sent = 0;
+        let result = write_while(&mut sink, false, |send| {
+            for _ in 0..1_000 {
+                if !send(vec![text("x")]) {
+                    break;
+                }
+                sent += 1;
+            }
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err().to_string(), "disk full");
+        assert!(sent < 10, "the producer went on for {sent} batches");
+    }
+
+    #[test]
+    fn an_error_of_the_writer_comes_before_one_of_the_producer_that_came_after_it() {
+        // The writer can only have failed on a batch that came before whatever the producer
+        // met afterwards, and the first failure is the one a run that wrote as it went reported.
+        let mut sink = Sink {
+            fail_at: Some(1),
+            ..Default::default()
+        };
+        let result = write_while(&mut sink, false, |send| {
+            while send(vec![text("x")]) {}
+            Err(anyhow::anyhow!("producer"))
+        });
+        assert_eq!(result.unwrap_err().to_string(), "disk full");
+    }
+
+    #[test]
+    fn an_error_of_the_producer_leaves_every_batch_before_it_written() {
+        let mut sink = Sink::default();
+        let result = write_while(&mut sink, false, |send| {
+            assert!(send(vec![text("a")]));
+            assert!(send(vec![text("b")]));
+            Err(anyhow::anyhow!("read error"))
+        });
+        assert_eq!(sink.bytes, b"ab");
+        assert_eq!(result.unwrap_err().to_string(), "read error");
+    }
+
+    /// An output that holds its first write until it is let go.
+    struct HeldOnce {
+        started: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+        held: bool,
+    }
+
+    impl Write for HeldOnce {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if !self.held {
+                self.held = true;
+                let _ = self.started.send(());
+                let _ = self.release.recv_timeout(Duration::from_secs(10));
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_producer_cannot_hand_over_a_second_batch_while_the_writer_is_held_on_the_first() {
+        // The hand-over has no room in it: with the first batch in the writer's hands and the
+        // writer held, the second batch is made and not taken, which bounds what is in memory.
+        //
+        // Nothing here depends on how fast a thread runs. The producer says that it is about to
+        // send the second batch before it does, so by the time the test looks the producer is at
+        // that send or past it; and the count it looks at can only be more than one if the send
+        // returned, which with the writer held is the bound broken, and not a slow thread.
+        let (started, writer_is_writing) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let (about_to_send, producer_is_at) = mpsc::channel();
+        let mut slow = HeldOnce {
+            started,
+            release: released,
+            held: false,
+        };
+        let sent = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let sent = &sent;
+            let watcher = scope.spawn(move || {
+                writer_is_writing
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("the writer starts on the first batch");
+                assert_eq!(
+                    producer_is_at
+                        .iter()
+                        .take(2)
+                        .last()
+                        .expect("the producer reaches its second send"),
+                    1
+                );
+                // a producer that is not held back has the time to send the others
+                std::thread::sleep(Duration::from_millis(100));
+                let ahead = sent.load(std::sync::atomic::Ordering::SeqCst);
+                release.send(()).unwrap();
+                ahead
+            });
+            write_while(&mut slow, false, |send| {
+                for batch in 0..5 {
+                    let _ = about_to_send.send(batch);
+                    assert!(send(vec![text("x")]));
+                    sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                Ok(())
+            })
+            .unwrap();
+            // one in the writer's hands, and the producer waiting to hand over the next
+            assert_eq!(watcher.join().unwrap(), 1);
+        });
+    }
+
+    /// An output that panics at its first write.
+    struct PanicsOnWrite;
+
+    impl Write for PanicsOnWrite {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            panic!("the writer panicked on purpose")
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_panic_of_the_writer_is_the_callers_and_the_producer_is_let_go() {
+        let mut sent = 0;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            write_while(&mut PanicsOnWrite, false, |send| {
+                // a writer that has panicked has gone, and `send` says so, or this would not end
+                while send(vec![text("x")]) {
+                    sent += 1;
+                }
+                Ok(())
+            })
+        }));
+        let payload = outcome.expect_err("the panic of the writer is resumed in the caller");
+        assert_eq!(
+            payload.downcast_ref::<&str>().copied(),
+            Some("the writer panicked on purpose")
+        );
+        assert!(sent < 10, "the producer went on for {sent} batches");
+    }
+
+    #[test]
+    fn a_record_that_fails_to_render_fails_its_piece_and_the_others_are_still_annotated_and_dropped(
+    ) {
+        let stages: Stages = Arc::default();
+        let pieces = render_batch(
+            probes(1_000, &stages),
+            false,
+            |p| p.note("annotated"),
+            |p, _| {
+                if p.id == 500 {
+                    anyhow::bail!("record 500")
+                }
+                Ok(())
+            },
+        );
+
+        let failed: Vec<String> = pieces
+            .iter()
+            .filter_map(|p| p.as_ref().err().map(|e| e.to_string()))
+            .collect();
+        assert_eq!(failed, ["record 500"]);
+        let stages = stages.lock().unwrap();
+        let count = |stage: &str| stages.iter().filter(|s| s.1 == stage).count();
+        assert_eq!(count("annotated"), 1_000);
+        assert_eq!(count("dropped"), 1_000);
     }
 }
 

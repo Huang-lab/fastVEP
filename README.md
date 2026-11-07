@@ -59,6 +59,31 @@ fastvep --version
 > source "$HOME/.cargo/env"
 > ```
 
+#### Alternative: download a prebuilt binary
+
+Each [release](https://github.com/Huang-lab/fastVEP/releases) carries `fastvep` and `fastvep-web` in one archive per platform, with a `.sha256` file beside it:
+
+| Platform | Archive |
+| --- | --- |
+| Linux, x86_64 | `fastVEP-<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux, aarch64 (releases after v0.4.0) | `fastVEP-<version>-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS, Apple silicon | `fastVEP-<version>-aarch64-apple-darwin.tar.gz` |
+
+```bash
+VERSION=v0.4.0                    # a release tag
+TARGET=x86_64-unknown-linux-gnu   # or aarch64-unknown-linux-gnu, aarch64-apple-darwin
+BASE=https://github.com/Huang-lab/fastVEP/releases/download/$VERSION
+curl -LO "$BASE/fastVEP-$VERSION-$TARGET.tar.gz"
+curl -LO "$BASE/fastVEP-$VERSION-$TARGET.tar.gz.sha256"
+sha256sum -c "fastVEP-$VERSION-$TARGET.tar.gz.sha256"   # shasum -a 256 -c on macOS
+tar -xzf "fastVEP-$VERSION-$TARGET.tar.gz"
+"fastVEP-$VERSION-$TARGET/fastvep" --version
+```
+
+The Linux binaries need glibc 2.34 or newer: Ubuntu 22.04, Debian 12, RHEL 9 and its rebuilds (Rocky Linux, AlmaLinux), and anything newer.
+The release workflow runs each Linux archive in Rocky Linux 9 before it publishes it, so that a build which asks for a newer glibc stops the release.
+On an older system (Ubuntu 20.04, Debian 11, RHEL 8), build from source as above.
+
 #### Alternative: build a conda package
 
 > fastVEP is **not yet published on bioconda** — `conda install -c bioconda fastvep` will not work. The recipe below is bioconda-shaped and builds locally in the meantime.

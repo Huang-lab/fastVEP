@@ -5,10 +5,22 @@
 //! while `annotate_vcf_text` (the web server's path) kept "canonical, or the
 //! first transcript seen", which returns two rows for a single-gene variant
 //! and puts a non-canonical one first. One implementation, one behaviour.
+//!
+//! The scoring is that one implementation: it is written against [`PickRow`], and everything that
+//! picks goes through it. What a pick *keeps* is decided by [`pick_winners`], which the library
+//! applies to finished rows ([`apply_pick`]) and the CLI, when it reduces, applies to what the
+//! predictor said before any row is built (see [`PredictedRow`]). That is two ways of reaching one
+//! answer, so `tests/loop_parity.rs` holds the CLI to the library's and `tests/pick_before_rows.rs`
+//! holds a reducing run to the rows its flagging counterpart marks.
+
+use std::collections::HashMap;
 
 use anyhow::Result;
+use fastvep_consequence::{AlleleConsequenceResult, Flank, TranscriptConsequence};
 use fastvep_core::Allele;
+use fastvep_genome::Transcript;
 use fastvep_io::variant::TranscriptVariation;
+use foldhash::fast::FixedState;
 use serde::Deserialize;
 
 /// One tier of the `--pick-order` hierarchy, in VEP's vocabulary.
@@ -273,10 +285,227 @@ impl PickFlags {
     }
 }
 
+/// What a pick reads of one transcript's row.
+///
+/// Two things are a row. [`TranscriptVariation`] is the finished one, which [`apply_pick`]
+/// reduces or flags. [`PredictedRow`] is the predictor's answer for one transcript, borrowed and
+/// not yet a row, so that a run can settle the pick *before* it builds any rows and build only
+/// the ones it keeps. A variant of a run with `--distance 500000` has hundreds of transcripts
+/// around it and the pick keeps a few tens; building the rest to delete them was most of what
+/// such a run did. Both go through the one scoring below, so what is picked cannot depend on
+/// which of the two it was asked of.
+pub trait PickRow {
+    fn transcript_id(&self) -> &str;
+    fn gene_id(&self) -> &str;
+    fn canonical(&self) -> bool;
+    fn has_mane_select(&self) -> bool;
+    fn has_mane_plus_clinical(&self) -> bool;
+    fn appris(&self) -> Option<&str>;
+    fn tsl(&self) -> Option<u8>;
+    fn biotype(&self) -> &str;
+    fn has_ccds(&self) -> bool;
+    /// How many alleles the row has. They are numbered `0..allele_count()`, in the order the row
+    /// writes them.
+    fn allele_count(&self) -> usize;
+    /// The allele numbered `index`, which has to be below [`allele_count`](Self::allele_count).
+    fn allele(&self, index: usize) -> &Allele;
+    /// The lowest consequence rank among the alleles equal to `allele`, or among all of them for
+    /// `None`; `u32::MAX` when there is none.
+    fn best_rank(&self, allele: Option<&Allele>) -> u32;
+    /// A placeholder row, which stands for no transcript (see [`TranscriptVariation::NO_FEATURE`]):
+    /// no pick chooses it and none deletes it.
+    fn is_featureless(&self) -> bool {
+        self.transcript_id() == TranscriptVariation::NO_FEATURE
+    }
+}
+
+impl PickRow for TranscriptVariation {
+    fn transcript_id(&self) -> &str {
+        &self.transcript_id
+    }
+    fn gene_id(&self) -> &str {
+        &self.gene_id
+    }
+    fn canonical(&self) -> bool {
+        self.canonical
+    }
+    fn has_mane_select(&self) -> bool {
+        self.mane_select.is_some()
+    }
+    fn has_mane_plus_clinical(&self) -> bool {
+        self.mane_plus_clinical.is_some()
+    }
+    fn appris(&self) -> Option<&str> {
+        self.appris.as_deref()
+    }
+    fn tsl(&self) -> Option<u8> {
+        self.tsl
+    }
+    fn biotype(&self) -> &str {
+        &self.biotype
+    }
+    fn has_ccds(&self) -> bool {
+        self.ccds.is_some()
+    }
+    fn allele_count(&self) -> usize {
+        self.allele_annotations.len()
+    }
+    fn allele(&self, index: usize) -> &Allele {
+        &self.allele_annotations[index].allele
+    }
+    fn best_rank(&self, allele: Option<&Allele>) -> u32 {
+        self.allele_annotations
+            .iter()
+            .filter(|aa| allele.is_none_or(|a| &aa.allele == a))
+            .flat_map(|aa| aa.consequences.iter())
+            .map(|c| c.rank())
+            .min()
+            .unwrap_or(u32::MAX)
+    }
+}
+
+/// Whether an allele makes a row of a transcript: `*` (a deletion that began upstream) is not a
+/// variant of the transcript, and VEP writes no row for it.
+///
+/// The one definition of it, for every place that has to number the alleles of a row the way the
+/// pick does: [`row_alleles`], and the caller that numbers the alleles of a transcript the change
+/// is beside before it has a prediction to read them from. If two of them disagreed the pick's
+/// allele numbers would point at other alleles than the ones the rows have.
+pub fn makes_row(allele: &Allele) -> bool {
+    *allele != Allele::Missing
+}
+
+/// The alleles of a prediction that make a row, in the order the row writes them.
+pub fn row_alleles(
+    prediction: &TranscriptConsequence,
+) -> impl Iterator<Item = &AlleleConsequenceResult> {
+    prediction
+        .allele_consequences
+        .iter()
+        .filter(|ac| makes_row(&ac.allele))
+}
+
+/// What the predictor said of one transcript, or, for a transcript the change is beside, what it
+/// would say, read as the row a pick can choose from before that row is built.
+///
+/// It answers every question of [`PickRow`] as the [`TranscriptVariation`] built from the same
+/// prediction does: the ids, the canonical flag and the biotype are the prediction's, the MANE,
+/// APPRIS, TSL and CCDS attributes are the transcript's, and a prediction whose transcript could
+/// not be found has none of them.
+pub enum PredictedRow<'a> {
+    /// A transcript predicted in full.
+    Built {
+        prediction: &'a TranscriptConsequence,
+        transcript: Option<&'a Transcript>,
+    },
+    /// A transcript the change is beside: every allele in `alleles` has the one answer `flank`
+    /// for it, which is all a pick can ask, so nothing has been built for it. The ids, the
+    /// canonical flag and the biotype are read from the transcript, which is where the
+    /// predictor takes them from.
+    Flank {
+        transcript: &'a Transcript,
+        flank: Flank,
+        alleles: &'a [&'a Allele],
+    },
+}
+
+impl PredictedRow<'_> {
+    fn transcript(&self) -> Option<&Transcript> {
+        match self {
+            Self::Built { transcript, .. } => *transcript,
+            Self::Flank { transcript, .. } => Some(transcript),
+        }
+    }
+}
+
+impl PickRow for PredictedRow<'_> {
+    fn transcript_id(&self) -> &str {
+        match self {
+            Self::Built { prediction, .. } => &prediction.transcript_id,
+            Self::Flank { transcript, .. } => &transcript.stable_id,
+        }
+    }
+    fn gene_id(&self) -> &str {
+        match self {
+            Self::Built { prediction, .. } => &prediction.gene_id,
+            Self::Flank { transcript, .. } => &transcript.gene.stable_id,
+        }
+    }
+    fn canonical(&self) -> bool {
+        match self {
+            Self::Built { prediction, .. } => prediction.canonical,
+            Self::Flank { transcript, .. } => transcript.canonical,
+        }
+    }
+    fn has_mane_select(&self) -> bool {
+        self.transcript().is_some_and(|t| t.mane_select.is_some())
+    }
+    fn has_mane_plus_clinical(&self) -> bool {
+        self.transcript()
+            .is_some_and(|t| t.mane_plus_clinical.is_some())
+    }
+    fn appris(&self) -> Option<&str> {
+        self.transcript().and_then(|t| t.appris.as_deref())
+    }
+    fn tsl(&self) -> Option<u8> {
+        self.transcript().and_then(|t| t.tsl)
+    }
+    fn biotype(&self) -> &str {
+        match self {
+            Self::Built { prediction, .. } => &prediction.biotype,
+            Self::Flank { transcript, .. } => &transcript.biotype,
+        }
+    }
+    fn has_ccds(&self) -> bool {
+        self.transcript().is_some_and(|t| t.ccds.is_some())
+    }
+    fn allele_count(&self) -> usize {
+        match self {
+            Self::Built { prediction, .. } => row_alleles(prediction).count(),
+            Self::Flank { alleles, .. } => alleles.len(),
+        }
+    }
+    fn allele(&self, index: usize) -> &Allele {
+        match self {
+            Self::Built { prediction, .. } => {
+                &row_alleles(prediction)
+                    .nth(index)
+                    .expect("an allele number below `allele_count`")
+                    .allele
+            }
+            Self::Flank { alleles, .. } => alleles[index],
+        }
+    }
+    fn best_rank(&self, allele: Option<&Allele>) -> u32 {
+        match self {
+            Self::Built { prediction, .. } => row_alleles(prediction)
+                .filter(|ac| allele.is_none_or(|a| &ac.allele == a))
+                .flat_map(|ac| ac.consequences.iter())
+                .map(|c| c.rank())
+                .min()
+                .unwrap_or(u32::MAX),
+            // each allele has the one consequence, so the best of them is that one if any allele
+            // is asked about
+            Self::Flank { flank, alleles, .. } => {
+                if alleles
+                    .iter()
+                    .any(|a| allele.is_none_or(|asked| *a == asked))
+                {
+                    flank.consequence.rank()
+                } else {
+                    u32::MAX
+                }
+            }
+        }
+    }
+}
+
 /// Run a pick over one variant's transcript variations, in place.
 ///
-/// The single entry point both drivers call, because they had already drifted
-/// once on the question of what `--pick` even means.
+/// The entry point for finished rows: the library's loop, and the CLI's for a flagging pick, which
+/// keeps every row. A reducing pick in the CLI is settled before the rows exist, with
+/// [`pick_winners`] on [`PredictedRow`]s, and applied by what it builds; the two are held to one
+/// answer by the tests named in the module header.
 ///
 /// There used to be a `has_transcripts_to_pick` gate here, returning early
 /// unless the record held more than one row and at least one real transcript.
@@ -308,26 +537,29 @@ pub fn apply_pick(tvs: &mut Vec<TranscriptVariation>, plan: &PickPlan<'_>) {
     }
 }
 
-/// The `(transcript index, allele index)` pairs one pick chooses.
+/// The `(row index, allele index)` pairs one pick chooses.
 ///
 /// Candidates are the rows carrying a real transcript, at every scope. A
 /// scaffold row (`transcript_id` `-`) is never a candidate, so it is never
 /// flagged - it has no transcript, so "the transcript the pick chose" is not a
 /// thing it can be - and never deleted, because it carries an alt allele that
 /// nothing else in the record reports.
-fn pick_winners(tvs: &[TranscriptVariation], plan: &PickPlan<'_>) -> Vec<(usize, usize)> {
+///
+/// Public for the caller that settles the pick on [`PredictedRow`]s, before the rows exist, and
+/// then builds only the winners.
+pub fn pick_winners<R: PickRow>(rows: &[R], plan: &PickPlan<'_>) -> Vec<(usize, usize)> {
     match plan.scope {
         PickScope::Variant => {
-            let Some(best) = best_real_transcript_idx(tvs, plan.order) else {
+            let Some(best) = best_real_transcript_idx(rows, plan.order) else {
                 return Vec::new();
             };
             // Every allele of the winning transcript, which is what makes
             // `--pick` keep an alt that VEP's `--pick` drops. See `PickScope`.
-            (0..tvs[best].allele_annotations.len())
+            (0..rows[best].allele_count())
                 .map(|ai| (best, ai))
                 .collect()
         }
-        PickScope::Allele | PickScope::AlleleGene => grouped_winners(tvs, plan),
+        PickScope::Allele | PickScope::AlleleGene => grouped_winners(rows, plan),
     }
 }
 
@@ -338,60 +570,85 @@ fn pick_winners(tvs: &[TranscriptVariation], plan: &PickPlan<'_>) -> Vec<(usize,
 /// holding both a scaffold and a transcript, an order whose listed criteria all
 /// tie would pick the scaffold, and a reducing pick would then delete the real
 /// annotation. `--pick-order mane_select` is enough to produce that tie.
-fn best_real_transcript_idx(tvs: &[TranscriptVariation], order: &[PickCriterion]) -> Option<usize> {
-    (0..tvs.len())
-        .filter(|&i| tvs[i].transcript_id.as_ref() != "-")
+fn best_real_transcript_idx<R: PickRow>(rows: &[R], order: &[PickCriterion]) -> Option<usize> {
+    (0..rows.len())
+        .filter(|&i| !rows[i].is_featureless())
         .min_by(|&a, &b| {
-            pick_key_with(&tvs[a], order, None).cmp(&pick_key_with(&tvs[b], order, None))
+            pick_key_with(&rows[a], order, None).cmp(&pick_key_with(&rows[b], order, None))
         })
 }
 
-/// The best `(transcript index, allele index)` pair in each group, where a
-/// group is one allele or one (allele, gene) pair.
+/// The best `(row index, allele index)` pair in each group, where a group is
+/// one allele or one (allele, gene) pair.
 ///
-/// One pass, with the groups in a `Vec` scanned linearly rather than hashed: a
-/// site has a handful of alt alleles and a locus a handful of genes, so the
-/// scan is shorter than a hash, and it holds borrows of the alleles and gene
-/// IDs already in `tvs` instead of building a `String` key per (transcript x
-/// allele). This runs once per variant, but the pairs it walks are the
-/// (variant x transcript x allele) product, which is the loop that matters.
-fn grouped_winners(tvs: &[TranscriptVariation], plan: &PickPlan<'_>) -> Vec<(usize, usize)> {
+/// One pass. A row finds its group through numbers rather than comparisons: its gene is hashed to a
+/// dense number once, its allele is looked up among the few distinct alleles of the site, and the
+/// pair of them finds the group. Groups used to be found by comparing the row's allele and gene
+/// against every group before it, which is short work while a locus has a handful of genes. At
+/// `--distance 500000` there are dozens of genes around a variant and each row compared its gene's
+/// text with each of their groups in turn: the comparisons and the `memcmp` under them were about a
+/// fifth of the CPU time of a run over HG002 chr1 with the flags of #166, in a sampling profile.
+/// Nothing here builds a `String`: the keys hold borrows of the rows.
+///
+/// The tables are sized for the rows up front, so that none of them grows: this runs once per
+/// variant, and a table that starts small and doubles is five allocations where one would do.
+fn grouped_winners<R: PickRow>(rows: &[R], plan: &PickPlan<'_>) -> Vec<(usize, usize)> {
     struct Group<'a> {
-        allele: &'a Allele,
-        gene: Option<&'a str>,
         best: (usize, usize),
         key: PickKey<'a>,
     }
 
     let by_gene = plan.scope == PickScope::AlleleGene;
-    let mut groups: Vec<Group<'_>> = Vec::new();
+    // A gene's number is the order in which the rows first met it. Not used when the pick is not
+    // per gene, which puts every row in the one gene `0`.
+    let mut gene_numbers: HashMap<&str, usize, FixedState> = HashMap::with_capacity_and_hasher(
+        if by_gene { rows.len() } else { 0 },
+        FixedState::default(),
+    );
+    let mut alleles: Vec<&Allele> = Vec::new();
+    // The number of the group a (gene number, allele number) pair is in.
+    let mut group_of: HashMap<(usize, usize), usize, FixedState> =
+        HashMap::with_capacity_and_hasher(rows.len(), FixedState::default());
+    let mut groups: Vec<Group<'_>> = Vec::with_capacity(rows.len());
 
-    for (ti, tv) in tvs.iter().enumerate() {
+    for (ti, row) in rows.iter().enumerate() {
         // A scaffold row carries no transcript, so it cannot win a pick and
         // must not be able to lose one either - it would take an allele with
         // it under Reduce.
-        if tv.transcript_id.as_ref() == "-" {
+        if row.is_featureless() {
             continue;
         }
-        let gene = by_gene.then(|| tv.gene_id.as_ref());
-        for (ai, aa) in tv.allele_annotations.iter().enumerate() {
-            let key = pick_key_with(tv, plan.order, Some(&aa.allele));
-            match groups
-                .iter_mut()
-                .find(|g| g.allele == &aa.allele && g.gene == gene)
-            {
-                Some(g) => {
-                    if key < g.key {
-                        g.best = (ti, ai);
-                        g.key = key;
+        let gene = if by_gene {
+            let next = gene_numbers.len();
+            *gene_numbers.entry(row.gene_id()).or_insert(next)
+        } else {
+            0
+        };
+        for ai in 0..row.allele_count() {
+            let allele = row.allele(ai);
+            let key = pick_key_with(row, plan.order, Some(allele));
+            let allele_number = match alleles.iter().position(|a| *a == allele) {
+                Some(number) => number,
+                None => {
+                    alleles.push(allele);
+                    alleles.len() - 1
+                }
+            };
+            match group_of.entry((gene, allele_number)) {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    let group = &mut groups[*entry.get()];
+                    if key < group.key {
+                        group.best = (ti, ai);
+                        group.key = key;
                     }
                 }
-                None => groups.push(Group {
-                    allele: &aa.allele,
-                    gene,
-                    best: (ti, ai),
-                    key,
-                }),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(groups.len());
+                    groups.push(Group {
+                        best: (ti, ai),
+                        key,
+                    });
+                }
             }
         }
     }
@@ -406,9 +663,13 @@ fn grouped_winners(tvs: &[TranscriptVariation], plan: &PickPlan<'_>) -> Vec<(usi
 /// untouched: it was never in a group, and deleting it would delete an allele
 /// nothing else reports.
 fn retain_winners(tvs: &mut Vec<TranscriptVariation>, winners: &[(usize, usize)]) {
+    // Sorted, so that asking whether a pair won is a search, and not a scan of every winner for
+    // every pair of every row.
+    let mut winners = winners.to_vec();
+    winners.sort_unstable();
     let mut out: Vec<TranscriptVariation> = Vec::with_capacity(winners.len());
     for (ti, mut tv) in std::mem::take(tvs).into_iter().enumerate() {
-        if tv.transcript_id.as_ref() == "-" {
+        if tv.is_featureless() {
             out.push(tv);
             continue;
         }
@@ -416,7 +677,7 @@ fn retain_winners(tvs: &mut Vec<TranscriptVariation>, winners: &[(usize, usize)]
         let kept: Vec<_> = anns
             .into_iter()
             .enumerate()
-            .filter(|(ai, _)| winners.contains(&(ti, *ai)))
+            .filter(|(ai, _)| winners.binary_search(&(ti, *ai)).is_ok())
             .map(|(_, aa)| aa)
             .collect();
         if kept.is_empty() {
@@ -434,12 +695,12 @@ fn retain_winners(tvs: &mut Vec<TranscriptVariation>, winners: &[(usize, usize)]
 ///
 /// Criteria omitted from `order` are not consulted at all, which is what lets
 /// a caller drop a tier rather than only reorder it.
-pub fn pick_best_transcript_idx_with(
-    tvs: &[TranscriptVariation],
+pub fn pick_best_transcript_idx_with<R: PickRow>(
+    rows: &[R],
     order: &[PickCriterion],
 ) -> Option<usize> {
-    (0..tvs.len()).min_by(|&a, &b| {
-        pick_key_with(&tvs[a], order, None).cmp(&pick_key_with(&tvs[b], order, None))
+    (0..rows.len()).min_by(|&a, &b| {
+        pick_key_with(&rows[a], order, None).cmp(&pick_key_with(&rows[b], order, None))
     })
 }
 
@@ -462,23 +723,16 @@ fn pick_best_transcript_idx(tvs: &[TranscriptVariation]) -> Option<usize> {
 /// synonymous has two ranks, and an allele-scoped pick has to compare the one
 /// belonging to the allele it is picking for. `None` means "every allele on
 /// this transcript", which is what a variant-scoped pick wants.
-fn pick_score(tv: &TranscriptVariation, c: PickCriterion, allele: Option<&Allele>) -> u32 {
+fn pick_score<R: PickRow>(row: &R, c: PickCriterion, allele: Option<&Allele>) -> u32 {
     match c {
-        PickCriterion::ManeSelect => tv.mane_select.is_none() as u32,
-        PickCriterion::ManePlusClinical => tv.mane_plus_clinical.is_none() as u32,
-        PickCriterion::Canonical => !tv.canonical as u32,
-        PickCriterion::Appris => appris_rank(tv.appris.as_deref()),
-        PickCriterion::Tsl => tv.tsl.unwrap_or(u8::MAX) as u32,
-        PickCriterion::Biotype => u32::from(tv.biotype.as_ref() != "protein_coding"),
-        PickCriterion::Ccds => tv.ccds.is_none() as u32,
-        PickCriterion::Rank => tv
-            .allele_annotations
-            .iter()
-            .filter(|aa| allele.is_none_or(|a| &aa.allele == a))
-            .flat_map(|aa| aa.consequences.iter())
-            .map(|c| c.rank())
-            .min()
-            .unwrap_or(u32::MAX),
+        PickCriterion::ManeSelect => !row.has_mane_select() as u32,
+        PickCriterion::ManePlusClinical => !row.has_mane_plus_clinical() as u32,
+        PickCriterion::Canonical => !row.canonical() as u32,
+        PickCriterion::Appris => appris_rank(row.appris()),
+        PickCriterion::Tsl => row.tsl().unwrap_or(u8::MAX) as u32,
+        PickCriterion::Biotype => u32::from(row.biotype() != "protein_coding"),
+        PickCriterion::Ccds => !row.has_ccds() as u32,
+        PickCriterion::Rank => row.best_rank(allele),
     }
 }
 
@@ -493,16 +747,16 @@ const MAX_PICK_CRITERIA: usize = 8;
 /// heap allocations for every pair of transcripts considered, on every variant.
 /// Unused slots stay zero and compare equal, which is harmless since every key
 /// in a given comparison is built from the same `order`.
-fn pick_key_with<'a>(
-    tv: &'a TranscriptVariation,
+fn pick_key_with<'a, R: PickRow>(
+    row: &'a R,
     order: &[PickCriterion],
     allele: Option<&Allele>,
 ) -> PickKey<'a> {
     let mut key = [0u32; MAX_PICK_CRITERIA];
     for (slot, &c) in key.iter_mut().zip(order.iter()) {
-        *slot = pick_score(tv, c, allele);
+        *slot = pick_score(row, c, allele);
     }
-    (key, tv.transcript_id.as_ref())
+    (key, row.transcript_id())
 }
 
 /// The scores in `--pick-order` order, then the transcript ID as the final
@@ -544,23 +798,27 @@ fn appris_rank(appris: Option<&str>) -> u32 {
     let Some(s) = appris else {
         return APPRIS_ABSENT;
     };
-    let lower = s.trim().to_ascii_lowercase();
-    let body = lower.strip_prefix("appris_").unwrap_or(&lower);
+    // Compared without regard to case, and without building a lower-cased copy: this is called for
+    // every row of every allele of every variant, and a `String` for each of them is an allocation
+    // that a run with GENCODE's tags and the default `--pick-order` made millions of times.
+    let s = s.trim();
+    let body = strip_prefix_ignore_ascii_case(s, "appris_").unwrap_or(s);
     // `alt` before the bare `a`, and `alternative` before `alt`: the shorter
     // prefixes would otherwise swallow the longer spellings' digits.
-    let (base, unnumbered, digits) = if let Some(d) = body.strip_prefix("principal") {
-        (APPRIS_PRINCIPAL_BASE, APPRIS_PRINCIPAL_UNNUMBERED, d)
-    } else if let Some(d) = body.strip_prefix("alternative") {
-        (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
-    } else if let Some(d) = body.strip_prefix("alt") {
-        (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
-    } else if let Some(d) = body.strip_prefix('p') {
-        (APPRIS_PRINCIPAL_BASE, APPRIS_PRINCIPAL_UNNUMBERED, d)
-    } else if let Some(d) = body.strip_prefix('a') {
-        (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
-    } else {
-        return APPRIS_UNRECOGNISED;
-    };
+    let (base, unnumbered, digits) =
+        if let Some(d) = strip_prefix_ignore_ascii_case(body, "principal") {
+            (APPRIS_PRINCIPAL_BASE, APPRIS_PRINCIPAL_UNNUMBERED, d)
+        } else if let Some(d) = strip_prefix_ignore_ascii_case(body, "alternative") {
+            (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
+        } else if let Some(d) = strip_prefix_ignore_ascii_case(body, "alt") {
+            (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
+        } else if let Some(d) = strip_prefix_ignore_ascii_case(body, "p") {
+            (APPRIS_PRINCIPAL_BASE, APPRIS_PRINCIPAL_UNNUMBERED, d)
+        } else if let Some(d) = strip_prefix_ignore_ascii_case(body, "a") {
+            (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
+        } else {
+            return APPRIS_UNRECOGNISED;
+        };
     let digits = digits.trim_start_matches(['_', '-']);
     if digits.is_empty() {
         return unnumbered;
@@ -572,6 +830,16 @@ fn appris_rank(appris: Option<&str>) -> u32 {
         // `P1extra`: the class is legible, the tier is not.
         Err(_) => unnumbered,
     }
+}
+
+/// `s` without `prefix`, when it starts with it in any case of ASCII letters.
+///
+/// `get` is `None` for a prefix longer than `s` and for a cut that falls inside a multi-byte
+/// character, and neither can be a match, because `prefix` is ASCII.
+fn strip_prefix_ignore_ascii_case<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = s.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &s[prefix.len()..])
 }
 
 #[cfg(test)]
@@ -1167,6 +1435,96 @@ mod pick_tests {
         }
     }
 
+    /// `appris_rank` as it was written when it lower-cased a copy of its argument. It is the oracle
+    /// of the test below, which holds the version that builds no copy to the same answers.
+    fn appris_rank_through_a_lower_cased_copy(appris: Option<&str>) -> u32 {
+        let Some(s) = appris else {
+            return APPRIS_ABSENT;
+        };
+        let lower = s.trim().to_ascii_lowercase();
+        let body = lower.strip_prefix("appris_").unwrap_or(&lower);
+        let (base, unnumbered, digits) = if let Some(d) = body.strip_prefix("principal") {
+            (APPRIS_PRINCIPAL_BASE, APPRIS_PRINCIPAL_UNNUMBERED, d)
+        } else if let Some(d) = body.strip_prefix("alternative") {
+            (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
+        } else if let Some(d) = body.strip_prefix("alt") {
+            (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
+        } else if let Some(d) = body.strip_prefix('p') {
+            (APPRIS_PRINCIPAL_BASE, APPRIS_PRINCIPAL_UNNUMBERED, d)
+        } else if let Some(d) = body.strip_prefix('a') {
+            (APPRIS_ALTERNATIVE_BASE, APPRIS_ALTERNATIVE_UNNUMBERED, d)
+        } else {
+            return APPRIS_UNRECOGNISED;
+        };
+        let digits = digits.trim_start_matches(['_', '-']);
+        if digits.is_empty() {
+            return unnumbered;
+        }
+        match digits.parse::<u32>() {
+            Ok(n) => base + n.clamp(1, 99),
+            Err(_) => unnumbered,
+        }
+    }
+
+    #[test]
+    fn appris_rank_reads_a_tag_in_any_case_as_it_did_through_a_lower_cased_copy() {
+        // Every string of up to three of these pieces: the prefixes in every case, the separators,
+        // tiers, a sign `parse` accepts, whitespace `trim` removes, and characters that are not
+        // ASCII, including ones whose cut would fall inside a character.
+        const PIECES: [&str; 26] = [
+            "",
+            " ",
+            "\t",
+            "appris_",
+            "APPRIS_",
+            "Appris_",
+            "principal",
+            "PRINCIPAL",
+            "Principal",
+            "alternative",
+            "ALTERNATIVE",
+            "alt",
+            "ALT",
+            "a",
+            "A",
+            "p",
+            "P",
+            "_",
+            "-",
+            "1",
+            "2",
+            "007",
+            "+3",
+            "\u{e9}",
+            "\u{212a}",
+            "\u{130}",
+        ];
+        let mut checked = 0usize;
+        let mut each = |tag: &str| {
+            assert_eq!(
+                appris_rank(Some(tag)),
+                appris_rank_through_a_lower_cased_copy(Some(tag)),
+                "{tag:?}"
+            );
+            checked += 1;
+        };
+        each("");
+        for a in PIECES {
+            each(a);
+            for b in PIECES {
+                each(&format!("{a}{b}"));
+                for c in PIECES {
+                    each(&format!("{a}{b}{c}"));
+                }
+            }
+        }
+        assert!(checked > 17_000, "{checked} tags");
+        assert_eq!(
+            appris_rank(None),
+            appris_rank_through_a_lower_cased_copy(None)
+        );
+    }
+
     #[test]
     fn appris_ranks_an_unnumbered_call_at_the_end_of_its_own_class() {
         // Older GENCODE releases write `appris_principal` with no tier. It is
@@ -1731,5 +2089,231 @@ mod pick_tests {
 
         let empty: PickFlags = serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(empty.resolve(), None);
+    }
+
+    /// The grouping as it was written before a row found its group by number: every row compared
+    /// with every group so far. Kept as the oracle for the faster one, which has to choose the same
+    /// pair in every group, in the same order, on any input, ties included.
+    fn reference_grouped_winners(
+        tvs: &[TranscriptVariation],
+        plan: &PickPlan<'_>,
+    ) -> Vec<(usize, usize)> {
+        struct Group<'a> {
+            allele: &'a Allele,
+            gene: Option<&'a str>,
+            best: (usize, usize),
+            key: PickKey<'a>,
+        }
+        let by_gene = plan.scope == PickScope::AlleleGene;
+        let mut groups: Vec<Group<'_>> = Vec::new();
+        for (ti, tv) in tvs.iter().enumerate() {
+            if tv.transcript_id.as_ref() == "-" {
+                continue;
+            }
+            let gene = by_gene.then(|| tv.gene_id.as_ref());
+            for (ai, aa) in tv.allele_annotations.iter().enumerate() {
+                let key = pick_key_with(tv, plan.order, Some(&aa.allele));
+                match groups
+                    .iter_mut()
+                    .find(|g| g.allele == &aa.allele && g.gene == gene)
+                {
+                    Some(g) => {
+                        if key < g.key {
+                            g.best = (ti, ai);
+                            g.key = key;
+                        }
+                    }
+                    None => groups.push(Group {
+                        allele: &aa.allele,
+                        gene,
+                        best: (ti, ai),
+                        key,
+                    }),
+                }
+            }
+        }
+        groups.into_iter().map(|g| g.best).collect()
+    }
+
+    /// A small deterministic generator, so that a failure is the same failure on every machine.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+        fn chance(&mut self, one_in: usize) -> bool {
+            self.below(one_in) == 0
+        }
+    }
+
+    /// A locus of up to 40 transcripts in up to 12 genes, over up to three alt alleles, with every
+    /// attribute a pick reads varied, transcript ids drawn from a pool small enough that some
+    /// repeat (a tie on every tier), and now and then a scaffold row.
+    fn random_locus(rng: &mut Rng) -> Vec<TranscriptVariation> {
+        const ALLELES: [&str; 5] = ["A", "C", "G", "-", "<DEL>"];
+        const CONSEQUENCES: [Consequence; 6] = [
+            Consequence::MissenseVariant,
+            Consequence::SynonymousVariant,
+            Consequence::StopGained,
+            Consequence::IntronVariant,
+            Consequence::UpstreamGeneVariant,
+            Consequence::DownstreamGeneVariant,
+        ];
+        const APPRIS: [&str; 6] = [
+            "principal1",
+            "P3",
+            "alternative2",
+            "ALT1",
+            "appris_principal_1",
+            "x",
+        ];
+        let mut tvs = Vec::new();
+        for _ in 0..rng.below(41) {
+            let id = if rng.chance(25) {
+                "-".to_string()
+            } else {
+                format!("ENST{:02}", rng.below(30))
+            };
+            let consequence = CONSEQUENCES[rng.below(CONSEQUENCES.len())];
+            let mut tv = make_tv(
+                &id,
+                rng.chance(2),
+                if rng.chance(3) {
+                    "lncRNA"
+                } else {
+                    "protein_coding"
+                },
+                vec![consequence],
+                rng.chance(4).then_some("NM_1"),
+                rng.chance(6).then_some("NM_2"),
+                rng.chance(2).then(|| APPRIS[rng.below(APPRIS.len())]),
+                rng.chance(2).then(|| rng.below(6) as u8),
+                rng.chance(3).then_some("CCDS1"),
+            );
+            tv.gene_id = Arc::from(format!("GENE{:02}", rng.below(12)).as_str());
+            let alleles = 1 + rng.below(3);
+            let mut annotations = Vec::new();
+            for _ in 0..alleles {
+                let mut aa = tv.allele_annotations[0].clone();
+                aa.allele = Allele::from_str(ALLELES[rng.below(ALLELES.len())]);
+                aa.consequences = (0..=rng.below(2))
+                    .map(|_| CONSEQUENCES[rng.below(CONSEQUENCES.len())])
+                    .collect();
+                annotations.push(aa);
+            }
+            tv.allele_annotations = annotations;
+            tvs.push(tv);
+        }
+        tvs
+    }
+
+    fn random_order(rng: &mut Rng) -> Vec<PickCriterion> {
+        let mut all = DEFAULT_PICK_ORDER.to_vec();
+        // Fisher-Yates, then a prefix: orders of every length and every sequence
+        for i in (1..all.len()).rev() {
+            all.swap(i, rng.below(i + 1));
+        }
+        all.truncate(1 + rng.below(all.len()));
+        all
+    }
+
+    #[test]
+    fn the_grouped_pick_chooses_what_the_scan_of_every_group_chose_on_any_locus() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let mut compared = 0usize;
+        for case in 0..4_000 {
+            let tvs = random_locus(&mut rng);
+            let order = random_order(&mut rng);
+            for scope in [PickScope::Allele, PickScope::AlleleGene] {
+                let plan = PickPlan {
+                    scope,
+                    mode: PickMode::Reduce,
+                    order: &order,
+                };
+                assert_eq!(
+                    grouped_winners(&tvs, &plan),
+                    reference_grouped_winners(&tvs, &plan),
+                    "case {case}, {scope:?}, order {order:?}"
+                );
+                compared += 1;
+            }
+        }
+        assert_eq!(compared, 8_000);
+    }
+
+    #[test]
+    fn a_reducing_pick_keeps_what_the_flagging_pick_flags_on_any_locus() {
+        // `retain_winners` finds a pair among the winners by search now, and the flagging mode
+        // never searches at all: they have to agree about which pairs won
+        let mut rng = Rng(0xD1B5_4A32_D192_ED03);
+        for case in 0..2_000 {
+            let tvs = random_locus(&mut rng);
+            let order = random_order(&mut rng);
+            for scope in [PickScope::Variant, PickScope::Allele, PickScope::AlleleGene] {
+                let mut reduced = tvs.clone();
+                apply_pick(
+                    &mut reduced,
+                    &PickPlan {
+                        scope,
+                        mode: PickMode::Reduce,
+                        order: &order,
+                    },
+                );
+                let mut flagged = tvs.clone();
+                apply_pick(
+                    &mut flagged,
+                    &PickPlan {
+                        scope,
+                        mode: PickMode::Flag,
+                        order: &order,
+                    },
+                );
+                let kept = |tvs: &[TranscriptVariation], only_flagged: bool| {
+                    tvs.iter()
+                        .flat_map(|tv| {
+                            tv.allele_annotations
+                                .iter()
+                                .filter(move |aa| !only_flagged || aa.pick)
+                                .map(move |aa| {
+                                    (tv.transcript_id.to_string(), aa.allele.to_string())
+                                })
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let winners = pick_winners(
+                    &tvs,
+                    &PickPlan {
+                        scope,
+                        mode: PickMode::Reduce,
+                        order: &order,
+                    },
+                );
+                if winners.is_empty() {
+                    // nothing was a candidate, so a reducing pick leaves the record as it came
+                    assert_eq!(
+                        kept(&reduced, false),
+                        kept(&tvs, false),
+                        "case {case}, {scope:?}"
+                    );
+                } else {
+                    // scaffold rows are never candidates, and a reducing pick leaves them where they were
+                    let candidates_only = |v: Vec<(String, String)>| {
+                        v.into_iter().filter(|(t, _)| t != "-").collect::<Vec<_>>()
+                    };
+                    assert_eq!(
+                        candidates_only(kept(&reduced, false)),
+                        candidates_only(kept(&flagged, true)),
+                        "case {case}, {scope:?}, order {order:?}"
+                    );
+                }
+            }
+        }
     }
 }

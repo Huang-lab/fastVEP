@@ -3,6 +3,18 @@ use clap::{Parser, Subcommand};
 
 use fastvep_cli::{pipeline, webserver};
 
+// A run allocates in every loop of it, and mimalloc does less work for each allocation than the
+// allocators of the systems it was measured on (glibc and macOS). glibc also grows the arena of
+// each thread a page at a time, with an `mprotect` for every 4 KB, and the transcript cache, which
+// is decoded on several threads, costs over 230,000 of them (mimalloc: 62): under Rosetta 2 that
+// leaves a run no faster than master's one thread, and with mimalloc it is about four times
+// faster. This is set here, in the binary, and not in a library crate, which has no business
+// choosing the allocator of whatever links it. The `fastvep web` subcommand is in the binary and
+// runs on it; the `fastvep-web` binary does not, and what either does with its memory over weeks
+// of requests is not something that was measured.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(name = "fastvep")]
 #[command(about = "fastVEP - A high-performance variant effect predictor")]
