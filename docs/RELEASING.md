@@ -66,6 +66,10 @@ A Linux archive is run in Rocky Linux 9, whose glibc is 2.34.
 That is what the v0.4.0 x86_64 binary needed, and the check is what keeps it so: a runner image whose toolchain links a newer glibc would otherwise build, pack and publish a binary that fails to start on RHEL 9.
 If the check fails that way, build on an older runner image, or raise the floor on purpose and change the README's note on it with it.
 
+Both Linux jobs name their runner image (`ubuntu-24.04` and `ubuntu-24.04-arm`) and not `ubuntu-latest`, because that label moves to a newer Ubuntu without a change here.
+On 2026-11-07 it did: the rehearsal ran on Ubuntu 26.04, and the x86_64 archive built there needed glibc 2.38, so it did not start in the check's Rocky Linux 9.
+Move the two images together, on purpose, and rehearse before the tag.
+
 ## Release candidates
 
 A tag `vX.Y.Z-rc.N` publishes a release candidate: the same archives, as a GitHub pre-release.

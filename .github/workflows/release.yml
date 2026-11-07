@@ -36,7 +36,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # The image is named, not `ubuntu-latest`: that label moves to a newer
+          # Ubuntu without a change here, and the glibc the archive is linked
+          # against moves with it. The rehearsal of 2026-11-07 ran on Ubuntu 26.04
+          # (24.04 the day before), and the archive built there did not start in the
+          # check's Rocky Linux 9 (glibc 2.34): version `GLIBC_2.38' not found.
+          # Move this image and the arm64 one below together, on purpose, and
+          # rehearse first (docs/RELEASING.md).
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           # GitHub's arm64 runner, free for public repositories. The binary is
           # built where it runs, so the check below runs the very file that is
