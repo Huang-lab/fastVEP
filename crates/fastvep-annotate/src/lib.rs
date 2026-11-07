@@ -2095,7 +2095,11 @@ mod tests {
 
         let first = annotate();
         let mut damaged = std::fs::read(&sidecar).expect("the first context writes the sidecar");
-        *damaged.last_mut().unwrap() ^= 0xFF;
+        // The last byte of the frame, which is the last of its checksum. The file ends with the
+        // table of frames, which is not what the cache holds: a header of 8 bytes, an entry of 8 for
+        // the one frame, and a footer of 9.
+        let checksum = damaged.len() - (8 + 8 + 9) - 1;
+        damaged[checksum] ^= 0xFF;
         std::fs::write(&sidecar, &damaged).unwrap();
         // newer than the GFF3, so that it is the cache that is tried
         std::fs::File::options()

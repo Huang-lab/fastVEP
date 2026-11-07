@@ -408,6 +408,7 @@ dependencies = [
  "noodles-core",
  "noodles-csi",
  "noodles-tabix",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

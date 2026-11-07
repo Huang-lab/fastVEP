@@ -3,6 +3,17 @@
 //! Serializes fully-built `Vec<Transcript>` (including spliced sequences)
 //! to a compact binary format using bincode + zstd compression.
 //! Subsequent loads skip GFF3 parsing, FASTA loading, and sequence building.
+//!
+//! The stream (the magic, the length of the list, the transcripts) is written as zstd frames of
+//! about 8 MB, each with a checksum, and a table of them in a skippable frame at the end (the
+//! layout of zstd's "seekable format"). A decoder that reads one frame after another decompresses
+//! the frames to the same bytes as the one frame it used to be, and skips the table, so the file
+//! is read as it always was by anything that takes it for a stream. A run with more than two
+//! threads takes the frames from the table and decodes them side by side; any other run, and a
+//! cache that an earlier build wrote as one frame, which has no table, is read as a stream with
+//! the decoder on a thread of its own. Either way every frame is read to its end, where the
+//! decoder checks its checksum: a cache that fails one, or whose stream goes on after its list, is
+//! an error.
 
 use anyhow::{Context, Result};
 use fastvep_genome::Transcript;
@@ -237,6 +248,137 @@ impl std::fmt::Display for StaleCacheFormat {
 
 impl std::error::Error for StaleCacheFormat {}
 
+/// About how many bytes of the decompressed stream go in one frame of a cache.
+///
+/// Big enough that zstd, which starts each frame with an empty window, loses next to nothing of its
+/// ratio, and small enough that a cache of the transcripts of Ensembl's GFF3, about 1.6 GB
+/// decompressed, is some two hundred frames for the cores of a machine to share.
+const FRAME_BYTES: usize = 8 << 20;
+
+/// The magic of the skippable frame that holds the table of frames, and the last four bytes of the
+/// file, which say that a table ends it: both from the seekable format of zstd
+/// (`contrib/seekable_format` in the zstd repository), so that anything that reads that finds the
+/// frames in it too.
+const FRAME_TABLE_MAGIC: u32 = 0x184D_2A5E;
+const FRAME_TABLE_FOOTER_MAGIC: u32 = 0x8F92_EAB1;
+
+/// Counts the bytes that go through it, so that the length of a frame is known when it is done.
+struct Counted<W> {
+    inner: W,
+    written: u64,
+}
+
+impl<W: std::io::Write> std::io::Write for Counted<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.written += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// A writer of zstd frames, each with its own checksum, and then the table of them. The caller says
+/// where a frame may end, between two transcripts, so that a frame holds whole ones.
+struct Frames<W: std::io::Write> {
+    encoder: Option<zstd::Encoder<'static, Counted<W>>>,
+    /// The bytes of the frame that is open, and where in the output it began.
+    in_frame: usize,
+    began_at: u64,
+    /// The bytes of the stream so far, which tells how long a transcript was once it is written.
+    total: u64,
+    /// How many bytes of the stream go in a frame before the next transcript begins another.
+    frame_bytes: usize,
+    /// The length of each frame that is done, as it is in the file and as it is decompressed.
+    done: Vec<(u64, u64)>,
+}
+
+impl<W: std::io::Write> Frames<W> {
+    fn new(writer: W, frame_bytes: usize) -> std::io::Result<Self> {
+        let writer = Counted {
+            inner: writer,
+            written: 0,
+        };
+        Ok(Self {
+            encoder: Some(Self::encoder(writer)?),
+            in_frame: 0,
+            began_at: 0,
+            total: 0,
+            frame_bytes,
+            done: Vec::new(),
+        })
+    }
+
+    fn encoder(writer: Counted<W>) -> std::io::Result<zstd::Encoder<'static, Counted<W>>> {
+        // zstd level 1: fast compression, still much better decompression than gzip.
+        let mut encoder = zstd::Encoder::new(writer, 1)?;
+        // Record a frame checksum so a cache corrupted in place - a bad sector, a
+        // half-flushed page - fails loudly at load instead of deserializing into
+        // something subtly wrong.
+        encoder.include_checksum(true)?;
+        Ok(encoder)
+    }
+
+    /// Ends the frame that is open and notes how long it is.
+    fn end_the_frame(&mut self) -> std::io::Result<Counted<W>> {
+        let writer = self.encoder.take().expect("a frame is open").finish()?;
+        self.done
+            .push((writer.written - self.began_at, self.in_frame as u64));
+        Ok(writer)
+    }
+
+    /// Ends the frame, and begins another, if this one has `frame_bytes` in it. Called between two
+    /// transcripts, so that a frame holds whole ones.
+    fn begin_a_frame_if_this_one_is_full(&mut self) -> std::io::Result<()> {
+        if self.in_frame >= self.frame_bytes {
+            let writer = self.end_the_frame()?;
+            self.began_at = writer.written;
+            self.encoder = Some(Self::encoder(writer)?);
+            self.in_frame = 0;
+        }
+        Ok(())
+    }
+
+    /// Ends the last frame, and writes the table of them: a skippable frame, which a decoder that
+    /// reads the file as a stream passes over, with for each frame its length in the file and
+    /// decompressed (four bytes each, as the seekable format has them), and then how many frames
+    /// there are, a byte of flags (none: no checksum of its own for an entry), and the magic.
+    fn finish(mut self) -> std::io::Result<W> {
+        let mut writer = self.end_the_frame()?;
+        let too_long = |_| std::io::Error::other("a frame of the cache is longer than 4 GiB");
+        let too_many = |_| std::io::Error::other("a cache of more than 500 million frames");
+        let entries = u32::try_from(self.done.len()).map_err(too_many)?;
+        let size = u32::try_from(8 * u64::from(entries) + 9).map_err(too_many)?;
+        let mut table = Vec::with_capacity(8 * self.done.len() + 17);
+        table.extend_from_slice(&FRAME_TABLE_MAGIC.to_le_bytes());
+        table.extend_from_slice(&size.to_le_bytes());
+        for &(in_file, decompressed) in &self.done {
+            table.extend_from_slice(&u32::try_from(in_file).map_err(too_long)?.to_le_bytes());
+            table.extend_from_slice(&u32::try_from(decompressed).map_err(too_long)?.to_le_bytes());
+        }
+        table.extend_from_slice(&entries.to_le_bytes());
+        table.push(0);
+        table.extend_from_slice(&FRAME_TABLE_FOOTER_MAGIC.to_le_bytes());
+        std::io::Write::write_all(&mut writer, &table)?;
+        Ok(writer.inner)
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for Frames<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.encoder.as_mut().expect("a frame is open").write(buf)?;
+        self.in_frame += n;
+        self.total += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.encoder.as_mut().expect("a frame is open").flush()
+    }
+}
+
 /// Save transcripts to a binary cache file (bincode + zstd).
 ///
 /// The write is atomic: the stream goes to a temporary file in the same
@@ -250,6 +392,12 @@ impl std::error::Error for StaleCacheFormat {}
 /// one directory is atomic, so a reader now sees either the previous cache or
 /// the complete new one.
 pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
+    save_cache_with(transcripts, path, FRAME_BYTES)
+}
+
+/// [`save_cache`] with the size of a frame as a parameter, which a test makes small, so that a
+/// handful of transcripts are several frames.
+fn save_cache_with(transcripts: &[Transcript], path: &Path, frame_bytes: usize) -> Result<()> {
     // The temp file has to live in the destination's own directory: `rename` is
     // only atomic within a filesystem, and /tmp is frequently a different one.
     let dir = path
@@ -269,22 +417,34 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
             tmp.path().to_path_buf().display()
         )
     })?);
-    // zstd level 1: fast compression, still much better decompression than gzip.
-    let mut zst = zstd::Encoder::new(writer, 1)?;
-    // Record a frame checksum so a cache corrupted in place - a bad sector, a
-    // half-flushed page - fails loudly at load instead of deserializing into
-    // something subtly wrong.
-    zst.include_checksum(true)?;
-
-    // Write magic header
     use std::io::Write;
-    zst.write_all(CACHE_MAGIC_V10)?;
-
-    // Serialize with bincode
-    bincode::serialize_into(&mut zst, transcripts)
+    // The stream is the magic, the length of the list and then the transcripts, one after the
+    // other: the bytes `bincode::serialize_into(&mut zst, transcripts)` gave after the magic when
+    // the whole of it was one frame. It is cut into frames between two transcripts, each of about
+    // `frame_bytes`, so that a reader can decode the frames side by side, and the table of them
+    // ends the file (`Frames::finish`). A reader that takes the file as one stream of frames, as
+    // every reader before this one did, reads the same bytes and passes over the table.
+    let mut frames = Frames::new(writer, frame_bytes)?;
+    frames.write_all(CACHE_MAGIC_V10)?;
+    bincode::serialize_into(&mut frames, &(transcripts.len() as u64))
         .with_context(|| "Serializing transcripts to cache")?;
-
-    let mut writer = zst.finish()?;
+    for transcript in transcripts {
+        frames.begin_a_frame_if_this_one_is_full()?;
+        let before = frames.total;
+        bincode::serialize_into(&mut frames, transcript)
+            .with_context(|| "Serializing transcripts to cache")?;
+        // A cache is read with a limit on the bytes of one transcript (`bounded`), and a cache with
+        // one that is over it would be refused at every load, and written again by every run that
+        // rebuilds it.
+        let size = frames.total - before;
+        anyhow::ensure!(
+            size <= LARGEST_VALUE,
+            "the transcript {} is {size} bytes in a cache, and a cache is read with a limit of \
+             {LARGEST_VALUE} bytes for one",
+            transcript.stable_id
+        );
+    }
+    let mut writer = frames.finish()?;
     writer.flush().with_context(|| "Flushing cache writer")?;
     // fsync before the rename. Without it a crash between the two can leave the
     // renamed path pointing at unwritten blocks, which is the same silent
@@ -325,28 +485,25 @@ pub fn save_cache(transcripts: &[Transcript], path: &Path) -> Result<()> {
 /// Load transcripts from a binary cache file.
 /// Supports both zstd (v2) and legacy gzip (v1) formats.
 pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
-    let file =
+    use std::io::{Read, Seek};
+    let mut file =
         File::open(path).with_context(|| format!("Opening cache file: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
 
     // Peek at the first bytes to detect format.
     // zstd frames start with 0x28B52FFD; gzip starts with 0x1F8B.
-    use std::io::Read;
     let mut peek = [0u8; 4];
-    reader
-        .read_exact(&mut peek)
+    file.read_exact(&mut peek)
         .with_context(|| "Reading cache header")?;
 
     // Rewind so the decompressor sees the full stream
-    use std::io::Seek;
-    reader.seek(std::io::SeekFrom::Start(0))?;
+    file.seek(std::io::SeekFrom::Start(0))?;
 
     if peek[0..2] == [0x1F, 0x8B] {
         // Legacy gzip format (v1)
-        load_cache_gzip(reader)
+        load_cache_gzip(BufReader::new(file))
     } else {
         // zstd format (v2, or future)
-        load_cache_zstd(reader)
+        load_cache_zstd(file)
     }
 }
 
@@ -415,14 +572,242 @@ pub fn load_cache(path: &Path) -> Result<Vec<Transcript>> {
 /// empty SYMBOL, because the parser never runs again. A V3 cache is whole-file
 /// and loads cleanly; it just has no name for any `ncRNA_gene` locus, which is
 /// indistinguishable from a genuinely unnamed gene.
-fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>> {
-    let mut zst = zstd::Decoder::new(reader)?;
+fn load_cache_zstd(mut file: File) -> Result<Vec<Transcript>> {
+    use std::io::Seek;
+    // A cache of several frames has them decoded side by side, when there are cores to do it on.
+    // The frames are found from the table at the end of the file, without reading any of them. The
+    // table is only where they are: the stream has every one, each with its checksum, and a run
+    // that reads the file as one does not look at the table. Where it is used, a table that does
+    // not describe its file is a cache that is damaged, and is refused as one.
+    if let Some(workers) = side_by_side_workers(rayon::current_num_threads()) {
+        if let Some(frames) = read_frame_table(&file)? {
+            if frames.len() > 1 {
+                return decode_frames_side_by_side(&file, &frames, workers)
+                    .with_context(|| "Deserializing transcripts from cache");
+            }
+        }
+    }
 
-    use std::io::Read;
+    // A cache of one frame, which is what every build before the one that cut them wrote, or a run
+    // with no cores to spare, is read as a stream: the decompression goes ahead of the
+    // deserialization on a thread of its own. (A positioned read leaves the cursor of the file
+    // where it was on Unix, and does not on Windows.)
+    file.seek(std::io::SeekFrom::Start(0))?;
+    let mut zst = zstd::Decoder::new(file)?;
+    check_magic(&read_magic(&mut zst)?)?;
+    deserialize_decoded(zst).with_context(|| "Deserializing transcripts from cache")
+}
+
+/// The transcripts of the frames of a cache, in order, with the frames decoded side by side.
+///
+/// A frame is appended to the list as soon as it and every frame before it are decoded, and let
+/// go: the list is the one copy of the transcripts that is held, and what is read of the file at
+/// any moment is the few frames that are being decoded, and not the file.
+fn decode_frames_side_by_side(
+    file: &File,
+    frames: &[FrameEntry],
+    workers: usize,
+) -> Result<Vec<Transcript>> {
+    let mut transcripts: Vec<Transcript> = Vec::new();
+    let mut count: Option<u64> = None;
+    decode_in_order(
+        frames,
+        workers,
+        |i, frame| {
+            read_frame(file, frame)
+                .and_then(|bytes| decode_frame(&bytes, i == 0, frame.decompressed))
+        },
+        |(mut frame, header): (Vec<Transcript>, Option<u64>)| {
+            if let Some(n) = header {
+                count = Some(n);
+                // a hint, and not a promise: the length is the cache's own word, so it may be refused
+                let _ = transcripts.try_reserve_exact(usize::try_from(n).unwrap_or(0).min(1 << 24));
+            }
+            transcripts.append(&mut frame);
+            Ok(())
+        },
+    )?;
+    let count = count.expect("the first frame holds the length of the list");
+    anyhow::ensure!(
+        transcripts.len() as u64 == count,
+        "the cache says it holds {count} transcripts and its {} frames hold {}",
+        frames.len(),
+        transcripts.len()
+    );
+    Ok(transcripts)
+}
+
+/// The most frames decoded at once. A decoder has some 10 MB in flight, the frame and the
+/// transcripts built from it until they are appended to the list, so a decoder for every thread of a
+/// large machine raised the peak of a run with its cores: 3.5 GB on 64 threads, against 2.7 GB on 8
+/// and on 64 with this, in the same time.
+const MOST_DECODERS: usize = 8;
+
+/// How many frames to decode at once in a pool of `threads`: one thread of them merges, and the rest
+/// decode, up to `MOST_DECODERS` of them.
+fn decoders_on(threads: usize) -> usize {
+    threads.saturating_sub(1).clamp(1, MOST_DECODERS)
+}
+
+/// How many frames a run of `threads` decodes at once, and `None` for a run that reads the cache as
+/// a stream: two threads or fewer have no core to spare for it, and a platform that has neither
+/// `read_exact_at` nor `seek_read` has no frame to read apart from the others.
+fn side_by_side_workers(threads: usize) -> Option<usize> {
+    (cfg!(any(unix, windows)) && threads > 2).then(|| decoders_on(threads))
+}
+
+/// Runs `decode` on every item, on `workers` threads at most at once, and gives each result to
+/// `merge` in the order of the items, as soon as it and every item before it are done. The first
+/// error, from a decode or from the merge, is returned, and the items not yet begun are left alone.
+///
+/// A worker takes the next item that nobody has begun, so that the items are begun in order and a
+/// slow thread, an efficiency core of a machine that has both, holds up no more than the item it is
+/// on. Items of about the same cost finish in about the order they were begun, and few of them wait
+/// for one before them; a slow one lets the others run ahead of it, and what they decoded waits in
+/// memory, as pieces of the list, until it is done.
+///
+/// The workers are threads of their own, and the calling thread merges. They are not tasks of the
+/// rayon pool: a call from a task of the pool, which holds a thread of it while it waits for the
+/// results, would need the others to be free, and two such calls at once in a pool of two would
+/// wait for each other for ever.
+fn decode_in_order<I, T>(
+    items: &[I],
+    workers: usize,
+    decode: impl Fn(usize, &I) -> Result<T> + Sync,
+    merge: impl FnMut(T) -> Result<()>,
+) -> Result<()>
+where
+    I: Sync,
+    T: Send,
+{
+    decode_in_order_with(items, workers, || Ok(()), decode, merge)
+}
+
+/// Sets the flag that stops the items that are not yet begun if the thread that holds it unwinds: a
+/// panic in a decode or in the merge would otherwise be reported once every item had been decoded.
+struct StopOnPanic<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for StopOnPanic<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+/// For a test to tell how many workers a load had, and so that it was side by side at all: the
+/// calling thread, which is the one a test knows, and the workers that were given a thread.
+#[cfg(test)]
+static WORKERS_OF_THE_LOADS: std::sync::Mutex<Vec<(std::thread::ThreadId, usize)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// [`decode_in_order`] with a request for each worker's thread that comes before the thread is
+/// spawned, and that a test makes fail: a host that has reached its limit on threads refuses the
+/// spawn. The workers that were given a thread do all of it, and with none the items are decoded
+/// and merged one after the other, on the calling thread, as a run with no cores to spare would.
+fn decode_in_order_with<I, T>(
+    items: &[I],
+    workers: usize,
+    ask_for_a_thread: impl Fn() -> std::io::Result<()>,
+    decode: impl Fn(usize, &I) -> Result<T> + Sync,
+    mut merge: impl FnMut(T) -> Result<()>,
+) -> Result<()>
+where
+    I: Sync,
+    T: Send,
+{
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let (sender, decoded) = std::sync::mpsc::channel::<(usize, Result<T>)>();
+    // Set by the first failure, so that the items not yet begun are left alone.
+    let failed = AtomicBool::new(false);
+    // The next item that nobody has begun.
+    let unbegun = AtomicUsize::new(0);
+    // the results of items that were decoded before an item that comes earlier was
+    let mut waiting: std::collections::BTreeMap<usize, T> = Default::default();
+    let mut next = 0;
+    std::thread::scope(|scope| -> Result<()> {
+        let (failed, unbegun, decode) = (&failed, &unbegun, &decode);
+        let _stop_on_panic = StopOnPanic(failed);
+        let mut started = 0;
+        for _ in 0..workers.max(1) {
+            let sender = sender.clone();
+            let spawned = ask_for_a_thread().and_then(|()| {
+                std::thread::Builder::new()
+                    .name("cache-frames".into())
+                    .spawn_scoped(scope, move || {
+                        let _stop_on_panic = StopOnPanic(failed);
+                        loop {
+                            if failed.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            let i = unbegun.fetch_add(1, Ordering::Relaxed);
+                            if i >= items.len() {
+                                break;
+                            }
+                            let _ = sender.send((i, decode(i, &items[i])));
+                        }
+                    })
+            });
+            if spawned.is_err() {
+                break;
+            }
+            started += 1;
+        }
+        #[cfg(test)]
+        WORKERS_OF_THE_LOADS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((std::thread::current().id(), started));
+        // the loop below ends when the last of the clones is gone, and not before
+        drop(sender);
+        if started == 0 {
+            for (i, item) in items.iter().enumerate() {
+                merge(decode(i, item)?)?;
+                next += 1;
+            }
+            return Ok(());
+        }
+        for (i, outcome) in decoded {
+            match outcome {
+                Ok(item) => {
+                    waiting.insert(i, item);
+                }
+                Err(e) => {
+                    failed.store(true, Ordering::Relaxed);
+                    return Err(e);
+                }
+            }
+            while let Some(item) = waiting.remove(&next) {
+                if let Err(e) = merge(item) {
+                    failed.store(true, Ordering::Relaxed);
+                    return Err(e);
+                }
+                next += 1;
+            }
+        }
+        Ok(())
+    })?;
+    anyhow::ensure!(
+        next == items.len(),
+        "{next} of {} items were decoded",
+        items.len()
+    );
+    Ok(())
+}
+
+/// The first eight bytes of the stream of a cache.
+fn read_magic(stream: &mut impl std::io::Read) -> Result<[u8; 8]> {
     let mut magic = [0u8; 8];
-    zst.read_exact(&mut magic)
+    stream
+        .read_exact(&mut magic)
         .with_context(|| "Reading cache header")?;
-    if &magic == CACHE_MAGIC_V2 {
+    Ok(magic)
+}
+
+/// What a cache has to say of its format before anything is read of the rest of it: the formats that
+/// were written by builds that are stale, with why, and nothing else but the current one.
+fn check_magic(magic: &[u8; 8]) -> Result<()> {
+    if magic == CACHE_MAGIC_V2 {
         return Err(StaleCacheFormat {
             found: "FSTVEP02",
             summary: SUMMARY_PRE_90,
@@ -430,7 +815,7 @@ fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>
         }
         .into());
     }
-    if &magic == CACHE_MAGIC_V3 {
+    if magic == CACHE_MAGIC_V3 {
         return Err(StaleCacheFormat {
             found: "FSTVEP03",
             summary: SUMMARY_PRE_98,
@@ -438,7 +823,7 @@ fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>
         }
         .into());
     }
-    if &magic == CACHE_MAGIC_V4 {
+    if magic == CACHE_MAGIC_V4 {
         return Err(StaleCacheFormat {
             found: "FSTVEP04",
             summary: SUMMARY_PRE_APPRIS,
@@ -446,7 +831,7 @@ fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>
         }
         .into());
     }
-    if &magic == CACHE_MAGIC_V5 {
+    if magic == CACHE_MAGIC_V5 {
         return Err(StaleCacheFormat {
             found: "FSTVEP05",
             summary: SUMMARY_PRE_PROTEIN_VERSION,
@@ -454,7 +839,7 @@ fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>
         }
         .into());
     }
-    if &magic == CACHE_MAGIC_V6 {
+    if magic == CACHE_MAGIC_V6 {
         return Err(StaleCacheFormat {
             found: "FSTVEP06",
             summary: SUMMARY_PRE_REFSEQ_NAMES,
@@ -462,7 +847,7 @@ fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>
         }
         .into());
     }
-    if &magic == CACHE_MAGIC_V7 {
+    if magic == CACHE_MAGIC_V7 {
         return Err(StaleCacheFormat {
             found: "FSTVEP07",
             summary: SUMMARY_PRE_CACHE_PARITY,
@@ -470,7 +855,7 @@ fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>
         }
         .into());
     }
-    if &magic == CACHE_MAGIC_V8 {
+    if magic == CACHE_MAGIC_V8 {
         return Err(StaleCacheFormat {
             found: "FSTVEP08",
             summary: SUMMARY_PRE_GFF_CHECKS,
@@ -478,7 +863,7 @@ fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>
         }
         .into());
     }
-    if &magic == CACHE_MAGIC_V9 {
+    if magic == CACHE_MAGIC_V9 {
         return Err(StaleCacheFormat {
             found: "FSTVEP09",
             summary: SUMMARY_PRE_ORGANELLE,
@@ -486,11 +871,189 @@ fn load_cache_zstd<R: std::io::Read + Send>(reader: R) -> Result<Vec<Transcript>
         }
         .into());
     }
-    if &magic != CACHE_MAGIC_V10 {
+    if magic != CACHE_MAGIC_V10 {
         anyhow::bail!("Invalid cache file (wrong magic header, expected FSTVEP10)");
     }
 
-    deserialize_decoded(zst).with_context(|| "Deserializing transcripts from cache")
+    Ok(())
+}
+
+/// A frame of a cache as its table has it: where it begins in the file, how long it is there, and how
+/// long it is decompressed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FrameEntry {
+    at: u64,
+    len: u64,
+    decompressed: u64,
+}
+
+/// Where each frame of a cache begins, and how long it is, from the table that ends the file that
+/// `save_cache` wrote: the frames one after the other, and then the table, with nothing left over.
+/// `None` for a file with no table, which is every cache that an earlier build wrote, and is read
+/// as a stream.
+///
+/// A file that ends as a table does, and whose table does not describe it, is an error here: it is not
+/// what `save_cache` wrote. It is only here that the table is read. A run that reads the file as a
+/// stream (one or two threads) has the frames without it, each with its own checksum, and loads what a
+/// table that was right would have found, so the same file loads on two threads and is refused on
+/// three: the sidecar is then rebuilt, with a table that describes it, and a cache named on the
+/// command line stops the run. What the table says is not taken on trust for what is in the frames
+/// either: each is decoded to its end, where its own checksum is checked, to the length that its entry
+/// says, and the transcripts they hold have to be as many as the cache says. One cache in 2^32 of
+/// those that earlier builds wrote, one whose last four bytes (its checksum) are those of the footer,
+/// is refused here for want of a table, and rebuilt.
+fn read_frame_table(file: &File) -> Result<Option<Vec<FrameEntry>>> {
+    let file_len = file.metadata()?.len();
+    let mut footer = [0u8; 9];
+    if file_len < footer.len() as u64 {
+        return Ok(None);
+    }
+    read_at(file, &mut footer, file_len - 9).with_context(|| "Reading the end of the cache")?;
+    if u32::from_le_bytes([footer[5], footer[6], footer[7], footer[8]]) != FRAME_TABLE_FOOTER_MAGIC
+    {
+        return Ok(None);
+    }
+    let entries = u64::from(u32::from_le_bytes([
+        footer[0], footer[1], footer[2], footer[3],
+    ]));
+    anyhow::ensure!(
+        footer[4] == 0,
+        "the table of frames at the end of the cache has flags that this does not read ({:#04x})",
+        footer[4]
+    );
+    // the header of the skippable frame, the entries, and the footer
+    let table_len = 8 + 8 * entries + 9;
+    anyhow::ensure!(
+        entries > 0 && table_len <= file_len,
+        "the table of frames at the end of the cache says {entries} frames, in a file of {file_len} bytes"
+    );
+    let table_at = file_len - table_len;
+    let mut table = vec![0u8; usize::try_from(table_len - 9)?];
+    read_at(file, &mut table, table_at).with_context(|| "Reading the table of frames")?;
+    let word =
+        |at: usize| u32::from_le_bytes([table[at], table[at + 1], table[at + 2], table[at + 3]]);
+    anyhow::ensure!(
+        word(0) == FRAME_TABLE_MAGIC && u64::from(word(4)) == 8 * entries + 9,
+        "the table of frames at the end of the cache is not in a skippable frame of its size"
+    );
+    let mut frames = Vec::with_capacity(usize::try_from(entries)?);
+    let mut at = 0u64;
+    for entry in 0..entries as usize {
+        let len = u64::from(word(8 + 8 * entry));
+        anyhow::ensure!(len > 0, "the table of frames has a frame of no bytes");
+        frames.push(FrameEntry {
+            at,
+            len,
+            decompressed: u64::from(word(12 + 8 * entry)),
+        });
+        at += len;
+    }
+    anyhow::ensure!(
+        at == table_at,
+        "the frames in the table of the cache are {at} bytes, and the file holds {table_at} before it"
+    );
+    Ok(Some(frames))
+}
+
+/// `buf.len()` bytes of `file` from `offset`, on the one handle, which is what every thread that
+/// decodes a frame reads through: a file that is replaced while the cache is read is the file it was
+/// when it was opened, to all of them.
+#[cfg(unix)]
+fn read_at(file: &File, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.read_exact_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn read_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buf.is_empty() {
+        match file.seek_read(buf, offset)? {
+            0 => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            n => {
+                buf = &mut buf[n..];
+                offset += n as u64;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A platform with neither has no frame to read apart from the others: the cache is one stream.
+#[cfg(not(any(unix, windows)))]
+fn read_at(_: &File, _: &mut [u8], _: u64) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+fn read_frame(file: &File, frame: &FrameEntry) -> Result<Vec<u8>> {
+    let mut bytes = vec![0u8; usize::try_from(frame.len)?];
+    read_at(file, &mut bytes, frame.at)
+        .with_context(|| format!("Reading the frame at byte {}", frame.at))?;
+    Ok(bytes)
+}
+
+/// Counts the bytes that are read through it.
+struct CountedRead<R> {
+    inner: R,
+    read: u64,
+}
+
+impl<R: std::io::Read> std::io::Read for CountedRead<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.read += n as u64;
+        Ok(n)
+    }
+}
+
+/// The transcripts of one frame of a cache of several, and, for the first, the length of the list
+/// that the frames hold between them.
+///
+/// The frame is read as a stream, to its end, which is where the decoder checks its checksum, so a
+/// frame that is damaged is an error and none of what was read of it is used. Until then what is
+/// read is not known to be what was written, which is why every call of `bincode` has the limit of
+/// [`bounded`]. The first frame has the magic, which says whether the cache is one that this reads
+/// and why not if it is not, before anything is made of the rest. The frame is the bytes of its entry
+/// in the table and no others, and decompresses to as many as the table says: a table that were
+/// wrong about a frame would leave some of its bytes unread here, or fail to decode them, or make
+/// more or fewer of them.
+fn decode_frame(
+    frame: &[u8],
+    first: bool,
+    decompressed: u64,
+) -> Result<(Vec<Transcript>, Option<u64>)> {
+    use bincode::Options;
+    use std::io::BufRead;
+    let mut unread = frame;
+    let mut stream = BufReader::with_capacity(
+        DECODE_CHUNK / 4,
+        CountedRead {
+            inner: zstd::Decoder::with_buffer(&mut unread)?.single_frame(),
+            read: 0,
+        },
+    );
+    let count = if first {
+        check_magic(&read_magic(&mut stream)?)?;
+        Some(bounded().deserialize_from::<_, u64>(&mut stream)?)
+    } else {
+        None
+    };
+    let mut transcripts = Vec::new();
+    while !stream.fill_buf()?.is_empty() {
+        transcripts.push(bounded().deserialize_from::<_, Transcript>(&mut stream)?);
+    }
+    let read = stream.get_ref().read;
+    drop(stream);
+    anyhow::ensure!(
+        unread.is_empty(),
+        "a frame of the cache is followed, inside its entry in the table, by {} more bytes",
+        unread.len()
+    );
+    anyhow::ensure!(
+        read == decompressed,
+        "a frame of the cache decompresses to {read} bytes, and the table of frames says {decompressed}"
+    );
+    Ok((transcripts, count))
 }
 
 /// How much of the decompressed stream goes from the thread that decodes it to the thread that
@@ -504,8 +1067,9 @@ const DECODE_AHEAD: usize = 4;
 /// it zstd and half of it `bincode` building the transcripts, and the two were one after the other
 /// in the thread that wanted the answer: `bincode::deserialize_from` reads a field at a time
 /// and each read went into the decoder. The decoder now runs ahead of it, in pieces of a megabyte, and
-/// the wait for the cache is the longer of the two and not the sum. Nothing on disk changed, so
-/// every cache already written reads this way too.
+/// the wait for the cache is the longer of the two and not the sum. Every cache reads this way
+/// when the run has two threads or fewer, and a cache of one frame, which is what every build before
+/// the frames wrote, whatever the threads.
 ///
 /// The stream is then read to its end, and has to end where the list does. The end is where the
 /// decoder checks the checksum `save_cache` records in the frame "so a cache corrupted in place
@@ -764,7 +1328,9 @@ mod tests {
     use super::*;
     use fastvep_core::Strand;
     use fastvep_genome::{Exon, Gene, Transcript};
+    use std::fs::File;
     use std::sync::Arc;
+    use std::time::Duration;
     use tempfile::NamedTempFile;
 
     fn make_test_transcript() -> Transcript {
@@ -921,9 +1487,91 @@ mod tests {
         }
     }
 
+    /// `load_cache` in a pool of `threads`. With one or two a cache is read as a stream, with the
+    /// decompression ahead of the deserialization; with more, a cache of several frames has them
+    /// decoded side by side.
+    fn load_on(threads: usize, path: &Path) -> Result<Vec<Transcript>> {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| load_cache(path))
+    }
+
+    /// [`load_on`], and how many workers decoded the frames if they were decoded side by side, and
+    /// `None` if the cache was read as a stream.
+    fn load_observed(threads: usize, path: &Path) -> (Result<Vec<Transcript>>, Option<usize>) {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| {
+                // the load is made on this thread, which no other load has
+                let me = std::thread::current().id();
+                let loaded = load_cache(path);
+                let workers = WORKERS_OF_THE_LOADS
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|(id, _)| *id == me)
+                    .map(|(_, workers)| *workers);
+                (loaded, workers)
+            })
+    }
+
+    /// Whether `error` is a stream that ended before the list did, which is the same whatever the
+    /// text that the standard library gives it.
+    fn is_a_stream_that_ended_early(error: &anyhow::Error) -> bool {
+        error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<bincode::Error>().map(|e| &**e),
+                Some(bincode::ErrorKind::Io(io)) if io.kind() == std::io::ErrorKind::UnexpectedEof
+            )
+        })
+    }
+
+    /// Where the frames of the file at `path` begin, and how long they are, from its table.
+    fn frames_of(path: &Path) -> Vec<(u64, u64)> {
+        read_frame_table(&File::open(path).unwrap())
+            .unwrap()
+            .expect("the cache has a table")
+            .into_iter()
+            .map(|frame| (frame.at, frame.len))
+            .collect()
+    }
+
+    /// `save_cache` with frames of 16 KB, so that a few dozen transcripts are several frames.
+    fn save_small_frames(transcripts: &[Transcript], path: &Path) {
+        save_cache_with(transcripts, path, 16 << 10).unwrap();
+    }
+
+    /// What each frame of the cache at `path` holds, decompressed.
+    fn parts_of(path: &Path) -> Vec<Vec<u8>> {
+        let bytes = std::fs::read(path).unwrap();
+        frames_of(path)
+            .into_iter()
+            .map(|(at, len)| {
+                zstd::stream::decode_all(&bytes[at as usize..(at + len) as usize]).unwrap()
+            })
+            .collect()
+    }
+
+    /// A cache of `parts`, one frame each, with the table that `save_cache` would have written for
+    /// them: the way to make a cache with the bytes in it that a test chooses.
+    fn write_cache_of_parts(path: &Path, parts: &[Vec<u8>]) {
+        use std::io::Write;
+        let mut frames = Frames::new(BufWriter::new(File::create(path).unwrap()), 1).unwrap();
+        for part in parts {
+            frames.begin_a_frame_if_this_one_is_full().unwrap();
+            frames.write_all(part).unwrap();
+        }
+        frames.finish().unwrap().flush().unwrap();
+    }
+
     /// What `load_cache` says of a cache that `change` has made of the one `save_cache` wrote, as
-    /// the whole chain of its message.
-    fn what_a_changed_cache_says(
+    /// the whole chain of its message, on `threads` threads.
+    fn what_a_changed_cache_says_on(
+        threads: usize,
         transcripts: &[Transcript],
         change: impl FnOnce(&mut Vec<u8>),
     ) -> String {
@@ -933,33 +1581,52 @@ mod tests {
         let mut bytes = std::fs::read(&path).unwrap();
         change(&mut bytes);
         std::fs::write(&path, &bytes).unwrap();
-        match load_cache(&path) {
+        match load_on(threads, &path) {
             Ok(loaded) => panic!("the changed cache loaded, as {} transcripts", loaded.len()),
             Err(e) => format!("{e:#}"),
         }
     }
 
-    #[test]
-    fn a_cache_with_a_flipped_checksum_is_rejected_for_its_checksum() {
-        // `save_cache` records a checksum for the frame so that a cache corrupted in place fails
-        // loudly. Reading the stream to its end is what reads it.
-        let said = what_a_changed_cache_says(&bulky_transcripts(64), |bytes| {
-            let last = bytes.len() - 1;
-            bytes[last] ^= 0xFF;
-        });
-        assert!(said.contains("checksum"), "{said}");
+    /// [`what_a_changed_cache_says_on`] as a cache is read by a run of one thread, which is as a
+    /// stream.
+    fn what_a_changed_cache_says(
+        transcripts: &[Transcript],
+        change: impl FnOnce(&mut Vec<u8>),
+    ) -> String {
+        what_a_changed_cache_says_on(1, transcripts, change)
     }
 
     #[test]
-    fn a_cache_with_bytes_after_its_frame_is_rejected() {
-        // not the file `save_cache` wrote, whatever else about it reads
-        let said = what_a_changed_cache_says(&bulky_transcripts(8), |bytes| {
-            bytes.extend_from_slice(b"not a zstd frame");
-        });
-        assert!(
-            said.contains("Reading the rest of the cache after its transcripts"),
-            "{said}"
-        );
+    fn a_cache_with_a_flipped_checksum_is_rejected_for_its_checksum() {
+        // `save_cache` records a checksum for each frame so that a cache corrupted in place fails
+        // loudly. Reading a frame to its end is what reads it, and it is the last four bytes of
+        // the frame, and not of the file, which ends with the table.
+        for threads in [1, 4] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("t.cache");
+            save_small_frames(&bulky_transcripts(64), &path);
+            let (at, len) = *frames_of(&path).last().unwrap();
+            let mut bytes = std::fs::read(&path).unwrap();
+            bytes[(at + len) as usize - 1] ^= 0xFF;
+            std::fs::write(&path, &bytes).unwrap();
+            let said = format!("{:#}", load_on(threads, &path).unwrap_err());
+            assert!(said.contains("checksum"), "{threads} threads: {said}");
+        }
+    }
+
+    #[test]
+    fn a_cache_with_bytes_after_it_is_rejected() {
+        // not the file `save_cache` wrote, whatever else about it reads. The table ends the file, so
+        // a file that goes on after it has none to be found and is read as a stream, in which the
+        // bytes are not a frame, however many threads there are.
+        let junk = |bytes: &mut Vec<u8>| bytes.extend_from_slice(b"not a zstd frame");
+        for threads in [1, 4] {
+            let said = what_a_changed_cache_says_on(threads, &bulky_transcripts(8), junk);
+            assert!(
+                said.contains("Reading the rest of the cache after its transcripts"),
+                "{threads} threads: {said}"
+            );
+        }
     }
 
     #[test]
@@ -968,14 +1635,35 @@ mod tests {
         // second, the deserializer stops at the end of the first list, and v0.4.0 loaded the
         // first and said nothing of the second.
         let transcripts = bulky_transcripts(8);
-        let said = what_a_changed_cache_says(&transcripts, |bytes| {
+        let join = |bytes: &mut Vec<u8>| {
             let again = bytes.clone();
             bytes.extend_from_slice(&again);
-        });
+        };
+        // two caches that have a table each: read as a stream the second is what follows the first
+        // list, and the table at the end of the file, which the frames path reads, is the
+        // second's, and says what is in that one and not what the file holds
+        let said = what_a_changed_cache_says_on(1, &transcripts, join);
+        assert!(said.contains("bytes after its 8 transcripts"), "{said}");
+        let said = what_a_changed_cache_says_on(4, &transcripts, join);
         assert!(
-            said.contains("bytes after its 8 transcripts"),
-            "the message names what is wrong with it: {said}"
+            said.contains("the frames in the table of the cache are"),
+            "{said}"
         );
+        // two caches as every build before the table wrote them have no table, and the second is
+        // what follows the first list in a stream
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        write_a_cache_of_one_frame(&path, &transcripts);
+        let mut bytes = std::fs::read(&path).unwrap();
+        join(&mut bytes);
+        std::fs::write(&path, &bytes).unwrap();
+        for threads in [1, 4] {
+            let said = format!("{:#}", load_on(threads, &path).unwrap_err());
+            assert!(
+                said.contains("bytes after its 8 transcripts"),
+                "{threads} threads: the message names what is wrong with it: {said}"
+            );
+        }
     }
 
     #[test]
@@ -1284,6 +1972,880 @@ mod tests {
             std::panic::catch_unwind(|| deserialize_decoded(Panics))
         });
         assert!(outcome.is_err(), "the load returned {outcome:?}");
+    }
+
+    /// A cache as every build before the one that cut it into frames wrote it: the whole of it one
+    /// frame, and no table.
+    fn write_a_cache_of_one_frame(path: &Path, transcripts: &[Transcript]) {
+        use std::io::Write;
+        let mut zst = zstd::Encoder::new(BufWriter::new(File::create(path).unwrap()), 1).unwrap();
+        zst.include_checksum(true).unwrap();
+        zst.write_all(CACHE_MAGIC_V10).unwrap();
+        bincode::serialize_into(&mut zst, transcripts).unwrap();
+        zst.finish().unwrap().flush().unwrap();
+    }
+
+    fn same_transcripts(read: &[Transcript], written: &[Transcript]) {
+        assert_eq!(read.len(), written.len());
+        for (read, written) in read.iter().zip(written) {
+            assert_eq!(read.stable_id, written.stable_id);
+            assert_eq!(read.spliced_seq, written.spliced_seq);
+        }
+    }
+
+    #[test]
+    fn a_big_cache_is_several_frames_and_the_bytes_of_one_stream() {
+        // 5,000 transcripts of 4 KB that do not compress: 20 MB, which is more than two frames
+        let transcripts = bulky_transcripts(5_000);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_cache(&transcripts, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+
+        let frames = frames_of(&path);
+        assert!(frames.len() >= 3, "{} frames", frames.len());
+        // the frames, and then the table: 8 bytes for the header of its frame, 8 for each frame,
+        // and 9 for the footer
+        let table = 8 + 8 * frames.len() as u64 + 9;
+        assert_eq!(
+            frames.iter().map(|f| f.1).sum::<u64>() + table,
+            bytes.len() as u64
+        );
+        // The file, read as one stream, is the magic and what `bincode` writes of the list, which
+        // is what the one frame held: a reader of one stream reads the same bytes, and passes
+        // over the table.
+        let mut stream = CACHE_MAGIC_V10.to_vec();
+        stream.extend_from_slice(&bincode::serialize(&transcripts).unwrap());
+        assert!(
+            zstd::stream::decode_all(&bytes[..]).unwrap() == stream,
+            "the frames of the cache, read as one stream, are not the stream of the one frame"
+        );
+    }
+
+    #[test]
+    fn the_table_names_each_frame_of_the_file_and_what_it_decompresses_to() {
+        // none, one and many transcripts, in frames of a byte (a frame for each), of a hundred, of a
+        // few kilobytes, and one that is never full
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        for (n, frame_bytes) in [
+            (0, 1),
+            (1, 1),
+            (7, 100),
+            (7, 1 << 30),
+            (60, 16 << 10),
+            (60, 1),
+        ] {
+            let transcripts = bulky_transcripts(n);
+            save_cache_with(&transcripts, &path, frame_bytes).unwrap();
+            let bytes = std::fs::read(&path).unwrap();
+            let frames = frames_of(&path);
+            let (last_at, last_len) = *frames.last().unwrap();
+            let table = &bytes[(last_at + last_len) as usize..];
+            let word = |at: usize| u32::from_le_bytes(table[at..at + 4].try_into().unwrap());
+            assert_eq!(word(0), 0x184D_2A5E, "the magic of a skippable frame");
+            assert_eq!(word(4) as usize, table.len() - 8, "the size of that frame");
+            assert_eq!(
+                word(table.len() - 9) as usize,
+                frames.len(),
+                "{n} {frame_bytes}"
+            );
+            assert_eq!(table[table.len() - 5], 0, "no flags");
+            assert_eq!(
+                word(table.len() - 4),
+                0x8F92_EAB1,
+                "the magic of the footer"
+            );
+
+            let mut stream = Vec::new();
+            for (k, &(at, len)) in frames.iter().enumerate() {
+                let frame = &bytes[at as usize..(at + len) as usize];
+                // an entry is one frame, whole: the library, which is given the bytes, says where a
+                // frame that begins here ends
+                assert_eq!(
+                    zstd::zstd_safe::find_frame_compressed_size(frame).unwrap(),
+                    frame.len(),
+                    "frame {k} of {n} transcripts in frames of {frame_bytes}"
+                );
+                let decompressed = zstd::stream::decode_all(frame).unwrap();
+                assert_eq!(word(8 + 8 * k), len as u32);
+                assert_eq!(word(12 + 8 * k) as usize, decompressed.len());
+                stream.extend(decompressed);
+            }
+            let mut expected = CACHE_MAGIC_V10.to_vec();
+            expected.extend_from_slice(&bincode::serialize(&transcripts).unwrap());
+            assert!(
+                stream == expected,
+                "{n} transcripts in frames of {frame_bytes}"
+            );
+            if frame_bytes == 1 {
+                assert_eq!(
+                    frames.len(),
+                    n + 1,
+                    "the header is a frame, and then one for each transcript"
+                );
+            }
+            for threads in [1, 4] {
+                same_transcripts(&load_on(threads, &path).unwrap(), &transcripts);
+            }
+        }
+    }
+
+    #[test]
+    fn a_cache_of_several_frames_loads_the_same_on_any_number_of_threads() {
+        let transcripts = bulky_transcripts(200);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        assert!(frames_of(&path).len() >= 20);
+        // 32 is more threads than there are decoders
+        for threads in [1, 2, 3, 8, 32] {
+            same_transcripts(&load_on(threads, &path).unwrap(), &transcripts);
+        }
+    }
+
+    #[test]
+    fn at_most_eight_frames_are_decoded_at_once_and_one_thread_of_the_pool_merges() {
+        assert_eq!(decoders_on(1), 1);
+        assert_eq!(decoders_on(3), 2);
+        assert_eq!(decoders_on(8), 7);
+        assert_eq!(decoders_on(9), MOST_DECODERS);
+        assert_eq!(decoders_on(64), MOST_DECODERS);
+        // and two threads or fewer have no cores to spare for them
+        assert_eq!(side_by_side_workers(1), None);
+        assert_eq!(side_by_side_workers(2), None);
+        assert_eq!(side_by_side_workers(3), Some(2));
+        assert_eq!(side_by_side_workers(64), Some(MOST_DECODERS));
+    }
+
+    #[test]
+    fn a_load_takes_the_frames_from_the_table_on_three_threads_or_more_and_with_as_many_workers_as_that_says(
+    ) {
+        let transcripts = bulky_transcripts(200);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        // the table is what is read to decode side by side, so with two threads or fewer it is not
+        // read, and is not what is decoded with
+        for (threads, workers) in [
+            (1, None),
+            (2, None),
+            (3, Some(2)),
+            (8, Some(7)),
+            (9, Some(8)),
+            (32, Some(8)),
+        ] {
+            let (loaded, observed) = load_observed(threads, &path);
+            same_transcripts(&loaded.unwrap(), &transcripts);
+            assert_eq!(observed, workers, "{threads} threads");
+        }
+        // a cache of one frame, and one with no table, are read as a stream at any number of them
+        write_a_cache_of_one_frame(&path, &transcripts);
+        assert_eq!(load_observed(8, &path).1, None);
+        save_small_frames(&transcripts, &path);
+        let bytes = std::fs::read(&path).unwrap();
+        let (at, len) = *frames_of(&path).last().unwrap();
+        std::fs::write(&path, &bytes[..(at + len) as usize]).unwrap();
+        assert_eq!(load_observed(8, &path).1, None);
+    }
+
+    #[test]
+    fn items_are_merged_in_order_whatever_order_they_are_decoded_in() {
+        let merged = within(60, || {
+            let items: Vec<u64> = (0..40).collect();
+            let mut merged = Vec::new();
+            decode_in_order(
+                &items,
+                4,
+                |i, item| {
+                    // the early items are the slow ones, so that the later ones are done first
+                    let slow = if i < 8 { 40 - 4 * i as u64 } else { 0 };
+                    std::thread::sleep(Duration::from_millis(slow));
+                    Ok(*item * 10)
+                },
+                |value| {
+                    merged.push(value);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            merged
+        });
+        assert_eq!(merged, (0..40).map(|i| i * 10).collect::<Vec<u64>>());
+    }
+
+    #[test]
+    fn the_workers_decode_side_by_side_and_no_more_items_are_decoded_at_once_than_there_are_workers(
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+        let most = within(60, || {
+            let workers = 3;
+            let barrier = Arc::new(Barrier::new(workers));
+            let running = Arc::new(AtomicUsize::new(0));
+            let most = Arc::new(AtomicUsize::new(0));
+            let items: Vec<usize> = (0..60).collect();
+            let (b, r, m) = (barrier.clone(), running.clone(), most.clone());
+            decode_in_order(
+                &items,
+                workers,
+                move |i, _| {
+                    let now = r.fetch_add(1, Ordering::SeqCst) + 1;
+                    m.fetch_max(now, Ordering::SeqCst);
+                    // the first item of each worker waits for the others, so they have to be
+                    // decoding at the same time, or this does not return
+                    if i < workers {
+                        b.wait();
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                    r.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                },
+                |_| Ok(()),
+            )
+            .unwrap();
+            most.load(Ordering::SeqCst)
+        });
+        assert_eq!(most, 3);
+    }
+
+    #[test]
+    fn the_first_error_of_a_decode_is_returned_and_the_items_not_yet_begun_are_left_alone() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let (error, begun) = within(60, || {
+            let begun = Arc::new(AtomicUsize::new(0));
+            let counted = begun.clone();
+            let items: Vec<u64> = (0..400).collect();
+            let result = decode_in_order(
+                &items,
+                4,
+                move |i, _| {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    if i == 5 {
+                        return Err(anyhow::anyhow!("item 5 is bad"));
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                    Ok(i)
+                },
+                |_| Ok(()),
+            );
+            (
+                format!("{:#}", result.unwrap_err()),
+                begun.load(Ordering::SeqCst),
+            )
+        });
+        assert!(error.contains("item 5 is bad"), "{error}");
+        // four workers begin four items, and four more when those are done, which is when item 5
+        // has failed; every worker then looks at the flag before it begins another
+        assert!(begun < 200, "{begun} of 400 items were begun");
+    }
+
+    #[test]
+    fn an_error_of_the_merge_is_returned_and_the_items_not_yet_begun_are_left_alone() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let (error, begun) = within(60, || {
+            let begun = Arc::new(AtomicUsize::new(0));
+            let counted = begun.clone();
+            let items: Vec<u64> = (0..400).collect();
+            let result = decode_in_order(
+                &items,
+                4,
+                move |i, _| {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(20));
+                    Ok(i)
+                },
+                |value| {
+                    anyhow::ensure!(value != 3, "item 3 cannot be merged");
+                    Ok(())
+                },
+            );
+            (
+                format!("{:#}", result.unwrap_err()),
+                begun.load(Ordering::SeqCst),
+            )
+        });
+        assert!(error.contains("item 3 cannot be merged"), "{error}");
+        assert!(begun < 200, "{begun} of 400 items were begun");
+    }
+
+    #[test]
+    fn there_may_be_more_workers_than_items_and_no_items_at_all() {
+        for (n, workers) in [(0, 3), (1, 3), (2, 8), (5, 1), (7, 0)] {
+            let items: Vec<usize> = (0..n).collect();
+            let mut merged = Vec::new();
+            decode_in_order(
+                &items,
+                workers,
+                |_, item| Ok(*item),
+                |value| {
+                    merged.push(value);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(merged, items, "{n} items on {workers} workers");
+        }
+    }
+
+    #[test]
+    fn workers_that_cannot_have_a_thread_leave_the_items_to_those_that_can_and_to_the_caller() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let items: Vec<usize> = (0..30).collect();
+        // The host refuses every thread, or every one after the first two: the same items are
+        // merged in the same order, on the threads that there are, and on this one with none.
+        for allowed in [0, 2] {
+            let asked = AtomicUsize::new(0);
+            let mut merged = Vec::new();
+            decode_in_order_with(
+                &items,
+                5,
+                || {
+                    if asked.fetch_add(1, Ordering::SeqCst) < allowed {
+                        Ok(())
+                    } else {
+                        Err(std::io::ErrorKind::WouldBlock.into())
+                    }
+                },
+                |_, item| Ok(*item),
+                |value| {
+                    merged.push(value);
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(merged, items, "{allowed} threads were given");
+        }
+        // and an error is the error of the load there too
+        let said = decode_in_order_with(
+            &items,
+            5,
+            || Err(std::io::ErrorKind::WouldBlock.into()),
+            |i, _| {
+                anyhow::ensure!(i != 4, "item 4 is bad");
+                Ok(())
+            },
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert!(format!("{said:#}").contains("item 4 is bad"), "{said:#}");
+    }
+
+    #[test]
+    fn a_panic_of_a_decode_or_of_the_merge_is_the_panic_of_the_load_and_stops_the_items_not_yet_begun(
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        for panics_in in ["the decode", "the merge"] {
+            let begun = Arc::new(AtomicUsize::new(0));
+            let counted = begun.clone();
+            let outcome = within(60, move || {
+                let items: Vec<usize> = (0..400).collect();
+                std::panic::catch_unwind(|| {
+                    let _ = decode_in_order(
+                        &items,
+                        4,
+                        |i, _| {
+                            counted.fetch_add(1, Ordering::SeqCst);
+                            assert!(!(panics_in == "the decode" && i == 7), "item 7 panics");
+                            std::thread::sleep(Duration::from_millis(20));
+                            Ok(i)
+                        },
+                        |value| {
+                            assert!(!(panics_in == "the merge" && value == 3), "item 3 panics");
+                            Ok(())
+                        },
+                    );
+                })
+            });
+            assert!(outcome.is_err(), "{panics_in}: the load returned");
+            // a panic that is not told to the workers is found once every item has been decoded
+            let begun = begun.load(Ordering::SeqCst);
+            assert!(begun < 200, "{panics_in}: {begun} of 400 items were begun");
+        }
+    }
+
+    #[test]
+    fn loads_at_once_in_a_pool_that_has_no_thread_to_spare_do_not_wait_for_one_another() {
+        // The merge of a load holds the thread it is called from while it waits for the decoders.
+        // As tasks of the pool they would wait for threads that are all held by loads, and this
+        // would never return (it did, when they were).
+        within(60, || {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(2)
+                .build()
+                .unwrap();
+            let items: Vec<usize> = (0..20).collect();
+            pool.scope(|scope| {
+                for _ in 0..4 {
+                    scope.spawn(|_| {
+                        let mut merged = Vec::new();
+                        decode_in_order(
+                            &items,
+                            3,
+                            |_, item| {
+                                std::thread::sleep(Duration::from_millis(2));
+                                Ok(*item)
+                            },
+                            |value| {
+                                merged.push(value);
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                        assert_eq!(merged, items);
+                    });
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn a_loader_that_reads_one_stream_reads_a_cache_of_several_frames() {
+        // what every build before the one that cut the frames did with the file
+        use std::io::Read;
+        let transcripts = bulky_transcripts(200);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        let mut zst = zstd::Decoder::new(File::open(&path).unwrap()).unwrap();
+        let mut magic = [0u8; 8];
+        zst.read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, CACHE_MAGIC_V10);
+        let loaded: Vec<Transcript> = bincode::deserialize_from(zst).unwrap();
+        same_transcripts(&loaded, &transcripts);
+    }
+
+    #[test]
+    fn a_cache_of_one_frame_that_an_earlier_build_wrote_still_loads() {
+        let transcripts = bulky_transcripts(1_200);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        write_a_cache_of_one_frame(&path, &transcripts);
+        assert!(read_frame_table(&File::open(&path).unwrap())
+            .unwrap()
+            .is_none());
+        for threads in [1, 4] {
+            same_transcripts(&load_on(threads, &path).unwrap(), &transcripts);
+        }
+    }
+
+    #[test]
+    fn frames_that_end_where_a_block_or_a_buffer_does_load_on_every_path() {
+        // zstd blocks are 128 KiB, the buffer a frame is read through is 256 KiB, and a piece of
+        // the stream of the other path is a MiB: a frame of that many bytes, or one more or fewer,
+        // ends where one of them does. A cache of the transcripts of Ensembl's GFF3 has about one
+        // such frame in six hundred.
+        let transcript_of = |i: usize, bytes: usize| {
+            let mut transcript = make_test_transcript();
+            transcript.stable_id = Arc::from(format!("ENST{i:08}").as_str());
+            transcript.spliced_seq = Some(String::new());
+            let empty = bincode::serialized_size(&transcript).unwrap() as usize;
+            // pseudo-random bases, which zstd makes a quarter of and not nothing of
+            let mut x = (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            transcript.spliced_seq = Some(
+                (0..bytes - empty)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        ['A', 'C', 'G', 'T'][(x % 4) as usize]
+                    })
+                    .collect(),
+            );
+            assert_eq!(
+                bincode::serialized_size(&transcript).unwrap() as usize,
+                bytes
+            );
+            transcript
+        };
+        let sizes: Vec<usize> = [128 << 10, 256 << 10, 1 << 20]
+            .into_iter()
+            .flat_map(|size| [size - 1, size, size + 1])
+            .collect();
+        let transcripts: Vec<Transcript> = sizes
+            .iter()
+            .enumerate()
+            // the first frame has the magic and the length of the list before its transcript
+            .map(|(i, &size)| transcript_of(i, if i == 0 { size - 16 } else { size }))
+            .collect();
+        let mut parts: Vec<Vec<u8>> = transcripts
+            .iter()
+            .map(|t| bincode::serialize(t).unwrap())
+            .collect();
+        let mut first = CACHE_MAGIC_V10.to_vec();
+        first.extend_from_slice(&(transcripts.len() as u64).to_le_bytes());
+        first.append(&mut parts[0]);
+        parts[0] = first;
+        assert_eq!(parts.iter().map(Vec::len).collect::<Vec<_>>(), sizes);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        write_cache_of_parts(&path, &parts);
+        for threads in [1, 3, 4, 8] {
+            same_transcripts(&load_on(threads, &path).unwrap(), &transcripts);
+        }
+    }
+
+    #[test]
+    fn a_transcript_that_a_cache_could_not_be_read_with_is_not_written() {
+        // A cache is read with a limit on the bytes of one transcript. One over it would be written,
+        // refused at every load, and written again by every run that rebuilds it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        let mut big = make_test_transcript();
+        big.spliced_seq = Some("A".repeat(LARGEST_VALUE as usize));
+        let said = format!("{:#}", save_cache(&[big.clone()], &path).unwrap_err());
+        assert!(said.contains("a cache is read with a limit of"), "{said}");
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().next().is_none(),
+            "nothing is left, neither the cache nor a part of one"
+        );
+        // and one under it is written and read
+        big.spliced_seq = Some("A".repeat(LARGEST_VALUE as usize - 4096));
+        save_cache(&[big.clone()], &path).unwrap();
+        same_transcripts(&load_cache(&path).unwrap(), &[big]);
+    }
+
+    #[test]
+    fn a_cache_without_a_table_is_read_as_a_stream_of_the_frames_it_has() {
+        // The table is where the frames are, and not what is in them: a file that has lost it (cut
+        // off after its last frame, or with a footer that no longer says it is one) is still the
+        // frames, each with its checksum, and loads as every cache did before there was a table.
+        let transcripts = bulky_transcripts(100);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        let bytes = std::fs::read(&path).unwrap();
+        let (at, len) = *frames_of(&path).last().unwrap();
+        let without_table = &bytes[..(at + len) as usize];
+        let mut footer_flipped = bytes.clone();
+        *footer_flipped.last_mut().unwrap() ^= 0xFF;
+        for changed in [without_table, &footer_flipped[..]] {
+            std::fs::write(&path, changed).unwrap();
+            assert!(read_frame_table(&File::open(&path).unwrap())
+                .unwrap()
+                .is_none());
+            for threads in [1, 4] {
+                same_transcripts(&load_on(threads, &path).unwrap(), &transcripts);
+            }
+        }
+    }
+
+    #[test]
+    fn a_table_that_does_not_describe_the_file_is_refused_where_the_frames_are_taken_from_it() {
+        let transcripts = bulky_transcripts(60);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        let bytes = std::fs::read(&path).unwrap();
+        let frames = frames_of(&path);
+        assert!(frames.len() >= 5, "{} frames", frames.len());
+        let (last_at, last_len) = *frames.last().unwrap();
+        let table_at = (last_at + last_len) as usize;
+        let n = frames.len();
+        let put = |bytes: &mut Vec<u8>, at: usize, value: u32| {
+            bytes[at..at + 4].copy_from_slice(&value.to_le_bytes())
+        };
+        let get =
+            |bytes: &Vec<u8>, at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        // what each change to the table is refused for, on a run that has the cores to use it
+        type Change = Box<dyn Fn(&mut Vec<u8>)>;
+        let cases: Vec<(&str, Change, &str)> = vec![
+            (
+                "the first frame one byte longer than it is",
+                Box::new(move |b| put(b, table_at + 8, get(b, table_at + 8) + 1)),
+                "the frames in the table of the cache are",
+            ),
+            (
+                "the first frame one byte shorter than it is",
+                Box::new(move |b| put(b, table_at + 8, get(b, table_at + 8) - 1)),
+                "the frames in the table of the cache are",
+            ),
+            (
+                "a byte moved from the second frame to the first, so that they still add up",
+                Box::new(move |b| {
+                    put(b, table_at + 8, get(b, table_at + 8) + 1);
+                    put(b, table_at + 16, get(b, table_at + 16) - 1);
+                }),
+                "Deserializing transcripts from cache",
+            ),
+            (
+                "two frames under one entry, the frames in it more than the one it is for",
+                Box::new(move |b| {
+                    let entry = |b: &Vec<u8>, k: usize| {
+                        (get(b, table_at + 8 + 8 * k), get(b, table_at + 12 + 8 * k))
+                    };
+                    let mut table = 0x184D_2A5Eu32.to_le_bytes().to_vec();
+                    table.extend_from_slice(&(8 * (n as u32 - 1) + 9).to_le_bytes());
+                    let (c0, d0) = entry(b, 0);
+                    let (c1, d1) = entry(b, 1);
+                    table.extend_from_slice(&(c0 + c1).to_le_bytes());
+                    table.extend_from_slice(&(d0 + d1).to_le_bytes());
+                    for k in 2..n {
+                        let (c, d) = entry(b, k);
+                        table.extend_from_slice(&c.to_le_bytes());
+                        table.extend_from_slice(&d.to_le_bytes());
+                    }
+                    table.extend_from_slice(&(n as u32 - 1).to_le_bytes());
+                    table.push(0);
+                    table.extend_from_slice(&0x8F92_EAB1u32.to_le_bytes());
+                    b.truncate(table_at);
+                    b.extend_from_slice(&table);
+                }),
+                "inside its entry in the table",
+            ),
+            (
+                "the first frame said to decompress to one byte more than it does",
+                Box::new(move |b| put(b, table_at + 12, get(b, table_at + 12) + 1)),
+                "decompresses to",
+            ),
+            (
+                "the last frame said to decompress to one byte fewer than it does",
+                Box::new(move |b| {
+                    let at = table_at + 12 + 8 * (n - 1);
+                    put(b, at, get(b, at) - 1)
+                }),
+                "decompresses to",
+            ),
+            (
+                "a frame of no bytes",
+                Box::new(move |b| {
+                    put(
+                        b,
+                        table_at + 16,
+                        get(b, table_at + 16) + get(b, table_at + 8),
+                    );
+                    put(b, table_at + 8, 0);
+                }),
+                "a frame of no bytes",
+            ),
+            (
+                "one frame more than the table has entries for",
+                Box::new(move |b| {
+                    let footer = table_at + 8 + 8 * n;
+                    put(b, footer, n as u32 + 1)
+                }),
+                "not in a skippable frame of its size",
+            ),
+            (
+                "more frames than the file can hold",
+                Box::new(move |b| {
+                    let footer = table_at + 8 + 8 * n;
+                    put(b, footer, u32::MAX)
+                }),
+                "in a file of",
+            ),
+            (
+                "no frames",
+                Box::new(move |b| {
+                    let footer = table_at + 8 + 8 * n;
+                    put(b, footer, 0)
+                }),
+                "in a file of",
+            ),
+            (
+                "flags that this does not read",
+                Box::new(move |b| {
+                    let footer = table_at + 8 + 8 * n;
+                    b[footer + 4] = 0x80;
+                }),
+                "flags that this does not read",
+            ),
+            (
+                "the magic of the skippable frame",
+                Box::new(move |b| b[table_at] ^= 0x01),
+                "not in a skippable frame of its size",
+            ),
+            (
+                "the size of the skippable frame",
+                Box::new(move |b| put(b, table_at + 4, 8 * n as u32 + 10)),
+                "not in a skippable frame of its size",
+            ),
+        ];
+        for (what, change, said) in &cases {
+            let mut damaged = bytes.clone();
+            change(&mut damaged);
+            std::fs::write(&path, &damaged).unwrap();
+            let got = format!("{:#}", load_on(4, &path).unwrap_err());
+            assert!(got.contains(said), "{what}: {got}");
+            // A run that does not take the frames from the table does not read it, and the frames
+            // are intact, each with its own checksum. The skippable frame is part of the stream,
+            // though, and a decoder that is told by its header that it is longer than the file is
+            // refuses that.
+            let as_a_stream = load_on(1, &path);
+            if *what == "the size of the skippable frame" {
+                assert!(as_a_stream.is_err());
+            } else {
+                same_transcripts(&as_a_stream.unwrap(), &transcripts);
+            }
+        }
+    }
+
+    #[test]
+    fn a_stale_cache_of_several_frames_is_refused_as_stale_and_not_loaded() {
+        // The next bump of the magic depends on this: the magic is in the first frame, and the
+        // frames are decoded side by side, where a cache that is only stale is whole in every
+        // other way and loads.
+        let transcripts = bulky_transcripts(60);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        let mut parts = parts_of(&path);
+        assert!(parts.len() >= 5);
+        parts[0][..8].copy_from_slice(CACHE_MAGIC_V9);
+        write_cache_of_parts(&path, &parts);
+        for threads in [1, 4] {
+            let error = load_on(threads, &path).unwrap_err();
+            let stale = error
+                .downcast_ref::<StaleCacheFormat>()
+                .unwrap_or_else(|| panic!("{threads} threads: not a stale format: {error:#}"));
+            assert_eq!(stale.found, "FSTVEP09");
+        }
+        // and a magic that is not one of ours at all
+        parts[0][..8].copy_from_slice(b"FSTVEP99");
+        write_cache_of_parts(&path, &parts);
+        for threads in [1, 4] {
+            let said = format!("{:#}", load_on(threads, &path).unwrap_err());
+            assert!(
+                said.contains("wrong magic header"),
+                "{threads} threads: {said}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_length_that_is_not_one_is_an_error_in_any_frame_and_not_an_allocation() {
+        // A frame whose bytes are not what was written, with the checksum of the bytes it holds:
+        // what a damaged byte inside the compressed data can decode to, and what a writer with a
+        // bug makes. The id of the first transcript of a frame is made 1 GiB long, in the first
+        // frame and in a later one: with no limit it is allocated, and with an exabyte the
+        // process aborts.
+        let transcripts = bulky_transcripts(60);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        let parts = parts_of(&path);
+        assert!(parts.len() >= 5);
+        // the magic, the length of the list, and then the length of the first id; in a later
+        // frame the first transcript begins at its first byte
+        for (frame, at) in [(0, 16), (3, 0)] {
+            let mut damaged = parts.clone();
+            damaged[frame][at..at + 8].copy_from_slice(&(1u64 << 30).to_le_bytes());
+            write_cache_of_parts(&path, &damaged);
+            for threads in [1, 4] {
+                let said = format!("{:#}", load_on(threads, &path).unwrap_err());
+                assert!(
+                    said.contains("size limit"),
+                    "frame {frame}, {threads} threads: {said}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_count_that_the_frames_do_not_make_is_refused() {
+        let transcripts = bulky_transcripts(60);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        let parts = parts_of(&path);
+        // the cache says one more than it has, and one fewer
+        for (count, frames_said, stream_said) in [
+            (61u64, "the cache says it holds 61 transcripts", None),
+            (
+                59,
+                "the cache says it holds 59 transcripts",
+                Some("bytes after its 59 transcripts"),
+            ),
+        ] {
+            let mut damaged = parts.clone();
+            damaged[0][8..16].copy_from_slice(&count.to_le_bytes());
+            write_cache_of_parts(&path, &damaged);
+            let said = format!("{:#}", load_on(4, &path).unwrap_err());
+            assert!(said.contains(frames_said), "{said}");
+            // read as a stream, a list that says more than there is ends early, and one that says
+            // less is followed by what it left out
+            let error = load_on(1, &path).unwrap_err();
+            match stream_said {
+                Some(said) => assert!(format!("{error:#}").contains(said), "{error:#}"),
+                None => assert!(is_a_stream_that_ended_early(&error), "{error:#}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_byte_flipped_in_any_frame_of_a_cache_is_rejected_on_every_path() {
+        let transcripts = bulky_transcripts(60);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        let bytes = std::fs::read(&path).unwrap();
+        let frames: Vec<(usize, usize)> = frames_of(&path)
+            .into_iter()
+            .map(|(at, len)| (at as usize, len as usize))
+            .collect();
+        assert!(frames.len() >= 5);
+        for (k, (at, len)) in frames.iter().enumerate() {
+            for position in [at + len / 3, at + len - 1] {
+                let mut damaged = bytes.clone();
+                damaged[position] ^= 0xFF;
+                std::fs::write(&path, &damaged).unwrap();
+                for threads in [1, 4] {
+                    assert!(
+                        load_on(threads, &path).is_err(),
+                        "frame {k}, byte {position}, {threads} threads: loaded"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_cache_missing_a_frame_or_cut_short_is_rejected_on_every_path() {
+        let transcripts = bulky_transcripts(60);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cache");
+        save_small_frames(&transcripts, &path);
+        let bytes = std::fs::read(&path).unwrap();
+        let frames = frames_of(&path);
+        assert!(frames.len() >= 5);
+        let (at, len) = (frames[1].0 as usize, frames[1].1 as usize);
+
+        // the second frame taken out, and the table left as it was: every frame that is left is
+        // whole, and the table is of a file that is no longer this one
+        let mut without = bytes[..at].to_vec();
+        without.extend_from_slice(&bytes[at + len..]);
+        std::fs::write(&path, &without).unwrap();
+        let said = format!("{:#}", load_on(4, &path).unwrap_err());
+        assert!(
+            said.contains("the frames in the table of the cache are"),
+            "{said}"
+        );
+        // and read as a stream, which does not look at the table, the list is short
+        let error = load_on(1, &path).unwrap_err();
+        assert!(is_a_stream_that_ended_early(&error), "{error:#}");
+
+        // the second frame taken out of the cache, and a table made for the frames that are left:
+        // nothing is wrong with the file but the list, which is short
+        std::fs::write(&path, &bytes).unwrap();
+        let mut parts = parts_of(&path);
+        parts.remove(1);
+        write_cache_of_parts(&path, &parts);
+        let said = format!("{:#}", load_on(4, &path).unwrap_err());
+        assert!(
+            said.contains("the cache says it holds 60 transcripts and its"),
+            "{said}"
+        );
+        let error = load_on(1, &path).unwrap_err();
+        assert!(is_a_stream_that_ended_early(&error), "{error:#}");
+
+        // the last frame cut short, which takes the table with it
+        std::fs::write(&path, &bytes[..bytes.len() - 100]).unwrap();
+        for threads in [1, 4] {
+            assert!(load_on(threads, &path).is_err(), "{threads} threads");
+        }
     }
 
     #[test]
