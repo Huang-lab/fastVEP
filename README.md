@@ -764,15 +764,15 @@ cargo test -p fastvep-sa           # Supplementary annotation format tests
 
 ## Performance Benchmarks
 
-fastVEP's numbers below were measured on 2026-11-07 on an Apple M4 (10 cores, 4 performance and 6 efficiency, ARM64, macOS 26.5.1), with the release build (LTO) of v0.5.0-rc.1.
-`benchmarks/results/v0.5.0-rc.1/` holds every run, what it ran on and the hash of the binary; `benchmarks/run_head_to_head.py` and `benchmarks/run_benchmark.sh` are the commands that made them.
+fastVEP's numbers below were measured on 2026-11-07 on an Apple M4 (10 cores, 4 performance and 6 efficiency, ARM64, macOS 26.5.1), with the release build (LTO) of 0.5.0.
+`benchmarks/results/v0.5.0/` holds every run, what it ran on and the hash of the binary; `benchmarks/run_head_to_head.py` and `benchmarks/run_benchmark.sh` are the commands that made them.
 Each is the median of 5 runs, with the full Ensembl annotations, the FASTA and HGVS.
-The Ensembl VEP times were measured on 2026-07-29 on the same machine and were not run again, so each speedup is the VEP time of that day over the fastVEP time of this one.
-A laptop is a noisy instrument: the 5 consequence-only whole-genome runs on one thread took between 43 and 55 seconds, and those on every core between 12 and 17.
+The comparison with Ensembl VEP 116.3 was made on the same machine, with VEP in Docker (`benchmarks/run_vep_side.py`), and the fastVEP times that it is set against were measured in the same session (`benchmarks/results/v0.5.0/with_vep/`): a laptop runs one binary at speeds that differ by several per cent from one session to another, so each speedup is the time of VEP over the time of fastVEP of one session.
+A laptop is a noisy instrument: the 5 consequence-only whole-genome runs on one thread took 41 to 46 seconds in that session (43 to 55 in the earlier one), and those on every core 11.0 to 11.3 (12 to 17).
 
 ### Multi-Organism Throughput
 
-Default threads, `--hgvs`, the output written to a file, the binary transcript cache already built.
+Default threads, `--hgvs`, the output written to a file, the binary transcript cache already built (the first session of 2026-11-07).
 
 | Organism | Transcripts | Variants | Source | Time | Throughput |
 |----------|-------------|----------|--------|------|------------|
@@ -785,51 +785,52 @@ Default threads, `--hgvs`, the output written to a file, the binary transcript c
 Transcripts are those that fastVEP reads from each GFF3.
 The Drosophila and mouse variant files are in the coordinates of dm3 and GRCm38, against gene models of BDGP6.54 and GRCm39: those two rows measure throughput, and the consequences they predict are not those of the variants.
 
-### vs. Ensembl VEP v115.1 (head-to-head, single-thread, GIAB HG002)
+### vs. Ensembl VEP 116.3 (head-to-head, single-thread, GIAB HG002)
 
 Both tools single-threaded on identical GRCh38 Ensembl 115 GFF3 + FASTA with `--hgvs --symbol --canonical`.
-fastVEP uses its binary transcript cache; Ensembl VEP runs via Docker (`ensemblorg/ensembl-vep:release_115.1`) in `--gff` mode against a bgzip+tabix-indexed GFF3.
-VEP's full-genome time is measured per chromosome and summed: a single-process whole-genome run OOMs above ~2.7M variants at the 7.65 GiB Docker default, and the per-chromosome sum keeps VEP's memory bounded (its best case).
+fastVEP uses its binary transcript cache; Ensembl VEP runs via Docker (`ensemblorg/ensembl-vep:release_116.3`, pinned by its digest) in `--gff` mode against a bgzip+tabix-indexed GFF3.
+VEP's full-genome time is measured per chromosome and summed, one run at a time: a single-process whole-genome run of VEP 115.1 ran out of the 7.65 GiB Docker default above ~2.7M variants (July 2026, not repeated), and the per-chromosome sum keeps VEP's memory bounded (its best case).
+Release 116.3 takes 1.3 to 1.9 times as long as the release 115.1 of the earlier version of this table: on the chr22 inputs below, on the same day, 115.1 took 0.46, 5.98, 12.88, 83.65 s where 116.3 took 0.64, 7.91, 24.07, 112.51 s (`benchmarks/results/v0.5.0/with_vep/vep_115_1/`).
 
 **Full human WGS (4,048,342 variants), single-thread:**
 
 | Annotation | fastVEP | Ensembl VEP | Speedup |
 |-----------|---------|-------------|---------|
-| Consequence only | 44.7s | 4,621s (~77 min) | **103×** |
-| + ClinVar | 47.6s | 4,803s | **101×** |
-| + gnomAD + ClinVar | 61.6s | 4,905s | **80×** |
+| Consequence only | 42.2s | 6,516s (~109 min) | **154×** |
+| + ClinVar | 44.5s | 6,662s | **150×** |
+| + gnomAD + ClinVar | 54.6s | 7,334s | **134×** |
 
-With fastVEP's default multi-threading (10 cores), the same full WGS completes in **12.1s** (consequence-only) to **19.0s** (+gnomAD+ClinVar) on this system.
-A whole-genome run on all cores writes 11.1 GB (the multi-organism table above has 12.4s for the same genome with `--hgvs` alone).
-The ClinVar and gnomAD databases of the two annotation rows are those of the ACMG benchmark (`data/benchmark/sa_db`: ClinVar of 27 June 2026, and gnomAD v4.1 exomes restricted to the regions of its ClinVar 2-star+ set).
+With fastVEP's default multi-threading (10 cores), the same full WGS completes in **11.1s** (consequence-only) to **17.0s** (+gnomAD+ClinVar) on this system.
+A whole-genome run on all cores writes 11.1 GB (the multi-organism table above has 12.4s for the same genome with `--hgvs` alone, measured in the first session).
+Both tools read the same ClinVar and gnomAD files in the two annotation rows (`data/benchmark/sa_sources`: the ClinVar VCF of 27 June 2026, and the extracts of the joint release of gnomAD v4.1 restricted to the regions of its ClinVar 2-star+ set), fastVEP as the fastSA databases built from them (`data/benchmark/sa_db` and `sa_db_joint`) and VEP as `--custom` sources; on chromosome 22 they found the same 1,057 ClinVar records and 2,623 gnomAD records (`benchmarks/check_custom_matches.py`).
 
 **chr22 scaling, single-thread** — fastVEP reads its binary transcript cache of 509,650 transcripts on every run: a run of one variant takes about 0.9s on one thread and 0.4s on eight, nearly all of it reading the cache.
 VEP (which tabix-fetches only overlapping GFF regions) is therefore faster at 1,000 variants, and fastVEP from a few thousand on:
 
 | Variants | fastVEP | VEP | Speedup |
 |----------|---------|-----|---------|
-| 1,000 | 0.91s | 0.45s | 0.5× (VEP faster) |
-| 5,000 | 0.98s | 6.29s | 6.4× |
-| 10,000 | 1.10s | 13.41s | 12× |
-| 50,284 | 1.63s | 93.95s | **58×** |
+| 1,000 | 0.88s | 0.64s | 0.7× (VEP faster) |
+| 5,000 | 0.94s | 7.91s | 8.4× |
+| 10,000 | 1.05s | 24.07s | 23× |
+| 50,284 | 1.54s | 112.51s | **73×** |
 
 | Resource | Ensembl VEP | fastVEP |
 |----------|-------------|---------|
-| Peak memory (100K variants) | not measured | **2.6 GiB** (the whole gene model, with its sequences, is in memory) |
-| Binary / install size | not measured | **5.8 MB** |
+| Peak memory (100K variants) | 0.94 GiB (the peak of the VEP process) | 2.6 GiB (the whole gene model, with its sequences, is in memory) |
+| Binary / install size | 0.97 GB (the Docker image, unpacked; 0.31 GB to pull) | **5.8 MB** |
 | Dependencies | Perl (5.22 or later recommended), the Perl libraries Archive::Zip and DBI, a C compiler, and what its `INSTALL.pl` fetches (the README of ensembl-vep release/115.2) | **None** at run time (a C compiler to build) |
 
 ### Threads and memory
 
 fastVEP uses every core unless `RAYON_NUM_THREADS=N` says otherwise.
-The peak memory of a run is the gene model and not the VCF or the threads: 2,688 MiB on one thread and 2,704 MiB on eight for 100,000 variants against the human Ensembl GFF3 with sequences (macOS), and 1,170 MiB and 1,184 MiB with a cache built without a FASTA, which has no sequences (consequence only, no `--hgvs`).
+The peak memory of a run is the gene model and not the VCF or the threads: 2,700 MiB on one thread and 2,702 MiB on eight for 100,000 variants against the human Ensembl GFF3 with sequences (macOS), and 1,170 MiB and 1,188 MiB with a cache built without a FASTA, which has no sequences (consequence only, no `--hgvs`).
 On Linux (arm64, glibc 2.39, in a container) a run of 200 variants peaks at 2,648 MB on 4 threads and 2,677 MB on 64, where the build before #166 peaked at 2,520 MB on either, and a run of 100,000 variants peaks at 2,673 MB on 4 threads, 2,720 MB on 32 and 2,834 MB on 64, against 2,519 MB: the peak does not grow with the number of variants, and the `fastvep` binary's allocator (mimalloc) holds 4 to 9% more of it than glibc's does on one to 32 threads and 12% more on 64, and nothing more on macOS.
 Under an address-space limit (`ulimit -v`, the `h_vmem` of some schedulers) a run of 100,000 variants on 8 threads needs about 1.2 GiB more than before: it ran down to a limit between 7,000 and 7,200 MiB, against 5,800 to 6,000 MiB, and below that it stops with `Cannot allocate memory`.
 
 ### Supplementary annotation format (fastSA v2)
 
 The `.osa2` format (echtvar-inspired chunked binary; `--format auto` default) stores real annotation databases compactly, with annotation output **byte-identical** to the v1 `.osa` format (md5-verified).
-Measured on 2026-11-07 with v0.5.0-rc.1 by `benchmarks/run_sa_formats.py` (sizes in megabytes of 10^6 bytes; the `.osa` with its `.osa.idx`):
+Measured on 2026-11-07 with 0.5.0 by `benchmarks/run_sa_formats.py` (sizes in megabytes of 10^6 bytes; the `.osa` with its `.osa.idx`):
 
 | Source | Records | v1 (.osa) | v2 (.osa2) | Ratio | Build v1 | Build v2 |
 |--------|---------|-----------|-----------|-------|----------|----------|
@@ -844,9 +845,8 @@ The sizes of SpliceAI, gnomAD and PhyloP databases, and the annotation against f
 
 fastVEP's consequence and HGVS output is a port of Ensembl VEP's own model, and it is compared with **real Ensembl VEP 116.3**, the release that most users run now.
 VEP ran in Docker (`ensemblorg/ensembl-vep:release_116.3`) in `--gff` mode over the same GRCh38 Ensembl 115 GFF3 and FASTA that fastVEP reads, with `--tab --symbol --biotype --canonical --numbers --variant_class --show_ref_allele --hgvs --hgvsg`, and `validation/compare_tab.py` pairs the rows of the two outputs and compares them cell by cell (27 columns with the HGVS columns and 23 without them: a GFF3 has no symbol source, HGNC identifier or CDS flags, so VEP's `--gff` reader writes `-` where fastVEP, like VEP's own cache, fills them).
-The counts below were measured on 27 October 2026 with commit `5048fc5`.
-The release candidate v0.5.0-rc.1 writes the same bytes as that build on every input of the comparison that can be run without VEP, as a VCF and as the tab output of this comparison (11 runs, the whole HG002 call set among them; `validation/compare_builds.py`, [`benchmarks/results/v0.5.0-rc.1/identity_vs_5048fc5/`](benchmarks/results/v0.5.0-rc.1/identity_vs_5048fc5/)), so they are its counts.
-They were not measured again with Ensembl VEP for the release candidate.
+The counts below were measured on 7 November 2026 with the binary of 0.5.0 (`validation/measure_vep116.py` makes every row of the table in one command), and are the counts that commit `5048fc5` gave on 27 October 2026, to the cell.
+The two builds write the same bytes on every input of the comparison that can be run without VEP, as a VCF and as the tab output of this comparison (11 runs, the whole HG002 call set among them; `validation/compare_builds.py`, [`benchmarks/results/v0.5.0/identity_vs_5048fc5/`](benchmarks/results/v0.5.0/identity_vs_5048fc5/)).
 
 | Input | Records | Paired rows | Cells compared | Cells that differ |
 |---|---:|---:|---:|---:|
@@ -856,12 +856,14 @@ They were not measured again with Ensembl VEP for the release candidate.
 | A generated world built to be hard (both strands, multi-ALT records) | 3,000 | 7,213 | 216,390 | 954 (0.44 %) |
 | Its edges: every shape of change within ten bases of every exon, CDS and transcript boundary | 17,672 | 36,958 | 1,108,740 | 845 (0.076 %) |
 | Its lone indels, written with shared bases | 1,500 | 3,176 | 95,280 | 26 (0.027 %) |
+| The 173 variants of VEP's own example set | 173 | 2,977 | 80,379 | 0 |
+| The 400 ClinVar in-frame deletions | 400 | 9,465 | 255,555 | 53 (0.021 %) |
 
 **An ordinary callset.**
-On the HG002 sample `Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `cDNA_position`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `FLAGS`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row.
+On the HG002 sample `Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `cDNA_position`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row.
 The 3,851 cells that differ are all in four HGVS columns: `HGVS_OFFSET` 2,070, `HGVSc` 1,729, `HGVSg` 35 and `HGVSp` 17.
 Each has a documented cause: 3,822 are alleles of records with several ALTs, which fastVEP describes as each would be alone and Ensembl 116 describes by what else the record holds (divergence 11), 12 are the `*` coordinate that Ensembl writes for an intronic base after the terminator (divergence 4), and 17 are a change that the 3'-rule carries over an intron, for which Ensembl writes no protein change (divergence 17).
-On a RefSeq GFF3 (chr21 and chr22 of GRCh38.p14) 135 of 81,510 cells differ, all of them the multi-allelic difference of divergence 11, and against the output of VEP 116.3's own Ensembl cache (`vep --cache --offline`, chromosomes 21 and 22) fastVEP over the matching GFF3 differs in one `Consequence` cell of the 168,813 paired rows of the ClinVar sample.
+On a RefSeq GFF3 (chr21 and chr22 of GRCh38.p14, the 527 variants of the sample on them) 818 of 73,359 cells differ: 135 are the multi-allelic difference of divergence 11, and 683 are the canonical flag and the biotype, which a RefSeq GFF3 does not carry (VEP's `--gff` reader guesses the biotype and has no canonical flag, and fastVEP reads them as VEP's RefSeq cache does); against the output of VEP 116.3's own Ensembl cache (`vep --cache --offline`, chromosomes 21 and 22; measured on 27 October 2026 with `5048fc5`, and not repeated, because the extracted caches are no longer on disk) fastVEP over the matching GFF3 differs in one `Consequence` cell of the 168,813 paired rows of the ClinVar sample.
 
 **The shapes that disagree.**
 A real callset holds few of them, so the generated worlds are built to hold many, and their rates are the rates on those shapes.
@@ -871,7 +873,7 @@ Smaller worlds of the same kinds, with the output that VEP 116.3 wrote for them,
 For a two-residue deletion in the poly-glutamate C-terminus of NT5C2 (`10:103089678 TTCCTCC>T`) fastVEP writes `p.Glu560_Glu561del`, the 3'-most placement that HGVS asks for, and Ensembl `p.Glu559_Glu560del`: Ensembl's 3'-shift stops short of the end of the protein in two ways, both of which are in release 116 as they were in 115 (divergence 9).
 
 An earlier comparison, against release 115.1 and the build of 15 September 2026 (v0.3.0), is in [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#what-is-measured); its output differs from this release's on every input, so its numbers are not quoted here.
-The comparison needs Docker and takes a few minutes: `validation/run_divergence.sh` makes the 115.1 one again, and Part 3 of that document gives the commands of the 116.3 one.
+The comparisons need Docker: `validation/measure_vep116.py` makes the 116.3 one in one command (about an hour on an Apple M4, most of it Ensembl VEP over the ClinVar sample), `validation/run_divergence.sh` makes the 115.1 one again (a few minutes), and Part 3 of that document gives the commands of the 116.3 one one by one.
 
 ### Divergences
 

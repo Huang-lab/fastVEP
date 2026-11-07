@@ -10,9 +10,12 @@ rustc,rustc 1.98.0 (88d9e12ae 2026-08-18)
 runs_per_cell,5
 started_utc,2026-11-07T04:50:13Z
 finished_utc,2026-11-07T05:15:47Z
-vep_baseline_file,vep_baseline_2026-07-29.csv
-vep_baseline_what,"Ensembl VEP v115.1, Docker ensemblorg/ensembl-vep:release_115.1, --gff against a tabix-indexed GFF3, one thread, --hgvs --symbol --canonical"
-vep_baseline_measured,2026-07-29
-vep_baseline_machine,"Apple M4, macOS Darwin 24.6.0"
-vep_baseline_wgs,sum over chromosomes 1 to 22 of the minimum of two runs of each
-results_directory,benchmarks/results/v0.5.0-rc.1
+vep_baseline_file,vep_baseline.csv
+vep_baseline_what,"Ensembl VEP 116.3, Docker ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3, --gff against a tabix-indexed GFF3, one thread, --vcf --hgvs --symbol --canonical; --custom ClinVar and gnomAD v4.1 joint for the annotation conditions"
+vep_baseline_measured,2026-11-07
+vep_baseline_machine,"Darwin 25.5.0 arm64, Apple M4"
+vep_baseline_wgs,sum over chromosomes 1 to 22 of one run of each
+with_vep_started_utc,2026-11-07T14:09:54Z
+with_vep_finished_utc,2026-11-07T14:39:27Z
+with_vep_parts,"startup,scaling,memory,formats,wgs,wgs_joint"
+results_directory,benchmarks/results/v0.5.0

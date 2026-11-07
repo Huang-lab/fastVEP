@@ -9,8 +9,8 @@ as an anchor that no longer matches and not as a silent pass.
     manuscript/verify_numbers.py        run every check, print the failures, exit 1 if there are any
     manuscript/verify_numbers.py -v     also print every check that passed
 
-The counts of the comparison with Ensembl VEP 116.3 are typed (`manuscript/data/vep116_provenance.md` says where they come from), so they
-are looked for in the rows of `docs/VEP_DIVERGENCE.md` that they were copied from, and the text is checked against them.
+The counts of the comparison with Ensembl VEP 116.3 are written by `validation/measure_vep116.py` (`manuscript/data/vep116_provenance.md` says how), and
+the text of `docs/VEP_DIVERGENCE.md` quotes them as well, so each is looked for in its row of that document too.
 
 Not checked: a number that is not a function of the CSV files (a date, a count read from the repository's own documents that is not one
 of those above), and the wording of any sentence that passes.
@@ -21,13 +21,16 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
+import os
 import re
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
+RESULTS = Path(os.environ.get("FASTVEP_RESULTS", HERE.parent / "benchmarks" / "results" / "v0.5.0"))  # the results directory that `build_data.py` was given
 
 
 def logical_lines(text: str) -> list[str]:
@@ -65,8 +68,7 @@ def table(name: str) -> list[dict[str, str]]:
 
 def table_tsv(relative: str) -> list[dict[str, str]]:
     """A tab-separated file of benchmarks/results/<build>/ (the comparison of builds is not data of the manuscript, but the text quotes it)."""
-    results = HERE.parent / "benchmarks" / "results" / "v0.5.0-rc.1"
-    with (results / relative).open(newline="") as f:
+    with (RESULTS / relative).open(newline="") as f:
         return list(csv.DictReader(f, delimiter="\t"))
 
 
@@ -133,10 +135,56 @@ lo, hi = min(float(r["speedup"]) for r in gw), max(float(r["speedup"]) for r in 
 fact(PAPER, "abstract", "fastVEP annotates the complete GIAB HG002", f"{lo:.0f}-{hi:.0f}x")
 fact(PAPER, "3.2", "On the complete GIAB HG002 WGS, fastVEP is", f"{lo:.0f}-{hi:.0f}x")
 
+# the numbers that the text derives from Table 3 and from the runs behind it
+N_WGS = 4_048_342
+plain = gw[0]
+one, many, vep_plain = float(plain["fastvep_1t_sec"]), float(plain["fastvep_mt_sec"]), float(plain["vep_sec"])
+raw_later = [r for r in table_tsv("with_vep/raw.tsv") if int(r["round"]) >= 1]
+rounds = lambda cell, part="wgs": [float(r["wall_s"]) for r in raw_later if r["part"] == part and r["cell"] == cell]
+with (RESULTS / "with_vep" / "vep_genome_sums.csv").open(newline="") as f:
+    vsum = {r["condition"]: r for r in csv.DictReader(f)}
+cpu_share = 100 * sum(float(r["cpu_s"]) for r in vsum.values()) / sum(float(r["wall_s"]) for r in vsum.values())
+with (RESULTS / "with_vep" / "custom_matches_chr22.tsv").open(newline="") as f:
+    cm = {r["source"]: r for r in csv.DictReader(f, delimiter="\t")}
+assert all(r["only_vep"] == "0" == r["only_fastvep"] and r["vep_found"] == r["fastvep_found"] for r in cm.values()), "the two tools found different records in the same ClinVar and gnomAD files"
+fact(PAPER, "abstract", "fastVEP annotates the complete GIAB HG002", f"in {many:.0f} seconds on ten cores")
+fact(PAPER, "abstract", "In single-threaded head-to-head benchmarks", f"{lo:.0f}-{hi:.0f}x", f"approximately {vep_plain / 60:.0f} minutes")
+fact(PAPER, "intro", "one VEP process annotates hundreds of variants", f"{N_WGS / vep_plain:,.0f} per second", f"about {vep_plain / 3600:.1f} hours")
+fact(PAPER, "intro", "annotates a complete human whole genome", f"{lo:.0f}-{hi:.0f}x")
+fact(PAPER, "3.2", "The 5 consequence-only runs behind the medians", f"from {min(rounds('hg002_plain_t1')):.0f} to {max(rounds('hg002_plain_t1')):.0f} seconds on one thread",
+     f"from {min(rounds('hg002_plain_all')):.1f} to {max(rounds('hg002_plain_all')):.1f} seconds on ten threads")
+fact(PAPER, "3.2", "With its default multi-threaded pipeline", f"{many:.0f} seconds", f"{N_WGS / many:,.0f} variants per second", f"{one / many:.1f}x its single-threaded speed")
+fact(PAPER, "3.2", "These whole-genome VEP times are", f"{float(vsum['plain']['cpu_s']):,.0f} s of the {vep_plain:,.0f} s of wall time")
+fact(PAPER, "3.2", "In the present comparison both tools consume", f"{lo:.0f}-{hi:.0f}x")
+fact(PAPER, "3.2", "Supplementary annotations were supplied to both tools", f"{int(cm['ClinVar']['both']):,} ClinVar records", f"{int(cm['gnomAD']['both']):,} gnomAD records")
+fact(PAPER, "4.1", "Benchmarks on the GIAB HG002 gold-standard dataset", f"{lo:.0f}-{hi:.0f}x", f"about {many:.0f} seconds", f"~{N_WGS / many:,.0f} variants per second")
+fact(PAPER, "4.1", "The fixed binary-cache start-up", f"{N_WGS / one:,.0f} variants per second")
+fact(PAPER, "4.1", "The practical implications are substantial", f"roughly {500_000 / (N_WGS / one):.0f} seconds", f"about {500_000 / (N_WGS / many):.1f} seconds multi-threaded",
+     f"approximately {500_000 / (N_WGS / vep_plain) / 60:.0f} minutes", f"{N_WGS / vep_plain:,.0f} variants per second")
+fact(PAPER, "Figure 2", "(A) Wall-clock annotation time (log-log)", f"{vep_plain:,.0f} s", f"fastVEP single-thread, {one:.0f} s", f"fastVEP multi-thread, {many:.0f} s")
+fact(PAPER, "Figure 2", "(B) Whole-genome single-threaded head-to-head", f"{lo:.0f}-{hi:.0f}x", f"({min(float(r['fastvep_mt_sec']) for r in gw):.0f}-{max(float(r['fastvep_mt_sec']) for r in gw):.0f} s)")
+fact(PAPER, "5.2", "The time of a VEP run is the wall-clock time of", f"{cpu_share:.1f}% of the wall time")
+fact(PAPER, "5.2", "Supplementary-annotation conditions gave both tools", f"{int(cm['ClinVar']['both']):,} ClinVar records", f"{int(cm['gnomAD']['both']):,} gnomAD records")
+first = [r for r in table_tsv("summary.tsv") if r["cell"] == "hg002_plain_t1"][0]
+later = [r for r in table_tsv("with_vep/summary.tsv") if r["cell"] == "hg002_plain_t1"][0]
+fact(PAPER, "5.2", "The parts of fastVEP's harness that are compared with VEP", f"{float(first['median_wall_s']):.1f} s in an earlier session and {float(later['median_wall_s']):.1f} s in this one")
+spot = RESULTS / "with_vep" / "vep_115_1" / "vep_summary.tsv"
+if spot.exists():
+    s115 = {r["cell"]: float(r["median_wall_s"]) for r in table_tsv("with_vep/vep_115_1/vep_summary.tsv") if r["part"] == "scaling"}
+    cells = [("1000", "chr22_1000"), ("5000", "chr22_5000"), ("10000", "chr22_10000"), ("50284", "chr22_all")]
+    v116 = {r["variants"]: float(r["vep_sec"]) for r in h2h}
+    ratios = [v116[n] / s115[c] for n, c in cells]
+    fact(PAPER, "3.2", "Release 116.3 is slower than release 115.1", ", ".join(f"{s115[c]:.2f}" for _, c in cells), ", ".join(f"{v116[n]:.2f}" for n, _ in cells),
+         f"{min(ratios):.1f} to {max(ratios):.1f} times as long")
+    fact(README, "README", "Release 116.3 takes", f"{min(ratios):.1f} to {max(ratios):.1f} times as long", ", ".join(f"{s115[c]:.2f}" for _, c in cells), ", ".join(f"{v116[n]:.2f}" for n, _ in cells))
+
 # ---- Table 5: formats ---------------------------------------------------------------------------------------------------
 fm = table("format_comparison.csv")
 want5 = [[{"vcf": "VCF (CSQ, 49 fields)", "tab": "Tab-delimited", "json": "JSON"}[r["format"]], f"{float(r['time_sec']):.2f}", f"{int(r['output_size_bytes']) / 1024:,.0f} KB"] for r in fm]
 same("Table 5", block(PAPER, "**Table 5."), want5)
+start1 = float(next(r for r in table_tsv("with_vep/summary.tsv") if r["cell"] == "human_1_variant_t1")["median_wall_s"])
+adds = {r["format"]: float(r["time_sec"]) - start1 for r in fm}
+fact(PAPER, "3.5", "All three output formats perform similarly", f"the {start1:.2f}-second binary-cache start-up", f"add {adds['vcf']:.2f} seconds as VCF", f"{adds['tab']:.2f} as tab-delimited", f"{adds['json']:.2f} as JSON")
 
 # ---- Table 7 and Figure 5: five organisms --------------------------------------------------------------------------------
 org = table("organism_comparison.csv")
@@ -175,11 +223,33 @@ same("Table S1", [r[:4] for r in rows_s1], [[t["rank"], t["so_term"], t["impact"
 
 # ---- resource usage -------------------------------------------------------------------------------------------------------
 res = kv("resource_usage.csv")
+# peak memory by thread count, as the operating system reports it (MiB), in the session of the VEP runs
+mem = {r["cell"]: float(r["median_peak_rss_mib"]) for r in table_tsv("with_vep/summary.tsv") if r["part"] == "memory"}
 fact(PAPER, "Table 4", "| Binary/install size |", f"{float(res['binary_size']):.1f} MB")
 fact(PAPER, "Table 4", "| Startup (7K transcripts, yeast) |", f"{float(res['cache_load_yeast_7k_1_thread']):.2f} sec")
 fact(PAPER, "Table 4", "| Startup (510K transcripts, human) |", f"{float(res['cache_load_human_509k_1_thread']):.2f} sec", f"{float(res['cache_load_human_509k_8_threads']):.2f} sec")
 fact(PAPER, "Table 4", "| Peak memory (100,000 variants, human) |", f"{float(res['peak_memory_100k_variants']):.1f} GiB")
-fact(PAPER, "Table 10", "| Binary size |", f"{float(res['binary_size']):.1f} MB")
+# Ensembl VEP's side of Table 4 (run_vep_side.py): the image, a run of one variant, and the peak resident set of 100,000 variants
+vs = {r["cell"]: r for r in table_tsv("with_vep/vep_summary.tsv")}
+vep_yeast, vep_human = float(res["vep_startup_yeast_1_variant"]), float(res["vep_startup_human_1_variant"])
+vep_mem = float(res["vep_peak_memory_100k_variants"])
+fast_t1, fast_t8 = float(res["cache_load_human_509k_1_thread"]), float(res["cache_load_human_509k_8_threads"])
+fast_yeast = float(res["cache_load_yeast_7k_1_thread"])
+fact(PAPER, "Table 4", "| Binary/install size |", f"{float(res['vep_image_size_unpacked']):.2f} GB (Docker image, unpacked", f"{float(res['vep_image_size_pulled']):.2f} GB to pull",
+     f"{float(res['binary_size']):.1f} MB", f"{int(res['vep_image_unpacked_bytes']) / int(res['binary_bytes']):.0f}x smaller")
+fact(PAPER, "Table 4", "| Startup (7K transcripts, yeast) |", f"{vep_yeast:.2f} sec", f"{fast_yeast:.2f} sec", f"{vep_yeast / fast_yeast:.0f}x")
+fact(PAPER, "Table 4", "| Startup (510K transcripts, human) |", f"{vep_human:.2f} sec", f"{fast_t1:.2f} sec (1 thread)", f"{fast_t8:.2f} sec (8 threads)", f"VEP {fast_t1 / vep_human:.1f}x faster on one thread")
+fact(PAPER, "Table 4", "| Peak memory (100,000 variants, human) |", f"{vep_mem:.2f} GiB", f"VEP {mem['chr1_100k_t8'] / 1024 / vep_mem:.1f}x less")
+vep_cpu = {r["cell"]: float(r["median_cpu_s"]) for r in vs.values() if r["part"] == "startup"}
+fact(PAPER, "3.4", "Ensembl VEP's run of one variant takes", f"{vep_human:.2f} seconds for either gene model",
+     f"{vep_cpu['yeast_1_variant']:.2f} to {vep_cpu['human_1_variant']:.2f} seconds is the CPU time")
+assert abs(vep_human - vep_yeast) < 0.005, "the text says that a run of one variant takes the same time against either gene model"
+fact(PAPER, "3.4", "Ensembl VEP's process peaks at", f"{vep_mem:.2f} GiB", f"it needs {mem['chr1_100k_t8'] / 1024 / vep_mem:.1f} times less memory")
+fact(PAPER, "Table 10", "| Binary size |", f"{float(res['binary_size']):.1f} MB", f"{float(res['vep_image_size_unpacked']):.2f} GB (Docker image, unpacked)")
+fact(PAPER, "3.4", "The cache holds the whole gene model with its sequences in memory", f"{mem['chr1_100k_t1'] / 1024:.2f} GiB on one", f"{mem['chr1_100k_t8'] / 1024:.2f} GiB on eight",
+     f"{mem['chr1_100k_tall'] / 1024:.2f} GiB on ten", f"{mem['chr1_100k_nofasta_conseq_t8'] / 1024:.1f} GiB")
+fact(README, "README", "The peak memory of a run is the gene model", f"{mem['chr1_100k_t1']:,.0f} MiB on one thread", f"{mem['chr1_100k_t8']:,.0f} MiB on eight",
+     f"{mem['chr1_100k_nofasta_conseq_t1']:,.0f} MiB and {mem['chr1_100k_nofasta_conseq_t8']:,.0f} MiB")
 
 # ---- Table 6: fastSA v1 against v2 -------------------------------------------------------------------------------------------
 sa, saa = table("sa_formats.csv"), table("sa_formats_annotation.csv")
@@ -201,10 +271,10 @@ ex = kv("tests_executed.csv")
 # 1,733 `#[test]` attributes: 1,731 ran and passed on macOS, one is ignored, and one is compiled on Linux only
 assert int(ex["passed"]) + int(ex["ignored"]) + int(ex["linux_only"]) == int(m["tests_total"]), "the tests that ran do not add up to the tests that are counted"
 fact(PAPER, "3.9", "fastVEP's correctness was validated through", f"{int(ex['passed']):,} of them run and pass", "one is ignored", "Linux only")
-fact(PAPER, "5.4", "The release candidate has", f"{int(m['tests_total']):,}", f"{int(ex['passed']):,} ran and passed", "one was ignored", "Linux only")
+fact(PAPER, "5.4", "The release has", f"{int(m['tests_total']):,}", f"{int(ex['passed']):,} ran and passed", "one was ignored", "Linux only")
 
 # ---- accuracy against Ensembl VEP 116.3 -------------------------------------------------------------------------------------------
-# The counts are typed (docs/VEP_DIVERGENCE.md, Part 3, is where they were measured), so each is looked for in its own row of that document.
+# The counts are written by validation/measure_vep116.py, and docs/VEP_DIVERGENCE.md, Part 3, quotes them: each is looked for in its own row of that document.
 DIV = logical_lines((HERE.parent / "docs" / "VEP_DIVERGENCE.md").read_text())
 agree = {r["input"]: r for r in table("vep116_agreement.csv")}
 for r in agree.values():
@@ -216,12 +286,28 @@ fact(DIV, "VEP_DIVERGENCE.md", "| `HGVSc` and `HGVS_OFFSET` of an allele in a re
 fact(DIV, "VEP_DIVERGENCE.md", "| `HGVSg` of an allele in a record with several ALTs |", cols["HGVSg"]["cells_differ"])
 fact(DIV, "VEP_DIVERGENCE.md", "| `HGVSc` of an intronic base after the terminator |", cols["HGVSc"]["divergence_4_terminator_intron"])
 fact(DIV, "VEP_DIVERGENCE.md", "| `HGVSp` | 17 (divergence 17) |", cols["HGVSp"]["divergence_17_three_prime_rule"])
-hg, c5, c5h, world, edges, lone = (agree[k] for k in ("hg002_1in200", "clinvar_1in5", "clinvar_1in5_hgvs", "world", "edges", "lone_indels"))
+hg, c5, c5h, world, edges, lone, ex_set, inframe = (agree[k] for k in ("hg002_1in200", "clinvar_1in5", "clinvar_1in5_hgvs", "world", "edges", "lone_indels", "example", "inframe_deletions"))
+assert all(int(c["unclassified"]) == 0 for c in cols.values()), "a cell of the HG002 sample differs for a cause that the document does not record"
 share = lambda r: 100.0 * (int(r["cells_compared"]) - int(r["cells_differ"])) / int(r["cells_compared"])
 fact(PAPER, "3.3", "On a systematic 1-in-200 sample of the GIAB HG002 call set", f"{int(hg['records']):,}", f"{int(hg['paired_rows']):,}", f"{int(hg['cells_compared']):,}", f"{int(hg['cells_differ']):,}",
      f"{100 - share(hg):.3f}%", f"`HGVS_OFFSET` {int(cols['HGVS_OFFSET']['cells_differ']):,}", f"`HGVSc` {int(cols['HGVSc']['cells_differ']):,}", f"`HGVSg` {cols['HGVSg']['cells_differ']}", f"`HGVSp` {cols['HGVSp']['cells_differ']}")
 fact(PAPER, "3.3", "On a systematic 1-in-5 sample of the ClinVar 2-star+ call set", f"{int(c5['records']):,}", f"{int(c5['paired_rows']):,}", f"{int(c5['cells_differ'])} of {int(c5['cells_compared']):,}",
      f"{100 - share(c5):.5f}%", f"{int(c5h['cells_differ']):,} of {int(c5h['cells_compared']):,}", f"{100 - share(c5h):.4f}%")
+# the 53 cells of the in-frame deletions, by variant: the text says which are the NT5C2 deletion, which lose the initiator and which are on incomplete transcripts
+by_variant: collections.Counter = collections.Counter()
+features = collections.defaultdict(set)
+for path in sorted((RESULTS / "vep116_diff" / "inframe").glob("diff_*.tsv")):
+    with path.open(newline="") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            by_variant[row["Uploaded_variation"]] += 1
+            features[row["Uploaded_variation"]].add(row["Feature"])
+assert sum(by_variant.values()) == int(inframe["cells_differ"]), "the differing rows of the in-frame set are not the cells that differ"
+nt5c2, initiator = by_variant["10_103089678_TTCCTCC/T"], by_variant["1_110604009_AATGATGTTC/A"]
+others = [v for v in by_variant if v not in ("10_103089678_TTCCTCC/T", "1_110604009_AATGATGTTC/A")]
+fact(PAPER, "3.3", "On the 173 variants of VEP's own example set", f"{int(ex_set['cells_compared']):,}", f"{int(inframe['cells_differ'])} of {int(inframe['cells_compared']):,}",
+     f"{100 * int(inframe['cells_differ']) / int(inframe['cells_compared']):.3f}%", f"{nt5c2} are the NT5C2 deletion", f"{initiator} are a change that loses the initiator",
+     f"{sum(by_variant[v] for v in others)} are on {({1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five'})[len(set().union(*(features[v] for v in others)))]} transcripts")
+assert int(ex_set["cells_differ"]) == 0, "the text says that no cell of the VEP example set differs"
 fact(PAPER, "3.3", "A real call set holds few of the shapes", f"{int(world['records']):,}", f"{int(world['paired_rows']):,}", f"{int(world['cells_differ'])} of {int(world['cells_compared']):,}", f"{100 - share(world):.2f}%",
      f"{int(edges['records']):,}", f"{int(edges['paired_rows']):,}", f"{int(edges['cells_differ'])} of {int(edges['cells_compared']):,}", f"{100 - share(edges):.3f}%",
      f"{int(lone['records']):,}", f"{int(lone['cells_differ'])} of {int(lone['cells_compared']):,}", f"{100 - share(lone):.3f}%")
@@ -233,10 +319,10 @@ fact(PAPER, "4.2", "call set agrees on every paired row in the columns that carr
 fact(PAPER, "Table 9", "| **Agreement with Ensembl VEP 116.3** |", f"{share(hg):.2f}%", f"{share(c5h):.4f}%")
 fact(PAPER, "Table 10", "| Agreement with Ensembl VEP 116.3 |", f"{share(hg):.2f}%", f"{share(c5h):.4f}%")
 ident = [r for r in table_tsv("identity_vs_5048fc5/identity.tsv")]
-assert ident and all(r["identical"] == "yes" for r in ident), "the release candidate's output differs from the build of 27 October: the text says it is identical"
-fact(PAPER, "3.3", "The comparisons below were made on 27 October 2026", f"{len(ident)} runs in all")
+assert ident and all(r["identical"] == "yes" for r in ident), "the output of 0.5.0 differs from the build of 27 October: the text says it is identical"
+fact(PAPER, "3.3", "Ensembl VEP's output does not depend on the build of fastVEP", f"{len(ident)} runs in all")
 big = next(r for r in ident if r["input"] == "hg002_full")
-fact(PAPER, "3.3", "The comparisons below were made on 27 October 2026", f"{int(big['records']):,} records", f"{int(big['bytes_v0.5.0-rc.1']) / 1e9:.1f} GB")
+fact(PAPER, "3.3", "Ensembl VEP's output does not depend on the build of fastVEP", f"{int(big['records']):,} records", f"{int(big['bytes_v0.5.0-rc.1']) / 1e9:.1f} GB")
 fact(PAPER, "Table 9", "| **Golden files of VEP 116.3** |", "26", "20,363")
 fact(PAPER, "Figure 3", "**Figure 3.", f"{int(hg['paired_rows']):,}", f"{int(hg['cells_differ']):,}")
 
@@ -249,6 +335,13 @@ for r in h2h:
     fact(README, "README", f"| {int(r['variants']):,} | ", f"{float(r['fastvep_sec']):.2f}s")
 for o in org:
     fact(README, "README", f"| {int(o['variants']):,} | {{}}".format("") if False else f"| {int(o['transcripts']):,} | {int(o['variants']):,} |", f"{int(o['variants_per_sec']):,}")
+
+fact(README, "README", "A laptop is a noisy instrument", f"{min(rounds('hg002_plain_t1')):.0f} to {max(rounds('hg002_plain_t1')):.0f} seconds",
+     f"{min(rounds('hg002_plain_all')):.1f} to {max(rounds('hg002_plain_all')):.1f}")
+fact(README, "README", "With fastVEP's default multi-threading", f"**{many:.1f}s**", f"**{float(gw[-1]['fastvep_mt_sec']):.1f}s**")
+fact(README, "README", "Both tools read the same ClinVar and gnomAD files", f"{int(cm['ClinVar']['both']):,} ClinVar records", f"{int(cm['gnomAD']['both']):,} gnomAD records")
+for r in gw[1:]:
+    fact(README, "README", f"| {r['label']} |", f"{float(r['fastvep_1t_sec']):.1f}s", f"{float(r['vep_sec']):,.0f}s", f"**{float(r['vep_sec']) / float(r['fastvep_1t_sec']):.0f}×**")
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("-v", action="store_true", help="also print every check that passed")

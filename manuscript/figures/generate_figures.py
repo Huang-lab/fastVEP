@@ -316,36 +316,47 @@ def fig2_comparison():
 def fig3_concordance():
     """Agreement with Ensembl VEP 116.3: the cells that differ on each input, and, on the HG002 sample, by column and by cause.
 
-    The counts are `manuscript/data/vep116_agreement.csv` and `vep116_hg002_columns.csv`, which are the counts of Part 3 of
-    docs/VEP_DIVERGENCE.md (`vep116_provenance.md` says where they come from and why they are those of the release).
+    The counts are `manuscript/data/vep116_agreement.csv` and `vep116_hg002_columns.csv`, which `validation/measure_vep116.py` writes
+    (they are the counts of Part 3 of docs/VEP_DIVERGENCE.md; `vep116_provenance.md` says where they come from).
     """
     inputs = read_csv('vep116_agreement.csv')
     cols = read_csv('vep116_hg002_columns.csv')
+    # the legend of panel B says that every cell that differs has a documented cause: a cell without one is not drawn as if it had
+    assert all(int(c['unclassified']) == 0 for c in cols), "a cell of the HG002 sample differs for a cause that docs/VEP_DIVERGENCE.md does not record"
     if not HAS_MPL: return
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15.5, 7), gridspec_kw={'width_ratios': [1, 1.05]})
 
     # === Panel A: share of cells that differ, by input (log scale; a dot for each, because a bar on a log axis has the length of its baseline) ===
-    label = {'hg002_1in200': 'HG002 call set,\n1-in-200 sample', 'clinvar_1in5': 'ClinVar 2-star+,\n1-in-5, no HGVS columns',
-             'clinvar_1in5_hgvs': 'ClinVar 2-star+,\n1-in-5, with HGVS columns', 'world': 'Generated world\n(both strands, multi-ALT)',
-             'edges': 'Its edges\n(every shape at every boundary)', 'lone_indels': 'Its lone indels\n(shared bases)'}
-    colour = {'hg002_1in200': C['fast'], 'clinvar_1in5': C['fast'], 'clinvar_1in5_hgvs': C['fast'],
-              'world': C['moderate'], 'edges': C['moderate'], 'lone_indels': C['moderate']}
+    label = {'example': 'VEP example set\n(173 variants)', 'inframe_deletions': 'ClinVar in-frame\ndeletions (400)',
+             'hg002_1in200': 'HG002 call set,\n1-in-200 sample', 'clinvar_1in5': 'ClinVar 2-star+,\n1-in-5, no HGVS columns',
+             'clinvar_1in5_hgvs': 'ClinVar 2-star+,\n1-in-5, with HGVS columns',
+             'world': 'Generated world\n(both strands, multi-ALT)', 'edges': 'Its edges\n(every shape at every boundary)', 'lone_indels': 'Its lone indels\n(shared bases)'}
+    colour = {k: C['fast'] for k in ('example', 'inframe_deletions', 'hg002_1in200', 'clinvar_1in5', 'clinvar_1in5_hgvs')}
+    colour.update({k: C['moderate'] for k in ('world', 'edges', 'lone_indels')})
+    # The RefSeq GFF3 row of the data is not drawn: its cells differ by design in two columns that a RefSeq GFF3 cannot carry (docs/VEP_DIVERGENCE.md).
+    inputs = [r for r in inputs if r['input'] in label]
+    # a log axis has no zero: an input with no cell that differs sits on the left edge, as an open circle
+    floor = 1e-5
     share = [100.0 * int(r['cells_differ']) / int(r['cells_compared']) for r in inputs]
+    plotted = [max(v, floor) for v in share]
     y = list(range(len(inputs)))
-    ax1.hlines(y, 1e-4, share, color=[colour[r['input']] for r in inputs], lw=2, alpha=0.45, zorder=1)
-    ax1.scatter(share, y, s=130, color=[colour[r['input']] for r in inputs], edgecolors='white', lw=1.2, zorder=3)
-    for yi, r, v in zip(y, inputs, share):
-        ax1.text(v * 1.7, yi, f"{int(r['cells_differ']):,} of {int(r['cells_compared']):,} cells ({v:.2g}%)", va='center', fontsize=9, color='#333')
+    ax1.hlines(y, floor, plotted, color=[colour[r['input']] for r in inputs], lw=2, alpha=0.45, zorder=1)
+    ax1.scatter(plotted, y, s=130, color=[colour[r['input']] if v > 0 else 'white' for r, v in zip(inputs, share)],
+                edgecolors=[colour[r['input']] if v == 0 else 'white' for r, v in zip(inputs, share)], lw=1.6, zorder=3)
+    for yi, r, v, pv in zip(y, inputs, share, plotted):
+        ax1.text(pv * 1.7, yi, f"{int(r['cells_differ']):,} of {int(r['cells_compared']):,} cells ({v:.2g}%)", va='center', fontsize=9, color='#333')
     ax1.set_yticks(y); ax1.set_yticklabels([label[r['input']] for r in inputs], fontsize=9.5)
     ax1.invert_yaxis()
-    ax1.set_xscale('log'); ax1.set_xlim(1e-4, 100)
+    ax1.set_xscale('log'); ax1.set_xlim(floor, 1000)   # room for the longest label, which ends beyond 10^2
+    ax1.set_xticks([10.0 ** k for k in range(-5, 3)])  # no tick above 100%
+    ax1.minorticks_off()
     ax1.set_xlabel('Cells that differ from Ensembl VEP 116.3 (% of the cells compared, log scale)', fontsize=11)
     ax1.set_title('A. Cells that differ, by input', fontsize=12, fontweight='bold')
     ax1.grid(True, alpha=0.2, axis='x')
     ax1.legend(handles=[plt.Line2D([0], [0], marker='o', color=C['fast'], lw=0, ms=9, label='real call sets'),
                         plt.Line2D([0], [0], marker='o', color=C['moderate'], lw=0, ms=9, label='generated worlds, built to be hard')],
-               fontsize=9.5, loc='center right', bbox_to_anchor=(1.0, 0.68))
+               fontsize=9.5, loc='center right', bbox_to_anchor=(1.0, 0.5))
 
     # === Panel B: the HG002 sample by column, stacked by cause ===
     names = [c['column'] for c in cols]
@@ -366,7 +377,8 @@ def fig3_concordance():
     ax2.set_xlim(0, max(left) * 1.18)
     ax2.set_xlabel(f'Cells that differ (of {rows_n:,} paired rows per column)', fontsize=11)
     total = sum(left)
-    ax2.set_title(f'B. HG002 sample, by column: {total:,} cells differ\n(17 of the 21 columns shown agree on every row)', fontsize=12, fontweight='bold')
+    agreeing = sum(1 for t in left if t == 0)
+    ax2.set_title(f'B. HG002 sample, by column: {total:,} cells differ\n({agreeing} of the {len(names)} columns shown agree on every row)', fontsize=12, fontweight='bold')
     ax2.grid(True, alpha=0.2, axis='x')
     ax2.legend(title='every differing cell has a documented cause:', title_fontsize=9, fontsize=9, loc='upper right')
 
