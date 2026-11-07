@@ -15,7 +15,7 @@
 # Prerequisites:
 #   ./download_data.sh --all
 #
-# Each benchmark: 3 runs, median reported, with binary transcript cache.
+# Each benchmark: 3 runs (RUNS=5 for five), median reported, with binary transcript cache.
 #
 # FASTVEP_BIN=/path/to/fastvep benchmarks another binary (a build of a branch, or
 # a release archive) and skips the build; without it the script builds
@@ -29,7 +29,7 @@ FASTVEP="${FASTVEP_BIN:-$PROJECT_DIR/target/release/fastvep}"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 ORG_DATA="$PROJECT_DIR/test_data/organisms"
 HUMAN_DIR="$ORG_DATA/human"
-RUNS=3
+RUNS="${RUNS:-3}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -135,29 +135,28 @@ warm_cache() {
         cache_file="${gff3}.fastvep.cache"
     fi
 
-    if [[ -f "$cache_file" ]]; then
-        echo -e "  Cache exists: $(basename $cache_file)"
-        return 0
-    fi
-
-    echo -e "  ${YELLOW}Building cache for $(basename $gff3)...${NC}"
+    # Run the warm-up even when a cache is already there. fastvep reads a cache that it wrote and rejects, then rebuilds,
+    # one that an older version wrote, and the run that finds out is the first one that meets it: left to the timed
+    # runs, that would be one of the three, and a cache is never rewritten as frames (which a run on several threads
+    # decodes side by side) unless a run writes it.
+    echo -e "  ${YELLOW}Warming the cache for $(basename "$gff3")...${NC}"
     local tmp_vcf
     tmp_vcf=$(mktemp /tmp/fastvep_warm_XXXXXX.vcf)
     local chrom
     chrom=$(grep -m1 -v '^#' "$gff3" | cut -f1)
     printf '##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n%s\t1\t.\tA\tG\t.\tPASS\t.\n' "$chrom" > "$tmp_vcf"
 
-    local fasta_args=""
+    local fasta_args=()
     if [[ -n "$fasta" && -f "$fasta" ]]; then
-        fasta_args="--fasta $fasta"
+        fasta_args=(--fasta "$fasta")
     fi
 
-    "$FASTVEP" annotate --input "$tmp_vcf" --gff3 "$gff3" $fasta_args \
+    "$FASTVEP" annotate --input "$tmp_vcf" --gff3 "$gff3" ${fasta_args[@]+"${fasta_args[@]}"} \
         --output /dev/null --output-format tab 2>/dev/null || true
     rm -f "$tmp_vcf"
 
     if [[ -f "$cache_file" ]]; then
-        echo -e "  ${GREEN}Cache built: $(basename $cache_file)${NC}"
+        echo -e "  ${GREEN}Cache ready: $(basename "$cache_file")${NC}"
     else
         echo -e "  ${RED}Warning: cache not created${NC}"
     fi
@@ -304,6 +303,16 @@ print(f'{n/e:,.0f}' if e > 0 else 'inf')
     # CSV OUTPUT
     # ═══════════════════════════════════════════════════════════════
     local csv_file="$OUTPUT_DIR/benchmark_results.csv"
+    {
+        echo "date_utc	$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "system	$(uname -srm)"
+        echo "rustc	$(rustc --version 2>/dev/null || echo 'not found')"
+        echo "binary	$FASTVEP"
+        echo "binary_version	$("$FASTVEP" --version)"
+        echo "binary_sha256	$(shasum -a 256 "$FASTVEP" | cut -d' ' -f1)"
+        echo "runs_per_benchmark	$RUNS"
+        echo "load_average_at_end	$(uptime | sed 's/.*load averages*: //')"
+    } > "$OUTPUT_DIR/benchmark_environment.tsv"
     echo "dataset,organism,variants,time_seconds,variants_per_second" > "$csv_file"
     for i in "${!ALL_NAMES[@]}"; do
         local name="${ALL_NAMES[$i]}"
