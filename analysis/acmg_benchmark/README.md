@@ -211,17 +211,17 @@ because their provenance needs to be reviewable line by line.
 
 | File | What | Regenerate with |
 |---|---|---|
-| [`data/vcep_thresholds.toml`](data/vcep_thresholds.toml) | Published ClinGen VCEP BA1/BS1/PM2 bars for 117 genes, as `--acmg-config` input | [`scripts/build_vcep_thresholds.py`](scripts/build_vcep_thresholds.py) |
-| [`data/vcep_thresholds_audit.tsv`](data/vcep_thresholds_audit.tsv) | Every bar and every rejection, with the verbatim sentence it came from | same script |
-| [`data/gene_disease_attributes.tsv`](data/gene_disease_attributes.tsv) | Prevalence, onset and inheritance per gene-disorder pair, joined to the VCEP bars | [`scripts/build_gene_disease_attributes.py`](scripts/build_gene_disease_attributes.py) |
+| [`data/vcep_thresholds.toml`](data/vcep_thresholds.toml) | Published ClinGen VCEP BA1/BS1/PM2 thresholds for 117 genes, as `--acmg-config` input | [`scripts/build_vcep_thresholds.py`](scripts/build_vcep_thresholds.py) |
+| [`data/vcep_thresholds_audit.tsv`](data/vcep_thresholds_audit.tsv) | Every threshold and every rejection, with the verbatim sentence it came from | same script |
+| [`data/gene_disease_attributes.tsv`](data/gene_disease_attributes.tsv) | Prevalence, onset and inheritance per gene-disorder pair, joined to the VCEP thresholds | [`scripts/build_gene_disease_attributes.py`](scripts/build_gene_disease_attributes.py) |
 
 The audit table is the point. A threshold read out of prose by a regex is a
 claim about a clinical guideline, and the only way to make that claim checkable
 is to keep the sentence next to the number. Every rejection is in there too,
-with its reason, so "this gene has no bar" and "this generator would not guess"
+with its reason, so "this gene has no threshold" and "this generator would not guess"
 stay distinguishable.
 
 `vcep_thresholds.toml` is **not** on by default. It is a measured improvement
-that also introduces four new false-benign calls, two of which are founder
+that also introduces four new reference-discordant benign calls, two of which are founder
 variants the panels excluded in prose the generator cannot read. See the v17
 section of [`RUN_VERSIONS.md`](RUN_VERSIONS.md) for the full trade.

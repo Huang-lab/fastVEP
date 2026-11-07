@@ -57,8 +57,8 @@ python3 generate_figures.py
 | `sa_sources/`                 | Download the sources and build the supplementary databases: `download_sa_sources.sh`, `build_gnomad_per_chrom.sh` (exomes) and `build_gnomad_release_per_chrom.sh` (exomes, genomes or joint), `build_spliceai_phylop.sh`, `clingen_gdv_to_oga.py`, `repeatmasker_to_bed.py`, `make_clingen_parse_fixture.py` (the fixture of real ClinGen rows that the classifier's parsing test reads) |
 | `build_manuscript_binaries.sh` | Build the six binaries the manuscript's runs are made by (v37, its two patched builds, the commit before v38, v38 and its alternatives build), each from a clean export in a target directory of its own, and print the environment variables the run scripts read them from |
 | `generate_figures.py`         | Read the v7 outputs at `data/benchmark/output_v7/` and emit 6 PDF + PNG panels (incl. v1 vs v7 comparisons) |
-| `build_vcep_thresholds.py`    | Read published ClinGen VCEP BA1/BS1/PM2 bars out of the CSpec Registry API into `../data/vcep_thresholds.toml`, plus an audit table carrying the source sentence behind every number and the reason behind every rejection |
-| `build_gene_disease_attributes.py` | Join Orphanet prevalence, age of onset and inheritance to those bars into `../data/gene_disease_attributes.tsv`, one row per gene-disorder pair |
+| `build_vcep_thresholds.py`    | Read published ClinGen VCEP BA1/BS1/PM2 thresholds out of the CSpec Registry API into `../data/vcep_thresholds.toml`, plus an audit table carrying the source sentence behind every number and the reason behind every rejection |
+| `build_gene_disease_attributes.py` | Join Orphanet prevalence, age of onset and inheritance to those thresholds into `../data/gene_disease_attributes.tsv`, one row per gene-disorder pair |
 
 ## Data sources
 
@@ -72,7 +72,7 @@ python3 generate_figures.py
 | gnomAD v4.1 exomes per-chrom VCF | **PM2 / BA1 / BS1 / BS2** + (distilled) PhyloP & SpliceAI | ~12 GB raw / chrom |
 | REVEL `revel-v1.3_all_chromosomes.zip` | **PP3 / BP4 missense** | 637 MB |
 | ClinGen Gene-Disease Validity CSV | PVS1 disease-gene fallback (preferred per Abou Tayoun 2018; OMIM `genemap2.txt` accepted as legacy) | 1 MB |
-| ClinGen CSpec Registry (JSON-LD API) | published per-gene **BA1 / BS1 / PM2** bars | 10 MB, fetched |
+| ClinGen CSpec Registry (JSON-LD API) | published per-gene **BA1 / BS1 / PM2** thresholds | 10 MB, fetched |
 | Orphanet `en_product6` / `en_product9_prev` / `en_product9_ages` | disorder prevalence, onset and inheritance per gene | 46 MB |
 
 The classifier degrades gracefully — criteria with missing inputs are

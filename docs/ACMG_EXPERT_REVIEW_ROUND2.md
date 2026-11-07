@@ -10,7 +10,7 @@
 > leave-one-out mode removing the ClinVar self-reference PS1 and PM1 relied on
 > (section 8).
 > Two thresholds that had been set by convention are now set by measurement -
-> the BS2 prevalence bar and the PM2 bar for dominant genes - and both sweeps are
+> the BS2 prevalence threshold and the PM2 threshold for dominant genes - and both sweeps are
 > recorded in [`ACMG.md`](ACMG.md).
 > **B1 (prevalence-aware per-gene-disease thresholds) is the one thing still
 > open, and it is a curation task**: the code hooks exist and are waiting for the
@@ -36,8 +36,8 @@ Three things came out of reproducing her cases that she could not have seen from
 
 | Direction | Count |
 |---|---:|
-| ClinVar P/LP, fastVEP B/LB (false-benign) | 78 |
-| ClinVar B/LB, fastVEP P/LP (false-pathogenic) | 44 |
+| ClinVar P/LP, fastVEP B/LB (reference-discordant benign) | 78 |
+| ClinVar B/LB, fastVEP P/LP (reference-discordant pathogenic) | 44 |
 
 Her colour key resolves to:
 
@@ -61,11 +61,11 @@ Criterion footprint across the 122 (a criterion can appear in many rows):
 
 Two combinations dominate:
 
-- `PVS1;PM2_Supporting` on 33 rows, all false-pathogenic.
-- `BS2;BP4` and its relatives (`PS1;BS2;BP4`, `PM4;BS2;BP4`, `PS1;PM2_Supporting;BP1;BP4`) across most of the false-benign side.
+- `PVS1;PM2_Supporting` on 33 rows, all reference-discordant pathogenic.
+- `BS2;BP4` and its relatives (`PS1;BS2;BP4`, `PM4;BS2;BP4`, `PS1;PM2_Supporting;BP1;BP4`) across most of the reference-discordant benign side.
 
 **Homozygote counts where BS2 fired on a ClinVar-Pathogenic variant:** 20 rows had exactly 1 homozygote in gnomAD, 6 rows had 2.
-That single observation is 26 of the 52 BS2 false-benign rows, and it is precisely the reviewer's "a couple of homozygotes are possible if disease has later onset or variable expressivity" point.
+That single observation is 26 of the 52 BS2 reference-discordant benign rows, and it is precisely the reviewer's "a couple of homozygotes are possible if disease has later onset or variable expressivity" point.
 
 ## 2. Verified reproductions
 
@@ -102,7 +102,7 @@ Measured effect across the full 673,660-variant benchmark is in section 8; on th
 - **Guideline:** Richards 2015 explicitly says a variant meeting criteria in both directions should default to Uncertain Significance.
 - **Now:** [combiner.rs:28](../crates/fastvep-classification/src/combiner.rs#L28) only declares a conflict when *both* sides independently reach a definite call. A met PS1 (Strong) alongside two BP criteria still yields Likely Benign.
 - **Change:** any met criterion at Strong or above on one side blocks a definite call on the other side and yields VUS with an explicit "conflicting" rule string.
-- **Impact:** 36 of the 78 false-benign rows carry a met PS1 or PVS1 alongside the benign criteria that decided the call.
+- **Impact:** 36 of the 78 reference-discordant benign rows carry a met PS1 or PVS1 alongside the benign criteria that decided the call.
 
 ### A3. BP4 is not applied where no predictor is calibrated
 
@@ -116,7 +116,7 @@ Measured effect across the full 673,660-variant benchmark is in section 8; on th
 - **Guideline:** Richards 2015, BS2 = "Observed in a healthy adult individual for a recessive (homozygous), dominant (heterozygous), or X-linked (hemizygous) disorder, **with full penetrance expected at an early age**." We implement the first half and ignore the qualifier.
 - **Now:** [benign_strong.rs:171](../crates/fastvep-classification/src/criteria/benign_strong.rs#L171) fires BS2 on `all_hc > 0`, i.e. a single homozygote anywhere in gnomAD.
 - **Change, part 1 (no new data):** add `bs2_ar_min_hom`, default 3. One or two homozygotes is not evidence of tolerance for a late-onset, low-penetrance or variably expressive disorder.
-- **Superseded by measurement.** `bs2_ar_min_hom` turned out to be inert once the cohort-scaled test existed: sweeping it 1 to 10 changes nothing. The knob that matters is the prevalence bar, and sweeping *that* across the full benchmark set the default at 1e-3, the prevalence of the most common Mendelian disorders, rather than the 1e-5 first shipped. That covers the hearing-loss / alpha-1 antitrypsin / familial Mediterranean fever cases in her point 2 without needing the per-gene table. See [`ACMG.md`](ACMG.md#choosing-the-bs2-prevalence-bar).
+- **Superseded by measurement.** `bs2_ar_min_hom` turned out to be inert once the cohort-scaled test existed: sweeping it 1 to 10 changes nothing. The knob that matters is the prevalence threshold, and sweeping *that* across the full benchmark set the default at 1e-3, the prevalence of the most common Mendelian disorders, rather than the 1e-5 that was the default at first. That covers the hearing-loss / alpha-1 antitrypsin / familial Mediterranean fever cases in her point 2 without needing the per-gene table. See [`ACMG.md`](ACMG.md#choosing-the-bs2-prevalence-threshold).
 - **Change, part 2 (needs B1's gene-disease attribute table):** suppress BS2 entirely when the gene-disease entity is flagged late-onset, reduced-penetrance or variable-expressivity.
 - **Impact:** 26 of 52 BS2 rows from part 1 alone (EYS, ODAD1, DNAAF19, COG7, RSPH9, AMHR2, CYP24A1, MMACHC, OCA2, KIAA0586, RB1, STRC and others). Part 2 covers ALPL, MEFV, ACADS, C6, C9, SLCO1B1, SLC22A5, DUOX2.
 
@@ -125,7 +125,7 @@ Measured effect across the full 673,660-variant benchmark is in section 8; on th
 - **Guideline:** PM1 is "located in a mutational hot spot and/or critical functional domain **without benign variation**", and in practice it is applied to missense and in-frame variants to add residue-level evidence. Stacking it on a null variant double-counts the region evidence PVS1 already carries.
 - **Now:** [pathogenic_moderate.rs:27](../crates/fastvep-classification/src/criteria/pathogenic_moderate.rs#L27) applies PM1 to anything with a protein position, including frameshifts and nonsense. The reconciliation table in [ACMG.md](ACMG.md) suppresses PM1 only when PP3 was elevated to Strong.
 - **Change:** restrict PM1 to missense and in-frame indels; add "PVS1 fires -> suppress PM1" to the reconciliation pass.
-- **Impact:** 10 of 44 false-pathogenic rows. Directly answers her CBS, MSH6, RYR1 and CHD7/PTCH1 comments.
+- **Impact:** 10 of 44 reference-discordant pathogenic rows. Directly answers her CBS, MSH6, RYR1 and CHD7/PTCH1 comments.
 
 ### A6. ClinVar low-penetrance and risk-allele terms suppress BS1/BS2
 
@@ -152,7 +152,7 @@ This is the reviewer's central point about hearing loss, alpha-1 antitrypsin def
 
 - **Guideline:** Whiffin et al. 2017 (Genet Med), adopted by ClinGen SVI, derives a maximum credible population allele frequency per gene-disease from disease prevalence, allelic heterogeneity, genetic heterogeneity, penetrance and inheritance. Where a ClinGen VCEP has published explicit BA1/BS1 thresholds in cspec, those supersede any computed value. The reviewer cited cspec twice in the file (GN137 for MSH2, GN138 for MSH6).
 - **Now:** a single flat `bs1_af_threshold = 0.01` applied to max-population AF for every gene on earth.
-- **Change:** new gene-disease attribute table shipped as an `.oga` source, keyed by gene symbol and MONDO ID, carrying prevalence, penetrance class, onset class, allelic/genetic heterogeneity and, where published, the VCEP's literal BA1/BS1/PM2 thresholds. Config already has the `disorders` scaffold in [config.rs:216](../crates/fastvep-classification/src/config.rs#L216); this fills it.
+- **Change:** new gene-disease attribute table provided as an `.oga` source, keyed by gene symbol and MONDO ID, carrying prevalence, penetrance class, onset class, allelic/genetic heterogeneity and, where published, the VCEP's literal BA1/BS1/PM2 thresholds. Config already has the `disorders` scaffold in [config.rs:216](../crates/fastvep-classification/src/config.rs#L216); this fills it.
 - **Effort:** this is the largest single item. Seed with the ~60 VCEPs that have published specifications; fall back to the flat threshold with an explicit "generic threshold" flag in the output for everything else.
 
 ### B2. Filtering allele frequency instead of raw max-population AF
@@ -370,12 +370,12 @@ scaffold, the per-gene threshold hook and the gene-level `.oga` loader are all
 in place waiting for it.
 
 Two thresholds also moved from convention to measurement, which was not in the
-original plan: the BS2 prevalence bar (1e-5 → 1e-3) and the PM2 bar for dominant
+original plan: the BS2 prevalence threshold (1e-5 → 1e-3) and the PM2 threshold for dominant
 genes (strict absence → 4e-5). Both sweeps are in [`ACMG.md`](ACMG.md).
 
 ## 9. Answers received, and what they changed
 
-1. **BS2 on recessive genes: scale with the size behind the observation.** Implemented as a Poisson 95 % lower bound on the homozygote frequency compared against a disease-prevalence bar (`bs2_hom_prevalence_threshold`, default 1e-5), with an absolute floor of 2 homozygotes. One homozygote among gnomAD v4's 730 K individuals no longer fires BS2; three among 2 K still does.
+1. **BS2 on recessive genes: scale with the size behind the observation.** Implemented as a Poisson 95 % lower bound on the homozygote frequency compared against a disease-prevalence threshold (`bs2_hom_prevalence_threshold`, default 1e-5), with an absolute floor of 2 homozygotes. One homozygote among gnomAD v4's 730 K individuals no longer fires BS2; three among 2 K still does.
 2. **Gene-disease attribute table: build it from VCEP specifications plus Orphanet prevalence.** That is B1 and remains open. The per-gene threshold hook and the `disorders` config scaffold are in place to receive it.
 3. **The 8 "both calls are discordant" rows** are still awaiting her call and stay in the review table until then.
 4. **One classification per disease entity: yes.** Planned as phase 2 of B1, once the gene-disease attribute table exists to define the entities and their inheritance.
@@ -389,8 +389,8 @@ Only two things, and neither is code.
 
 What is *no longer* open, and why:
 
-- **The BS2 prevalence bar** was question 1 here. Answered by measurement rather than by asking: swept across the full benchmark and set to 1e-3, the prevalence of the most common Mendelian disorders, which covers the hearing-loss / alpha-1 antitrypsin / familial Mediterranean fever cases in her point 2 without needing the per-gene table. See [`ACMG.md`](ACMG.md#choosing-the-bs2-prevalence-bar).
-- **The PM2 bar for dominant genes** was not a question anyone had asked, and turned out to matter more. fastVEP read Richards 2015's "absent from controls" as literal absence, which is 19 points of pathogenic recall against gnomAD v4's 800,000 individuals. Now 4e-5, from the sweep and inside published VCEP practice. See [`ACMG.md`](ACMG.md#choosing-the-pm2-bar-for-dominant-genes).
+- **The BS2 prevalence threshold** was question 1 here. Answered by measurement rather than by asking: swept across the full benchmark and set to 1e-3, the prevalence of the most common Mendelian disorders, which covers the hearing-loss / alpha-1 antitrypsin / familial Mediterranean fever cases in her point 2 without needing the per-gene table. See [`ACMG.md`](ACMG.md#choosing-the-bs2-prevalence-threshold).
+- **The PM2 threshold for dominant genes** was not a question anyone had asked, and turned out to matter more. fastVEP read Richards 2015's "absent from controls" as literal absence, which is 19 points of pathogenic recall against gnomAD v4's 800,000 individuals. Now 4e-5, from the sweep and inside published VCEP practice. See [`ACMG.md`](ACMG.md#choosing-the-pm2-threshold-for-dominant-genes).
 
 Both are configurable, and both sweeps are reproducible with
 [`sweep_acmg_thresholds.py`](../analysis/acmg_benchmark/scripts/sweep_acmg_thresholds.py).

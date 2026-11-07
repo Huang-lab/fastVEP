@@ -40,7 +40,7 @@ that drove each call in `details.pp3_source` / `details.ps1_path` /
 | PS3 | Strong | Functional studies | Not automatable — NotEvaluated |
 | PS4 | Strong | Prevalence in affected vs controls | **NotEvaluated by default** — requires case-control statistics. Optional legacy proxy via `use_clinvar_stars_as_ps4_proxy` |
 | PM1 | Moderate | Mutational hotspot / functional domain | ClinVar protein-position density. Capped against PP3 per Pejaver 2022 |
-| PM2 | Supporting* | Absent / extremely rare in population | gnomAD raw AF, **inheritance-aware** (not recessive-only: AF ≤ 0.00004; recessive-only: AF ≤ 0.00007, which equals the Hearing Loss VCEP's recessive bar; SVI PM2 v1.0 gives no frequency) |
+| PM2 | Supporting* | Absent / extremely rare in population | gnomAD raw AF, **inheritance-aware** (not recessive-only: AF ≤ 0.00004; recessive-only: AF ≤ 0.00007, which equals the Hearing Loss VCEP's recessive threshold; SVI PM2 v1.0 gives no frequency) |
 | PM3 | Supporting/Moderate/Strong/VeryStrong | In trans with pathogenic (recessive) | **SVI PM3 v1.0 points-based**: P / LP companion × phasing × hom-occurrence → 0.5 / 1.0 / 2.0 / 4.0 thresholds |
 | PM4 | Moderate | Protein length change | Consequence (in-frame indel, stop-loss) |
 | PM5 | Moderate | Novel missense at known pathogenic position | ClinVar protein-position index (different alt AA) |
@@ -58,7 +58,7 @@ that drove each call in `details.pp3_source` / `details.ps1_path` /
 |-----------|----------|-------------|---------------------|
 | BA1 | Standalone | Common variant (AF > 5%) | gnomAD max population AF, with **AN ≥ 2000** at the site (the dataset-size condition of the BA1 recommendation, Ghosh 2018, applied to the site's AN; the March 2024 gnomAD v4 communication states no floor). Honors the **curated frequency-exception list** - Ghosh 2018's nine, three hypomorphic alleles that also block BS1 and BS2, and three more the round-6 review named (G6PD x2, SERPINC1) that do the same |
 | BS1 | Strong | Greater than expected frequency | gnomAD **max-population AF** (mirrors BA1; was cohort `all_af` pre-v7); gene-specific or default 0.005 (a filtering allele frequency of 0.5%, from v12); same AN minimum as BA1 |
-| BS2 | Strong | Observed in healthy adults | gnomAD counts + ClinGen GDV inheritance (or OMIM legacy). Both branches hold a 95 % lower bound on the frequency of the individuals the disorder would affect against a prevalence bar. Dominant genes: carriers (`AC - nhomalt`) with AC ≥ 5 (`bs2_ad_min_ac`) and a bound above `bs2_ad_prevalence_threshold` (3e-4). Recessive and X-linked genes: individuals with no functional copy, with a bound above `bs2_hom_prevalence_threshold` (1e-3). Not evaluated without an AN, or with an AN of 0. |
+| BS2 | Strong | Observed in healthy adults | gnomAD counts + ClinGen GDV inheritance (or OMIM legacy). Both branches hold a 95 % lower bound on the frequency of the individuals the disorder would affect against a prevalence threshold. Dominant genes: carriers (`AC - nhomalt`) with AC ≥ 5 (`bs2_ad_min_ac`) and a bound above `bs2_ad_prevalence_threshold` (3e-4). Recessive and X-linked genes: individuals with no functional copy, with a bound above `bs2_hom_prevalence_threshold` (1e-3). Not evaluated without an AN, or with an AN of 0. |
 | BS3 | Strong | Functional studies — no damage | Not automatable — NotEvaluated |
 | BS4 | Strong | Lack of segregation | Not automatable — NotEvaluated |
 | BP1 | Supporting | Missense in truncation-disease gene | gnomAD pLI ≥ 0.9 + misZ < 2.0 |
@@ -119,9 +119,9 @@ When NMD prediction or other transcript-level signals are missing,
 PVS1 falls back to legacy full-strength VeryStrong for backward
 compatibility.
 
-### PM2 Inheritance-Aware Bars (not from SVI PM2 v1.0, which sets only the strength)
+### PM2 Inheritance-Aware Thresholds (not from SVI PM2 v1.0, which sets only the strength)
 
-| Inheritance | Bar |
+| Inheritance | Threshold |
 |-------------|-----|
 | Not recessive-only (AD, both, unknown) | AF ≤ 0.00004 (set at v10 by a sweep under the 2015 table; nearly flat under the point system) |
 | Recessive-only | AF ≤ 0.00007 (0.007%; swept for the ACMG manuscript: flat) |

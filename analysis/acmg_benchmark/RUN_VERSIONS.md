@@ -71,7 +71,7 @@ variant's own ClinVar record.
 | Change | Criterion firings (v8 → v9) |
 |---|---|
 | BP1 blocked when the gene has an established pathogenic-missense spectrum | 22,567 → 6,471 |
-| BS2 homozygote test scaled to cohort size (95 % lower bound vs a prevalence bar, floor of 2) | 101,853 → 67,615 |
+| BS2 homozygote test scaled to cohort size (95 % lower bound vs a prevalence threshold, floor of 2) | 101,853 → 67,615 |
 | PM1 restricted to missense/in-frame and suppressed under PVS1 | 41,845 → 23,323 |
 | BP4 not applied to in-frame indels / stop-lost / protein-altering | included above |
 | BA1/BS1/BS2/PM2 NotEvaluated for homology-confounded genes (PMID 27228465) | included above |
@@ -182,9 +182,9 @@ guideline states one, the value should come from measurement rather than from
 convention. `sweep_bs2_thresholds.py` runs the full benchmark once per setting
 (78 s each) and reports what each choice costs.
 
-### BS2 prevalence bar (swept 2026-08-12)
+### BS2 prevalence threshold (swept 2026-08-12)
 
-| bar | BS2 fires | false-benign | correct benign | marginal cost per false-benign avoided |
+| threshold | BS2 fires | reference-discordant benign | correct benign | marginal cost per reference-discordant benign call avoided |
 |---|---:|---:|---:|---|
 | 1e-6 | 63,285 | 54 | 139,270 | |
 | 1e-5 (old default) | 51,875 | 45 | 136,014 | 362 |
@@ -192,22 +192,22 @@ convention. `sweep_bs2_thresholds.py` runs the full benchmark once per setting
 | 1e-4 | 37,808 | 40 | 133,407 | 542 |
 | **1e-3 (new default)** | **27,290** | **38** | **132,815** | **296** |
 
-No knee, so the data fixes the exchange rate but not the choice. The bar is a
+No knee, so the data fixes the exchange rate but not the choice. The threshold is a
 maximum credible disease prevalence, so it has to cover the most prevalent
 Mendelian conditions rather than the typical one; hearing loss, alpha-1
 antitrypsin deficiency and familial Mediterranean fever sit near 1 in 1,000. A
-false-benign call is a missed diagnosis and a lost benign call is a VUS, so the
-asymmetry favours the safer bar, and the last step is also the cheapest.
-Reasoning in full in [`docs/ACMG.md`](../../docs/ACMG.md#choosing-the-bs2-prevalence-bar).
+benign call on a pathogenic variant is the costlier error, if ClinVar is right, and a lost benign call is a VUS, so the
+asymmetry favours the safer threshold, and the last step is also the cheapest.
+Reasoning in full in [`docs/ACMG.md`](../../docs/ACMG.md#choosing-the-bs2-prevalence-threshold).
 
 Two knobs measured at the same time and found inert:
 
 - `bs2_ad_min_ac`: 5 to 100 removes 45 BS2 firings on pathogenic truth and
-  changes false-benign and opposite-direction counts by **zero**. Firing is not
+  changes reference-discordant benign and opposite-direction counts by **zero**. Firing is not
   deciding, and an earlier claim here that this was the weakest threshold was
   based on firing counts and was wrong.
 - `bs2_ar_min_hom`: 1 versus 10 is identical on every metric. Subsumed by the
-  prevalence test; retained only as a floor for configs that lower the bar.
+  prevalence test; retained only as a floor for configs that lower the threshold.
 
 Swept against `sa_db_noclinvar`, which was stable while the gnomAD rebuild ran
 and removes the ClinVar-derived criteria, so the fit is less circular. Absolute
@@ -317,8 +317,8 @@ Two changes, both found by mining v10's own discrepancy table rather than from t
 | Likely-pathogenic recall | 37.9 % | **47.9 %** | +10.0 pp |
 | Benign recall | 65.3 % | 65.3 % | — |
 | VUS recall | 97.0 % | 96.9 % | −0.1 pp |
-| **False-benign (missed diagnoses)** | **10** | **10** | **—** |
-| False-pathogenic | 15 | 46 | +31 |
+| **Reference-discordant benign** | **10** | **10** | **—** |
+| Reference-discordant pathogenic | 15 | 46 | +31 |
 | Opposite-direction (total) | 25 | 56 | +31 |
 
 **The combining rules.** v10 left 2,319 truth-pathogenic variants in VUS on `PVS1` and nothing else -
@@ -332,10 +332,10 @@ by points and keeps the 2015 table for the benign side; the measurement behind t
 It now blocks only where every ClinGen curation of the gene is Limited/Disputed/Refuted/No Known
 Disease Relationship - positive evidence rather than a gap in coverage.
 
-**Read the error columns separately.** The two directions did not move together. False-benign - a
-missed diagnosis - is unchanged at 10. The whole increase is false-pathogenic, 15 to 46, and it is
+**Read the error columns separately.** The two directions did not move together. Reference-discordant benign calls are
+unchanged at 10. The whole increase is reference-discordant pathogenic calls, 15 to 46, and it is
 the direct consequence of a lone PVS1 now reaching Likely Pathogenic. The trade is roughly 5,200
-additional correct pathogenic calls for 31 additional false-pathogenic ones, in the direction that
+additional correct pathogenic calls for 31 additional reference-discordant pathogenic ones, in the direction that
 gets scrutinised rather than filed away.
 
 ## v12: BS1 threshold from measurement
@@ -354,13 +354,13 @@ TP63 (57), CHD7 (30) and PTCH1 (15) notes all turn on this.
 | Benign recall | 65.3 % | **68.4 %** |
 | Likely-benign recall | 45.7 % | **46.8 %** |
 | Pathogenic recall | 65.0 % | 65.0 % |
-| False-benign | 10 | 14 |
-| False-pathogenic | 46 | 45 |
+| Reference-discordant benign | 10 | 14 |
+| Reference-discordant pathogenic | 46 | 45 |
 
 The sweep that picked 0.5 % ran on a 1-in-10 sample, where it looked free - benign recall up,
 neither error count moving. The full set says otherwise: +3.1 pp of benign recall for 4 additional
-missed diagnoses, roughly 1,200 to 1. A good trade by the same exchange-rate reasoning used for the
-BS2 prevalence bar, but a trade, and a sample of that size cannot resolve a four-count difference.
+reference-discordant benign calls, roughly 1,200 to 1. A good trade by the same exchange-rate reasoning used for the
+BS2 prevalence threshold, but a trade, and a sample of that size cannot resolve a four-count difference.
 Recorded here because the sample result was quoted before it was confirmed.
 
 ## v13: `--acmg` did not imply `--hgvs`, and the PVS1 tree got its missing inputs
@@ -380,7 +380,7 @@ PVS1 grading on truth-pathogenic variants went from `PVS1_Moderate` 3,528 / `PVS
 
 **BP7 no longer treats a missing SpliceAI score as a prediction of no impact.**
 Richards 2015 asks that "splicing prediction algorithms predict no impact"; the absence of a prediction is not one.
-This is correct in principle and it changed nothing measurable, which is worth recording: the deep-intronic false-benign calls it was meant to explain all *have* SpliceAI scores, reading 0.00 to 0.14.
+This is correct in principle and it changed nothing measurable, which is worth recording: the deep-intronic reference-discordant benign calls it was meant to explain all *have* SpliceAI scores, reading 0.00 to 0.14.
 That diagnosis was wrong and the real cause is in v14 below.
 
 | Metric | v12 | **v13** |
@@ -390,27 +390,27 @@ That diagnosis was wrong and the real cause is in v14 below.
 | Benign recall | 68.4 % | **71.6 %** |
 | Likely-benign recall | 46.8 % | **51.8 %** |
 | Pathogenic recall | 65.0 % | 65.0 % |
-| False-benign | 14 | **50** |
-| False-pathogenic | 45 | 44 |
+| Reference-discordant benign | 14 | **50** |
+| Reference-discordant pathogenic | 45 | 44 |
 
-**Read the false-benign column.** The whole benign-side gain is BP7's intronic extension switching on for the first time, and so is the whole cost: 44,803 additional correct BP7 firings on benign-truth variants against 36 additional missed diagnoses, every one of them deep-intronic.
+**Read the reference-discordant benign column.** The whole benign-side gain is BP7's intronic extension switching on for the first time, and so is the whole cost: 44,803 additional correct BP7 firings on benign-truth variants against 36 additional reference-discordant benign calls, every one of them deep-intronic.
 That ratio is fine in aggregate and terrible in the tail, which is what v14 addresses.
 
-Two changes shipped in v13 but off by default, both because measurement said so:
+Two changes made in v13 but off by default, both because measurement said so:
 
-- **`pvs1_nmd_50nt_rule`.** The exact 50-nucleotide NMD rule Abou Tayoun 2018 states, rather than the last-exon proxy. On a 4,000-variant sample it moved 58 calls from Likely Pathogenic to VUS - 54 of them ClinVar Pathogenic - so it gives up roughly 825 correct pathogenic calls to correct one false-pathogenic. Shipped, documented, default `false`.
+- **`pvs1_nmd_50nt_rule`.** The exact 50-nucleotide NMD rule Abou Tayoun 2018 states, rather than the last-exon proxy. On a 4,000-variant sample it moved 58 calls from Likely Pathogenic to VUS - 54 of them ClinVar Pathogenic - so it gives up roughly 825 correct pathogenic calls to remove one reference-discordant pathogenic call. Added, documented, default `false`.
 - **A tempering rule for lone PVS1 where gnomAD frequency was withheld as unreliable.** Implemented, measured, and **deleted**: 307 correct pathogenic calls lost against 7 corrected. The premise was wrong - `AC0` and `AS_VQSR` are the normal state of a genuinely rare pathogenic variant, not a mismapping marker.
 
-## v14: a far boundary for BP7, and the other half of PM1
+## v14: an intronic distance for BP7, and the other half of PM1
 
 Two changes, both taking a criterion from half-implemented to complete. Strictly dominant: 18 opposite-direction calls fixed, none introduced.
 
-**BP7's intronic extension gets a far boundary at 300 nt** (`bp7_max_intron_offset`).
-Walker 2023 gives the extension a near boundary (donor +7, acceptor -21) and no far one, which is coherent for a curator working one variant at a time and not for a pipeline applying it to every intronic position in the genome.
+**BP7's intronic extension gets an intronic distance of 300 nt** (`bp7_max_intron_offset`).
+Walker 2023 gives the extension a near boundary (donor +7, acceptor -21) and no intronic distance, which is coherent for a curator working one variant at a time and not for a pipeline applying it to every intronic position in the genome.
 Out in the deep intron the only evidence BP7 has is a SpliceAI score in the pseudoexon-activation regime where SpliceAI is weakest - and pseudoexon activation is essentially the only way a deep-intronic variant is pathogenic.
 On all 36 deep-intronic ClinVar-pathogenic variants v13 called benign, SpliceAI is present and reads 0.00 to 0.14: the criterion is not missing its evidence out there, it is being misled by it.
-The boundary is set by sweep, at the knee where the marginal cost jumps from 31 correct benign calls per diagnosis recovered to 155; the table is in [`docs/ACMG.md`](../../docs/ACMG.md#choosing-bp7s-far-boundary).
-The same sweep answers the question the bound raises - whether to keep Walker's extension at all - and the answer is yes: turning it off drops missed diagnoses to 14 but gives up 3.8 pp of benign recall, about 570 correct benign calls per diagnosis, which is stricter than either BS1 or BS2 is held to here.
+The intronic distance is set by sweep, at the knee where the marginal cost jumps from 31 correct benign calls per reference-discordant benign call avoided to 155; the table is in [`docs/ACMG.md`](../../docs/ACMG.md#choosing-bp7s-intronic-distance).
+The same sweep answers the question the bound raises - whether to keep Walker's extension at all - and the answer is yes: turning it off drops reference-discordant benign calls to 14 but gives up 3.8 pp of benign recall, about 570 correct benign calls per reference-discordant benign call avoided, which is stricter than either BS1 or BS2 is held to here.
 
 **PM1 now tests both halves of its own definition.**
 Richards 2015 asks for a mutational hot spot or critical domain "without benign variation", and fastVEP counted only the pathogenic half - because `clinvar_protein.oga` only ever indexed pathogenic missense.
@@ -422,16 +422,16 @@ Controls hold - TP53 p.Arg248 keeps PM1 on 23 pathogenic and 0 benign neighbours
 |---|---:|---:|
 | Exact match | 62.7 % | 62.7 % |
 | Same-direction | 77.6 % | 77.5 % |
-| **False-benign** | **50** | **33** |
-| False-pathogenic | 44 | **43** |
+| **Reference-discordant benign** | **50** | **33** |
+| Reference-discordant pathogenic | 44 | **43** |
 | **Opposite-direction (total)** | **94** | **76** |
 | Pathogenic recall | 65.0 % | 64.6 % |
 | Benign recall | 71.6 % | 71.5 % |
 | VUS recall | 96.7 % | **96.8 %** |
 
 **What each change cost.**
-The BP7 boundary is close to free: 17 missed diagnoses recovered for 530 correct benign calls, 0.1 pp of benign recall.
-PM1's benign half is not: it removes 1,523 PM1 firings on truth-pathogenic variants and costs 0.4 pp of pathogenic recall, buying one false-pathogenic call and a criterion that matches its own definition.
+BP7's intronic distance is close to free: 17 reference-discordant benign calls avoided for 530 correct benign calls, 0.1 pp of benign recall.
+PM1's benign half is not: it removes 1,523 PM1 firings on truth-pathogenic variants and costs 0.4 pp of pathogenic recall, buying one reference-discordant pathogenic call and a criterion that matches its own definition.
 That is a deliberate choice of correctness over the headline number, and it is the only change in four rounds where those two point in opposite directions.
 
 **One thing the reviewer's rows did *not* get fixed by this.**
@@ -456,8 +456,8 @@ The source is the UCSC RepeatMasker track - public, no registration, 155 MB - co
 | Same-direction | 77.50 % | 77.50 % |
 | Benign recall | 71.47 % | **71.49 %** |
 | Likely-benign recall | 51.57 % | **51.58 %** |
-| False-benign | 33 | 33 |
-| False-pathogenic | 43 | 43 |
+| Reference-discordant benign | 33 | 33 |
+| Reference-discordant pathogenic | 43 | 43 |
 | Opposite-direction | 76 | 76 |
 
 BP3 fires on 1,307 variants, split 688 on benign-truth against 56 on pathogenic-truth -
@@ -499,8 +499,8 @@ The file grew 13.4 MB to 17.9 MB and still builds in 11 s from the same `variant
 | Same-direction | 77.50 % | 77.50 % |
 | Pathogenic recall | 64.61 % | 64.61 % |
 | Benign recall | 71.49 % | 71.49 % |
-| False-benign | 33 | 33 |
-| False-pathogenic | 43 | 43 |
+| Reference-discordant benign | 33 | 33 |
+| Reference-discordant pathogenic | 43 | 43 |
 | Opposite-direction | 76 | 76 |
 
 Nothing on the benign side moved by a single variant, and no new opposite-direction call appeared.
@@ -550,14 +550,14 @@ A gene whose only classified variants are canonical splice ones has no residue s
 It now gets a record with an empty `proteinVariants`.
 That is a real behaviour change beyond PS1: `in_critical_region` for such a gene goes from "cannot tell" to "no downstream pathogenic variant indexed", which moved exactly one variant from `PVS1_Moderate` to `PVS1_Supporting`.
 
-## v17: published VCEP frequency bars, and why they do not ship on by default
+## v17: published VCEP frequency thresholds, and why they do not ship on by default
 
-fastVEP's BA1, BS1 and PM2 bars are single global numbers, measured across all genes.
-A ClinGen Variant Curation Expert Panel has done what a global measurement cannot: looked up one disorder's prevalence, penetrance and allelic heterogeneity, and derived a bar for one gene.
+fastVEP's BA1, BS1 and PM2 thresholds are single global numbers, measured across all genes.
+A ClinGen Variant Curation Expert Panel has done what a global measurement cannot: looked up one disorder's prevalence, penetrance and allelic heterogeneity, and derived a threshold for one gene.
 Where a panel has published one it outranks anything measured across everything.
 
 [`build_vcep_thresholds.py`](scripts/build_vcep_thresholds.py) reads them out of the [CSpec Registry](https://cspec.genome.network/cspec/ui/svi/)'s JSON-LD API and emits [`data/vcep_thresholds.toml`](data/vcep_thresholds.toml), loadable with `--acmg-config`.
-117 genes, 304 bars.
+117 genes, 304 thresholds.
 It also emits [`data/vcep_thresholds_audit.tsv`](data/vcep_thresholds_audit.tsv), which carries the verbatim sentence every number was read out of, plus every rejection and its reason, so the parse can be checked rather than trusted.
 
 `GeneOverride` gained `ba1_af_threshold`, which it had been missing: it could express a per-gene BS1 and PM2 but not a per-gene BA1, and BA1 is where most of the published specification lives.
@@ -569,12 +569,12 @@ It also emits [`data/vcep_thresholds_audit.tsv`](data/vcep_thresholds_audit.tsv)
 | Exact match | 63.11 % | **63.37 %** |
 | Benign recall | 71.49 % | **72.19 %** |
 | Pathogenic recall | 64.61 % | 64.60 % |
-| False-benign | 33 | 37 |
-| False-pathogenic | 43 | **42** |
+| Reference-discordant benign | 33 | 37 |
+| Reference-discordant pathogenic | 43 | **42** |
 | Opposite-direction | 76 | 79 |
 
 2,028 more true-Benign variants are called Benign, and 1,780 more calls land exactly right.
-The cost is four new false-benign calls, all four of them a *tightened* VCEP bar firing BA1 on a variant ClinVar calls pathogenic:
+The cost is four new reference-discordant benign calls, all four of them a *tightened* VCEP threshold firing BA1 on a variant ClinVar calls pathogenic:
 
 | Variant | Gene | Truth | VCEP BA1 | fastVEP default |
 |---|---|---|---:|---:|
@@ -585,22 +585,22 @@ The cost is four new false-benign calls, all four of them a *tightened* VCEP bar
 
 ### The half of the specification that is not machine-readable
 
-**Two of those four genes carry a founder-variant caveat in the very sentence the bar was read from.** ANO5 and CAPN3 are both limb-girdle muscular dystrophy genes with well-known common founder alleles, and the panels wrote the exclusion into the rule text.
-32 of the 286 usable bars, across 18 genes, say something like "and variant is excluded as founder pathogenic variant" - MLH1, MSH2, MSH6, PMS2, BRCA1, BRCA2, TP53, LDLR, GALT, five sarcoglycans, DYSF, FOXN1, RMRP, ANO5, CAPN3.
+**Two of those four genes carry a founder-variant caveat in the very sentence the threshold was read from.** ANO5 and CAPN3 are both limb-girdle muscular dystrophy genes with well-known common founder alleles, and the panels wrote the exclusion into the rule text.
+32 of the 286 usable thresholds, across 18 genes, say something like "and variant is excluded as founder pathogenic variant" - MLH1, MSH2, MSH6, PMS2, BRCA1, BRCA2, TP53, LDLR, GALT, five sarcoglycans, DYSF, FOXN1, RMRP, ANO5, CAPN3.
 
 fastVEP has the mechanism for that already: `ba1_exceptions`, the Ghosh 2018 list.
 What it does not have is the exception *contents*, because the panels publish them as prose and, in several cases, as an appendix behind a link.
-Applying a tightened bar without its exceptions is applying half a specification, and the half left out is the half that protects pathogenic founder variants.
+Applying a tightened threshold without its exceptions is applying half a specification, and the half left out is the half that protects pathogenic founder variants.
 
 The other two are different and worth separating.
-SERPINC1 and HNF4A carry no caveat: their bar and ClinVar's classification simply disagree, and HNF4A/MODY1 is a textbook reduced-penetrance disorder where a genuinely pathogenic allele is genuinely common.
+SERPINC1 and HNF4A carry no caveat: their threshold and ClinVar's classification simply disagree, and HNF4A/MODY1 is a textbook reduced-penetrance disorder where a genuinely pathogenic allele is genuinely common.
 `clinvar_low_penetrance_blocks_benign_frequency` exists for exactly this and did not catch it, because ClinVar does not carry a low-penetrance term on that record.
 
-**So the table ships as an opt-in file rather than as a default.** Turning it on is one flag and buys 2,028 correct benign calls for four missed pathogenic ones - a ratio of about 500:1, far better than BP7's far-boundary trade. But three of those four are avoidable rather than intrinsic, and the right order of work is exceptions first, default second.
+**So the table ships as an opt-in file rather than as a default.** Turning it on is one flag and buys 2,028 correct benign calls for four reference-discordant benign calls - a ratio of about 500:1, far better than BP7's intronic-distance trade. But three of those four are avoidable rather than intrinsic, and the right order of work is exceptions first, default second.
 
 ### The gene-disease attribute table
 
-[`build_gene_disease_attributes.py`](scripts/build_gene_disease_attributes.py) assembles the rest of B1 from Orphanet, joined to the VCEP bars: [`data/gene_disease_attributes.tsv`](data/gene_disease_attributes.tsv), 6,857 gene-disorder pairs across 4,199 genes.
+[`build_gene_disease_attributes.py`](scripts/build_gene_disease_attributes.py) assembles the rest of B1 from Orphanet, joined to the VCEP thresholds: [`data/gene_disease_attributes.tsv`](data/gene_disease_attributes.tsv), 6,857 gene-disorder pairs across 4,199 genes.
 
 | Field | Coverage | Source |
 |---|---:|---|
@@ -613,22 +613,22 @@ SERPINC1 and HNF4A carry no caveat: their bar and ClinVar's classification simpl
 
 Penetrance is the field BS2 most wants - its precondition is "full penetrance expected at an early age" - and no public resource publishes it per gene-disorder pair in machine-readable form.
 It is emitted blank rather than guessed at.
-The same goes for allelic contribution and genetic heterogeneity, the other two inputs to a Whiffin 2017 maximum-credible-AF calculation: VCEPs compute them per gene and publish only the resulting bar.
+The same goes for allelic contribution and genetic heterogeneity, the other two inputs to a Whiffin 2017 maximum-credible-AF calculation: VCEPs compute them per gene and publish only the resulting threshold.
 
 ### What the extractor refuses to do
 
-304 bars parsed; 107 criterion entries were rejected rather than guessed at, each with its reason in the audit table: 37 PM2 rules that specify absence rather than a bar, 27 that state separate bars for dominant and recessive disease (which one per-gene number cannot hold), 21 with no inequality attached to a frequency, 13 whose exponent was a superscript that did not survive markup stripping, 4 genuinely contradictory, 2 outside any believable range, 3 marked Not Applicable by the panel.
-Three genes are dropped because two panels state different bars for them, and `gene_overrides` is keyed by gene alone.
+304 thresholds parsed; 107 criterion entries were rejected rather than guessed at, each with its reason in the audit table: 37 PM2 rules that specify absence rather than a threshold, 27 that state separate thresholds for dominant and recessive disease (which one per-gene number cannot hold), 21 with no inequality attached to a frequency, 13 whose exponent was a superscript that did not survive markup stripping, 4 genuinely contradictory, 2 outside any believable range, 3 marked Not Applicable by the panel.
+Three genes are dropped because two panels state different thresholds for them, and `gene_overrides` is keyed by gene alone.
 
 Two guards earned their place during development, and both stay:
 
 - **`0.1%` parsed as `0.1`, not `0.001`.** Python's regex alternation is leftmost-first, not longest-match, so a decimal alternative placed before the percentage alternative swallowed the digits and dropped the `%`. A thousand-fold error, in the benign direction, silent. The ordering in `NUMBER` is now load-bearing and commented as such.
-- **BA1 ≥ BS1 ≥ PM2 is checked per gene, and a violation drops the gene.** This is what caught PM2 bars of 2 % read out of "the most frequent pathogenic variant accounts for no more than 2% of..." across eight cardiomyopathy genes, and BA1 bars of 4 and 6 read out of superscript exponents. Both are blocked upstream now; the check stays for the next mis-parse, which will be one nobody predicted.
+- **BA1 ≥ BS1 ≥ PM2 is checked per gene, and a violation drops the gene.** This is what caught PM2 thresholds of 2 % read out of "the most frequent pathogenic variant accounts for no more than 2% of..." across eight cardiomyopathy genes, and BA1 thresholds of 4 and 6 read out of superscript exponents. Both are blocked upstream now; the check stays for the next mis-parse, which will be one nobody predicted.
 
 ## v18: the BA1 exception list had never fired, and the benchmark cannot see it
 
 The reviewer supplied Table 1 of Ghosh 2018 (PMID 30311383), the ClinGen SVI list of nine variants that must not be called standalone-benign on frequency.
-All nine were already shipped as defaults, cited to the right paper.
+All nine were already defaults, cited to the right paper.
 
 **Not one of them had ever matched.**
 
@@ -714,7 +714,7 @@ Three hypomorphic alleles ship with `blocks = ["BA1", "BS1", "BS2"]`, all three 
 None reaches 5 %, which is why a BA1-only list never touched them.
 None reaches Likely pathogenic either, and should not: the deciding evidence is PM3, the second allele in trans, which no annotator computes from a single variant.
 
-A smaller hole closed on the way. BS1 stands down where BA1 already covers the frequency, but it compared against the global 5 % default rather than `effective_ba1_threshold(gene)`, so in a gene with a looser published bar - ABCA4's BA1 is 0.163 - a 6 % allele collected no frequency evidence in either direction.
+A smaller hole closed on the way. BS1 stands down where BA1 already covers the frequency, but it compared against the global 5 % default rather than `effective_ba1_threshold(gene)`, so in a gene with a looser published threshold - ABCA4's BA1 is 0.163 - a 6 % allele collected no frequency evidence in either direction.
 
 ### v18 to v20
 
@@ -736,8 +736,8 @@ Seventeen opposite-direction errors removed with the headline rates unmoved, whi
 | Same-direction | 71.0 % | 74.1 % | 75.0 % | 76.0 % | 77.6 % | **77.5 %** |
 | Pathogenic recall | 48.1 % | 58.5 % | 65.0 % | 65.0 % | 65.0 % | **64.6 %** |
 | Benign recall | 57.2 % | 65.3 % | 65.3 % | 68.4 % | 71.6 % | **71.5 %** |
-| False-benign | 18 | 10 | 10 | 14 | 50 | **33** |
-| False-pathogenic | 28 | 15 | 46 | 45 | 44 | **43** |
+| Reference-discordant benign | 18 | 10 | 10 | 14 | 50 | **33** |
+| Reference-discordant pathogenic | 28 | 15 | 46 | 45 | 44 | **43** |
 
 The v9-to-v12 columns are quoted from their own sections above; v13 and v14 are computed
 from `concordance_matrix.csv` on the same definitions.
@@ -758,14 +758,14 @@ v12 on every error count while keeping the rest of v13 and v14:
 | Same-direction | 76.0 % | **77.5 %** | 75.9 % |
 | Benign recall | 68.4 % | **71.5 %** | 68.4 % |
 | Pathogenic recall | **65.0 %** | 64.6 % | 64.6 % |
-| False-benign | **14** | 33 | **14** |
-| False-pathogenic | 45 | 43 | **43** |
+| Reference-discordant benign | **14** | 33 | **14** |
+| Reference-discordant pathogenic | 45 | 43 | **43** |
 | Opposite-direction | 59 | 76 | **57** |
 
 So the question is not which run to prefer but whether to apply an SVI recommendation the
 tool had never actually been running. The trade and the reasoning are in
-[`docs/ACMG.md`](../../docs/ACMG.md#choosing-bp7s-far-boundary); the short version is that
-it costs 19 missed diagnoses for ~10,800 correct benign calls, and that switching a
+[`docs/ACMG.md`](../../docs/ACMG.md#choosing-bp7s-intronic-distance); the short version is that
+it costs 19 reference-discordant benign calls for ~10,800 correct benign calls, and that switching a
 published recommendation off entirely is a deviation from guidance in a way that bounding it
 at a measured knee is not.
 
@@ -852,7 +852,7 @@ consequence disagreed with VEP, and they now agree.
 | Gained P/LP | 9 | VUS |
 | Gained P/LP | 3 | B/LB - **new opposite-direction** |
 | Lost P/LP | 21 | VUS |
-| Lost P/LP | 10 | P/LP - **new false-benign** |
+| Lost P/LP | 10 | P/LP - **new reference-discordant benign** |
 | Lost P/LP | 1 | B/LB |
 | LP to P | 3 | P/LP |
 | Other | 3 | - |
@@ -861,7 +861,7 @@ Both flagged buckets are the same class of variant seen from two sides, and both
 written up for the next medical-genetics round in
 [`results/v23/MD_REVIEW.md`](results/v23/MD_REVIEW.md):
 
-- The **10 new false-benign** are all `c.N+2dup` single-base duplications two bases into the
+- The **10 new reference-discordant benign calls** are all `c.N+2dup` single-base duplications two bases into the
   intron, in MECR, COL11A1, PCDH15, SLX4, BRIP1, SLC7A9, ERCC2, NEB, GLB1 and NPHP3. VEP
   agrees with the new `splice_region_variant` call on all ten: duplicating the base after
   `+2` leaves the `GT` intact. This is the class the round-2 review already reached in the
@@ -922,8 +922,8 @@ Measured against real Ensembl VEP 115.1 over a 6,600-variant stratified ClinVar 
 | Same-direction | 522,297 | **522,473** | +176 |
 | Opposite-direction | 61 | 64 | +3 |
 | P/LP recall | 62.22 % | **62.42 %** | +187 |
-| False-benign (ClinVar P/LP, fastVEP B/LB) | 30 | 30 | 0 |
-| False-pathogenic (ClinVar B/LB, fastVEP P/LP) | 31 | 34 | +3 |
+| Reference-discordant benign (ClinVar P/LP, fastVEP B/LB) | 30 | 30 | 0 |
+| Reference-discordant pathogenic (ClinVar B/LB, fastVEP P/LP) | 31 | 34 | +3 |
 
 290 calls changed. Every one was re-run through Ensembl VEP 115.1 with `--pick`; VEP chose the
 same transcript in all 290.
@@ -968,7 +968,7 @@ classifier defects, and carries round 5's 59 rows forward into
 
 v24 and v25 were intermediate runs of this work. v24 exposed both classifier bugs above -
 34 ClinVar-pathogenic calls lost PVS1 in it - and v25 fixed one of the two. Neither is a
-shipped state; they have no section here and no results directory.
+version that the project kept; they have no section here and no results directory.
 
 ## v27: the 3'-rule reaches the splice junction, and PVS1 stops firing on an intact donor
 
@@ -990,8 +990,8 @@ adding coding terms is the only thing #106 does.
 | Exact match | 425,322 | **425,334** | +12 |
 | Same-direction | 522,473 | **522,474** | +1 |
 | Opposite-direction | 64 | **59** | -5 |
-| False-benign (ClinVar P/LP, fastVEP B/LB) | 30 | 30 | 0 |
-| False-pathogenic (ClinVar B/LB, fastVEP P/LP) | 34 | **29** | -5 |
+| Reference-discordant benign (ClinVar P/LP, fastVEP B/LB) | 30 | 30 | 0 |
+| Reference-discordant pathogenic (ClinVar B/LB, fastVEP P/LP) | 34 | **29** | -5 |
 | P/LP recall | 62.42 % | 62.41 % | -15 variants |
 
 56 calls changed: 34 `LP -> VUS`, 11 `VUS -> LB`, 11 `LB -> VUS`.
@@ -1149,7 +1149,7 @@ same position the consequence terms are decided from, so the two agree.
 **v31** gave that measured offset to every criterion that reads an intronic offset, BP7 and PVS1
 alike, and the benchmark said no.
 
-| Metric | v30 | v31 | v35 (shipped) |
+| Metric | v30 | v31 | v35 (kept) |
 |---|---:|---:|---:|
 | Exact match | 425,334 | 425,307 | **425,328** |
 | Same-direction | 522,473 | 522,545 | **522,542** |
@@ -1269,7 +1269,7 @@ The round-6 workbook (`discordant_64_round6.xlsx`) came back with the reviewer's
 This section is what was done about them and what it cost, and, as importantly, what was measured and not done.
 Every run named `v37` below was made by `run_benchmark.sh` at commit `5d2521f` of this branch with the binary built from it.
 The `run_provenance.txt` beside each annotation records the flags, the hash of the binary and of every config, which inputs were read (by name and size, not content), and that commit.
-The commits above it change documentation, comments, tests and the analysis scripts, and make two changes to the code that no benchmark input reaches: a BS2 prevalence bar that is negative or not a number is rejected when a config loads, and a record whose END is smaller than its clip no longer underflows it.
+The commits above it change documentation, comments, tests and the analysis scripts, and make two changes to the code that no benchmark input reaches: a BS2 prevalence threshold that is negative or not a number is rejected when a config loads, and a record whose END is smaller than its clip no longer underflows it.
 `v37_head` is the run of the head's own binary, built in a clean worktree at `73f9a2a`: its annotation is byte-identical to `v37`'s, so they did not change what the benchmark sees.
 `v34`, `v35` and `v36` are master's runs from before this branch and predate the file, so they have none.
 `v37_adtag` and `v37_moi_global` are the exception, because no flag or config produces them.
@@ -1320,7 +1320,7 @@ Agreement with ClinVar's benign classifications falls.
 Likely benign same-direction goes from 66,046 to 65,461 and Benign from 111,965 to 111,745, 805 calls that matched in direction before.
 That is 807 benign-direction calls that became VUS (697 Likely benign and 110 Benign) and 2 VUS calls that became benign-direction.
 The aggregate still rises because ClinVar-VUS variants gain 1,085 exact matches, having been over-called (1,117 become VUS and 32 stop being VUS), and Pathogenic and Likely pathogenic gain 64 same-direction calls (70 gained and the 6 below lost).
-Benign-direction calls lost to VUS cost triage effort, and a missed diagnosis costs more, which is the asymmetry the BS2 bars were chosen on.
+Benign-direction calls lost to VUS cost triage effort, and, if ClinVar is right, a benign call on a pathogenic variant costs more, which is the asymmetry the BS2 thresholds were chosen on.
 
 ### PVS1, PS1, PM1, PM4, BP3 and BP4 act on where HGVS places an indel
 
@@ -1366,26 +1366,26 @@ All 475 of those sit at an exon edge in the Ensembl GFF3, checked independently 
 
 SNRNP200's "only 9 people in gnomadv4- BS2 wrongly called" is the dominant branch of BS2 firing at five carriers.
 It now requires the 95% lower bound on the carrier frequency to exceed `bs2_ad_prevalence_threshold`, as well as the floor.
-The full sweep is in [`docs/ACMG.md`](../../docs/ACMG.md#the-dominant-bar) and is reproduced here, one whole run per row, only the BS2 setting differing:
+The full sweep is in [`docs/ACMG.md`](../../docs/ACMG.md#the-dominant-threshold) and is reproduced here, one whole run per row, only the BS2 setting differing:
 
 | Run | Exact | Same-direction | Opposite | P same | LP same | LB same | B same |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | v36 (master) | 425,328 | 522,542 | 59 | 51,796 | 6,750 | 66,046 | 111,965 |
-| bar off (floor 5) | 425,289 | 522,388 | 49 | 51,793 | 6,747 | 65,825 | 111,855 |
+| threshold off (floor 5) | 425,289 | 522,388 | 49 | 51,793 | 6,747 | 65,825 | 111,855 |
 | 3e-5 | 425,773 | 522,873 | 49 | 51,839 | 6,753 | 65,610 | 111,837 |
 | 1e-4 | 425,877 | 522,938 | 49 | 51,852 | 6,755 | 65,500 | 111,803 |
 | **3e-4 (default)** | 425,869 | 522,886 | 49 | 51,855 | 6,755 | 65,461 | 111,745 |
 | 1e-3 | 425,753 | 522,819 | 49 | 51,855 | 6,755 | 65,437 | 111,693 |
 | 3e-3 | 425,653 | 522,775 | 49 | 51,855 | 6,755 | 65,427 | 111,652 |
 
-Against the bar off, 3e-4 recovers 70 Pathogenic and Likely pathogenic calls and gives up 474 benign-direction ones, and nothing above it recovers another.
+Against the threshold off, 3e-4 recovers 70 Pathogenic and Likely pathogenic calls and gives up 474 benign-direction ones, and nothing above it recovers another.
 68 of the 70 carry a PVS1 that BS2 had been cancelling, and the other two are CASR missense variants.
 The 474 are 364 Likely benign and 110 Benign variants that become VUS, and 7 Benign calls become Likely benign, which stays benign-direction.
 The same change moves 32 ClinVar-VUS variants to Likely pathogenic, which is the opposite error type and part of the cost.
 22 of them carry a PVS1 that BS2 had been cancelling, and the other 10 are missense variants on PP3 or PM1 (`PM2_Supporting&PP2&PP3_Strong` four times, `PM1&PM2_Supporting&PP2&PP3_Moderate` four times, `PM1&PM2_Supporting&PM5&PP2` twice).
-The earlier note that `bs2_ad_min_ac` was inert is corrected in `docs/ACMG.md`: it was inert on the false-benign and opposite-direction counts, which is all that sweep looked at, and it decides 46 to 70 Pathogenic and Likely pathogenic calls.
+The earlier note that `bs2_ad_min_ac` was inert is corrected in `docs/ACMG.md`: it was inert on the reference-discordant benign and opposite-direction counts, which is all that sweep looked at, and it decides 46 to 70 Pathogenic and Likely pathogenic calls.
 
-### Measured and not shipped (at v37; the tag was shipped in v38)
+### Measured and not adopted (at v37; the tag was adopted in v38)
 
 **Reading ClinGen's inheritance tag.**
 Superseded by v38, at the end of this file: the tag is read there, and BS2's carrier count is set aside beside BS1 and BA1.
@@ -1416,7 +1416,7 @@ It also moves six variants that ClinVar calls Pathogenic or Likely pathogenic to
 | TTR p.Val142Ile | 722 | 3 | 1,461,852 | 9.2e-4 | VUS, B | yes |
 | VWF p.Arg854Gln | 7,432 | 23 | 1,461,860 | 9.9e-3 | VUS, B | yes |
 
-The lower bound is the classifier's own `poisson_lower_95` divided by the individuals surveyed, with carriers counted as `AC - nhomalt`, and the shipped bar is 3e-4.
+The lower bound is the classifier's own `poisson_lower_95` divided by the individuals surveyed, with carriers counted as `AC - nhomalt`, and the default threshold is 3e-4.
 BS2 asks for full penetrance at an early age, which is a property of the disorder, and the tag only says whether the disorder is dominant or recessive.
 ClinGen's own labels for NEK1 and DDX41 are "amyotrophic lateral sclerosis, susceptibility to, 24" and "DDX41-related hematologic malignancy predisposition syndrome".
 TTR p.Val142Ile belongs to a disorder that is usually described as incompletely penetrant, which was not checked against a source here, and BS1 already fires on it.
@@ -1429,28 +1429,28 @@ It reads the annotated VCFs of `v37` and `v37_adtag` and finds the 13,375 varian
 The call of one of them without its BS2 is `v37`'s, because BS2 is the only criterion the two runs differ in for those variants, which the script checks.
 Only the additions are replayed.
 The 22 further calls that differ lose BS2, and net -11 exact and -2 same-direction, which is why the run totals above are 3,809 and 2,812 and the first row below is 3,820 and 2,814.
-Every addition already clears the shipped bar, which is also the check that the script's port of the lower bound agrees with the classifier's.
+Every addition already clears the default threshold, which is also the check that the script's port of the lower bound agrees with the classifier's.
 
 | Guard on the new BS2 | Additions kept | Exact | Same-direction | Benign or Likely benign VUS resolved | Pathogenic or Likely pathogenic pushed toward benign |
 |---|---:|---:|---:|---:|---|
 | none (as run) | 13,375 | +3,820 | +2,814 | 3,010 | 6 |
-| carrier bar above 1e-3 | 8,647 | +2,243 | +1,626 | 1,664 | 1 (VWF) |
-| carrier bar above 3e-3 | 5,134 | +1,130 | +866 | 874 | 1 (VWF) |
+| carrier threshold above 1e-3 | 8,647 | +2,243 | +1,626 | 1,664 | 1 (VWF) |
+| carrier threshold above 3e-3 | 5,134 | +1,130 | +866 | 874 | 1 (VWF) |
 | BS1 and BA1 not already firing | 4,756 | +517 | +1,624 | 1,817 | 4 (NEK1, DDX41, SRCAP, PROKR2) |
-| bar above 1e-3 and BS1 and BA1 not already firing | 2,028 | +250 | +805 | 842 | 0 |
-| bar above 3e-3 and BS1 and BA1 not already firing | 894 | +119 | +411 | 418 | 0 |
+| threshold above 1e-3 and BS1 and BA1 not already firing | 2,028 | +250 | +805 | 842 | 0 |
+| threshold above 3e-3 and BS1 and BA1 not already firing | 894 | +119 | +411 | 418 | 0 |
 
 "Resolved" counts the variants ClinVar calls Benign or Likely benign whose call moves from VUS to Likely benign or Benign.
-A bar alone cannot remove VWF p.Arg854Gln, whose lower bound is above every bar on the grid, and the BS1 guard alone cannot remove the four alleles, which carry no BS1.
+A threshold alone cannot remove VWF p.Arg854Gln, whose lower bound is above every threshold on the grid, and the BS1 guard alone cannot remove the four alleles, which carry no BS1.
 Together they remove all six and keep 805 of the 2,814 same-direction calls, but both were chosen after the six were found, so the zero is a fit to them and not a measure of safety.
 BS2 would still reach MYOC p.Gln368Ter, which ClinVar calls Pathogenic and whose lower bound is 2.3e-3, and its call stays VUS because BS2 is the only criterion it carries.
-The bar was chosen on the name-based set of genes, and on the same grid the pathogenic harm stops falling at 1e-3, where VWF p.Arg854Gln is still harmed.
+The threshold was chosen on the name-based set of genes, and on the same grid the pathogenic harm stops falling at 1e-3, where VWF p.Arg854Gln is still harmed.
 Not widening it was the decision at v37.
 What it would need is inheritance and age of onset read per disorder, with a penetrance rule that a clinician supplies, and these six variants as its regression cases.
 v38 widens it without that rule, with the guard of the reconciliation pass and for the reasons in `manuscript/acmg`, Section 3.8: the unread field is a defect in what is read, the guard is stated by what it counts, and the four variants that remain move to VUS and not to a benign-side call.
 
 **BA1's and BS1's minimum AN on BS2.**
-With the prevalence bar off it moved 693 calls, 690 of them away from ClinVar's classification, so BS2 takes no minimum AN beyond needing one that is not zero.
+With the prevalence threshold off it moved 693 calls, 690 of them away from ClinVar's classification, so BS2 takes no minimum AN beyond needing one that is not zero.
 (Measured on the stack before the placement fixes to PS1, PM1 and BP3, which do not touch BS2.)
 
 **Pick orders** (`--pick-order`), whole-benchmark runs:
@@ -1465,7 +1465,7 @@ The reviewer: "whenever MANE AND MANE PLUS CLINICAL ARE AVAILABLE MANE PLUS CLIN
 It resolves DST `c.1779-222C>T`, which is intronic on MANE Select and `c.64C>T p.Arg22Ter` on the Plus Clinical transcript.
 As a default it costs 224 exact matches and 402 same-direction ones.
 A Plus Clinical transcript is added for variants the Select one cannot report (as we read MANE's definition), and is not a better reading of every variant in its gene.
-Severity first halves the false-benign count and multiplies the false-pathogenic one by about eighteen, because it classifies the variant on the transcript where it looks worst.
+Severity first halves the reference-discordant benign count and multiplies the reference-discordant pathogenic one by about eighteen, because it classifies the variant on the transcript where it looks worst.
 
 **PM1 against the gene's own background** (`pm1_hotspot_alpha`, an opt-in knob on an earlier build of this branch, not in this change).
 The reviewer's CHD7, PTCH1 and FBN1 rows are three pathogenic missense in eleven residues of genes with 85, 48 and 1,486 pathogenic missense in ClinVar.
@@ -1476,7 +1476,7 @@ Three opposite-direction calls for roughly 1,900 calls away is not a trade this 
 Several remaining rows are a null variant at a gnomAD frequency the reviewer thinks is too high for the disease (KDM2B, PHKB, EDN3, RAD21, RUNX1, FMR1, CAMK2B, TP63, TBC1D8B, BRCA1).
 Among PVS1 variants in genes whose established ClinGen tags are AD only, with a population maximum between 3e-4 and 3e-3, 43 are ClinVar Pathogenic or Likely pathogenic and 5 are Benign or Likely benign.
 Above 3e-3 it is 8 against 17, which is the one range where a rule would correct more calls than it costs.
-Eight missed diagnoses for seventeen corrected calls is a worse exchange than the repo has accepted elsewhere, and frequency evidence has to be allele- and disease-specific, which is what the exception list is for.
+Eight reference-discordant benign calls for seventeen corrected calls is a worse exchange than the repo has accepted elsewhere, and frequency evidence has to be allele- and disease-specific, which is what the exception list is for.
 
 **PS1's splice path standing down for every exonic placement.**
 An earlier build of this branch stood PS1 down wherever HGVS places the change wholly inside an exon, in frame or not.
@@ -1538,28 +1538,28 @@ The output without `--acmg` hashes identically to master's in every run, and wit
 ## After v37: the runs of the ACMG manuscript
 
 `manuscript/acmg/` re-measures the thresholds of v37 and tests the departures from the sources that reading them again turned up.
-Every run is a variant of `v37` made by `scripts/11_manuscript_runs.py`, so each has its own provenance file in `results/v37_manuscript/`, and none of them changes the shipped classifier.
+Every run is a variant of `v37` made by `scripts/11_manuscript_runs.py`, so each has its own provenance file in `results/v37_manuscript/`, and none of them changes the default classifier.
 89 runs on the April set: 41 sweeps, 16 single-switch ablations, 9 leave-one-source-out ablations, 4 PM2 sweeps under the 2015 table, 9 runs of the point cutoffs, 7 runs of two measurement builds and 3 runs that change an input.
 Seven more runs (`v37_oct_*`) apply one change each to the variants of the 4 October 2026 release.
 
 | Run | What it changes | What it shows |
 |---|---|---|
-| `v37_sw_pm2ar_*` (6) | PM2 bar for genes read as recessive-only, strict absence to 5e-4 | Flat: recall within 0.02 points, agreement within 10 calls, no change in errors |
-| `v37_sw_phylop_*` (5) | BP7's PhyloP bar, 1 to 4 and off | No knee; off adds 16,482 benign-side calls and 2 missed diagnoses |
-| `v37_sw_bp1veto_*` (5) | The count of pathogenic missense records at which BP1's veto applies, 1 to 25 (shipped 3) | No knee; a count of 1 gains 1,716 calls in direction (1,865 ClinVar-VUS variants no longer called benign-side, less 149 correct benign-side calls), removes 2 missed diagnoses (IQSEC1, PRR12) and gives up 149 correct benign-side calls |
+| `v37_sw_pm2ar_*` (6) | PM2 threshold for genes read as recessive-only, strict absence to 5e-4 | Flat: recall within 0.02 points, agreement within 10 calls, no change in errors |
+| `v37_sw_phylop_*` (5) | BP7's PhyloP threshold, 1 to 4 and off | No knee; off adds 16,482 benign-side calls and 2 reference-discordant benign calls |
+| `v37_sw_bp1veto_*` (5) | The count of pathogenic missense records at which BP1's veto applies, 1 to 25 (default 3) | No knee; a count of 1 gains 1,716 calls in direction (1,865 ClinVar-VUS variants no longer called benign-side, less 149 correct benign-side calls), removes 2 reference-discordant benign calls (IQSEC1, PRR12) and gives up 149 correct benign-side calls |
 | `v37_hk_control` | The measurement build with nothing set | Reproduces v37 in every cell and every criterion's firing count |
-| `v37_hk_bp1_loo` | BP1's veto leaves out the variant's own ClinVar record | 3 more missed diagnoses (FBXO28, PCGF2, SBF1) |
-| `v37_hk_bp1_loo_veto{1,2}` | BP1's veto at a count of 1 or 2 and leaving out the own record | Count 1: the same 1,716 calls and 149 correct benign-side calls as without the change, and 23 missed diagnoses (IQSEC1 removed, PRR12 not: its one pathogenic missense record is its own); count 2: 849 more calls and 24 missed diagnoses |
-| `v37_hk_strict` | BP1's veto leaves out the own record, no low-penetrance gate and no frequency-exception list, together | 10 more missed diagnoses (3, 1 and 6 alone), 59 opposite-direction calls |
+| `v37_hk_bp1_loo` | BP1's veto leaves out the variant's own ClinVar record | 3 more reference-discordant benign calls (FBXO28, PCGF2, SBF1) |
+| `v37_hk_bp1_loo_veto{1,2}` | BP1's veto at a count of 1 or 2 and leaving out the own record | Count 1: the same 1,716 calls and 149 correct benign-side calls as without the change, and 23 reference-discordant benign calls (IQSEC1 removed, PRR12 not: its one pathogenic missense record is its own); count 2: 849 more calls and 24 reference-discordant benign calls |
+| `v37_hk_strict` | BP1's veto leaves out the own record, no low-penetrance gate and no frequency-exception list, together | 10 more reference-discordant benign calls (3, 1 and 6 alone), 59 opposite-direction calls |
 | `v37_hk_bp7_spliceai01` | BP7 needs SpliceAI at most 0.1 | 313 fewer benign-side calls, no change in errors |
-| `v37_hk_bp7_walker` | The two BP7 changes together (no conservation test, SpliceAI at most 0.1) | 15,953 more calls in direction, 2 more missed diagnoses (NF1, MAPT) |
-| `v37_gap_clingen_complete` | The ClinGen file with the 112 rows that complete its export of 30 April (104 curations that it lacked, 7 re-labelled rows and 1 row dated on the day of the export) | PVS1 for 674 more truncating variants (CFTR 439), 2 more false-pathogenic calls |
-| `v37_gap_orphanet_lof` | PVS1 licensed for 1,042 genes that Orphanet labels as loss of function | PVS1 for 1,506 of the 5,184 truncating variants without it, 5 more false-pathogenic calls |
-| `v37_gap_both` | Both of the above | PVS1 for 1,714, 2,053 more calls in direction, 5 more false-pathogenic calls |
-| `v37_oct_*` (7) | The completed ClinGen file, Orphanet's label, both, BP7 as Walker 2023, BP1's veto without the own record, BP1's veto at a count of 1 and no allele-number floor, each on the October release | On the 107,528 new variants BP7 as Walker adds 4,933 calls in direction and no missed diagnosis, the completed file adds 47, Orphanet's label 272 for 2 false-pathogenic calls, both 308 for 2, a count of 1 for BP1's veto 122 (and no missed diagnosis avoided: none of the 6 rests on BP1); the own-record run and the floor change no call |
+| `v37_hk_bp7_walker` | The two BP7 changes together (no conservation test, SpliceAI at most 0.1) | 15,953 more calls in direction, 2 more reference-discordant benign calls (NF1, MAPT) |
+| `v37_gap_clingen_complete` | The ClinGen file with the 112 rows that complete its export of 30 April (104 curations that it lacked, 7 re-labelled rows and 1 row dated on the day of the export) | PVS1 for 674 more truncating variants (CFTR 439), 2 more reference-discordant pathogenic calls |
+| `v37_gap_orphanet_lof` | PVS1 licensed for 1,042 genes that Orphanet labels as loss of function | PVS1 for 1,506 of the 5,184 truncating variants without it, 5 more reference-discordant pathogenic calls |
+| `v37_gap_both` | Both of the above | PVS1 for 1,714, 2,053 more calls in direction, 5 more reference-discordant pathogenic calls |
+| `v37_oct_*` (7) | The completed ClinGen file, Orphanet's label, both, BP7 as Walker 2023, BP1's veto without the own record, BP1's veto at a count of 1 and no allele-number floor, each on the October release | On the 107,528 new variants BP7 as Walker adds 4,933 calls in direction and no reference-discordant benign call, the completed file adds 47, Orphanet's label 272 for 2 reference-discordant pathogenic calls, both 308 for 2, a count of 1 for BP1's veto 122 (and no reference-discordant benign call avoided: none of the 6 rests on BP1); the own-record run and the floor change no call |
 
-The two measurement builds are v37 with a patch each (`manuscript/acmg/replay_validation/*.patch`) that reads one setting from the environment: the two point cutoffs, and BP1's own-record count and BP7's SpliceAI bar.
-With nothing set each is the shipped classifier, which the controls check.
+The two measurement builds are v37 with a patch each (`manuscript/acmg/replay_validation/*.patch`) that reads one setting from the environment: the two point cutoffs, and BP1's own-record count and BP7's SpliceAI threshold.
+With nothing set each is the default classifier, which the controls check.
 
 ## v38: the curated mode of inheritance is read, and BS2's carriers are not counted beside BS1 or BA1
 
@@ -1606,16 +1606,16 @@ The commit before the change (`9d84be0`) has v37's classification code (the two 
 | gnomAD's joint release in place of the exomes (`v38_joint`, below) | 436,212 | 533,701 | 25 | 26 |
 
 - Against the commit before it, v38 gives 149 more exact calls and 1,490 more in direction.
-  1,809 ClinVar benign-side variants that were VUS gain a benign-side call and 127 lose one; 4 ClinVar pathogenic-side variants lose theirs; 21 go from Likely pathogenic to Pathogenic, because PM2's recessive bar of 7e-5 now reaches 1,310 recessive-only genes and not 67.
+  1,809 ClinVar benign-side variants that were VUS gain a benign-side call and 127 lose one; 4 ClinVar pathogenic-side variants lose theirs; 21 go from Likely pathogenic to Pathogenic, because PM2's recessive threshold of 7e-5 now reaches 1,310 recessive-only genes and not 67.
 - Counting BS2 beside BS1 and BA1 calls TTR p.Val142Ile and VWF p.Arg854Gln Benign (both ClinVar Pathogenic) and gives 3,615 more exact calls than v38.
   The carrier arm is met on 7,234 of the 7,328 BS1 variants and on all 8,869 BA1 variants of genes whose established curations are all AD.
   The guard costs those 3,615 exact calls and 1,292 calls in direction, and on the 107,525 new variants of October 150 and 46 with no contradiction avoided, so it rests on the double counting and on the two variants.
 - The four variants that lose a pathogenic-side call are NEK1 p.Ser1036Ter, DDX41 p.Asp140GlyfsTer2, SRCAP p.Pro1879ThrfsTer21 and PROKR2 p.His20MetfsTer24 (PVS1 with BS2 on 295 to 324 gnomAD alleles, no homozygote).
   Withholding the carrier arm for a disorder whose label says susceptibility or predisposition restores NEK1 and DDX41 for 65 correct benign-side calls (53 in direction on balance), and was not adopted.
-- The cap on PP2, PM1 and PP3 changes 910 of the 1,591 calls that have all three met, all Likely pathogenic to VUS, and trades 320 correct pathogenic-side calls for 587 ClinVar-VUS variants kept at VUS and 3 false-pathogenic calls avoided (about 107 calls for each).
+- The cap on PP2, PM1 and PP3 changes 910 of the 1,591 calls that have all three met, all Likely pathogenic to VUS, and trades 320 correct pathogenic-side calls for 587 ClinVar-VUS variants kept at VUS and 3 reference-discordant pathogenic calls avoided (about 107 calls for each).
   It was not adopted (`docs/ACMG.md`, limitation 27).
-- Swept again on v38, the PM2 bars stay flat (recall 61.98% to 62.48% for the bar of genes not read as recessive-only, 62.43% to 62.48% for the bar of the 1,310 recessive-only genes), the BS2 bar for individuals with no functional copy keeps its shape (401, 272 and 487 calls per added missed diagnosis below the shipped 1e-3), and the BS2 carrier bar, which now reaches 746 genes and not 50, is no longer flat: free from 3e-3 to the shipped 3e-4, then 715, 678 and 315 calls per added missed diagnosis (3, 7 and 23 more missed diagnoses at 1e-4, 3e-5 and no bar).
-- On the October release (772,585 covered records) v38 gives 261 more exact calls and 1,762 more in direction than the commit before it, with 26 missed diagnoses before and after; on the 107,525 new variants with a call, 101 and 258, with 6 missed diagnoses and 12 false-pathogenic calls before and after.
+- Swept again on v38, the PM2 thresholds stay flat (recall 61.98% to 62.48% for the threshold of genes not read as recessive-only, 62.43% to 62.48% for the threshold of the 1,310 recessive-only genes), the BS2 threshold for individuals with no functional copy keeps its shape (401, 272 and 487 calls per added reference-discordant benign call below the default 1e-3), and the BS2 carrier threshold, which now reaches 746 genes and not 50, is no longer flat: free from 3e-3 to the default 3e-4, then 715, 678 and 315 calls per added reference-discordant benign call (3, 7 and 23 more reference-discordant benign calls at 1e-4, 3e-5 and no threshold).
+- On the October release (772,585 covered records) v38 gives 261 more exact calls and 1,762 more in direction than the commit before it, with 26 reference-discordant benign calls before and after; on the 107,525 new variants with a call, 101 and 258, with 6 reference-discordant benign calls and 12 reference-discordant pathogenic calls before and after.
 - A gene with more than one mode: 87,599 of the 673,278 scored variants (13.0%) are in 128 such genes, and the modes give different classes for 482 of them and different directions for 435, always through BS2 (2,976) or PM2 (1,461).
 
 ### gnomAD's joint release
@@ -1634,15 +1634,15 @@ The commit before the change (`9d84be0`) has v37's classification code (the two 
   6,476 are intronic and 2,171 UTR variants, and BA1 is gained on 10,115 of the moved calls and lost on 339.
   The exomes' records of the UTR variants whose call moves rest on a median of 394 alleles, against 152,416 in the joint release, and 4,242 of the 6,476 intronic variants have no record in the exomes (`v38_joint_coverage.csv`).
 - Each of the 22 autosomes and the X gains calls (1.3% to 2.7% of its variants change), and nothing moves on the Y or the mitochondrial contigs (`v38_joint_by_chrom.csv`).
-- The flags account for 4,075 of the 10,190 more exact calls and 3,473 of the 9,321 more in direction, with one more false-pathogenic call (NF1 p.Met895Ile, where PM2 is no longer withheld at a segmental duplication); the genomes add 6,115 and 5,848, with one more missed diagnosis and one more false-pathogenic call.
+- The flags account for 4,075 of the 10,190 more exact calls and 3,473 of the 9,321 more in direction, with one more reference-discordant pathogenic call (NF1 p.Met895Ile, where PM2 is no longer withheld at a segmental duplication); the genomes add 6,115 and 5,848, with one more reference-discordant benign call and one more reference-discordant pathogenic call.
 - Five variants change their standing as an opposite-direction call: KMT2C p.Cys391Ter (ClinVar Likely benign), RAI1 p.Gln280HisfsTer83 (Benign), TXNL4A's upstream deletion (Pathogenic) and NF1 p.Met895Ile (Likely benign) are added, and PIEZO1's splice-acceptor deletion (Benign) is removed.
-  Four are at the bar of BS1, a filtering allele frequency of 0.5%.
+  Four are at the threshold of BS1, a filtering allele frequency of 0.5%.
   KMT2C (0.522% in the exomes, 0.495% in the joint release) and RAI1 (0.537% and 0.498%) are at sites that failed gnomAD's variant-quality filter, where the site-level frequency veto holds a call that rests on PVS1 alone at VUS if the withheld frequency would have met BS1, and in the joint release it no longer does.
   PIEZO1 (0.198% and 0.947%) is held at VUS by the same veto in the joint release.
   TXNL4A (0.384% and 0.560%) gains BS1: the exomes cover it with 364,572 alleles and the joint release with 516,266 (`v38_joint_errors.csv`, made by `scripts/17_joint_boundary_cases.py`).
 - Thirteen ClinVar pathogenic-side variants lose a pathogenic-side call and 39 gain one.
   Ten of the 13 are missense variants whose joint record carries a filter of gnomAD's quality control (AC0 for eight, AS_VQSR for one and both for one), which withholds PM2: five have a clean record in the exomes, with one to four alleles, and the filter is the genomes', which the builder reports because it reports a filter that fired in either callset, and five are not in the exomes at all; three are frameshifts at low-complexity sites (MYO6 p.Gln918ThrfsTer24, PRRT2 p.Arg217ProfsTer8 and p.Arg217GlufsTer12) that gain BS2, which the flag of the exomes withheld.
-  Against the exomes without the flags, 741 variants with a positive joint count lose PM2 to an AC0 in one callset, and 11 calls move, 9 of them on ClinVar pathogenic-side variants; 4,876 lose it to a frequency above the bar, and 160 calls move (`v38_joint_pm2_lost.csv`).
+  Against the exomes without the flags, 741 variants with a positive joint count lose PM2 to an AC0 in one callset, and 11 calls move, 9 of them on ClinVar pathogenic-side variants; 4,876 lose it to a frequency above the threshold, and 160 calls move (`v38_joint_pm2_lost.csv`).
 - The price is about 3,100 calls in direction for each added opposite-direction call (9,321 for three), where the manuscript's knee is at about a hundred (Section 2.5); the genomes' share alone is about 2,900 (5,848 for two).
 - The pilot on chromosomes 21 and 22 (23,538 variants) was made first, as `v38_chr2122_exomes`, `v38_chr2122_exomes_noflags` and `v38_chr2122_joint`: the joint release gave 438 more exact calls and 387 more in direction, of which 184 and 135 were the flags.
   It gives the same call and the same criteria for each of its variants as the runs of every chromosome do (`v38_joint_pilot_check.csv`), so it is kept as a check and not as a result.
@@ -1650,8 +1650,8 @@ The commit before the change (`9d84be0`) has v37's classification code (the two 
 ### Reproduction
 
 All but one of the 42 runs (`v38_joint` is the exception, see above) were made twice.
-The first set used binaries built from earlier states of the working tree (SHA-256 `336fea23...` for the shipped change, `a83a5143...` for the build with the alternatives patch and `0982a653...` for the commit before the change), before the last edits of the tree: two fixes of allocations (rule 7 compared each criterion's code with a string built for the purpose, and PM2 read the inheritance of a gene twice), comments, documentation and a test of the allocations of the disease reading (`crates/fastvep-classification/tests/disease_allocations.rs`), and then the changes that followed two independent reviews (BP2's trans arm, the shared lookup of the supplementary databases, the order of a gene database and the converter's header check; "What changed").
-The second set, made on 4 November 2026 after the last edit, used binaries built by `scripts/build_manuscript_binaries.sh` (the shipped change `f184277d...`, the build with the alternatives patch `a2bb20ee...`, the commit before the change `f6e7f4ca...`), and its provenance is the one in `results/v37_manuscript/provenance/`.
+The first set used binaries built from earlier states of the working tree (SHA-256 `336fea23...` for the adopted change, `a83a5143...` for the build with the alternatives patch and `0982a653...` for the commit before the change), before the last edits of the tree: two fixes of allocations (rule 7 compared each criterion's code with a string built for the purpose, and PM2 read the inheritance of a gene twice), comments, documentation and a test of the allocations of the disease reading (`crates/fastvep-classification/tests/disease_allocations.rs`), and then the changes that followed two independent reviews (BP2's trans arm, the shared lookup of the supplementary databases, the order of a gene database and the converter's header check; "What changed").
+The second set, made on 4 November 2026 after the last edit, used binaries built by `scripts/build_manuscript_binaries.sh` (the adopted change `f184277d...`, the build with the alternatives patch `a2bb20ee...`, the commit before the change `f6e7f4ca...`), and its provenance is the one in `results/v37_manuscript/provenance/`.
 The two sets agree in every scored file of every run (41 of 41), in every record of the 14 annotated VCFs that both keep, and in every column of the 13 per-variant tables that the first set's tables have (`results/v37_manuscript/rerun_comparison.csv`).
 The control with nothing set reproduces `v38` in all 30 cells and in the 24 firing counts, and each alternative reproduces the first set's.
 
