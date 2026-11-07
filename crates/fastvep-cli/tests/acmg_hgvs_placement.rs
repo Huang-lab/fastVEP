@@ -635,3 +635,59 @@ fn cli_compound_het_second_pass_keeps_the_placement() {
         serde_json::json!({"kind": "intronic", "offset": 8})
     );
 }
+
+/// A run with a proband annotates a batch, enriches it with the compound-heterozygote pass, and
+/// only then renders it: two passes over the batch where a run without one makes one. Over several
+/// batches every record still has the consequence rows that it has without a proband, and has them
+/// once: a record annotated twice has its rows twice, and one that is never annotated has none.
+///
+/// 2,100 records are two batches of 1,024 and a part of one.
+#[test]
+fn a_run_with_a_proband_annotates_every_record_of_every_batch_once() {
+    let seq = reference();
+    let mut vcf = String::from(
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tP\n",
+    );
+    for i in 0..2_100u64 {
+        let pos = 1 + i / 6;
+        let reference = &seq[(pos - 1) as usize..pos as usize];
+        let alt = ["A", "C", "G", "T"]
+            .into_iter()
+            .filter(|base| *base != reference)
+            .nth((i % 3) as usize)
+            .unwrap();
+        // one record in fifty is heterozygous, so that the compound-het pass has variants of one
+        // gene to pair, in every batch
+        let gt = if i % 50 == 0 { "0/1" } else { "0/0" };
+        vcf.push_str(&format!(
+            "1\t{pos}\t.\t{reference}\t{alt}\t.\tPASS\t.\tGT:DP:GQ\t{gt}:30:99\n"
+        ));
+    }
+    let rows = |variants: &[Value]| -> Vec<Vec<Value>> {
+        variants
+            .iter()
+            .map(|v| {
+                v["transcript_consequences"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| {
+                        let mut row = row.clone();
+                        // what a proband changes is the classification
+                        row.as_object_mut().unwrap().remove("acmg");
+                        row
+                    })
+                    .collect()
+            })
+            .collect()
+    };
+
+    let without = annotate_over(GFF3, ACMG_CONFIG, PickFlags::default(), None, &vcf);
+    let with = annotate_over(GFF3, ACMG_CONFIG, PickFlags::default(), Some("P"), &vcf);
+    assert_eq!((without.len(), with.len()), (2_100, 2_100));
+    let (without, with) = (rows(&without), rows(&with));
+    for (i, (a, b)) in without.iter().zip(&with).enumerate() {
+        assert_eq!(a.len(), 1, "record {i} has the one transcript's row: {a:?}");
+        assert_eq!(a, b, "record {i}");
+    }
+}
