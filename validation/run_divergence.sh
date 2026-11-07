@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Re-measure the three-input table of docs/VEP_DIVERGENCE.md ("What is measured" and "Current agreement") against real Ensembl VEP 115.1.
+# Re-measure the three-input table of docs/VEP_DIVERGENCE.md ("What is measured" and "Agreement with 115.1") against real Ensembl VEP 115.1.
 # The comparisons with VEP 116.3 and with VEP's own cache (Part 3 of that document) are made by run_tab_world.sh, run_cache_oracle.sh
 # and run_known_columns.sh.
 #

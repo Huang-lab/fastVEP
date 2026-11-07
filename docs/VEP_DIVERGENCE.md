@@ -38,10 +38,13 @@ a class, no seed to carry around), runs both tools, and compares row by row with
 The counts below are those files.
 
 **When these counts were measured.**
-The three samples and the table under "Current agreement" were measured on 15 September 2026 with the build at `ac2e2b6` (v0.3.0), and the table has not changed since.
-fastVEP's output has changed since then: the build of 27 October 2026 (`5048fc5`), and the release candidate v0.5.0-rc.1 after it, write other bytes than `ac2e2b6` does on every input of the comparison (`benchmarks/results/v0.5.0-rc.1/identity_vs_ac2e2b6/identity.tsv`), among other things because the protein version of an `HGVSp`, the coding predicates and the frameshift introns now follow release 116.
-So the table below describes that build.
-The comparison that describes the release candidate is Part 3, against 116.3, measured with `5048fc5`: the release candidate writes the same bytes as that build on every input of it that can be run without VEP (`benchmarks/results/v0.5.0-rc.1/identity_vs_5048fc5/identity.tsv`, which `validation/compare_builds.py` writes).
+The three samples and the table under "Agreement with 115.1" were measured on 15 September 2026 with the build at `ac2e2b6` (v0.3.0), and the table has not changed since.
+fastVEP's output has changed since then: the build of 27 October 2026 (`5048fc5`), and v0.5.0 after it (measured as its tag `v0.5.0-rc.1`, commit `c12d9f9`), write other bytes than `ac2e2b6` does on every input of the comparison (`benchmarks/results/v0.5.0/identity_vs_ac2e2b6/identity.tsv`), among other things because the protein version of an `HGVSp`, the coding predicates and the frameshift introns now follow release 116.
+So the table below describes that build, and it is kept as the record against which Parts 1 and 2 were written, not as a description of this release.
+The comparison that describes v0.5.0 is Part 3, against 116.3.
+Its first table was measured again on 7 November 2026 with the binary of v0.5.0 (`validation/measure_vep116.py`, one command for every row of it), and the rows it had are the counts that the build at `5048fc5` gave on 27 October 2026, to the cell; the two builds write the same bytes on every input of it that can be run without VEP (`benchmarks/results/v0.5.0/identity_vs_5048fc5/identity.tsv`, which `validation/compare_builds.py` writes).
+Three rows are new: the 173 variants of VEP's example set and the 400 in-frame deletions, which this document had only against 115.1, and RefSeq's GFF3, whose earlier count was made before fastVEP read a transcript as VEP's cache holds it and is replaced by the count of 7 November ([A RefSeq GFF3](#a-refseq-gff3)).
+What was not measured again is said where it is: the comparisons with VEP's own caches, whose extracted copies of chromosomes 21 and 22 are no longer on disk, are those of 27 October 2026.
 
 Two things the comparison counts but does not rate.
 **Rows only fastVEP has**: 9,579 on the ClinVar sample and 67,226 genome-wide, almost all of them
@@ -51,7 +54,7 @@ fastVEP reads (#98).
 `intergenic_variant` on a variant whose only neighbours are those same non-coding genes.
 Neither is a disagreement about a variant both tools annotated.
 
-## Current agreement
+## Agreement with 115.1
 
 | Field | Scope | ClinVar sample | Genome-wide (HG002) |
 |---|---|---:|---:|
@@ -670,6 +673,7 @@ Everything above was measured against Ensembl VEP 115.1.
 The tab output's optional columns, `HGVSg` and `HGVS_OFFSET` had no measurement at all, and the release most people run now is 116, so they have their own, against **Ensembl VEP 116.3** (Docker `ensemblorg/ensembl-vep:release_116.3`).
 It reads the same GRCh38 Ensembl 115 GFF3 and FASTA as above and is run with `--tab --symbol --biotype --canonical --numbers --variant_class --show_ref_allele --hgvs --hgvsg`.
 `validation/compare_tab.py` compares its file with fastVEP's cell by cell, pairing rows on (`Uploaded_variation`, `Allele`, `Feature`).
+The first table and the columns of HG002 below it were measured again on 7 November 2026 with v0.5.0 (`validation/measure_vep116.py`, which writes `benchmarks/results/v0.5.0/vep116_agreement.csv`, `vep116_hg002_columns.csv` and the differing rows of each input): the counts of the rows that this document already had are those of 27 October 2026.
 
 | Input | Records | Paired rows | Cells compared | Cells that differ |
 |---|---:|---:|---:|---:|
@@ -679,6 +683,9 @@ It reads the same GRCh38 Ensembl 115 GFF3 and FASTA as above and is run with `--
 | The same world's lone indels written with shared bases (`fixtures/vep_tab_lone_indels`) | 1,500 | 3,176 | 95,280 | 26 (0.027 %), 17 of them divergences 14, 15 and 17; 9 before them, 52 before the HGVS notation, 59 before the coding terms and 14,526 before the minimisation |
 | A 1-in-5 sample of ClinVar 2-star+, without the HGVS columns | 134,732 | 3,136,295 | 72,134,785 | 112 (0.00016 %), 103 once VEP's UTR is corrected: 91 are on transcripts that fastVEP flags incomplete, which a `--gff` run has no flags for (against VEP's own cache the sample differs in 1 cell), and 12 are [divergence 14](#14-a-start-codon-is-not-lost-where-the-protein-still-begins-with-its-met); 43 and 275 before |
 | The same sample with them (`--hgvs --hgvsg`) | 134,732 | 3,136,295 | 84,679,965 | 2,999 (0.0035 %), 1,498 once VEP's UTR is corrected (below); 2,263 and 760 before divergences 14 to 17, 3,354 before the HGVS notation |
+| The 173 variants of VEP's own example set (`validation/human/vep_example_GRCh38.vcf`) | 173 | 2,977 | 80,379 | 0 |
+| The 400 ClinVar in-frame deletions (`validation/human/clinvar_inframe_deletions.vcf`) | 400 | 9,465 | 255,555 | 53 (0.021 %): 43 are [divergence 9](#9-the-smaller-ones), on one variant (NT5C2), 3 are [divergence 15](#15-a-change-that-loses-the-initiator-is-pmet1-always), and 7 are on three transcripts that fastVEP flags incomplete (`cds_end_NF` twice, `cds_start_NF` once), where a `--gff` run, which has no flags, writes `stop_retained_variant` and `start_lost` and the `p.Glu1?` that follows |
+| RefSeq's GFF3, chromosomes 21 and 22, and the HG002 sample on them (below) | 527 | 2,717 | 73,359 | 818 (1.1 %): 135 are divergence 11, and 683 are the `CANONICAL` flag and the `BIOTYPE`, which a RefSeq GFF3 does not carry |
 
 Since the change that reads a transcript as VEP's cache holds it ([Against VEP's own cache](#against-veps-own-cache)), the comparisons of HG002 and of the ClinVar sample against a `--gff` run leave out three columns, `SYMBOL_SOURCE`, `HGNC_ID` and `FLAGS` (`--ignore`): a GFF3 carries none of them, VEP's `--gff` writes `-`, and fastVEP now follows the cache.
 That is 27 columns of 30, and 23 of 26 without the HGVS columns, which is what the cell counts above are; the generated worlds have no such metadata and agree in all 30.
@@ -700,7 +707,7 @@ python3 validation/compare_tab.py vep.tab fv.tab \
 ```
 
 On HG002 the 3,851 cells are in four columns: `HGVS_OFFSET` 2,070, `HGVSc` 1,729, `HGVSp` 17 and `HGVSg` 35.
-`Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `cDNA_position`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `FLAGS`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row.
+`Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `cDNA_position`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row.
 
 Rows that are not paired: 121 are only fastVEP's, all on transcripts (it also wrote 6 for a `*` allele, which VEP does not, and no longer does), and 7 are only VEP's.
 VEP's `--gff` reader keeps only the feature types of `%INCLUDE_FEATURE_TYPES` (`GFF.pm`), its log says it skipped parents "due to invalid types", and `unconfirmed_transcript` and `scRNA`, the types of the three transcripts looked at, are not on that list.
@@ -1182,10 +1189,13 @@ All the columns it compares, `Consequence`, `IMPACT`, `HGVSc` and `HGVS_OFFSET` 
 
 ### A RefSeq GFF3
 
-Everything above is Ensembl's GFF3, and #139 runs RefSeq, so one RefSeq run was measured the same way: Ensembl VEP 116.3 and fastVEP over chr21 and chr22 of RefSeq's GFF3 for GRCh38.p14 (GCF_000001405.40, 134,543 records, the contigs renamed `21` and `22` so that the GRCh38 FASTA above answers for them) and the 527 variants of HG002 on those two chromosomes.
-2,717 rows are paired and 135 of their 81,510 cells differ (0.17 %), all of them divergence 11: `HGVSc` 62 and `HGVS_OFFSET` 73, on the 7 of the 527 records that have several ALTs.
-`Feature`, `Gene`, `BIOTYPE`, `SYMBOL`, `Consequence`, `IMPACT`, the positions, `Amino_acids` and `Codons` agree on every paired row.
-fastVEP writes 8 rows VEP does not: those of the mature microRNA records (`miRNA`, `rna-MIR185`), which hang off a transcript, and which VEP writes nothing for.
+Everything above is Ensembl's GFF3, and #139 runs RefSeq, so one RefSeq run was measured the same way: Ensembl VEP 116.3 and fastVEP over chr21 and chr22 of RefSeq's GFF3 for GRCh38.p14 (GCF_000001405.40, 134,543 records, the contigs renamed `21` and `22` so that the GRCh38 FASTA above answers for them) and the 527 variants of HG002 on those two chromosomes (`validation/measure_vep116.py --only refseq --refseq-gff3 FILE`, with `SYMBOL_SOURCE`, `HGNC_ID` and `FLAGS` left out as for Ensembl's GFF3).
+2,717 rows are paired, no row is one tool's alone, and 818 of their 73,359 cells differ (1.1 %), in four columns.
+`HGVSc` 62 and `HGVS_OFFSET` 73 are all divergence 11, on the 7 of the 527 records that have several ALTs.
+`CANONICAL` 406 and `BIOTYPE` 277 are what fastVEP does by design and what a `--gff` run cannot: RefSeq's GFF3 has no canonical tag and no biotype, so VEP's `--gff` reader writes no canonical flag and guesses a biotype from the record's `gbkey`, and fastVEP reads the transcript as VEP's own cache holds it, with one canonical transcript for each gene and the `gene_biotype` of its gene ([Against VEP's own cache](#against-veps-own-cache) compares those two columns with what VEP's RefSeq cache writes).
+`CANONICAL` is `-` for `YES` on all 406 cells, and `BIOTYPE` is `ncRNA` for `lncRNA` on 270, `misc_RNA` for `transcribed_pseudogene` on 5, and `ncRNA` for `snRNA` and for `snoRNA` on one each.
+`Feature`, `Gene`, `SYMBOL`, `Consequence`, `IMPACT`, the positions, `Amino_acids` and `Codons` agree on every paired row.
+The 8 rows that fastVEP once wrote and VEP did not, those of the mature microRNA records (`miRNA`, `rna-MIR185`), which hang off a transcript and for which VEP writes nothing, are gone: fastVEP writes none for them now ([the mature miRNA of a precursor](#against-veps-own-cache)).
 
 That is since fastVEP names a RefSeq record as VEP's GFF reader does (`BaseGXF.pm`, `GFF.pm`), and it did not.
 NCBI's GFF3 gives a transcript the ID `rna-NM_000001.3` and the attribute `transcript_id=NM_000001.3`, a gene the ID `gene-TP53` and its transcripts the Dbxref `GeneID:7157`, and states no biotype.
