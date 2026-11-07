@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fastSA v1 against v2 on real databases: size, build time and annotation output (Table 6 of the manuscript, the table of the README).
 
-    benchmarks/run_sa_formats.py --bin target/release/fastvep --out benchmarks/results/v0.5.0-rc.1
+    benchmarks/run_sa_formats.py --bin target/release/fastvep --out benchmarks/results/v0.5.0
 
 For each source it builds the v1 (`.osa` and its `.osa.idx`) and the v2 (`.osa2`) database from the same file with `fastvep sa-build --format`,
 and records the size on disk and the wall time of the build. ClinVar is the whole database; REVEL is chromosomes 1 and 22, cut out of the

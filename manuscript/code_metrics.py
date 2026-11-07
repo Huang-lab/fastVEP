@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Count what Table 1, Table 9 and Figure 1 of the manuscript quote about the code, from the source.
 
-    manuscript/code_metrics.py --out benchmarks/results/v0.5.0-rc.1        # writes code_metrics.csv, so_terms.csv, crate_dependencies.csv
+    manuscript/code_metrics.py --out benchmarks/results/v0.5.0        # writes code_metrics.csv, so_terms.csv, crate_dependencies.csv
     manuscript/code_metrics.py --root /path/to/another/checkout --print
 
 The rules are the ones that reproduce the numbers of `code_metrics.csv` as they stood on 29 July 2026 (the lines of every crate, to the

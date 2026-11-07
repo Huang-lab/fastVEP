@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How long the annotation step of the benchmark takes: `annotate --acmg --pick` over the 673,660 variants of the ClinVar 2-star+ set, and the scoring of it.
 
-    19_time_annotation.py --bin $FASTVEP_V38_BIN --out analysis/acmg_benchmark/results/v38_rc1
+    19_time_annotation.py --bin $FASTVEP_V38_BIN --out analysis/acmg_benchmark/results/v38_v0.5.0
 
 `run_benchmark.sh` annotates the set with `--acmg --pick --output-format vcf`, writes the VCF to stdout and compresses it with `bgzip`; this
 runs that command and times it from outside, on every core (the default) in rounds and on one thread once, and records the peak resident

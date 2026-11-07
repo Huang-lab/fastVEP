@@ -306,7 +306,7 @@ an alternative: it is fine for ad-hoc per-variant lookups, but
 exponential backoff**, so it cannot replace tabix for the 24 K-region
 extraction.
 
-### Speed (Apple M4, ten cores, release build, release candidate v0.5.0-rc.1, 7 November 2026)
+### Speed (Apple M4, ten cores, release build of 0.5.0, 7 November 2026)
 
 | Stage | Time | Throughput |
 |-------|------|-----------|
@@ -316,7 +316,7 @@ extraction.
 
 (All 101 SA databases are loaded once at process start: 24 gnomAD chromosomes +
 24 REVEL + 24 SpliceAI + 24 PhyloP, ClinVar, three .oga
-gene-level databases and the RepeatMasker .osi. The first version of this table (v7, one thread, 4,103 s, 164 variants/s) is superseded; `scripts/19_time_annotation.py` makes this one, and the times of the 42 runs of `results/v38_rc1/`, made three at a time, are in their provenance files.)
+gene-level databases and the RepeatMasker .osi. The first version of this table (v7, one thread, 4,103 s, 164 variants/s) is superseded; `scripts/19_time_annotation.py` makes this one, and the times of the 42 runs of `results/v38_v0.5.0/`, made three at a time, are in their provenance files.)
 
 The annotation pipeline writes `--output-format vcf` (single-line per
 variant, ACMG annotations carried in CSQ INFO field) and pipes through

@@ -150,7 +150,7 @@ readers and compared:
 | gnomAD (chr22) | 852,255 | 15.4 MB | 12.9 MB | 0.84× |
 | PhyloP (chr22) | 852,255 | 3.1 MB | 1.4 MB | 0.45× |
 
-The ClinVar and REVEL rows were measured again on 2026-11-07 with v0.5.0-rc.1 (`benchmarks/run_sa_formats.py`), in megabytes of 10^6 bytes; the SpliceAI, gnomAD and PhyloP rows come from an earlier measurement, whose sources are not among the files that the repository's scripts fetch, and their unit was not recorded (the REVEL chr22 files of this run measure 8.7 and 3.8 in mebibytes, the numbers that row had, so the older rows are probably mebibytes).
+The ClinVar and REVEL rows were measured again on 2026-11-07 with 0.5.0 (`benchmarks/run_sa_formats.py`), in megabytes of 10^6 bytes; the SpliceAI, gnomAD and PhyloP rows come from an earlier measurement, whose sources are not among the files that the repository's scripts fetch, and their unit was not recorded (the REVEL chr22 files of this run measure 8.7 and 3.8 in mebibytes, the numbers that row had, so the older rows are probably mebibytes).
 
 Annotating 308,740 real chr22 variants against all five of those databases at
 once takes **12.7 s from the `.osa` set and 8.5 s from the `.osa2` set (1.50×)**,
