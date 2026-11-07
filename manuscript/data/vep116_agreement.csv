@@ -1,0 +1,7 @@
+input,description,records,paired_rows,cells_compared,cells_differ,columns_compared
+hg002_1in200,GIAB HG002 WGS call set: a systematic 1-in-200 sample,20241,186055,5023485,3851,27
+clinvar_1in5,ClinVar 2-star+ call set: a systematic 1-in-5 sample; the HGVS columns left out,134732,3136295,72134785,112,23
+clinvar_1in5_hgvs,The same sample with --hgvs and --hgvsg,134732,3136295,84679965,2999,27
+world,A generated world: both strands; coding and non-coding genes; 372 of its 3000 records with several ALTs,3000,7213,216390,954,30
+edges,The same world's edges: every shape of change within ten bases of every exon and CDS and transcript boundary; each its own single-ALT record,17672,36958,1108740,845,30
+lone_indels,The same world's lone indels written with shared bases,1500,3176,95280,26,30

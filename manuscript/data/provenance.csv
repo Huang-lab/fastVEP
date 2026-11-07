@@ -1,0 +1,18 @@
+key,value
+binary_version,fastvep 0.5.0-rc.1
+built_from,"tag v0.5.0-rc.1 (c12d9f9), cargo build --release -p fastvep-cli in a clean worktree, rustc 1.98.0"
+binary_sha256,0063e01bd1435fb1a9dee209f0559e54de87687cefbacfb72aaed1ea231215ff
+system,Darwin 25.5.0 arm64
+macos_product_version,26.5.1
+cpu,Apple M4
+logical_cores,10
+rustc,rustc 1.98.0 (88d9e12ae 2026-08-18)
+runs_per_cell,5
+started_utc,2026-11-07T04:50:13Z
+finished_utc,2026-11-07T05:15:47Z
+vep_baseline_file,vep_baseline_2026-07-29.csv
+vep_baseline_what,"Ensembl VEP v115.1, Docker ensemblorg/ensembl-vep:release_115.1, --gff against a tabix-indexed GFF3, one thread, --hgvs --symbol --canonical"
+vep_baseline_measured,2026-07-29
+vep_baseline_machine,"Apple M4, macOS Darwin 24.6.0"
+vep_baseline_wgs,sum over chromosomes 1 to 22 of the minimum of two runs of each
+results_directory,benchmarks/results/v0.5.0-rc.1

@@ -1,0 +1,5 @@
+config,databases,format,variants,median_s,runs_s,md5,records_with_revel
+clinvar,clinvar,osa,673660,7.09,7.06;7.15;7.09,09220863ff8b3e4d923ba7cfd3c6a86b,0
+clinvar,clinvar,osa2,673660,7.01,7.15;7.01;6.75,09220863ff8b3e4d923ba7cfd3c6a86b,0
+clinvar+revel,clinvar+revel_chr1+revel_chr22,osa,673660,7.58,7.41;7.79;7.58,80091dac86e558010bedaf3871aa81b7,38537
+clinvar+revel,clinvar+revel_chr1+revel_chr22,osa2,673660,7.08,7.28;7.04;7.08,80091dac86e558010bedaf3871aa81b7,38537
