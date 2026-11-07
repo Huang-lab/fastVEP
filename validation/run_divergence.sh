@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Re-measure every number in docs/VEP_DIVERGENCE.md against real Ensembl VEP.
+# Re-measure the three-input table of docs/VEP_DIVERGENCE.md ("What is measured" and "Current agreement") against real Ensembl VEP 115.1.
+# The comparisons with VEP 116.3 and with VEP's own cache (Part 3 of that document) are made by run_tab_world.sh, run_cache_oracle.sh
+# and run_known_columns.sh.
 #
 # Three inputs, because they exercise different code paths: a stratified ClinVar
 # 2-star+ sample built to be hard, a 1-in-200 systematic sample of the GIAB
@@ -12,10 +14,10 @@ set -euo pipefail
 # reproducible from the inputs alone, with no seed to carry around.
 #
 # Prerequisites:
-#   - cargo build --release
+#   - cargo build --release, or FASTVEP=/path/to/fastvep for another build (the script prints its version)
 #   - Docker, and ensemblorg/ensembl-vep:release_115.1 (pulled if missing)
 #   - bgzip and tabix (htslib): VEP rejects an unindexed GFF3 in --gff mode
-#   - test_data/organisms/human/ (benchmarks/download_data.sh --human)
+#   - test_data/organisms/human/ (benchmarks/download_data.sh human)
 #   - data/benchmark/clinvar_2star.vcf
 #     (analysis/acmg_benchmark/scripts/01_extract_clinvar_2star.py)
 #
@@ -23,7 +25,9 @@ set -euo pipefail
 #   ./validation/run_divergence.sh [outdir]      # default: validation/results
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# PROJECT_DIR is where the data is read and what Docker mounts; it is the checkout this script is in unless it is set (as it has to be from a
+# git worktree whose test_data is a link to the main checkout's).
+PROJECT_DIR="${PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 OUT_DIR="${1:-$SCRIPT_DIR/results}"
 VEP_IMAGE="ensemblorg/ensembl-vep:release_115.1"
 HUMAN_DIR="$PROJECT_DIR/test_data/organisms/human"
@@ -32,7 +36,7 @@ FASTA="$HUMAN_DIR/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
 SORTED_GFF3="$HUMAN_DIR/Homo_sapiens.GRCh38.115.sorted.gff3.gz"
 CLINVAR="$PROJECT_DIR/data/benchmark/clinvar_2star.vcf"
 HG002="$HUMAN_DIR/human_giab_hg002_full.vcf"
-FASTVEP="$PROJECT_DIR/target/release/fastvep"
+FASTVEP="${FASTVEP:-$PROJECT_DIR/target/release/fastvep}"
 
 cd "$PROJECT_DIR"
 mkdir -p "$OUT_DIR"
@@ -40,6 +44,7 @@ mkdir -p "$OUT_DIR"
 for f in "$FASTVEP" "$GFF3" "$FASTA"; do
     [[ -f "$f" ]] || { echo "missing: $f" >&2; exit 1; }
 done
+echo "fastVEP: $FASTVEP ($("$FASTVEP" --version))"
 
 # VEP reads the GFF3 through tabix and rejects an unindexed one outright, so it
 # gets a bgzipped copy of the same file fastVEP reads. Sorting is required by
