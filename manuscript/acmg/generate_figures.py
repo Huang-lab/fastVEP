@@ -183,7 +183,7 @@ def figS1_trajectory() -> None:
         t[c] = t[c] * 100  # every rate of this figure is drawn as a percentage
     stored = t[t.source.str.startswith("scored")]
     main = stored[stored.mainline]  # the steps on the way: v7 to v37 without v17
-    side = stored[~stored.mainline]  # v17, the opt-in run with the published VCEP bars
+    side = stored[~stored.mainline]  # v17, the opt-in run with the published VCEP thresholds
     # Open markers: v1, a matrix reconstructed from the run's documentation, and v2, v4 to v6, the figures
     # recorded at the time. None of them has a raw output behind it.
     opened = t[~t.source.str.startswith("scored")]
@@ -555,7 +555,7 @@ def fig2_points() -> None:
     axB.plot(cut.wrong / 1000, cut.plp_recall * 100, color=CAT[0], lw=LW, zorder=2)
     for r in cut.itertuples():
         shipped = r.lp == 6
-        # a filled black marker is the shipped setting, here and in Figures 1 and 2C; open markers are the others
+        # a filled black marker is the default setting, here and in Figures 1 and 2C; open markers are the others
         axB.plot([r.wrong / 1000], [r.plp_recall * 100], marker="o", ms=MS + (2 if shipped else 0), mfc=INK if shipped else SURFACE,
                  mec=SURFACE if shipped else CAT[0], mew=1.5 if shipped else 1.4, zorder=5 if shipped else 3)
     lab = {4: (0.9, 0, "4"), 5: (-0.9, 2.4, "5"), 6: (0.9, 0.6, "6 (default)"), 7: (0.9, -1.6, "7 and 8"), 9: (0.9, 0, "9")}
@@ -804,7 +804,7 @@ def fig1_thresholds() -> None:
     axB = fig.add_subplot(gs[1])
     axC = fig.add_subplot(gs[2])
 
-    # A: the benign-side trade space. Every knob passes through the shipped point.
+    # A: the benign-side trade space. Every knob passes through the default point.
     # (dx, dy, alignment) of each labelled point, in data units, chosen so no label sits on a line.
     knobs = [
         ("bs1_af_threshold", "BS1 threshold", CAT[0], "0.005", {"0.0002": (0.3, 0, "left"), "0.001": (0.3, -4, "left"), "0.02": (0, 6, "center"), "0.01": (0, 6, "center")}),
@@ -814,7 +814,7 @@ def fig1_thresholds() -> None:
         ("bp1_max_pathogenic_missense", "BP1 veto count", CAT[4], "3", {"1": (0.3, -3.5, "left"), "25": (0.3, 0, "left")}),
     ]
     show = {"bs1_af_threshold": {"0.0002", "0.001", "0.01", "0.02"}, "bs2_hom_prevalence_threshold": {"1e-06", "1e-05"},
-            "bp7_max_intron_offset": {"0", "50", "1000000"}, "phylop_conserved": {"1", "1000"}, "bp1_max_pathogenic_missense": set()}  # its points sit on the shipped one and on BP7's line; the caption names the range
+            "bp7_max_intron_offset": {"0", "50", "1000000"}, "phylop_conserved": {"1", "1000"}, "bp1_max_pathogenic_missense": set()}  # its points sit on the default one and on BP7's line; the caption names the range
     for knob, label, color, shipped, offs in knobs:
         sub = r[(r.knob == knob) & (r.group == "sweep")].copy()
         sub["v"] = sub.value.astype(str)
@@ -843,7 +843,7 @@ def fig1_thresholds() -> None:
     axA.set_title("Thresholds on the benign side", loc="left", fontsize=8, pad=6)
     panel_letter(axA, "A", x=-0.17, y=1.10)
 
-    # B: the PM2 bar for dominant genes, under the point system and under the 2015 table
+    # B: the PM2 threshold for dominant genes, under the point system and under the 2015 table
     pm = r[(r.knob == "pm2_ad_af_threshold") & (r.group == "sweep")].copy()
     tb = r[r.knob.str.startswith("pm2_ad_af_threshold (Richards") & (r.group == "interaction")].copy() if "interaction" in set(r.group) else r.iloc[0:0]
     tbase = r[r.name == "v37_sw_table_both_sides"]
@@ -879,7 +879,7 @@ def fig1_thresholds() -> None:
     axB.set_title("PM2 threshold, by combining rule", loc="left", fontsize=8, pad=6)
     panel_letter(axB, "B", x=-0.27, y=1.10)
 
-    # C: the dominant-gene BS2 carrier bar, change in recall against the shipped 3e-4
+    # C: the dominant-gene BS2 carrier threshold, change in recall against the default 3e-4
     bs = r[(r.knob == "bs2_ad_prevalence_threshold") & (r.group == "sweep")].copy()
     xs, plp, blb = [], [], []
     for row in bs.itertuples():
@@ -1049,14 +1049,14 @@ def figS4_frontier() -> None:
         r = main[main.run == run].iloc[0]
         ax.text(r.opposite * fx, r.same_direction_rate * 100 + dy, f"{run}: {int(r.opposite)}", fontsize=6.2, color=INK2, ha=ha, va="center")
 
-    # the rules, at nine frequency bars each
-    style = {"R1": (CAT[1], "o", "R1: benign-side at or above a frequency bar (the bar is labelled)"),
+    # the rules, at nine frequency thresholds each
+    style = {"R1": (CAT[1], "o", "R1: benign-side at or above a frequency threshold (the threshold is labelled)"),
              "R1 + R2": (CAT[3], "s", "R1 and R2: a rare null variant is pathogenic-side"),
              "R1 + R2 + R3": (CAT[2], "^", "R1, R2 and R3: a quiet variant with SpliceAI below 0.2 is benign-side")}
     for rule, (col, mk, lab) in style.items():
         c = curve[curve.rule == rule].sort_values("benign_frequency_bar", ascending=False)
         ax.plot(c.opposite, c.same_direction_share * 100, color=col, lw=1.1, marker=mk, ms=MS - 2.2, mfc=SURFACE, mec=col, mew=1.1, zorder=3, label=lab)
-    # the frequency bar at each end of each line
+    # the frequency threshold at each end of each line
     for rule, (col, mk, lab) in style.items():
         c = curve[curve.rule == rule].set_index("benign_frequency_bar")
         for bar, dx, dy, ha in ((5e-2, 0.80, 0.0, "right"), (1e-4, 1.22, 0.0, "left")):
