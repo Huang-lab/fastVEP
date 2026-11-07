@@ -918,7 +918,7 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 | **1000 Genomes** | `onekg` | PM2 (supplement) | Population frequencies |
 | **TOPMed** | `topmed` | PM2 (supplement) | Population frequencies |
 
-### Positional Sources (`.osa`)
+### Positional Sources (`.osa` / `.osa2`)
 
 | Source | SA Key | Used By | Description |
 |---|---|---|---|

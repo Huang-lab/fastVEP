@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#2bbd8c">
-  <meta name="description" content="fastVEP — high-performance variant effect prediction in Rust. 10–100x faster than VEP.">
+  <meta name="description" content="fastVEP — high-performance variant effect prediction in Rust. 80-100x faster than VEP on a whole genome, single-threaded.">
   <title>fastVEP — Variant Effect Predictor</title>
 
   <!-- fastVEP logo. Served by the Rust backend (routes /assets/logo.png,
@@ -702,7 +702,7 @@
   <header>
     <img class="logo" src="/assets/logo.png" alt="fastVEP logo" width="36" height="36">
     <h1><span>fast</span>VEP</h1>
-    <span class="badge">v0.3.0</span>
+    <span class="badge">v0.5.0</span>
     <span class="spacer"></span>
     <div id="stats" style="display:none; font-size:12px; color:var(--text-dim); margin-right:20px; text-align:right">
       <div id="genomeStat"></div>
@@ -1425,7 +1425,7 @@ let serverGff3Source = null; // name of the gene model the server already has lo
 let allowModelReplacement = false;
 // Fallback version = the static header badge text (single source of truth);
 // overridden by /api/status when a backend responds.
-let serverVersion = (document.querySelector('.badge')?.textContent || 'v0.3.0').replace(/^v/, '').trim();
+let serverVersion = (document.querySelector('.badge')?.textContent || 'v0.5.0').replace(/^v/, '').trim();
 let builtinUploadedToServer = false; // track if we've uploaded the example GFF3
 
 // Detect backend on load, fetch available genomes, ensure transcripts are loaded

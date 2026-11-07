@@ -37,6 +37,12 @@ a class, no seed to carry around), runs both tools, and compares row by row with
 `validation/compare_rows.py`, which also writes one TSV per field holding every disagreeing row.
 The counts below are those files.
 
+**When these counts were measured.**
+The three samples and the table under "Current agreement" were measured on 15 September 2026 with the build at `ac2e2b6` (v0.3.0), and the table has not changed since.
+fastVEP's output has changed since then: the build of 27 October 2026 (`5048fc5`), and the release candidate v0.5.0-rc.1 after it, write other bytes than `ac2e2b6` does on every input of the comparison (`benchmarks/results/v0.5.0-rc.1/identity_vs_ac2e2b6/identity.tsv`), among other things because the protein version of an `HGVSp`, the coding predicates and the frameshift introns now follow release 116.
+So the table below describes that build.
+The comparison that describes the release candidate is Part 3, against 116.3, measured with `5048fc5`: the release candidate writes the same bytes as that build on every input of it that can be run without VEP (`benchmarks/results/v0.5.0-rc.1/identity_vs_5048fc5/identity.tsv`, which `validation/compare_builds.py` writes).
+
 Two things the comparison counts but does not rate.
 **Rows only fastVEP has**: 9,579 on the ClinVar sample and 67,226 genome-wide, almost all of them
 transcripts of `ncRNA_gene` records, which VEP's `--gff` reader discards with a warning and
@@ -1129,7 +1135,7 @@ Measured against VEP 116.3, cell by cell, with the flags on in both tools:
 | The same, VCF `CSQ` | 4,753 entries | **all 14,259 agree** | |
 | The frameshift-intron world (`vep_tab_fsintron`, 2,879 changes), where 301 rows are `-/N` for the cDNA and 212 for the CDS | 7,756 | **all agree** | all 131,852 cells agree |
 | A RefSeq-style world with a symbol that has a space and synonymous changes (`vep_flags_compat`, 760 records) | 1,418 | all agree | all 42,540 cells agree, with each flag and without |
-| HG002 sample, Ensembl 115 GFF3, `--gff` (20,241 records) | 186,055 | all agree | the 3,834 cells of Part 3 and no others |
+| HG002 sample, Ensembl 115 GFF3, `--gff` (20,241 records) | 186,055 | all agree | the 3,851 cells of Part 3 and no others |
 | VEP's Ensembl cache, chr21 and chr22, 45,916 changes, complete transcripts | 1,884,993 | all agree | the `HGVSp`, `HGVSc`, `Amino_acids` and `Consequence` cells of the `HGVSp` section, and the `SYMBOL_SOURCE` and `HGNC_ID` a GFF3 does not carry |
 | VEP's RefSeq cache, the same, unedited transcripts | 203,125 | all agree | those of the `HGVSp` section, and the `SYMBOL_SOURCE`, `BIOTYPE` and `CANONICAL` of a RefSeq GFF3 |
 

@@ -93,7 +93,7 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
     "total_genomes": 0,
     "total_variants": 0,
     "transcripts": 509650,
-    "version": "0.3.0"
+    "version": "0.5.0"
 }
 ```
 

@@ -36,7 +36,7 @@ check the other before you call the work done.
 ```bash
 cargo fmt --all                                        # before every commit
 cargo clippy --workspace --all-targets -- -D warnings  # what CI gates on
-cargo test --workspace                                 # ~1000 tests, all must pass
+cargo test --workspace                                 # 1,731 tests, all must pass
 ```
 
 CI runs exactly these three and nothing else, in this order. The lint set lives
@@ -161,15 +161,22 @@ builds a large structure: glibc grows the arena of each thread a page at a time,
 one `mprotect` for every 4 KB, so decoding the transcript cache on 8 threads
 made 231,689 of them where mimalloc made 62, and under Rosetta 2 that left the
 run no faster than master's one thread. The price is peak memory on Linux, 4 to
-7% (100 to 180 MB) over glibc, and about 1.2 GiB more address space under
+9% (100 to 230 MB) over glibc on one to 32 threads and 12% on 64, and about 1.2 GiB more address space under
 `ulimit -v`. The counting-allocator tests wrap the system allocator, since the
 library crates they test never link mimalloc: they count allocations, and the
 count does not depend on which allocator serves them.
 
 Measuring. Interleave the binaries and take medians, and compare their output
-byte for byte in the same runs: a speed-up that changes an answer is not one. A
+byte for byte in the same runs: a speed-up that changes an answer is not one.
+`benchmarks/run_head_to_head.py` does that for the fastVEP side of the tables in the README and the manuscript and writes every run into
+`benchmarks/results/<build>/`; run nothing else while it does (in the run behind those tables the five whole-genome runs on one thread took 43 to 55
+seconds, and the 55 had the CPU time of the others and spent ten seconds waiting), and hold a laptop awake with `caffeinate -i`, because macOS
+idle-sleeps between commands and suspends a background job while it does (one run of the five organisms took 18.7 seconds for 12.4 that way). A
 run that needs sequences its sidecar cache lacks (`--hgvs` over a cache built
 without `--fasta`) rewrites the cache, so checksum it before and after a series.
+A comparison with Ensembl VEP that was measured with one build describes another build only if the two write the same bytes on its inputs, which
+`validation/compare_builds.py` checks: the numbers of `docs/VEP_DIVERGENCE.md` against release 115.1 had gone stale that way, silently, when the
+output changed to follow release 116.
 An `amd64` container on Apple silicon runs under Rosetta 2, which tells you that
 the code runs and gives ratios at best: it aborts on a thread stack of 1 << 50
 bytes, where a kernel answers an error, and it showed the glibc behaviour above

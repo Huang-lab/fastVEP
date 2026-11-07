@@ -45,7 +45,7 @@ chmod +x /opt/fastvep/bin/fastvep-web /opt/fastvep/bin/fastvep
 
 # 5. Run the deployment script (pick one)
 export FASTVEP_BIN=/root/fastVEP/target/release
-bash scripts/deploy-full.sh        # ← recommended for CCX33 (150GB)
+bash scripts/deploy-full.sh        # ← recommended for CCX33 (160GB)
 # OR: bash scripts/deploy-clinical.sh   # for CCX23 (80GB)
 # OR: bash scripts/deploy-minimal.sh    # quickest, just hg38 + ClinVar
 ```
@@ -200,8 +200,8 @@ fastVEP supports multiple genomes via the `--data-dir` flag. Each subdirectory i
 │   ├── Homo_sapiens.GRCh38.dna.primary_assembly.fa
 │   ├── Homo_sapiens.GRCh38.dna.primary_assembly.fa.fai
 │   └── sa/
-│       ├── clinvar.osa
-│       ├── gnomad.osa
+│       ├── clinvar.osa2
+│       ├── gnomad_chr1.osa2     # one file per chromosome
 │       └── ...
 ├── hg19_ensembl_113/
 │   ├── Homo_sapiens.GRCh37.113.gff3
@@ -246,7 +246,7 @@ apt install -y samtools
 ```bash
 mkdir -p hg38_ensembl_115/sa && cd hg38_ensembl_115
 
-# Gene annotation (~1.1GB compressed → ~3GB uncompressed)
+# Gene annotation (~1.2GB uncompressed)
 wget https://ftp.ensembl.org/pub/release-115/gff3/homo_sapiens/Homo_sapiens.GRCh38.115.gff3.gz
 gunzip Homo_sapiens.GRCh38.115.gff3.gz
 
@@ -398,7 +398,7 @@ For **hg38_ensembl_115** (GRCh38):
 ```bash
 cd /opt/fastvep/data/hg38_ensembl_115/sa
 
-# ClinVar (~30MB download, ~40MB .osa) — updates monthly
+# ClinVar (~190MB download, ~40MB .osa2) — updates monthly
 wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
 /opt/fastvep/bin/fastvep sa-build --source clinvar \
   -i clinvar.vcf.gz -o clinvar --assembly GRCh38
@@ -415,7 +415,7 @@ for chr in {1..22} X; do
   VCF="gnomad.genomes.v4.1.sites.chr${chr}.vcf.bgz"
   wget "https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/genomes/${VCF}"
   /opt/fastvep/bin/fastvep sa-build --source gnomad \
-    -i "$VCF" -o gnomad --assembly GRCh38
+    -i "$VCF" -o "gnomad_chr${chr}" --assembly GRCh38   # a name per chromosome: sa-build overwrites its output
   rm -f "$VCF"   # delete raw VCF to free disk space
   echo "chr${chr} done. Disk free: $(df -h --output=avail /opt/fastvep/data | tail -1 | xargs)"
 done
@@ -426,10 +426,12 @@ wget https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high
   -i 1kGP_high_coverage_Illumina.chr1.filtered.SNV_INDEL_SV_phased_panel.vcf.gz \
   -o onekg --assembly GRCh38
 
-# REVEL (~2GB download)
-# Manual download from https://sites.google.com/site/revelgenomics/downloads
+# REVEL (667MB zip). sa-build reads a plain or gzipped CSV and not a zip, so cut one chromosome at a time out of it
+# (scripts/build-sa-databases.sh does the same for every chromosome)
+wget https://rothsj06.dmz.hpc.mssm.edu/revel-v1.3_all_chromosomes.zip
+unzip -p revel-v1.3_all_chromosomes.zip | awk -F, -v c=1 'NR==1||$1==c' > revel_chr1.csv
 /opt/fastvep/bin/fastvep sa-build --source revel \
-  -i revel-v1.3_all_chromosomes.csv.zip -o revel --assembly GRCh38
+  -i revel_chr1.csv -o revel_chr1 --assembly GRCh38
 
 # SpliceAI (~30GB download)
 # Manual download from https://basespace.illumina.com/s/otSPW8hnhaZR
@@ -486,7 +488,7 @@ Human GRCh38 with all SA databases:
 | File | Size |
 |------|------|
 | GFF3 | 1.1 GB |
-| GFF3 cache (auto-built on first run) | ~370 MB |
+| GFF3 cache (auto-built on first run) | ~130 MB |
 | FASTA + .fai | 2.9 GB |
 | ClinVar .osa | ~40 MB |
 | dbSNP .osa | ~5 GB |
@@ -570,7 +572,7 @@ Restart=always
 RestartSec=5
 
 LimitNOFILE=65535
-# Allow more memory for multi-genome switching (each loaded genome uses ~4-6GB)
+# Allow more memory for multi-genome switching (a human genome with its sequences takes about 2.6 GiB once loaded, and 4.5 GiB while its cache is first built; yeast takes 54 MiB, mouse 1.1 GiB)
 MemoryMax=24G
 
 [Install]
@@ -590,7 +592,7 @@ systemctl status fastvep
 journalctl -u fastvep -f   # watch logs
 ```
 
-First start takes ~10-15s (initial GFF3 parse + cache build). Subsequent starts are ~3-4s (from cache). Switching genomes in the UI takes ~3-4s.
+The first start on a gene model parses its GFF3 and builds the cache, which takes about 13s for the human genome on ten cores. Later starts read the cache in about a second (0.4s on eight threads, 0.9s on one), plus the time to open the supplementary databases.
 
 ### nginx reverse proxy
 
@@ -705,7 +707,7 @@ curl -s https://your-domain.com/api/status | python3 -m json.tool
 # Should show:
 # {
 #     "status": "ok",
-#     "transcripts": 508530,
+#     "transcripts": 509650,
 #     "has_fasta": true,
 #     "sa_sources": ["ClinVar", "dbSNP", "gnomAD", ...]
 # }
@@ -795,7 +797,7 @@ Users (browser)
   Hetzner CCX23 ($30/mo)
   ├─ nginx (reverse proxy, rate limiting)
   └─ fastvep-web (port 3000)
-     ├─ 508k transcripts (GRCh38, Ensembl 115)
+     ├─ 510k transcripts (GRCh38, Ensembl 115)
      ├─ FASTA reference (memory-mapped, 2.9GB)
      └─ SA databases
         ├─ ClinVar
