@@ -3,7 +3,9 @@
 Everything in this directory was measured on 7 November 2026 (UTC) with the binary built from the tag `v0.5.0-rc.1` (commit `c12d9f9`, whose crates are those of `master` at `aa5e5ee`; SHA-256 `0063e01bd143...`, 5,834,640 bytes), on an Apple M4 (10 cores: 4 performance and 6 efficiency; 24 GiB; macOS 26.5.1; rustc 1.98.0).
 What the README and `manuscript/manuscript.md` quote about speed, memory, the five organisms, the consequence distribution, the fastSA formats and the tests is in these files, and `manuscript/build_data.py` turns them into `manuscript/data/`.
 `environment.tsv` holds the machine, the load, the hash of the binary and of every input.
-The binary prints `fastvep 0.5.0-rc.1`, because it was built from the tag of the release candidate; the release is cut from the same crates, which `git diff --stat v0.5.0-rc.1 v0.5.0 -- crates Cargo.lock` shows once the tag `v0.5.0` exists (it is empty if they are), and if it is not empty these are not the numbers of the release and the commands under "To repeat it" are to be run again.
+The binary prints `fastvep 0.5.0-rc.1`, because it was built from the tag of the release candidate.
+The numbers are those of the release if it is cut from the same crates, which `git diff --stat v0.5.0-rc.1 v0.5.0 -- crates Cargo.lock` shows once the tag `v0.5.0` exists (it is empty if they are); if it is not empty, the commands under "To repeat it" are to be run again.
+`web/index.html` is embedded in the binary, and the description in its head, which quotes the speed-up, is the one difference to expect there.
 
 ## What is here
 
