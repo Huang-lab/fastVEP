@@ -1,0 +1,28 @@
+part	cell	round	wall_s	cpu_s	peak_rss_mib	load1
+scaling	chr22_1000	0	0.74	0.44		3.33
+scaling	chr22_1000	1	0.65	0.41		3.33
+scaling	chr22_1000	2	0.64	0.41		3.33
+scaling	chr22_1000	3	0.63	0.41		3.46
+scaling	chr22_5000	0	8.15	7.90		3.35
+scaling	chr22_5000	1	7.87	7.64		3.23
+scaling	chr22_5000	2	7.91	7.68		3.05
+scaling	chr22_5000	3	7.93	7.67		2.89
+scaling	chr22_10000	0	24.44	24.16		2.58
+scaling	chr22_10000	1	24.07	23.80		2.22
+scaling	chr22_10000	2	23.98	23.70		3.27
+scaling	chr22_10000	3	24.14	23.87		3.34
+scaling	chr22_all	0	115.31	114.79		2.29
+scaling	chr22_all	1	111.14	110.64		2.18
+scaling	chr22_all	2	112.51	112.00		3.00
+scaling	chr22_all	3	113.83	113.33		2.96
+startup	human_1_variant	0	0.38	0.17		2.80
+startup	human_1_variant	1	0.36	0.16		2.80
+startup	human_1_variant	2	0.38	0.17		2.80
+startup	human_1_variant	3	0.35	0.17		2.80
+startup	yeast_1_variant	0	0.36	0.15		2.80
+startup	yeast_1_variant	1	0.36	0.15		2.80
+startup	yeast_1_variant	2	0.36	0.15		2.80
+startup	yeast_1_variant	3	0.37	0.15		2.80
+memory	chr1_100k	1	194.54	194.74	960	2.38
+memory	chr1_100k	2	194.87	195.06	959	2.10
+memory	chr1_100k	3	196.00	196.18	957	2.11

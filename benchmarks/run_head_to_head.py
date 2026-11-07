@@ -8,7 +8,7 @@ made (`raw.tsv`), their medians (`summary.tsv`) and what it ran on (`environment
 documents quote that directory.
 
     benchmarks/run_head_to_head.py --bin target/release/fastvep --built-from "v0.5.0-rc.1 (c12d9f9)" \
-        --out benchmarks/results/v0.5.0-rc.1
+        --out benchmarks/results/v0.5.0
     benchmarks/run_head_to_head.py --bin ... --only scaling,memory --runs 3
 
 What is measured, always with the FASTA and `--hgvs --symbol --canonical` (the flags of the head-to-head with Ensembl
@@ -20,7 +20,9 @@ VEP) and with the transcript cache already built:
     memory     Table 4: peak memory of 100,000 chr1 variants on 1, 8 and every thread; and of a run without a FASTA
     formats    Table 5: 10,000 chr22 variants written as VCF, tab and JSON, one thread
     wgs        Table 3: the whole of HG002 (4,048,342 variants) on one thread and on every core: consequences only,
-               with ClinVar, and with gnomAD and ClinVar
+               with ClinVar, and with gnomAD (the v4.1 exomes) and ClinVar
+    wgs_joint  the same with gnomAD's v4.1 joint release and ClinVar: the condition that Ensembl VEP can be given the same
+               files for (`run_vep_side.py` reads the joint extracts that `sa_db_joint` was built from)
     organisms  one variant against each of the five gene models: how many transcripts each holds (`gene_models.tsv`)
 
 The size of the binary, and the SHA-256 of every input, are in `environment.tsv`.
@@ -75,12 +77,13 @@ FASTA = HUMAN / "Homo_sapiens.GRCh38.dna.primary_assembly.fa"
 HG002 = HUMAN / "human_giab_hg002_full.vcf"
 YEAST = ORGANISMS / "yeast"
 DEFAULT_SA_DB = ROOT / "data" / "benchmark" / "sa_db"
+DEFAULT_SA_DB_JOINT = ROOT / "data" / "benchmark" / "sa_db_joint"
 WORK = ROOT / "benchmarks" / "output" / "head_to_head"
 
 # --hgvs needs the FASTA; --symbol and --canonical are the two flags the Ensembl VEP side of the comparison is given.
 FLAGS = ["--hgvs", "--symbol", "--canonical", "--no-progress"]
 ALL_CORES = os.cpu_count() or 1
-PARTS = ("first-run", "startup", "scaling", "memory", "formats", "wgs", "organisms")
+PARTS = ("first-run", "startup", "scaling", "memory", "formats", "wgs", "wgs_joint", "organisms")
 RSS_UNIT = 1024 * 1024 if sys.platform == "darwin" else 1024  # ru_maxrss is bytes on macOS and KiB on Linux
 
 
@@ -230,7 +233,7 @@ def lean_vcf(src: Path, dst: Path, chrom: str, limit: int | None) -> int:
     return n
 
 
-def prepare_inputs(sa_db: Path) -> dict[str, Path]:
+def prepare_inputs(sa_db: Path, sa_db_joint: Path | None = None) -> dict[str, Path]:
     """The cuts of the HG002 VCF and the database directories the cells read, made once and reused."""
     d = WORK / "inputs"
     d.mkdir(parents=True, exist_ok=True)
@@ -285,6 +288,18 @@ def prepare_inputs(sa_db: Path) -> dict[str, Path]:
             for name in files:
                 (cd / name).symlink_to(sa_db / name)
             inputs[cond] = cd
+        # ClinVar and the joint release of gnomAD (24 chromosomes), for the one condition that Ensembl VEP reads the same files for
+        joint_files = sorted(sa_db_joint.glob("gnomad_chr*.osa2")) if sa_db_joint is not None else []
+        if joint_files:
+            cd = d / "sa_joint"
+            if cd.exists():
+                shutil.rmtree(cd)
+            cd.mkdir()
+            for name in ("clinvar.osa", "clinvar.osa.idx"):
+                (cd / name).symlink_to(sa_db / name)
+            for f in joint_files:
+                (cd / f.name).symlink_to(f)
+            inputs["sa_joint"] = cd
     return inputs
 
 
@@ -335,6 +350,9 @@ def environment(rec: Recorder, args: argparse.Namespace, started: str, inputs: d
     if (sa / "clinvar.osa").exists():
         rows.append(("clinvar_osa_sha256", sha256(sa / "clinvar.osa")))
         rows.append(("gnomad_osa2_files", str(len(list(sa.glob("gnomad_chr*.osa2"))))))
+    if args.sa_db_joint.exists():
+        rows.append(("gnomad_joint_osa2_files", str(len(list(args.sa_db_joint.glob("gnomad_chr*.osa2"))))))
+        rows.append(("gnomad_joint_osa2_bytes", str(sum(f.stat().st_size for f in args.sa_db_joint.glob("gnomad_chr*.osa2")))))
     with (rec.outdir / "environment.tsv").open("w") as f:
         for k, v in rows:
             f.write(f"{k}\t{v}\n")
@@ -348,6 +366,7 @@ def main() -> None:
     ap.add_argument("--only", default="", help=f"comma-separated parts to run: {', '.join(PARTS)} (default all)")
     ap.add_argument("--built-from", default="not stated", help="what the binary was built from, recorded in environment.tsv")
     ap.add_argument("--sa-db", type=Path, default=DEFAULT_SA_DB, help="directory with clinvar.osa and gnomad_chr*.osa2 (default data/benchmark/sa_db)")
+    ap.add_argument("--sa-db-joint", type=Path, default=DEFAULT_SA_DB_JOINT, help="directory with the gnomad_chr*.osa2 of the joint release (default data/benchmark/sa_db_joint)")
     ap.add_argument("--list", action="store_true", help="print the cells and stop")
     args = ap.parse_args()
     args.parts = [p for p in (args.only.split(",") if args.only else PARTS) if p]
@@ -360,7 +379,7 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    inputs = prepare_inputs(args.sa_db)
+    inputs = prepare_inputs(args.sa_db, args.sa_db_joint)
     tmp = WORK / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
     rec = Recorder(args.bin.resolve(), args.out)
@@ -391,6 +410,13 @@ def main() -> None:
         for t in (1, None):
             label = "t1" if t == 1 else "all"
             cells["wgs"].append(Cell("wgs", f"hg002_{cond}_{label}", annotate(HG002, tmp / "wgs.vcf", sa=sa), t, tmp / "wgs.vcf", group=f"wgs_{cond}"))
+
+    if "wgs_joint" in args.parts:
+        if "sa_joint" not in inputs:
+            sys.exit(f"the wgs_joint part needs the databases of the joint release in {args.sa_db_joint} and ClinVar in {args.sa_db}")
+        for t in (1, None):
+            label = "t1" if t == 1 else "all"
+            cells["wgs_joint"].append(Cell("wgs_joint", f"hg002_joint_{label}", annotate(HG002, tmp / "wgs.vcf", sa=inputs["sa_joint"]), t, tmp / "wgs.vcf", group="wgs_joint"))
 
     organisms = []
     for name, d, gff3, fasta, vcf in (("yeast", "yeast", "yeast.gff3", "yeast.fa", "yeast_ensembl_full.vcf"),
@@ -433,7 +459,7 @@ def main() -> None:
             rec.raw[-1]["out_bytes"] = str(sidecar_of(gff3).stat().st_size)  # what the first run leaves behind is the cache
     if "first-run" not in args.parts and not sidecar.exists():
         sys.exit(f"no sidecar cache at {sidecar}: run the first-run part first")
-    for part in ("startup", "scaling", "memory", "formats", "wgs"):
+    for part in ("startup", "scaling", "memory", "formats", "wgs", "wgs_joint"):
         if part in args.parts:
             print(f"== {part}", flush=True)
             rec.rounds(cells[part], args.runs)

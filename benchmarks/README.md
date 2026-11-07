@@ -14,9 +14,9 @@ bash benchmarks/check_urls.sh acmg      # ACMG concordance only
 
 | Benchmark | Question it answers | Runner | Inputs | Outputs |
 |-----------|---------------------|--------|--------|---------|
-| **1. Speed** (multi-organism, and the fastVEP side of the head-to-head with Ensembl VEP) | How fast is annotation across genome sizes, and how much does it cost in memory? | [`benchmarks/run_benchmark.sh`](run_benchmark.sh) (five organisms), [`benchmarks/run_head_to_head.py`](run_head_to_head.py) (chr22 scaling, whole genome, start-up, memory, formats) | `test_data/organisms/<org>/` (~30 GB, not in the repository) | [`benchmarks/results/`](results/), one directory per build measured |
+| **1. Speed** (multi-organism, and the fastVEP side of the head-to-head with Ensembl VEP) | How fast is annotation across genome sizes, and how much does it cost in memory? | [`benchmarks/run_benchmark.sh`](run_benchmark.sh) (five organisms), [`benchmarks/run_head_to_head.py`](run_head_to_head.py) (chr22 scaling, whole genome, start-up, memory, formats) and [`benchmarks/run_vep_side.py`](run_vep_side.py) (Ensembl VEP 116.3 on the same inputs) | `test_data/organisms/<org>/` (~30 GB, not in the repository) | [`benchmarks/results/`](results/), one directory per build measured |
 | **2. ACMG concordance** (clinical)   | How well does `--acmg` agree with curated ClinVar 2-star+ calls? | [`analysis/acmg_benchmark/scripts/run_benchmark.sh`](../analysis/acmg_benchmark/scripts/run_benchmark.sh) | `data/benchmark/` (~30 GB SA dbs + sources, not in the repository) | [`analysis/acmg_benchmark/results/`](../analysis/acmg_benchmark/results/), [`manuscript/acmg/data/`](../manuscript/acmg/data/) |
-| **3. VEP validation** (correctness)  | Does fastVEP agree with Ensembl VEP on the same input? | [`validation/run_validation.sh`](../validation/run_validation.sh), [`validation/run_divergence.sh`](../validation/run_divergence.sh) | [`validation/human/`](../validation/human/), [`validation/mouse/`](../validation/mouse/), the human inputs of benchmark 1 | the counts of [`docs/VEP_DIVERGENCE.md`](../docs/VEP_DIVERGENCE.md); the runs write `validation/results/` (not in the repository) |
+| **3. VEP validation** (correctness)  | Does fastVEP agree with Ensembl VEP on the same input? | [`validation/measure_vep116.py`](../validation/measure_vep116.py), [`validation/run_validation.sh`](../validation/run_validation.sh), [`validation/run_divergence.sh`](../validation/run_divergence.sh) | [`validation/human/`](../validation/human/), [`validation/mouse/`](../validation/mouse/), the human inputs of benchmark 1 | the counts of [`docs/VEP_DIVERGENCE.md`](../docs/VEP_DIVERGENCE.md); the runs write `validation/results/` (not in the repository) |
 
 A fourth, narrower benchmark — the synthetic `.osa` reader microbench
 ([`crates/fastvep-sa/examples/bench_sa_reader.rs`](../crates/fastvep-sa/examples/bench_sa_reader.rs))
@@ -113,7 +113,7 @@ The yeast file is of Ensembl 115, like its gene model, and the human file is GRC
 
 ### Head-to-head with Ensembl VEP (the fastVEP side), start-up, memory and formats
 
-The README's comparison with Ensembl VEP v115.1 runs each tool on one thread
+The README's comparison with Ensembl VEP 116.3 runs each tool on one thread
 over the whole of GIAB HG002 (4,048,342 variants, GRCh38 Ensembl 115 GFF3 and
 FASTA) with `--hgvs --symbol --canonical`, and on the first 1,000, 5,000 and
 10,000 variants of its chromosome 22 and all 50,284 of them.
@@ -121,30 +121,30 @@ FASTA) with `--hgvs --symbol --canonical`, and on the first 1,000, 5,000 and
 
 ```bash
 python3 benchmarks/run_head_to_head.py --bin target/release/fastvep \
-    --built-from "v0.5.0-rc.1 (c12d9f9)" --out benchmarks/results/v0.5.0-rc.1
+    --built-from "v0.5.0-rc.1 (c12d9f9)" --out benchmarks/results/v0.5.0
 python3 benchmarks/run_head_to_head.py --bin ... --only scaling,memory --runs 3    # a part of it
 ```
 
 It measures, with the FASTA and the cache already built: the first run on a gene model (parse the GFF3 and write the cache), start-up (a run of one variant),
 the chr22 series, the peak memory of 100,000 variants, the three output formats, the whole genome on one thread and on every core
-in three annotation conditions (consequences only, with ClinVar, with gnomAD and ClinVar), and the size of the binary.
+in three annotation conditions (consequences only, with ClinVar, with the joint release of gnomAD and ClinVar), and the size of the binary.
 Every cell is run once per round and the rounds are repeated, so that a slow minute falls on all cells and not on one, and the median is reported.
 It writes every run (`raw.tsv`), the medians (`summary.tsv`), what it ran on (`environment.tsv`: the machine, the binary's hash, the SHA-256 of every input, the load)
 and whether the multi-threaded outputs are the single-threaded ones byte for byte (`identity.tsv`), and it stops when they are not.
-The two annotation conditions read the ClinVar and gnomAD databases of the ACMG benchmark (`data/benchmark/sa_db`, see below); `--sa-db DIR` names others.
+The annotation conditions read the databases of the ACMG benchmark: ClinVar from `data/benchmark/sa_db`, and for the third condition the joint release of gnomAD from `data/benchmark/sa_db_joint` (`--sa-db DIR` and `--sa-db-joint DIR` name others).
+The third condition is the `wgs_joint` part; the condition of the v4.1 exomes (the `both` cells of the `wgs` part) is kept in `raw.tsv` of the first session and is not the one that Ensembl VEP is given the same files for.
+A laptop runs one binary at speeds that differ by several per cent from one session to another (the medians of the consequence-only genome on one thread were 44.7 s in the first session of 0.5.0 and 42.2 s in the second, and those of the condition with gnomAD's exomes and ClinVar 61.6 s and 51.1 s), more than the rounds of one session differ, so the parts that are compared with Ensembl VEP (start-up, scaling, memory, formats, `wgs` and `wgs_joint`) were run again in the session of the VEP runs, into `benchmarks/results/v0.5.0/with_vep/`, and a speed-up is a ratio of two times of one session.
 Nothing else should run on the machine while it does: a browser, a backup or another build moves the medians by more than the differences measured.
 
 `consequence_distribution.py` counts the consequence calls of an annotated VCF (Table 8 of the manuscript), from a file or a pipe, so that the 10 GB output of a whole genome need not be kept.
 `check_lean_inputs.py` measures what the cut of the chromosome 22 inputs to five columns is worth to fastVEP (about 3% of the time of 50,284 records on one thread), because the inputs that Ensembl VEP read in July are not recorded.
 `run_sa_formats.py` measures the fastSA v1 against v2 table (sizes, build times, and the annotation of the ClinVar 2-star+ set against each format, which must come out as the same bytes).
 `manuscript/build_data.py` turns a results directory into the CSV files of `manuscript/data/`, and checks that they still agree with it; `manuscript/verify_numbers.py` checks that the numbers of the text are those of the CSV files.
-`benchmarks/run_vep_side.py` is the Ensembl VEP side (the chromosome 22 series, start-up and peak memory in Docker); it was written for the release candidate and has not been run, because Docker could not be started on the day (`benchmarks/results/v0.5.0-rc.1/README.md`).
-
-Ensembl VEP's side (the Docker image, `--gff` mode against a bgzip and tabix copy of the same
-GFF3, the whole genome as the sum of 22 per-chromosome runs because a single
-process runs out of the Docker default memory above about 2.7M variants) is
-described in the manuscript's methods; its times were measured on
-2026-07-29 and are kept in `manuscript/data/vep_baseline_2026-07-29.csv`.
+[`run_vep_side.py`](run_vep_side.py) is the Ensembl VEP side, in Docker with release 116.3 (pinned by its digest) in `--gff` mode against a bgzip and tabix copy of the same GFF3:
+the chromosome 22 series, start-up, peak memory and the size of the image, and the whole genome as the sum of 22 per-chromosome runs (a single process ran out of the Docker default memory above about 2.7M variants with VEP 115.1) in the three annotation conditions.
+For the annotation conditions it gives VEP the very files that the fastSA databases were built from, as `--custom` sources (`data/benchmark/sa_sources/clinvar.vcf.gz`, and the `gnomad_joint_extracts/` of the joint release, one file per chromosome), and asks for the INFO fields that the databases keep.
+It writes the CPU time of VEP, read inside the container, beside the wall time of every run, and a run that is already in `vep_genome.tsv` is skipped when it is started again, so that a campaign of hours can be resumed.
+Its output (`vep_baseline.csv` and the files beside it) is in `benchmarks/results/v0.5.0/`, and `manuscript/build_data.py` reads it.
 
 ---
 
@@ -224,17 +224,20 @@ same VCF + GFF3 + FASTA and diffs the outputs. Lives in
 [`validation/run_validation.sh`](../validation/run_validation.sh) (the VEP example variants and a mouse chromosome)
 and [`validation/run_divergence.sh`](../validation/run_divergence.sh) (the three inputs whose counts are in
 [`docs/VEP_DIVERGENCE.md`](../docs/VEP_DIVERGENCE.md): a ClinVar sample built to be hard, one in 200 of the HG002 variants, and 400 in-frame deletions).
-Both compare against VEP 115.1; the comparisons with VEP 116.3 and with VEP's own cache (Part 3 of that document) have their own scripts, `run_tab_world.sh`, `run_cache_oracle.sh` and `run_known_columns.sh`.
+Both compare against VEP 115.1.
+The comparison with VEP 116.3 is [`validation/measure_vep116.py`](../validation/measure_vep116.py), one command for the VEP example set, the in-frame deletions, the HG002 and ClinVar samples, the generated worlds and, given NCBI's GFF3, RefSeq; the comparisons with VEP's own cache and with its known-variant columns (Part 3 of that document) have their own scripts, `run_cache_oracle.sh` and `run_known_columns.sh`.
 Ensembl VEP's output does not depend on the build of fastVEP, so a comparison that was measured with one build describes any build that writes the same bytes:
 [`validation/compare_builds.py`](../validation/compare_builds.py) runs two builds over the inputs of these comparisons, as a VCF and as the tab output of Part 3, and compares what they write byte for byte.
-That is how the counts of Part 3, measured on 27 October 2026 with commit `5048fc5`, are the release candidate's: `benchmarks/results/v0.5.0-rc.1/identity_vs_5048fc5/` has the hashes of both.
+`measure_vep116.py` was run with the binary of 0.5.0 on 7 November 2026 and gave the counts that commit `5048fc5` gave on 27 October 2026, to the cell (`benchmarks/results/v0.5.0/identity_vs_5048fc5/` has the hashes of the outputs of both builds).
+The comparisons with VEP's own caches were not repeated, because their extracted caches are no longer on disk.
+[`check_custom_matches.py`](check_custom_matches.py) checks, for the annotation conditions of the speed comparison, that the two tools find the same records in the same ClinVar and gnomAD files.
 
 External data needed:
 - Mouse chr19 FASTA: [Ensembl 115 chromosome.19.fa.gz](https://ftp.ensembl.org/pub/release-115/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.chromosome.19.fa.gz) — auto-downloaded by the script
 - Mouse chr19 GFF3: [Ensembl 115 chromosome.19.gff3.gz](https://ftp.ensembl.org/pub/release-115/gff3/mus_musculus/Mus_musculus.GRCm39.115.chromosome.19.gff3.gz) — auto-downloaded by the script
 - Human chr22 1KGP VCF: tracked in-repo at [`validation/human/chr22_1kgp.vcf`](../validation/human/chr22_1kgp.vcf)
 - Human VEP example VCF: tracked in-repo at [`validation/human/vep_example_GRCh38.vcf`](../validation/human/vep_example_GRCh38.vcf)
-- Docker image: `ensemblorg/ensembl-vep:release_115.1`
+- Docker image: `ensemblorg/ensembl-vep:release_116.3` (`measure_vep116.py` and `run_vep_side.py`, pinned by digest), and `ensemblorg/ensembl-vep:release_115.1` for the two older scripts
 
 ---
 

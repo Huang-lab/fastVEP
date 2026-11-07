@@ -1,0 +1,3 @@
+source	records	vep_found	fastvep_found	both	only_vep	only_fastvep
+ClinVar	50284	1057	1057	1057	0	0
+gnomAD	50284	2623	2623	2623	0	0

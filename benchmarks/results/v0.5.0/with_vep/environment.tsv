@@ -1,0 +1,35 @@
+started_utc	2026-11-07T14:09:54Z
+system	Darwin 25.5.0 arm64
+macos_product_version	26.5.1
+cpu	Apple M4
+logical_cores	10
+performance_cores	4
+efficiency_cores	6
+hardware_model	Mac16,1
+swap_in_use	total = 9216.00M  used = 7783.12M  free = 1432.88M  (encrypted)
+memory_gib	24
+rustc	rustc 1.98.0 (88d9e12ae 2026-08-18)
+python	3.9.6
+binary	/private/tmp/claude-502/-Users-kuan-lin-huang-Projects-fastVEP/696ff2b0-3e7d-47aa-b41a-084d4dfce957/scratchpad/fv_rc1
+binary_version	fastvep 0.5.0-rc.1
+binary_bytes	5834640
+binary_sha256	0063e01bd1435fb1a9dee209f0559e54de87687cefbacfb72aaed1ea231215ff
+built_from	v0.5.0-rc.1 (c12d9f9)
+repo_head	3dc11fa555157f351f22b5abb4ea62900a5e70fb
+runs_per_cell	5
+parts	startup,scaling,memory,formats,wgs,wgs_joint
+loadavg_start	3.07 3.39 3.13
+flags	--hgvs --symbol --canonical --no-progress
+gff3_sha256	9bf4bd781bb7b57be170e4a98855776e8bd09540451779ed7cf84ac0a70d77e8
+fasta_sha256	1e74081a49ceb9739cc14c812fbb8b3db978eb80ba8e5350beb80d8ad8dfef3b
+hg002_vcf_sha256	55e79531f154398cebc26a678bd223ec0cc93f43edb7d140225b2f1647efb415
+hg002_records	4048342
+chr22_records	50284
+clinvar_osa_sha256	7eeedd4930d9435b325d3dbbbd92de97351c29103c7666f4b3202f8733c3cacf
+gnomad_osa2_files	24
+gnomad_joint_osa2_files	24
+gnomad_joint_osa2_bytes	609518785
+loadavg_end	3.33 3.61 3.69
+sidecar_md5_before	6c47787bc08443437afba374e3bd7a5c
+sidecar_md5_after	6c47787bc08443437afba374e3bd7a5c
+finished_utc	2026-11-07T14:39:27Z

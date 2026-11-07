@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Does cutting the benchmark's inputs to five columns change what fastVEP's time says?
 
-    benchmarks/check_lean_inputs.py --bin target/release/fastvep --out benchmarks/results/v0.5.0-rc.1
+    benchmarks/check_lean_inputs.py --bin target/release/fastvep --out benchmarks/results/v0.5.0
 
 `run_head_to_head.py` cuts the chromosome 22 and chromosome 1 inputs of Tables 2, 4 and 5 from the GIAB HG002 VCF to CHROM POS ID REF ALT,
-with `.` for the rest, because neither tool reads the INFO of that file to predict a consequence. The times of Ensembl VEP that those tables
-compare with are those of 29 July 2026, and what that run read is not recorded, so this measures what the cut is worth to fastVEP: all
+with `.` for the rest, because neither tool reads the INFO of that file to predict a consequence. Ensembl VEP reads the same cut text
+(`run_vep_side.py`), so the tables compare like with like; this measures what the cut is worth to fastVEP: all
 50,284 chromosome 22 records, cut and as they are, on one thread, with the flags of the head-to-head, the two alternating within a round, one
 round that is not reported and then `--runs` that are. It writes lean_inputs.tsv (every run) into --out and prints the medians.
 Standard library only.

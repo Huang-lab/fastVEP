@@ -1,0 +1,5 @@
+part	cell	n	median_wall_s	min_wall_s	max_wall_s	median_cpu_s	median_peak_rss_mib
+scaling	chr22_1000	3	0.46	0.44	0.46	0.25	
+scaling	chr22_5000	3	5.98	5.98	6.04	5.75	
+scaling	chr22_10000	3	12.88	12.84	13.02	12.61	
+scaling	chr22_all	3	83.65	82.67	84.11	83.20	
