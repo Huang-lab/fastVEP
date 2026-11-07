@@ -87,6 +87,7 @@ fn cli_rows(
     world: &str,
     vcf: &Path,
     distance: u64,
+    pick: PickFlags,
 ) -> BTreeMap<Key, BTreeMap<&'static str, Value>> {
     let dir = TempDir::new().unwrap();
     let (gff3, fasta) = (dir.path().join("genes.gff3"), dir.path().join("genome.fa"));
@@ -99,7 +100,7 @@ fn cli_rows(
         gff3: vec![gff3.to_string_lossy().into()],
         fasta: Some(fasta.to_string_lossy().into()),
         output_format: "json".into(),
-        pick: PickFlags::default(),
+        pick,
         hgvs: true,
         columns: ColumnFlags {
             hgvsg: true,
@@ -133,6 +134,7 @@ fn library_rows(
     world: &str,
     vcf_text: &str,
     distance: u64,
+    pick: PickFlags,
 ) -> BTreeMap<Key, BTreeMap<&'static str, Value>> {
     let dir = TempDir::new().unwrap();
     let (gff3, fasta) = (dir.path().join("genes.gff3"), dir.path().join("genome.fa"));
@@ -147,18 +149,26 @@ fn library_rows(
     .expect("the world should load");
     ctx.hgvs = true;
     let variants = ctx
-        .annotate_vcf_text(vcf_text, None)
+        .annotate_vcf_text(vcf_text, pick.resolve())
         .expect("annotation should succeed");
     by_row(&variants)
 }
 
 fn compare(world: &str, vcf: &Path, distance: u64, at_least: usize) {
+    compare_picked(world, vcf, distance, at_least, PickFlags::default());
+}
+
+fn compare_picked(world: &str, vcf: &Path, distance: u64, at_least: usize, pick: PickFlags) {
     let text = std::fs::read_to_string(vcf).unwrap();
     let (cli, lib) = (
-        cli_rows(world, vcf, distance),
-        library_rows(world, &text, distance),
+        cli_rows(world, vcf, distance, pick),
+        library_rows(world, &text, distance, pick),
     );
-    assert!(cli.len() >= at_least, "{world}: only {} rows", cli.len());
+    assert!(
+        cli.len() >= at_least,
+        "{world} with {pick:?}: only {} rows",
+        cli.len()
+    );
     let mut missing = Vec::new();
     let mut differ: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for (key, a) in &cli {
@@ -182,19 +192,19 @@ fn compare(world: &str, vcf: &Path, distance: u64, at_least: usize) {
         .collect();
     assert!(
         missing.is_empty(),
-        "{world}: rows only the CLI writes, e.g. {:?}",
+        "{world} with {pick:?}: rows only the CLI writes, e.g. {:?}",
         &missing[..missing.len().min(5)]
     );
     assert!(
         extra.is_empty(),
-        "{world}: rows only the library writes, e.g. {extra:?}"
+        "{world} with {pick:?}: rows only the library writes, e.g. {extra:?}"
     );
     for (field, rows) in &differ {
         eprintln!("{world} {field}: {} rows, e.g. {}", rows.len(), rows[0]);
     }
     assert!(
         differ.is_empty(),
-        "{world}: the loops differ in {:?}",
+        "{world} with {pick:?}: the loops differ in {:?}",
         differ.keys()
     );
 }
@@ -285,4 +295,46 @@ fn the_two_loops_agree_on_the_edges_of_the_generated_world() {
         5000,
         1000,
     );
+}
+
+/// A reducing pick keeps the same rows in both loops.
+///
+/// The CLI settles it on what the predictor said, before it builds any row, and builds only the
+/// rows it chose; the library builds every row and deletes the ones the pick did not choose. They
+/// share the scoring and nothing else of it, which is the shape drift takes, so this holds them to
+/// one answer on the worlds the other tests here use, at the default distance and at one that puts
+/// every transcript of the world beside every variant.
+#[test]
+fn the_two_loops_keep_the_same_rows_under_every_reducing_pick() {
+    for pick in [
+        PickFlags {
+            pick: true,
+            ..Default::default()
+        },
+        PickFlags {
+            pick_allele: true,
+            ..Default::default()
+        },
+        PickFlags {
+            pick_allele_gene: true,
+            ..Default::default()
+        },
+    ] {
+        for distance in [5000, 100_000] {
+            compare_picked(
+                "vep_tab_world",
+                &fixture("vep_tab_alleles", "in.vcf"),
+                distance,
+                100,
+                pick,
+            );
+            compare_picked(
+                "vep_tab_world",
+                &fixture("vep_tab_edges", "in.vcf"),
+                distance,
+                300,
+                pick,
+            );
+        }
+    }
 }

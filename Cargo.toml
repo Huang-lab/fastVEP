@@ -53,6 +53,9 @@ bincode = "1"
 zstd = "0.13"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 lru = "0.12"
+# The hasher of the maps keyed by a few dozen short ids that a per-variant loop builds; already in the
+# lock file, under hashbrown.
+foldhash = "0.1"
 tempfile = "3"
 # The allocator of the `fastvep` binary; its main.rs says why
 mimalloc = { version = "0.1", default-features = false }
