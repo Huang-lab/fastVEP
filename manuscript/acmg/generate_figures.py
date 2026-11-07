@@ -263,7 +263,7 @@ def figS1_trajectory() -> None:
     axB.plot(opp["order"], opp.false_benign, color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
              label=f"{CV} P/LP called LB or B (reference-discordant benign)")
     axB.plot(opp["order"], opp.false_pathogenic, color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
-             label=f"{CV} LB or B called P or LP")
+             label=f"{CV} LB or B called P or LP (reference-discordant pathogenic)")
     axB.plot(main["order"], main.opposite, color=INK2, lw=1.0, marker="o", ms=MS - 2.5, mec=SURFACE, mew=0.8, zorder=2, label="Total")
     dotted(axB, opened, "opposite", INK2)
     open_marks(axB, opened.dropna(subset=["opposite"]), "opposite", INK2, ms=MS - 1.5)
