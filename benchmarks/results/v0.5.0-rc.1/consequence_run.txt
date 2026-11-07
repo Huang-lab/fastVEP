@@ -1,0 +1,6 @@
+variants: 4048342
+calls: 37214646
+records without a CSQ field: 0
+distinct terms as the most severe: 27
+distinct terms in all: 28
+md5 of the VCF read: 418eb82f968435d459db01609fddf3a5

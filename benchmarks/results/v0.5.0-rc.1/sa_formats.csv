@@ -1,0 +1,4 @@
+source,records,v1_bytes,v2_bytes,ratio,build_v1_s,build_v2_s
+ClinVar (whole database),4438232,50456570,40879120,0.81,10.9,12.2
+REVEL (chr1),8247130,42470002,18785506,0.44,3.5,5.4
+REVEL (chr22),1776286,9130570,4015641,0.44,0.8,1.2

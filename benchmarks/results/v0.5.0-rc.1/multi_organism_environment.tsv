@@ -1,0 +1,8 @@
+date_utc	2026-11-07T06:46:54Z
+system	Darwin 25.5.0 arm64
+rustc	rustc 1.98.0 (88d9e12ae 2026-08-18)
+binary	/private/tmp/claude-502/-Users-kuan-lin-huang-Projects-fastVEP/696ff2b0-3e7d-47aa-b41a-084d4dfce957/scratchpad/fv_rc1
+binary_version	fastvep 0.5.0-rc.1
+binary_sha256	0063e01bd1435fb1a9dee209f0559e54de87687cefbacfb72aaed1ea231215ff
+runs_per_benchmark	5
+load_average_at_end	7.14 8.63 7.68

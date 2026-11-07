@@ -1,0 +1,8 @@
+started_utc	2026-11-07T08:01:31Z
+flags_vcf	--hgvs --symbol --canonical
+flags_tab	--output-format tab --symbol --biotype --canonical --numbers --variant-class --show-ref-allele --hgvs --hgvsg
+binary_5048fc5	fastvep_5048fc5	fastvep 0.4.0	sha256 fad446ce135533a787a9c52522c11bb807a4ed76805581c96c6be794afca9514
+binary_v0.5.0-rc.1	fv_rc1	fastvep 0.5.0-rc.1	sha256 0063e01bd1435fb1a9dee209f0559e54de87687cefbacfb72aaed1ea231215ff
+gff3	Homo_sapiens.GRCh38.115.gff3
+fasta	Homo_sapiens.GRCh38.dna.primary_assembly.fa
+clinvar_2star	clinvar_2star.vcf
