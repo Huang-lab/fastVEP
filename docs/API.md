@@ -350,7 +350,9 @@ The chromosomes of a gene model are known once it is loaded, so the check of wha
 ### What one request may cost
 
 A response is built in memory, and on a 16 GB host that is the one thing a single client can use to take the server down.
-Measured on ClinVar variants against GRCh38, an answer is about 38 KB a variant, 14 KB with `pick`, and 258 KB a variant with `acmg` and no `pick`; 10,000 variants with ACMG came to several gigabytes in the process, and the 10 MiB the server accepts as a body holds some 440,000 variants.
+Measured on 8 November 2026 against GRCh38, with the reference stack of fastvep.org, 1,000 ClinVar variants came to about 43 KB a variant, 18 KB with `pick`, and 27 KB with `pick` and `acmg`, and variants spread over the genome to about 18 KB with `pick`, so that the 128 MiB limit holds about 7,300 of them.
+Without `pick`, an earlier measurement of `acmg` was 258 KB a variant, and 10,000 variants with ACMG came to several gigabytes in the process.
+The 10 MiB the server accepts as a body holds some 440,000 variants.
 So a request is bounded, and told how when it is not met:
 
 - **Malformed input is a `400`.**

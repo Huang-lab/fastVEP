@@ -929,12 +929,15 @@ These are the figures of fastvep.org on 8 November 2026, with the nine genomes, 
   In the rehearsal about 3.5 GiB of the memory was heap, and the rest is memory-mapped database pages that the kernel takes back under pressure.
 - **Disk.** 59 GB of the 150 GB filesystem are used, by the system, the nine genomes and every database; the databases of GRCh38 are 12 GB, of which dbSNP is 9.2 GB.
 - **Start.** The default genome answered 4.7 s and 4.9 s after two restarts, and the rehearsal of the nine genomes preloaded in about 70 s.
-- **ACMG.** 1,000 ClinVar variants with `acmg` and `pick` took 5.4 s through the API (four requests of 250 variants, the host otherwise idle) and 11.6 s through the command line on two threads, process start included; the two gave the same class and the same criteria for every one of the 1,000.
+- **One request, alone.** 100 variants spread over the genome took 0.8 s and 1,000 took 7.0 s with `pick` (142 a second, 19 KB of answer each); 1,000 ClinVar variants took 4.7 s with `pick` and 5.0 s with `pick` and `acmg` (about 200 a second, 27 KB each with ACMG).
+- **Several at once.** Four requests of 1,000 ClinVar variants with ACMG at once took 8.0 s each, which is 500 variants a second in all; six at once took 7.8 s for four and 13.1 s for the last two, which waited for one of the four permits, and all six were answered.
+- **The size limit.** 10,000 and 50,000 variants spread over the genome were refused with `413` after 7,300 variants, which is what 128 MiB holds, and the answer said so.
+- **The same answer from the web server and the command line.** 1,000 ClinVar variants with `acmg` and `pick` gave the same class and the same criteria through the API (5.4 s in four requests of 250) and through the command line on two threads (11.6 s, process start included).
 - **Scattered lookups.** 4,000 variants spread over the genome, through the dbSNP database alone on two threads, took 18 s with the chunks at 16 bits and 106 s with the chunks at 1 Mb (`docs/SUPPLEMENTARY_ANNOTATIONS.md`).
 
-What has not been measured is several clients at once, or one very long request (tens of thousands of variants).
-The limits (four annotations at a time, two requests a second for each client at nginx, batches of 100 variants or 4,000 rows, an answer of at most 128 MiB, 90 s for a request) come from the memory of the host and the sizes of the answers in `docs/API.md`.
-Run a load test of your own before you raise any of them.
+These came from a second instance of the same binary, started beside the live service at the lowest CPU priority, with its own counters (the site's did not move) and a cap of 8 GiB and no swap; it held 2.8 GiB at start and peaked at 5.6 GiB with the default genome alone.
+What has not been measured is the host over hours of mixed traffic, or with the nginx rate limit (two requests a second for each client) at its limit.
+The limits (four annotations at a time, batches of 100 variants or 4,000 rows, an answer of at most 128 MiB, 90 s for a request) come from the memory of the host and the sizes of the answers in `docs/API.md`; run a load test of your own before you raise any of them.
 
 | Situation | Solution | Cost |
 |-----------|----------|------|
