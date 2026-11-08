@@ -1346,7 +1346,7 @@ const state = {
   sort: { key: null, dir: 'asc' }, page: 0, pageSize: 100,
   tab: 'table', dirty: { summary: true, raw: true },
   provenance: null,
-  busy: false, abort: null, statusTimer: null, ready: null,
+  busy: false, abort: null, clearing: false, statusTimer: null, ready: null,
 };
 
 // ---- server communication ---------------------------------------
@@ -1598,7 +1598,7 @@ function syncPage() {
   // The bundled examples are GRCh38 coordinates in OR4F5 and one lncRNA.
   let fits = true;
   if (g) fits = g.info.species === 'Homo_sapiens' && g.info.assembly === 'GRCh38';
-  else if (state.mode === 'server-single' && state.selection === 'active') fits = /GRCh38|hg38/i.test(state.legacy.source || '');
+  else if (state.mode === 'server-single') fits = state.selection === 'builtin' || state.selection === 'demo' || (state.selection !== 'upload' && /GRCh38|hg38/i.test(state.legacy.source || ''));
   $('examples').hidden = !fits;
   const note = $('examplesNote');
   note.hidden = fits;
@@ -1821,7 +1821,7 @@ async function annotate() {
   } catch (e) {
     hideStatus();
     if (e?.name === 'AbortError') {
-      showAlert('info', 'Annotation cancelled', 'Nothing was changed. Your variants are still in the box.');
+      if (!state.clearing) showAlert('info', 'Annotation cancelled', 'Nothing was changed. Your variants are still in the box.');
     } else if (e instanceof ApiError) {
       // Results from an earlier run stay put on an ordinary failure, but never beside a mismatch error.
       if (e.kind === 'mismatch') hideResults();
@@ -1833,6 +1833,7 @@ async function annotate() {
   } finally {
     setBusy(false);
     state.abort = null;
+    state.clearing = false;
   }
 }
 
@@ -1890,6 +1891,7 @@ async function annotateDemo(vcfText) {
   const pick = $('optPick').checked;
   const rows = [];
   for (const v of variants) {
+    const variant = { chrom: v.chrom, start: v.start, end: v.end, id: v.id, origPos: v.origPos, origRef: v.origRef, origAlt: v.origAlt, orig: { pos: v.origPos, ref: v.origRef, alt: v.origAlt, id: v.id, qual: v.qual, filter: v.filter } };
     let preds = predict(v, transcripts, 5000);
     if (pick) {
       const canonical = preds.filter((p) => p.transcript?.canonical);
@@ -1898,17 +1900,17 @@ async function annotateDemo(vcfText) {
       for (const p of picked) if (!byAllele[p.allele] || impactRank(p.impact) < impactRank(byAllele[p.allele].impact)) byAllele[p.allele] = p;
       preds = Object.values(byAllele);
     }
-    for (const p of preds) rows.push(fromEngine(p, v));
+    for (const p of preds) rows.push(fromEngine(p, v, variant));
   }
   state.provenance = { kind: 'demo', label: custom ? `Your GFF3 (${state.customGff3Name})` : DEMO_LABEL, detail: custom ? `${plural(transcripts.length, 'transcript')}, analysed in your browser` : DEMO_DETAIL };
   showResults(rows, { variants: variants.length, ms: performance.now() - t0, warnings: demoWarnings(variants, transcripts, rows) });
 }
 
-function fromEngine(p, v) {
+function fromEngine(p, v, variant) {
   const t = p.transcript;
   const loc = v.start === v.end ? `${v.chrom}:${v.start}` : `${v.chrom}:${v.start}-${v.end}`;
   return {
-    variant: { chrom: v.chrom, start: v.start, end: v.end, id: v.id, origPos: v.origPos, origRef: v.origRef, origAlt: v.origAlt, orig: { pos: v.origPos, ref: v.origRef, alt: v.origAlt, id: v.id, qual: v.qual, filter: v.filter } },
+    variant,
     loc, allele: p.allele, consequences: p.consequences, impact: p.impact,
     transcript: t ? { id: t.id, gene: { id: t.gene.id, symbol: t.gene.symbol || null }, biotype: t.biotype, canonical: !!t.canonical, strand: t.strand, mane_select: null, mane_plus_clinical: null, tsl: null, ccds: null, protein_id: t.proteinId || null } : null,
     exon: p.exon, intron: p.intron, cdna: p.cdna, cds: p.cds, protein: p.protein, aa: p.aa, codons: p.codons, dist: p.dist, hgvsc: p.hgvsc, hgvsp: p.hgvsp, hgvsg: p.hgvsg, acmg: null, sa: null,
@@ -2200,24 +2202,35 @@ function renderRaw() {
 // ---- exports ---------------------------------------------------------------
 const CSQ_FORMAT = 'Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons|Existing_variation|REF_ALLELE|UPLOADED_ALLELE|DISTANCE|STRAND|FLAGS|CANONICAL|SYMBOL_SOURCE|HGNC_ID|MANE|MANE_SELECT|MANE_PLUS_CLINICAL|TSL|APPRIS|CCDS|ENSP|SOURCE|HGVS_OFFSET|SIFT|PolyPhen|AF|CLIN_SIG|SOMATIC|PHENO|PUBMED|MOTIF_NAME|MOTIF_POS|HIGH_INF_POS|MOTIF_SCORE_CHANGE|TRANSCRIPTION_FACTORS'.split('|');
 
-function buildVcf() {
+function csqEntry(r) {
   const csqEsc = (s) => String(s ?? '').replace(/,/g, '&').replace(/;/g, '%3B').replace(/=/g, '%3D').replace(/ /g, '_').replace(/[\t\r\n]/g, '_');
+  const t = r.transcript;
+  const f = Object.fromEntries(CSQ_FORMAT.map((k) => [k, '']));
+  Object.assign(f, {
+    Allele: csqEsc(r.allele), Consequence: r.consequences.join('&'), IMPACT: r.impact, SYMBOL: csqEsc(t?.gene?.symbol), Gene: csqEsc(t?.gene?.id), Feature_type: t ? 'Transcript' : '',
+    Feature: csqEsc(t?.id), BIOTYPE: csqEsc(t?.biotype), EXON: r.exon ?? '', INTRON: r.intron ?? '', HGVSc: csqEsc(r.hgvsc), HGVSp: csqEsc(r.hgvsp), cDNA_position: r.cdna ?? '', CDS_position: r.cds ?? '',
+    Protein_position: r.protein ?? '', Amino_acids: csqEsc(r.aa), Codons: csqEsc(r.codons), REF_ALLELE: csqEsc(r.variant.origRef), UPLOADED_ALLELE: csqEsc(`${r.variant.origRef}/${r.variant.origAlt}`), DISTANCE: r.dist ?? '',
+    STRAND: t?.strand === 1 ? '1' : t?.strand === -1 ? '-1' : '', CANONICAL: t?.canonical ? 'YES' : '', MANE: maneOf(r) || '', MANE_SELECT: typeof t?.mane_select === 'string' ? csqEsc(t.mane_select) : '',
+    TSL: t?.tsl ?? '', CCDS: csqEsc(t?.ccds), ENSP: csqEsc(t?.protein_id),
+  });
+  return CSQ_FORMAT.map((k) => f[k]).join('|');
+}
+
+// One line per input record, however many transcripts it touches: that is how VEP writes it, and a repeated
+// variant line would read as a duplicate record to anything that takes the file next.
+function buildVcf() {
   const unmatched = state.results.some((r) => !r.variant.orig);
   const lines = ['##fileformat=VCFv4.2', provenanceComment().replace(/^## /, '##fastVEP_model=')];
   if (unmatched) lines.push('##fastVEP_note=REF and ALT are VEP-style alleles (- marks a deletion or insertion) because the input records could not be matched to their results');
   lines.push(`##INFO=<ID=CSQ,Number=.,Type=String,Description="Consequence annotations from fastVEP. Format: ${CSQ_FORMAT.join('|')}">`, '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO');
+  const records = new Map();
   for (const r of state.results) {
-    const o = r.variant.orig;
-    const t = r.transcript;
-    const f = Object.fromEntries(CSQ_FORMAT.map((k) => [k, '']));
-    Object.assign(f, {
-      Allele: csqEsc(r.allele), Consequence: r.consequences.join('&'), IMPACT: r.impact, SYMBOL: csqEsc(t?.gene?.symbol), Gene: csqEsc(t?.gene?.id), Feature_type: t ? 'Transcript' : '',
-      Feature: csqEsc(t?.id), BIOTYPE: csqEsc(t?.biotype), EXON: r.exon ?? '', INTRON: r.intron ?? '', HGVSc: csqEsc(r.hgvsc), HGVSp: csqEsc(r.hgvsp), cDNA_position: r.cdna ?? '', CDS_position: r.cds ?? '',
-      Protein_position: r.protein ?? '', Amino_acids: csqEsc(r.aa), Codons: csqEsc(r.codons), REF_ALLELE: csqEsc(r.variant.origRef), UPLOADED_ALLELE: csqEsc(`${r.variant.origRef}/${r.variant.origAlt}`), DISTANCE: r.dist ?? '',
-      STRAND: t?.strand === 1 ? '1' : t?.strand === -1 ? '-1' : '', CANONICAL: t?.canonical ? 'YES' : '', MANE: maneOf(r) || '', MANE_SELECT: typeof t?.mane_select === 'string' ? csqEsc(t.mane_select) : '',
-      TSL: t?.tsl ?? '', CCDS: csqEsc(t?.ccds), ENSP: csqEsc(t?.protein_id),
-    });
-    lines.push([r.variant.chrom, o ? o.pos : r.variant.origPos, (o ? o.id : r.variant.id) || '.', o ? o.ref : r.variant.origRef, o ? o.alt : r.variant.origAlt, o?.qual ?? '.', o?.filter ?? '.', `CSQ=${CSQ_FORMAT.map((k) => f[k]).join('|')}`].join('\t'));
+    if (!records.has(r.variant)) records.set(r.variant, []);
+    records.get(r.variant).push(r);
+  }
+  for (const [v, rows] of records) {
+    const o = v.orig;
+    lines.push([v.chrom, o ? o.pos : v.origPos, (o ? o.id : v.id) || '.', o ? o.ref : v.origRef, o ? o.alt : v.origAlt, o?.qual ?? '.', o?.filter ?? '.', `CSQ=${rows.map(csqEntry).join(',')}`].join('\t'));
   }
   return `${lines.join('\n')}\n`;
 }
@@ -2379,6 +2392,8 @@ function toggleTheme() {
 function wireEvents() {
   $('btnAnnotate').addEventListener('click', annotate);
   $('btnClear').addEventListener('click', () => {
+    // Clearing the page also ends a run in flight, or its results would appear after the user cleared them.
+    if (state.busy) { state.clearing = true; state.abort?.abort(); }
     $('vcfInput').value = '';
     $('vcfError').hidden = true;
     hideResults();
@@ -2496,7 +2511,10 @@ async function init() {
     syncGenomeInfo();
   }
 }
-init();
+init().catch((e) => {
+  console.error(e);
+  showAlert('error', 'The page could not finish loading', `${e?.message || e}. Reload the page; if it keeps happening, please report it on GitHub.`);
+});
 </script>
 </body>
 </html>
