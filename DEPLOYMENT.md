@@ -447,8 +447,10 @@ rm clinvar.vcf.gz
 
 # dbSNP (29.6 GB download, 9.4 GB .osa2)
 wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
+# --chunk-bits 16: dbSNP is dense (about 3 MB of records in each megabase), and at the default width a scattered
+# lookup costs 23 ms, so a VCF of 1,000 variants spread over the genome took 24 s (see docs/SUPPLEMENTARY_ANNOTATIONS.md)
 /opt/fastvep/bin/fastvep sa-build --source dbsnp \
-  -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38
+  -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38 --chunk-bits 16
 rm GCF_000001405.40.gz
 
 # gnomAD v4.1 genomes (0.6-47 GB per chromosome VCF, 563 GB in all)
@@ -457,7 +459,7 @@ for chr in {1..22} X; do
   VCF="gnomad.genomes.v4.1.sites.chr${chr}.vcf.bgz"
   wget "https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/genomes/${VCF}"
   /opt/fastvep/bin/fastvep sa-build --source gnomad \
-    -i "$VCF" -o "gnomad_chr${chr}" --assembly GRCh38   # a name per chromosome
+    -i "$VCF" -o "gnomad_chr${chr}" --assembly GRCh38 --chunk-bits 16   # a name per chromosome
   rm -f "$VCF"   # delete raw VCF to free disk space
   echo "chr${chr} done. Disk free: $(df -h --output=avail /opt/fastvep/data | tail -1 | xargs)"
 done
@@ -486,7 +488,7 @@ rm clinvar.vcf.gz
 # sa-build maps those contigs for --assembly GRCh37 and refuses to write a database when none matched.
 wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.25.gz
 /opt/fastvep/bin/fastvep sa-build --source dbsnp \
-  -i GCF_000001405.25.gz -o dbsnp --assembly GRCh37
+  -i GCF_000001405.25.gz -o dbsnp --assembly GRCh37 --chunk-bits 16
 rm GCF_000001405.25.gz
 
 # gnomAD v2.1.1 for GRCh37 (v3 and v4 are GRCh38 only)
@@ -496,7 +498,7 @@ for chr in {1..22} X; do
   VCF="gnomad.genomes.r2.1.1.sites.${chr}.vcf.bgz"
   wget "https://storage.googleapis.com/gcp-public-data--gnomad/release/2.1.1/vcf/genomes/${VCF}"
   /opt/fastvep/bin/fastvep sa-build --source gnomad \
-    -i "$VCF" -o "gnomad_chr${chr}" --assembly GRCh37
+    -i "$VCF" -o "gnomad_chr${chr}" --assembly GRCh37 --chunk-bits 16
   rm -f "$VCF"
 done
 ```
@@ -528,79 +530,75 @@ The gnomAD build needs, besides its database, the size of the largest VCF as tem
 
 ### systemd unit
 
-Two configurations depending on your setup:
-
-**Option A: Single genome (simplest)**
-
-Good if you only host one genome (e.g., just human GRCh38).
+One unit serves every genome of the data directory: a request names the genome it wants, nothing is replaced when a visitor chooses, and so `--allow-model-replacement` stays off.
+The service runs as the `fastvep` user and not as root, so the data directory has to belong to that user (the server writes its transcript caches beside the GFF3 files), and its counters go to a state directory of their own.
 
 ```bash
+chown -R fastvep:fastvep /opt/fastvep/data
+mkdir -p /opt/fastvep/state && chown fastvep:fastvep /opt/fastvep/state
+
 cat > /etc/systemd/system/fastvep.service << 'EOF'
 [Unit]
 Description=fastVEP Variant Annotation Server
+Documentation=https://github.com/Huang-lab/fastVEP/blob/master/DEPLOYMENT.md
 After=network.target
 
 [Service]
 Type=simple
 User=fastvep
 Group=fastvep
-WorkingDirectory=/opt/fastvep
+WorkingDirectory=/opt/fastvep/state
 
 Environment=FASTVEP_PORT=3000
 Environment=FASTVEP_BIND=127.0.0.1
-Environment=FASTVEP_GFF3=/opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.115.gff3
-Environment=FASTVEP_FASTA=/opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.dna.primary_assembly.fa
-Environment=FASTVEP_SA_DIR=/opt/fastvep/data/hg38_ensembl_115/sa
-
-ExecStart=/opt/fastvep/bin/fastvep-web
-Restart=always
-RestartSec=5
-
-LimitNOFILE=65535
-MemoryMax=12G
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-**Option B: Multi-genome (recommended)**
-
-Uses `--data-dir` so each request can name the genome it wants, and the web UI's dropdown lists every subdirectory of it.
-Nothing is replaced when a visitor chooses, so `--allow-model-replacement` stays off.
-
-```bash
-cat > /etc/systemd/system/fastvep.service << 'EOF'
-[Unit]
-Description=fastVEP Variant Annotation Server
-After=network.target
-
-[Service]
-Type=simple
-User=fastvep
-Group=fastvep
-WorkingDirectory=/opt/fastvep
-
-Environment=FASTVEP_PORT=3000
-Environment=FASTVEP_BIND=127.0.0.1
-# Data directory containing one subdirectory per genome (hg38_ensembl_115, hg37_ensembl_87, ...)
 Environment=FASTVEP_DATA_DIR=/opt/fastvep/data
-# The genome that answers a request naming none; every other genome of the data directory answers when a request names it
+# The genome that answers a request naming none; every other genome of the data directory answers when named.
 Environment=FASTVEP_GFF3=/opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.115.gff3
 Environment=FASTVEP_FASTA=/opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.dna.primary_assembly.fa
 Environment=FASTVEP_SA_DIR=/opt/fastvep/data/hg38_ensembl_115/sa
-# Load the other genomes in the background at startup, so no visitor waits for one (true, 1, yes or on)
+Environment=FASTVEP_STATS_FILE=/opt/fastvep/state/stats.json
+# Load the other genomes in the background at startup, so that no visitor waits for one.
 Environment=FASTVEP_PRELOAD_GENOMES=true
+# One annotation per core. A request is also bounded in the size of its answer (128 MiB) and its time (90 s).
+Environment=FASTVEP_MAX_PARALLEL=4
 
 ExecStart=/opt/fastvep/bin/fastvep-web
 Restart=always
 RestartSec=5
 
 LimitNOFILE=65535
-# Memory with every genome resident: the nine genomes of fastVEP.org took 3.5 GiB of heap and 6.5 GiB of memory-mapped FASTA and SA pages,
-# which the kernel reclaims under pressure (measured on 8 November 2026, right after the first preload, on a 16 GB machine).
-# The preload took about 70 seconds the first time, while the transcript caches were built.
-MemoryMax=24G
+TasksMax=1024
+# The host has 16 GB. The nine genomes take about 3.5 GiB of heap and the rest is memory-mapped files, which
+# the kernel takes back under pressure. There is no MemoryHigh: the mapped pages of the databases count toward
+# it, and it throttles them below what the host can hold (the rehearsal reached 11 GiB, with the old service
+# beside it, and swapped 2 GiB). MemoryMax only guards the host against a runaway.
+MemoryMax=13G
+MemorySwapMax=2G
+
+# The service reads its data and writes only its transcript caches and its counters.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/fastvep/data /opt/fastvep/state
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target
@@ -619,7 +617,17 @@ systemctl status fastvep
 journalctl -u fastvep -f   # watch logs
 ```
 
-The first start on a gene model parses its GFF3 and builds the cache, which takes about 13s for the human genome on ten cores. Later starts read the cache in about a second (0.4s on eight threads, 0.9s on one), plus the time to open the supplementary databases.
+What is in the unit, and what was measured about it on fastvep.org (8 November 2026):
+
+- The sandbox (`ProtectSystem=strict` with only the data and state directories writable, no capabilities, a system call filter, no way to map memory that is writable and executable) was run before it replaced the old service: a transient unit with exactly these properties served all nine genomes on port 3001 beside the live service, with no system call refused and no restart.
+- With the caches built, the default genome answers 3 s after the start and the other eight are loaded about 7 s after that; the first start on a gene model parses its GFF3 and builds the cache, which takes about 13 s for the human genome on ten cores (3.4 s for Arabidopsis release 63 on this host).
+- Swapping the old service for this one took 3.6 s from the stop to the first answer.
+- There is no `MemoryHigh`.
+  The mapped pages of the databases count toward it, and it throttles them below what the host can hold: the rehearsal, with `MemoryHigh=11G` and the old service running beside it, reached 11 GiB within its first requests and swapped 2 GiB.
+  `MemoryMax` only guards the host against a runaway.
+- `FASTVEP_MAX_PARALLEL=4` is one annotation per core, and a request is bounded in the size of its answer (128 MiB) and its time (90 s): [What one request may cost](docs/API.md#what-one-request-may-cost).
+
+For one genome only, leave out `FASTVEP_DATA_DIR` and `FASTVEP_PRELOAD_GENOMES`.
 
 ### nginx reverse proxy
 
