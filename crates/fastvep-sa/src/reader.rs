@@ -465,6 +465,18 @@ impl AnnotationProvider for SaReader {
         self.index.chromosomes.values().all(Vec::is_empty)
     }
 
+    fn chromosomes(&self) -> Option<Vec<String>> {
+        let mut names: Vec<String> = self
+            .index
+            .chromosomes
+            .iter()
+            .filter(|(_, blocks)| !blocks.is_empty())
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.sort();
+        Some(names)
+    }
+
     fn annotate_position(
         &self,
         chrom: &str,

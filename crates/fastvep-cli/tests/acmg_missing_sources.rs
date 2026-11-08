@@ -70,6 +70,12 @@ impl Fixture {
     /// A gnomAD database holding one record, so that gnomAD is loaded and every other variant is
     /// one it does not know.
     fn with_gnomad_record(self, pos: usize, af: f64, ac: u64) -> Self {
+        self.with_gnomad_record_on("1", pos, af, ac)
+    }
+
+    /// As [`with_gnomad_record`](Self::with_gnomad_record), on the chromosome given: on another
+    /// than the gene's, the database is open and holds nothing of the gene's chromosome.
+    fn with_gnomad_record_on(self, chrom: &str, pos: usize, af: f64, ac: u64) -> Self {
         let sa = self.dir.path().join("sa");
         fs::create_dir_all(&sa).unwrap();
         let vcf = self.dir.path().join("gnomad.vcf");
@@ -77,7 +83,7 @@ impl Fixture {
             &vcf,
             format!(
                 "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
-                 1\t{pos}\t.\t{}\t{}\t.\tPASS\tAF={af};AC={ac};AN=1000000;nhomalt=0\n",
+                 {chrom}\t{pos}\t.\t{}\t{}\t.\tPASS\tAF={af};AC={ac};AN=1000000;nhomalt=0\n",
                 reference_at(pos),
                 alt_at(pos)
             ),
@@ -279,4 +285,92 @@ fn the_library_path_that_the_web_servers_use_reads_the_loaded_sources_as_the_com
     assert_eq!(sources.missing().count(), 8);
     let pm2 = criterion(&results[0], "PM2");
     assert_eq!(pm2["met"], true, "{pm2}");
+}
+
+/// A gnomAD database of chromosome 2, over a gene on chromosome 1: it is loaded, so the stack has
+/// the source, and it says "no record" for every variant of chromosome 1, which PM2 read as "absent
+/// from the population". It is what a gnomAD of chromosome X alone, built by a deployment script
+/// that gave every chromosome the same output name, did to the other twenty-two.
+#[test]
+fn a_gnomad_database_of_another_chromosome_does_not_make_a_variant_absent_from_the_population() {
+    let fixture = Fixture::new(&[100]).with_gnomad_record_on("2", 200, 0.2, 200_000);
+    let variants = fixture.annotate(true);
+
+    let pm2 = criterion(&variants[0], "PM2");
+    assert_eq!(pm2["evaluated"], false, "{pm2}");
+    assert_eq!(pm2["met"], false, "{pm2}");
+    assert!(
+        pm2["summary"]
+            .as_str()
+            .unwrap()
+            .contains("holds no record of chromosome 1"),
+        "{pm2}"
+    );
+    assert_eq!(criterion(&variants[0], "BA1")["evaluated"], false);
+    assert_eq!(
+        variants[0]["transcript_consequences"][0]["acmg"]["classification"],
+        "UncertainSignificance"
+    );
+
+    // The control: the same variant against a gnomAD that holds its chromosome is absent.
+    let held = Fixture::new(&[100]).with_gnomad_record_on("1", 200, 0.2, 200_000);
+    let variants = held.annotate(true);
+    assert_eq!(criterion(&variants[0], "PM2")["met"], true);
+}
+
+#[test]
+fn the_command_line_names_the_chromosomes_that_the_loaded_gnomad_lacks() {
+    let fixture = Fixture::new(&[100]).with_gnomad_record_on("2", 200, 0.2, 200_000);
+    let sa = fixture.path("sa");
+    let (output, _) = run_binary(&fixture, &["--acmg", "--sa-dir", &sa]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(stderr.contains("hold nothing of chromosomes 1"), "{stderr}");
+    assert!(
+        stderr.contains("PM2, BA1, BS1 and BS2 are not evaluated"),
+        "{stderr}"
+    );
+    // And a gnomAD that holds the chromosome has nothing to say about it.
+    let held = Fixture::new(&[100]).with_gnomad_record_on("1", 200, 0.2, 200_000);
+    let sa = held.path("sa");
+    let (output, _) = run_binary(&held, &["--acmg", "--sa-dir", &sa]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("hold nothing of chromosomes"), "{stderr}");
+}
+
+/// The library behind the web servers declines the same variant, and says which chromosomes of
+/// its gene model the loaded gnomAD lacks (what the server's verdict is made of).
+#[test]
+fn the_library_path_reads_the_chromosomes_the_loaded_gnomad_holds_as_the_command_line_does() {
+    let fixture = Fixture::new(&[100]).with_gnomad_record_on("2", 200, 0.2, 200_000);
+    let mut ctx = AnnotationContext::new(
+        Some(&fixture.path("genes.gff3")),
+        Some(&fixture.path("genome.fa")),
+        Some(&fixture.path("sa")),
+        5000,
+    )
+    .expect("the fixture should load");
+    ctx.hgvs = true;
+    assert_eq!(ctx.gnomad_lacks(), ["1"]);
+    let vcf = fs::read_to_string(fixture.path("in.vcf")).unwrap();
+    let results = ctx
+        .annotate_vcf_text_with_acmg(&vcf, None, Some(&AcmgConfig::default()))
+        .expect("annotation should succeed");
+    let pm2 = criterion(&results[0], "PM2");
+    assert_eq!(pm2["evaluated"], false, "{pm2}");
+    assert!(pm2["summary"]
+        .as_str()
+        .unwrap()
+        .contains("holds no record of chromosome 1"));
+
+    // Held, nothing is lacking.
+    let held = Fixture::new(&[100]).with_gnomad_record_on("1", 200, 0.2, 200_000);
+    let ctx = AnnotationContext::new(
+        Some(&held.path("genes.gff3")),
+        Some(&held.path("genome.fa")),
+        Some(&held.path("sa")),
+        5000,
+    )
+    .expect("the fixture should load");
+    assert!(ctx.gnomad_lacks().is_empty());
 }

@@ -176,6 +176,9 @@ struct AnnotationContext<'a> {
     /// with no gnomAD record from a run with no gnomAD database, and BP3 to tell a variant outside
     /// every repeat from a run with no repeat track.
     sources: fastvep_classification::LoadedSources,
+    /// Which chromosomes the gnomAD databases hold, so that a variant on another is not called
+    /// absent from the population: a database of some chromosomes says "no record" for the rest.
+    coverage: &'a fastvep_annotate::SourceCoverage,
 }
 
 /// What the predictor said of one transcript of a variant, or, for a transcript a reducing pick may
@@ -262,6 +265,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
         sample_names,
         normalize_gnomad_queries,
         sources,
+        coverage,
     } = ctx;
 
     // VEP's known-variant columns, worked out once per alt allele: every
@@ -973,7 +977,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     aa.exon,
                     aa.protein_length,
                     aa.escapes_nmd,
-                    sources,
+                    coverage.sources_for(sources, &vf.position.chromosome),
                     fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                     alt_idx
                         .and_then(|i| query_alleles.get(i))
@@ -1912,12 +1916,30 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // criterion without its data reports `evaluated: false`, and the run ends with a classification
     // that rests on less evidence and looks like any other. Say so once, on stderr, where the
     // output files stay what they were.
+    // Which chromosomes the gnomAD databases hold. A database of some chromosomes opens without
+    // complaint and says "no record" for the rest, which PM2 reads as absence from the population:
+    // the classifier declines the frequency criteria for a variant on a chromosome that no loaded
+    // gnomAD holds, and the run says which chromosomes of the gene model those are.
+    let coverage = fastvep_annotate::SourceCoverage::of(&sa_providers);
     if acmg_config.is_some() {
         if let Some(shortfall) = sources.shortfall() {
             eprintln!("warning: --acmg is running on an incomplete reference stack: {shortfall}.");
             eprintln!(
                 "         The classes below rest on less evidence than the benchmark of the paper's, \
                  and a VUS can mean that nothing was checked. See docs/ACMG_SETUP.md."
+            );
+        }
+        let wanted = fastvep_annotate::expected_chromosomes(transcript_provider.chromosomes());
+        let lacks = coverage.gnomad_lacks(&wanted);
+        if !lacks.is_empty() {
+            eprintln!(
+                "warning: --acmg: the gnomAD databases that are loaded hold nothing of chromosomes {}, \
+                 which the gene model has transcripts on.",
+                fastvep_annotate::describe_chromosomes(&lacks)
+            );
+            eprintln!(
+                "         PM2, BA1, BS1 and BS2 are not evaluated for a variant there (no record would \
+                 read as absent from the population). Build the missing chromosomes: docs/ACMG_SETUP.md."
             );
         }
     }
@@ -2175,6 +2197,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             sample_names: &sample_names,
             normalize_gnomad_queries,
             sources,
+            coverage: &coverage,
         };
         // Phase 2: Annotate the batch (transcript lookup + consequence prediction + HGVS) and
         // render it into the bytes it writes, in one pass on every thread (see `render_batch`).
@@ -2196,6 +2219,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                 &sample_names,
                 functional_evidence,
                 sources,
+                &coverage,
             );
         }
         let records = batch.len() as u64;
@@ -2966,6 +2990,7 @@ fn enrich_compound_het_batch(
     sample_names: &[String],
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
     sources: fastvep_classification::LoadedSources,
+    coverage: &fastvep_annotate::SourceCoverage,
 ) {
     // Collect per-gene variant info
     struct VariantGeneInfo {
@@ -3139,7 +3164,7 @@ fn enrich_compound_het_batch(
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
-                sources,
+                coverage.sources_for(sources, &vf.position.chromosome),
                 fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                 alt_idx
                     .and_then(|i| query_alleles.get(i))

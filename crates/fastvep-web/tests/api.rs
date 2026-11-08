@@ -994,14 +994,20 @@ fn write_reference_stack(sa_dir: &std::path::Path) {
             chunk_bits: 20,
             description: String::new(),
         };
-        let records = vec![Osa2Record {
-            chrom: "chr1".into(),
-            position: 1000,
-            ref_allele: b"A".to_vec(),
-            alt_allele: b"G".to_vec(),
-            values: vec![field.encode_float(0.25)],
-            json_blob: None,
-        }];
+        // One record on chromosome 1 and one on 17, the chromosome the gene models of these tests
+        // have their transcripts on: a gnomAD that held chromosome 1 alone would not be a complete
+        // stack for them.
+        let records: Vec<Osa2Record> = ["chr1", "chr17"]
+            .iter()
+            .map(|chrom| Osa2Record {
+                chrom: (*chrom).into(),
+                position: 1000,
+                ref_allele: b"A".to_vec(),
+                alt_allele: b"G".to_vec(),
+                values: vec![field.encode_float(0.25)],
+                json_blob: None,
+            })
+            .collect();
         let file = std::fs::File::create(sa_dir.join(format!("{stem}.osa2"))).unwrap();
         Osa2Writer::new(metadata, vec![field.clone()])
             .write_all(std::io::BufWriter::new(file), &records)
@@ -1187,6 +1193,229 @@ async fn a_genome_with_the_whole_stack_is_classified_and_the_response_says_the_s
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert!(body["error"].as_str().unwrap().contains("genome 'beta'"));
+}
+
+/// `alpha` with the whole stack except that its gnomAD holds chromosome 1 alone, while the gene
+/// model has its transcripts on chromosome 17: what a gnomAD of one chromosome, built by a script
+/// that gave every chromosome the same name, looks like to the classifier.
+fn state_with_a_gnomad_of_another_chromosome(label: &str, allow_partial: bool) -> AppState {
+    let dir = genome_dir(label);
+    let sa = dir.join("alpha").join("sa");
+    write_reference_stack(&sa);
+    write_osa2(&sa, "gnomad", "gnomad", "test", 2);
+    let gff3 = dir.join("alpha").join("mini.gff3");
+    let ctx =
+        AnnotationContext::new(gff3.to_str(), None, sa.to_str(), 5000).expect("build context");
+    let name = default_genome_name(gff3.to_str(), Some(dir.as_path()));
+    Arc::new(SharedState::new(
+        ctx,
+        name,
+        ServerConfig {
+            acmg_allow_partial: allow_partial,
+            ..config(Some(dir), false)
+        },
+    ))
+}
+
+#[tokio::test]
+async fn a_gnomad_of_other_chromosomes_than_the_gene_model_is_not_a_complete_stack() {
+    let state = state_with_a_gnomad_of_another_chromosome("gnomad-elsewhere", false);
+    let (_, status) = get(&state, "/api/status").await;
+    let acmg = &status["acmg"];
+    assert_eq!(acmg["ready"], false, "{acmg}");
+    assert_eq!(acmg["available"], false, "{acmg}");
+    assert!(
+        !acmg["loaded"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("gnomad")),
+        "{acmg}"
+    );
+    let first = &acmg["missing"][0];
+    assert_eq!(first["id"], "gnomad", "{acmg}");
+    assert!(
+        first["label"]
+            .as_str()
+            .unwrap()
+            .contains("none for chromosomes 17"),
+        "{first}"
+    );
+    assert!(
+        first["without"]
+            .as_str()
+            .unwrap()
+            .contains("PM2 would fire"),
+        "{first}"
+    );
+    // The other eight are in place: only gnomAD is named.
+    assert_eq!(acmg["missing"].as_array().unwrap().len(), 1, "{acmg}");
+
+    let (code, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "."), "acmg": true }),
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("none for chromosomes 17"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn with_partial_acmg_allowed_a_variant_on_a_chromosome_gnomad_lacks_is_not_called_absent() {
+    let state = state_with_a_gnomad_of_another_chromosome("gnomad-elsewhere-allowed", true);
+    let (code, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "."), "acmg": true }),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["acmg_stack"]["complete"], false, "{body}");
+    assert_eq!(body["acmg_stack"]["missing"], json!(["gnomad"]), "{body}");
+    let criteria = body["results"][0]["transcript_consequences"][0]["acmg"]["criteria"]
+        .as_array()
+        .unwrap();
+    // Reported as PM2 or, at the strength the default gives it, PM2_Supporting.
+    let pm2 = criteria
+        .iter()
+        .find(|c| {
+            c["code"]
+                .as_str()
+                .is_some_and(|code| code.starts_with("PM2"))
+        })
+        .expect("PM2 is reported");
+    assert_eq!(pm2["met"], false, "{pm2}");
+    assert_eq!(pm2["evaluated"], false, "{pm2}");
+    assert!(
+        pm2["summary"]
+            .as_str()
+            .unwrap()
+            .contains("holds no record of chromosome 17"),
+        "{pm2}"
+    );
+}
+
+/// Corrupt the payload of one ZIP entry in place, leaving every offset and length untouched, so
+/// that the reader still finds the entry (the database opens, and lists the chromosome) and fails
+/// only when it has to inflate it.
+fn corrupt_entry_payload(bytes: &mut [u8], name: &str) -> bool {
+    let name_bytes = name.as_bytes();
+    let mut i = 0;
+    while i + 30 + name_bytes.len() <= bytes.len() {
+        if &bytes[i..i + 4] == b"PK\x03\x04" {
+            let name_len = u16::from_le_bytes([bytes[i + 26], bytes[i + 27]]) as usize;
+            let extra_len = u16::from_le_bytes([bytes[i + 28], bytes[i + 29]]) as usize;
+            let name_start = i + 30;
+            if name_len == name_bytes.len()
+                && &bytes[name_start..name_start + name_len] == name_bytes
+            {
+                let data = name_start + name_len + extra_len;
+                for b in bytes.iter_mut().skip(data).take(16) {
+                    *b ^= 0xFF;
+                }
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+#[tokio::test]
+async fn a_database_that_cannot_be_read_at_query_time_says_so_in_the_answer_and_in_the_status() {
+    use fastvep_sa::fields::{Field, FieldType};
+    use fastvep_sa::writer_v2::{Osa2Metadata, Osa2Record, Osa2Writer};
+
+    let dir = genome_dir("unreadable-chunk");
+    let sa = dir.join("alpha").join("sa");
+    write_reference_stack(&sa);
+    // A gnomAD that opens, holds chromosome 17, and cannot inflate the chunk the variant is in: the
+    // answer for that variant is "no record", and nothing in it said that this was not "none".
+    let field = Field {
+        field: "AF".into(),
+        alias: "af".into(),
+        ftype: FieldType::Float,
+        multiplier: 1_000_000,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: String::new(),
+    };
+    let metadata = Osa2Metadata {
+        format_version: 2,
+        name: "gnomad".into(),
+        version: "test".into(),
+        assembly: "GRCh38".into(),
+        json_key: "gnomad".into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+        chunk_bits: 20,
+        description: String::new(),
+    };
+    let record = Osa2Record {
+        chrom: "chr17".into(),
+        position: 1100,
+        ref_allele: b"G".to_vec(),
+        alt_allele: b"A".to_vec(),
+        values: vec![field.encode_float(0.25)],
+        json_blob: None,
+    };
+    let path = sa.join("gnomad.osa2");
+    let file = std::fs::File::create(&path).unwrap();
+    Osa2Writer::new(metadata, vec![field])
+        .write_all(std::io::BufWriter::new(file), &[record])
+        .unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    assert!(corrupt_entry_payload(
+        &mut bytes,
+        "fastsa/chr17/0/var32.bin"
+    ));
+    std::fs::write(&path, bytes).unwrap();
+
+    let gff3 = dir.join("alpha").join("mini.gff3");
+    let ctx =
+        AnnotationContext::new(gff3.to_str(), None, sa.to_str(), 5000).expect("build context");
+    let name = default_genome_name(gff3.to_str(), Some(dir.as_path()));
+    let state = Arc::new(SharedState::new(ctx, name, config(Some(dir), false)));
+
+    let (code, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, ".") }),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let warnings = body["warnings"]
+        .as_array()
+        .expect("the answer carries warnings");
+    assert!(
+        warnings.iter().any(|w| w
+            .as_str()
+            .unwrap()
+            .contains("gnomad could not be read for 1 variant lookup")),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings[0]
+            .as_str()
+            .unwrap()
+            .contains("not the same as having none"),
+        "{warnings:?}"
+    );
+
+    // The tally is the server's, so the status says it too, for the monitor that never sends a VCF.
+    let (_, status) = get(&state, "/api/status").await;
+    assert!(
+        status["sa_lookup_errors"]["gnomad"].as_u64().unwrap() >= 1,
+        "{status}"
+    );
 }
 
 #[tokio::test]

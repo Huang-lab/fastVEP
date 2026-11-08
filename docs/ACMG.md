@@ -955,6 +955,13 @@ PM2 used to be the exception: it read a variant with no gnomAD record as absent 
 It now declines when no gnomAD database is loaded, whatever `pm2_absent_when_no_record` says, and so do BA1, BS1 and BS2.
 That setting is about a database that is loaded and holds no record of the variant (limitation 30), which is a different statement.
 
+A source can also be loaded and hold only some of the genome, and for gnomAD that is the same mistake.
+A database built for some chromosomes (one shard of a per-chromosome build, a region-restricted build, a chromosome that failed to build and was not noticed) opens without complaint and says "no record" for every variant of the others, which PM2 reads as absence from the population.
+A deployment script of this project once built a gnomAD of chromosome X alone.
+The classifier is told, for each variant, whether the gnomAD databases that are loaded hold its chromosome, and declines PM2, BA1, BS1 and BS2 for a variant on one that they do not (`holds no record of chromosome 1`), whatever the genome; chromosomes are compared without their `chr` prefix, and the shards of one source count as the union of what they hold.
+The command line says which chromosomes of the gene model the loaded gnomAD lacks (`warning: --acmg: the gnomAD databases that are loaded hold nothing of chromosomes ...`), and the web server counts a gnomAD that lacks a chromosome of the gene model's autosomes or X as missing, so the genome is not classified until it is built (Y and the mitochondrial genome are left out of that, because the gnomAD of GRCh37 has no Y: a variant there is declined one by one).
+A database that cannot say which chromosomes it holds is read as holding all of them.
+
 `fastvep-web` goes further than a warning, because the people who read its answers are not the ones who built its databases: it refuses to classify a genome that lacks any of the nine sources, and `GET /api/status` and `GET /api/genomes` say which genomes can be classified.
 The nine sources are named once, in `crates/fastvep-classification/src/sources.rs` (`REFERENCE_STACK`), with the criteria that read each of them and what a classification loses without it.
 The command line, the web server and this document all read from that list.

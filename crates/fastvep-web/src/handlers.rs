@@ -324,7 +324,11 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
             skipped_json(&guard.sa_skipped),
             state.gene_model_generation.load(Ordering::Relaxed),
             state.current_default_genome(),
-            AcmgReadiness::of(guard.loaded_sources(), state.acmg_allow_partial),
+            AcmgReadiness::of(
+                guard.loaded_sources(),
+                &guard.gnomad_lacks(),
+                state.acmg_allow_partial,
+            ),
         )
     };
     Json(serde_json::json!({
@@ -349,6 +353,10 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
         // How much one request may cost, so that a client can size its requests instead of
         // finding out with a 413.
         "limits": state.limits.describe(),
+        // The lookups, by source, that a database that opened could not answer since the server
+        // started: a chunk that does not inflate is "no record" at its positions and nothing else
+        // says so. Empty when every database has answered every lookup.
+        "sa_lookup_errors": lookup_failures(),
         // So a UI can offer the model-replacing controls only when they will
         // work, instead of finding out with a 403 the user cannot interpret.
         "allow_model_replacement": state.allow_model_replacement,
@@ -387,7 +395,11 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
             guard.seq_provider.is_some(),
             !guard.sa_source_names().is_empty(),
             guard.transcript_count(),
-            AcmgReadiness::of(guard.loaded_sources(), state.acmg_allow_partial),
+            AcmgReadiness::of(
+                guard.loaded_sources(),
+                &guard.gnomad_lacks(),
+                state.acmg_allow_partial,
+            ),
             skipped_json(&guard.sa_skipped),
         )
     };
@@ -432,7 +444,9 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
                 .await
                 .unwrap_or_default();
             (
-                AcmgReadiness::of(inventory.sources, state.acmg_allow_partial),
+                // Not loaded, so the chromosomes of its gene model are not known: the verdict is
+                // the one of its sources, and the one of a loaded genome adds what its gnomAD lacks.
+                AcmgReadiness::of(inventory.sources, &[], state.acmg_allow_partial),
                 skipped_json(&inventory.skipped),
                 inventory.databases > 0,
             )
@@ -603,6 +617,9 @@ impl ResultsBuffer {
 /// had to read.
 struct Annotated {
     results: ResultsBuffer,
+    /// What the client has to be told besides the results: a database that could not be read for
+    /// some of the lookups of this request. See [`lookup_failures`].
+    warnings: Vec<String>,
     /// Present exactly when the request asked for `acmg`: whether every source of the
     /// reference stack was loaded, and which were not.
     acmg_stack: Option<AcmgStack>,
@@ -766,6 +783,18 @@ fn read_vcf_lines<'a>(
     Ok((headers, records))
 }
 
+/// The lookups of each source that have failed so far in this process, from the tally the readers
+/// keep: a database that opens and cannot be read at some position (one chunk that does not
+/// inflate) answers "no record" there, which is indistinguishable in the answer from a variant it
+/// does not hold. The command line prints the tally when its run ends, and a server does not end.
+fn lookup_failures() -> std::collections::HashMap<String, u64> {
+    fastvep_annotate::sa_lookup_errors()
+        .snapshot()
+        .into_iter()
+        .map(|(source, count, _)| (source, count))
+        .collect()
+}
+
 /// Where each batch of records ends: at most `max_variants` of them and, past the first, at most
 /// `max_rows` rows, so that a variant that overlaps thousands of transcripts is annotated nearly
 /// alone and a hundred of them are never held at once.
@@ -805,7 +834,8 @@ fn annotate_with(
     allow_partial: bool,
     budget: &Budget<'_>,
 ) -> Result<Annotated, AppError> {
-    let readiness = acmg_requested.then(|| AcmgReadiness::of(ctx.loaded_sources(), allow_partial));
+    let readiness = acmg_requested
+        .then(|| AcmgReadiness::of(ctx.loaded_sources(), &ctx.gnomad_lacks(), allow_partial));
     if let Some(unavailable) = readiness.as_ref().filter(|r| !r.available) {
         return Err(AppError::AcmgUnavailable {
             message: unavailable.refusal(genome),
@@ -829,6 +859,7 @@ fn annotate_with(
     };
 
     let (headers, records) = read_vcf_lines(ctx, vcf_text, pick, acmg_requested, budget.limits)?;
+    let failures_before = lookup_failures();
     let mut results = ResultsBuffer::new();
     let mut batch_text = String::new();
     let mut first = 0;
@@ -876,8 +907,27 @@ fn annotate_with(
             )));
         }
     }
+    // A database that could not be read for some lookups while this request ran. The tally is the
+    // process's, so a lookup of a concurrent request that failed is counted here too: that is
+    // still a source that could not answer, which is what the client is told.
+    let mut warnings = Vec::new();
+    for (source, count, first) in fastvep_annotate::sa_lookup_errors().snapshot() {
+        let failed = count.saturating_sub(failures_before.get(&source).copied().unwrap_or(0));
+        if failed > 0 {
+            tracing::error!(
+                "{source} could not be read for {failed} lookup(s) while a request was answered; \
+                 first error: {first}"
+            );
+            warnings.push(format!(
+                "{source} could not be read for {failed} variant lookup(s) while this request was \
+                 answered, so those variants carry no {source} annotation, which is not the same \
+                 as having none."
+            ));
+        }
+    }
     Ok(Annotated {
         results,
+        warnings,
         acmg_stack: readiness.map(|r| r.stack()),
     })
 }
@@ -1053,6 +1103,9 @@ pub async fn annotate(
         "time_ms": time_ms,
         "gene_model": gene_model,
     });
+    if !annotated.warnings.is_empty() {
+        extra["warnings"] = serde_json::json!(annotated.warnings);
+    }
     if let Some(stack) = annotated.acmg_stack {
         // Beside the classifications it qualifies, so that a client that stores or shows them
         // keeps what they rest on with them.

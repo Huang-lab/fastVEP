@@ -1192,6 +1192,31 @@ mod tests {
     }
 
     #[test]
+    fn test_pm2_is_not_evaluated_on_a_chromosome_the_loaded_gnomad_holds_nothing_of() {
+        // A gnomAD of chromosome X alone, which is what deploy-full.sh once built, is open and says
+        // "no record" for every variant of chromosomes 1 to 22. That is not absence from the
+        // population, and the stack as a whole is complete, so only the variant knows.
+        let cfg = AcmgConfig::default();
+        let mut covered = make_input(vec![Consequence::MissenseVariant], None);
+        covered.variant_coordinates = Some(("X".into(), 1_000, "A".into(), "G".into()));
+        let met = evaluate_pm2(&covered, &cfg);
+        assert!(met.met && met.evaluated, "{met:?}");
+
+        let mut uncovered = make_input(vec![Consequence::MissenseVariant], None);
+        uncovered.variant_coordinates = Some(("1".into(), 1_000, "A".into(), "G".into()));
+        uncovered.sources =
+            crate::sources::LoadedSources::all().without_coverage(crate::sources::Source::Gnomad);
+        let result = evaluate_pm2(&uncovered, &cfg);
+        assert!(!result.met, "{result:?}");
+        assert!(!result.evaluated, "{result:?}");
+        assert!(
+            result.summary.contains("holds no record of chromosome 1"),
+            "{}",
+            result.summary
+        );
+    }
+
+    #[test]
     fn test_pm2_no_gnomad_record_not_evaluated_when_strict() {
         // Setting `pm2_absent_when_no_record = false` reverts to the
         // strict-coverage stance: PM2 NotEvaluated when no record present.

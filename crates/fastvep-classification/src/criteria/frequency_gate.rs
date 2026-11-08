@@ -224,6 +224,20 @@ pub(crate) fn data_blocker(
                 .to_string(),
         ));
     }
+    // A gnomAD database is open and holds nothing of this variant's chromosome: one shard of a
+    // per-chromosome build, or a chromosome that failed to build. The same "no record" again, for
+    // the same reason, and it is what a gnomAD of chromosome X alone said of every variant of
+    // chromosomes 1 to 22.
+    if !input.sources.covers_variant(Source::Gnomad) {
+        let chromosome = match input.variant_coordinates.as_ref() {
+            Some((chrom, ..)) => format!("chromosome {chrom}"),
+            None => "this variant's chromosome".to_string(),
+        };
+        return Some(FrequencyBlocker::source_not_loaded(format!(
+            "the gnomAD database that is loaded holds no record of {chromosome}, so a variant's \
+             absence from it says nothing about its frequency"
+        )));
+    }
 
     // Curated gene-level homology. Reads from a paralogue or pseudogene mismap
     // onto the gene of interest, so both the frequency and the absence of a

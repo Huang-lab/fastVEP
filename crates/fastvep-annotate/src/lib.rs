@@ -8,11 +8,15 @@
 //! the same underlying crates.
 
 mod colocated;
+pub mod coverage;
 mod hgvs_normalize;
 mod hgvsp;
 pub mod pick;
 
 pub use colocated::known_cells;
+pub use coverage::{
+    describe_chromosomes, expected_chromosomes, normalize_chromosome, SourceCoverage,
+};
 pub use hgvs_normalize::{
     clipped_span, convert_ins_to_dup_range, convert_ins_to_dup_range_noncoding, hgvs_allele,
     hgvs_allele_on_transcript, hgvs_placement, hgvsc_shifted, hgvsc_shifted_outcome,
@@ -273,6 +277,23 @@ impl AnnotationContext {
         self.transcript_provider.transcript_count()
     }
 
+    /// Which chromosomes the loaded gnomAD databases hold.
+    pub fn coverage(&self) -> SourceCoverage {
+        SourceCoverage::of(&self.sa_providers)
+    }
+
+    /// The autosomes and X that the gene model has transcripts on and the loaded gnomAD databases
+    /// hold nothing of, in natural order. Empty when there is nothing to say: no gnomAD database
+    /// is loaded (the sources report that), or the databases hold every chromosome the gene model
+    /// has, or they cannot say which they hold.
+    ///
+    /// A gnomAD of some chromosomes only is loaded and answers "no record" for the rest, which
+    /// PM2 reads as absence from the population; see [`coverage`].
+    pub fn gnomad_lacks(&self) -> Vec<String> {
+        let wanted = expected_chromosomes(self.transcript_provider.chromosomes());
+        self.coverage().gnomad_lacks(&wanted)
+    }
+
     /// Which sources of the classifier's reference stack are loaded.
     ///
     /// The classifier needs this because an annotation says nothing about a source that was
@@ -418,6 +439,9 @@ impl AnnotationContext {
         // Computed once: PM2 and BP3 must tell "no record" from "no database", and only the
         // context knows which sources are open.
         let sources = self.loaded_sources();
+        // And which chromosomes the gnomAD databases hold: a variant on another has no record
+        // because there is nothing to hold one, which PM2 must not read as absence.
+        let coverage = self.coverage();
         let mut vcf_parser = VcfParser::new(vcf_text.as_bytes())?;
 
         // Extract sample names from VCF #CHROM header
@@ -915,7 +939,7 @@ impl AnnotationContext {
                             aa.exon,
                             aa.protein_length,
                             aa.escapes_nmd,
-                            sources,
+                            coverage.sources_for(sources, &vf.position.chromosome),
                             splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                             alt_idx
                                 .and_then(|i| query_alleles.get(i))
@@ -955,6 +979,7 @@ impl AnnotationContext {
                     &sample_names,
                     functional_evidence,
                     sources,
+                    &coverage,
                 );
             }
         }
@@ -1123,6 +1148,21 @@ impl SaLookupErrors {
             return;
         }
         map.insert(source.to_string(), (1, err.to_string()));
+    }
+
+    /// `(source, failures, first message)` for every source that has failed a lookup, sorted by
+    /// source: what a server that does not end, and so never prints the summary of the run, reads
+    /// to tell its clients that a database could not answer.
+    pub fn snapshot(&self) -> Vec<(String, u64, String)> {
+        let Ok(map) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let mut rows: Vec<(String, u64, String)> = map
+            .iter()
+            .map(|(source, (count, first))| (source.clone(), *count, first.clone()))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows
     }
 
     /// One line per source that failed, sorted so the output is reproducible.
@@ -1511,6 +1551,7 @@ fn enrich_compound_het(
     sample_names: &[String],
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
     sources: fastvep_classification::LoadedSources,
+    coverage: &SourceCoverage,
 ) {
     use std::collections::HashMap;
 
@@ -1712,7 +1753,7 @@ fn enrich_compound_het(
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
-                sources,
+                coverage.sources_for(sources, &vf.position.chromosome),
                 splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                 alt_idx
                     .and_then(|i| query_alleles.get(i))

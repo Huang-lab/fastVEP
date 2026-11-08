@@ -68,6 +68,18 @@ pub trait AnnotationProvider: Send + Sync {
         false
     }
 
+    /// The chromosomes this database holds a record of, as the database names them, when it can
+    /// say; `None` when it cannot, which a caller reads as "may hold any".
+    ///
+    /// A database built for some chromosomes only (one shard of a per-chromosome build, a
+    /// region-restricted build, a chromosome whose download failed and was not noticed) answers
+    /// "no record" for every variant of the others, and for a frequency source that reads as
+    /// "absent from the population". The classifier asks which chromosomes a source covers so that
+    /// it can tell the two apart.
+    fn chromosomes(&self) -> Option<Vec<String>> {
+        None
+    }
+
     /// Look up annotations for a specific variant position and alleles.
     ///
     /// Returns `None` if no annotation exists for this position/allele combination.

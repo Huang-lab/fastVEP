@@ -294,6 +294,10 @@ Expect responses to be large, and select the transcript you care about rather th
 The per-variant shape follows Ensembl VEP's JSON output, so clients written against VEP's `transcript_consequences` mostly port over.
 `time_ms` is server-side annotation time, excluding transport.
 
+`warnings`, present only when there is something to say, lists the databases that could not be read for some of the lookups while the request was answered (`gnomad could not be read for 3 variant lookup(s) ...`).
+A database that opens and cannot inflate one chunk answers "no record" at the positions of that chunk, which is the same in the annotation as a variant it does not hold, and for gnomAD that reads as absence from the population; the warning is how a client tells the two apart.
+The count is the server's, so a lookup of a concurrent request that failed is among them, and `GET /api/status` carries the total since the server started as `sa_lookup_errors` (`{"gnomad": 3}`, empty when every lookup was answered).
+
 `"pick": true` reduces each variant to one transcript, chosen by the same hierarchy as `fastvep annotate --pick`: MANE Select, then MANE Plus Clinical, canonical, APPRIS, TSL, biotype, CCDS, and only then consequence severity.
 That is Ensembl VEP's default `--pick_order`, so a default run of either tool picks the same transcript.
 It reduces to one *transcript*, not to one entry: `transcript_consequences` carries one entry per (transcript, allele), so a biallelic site still returns two.
@@ -321,7 +325,8 @@ A criterion with none of its source reports `evaluated: false` and nothing else.
 A server that holds only some of the nine therefore answers `"acmg": true` with a classification that rests on less evidence than it appears to, almost always VUS, and nothing in a VUS says that the evidence was never looked at.
 So the server decides before it classifies:
 
-- A genome whose database directory holds all nine is *ready*, and `"acmg": true` is answered.
+- A genome whose database directory holds all nine is *ready*, and `"acmg": true` is answered, provided its gnomAD databases hold every autosome and X that the gene model has transcripts on.
+  A gnomAD that holds only some of them (one shard of a per-chromosome build, a chromosome that failed to build) says "no record" for the rest, which reads as absence from the population, so it counts as missing: its entry in `missing` is labelled `none for chromosomes 1-22` (the ones it lacks) and says that PM2 would fire there.
   The response carries `"acmg_stack": {"complete": true, "missing": []}` beside the results.
 - Any other genome is refused with HTTP `422` before anything is annotated, and the body says what is missing:
 
@@ -340,6 +345,7 @@ So the server decides before it classifies:
 `ready` means all nine are loaded; `available` means a request for ACMG will be answered, and differs from `ready` only under `--acmg-allow-partial`.
 `loaded` and `missing` use the `json_key` of each source as its `id`, and each missing source says which criteria read it (`drives`) and what is lost without it (`without`).
 For a genome that is not loaded yet the verdict comes from what its `sa/` directory holds, found once by opening its files, so that a client does not have to load a genome to ask; restart the server after adding databases to a directory.
+The chromosomes of a gene model are known once it is loaded, so the check of what gnomAD holds is added then: the server preloads its genomes at start, and a client that asks for a genome before it has loaded is told what its files hold.
 
 ### What one request may cost
 

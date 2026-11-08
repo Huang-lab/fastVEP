@@ -201,6 +201,9 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LoadedSources {
     bits: u16,
+    /// Sources that are loaded but hold nothing of the chromosome of the variant that this copy
+    /// is for: see [`LoadedSources::without_coverage`].
+    uncovered: u16,
 }
 
 impl LoadedSources {
@@ -208,6 +211,7 @@ impl LoadedSources {
     pub fn all() -> Self {
         Self {
             bits: (1 << Source::ALL.len()) - 1,
+            uncovered: 0,
         }
     }
 
@@ -225,6 +229,27 @@ impl LoadedSources {
 
     pub fn has(self, source: Source) -> bool {
         self.bits & (1 << source as u16) != 0
+    }
+
+    /// These sources, for a variant on a chromosome that `source` holds no record of: it stays
+    /// loaded (the stack is what it was), and [`covers_variant`](Self::covers_variant) says it
+    /// cannot answer for this variant.
+    ///
+    /// A database of some chromosomes only (one shard of a per-chromosome build, a chromosome
+    /// whose download failed) says "no record" for every variant of the others, and for gnomAD
+    /// that is read as "absent from the population": PM2 fires on a variant of chromosome 1
+    /// against a database that holds chromosome X. The caller that knows which chromosomes the
+    /// databases cover marks the variants on the others.
+    pub fn without_coverage(mut self, source: Source) -> Self {
+        self.uncovered |= 1 << source as u16;
+        self
+    }
+
+    /// Whether `source` can say anything about the variant these sources are for. True unless
+    /// [`without_coverage`](Self::without_coverage) said otherwise, which includes the sources that
+    /// are not loaded at all: for those, [`has`](Self::has) is what to ask.
+    pub fn covers_variant(self, source: Source) -> bool {
+        self.uncovered & (1 << source as u16) == 0
     }
 
     /// The sources of the stack that are not loaded, in the order of [`REFERENCE_STACK`].
@@ -274,6 +299,20 @@ mod tests {
             assert_eq!(Source::ALL[i], info.source);
             assert_eq!(info.source.info().id, info.id);
         }
+    }
+
+    #[test]
+    fn a_source_can_be_marked_as_holding_nothing_of_one_variants_chromosome() {
+        let loaded = LoadedSources::all();
+        assert!(Source::ALL.iter().all(|s| loaded.covers_variant(*s)));
+        let for_a_variant = loaded.without_coverage(Source::Gnomad);
+        // Still loaded, so the stack is as complete as it was; only this variant is not covered.
+        assert!(for_a_variant.has(Source::Gnomad));
+        assert!(for_a_variant.is_complete());
+        assert!(!for_a_variant.covers_variant(Source::Gnomad));
+        assert!(for_a_variant.covers_variant(Source::Clinvar));
+        // The marking belongs to the copy.
+        assert!(loaded.covers_variant(Source::Gnomad));
     }
 
     #[test]

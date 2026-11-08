@@ -712,6 +712,12 @@ impl AnnotationProvider for Osa2Reader {
         self.chrom_index.is_empty()
     }
 
+    fn chromosomes(&self) -> Option<Vec<String>> {
+        let mut names: Vec<String> = self.chrom_index.keys().cloned().collect();
+        names.sort();
+        Some(names)
+    }
+
     fn annotate_position(
         &self,
         chrom: &str,
