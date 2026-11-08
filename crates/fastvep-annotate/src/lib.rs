@@ -296,6 +296,26 @@ impl AnnotationContext {
         names
     }
 
+    /// What each loaded source is, once: its key, name, version (the date of the release when it
+    /// dated itself), assembly, and how many files hold it.
+    pub fn sa_source_details(&self) -> Vec<SourceDetail> {
+        let mut details: Vec<SourceDetail> = Vec::new();
+        for provider in &self.sa_providers {
+            let meta = provider.metadata();
+            match details.iter_mut().find(|d| d.key == meta.json_key) {
+                Some(existing) => existing.files += 1,
+                None => details.push(SourceDetail {
+                    key: meta.json_key.clone(),
+                    name: meta.name.clone(),
+                    version: meta.version.clone(),
+                    assembly: meta.assembly.clone(),
+                    files: 1,
+                }),
+            }
+        }
+        details
+    }
+
     /// Load a genome from GFF3 path (+ optional FASTA + optional SA directory).
     /// Replaces transcripts, sequence provider, and SA providers.
     pub fn load_genome(
@@ -1774,13 +1794,45 @@ pub fn check_sa_assemblies(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkippedSource {
     pub path: std::path::PathBuf,
+    /// Why, in words, for a log or a command line: it can carry paths.
     pub reason: String,
+    /// Why, as a class, for a response that must not carry them.
+    pub kind: SkippedKind,
+}
+
+/// The two ways a database file is found and not loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkippedKind {
+    /// It opens and holds no record.
+    Empty,
+    /// It could not be opened or read: a truncated copy, a file of another format.
+    Unopenable,
+}
+
+impl SkippedKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SkippedKind::Empty => "empty",
+            SkippedKind::Unopenable => "unopenable",
+        }
+    }
 }
 
 impl std::fmt::Display for SkippedSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} was not loaded: {}", self.path.display(), self.reason)
     }
+}
+
+/// What a loaded source is, as `GET /api/status` reports it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SourceDetail {
+    pub key: String,
+    pub name: String,
+    pub version: String,
+    pub assembly: String,
+    /// How many files hold it: a source kept in a shard for each chromosome is one source.
+    pub files: usize,
 }
 
 /// What loading a directory of databases produced: the ones that loaded, in path order, and the
@@ -1840,6 +1892,7 @@ pub fn load_sa_providers_reporting(
                 Ok((_, provider)) if provider.is_empty() => Err(SkippedSource {
                     path: path.clone(),
                     reason: EMPTY_DATABASE_REASON.to_string(),
+                    kind: SkippedKind::Empty,
                 }),
                 Ok((kind, provider)) => {
                     tracing::info!("Loaded {}: {} ({})", kind, provider.name(), path.display());
@@ -1848,6 +1901,7 @@ pub fn load_sa_providers_reporting(
                 Err(e) => Err(SkippedSource {
                     path: path.clone(),
                     reason: format!("{e:#}"),
+                    kind: SkippedKind::Unopenable,
                 }),
             }
         })
@@ -1929,6 +1983,7 @@ pub fn load_gene_providers_reporting(
                 Ok(index) if index.is_empty() => Err(SkippedSource {
                     path: path.clone(),
                     reason: EMPTY_DATABASE_REASON.to_string(),
+                    kind: SkippedKind::Empty,
                 }),
                 Ok(index) => {
                     tracing::info!(
@@ -1942,6 +1997,7 @@ pub fn load_gene_providers_reporting(
                 Err(e) => Err(SkippedSource {
                     path: path.clone(),
                     reason: format!("{e:#}"),
+                    kind: SkippedKind::Unopenable,
                 }),
             }
         })

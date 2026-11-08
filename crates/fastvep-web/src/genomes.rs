@@ -32,6 +32,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use fastvep_annotate::SkippedSource;
 use fastvep_classification::LoadedSources;
 use tokio::sync::{watch, OnceCell};
 
@@ -297,9 +298,17 @@ pub struct GenomeRegistry {
     loads: Loads,
     loads_started: AtomicUsize,
     loader: Loader,
-    /// Which sources of the reference stack a genome's `sa/` directory holds, found once by
-    /// opening its files, for the genomes that are not loaded and so have no context to ask.
-    inventories: Mutex<HashMap<String, Arc<OnceCell<LoadedSources>>>>,
+    /// What a genome's `sa/` directory holds, found once by opening its files, for the genomes
+    /// that are not loaded and so have no context to ask.
+    inventories: Mutex<HashMap<String, Arc<OnceCell<SaInventory>>>>,
+}
+
+/// What a genome's database directory holds: the sources of the reference stack that opened, and
+/// the files that were found and not loaded.
+#[derive(Debug, Clone, Default)]
+pub struct SaInventory {
+    pub sources: LoadedSources,
+    pub skipped: Vec<SkippedSource>,
 }
 
 impl GenomeRegistry {
@@ -411,14 +420,17 @@ impl GenomeRegistry {
         });
     }
 
-    /// Which sources of the reference stack the genome's database directory holds.
+    /// What the genome's database directory holds.
     ///
     /// A genome that is loaded answers from its context, which is what the classifier will be
     /// told. One that is not has its `sa/` directory opened once, with the loaders a real load
     /// uses, so that a file that cannot be opened is missing here as it would be there.
-    pub async fn sa_sources(&self, name: &str) -> Result<LoadedSources, AppError> {
+    pub async fn sa_inventory(&self, name: &str) -> Result<SaInventory, AppError> {
         if let Some(ctx) = self.loaded(name) {
-            return Ok(ctx.loaded_sources());
+            return Ok(SaInventory {
+                sources: ctx.loaded_sources(),
+                skipped: ctx.sa_skipped.clone(),
+            });
         }
         let Some(data_dir) = self.data_dir.as_deref() else {
             return Err(AppError::BadRequest("No data directory configured".into()));
@@ -428,28 +440,35 @@ impl GenomeRegistry {
             let mut inventories = self.inventories.lock().unwrap_or_else(|p| p.into_inner());
             Arc::clone(inventories.entry(name.to_string()).or_default())
         };
-        let sources = cell
+        let inventory = cell
             .get_or_try_init(|| async {
                 let Some(sa_dir) = paths.sa_dir else {
-                    return Ok::<_, AppError>(LoadedSources::default());
+                    return Ok::<_, AppError>(SaInventory::default());
                 };
                 Ok(tokio::task::spawn_blocking(move || inspect_sa_dir(&sa_dir)).await?)
             })
             .await?;
-        Ok(*sources)
+        Ok(inventory.clone())
     }
 }
 
-/// The sources of the reference stack a database directory holds, by opening its files.
-fn inspect_sa_dir(dir: &Path) -> LoadedSources {
-    let alleles = fastvep_annotate::load_sa_providers(dir).unwrap_or_default();
-    let genes = fastvep_annotate::load_gene_providers(dir).unwrap_or_default();
-    LoadedSources::from_json_keys(
-        alleles
-            .iter()
-            .map(|p| p.json_key())
-            .chain(genes.iter().map(|g| g.header.json_key.as_str())),
-    )
+/// What a database directory holds, by opening its files with the loaders a real load uses. A
+/// directory that cannot be read at all holds nothing.
+fn inspect_sa_dir(dir: &Path) -> SaInventory {
+    let (alleles, mut skipped) =
+        fastvep_annotate::load_sa_providers_reporting(dir).unwrap_or_default();
+    let (genes, skipped_genes) =
+        fastvep_annotate::load_gene_providers_reporting(dir).unwrap_or_default();
+    skipped.extend(skipped_genes);
+    SaInventory {
+        sources: LoadedSources::from_json_keys(
+            alleles
+                .iter()
+                .map(|p| p.json_key())
+                .chain(genes.iter().map(|g| g.header.json_key.as_str())),
+        ),
+        skipped,
+    }
 }
 
 /// Build the context of one genome from its own files and nothing else.
@@ -793,8 +812,9 @@ mod tests {
     #[tokio::test]
     async fn a_genome_with_no_sa_directory_holds_no_source_of_the_stack() {
         let registry = GenomeRegistry::new(Some(tiny_genome("inventory-none")), 5000);
-        let sources = registry.sa_sources("alpha").await.unwrap();
-        assert_eq!(sources.missing().count(), 9);
-        assert!(registry.sa_sources("nonexistent").await.is_err());
+        let inventory = registry.sa_inventory("alpha").await.unwrap();
+        assert_eq!(inventory.sources.missing().count(), 9);
+        assert!(inventory.skipped.is_empty());
+        assert!(registry.sa_inventory("nonexistent").await.is_err());
     }
 }

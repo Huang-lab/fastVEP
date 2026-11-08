@@ -1482,3 +1482,152 @@ async fn status_reports_what_one_request_may_cost() {
     assert_eq!(limits["max_request_seconds"], 90);
     assert!(limits["max_parallel"].as_u64().unwrap() >= 1);
 }
+
+// ---------------------------------------------------------------------------
+// What each source is, and what was not loaded
+// ---------------------------------------------------------------------------
+
+fn write_osa2(dir: &std::path::Path, stem: &str, key: &str, version: &str, records: usize) {
+    use fastvep_sa::fields::{Field, FieldType};
+    use fastvep_sa::writer_v2::{Osa2Metadata, Osa2Record, Osa2Writer};
+    let field = Field {
+        field: "AF".into(),
+        alias: "af".into(),
+        ftype: FieldType::Float,
+        multiplier: 1_000_000,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: "allele frequency".into(),
+    };
+    let metadata = Osa2Metadata {
+        format_version: 2,
+        name: key.into(),
+        version: version.into(),
+        assembly: "GRCh38".into(),
+        json_key: key.into(),
+        match_by_allele: true,
+        is_array: false,
+        is_positional: false,
+        chunk_bits: 20,
+        description: String::new(),
+    };
+    let rows: Vec<Osa2Record> = (0..records)
+        .map(|i| Osa2Record {
+            chrom: "chr1".into(),
+            position: 1000 + i as u32,
+            ref_allele: b"A".to_vec(),
+            alt_allele: b"G".to_vec(),
+            values: vec![field.encode_float(0.25)],
+            json_blob: None,
+        })
+        .collect();
+    let file = std::fs::File::create(dir.join(format!("{stem}.osa2"))).unwrap();
+    Osa2Writer::new(metadata, vec![field])
+        .write_all(std::io::BufWriter::new(file), &rows)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn status_says_what_each_source_is_and_which_database_files_were_not_loaded() {
+    let dir = genome_dir("skipped");
+    let sa = dir.join("alpha").join("sa");
+    std::fs::create_dir_all(&sa).unwrap();
+    // A source in two shards, dated; an empty database, which is a build that found nothing; and a
+    // truncated copy.
+    write_osa2(&sa, "gnomad_chr1", "gnomad", "2026-11-02", 2);
+    write_osa2(&sa, "gnomad_chr2", "gnomad", "2026-11-02", 2);
+    write_osa2(&sa, "dbsnp", "dbsnp", "latest", 0);
+    std::fs::write(
+        sa.join("clinvar.osa2"),
+        b"PK truncated in the middle of a copy",
+    )
+    .unwrap();
+    let gff3 = dir.join("alpha").join("mini.gff3");
+    let ctx =
+        AnnotationContext::new(gff3.to_str(), None, sa.to_str(), 5000).expect("build context");
+    let state = Arc::new(SharedState::new(
+        ctx,
+        default_genome_name(gff3.to_str(), Some(dir.as_path())),
+        config(Some(dir), false),
+    ));
+
+    let (_, body) = get(&state, "/api/status").await;
+    // One source, held in two files, named once and dated.
+    assert_eq!(body["sa_sources"], json!(["gnomad"]));
+    let info = body["sa_info"].as_array().unwrap();
+    assert_eq!(info.len(), 1, "{info:?}");
+    assert_eq!(info[0]["key"], "gnomad");
+    assert_eq!(info[0]["version"], "2026-11-02");
+    assert_eq!(info[0]["assembly"], "GRCh38");
+    assert_eq!(info[0]["files"], 2);
+    // The two files that did not load, by name and by class of reason, and nothing of the server's paths.
+    let skipped = body["sa_skipped"].as_array().unwrap();
+    let mut by_file: Vec<(String, String)> = skipped
+        .iter()
+        .map(|s| {
+            (
+                s["file"].as_str().unwrap().into(),
+                s["reason"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    by_file.sort();
+    assert_eq!(
+        by_file,
+        [
+            ("clinvar.osa2".to_string(), "unopenable".to_string()),
+            ("dbsnp.osa2".to_string(), "empty".to_string()),
+        ]
+    );
+    assert!(
+        !body.to_string().contains(sa.to_str().unwrap()),
+        "no path of the server is sent"
+    );
+
+    // The genome list says the same of the default, and of a genome that is not loaded.
+    let (_, listing) = get(&state, "/api/genomes").await;
+    let alpha = listing["genomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "alpha")
+        .unwrap();
+    assert_eq!(alpha["sa_skipped"].as_array().unwrap().len(), 2);
+    let beta = listing["genomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "beta")
+        .unwrap();
+    assert_eq!(beta["sa_skipped"], json!([]));
+}
+
+#[tokio::test]
+async fn the_genome_list_reports_the_skipped_files_of_a_genome_that_is_not_loaded() {
+    let dir = genome_dir("skipped-unloaded");
+    let sa = dir.join("beta").join("sa");
+    std::fs::create_dir_all(&sa).unwrap();
+    write_osa2(&sa, "dbsnp", "dbsnp", "latest", 0);
+    let gff3 = dir.join("alpha").join("mini.gff3");
+    let ctx = AnnotationContext::new(gff3.to_str(), None, None, 5000).expect("build context");
+    let state = Arc::new(SharedState::new(
+        ctx,
+        default_genome_name(gff3.to_str(), Some(dir.as_path())),
+        config(Some(dir), false),
+    ));
+    let (_, listing) = get(&state, "/api/genomes").await;
+    let beta = listing["genomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "beta")
+        .unwrap();
+    assert_eq!(beta["loaded"], false);
+    assert_eq!(
+        beta["sa_skipped"],
+        json!([{ "file": "dbsnp.osa2", "reason": "empty" }])
+    );
+    // The empty database is not a source of the stack and is not counted as one.
+    assert_eq!(beta["acmg"]["loaded"], json!([]));
+}

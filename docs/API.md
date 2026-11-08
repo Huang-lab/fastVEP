@@ -108,6 +108,11 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
     "has_fasta": true,
     "limits": {"max_body_bytes": 10485760, "max_response_bytes": 134217728, "max_request_seconds": 90, "max_parallel": 4},
     "sa_sources": ["ClinVar", "dbSNP"],
+    "sa_info": [
+        {"key": "clinvar", "name": "ClinVar", "version": "2026-11-02", "assembly": "GRCh38", "files": 1},
+        {"key": "dbsnp", "name": "dbSNP", "version": "latest", "assembly": "GRCh38", "files": 1}
+    ],
+    "sa_skipped": [],
     "acmg": {
         "ready": false,
         "available": false,
@@ -126,6 +131,10 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
 
 Check `transcripts`, `has_fasta`, and `sa_sources` here before you trust any annotation.
 Each of the three can be missing without the server saying so: a zero transcript count makes every variant `intergenic_variant`, and the other two are the subject of the next section.
+
+`sa_info` says what each loaded source is: its `key`, its `name`, its `version`, which is the date of the release when the release dated itself (a VCF with a `##fileDate=` line, as ClinVar's has) and `latest` when it did not, its `assembly`, and how many files hold it (`files`; a source kept in a shard for each chromosome is one source).
+`sa_skipped` lists the database files that were found in the directory and not loaded, by name and by class of reason, `empty` (a build that found nothing to write) or `unopenable` (a truncated copy, a file of another format), so that a source that is missing can be told from one that was never provided; the reason in words, which can carry a path, is in the server's log.
+Each entry of `GET /api/genomes` carries `sa_skipped` for its own directory too.
 
 `limits` is what one request may cost, so that a client can size its requests instead of finding out with a `413`; see [What one request may cost](#what-one-request-may-cost).
 

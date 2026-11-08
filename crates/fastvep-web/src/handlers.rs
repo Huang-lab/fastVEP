@@ -281,6 +281,21 @@ pub async fn logo_png() -> impl IntoResponse {
     )
 }
 
+/// The database files a load skipped, as a response may carry them: the file name and the class
+/// of reason. The reason in words can carry a path of the server, so it goes to the log, which
+/// is where `AnnotationContext` already wrote it.
+fn skipped_json(skipped: &[fastvep_annotate::SkippedSource]) -> Vec<serde_json::Value> {
+    skipped
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "file": s.path.file_name().map(|n| n.to_string_lossy().into_owned()),
+                "reason": s.kind.as_str(),
+            })
+        })
+        .collect()
+}
+
 /// Enhanced status: reports transcript/genome/SA state so the SPA can
 /// decide whether to use server-side annotation or upload example GFF3.
 ///
@@ -288,13 +303,25 @@ pub async fn logo_png() -> impl IntoResponse {
 /// `default_genome` is also how a client learns that this server answers per
 /// request: an older server does not send it.
 pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let (transcripts, gff3_source, has_fasta, sa_sources, generation, default_genome, acmg) = {
+    let (
+        transcripts,
+        gff3_source,
+        has_fasta,
+        sa_sources,
+        sa_info,
+        sa_skipped,
+        generation,
+        default_genome,
+        acmg,
+    ) = {
         let guard = state.ctx.read().unwrap();
         (
             guard.transcript_count(),
             guard.gff3_source.clone(),
             guard.seq_provider.is_some(),
             guard.sa_source_names(),
+            guard.sa_source_details(),
+            skipped_json(&guard.sa_skipped),
             state.gene_model_generation.load(Ordering::Relaxed),
             state.current_default_genome(),
             AcmgReadiness::of(guard.loaded_sources(), state.acmg_allow_partial),
@@ -310,6 +337,12 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
         "default_genome": default_genome,
         "has_fasta": has_fasta,
         "sa_sources": sa_sources,
+        // What each loaded source is: its key, name, the date of its release (`latest` when the
+        // release did not date itself), its assembly, and how many files hold it.
+        "sa_info": sa_info,
+        // Database files that were found and not loaded, so that a missing source can be told
+        // from one that was never provided.
+        "sa_skipped": sa_skipped,
         // Whether `"acmg": true` will be answered for the default genome, and the sources
         // that stand in the way if not.
         "acmg": acmg,
@@ -338,7 +371,15 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
     };
 
     // Taken under one guard, so the entry and the name it carries agree.
-    let (default_name, default_gff3, default_fasta, default_sa, default_transcripts, default_acmg) = {
+    let (
+        default_name,
+        default_gff3,
+        default_fasta,
+        default_sa,
+        default_transcripts,
+        default_acmg,
+        default_skipped,
+    ) = {
         let guard = state.ctx.read().unwrap();
         (
             state.current_default_genome(),
@@ -347,6 +388,7 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
             !guard.sa_source_names().is_empty(),
             guard.transcript_count(),
             AcmgReadiness::of(guard.loaded_sources(), state.acmg_allow_partial),
+            skipped_json(&guard.sa_skipped),
         )
     };
 
@@ -361,6 +403,7 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
             "default": true,
             "transcripts": default_transcripts,
             "acmg": default_acmg,
+            "sa_skipped": default_skipped,
         }));
     }
     for listing in scanned {
@@ -373,17 +416,20 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
                 .loaded(&listing.name)
                 .map(|g| g.transcript_count())
         };
-        let acmg = if is_default {
-            default_acmg.clone()
+        let (acmg, skipped) = if is_default {
+            (default_acmg.clone(), default_skipped.clone())
         } else {
             // Loaded: what the classifier will be told. Not loaded: what its `sa/` directory
             // holds, found once. A directory that cannot be read has none of the sources.
-            let sources = state
+            let inventory = state
                 .genomes
-                .sa_sources(&listing.name)
+                .sa_inventory(&listing.name)
                 .await
                 .unwrap_or_default();
-            AcmgReadiness::of(sources, state.acmg_allow_partial)
+            (
+                AcmgReadiness::of(inventory.sources, state.acmg_allow_partial),
+                skipped_json(&inventory.skipped),
+            )
         };
         genomes.push(serde_json::json!({
             "name": listing.name,
@@ -394,6 +440,7 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
             "default": is_default,
             "transcripts": transcripts,
             "acmg": acmg,
+            "sa_skipped": skipped,
         }));
     }
 
