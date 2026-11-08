@@ -40,23 +40,23 @@ what the stale index can have done.
 
 ClinVar's 2-star+ classifications are a reference and not ground truth.
 
-Usage
-  14_temporal_holdout.py prepare   build the covered subset and the strata
-  14_temporal_holdout.py run       annotate and score it with run_benchmark.sh
-  14_temporal_holdout.py table     write the per-variant table of that run
+Usage (the base is v38, the latest classifier, unless `--base v37` says the classifier at the close of the review rounds)
+  14_temporal_holdout.py prepare   build the covered subset and the strata (the same under both bases)
+  14_temporal_holdout.py table     write the per-variant table of the base's October run (v38_oct_shipped, made by
+                                   `11_manuscript_runs.py --v38 --holdout`)
   14_temporal_holdout.py blockers  why BA1 and BS1 did not fire on the uncalled Benign variants of 2% or more
-                                   (needs the per-variant tables; writes temporal_high_af_blockers_v37.csv)
-  14_temporal_holdout.py all       prepare, run and table
+                                   (needs the per-variant tables; writes temporal_high_af_blockers_v38.csv, and needs
+                                   FASTVEP_V38_BIN, the binary of release 0.5.0, the tag v0.5.0-rc.1)
+  14_temporal_holdout.py all       prepare and table
 
-`run` and `blockers` need FASTVEP_V37_BIN, the binary built at the v37 commit (5d8004a).
+  14_temporal_holdout.py --base v37 run        annotate and score the covered subset with run_benchmark.sh (v37_oct2026)
+  14_temporal_holdout.py --base v37 table      the per-variant table of that run
+  14_temporal_holdout.py --base v37 blockers   writes temporal_high_af_blockers_v37.csv; needs FASTVEP_V37_BIN, the binary built
+                                               at the v37 commit (5d8004a)
+  14_temporal_holdout.py --base v37 all        prepare, run and table
 
-  14_temporal_holdout.py --base v38 table      the same for v38 (the default base is v37)
-  14_temporal_holdout.py --base v38 blockers   writes temporal_high_af_blockers_v38.csv; needs FASTVEP_V38_BIN, the binary of
-                                               release 0.5.0 (the tag v0.5.0-rc.1)
-
-Under `--base v38` the October run is `v38_oct_shipped` of `11_manuscript_runs.py --v38 --holdout`, which is made there, and the
-covered subset is the same, so `prepare`, `run` and `all` do not apply and stop with a message; `table` writes the per-variant table
-of that run and `blockers` the table of Section 3.5's counterpart for v38 (`13_manuscript_stats.py --base v38` reads both).
+Under `--base v38` the October run is made by `11_manuscript_runs.py --v38 --holdout`, so `run` does not apply and stops with a
+message; `13_manuscript_stats.py` reads the per-variant table and the blockers of the base it is run for.
 """
 
 from __future__ import annotations
@@ -78,10 +78,10 @@ CURRENT_RAW = BENCH / "sa_sources/clinvar_20261004.vcf.gz"
 CURRENT_DIR = BENCH / "clinvar_20261004"
 REGIONS = BENCH / "sa_sources/clinvar_2star_regions.bed"
 SUBSET_DIR = BENCH / "clinvar_20261004_covered"
-BASE = "v37"  # the classifier the steps are about: v37, or v38 under `--base v38` (see `set_base`)
-RUN_NAME = "v37_oct2026"
-RUN_DIR = BENCH / f"output_{RUN_NAME}"
-PER_VARIANT = BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"
+BASE = "v38"  # the classifier the steps are about: v38, or v37 under `--base v37` (see `set_base`)
+RUN_NAME = "v38_oct_shipped"
+RUN_DIR = BENCH / f"manuscript_runs/{RUN_NAME}"
+PER_VARIANT = BENCH / f"manuscript_runs/{RUN_NAME}_per_variant.tsv.gz"
 
 
 def set_base(base: str) -> None:
@@ -251,7 +251,7 @@ def blockers() -> None:
     BS1 gives is counted: BS1 has the lower bar, and the site-level and gene-level blockers withhold BA1 and BS1
     alike. The calls of this second annotation are checked against the table's, one by one.
 
-    Writes manuscript/acmg/data/temporal_high_af_blockers_v37.csv (_v38 under --base v38).
+    Writes manuscript/acmg/data/temporal_high_af_blockers_v38.csv (_v37 under --base v37).
     """
     import gzip
     import json
@@ -319,15 +319,14 @@ def blockers() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("step", choices=["prepare", "run", "table", "blockers", "all"])
-    ap.add_argument("--base", choices=["v37", "v38"], default="v37", help="the classifier the step is about (default v37; see the docstring)")
+    ap.add_argument("--base", choices=["v37", "v38"], default="v38", help="the classifier the step is about (default v38; see the docstring)")
     args = ap.parse_args()
     set_base(args.base)
-    if args.base != "v37" and args.step in ("prepare", "run", "all"):
-        sys.exit(f"under --base {args.base} the October run is {RUN_NAME} of 11_manuscript_runs.py (--v38 --holdout) and the covered subset is "
-                 "the same: only `table` and `blockers` apply")
+    if args.base != "v37" and args.step == "run":
+        sys.exit(f"under --base {args.base} the October run is {RUN_NAME} of 11_manuscript_runs.py (--v38 --holdout): `run` applies to --base v37 only")
     if args.step in ("prepare", "all"):
         prepare()
-    if args.step in ("run", "all"):
+    if args.step == "run" or (args.step == "all" and args.base == "v37"):
         run()
     if args.step in ("table", "all"):
         table()

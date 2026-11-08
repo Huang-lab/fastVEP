@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 """Run the threshold sweeps and leave-one-out ablations the ACMG manuscript reports.
 
-Every run here is a variant of `v37`, the final classifier, made by
+Every run here is a variant of `v38`, the latest classifier (release 0.5.0, the tag `v0.5.0-rc.1`), made by
 `run_benchmark.sh` so that it is scored by `03_evaluate_concordance.py` and records
 what produced it. A variant of a run is a run of its own, so each one has its own
-version name, `v37_<knob>_<value>`.
+version name, `v38_<knob>_<value>`.
 
-The runs are defined once, for a family: `v37` (the classifier of Sections 2 to 3.7, names `v37_<...>`) and `v38` (the
-classifier of release 0.5.0, the tag `v0.5.0-rc.1`, names `v38_<...>`). The two families are made by the same functions
-below with the name prefix, the binaries and the names of two controls as their only parameters, so that they can differ in
-the classifier and in nothing else (`--family`). The family `v37` is what this script has always made. The family `v38` is
-the same list made again by the later classifier, and it takes in the runs of Section 3.8 that are members of it
-(`v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`, which have the grids of the family): they are not made again,
-and `main` stops if Section 3.8 defines one of them differently from the family. Section 3.8's own runs (`--v38`) are
-unchanged, and so are their files, to which the runs of the family `v38` add rows.
+The runs are defined once, for a family: `v38` (the classifier of release 0.5.0, names `v38_<...>`, the default) and `v37`
+(the classifier at the close of the review rounds, the commit 5d8004a, names `v37_<...>`). The two families are made by the
+same functions below with the name prefix, the binaries and the names of two controls as their only parameters, so that they
+can differ in the classifier and in nothing else (`--family`). The family `v37` is the list that this script made first, on
+the classifier that the paper's review rounds ended with, and it is kept so that what v38 changes can be measured run for
+run (`20_compare_families.py`). The family `v38` is the same list made by the later classifier, and it takes in the runs of
+Section 3.8 that are members of it (`v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`, which have the grids of the
+family): they are not made again, and `main` stops if Section 3.8 defines one of them differently from the family. Section
+3.8's own runs (`--v38`: the change from the commit before v38 to v38, with the alternatives) are unchanged, and so are their
+files, to which the runs of the family `v38` add rows.
 
 Three groups:
 
   sweep   one numeric threshold varied alone, everything else the shipped default.
-          The shipped value is `v37` itself and is not re-run.
+          The shipped value is the family's own main run (`v38`, or `v37`) and is not re-run.
   switch  one boolean or list setting turned off (or, for the two opt-in settings,
           on), everything else the shipped default.
   source  one supplementary-annotation source removed from `--sa-dir`, by symlinking
@@ -36,11 +38,11 @@ Three groups:
           binary built from `manuscript/acmg/replay_validation/bp_hooks_env.patch` (BP1's veto
           counting a variant's own ClinVar record, and BP7's SpliceAI bar); name it in
           FASTVEP_HOOKS_BIN. With no environment variable set it is the shipped classifier,
-          which the control run `v37_hk_control` checks cell for cell.
+          which the control run `v38_hk_control` (`v37_hk_control` in the family v37) checks cell for cell.
   gap     what the PVS1 gap of Section 3.5 is made of: the ClinGen file with the curations the
           April export lacked put back, and PVS1 licensed by Orphanet's loss-of-function label
           for genes that no other route reaches. Needs the files named in `gap_inputs()`.
-  v38     what changed after v37 (Section 3.8): the classifier reading ClinGen's curated inheritance,
+  v38     what v38 changed (Section 3.8): the classifier reading ClinGen's curated inheritance,
           classifying a gene against each of its modes of inheritance, and not counting BS2's carriers
           beside BS1 or BA1. Four kinds of run, kept apart from the rest (their names start `v38`, they
           are written to `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv`, and the
@@ -79,21 +81,22 @@ Outputs (MANUSCRIPT_RUNS_ROOT and MANUSCRIPT_RESULTS_DIR name another root and a
                            the same for every run whose name starts `v38`: Section 3.8's, then the family v38's
 
 Usage
-  11_manuscript_runs.py                 run everything that has not been run (the family v37)
+  11_manuscript_runs.py                 run everything that has not been run (the family v38, the default)
   11_manuscript_runs.py --workers 2     two runs at a time
   11_manuscript_runs.py --only pm2ad    only runs whose name contains the text
   11_manuscript_runs.py --list          print the matrix and stop
   11_manuscript_runs.py --collect       rebuild runs.tsv from the scored files and stop
   11_manuscript_runs.py --holdout       the runs of the `holdout` group (the others are not run)
-  11_manuscript_runs.py --family v38    the family v38 in place of v37 (with --list: print its matrix; with --holdout: its
-                                        seven runs on the October release); the runs that Section 3.8 made are found
-                                        scored and not made again, so a second invocation makes nothing
-  11_manuscript_runs.py --v38           the runs of Section 3.8 (not the family v38)
+  11_manuscript_runs.py --family v37    the family v37 in place of v38 (with --list: print its matrix; with --holdout: its
+                                        seven runs on the October release); what this script listed and ran before v38
+                                        was the default
+  11_manuscript_runs.py --v38           the runs of Section 3.8 (the change from the commit before v38, and its alternatives)
 
-  FASTVEP_V37_BIN=/path/to/v37/fastvep 11_manuscript_runs.py --workers 3
-  FASTVEP_CUTOFF_BIN=/path/to/patched/fastvep 11_manuscript_runs.py --only cut
   export FASTVEP_V38_BIN=/path/to/fastvep_v38 FASTVEP_CUTOFF38_BIN=/path/to/fastvep_cut38 FASTVEP_HOOKS38_BIN=/path/to/fastvep_hook38
-  11_manuscript_runs.py --family v38 --workers 3        (and again with --holdout)
+  11_manuscript_runs.py --workers 3        (and again with --holdout); the runs that Section 3.8 made are found scored and
+                                           not made again, so a second invocation makes nothing
+  FASTVEP_V37_BIN=/path/to/v37/fastvep 11_manuscript_runs.py --family v37 --workers 3
+  FASTVEP_CUTOFF_BIN=/path/to/patched/fastvep 11_manuscript_runs.py --family v37 --only cut
 
 The binary of every run is named by an environment variable, and a run whose variable is not set is not run:
 FASTVEP_V37_BIN for the runs of the family v37 that are v37 with one setting changed, and FASTVEP_V38_BIN for those of
@@ -993,8 +996,13 @@ def collect(runs: list[Run]) -> None:
     # `runs.tsv` and `holdout_runs.tsv` whole, do not change when they are made.
     apr = [r for r in scored if r[0].group != "holdout" and not is_v38(r[0])]
     hold = [r for r in scored if r[0].group == "holdout" and not is_v38(r[0])]
-    write_runs(RES / "runs.tsv", apr)
-    write_runs(RES / "holdout_runs.tsv", hold)
+    # A family none of whose runs is on this machine leaves its files alone. They are tracked and the bulk outputs are not, and the family that
+    # this script runs by default is v38: a machine that has made only that family would otherwise write the two files of v37 with a header
+    # and no row, over the results that the manuscript's twin tables for v37 are made from.
+    if apr:
+        write_runs(RES / "runs.tsv", apr)
+    if hold:
+        write_runs(RES / "holdout_runs.tsv", hold)
     if any(is_v38(r[0]) for r in scored):
         write_runs(RES / "runs_v38.tsv", [r for r in scored if is_v38(r[0]) and r[0].group != "holdout"])
         write_runs(RES / "holdout_runs_v38.tsv", [r for r in scored if is_v38(r[0]) and r[0].group == "holdout"])
@@ -1016,9 +1024,10 @@ def collect(runs: list[Run]) -> None:
                  ",".join(run.sa_remove), ",".join(sorted(run.sa_replace)),
                  " ".join(f"{k}={v}" for k, v in sorted(run.env.items()))]
             )
-    print(f"collected {len(apr)} of {len([r for r in runs if r.group != 'holdout'])} runs "
-          f"into {RES / 'runs.tsv'} and {len(hold)} of "
-          f"{len([r for r in runs if r.group == 'holdout'])} held-out runs into {RES / 'holdout_runs.tsv'}"
+    print((f"collected {len(apr)} of {len([r for r in runs if r.group != 'holdout'])} runs "
+           f"into {RES / 'runs.tsv'} and {len(hold)} of "
+           f"{len([r for r in runs if r.group == 'holdout'])} held-out runs into {RES / 'holdout_runs.tsv'}"
+           if apr or hold else "no run of the family v37 is on disk, so runs.tsv and holdout_runs.tsv are as they were")
           + (f"; {len([r for r in scored if is_v38(r[0])])} runs of Section 3.8 into the files with `v38` in their names"
              if any(is_v38(r[0]) for r in scored) else ""))
 
@@ -1077,10 +1086,10 @@ def main() -> None:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--collect", action="store_true")
     ap.add_argument("--holdout", action="store_true", help="run the held-out group (on the 4 October 2026 release) and nothing else")
-    ap.add_argument("--v38", action="store_true", help="run the runs of Section 3.8 (what changed after v37) in place of the others")
-    ap.add_argument("--family", choices=FAMILIES, default="v37",
-                    help="the family of runs to list and to run: v37, the runs of Sections 2 to 3.7 (the default, which lists and runs "
-                         "what this script has always listed and run), or v38, the same runs made by the classifier of release 0.5.0")
+    ap.add_argument("--v38", action="store_true", help="run the runs of Section 3.8 (what v38 changed from the commit before it) in place of the others")
+    ap.add_argument("--family", choices=FAMILIES, default="v38",
+                    help="the family of runs to list and to run: v38, the runs made by the classifier of release 0.5.0 (the default), or v37, "
+                         "the same runs made by the classifier at the close of the review rounds (what this script listed and ran first)")
     args = ap.parse_args()
 
     section38 = v38_runs() + v38_holdout_runs()

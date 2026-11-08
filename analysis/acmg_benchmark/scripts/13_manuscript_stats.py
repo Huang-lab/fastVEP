@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Every number and table the ACMG manuscript reports about v37 (and, for Section 3.8, about v38), and the same tables for v38.
+"""Every number and table the ACMG manuscript reports about v38, the latest classifier, and the same tables for v37, the before of what v38 changes.
 
 Reads the per-variant table of the final run (`12_per_variant_table.py`), the
 concordance matrix of every other run on disk, and the sweeps and ablations of
@@ -20,33 +20,36 @@ ClinVar's `Pathogenic/Likely pathogenic` is scored as `Pathogenic` and its
 `Benign/Likely benign` as `Benign`, so `exact` is a strict measure and
 `same-direction` the fair one.
 
-Two bases. The tables are written for a base, the classifier whose final run they describe: `--base v37` (the default)
-writes the files the manuscript reads, `headline_v37.csv` and the rest, and nothing about them has changed. `--base v38` writes
-their twins from the family of runs that `11_manuscript_runs.py --family v38` made (the same runs of the classifier of
-release 0.5.0): `headline_v38.csv`, `confusion_5x5_v38.csv`, ..., one twin for every file that holds a measurement of the final
-classifier, with the same columns and the same rows, and `v38` where the v37 file says `v37` (in a file name, a run name or a
-label). The code is spelled for v37 and every name goes through `fname`, `rn` or `lab`, which turn it into the base's; under v37
-they change nothing, which is how the tables of v37 stay byte for byte what they were.
+Two bases. The tables are written for a base, the classifier whose final run they describe: `--base v38` (the default) writes the
+files the manuscript reads, `headline_v38.csv`, `confusion_5x5_v38.csv` and the rest, from the family of runs that
+`11_manuscript_runs.py` made with the classifier of release 0.5.0, and `--base v37` writes their twins for v37, `headline_v37.csv` and
+the rest, from the family of runs of the classifier at the close of the review rounds, which are the before of the differences that
+Section 3.8 reports. Each base has one file for every table that holds a measurement of the final classifier, with the same columns
+and the same rows, and `v38` where the v37 file says `v37` (in a file name, a run name or a label). The code is spelled for v37 and
+every name goes through `fname`, `rn` or `lab`, which turn it into the base's; under v37 they change nothing, which is how the files
+of v37 stay what they were before v38 became the default, but for the few rows that the re-based text quotes and no table held
+(`clingen_missing_summary_v37.csv` and `facts_v37.csv` have more rows than they had).
 
-What stays v37's and has no twin: the trajectory of the benchmark from v1 to v37 (`trajectory.csv`), the change ledger and the
-reviewer's rounds (`review_rounds.csv`, `round6_rulings.tsv`), which are the history of the versions before v38. The rows and rules
-of round 6 (`round6_rows_v37.csv`, `round6_rules_v37.csv`) have twins, because they say what became of the reviewer's 64 rows under
-the base (the calls that are still opposite, 49 under v37 and 48 under v38) and not what the reviewer did. A file that holds nothing that depends on the base
-(`tavtigian_posterior.csv`) is not written under another base and is checked to be the file that is there. The tables of Section
-3.8 (`v38_*.csv`) are about the change from the commit before v38 to v38 and belong to neither base: `--base v38` does not write
-them, and `--base v37` writes them as it always has.
+What belongs to neither base is the same under both, and every invocation runs its steps: the trajectory of the benchmark from v1 to v38
+(`trajectory.csv`), the reviewer's rounds (`review_rounds.csv`; the change ledger and `round6_rulings.tsv` are typed from the project's
+record), the tables of Section 3.8 (`v38_*.csv`, about the change from the commit before v38 to v38) and a file that holds nothing that
+depends on the base (`tavtigian_posterior.csv`). Three of them (`trajectory.csv`, `review_rounds.csv` and `tavtigian_posterior.csv`)
+are written under v38, and under v37 they are checked to be the file that is there; the others do not depend on the base either, and
+each base that runs them writes the same bytes. The rows and rules of round 6 (`round6_rows_*.csv`, `round6_rules_*.csv`) have a file for each base, because they say what
+became of the reviewer's 64 rows under it (the calls that are still opposite, 48 under v38 and 49 under v37) and not what the
+reviewer did.
 
 The 382 ClinVar reference-agreement records (ALT is '.') are no-call under both classifiers, but v37's binaries write a record for
 them and v38's do not, so v37's matrices and per-variant tables hold the 673,660 records of the benchmark and v38's hold 673,278
 (the harness counts the other 382 apart). The tables of the paper are over all 673,660, so under `--base v38` the missing records
 are put back as the no-call rows v37's table holds for them (`reinstate`), and the matrices get the same no-calls (`fill_nocall`);
 the files of Section 3.8 are made from the tables as they are and keep the 673,278, which changes their class recalls and nothing
-else (the benign-side recall has the 382 in its denominator here and not there).
+else (the benign-side recall has the 382 in its denominator everywhere but there, where it is over the 284,168 that have a call).
 
 Usage
-  13_manuscript_stats.py            write every table
+  13_manuscript_stats.py            write every table for v38
   13_manuscript_stats.py --only headline,stars
-  13_manuscript_stats.py --base v38 write the twins for v38 (`--only` works as above)
+  13_manuscript_stats.py --base v37 write the files of v37 (`--only` works as above)
 """
 
 from __future__ import annotations
@@ -83,9 +86,8 @@ OCT_PV = BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"
 SKELETON = {"april": BENCH / "manuscript_runs/v37_per_variant.tsv.gz", "october": BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"}
 LABELS = {"april": BENCH / "clinvar_2star_labels.tsv", "october": BENCH / "clinvar_20261004_covered/clinvar_2star_labels.tsv"}
 
-# The files that Section 3.8 and the other pieces of v37's history own: a base other than v37 does not write them.
-V38_ONLY_STEPS = ("v38", "v38reading", "v38holdout", "v38sweeps", "v38disorder", "v38triple", "v38joint")
-HISTORY_STEPS = ("trajectory", "rounds")
+# The base whose invocation writes the files that belong to neither base (`shared`): the other base checks that they are the same.
+WRITER = "v38"
 
 CLASSES = ["Pathogenic", "Likely_pathogenic", "VUS", "Likely_benign", "Benign"]
 CALLS = CLASSES + ["NoCall"]
@@ -127,11 +129,11 @@ def lab(text: str) -> str:
 
 
 def write(name: str, rows: list[dict] | pd.DataFrame, shared: bool = False) -> None:
-    """Write a table. A `shared` one holds nothing that depends on the base: under another base it is checked and not written."""
+    """Write a table. A `shared` one holds nothing that depends on the base: the base `WRITER` writes it and the other checks it."""
     OUT.mkdir(parents=True, exist_ok=True)
     df = rows if isinstance(rows, pd.DataFrame) else pd.DataFrame(rows)
     name = fname(name)
-    if shared and BASE != "v37":
+    if shared and BASE != WRITER:
         text = df.to_csv(index=False, lineterminator="\n")
         if not (OUT / name).exists() or (OUT / name).read_text() != text:
             sys.exit(f"{name} is meant to hold nothing that depends on the base, and the file that is there is not the one {BASE} gives")
@@ -180,9 +182,13 @@ def label_counts(kind: str) -> dict[str, int]:
     return _LABEL_COUNTS[kind]
 
 
-def fill_nocall(m: dict[str, dict[str, int]], kind: str = "april") -> dict[str, dict[str, int]]:
-    """A matrix with the reference-agreement records that its run did not annotate counted as no-call, as v37's matrices count them."""
-    if BASE == "v37":
+def fill_nocall(m: dict[str, dict[str, int]], kind: str = "april", force: bool = False) -> dict[str, dict[str, int]]:
+    """A matrix with the reference-agreement records that its run did not annotate counted as no-call, as v37's matrices count them.
+
+    Under v37 the matrices of the base hold them already and are returned as they are; `force` fills whatever the base is, for a
+    table that belongs to neither (the trajectory has v38's matrix in it under both bases), and changes a matrix that is complete in nothing.
+    """
+    if BASE == "v37" and not force:
         return m
     lab_ = label_counts(kind)
     for t in CLASSES:
@@ -202,14 +208,14 @@ def load() -> pd.DataFrame:
     return df
 
 
-def read_matrix(path: Path, kind: str | None = None) -> dict[str, dict[str, int]]:
+def read_matrix(path: Path, kind: str | None = None, force: bool = False) -> dict[str, dict[str, int]]:
     """A run's matrix; with a `kind` ("april" or "october") its no-calls are filled in for the base (`fill_nocall`)."""
     rows = list(csv.reader(path.open()))
     hdr = rows[0][1:]
     m = {r[0]: {c: int(v) for c, v in zip(hdr, r[1:])} for r in rows[1:]}
     for t in CLASSES:
         m[t].setdefault("NoCall", 0)
-    return fill_nocall(m, kind) if kind else m
+    return fill_nocall(m, kind, force) if kind else m
 
 
 def matrix_metrics(m: dict[str, dict[str, int]]) -> dict[str, float]:
@@ -1330,7 +1336,11 @@ def gap_runs() -> None:
     day_gene = cur[cur.status == "export day"].gene.iloc[0]
     v37 = read_pv(PER_VARIANT)  # the base's own table (v37's under v37)
     done = read_pv(BENCH / f"manuscript_runs/{rn('v37_gap_clingen_complete')}_per_variant.tsv.gz")
-    both = v37[v37.gene == day_gene].merge(done[key + ["call", "criteria"]], on=key, suffixes=("", "_run"))
+    both = v37[v37.gene == day_gene].merge(done[key + ["call", "criteria", "clingen_tags"]], on=key, suffixes=("", "_run"))
+    # PM2 is a code of its own at each strength (PM2_Supporting, PM2_Moderate), so the codes are compared whole.
+    has_pm2 = lambda s: s.str.split("&").map(lambda codes: any(c.startswith("PM2") for c in codes))  # noqa: E731
+    lost_pm2 = both[has_pm2(both.criteria) & ~has_pm2(both.criteria_run)]
+    lost_af = lost_pm2.gnomad_ac.astype(float) / lost_pm2.gnomad_an.astype(float)
     write("clingen_missing_summary_v37.csv", [
         {"measure": "curations in the 30 April export", "n": len(april)},
         {"measure": "rows of the 11 October export dated on or before 30 April whose gene and disease pair the April export lacks", "n": len(cur)},
@@ -1356,8 +1366,17 @@ def gap_runs() -> None:
         {"measure": "  expected before 2024 if the omission were independent of the date",
          "n": len(lacked) * int((april["CLASSIFICATION DATE"].str[:4].astype(int) < 2024).sum()) / len(april)},
         {"measure": f"variants of {day_gene}, the gene of the row dated 30 April itself, in the benchmark", "n": len(both)},
+        # The call and the criteria are counted apart because they differ under v38 and not under v37: v38 reads the curated tag, and the
+        # completed file adds a dominant curation beside the recessive one, so the gene stops being read as recessive-only and PM2 takes its
+        # lower threshold (the tags of the two runs are counted here, because the reason is a statement about them).
+        {"measure": "  with the established ClinGen tag AR alone in the main run", "n": int((both.clingen_tags == "AR").sum())},
+        {"measure": "  with the established ClinGen tags AD and AR in the run that reads the completed file", "n": int((both.clingen_tags_run == "AD+AR").sum())},
+        {"measure": "  whose call differs in the run that reads the completed file", "n": int((both.call != both.call_run).sum())},
         {"measure": "  whose call or criteria differ in the run that reads the completed file",
-         "n": int(((both.call != both.call_run) | (both.criteria != both.criteria_run)).sum())}])
+         "n": int(((both.call != both.call_run) | (both.criteria != both.criteria_run)).sum())},
+        {"measure": "  that lose a PM2 criterion in the run that reads the completed file", "n": len(lost_pm2)},
+        {"measure": "  lowest allele frequency in gnomAD among those (0 when there are none)", "n": float(lost_af.min()) if len(lost_af) else 0.0},
+        {"measure": "  highest allele frequency in gnomAD among those (0 when there are none)", "n": float(lost_af.max()) if len(lost_af) else 0.0}])
 
 
 def hook_runs() -> None:
@@ -1439,6 +1458,9 @@ def trajectory() -> None:
     the documentation of the run (`results/v1/README.md`), and holds 31 opposite-direction calls where the
     run record says 36. v17 is not a step on the way: it is the opt-in run with the published VCEP bars,
     which v18 does not carry, so it is marked and left out of every range the text quotes.
+
+    v38 is the last row: the main run of the latest classifier (`manuscript_runs/v38`), whose matrix lacks the 382 records with no
+    alternative allele that every earlier run counted as no-calls, so they are put back (`force`) and every rate is over 673,660.
     """
     rows = []
 
@@ -1476,13 +1498,15 @@ def trajectory() -> None:
         p = BENCH / f"output_v{v}/concordance_matrix.csv"
         if p.exists():
             paths[v] = p
+    paths[38] = BENCH / "manuscript_runs/v38/concordance_matrix.csv"
     # v9 is reported leave-one-out, which is what the run directory holds.
     for v, p in sorted(paths.items()):
-        mat = read_matrix(p)
+        mat = read_matrix(p, "april", force=True) if v == 38 else read_matrix(p)
         mm = matrix_metrics(mat)
         rows.append({
             "run": f"v{v}", "order": v, "source": "scored matrix on disk",
-            "note": "opt-in run with the published VCEP bars, not a step on the way (v18 does not carry it)" if v == 17 else "",
+            "note": ("opt-in run with the published VCEP bars, not a step on the way (v18 does not carry it)" if v == 17 else
+                     "the latest classifier: the main run of the family made by release 0.5.0, with the 382 reference-agreement records counted as no-calls" if v == 38 else ""),
             "same_direction_rate": mm["same_direction"] / mm["n"], "exact_rate": mm["exact"] / mm["n"],
             "opposite": mm["opposite"], "false_benign": mm["false_benign"], "false_pathogenic": mm["false_pathogenic"],
             "plp_recall": mm["plp_recall"], "blb_recall": mm["blb_recall"], "n": mm["n"], "denominator": mm["n"],
@@ -1709,6 +1733,16 @@ def facts(df: pd.DataFrame) -> None:
     out.append(("trunc_vus", len(trunc)))
     splice = df[(df.cv3 == "P/LP") & (df.fv3 == "VUS") & df.consequence.isin(["splice_donor_variant", "splice_acceptor_variant"])]
     out += [("canonical_splice_vus", len(splice)), ("canonical_splice_vus_with_pvs1", int(splice.criteria.str.contains("PVS1").sum()))]
+
+    # The benign-side calls of ClinVar's VUS variants: each rests on two or more benign criteria or on one at Very Strong or Stand-alone strength,
+    # which is what the 2015 table needs for a benign-side call. The signatures table keeps only the 25 most common signatures of a cell, so it
+    # cannot count the calls that rest on one criterion, and the sentence that quotes them was checked against a typed 4,616 until v38 made it 4,804.
+    vus_blb = df[(df.cv3 == "VUS") & (df.fv3 == "B/LB")]
+    benign_points = vus_blb["criteria"].map(lambda s_: [code_points(c)[1] for c in s_.split("&") if c and code_points(c)[0] == "B"])
+    one_benign = benign_points[benign_points.map(len) == 1]
+    out += [("vus_called_blb", len(vus_blb)), ("vus_called_blb_no_benign_criterion", int((benign_points.map(len) == 0).sum())),
+            ("vus_called_blb_one_benign_criterion", len(one_benign)),
+            ("vus_called_blb_one_benign_criterion_very_strong_or_standalone", int(one_benign.map(lambda b_: b_[0] == 8).sum()))]
 
     # The residual calls: gnomAD counts of the PVS1-on-benign-side group, and the consequence classes of the BP4+BP7 group.
     res = pd.read_csv(OUT / fname("opposite_direction_v37.csv"), dtype=str)
@@ -2616,6 +2650,23 @@ def v38_stats() -> None:
               ("base_vs_v37_differing_variants_that_are_indels", int((differ.ref.str.len() != differ.alt.str.len()).sum())),
               ("base_vs_v37_differing_variants_called_lp_by_v37_and_vus_in_clinvar",
                int(((differ.call == "Likely_pathogenic") & (differ.call_base == "VUS") & (differ.clinvar == "VUS")).sum()))]
+    # The opposite-direction calls of the main run under v37 and under v38: which leave the set and which enter it. The text says that one
+    # leaves and none enters, and what the variant that leaves is and why its call changed (the criteria are those of the two runs).
+    p37, p38 = v38_pv("v37"), cache["v38"]
+    opposite = lambda d: set(map(tuple, d[((d.cv3 == "P/LP") & (d.fv3 == "B/LB")) | ((d.cv3 == "B/LB") & (d.fv3 == "P/LP"))][KEY].values))  # noqa: E731
+    o37, o38 = opposite(p37), opposite(p38)
+    left, entered = sorted(o37 - o38), sorted(o38 - o37)
+    facts += [("opposite_in_v37", len(o37)), ("opposite_in_v38", len(o38)), ("opposite_left_in_v38", len(left)), ("opposite_entered_in_v38", len(entered))]
+    if len(left) == 1:
+        k = left[0]
+        x37 = p37.set_index(KEY).loc[k]
+        x38 = p38.set_index(KEY).loc[k]
+        facts += [("left_opposite_variant", f"{k[0]}:{k[1]} {k[2]}>{k[3]}"), ("left_opposite_gene", x38.symbol or x38.gene), ("left_opposite_consequence", x38.consequence), ("left_opposite_clinvar", x38.clinvar),
+                  ("left_opposite_stars", x38.stars), ("left_opposite_call_v37", x37.call), ("left_opposite_criteria_v37", x37.criteria),
+                  ("left_opposite_call_v38", x38.call), ("left_opposite_criteria_v38", x38.criteria), ("left_opposite_tags_v38", x38.clingen_tags),
+                  ("left_opposite_gnomad_ac", int(x38.gnomad_ac)), ("left_opposite_gnomad_an", int(x38.gnomad_an)), ("left_opposite_gnomad_hc", int(x38.gnomad_hc)),
+                  ("left_opposite_popmax_af", float(x38.gnomad_popmax_af)), ("left_opposite_in_round6", int(k in {tuple(r_) for r_ in
+                      pd.read_csv(OUT / "round6_rulings.tsv", sep="\t", dtype=str)[["chrom", "pos", "ref", "alt"]].values.tolist()}))]
     write("v38_facts.csv", [{"name": k, "value": v} for k, v in facts])
 
 
@@ -2996,14 +3047,12 @@ NO_DF = {"v38": v38_stats, "v38reading": v38_inheritance_reading, "v38holdout": 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", default="", help="comma-separated step names")
-    ap.add_argument("--base", choices=BASES, default="v37",
-                    help="the classifier whose final run the tables describe: v37 (the default) writes the files the manuscript reads, "
-                         "v38 writes their twins from the family of runs of release 0.5.0 (see the docstring)")
+    ap.add_argument("--base", choices=BASES, default="v38",
+                    help="the classifier whose final run the tables describe: v38, the latest (the default), writes the files the manuscript "
+                         "reads, and v37 writes their twins for the classifier at the close of the review rounds (see the docstring)")
     args = ap.parse_args()
     set_base(args.base)
-    # Under another base the steps of Section 3.8 and of the history of the versions are not run: their files belong to neither base.
-    want = [s for s in args.only.split(",") if s] or [s for s in list(STEPS) + list(NO_DF)
-                                                       if args.base == "v37" or s not in V38_ONLY_STEPS + HISTORY_STEPS]
+    want = [s for s in args.only.split(",") if s] or list(STEPS) + list(NO_DF)
     df = None
     for name in want:
         print(name)

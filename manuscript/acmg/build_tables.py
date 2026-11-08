@@ -15,27 +15,28 @@ that are text (the guidance ledger, the evidence sources) are not generated and 
 
 ClinVar's 2-star+ classifications are a reference and not ground truth.
 
-Two bases. The tables are built from the files of a base, the classifier whose final run they describe: `--base v37` (the
-default) reads `runs_v37_variants.csv` and the other `_v37` files, which is what the manuscript says, and `--base v38` reads their
-twins (`runs_v38_variants.csv`, ...) from `analysis/acmg_benchmark/scripts/13_manuscript_stats.py --base v38`, with the runs and the
-labels that name v37 named v38. The code is spelled for v37 and every name goes through `fname`, `rn` or `lab`, which change nothing
-under v37. The text of `manuscript.md` still says v37, so under `--base v38` `--check` says what would change and `--write` is
-refused: `--write-to PATH` writes the manuscript with the tables of the base to a file of your own, and the manuscript is not touched.
-The typed claims of Table 3 (a knee, a range of exchange rates, a flat sweep) are computed from the steps of the base by the rules
-in `table_thresholds`, so that they say what the base's data say; under v37 they give the words that were typed there.
+Two bases. The tables are built from the files of a base, the classifier whose final run they describe: `--base v38` (the
+default, the latest classifier, which is what the manuscript says) reads `runs_v38_variants.csv` and the other `_v38` files from
+`analysis/acmg_benchmark/scripts/13_manuscript_stats.py`, and `--base v37` reads their twins for v37 (`runs_v37_variants.csv`, ...),
+the classifier at the close of the review rounds, which is the before of what v38 changes. The code is spelled for v37 and every
+name goes through `fname`, `rn` or `lab`, which turn it into the base's. The text of `manuscript.md` says v38, so under `--base v37`
+`--check` says what would differ and `--write` is refused: `--write-to PATH` writes the manuscript with the tables of the base to a
+file of your own, and the manuscript is not touched. The typed claims of Table 3 (a knee, a range of exchange rates, a flat sweep)
+are computed from the steps of the base by the rules in `table_thresholds`, so that they say what the base's data say.
 
 Usage
   build_tables.py --check     compare every marked block with its generated text
   build_tables.py --write     rewrite the marked blocks in place
   build_tables.py --print cutoffs    print one table
-  build_tables.py --base v38 --print thresholds     the table for v38
-  build_tables.py --base v38 --write-to /tmp/manuscript_v38_tables.md    the manuscript with v38's tables, written elsewhere
+  build_tables.py --base v37 --print thresholds     the table for v37
+  build_tables.py --base v37 --write-to /tmp/manuscript_v37_tables.md    the manuscript with v37's tables, written elsewhere
 """
 
 from __future__ import annotations
 
 import argparse
 import math
+import os
 import re
 import sys
 from pathlib import Path
@@ -49,7 +50,7 @@ MANUSCRIPT = HERE / "manuscript.md"
 N_ALL = 673_660  # every ClinVar 2-star+ record of the April benchmark
 
 
-BASE = "v37"  # the classifier whose files the tables are built from (see the docstring)
+BASE = "v38"  # the classifier whose files the tables are built from (see the docstring)
 
 
 def fname(name: str) -> str:
@@ -210,7 +211,7 @@ def _step(steps: pd.DataFrame, knob: str, which: int) -> str:
 
 
 def table_thresholds() -> str:
-    """Table 3: the thresholds that no guideline states, and what v37 shows."""
+    """Table 3: the thresholds that no guideline states, and what the base (v38 by default) shows."""
     r = read("runs_v37_variants.csv").set_index("name")
     steps = read("threshold_steps_v37.csv")
     vc = read("vcep_bars_v37.csv").set_index("bar")
@@ -219,7 +220,8 @@ def table_thresholds() -> str:
     lo, hi = min(pm2.plp_recall.min(), base.plp_recall), max(pm2.plp_recall.max(), base.plp_recall)
     pm2r = r[(r.knob == "pm2_ar_af_threshold") & (r.group == "sweep")]
     rlo, rhi = min(pm2r.plp_recall.min(), base.plp_recall), max(pm2r.plp_recall.max(), base.plp_recall)
-    rspan = int(pm2r.same_direction.max() - pm2r.same_direction.min())
+    # the default is one of the settings of the sweep, as it is for the recall beside it: leaving it out gave 26 calls under v38 where the text said 27
+    rspan = int(max(pm2r.same_direction.max(), base.same_direction) - min(pm2r.same_direction.min(), base.same_direction))
     tb0, tb1 = r.loc[rn("v37_ix_table_pm2ad_0")], r.loc[rn("v37_ix_table_pm2ad_0.0001")]
     noan = r.loc[rn("v37_sw_no_an_floor")]
     off = r.loc[rn("v37_sw_phylop_1000")]
@@ -319,7 +321,7 @@ def table_thresholds() -> str:
 
 
 def table_decomposition() -> str:
-    """Table 5: every ClinVar 2-star+ record, by how the v37 call relates to ClinVar's class."""
+    """Table 5: every ClinVar 2-star+ record, by how the base's call relates to ClinVar's class."""
     c = read("confusion_5x5_v37.csv").pivot(index="clinvar", columns="fastvep", values="n")
     tot = int(c.to_numpy().sum())
     if tot != N_ALL:
@@ -356,7 +358,7 @@ def table_decomposition() -> str:
 
 
 def table_residual() -> str:
-    """Table 6: the opposite-direction calls of v37, by the kind of evidence behind the call and the review ruling."""
+    """Table 6: the opposite-direction calls of the base, by the kind of evidence behind the call and the review ruling."""
     g = read("opposite_direction_by_group_v37.csv").set_index("group")
     order = [
         "PVS1 on a ClinVar benign-side variant",
@@ -386,7 +388,7 @@ def table_residual() -> str:
 
 
 def table_temporal() -> str:
-    """Table 7: v37 on the April set and on each stratum of the later release."""
+    """Table 7: the base on the April set and on each stratum of the later release."""
     t = read("temporal_v37.csv")
     bc = read("temporal_by_class_v37.csv")
     c3 = read("confusion_3x3_v37.csv")
@@ -444,13 +446,16 @@ def main() -> None:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--print", dest="show", default="")
-    ap.add_argument("--base", choices=["v37", "v38"], default="v37", help="the classifier whose files the tables are built from (see the docstring)")
+    ap.add_argument("--base", choices=["v37", "v38"], default=os.environ.get("ACMG_BASE", "v38"),
+                    help="the classifier whose files the tables are built from (default v38, or ACMG_BASE like the other scripts; see the docstring)")
     ap.add_argument("--write-to", dest="write_to", default="", help="write the manuscript with the tables of the base to this file and leave manuscript.md as it is")
     args = ap.parse_args()
     global BASE
     BASE = args.base
-    if args.write and BASE != "v37":
-        sys.exit(f"manuscript.md says v37, and --write would put the tables of {BASE} in its text: use --write-to PATH")
+    if BASE not in ("v37", "v38"):
+        sys.exit(f"unknown base {BASE}; choose v37 or v38")
+    if args.write and BASE != "v38":
+        sys.exit(f"manuscript.md says v38, and --write would put the tables of {BASE} in its text: use --write-to PATH")
     if args.show:
         print(TABLES[args.show]())
         return

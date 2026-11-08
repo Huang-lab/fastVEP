@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
-# Build the eight binaries the manuscript's runs are made by, each from a clean export of its source.
+# Build the eight binaries the manuscript's runs are made by, each from a clean export of its source: the three of the family v38 (the
+# latest classifier, from the tag of release 0.5.0), the two that Section 3.8 adds, and the three of the family v37.
 #
 #     build_manuscript_binaries.sh OUT_DIR
-#     V38_REF=<commit> build_manuscript_binaries.sh OUT_DIR       # v38 as committed
+#     V38_REF=<commit> build_manuscript_binaries.sh OUT_DIR       # v38 as committed (the default is the tag v0.5.0-rc.1, release 0.5.0)
 #     V38_TREE=. build_manuscript_binaries.sh OUT_DIR             # v38 as the checkout holds it, uncommitted files included
-#     NAMES="v38 alt" V38_TREE=. build_manuscript_binaries.sh OUT_DIR   # only these, the others being left as they are
-#     V38_REF=v0.5.0-rc.1 NAMES="cut38 hook38" build_manuscript_binaries.sh OUT_DIR   # the two patched builds of the v38 family
+#     NAMES="v38 cut38 hook38" build_manuscript_binaries.sh OUT_DIR   # only the three binaries of the family v38 (the default family
+#                                                                     # of 11_manuscript_runs.py), the others being left as they are
+#     NAMES="v37 cut hook" build_manuscript_binaries.sh OUT_DIR   # only the three binaries of the family v37
 #
-#   v37   the classifier of Sections 2 to 3.7 (V37_REF, default 5d8004a, the merge of PR #140)
-#   cut   v37 with replay_validation/combiner_cutoff_env.patch   the point-cutoff runs (FASTVEP_LP_CUT, FASTVEP_P_CUT)
-#   hook  v37 with replay_validation/bp_hooks_env.patch          the BP1 and BP7 runs (FASTVEP_BP1_LOO, ...)
-#   base  the commit before the curated-inheritance change (BASE_REF, default 9d84be0, master before it)
-#   v38   the classifier of Section 3.8 (V38_REF, default HEAD; or the files of the checkout named by V38_TREE)
-#   alt   v38 with replay_validation/inheritance_alternatives_env.patch   the alternatives (FASTVEP_ALT)
-#   cut38   v38 with replay_validation/combiner_cutoff_env.patch   the point-cutoff runs of the v38 family
-#   hook38  v38 with replay_validation/bp_hooks_env.patch          the BP1 and BP7 runs of the v38 family
+#   v38   the latest classifier (V38_REF, default the tag v0.5.0-rc.1, release 0.5.0; or the files of the checkout named by V38_TREE)
+#   cut38   v38 with replay_validation/combiner_cutoff_env.patch   the point-cutoff runs of the family v38 (FASTVEP_LP_CUT, FASTVEP_P_CUT)
+#   hook38  v38 with replay_validation/bp_hooks_env.patch          the BP1 and BP7 runs of the family v38 (FASTVEP_BP1_LOO, ...)
+#   base  the commit before the curated-inheritance change (BASE_REF, default 9d84be0, master before it), for Section 3.8
+#   alt   v38 with replay_validation/inheritance_alternatives_env.patch   the alternatives of Section 3.8 (FASTVEP_ALT)
+#   v37   the classifier at the close of the review rounds (V37_REF, default 5d8004a, the merge of PR #140), the before of what v38 changes
+#   cut   v37 with replay_validation/combiner_cutoff_env.patch   the point-cutoff runs of the family v37
+#   hook  v37 with replay_validation/bp_hooks_env.patch          the BP1 and BP7 runs of the family v37
 #
-# The two patches of cut38 and hook38 were written against v37 (5d8004a) and apply to the v38 tree (the tag v0.5.0-rc.1)
+# The two patches were written against v37 (5d8004a), and apply to the v38 tree of cut38 and hook38 (the tag v0.5.0-rc.1)
 # as they are, with every context line matching (`patch --dry-run --verbose --fuzz=0` on an export of the tag): the
 # cutoff patch lands on the line it was written for, and the hooks patch with offsets of 2 and 20 lines, because the
-# v38 tree has documentation added above both of its hunks. `apply_patch` refuses a hunk that needs fuzz, so a patch
-# whose context has changed stops the build and is not quietly fitted to the tree by `patch`. (macOS's patch prints
-# an offset only with --verbose; the build is quiet, so the offsets are not in its log.)
+# v38 tree has documentation added above both of its hunks. The alternatives patch of `alt` was written against the working
+# tree that became v38 and applies to the tag with one hunk at an offset of 30 lines and the rest where they were written,
+# checked the same way. `apply_patch` refuses a hunk that needs fuzz, so a patch whose context has changed stops the build
+# and is not quietly fitted to the tree by `patch`. (macOS's patch prints an offset only with --verbose; the build is
+# quiet, so the offsets are not in its log.)
 #
 # Writes OUT_DIR/fastvep_<name> and OUT_DIR/SHA256SUMS, and prints the environment variables that
 # `11_manuscript_runs.py` and `14_temporal_holdout.py` read their binaries from.
@@ -47,10 +51,10 @@ ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 PATCHES="$ROOT/manuscript/acmg/replay_validation"
 V37_REF="${V37_REF:-5d8004a}"
 BASE_REF="${BASE_REF:-9d84be0}"
-V38_REF="${V38_REF:-HEAD}"
+V38_REF="${V38_REF:-v0.5.0-rc.1}"
 V38_TREE="${V38_TREE:-}"
 BUILD_JOBS="${BUILD_JOBS:-2}"
-NAMES="${NAMES:-v37 cut hook base v38 alt cut38 hook38}"
+NAMES="${NAMES:-v38 cut38 hook38 base alt v37 cut hook}"
 wants() { case " $NAMES " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 mkdir -p "$OUT_DIR"
@@ -87,7 +91,7 @@ for name in $NAMES; do
     v38 | alt | cut38 | hook38)
       if [ -n "$V38_TREE" ]; then export_tree "$name" "$V38_TREE"; else export_ref "$name" "$V38_REF"; fi
       ;;
-    *) echo "unknown name: $name (v37 cut hook base v38 alt cut38 hook38)" >&2; exit 2 ;;
+    *) echo "unknown name: $name (v38 cut38 hook38 base alt v37 cut hook)" >&2; exit 2 ;;
   esac
 done
 if wants cut; then apply_patch cut combiner_cutoff_env.patch; fi
@@ -168,14 +172,16 @@ done
 
 (cd "$OUT_DIR" && shasum -a 256 fastvep_* > SHA256SUMS)
 cat "$OUT_DIR/SHA256SUMS"
-cat <<EOF
-
-export FASTVEP_V37_BIN=$OUT_DIR/fastvep_v37
-export FASTVEP_CUTOFF_BIN=$OUT_DIR/fastvep_cut
-export FASTVEP_HOOKS_BIN=$OUT_DIR/fastvep_hook
-export FASTVEP_V38_BASE_BIN=$OUT_DIR/fastvep_base
-export FASTVEP_V38_BIN=$OUT_DIR/fastvep_v38
-export FASTVEP_V38_ALT_BIN=$OUT_DIR/fastvep_alt
-export FASTVEP_CUTOFF38_BIN=$OUT_DIR/fastvep_cut38
-export FASTVEP_HOOKS38_BIN=$OUT_DIR/fastvep_hook38
-EOF
+# the variables of the binaries that were built, and of no other
+exports() { # variable name
+  if wants "$2"; then echo "export $1=$OUT_DIR/fastvep_$2"; fi
+}
+echo
+exports FASTVEP_V38_BIN v38
+exports FASTVEP_CUTOFF38_BIN cut38
+exports FASTVEP_HOOKS38_BIN hook38
+exports FASTVEP_V38_BASE_BIN base
+exports FASTVEP_V38_ALT_BIN alt
+exports FASTVEP_V37_BIN v37
+exports FASTVEP_CUTOFF_BIN cut
+exports FASTVEP_HOOKS_BIN hook

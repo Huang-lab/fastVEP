@@ -18,17 +18,17 @@ ClinVar's 2-star+ classifications are a reference and not ground truth; every ax
 says "ClinVar 2-star+" (the constant `CV`), and `clinvar_note` puts a footnote under each figure that
 gives the review status, the release and what P/LP, B/LB and VUS stand for.
 
-Two bases. The figures are drawn from the files of a base, the classifier whose final run the tables describe: `--base v37`
-(the default) reads `runs_v37_variants.csv` and the other `_v37` files, which is what the manuscript says, and writes `figures/`.
-`--base v38` reads their twins (`13_manuscript_stats.py --base v38`) with the runs and the labels that name v37 named v38, and needs
-`--out DIR`, because the figures of the repository are the manuscript's and say v37. The code is spelled for v37 and every name
-goes through `fname`, `rn` or `blab`, which change nothing under v37. The figures of the history of the versions (S1, S2 and the
-trajectory in S4) are v37's and are drawn from the files that have no twin.
+Two bases. The figures are drawn from the files of a base, the classifier whose final run the tables describe: `--base v38`
+(the default, the latest classifier, which is what the manuscript says) reads `runs_v38_variants.csv` and the other `_v38` files
+(`13_manuscript_stats.py`) and writes `figures/`. `--base v37` reads their twins for v37, the classifier at the close of the review
+rounds, with the runs and the labels that name v38 named v37, and needs `--out DIR`, because the figures of the repository are the
+manuscript's and say v38. The code is spelled for v37 and every name goes through `fname`, `rn` or `blab`, which turn it into the
+base's. The figures of the history of the versions (S1, S2 and the trajectory in S4) are drawn from the files that have no twin.
 
 Usage
   generate_figures.py            all figures
   generate_figures.py 1 S3       figure 1 and supplementary figure S3
-  generate_figures.py --base v38 --out /tmp/figures_v38     every figure for v38, in a directory of your own
+  generate_figures.py --base v37 --out /tmp/figures_v37     every figure for v37, in a directory of your own
 
 Figures 1 to 5 are the main figures, each of which states a conclusion of the paper; Figures S1 to S4
 show how the classifier was developed and reviewed (the runs, the ledger of changes, the reviewer's
@@ -65,13 +65,13 @@ def _arg(flag: str, default: str) -> str:
     return default
 
 
-BASE = _arg("--base", os.environ.get("ACMG_BASE", "v37"))
+BASE = _arg("--base", os.environ.get("ACMG_BASE", "v38"))
 if BASE not in ("v37", "v38"):
     sys.exit(f"unknown base {BASE}; choose v37 or v38")
 if _arg("--out", ""):
     FIG = Path(_arg("--out", ""))
-elif BASE != "v37":
-    sys.exit(f"the figures of the repository say v37: give --out DIR for the figures of {BASE}")
+elif BASE != "v38":
+    sys.exit(f"the figures of the repository say v38: give --out DIR for the figures of {BASE}")
 
 
 def fname(name: str) -> str:
@@ -216,6 +216,7 @@ EVENTS = [
     (20, "v19 and v20: frequency veto; hypomorph exceptions"),
     (27, "v23 to v27: Ensembl-parity annotation"),
     (37, "v37: review 6 (HGVS placement, BP7 exon edge, BS2 threshold)"),
+    (38, "v38: reads ClinGen's curated mode of inheritance"),
 ]
 
 
@@ -225,7 +226,7 @@ def figS1_trajectory() -> None:
     for c in ("same_direction_rate", "exact_rate", "plp_recall", "blb_recall"):
         t[c] = t[c] * 100  # every rate of this figure is drawn as a percentage
     stored = t[t.source.str.startswith("scored")]
-    main = stored[stored.mainline]  # the steps on the way: v7 to v37 without v17
+    main = stored[stored.mainline]  # the steps on the way: v7 to v38 without v17
     side = stored[~stored.mainline]  # v17, the opt-in run with the published VCEP thresholds
     # Open markers: v1, a matrix reconstructed from the run's documentation, and v2, v4 to v6, the figures
     # recorded at the time. None of them has a raw output behind it.
@@ -279,9 +280,9 @@ def figS1_trajectory() -> None:
     axA.set_ylim(45, 80)
     axA.set_yticks(range(45, 81, 5))
     axA.set_ylabel("Agreement with ClinVar 2-star+\n(% of 673,660 variants)")
-    v37 = main[main.run == "v37"].iloc[0]
-    axA.text(37.6, v37.same_direction_rate, f"{v37.same_direction_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
-    axA.text(37.6, v37.exact_rate, f"{v37.exact_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
+    last = main[main.run == "v38"].iloc[0]  # the latest version; v37 is one step before it and 0.2 points below
+    axA.text(38.6, last.same_direction_rate, f"{last.same_direction_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
+    axA.text(38.6, last.exact_rate, f"{last.exact_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
     v1 = opened[opened.run == "v1"].iloc[0]
     axA.annotate("v1: 51.0% of all records\n(54.7% of the 627,376 it annotated)", xy=(1.2, v1.same_direction_rate - 0.5),
                  xytext=(8.0, 47.6), fontsize=6.4, color=INK2, ha="left", va="center",
@@ -321,7 +322,7 @@ def figS1_trajectory() -> None:
     axB.set_yticklabels(["10", "30", "100", "300"])
     axB.yaxis.set_minor_locator(matplotlib.ticker.NullLocator())
     axB.set_ylabel("Opposite-direction calls\n(n, log scale)")
-    for run in ("v7", "v13", "v37"):
+    for run in ("v7", "v13", "v38"):
         r = main[main.run == run].iloc[0]
         axB.text(r["order"] + 0.35, r.opposite * 1.10, f"{int(r.opposite)}", fontsize=6.8, color=INK2, va="bottom", ha="left")
     handles, labels = axB.get_legend_handles_labels()
@@ -340,9 +341,9 @@ def figS1_trajectory() -> None:
     axC.set_yticks(range(40, 71, 5))
     axC.set_ylabel(f"Same-direction recall\n(% of the {CV} class)")
     axC.text(1.0, 41.0, "v1: 10.9% and 19.0%, below the axis", fontsize=6.4, color=INK2, ha="left", va="bottom")
-    axC.set_xlabel("Benchmark run (v1 to v37)")
-    axC.set_xlim(0, 40)
-    axC.set_xticks([1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37])
+    axC.set_xlabel("Benchmark run (v1 to v38)")
+    axC.set_xlim(0, 41.5)
+    axC.set_xticks([1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 38])
     axC.legend(handles=[Line2D([0], [0], color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label=f"{CV} P/LP called P or LP"),
                         Line2D([0], [0], color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label=f"{CV} B/LB called LB or B")],
                loc="lower right", fontsize=6.6)
@@ -1064,8 +1065,8 @@ def figS4_frontier() -> None:
     """Agreement in direction against opposite-direction calls, for the versions, the runs of this paper and simple rules.
 
     The point of the figure is that agreement does not say how cautious a classifier is: rules with no combining rule,
-    gene-level gate or safeguard reach a higher agreement than v37 by accepting many times as many contradictions, and at
-    the number of contradictions that v37 has, or ten times it, they agree far less.
+    gene-level gate or safeguard reach a higher agreement than the base classifier by accepting many times as many
+    contradictions, and at the number of contradictions that the base has, or ten times it, they agree far less.
     """
     N = 673_660
     traj = read("trajectory.csv")
@@ -1136,7 +1137,7 @@ def figS4_frontier() -> None:
     ax.set_xlabel("Opposite-direction calls (n, log scale)")
     ax.set_ylabel(f"Agreement in direction with {CV}\n(% of 673,660 variants)")
     handles = [
-        Line2D([0], [0], color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, label="fastVEP versions v7 to v37 (scored matrices)"),
+        Line2D([0], [0], color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, label=f"fastVEP versions {main.run.iloc[0]} to {main.run.iloc[-1]} (scored matrices)"),
         Line2D([0], [0], ls="none", marker="o", ms=3.4, mfc="#b7b6ae", mec="none", label=blab("runs of this paper: v37 with one change")),
     ] + [Line2D([0], [0], color=col, lw=1.1, marker=mk, ms=MS - 2.2, mfc=SURFACE, mec=col, mew=1.1, label=lab) for col, mk, lab in style.values()] + [
         Line2D([0], [0], ls="none", marker="s", ms=MS - 1.0, mfc=CAT[3], mec=SURFACE, label="filled: R2, and R2 with R3, with no frequency rule"),

@@ -3,7 +3,8 @@
 
 The two families are the same list of runs (`11_manuscript_runs.py --family v37` and `--family v38`: the sweeps, switches,
 leave-one-source-out ablations, PM2 sweeps under the 2015 table, point cutoffs, hooks and gap runs on the April set, and the
-seven changes on the October release), made by the classifier of Sections 2 to 3.7 and by the classifier of release 0.5.0, so a
+seven changes on the October release), made by the classifier of the review rounds (v37) and by the classifier of release 0.5.0 (v38, the
+latest, which is the one that the manuscript describes), so a
 pair of runs with the same name apart from the prefix differs in the classifier and in nothing else. This script reads the
 scored files of both and writes what moved:
 
@@ -17,10 +18,13 @@ scored files of both and writes what moved:
                                            same classifier) under both, and whether the effect changed sign or by more than 20%
   results/v38_family_vs_v37_opposite.csv   the opposite-direction calls that are in one run of a pair and not in the other, with
                                            the criteria and the call each has
+  results/v38_family_vs_v37_summary.csv    the counts that the manuscript quotes from this comparison and that no table of
+                                           `manuscript/acmg/data/` holds (`verify_numbers.py` reads them): the sweeps and how many
+                                           differ in shape or knee, the effects and how many changed
   results/v38_family_vs_v37.md             the same in words, one sentence on a line: a summary, then the main pair, the
                                            opposite-direction calls, the sweeps, the ablations, the controls, the criteria that fire
-                                           more or less and the October release, and last the statements of the manuscript that the
-                                           numbers of v38 change (Section 9: the claims whose truth or wording changes, with their
+                                           more or less and the October release, and last the statements of the manuscript that read
+                                           differently under v37 (Section 9: the claims whose truth or wording differs, with their
                                            line numbers and the numbers that decide them; the statements about how the runs were
                                            made; the tables, workbook and figures that differ; and every number of the text that
                                            `verify_numbers.py` recomputes differently)
@@ -31,9 +35,11 @@ them and v38's do not, so the matrices of v38 are filled with them as no-calls (
 
 ClinVar's 2-star+ classifications are a reference and not ground truth. Every agreement here is with them and nothing stronger.
 
-Section 9 of the document reads `manuscript/acmg/manuscript.md` and does not change it. Its line numbers are those of the file as it
-stands, and it runs `verify_numbers.py --base v37` and `--base v38` with `--dump` and sets the two dumps side by side, builds the
-workbook and the figures of v38 in a temporary directory, and compares the tables that `build_tables.py` makes with the text. The few
+Section 9 of the document reads `manuscript/acmg/manuscript.md`, which says v38, and does not change it. Its line numbers are those of
+the file as it stands, and it runs `verify_numbers.py --base v37` and `--base v38` with `--dump` and sets the two dumps side by side (the
+numbers of the text that differ under v37), builds the workbook and the figures of v37 in a temporary directory, and compares the tables
+that `build_tables.py --base v37` makes with the text. The statements that it quotes are those of the manuscript as it stands, and the
+wording that they had when the manuscript was written for v37 is in the script. The few
 statements of the text above that are typed and not computed (which sweeps have a knee, which four variants lose a pathogenic-side
 call, which sweeps are flat, which is the large effect) are asserted by `check_typed_claims`, so the script stops and does not write a
 document that the data contradict.
@@ -46,6 +52,7 @@ Usage
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import importlib.util
 import json
 import math
@@ -56,6 +63,7 @@ import sys
 import tempfile
 from collections import Counter
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -69,6 +77,7 @@ OUT_CSV = RES / "v38_family_vs_v37.csv"
 OUT_SWEEPS = RES / "v38_family_vs_v37_sweeps.csv"
 OUT_EFFECTS = RES / "v38_family_vs_v37_effects.csv"
 OUT_OPPOSITE = RES / "v38_family_vs_v37_opposite.csv"
+OUT_SUMMARY = RES / "v38_family_vs_v37_summary.csv"
 OUT_MD = RES / "v38_family_vs_v37.md"
 
 _spec = importlib.util.spec_from_file_location("stats13", HERE / "13_manuscript_stats.py")
@@ -269,7 +278,7 @@ def knee_of(steps: list[dict]) -> tuple[float | None, float]:
     calls per added error to about a hundred or fewer. Here it is the setting that two neighbouring steps share when the finite rate
     of the second is the smallest fraction of the first's (the rates of a step that adds no error are infinite and are not compared),
     and only when that fall is by a factor of 3 or more and the first step is worth 150 calls per error or more; otherwise there is
-    no knee. The rule gives the two knees that the manuscript names for v37, BS1 at 1e-3 and the far boundary of BP7 at 300, and
+    no knee. The rule gives the two knees that the manuscript names, BS1 at 1e-3 and the far boundary of BP7 at 300, under both versions, and
     none for the other sweeps that the manuscript says have none. Returns the setting and the factor of the largest fall.
     """
     best, where, before = 1.0, None, 0.0
@@ -508,6 +517,18 @@ def find_line(lines: list[str], anchor: str) -> int:
 # ---------------------------------------------------------------------------------------------- 1. what is compared
 
 
+def new_york_days(times: list[str]) -> str:
+    """The New York date of times that the provenance files record in UTC, which is how the paper dates a run: `7 November 2026`, or `7 to 8 November 2026`.
+
+    The 78 runs of the family v38 that were new were recorded between 03:58 and 04:30 UTC on 8 November, which is the evening of 7 November in New York,
+    and the manuscript dates the runs of v37 in New York (`4 November`, for times that are 4 and 5 November in UTC).
+    """
+    days = sorted({dt.datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(ZoneInfo("America/New_York")).date() for t in times})
+    if len(days) == 1:
+        return f"{days[0].day} {days[0].strftime('%B %Y')}"
+    return f"{days[0].day} to {days[-1].day} {days[-1].strftime('%B %Y')}"
+
+
 def provenance_counts(names: list[str]) -> dict[str, int]:
     out: dict[str, int] = {}
     for nm in names:
@@ -533,7 +554,7 @@ def section_compared(D: Doc, pairs: list[Pair], main: Pair, october: Pair) -> No
     D.s(f"The family v37 is the {sum(1 for p in pairs if p.kind == 'april' and p.dir37.parent == BENCH / 'manuscript_runs')} runs on the April set and the {sum(1 for p in pairs if p.kind == 'october')} runs on the October release that `11_manuscript_runs.py` defines, made on 4 November 2026 by binaries built from commit 5d8004a (`binaries.tsv`).")
     D.s(f"The family v38 is the same {len(fam37)} runs made by the classifier of release 0.5.0, the tag `v0.5.0-rc.1`.")
     D.s(f"{len(shared)} of them are runs that Section 3.8 had already made under the same names (the sweeps `v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`, whose grids are the family's): they were made on 4 November 2026 by the binary of the working tree that became v38 and made again on 7 November 2026 by the binary of release 0.5.0 with every scored file identical (`results/v38_v0.5.0/rerun_comparison.csv`), so they were not made a third time.")
-    D.s(f"The other {len(new38)} were made on 8 November 2026 by binaries built from the tag, {len([x for x in new38 if x.startswith('v38_oct_')])} of them on the October release, recorded between {rec[0][11:19]} and {rec[-1][11:19]} UTC, three at a time on the ten-core machine (the annotation of one run took {secs[0]} to {secs[-1]} seconds, median {secs[len(secs) // 2]}).")
+    D.s(f"The other {len(new38)} were made on {new_york_days(rec)} (New York; the provenance records UTC, {rec[0][:10]}) by binaries built from the tag, {len([x for x in new38 if x.startswith('v38_oct_')])} of them on the October release, recorded between {rec[0][11:19]} and {rec[-1][11:19]} UTC, three at a time on the ten-core machine (the annotation of one run took {secs[0]} to {secs[-1]} seconds, median {secs[len(secs) // 2]}).")
     D.s(f"The binaries were `fastvep_v38` (SHA-256 `70b7c684...`, {c38.get('70b7c684', 0)} runs), `fastvep_cut38` (`de44db94...`, {c38.get('de44db94', 0)} runs, the point cutoffs) and `fastvep_hook38` (`9886d1b5...`, {c38.get('9886d1b5', 0)} runs, BP1's own-record count and BP7's SpliceAI threshold), each built from a clean export of the tag in a target directory of its own by `build_manuscript_binaries.sh`, and `binaries_v38.tsv` records them.")
     D.s(f"The two families are generated by the same functions of `11_manuscript_runs.py` with the name prefix and the binaries as the only parameters, and {same_def[0]} of the {same_def[1]} pairs have the same knob, value, default, removed and replaced annotation files and environment in `run_matrix.tsv` and `run_matrix_v38.tsv`, so a pair differs in the classifier and in nothing else.")
     earlier = [p for p in pairs if p.dir37.parent == BENCH]
@@ -547,9 +568,9 @@ def section_compared(D: Doc, pairs: list[Pair], main: Pair, october: Pair) -> No
     D.bullets([
         "A change is a difference of two counts of the same pair, v38 less v37, and a relative change is that difference over the count under v37.",
         f"The effect of an ablation is the run less the default under the same classifier; it changed sign if the two effects have opposite signs, and by more than 20% if the effect under v38 differs from the one under v37 by more than a fifth of the latter; an effect of fewer than 10 calls under both is called small, because 20% of it is less than two calls.",
-        f"The knee of a sweep is where the exchange rate falls the most from one step to the next (Section 2.5 of the manuscript: from hundreds of calls per added error to about a hundred or fewer), taken here as a fall by a factor of {KNEE_FACTOR:g} or more from a step worth {KNEE_FROM:g} calls per error or more; under both classifiers the rule finds the two knees that the manuscript names for v37 (BS1 at 1e-3 and BP7's far boundary at 300), none in the sweeps that the manuscript says have none (BS2's homozygote bar, BP7's PhyloP bar and the veto count of BP1), and two that it does not state in these terms (the Likely pathogenic cutoff at 5 points, and the PM2 threshold under the 2015 table at 1e-5, a point inside the span from strict absence to 4e-5 that the manuscript calls the knee that v10 recorded).",
+        f"The knee of a sweep is where the exchange rate falls the most from one step to the next (Section 2.5 of the manuscript: from hundreds of calls per added error to about a hundred or fewer), taken here as a fall by a factor of {KNEE_FACTOR:g} or more from a step worth {KNEE_FROM:g} calls per error or more; under both classifiers the rule finds the two knees that the manuscript names (BS1 at 1e-3 and BP7's far boundary at 300, under both versions), none in the sweeps that the manuscript says have none (BS2's homozygote bar, BP7's PhyloP bar and the veto count of BP1), and two that it does not state in these terms (the Likely pathogenic cutoff at 5 points, and the PM2 threshold under the 2015 table at 1e-5, a point inside the span from strict absence to 4e-5 whose rise the manuscript says that v10 took for a knee).",
     ])
-    D.s("Every number in this file is read from the scored files of the runs and from the twin tables of `manuscript/acmg/data/`, and `20_compare_families.py` writes this file and the four CSV files beside it.")
+    D.s("Every number in this file is read from the scored files of the runs and from the twin tables of `manuscript/acmg/data/`, and `20_compare_families.py` writes this file and the five CSV files beside it.")
     D.bullets([
         "`v38_family_vs_v37.csv`: one row for every pair, number and cell (the 30 cells of the concordance matrix, 16 headline metrics and the firing count of every criterion), under both families, with the difference and the relative difference.",
         "`v38_family_vs_v37_sweeps.csv`: every sweep as a curve, one row for every setting.",
@@ -784,6 +805,25 @@ def shape_changes(summary: list[dict]) -> list[tuple[str, str]]:
         if reasons:
             out.append((sw["label"], "; ".join(reasons)))
     return out
+
+
+def summary_rows(summary: list[dict], eff: pd.DataFrame) -> list[dict]:
+    """The counts that the manuscript quotes from this comparison and that no table of `manuscript/acmg/data/` holds (`verify_numbers.py`
+    reads them from here): how many sweeps there are and how many differ, and how many effects there are and how many changed."""
+    group_eff = eff[eff.group.isin(["switch", "source", "hook", "gap"])]
+    flagged = group_eff[(group_eff.changed_sign == True) | (group_eff.changed_by_more_than_20_percent == True) | (group_eff.appeared_or_vanished == True)]  # noqa: E712
+    knee = {s_["label"]: (s_["shape"]["v37"]["knee"], s_["shape"]["v38"]["knee"]) for s_ in summary}
+    return [
+        {"name": "sweeps", "value": len(summary)},
+        {"name": "sweeps_that_differ_in_shape", "value": len(shape_changes(summary))},
+        {"name": "sweeps_that_differ_in_the_knee", "value": sum(1 for a_, b_ in knee.values() if a_ != b_)},
+        {"name": "knee_bs1_v37", "value": knee["BS1 bar"][0]}, {"name": "knee_bs1_v38", "value": knee["BS1 bar"][1]},
+        {"name": "knee_bp7_far_boundary_v37", "value": knee["BP7 far boundary"][0]}, {"name": "knee_bp7_far_boundary_v38", "value": knee["BP7 far boundary"][1]},
+        {"name": "effects", "value": len(group_eff)},
+        {"name": "effect_measures", "value": int(group_eff.metric.nunique())},
+        {"name": "effects_that_changed", "value": len(flagged)},
+        {"name": "effects_that_changed_and_are_small", "value": int((flagged.small_number == True).sum())},  # noqa: E712
+    ]
 
 
 def knee_sentence(a: dict, b: dict) -> str:
@@ -1092,23 +1132,28 @@ def numbers_that_change() -> tuple[list[tuple[int, str, list[tuple[str, str]]]],
         sys.exit("the checks of the two bases are not the same list")
     out = []
     for x, y in zip(a, b):
-        d = [(u, v) for u, v in zip(x["values"], y["values"]) if u != v]
+        if len(x["values"]) != len(y["values"]):
+            # a check that lists a different number of values under the two bases (the genes that a sentence names: six under v37 and five under v38)
+            # has values that do not pair by position, so each list is given whole
+            d = [(", ".join(x["values"]), ", ".join(y["values"]))]
+        else:
+            d = [(u, v) for u, v in zip(x["values"], y["values"]) if u != v]
         if d:
             out.append((x["line"], x["anchor"], d))
     return out, len(a), sum(len(x["values"]) for x in a)
 
 
 def derived_outputs_that_change() -> dict:
-    """What the scripts that build the manuscript's tables, workbook and figures make of the files of v38 against what the repository holds
-    (the text still says v37): the marked tables that differ, the sheets of the workbook and the figures. The workbook and the figures are
-    built into a temporary directory, since the ones in the repository are the manuscript's."""
+    """What the scripts that build the manuscript's tables, workbook and figures make of the files of v37 against what the repository holds (the
+    text says v38): the marked tables that differ, the sheets of the workbook and the figures. The workbook and the figures are built into a
+    temporary directory, since the ones in the repository are the manuscript's."""
     out: dict = {}
-    r = subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/build_tables.py"), "--base", "v38", "--check"], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/build_tables.py"), "--base", "v37", "--check"], capture_output=True, text=True)
     out["tables"] = [line.split(": ", 1)[1] for line in r.stdout.splitlines() if line.startswith("stale: ")]
     out["n_tables"] = int(re.search(r"(\d+) marked tables", r.stdout).group(1))
-    # the cells of Table 3 whose words change and not only their numbers
-    t37 = subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/build_tables.py"), "--print", "thresholds"], capture_output=True, text=True, check=True).stdout.splitlines()
-    t38 = subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/build_tables.py"), "--base", "v38", "--print", "thresholds"], capture_output=True, text=True, check=True).stdout.splitlines()
+    # the cells of Table 3 whose words differ and not only their numbers
+    t38 = subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/build_tables.py"), "--print", "thresholds"], capture_output=True, text=True, check=True).stdout.splitlines()
+    t37 = subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/build_tables.py"), "--base", "v37", "--print", "thresholds"], capture_output=True, text=True, check=True).stdout.splitlines()
     bare = lambda text: re.sub(r"[0-9][0-9,.]*(e-?\d+)?%?", "#", text)  # noqa: E731
     out["words"] = []
     for x, y in zip(t37, t38):
@@ -1117,12 +1162,12 @@ def derived_outputs_that_change() -> dict:
             if bare(u) != bare(v):
                 out["words"].append((cx[0], u, v))
     with tempfile.TemporaryDirectory() as tmp:
-        wb, figs = Path(tmp) / "supplementary_tables_v38.xlsx", Path(tmp) / "figures"
-        subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/build_supplement.py"), "--base", "v38", "--write", "--out", str(wb)], check=True, capture_output=True)
+        wb, figs = Path(tmp) / "supplementary_tables_v37.xlsx", Path(tmp) / "figures"
+        subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/build_supplement.py"), "--base", "v37", "--write", "--out", str(wb)], check=True, capture_output=True)
         a = pd.read_excel(ROOT / "manuscript/acmg/supplementary_tables.xlsx", sheet_name=None, header=None)
         b = pd.read_excel(wb, sheet_name=None, header=None)
         out["sheets"] = (len(a), [k for k in a if not a[k].equals(b[k])], [k for k in a if a[k].equals(b[k])])
-        subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/generate_figures.py"), "--base", "v38", "--out", str(figs)], check=True, capture_output=True)
+        subprocess.run([sys.executable, str(ROOT / "manuscript/acmg/generate_figures.py"), "--base", "v37", "--out", str(figs)], check=True, capture_output=True)
         pngs = sorted(f.name for f in figs.glob("*.png"))
         same = [f for f in pngs if (ROOT / "manuscript/acmg/figures" / f).read_bytes() == (figs / f).read_bytes()]
         out["figures"] = (len(pngs), [f for f in pngs if f not in same], same)
@@ -1193,16 +1238,16 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     band = mainline[(mainline.order >= 14) & (mainline.order <= 37)]
     steps = mainline[(mainline.order >= 13) & (mainline.order <= 37)].same_direction_rate.diff().abs().dropna()  # from v13's level into the band, as the text counts
     early = (mainline[mainline.order <= 13].same_direction_rate.diff().abs() * 100).dropna().sort_values(ascending=False)
-    plp_band = mainline[mainline.order >= 11].plp_recall
-    blb_band = mainline[mainline.order >= 13].blb_recall
+    plp_band = mainline[(mainline.order >= 11) & (mainline.order <= 37)].plp_recall  # v11 to v37: trajectory.csv now ends with v38, which is not in the band
+    blb_band = mainline[(mainline.order >= 13) & (mainline.order <= 37)].blb_recall
     r37, r38 = h37["same_direction"] / N, h38["same_direction"] / N
     claims.append(Claim(
-        ["was flat after the thirteenth version", "no run moved it by more than 0.07 points", "has stayed between 62.0 and 62.5% since v11", "stayed between 77.50% and 77.62% for the next 23 runs"],
+        ["flat from the thirteenth version to v37 (77.50% to 77.62%)", "After v13 the headline stopped moving.", "Agreement in direction with ClinVar reached 77.6% at v13 and stayed between"],
         f"Agreement in direction was flat after the thirteenth version: it stayed between {pc(band.same_direction_rate.min())} and {pc(band.same_direction_rate.max())} for the next {len(band)} runs (v14 to v37, without v17), no run moving it by more than {steps.max() * 100:.2f} points; recall of ClinVar's pathogenic-side variants has stayed between {pc(plp_band.min(), 1)} and {pc(plp_band.max(), 1)} since v11, and recall of its benign-side variants between {pc(blb_band.min(), 1)} and {pc(blb_band.max(), 1)} since v13.",
         [f"These are statements about the runs v14 to v37 of `trajectory.csv` ({len(band)} runs, and the step from v13 into the band), and they stay true as history.",
          f"v38 has {pc(r38)} agreement in direction ({n(h38['same_direction'])} calls), {pa(r38 - r37)} points above v37 and {pa(r38 - band.same_direction_rate.max())} points above the top of that band, a step that is {(r38 - r37) / steps.max():.1f} times the largest step between neighbouring runs of v13 to v37.",
          f"Its recall of pathogenic-side variants is {pc(h38['plp_recall'], 1)}, {'inside' if plp_band.min() <= h38['plp_recall'] <= plp_band.max() else 'outside'} the band, and its recall of benign-side variants is {pc(h38['blb_recall'], 1)}, {pa(h38['blb_recall'] - blb_band.max(), 1)} points {'above' if h38['blb_recall'] > blb_band.max() else 'below'} the top of the band (the benign-side recall is over the same {n(sum(sum(main.m38[t].values()) for t in ('Likely_benign', 'Benign')))} variants as the trajectory's).",
-         f"A manuscript whose last version is v38 therefore has one run after the flat stretch that is not in it, and the sentences that say the agreement stopped moving after v13 need to say that it moved once more at v38, by the change of Section 3.8 ({pa(r38 - r37)} points, against {early.iloc[0]:.1f} and {early.iloc[1]:.1f} points for the two largest steps before v13, which line {find_line(manuscript_lines(), 'The two largest steps before v13')} quotes).",
+         f"The manuscript therefore says that the agreement moved once more at v38, by the change of Section 3.8 ({pa(r38 - r37)} points, against {early.iloc[0]:.1f} and {early.iloc[1]:.1f} points for the two largest steps before v13, which line {find_line(manuscript_lines(), 'The two largest steps before v13')} quotes).",
          ]))
 
     # ---- the PM2 sweeps
@@ -1210,11 +1255,11 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     rec37, rec38 = int(float(f37["inheritance_read_recessive_only"])), int(float(f38["inheritance_read_recessive_only"]))
     ar_zero = all(pm_ar["shape"][t][k] == 0 for t in ("v37", "v38") for k in ("range_false_benign", "range_false_pathogenic"))
     claims.append(Claim(
-        ["On v37 the same sweep is almost flat.", "is flat as well: from strict absence to 5e-4", "The two thresholds therefore acted on nearly every gene and on 67 genes"],
+        ["On v38 the same sweep is almost flat, and on v37 it was almost flat as well.", "is flat as well: from strict absence to 5e-4", "On v37 the second threshold reached 67 genes, and a flat sweep there said"],
         f"On v37 the sweep of the PM2 threshold for genes not read as recessive-only is almost flat (recall {span(pm_ad, 'x37', 'same_pathogenic', 93_812)}, {n(pm_ad['shape']['v37']['range_gain'])} variants of 93,812), the sweep for recessive-only genes is flat as well (recall {span(pm_ar, 'x37', 'same_pathogenic', 93_812)}, agreement varying by {pm_ar['shape']['v37']['range_same_direction']} calls, no change in either kind of reference-discordant call), and 'the two thresholds therefore acted on nearly every gene and on {rec37} genes, and a flat sweep says what a threshold does to the calls it reaches, not what a threshold would do if inheritance were read from a correct field'.",
         [f"Under v38 the first sweep moves recall across {span(pm_ad, 'x38', 'same_pathogenic', 93_812)} ({n(pm_ad['shape']['v38']['range_gain'])} variants) and reference-discordant pathogenic calls from {min(o['x38']['false_pathogenic'] for o in pm_ad['points'])} to {max(o['x38']['false_pathogenic'] for o in pm_ad['points'])}: it is still almost flat.",
          f"The second moves recall across {span(pm_ar, 'x38', 'same_pathogenic', 93_812)} and agreement by {pm_ar['shape']['v38']['range_same_direction']} calls, and {'changes neither kind of reference-discordant call under either classifier' if ar_zero else 'changes a reference-discordant call under one of the classifiers'}: it is still flat.",
-         f"v38 reads {n(rec38)} genes as recessive-only where v37 read {n(rec37)}, so the count of genes is a statement about v37, and the clause that a flat sweep does not say what a threshold would do if inheritance were read from a correct field argues from v37's reading; under v38 the field is read and both sweeps stay flat, which Section 3.8 already says (line {find_line(manuscript_lines(), 'Swept again on the genes they now reach, the PM2 thresholds stay flat')})."]))
+         f"v38 reads {n(rec38)} genes as recessive-only where v37 read {n(rec37)}, so the manuscript gives the count of genes of both versions, and says that the sweep of the recessive-only threshold, which reached {n(rec37)} genes and now reaches {n(rec38)}, stays flat (line {find_line(manuscript_lines(), 'On v37 the second threshold reached 67 genes, and a flat sweep there said')})."]))
 
     # ---- the PM2 sweep under the 2015 table
     ix = sweep["PM2 bar, not recessive-only, 2015 table both sides"]
@@ -1228,11 +1273,11 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     tbl, pts_ = "Richards 2015 table", "shipped: SVI points on the pathogenic side"
     ixrun = P["v37_ix_table_pm2ad_0"]
     claims.append(Claim(
-        ["Under the 2015 combining table, which is one switch away in the same classifier, the same sweep is steep", "Recall of pathogenic-side variants is 38.8% at strict absence", "Raising the threshold from strict absence to 4e-5 gains 16,785", "and by 17.9 again when the 2015 table is restored"],
+        ["Under the 2015 combining table, which is one switch away in the same classifier, the same sweep is steep", "Recall of pathogenic-side variants is 51.0% at strict absence", "The sweep that v10 recorded under this table", "The PM2 threshold moved pathogenic-side recall by 19 points when it was set in v10"],
         f"Under the 2015 combining table the same sweep is steep: recall of pathogenic-side variants is {curve('x37')}; raising the threshold from strict absence to 4e-5 gains {n(gain['x37'])} of 93,812 variants for {cost['x37']} more reference-discordant pathogenic calls, 'which is the knee that v10 recorded: the sweep then gave 37.8% at strict absence and 56.8% at 4e-5'; and the PM2 threshold moved pathogenic-side recall by 19 points when it was set in v10, by {pm_ad['shape']['v37']['range_gain'] / 93_812 * 100:.1f} in v37 and by {gain['x37'] / 93_812 * 100:.1f} again when the 2015 table is restored.",
         [f"Under v38 the recall is {curve('x38')}.",
          f"Raising the threshold from strict absence to 4e-5 gains {n(gain['x38'])} variants ({gain['x38'] / 93_812 * 100:.1f} points) for {cost['x38']} more reference-discordant pathogenic calls under v38, against {n(gain['x37'])} ({gain['x37'] / 93_812 * 100:.1f} points) for {cost['x37']} under v37.",
-         f"v10's sweep (37.8% at strict absence and 56.8% at 4e-5) is reproduced by v37 ({pc(p0['x37']['plp_recall'], 1)} and {pc(pdef['x37']['plp_recall'], 1)}) and not by v38 ({pc(p0['x38']['plp_recall'], 1)} and {pc(pdef['x38']['plp_recall'], 1)}), so the sentence that the sweep is the knee that v10 recorded does not hold under v38, and the sentence of Section 4.1 that quotes {gain['x37'] / 93_812 * 100:.1f} points becomes {gain['x38'] / 93_812 * 100:.1f}.",
+         f"v10's sweep (37.8% at strict absence and 56.8% at 4e-5) is reproduced by v37 ({pc(p0['x37']['plp_recall'], 1)} and {pc(pdef['x37']['plp_recall'], 1)}) and not by v38 ({pc(p0['x38']['plp_recall'], 1)} and {pc(pdef['x38']['plp_recall'], 1)}), so the manuscript says that v37 reproduced the sweep that v10 recorded and that v38 rises at every step as v37 does and by about a third as much (Section 4.10 below finds the shape the same step for step and the knee at 1e-5 under both), and Section 4.1 quotes {gain['x38'] / 93_812 * 100:.1f} points for v38 and {gain['x37'] / 93_812 * 100:.1f} for v37.",
          f"The sweep is still the steeper one: it moves recall {gain['x38'] / pm_ad['shape']['v38']['range_gain']:.0f} times as far as the same sweep under the default scheme ({n(gain['x38'])} against {n(pm_ad['shape']['v38']['range_gain'])} variants), where under v37 it moves it {gain['x37'] / pm_ad['shape']['v37']['range_gain']:.0f} times as far, and the statement that the combining rule decides how many calls depend on PM2 holds under v38: {n(dep38.loc[tbl, 'calls_depending_on_pm2'])} calls depend on PM2 under the 2015 table ({n(dep38.loc[tbl, 'of_which_pvs1_and_pm2_only'])} on PVS1 and PM2 alone) and {n(dep38.loc[pts_, 'calls_depending_on_pm2'])} under the default scheme (v37: {n(dep37.loc[tbl, 'calls_depending_on_pm2'])}, {n(dep37.loc[tbl, 'of_which_pvs1_and_pm2_only'])} and {n(dep37.loc[pts_, 'calls_depending_on_pm2'])}).",
          f"A reading that the firing counts support, and that no run tests (no run sweeps both PM2 thresholds under the 2015 table): at strict absence PM2 still fires on {n(ixrun.f38['PM2_Supporting'])} variants under v38 against {n(ixrun.f37['PM2_Supporting'])} under v37, because the {n(rec38)} genes that v38 reads as recessive-only keep their own threshold, which this sweep does not change."]))
 
@@ -1243,9 +1288,9 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     fb = lambda t: "/".join(str(o[t]["false_benign"]) for o in bc["points"])  # noqa: E731
     fp = lambda t: "/".join(str(o[t]["false_pathogenic"]) for o in bc["points"])  # noqa: E731
     claims.append(Claim(
-        ["In v37 the BS2 carrier threshold for genes read as dominant-only is flat", "Switching the threshold off, so that an allele count of at least five alone suffices", "The default 3e-4 recovers 70 pathogenic-side calls"],
+        ["**The BS2 carrier threshold for genes read as dominant-only is a trade", "Switching it off, so that an allele count of at least five alone suffices", "On v37 the same sweep was flat, because the threshold reached the 50 genes"],
         f"In v37 the BS2 carrier threshold for genes read as dominant-only is flat, because it reached {int(float(f37['inheritance_read_dominant_only']))} genes: switching it off and setting it at 3e-3 change the numbers of reference-discordant benign and reference-discordant pathogenic calls by nothing ({dflt['x37']['false_benign']} and {dflt['x37']['false_pathogenic']} throughout), and the default 3e-4 recovers {n(dflt['x37']['same_pathogenic'] - off['x37']['same_pathogenic'])} pathogenic-side calls relative to no threshold ({n(off['x37']['same_pathogenic'])} to {n(dflt['x37']['same_pathogenic'])}) and gives up {n(off['x37']['same_benign'] - dflt['x37']['same_benign'])} benign-side calls ({n(off['x37']['same_benign'])} to {n(dflt['x37']['same_benign'])}), 'and nothing above it recovers another'.",
-        [f"The text says v37 in the first words, and Section 3.8 (line {find_line(manuscript_lines(), 'The BS2 carrier threshold, which now reaches 746 genes and not 50, is no longer flat')}) says that it is no longer flat on the {n(f38['inheritance_read_dominant_only'])} genes that v38 reads as dominant-only.",
+        [f"The manuscript says that the threshold is a trade on the {n(f38['inheritance_read_dominant_only'])} genes that v38 reads as dominant-only, where it was flat on the {int(float(f37['inheritance_read_dominant_only']))} that v37 read (line {find_line(manuscript_lines(), 'On v37 the same sweep was flat, because the threshold reached the 50 genes')}).",
          f"Under v38 the reference-discordant benign calls across the settings (off, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3) are {fb('x38')} and the reference-discordant pathogenic calls {fp('x38')} (under v37 {fb('x37')} and {fp('x37')}).",
          f"The default recovers {n(dflt['x38']['same_pathogenic'] - off['x38']['same_pathogenic'])} pathogenic-side calls relative to no threshold ({n(off['x38']['same_pathogenic'])} to {n(dflt['x38']['same_pathogenic'])}) and gives up {n(off['x38']['same_benign'] - dflt['x38']['same_benign'])} benign-side calls ({n(off['x38']['same_benign'])} to {n(dflt['x38']['same_benign'])}), against {n(dflt['x37']['same_pathogenic'] - off['x37']['same_pathogenic'])} and {n(off['x37']['same_benign'] - dflt['x37']['same_benign'])} under v37.",
          f"Above the default, 1e-3 recovers {n(hi['x38']['same_pathogenic'] - dflt['x38']['same_pathogenic'])} more pathogenic-side calls ({n(dflt['x38']['same_pathogenic'])} to {n(hi['x38']['same_pathogenic'])}), so 'nothing above it recovers another' does not hold under v38 (it holds under v37, where the count stays at {n(dflt['x37']['same_pathogenic'])})."]))
@@ -1262,11 +1307,11 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     lost_in_change = [k for k in dropped if has_pvs1(base_pv, k) and not has_pvs1(v38_pv, k)]
     other = [k for k in dropped if k not in lost_before and k not in lost_in_change]
     claims.append(Claim(
-        ["Regrading both by one step would change 7 of 673,660 calls"],
+        ["The same replay on the recorded criteria of v37 changed 7"],
         f"Regrading the two PVS1 grades by one step would change {int(f37['pvs1_regrade_calls_changed'])} of 673,660 calls ({int(f37['pvs1_regrade_vus_to_lp'])} from VUS to Likely pathogenic and {int(f37['pvs1_regrade_b_to_vus'])} from Benign to VUS), by a replay that is an upper bound, because the recorded code does not say which branch gave a PVS1_Moderate; so few change because a grade one step lower plus PM2 seldom reaches 6 points either way.",
         [f"The same replay on the recorded criteria of v38 changes {int(f38['pvs1_regrade_calls_changed'])} calls ({int(f38['pvs1_regrade_vus_to_lp'])} from VUS to Likely pathogenic and {int(f38['pvs1_regrade_b_to_vus'])} from Benign to VUS), still an upper bound.",
          f"{len(dropped)} of the {len(g37)} variants that change under v37 do not under v38: {len(lost_before)} carry no PVS1 at all in the commit before the change, which differs from v37 in the criteria of 25 indels (Section 3.8, line {find_line(manuscript_lines(), 'Its run differs from v37')}), {len(lost_in_change)} lose it in the change itself" + (f", and {len(other)} keep it and no longer change call for another reason." if other else ", and none keeps PVS1 and stops changing."),
-         "The reason the text gives for the small number holds a fortiori."]))
+         "The reason that the manuscript gives for the small number holds a fortiori."]))
 
     # ---- the row dated on the day of the export
     gm37 = pd.read_csv(DATA / "clingen_missing_summary_v37.csv").set_index("measure")["n"]
@@ -1283,9 +1328,9 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     lost_codes = sorted({c_ for _, r_ in d38.iterrows() for c_ in set(r_.criteria.split("&")) - set(r_.criteria_gap.split("&"))})
     afs = (d38.gnomad_ac.astype(float) / d38.gnomad_an.astype(float))
     claims.append(Claim(
-        ["changes none of the 163 calls on GATM's variants"],
+        ["and changes none of the 163 calls on GATM's variants", "It does change the criteria of 6 of them under v38"],
         f"The completed ClinGen file adds one row (GATM, Moderate) dated 04:00 UTC on 30 April, after the April file was saved, and it 'changes none of the {int(gm37[key_day])} calls on GATM's variants'.",
-        [f"Under v38 the call of {int((d38.call != d38.call_gap).sum())} of the {int(gm38[key_day])} variants changes ({int((d37.call != d37.call_gap).sum())} under v37) and the call or criteria of {int(gm38[key_diff])} do ({int(gm37[key_diff])} under v37; `clingen_missing_summary_v38.csv`), so the sentence {'stays true if it says calls and not criteria' if int((d38.call != d38.call_gap).sum()) == 0 else 'does not hold'}.",
+        [f"Under v38 the call of {int((d38.call != d38.call_gap).sum())} of the {int(gm38[key_day])} variants changes ({int((d37.call != d37.call_gap).sum())} under v37) and the call or criteria of {int(gm38[key_diff])} do ({int(gm37[key_diff])} under v37; `clingen_missing_summary_v38.csv`), so the manuscript says that the file changes none of the calls and then that it changes the criteria of {int(gm38[key_diff])}{'' if int((d38.call != d38.call_gap).sum()) == 0 else ' (the calls of some do change, and that sentence does not hold)'}.",
          f"The {len(d38)} variants lose {' and '.join(lost_codes)}; they are seen in {int(d38.gnomad_ac.astype(float).min())} to {int(d38.gnomad_ac.astype(float).max())} gnomAD alleles, at allele frequencies of {afs.min():.1e} to {afs.max():.1e}, between PM2's two thresholds (4e-5 for genes not read as recessive-only and 7e-5 for recessive-only genes, Section 3.3).",
          f"The established ClinGen tags of GATM's variants are {' and '.join(gtags['v38'][0])} in the main run and {' and '.join(gtags['v38'][1])} in the run that reads the completed file (the same under v37), so under v38, which reads the tag, the gene stops being read as recessive-only and PM2 takes the lower threshold for it."]))
 
@@ -1296,11 +1341,14 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     rulings = pd.read_csv(DATA / "round6_rulings.tsv", sep="\t", dtype=str)
     gone = [r_ for r_ in rulings.itertuples() if r_.gene in set(str(f37["pvs1_benign_common_genes"]).split(",")) - set(str(f38["pvs1_benign_common_genes"]).split(","))]
     claims.append(Claim(
-        ["Eleven of these are a lone PVS1 and 11 are PVS1 with PM2", "Six are seen in 611 to 4,892 gnomAD alleles", "BS1, which tests the filtering allele frequency against 5e-3", "**PVS1 on a variant ClinVar calls benign or likely benign (22).**"],
+        ["Ten of these are a lone PVS1 and 11 are PVS1 with PM2", "Five are seen in 611 to 4,892 gnomAD alleles", "BS1, which tests the filtering allele frequency against 5e-3", "**PVS1 on a variant ClinVar calls benign or likely benign (21).**"],
         f"Section 3.6 groups {int(obg37.loc[grp, 'total'])} calls of PVS1 on a variant that ClinVar calls benign or likely benign: {int(f37['pvs1_benign_lone_pvs1'])} a lone PVS1 and {int(f37['pvs1_benign_pvs1_pm2'])} PVS1 with PM2; {int(f37['pvs1_benign_common_n'])} are seen in {n(f37['pvs1_benign_common_ac_min'])} to {n(f37['pvs1_benign_common_ac_max'])} gnomAD alleles ({str(f37['pvs1_benign_common_genes']).replace(',', ', ')}) with population-maximum frequencies of {float(f37['pvs1_benign_common_popmax_min']) * 100:.2f}% to {float(f37['pvs1_benign_common_popmax_max']) * 100:.1f}%; BS1 fired for none of them, their population-maximum frequencies being {float(f37['pvs1_benign_common_popmax_min']) / 2.5e-4:.0f} to {float(f37['pvs1_benign_common_popmax_max']) / 2.5e-4:.0f} times the median published threshold of 2.5e-4; the reviewer supported ClinVar on all six, 'remarking for five of them that the variant is too common in gnomAD'.",
         [f"Under v38 the group has {int(obg38.loc[grp, 'total'])} calls ({int(f38['pvs1_benign_lone_pvs1'])} a lone PVS1 and {int(f38['pvs1_benign_pvs1_pm2'])} PVS1 with PM2), because the RAD21 variant of Section 3 above left it: {int(f38['pvs1_benign_common_n'])} are seen in {n(f38['pvs1_benign_common_ac_min'])} to {n(f38['pvs1_benign_common_ac_max'])} gnomAD alleles ({str(f38['pvs1_benign_common_genes']).replace(',', ', ')}), at allele frequencies of {float(f38['pvs1_benign_common_af_min']) * 1e4:.1f}e-4 to {float(f38['pvs1_benign_common_af_max']) * 1e3:.1f}e-3 and population-maximum frequencies of {float(f38['pvs1_benign_common_popmax_min']) * 100:.2f}% to {float(f38['pvs1_benign_common_popmax_max']) * 100:.1f}%, {float(f38['pvs1_benign_common_popmax_min']) / 2.5e-4:.0f} to {float(f38['pvs1_benign_common_popmax_max']) / 2.5e-4:.0f} times the median published threshold, and BS1 fired for {'none' if int(f38['pvs1_benign_common_bs1_fired']) == 0 else str(int(f38['pvs1_benign_common_bs1_fired']))} of them.",
-         f"In round 6 {ruling_text(gone[0].ruling, gone[0].rule)} on the RAD21 variant, so 'on all six' becomes 'on all {word(f38['pvs1_benign_common_n'])}' (the RAD21 variant is {'the only one of the six that is no longer in the group' if len(gone) == 1 else 'one of those that are no longer in the group'}).",
-         "How many of them the reviewer remarked on as too common in gnomAD is in the reviewer's own text and not in `round6_rulings.tsv`, so it cannot be recomputed here; the text says five of the six, and whether the RAD21 variant was one of the five decides whether it becomes four of five or five of five."]))
+         f"In round 6 {ruling_text(gone[0].ruling, gone[0].rule)} on the RAD21 variant, so the manuscript says that the reviewer supported ClinVar on all {word(f38['pvs1_benign_common_n'])} (the RAD21 variant is {'the only one of the six that is no longer in the group' if len(gone) == 1 else 'one of those that are no longer in the group'}).",
+         "The reviewer's remarks on how common each variant is in gnomAD are in the reviewer's own workbook and not in `round6_rulings.tsv`, so neither this script nor `verify_numbers.py` can check them.",
+         "When the manuscript was written for v37 it said that the reviewer remarked for five of the six that the variant is too common in gnomAD.",
+         "The manuscript now says four of the five (KDM2B and PHKB in those words, EDN3 and PIEZO1 as more than 1,000 carriers) and, for FMR1, its 210 hemizygotes and one homozygote and a question why the population frequencies were not applied.",
+         "That is a reading of the returned workbook on the machine that made the paper, made when the manuscript was re-based, and the workbook is not in the repository."]))
 
     # ---- the reviewer's rulings
     tot37 = obg37[["clinvar", "fastvep", "neither", "needs_evidence", "disorder_specific"]].sum()
@@ -1313,7 +1361,7 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     lab37, lab38 = f"the {int(r6a.still_opposite.sum())} still opposite in v37", f"the {int(r6b.still_opposite.sum())} still opposite in v38"
     sup = lambda rows, side: int(rows[rows.clinvar_class.isin(side) & rows.still_opposite & (rows.ruling == "clinvar")].shape[0])  # noqa: E731
     claims.append(Claim(
-        ["the reviewer supported ClinVar's class for 13 of the 24 reference-discordant benign calls", "For 30 of the 49 (61%) the reviewer supported ClinVar's call", "So for 30 of the 49 the reviewer judged ClinVar's call the better", "Of the 30 rulings for ClinVar, 11 follow from a class", "In the last round the reviewer supported ClinVar on 61% of the 49"],
+        ["the reviewer supported ClinVar's class for 13 of the 24 reference-discordant benign calls", "For 29 of the 48 (60%) the reviewer supported ClinVar's call", "So for 29 of the 48 the reviewer judged ClinVar's call the better", "Of the 29 rulings for ClinVar, 10 follow from a class", "In the last round the reviewer supported ClinVar on 60% of the 48"],
         f"For {int(tot37.clinvar)} of the {int(tot37.sum())} ({pc(tot37.clinvar / tot37.sum(), 0)}) opposite-direction calls the reviewer supported ClinVar's call ({sup(r6a, ('Pathogenic', 'Likely_pathogenic'))} of the {int(h37['false_benign'])} reference-discordant benign calls and {sup(r6a, ('Benign', 'Likely_benign'))} of the {int(h37['false_pathogenic'])} reference-discordant pathogenic calls), for {int(tot37.fastvep)} fastVEP's, for {int(tot37.neither)} the reviewer's own call was VUS, for {int(tot37.needs_evidence)} more evidence was needed and for {int(tot37.disorder_specific)} the answer depends on the disorder; of the {int(tot37.clinvar)} rulings for ClinVar, {kind(rl37, lab37, 'class')} follow from a class that the reviewer stated, {kind(rl37, lab37, 'stated')} from the reviewer's statement that ClinVar is correct and {kind(rl37, lab37, 'evidence')} from evidence for ClinVar's class without naming one.",
         [f"Under v38 the reviewer's rulings on the {int(tot38.sum())} calls give ClinVar {int(tot38.clinvar)} ({pc(tot38.clinvar / tot38.sum(), 0)}; {sup(r6b, ('Pathogenic', 'Likely_pathogenic'))} of the {int(h38['false_benign'])} reference-discordant benign calls and {sup(r6b, ('Benign', 'Likely_benign'))} of the {int(h38['false_pathogenic'])} reference-discordant pathogenic calls), fastVEP {int(tot38.fastvep)}, neither {int(tot38.neither)}, more evidence {int(tot38.needs_evidence)} and the disorder {int(tot38.disorder_specific)}; the rulings for ClinVar are {kind(rl38, lab38, 'class')} from a class, {kind(rl38, lab38, 'stated')} from a statement and {kind(rl38, lab38, 'evidence')} from evidence (`round6_rules_v38.csv`).",
          f"{int((~r6b.still_opposite).sum())} of the 64 rows of round 6 are no longer opposite under v38 ({int((~r6a.still_opposite).sum())} under v37), and the reviewer supported ClinVar's call on {int(((~r6b.still_opposite) & (r6b.ruling == 'clinvar')).sum())} of them ({int(((~r6a.still_opposite) & (r6a.ruling == 'clinvar')).sum())} under v37); the one that was added is the RAD21 variant, which the reviewer first saw in {rulings[(rulings.gene == 'RAD21') & (rulings.pos == '116866762')].iloc[0].seen_in_round}.",
@@ -1335,9 +1383,9 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     rows = [[band, n(c37_.loc[band].n_new), pc(c37_.loc[band].recall_april, 1), pc(c37_.loc[band].recall_new, 1), f"{-c37_.loc[band].c:+.2f}", pc(c38_.loc[band].recall_april, 1), pc(c38_.loc[band].recall_new, 1), f"{-c38_.loc[band].c:+.2f}"] for band in c37_.index]
     table = ["| Band of population-maximum frequency | New Benign variants | April recall v37 | New recall v37 | Points v37 | April recall v38 | New recall v38 | Points v38 |", "|:---|---:|---:|---:|---:|---:|---:|---:|"] + ["| " + " | ".join(r_) + " |" for r_ in rows]
     cl = Claim(
-        ["What remains is mostly in the highest bands"],
+        ["What remains is spread over the bands"],
         f"What remains of the fall in recall of the new Benign variants, once the mix of nine bands of population-maximum frequency is taken as the April recall in each band, 'is mostly in the highest bands (the two at 2% or more carry {t37:.1f} of the {s37:.1f} points that the mix does not explain)'.",
-        [f"Under v38 the two bands at 2% or more carry {t38:.1f} of the {s38:.1f} points ({t38 / s38 * 100:.0f}%) where under v37 they carry {t37:.1f} of {s37:.1f} ({t37 / s37 * 100:.0f}%), so 'mostly' no longer holds; the unexplained part is larger ({s38:.1f} points against {s37:.1f}) and is spread over more bands.",
+        [f"Under v38 the two bands at 2% or more carry {t38:.1f} of the {s38:.1f} points ({t38 / s38 * 100:.0f}%) where under v37 they carry {t37:.1f} of {s37:.1f} ({t37 / s37 * 100:.0f}%), so the manuscript no longer says 'mostly in the highest bands' and says that what remains is spread over the bands; the unexplained part is larger ({s38:.1f} points against {s37:.1f}).",
          "The positive and negative contributions of each band to the points that the mix does not explain (the points are the band's share of the new Benign variants times the April recall less the new recall, so a negative figure means the new variants are called benign-side more often than the April ones of that band):"])
     cl.table = table
     claims.append(cl)
@@ -1348,16 +1396,16 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     new_apr = [p_.v38 for p_ in pairs if p_.kind == "april" and p_.dir37.parent == BENCH / "manuscript_runs" and not is_shared(p_.v38)]
     secs_new = sorted(int(prov(x)["annotation_seconds"]) for x in new_apr)
     claims.append(Claim(
-        ["takes about two minutes to annotate"],
+        ["takes about two minutes to annotate in the runs of v37", "Release 0.5.0, which holds v38"],
         f"A benchmark of 673,660 ClinVar variants of review status two stars or better takes about two minutes to annotate ('a median of {int(prov37.annotation_seconds.median())} seconds over the runs of this paper, made up to three at a time on one Apple M4 machine with 10 cores and 24 GB that another job was also using').",
-        [f"The {len(prov89)} April runs of the family v38 took a median of {int(prov89.annotation_seconds.median())} seconds ({int(prov89.annotation_seconds.min())} to {int(prov89.annotation_seconds.max())}; the {len(new_apr)} made on 8 November 2026 a median of {secs_new[len(secs_new) // 2]}, {secs_new[0]} to {secs_new[-1]}), three at a time on the same machine, by binaries that contain the two speed-ups of 5 November 2026 (`RUN_VERSIONS.md`, 'After v38'), except the {len(prov89) - len(new_apr)} runs of Section 3.8 that were made earlier, so 'about two minutes' becomes about a minute.",
+        [f"The {len(prov89)} April runs of the family v38 took a median of {int(prov89.annotation_seconds.median())} seconds ({int(prov89.annotation_seconds.min())} to {int(prov89.annotation_seconds.max())}; the {len(new_apr)} made on {new_york_days([prov(x)['recorded_at'] for x in new_apr])} a median of {secs_new[len(secs_new) // 2]}, {secs_new[0]} to {secs_new[-1]}), three at a time on the same machine, by binaries that contain the two speed-ups of 5 November 2026 (`RUN_VERSIONS.md`, 'After v38'), except the {len(prov89) - len(new_apr)} runs of Section 3.8 that were made earlier, and the manuscript keeps the time of the runs of v37 (a median of {int(prov37.annotation_seconds.median())} seconds), gives the time of release 0.5.0 measured alone, and says that the runs of v38 made for this paper were not timed on a quiet machine.",
          "The individual times are those of runs made three at a time, and a job of mine ran beside some of them, so they are an upper bound and not a timing; the measurement that is one is `results/v38_v0.5.0/annotation_time.tsv`."]))
     l37, t37_, v37_ver = crate_size("5d8004a")
     l38, t38_, v38_ver = crate_size("v0.5.0-rc.1")
     claims.append(Claim(
-        ["14,857 lines of Rust with 340 unit tests at the commit analyzed"],
+        ["The classification engine is the `fastvep-classification` crate", "v37 (5d8004a) is the version in which the review rounds ended"],
         f"The classification engine is the `fastvep-classification` crate of fastVEP (version 0.4.0): 14,857 lines of Rust with 340 unit tests at the commit analyzed.",
-        [f"The method that gives these figures for 5d8004a (`src` files of the crate, `#[test]` attributes) gives {n(l37)} lines and {t37_} tests there, version {v37_ver}, and {n(l38)} lines and {t38_} tests at the tag `v0.5.0-rc.1` (c12d9f9), version {v38_ver}, so the sentence becomes {n(l38)} lines and {t38_} unit tests at version {v38_ver}."]))
+        [f"The method that gives these figures for 5d8004a (`src` files of the crate, `#[test]` attributes) gives {n(l37)} lines and {t37_} tests there, version {v37_ver}, and {n(l38)} lines and {t38_} tests at the tag `v0.5.0-rc.1` (c12d9f9), version {v38_ver}, and the manuscript gives both."]))
 
     # ---- the veto and the ClinVar-derived inputs
     def false_benign_set(path: Path) -> set:
@@ -1372,9 +1420,9 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
                      len(false_benign_set(BENCH / f"manuscript_runs/{fam}_src_noclinvar_all") - b0),
                      (false_benign_set(BENCH / f"manuscript_runs/{fam}_sw_no_bp1_veto") - b0) == (false_benign_set(BENCH / f"manuscript_runs/{fam}_src_noclinvar_protein") - b0))
     claims.append(Claim(
-        ["The dependence on ClinVar-derived inputs is therefore small in agreement and larger in errors", "Removing every ClinVar-derived input costs 0.77 points"],
+        ["The dependence on ClinVar-derived inputs is therefore small in agreement and larger in errors", "Removing every ClinVar-derived input costs 0.78 points"],
         f"Without the ClinVar protein and splice index, reference-discordant benign calls rise from {sets['v37'][0]} to {sets['v37'][0] + sets['v37'][2]}, and from {sets['v37'][0]} to {sets['v37'][0] + sets['v37'][3]} with the allele-level record as well, and 'the {sets['v37'][2]} are the same variants as appear when BP1's veto is switched off'; removing every ClinVar-derived input 'takes the opposite-direction calls from 49 to 74, {sets['v37'][2]} of the reference-discordant benign calls because it removes the BP1 veto'.",
-        [f"Under v38 the index removal adds {sets['v38'][2]} reference-discordant benign calls (from {sets['v38'][0]} to {sets['v38'][0] + sets['v38'][2]}) and removing the allele-level record as well adds {sets['v38'][3]} (to {sets['v38'][0] + sets['v38'][3]}), and the {sets['v38'][2]} {'are' if sets['v38'][4] else 'are not'} the same variants as appear when BP1's veto is switched off ({sets['v38'][1]} added, {'the same set' if sets['v38'][4] else 'a different set'}), so the sentence keeps its form with {sets['v38'][2]} where it has {sets['v37'][2]}; the allele-level record accounts for {sets['v38'][3] - sets['v38'][2]} of the additions under v38 where it accounts for {sets['v37'][3] - sets['v37'][2]} under v37."]))
+        [f"Under v38 the index removal adds {sets['v38'][2]} reference-discordant benign calls (from {sets['v38'][0]} to {sets['v38'][0] + sets['v38'][2]}) and removing the allele-level record as well adds {sets['v38'][3]} (to {sets['v38'][0] + sets['v38'][3]}), and the {sets['v38'][2]} {'are' if sets['v38'][4] else 'are not'} the same variants as appear when BP1's veto is switched off ({sets['v38'][1]} added, {'the same set' if sets['v38'][4] else 'a different set'}), so the manuscript says {sets['v38'][2]} where the sentence for v37 had {sets['v37'][2]}; the allele-level record accounts for {sets['v38'][3] - sets['v38'][2]} of the additions under v38 where it accounts for {sets['v37'][3] - sets['v37'][2]} under v37."]))
     ms = manuscript_lines()
     claims.sort(key=lambda c_: min(find_line(ms, a_) for a_ in c_.anchors))
     return claims
@@ -1383,22 +1431,22 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
 def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summary: list[dict], cmp_: dict, changes: tuple, claims: list, outs: dict) -> None:
     ms = manuscript_lines()
     heads = headings(ms)
-    commit = git_out("log", "-1", "--format=%h", "--", "manuscript/acmg/manuscript.md").strip()
     numbers, n_checks, n_values = changes
-    D.h(2, "9. Statements that will need rewording")
-    D.s(f"The line numbers are those of `manuscript/acmg/manuscript.md` as of commit {commit}, and the manuscript was not edited.")
-    D.s("Three kinds of statement change when the classifier of the analysis is v38: a number (the same sentence, a new value), a claim whose truth or wording changes, and a statement about how the runs were made.")
-    D.s("The first kind is listed in full from `verify_numbers.py`, which recomputes every number of the text from the tables: with `--base v38` it recomputes them from the twin tables, and `--dump` writes the line, the anchor and the value of each check, so the dumps of the two bases, set side by side, say which sentence changes and to what.")
+    D.h(2, "9. Where the manuscript's statements differ between v38 and v37")
+    D.s("The manuscript says v38 and quotes v37 only as the history of the numbered versions and as the before of a difference between the two.")
+    D.s("Its line numbers here are those of `manuscript/acmg/manuscript.md` as it stands, and this section lists what would read differently if it were written for v37.")
+    D.s("Three kinds of statement differ: a number (the same sentence, another value), a claim whose truth or wording differs, and a statement about how the runs were made.")
+    D.s("The first kind is listed in full from `verify_numbers.py`, which recomputes every number of the text from the tables: with `--base v38` (the default) it recomputes them from the twin tables of v38, and with `--base v37` from those of v37, and `--dump` writes the line, the anchor and the value of each check, so the dumps of the two bases, set side by side, say which sentence differs and in what.")
     D.s("The second kind is listed by hand from a reading of the sentences around those numbers, each with the numbers that decide it, computed here from the scored files.")
     D.s("The third kind is listed from the provenance of the runs.")
-    D.s("The sentences that say what v37 read (the inheritance read from the words of the disease names: 67 genes recessive-only, 50 dominant-only and 12 both, and the genes the carrier threshold reached) and the trajectory of the versions v1 to v37 (`trajectory.csv`, `change_ledger.csv`, `review_rounds.csv`) are v37's history and are not listed as changing.")
+    D.s("The sentences that say what v37 read (the inheritance read from the words of the disease names: 67 genes recessive-only, 50 dominant-only and 12 both, and the genes the carrier threshold reached) and the trajectory of the numbered versions (`trajectory.csv`, `change_ledger.csv`, `review_rounds.csv`) are the same for both and are not listed as differing.")
 
-    D.h(3, "9.1 Claims whose truth or wording changes")
+    D.h(3, "9.1 Claims whose truth or wording differs")
     for cl in claims:
         lines_ = sorted({find_line(ms, a) for a in cl.anchors})
         where = ", ".join(dict.fromkeys(section_of(x, heads) for x in lines_))
         D.s(f"**{'Line' if len(lines_) == 1 else 'Lines'} {', '.join(str(x) for x in lines_)} ({where}).**")
-        D.s(f"The text says: {cl.says}")
+        D.s(f"Written for v37, the statement read: {cl.says}")
         for e in cl.evidence[:-1] if hasattr(cl, "table") else cl.evidence:
             D.s(e)
         if hasattr(cl, "table"):
@@ -1427,48 +1475,49 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
     independent = {"clingen_missing_curations.csv": "a list of the rows of the ClinGen export", "criteria_status.csv": "read from the engine of v38 already", "tavtigian_posterior.csv": "arithmetic of the framework, which `13_manuscript_stats.py` checks to be the file that is there"}
     assert set(no_twin) == set(history) | {"round6_rulings.tsv"} | set(independent), f"the files without a twin are not the ones that Section 9.2 describes: {no_twin}"
 
-    def where(anchor: str) -> str:
+    def where(anchor: str, inline: bool = False) -> str:
         line = find_line(ms, anchor)
-        return f"Line {line} ({section_of(line, heads)})"
+        return f"{'line' if inline else 'Line'} {line} ({section_of(line, heads)})"
 
     D.blank()
-    D.s(f"**{where('The other numbers of Sections 2 and 3 are v37')} and {where('The analyses of Sections 3.1 to 3.7 have not been repeated on v38').lower()}.**")
-    D.s("The text says that the analyses of Sections 3.1 to 3.7 were not repeated on v38, except for the four thresholds that read inheritance and the runs on gnomAD's joint release (Section 3.8).")
-    D.s(f"The family v38 repeats the {len(family)} runs of Section 2.6 ({len([p_ for p_ in family if p_.kind == 'april'])} on the April set and {len(new_oct)} on the October release) with the classifier of release 0.5.0, and `13_manuscript_stats.py --base v38` and `14_temporal_holdout.py --base v38` write {len(twins)} twin tables of `manuscript/acmg/data/` from them (`_v38` where the v37 file has `_v37` in its name), so the sentences can say that Sections 3.1 to 3.7 were repeated on v38, with the exceptions below.")
-    why_no = [f"{', '.join(f'`{f}`' for f in history)} are the history of the versions before v38", "`round6_rulings.tsv` is the reviewer's own ruling"] + [f"`{f}` is {why}" for f, why in independent.items()]
+    D.s(f"**{where('The analyses of Sections 3.1 to 3.7 were made on v38 and on v37')} and {where('Every number of this paper is v38', inline=True)}.**")
+    D.s("The manuscript says that every number is v38's unless it names v37, and that the analyses of Sections 3.1 to 3.7 were made on both versions, except for what needs a reviewer or a run that the repository does not have.")
+    D.s(f"Written for v37 it said that the analyses of Sections 3.1 to 3.7 had not been repeated on v38, except for the four thresholds that read inheritance and the runs on gnomAD's joint release (Section 3.8).")
+    D.s(f"The family v38 repeats the {len(family)} runs of Section 2.6 ({len([p_ for p_ in family if p_.kind == 'april'])} on the April set and {len(new_oct)} on the October release) with the classifier of release 0.5.0, and `13_manuscript_stats.py --base v38` and `14_temporal_holdout.py --base v38` write {len(twins)} twin tables of `manuscript/acmg/data/` from them (`_v38` where the file of v37 has `_v37` in its name), which is what lets the manuscript say that Sections 3.1 to 3.7 were repeated on v38.")
+    why_no = [f"{', '.join(f'`{f}`' for f in history)} are the history of the numbered versions", "`round6_rulings.tsv` is the reviewer's own ruling"] + [f"`{f}` is {why}" for f, why in independent.items()]
     D.s(f"{len(no_twin)} of the {len(v37_files)} files of `manuscript/acmg/data/` that are not v38's own have no twin: {'; '.join(why_no)}.")
-    D.s("What was not repeated on v38 is what needs a reviewer or a run that the repository does not have: the review rounds, the ledger, the trajectory of the versions, and the runs of round 6 that need builds that are not in the repository.")
+    D.s("What was not repeated on v38 is what needs a reviewer or a run that the repository does not have: the review rounds, the ledger, and the runs of round 6, which need builds that are not in the repository.")
 
     D.blank()
     D.s(f"**{where('All 89 runs (Supplementary Table S2) were made by the same harness')}.**")
-    D.s(f"The text says that all 89 runs were made by the same harness, {sum(k37['plain'].values())} with the binary of v37 (SHA-256 `{next(iter(k37['plain']))}...`), {sum(k37['cutoff'].values())} with the build of the first patch and {sum(k37['hook'].values())} with the build of the second.")
+    D.s(f"Written for v37, the statement was that all 89 runs were made by the same harness, {sum(k37['plain'].values())} with the binary of v37 (SHA-256 `{next(iter(k37['plain']))}...`), {sum(k37['cutoff'].values())} with the build of the first patch and {sum(k37['hook'].values())} with the build of the second.")
     D.s(f"For the family v38 the split of the 89 April runs is the same, {sum(ca['plain'].values())} plain, {sum(ca['cutoff'].values())} with the cutoff build and {sum(ca['hook'].values())} with the hook build, but the plain runs have two binaries: {', '.join(f'`{k}...` made {v}' for k, v in sorted(ca['plain'].items(), key=lambda kv: -kv[1]))}.")
     D.s(f"The {ca['plain'].get('f184277d', 0)} runs of Section 3.8 that the family shares carry `f184277d...`, the binary of the working tree that became v38, which release 0.5.0 reproduced (`results/v38_v0.5.0`), and the other plain runs carry `70b7c684...`, the binary built from the tag; the cutoff runs carry `{', '.join(ca['cutoff'])}...` and the hook runs `{', '.join(ca['hook'])}...` (`binaries_v38.tsv`).")
-    D.s("`verify_numbers.py --base v38` reports this as its one failure that is not a value: it requires one binary for each of the three kinds of run, and the plain kind has two.")
+    D.s("The manuscript says that the plain runs are 73 with the binary built from the tag and that eighteen of them were made first by the binary of the working tree and again by the tag's, and `verify_numbers.py` counts a run of the other binary as made by the tag's only if the repetition by the tag's binary is in `results/v38_v0.5.0` with every scored file identical.")
 
     D.blank()
-    D.s(f"**{where('The three binaries are builds of commit 5d8004a')}.**")
-    D.s("The text says that the three binaries are builds of commit 5d8004a, each from a clean export in a target directory of its own (`build_manuscript_binaries.sh`).")
+    D.s(f"**{where('The three binaries are builds of the tag')}.**")
+    D.s("Written for v37, the statement was that the three binaries are builds of commit 5d8004a, each from a clean export in a target directory of its own (`build_manuscript_binaries.sh`).")
     D.s("The binaries of the family v38 are builds of the tag `v0.5.0-rc.1` (commit c12d9f9), made the same way (`build_manuscript_binaries.sh`, names `v38`, `cut38` and `hook38`); the two patches apply to the tag with every context line matching, the cutoff patch at the line it was written for and the hooks patch with offsets of 2 and 20 lines, the lines that the tree of the tag has gained above its two hunks.")
 
     D.blank()
-    D.s(f"**{where('Every run was made twice')}, {where('All but one of the 42 were made twice').lower()}.**")
-    D.s("The text says that every run was made twice, in October 2026 and again on 4 November 2026, and that the two sets agree in every scored file.")
-    D.s(f"In the family v38 the {len(shared)} runs of Section 3.8 that it shares were made twice (on 4 November by the binary of the working tree and on 7 November by release 0.5.0, identical in every scored file), and the {len(new_apr) + len(new_oct)} others were made once, on 8 November 2026, so the checks that they are right are the controls (Section 6 above) and that `13_manuscript_stats.py --base v37` rewrites every tracked table byte for byte.")
-    D.s("The provenance file of each new run records the commit of the checkout that ran the harness (`9574be1` for the first 19 runs and `13665f4` for the rest, because the branch `docs/acmg-scheme-and-versions` was merged while the family was running), which is not the commit of the binary, as the text and `results/v37_manuscript/README.md` say for the family v37.")
+    D.s(f"**{where('Eighteen of the plain runs are sweeps')}, {where('The same 96 runs were made for v37', inline=True)}, {where('All but one of the 42 were made twice', inline=True)}.**")
+    D.s("Written for v37, the statement was that every run was made twice, in October 2026 and again on 4 November 2026, and that the two sets agree in every scored file.")
+    D.s(f"In the family v38 the {len(shared)} runs of Section 3.8 that it shares were made twice (on 4 November by the binary of the working tree and on 7 November by release 0.5.0, identical in every scored file), and the {len(new_apr) + len(new_oct)} others were made once, on {new_york_days([prov(p_.v38)['recorded_at'] for p_ in new_apr + new_oct])}, so the check that they are right is the controls (Section 6 above), which reproduce the main run in every cell and in the firing count of every criterion.")
+    D.s("The provenance file of each new run records the commit of the checkout that ran the harness (`9574be1` for the first 19 runs and `13665f4` for the rest, because the branch `docs/acmg-scheme-and-versions` was merged while the family was running), which is not the commit of the binary, as the manuscript and `results/v37_manuscript/README.md` say for both families.")
 
     D.blank()
-    D.s(f"**{where('The prices of the first six steps were measured on v37')}.**")
-    D.s("The text says that the prices of the first six steps of Section 4.5 were measured on v37 and not repeated on v38, and that the seventh was measured on v38.")
-    D.s(f"All seven are measured on v38 in the family (`temporal_proposals_v38.csv`, the April and the October columns), and the numbers of the steps are in 9.3 below (lines {', '.join(str(find_line(ms, a_)) for a_ in ('First, complete the ClinGen input', 'Third, BP7 as the splicing recommendation describes it', 'Fourth, BP1', 'Sixth, review of the allele-number floor'))}).")
+    D.s(f"**{where('The prices of all seven steps are measured on v38')}.**")
+    D.s("Written for v37, the statement was that the prices of the first six steps of Section 4.5 were measured on v37 and not repeated on v38, and that the seventh was measured on v38.")
+    D.s(f"All seven are measured on v38 in the family (`temporal_proposals_v38.csv`, the April and the October columns), and the numbers of the steps are in 9.4 below (lines {', '.join(str(find_line(ms, a_)) for a_ in ('First, complete the ClinGen input', 'Third, BP7 as the splicing recommendation describes it', 'Fourth, BP1', 'Sixth, review of the allele-number floor'))}).")
 
     D.blank()
-    D.s(f"**{where('The scored concordance matrix, the criterion firing counts and the provenance file of each run made for this paper')}, {where('The results of v37 are the 89 runs on the April set').lower()}, {where('The results of v38 are the 42 runs of Section 3.8').lower()}.**")
-    D.s("The text lists the results of v37 as the 89 runs on the April set and the 7 on the October release in `analysis/acmg_benchmark/results/v37_manuscript/` with `binaries.tsv`, whose 74 files in `manuscript/acmg/data/` are the ones whose names do not begin with `v38_`, and the results of v38 as the 42 runs of Section 3.8, their repetition by release 0.5.0 and the 23 files of `manuscript/acmg/data/` whose names begin with `v38_`.")
-    D.s(f"The family v38 adds {len(new_apr)} runs on the April set and {len(new_oct)} on the October release to `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv` of the same directory (the 18 shared runs were already there), with their provenance files and configurations, `binaries_v38.tsv`, the {len(twins)} twin tables whose names have `_v38` in them ({len(section38)} files begin with `v38_`, as the text says: {'the same number' if len(section38) == 23 else 'not the number it says'}, and {len(v37_files)} do not and are not twins, as the text says: {'the same number' if len(v37_files) == 74 else 'not the number it says'}), the comparison `analysis/acmg_benchmark/results/v38_family_vs_v37.md` with its four CSV files, and the per-variant tables of the new runs in `data/benchmark/manuscript_runs/` (not in the repository).")
+    D.s(f"**{where('The scored concordance matrix, the criterion firing counts and the provenance file of each run made for this paper')}, {where('The results of v38, which is the version of every number', inline=True)}.**")
+    D.s("Written for v37, the statement listed the results of v37 as the 89 runs on the April set and the 7 on the October release in `analysis/acmg_benchmark/results/v37_manuscript/` with `binaries.tsv`, whose 74 files in `manuscript/acmg/data/` were the ones whose names do not begin with `v38_`, and the results of v38 as the 42 runs of Section 3.8, their repetition by release 0.5.0 and the 23 files of `manuscript/acmg/data/` whose names begin with `v38_`.")
+    D.s(f"The manuscript now lists the results of v38 first and those of v37 as the before: the family v38 adds {len(new_apr)} runs on the April set and {len(new_oct)} on the October release to `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv` of the same directory (the {len(shared)} shared runs were already there), with their provenance files and configurations, `binaries_v38.tsv`, the {len(twins)} twin tables whose names have `_v38` in them, each with its twin for v37 ({'the 67 pairs that the manuscript counts' if len(twins) == 67 else 'not the number of pairs that the manuscript counts'}), the {len(section38)} files that begin with `v38_` ({'the 23 that the manuscript counts' if len(section38) == 23 else 'not the number that the manuscript counts'}) and the {len(no_twin)} that belong to neither version ({'the seven that the manuscript counts' if len(no_twin) == 7 else 'not the number that the manuscript counts'}), this comparison with its five CSV files, and the per-variant tables of the new runs in `data/benchmark/manuscript_runs/` (not in the repository).")
 
     D.h(3, "9.3 The tables, the workbook and the figures")
-    D.s(f"`build_tables.py --base v38 --check` finds {len(outs['tables'])} of the {outs['n_tables']} marked tables of the manuscript different from the text: {', '.join(outs['tables'])}.")
+    D.s(f"`build_tables.py --base v37 --check` finds {len(outs['tables'])} of the {outs['n_tables']} marked tables of the manuscript different from the text, which says v38: {', '.join(outs['tables'])}.")
     caption, in_section = {}, {}
     for i_, line_ in enumerate(ms):
         m_ = re.match(r"<!-- table:(\w+):begin -->", line_)
@@ -1476,23 +1525,23 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
             caption[m_.group(1)] = next((re.match(r"\*\*(Table \d+)\.", ms[k]).group(1) for k in range(i_, -1, -1) if re.match(r"\*\*Table \d+\.", ms[k])), "")
             in_section[m_.group(1)] = section_of(i_ + 1, heads)
     unchanged = [t for t in caption if t not in outs["tables"]]
-    D.s(f"They are {', '.join(f'{caption[t]} (`{t}`)' for t in outs['tables'])}; the ones that do not change are {', '.join(f'{caption[t]} (`{t}`, in {in_section[t]})' for t in unchanged)}.")
-    D.s("`build_tables.py --base v38 --write-to PATH` writes the manuscript with the tables of v38 to a file and leaves `manuscript.md` as it is.")
+    D.s(f"They are {', '.join(f'{caption[t]} (`{t}`)' for t in outs['tables'])}; the ones that do not differ are {', '.join(f'{caption[t]} (`{t}`, in {in_section[t]})' for t in unchanged)}.")
+    D.s("`build_tables.py --base v37 --write-to PATH` writes the manuscript with the tables of v37 to a file and leaves `manuscript.md` as it is.")
     for row, u, v in outs["words"]:
-        D.s(f"The words of a cell of Table 3 change and not only its numbers, in the row '{row}': '{u}' becomes '{v}'.")
+        D.s(f"The words of a cell of Table 3 differ and not only its numbers, in the row '{row}': under v37 it reads '{u}' and under v38, as in the manuscript, '{v}'.")
     n_sheets, differ, alike = outs["sheets"]
-    D.s(f"The workbook of v38 (`build_supplement.py --base v38 --write --out PATH`) has the same {n_sheets} sheets, and {len(differ)} of them differ from `supplementary_tables.xlsx`: {', '.join(differ)}; the same are {', '.join(alike)}.")
+    D.s(f"The workbook of v37 (`build_supplement.py --base v37 --write --out PATH`) has the same {n_sheets} sheets, and {len(differ)} of them differ from `supplementary_tables.xlsx`: {', '.join(differ)}; the same are {', '.join(alike)}.")
     n_png, differ_png, same_png = outs["figures"]
-    D.s(f"`generate_figures.py --base v38 --out DIR` draws the same {n_png} figures as PNG files, and {len(differ_png)} of them differ from the ones in `manuscript/acmg/figures/`: {', '.join(differ_png)}; {', '.join(same_png)} are the same, being the history of the versions before v38.")
+    D.s(f"`generate_figures.py --base v37 --out DIR` draws the same {n_png} figures as PNG files, and {len(differ_png)} of them differ from the ones in `manuscript/acmg/figures/`: {', '.join(differ_png)}; {', '.join(same_png)} are the same, being the history of the numbered versions, which ends with v38 under both.")
     D.s("The PDF files of the figures are not tracked and carry the time they were made, so they are not compared.")
 
-    D.h(3, "9.4 The numbers of the text that change")
+    D.h(3, "9.4 The numbers of the text that differ")
     changed_values = sum(len(c[2]) for c in numbers)
-    D.s(f"`verify_numbers.py` makes {n_checks} checks of {n_values} values; under v38 {len(numbers)} of the checks give a value that the sentence does not contain, {changed_values} values in all.")
-    D.s("They are listed below by section of the manuscript, each as the line, the phrase that identifies the sentence, and the values that change, the value the text has first.")
-    D.s("A value that is a statement about v37 as history (what v37 read, the trajectory of the versions) does not appear, and a quoted count of `49` is the count of v38 (48), which the guard now reads from the main run.")
-    D.s("A value written `?` is a condition that the guard types (`Eleven`, `Six`, `none of the`) and that no longer holds; the claims above explain each.")
-    D.s("The numbers inside the five marked tables are not checks of `verify_numbers.py` and are in 9.3.")
+    D.s(f"`verify_numbers.py` makes {n_checks} checks of {n_values} values; under v37 {len(numbers)} of the checks give another value than under v38, {changed_values} values in all (the sentences that set v38 against v37 contain both, so not every one of these is absent from its sentence).")
+    D.s("They are listed below by section of the manuscript, each as the line, the phrase that identifies the sentence, and the values that differ, the value under v37 first and the value under v38, which the manuscript has, second.")
+    D.s("A value that is a statement about v37 as history (what v37 read, the trajectory of the numbered versions) does not appear, and a quoted count of `48` is the count of v38 (v37: 49), which the guard reads from the main run.")
+    D.s("A value written `?` is a condition that the guard types (`Ten`, `Five`, `none of the`) and that does not hold under v37; the claims above explain each.")
+    D.s("The numbers inside the marked tables are not checks of `verify_numbers.py` and are in 9.3.")
     by_section: dict[str, list] = {}
     for line_, anchor, d in numbers:
         by_section.setdefault(section_of(line_, heads), []).append((line_, anchor, d))
@@ -1502,7 +1551,7 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
             continue
         D.blank()
         D.s(f"**{sec[0].upper() + sec[1:]}.**")
-        D.bullets([f"Line {line_}, \"{short(anchor)}\": " + "; ".join(f"{u} becomes {('a condition that no longer holds' if v == '?' else v)}" for u, v in d) + "." for line_, anchor, d in sorted(by_section[sec])])
+        D.bullets([f"Line {line_}, \"{short(anchor)}\": " + "; ".join(f"{('a condition that does not hold' if u == '?' else u)} under v37 becomes {v}" for u, v in d) + "." for line_, anchor, d in sorted(by_section[sec])])
 
 
 # ------------------------------------------------------------------------------------------------------ main
@@ -1547,7 +1596,7 @@ def section_summary(D: Doc, pairs: list[Pair], main_pair: Pair, october: Pair, s
     ra, rb = pd.read_csv(DATA / "temporal_ratio_v37.csv"), pd.read_csv(DATA / "temporal_ratio_v38.csv")
     xa, xb = ra[ra.measure.str.startswith("ratio")].iloc[0], rb[rb.measure.str.startswith("ratio")].iloc[0]
     D.out += ["# The runs of the family v38 against the runs of the family v37", ""]
-    D.s("This file sets the classifier of release 0.5.0 (v38) against the classifier of Sections 2 to 3.7 of the ACMG manuscript (v37), run for run, on the same inputs and by the same harness.")
+    D.s("This file sets the classifier of release 0.5.0 (v38), the latest, against v37, the classifier at the close of the review rounds, which the ACMG manuscript described until it was re-based on v38, run for run, on the same inputs and by the same harness.")
     D.s("It is written by `analysis/acmg_benchmark/scripts/20_compare_families.py` from the scored files of the runs and the tables of `manuscript/acmg/data/`, and every number in it is read from them.")
     D.s("ClinVar's 2-star+ classifications are a reference and not ground truth, and every agreement here is with them and nothing stronger.")
     D.h(2, "Summary")
@@ -1556,14 +1605,14 @@ def section_summary(D: Doc, pairs: list[Pair], main_pair: Pair, october: Pair, s
         f"Opposite-direction calls go from {a['opposite']} to {b['opposite']} ({a['false_benign']} reference-discordant benign calls and {a['false_pathogenic']} reference-discordant pathogenic calls, then {b['false_benign']} and {b['false_pathogenic']}): {len(opp[(opp.pair_v37 == 'v37') & (opp.change == 'left_in_v38')])} call leaves the set and {len(opp[(opp.pair_v37 == 'v37') & (opp.change == 'entered_in_v38')])} enter it (Section 3).",
         f"Across the {len(others)} other pairs with a discrepancy file on both sides, {len(fewer)} have fewer opposite-direction calls under v38, {len(others) - len(fewer) - len(more)} the same number and {len(more)} more, and over all the pairs {len(left)} variants leave and {len(entered)} enter in at least one; the pairs with more are {', '.join(f'`{k}` ({c37} to {c38})' for k, c37, c38 in more)} (Section 3).",
         f"Of the {len(summary)} sweeps, {len(changed_shape)} differ in the sign of a step, the position of the knee or the order of their settings, and {sum(1 for s_ in summary if s_['shape']['v37']['knee'] != s_['shape']['v38']['knee'])} differ in the knee; the sweeps of the BS2 carrier bar and floor stop being flat and the PM2 sweep under the 2015 table loses most of its range (Section 4).",
-        f"Of the {len(group_eff)} effects of the single switches, source removals, hook runs and gap runs on five measures, {len(flagged)} changed sign, appeared or vanished, or changed by more than 20%, and {int((flagged.small_number == True).sum())} of them are of fewer than 10 calls; the one that is large is the removal of the ClinGen file (Section 5).",  # noqa: E712
+        f"Of the {len(group_eff)} effects of the single switches, source removals, hook runs and gap runs on {word(int(group_eff.metric.nunique()))} measures, {len(flagged)} changed sign, appeared or vanished, or changed by more than 20%, and {int((flagged.small_number == True).sum())} of them are of fewer than 10 calls; the one that is large is the removal of the ClinGen file (Section 5).",  # noqa: E712
         f"In the main run {len(moved)} criterion moves its firing count by more than 5% ({', '.join(sorted(moved))}); PM2 at Supporting strength moves by {(main_pair.f38['PM2_Supporting'] - main_pair.f37['PM2_Supporting']) / main_pair.f37['PM2_Supporting'] * 100:+.1f}% (Section 7).",
         f"On the covered part of the October release agreement in direction goes from {pc(al.same_direction / al.stratum_n, 1)} to {pc(nw.same_direction / nw.stratum_n, 1)} and opposite-direction calls from {al.opposite} to {nw.opposite}; on the {n(na.stratum_n)} new variants agreement goes from {pc(na.same_direction / na.stratum_n, 1)} to {pc(nb.same_direction / nb.stratum_n, 1)} with {na.opposite} and {nb.opposite} opposite-direction calls, and the rate of opposite-direction calls is {xa.value:.1f} and {xb.value:.1f} times the April rate (Section 8).",
         f"The controls reproduce the main run under both classifiers (Section 6).",
-        f"{len(numbers)} of the {n_checks} checks of `verify_numbers.py` give another value under v38 ({sum(len(c[2]) for c in numbers)} of {n_values} values), {n_claims} claims change in truth or wording, {len(outs['tables'])} of {outs['n_tables']} marked tables, {len(outs['sheets'][1])} of {outs['sheets'][0]} sheets of the workbook and {len(outs['figures'][1])} of {outs['figures'][0]} figures differ (Section 9).",
+        f"{len(numbers)} of the {n_checks} checks of `verify_numbers.py` give another value under v37 than the manuscript's ({sum(len(c[2]) for c in numbers)} of {n_values} values), {n_claims} claims differ in truth or wording, {len(outs['tables'])} of {outs['n_tables']} marked tables, {len(outs['sheets'][1])} of {outs['sheets'][0]} sheets of the workbook and {len(outs['figures'][1])} of {outs['figures'][0]} figures differ (Section 9).",
     ])
     D.s("The sections:")
-    D.bullets(["1. what is compared and how", "2. the main run", "3. the opposite-direction calls", "4. the sweeps", "5. the ablations and the inputs", "6. the controls", "7. the criteria that fire more or less", "8. the October release", "9. the statements of the manuscript that will need rewording"])
+    D.bullets(["1. what is compared and how", "2. the main run", "3. the opposite-direction calls", "4. the sweeps", "5. the ablations and the inputs", "6. the controls", "7. the criteria that fire more or less", "8. the October release", "9. where the manuscript's statements differ between v38 and v37"])
 
 
 def write_md(pairs, main_pair, october, summary, eff, opp, counts) -> None:
@@ -1599,6 +1648,8 @@ def main() -> None:
     eff = effects(pairs, main_pair)
     eff.to_csv(OUT_EFFECTS, index=False, lineterminator="\n")
     print(f"wrote {OUT_EFFECTS.name} ({len(eff)} rows)")
+    pd.DataFrame(summary_rows(summary, eff)).to_csv(OUT_SUMMARY, index=False, lineterminator="\n")
+    print(f"wrote {OUT_SUMMARY.name}")
     opp, counts = opposite_changes(pairs, main_pair, october)
     opp.to_csv(OUT_OPPOSITE, index=False, lineterminator="\n")
     print(f"wrote {OUT_OPPOSITE.name} ({len(opp)} rows)")
