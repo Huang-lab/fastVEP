@@ -416,7 +416,7 @@ def table_temporal() -> str:
 
     rows = [
         april_row(),
-        block("October release, covered by the gnomAD extract", "all covered"),
+        block("October release, all 2-star+ variants", "all"),
         block("&nbsp;&nbsp;unchanged since April", "unchanged"),
         block("&nbsp;&nbsp;class moved within its direction", "tier_change"),
         block("&nbsp;&nbsp;class moved across a direction", "direction_change"),

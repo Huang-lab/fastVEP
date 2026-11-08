@@ -57,6 +57,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import os
 import re
 import sys
 from collections import Counter
@@ -69,6 +70,7 @@ from scipy import stats
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 BENCH = ROOT / "data/benchmark"
+SA_DB = BENCH / os.environ.get("BENCH_SA_DB", "sa_db_complete")  # the databases of the runs (11_manuscript_runs.py)
 OUT = ROOT / "manuscript/acmg/data"
 RES = ROOT / "analysis/acmg_benchmark/results"
 PER_VARIANT = BENCH / "manuscript_runs/v37_per_variant.tsv.gz"
@@ -84,7 +86,7 @@ OCT_PV = BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"
 # v38's binaries write no record for a reference-agreement record, v37's do: the table that has them is the skeleton that the
 # records of another base are put back into (`reinstate`), and the labels count each class (`fill_nocall`)
 SKELETON = {"april": BENCH / "manuscript_runs/v37_per_variant.tsv.gz", "october": BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"}
-LABELS = {"april": BENCH / "clinvar_2star_labels.tsv", "october": BENCH / "clinvar_20261004_covered/clinvar_2star_labels.tsv"}
+LABELS = {"april": BENCH / "clinvar_2star_labels.tsv", "october": BENCH / "clinvar_20261004/clinvar_2star_labels.tsv"}
 
 # The base whose invocation writes the files that belong to neither base (`shared`): the other base checks that they are the same.
 WRITER = "v38"
@@ -1422,7 +1424,7 @@ def hook_runs() -> None:
     # gene, and whether the variant's own is among them. The two BP1 calls of v37 are calls that the veto would have prevented at
     # a stricter count, and the three that the measurement build with the own record left out adds are calls that the own
     # record was keeping from BP1.
-    index = read_protein_index(BENCH / "sa_db/clinvar_protein.oga")
+    index = read_protein_index(SA_DB / "clinvar_protein.oga")
     own_rows = []
     for r in base[(base.cv3 == "P/LP") & (base.call.map(TRI) == "B/LB") & base.criteria.str.contains("BP1")].itertuples():
         own_rows.append(_index_row(index, r.gene, r.hgvsp, lab("opposite-direction in v37, with BP1")))
@@ -2156,13 +2158,13 @@ def holdout_rates(apr: pd.DataFrame, octo: pd.DataFrame) -> None:
 
 
 def temporal() -> None:
-    """The final classifier against ClinVar 2026-10-04: the whole covered set and each stratum of it.
+    """The final classifier against ClinVar 2026-10-04: the whole release (its 2-star+ variants) and each stratum of it.
 
     Strata are defined in `14_temporal_holdout.py`: `new` variants were not in the April benchmark set
     at all, so no iteration, review round or sweep ever saw them.
     """
     pv = OCT_PV
-    st = BENCH / "clinvar_20261004_covered/strata.tsv"
+    st = BENCH / "clinvar_20261004/strata.tsv"
     if not (pv.exists() and st.exists()):
         print("  (no October run yet: skipping)")
         return
@@ -2196,7 +2198,7 @@ def temporal() -> None:
                             "opposite": fb + fp, "false_benign": fb, "false_pathogenic": fp})
         return out
 
-    rows = block(df, "all covered")
+    rows = block(df, "all")
     for name in ("unchanged", "tier_change", "direction_change", "new"):
         rows += block(df[df.stratum == name], name)
     # By review status within the new variants (the 3-star ones are expert-panel calls).
@@ -2258,35 +2260,10 @@ def temporal() -> None:
     newopp["kind"] = newopp.apply(kind, axis=1)
     write("temporal_new_opposite_v37.csv", newopp[["kind", "gene", "chrom", "pos", "ref", "alt", "stars", "clinvar", "call", "criteria", "consequence"]].sort_values(["kind", "gene"]))
 
-    # How many October records the gnomAD extract covers, by stratum, and how many the rule drops.
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("temporal_holdout", HERE / "14_temporal_holdout.py")
-    th = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(th)
-    regions = th.load_regions()
-    apr_cls = {(r["chrom"], r["pos"], r["ref"], r["alt"]): r["normalized_class"]
-               for r in csv.DictReader((BENCH / "clinvar_2star_labels.tsv").open(), delimiter="\t")}
-    cov = Counter()
-    with (BENCH / "clinvar_20261004/clinvar_2star_labels.tsv").open() as f:
-        for r in csv.DictReader(f, delimiter="\t"):
-            key = (r["chrom"], r["pos"], r["ref"], r["alt"])
-            st_ = th.stratum(apr_cls, key, r["normalized_class"])
-            cov[(st_, "covered" if th.covered(regions, r["chrom"], int(r["pos"])) else "outside the extract")] += 1
-    rows = []
-    for name in ("unchanged", "tier_change", "direction_change", "new"):
-        k, d = cov[(name, "covered")], cov[(name, "outside the extract")]
-        rows.append({"stratum": name, "records": k + d, "covered": k, "outside_the_extract": d})
-    rows.append({"stratum": "all", "records": sum(cov.values()), "covered": sum(v for (a, b), v in cov.items() if b == "covered"),
-                 "outside_the_extract": sum(v for (a, b), v in cov.items() if b != "covered")})
-    write("temporal_coverage_v37.csv", rows)
-    if rows[-1]["covered"] != len(df):
-        sys.exit("the covered count does not match the October run")
-
     # The rate of opposite-direction calls, with an exact interval, for the April set and each October stratum.
     rows = []
     for name, sub in (("April set", load()), ("October, unchanged", df[df.stratum == "unchanged"]), ("October, new", df[df.stratum == "new"]),
-                      ("October, all covered", df)):
+                      ("October, all", df)):
         k = int((((sub.cv3 == "P/LP") & (sub.fv3 == "B/LB")) | ((sub.cv3 == "B/LB") & (sub.fv3 == "P/LP"))).sum())
         lo, hi = clopper_pearson(k, len(sub))
         rows.append({"set": name, "opposite": k, "records": len(sub), "rate": k / len(sub), "ci_lo": lo, "ci_hi": hi})
@@ -2326,7 +2303,7 @@ def temporal() -> None:
                     if not missing:
                         break
     if missing:
-        sys.exit(f"{len(missing)} of the April opposite-direction calls are neither in the October covered set nor in the October release")
+        sys.exit(f"{len(missing)} of the April opposite-direction calls are neither in the October release's 2-star+ set nor in the raw release")
     write("april_opposite_in_october_v37.csv", rows)
     april_genes = set(read_pv(PER_VARIANT)["gene"])
     new_genes = set(new["gene"])
@@ -2350,7 +2327,7 @@ def new_in_index() -> None:
     exactly at the bar and the variant's own record is in it.
     """
     pv = OCT_PV
-    st = BENCH / "clinvar_20261004_covered/strata.tsv"
+    st = BENCH / "clinvar_20261004/strata.tsv"
     if not (pv.exists() and st.exists()):
         print("  (no October run yet: skipping)")
         return
@@ -2371,7 +2348,7 @@ def new_in_index() -> None:
     single = status == "criteria provided, single submitter"
     multiple = status == "criteria provided, multiple submitters, no conflicts"
     expert = status.isin(["reviewed by expert panel", "practice guideline"])
-    rows = [("new variants of the covered release", len(new)),
+    rows = [("new variants of the release", len(new)),
             ("  with a record in the April variant_summary", int(present.sum())),
             ("    a single-submitter record", int(single.sum())),
             ("    a record with multiple submitters and no conflict", int(multiple.sum())),
@@ -2380,7 +2357,7 @@ def new_in_index() -> None:
             ("  without a record in the April variant_summary", int((~present).sum())),
             ("  with a pathogenic or likely pathogenic record in the April variant_summary", int(plp.sum()))]
     # The test of the held-out run of BP1's veto without the variant's own record.
-    index = read_protein_index(BENCH / "sa_db/clinvar_protein.oga")
+    index = read_protein_index(SA_DB / "clinvar_protein.oga")
     can = new[(new.clinvar.isin(PATH)) & (new.consequence == "missense_variant")
               & (pd.to_numeric(new.pli, errors="coerce") >= 0.9) & (pd.to_numeric(new.mis_z, errors="coerce") < 2)]
     in_index, at_bar, at_bar_bp4 = 0, 0, 0
@@ -2413,7 +2390,7 @@ def proposals() -> None:
     a test of it.
     The per-variant table of each run is made by `12_per_variant_table.py` from the run's annotated VCF.
     """
-    st = BENCH / "clinvar_20261004_covered/strata.tsv"
+    st = BENCH / "clinvar_20261004/strata.tsv"
     base_path = OCT_PV
     changes = [
         ("the completed ClinGen file", rn("v37_oct_clingen_complete"), rn("v37_gap_clingen_complete")),
@@ -2760,8 +2737,8 @@ def v38_inheritance_reading() -> None:
 
 
 def v38_holdout() -> None:
-    """The shipped change and the alternatives on the 4 October 2026 release: all covered variants and the new ones."""
-    st = BENCH / "clinvar_20261004_covered/strata.tsv"
+    """The shipped change and the alternatives on the 4 October 2026 release: all its variants and the new ones."""
+    st = BENCH / "clinvar_20261004/strata.tsv"
     names = ["v38_oct_base", "v38_oct_shipped", "v38_oct_alt_unguarded", "v38_oct_alt_triple_cap"]
     if not st.exists() or not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in names):
         print("  (the held-out v38 runs have no per-variant tables yet: skipping)")
@@ -2770,8 +2747,8 @@ def v38_holdout() -> None:
     runs = {n: v38_pv(n).merge(strata, on=KEY, how="left") for n in names}
     base = runs["v38_oct_base"]
     rows = []
-    for scope in ("all covered", "new"):
-        sel = (lambda x: x) if scope == "all covered" else (lambda x: x[x.stratum == "new"])
+    for scope in ("all", "new"):
+        sel = (lambda x: x) if scope == "all" else (lambda x: x[x.stratum == "new"])
         b = sel(base).set_index(KEY)
         for n in names:
             x = sel(runs[n]).set_index(KEY).reindex(b.index)
@@ -2886,7 +2863,7 @@ def v38_per_disorder() -> None:
 def v38_triple() -> None:
     """A combined cap of 4 points on PP2, PM1 and PP3, by real runs on the April set and on the October release."""
     out = []
-    spec = [("April set", "v38", "v38_alt_triple_cap", None), ("October, all covered", "v38_oct_shipped", "v38_oct_alt_triple_cap", "all"),
+    spec = [("April set", "v38", "v38_alt_triple_cap", None), ("October, all", "v38_oct_shipped", "v38_oct_alt_triple_cap", "all"),
             ("October, new variants", "v38_oct_shipped", "v38_oct_alt_triple_cap", "new")]
     for label, a, b, scope in spec:
         if not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in (a, b)):
@@ -2894,7 +2871,7 @@ def v38_triple() -> None:
             continue
         x, y = v38_pv(a), v38_pv(b)
         if scope == "new":
-            st = pd.read_csv(BENCH / "clinvar_20261004_covered/strata.tsv", sep="\t", dtype=str)
+            st = pd.read_csv(BENCH / "clinvar_20261004/strata.tsv", sep="\t", dtype=str)
             x = x.merge(st, on=KEY, how="left")
             x = x[x.stratum == "new"]
             y = y.merge(x[KEY], on=KEY)

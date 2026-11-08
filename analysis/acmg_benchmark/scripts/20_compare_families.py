@@ -29,7 +29,7 @@ scored files of both and writes what moved:
                                            made; the tables, workbook and figures that differ; and every number of the text that
                                            `verify_numbers.py` recomputes differently)
 
-Everything is over all 673,660 records of the April set and all 772,585 of the October subset, as the paper's tables are: the
+Everything is over all 673,660 records of the April set and all 781,135 of the October release, as the paper's tables are: the
 reference-agreement records (ALT is a dot; 382 and 385) are no-call under both classifiers, v37's binaries write a record for
 them and v38's do not, so the matrices of v38 are filled with them as no-calls (`13_manuscript_stats.py`, `fill_nocall`).
 
@@ -561,7 +561,7 @@ def section_compared(D: Doc, pairs: list[Pair], main: Pair, october: Pair) -> No
     D.s(f"{len(earlier)} earlier runs of the BS2 carrier settings (`output_v37_bs2off`, `output_v37_bs2prev_*` and `output_v37_bs2ac_*`, made on the stack of v37 before the paper's runs) are paired with the runs of Section 3.8 that have the same grids (`v38_sw_bs2ad_*` and `v38_sw_bs2ac_*`), which makes {len(pairs)} pairs besides the two baselines in the CSV files; the table below says how many pairs each group holds.")
     D.table(["Group", "Pairs"], [[g, str(k)] for g, k in sorted(groups.items())])
     D.s("The main run `v37` is paired with `v38`, and the run of `14_temporal_holdout.py` on the October release (`v37_oct2026`) with `v38_oct_shipped`.")
-    D.s("Everything is over all 673,660 records of the April set and all 772,585 of the October subset, as the tables of the paper are.")
+    D.s("Everything is over all 673,660 records of the April set and all 781,135 of the October release, as the tables of the paper are.")
     D.s("The 382 ClinVar reference-agreement records of the April set (385 in the October subset) have `.` as their alternative allele and get no call under either classifier, but the binaries of v37 write a record for them and the binaries of v38 do not, so the matrices of v38 hold 673,278 records and the scoring script counts the other 382 apart.")
     D.s("The matrices of v38 here are filled with those records as no-calls, as `13_manuscript_stats.py` does for its twin tables (`fill_nocall`), so that both families have the same denominators; the benign-side recall of v38 is therefore over 284,550 variants, as v37's is, and not over 284,168, as in the tables of Section 3.8.")
     D.s("Three kinds of statement are used below.")
@@ -723,7 +723,7 @@ def section_opposite(D: Doc, main: Pair, october: Pair, pairs: list[Pair], opp: 
         D.s(f"{len(entered)} call entered the set, and {seen} of the {len(keys38)} opposite-direction calls of v38 are among the {len(rulings)} rows of `round6_rulings.tsv`.")
     oc = opp[opp.pair_v37 == "v37_oct2026"]
     same_oct = len(left) and len(oc) and set(map(tuple, left[KEY].itertuples(index=False))) == set(map(tuple, oc[oc.change == "left_in_v38"][KEY].itertuples(index=False))) and not (oc.change == "entered_in_v38").any()
-    D.s(f"On the October release the covered subset has {october.x37['opposite']} opposite-direction calls under v37 and {october.x38['opposite']} under v38 ({october.x37['false_benign']} and {october.x37['false_pathogenic']}, {october.x38['false_benign']} and {october.x38['false_pathogenic']}); " + ("the same variant leaves it and none enters." if same_oct else f"{len(oc[oc.change == 'left_in_v38'])} leave it and {len(oc[oc.change == 'entered_in_v38'])} enter it (Section 8)."))
+    D.s(f"On the October release the 2-star+ variants have {october.x37['opposite']} opposite-direction calls under v37 and {october.x38['opposite']} under v38 ({october.x37['false_benign']} and {october.x37['false_pathogenic']}, {october.x38['false_benign']} and {october.x38['false_pathogenic']}); " + ("the same variant leaves it and none enters." if same_oct else f"{len(oc[oc.change == 'left_in_v38'])} leave it and {len(oc[oc.change == 'entered_in_v38'])} enter it (Section 8)."))
     first = f"{left.iloc[0].gene} {left.iloc[0].chrom}:{left.iloc[0].pos}" if len(left) else ""
     gone = opp[(opp.change == "left_in_v38") & (opp.gene == left.iloc[0].gene) & (opp.pos == left.iloc[0].pos)].pair_v37.nunique() if len(left) else 0
     D.s(f"{first} is an opposite-direction call under v37 and not under v38 in {gone} of the {len(counts)} pairs that have a discrepancy file on both sides, so the table below lists, for each other pair, only what differs beyond that one variant.")
@@ -1050,23 +1050,23 @@ def st_recessive_v37() -> int:
 
 def section_october(D: Doc, pairs: list[Pair], main: Pair, october: Pair, opp: pd.DataFrame) -> None:
     D.h(2, "8. The October release")
-    D.s("The classifier of each family was applied unchanged to the 772,585 variants of ClinVar's release of 4 October 2026 that the gnomAD extract covers (`temporal_v37.csv` and `temporal_v38.csv`).")
+    D.s("The classifier of each family was applied unchanged to the 781,135 variants of ClinVar's release of 4 October 2026 at two stars or better (`temporal_v37.csv` and `temporal_v38.csv`).")
     ta, tb = pd.read_csv(DATA / "temporal_v37.csv"), pd.read_csv(DATA / "temporal_v38.csv")
     rows = []
-    for stratum in ("all covered", "unchanged", "tier_change", "direction_change", "new", "new, 2-star", "new, 3-star"):
+    for stratum in ("all", "unchanged", "tier_change", "direction_change", "new", "new, 2-star", "new, 3-star"):
         x, y = ta[ta.stratum == stratum].iloc[0], tb[tb.stratum == stratum].iloc[0]
         rows.append([stratum, n(x.stratum_n), n(x.exact), n(y.exact), n(x.same_direction), n(y.same_direction), pc(x.same_direction / x.stratum_n, 1), pc(y.same_direction / y.stratum_n, 1),
                      f"{x.opposite} ({x.false_benign} and {x.false_pathogenic})", f"{y.opposite} ({y.false_benign} and {y.false_pathogenic})"])
     D.table(["Stratum", "Variants", "Exact v37", "Exact v38", "In direction v37", "In direction v38", "Rate v37", "Rate v38", "Opposite v37", "Opposite v38"], rows)
-    al, nw = ta[ta.stratum == "all covered"].iloc[0], tb[tb.stratum == "all covered"].iloc[0]
-    D.s(f"On the covered release v38 agrees in direction for {n(nw.same_direction)} variants where v37 agrees for {n(al.same_direction)} ({sg(nw.same_direction - al.same_direction)}), with {nw.opposite} opposite-direction calls where v37 has {al.opposite} ({nw.false_benign} reference-discordant benign calls and {nw.false_pathogenic} reference-discordant pathogenic calls, against {al.false_benign} and {al.false_pathogenic}).")
+    al, nw = ta[ta.stratum == "all"].iloc[0], tb[tb.stratum == "all"].iloc[0]
+    D.s(f"On the October release v38 agrees in direction for {n(nw.same_direction)} variants where v37 agrees for {n(al.same_direction)} ({sg(nw.same_direction - al.same_direction)}), with {nw.opposite} opposite-direction calls where v37 has {al.opposite} ({nw.false_benign} reference-discordant benign calls and {nw.false_pathogenic} reference-discordant pathogenic calls, against {al.false_benign} and {al.false_pathogenic}).")
     a2, b2 = ta[ta.stratum == "new"].iloc[0], tb[tb.stratum == "new"].iloc[0]
     same_new_opp = int(a2.opposite) == int(b2.opposite)
     D.s(f"On the {n(a2.stratum_n)} new variants, the ones that are not in the April set, agreement in direction is {pc(a2.same_direction / a2.stratum_n, 1)} under v37 and {pc(b2.same_direction / b2.stratum_n, 1)} under v38, and the opposite-direction calls are {a2.opposite} under v37 ({a2.false_benign} reference-discordant benign calls and {a2.false_pathogenic} reference-discordant pathogenic calls) and {b2.opposite} under v38 ({b2.false_benign} and {b2.false_pathogenic}){', the same number' if same_new_opp else ''}.")
     ra, rb = pd.read_csv(DATA / "temporal_ratio_v37.csv"), pd.read_csv(DATA / "temporal_ratio_v38.csv")
     xa, xb = ra[ra.measure.str.startswith("ratio")].iloc[0], rb[rb.measure.str.startswith("ratio")].iloc[0]
     D.s(f"The rate of opposite-direction calls on the new variants is {xa.value:.2f} times the April rate under v37 (95% interval {xa.ci_lo:.2f} to {xa.ci_hi:.2f}) and {xb.value:.2f} times under v38 ({xb.ci_lo:.2f} to {xb.ci_hi:.2f}), where the April rate is {int(ra.iloc[0].k)} in {n(ra.iloc[0].n)} and {int(rb.iloc[0].k)} in {n(rb.iloc[0].n)}.")
-    strata = pd.read_csv(BENCH / "clinvar_20261004_covered/strata.tsv", sep="\t", dtype=str)
+    strata = pd.read_csv(BENCH / "clinvar_20261004/strata.tsv", sep="\t", dtype=str)
     o = opp[opp.pair_v37 == "v37_oct2026"]
     where = []
     for r in o.itertuples():
@@ -1591,7 +1591,7 @@ def section_summary(D: Doc, pairs: list[Pair], main_pair: Pair, october: Pair, s
     changed_shape = shape_changes(summary)
     moved = [c for c in set(main_pair.f37) | set(main_pair.f38) if main_pair.f37.get(c, 0) and abs(main_pair.f38.get(c, 0) - main_pair.f37[c]) / main_pair.f37[c] > 0.05]
     ta, tb = pd.read_csv(DATA / "temporal_v37.csv"), pd.read_csv(DATA / "temporal_v38.csv")
-    al, nw = ta[ta.stratum == "all covered"].iloc[0], tb[tb.stratum == "all covered"].iloc[0]
+    al, nw = ta[ta.stratum == "all"].iloc[0], tb[tb.stratum == "all"].iloc[0]
     na, nb = ta[ta.stratum == "new"].iloc[0], tb[tb.stratum == "new"].iloc[0]
     ra, rb = pd.read_csv(DATA / "temporal_ratio_v37.csv"), pd.read_csv(DATA / "temporal_ratio_v38.csv")
     xa, xb = ra[ra.measure.str.startswith("ratio")].iloc[0], rb[rb.measure.str.startswith("ratio")].iloc[0]
@@ -1607,7 +1607,7 @@ def section_summary(D: Doc, pairs: list[Pair], main_pair: Pair, october: Pair, s
         f"Of the {len(summary)} sweeps, {len(changed_shape)} differ in the sign of a step, the position of the knee or the order of their settings, and {sum(1 for s_ in summary if s_['shape']['v37']['knee'] != s_['shape']['v38']['knee'])} differ in the knee; the sweeps of the BS2 carrier bar and floor stop being flat and the PM2 sweep under the 2015 table loses most of its range (Section 4).",
         f"Of the {len(group_eff)} effects of the single switches, source removals, hook runs and gap runs on {word(int(group_eff.metric.nunique()))} measures, {len(flagged)} changed sign, appeared or vanished, or changed by more than 20%, and {int((flagged.small_number == True).sum())} of them are of fewer than 10 calls; the one that is large is the removal of the ClinGen file (Section 5).",  # noqa: E712
         f"In the main run {len(moved)} criterion moves its firing count by more than 5% ({', '.join(sorted(moved))}); PM2 at Supporting strength moves by {(main_pair.f38['PM2_Supporting'] - main_pair.f37['PM2_Supporting']) / main_pair.f37['PM2_Supporting'] * 100:+.1f}% (Section 7).",
-        f"On the covered part of the October release agreement in direction goes from {pc(al.same_direction / al.stratum_n, 1)} to {pc(nw.same_direction / nw.stratum_n, 1)} and opposite-direction calls from {al.opposite} to {nw.opposite}; on the {n(na.stratum_n)} new variants agreement goes from {pc(na.same_direction / na.stratum_n, 1)} to {pc(nb.same_direction / nb.stratum_n, 1)} with {na.opposite} and {nb.opposite} opposite-direction calls, and the rate of opposite-direction calls is {xa.value:.1f} and {xb.value:.1f} times the April rate (Section 8).",
+        f"On the October release agreement in direction goes from {pc(al.same_direction / al.stratum_n, 1)} to {pc(nw.same_direction / nw.stratum_n, 1)} and opposite-direction calls from {al.opposite} to {nw.opposite}; on the {n(na.stratum_n)} new variants agreement goes from {pc(na.same_direction / na.stratum_n, 1)} to {pc(nb.same_direction / nb.stratum_n, 1)} with {na.opposite} and {nb.opposite} opposite-direction calls, and the rate of opposite-direction calls is {xa.value:.1f} and {xb.value:.1f} times the April rate (Section 8).",
         f"The controls reproduce the main run under both classifiers (Section 6).",
         f"{len(numbers)} of the {n_checks} checks of `verify_numbers.py` give another value under v37 than the manuscript's ({sum(len(c[2]) for c in numbers)} of {n_values} values), {n_claims} claims differ in truth or wording, {len(outs['tables'])} of {outs['n_tables']} marked tables, {len(outs['sheets'][1])} of {outs['sheets'][0]} sheets of the workbook and {len(outs['figures'][1])} of {outs['figures'][0]} figures differ (Section 9).",
     ])
