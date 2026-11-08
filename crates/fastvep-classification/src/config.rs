@@ -32,7 +32,7 @@ fn default_min_gq() -> u32 {
 // Reject unknown keys rather than ignoring them. A misspelled threshold in a
 // lab's TOML is otherwise silent, and the file is read precisely by people who
 // need to depart from the defaults and have no other signal that they did not.
-// This classifier has shipped three separate criteria that never fired; every
+// This classifier has included three separate criteria that never fired; every
 // one was invisible because nothing objected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,7 +54,7 @@ pub struct AcmgConfig {
     /// Swept alone over a 1-in-10 sample of the benchmark, which is what picked
     /// the value:
     ///
-    /// | bar | benign recall | false-pathogenic | false-benign |
+    /// | threshold | benign recall | reference-discordant pathogenic | reference-discordant benign |
     /// |---|---:|---:|---:|
     /// | 0.01 | 56.3 % | 4 | 1 |
     /// | **0.005** | **58.5 %** | **4** | **1** |
@@ -64,14 +64,14 @@ pub struct AcmgConfig {
     ///
     /// On the sample 0.005 looked free. **It is not.** Confirming it on the
     /// full 673,660-variant set (v11 to v12) put benign recall at 65.3 % to
-    /// 68.4 % and false-benign at 10 to 14: roughly 4,850 additional correct
-    /// benign calls for 4 additional missed diagnoses, about 1,200 to 1. That
+    /// 68.4 % and reference-discordant benign calls at 10 to 14: roughly 4,850 additional correct
+    /// benign calls for 4 additional reference-discordant benign calls, about 1,200 to 1. That
     /// is a good trade by the same exchange-rate reasoning used for the BS2
-    /// prevalence bar, but it is a trade, and a sample of this size cannot
+    /// prevalence threshold, but it is a trade, and a sample of this size cannot
     /// resolve a four-count difference.
     ///
-    /// Below 0.005 the cost climbs steeply - past 0.0005 false-benign roughly
-    /// triples - so the remainder is left to a per-gene-disease threshold,
+    /// Below 0.005 the cost climbs steeply - past 0.0005 reference-discordant benign calls roughly
+    /// triple - so the remainder is left to a per-gene-disease threshold,
     /// which is what Richards' "expected for disorder" actually asks for.
     #[serde(default = "default_bs1")]
     pub bs1_af_threshold: f64,
@@ -99,14 +99,14 @@ pub struct AcmgConfig {
     ///
     /// ClinGen SVI moved the same way, downgrading PM2 to Supporting in 2020
     /// because it had been over-weighted, and the VCEP specifications written
-    /// since then give dominant genes explicit non-zero bars, clustered between
+    /// since then give dominant genes explicit non-zero thresholds, clustered between
     /// 1e-5 and 1e-4 (the Cardiomyopathy VCEP's MYH7 specification uses 4e-5;
     /// the PTEN VCEP uses 1e-5). 4e-5 sits inside that published range rather
     /// than being a number of our own.
     ///
     /// Measured over the ClinVar 2-star+ benchmark, sweeping this key alone:
     ///
-    /// | bar | pathogenic recall | false-pathogenic | benign recall |
+    /// | threshold | pathogenic recall | reference-discordant pathogenic | benign recall |
     /// |---|---:|---:|---:|
     /// | 0 (strict absence) | 37.8 % | 1 | 56.3 % |
     /// | 1e-6 | 46.2 % | 1 | 56.3 % |
@@ -124,12 +124,12 @@ pub struct AcmgConfig {
     /// PM2: AF threshold for autosomal-recessive genes. Default 0.00007
     /// (0.007%). It was documented as "per ClinGen SVI v1.0 (Sept 2020)", but
     /// that recommendation lowers PM2 to Supporting and gives no frequency for any
-    /// inheritance. The number equals the autosomal-recessive PM2 bar of the
+    /// inheritance. The number equals the autosomal-recessive PM2 threshold of the
     /// Hearing Loss VCEP (specifications GN005 and GN023), and the project's
     /// record does not say where it came from. Swept for the ACMG
     /// manuscript (`manuscript/acmg`, Section 3.3) from strict absence to 5e-4
     /// under the point system: flat, with recall within 0.02 points and no change
-    /// in missed diagnoses or false-pathogenic calls.
+    /// in reference-discordant benign calls or reference-discordant pathogenic calls.
     #[serde(default = "default_pm2_ar")]
     pub pm2_ar_af_threshold: f64,
 
@@ -176,7 +176,7 @@ pub struct AcmgConfig {
     /// conservation test for BP7. Swept for the ACMG manuscript
     /// (`manuscript/acmg`, Section 3.3): no step of the sweep has a knee, and
     /// switching the test off (a very large value) adds 16,482 correct
-    /// benign-side calls and 2 missed diagnoses on the ClinVar 2-star+ benchmark.
+    /// benign-side calls and 2 reference-discordant benign calls on the ClinVar 2-star+ benchmark.
     #[serde(default = "default_phylop")]
     pub phylop_conserved: f64,
 
@@ -236,7 +236,7 @@ pub struct AcmgConfig {
     /// counterpart of [`Self::bs2_hom_prevalence_threshold`]. BS2 fires only when
     /// the 95 % lower confidence bound on the *carrier* frequency in gnomAD -
     /// `AC - nhomalt` individuals, so a homozygote counts once - exceeds this
-    /// value and [`Self::bs2_ad_min_ac`] is also met. `0` switches the bar off and
+    /// value and [`Self::bs2_ad_min_ac`] is also met. `0` switches the threshold off and
     /// leaves the floor as the whole test. It must be finite and not negative;
     /// [`Self::validate`], which `from_toml_file` calls, rejects anything else.
     ///
@@ -244,9 +244,9 @@ pub struct AcmgConfig {
     /// SNRNP200 p.Ser1087Leu with nine carriers among 1.4 M alleles, a
     /// ClinVar-Pathogenic variant, because the floor ignores how many
     /// individuals were looked at. The sweep is in `docs/ACMG.md`; its shape is
-    /// that every ClinVar Pathogenic and Likely pathogenic call the bar can
+    /// that every ClinVar Pathogenic and Likely pathogenic call the threshold can
     /// recover is recovered by 3e-4, and each step above it only gives up
-    /// correct benign calls. That is the rule used to pick it - the smallest bar
+    /// correct benign calls. That is the rule used to pick it - the smallest threshold
     /// on the swept grid that recovers all of them - and not a claim about a
     /// disease prevalence, nor that nothing between two grid points would do.
     ///
@@ -276,7 +276,7 @@ pub struct AcmgConfig {
     /// sweep of the full 673,660-variant ClinVar 2-star+ benchmark
     /// (`analysis/acmg_benchmark/scripts/sweep_acmg_thresholds.py`) gives:
     ///
-    /// | bar | false-benign calls | correct benign calls |
+    /// | threshold | reference-discordant benign calls | correct benign calls |
     /// |---|---|---|
     /// | 1e-6 | 54 | 139,270 |
     /// | 1e-5 | 45 | 136,014 |
@@ -289,13 +289,13 @@ pub struct AcmgConfig {
     /// most prevalent Mendelian conditions BS2 is applied to, not the typical
     /// one. Hearing loss, alpha-1 antitrypsin deficiency and familial
     /// Mediterranean fever in high-prevalence populations all sit near
-    /// 1 in 1,000, and a 1e-5 bar is two orders of magnitude too tight for
+    /// 1 in 1,000, and a 1e-5 threshold is two orders of magnitude too tight for
     /// them - which is exactly the failure a medical geneticist raised in the
-    /// round-2 review. A false-benign call is a missed diagnosis, whereas a
+    /// round-2 review. If ClinVar is right, a benign call on a pathogenic variant is the costlier error, whereas a
     /// lost benign call becomes a VUS and costs triage effort, so the
-    /// asymmetry favours the safer bar. The step from 1e-4 to 1e-3 is also the
-    /// cheapest on the curve, at 296 correct benign calls per false-benign
-    /// avoided against 542 for the step before it.
+    /// asymmetry favours the safer threshold. The step from 1e-4 to 1e-3 is also the
+    /// cheapest on the curve, at 296 correct benign calls per reference-discordant benign
+    /// call avoided against 542 for the step before it.
     ///
     /// Raise or lower it freely: a lab willing to trade the other way sets a
     /// smaller value, and a gene-specific prevalence from a VCEP
@@ -418,7 +418,7 @@ pub struct AcmgConfig {
     /// from Likely Pathogenic to Uncertain: **54 of them ClinVar calls
     /// Pathogenic**, 4 Uncertain, and none Benign. Extrapolated to the full
     /// PVS1 population that is roughly 825 correct pathogenic calls given up to
-    /// correct a single false-pathogenic one.
+    /// remove a single reference-discordant pathogenic call.
     ///
     /// The trade is not a defect in either the rule or the tree - both give the
     /// right answer. A PTC 20 nt before the last junction really does escape
@@ -453,8 +453,8 @@ pub struct AcmgConfig {
     ///
     /// BP1's veto (`bp1_max_pathogenic_missense`) counts the same index without
     /// discounting the variant's own record. Measured for the ACMG manuscript
-    /// (`manuscript/acmg`, Section 3.4): leaving it out would add 3 missed
-    /// diagnoses on the ClinVar 2-star+ benchmark (FBXO28, PCGF2 and SBF1).
+    /// (`manuscript/acmg`, Section 3.4): leaving it out would add 3 reference-discordant benign
+    /// calls on the ClinVar 2-star+ benchmark (FBXO28, PCGF2 and SBF1).
     #[serde(default = "default_true")]
     pub exclude_self_from_clinvar_evidence: bool,
     /// Number of pathogenic/likely-pathogenic missense variants in the ClinVar
@@ -463,13 +463,13 @@ pub struct AcmgConfig {
     /// cannot apply. Default 3. The count was set with the veto and not swept
     /// until the ACMG manuscript (`manuscript/acmg`, Section 3.3): a count of 1
     /// gains 1,716 calls in direction and gives up 149 correct benign-side calls
-    /// on the ClinVar 2-star+ benchmark, and removes 2 missed diagnoses (IQSEC1
+    /// on the ClinVar 2-star+ benchmark, and removes 2 reference-discordant benign calls (IQSEC1
     /// and PRR12), of which PRR12's rests on the variant's own record (the
     /// gene's only pathogenic missense record), so that 1 is removed when the
     /// veto leaves the own record out. It has not been changed.
     #[serde(default = "default_bp1_max_pathogenic_missense")]
     pub bp1_max_pathogenic_missense: u32,
-    /// Far boundary, in nucleotides from the nearest exon edge, of BP7's
+    /// Intronic distance, in nucleotides from the nearest exon edge, of BP7's
     /// intronic extension. Default 300.
     ///
     /// Both ends of the range are meaningful, so no sentinel is needed: a value
@@ -477,7 +477,7 @@ pub struct AcmgConfig {
     /// entirely, and one larger than any human intron restores it unbounded.
     ///
     /// Walker 2023 gives BP7's intronic extension a *near* boundary (donor
-    /// `+7`, acceptor `-21`) and states no far one. That is consistent for the
+    /// `+7`, acceptor `-21`) and states no intronic distance. That is consistent for the
     /// SVI, whose recommendations are written for a curator applying BP7 to a
     /// single variant in a gene they know. An automated pipeline applies it to
     /// every intronic position in the genome, and out in the deep intron the
@@ -485,13 +485,13 @@ pub struct AcmgConfig {
     /// SpliceAI is weakest: pseudoexon activation, which is also the dominant
     /// mechanism by which a deep-intronic variant is pathogenic at all.
     ///
-    /// So the far boundary is set by measurement. Over the full ClinVar
+    /// So the intronic distance is set by measurement. Over the full ClinVar
     /// 2-star-or-better set, the extension's exchange rate - correct benign
-    /// firings per missed diagnosis - collapses with intron depth:
+    /// firings per reference-discordant benign call - collapses with intron depth:
     ///
-    /// | bound | correct benign calls | missed diagnoses | marginal cost |
+    /// | bound | correct benign calls | reference-discordant benign calls | marginal cost |
     /// |---|---:|---:|---|
-    /// | 50 | 176,132 | 25 | 248 correct benign per diagnosis recovered |
+    /// | 50 | 176,132 | 25 | 248 correct benign per reference-discordant benign call avoided |
     /// | 100 | 177,122 | 29 | 204 |
     /// | 200 | 177,735 | 32 | 155 |
     /// | **300** | **177,890** | **33** | **40** |
@@ -499,11 +499,11 @@ pub struct AcmgConfig {
     /// | 1000 | 177,981 | 36 | 31 |
     /// | unbounded | 178,420 | 50 | - |
     ///
-    /// 300 is the knee. Bounding an unbounded extension at 300 recovers 17 of
-    /// its 50 missed diagnoses for 530 correct benign calls, about 31 each;
-    /// tightening further costs 155 and then 204 and then 248 per diagnosis.
-    /// For scale, the BS2 prevalence bar this classifier already ships trades
-    /// ~296 correct benign calls per missed diagnosis avoided, so everything
+    /// 300 is the knee. Bounding an unbounded extension at 300 avoids 17 of
+    /// its 50 reference-discordant benign calls for 530 correct benign calls, about 31 each;
+    /// tightening further costs 155 and then 204 and then 248 per reference-discordant benign call avoided.
+    /// For scale, the BS2 prevalence threshold this classifier already ships trades
+    /// ~296 correct benign calls per reference-discordant benign call avoided, so everything
     /// down to 300 is cheap by the project's own standard and everything below
     /// it is not. The sweep is reproducible with `sweep_acmg_thresholds.py
     /// --sweep "bp7_max_intron_offset=..."` and is recorded in `docs/ACMG.md`.
@@ -568,7 +568,7 @@ pub struct AcmgConfig {
     /// no entry in [`Self::gene_overrides`].
     ///
     /// Values are `"LOF"`, `"GOF"`, `"DOMINANT_NEGATIVE"` or `"LOF_and_GOF"`,
-    /// matched case-insensitively. This is shipped data rather than user
+    /// matched case-insensitively. This is default data rather than user
     /// policy, which is why it is a separate map: a TOML that sets one
     /// `[gene_overrides.X]` block would otherwise silently replace the whole
     /// curated table. `gene_overrides` still wins per gene where both name the
@@ -723,10 +723,10 @@ pub struct GeneOverride {
     pub mechanism: Option<String>,
     /// Override the BA1 standalone-benign allele frequency threshold.
     ///
-    /// Where a ClinGen VCEP has published a bar for this gene it outranks the
+    /// Where a ClinGen VCEP has published a threshold for this gene it outranks the
     /// global default, which is measured across all genes and cannot know the
     /// disorder's prevalence, penetrance or allelic heterogeneity. Published
-    /// bars run in both directions: ABCA4's is 0.163, three times looser than
+    /// thresholds run in both directions: ABCA4's is 0.163, three times looser than
     /// the 0.05 default, and CDKL5's is 8.3e-5, six hundred times tighter.
     pub ba1_af_threshold: Option<f64>,
     /// Override BS1 allele frequency threshold
@@ -748,7 +748,7 @@ pub struct GeneOverride {
     /// criteria that branch on inheritance or on gene-disease validity read
     /// only that mode's diseases; but the thresholds are the gene-level ones
     /// above. The generated VCEP table writes the same thresholds under every
-    /// disorder of a gene, so nothing in it tells one disorder's bar from
+    /// disorder of a gene, so nothing in it tells one disorder's threshold from
     /// another's, and picking a disorder's block over the gene's would be a
     /// guess about which of them the panel meant for which mode.
     #[serde(default)]
@@ -835,7 +835,7 @@ impl AcmgConfig {
     /// Reject a value that would change what a criterion means without anyone
     /// being told.
     ///
-    /// BS2's two prevalence bars read `0` as "off". A negative bar is not a
+    /// BS2's two prevalence thresholds read `0` as "off". A negative threshold is not a
     /// smaller one: the test `bar <= 0` reads it as off as well, so a typo
     /// (`-3e-4`) fires BS2 on the carrier floor alone, the less cautious
     /// direction, and a NaN fails every comparison and silently never fires.
@@ -1247,7 +1247,7 @@ mod tests {
     /// Every knob has two defaults: the `Default` impl, and the serde function a
     /// key missing from a TOML file falls back on. Nothing else makes them agree,
     /// and a lab that omits `bs2_ad_prevalence_threshold` would otherwise get a
-    /// different bar from the one the docs and the benchmark quote.
+    /// different threshold from the one the docs and the benchmark quote.
     #[test]
     fn test_an_empty_toml_is_the_default_config() {
         let from_empty: AcmgConfig = toml::from_str("").unwrap();
@@ -1343,7 +1343,7 @@ ba1_af_threshold = 8.3e-5
         assert_eq!(cfg.effective_ba1_threshold(Some("ABCA4")), 0.163);
         assert_eq!(cfg.effective_bs1_threshold(Some("ABCA4")), 0.0163);
         assert_eq!(cfg.effective_ba1_threshold(Some("CDKL5")), 8.3e-5);
-        // CDKL5 sets no BS1, so it keeps the global bar rather than inheriting
+        // CDKL5 sets no BS1, so it keeps the global threshold rather than inheriting
         // its own BA1.
         assert_eq!(cfg.effective_bs1_threshold(Some("CDKL5")), 0.005);
         assert_eq!(cfg.effective_ba1_threshold(Some("TP53")), 0.05);
@@ -1353,7 +1353,7 @@ ba1_af_threshold = 8.3e-5
     fn test_a_misspelled_key_is_an_error_not_a_shrug() {
         // The whole point of a config file is departing from the defaults. A
         // user who misspells a key and gets the defaults back has been told
-        // nothing, and this classifier has already shipped three criteria that
+        // nothing, and this classifier has already included three criteria that
         // never fired for want of exactly that signal.
         for toml in [
             "bs1_af_thresold = 0.001",                      // transposed letters
@@ -1432,7 +1432,7 @@ ba1_af_threshold = 8.3e-5
         let cfg: AcmgConfig =
             toml::from_str("[gene_overrides.PCSK9]\nmechanism = \"LOF\"\n").unwrap();
         assert_eq!(cfg.effective_mechanism(Some("PCSK9")), Some("LOF"));
-        // ... and the rest of the shipped table survives that override.
+        // ... and the rest of the default table survives that override.
         assert_eq!(
             cfg.effective_mechanism(Some("MYH7")),
             Some("DOMINANT_NEGATIVE")

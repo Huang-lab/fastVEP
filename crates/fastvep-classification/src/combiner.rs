@@ -42,9 +42,9 @@ pub fn combine(
 /// supporting benign criterion, on its own - is enough for a Likely Benign
 /// call, where Richards 2015 requires two benign supporting criteria or a
 /// strong plus a supporting. Measured on the benchmark sample, the `-1` floor
-/// produced 36 false-benign calls against 1, and **22 of those 36 were a lone
+/// produced 36 reference-discordant benign calls against 1, and **22 of those 36 were a lone
 /// BP4**. Taking the stricter of the two schemes on the benign side costs
-/// almost nothing and removes the whole class: a missed diagnosis and a variant
+/// almost nothing and removes the whole class: if ClinVar is right, a benign call on a pathogenic variant and a variant
 /// left uncertain are not comparable errors.
 ///
 /// Conflict handling falls out of the arithmetic rather than needing a separate
@@ -61,7 +61,7 @@ pub fn combine(
 /// single BP4 - one supporting benign criterion on its own - is enough for a
 /// Likely Benign call, where Richards requires two benign supporting criteria
 /// or a strong plus a supporting. On the benchmark sample the full point system
-/// scored 36 false-benign calls against the table's 1, and **22 of the 36 were
+/// scored 36 reference-discordant benign calls against the table's 1, and **22 of the 36 were
 /// a lone BP4**. Tightening the band instead (floor `-2`) removed those but
 /// took benign recall from 56.3 % down to 45.6 %, because a lone BP4 carries a
 /// great many correct benign calls too.
@@ -71,7 +71,7 @@ pub fn combine(
 /// Likely Pathogenic, but matches no row of Table 5 and so returns Uncertain -
 /// which put 2,319 ClinVar-Pathogenic variants in VUS in run v10. Its divergence
 /// on the benign side runs the other way, toward calling variants benign on
-/// thinner evidence, and a missed diagnosis is not the same kind of error as a
+/// thinner evidence, and, if ClinVar is right, a benign call on a pathogenic variant is not the same kind of error as a
 /// variant left uncertain.
 fn pathogenic_call_by_points(
     criteria: &[EvidenceCriterion],
@@ -133,7 +133,7 @@ fn combine_inner(
     // the case where one direction reaches a definite call while the other
     // holds evidence at Strong or above without itself reaching a call.
     //
-    // That asymmetry produced most of the false-benign calls in the round-2
+    // That asymmetry produced most of the reference-discordant benign calls in the round-2
     // medical-genetics review: a met PS1 (Strong) plus two benign supporting
     // criteria was reported Likely Benign, with the Strong pathogenic evidence
     // silently discarded. 36 of the 78 such rows carried a met PS1 or PVS1.
@@ -783,7 +783,7 @@ mod tests {
     fn test_strong_pathogenic_blocks_likely_benign_call() {
         // PS1 (Strong) alongside two BP criteria used to be reported Likely
         // Benign with the Strong pathogenic evidence silently discarded. 36 of
-        // the 78 false-benign rows in the round-2 medical-genetics review had
+        // the 78 reference-discordant benign rows in the round-2 medical-genetics review had
         // exactly this shape.
         let criteria = vec![
             met("PS1", Pathogenic, Strong),

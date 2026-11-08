@@ -42,7 +42,7 @@ pub enum ModeOfInheritance {
     /// `SD`: semidominant. Heterozygotes are affected, and homozygotes more
     /// severely, so it is dominant and recessive at once: a criterion that needs
     /// a gene to be dominant only or recessive only does not apply to it (PM2
-    /// takes the strict bar, BS2 the arm for homozygotes and hemizygotes, and
+    /// takes the strict threshold, BS2 the arm for homozygotes and hemizygotes, and
     /// BP2's trans arm does not apply), and PM3, which needs a recessive
     /// disease, does.
     Semidominant,
@@ -290,7 +290,7 @@ impl<'a> DiseaseEntry<'a> {
 /// A gene with an autosomal dominant disease and an autosomal recessive one -
 /// 124 genes in the ClinGen export of 11 October 2026, ATM, ABCC8, ACTA1, ALPL
 /// and ANO5 among them - is two questions to the criteria that branch on
-/// inheritance, not one: PM2's frequency bar, which of BS2's arms applies,
+/// inheritance, not one: PM2's frequency threshold, which of BS2's arms applies,
 /// whether PM3 or BP2's trans arm can apply. ClinGen's guidance on genes with
 /// several disorders
 /// (January 2024) is to answer each against its own disease, and this is the
@@ -390,7 +390,7 @@ impl OmimData {
     /// Considers only diseases that met the evidence threshold: the inheritance
     /// of a relationship ClinGen refuted is not a fact about this gene, and PM2,
     /// BS2, PM3 and BP2 all branch on it. A gene with an autosomal dominant
-    /// disease and an autosomal recessive one is both. PM2's bar, BS2's arm
+    /// disease and an autosomal recessive one is both. PM2's threshold, BS2's arm
     /// and BP2's trans arm treat that as neither "dominant only" nor
     /// "recessive only", which is the cautious reading for each; PM3 asks only
     /// that one established disease be recessive, because the observation it

@@ -34,7 +34,7 @@ pub fn evaluate_all(input: &ClassificationInput, config: &AcmgConfig) -> Vec<Evi
 ///    missense records does have a missense mechanism, and BP1 cannot apply
 ///    to it no matter what the constraint metrics say. The count includes the
 ///    variant's own record when ClinVar calls it pathogenic, which PS1 and PM1
-///    exclude (3 missed diagnoses on the ClinVar 2-star+ benchmark rest on it).
+///    exclude (3 reference-discordant benign calls on the ClinVar 2-star+ benchmark rest on it).
 ///
 /// Condition 2 was missing before the round-2 medical-genetics review, which
 /// found BP1 firing on ENG, CFH, FGFR3, APC, ANKRD11, PKD1 and a dozen more
@@ -685,10 +685,10 @@ fn evaluate_bp6(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCr
 /// 2015's "not highly conserved" as `phylop` below `phylop_conserved`, which is why
 /// removing PhyloP removes every BP7. Measured on the ClinVar 2-star+ benchmark
 /// (`manuscript/acmg`, Section 3.3): switching the conservation test off adds 16,482
-/// correct benign-side calls and 2 missed diagnoses, and asking for SpliceAI of at
+/// correct benign-side calls and 2 reference-discordant benign calls, and asking for SpliceAI of at
 /// most 0.1 as well removes 402 calls and no error. Neither has been changed.
 ///
-/// The extension also carries a far boundary, which Walker 2023 does not state
+/// The extension also carries an intronic distance, which Walker 2023 does not state
 /// and which is set here by measurement rather than assertion: see
 /// [`AcmgConfig::bp7_max_intron_offset`]. Past it the only evidence BP7 has is
 /// a SpliceAI score in the pseudoexon-activation regime where SpliceAI is
@@ -715,7 +715,7 @@ fn evaluate_bp7(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
     // - Synonymous: traditional BP7 target.
     // - Intronic: Walker 2023 extension, but only outside the standard splice
     //   region (donor-side offset ≥ 7, acceptor-side offset ≤ -21) and inside
-    //   the measured far boundary (`bp7_max_intron_offset`).
+    //   the measured intronic distance (`bp7_max_intron_offset`).
     let too_deep = matches!(
         (is_intronic, input.intronic_offset),
         (true, Some(off)) if off.unsigned_abs() > config.bp7_max_intron_offset
@@ -786,7 +786,7 @@ fn evaluate_bp7(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
     //
     // Worth recording what this did *not* fix, since it was the reason the
     // change was written. It was meant to explain v13's 36 deep-intronic
-    // false-benign calls (PCDH15, NPHP1, CERKL, POLR3A, DST), and it does not:
+    // reference-discordant benign calls (PCDH15, NPHP1, CERKL, POLR3A, DST), and it does not:
     // all 36 have SpliceAI scores, reading 0.00 to 0.14. Their cause is that
     // SpliceAI is genuinely insensitive to pseudoexon activation, which is
     // what `bp7_max_intron_offset` addresses instead. This gate is still

@@ -195,9 +195,9 @@ fn push_with_overrides(
 ///     withhold benign calls, and on the ClinVar 2-star+ benchmark it recovers
 ///     no Pathogenic or Likely pathogenic call, because the BP4 is not what
 ///     holds those variants at VUS (`analysis/acmg_benchmark/RUN_VERSIONS.md`,
-///     "v36 to v37"). The repo's stance on that trade is that a missed
-///     diagnosis is the worse error, which is a reason to act only where one is
-///     recovered.
+///     "v36 to v37"). The repo's stance on that trade is that, if ClinVar is right, a benign
+///     call on a pathogenic variant costs more than a variant left at VUS, which is a reason to act only where a
+///     Pathogenic or Likely pathogenic call is recovered.
 ///
 /// 7.  **BS2 (carriers) + BS1 or BA1** - in a dominant gene BS2 counts the
 ///     individuals who carry the allele, which is the allele count that BS1 and
@@ -220,7 +220,7 @@ fn push_with_overrides(
 /// the point system counts them and although they can be correlated, except
 /// where rule 4 removes PM1 beside a Strong PP3. A combined cap at Strong (4
 /// points) was measured on the ClinVar 2-star+ benchmark and not adopted: it
-/// gives up 320 correct pathogenic-side calls for 3 false-pathogenic calls
+/// gives up 320 correct pathogenic-side calls for 3 reference-discordant pathogenic calls
 /// avoided and 587 ClinVar-VUS variants kept at VUS, and it changes the
 /// combining rule without correcting a defect (`docs/ACMG.md`, limitation 27).
 fn reconcile_evidence(criteria: &mut [EvidenceCriterion]) {
@@ -518,9 +518,9 @@ fn is_criterion(code: &str, base: &str) -> bool {
 /// with no working copy (homozygotes, hemizygotes). For a dominant gene it counts
 /// carriers - `AC - nhomalt` - and a carrier count is the allele count under
 /// another name: BS1 and BA1 turn the allele count into a frequency and test it
-/// against a bar. They test the filtering allele frequency of the population
+/// against a threshold. They test the filtering allele frequency of the population
 /// with the highest one and the arm tests the global carrier count, so clearing
-/// their bar does not make the arm fire (it fired on 7,234 of the 7,328 variants
+/// their threshold does not make the arm fire (it fired on 7,234 of the 7,328 variants
 /// that meet BS1 in the genes curated as dominant only), but where both fire they
 /// summarise one gnomAD record twice and add a second Strong criterion for it.
 /// Under the Richards rules two Strong benign criteria are Benign.
@@ -541,7 +541,7 @@ fn is_criterion(code: &str, base: &str) -> bool {
 /// as more certain than the evidence is, and that is the error this repository
 /// treats as the costlier one.
 ///
-/// The carrier arm still acts below BS1's bar, which is the only place it adds
+/// The carrier arm still acts below BS1's threshold, which is the only place it adds
 /// anything: a dominant gene's carriers can exceed what a rare dominant disorder
 /// could account for at a frequency far under BS1's.
 fn suppress_bs2_carriers_beside_frequency(criteria: &mut [EvidenceCriterion]) {
@@ -1358,7 +1358,7 @@ mod reconcile_tests {
 
     #[test]
     fn test_bs2_carriers_stand_where_bs1_did_not_fire() {
-        // The arm exists for the frequencies below BS1's bar, and there it is the
+        // The arm exists for the frequencies below BS1's threshold, and there it is the
         // only criterion saying so.
         let mut criteria = vec![
             not_met("BS1", EvidenceDirection::Benign, EvidenceStrength::Strong),

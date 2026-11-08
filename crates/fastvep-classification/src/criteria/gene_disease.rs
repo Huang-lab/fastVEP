@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_curated_table_applies_without_a_user_override() {
-        // The shipped table has to work on its own; requiring a TOML entry
+        // The default table has to work on its own; requiring a TOML entry
         // would leave the default config with a gate that never fires.
         let mut input = minimal_input();
         input.gene_symbol = Some("PCSK9".to_string());
@@ -311,7 +311,7 @@ mod tests {
         let (input, config) = with_mechanism("PCSK9", "LOF");
         assert!(
             lof_mechanism_blocker(&input, &config).is_none(),
-            "an explicit gene_overrides mechanism must win over the shipped table",
+            "an explicit gene_overrides mechanism must win over the default table",
         );
     }
 
@@ -319,7 +319,7 @@ mod tests {
     fn test_setting_one_gene_override_does_not_wipe_the_curated_table() {
         // The reason the curated mechanisms live in their own map: a TOML that
         // sets a single [gene_overrides.X] block replaces `gene_overrides`
-        // wholesale, and would take the shipped table with it.
+        // wholesale, and would take the default table with it.
         let config: AcmgConfig = toml::from_str("[gene_overrides.BRCA1]\nmechanism = \"LOF\"\n")
             .expect("config must parse");
         let mut input = minimal_input();

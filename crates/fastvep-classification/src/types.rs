@@ -111,8 +111,8 @@ pub struct AcmgResult {
     /// Empty for the great majority of genes, which have one. A gene with an
     /// autosomal dominant disease and an autosomal recessive one - 124 genes in
     /// ClinGen's export of 11 October 2026 - has criteria that depend on the
-    /// inheritance (PM2's frequency bar, which arm of BS2 applies, PM3, BP2),
-    /// and the call above reads its diseases together: PM2's bar, BS2's arm and
+    /// inheritance (PM2's frequency threshold, which arm of BS2 applies, PM3, BP2),
+    /// and the call above reads its diseases together: PM2's threshold, BS2's arm and
     /// BP2's trans arm take the reading for a gene that is neither dominant only
     /// nor recessive only, which is the cautious one for each, and PM3 asks only
     /// that one of the diseases be recessive. ClinGen's guidance on genes with
