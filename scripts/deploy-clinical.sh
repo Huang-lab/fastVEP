@@ -59,7 +59,8 @@ fi
 echo "[4/6] Building dbSNP database (~9.4GB .osa2, ~30GB download; this takes a while)..."
 if [ ! -s dbsnp.osa2 ] && [ ! -s dbsnp.osa ]; then
     wget -q --show-progress https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
-    "$BIN_DIR/fastvep" sa-build --source dbsnp -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38
+    # 16-bit chunks: dbSNP is dense, and at the default width a scattered lookup costs 23 ms (docs/SUPPLEMENTARY_ANNOTATIONS.md)
+    "$BIN_DIR/fastvep" sa-build --source dbsnp -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38 --chunk-bits 16
     rm -f GCF_000001405.40.gz
 fi
 

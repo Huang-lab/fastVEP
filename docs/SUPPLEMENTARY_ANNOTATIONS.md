@@ -231,22 +231,56 @@ A loader refuses to serve one that already exists, whoever built it.
 A chunk is the unit a query loads, and it covers a fixed genomic width -- 2^20
 bases, 1 Mb, by default.
 A blob-encoded chunk stores its records' JSON one after another in a single
-compressed stream, so reading one record decompresses the whole chunk's worth.
+compressed stream, so reading one record decompresses the whole chunk's worth,
+and a column-encoded one inflates and indexes every record of the chunk to
+answer for one.
+The width is therefore the price of a lookup that misses the cache, and how
+many records a megabase holds decides whether that price is small.
 
-That is cheap for the sparse sources.
-dbSNP, ClinVar, COSMIC and REVEL put kilobytes in a megabase, and the wide chunk
+It is small for the sparse sources.
+ClinVar and COSMIC put a few thousand records in a megabase, and the wide chunk
 is what keeps them compact.
-It is not cheap for a source that scores nearly every base.
-SpliceAI carries three alternates at essentially every position of a gene body,
-which is hundreds of megabytes of JSON in a single 1 Mb chunk: queries slow to a
-crawl, and past 256 MiB the chunk exceeds the blob decompression limit outright,
-at which point *every* lookup in that megabase fails.
+It is not small for a source with hundreds of thousands, and a source does not
+have to score every base to be one.
+dbSNP is dense, 9.4 GB for the 3,100 megabases of GRCh38, which is about 3 MB of
+compressed records in each megabase: on the hosted site, 1,000 scattered GRCh38
+variants took 24 s with it loaded and 0.5 s without it (23 ms a lookup, and the
+same on a second pass, because the shared chunk cache is 24 MiB for each core
+and holds a few dozen chunks of that size of the 3,100).
+SpliceAI is the extreme: three alternates at essentially every position of a
+gene body, which is hundreds of megabytes of JSON in a single 1 Mb chunk, so
+that queries slow to a crawl and, past 256 MiB, the chunk exceeds the blob
+decompression limit outright and *every* lookup in that megabase fails.
 
-Pass `--chunk-bits 16` (65 kb) when converting such a source:
+Pass `--chunk-bits 16` (65 kb) for such a source, to `sa-build` or, for a
+database that is already built as a v1 `.osa`, to `sa-convert`:
 
 ```bash
+fastvep sa-build --source dbsnp -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38 --chunk-bits 16
 fastvep sa-convert -i old/spliceai.osa -o new/spliceai --chunk-bits 16
 ```
+
+`sa-build` applies it to every `.osa2` it writes and says so, with a warning,
+when the build writes something that has no chunks (a v1 file, an interval or a
+gene database); without the option each source keeps its own width.
+`scripts/build-sa-databases.sh --chunk-bits 16` passes it to the allele-level
+sources.
+
+Measured on gnomAD v4.1 exomes, chromosome 21 (2,188,842 records), 3,041
+variants in random order under a cache too small to hold one chunk, so that
+every lookup loads its chunk:
+
+| `--chunk-bits` | file size | build | 3,041 lookups | CPU of the lookups |
+|---|---:|---:|---:|---:|
+| 20 (default) | 20.7 MB | 153 s | 13.2 s | 42 s |
+| 16 | 22.7 MB (+9.7%) | 156 s | 4.2 s | 7.3 s |
+| no database | | | 1.9 s | |
+
+The two databases return the same annotation for every variant (the sorted
+outputs have the same checksum).
+With the variants in position order, and so one chunk loaded for many, the two
+took the same time as no database at all: the width matters when the variants
+are scattered over many chunks, which is what a genome-wide VCF is.
 
 Measured on a source built to SpliceAI's density, 300 scattered queries:
 
@@ -263,7 +297,7 @@ so a converted database at `--chunk-bits 16` is close to it.
 Do not lower it for the sparse sources: narrower chunks mean more of them, and
 real ClinVar grows from 40.9 MB to 53.6 MB (and from 7,566 to 54,911 archive
 entries) between 20 and 16.
-`chunk_bits` is recorded per file, so a database converted at any width is read
+`chunk_bits` is recorded per file, so a database built at any width is read
 correctly without telling the reader anything.
 
 A run that hits the limit now says so, once per source, rather than returning

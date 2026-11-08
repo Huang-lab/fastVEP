@@ -93,6 +93,10 @@ Every command below is a two-step pattern: download the upstream release, then c
 Handed a missing or truncated file it can succeed and write a database containing nothing, which then annotates nothing, which then classifies everything as VUS.
 Check each download before building it.
 
+**For a stack that serves genome-wide VCFs, build the allele-level databases of gnomAD, SpliceAI and PhyloP with `--chunk-bits 16`**, as the commands below do.
+A lookup loads the whole chunk it falls in, one megabase by default, and a gnomAD database has tens of thousands of records in each; with the variants of a genome in the cache's way, the same 3,041 lookups took 4.2 s at 16 bits and 13.2 s at the default (chromosome 21, exomes), for 10% more file.
+It changes no annotation: the outputs of the two databases are byte for byte the same (measurements and the reasoning in [SUPPLEMENTARY_ANNOTATIONS.md](SUPPLEMENTARY_ANNOTATIONS.md#chunk-width-for-dense-sources---chunk-bits)).
+
 ```bash
 REPO=/path/to/fastVEP          # this checkout, for the helper scripts below
 mkdir -p sa_databases sa_sources && cd sa_sources
@@ -171,7 +175,7 @@ for chr in {1..22} X Y; do
     | xargs -n 200 tabix "$url" >> gnomad_chr${chr}.vcf
   bgzip -f gnomad_chr${chr}.vcf
   fastvep sa-build --source gnomad -i gnomad_chr${chr}.vcf.gz \
-      -o ../sa_databases/gnomad_chr${chr} --assembly GRCh38
+      -o ../sa_databases/gnomad_chr${chr} --assembly GRCh38 --chunk-bits 16
   rm -f gnomad_chr${chr}.vcf.gz
 done
 ```
@@ -300,9 +304,9 @@ This is also what removes the 5.2 GB UCSC phyloP download from the setup.
 for chr in {1..22} X Y; do
   python3 "$REPO/scripts/extract_gnomad_scores.py" --chrom $chr --regions targets.bed --out-dir .
   fastvep sa-build --source spliceai -i spliceai_chr${chr}.vcf \
-      -o ../sa_databases/spliceai_chr${chr} --assembly GRCh38
+      -o ../sa_databases/spliceai_chr${chr} --assembly GRCh38 --chunk-bits 16
   fastvep sa-build --source phylop -i phylop_chr${chr}.tsv \
-      -o ../sa_databases/phylop_chr${chr} --assembly GRCh38
+      -o ../sa_databases/phylop_chr${chr} --assembly GRCh38 --chunk-bits 16
   rm -f spliceai_chr${chr}.vcf phylop_chr${chr}.tsv
 done
 ```

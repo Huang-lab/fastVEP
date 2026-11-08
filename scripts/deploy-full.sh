@@ -81,7 +81,8 @@ fi
 echo "[4/8] Building dbSNP (GRCh38, ~30GB download → ~9.4GB .osa2)..."
 if [ ! -s dbsnp.osa2 ] && [ ! -s dbsnp.osa ]; then
     wget -q --show-progress https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
-    "$BIN_DIR/fastvep" sa-build --source dbsnp -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38
+    # 16-bit chunks: dbSNP is dense, and at the default width a scattered lookup costs 23 ms (docs/SUPPLEMENTARY_ANNOTATIONS.md)
+    "$BIN_DIR/fastvep" sa-build --source dbsnp -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38 --chunk-bits 16
     # Clean up the 30GB download immediately
     rm -f GCF_000001405.40.gz
 fi
@@ -106,7 +107,7 @@ for chr in {1..22} X; do
     wget -q --show-progress -O "$BUILD_DIR/$VCF" \
         "https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/genomes/${VCF}"
     echo "  → Indexing chr${chr}..."
-    "$BIN_DIR/fastvep" sa-build --source gnomad -i "$BUILD_DIR/$VCF" -o "$BUILD_DIR/gnomad_chr${chr}" --assembly GRCh38
+    "$BIN_DIR/fastvep" sa-build --source gnomad -i "$BUILD_DIR/$VCF" -o "$BUILD_DIR/gnomad_chr${chr}" --assembly GRCh38 --chunk-bits 16
     mv "$BUILD_DIR"/gnomad_chr${chr}.osa* "$SA_DIR/"
     echo "  → Cleaning up chr${chr} VCF..."
     rm -f "$BUILD_DIR/$VCF"

@@ -443,12 +443,13 @@ enum Commands {
         /// source keeps its own width (20, one megabase) when this is not given.
         ///
         /// A query inflates and indexes the whole chunk it falls in, so a chunk with many records
-        /// makes every lookup that is not in the cache dear. dbSNP, with a record for about one
-        /// base in three, is such a source: 1,000 scattered GRCh38 variants took 24 s against its
-        /// default chunks. Pass 16 (65 kb) for it, for gnomAD, REVEL and any source that holds
-        /// hundreds of thousands of records in a megabase; it costs a few percent of file size
-        /// (12% measured on a SpliceAI-density source) and no change in what a query returns.
-        /// Ignored, with a warning, by a build that does not write an `.osa2`.
+        /// makes every lookup that is not in the cache dear. dbSNP, about 3 MB of compressed
+        /// records in each megabase, is such a source: 1,000 scattered GRCh38 variants took 24 s
+        /// against its default chunks. Pass 16 (65 kb) for it, for gnomAD (a lookup that misses
+        /// the cache cost a fifth, on exomes chromosome 21) and for any source that holds hundreds
+        /// of thousands of records in a megabase; it costs 10 to 12% of file size (measured) and
+        /// changes nothing a query returns. Ignored, with a warning, by a build that does not
+        /// write an `.osa2`.
         #[arg(long, value_parser = clap::value_parser!(u32).range(1..=20))]
         chunk_bits: Option<u32>,
 
@@ -483,11 +484,11 @@ enum Commands {
         /// Genomic width of one chunk, as a power of two (1..=20). A chunk is
         /// the unit a query loads, and a conversion stores whole-record JSON
         /// blobs, so the whole chunk's blobs are decompressed to read one
-        /// record. The default of 20 (1 Mb) suits the sparse sources - dbSNP,
-        /// ClinVar, COSMIC, REVEL - and keeps them compact. A source that
-        /// scores nearly every base, SpliceAI above all, puts so much in one
-        /// megabase that queries slow to a crawl and can exceed the blob
-        /// decompression limit outright; pass 16 (65 kb) for those. Measured on
+        /// record. The default of 20 (1 Mb) suits the sparse sources - ClinVar,
+        /// COSMIC - and keeps them compact. A dense source puts so much in one
+        /// megabase that queries slow to a crawl: dbSNP, gnomAD, and SpliceAI
+        /// above all, which can exceed the blob decompression limit outright;
+        /// pass 16 (65 kb) for those. Measured on
         /// a SpliceAI-density source, 300 scattered queries went from 9.7s
         /// (with most lookups failing) to 0.5s, for 12% more file size.
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=20))]
