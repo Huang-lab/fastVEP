@@ -1457,6 +1457,10 @@ async function fetchJson(url, { method = 'GET', body, signal, timeoutMs, type = 
 
 function httpError(status, data, text) {
   const server = data?.error || (text && text.length < 200 && !/<html/i.test(text) ? text : '');
+  // fastvep-web's own 413 says what was too much (the answer, or the time), how many variants were done and what to change; the option it
+  // calls `pick` is the box labelled "Canonical transcript only" here. A 413 from a body limit or a proxy is not JSON and says nothing,
+  // so only that one gets the standing advice.
+  if (status === 413 && data?.error) return new ApiError('http', 'That is too much for one request', /`pick`/.test(data.error) ? `${data.error} On this page, \u201cCanonical transcript only\u201d is that option.` : data.error, status);
   if (status === 413) return new ApiError('http', 'That is too much data for one request', 'Split the VCF into smaller files, or run the fastvep command-line tool for large inputs. Servers accept about 10 MB per request by default.', status);
   // 422 is the server declining to classify, with its verdict on the genome in the body: not a fault in the input.
   if (status === 422 && parseVerdict(data?.acmg)) {
@@ -1466,6 +1470,8 @@ function httpError(status, data, text) {
   }
   if (status === 400 || status === 422) return new ApiError('http', 'The server could not use that input', server || 'Check the VCF records and the chosen genome.', status);
   if (status === 403) return new ApiError('http', 'The server refused this request', server, status);
+  // fastvep-web answers 503 when every place for an annotation is taken, says how long it waited, and the request is worth repeating.
+  if (status === 503 && data?.error) return new ApiError('http', 'The server is busy', data.error, status);
   if (status === 429 || status === 502 || status === 503 || status === 504) return new ApiError('http', 'The server is busy or restarting', 'Wait a moment and try again.', status);
   return new ApiError('http', 'The server hit an error while annotating', `${server || `HTTP ${status}`}. Try again; if it keeps happening, please report it on GitHub.`, status);
 }
