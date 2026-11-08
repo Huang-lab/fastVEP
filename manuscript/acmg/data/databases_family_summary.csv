@@ -1,7 +1,7 @@
 name,value,text
 sweeps,12.0,
 sweeps_that_differ_in_shape,4.0,
-sweeps_that_differ_in_the_knee,1.0,
+sweeps_that_differ_in_the_knee,0.0,
 knee_bs1_first,0.001,
 knee_bs1_complete,0.001,
 knee_bp7_far_boundary_first,300.0,

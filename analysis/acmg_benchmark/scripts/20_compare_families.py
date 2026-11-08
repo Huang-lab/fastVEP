@@ -162,7 +162,7 @@ def load_pairs() -> tuple[list[Pair], Pair, Pair]:
                           matrix_of(row, "october"), matrix_of(r38, "october"), fires_of(row), fires_of(r38)))
     if missing:
         sys.exit(f"{len(missing)} runs of the family v38 are not in the files of the runs: {missing[:6]}")
-    # The BS2 sweeps of the carrier bar and floor were run on the stack of v37 before the paper's runs (`output_v37_bs2*`), and on v38 they are the runs of Section 3.8 with the same grids.
+    # The BS2 sweeps of the carrier bar and floor of v37 are runs outside the family (`output_v37_bs2*`), and on v38 they are the runs of Section 3.8 with the same grids.
     earlier = [("v37_bs2off", "v38_sw_bs2ad_0", "bs2_ad_prevalence_threshold", "0"), ("v37_bs2prev_3e-5", "v38_sw_bs2ad_3e-05", "bs2_ad_prevalence_threshold", "3e-05"),
                ("v37_bs2prev_1e-4", "v38_sw_bs2ad_0.0001", "bs2_ad_prevalence_threshold", "0.0001"),
                ("v37_bs2prev_1e-3", "v38_sw_bs2ad_0.001", "bs2_ad_prevalence_threshold", "0.001"),
@@ -268,29 +268,39 @@ def steps_of(points: list[dict], gain: str, cost: str, which: str) -> list[dict]
 
 
 KNEE_FACTOR = 3.0  # the fall that makes a knee: a step worth a third or less of the step before it
-KNEE_FROM = 150.0  # and the step before it is worth hundreds of calls per added error (Section 2.5 of the manuscript)
+KNEE_FROM = 150.0  # the step before it is worth hundreds of calls per added error (Section 2.5 of the manuscript)
+KNEE_TO = 150.0  # and the step after it about a hundred or fewer (the same Section 2.5); a fall by a factor of 3 to 480 calls per error is not a knee
 
 
-def knee_of(steps: list[dict]) -> tuple[float | None, float]:
-    """Where the exchange rate falls the most from one step to the next, along the steps in the order of what they gain.
-
-    Section 2.5 of the manuscript takes the knee of a curve to be the point past which the exchange rate falls from hundreds of
-    calls per added error to about a hundred or fewer. Here it is the setting that two neighbouring steps share when the finite rate
-    of the second is the smallest fraction of the first's (the rates of a step that adds no error are infinite and are not compared),
-    and only when that fall is by a factor of 3 or more and the first step is worth 150 calls per error or more; otherwise there is
-    no knee. The rule gives the two knees that the manuscript names, BS1 at 1e-3 and the far boundary of BP7 at 300, under both versions, and
-    none for the other sweeps that the manuscript says have none. Returns the setting and the factor of the largest fall.
-    """
-    best, where, before = 1.0, None, 0.0
+def largest_fall(steps: list[dict]) -> tuple[float, float, float, float | None]:
+    """The two neighbouring steps, in the order of what they gain, between which the exchange rate falls the most, as (the factor, the rate
+    of the first, the rate of the second, the setting that they share); the rates of a step that adds no error are infinite and are not compared."""
+    best: tuple[float, float, float, float | None] = (1.0, 0.0, 0.0, None)
     for a, b in zip(steps[:-1], steps[1:]):
         if math.isinf(a["rate"]) or math.isinf(b["rate"]) or b["rate"] <= 0:
             continue
         f = a["rate"] / b["rate"]
-        if f > best:
-            best, where, before = f, a["to"] if a["to"] == b["from"] else b["from"], a["rate"]
-    if best < KNEE_FACTOR or before < KNEE_FROM:
-        return None, best
-    return where, best
+        if f > best[0]:
+            best = (f, a["rate"], b["rate"], a["to"] if a["to"] == b["from"] else b["from"])
+    return best
+
+
+def knee_of(steps: list[dict]) -> tuple[float | None, float]:
+    """Where the exchange rate falls the most from one step to the next, along the steps in the order of what they gain, if that is a knee.
+
+    Section 2.5 of the manuscript takes the knee of a curve to be the point past which the exchange rate falls from hundreds of calls per
+    added error to about a hundred or fewer. Here it is the setting that the two neighbouring steps of the largest fall share, when the fall
+    is by a factor of 3 or more, the first step is worth 150 calls per error or more and the second 150 or fewer; otherwise there is no
+    knee. The rule gives the knees that the manuscript names, BS1 at 1e-3 and the far boundary of BP7 at 300, under both versions and on both
+    sets of databases, and none for the other sweeps that the manuscript says have none. (The first form of the rule asked only for the
+    factor of 3 and the first step; on the complete databases the carrier floor of BS2 with the bar off then fell by a factor of 3.3, from 1,578
+    calls per error to 480, which is not the fall to about a hundred that Section 2.5 describes, and the rule now asks for it.)
+    Returns the setting and the factor of the largest fall.
+    """
+    factor, before, after, where = largest_fall(steps)
+    if factor < KNEE_FACTOR or before < KNEE_FROM or after > KNEE_TO:
+        return None, factor
+    return where, factor
 
 
 def sweep_shape(points: list[dict], gain: str, cost: str) -> dict:
@@ -303,6 +313,7 @@ def sweep_shape(points: list[dict], gain: str, cost: str) -> dict:
         sign = lambda x: (x > 0) - (x < 0)  # noqa: E731
         steps = steps_of(points, gain, cost, which)
         knee, factor = knee_of(steps)
+        _, fall_from, fall_to, _ = largest_fall(steps)
         res[tag] = {
             "range_same_direction": max(o[which]["same_direction"] for o in points) - min(o[which]["same_direction"] for o in points),
             "range_gain": max(o[which][gain] for o in points) - min(o[which][gain] for o in points),
@@ -310,7 +321,7 @@ def sweep_shape(points: list[dict], gain: str, cost: str) -> dict:
             "range_false_pathogenic": max(o[which]["false_pathogenic"] for o in points) - min(o[which]["false_pathogenic"] for o in points),
             "gain_signs": "".join("+" if s > 0 else "-" if s < 0 else "0" for s in map(sign, d_gain)),
             "cost_signs": "".join("+" if s > 0 else "-" if s < 0 else "0" for s in map(sign, d_cost)),
-            "knee": knee, "knee_factor": factor,
+            "knee": knee, "knee_factor": factor, "fall_from_rate": fall_from, "fall_to_rate": fall_to,
             "order_by_same_direction": [o["setting"] for o in sorted(points, key=lambda o: (o[which]["same_direction"], o["setting"]))],
             "max_rate": max([s["rate"] for s in steps if not math.isinf(s["rate"])] or [0]),
             "min_rate": min([s["rate"] for s in steps if not math.isinf(s["rate"])] or [0]),
@@ -550,11 +561,11 @@ def section_compared(D: Doc, pairs: list[Pair], main: Pair, october: Pair) -> No
     D.s(f"The family v37 is the {sum(1 for p in pairs if p.kind == 'april' and p.dir37.parent == BENCH / 'manuscript_runs')} runs on the April set and the {sum(1 for p in pairs if p.kind == 'october')} runs on the October release that `11_manuscript_runs.py` defines, made on {new_york_days([prov(x)['recorded_at'] for x in fam37])} by binaries built from commit 5d8004a (`binaries.tsv`).")
     D.s(f"The family v38 is the same {len(fam37)} runs made by the classifier of release 0.5.0, the tag `v0.5.0-rc.1`, with the same databases.")
     D.s(f"{len(shared)} of them are runs that Section 3.8 also defines under the same names (the sweeps `v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`, whose grids are the family's), and the harness makes each of them once.")
-    D.s(f"The {len(new38)} were made on {new_york_days(rec)} (New York; the provenance records UTC, {rec[0][:10]}) by binaries built from the tag, {len([x for x in new38 if x.startswith('v38_oct_')])} of them on the October release, up to seven at a time on the ten-core machine (the annotation of one run took {secs[0]} to {secs[-1]} seconds, median {secs[len(secs) // 2]}).")
+    D.s(f"The {len(new38)} were made on {new_york_days(rec)} (New York; the provenance records UTC, {rec[0][:10]}) by binaries built from the tag, {len([x for x in new38 if x.startswith('v38_oct_')])} of them on the October release, several at a time on the ten-core machine (the annotation of one run took {secs[0]} to {secs[-1]} seconds, median {secs[len(secs) // 2]}).")
     D.s(f"The binaries were `fastvep_v38` (SHA-256 `70b7c684...`, {c38.get('70b7c684', 0)} runs), `fastvep_cut38` (`de44db94...`, {c38.get('de44db94', 0)} runs, the point cutoffs) and `fastvep_hook38` (`9886d1b5...`, {c38.get('9886d1b5', 0)} runs, BP1's own-record count and BP7's SpliceAI threshold), each built from a clean export of the tag in a target directory of its own by `build_manuscript_binaries.sh`, and `binaries_v38.tsv` records them.")
     D.s(f"The two families are generated by the same functions of `11_manuscript_runs.py` with the name prefix and the binaries as the only parameters, and {same_def[0]} of the {same_def[1]} pairs have the same knob, value, default, removed and replaced annotation files and environment in `run_matrix.tsv` and `run_matrix_v38.tsv`, so a pair differs in the classifier and in nothing else.")
     earlier = [p for p in pairs if p.dir37.parent == BENCH]
-    D.s(f"{len(earlier)} earlier runs of the BS2 carrier settings (`output_v37_bs2off`, `output_v37_bs2prev_*` and `output_v37_bs2ac_*`, made on the stack of v37 before the paper's runs) are paired with the runs of Section 3.8 that have the same grids (`v38_sw_bs2ad_*` and `v38_sw_bs2ac_*`), which makes {len(pairs)} pairs besides the two baselines in the CSV files; the table below says how many pairs each group holds.")
+    D.s(f"{len(earlier)} earlier runs of the BS2 carrier settings (`output_v37_bs2off`, `output_v37_bs2prev_*` and `output_v37_bs2ac_*`, made on 8 November 2026 by the binary of v37, like the paper's runs) are paired with the runs of Section 3.8 that have the same grids (`v38_sw_bs2ad_*` and `v38_sw_bs2ac_*`), which makes {len(pairs)} pairs besides the two baselines in the CSV files; the table below says how many pairs each group holds.")
     D.table(["Group", "Pairs"], [[g, str(k)] for g, k in sorted(groups.items())])
     D.s("The main run `v37` is paired with `v38`, and the run of `14_temporal_holdout.py` on the October release (`v37_oct2026`) with `v38_oct_shipped`.")
     D.s("Everything is over all 673,660 records of the April set and all 781,135 of the October release, as the tables of the paper are.")
@@ -809,12 +820,17 @@ def summary_rows(summary: list[dict], eff: pd.DataFrame) -> list[dict]:
     group_eff = eff[eff.group.isin(["switch", "source", "hook", "gap"])]
     flagged = group_eff[(group_eff.changed_sign == True) | (group_eff.changed_by_more_than_20_percent == True) | (group_eff.appeared_or_vanished == True)]  # noqa: E712
     knee = {s_["label"]: (s_["shape"]["v37"]["knee"], s_["shape"]["v38"]["knee"]) for s_ in summary}
+    PM2_2015 = "PM2 bar, not recessive-only, 2015 table both sides"
+    fall = {s_["label"]: ((0, s_["shape"]["v37"]["fall_from_rate"], s_["shape"]["v37"]["fall_to_rate"]), (0, s_["shape"]["v38"]["fall_from_rate"], s_["shape"]["v38"]["fall_to_rate"])) for s_ in summary}
     return [
         {"name": "sweeps", "value": len(summary)},
         {"name": "sweeps_that_differ_in_shape", "value": len(shape_changes(summary))},
         {"name": "sweeps_that_differ_in_the_knee", "value": sum(1 for a_, b_ in knee.values() if a_ != b_)},
         {"name": "knee_bs1_v37", "value": knee["BS1 bar"][0]}, {"name": "knee_bs1_v38", "value": knee["BS1 bar"][1]},
         {"name": "knee_bp7_far_boundary_v37", "value": knee["BP7 far boundary"][0]}, {"name": "knee_bp7_far_boundary_v38", "value": knee["BP7 far boundary"][1]},
+        {"name": "knee_pm2_2015_v37", "value": knee[PM2_2015][0]}, {"name": "knee_pm2_2015_v38", "value": knee[PM2_2015][1]},
+        {"name": "fall_pm2_2015_v37_from", "value": round(fall[PM2_2015][0][1])}, {"name": "fall_pm2_2015_v37_to", "value": round(fall[PM2_2015][0][2])},
+        {"name": "fall_pm2_2015_v38_from", "value": round(fall[PM2_2015][1][1])}, {"name": "fall_pm2_2015_v38_to", "value": round(fall[PM2_2015][1][2])},
         {"name": "effects", "value": len(group_eff)},
         {"name": "effect_measures", "value": int(group_eff.metric.nunique())},
         {"name": "effects_that_changed", "value": len(flagged)},
@@ -1404,7 +1420,7 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     claims.append(Claim(
         ["takes 25.3 seconds to annotate on every core", "the annotation of one of the 89 runs of v37 took a median of"],
         "A benchmark of 673,660 ClinVar variants of review status two stars or better 'takes about two minutes to annotate in the runs of v37 (a median of 127 seconds over its 89 runs on the April set, made on 4 November 2026 up to three at a time on one Apple M4 machine with 10 cores and 24 GB that another job was also using) and about ten seconds to score', and release 0.5.0 'was timed alone on the same machine on 7 November 2026: it took 25.3 seconds on every core (the median of three runs), 74 seconds on one thread (one run) and 11 seconds to score'.",
-        [f"The {len(prov37)} April runs of v37 made for this paper took a median of {int(prov37.annotation_seconds.median())} seconds ({int(prov37.annotation_seconds.min())} to {int(prov37.annotation_seconds.max())}) and the {len(prov89)} of v38 a median of {int(prov89.annotation_seconds.median())} ({int(prov89.annotation_seconds.min())} to {int(prov89.annotation_seconds.max())}), made on 8 November 2026 up to seven at a time on the same machine with other work beside them, with the complete databases (which hold 8% more records) and by binaries that contain the two speed-ups of 5 November 2026 for v38 only.",
+        [f"The {len(prov37)} April runs of v37 made for this paper took a median of {int(prov37.annotation_seconds.median())} seconds ({int(prov37.annotation_seconds.min())} to {int(prov37.annotation_seconds.max())}) and the {len(prov89)} of v38 a median of {int(prov89.annotation_seconds.median())} ({int(prov89.annotation_seconds.min())} to {int(prov89.annotation_seconds.max())}), made on 8 November 2026 several at a time on the same machine with other work beside them, with the complete databases (which hold 8% more records) and by binaries that contain the two speed-ups of 5 November 2026 for v38 only.",
          "The manuscript therefore says that the times of these runs are not timings, and keeps the time of release 0.5.0 measured alone on 7 November 2026 on the first databases (`results/v38_v0.5.0/annotation_time.tsv`), which was not repeated with the complete databases (Section 4.4)."]))
     l37, t37_, v37_ver = crate_size("5d8004a")
     l38, t38_, v38_ver = crate_size("v0.5.0-rc.1")
@@ -1478,7 +1494,8 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
     v37_files = [f for f in all_files if not f.startswith("v38_") and "_v38" not in f]
     no_twin = [f for f in v37_files if "_v37" not in f or f.replace("_v37", "_v38") not in all_files]
     history = [f for f in no_twin if f in ("trajectory.csv", "change_ledger.csv", "review_rounds.csv")]
-    independent = {"clingen_missing_curations.csv": "a list of the rows of the ClinGen export", "criteria_status.csv": "read from the engine of v38 already", "tavtigian_posterior.csv": "arithmetic of the framework, which `13_manuscript_stats.py` checks to be the file that is there"}
+    independent = {"clingen_missing_curations.csv": "a list of the rows of the ClinGen export", "criteria_status.csv": "read from the engine of v38 already", "tavtigian_posterior.csv": "arithmetic of the framework, which `13_manuscript_stats.py` checks to be the file that is there",
+                   **{f: "a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions" for f in no_twin if f.startswith("databases_")}}
     assert set(no_twin) == set(history) | {"round6_rulings.tsv"} | set(independent), f"the files without a twin are not the ones that Section 9.2 describes: {no_twin}"
 
     def where(anchor: str, inline: bool = False) -> str:
@@ -1567,10 +1584,9 @@ def check_typed_claims(summary: list[dict], cmp_: dict, eff: pd.DataFrame) -> No
     """The few statements of the text above that are typed and not computed. They hold for these data, and if the data change the script stops
     here and does not write a document that says something the data no longer say."""
     knees = {s_["label"]: (s_["shape"]["v37"]["knee"], s_["shape"]["v38"]["knee"]) for s_ in summary if s_["shape"]["v37"]["knee"] is not None or s_["shape"]["v38"]["knee"] is not None}
-    # the floor of BS2's carrier arm with the bar off has a knee at 100 alleles under v38 on the complete databases (the largest fall of its exchange rate is
-    # by a factor of 3.3) and none under v37 (2.4) or under v38 on the first databases (2.4), a crossing of the factor of 3 and not a different curve
-    expected = {"BS1 bar": (0.001, 0.001), "BS2 carrier floor, bar off": (None, 100.0), "BP7 far boundary": (300.0, 300.0),
-                "PM2 bar, not recessive-only, 2015 table both sides": (1e-05, 1e-05), "Likely pathogenic cutoff (points)": (5.0, 5.0)}
+    # the PM2 sweep under the 2015 table has the knee at 1e-5 under v38 only: its exchange rate falls from 880 calls per error to 84 under v38, and from 3,410
+    # to 484 under v37, which is a fall by a factor of 7 and not to about a hundred (the first form of the rule, which asked only for the factor, gave it to both)
+    expected = {"BS1 bar": (0.001, 0.001), "BP7 far boundary": (300.0, 300.0), "PM2 bar, not recessive-only, 2015 table both sides": (None, 1e-05), "Likely pathogenic cutoff (points)": (5.0, 5.0)}
     assert knees == expected, f"the knees are not the ones that Section 1 of the document names: {knees}"
     sw = {s_["label"]: s_["shape"] for s_ in summary}
     for label in ("BS2 carrier bar, dominant-only genes", "BS2 carrier floor, bar off"):
@@ -1613,7 +1629,7 @@ def section_summary(D: Doc, pairs: list[Pair], main_pair: Pair, october: Pair, s
         f"On the main run, v38 agrees with ClinVar's class for {n(b['exact'] - a['exact'])} more of the {n(N)} records and with its direction for {n(b['same_direction'] - a['same_direction'])} more ({pc(a['same_direction'] / N)} to {pc(b['same_direction'] / N)}); it calls {n(b['same_benign'] - a['same_benign'])} more ClinVar benign-side variants benign-side (recall {pc(a['blb_recall'])} to {pc(b['blb_recall'])}) and {n(abs(b['same_pathogenic'] - a['same_pathogenic']))} fewer pathogenic-side variants pathogenic-side (recall {pc(a['plp_recall'])} to {pc(b['plp_recall'])}) (Section 2).",
         f"Opposite-direction calls go from {a['opposite']} to {b['opposite']} ({a['false_benign']} reference-discordant benign calls and {a['false_pathogenic']} reference-discordant pathogenic calls, then {b['false_benign']} and {b['false_pathogenic']}): {len(opp[(opp.pair_v37 == 'v37') & (opp.change == 'left_in_v38')])} call leaves the set and {len(opp[(opp.pair_v37 == 'v37') & (opp.change == 'entered_in_v38')])} enter it (Section 3).",
         f"Across the {len(others)} other pairs with a discrepancy file on both sides, {len(fewer)} have fewer opposite-direction calls under v38, {len(others) - len(fewer) - len(more)} the same number and {len(more)} more, and over all the pairs {len(left)} variants leave and {len(entered)} enter in at least one; the pairs with more are {', '.join(f'`{k}` ({c37} to {c38})' for k, c37, c38 in more)} (Section 3).",
-        f"Of the {len(summary)} sweeps, {len(changed_shape)} differ in the sign of a step, the position of the knee or the order of their settings, and {sum(1 for s_ in summary if s_['shape']['v37']['knee'] != s_['shape']['v38']['knee'])} differ in the knee; the sweeps of the BS2 carrier bar and floor stop being flat and the PM2 sweep under the 2015 table loses most of its range (Section 4).",
+        f"Of the {len(summary)} sweeps, {len(changed_shape)} differ in the sign of a step, the position of the knee or the order of their settings, and {plural(sum(1 for s_ in summary if s_['shape']['v37']['knee'] != s_['shape']['v38']['knee']), 'differs', 'differ')} in the knee; the sweeps of the BS2 carrier bar and floor stop being flat and the PM2 sweep under the 2015 table loses most of its range (Section 4).",
         f"Of the {len(group_eff)} effects of the single switches, source removals, hook runs and gap runs on {word(int(group_eff.metric.nunique()))} measures, {len(flagged)} changed sign, appeared or vanished, or changed by more than 20%, and {int((flagged.small_number == True).sum())} of them are of fewer than 10 calls; the one that is large is the removal of the ClinGen file (Section 5).",  # noqa: E712
         f"In the main run {len(moved)} criterion moves its firing count by more than 5% ({', '.join(sorted(moved))}); PM2 at Supporting strength moves by {(main_pair.f38['PM2_Supporting'] - main_pair.f37['PM2_Supporting']) / main_pair.f37['PM2_Supporting'] * 100:+.1f}% (Section 7).",
         f"On the October release agreement in direction goes from {pc(al.same_direction / al.stratum_n, 1)} to {pc(nw.same_direction / nw.stratum_n, 1)} and opposite-direction calls from {al.opposite} to {nw.opposite}; on the {n(na.stratum_n)} new variants agreement goes from {pc(na.same_direction / na.stratum_n, 1)} to {pc(nb.same_direction / nb.stratum_n, 1)} with {na.opposite} and {nb.opposite} opposite-direction calls, and the rate of opposite-direction calls is {xa.value:.1f} and {xb.value:.1f} times the April rate (Section 8).",

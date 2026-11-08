@@ -87,11 +87,11 @@ The rows below set the two stacks side by side over the variants that both hold,
 
 ## The sweeps and the effects of the family
 
-The 12 sweeps of the paper keep their shape but for 4, and 1 of them differs in its knee (BS1's is at 0.001 on both stacks, the far boundary of BP7's is at 300 on both stacks).
+The 12 sweeps of the paper keep their shape but for 4, and 0 of them differs in its knee (BS1's is at 0.001 on both stacks, the far boundary of BP7's is at 300 on both stacks).
 
 - BS1 bar: settings 0.0005 and 0.002 change order
 - BS2 carrier bar, dominant-only genes: settings 0 and 0.001; 0 and 0.003 change order
-- BS2 carrier floor, bar off: the knee appears at 100; settings 5 and 1000 change order
+- BS2 carrier floor, bar off: settings 5 and 1000 change order
 - BP7 PhyloP bar: the cost of the step from 2.0 to 3 goes from zero to positive
 
 Of the 245 effects of the switches, sources, hooks and gap runs on 7 measures, 7 changed sign, appeared or vanished, or changed by more than 20%, and 6 of those are of fewer than 10 calls.

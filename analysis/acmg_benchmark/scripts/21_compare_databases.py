@@ -418,6 +418,8 @@ def family_on_both_stacks() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, p
         flips = sw["shape"]["flips"]
         shapes.append({"sweep": sw["label"], "knob": sw["knob"], "settings": sw["n"], "knee_first": first["knee"], "knee_factor_first": round(first["knee_factor"], 2),
                        "knee_complete": complete["knee"], "knee_factor_complete": round(complete["knee_factor"], 2),
+                       "fall_from_rate_first": round(first["fall_from_rate"]), "fall_to_rate_first": round(first["fall_to_rate"]),
+                       "fall_from_rate_complete": round(complete["fall_from_rate"]), "fall_to_rate_complete": round(complete["fall_to_rate"]),
                        "range_same_direction_first": first["range_same_direction"], "range_same_direction_complete": complete["range_same_direction"],
                        "gain_signs_first": first["gain_signs"], "gain_signs_complete": complete["gain_signs"], "cost_signs_first": first["cost_signs"], "cost_signs_complete": complete["cost_signs"],
                        "pairs_that_change_order": len(flips), "settings_that_change_order": "; ".join(f"{a_} and {b_}" for a_, b_ in flips),
