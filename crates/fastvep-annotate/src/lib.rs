@@ -62,6 +62,10 @@ pub struct AnnotationContext {
     /// every lookup of every provider across concurrent `/annotate` requests
     /// (and which the CLI pipeline worked around by immediately unwrapping).
     pub sa_providers: Vec<Box<dyn AnnotationProvider>>,
+    /// Database files of the SA directory that were found and not loaded, with why. A source that
+    /// is in this list is a source that is missing from every annotation and classification the
+    /// context makes, so whoever serves the context reports it.
+    pub sa_skipped: Vec<SkippedSource>,
     /// Gene-level annotation providers (OMIM, gnomAD gene constraints, ClinVar protein index).
     pub gene_providers: Vec<fastvep_sa::gene::GeneIndex>,
     /// ACMG-AMP classification configuration (None = disabled).
@@ -219,17 +223,21 @@ impl AnnotationContext {
         let predictor = ConsequencePredictor::new(distance, distance);
 
         // Load supplementary annotation providers (.osa, .osa2 files)
-        let sa_providers = if let Some(dir) = sa_dir {
-            load_sa_providers(Path::new(dir))?
+        let (sa_providers, mut sa_skipped) = if let Some(dir) = sa_dir {
+            load_sa_providers_reporting(Path::new(dir))?
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
 
-        let gene_providers = if let Some(dir) = sa_dir {
-            load_gene_providers(Path::new(dir))?
+        let (gene_providers, skipped_genes) = if let Some(dir) = sa_dir {
+            load_gene_providers_reporting(Path::new(dir))?
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
+        sa_skipped.extend(skipped_genes);
+        for source in &sa_skipped {
+            tracing::warn!("{source}");
+        }
         if let Some(conflict) = check_sa_assemblies(&sa_providers, &gene_providers) {
             tracing::warn!("{conflict}");
         }
@@ -243,6 +251,7 @@ impl AnnotationContext {
             distance,
             hgvs: true,
             sa_providers,
+            sa_skipped,
             gene_providers,
             acmg_config: None,
         })
@@ -270,12 +279,16 @@ impl AnnotationContext {
         })
     }
 
-    /// Names of loaded supplementary annotation sources.
+    /// Names of loaded supplementary annotation sources, each once: a source held in a shard
+    /// for every chromosome is one source.
     pub fn sa_source_names(&self) -> Vec<String> {
-        self.sa_providers
-            .iter()
-            .map(|p| p.name().to_string())
-            .collect()
+        let mut names: Vec<String> = Vec::new();
+        for provider in &self.sa_providers {
+            if !names.iter().any(|n| n == provider.name()) {
+                names.push(provider.name().to_string());
+            }
+        }
+        names
     }
 
     /// Load a genome from GFF3 path (+ optional FASTA + optional SA directory).
@@ -293,6 +306,7 @@ impl AnnotationContext {
         self.predictor = new_ctx.predictor;
         self.gff3_source = new_ctx.gff3_source;
         self.sa_providers = new_ctx.sa_providers;
+        self.sa_skipped = new_ctx.sa_skipped;
         self.gene_providers = new_ctx.gene_providers;
         Ok(tr_count)
     }
@@ -1746,6 +1760,32 @@ pub fn check_sa_assemblies(
     )
 }
 
+/// A database file that was found in a `--sa-dir` and not loaded, and why.
+///
+/// Loading does not fail on one: the directory may hold a source that is not needed, and a run is
+/// better served by the others than by none. But a file that is skipped is a source that is
+/// missing, and a run that does not say so classifies and annotates without it as if it had never
+/// been asked for, so every caller of a loader that matters hears about each of these.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedSource {
+    pub path: std::path::PathBuf,
+    pub reason: String,
+}
+
+impl std::fmt::Display for SkippedSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} was not loaded: {}", self.path.display(), self.reason)
+    }
+}
+
+/// What loading a directory of databases produced: the ones that loaded, in path order, and the
+/// ones that were found and skipped, with why.
+pub type LoadedAndSkipped<T> = (Vec<T>, Vec<SkippedSource>);
+
+const EMPTY_DATABASE_REASON: &str = "it holds no records, which is a build that found nothing to \
+     write (every contig name of its input unmatched, or a truncated download) and not a source of \
+     annotations; rebuild it";
+
 /// Load supplementary annotation providers (.osa, .osa2, .osi files) from a
 /// directory.
 ///
@@ -1755,7 +1795,12 @@ pub fn check_sa_assemblies(
 /// startup scale linearly with shard count for no reason. Sorting by path also
 /// makes the provider order - and therefore the output column order - depend on
 /// the file names rather than on directory iteration order.
-pub fn load_sa_providers(sa_dir: &Path) -> Result<Vec<Box<dyn AnnotationProvider>>> {
+///
+/// A file that cannot be opened, or that holds no record, is skipped and returned beside the
+/// providers, in path order, with the reason.
+pub fn load_sa_providers_reporting(
+    sa_dir: &Path,
+) -> Result<LoadedAndSkipped<Box<dyn AnnotationProvider>>> {
     use fastvep_sa::interval::OsiReader;
     use fastvep_sa::reader::SaReader;
     use fastvep_sa::reader_v2::Osa2Reader;
@@ -1766,16 +1811,15 @@ pub fn load_sa_providers(sa_dir: &Path) -> Result<Vec<Box<dyn AnnotationProvider
             "SA directory does not exist: {} (skipping)",
             sa_dir.display()
         );
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let paths = sorted_paths_with_extensions(sa_dir, &["osa2", "osa", "osi"])?;
 
-    // A source that fails to open is skipped with a warning, as before; only
-    // the directory walk itself is fatal.
-    let providers: Vec<Box<dyn AnnotationProvider>> = paths
+    // A source that fails to open is skipped, as before; only the directory walk itself is fatal.
+    let opened: Vec<std::result::Result<Box<dyn AnnotationProvider>, SkippedSource>> = paths
         .par_iter()
-        .filter_map(|path| {
+        .map(|path| {
             let ext = path.extension().and_then(|e| e.to_str());
             let opened: Result<(&str, Box<dyn AnnotationProvider>)> = match ext {
                 Some("osa2") => Osa2Reader::open(path).map(|r| ("SA v2", boxed(r))),
@@ -1785,21 +1829,43 @@ pub fn load_sa_providers(sa_dir: &Path) -> Result<Vec<Box<dyn AnnotationProvider
                 // "just works" via --sa-dir; the OsiReader exposes the same
                 // AnnotationProvider trait, returning AnnotationValue::Interval.
                 Some("osi") => OsiReader::open(path).map(|r| ("SA interval", boxed(r))),
-                _ => return None,
+                _ => unreachable!("only the extensions asked for are listed"),
             };
             match opened {
+                Ok((_, provider)) if provider.is_empty() => Err(SkippedSource {
+                    path: path.clone(),
+                    reason: EMPTY_DATABASE_REASON.to_string(),
+                }),
                 Ok((kind, provider)) => {
                     tracing::info!("Loaded {}: {} ({})", kind, provider.name(), path.display());
-                    Some(provider)
+                    Ok(provider)
                 }
-                Err(e) => {
-                    tracing::warn!("Could not load {}: {}", path.display(), e);
-                    None
-                }
+                Err(e) => Err(SkippedSource {
+                    path: path.clone(),
+                    reason: format!("{e:#}"),
+                }),
             }
         })
         .collect();
 
+    let mut providers = Vec::with_capacity(opened.len());
+    let mut skipped = Vec::new();
+    for result in opened {
+        match result {
+            Ok(provider) => providers.push(provider),
+            Err(source) => skipped.push(source),
+        }
+    }
+    Ok((providers, skipped))
+}
+
+/// [`load_sa_providers_reporting`] for a caller that has no use for the list of what was skipped:
+/// each is logged at warning level, which is seen only where a `tracing` subscriber is installed.
+pub fn load_sa_providers(sa_dir: &Path) -> Result<Vec<Box<dyn AnnotationProvider>>> {
+    let (providers, skipped) = load_sa_providers_reporting(sa_dir)?;
+    for source in &skipped {
+        tracing::warn!("{source}");
+    }
     Ok(providers)
 }
 
@@ -1835,23 +1901,30 @@ fn sorted_paths_with_extensions(dir: &Path, exts: &[&str]) -> Result<Vec<std::pa
 
 /// Load gene-level annotation providers (.oga files) from a directory.
 ///
-/// Same ordering and parallelism contract as [`load_sa_providers`].
-pub fn load_gene_providers(sa_dir: &Path) -> Result<Vec<fastvep_sa::gene::GeneIndex>> {
+/// Same ordering and parallelism contract as [`load_sa_providers_reporting`], and the same
+/// accounting for a file that was skipped.
+pub fn load_gene_providers_reporting(
+    sa_dir: &Path,
+) -> Result<LoadedAndSkipped<fastvep_sa::gene::GeneIndex>> {
     use rayon::prelude::*;
 
     if !sa_dir.is_dir() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let paths = sorted_paths_with_extensions(sa_dir, &["oga"])?;
 
-    let providers: Vec<fastvep_sa::gene::GeneIndex> = paths
+    let opened: Vec<std::result::Result<fastvep_sa::gene::GeneIndex, SkippedSource>> = paths
         .par_iter()
-        .filter_map(|path| {
+        .map(|path| {
             match std::fs::File::open(path)
                 .map_err(anyhow::Error::from)
                 .and_then(|mut f| fastvep_sa::gene::GeneIndex::read_from(&mut f))
             {
+                Ok(index) if index.is_empty() => Err(SkippedSource {
+                    path: path.clone(),
+                    reason: EMPTY_DATABASE_REASON.to_string(),
+                }),
                 Ok(index) => {
                     tracing::info!(
                         "Loaded gene annotations: {} ({}, {} genes)",
@@ -1859,16 +1932,33 @@ pub fn load_gene_providers(sa_dir: &Path) -> Result<Vec<fastvep_sa::gene::GeneIn
                         path.display(),
                         index.gene_count()
                     );
-                    Some(index)
+                    Ok(index)
                 }
-                Err(e) => {
-                    tracing::warn!("Could not load {}: {}", path.display(), e);
-                    None
-                }
+                Err(e) => Err(SkippedSource {
+                    path: path.clone(),
+                    reason: format!("{e:#}"),
+                }),
             }
         })
         .collect();
 
+    let mut providers = Vec::with_capacity(opened.len());
+    let mut skipped = Vec::new();
+    for result in opened {
+        match result {
+            Ok(index) => providers.push(index),
+            Err(source) => skipped.push(source),
+        }
+    }
+    Ok((providers, skipped))
+}
+
+/// [`load_gene_providers_reporting`] for a caller that has no use for the list of what was skipped.
+pub fn load_gene_providers(sa_dir: &Path) -> Result<Vec<fastvep_sa::gene::GeneIndex>> {
+    let (providers, skipped) = load_gene_providers_reporting(sa_dir)?;
+    for source in &skipped {
+        tracing::warn!("{source}");
+    }
     Ok(providers)
 }
 

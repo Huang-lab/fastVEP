@@ -58,6 +58,16 @@ pub trait AnnotationProvider: Send + Sync {
     /// Metadata about this annotation source.
     fn metadata(&self) -> &SaMetadata;
 
+    /// Whether the database holds no record at all.
+    ///
+    /// An empty database is a build that found nothing to write (every contig name of the input
+    /// unmatched, a truncated download), not a source of annotations. It opens without an error
+    /// and answers every query with "no record", which for a frequency source reads as "absent
+    /// from the population", so a loader declines to serve one and says so.
+    fn is_empty(&self) -> bool {
+        false
+    }
+
     /// Look up annotations for a specific variant position and alleles.
     ///
     /// Returns `None` if no annotation exists for this position/allele combination.

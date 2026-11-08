@@ -214,6 +214,18 @@ column-oriented sources it is not, so if you still have the upstream release
 prefer `sa-build --format osa2` to get the column layout. Which of the two ends
 up smaller is data-dependent, so compare if size matters.
 
+### Databases that hold nothing
+
+A database with no record opens without an error and answers every query with "no record", which for a frequency source reads as "absent from the population".
+The dbSNP database that was meant to serve GRCh37 on fastvep.org was ten bytes of header: it had been built from a release whose contigs are RefSeq accessions, none matched the assembly, and the builder wrote it and exited with success.
+So the built-in sources refuse to write one.
+`sa-build` (and `sa-convert`, which would carry an empty `.osa` over) stops with an error that names the usual causes, removes what it had begun to write, and exits non-zero; `--allow-empty` writes the database anyway, for the case where nothing is the right answer, such as the shard of a chromosome that has no record in the regions being built.
+The custom sources (`custom_vcf`, `custom_bed`) keep their older behaviour of a warning and an empty file, so that a user can iterate on a filter.
+
+A loader refuses to serve one that already exists, whoever built it.
+`fastvep annotate` prints `warning: <file> was not loaded: it holds no records ...` on stderr for each database file that is empty or cannot be opened (a truncated copy is the common one), because `tracing` has no subscriber in the command line and the file would otherwise be a source that is silently missing from every row.
+`fastvep-web` logs the same and reports it in the ACMG verdict, where the source counts as missing.
+
 #### Chunk width for dense sources (`--chunk-bits`)
 
 A chunk is the unit a query loads, and it covers a fixed genomic width -- 2^20

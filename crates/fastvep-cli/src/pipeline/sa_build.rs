@@ -11,6 +11,79 @@ use std::fs::File;
 use std::io::{self, BufRead, BufWriter, Read, Seek, SeekFrom};
 use std::path::Path;
 
+thread_local! {
+    /// Whether a build that writes no record is allowed (`--allow-empty`). A thread-local, set by
+    /// [`with_allow_empty`] around the one call that is told to, so that the many callers of the
+    /// builders (and the tests that run them side by side) are untouched and cannot affect each
+    /// other.
+    static ALLOW_EMPTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with builds that write no record allowed, which is what `--allow-empty` means.
+///
+/// By default a build of a built-in source that finds no record to write is an error. An empty
+/// database opens without complaint and answers every query with "no record", which for a
+/// frequency source reads as "absent from the population": the one on the hosted site that was
+/// meant to carry dbSNP for GRCh37 was ten bytes of header, and nothing had said so. The cases
+/// where nothing to write is the right answer (a chromosome without a record in the regions of a
+/// per-chromosome build) say so with the flag.
+pub fn with_allow_empty<T>(allow: bool, f: impl FnOnce() -> T) -> T {
+    ALLOW_EMPTY.with(|flag| {
+        let before = flag.replace(allow);
+        let out = f();
+        flag.set(before);
+        out
+    })
+}
+
+/// Refuse a build that wrote no record, unless the caller allowed one, naming the usual causes.
+/// `outputs` are removed first, so that a refused build leaves nothing that loads.
+pub(crate) fn refuse_empty_build(
+    source: &str,
+    input: &str,
+    assembly: &str,
+    outputs: &[&Path],
+) -> Result<()> {
+    if ALLOW_EMPTY.with(|flag| flag.get()) {
+        eprintln!(
+            "warning: {source} wrote no record from {input}; the empty database is kept because \
+             --allow-empty was given."
+        );
+        return Ok(());
+    }
+    for path in outputs {
+        let _ = std::fs::remove_file(path);
+    }
+    anyhow::bail!(
+        "{source}: no record was written from {input}. A database of nothing annotates nothing, \
+         which for a frequency source reads as absence from the population. If the input is not \
+         empty, none of its chromosome names matched assembly '{assembly}' (NCBI releases name \
+         contigs by RefSeq accession, such as NC_000001.11: pass the --assembly of the build you \
+         downloaded), or the download is truncated. Pass --allow-empty if an empty database is \
+         what you mean."
+    )
+}
+
+/// The date a VCF says it was made, from its `##fileDate=` header line, when it has one.
+///
+/// The databases were stamped `latest`, which says nothing about what they hold: a ClinVar that is
+/// seven months old reads the same as one from this week. A release that dates itself is stamped
+/// with the date, and the server reports it.
+fn vcf_file_date(input: &str) -> Option<String> {
+    let reader = io::BufReader::new(open_sa_input(input, None).ok()?);
+    for line in reader.lines().take(5_000) {
+        let line = line.ok()?;
+        if !line.starts_with('#') {
+            return None;
+        }
+        if let Some(date) = line.strip_prefix("##fileDate=") {
+            let date = date.trim();
+            return (!date.is_empty()).then(|| date.to_string());
+        }
+    }
+    None
+}
+
 /// Standard chromosome ordering for SA builds.
 ///
 /// Canonical names use the UCSC `chr*` style so the resulting `.osa.idx`
@@ -118,6 +191,8 @@ where
     use std::sync::Arc;
 
     let output_path = Path::new(output);
+    let source_label = header.json_key.clone();
+    let assembly_label = header.assembly.clone();
     let mut writer = fastvep_sa::writer::SaWriter::new(header);
 
     let file_size = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
@@ -147,6 +222,17 @@ where
         let _ = std::fs::remove_file(output_path.with_extension("osa"));
         let _ = std::fs::remove_file(output_path.with_extension("osa.idx"));
         return Err(e);
+    }
+    if writer.is_empty() {
+        refuse_empty_build(
+            &source_label,
+            input,
+            &assembly_label,
+            &[
+                &output_path.with_extension("osa"),
+                &output_path.with_extension("osa.idx"),
+            ],
+        )?;
     }
 
     meter.finish();
@@ -397,6 +483,14 @@ pub fn run_sa_build(
         Path::new(output).with_extension("osa").display()
     );
 
+    // A release that dates itself is stamped with the date it gives, not `latest`.
+    let mut header = header;
+    if header.version == "latest" {
+        if let Some(date) = vcf_file_date(input) {
+            header.version = date;
+        }
+    }
+
     // Large, coordinate-sorted population/score sources stream straight into
     // the writer instead of buffering every record (issue #55). They share one
     // helper that differs only in which per-source iterator adapts the reader.
@@ -508,14 +602,8 @@ pub fn run_sa_build(
 
     let n = records.len() as u64;
     if records.is_empty() {
-        eprintln!(
-            "Warning: 0 records parsed from {} — if the input is non-empty, this \
-             usually means none of its chromosome names matched assembly '{}'. \
-             NCBI releases (e.g. dbSNP) name contigs by RefSeq accession \
-             (NC_000001.11); pass the --assembly (GRCh38 or GRCh37) matching the \
-             build you downloaded.",
-            source, assembly
-        );
+        // Nothing has been written yet, so there is nothing to remove.
+        refuse_empty_build(source, input, assembly, &[])?;
     }
     eprintln!(
         "INFO  ProgressMeter - Parsed {} records in {:.1} min. Writing ...",
@@ -1195,9 +1283,16 @@ fn finish_osa2_build_deferred<F>(
 where
     F: FnOnce() -> Vec<(usize, Vec<String>)>,
 {
+    // A release that dates itself is stamped with the date it gives, not `latest`.
+    let mut stamped = metadata.clone();
+    if stamped.version == "latest" {
+        if let Some(date) = vcf_file_date(input) {
+            stamped.version = date;
+        }
+    }
     let n = match write_osa2_stream(
         out_path,
-        metadata,
+        &stamped,
         fields,
         records,
         &mut meter,
@@ -1211,11 +1306,7 @@ where
     };
     meter.finish();
     if n == 0 {
-        eprintln!(
-            "Warning: 0 records parsed from {} — if the input is non-empty, none of its \
-             chromosome names matched assembly '{}'.",
-            input, assembly
-        );
+        refuse_empty_build(&stamped.json_key, input, assembly, &[out_path])?;
     }
     eprintln!(
         "Wrote: {} ({} records)",
@@ -1399,10 +1490,12 @@ pub fn run_sa_convert(
     meter.finish();
 
     if n == 0 {
-        eprintln!(
-            "warning: {} contained 0 records; wrote an empty .osa2.",
-            in_path.display()
-        );
+        refuse_empty_build(
+            &header.json_key,
+            &in_path.display().to_string(),
+            &header.assembly,
+            &[&out_path],
+        )?;
     }
     let in_bytes = std::fs::metadata(in_path).map(|m| m.len()).unwrap_or(0)
         + std::fs::metadata(in_path.with_extension("osa.idx"))
