@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use tokio::sync::OnceCell;
+use tokio::sync::watch;
 
 use crate::context::AnnotationContext;
 use crate::errors::AppError;
@@ -263,26 +263,53 @@ pub fn find_file_with_ext(dir: &Path, extensions: &[&str]) -> Option<PathBuf> {
     None
 }
 
+/// How a genome gets built from its files. A seam for tests, which need a load that takes a
+/// known time; the server always uses [`load_context`].
+type Loader =
+    Arc<dyn Fn(&str, &GenomePaths, u64) -> anyhow::Result<AnnotationContext> + Send + Sync>;
+
+/// What a load has to say so far: nothing while it runs, then the genome or why it could not
+/// be built.
+type Outcome = Option<Result<Arc<AnnotationContext>, Arc<str>>>;
+
+/// The loads under way or finished, by genome name. Shared with the task that does a load so
+/// that a failed one can take itself out, which lets the next request try again.
+type Loads = Arc<Mutex<HashMap<String, watch::Receiver<Outcome>>>>;
+
 /// The genomes loaded so far besides the one the server started with.
 ///
 /// A genome is loaded the first time something asks for it and then kept, so
 /// memory grows with the genomes actually used, bounded by the number of
 /// directories under `--data-dir`. Concurrent first requests for one genome share
 /// a single load.
+///
+/// The load is not owned by the request that started it. It runs as a task of its own, and a
+/// request only waits for its outcome, so a client that gives up (the browser tab closes, the
+/// proxy times out) does not stop the load or start a second one. A load that belonged to its
+/// first request would be restarted by the next waiter each time that request went away, and
+/// every restart builds the whole genome again: for human, 2.4 GiB of heap and 4.5 GiB while
+/// its transcript cache is rebuilt, which a handful of abandoned requests multiply past what a
+/// 16 GB host has.
 pub struct GenomeRegistry {
     data_dir: Option<PathBuf>,
     distance: u64,
-    cells: Mutex<HashMap<String, Arc<OnceCell<Arc<AnnotationContext>>>>>,
+    loads: Loads,
     loads_started: AtomicUsize,
+    loader: Loader,
 }
 
 impl GenomeRegistry {
     pub fn new(data_dir: Option<PathBuf>, distance: u64) -> Self {
+        Self::with_loader(data_dir, distance, Arc::new(load_context))
+    }
+
+    fn with_loader(data_dir: Option<PathBuf>, distance: u64, loader: Loader) -> Self {
         Self {
             data_dir,
             distance,
-            cells: Mutex::new(HashMap::new()),
+            loads: Arc::new(Mutex::new(HashMap::new())),
             loads_started: AtomicUsize::new(0),
+            loader,
         }
     }
 
@@ -299,8 +326,9 @@ impl GenomeRegistry {
 
     /// The genome if it is already loaded; never waits and never loads.
     pub fn loaded(&self, name: &str) -> Option<Arc<AnnotationContext>> {
-        let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
-        cells.get(name).and_then(|cell| cell.get().cloned())
+        let loads = self.loads.lock().unwrap_or_else(|p| p.into_inner());
+        let outcome = loads.get(name)?.borrow().clone();
+        outcome?.ok()
     }
 
     /// The genome, loading it first if this is the first request for it.
@@ -316,22 +344,66 @@ impl GenomeRegistry {
             return Err(AppError::BadRequest("No data directory configured".into()));
         };
         let paths = resolve_genome_paths(data_dir, name)?;
-        let cell = {
-            let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
-            Arc::clone(cells.entry(name.to_string()).or_default())
+        let mut outcome = {
+            let mut loads = self.loads.lock().unwrap_or_else(|p| p.into_inner());
+            match loads.get(name) {
+                Some(rx) => rx.clone(),
+                None => {
+                    let (tx, rx) = watch::channel(None);
+                    loads.insert(name.to_string(), rx.clone());
+                    self.loads_started.fetch_add(1, Ordering::Relaxed);
+                    self.start_load(name.to_string(), paths, tx);
+                    rx
+                }
+            }
         };
-        let loaded = cell
-            .get_or_try_init(|| async {
-                self.loads_started.fetch_add(1, Ordering::Relaxed);
-                let label = name.to_string();
-                let distance = self.distance;
-                let ctx =
-                    tokio::task::spawn_blocking(move || load_context(&label, &paths, distance))
-                        .await??;
-                Ok::<_, AppError>(Arc::new(ctx))
-            })
-            .await?;
-        Ok(Arc::clone(loaded))
+        loop {
+            let answer = outcome.borrow().clone();
+            match answer {
+                Some(Ok(ctx)) => return Ok(ctx),
+                Some(Err(why)) => {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "genome {name} could not be loaded: {why}"
+                    )))
+                }
+                None => {}
+            }
+            outcome.changed().await.map_err(|_| {
+                AppError::Internal(anyhow::anyhow!(
+                    "the load of genome {name} ended without an answer"
+                ))
+            })?;
+        }
+    }
+
+    /// Run the load of one genome on its own task and report the outcome on `tx`.
+    fn start_load(&self, name: String, paths: GenomePaths, tx: watch::Sender<Outcome>) {
+        let loader = Arc::clone(&self.loader);
+        let loads = Arc::clone(&self.loads);
+        let distance = self.distance;
+        tokio::spawn(async move {
+            let label = name.clone();
+            let built = tokio::task::spawn_blocking(move || loader(&label, &paths, distance)).await;
+            let outcome: Result<Arc<AnnotationContext>, Arc<str>> = match built {
+                Ok(Ok(ctx)) => Ok(Arc::new(ctx)),
+                Ok(Err(e)) => {
+                    tracing::error!("Could not load genome {name}: {e:?}");
+                    Err(format!("{e:#}").into())
+                }
+                Err(e) => {
+                    tracing::error!("The load of genome {name} panicked: {e}");
+                    Err(format!("{e}").into())
+                }
+            };
+            if outcome.is_err() {
+                // So that the next request tries again instead of finding the failure.
+                loads
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&name);
+            }
+            tx.send_replace(Some(outcome));
+        });
     }
 }
 
@@ -567,5 +639,109 @@ mod tests {
             "Homo_sapiens.GRCh38.115"
         );
         assert_eq!(default_genome_name(None, None), "default");
+    }
+
+    const TINY_GFF3: &str = "##gff-version 3\n\
+1\ttest\tgene\t1\t300\t.\t+\t.\tID=gene:G1;Name=G1;biotype=protein_coding\n\
+1\ttest\tmRNA\t1\t300\t.\t+\t.\tID=transcript:T1;Parent=gene:G1;biotype=protein_coding\n\
+1\ttest\texon\t1\t300\t.\t+\t.\tID=exon:E1;Parent=transcript:T1;rank=1\n\
+1\ttest\tCDS\t1\t300\t.\t+\t0\tID=CDS:P1;Parent=transcript:T1\n";
+
+    fn tiny_genome(label: &str) -> PathBuf {
+        let data_dir = tmp_dir(label);
+        let genome = data_dir.join("alpha");
+        fs::create_dir_all(&genome).unwrap();
+        fs::write(genome.join("alpha.gff3"), TINY_GFF3).unwrap();
+        data_dir
+    }
+
+    /// A load that takes `delay`, and counts how many times it ran.
+    fn slow_registry(
+        data_dir: PathBuf,
+        delay: std::time::Duration,
+    ) -> (Arc<GenomeRegistry>, Arc<AtomicUsize>) {
+        let ran = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&ran);
+        let registry = GenomeRegistry::with_loader(
+            Some(data_dir),
+            5000,
+            Arc::new(move |label, paths, distance| {
+                counted.fetch_add(1, Ordering::Relaxed);
+                std::thread::sleep(delay);
+                load_context(label, paths, distance)
+            }),
+        );
+        (Arc::new(registry), ran)
+    }
+
+    // The load belongs to the registry and not to the request that asked first. If it
+    // belonged to that request, each one that went away would hand the load to the next
+    // waiter, which would build the whole genome again while the abandoned build was still
+    // running: a few clients that give up early multiply the memory of a human genome.
+    #[tokio::test]
+    async fn a_client_that_goes_away_neither_stops_a_load_nor_starts_another() {
+        let (registry, ran) =
+            slow_registry(tiny_genome("cancel"), std::time::Duration::from_millis(400));
+        for _ in 0..6 {
+            let r = Arc::clone(&registry);
+            let request = tokio::spawn(async move { r.get_or_load("alpha").await.map(|_| ()) });
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            request.abort();
+            let _ = request.await;
+        }
+        let ctx = registry
+            .get_or_load("alpha")
+            .await
+            .expect("the genome loads");
+        assert_eq!(ctx.transcript_count(), 1);
+        assert_eq!(ran.load(Ordering::Relaxed), 1, "the genome was built once");
+        assert_eq!(registry.loads_started(), 1);
+        assert!(registry.loaded("alpha").is_some());
+    }
+
+    #[tokio::test]
+    async fn requests_that_arrive_while_a_genome_loads_share_the_load() {
+        let (registry, ran) =
+            slow_registry(tiny_genome("share"), std::time::Duration::from_millis(200));
+        let waiting: Vec<_> = (0..8)
+            .map(|_| {
+                let r = Arc::clone(&registry);
+                tokio::spawn(
+                    async move { r.get_or_load("alpha").await.map(|c| c.transcript_count()) },
+                )
+            })
+            .collect();
+        for w in waiting {
+            assert_eq!(w.await.unwrap().unwrap(), 1);
+        }
+        assert_eq!(ran.load(Ordering::Relaxed), 1);
+    }
+
+    // A genome that failed to load is not a genome that fails for ever: the failure is not
+    // kept, so the next request builds it again, once whatever was wrong is fixed.
+    #[tokio::test]
+    async fn a_failed_load_is_not_remembered() {
+        let data_dir = tiny_genome("retry");
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+        let registry = GenomeRegistry::with_loader(
+            Some(data_dir),
+            5000,
+            Arc::new(move |label, paths, distance| {
+                if counted.fetch_add(1, Ordering::Relaxed) == 0 {
+                    anyhow::bail!("the disk was not there yet");
+                }
+                load_context(label, paths, distance)
+            }),
+        );
+        let first = registry.get_or_load("alpha").await;
+        assert!(matches!(first, Err(AppError::Internal(_))));
+        assert!(registry.loaded("alpha").is_none());
+        let second = registry
+            .get_or_load("alpha")
+            .await
+            .expect("the second try loads");
+        assert_eq!(second.transcript_count(), 1);
+        assert_eq!(registry.loads_started(), 2);
     }
 }

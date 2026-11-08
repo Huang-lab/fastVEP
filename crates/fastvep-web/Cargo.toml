@@ -19,7 +19,7 @@ fastvep-io = { workspace = true }
 
 # Web framework
 axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 tower = { version = "0.5", features = ["util", "limit"] }
 tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
 
