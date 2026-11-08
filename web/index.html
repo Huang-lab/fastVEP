@@ -176,6 +176,14 @@
     .check small { display: block; font-size: 12px; color: var(--text-dim); line-height: 1.4; margin-top: 2px; }
     .check:has(input:disabled) { cursor: not-allowed; opacity: 0.65; }
     .check:has(input:disabled):hover { border-color: var(--border-strong); }
+    /* Why ACMG is unavailable, or incomplete, for this genome. It is a precondition and not a fault, so it takes no alarm colour. */
+    .acmg-note { font-size: 12px; color: var(--text-dim); line-height: 1.45; padding: 2px 0 2px 12px; margin-left: 2px; border-left: 3px solid var(--border-strong); }
+    .acmg-note p { margin-bottom: 4px; }
+    .acmg-missing { list-style: none; display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+    .acmg-missing .drives { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+    .acmg-why summary { cursor: pointer; width: fit-content; border-radius: 4px; color: var(--text); }
+    .acmg-why dl { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+    .acmg-why dt { font-weight: 600; color: var(--text); }
     .btn-stack { display: flex; flex-direction: column; gap: 10px; }
     .btn-row { display: flex; gap: 10px; }
 
@@ -513,6 +521,14 @@
             <legend class="visually-hidden">Annotation options</legend>
             <label class="check"><input type="checkbox" id="optPick"><span>Canonical transcript only<small>One consequence per variant, MANE Select preferred.</small></span></label>
             <label class="check"><input type="checkbox" id="optAcmg" checked><span>ACMG-AMP classification<small id="acmgHint">Richards et al. 2015 with ClinGen SVI updates.</small></span></label>
+            <div class="acmg-note" id="acmgNote" hidden>
+              <p id="acmgNoteLead"></p>
+              <ul class="acmg-missing" id="acmgMissing"></ul>
+              <details class="acmg-why">
+                <summary>What each of these is for</summary>
+                <dl id="acmgWhy"></dl>
+              </details>
+            </div>
           </fieldset>
           <div class="btn-stack">
             <button type="button" class="btn btn-secondary" id="btnUpload">Upload VCF file</button>
@@ -1321,6 +1337,34 @@ function saColumn(key) {
   return { key: `sa:${key}`, label: SA_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1), tsv: key, group: 'Annotations', core: SA_CORE.has(key), sort: get, text: get, cell: textCell(get) };
 }
 
+// ---- ACMG: what a server can classify, what a run lacked, and how a call was reached --------
+// The nine sources the classifier reads, by the id a server reports them under (the table is the one in
+// fastvep-classification). A server's verdict carries the label of each source it lacks, but acmg_stack names
+// the sources a run lacked by id only, so an id the verdict does not explain is named from here.
+const ACMG_SOURCE_LABELS = {
+  gnomad: 'gnomAD allele frequencies', clinvar: 'ClinVar', revel: 'REVEL missense scores', spliceai: 'SpliceAI splice predictions', phylop: 'PhyloP conservation',
+  gnomad_genes: 'gnomAD gene constraint', omim: 'gene-disease validity and inheritance (ClinGen, or OMIM)', clinvar_protein: 'ClinVar protein and splice index', repeatmasker: 'RepeatMasker repeat intervals',
+};
+const sentenceCase = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
+const endSentence = (s) => (/[.!?]$/.test(s) ? s : `${s}.`);
+
+// The shape a server that answers per genome sends under `acmg`. Anything else is read as the server having said
+// nothing, which is what an older server has done, so that a malformed verdict cannot switch ACMG off or on.
+function parseVerdict(v) {
+  if (!v || typeof v !== 'object' || typeof v.available !== 'boolean') return null;
+  return {
+    ready: v.ready === true,
+    available: v.available,
+    loaded: Array.isArray(v.loaded) ? v.loaded.map(String) : [],
+    missing: (Array.isArray(v.missing) ? v.missing : []).filter((m) => m && typeof m.id === 'string').map((m) => ({
+      id: m.id,
+      label: typeof m.label === 'string' && m.label ? m.label : ACMG_SOURCE_LABELS[m.id] || m.id,
+      drives: Array.isArray(m.drives) ? m.drives.map(String) : [],
+      without: typeof m.without === 'string' ? m.without : '',
+    })),
+  };
+}
+
 // ---- state -----------------------------------------------------
 const state = {
   mode: 'unknown', // 'client' (no server) | 'server-multi' (per-request genomes) | 'server-single' (one model per process)
@@ -1330,6 +1374,9 @@ const state = {
   genomes: [], // server-multi: the catalogue; server-single: genomes a server may swap in
   selection: null, // server-multi: genome name; server-single: 'active' | 'server:<name>' | 'builtin' | 'upload' | 'demo'
   legacy: { transcripts: 0, source: null, saSources: [], builtinOnServer: false },
+  genomesApi: 'unknown', // whether /api/genomes answered: 'present' | 'absent' (a 404) | 'unknown' (it failed some other way)
+  embedded: false, // the server inside the `fastvep` binary: no /api/genomes, no sa_sources in its status, and it never classifies
+  verdicts: new Map(), // genome name (or '' for a server with one model) -> what the server said about ACMG for it
   customGff3: null, // text of a GFF3 chosen for in-browser annotation
   customGff3Name: null,
   gffReady: false, // a GFF3 was chosen and accepted since "Upload a GFF3 file" was selected
@@ -1460,8 +1507,13 @@ async function detectBackend() {
   let list = [];
   try {
     const r = await fetchJson('api/genomes', { timeoutMs: 8000 });
-    if (r.ok && Array.isArray(r.data?.genomes)) list = r.data.genomes;
-  } catch { /* the embedded server has no /api/genomes */ }
+    if (r.ok && Array.isArray(r.data?.genomes)) { list = r.data.genomes; state.genomesApi = 'present'; }
+    else if (r.status === 404 || r.status === 405) state.genomesApi = 'absent';
+  } catch { /* unreachable or too slow: that says nothing about whether the route exists */ }
+  // The server inside the `fastvep` binary has neither the route nor sa_sources in its status (fastvep-web has had both
+  // since 0.3.0), and it ignores `acmg`. Both signals are needed: a fastvep-web behind a proxy that only forwards
+  // some routes lacks the first and must not be taken for it.
+  state.embedded = state.mode === 'server-single' && state.genomesApi === 'absent' && !Array.isArray(status.sa_sources);
 
   if (state.mode === 'server-multi') {
     if (!list.some((g) => g.name === status.default_genome)) {
@@ -1469,10 +1521,20 @@ async function detectBackend() {
     }
     state.genomes = normaliseGenomes(list);
     state.selection = status.default_genome;
+    for (const g of list) rememberVerdict(g.name, g.acmg);
+    rememberVerdict(status.default_genome, status.acmg);
   } else {
     state.genomes = normaliseGenomes(list);
     state.legacy = { transcripts: status.transcripts || 0, source: status.gff3_source || null, saSources: status.sa_sources || [], builtinOnServer: false };
+    rememberVerdict('', status.acmg);
   }
+}
+
+// The key a verdict is kept under: the genome name when the server answers per genome, otherwise the one model it holds.
+const verdictKey = (genome) => (state.mode === 'server-multi' ? genome : '');
+function rememberVerdict(key, raw) {
+  const v = parseVerdict(raw);
+  if (v) state.verdicts.set(key, v);
 }
 
 const selectedGenome = () => state.genomes.find((g) => g.name === state.selection) || null;
@@ -1575,18 +1637,67 @@ function syncGenomeInfo() {
   if (!note.hidden) $('adminNoteText').innerHTML = 'This server answers from one gene model. To offer several genomes at once, start <code>fastvep-web</code> with <code>--data-dir</code> pointing at a directory of genome folders. <code>--allow-model-replacement</code> lets any client swap the model for everyone, so leave it off on a shared server.';
 }
 
+// Whether ACMG can be asked of what is selected, and what to say about it. The server's verdict decides when it sent
+// one. An older server sent none, so it is offered as it always was and nothing is claimed about sources; the one rule
+// kept for those is that ACMG-AMP is a framework for human variants, since there is nothing else to go on.
+const ACMG_HINT = 'Richards et al. 2015 with ClinGen SVI updates.';
+function acmgOffer() {
+  if (state.mode === 'client' || state.selection === 'demo') return { kind: 'off', hint: 'Not available in the in-browser demo.' };
+  // The embedded server drops the `acmg` field and never classifies, so ticking the box would only produce no classes.
+  if (state.embedded) return { kind: 'off', hint: 'Not available on this server: it reports consequences only.' };
+  const verdict = state.verdicts.get(verdictKey(state.selection));
+  if (verdict) {
+    if (!verdict.available) return { kind: 'unavailable', verdict, hint: state.mode === 'server-multi' ? 'Not available for this genome.' : 'Not available on this server.' };
+    if (!verdict.ready) return { kind: 'partial', verdict, hint: 'The reference stack is incomplete here, and every result says so.' };
+    return { kind: 'ready', verdict, hint: `${ACMG_HINT} All ${verdict.loaded.length} reference sources are loaded.` };
+  }
+  const g = state.mode === 'server-multi' ? selectedGenome() : null;
+  if (g && !g.info.human && g.info.species) return { kind: 'off', hint: 'ACMG-AMP applies to human variants.' };
+  return { kind: 'unknown', hint: ACMG_HINT };
+}
+
+// The missing sources, each with the criteria that read it. Visible text and not a tooltip: a precondition has to be
+// readable by anyone who cannot hover, and by a screen reader.
+const missingItemsHtml = (verdict) => verdict.missing.map((m) => `<li>${esc(m.label)}${m.drives.length ? ` <span class="drives">(${esc(m.drives.join(', '))})</span>` : ''}</li>`).join('');
+const missingWhyHtml = (verdict) => verdict.missing.filter((m) => m.without).map((m) => `<dt>${esc(m.label)}</dt><dd>${esc(sentenceCase(endSentence(m.without)))}</dd>`).join('');
+
+// What a screen reader is told when changing the genome changes what ACMG can do: the note under the option is not live.
+function acmgAnnouncement(label, offer) {
+  if (offer.kind === 'unavailable') return `ACMG classification is not available for ${label}: it needs the full reference stack.`;
+  if (offer.kind === 'off') return `ACMG classification is not available for ${label}. ${offer.hint}`;
+  if (offer.kind === 'partial') return `ACMG classification is available for ${label}, but without ${offer.verdict.missing.length} of the reference sources, and every result says so.`;
+  return `ACMG classification is available for ${label}.`;
+}
+
+function syncAcmg() {
+  const offer = acmgOffer();
+  const box = $('optAcmg');
+  const off = offer.kind === 'off' || offer.kind === 'unavailable';
+  if (off && !box.disabled) { state.acmgPreference = box.checked; box.checked = false; }
+  if (!off && box.disabled) box.checked = state.acmgPreference;
+  box.disabled = off;
+  $('acmgHint').textContent = offer.hint;
+  const note = $('acmgNote');
+  const verdict = offer.kind === 'unavailable' || offer.kind === 'partial' ? offer.verdict : null;
+  note.hidden = !verdict;
+  // Only while it is shown: a hidden element that is still referenced would be read out as the box's description.
+  if (verdict) box.setAttribute('aria-describedby', 'acmgNote'); else box.removeAttribute('aria-describedby');
+  if (!verdict) return;
+  const total = verdict.loaded.length + verdict.missing.length;
+  const where = state.mode === 'server-multi' ? 'This genome' : 'This server';
+  $('acmgNoteLead').textContent = offer.kind === 'unavailable'
+    ? `ACMG needs the full reference stack. ${where} lacks ${verdict.missing.length} of the ${total} sources it reads:`
+    : `${where} classifies without ${verdict.missing.length} of the ${total} sources the classifier reads:`;
+  $('acmgMissing').innerHTML = missingItemsHtml(verdict);
+  $('acmgWhy').innerHTML = missingWhyHtml(verdict);
+  note.querySelector('.acmg-why').hidden = !$('acmgWhy').children.length;
+}
+
 // Everything that depends on the genome that is selected right now.
 function syncPage() {
   syncGenomeInfo();
   const g = state.mode === 'server-multi' ? selectedGenome() : null;
-  const demo = state.mode === 'client' || state.selection === 'demo';
-  // ACMG-AMP is a human-genetics framework, and the in-browser engine does not implement it.
-  const acmgOff = demo || (g && !g.info.human && g.info.species);
-  const box = $('optAcmg');
-  if (acmgOff && !box.disabled) { state.acmgPreference = box.checked; box.checked = false; }
-  if (!acmgOff && box.disabled) box.checked = state.acmgPreference;
-  box.disabled = !!acmgOff;
-  $('acmgHint').textContent = demo ? 'Not available in the in-browser demo.' : acmgOff ? 'ACMG-AMP applies to human variants.' : 'Richards et al. 2015 with ClinGen SVI updates.';
+  syncAcmg();
 
   // The bundled examples are GRCh38 coordinates in OR4F5 and one lncRNA.
   let fits = true;
@@ -1603,7 +1714,16 @@ function syncPage() {
 async function onGenomeChange() {
   const value = $('genomeSelect').value;
   const previous = state.selection;
-  if (state.mode === 'server-multi') { state.selection = value; syncPage(); return; }
+  if (state.mode === 'server-multi') {
+    const acmgBefore = acmgOffer().kind;
+    state.selection = value;
+    syncPage();
+    // An error describes the genome that was selected when it happened, and its Try again would now ask another one.
+    for (const el of $$('#alertHost .alert-error')) el.remove();
+    const offer = acmgOffer();
+    if (offer.kind !== acmgBefore) announce(acmgAnnouncement(selectedGenome()?.info.label || value, offer));
+    return;
+  }
   state.selection = value;
   state.gffReady = false;
   syncPage();
@@ -1938,7 +2058,13 @@ function demoWarnings(variants, transcripts, rows) {
 async function refreshStatus() {
   try {
     const r = await fetchJson('api/status', { timeoutMs: 6000 });
-    if (r.ok && r.data) { state.status = { ...state.status, ...r.data }; syncCounters(); }
+    if (r.ok && r.data) {
+      state.status = { ...state.status, ...r.data };
+      syncCounters();
+      // The default genome's verdict can change under a running page (an operator adds databases and restarts).
+      rememberVerdict(verdictKey(state.status.default_genome), r.data.acmg);
+      if (r.data.acmg) syncAcmg();
+    }
   } catch { /* the counters are a courtesy */ }
 }
 
@@ -2345,6 +2471,7 @@ function showAcmgDetail(index, opener) {
     const m = (d.criteria || []).filter((c) => c.met).map((c) => c.code).join(', ') || 'None';
     return `<div class="acmg-disorder"><span class="acmg-badge acmg-${esc(d.shorthand)}">${esc(prettyWords(d.classification))}</span><span class="moi">${esc(d.inheritance)}</span><span class="names">${esc(names)}</span><span class="met">${esc(m)}</span></div>`;
   }).join('');
+  const c = a.counts || {};
   $('acmgBody').innerHTML = `
     <div class="dialog-head">
       <h2 id="acmgTitle"><span class="acmg-badge acmg-${esc(a.shorthand)}" style="cursor:default">${esc(prettyWords(a.classification) || a.shorthand)}</span><span class="sub">${esc(r.transcript?.gene?.symbol || '')}${r.transcript?.gene?.symbol && (r.hgvsc || r.hgvsp) ? ' &middot; ' : ''}${esc(r.hgvsc || r.hgvsp || '')}</span></h2>
