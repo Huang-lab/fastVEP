@@ -456,7 +456,8 @@ Failures return the matching HTTP status and a single-field body:
 `403` means the request was understood and refused by how the server was started, so changing the request will not help. Currently only the two gene-model-replacing endpoints return it, and the message names the flag that lifts it.
 `413` means the request is larger than this server answers in one go: its answer would pass `--max-response-bytes`, or it ran past `--max-request-seconds`. The message says how many variants were done and what to change.
 `503` means every place for an annotation was taken and none came free in time; it carries `Retry-After`, and the request is worth repeating.
-`422` means the request is well formed and the server could answer it, but not faithfully: ACMG classification was asked of a genome that lacks sources the classifier reads. The body carries the verdict under `acmg` beside `error`, and the request is not counted as a run.
+`422` means the request is well formed and the server could answer it, but not faithfully: ACMG classification was asked of a genome that lacks sources the classifier reads.
+The body carries the verdict under `acmg` beside `error`, and the request is not counted as a run.
 `500` is always the literal string `Internal server error`; the detail is written to the server log instead, so that paths and parser internals are not returned to clients.
 Check the server's stderr when you get one.
 

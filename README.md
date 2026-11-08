@@ -189,7 +189,9 @@ fastvep-web --gff3 Homo_sapiens.GRCh38.115.gff3 --fasta Homo_sapiens.GRCh38.dna.
 fastvep-web --gff3 genes.gff3 --fasta ref.fa --sa-dir /path/to/sa_databases/
 ```
 
-Open http://localhost:8080 in your browser. The web interface lets you paste VCF data and view results in an interactive table. With `--data-dir` the page offers every genome in that directory, and each analysis names the genome it wants, so choosing one needs no flag and changes nobody else's answers.
+Open http://localhost:8080 in your browser.
+The web interface lets you paste VCF data and view results in an interactive table.
+With `--data-dir` the page offers every genome in that directory, and each analysis names the genome it wants, so choosing one needs no flag and changes nobody else's answers.
 ACMG classification is offered for a genome only when its database directory holds all nine sources the classifier reads; for any other the checkbox is disabled and names what is missing, and the API refuses with `422` (`--acmg-allow-partial` answers anyway and says so in every response; [docs/API.md](docs/API.md#acmg-needs-the-reference-stack)).
 Uploading your own GFF3 in the page replaces the server's gene model for every client, so that needs `--allow-model-replacement`, which is off by default.
 

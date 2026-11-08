@@ -69,7 +69,8 @@ They skip a file or a database that already exists, and gnomAD is built one chro
 
 > **Which tier should I pick?**
 > - **Minimal** (~5 GB): fast variant consequence + ClinVar.
-> - **Clinical** (~23 GB once built): adds dbSNP rs IDs and the seven other organisms. The dbSNP build needs 29.6 GB of download space while it runs, and the script deletes the download afterwards.
+> - **Clinical** (~23 GB once built): adds dbSNP rs IDs and the seven other organisms.
+>   The dbSNP build needs 29.6 GB of download space while it runs, and the script deletes the download afterwards.
 > - **Full Research** (~26 GB plus gnomAD, several hours): adds GRCh37 and gnomAD v4.1 population frequencies.
 >
 > All three fit a 160 GB disk.
@@ -924,7 +925,8 @@ tar czf /opt/fastvep/backup/sa_$(date +%Y%m%d).tar.gz /opt/fastvep/data/*/sa/
 
 These are the figures of fastvep.org on 8 November 2026, with the nine genomes, the nine-source reference stack for GRCh38 and dbSNP loaded.
 
-- **Memory.** 25 minutes after a restart the service held 6.6 GiB (also its peak) of the 15.6 GiB of the host, with 8.8 GiB available; the unit allows 13 GiB and 2 GiB of swap. In the rehearsal about 3.5 GiB of the memory was heap, and the rest is memory-mapped database pages that the kernel takes back under pressure.
+- **Memory.** 25 minutes after a restart the service held 6.6 GiB (also its peak) of the 15.6 GiB of the host, with 8.8 GiB available; the unit allows 13 GiB and 2 GiB of swap.
+  In the rehearsal about 3.5 GiB of the memory was heap, and the rest is memory-mapped database pages that the kernel takes back under pressure.
 - **Disk.** 59 GB of the 150 GB filesystem are used, by the system, the nine genomes and every database; the databases of GRCh38 are 12 GB, of which dbSNP is 9.2 GB.
 - **Start.** The default genome answered 4.7 s and 4.9 s after two restarts, and the rehearsal of the nine genomes preloaded in about 70 s.
 - **ACMG.** 1,000 ClinVar variants with `acmg` and `pick` took 5.4 s through the API (four requests of 250 variants, the host otherwise idle) and 11.6 s through the command line on two threads, process start included; the two gave the same class and the same criteria for every one of the 1,000.
