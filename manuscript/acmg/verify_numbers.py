@@ -437,10 +437,11 @@ def databases() -> None:
     fact("Of the 12 sweeps, 4 differ in a detail between the two sets of databases and 8 do not", str(int(cnt["sweeps"])), str(len(shapes[shapes.differs])), str(len(kept)),
          "1e-3" if shapes.loc["BS1 bar", "knee_first"] == shapes.loc["BS1 bar", "knee_complete"] == 0.001 else "?",
          "300 nucleotides" if shapes.loc["BP7 far boundary", "knee_first"] == shapes.loc["BP7 far boundary", "knee_complete"] == 300 else "?",
-         "under both" if int(cnt["sweeps_that_differ_in_the_knee"]) == 1 and shapes.loc["BS2 carrier floor, bar off", "differs"] else "?")
+         "under both" if int(cnt["sweeps_that_differ_in_the_knee"]) == 0 else "?")
     fact("The details are the order of two settings of the BS1 bar", n(max(gaps)),
          "one reference-discordant benign call on the complete databases and none on the first" if fb("3", "complete") - fb("2.0", "complete") == 1 and fb("3", "first") - fb("2.0", "first") == 0 else "?",
-         f"{floor.knee_factor_first:.1f}", f"{floor.knee_factor_complete:.1f}", f"{int(floor.knee_complete)} alleles" if pd.isna(floor.knee_first) else "?",
+         f"{floor.knee_factor_first:.1f}", f"{floor.knee_factor_complete:.1f}", n(floor.fall_from_rate_first), n(floor.fall_to_rate_first), n(floor.fall_from_rate_complete), n(floor.fall_to_rate_complete),
+         "neither fall reaches the hundred or fewer" if min(floor.fall_to_rate_first, floor.fall_to_rate_complete) > 150 and pd.isna(floor.knee_first) and pd.isna(floor.knee_complete) else "?",
          "BS2 carrier bar" if shapes.loc["BS2 carrier bar, dominant-only genes", "pairs_that_change_order"] > 0 and shapes.loc["BS1 bar", "pairs_that_change_order"] > 0 else "?")
     fact("7 changed sign, appeared or vanished, or changed by more than 20%, and 6 of the 7", str(int(cnt["effects"])), w(int(cnt["effect_measures"]))[1], str(int(cnt["effects_that_changed"])),
          str(int(cnt["effects_that_changed_and_are_small"])), "20%", "6 of the 7" if f"{int(cnt['effects_that_changed_and_are_small'])} of the {int(cnt['effects_that_changed'])}" == "6 of the 7" else "?")
@@ -1782,8 +1783,10 @@ def v38() -> None:
     span_dir = lambda rs, b_: int(max(rs.same_direction.max(), b_.same_direction) - min(rs.same_direction.min(), b_.same_direction))  # noqa: E731
     span_rec = lambda rs, b_: (min(rs.plp_recall.min(), b_.plp_recall), max(rs.plp_recall.max(), b_.plp_recall))  # noqa: E731
     p38_flat = p38_ar.false_benign.nunique() == 1 and p38_ar.false_pathogenic.nunique() == 1 and p38_ar.false_benign.iloc[0] == b38.false_benign and p38_ar.false_pathogenic.iloc[0] == b38.false_pathogenic
-    fact("Of the 12 sweeps, 4 differ from v37", n(fam["sweeps"]), n(fam["sweeps_that_differ_in_shape"]), "none differs in the knee" if fam["sweeps_that_differ_in_the_knee"] == 0 else "?",
-         sci1(fam["knee_bs1_v38"]), n(fam["knee_bp7_far_boundary_v38"]), "under both versions" if (fam["knee_bs1_v37"], fam["knee_bp7_far_boundary_v37"]) == (fam["knee_bs1_v38"], fam["knee_bp7_far_boundary_v38"]) else "?")
+    fact(f"Of the {n(fam['sweeps'])} sweeps, {n(fam['sweeps_that_differ_in_shape'])} differ from v37", n(fam["sweeps"]), n(fam["sweeps_that_differ_in_shape"]),
+         "one differs in the knee" if fam["sweeps_that_differ_in_the_knee"] == 1 and pd.isna(fam["knee_pm2_2015_v37"]) and fam["knee_pm2_2015_v38"] == 1e-5 else "?",
+         sci1(fam["knee_bs1_v38"]), n(fam["knee_bp7_far_boundary_v38"]), "under both versions" if (fam["knee_bs1_v37"], fam["knee_bp7_far_boundary_v37"]) == (fam["knee_bs1_v38"], fam["knee_bp7_far_boundary_v38"]) else "?",
+         sci1(fam["knee_pm2_2015_v38"]), n(fam["fall_pm2_2015_v38_from"]), n(fam["fall_pm2_2015_v38_to"]), n(fam["fall_pm2_2015_v37_from"]), n(fam["fall_pm2_2015_v37_to"]))
     fact("The BS2 carrier threshold and its floor stop being flat", str(int(rv38.loc["v38_bs2off"].false_benign)), str(int(runs37.loc["v37_bs2off"].false_benign)),
          str(int(rv38.loc["v38_bs2ac_20"].false_benign)), str(int(runs37.loc["v37_bs2ac_20"].false_benign)))
     ix38, ix37 = rv38.loc["v38_ix_table_pm2ad_0"], runs37.loc["v37_ix_table_pm2ad_0"]
