@@ -425,7 +425,48 @@ def table_temporal() -> str:
     return md(["Set", "Variants", "Same-direction agreement", "ClinVar P/LP called P/LP", "ClinVar LB/B called LB/B", "ClinVar VUS called VUS",
                "Opposite-direction calls (reference-discordant benign and reference-discordant pathogenic)"], rows)
 
+def table_databases() -> str:
+    """Table 3: v37 and v38 with the first databases and with the complete ones, from `databases_old_vs_new.csv`.
+
+    The file is made by `21_compare_databases.py` from the per-variant tables of the runs on both stacks and holds both versions
+    whatever the base is, so the table is the same under `--base v37`.
+    """
+    d = pd.read_csv(DATA / "databases_old_vs_new.csv")
+
+    def get(version: str, scope: str, measure: str, db: str) -> float:
+        x = d[(d.version == version) & (d.set == scope) & (d.measure == measure)]
+        return float(x.iloc[0][db])
+
+    def row(label: str, scope: str, measure: str, fmt) -> list[str]:
+        return [label] + [fmt(version, scope, measure, db) for version in ("v37", "v38") for db in ("first", "complete")]
+
+    def count_rate(version: str, scope: str, measure: str, db: str) -> str:
+        return f"{n(get(version, scope, measure, db))} ({pct(get(version, scope, measure, db) / get(version, scope, 'variants', db), 1)})"
+
+    def opposite(version: str, scope: str, measure: str, db: str) -> str:
+        return f"{n(get(version, scope, 'opposite', db))} ({n(get(version, scope, 'false_benign', db))} and {n(get(version, scope, 'false_pathogenic', db))})"
+
+    april, covered, new = "April set", "October release, the variants of the first design", "October release, new variants of the first design"
+    rows = [
+        row("**April set** (673,660 variants): exact agreement", april, "exact", count_rate),
+        row("Agreement in direction", april, "same_direction", count_rate),
+        row("Opposite-direction calls (reference-discordant benign and reference-discordant pathogenic)", april, "opposite", opposite),
+        row("Recall of ClinVar pathogenic-side variants", april, "plp_recall", lambda v, sc, m, db: pct(get(v, sc, m, db), 1)),
+        row("Recall of ClinVar benign-side variants", april, "blb_recall", lambda v, sc, m, db: pct(get(v, sc, m, db), 1)),
+        row("Variants with BP4", april, "BP4", lambda v, sc, m, db: n(get(v, sc, m, db))),
+        row("Variants with BP7", april, "BP7", lambda v, sc, m, db: n(get(v, sc, m, db))),
+        row("Variants with PP3", april, "PP3", lambda v, sc, m, db: n(get(v, sc, m, db))),
+        row(f"Canonical splice variants with PVS1 (of {n(get('v38', april, 'canonical_splice_variants', 'complete'))})", april, "PVS1_on_canonical_splice", lambda v, sc, m, db: n(get(v, sc, m, db))),
+        row(f"**October release**, the {n(get('v38', covered, 'variants', 'complete'))} variants of the first design: agreement in direction", covered, "same_direction", count_rate),
+        row("Opposite-direction calls", covered, "opposite", opposite),
+        row(f"Among them the {n(get('v38', new, 'variants', 'complete'))} new variants: agreement in direction", new, "same_direction", count_rate),
+        row("Opposite-direction calls", new, "opposite", opposite),
+    ]
+    return md(["Measure", "v37, first databases", "v37, complete databases", "v38, first databases", "v38, complete databases"], rows)
+
+
 TABLES = {
+    "databases": table_databases,
     "inheritance": table_inheritance,
     "joint": table_joint,
     "thresholds": table_thresholds,

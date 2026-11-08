@@ -35,7 +35,7 @@ def one_run(binary: Path, threads: str, dst: Path) -> tuple[float, float, int]:
     if threads != "all":
         env["RAYON_NUM_THREADS"] = threads
     cmd = [str(binary), "annotate", "-i", str(BENCH / "clinvar_2star.vcf"), "-o", "-", "--gff3", str(HUMAN / "Homo_sapiens.GRCh38.115.gff3"),
-           "--fasta", str(HUMAN / "Homo_sapiens.GRCh38.dna.primary_assembly.fa"), "--sa-dir", str(BENCH / "sa_db"), "--acmg", "--pick",
+           "--fasta", str(HUMAN / "Homo_sapiens.GRCh38.dna.primary_assembly.fa"), "--sa-dir", str(BENCH / "sa_db_complete"), "--acmg", "--pick",
            "--output-format", "vcf"]
     t0 = time.perf_counter()
     with dst.open("wb") as out:
@@ -60,7 +60,7 @@ def main() -> None:
     ap.add_argument("--skip-one-thread", action="store_true")
     ap.add_argument("--work", type=Path, default=Path("/tmp"))
     args = ap.parse_args()
-    for need in (args.bin, BENCH / "clinvar_2star.vcf", BENCH / "sa_db", HUMAN / "Homo_sapiens.GRCh38.115.gff3"):
+    for need in (args.bin, BENCH / "clinvar_2star.vcf", BENCH / "sa_db_complete", HUMAN / "Homo_sapiens.GRCh38.115.gff3"):
         if not need.exists():
             sys.exit(f"missing {need}")
     args.out.mkdir(parents=True, exist_ok=True)

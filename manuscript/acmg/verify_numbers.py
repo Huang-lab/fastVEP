@@ -186,7 +186,6 @@ res_by_group = csv("opposite_direction_by_group_v37.csv").set_index("group")
 r6 = csv("round6_rows_v37.csv")
 temporal = csv("temporal_v37.csv")
 tclass = csv("temporal_by_class_v37.csv")
-tcov = csv("temporal_coverage_v37.csv").set_index("stratum")
 trate = csv("temporal_opposite_rates_v37.csv").set_index("set")
 tdir = csv("temporal_direction_changes_v37.csv")
 aprl = csv("april_opposite_in_october_v37.csv")
@@ -440,7 +439,7 @@ def methods() -> None:
     fact("All 89 runs (Supplementary Table S2) were made by the same harness", str(len(harness)), str(len(kinds["plain"])),
          str(len(kinds["cutoff"])), str(len(kinds["hooks"])), kind_bin["plain"])
     # 2.8
-    nw_n = new_idx["new variants of the covered release"]
+    nw_n = new_idx["new variants of the release"]
     fact("A new variant is not one that ClinVar did not hold in April", p(new_idx["  with a record in the April variant_summary"] / nw_n),
          p(new_idx["    a single-submitter record"] / new_idx["  with a record in the April variant_summary"] * new_idx["  with a record in the April variant_summary"] / nw_n, 0))
     fact("Seven runs of the changes that Section 4.5 proposes were made on the same variants", "Seven" if len(hold) == 7 else "?")
@@ -965,7 +964,7 @@ def residual() -> None:
     r49 = rules64[(rules64.set == f"the {N_OPP} still opposite in {BASE}") & (rules64.ruling == "clinvar")].set_index("rule").rows
     fact("Of the 29 rulings for ClinVar, 10 follow from a class", str(int(r49.sum())), str(int(r49["class"])), str(int(r49["stated"])), str(int(r49["evidence"])))
     left = int((aprl.october_status == "left the 2-star+ set").sum())
-    fact("Five of the 48 (10%) are no longer in the 2-star+ set", w(left), p(left / N_OPP, 0), p((N_ALL - (tcov.loc["unchanged", "records"] + tcov.loc["tier_change", "records"] + tcov.loc["direction_change", "records"])) / N_ALL, 1))
+    fact("Five of the 48 (10%) are no longer in the 2-star+ set", w(left), p(left / N_OPP, 0), p((N_ALL - sum(temporal[temporal.stratum == x].iloc[0].stratum_n for x in ("unchanged", "tier_change", "direction_change"))) / N_ALL, 1))
     fact("Ten of these are a lone PVS1 and 11 are PVS1 with PM2", "Ten" if fv("pvs1_benign_lone_pvs1") == 10 else "?", "11" if fv("pvs1_benign_pvs1_pm2") == 11 else "?")
     fact("**PVS1 on a variant ClinVar calls benign or likely benign (", f"({int(res_by_group.loc['PVS1 on a ClinVar benign-side variant', 'total'])})")
     fact("Five are seen in 611 to 4,892 gnomAD alleles", "Five" if fv("pvs1_benign_common_n") == 5 else "?", n(fv("pvs1_benign_common_ac_min")), n(fv("pvs1_benign_common_ac_max")),
@@ -986,24 +985,21 @@ def residual() -> None:
 
 
 def later_release() -> None:
-    cov = tcov
-    fact("ClinVar's release of 4 October 2026 holds 781,135", n(cov.loc["all", "records"]), n(cov.loc["unchanged", "records"] + cov.loc["tier_change", "records"] + cov.loc["direction_change", "records"]),
-         n(cov.loc["new", "records"]))
-    fact("A further 8,603 of the April variants have left the set", n(N_ALL - (cov.loc["unchanged", "records"] + cov.loc["tier_change", "records"] + cov.loc["direction_change", "records"])))
+    sub = lambda name: temporal[temporal.stratum == name].iloc[0]
+    kept = int(sub("unchanged").stratum_n + sub("tier_change").stratum_n + sub("direction_change").stratum_n)  # the April variants that are still at two stars or better
+    fact("ClinVar's release of 4 October 2026 holds 781,135", n(sub("all").stratum_n), n(kept), n(sub("new").stratum_n))
+    fact("A further 8,603 of the April variants have left the set", n(N_ALL - kept))
     ni = new_idx
-    fact("Most of the new variants were already in ClinVar in April", n(ni["  with a record in the April variant_summary"]), n(ni["new variants of the covered release"]),
-         p(ni["  with a record in the April variant_summary"] / ni["new variants of the covered release"]), n(ni["    a single-submitter record"]),
-         p(ni["    a single-submitter record"] / ni["new variants of the covered release"], 0))
+    fact("Most of the new variants were already in ClinVar in April", n(ni["  with a record in the April variant_summary"]), n(ni["new variants of the release"]),
+         p(ni["  with a record in the April variant_summary"] / ni["new variants of the release"]), n(ni["    a single-submitter record"]),
+         p(ni["    a single-submitter record"] / ni["new variants of the release"], 0))
     fact("They are variants that reached two stars since", n(ni["  with a pathogenic or likely pathogenic record in the April variant_summary"]))
     bp1_can = "new ClinVar pathogenic or likely pathogenic missense variants in genes where BP1 can fire (pLI at least 0.9, missense z below 2)"
     own_in = "  with their own residue change among the gene's pathogenic missense records in the April protein index"
     apr_can = "April ClinVar pathogenic or likely pathogenic missense variants in genes where BP1 can fire"
     apr_own = "  April set: with their own residue change among the gene's pathogenic missense records in the April protein index"
     fact("so the protein index lacks every record added since April", n(ni[own_in]), n(ni[bp1_can]), n(ni[bp1_can] - ni[own_in]), n(ni[apr_own]), n(ni[apr_can]))
-    fact("The gnomAD extract the classifier reads covers every April variant", n(cov.loc["new", "covered"]), n(cov.loc["new", "outside_the_extract"]),
-         p(cov.loc["new", "outside_the_extract"] / cov.loc["new", "records"]), p(cov.loc["all", "outside_the_extract"] / cov.loc["all", "records"]))
-    sub = lambda name: temporal[temporal.stratum == name].iloc[0]
-    fa = sub("all covered")
+    fa = sub("all")
     fact("Across the 772,585 covered records", n(fa.stratum_n), p(fa.same_direction / fa.stratum_n), str(int(fa.opposite)), str(int(fa.false_benign)), str(int(fa.false_pathogenic)))
     fu = sub("unchanged")
     fact("On the 662,668 variants whose class did not change", n(fu.stratum_n), p(fu.same_direction / fu.stratum_n), str(int(fu.opposite)))
@@ -1377,7 +1373,7 @@ def coverage() -> None:
     t = traj
     f = ledger.found_by.value_counts()
     new = temporal[temporal.stratum == "new"].iloc[0]
-    fact("we applied it unchanged to ClinVar's release of 4 October 2026, extracted the same way", n(tcov.loc["all", "records"]))
+    fact("we applied it unchanged to ClinVar's release of 4 October 2026, extracted the same way", n(temporal[temporal.stratum == "all"].iloc[0].stratum_n))
     fact("The output does not record the detail the veto needs", str(int(veto.held_at_vus_by_the_veto)))
     r6row = rounds.loc[6]
     fact("In round 6 the workbook asked for the reviewer's class", str(int(r6row.rows)), str(int(r6row.rows_with_written_reason)))
@@ -1631,7 +1627,7 @@ def v38() -> None:
          n(gc38.fire_PM2_Supporting - b38.fire_PM2_Supporting), n(b38.fire_BS2 - gc38.fire_BS2), n(gc37.fire_PM2_Supporting - base37.fire_PM2_Supporting), n(gc37.fire_BS2 - base37.fire_BS2))
     t37, t38 = pd.read_csv(DATA / "temporal_v37.csv"), pd.read_csv(DATA / "temporal_v38.csv")
     ra37, ra38 = pd.read_csv(DATA / "temporal_ratio_v37.csv"), pd.read_csv(DATA / "temporal_ratio_v38.csv")
-    a37, a38 = t37[t37.stratum == "all covered"].iloc[0], t38[t38.stratum == "all covered"].iloc[0]
+    a37, a38 = t37[t37.stratum == "all"].iloc[0], t38[t38.stratum == "all"].iloc[0]
     n37, n38 = t37[t37.stratum == "new"].iloc[0], t38[t38.stratum == "new"].iloc[0]
     ao37, ao38 = (pd.read_csv(DATA / f"april_opposite_in_october_{v_}.csv") for v_ in ("v37", "v38"))
     in38 = set(zip(ao38.chrom.astype(str), ao38.pos, ao38.ref, ao38.alt))
@@ -1708,7 +1704,7 @@ def v38() -> None:
 
     # ----------------------------------------------------------------------------------- the cap
     a = tp.loc["April set"]
-    o = tp.loc["October, all covered"]
+    o = tp.loc["October, all"]
     nn = tp.loc["October, new variants"]
     fact("**A combined cap on PP2, PM1 and PP3 trades 320 correct pathogenic-side calls", n(a.clinvar_plp_losing_the_call), n(a.clinvar_vus_kept_at_vus), n(a.clinvar_blb_no_longer_called_plp))
     fact("All three are met for 1,591 variants", n(a.variants_with_pp2_pm1_and_pp3_met), n(a.of_them_called_likely_pathogenic))
@@ -1746,10 +1742,10 @@ def v38() -> None:
             failures.append(f"the sweep of {knob} in v38_sweeps.csv is not the one of the family v38 in runs_v38_variants.csv")
 
     # ----------------------------------------------------------------------------------- the October release
-    ao, bo = the_ho("all covered", "v38_oct_shipped"), the_ho("all covered", "v38_oct_base")
-    uo = the_ho("all covered", "v38_oct_alt_unguarded")
+    ao, bo = the_ho("all", "v38_oct_shipped"), the_ho("all", "v38_oct_base")
+    uo = the_ho("all", "v38_oct_alt_unguarded")
     nb = the_ho("new", "v38_oct_base")
-    fact("On the 772,585 covered records v38 gives 261 more exact calls", n(tcov.loc["all", "covered"]), n(ao.exact - bo.exact), n(ao.same_direction - bo.same_direction), n(bo.false_benign), n(ao.false_benign),
+    fact("On the 772,585 covered records v38 gives 261 more exact calls", n(ao.variants), n(ao.exact - bo.exact), n(ao.same_direction - bo.same_direction), n(bo.false_benign), n(ao.false_benign),
          n(bo.false_pathogenic), n(ao.false_pathogenic))
     fact("**On the new variants of the October release the effect is", n(ns.same_direction - nb.same_direction))
     fact("with 26 reference-discordant benign calls before and after and 38 reference-discordant pathogenic calls", n((ao.same_direction - bo.same_direction) - (ns.same_direction - nb.same_direction)))
@@ -1895,7 +1891,7 @@ def v38() -> None:
     fact("Across the two thresholds the words made", n(names_all.dominant_only + names_all.recessive_only), n(names_all.genes), n(field_all.dominant_only + field_all.recessive_only))
     fact("Read the field that a source curates and not the prose beside it", n(names_all.dominant_only + names_all.recessive_only), n(field_all.dominant_only + field_all.recessive_only), n(len(rows)))
     t37o, t38o = pd.read_csv(DATA / "temporal_v37.csv"), pd.read_csv(DATA / "temporal_v38.csv")
-    a37o, a38o = t37o[t37o.stratum == "all covered"].iloc[0], t38o[t38o.stratum == "all covered"].iloc[0]
+    a37o, a38o = t37o[t37o.stratum == "all"].iloc[0], t38o[t38o.stratum == "all"].iloc[0]
     n37o, n38o = t37o[t37o.stratum == "new"].iloc[0], t38o[t38o.stratum == "new"].iloc[0]
     fact("Against v37, v38 reads the mode of inheritance that ClinGen curates, which v37 took", n(b38.same_direction - base37.same_direction), n(a38o.same_direction - a37o.same_direction),
          n(n38o.same_direction - n37o.same_direction), w(len(four))[1], n(unguarded.d_same_direction - shipped.d_same_direction),
