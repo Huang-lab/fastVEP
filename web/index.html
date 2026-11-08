@@ -394,7 +394,7 @@
     .acmg-criterion { padding: 6px 10px; border-radius: 4px; font-size: 12px; border: 1px solid var(--border); display: grid; grid-template-columns: 1rem auto auto minmax(0, 1fr); align-items: center; gap: 4px 8px; }
     .acmg-criterion .code { font-weight: 700; font-family: var(--mono); white-space: nowrap; }
     .acmg-criterion .strength { font-size: 10px; padding: 1px 5px; border-radius: 2px; background: var(--surface2); white-space: nowrap; }
-    .acmg-criterion .summary { font-size: 12px; color: var(--text-dim); text-align: right; overflow-wrap: anywhere; }
+    .acmg-criterion .summary { font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
     .acmg-criterion.met-pathogenic { background: color-mix(in srgb, var(--high) 12%, transparent); border-color: color-mix(in srgb, var(--high) 40%, transparent); }
     .acmg-criterion.met-benign { background: color-mix(in srgb, var(--success) 12%, transparent); border-color: color-mix(in srgb, var(--success) 40%, transparent); }
     .acmg-criterion.not-met .code, .acmg-criterion.not-met .strength { opacity: 0.7; }
@@ -1239,6 +1239,11 @@ const chromRank = (c) => {
   if (/^\d+$/.test(s)) return +s;
   return { X: 1000, Y: 1001, M: 1002, MT: 1002 }[s.toUpperCase()] ?? 2000 + (s.charCodeAt(0) || 0);
 };
+// The server names ACMG classes and strengths in CamelCase (UncertainSignificance, VeryStrong); older text used underscores.
+const prettyWords = (s) => {
+  const w = String(s ?? '').replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+  return w.charAt(0).toUpperCase() + w.slice(1);
+};
 const dash = (v) => (v == null || v === '' ? '-' : String(v));
 const strandOf = (r) => (r.transcript?.strand === 1 ? '+' : r.transcript?.strand === -1 ? '-' : null);
 const maneOf = (r) => (r.transcript?.mane_select ? 'MANE_Select' : r.transcript?.mane_plus_clinical ? 'MANE_Plus_Clinical' : null);
@@ -1256,7 +1261,7 @@ const BASE_COLUMNS = [
   { key: 'acmg', label: 'ACMG', tsv: 'ACMG', group: 'Annotations', core: true, needs: 'hasAcmg', sort: (r) => (r.acmg ? ACMG_RANK[r.acmg.shorthand] ?? 2 : null), text: (r) => r.acmg?.shorthand || null,
     cell: (r, i) => {
       if (!r.acmg) return '-';
-      const label = (r.acmg.classification || 'VUS').replace(/_/g, ' ');
+      const label = prettyWords(r.acmg.classification) || r.acmg.shorthand;
       return `<button type="button" class="acmg-badge acmg-${esc(r.acmg.shorthand)}" data-acmg="${i}" aria-haspopup="dialog" title="Show the evidence${metCriteria(r) ? ` (${esc(metCriteria(r))})` : ''}">${esc(label)}</button>`;
     } },
   { key: 'acmgCriteria', label: 'ACMG criteria met', tsv: 'ACMG_CRITERIA', group: 'Annotations', core: false, needs: 'hasAcmg', sort: metCriteria, text: metCriteria, cell: textCell(metCriteria) },
@@ -1535,7 +1540,7 @@ function genomeInfoHtml() {
     if (!g) return '';
     const parts = [`<strong>${esc(g.info.label)}</strong>`];
     if (g.loaded) {
-      if (g.transcripts != null) parts.push(`${fmtInt(g.transcripts)} transcripts`);
+      if (g.transcripts != null) parts.push(plural(g.transcripts, 'transcript'));
       parts.push(g.hasFasta ? 'reference sequence' : 'no reference sequence');
       const names = g.isDefault ? state.status.sa_sources || [] : [];
       if (names.length) parts.push(esc(names.join(', ')));
@@ -1550,14 +1555,14 @@ function genomeInfoHtml() {
     const L = state.legacy;
     const sel = state.selection;
     if (sel === 'active') {
-      const parts = [`<strong>${esc(activeModelLabel())}</strong>`, `${fmtInt(L.transcripts)} transcripts`];
+      const parts = [`<strong>${esc(activeModelLabel())}</strong>`, plural(L.transcripts, 'transcript')];
       if (L.saSources.length) parts.push(esc(L.saSources.join(', ')));
       parts.push(state.canReplaceModel ? 'loading another model replaces this one on the server' : 'fixed for everyone using this server');
       return parts.join(dot);
     }
     if (sel.startsWith('server:') || sel === 'builtin' || sel === 'upload') {
       const parts = [];
-      if (L.transcripts > 0) parts.push(`${fmtInt(L.transcripts)} transcripts now on the server`);
+      if (L.transcripts > 0) parts.push(`${plural(L.transcripts, 'transcript')} now on the server`);
       parts.push('loading a model replaces the one on the server');
       return parts.join(dot);
     }
@@ -2014,8 +2019,8 @@ function renderProvenance() {
   if (!p) { el.textContent = ''; return; }
   if (p.kind === 'demo') { el.innerHTML = `<strong>${esc(p.label)}</strong>${dot}${esc(p.detail)}`; el.removeAttribute('data-genome'); return; }
   const parts = [`<strong>${esc(p.label)}</strong>`];
-  if (p.transcripts != null) parts.push(`${fmtInt(p.transcripts)} transcripts`);
-  if (p.source && p.source !== 'user-upload') parts.push(`<span class="mono">${esc(p.source)}</span>`);
+  if (p.transcripts != null) parts.push(plural(p.transcripts, 'transcript'));
+  if (p.source && p.source !== 'user-upload' && p.source !== p.label) parts.push(`<span class="mono">${esc(p.source)}</span>`);
   el.innerHTML = parts.join(dot);
   if (p.genome) el.setAttribute('data-genome', p.genome); else el.removeAttribute('data-genome');
 }
@@ -2170,7 +2175,7 @@ function provenanceComment() {
   if (!p) return `## fastVEP v${state.version}`;
   if (p.kind === 'demo') return `## fastVEP v${state.version} | ${p.label}: ${p.detail}`;
   const bits = [`fastVEP v${state.version}`, `genome: ${p.label}${p.genome ? ` (${p.genome})` : ''}`];
-  if (p.source && p.source !== 'user-upload') bits.push(`gene model: ${p.source}${p.transcripts != null ? `, ${fmtInt(p.transcripts)} transcripts` : ''}`);
+  if (p.source && p.source !== 'user-upload') bits.push(`gene model: ${p.source}${p.transcripts != null ? `, ${plural(p.transcripts, 'transcript')}` : ''}`);
   bits.push(`ACMG: ${p.acmg ? 'on' : 'off'}`);
   return `## ${bits.join(' | ')}`;
 }
@@ -2325,17 +2330,17 @@ function showAcmgDetail(index, opener) {
     else if (c.met && c.direction === 'Benign') cls = 'met-benign';
     const icon = !c.evaluated ? '&#x25CB;' : c.met ? '&#x2713;' : '&#x2717;';
     const word = !c.evaluated ? 'not evaluated' : c.met ? 'met' : 'not met';
-    return `<li class="acmg-criterion ${cls}"><span aria-hidden="true">${icon}</span><span class="code">${esc(c.code)}<span class="visually-hidden"> ${word}</span></span><span class="strength">${esc((c.strength || '').replace(/_/g, ' '))}</span><span class="summary">${esc(c.summary)}</span></li>`;
+    return `<li class="acmg-criterion ${cls}"><span aria-hidden="true">${icon}</span><span class="code">${esc(c.code)}<span class="visually-hidden"> ${word}</span></span><span class="strength">${esc(prettyWords(c.strength))}</span><span class="summary">${esc(c.summary)}</span></li>`;
   }).join('');
   const dis = (a.per_disorder || []).map((d) => {
     const names = (d.disorders || []).map((x) => x.label).filter(Boolean).join('; ');
     const m = (d.criteria || []).filter((c) => c.met).map((c) => c.code).join(', ') || 'None';
-    return `<div class="acmg-disorder"><span class="acmg-badge acmg-${esc(d.shorthand)}">${esc((d.classification || '').replace(/_/g, ' '))}</span><span class="moi">${esc(d.inheritance)}</span><span class="names">${esc(names)}</span><span class="met">${esc(m)}</span></div>`;
+    return `<div class="acmg-disorder"><span class="acmg-badge acmg-${esc(d.shorthand)}">${esc(prettyWords(d.classification))}</span><span class="moi">${esc(d.inheritance)}</span><span class="names">${esc(names)}</span><span class="met">${esc(m)}</span></div>`;
   }).join('');
   const c = a.counts || {};
   $('acmgBody').innerHTML = `
     <div class="dialog-head">
-      <h2 id="acmgTitle"><span class="acmg-badge acmg-${esc(a.shorthand)}" style="cursor:default">${esc((a.classification || '').replace(/_/g, ' '))}</span><span class="sub">${esc(r.transcript?.gene?.symbol || '')}${r.transcript?.gene?.symbol && (r.hgvsc || r.hgvsp) ? ' &middot; ' : ''}${esc(r.hgvsc || r.hgvsp || '')}</span></h2>
+      <h2 id="acmgTitle"><span class="acmg-badge acmg-${esc(a.shorthand)}" style="cursor:default">${esc(prettyWords(a.classification) || a.shorthand)}</span><span class="sub">${esc(r.transcript?.gene?.symbol || '')}${r.transcript?.gene?.symbol && (r.hgvsc || r.hgvsp) ? ' &middot; ' : ''}${esc(r.hgvsc || r.hgvsp || '')}</span></h2>
       <button type="button" class="btn btn-secondary btn-sm" id="acmgClose">Close</button>
     </div>
     ${a.triggered_rule ? `<p class="acmg-met">Triggered rule: <strong>${esc(a.triggered_rule)}</strong></p>` : ''}
