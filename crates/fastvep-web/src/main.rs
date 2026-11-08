@@ -85,7 +85,12 @@ struct Cli {
     /// single-user desktop run, where the browser UI's own genome switching
     /// needs it; leave it off for anything several people share, and the gene
     /// model becomes a property of how the server was started.
-    #[arg(long, default_value_t = false, env = "FASTVEP_ALLOW_MODEL_REPLACEMENT")]
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new(),
+        env = "FASTVEP_ALLOW_MODEL_REPLACEMENT"
+    )]
     allow_model_replacement: bool,
 }
 
