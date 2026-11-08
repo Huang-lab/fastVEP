@@ -50,7 +50,7 @@ Counting one gnomAD observation as two benign criteria would have added 1,292 mo
 Reading gnomAD's genomes as well as its exomes, through its joint release, would add 9,321 calls in direction (1.38 points) on every chromosome for one more reference-discordant benign call and two more reference-discordant pathogenic calls, and the release lacks the flags that withhold the frequency criteria in repeats.
 
 **Conclusions.**
-A reader can reuse the implementation choices, each with the agreement and the contradictions that it measured (the default scheme, the reading of each recommendation as the conditions that its text states, and the default of each threshold that no guideline states), and the checks that recompute the numbers of the text from the stored runs.
+A reader can reuse the implementation choices, each with the agreement and the contradictions that it measured (the default scheme, the reading of each recommendation as the conditions that its text states, and the default of each threshold that no guideline states), and the checks that recompute the numbers that the text quotes from the stored runs.
 The largest class of change was a condition that the standards state and a first implementation omitted.
 Agreement in direction does not separate cautious from aggressive calling, so contradictions belong beside it.
 A flat sweep can mean that the setting reaches almost nothing, or that the rule beside it makes the setting irrelevant.
@@ -87,7 +87,7 @@ They are fragmented because the rules are spread over the standards of 2015, the
 Our contribution is how to implement such criteria in software so that the calls agree closely with community opinion, and what each choice costs in contradictions.
 We take community opinion to be two things: ClinVar's classifications of review status two stars or better, which are a reference and not ground truth, and the review of one medical geneticist, who read the calls on which the software and ClinVar disagreed in direction over six rounds.
 The paper gives the implementation choices that follow (the reading of each recommendation, the default of each threshold that no guideline states, and the combining scheme, with the reasons), the agreement and the contradictions that each measured, and the checks that recompute the numbers that the text quotes from the stored runs.
-Agreement is judged by four measures: exact agreement with ClinVar's class, agreement in direction, opposite-direction calls (a pathogenic-side call where ClinVar is benign-side, or the reverse) and the recall of each side, because agreement in direction alone does not separate cautious from aggressive calling.
+Agreement is judged by four measures: exact agreement with ClinVar's class, agreement in direction, opposite-direction calls, which we also call contradictions (a pathogenic-side call where ClinVar is benign-side, or the reverse), and the recall of each side, because agreement in direction alone does not separate cautious from aggressive calling.
 
 The claim has four bounds.
 First, "closely" is relative to the settings that we measured, and a default is not always the setting that agrees most: where a sweep did not decide, thresholds were set inside the range of published expert-panel specifications, on the safer side of a trade or at the knee of the exchange rate between correct calls gained and errors added (Section 2.5), and three were not swept at all until this paper.
@@ -96,7 +96,8 @@ Third, ClinVar can be wrong or out of date, and the expert is one reviewer, who 
 Fourth, an input of variants alone, with no genotype, pedigree or phenotype of any individual, allows 15 of the 28 criteria, which caps what any annotator of such an input can reach.
 
 Here we describe how the ACMG/AMP classification engine of fastVEP, an open-source Rust reimplementation of the Ensembl Variant Effect Predictor (McLaren et al., 2016), was built, reviewed and measured.
-Two versions of the classifier appear throughout, and they are versions of the classifier and not builds of the genome: every run of either is on GRCh38.
+Two versions of the classifier appear throughout.
+They are versions of the classifier and not builds of the genome: every run of either is on GRCh38.
 v38 is the latest, and every number in this paper is v38's unless the text names v37.
 v38 is the classifier of fastVEP release 0.5.0, which for now is the release candidate `v0.5.0-rc.1` (Section 2.1): it reads the mode of inheritance that ClinGen curates, does not count BS2's carriers beside BS1 or BA1, and classifies a gene once for each of its modes of inheritance.
 v37 is the version in which the review rounds ended, which took a gene's mode of inheritance from the words of its disease names; it appears here as the history of the numbered versions v1 to v37 and as the before of what v38 changes (Section 3.8).
