@@ -123,7 +123,7 @@ compatibility.
 
 | Inheritance | Threshold |
 |-------------|-----|
-| Not recessive-only (AD, both, unknown) | AF ≤ 0.00004 (set at v10 by a sweep under the 2015 table; nearly flat under the point system) |
+| Not recessive-only (AD, both, unknown) | AF ≤ 0.00004 (set at v10 by a sweep under the 2015 table; nearly flat under the default scheme) |
 | Recessive-only | AF ≤ 0.00007 (0.007%; swept for the ACMG manuscript: flat) |
 | Per-gene override | Wins over inheritance default |
 
@@ -211,6 +211,10 @@ no opposite-direction call on the ClinVar 2-star+ benchmark.
 
 ### Combination Rules (19 = 18 Richards 2015 + 1 SVI Sept 2020)
 
+The list below is the 2015 table with the SVI rule of September 2020.
+By default it decides the benign direction only: the pathogenic direction is scored on the point scale of Tavtigian et al. (2020), where 6 to 9 points is Likely Pathogenic and 10 or more is Pathogenic.
+The pathogenic rules below apply with `use_point_system = false`, which puts the 2015 table on both directions (`docs/ACMG.md`, "Which combining rules apply" and "Classification Combination Rules").
+
 **Benign:**
 1. BA1 standalone → Benign
 2. ≥2 BS → Benign
@@ -242,6 +246,7 @@ no opposite-direction call on the ClinVar 2-star+ benchmark.
 **independently**. The result is VUS-Conflicting only when **both**
 directions reach a definite call (P/LP and B/LB). Otherwise the
 directional call wins.
+The classifier has since added two guards and a veto to this rule: a call is withheld when the other direction holds Strong evidence without reaching a call, and a Likely Pathogenic call is held at VUS at a site that gnomAD rejected where the withheld frequency would have met BA1 or BS1 (`docs/ACMG.md`, "Conflicting Evidence").
 
 ### Trio Analysis
 

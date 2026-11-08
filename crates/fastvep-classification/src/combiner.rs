@@ -6,14 +6,25 @@ use crate::types::{
 ///
 /// Returns the classification and the name of the triggered rule.
 ///
-/// Rules: pathogenic (8 combinations) and benign (BA1, `>=2` BS, BS+BP,
-/// `>=2` BP) are evaluated independently. If both directions reach a
-/// definite call (P/LP and B/LB), the result is VUS (Conflicting).
-/// Otherwise the directional call wins.
+/// The two directions are decided differently, and `use_point_system`
+/// switches the pathogenic one only:
 ///
-/// Includes the ClinGen SVI novel combination rule (Sept 2020) that
-/// PVS + >=1 PP → Likely Pathogenic, added to compensate for the PM2
-/// downgrade to Supporting (Bayesian Post_P = 0.988, within LP range).
+/// - Pathogenic: by default the point scale of Tavtigian et al. 2020
+///   (`pathogenic_call_by_points`); with `use_point_system = false` the
+///   Richards 2015 table (`compute_pathogenic_call`: 8 Pathogenic and 7
+///   Likely Pathogenic combinations, one of them the ClinGen SVI rule of
+///   Sept 2020, PVS + >=1 PP → Likely Pathogenic, added to compensate for the
+///   PM2 downgrade to Supporting; Bayesian Post_P = 0.988, within LP range).
+/// - Benign: the Richards 2015 table whichever way the switch is set
+///   (`compute_benign_call`: BA1, `>=2` BS, BS+BP, `>=2` BP). Points on both
+///   sides is not a setting; it exists only as the offline replay of the ACMG
+///   manuscript (`manuscript/acmg`, Section 3.3).
+///
+/// Both directions then go through the same rules, in `combine_inner`. A call
+/// on one side stands unless the other side also reaches a call, or holds
+/// evidence at Strong strength or above without reaching one, and the result
+/// is then VUS (Conflicting). A Likely Pathogenic call that has no benign call
+/// against it is also held at VUS where `site_level_frequency_veto` applies.
 pub fn combine(
     criteria: &[EvidenceCriterion],
     config: &crate::config::AcmgConfig,
@@ -21,57 +32,40 @@ pub fn combine(
     combine_inner(criteria, config.use_point_system)
 }
 
-/// The ClinGen SVI point system (Tavtigian et al. 2020, Hum Mutat 41:1734-1737).
-///
-/// The 2015 combining table and this point system are two encodings of the same
-/// Bayesian model, and where they disagree the SVI's own analysis is that the
-/// table has gaps. The clearest is a lone PVS1: 8 points, squarely inside the
-/// Likely Pathogenic band, but no row of Table 5 matches it, so the table gives
-/// Uncertain Significance. Run v10 had **2,319 ClinVar-Pathogenic variants land in
-/// VUS on `PVS1` and nothing else** - a nonsense or frameshift variant in a
-/// haploinsufficient disease gene, which is close to the least uncertain thing a
-/// classifier sees.
+/// Pathogenic-side call from the ClinGen SVI point scale (Tavtigian et al.
+/// 2020, Hum Mutat 41:1734-1737), or `None` when the pathogenic evidence does
+/// not reach Likely Pathogenic.
 ///
 /// Points are `1 / 2 / 4 / 8` for Supporting / Moderate / Strong / Very Strong,
-/// negated for benign criteria, with a standalone benign criterion at `-8`.
-/// Bands: `>= 10` Pathogenic, `6..=9` Likely Pathogenic, `-6..=-2` Likely
-/// Benign, `<= -7` Benign, everything else Uncertain.
-///
-/// The Likely Benign floor is the one deliberate deviation from Tavtigian's
-/// published table, which puts it at `-1`. At `-1` a single BP4 - one
-/// supporting benign criterion, on its own - is enough for a Likely Benign
-/// call, where Richards 2015 requires two benign supporting criteria or a
-/// strong plus a supporting. Measured on the benchmark sample, the `-1` floor
-/// produced 36 reference-discordant benign calls against 1, and **22 of those 36 were a lone
-/// BP4**. Taking the stricter of the two schemes on the benign side costs
-/// almost nothing and removes the whole class: if ClinVar is right, a benign call on a pathogenic variant and a variant
-/// left uncertain are not comparable errors.
-///
-/// Conflict handling falls out of the arithmetic rather than needing a separate
-/// rule: evidence in both directions cancels toward zero, which is the VUS band.
-/// Pathogenic-side call from the ClinGen SVI point system, or `None` when the
-/// pathogenic evidence does not reach Likely Pathogenic.
-///
-/// Points are `1 / 2 / 4 / 8` for Supporting / Moderate / Strong / Very Strong.
-/// Bands: `>= 10` Pathogenic, `6..=9` Likely Pathogenic.
+/// summed over the met pathogenic criteria at their effective strength (a
+/// graded `PVS1_Moderate` is 2, not 8). Bands: `>= 10` Pathogenic, `6..=9`
+/// Likely Pathogenic.
 ///
 /// **Only the pathogenic direction is scored this way**, and the benign
-/// direction keeps the Richards 2015 rules. That split is deliberate and was
-/// measured, not assumed. Tavtigian's Likely Benign band opens at `-1`, so a
-/// single BP4 - one supporting benign criterion on its own - is enough for a
-/// Likely Benign call, where Richards requires two benign supporting criteria
-/// or a strong plus a supporting. On the benchmark sample the full point system
-/// scored 36 reference-discordant benign calls against the table's 1, and **22 of the 36 were
-/// a lone BP4**. Tightening the band instead (floor `-2`) removed those but
-/// took benign recall from 56.3 % down to 45.6 %, because a lone BP4 carries a
-/// great many correct benign calls too.
+/// direction keeps the Richards 2015 table (`compute_benign_call`). That split
+/// is deliberate and was measured, not assumed. The table has no row for a lone
+/// PVS1: 8 points, inside Likely Pathogenic, so the table returns Uncertain,
+/// which put 2,319 ClinVar-Pathogenic variants in VUS in run v10. Tavtigian's
+/// Likely Benign band, on the other hand, opens at `-1`, so a single BP4 - one
+/// supporting benign criterion on its own - would be a Likely Benign call,
+/// where Richards requires two benign supporting criteria or a strong plus a
+/// supporting.
 ///
-/// So the two schemes are used where each is the safer one. The point system's
-/// documented gap is on the pathogenic side: a lone PVS1 is 8 points, inside
-/// Likely Pathogenic, but matches no row of Table 5 and so returns Uncertain -
-/// which put 2,319 ClinVar-Pathogenic variants in VUS in run v10. Its divergence
-/// on the benign side runs the other way, toward calling variants benign on
-/// thinner evidence, and, if ClinVar is right, a benign call on a pathogenic variant is not the same kind of error as a
+/// Replayed from the recorded criteria of v37 over the 673,660 ClinVar 2-star+
+/// records (`manuscript/acmg/data/combining_rules_replay_v37.csv`; Section 3.3
+/// and Appendix Table A2 of the manuscript), points on both sides with Likely
+/// Benign from `-1` raise benign recall from 62.3 % to 73.9 % and the
+/// reference-discordant benign calls from 24 to 380, 218 of them a lone BP4,
+/// and cut recall of ClinVar VUS variants from 97.2 % to 69.2 %. A floor of
+/// `-2` gives 62 reference-discordant benign calls at a benign recall of
+/// 49.6 %, and a floor of `-3` gives 26 at 37.0 %. The 2015 table on both sides
+/// is a real run (`use_point_system = false`) that differs from the default on
+/// the pathogenic side only: it gives up 5.8 points of pathogenic recall
+/// (56.7 % against 62.5 %) to avoid 11 reference-discordant pathogenic calls.
+///
+/// So the points are used where the table has a gap, and the table where the
+/// points would call benign on thinner evidence, and, if ClinVar is right, a
+/// benign call on a pathogenic variant is not the same kind of error as a
 /// variant left uncertain.
 fn pathogenic_call_by_points(
     criteria: &[EvidenceCriterion],

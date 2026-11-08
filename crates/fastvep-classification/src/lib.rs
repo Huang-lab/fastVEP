@@ -149,9 +149,10 @@ mod tests {
         let result = classify(&input, &AcmgConfig::default());
         assert_eq!(result.classification, AcmgClassification::Benign);
         assert_eq!(result.shorthand, "B");
-        // BA1 is standalone benign: -8 points, inside the Benign band on its
-        // own. The rule string names the arithmetic under the point system and
-        // the rule id under the table, so assert on the evidence instead.
+        // BA1 is Stand-alone benign, and the 2015 table calls it Benign on its
+        // own. The benign side never uses points, so the rule is "BA1" under
+        // either setting of `use_point_system`: the first assertion checks the
+        // evidence, and the second the rule under the table.
         assert!(result.criteria.iter().any(|c| c.code == "BA1" && c.met));
         let table = AcmgConfig {
             use_point_system: false,
@@ -283,10 +284,10 @@ mod tests {
         // evaluated because the record carries no AN. That leaves PVS1 alone,
         // and the two combining schemes genuinely disagree about it.
         //
-        // Point system (the default): 8 points, inside the Likely Pathogenic
-        // band. A frameshift in a haploinsufficient disease gene is not an
-        // uncertain finding, and run v10 had 2,319 ClinVar-Pathogenic variants
-        // sitting in VUS on exactly this signature.
+        // Points on the pathogenic side (the default): 8 points, inside the
+        // Likely Pathogenic band. A frameshift in a haploinsufficient disease
+        // gene is not an uncertain finding, and run v10 had 2,319
+        // ClinVar-Pathogenic variants sitting in VUS on exactly this signature.
         assert_eq!(
             classify(&input, &AcmgConfig::default()).classification,
             AcmgClassification::LikelyPathogenic

@@ -23,6 +23,7 @@ We describe how the classification engine of fastVEP, an open-source reimplement
 **Methods.**
 Thirty-seven numbered versions were scored on 673,660 ClinVar variants (release of 4 April 2026; 31 have stored scored output) over six rounds of review, three of which returned rulings.
 The input lists variants only, with no genotype, pedigree or phenotype of any individual (a sites-only VCF), and from it 15 of the 28 ACMG/AMP criteria can be evaluated.
+The criteria that are met are combined by a point scale on the pathogenic side (1, 2, 4 and 8 points for Supporting, Moderate, Strong and Very Strong evidence; 6 to 9 points is Likely pathogenic and 10 or more is Pathogenic) and by the 2015 combining table on the benign side.
 For this paper 89 further runs re-measured all but four groups of the thresholds that no guideline states and tested departures from the sources.
 The classifier of that analysis (v37) was applied unchanged to ClinVar's release of 4 October 2026, including 107,528 variants that were not in the April set.
 A later version (v38), which reads the mode of inheritance that ClinGen curates and not the words of the disease name, was measured in 42 further runs on both releases.
@@ -92,7 +93,10 @@ Along the way we read each recommendation that the classifier cites for a number
 ### 2.1 The classifier and its evidence sources
 
 The classification engine is the `fastvep-classification` crate of fastVEP (version 0.4.0): 14,857 lines of Rust with 340 unit tests at the commit analyzed.
-That commit is v37 (5d8004a), and every number of Sections 2 to 3.7 is v37's; Section 3.8 describes what was changed in the classifier afterwards (v38) and measures it with the same harness.
+That commit is v37 (5d8004a).
+v37 and v38 are versions of the classifier and not builds of the genome: every run of this paper, of either version, is on GRCh38 (Sections 2.2 and 2.8).
+v38 (5293cc0) is the latest version of the classifier and is the classifier of release 0.5.0 (the tag `v0.5.0-rc.1`); Sections 2.10 and 3.8 describe what was changed in it and measure it with the same harness.
+The other numbers of Sections 2 and 3 are v37's, except that the status of the 28 criteria in Section 2.1 (Supplementary Table S1) was read from the engine of v38, and the analyses of Sections 3.1 to 3.7 were not repeated on v38 (Section 3.8 repeats the four thresholds that read inheritance).
 It is called from the annotation loop after consequence prediction and HGVS naming, once per allele and transcript, and with `--pick`, which was used throughout, one transcript is reported per variant, chosen by VEP's default order (MANE Select, MANE Plus Clinical, canonical, APPRIS, TSL, biotype, CCDS, consequence severity; MANE is described by Morales et al., 2022).
 The Ensembl GFF3 that we used holds no APPRIS attribute, so that step of the order does nothing here.
 Both per-variant loops of the code base, the shared annotation library and the command-line batch path, call the same classifier and the same helper for splice context, and each has end-to-end tests.
@@ -115,8 +119,14 @@ Two gene-level gates are referred to in the text: BP1 is withheld (the veto) in 
 Strength follows the guidelines where they grade a criterion: PVS1 by a decision tree after that of Abou Tayoun et al. (2018), whose departures from the published tree are listed in Section 3.2, PP3 and BP4 by the REVEL bands of Pejaver et al. (2022), and PM2 at Supporting (ClinGen SVI, 2020).
 Criteria that read the same signal are reconciled in one pass before the call is combined, and a criterion that the pass sets aside stays in the output with the reason.
 PM1 is set aside beside PVS1 and beside PP3 at Strong strength; PP3 beside PVS1 at a canonical splice site, when PP3 was met from SpliceAI, and beside PS1 or PM5, when it was met from REVEL; BP4 from SpliceAI beside PP3 from REVEL; PP3, BP4 and BP7 beside curated functional evidence, which the benchmark does not use; and, from v38, BS2's carrier count beside BS1 or BA1 (Section 2.10).
-Criteria that are met are combined into a class on the point scale of Tavtigian et al. (2020): on the pathogenic side a criterion of Supporting, Moderate, Strong or Very Strong strength adds 1, 2, 4 or 8 points, and a variant with 6 to 9 points is Likely pathogenic and one with 10 or more is Pathogenic, while the benign side keeps the 2015 combining table (Table 1).
-PP2, PM1 and PP3 on one missense variant are otherwise counted as three independent criteria, as the point system counts them, although they can be correlated, and a combined cap on the three was measured and not adopted (Section 3.8).
+Criteria that are met are combined into a class by the default scheme, which is points on the pathogenic side and the 2015 combining table on the benign side (Table 1).
+On the pathogenic side the point scale is that of Tavtigian et al. (2020): a criterion of Supporting, Moderate, Strong or Very Strong strength adds 1, 2, 4 or 8 points, and a variant with 6 to 9 points is Likely pathogenic and one with 10 or more is Pathogenic.
+On the benign side the table is that of Richards et al. (2015): a Stand-alone criterion alone, or two Strong criteria, make a variant Benign, and one Strong and one Supporting criterion, or two Supporting criteria, make it Likely benign.
+A call on one side stands unless the other side also reaches a call, or holds evidence of Strong strength or above without reaching one, and the variant is then a VUS; the site-level frequency veto of Section 2.7 also holds some Likely pathogenic calls at VUS.
+Two alternatives were measured: the 2015 table on both sides, which is a setting of the classifier (`use_point_system = false`) and was run for this paper, and points on both sides, which has no setting and exists only as a replay of the recorded criteria (Section 2.7).
+The default scheme is split because the table has no row for a lone Very Strong criterion, which the points call Likely pathogenic, and because points on the benign side would call a lone Supporting criterion Likely benign (from -1 points), which the table does not (Section 3.3).
+Where the text says points or the point scale and names no side, it means the pathogenic half of the default scheme.
+PP2, PM1 and PP3 on one missense variant are otherwise counted as three independent criteria, as the point scale counts them, although they can be correlated, and a combined cap on the three was measured and not adopted (Section 3.8).
 Table 1 lists the guidance incorporated, when it first landed, and what the classifier does with it.
 
 **Table 1. Guidance incorporated into the classifier.**
@@ -343,14 +353,14 @@ The first review (v7 to v8) added 2.8 points.
 The next run, v9, lost 2.7 points, and that loss was the correct result: PS1 and PM1 had been counting each variant's own ClinVar record, and 94% of PS1's firings were self-matches, so scoring them leave-one-out removed agreement that had never been evidence.
 Of the 2.7 points, about 0.6 were the cost of the review's criteria fixes and about 2.0 were the leave-one-out scoring (RUN_VERSIONS.md).
 Recall of ClinVar's pathogenic-side variants fell from 63.2% at v8 to 45.6% at v9 for the same reason, and the 62.5% of v37 is 0.7 points below the 63.2% that v8 reached by counting each variant's own record.
-Agreement then rose by 3.2 points at v10, which bundled a rebuilt gnomAD database with its quality fields, the gene-level gates, and the first two measured thresholds (the PM2 threshold and the BS2 prevalence threshold), by 0.9 points each for the SVI point system (v11) and the BS1 threshold (v12), and by 1.6 points at v13, when `--acmg` was made to enable HGVS and the criteria that read it came alive.
+Agreement then rose by 3.2 points at v10, which bundled a rebuilt gnomAD database with its quality fields, the gene-level gates, and the first two measured thresholds (the PM2 threshold and the BS2 prevalence threshold), by 0.9 points each for the SVI point scale on the pathogenic side (v11) and the BS1 threshold (v12), and by 1.6 points at v13, when `--acmg` was made to enable HGVS and the criteria that read it came alive.
 
 After v13 the headline stopped moving.
 Across the next 23 runs (v14 to v37, without v17) same-direction agreement stayed between 77.50% and 77.62%, and no run moved it by more than 0.07 points.
 The work did not stop, and its effect shows in the other panels.
 Opposite-direction calls fell from 94 at v13 to 49 at v37, reference-discordant benign calls from 50 to 24, and reference-discordant pathogenic calls from 44 to 25 (Figure S1B).
 The path was not monotonic.
-Opposite-direction calls had reached a minimum of 25 at v10 and then rose to 56 at v11, when a lone PVS1 became Likely pathogenic under the point system, which gained 6,632 correct pathogenic-side calls for 31 additional reference-discordant pathogenic calls.
+Opposite-direction calls had reached a minimum of 25 at v10 and then rose to 56 at v11, when a lone PVS1 became Likely pathogenic under the point scale of the pathogenic side, which gained 6,632 correct pathogenic-side calls for 31 additional reference-discordant pathogenic calls.
 They rose again at v13, when BP7's intronic extension started to fire, which gained 11,339 benign-side calls for 36 additional reference-discordant benign calls.
 Both were trades made on purpose and recorded as trades, and Section 3.3 returns to how they were weighed.
 The matrix stored for v1 holds 31 opposite-direction calls, fewer than v37, because v1 committed to only 74,355 variants where v37 commits to 244,093; per committed call, contradictions fell from 0.042% in v1 to 0.020% in v37, with a minimum of 0.011% at v10.
@@ -434,7 +444,7 @@ Supplementary Table S4 gives every step of every sweep.
 <!-- table:thresholds:begin -->
 | Threshold: default value | How it was set | Last step before the default value | First step beyond it | On v37 |
 |:---|:---|:---|:---|:---|
-| PM2 threshold, genes not read as recessive-only: 4e-5 | Swept in v10 under the 2015 table; the median of the published VCEP thresholds is 4e-5 (64 genes) | 2e-5 to 4e-5: +13 calls, +1 (13 per added error) | 4e-5 to 1e-4: +6 calls, +0 (no added error) | Recall 62.0% to 62.5% across strict absence to 5e-4 under the point system; 38.8% to 57.4% under the 2015 table |
+| PM2 threshold, genes not read as recessive-only: 4e-5 | Swept in v10 under the 2015 table; the median of the published VCEP thresholds is 4e-5 (64 genes) | 2e-5 to 4e-5: +13 calls, +1 (13 per added error) | 4e-5 to 1e-4: +6 calls, +0 (no added error) | Recall 62.0% to 62.5% across strict absence to 5e-4 under the default scheme; 38.8% to 57.4% under the 2015 table on both sides |
 | PM2 threshold, genes read as recessive-only: 7e-5 | Not from the SVI PM2 recommendation, which the code cited and which gives no frequency; equal to the Hearing Loss expert panel's recessive threshold. First swept here | 2e-5 to 7e-5: +0 calls, +0 (no added error) | 7e-5 to 2e-4: +6 calls, +0 (no added error) | Flat: recall 62.46% to 62.48% and agreement in direction within 10 calls from strict absence to 5e-4 |
 | BS1 threshold: 5e-3 | Swept on a 1-in-10 sample, where the move from 1e-2 looked free; on the full set it cost 4 more reference-discordant benign calls for 2.3 points of benign-side recall (6,443 calls), and was kept (v12). The median of the published VCEP thresholds is 2.5e-4 | 1e-2 to 5e-3: +5,289 calls, +2 (2,645 per added error) | 5e-3 to 2e-3: +5,565 calls, +6 (928 per added error) | Knee at 1e-3 (112 per added error below it); 5e-3 is on the cautious side of the knee |
 | BS2 homozygote threshold, every gene not read as dominant-only: 1e-3 | Swept on the full benchmark (12 Aug): no knee, so set on the prevalence of the commonest recessive conditions | 1e-2 to 1e-3: +304 calls, +0 (no added error) | 1e-3 to 1e-4: +1,389 calls, +3 (463 per added error) | No knee: 463, 291 and 533 calls per added error below the default value |
@@ -464,7 +474,7 @@ Recall of pathogenic-side variants is 38.8% at strict absence, 46.8% at 1e-6, 54
 Raising the threshold from strict absence to 4e-5 gains 16,785 of 93,812 variants for 7 more reference-discordant pathogenic calls, which is the knee that v10 recorded: the sweep then gave 37.8% at strict absence and 56.8% at 4e-5, against 38.8% and 56.7% here.
 Under that table a lone PVS1 matches no row, and a null variant whose only companion is PM2 reaches Likely pathogenic only through the rule that the SVI added with its PM2 recommendation, one Very Strong criterion plus one Supporting criterion (ClinGen SVI, 2020).
 Of the 51,348 pathogenic-side calls that the table makes with PM2 and would not make without it, 45,855 (89%) rest on PVS1 and PM2 and nothing else.
-The point system counts a lone PVS1 as 8 points, so under it only 5,493 calls depend on PM2, and none of them is a PVS1-and-PM2 pair.
+The point scale of the default scheme counts a lone PVS1 as 8 points, so under it only 5,493 calls depend on PM2, and none of them is a PVS1-and-PM2 pair.
 A threshold can move only the calls that need the criterion it gates, and the combining rule decides how many do.
 
 **The BS1, BS2 and BP7 thresholds trade benign-side calls for reference-discordant benign calls, and each has a different shape.**
@@ -553,12 +563,16 @@ ClinVar P/LP, VUS and B/LB are classes of ClinVar 2-star+ records of the release
 | Pathogenic from 12 points | 58,610 (62.5%) | 3,612 | 25 | 24 | 522,886 (77.6%) | 422,757 (62.8%) |
 <!-- table:cutoffs:end -->
 
-The benign side shows that the choice of scheme matters more than the choice of floor.
-The default scheme applies the 2015 table to benign evidence.
+**The default scheme is points on the pathogenic side and the 2015 table on the benign side, and each half was chosen over a measured alternative.**
+Three schemes can be set side by side on the recorded criteria of v37 (Appendix Table A2): the default scheme, the 2015 table on both sides, and the point scale on both sides.
+The first two are real runs, the second through the setting `use_point_system = false`, and the third has no setting in the classifier and is a replay of the recorded criteria (Section 2.7).
+The default scheme has 425,869 exact calls and 522,886 in direction, recall of ClinVar's pathogenic-side variants of 62.5% and of its benign-side variants of 62.3%, 24 reference-discordant benign calls and 25 reference-discordant pathogenic calls.
+The 2015 table on both sides has 424,773 exact calls and 517,631 in direction, recall of 56.7% of ClinVar's pathogenic-side variants and 62.3% of its benign-side variants, and 24 reference-discordant benign calls and 14 reference-discordant pathogenic calls, so it differs from the default scheme on the pathogenic side only, where it gives up 5,255 calls in direction and 5.8 points of recall to avoid 11 reference-discordant pathogenic calls (Section 3.4).
+On the benign side the choice of scheme matters more than the choice of floor.
 Scoring both sides on the point scale with Likely benign from -1 points, as in the published point system, raises recall of ClinVar's benign-side variants from 62.3% to 73.9%, but raises reference-discordant benign calls from 24 to 380, of which 218 are a lone BP4, and lowers recall of ClinVar's VUS variants from 97.2% to 69.2%.
 Tightening the floor to -2 gives 49.6% recall and 62 reference-discordant benign calls, and to -3 gives 37.0% and 26.
 The table therefore does better than the floors of -2 and -3 on recall and on reference-discordant benign calls alike, and the floor of -1 is a trade of 356 more reference-discordant benign calls for 11.6 points of recall (Figure 2C).
-These three are replays of the recorded criteria and not real runs (Section 2.7).
+These three point scales are replays of the recorded criteria and not real runs (Section 2.7), and each has fewer exact calls (349,592, 367,373 and 364,541) and fewer calls in direction (473,315, 471,582 and 451,351) than the default scheme.
 
 **An allele-number floor whose source is narrower than its use bought nothing.**
 BA1 and BS1 require an allele number of at least 2,000 at the variant's site in gnomAD.
@@ -938,7 +952,7 @@ All three are met for 1,591 variants, 913 of them called Likely pathogenic.
 Capping the three together at 4 points changes 910 calls, all from Likely pathogenic to VUS (Table 8, Appendix Table A12): 320 of them are ClinVar pathogenic-side variants, 587 are ClinVar VUS variants and 3 are ClinVar benign-side variants that were called pathogenic-side.
 It raises agreement in direction by 267 calls and exact agreement by 512, lowers recall of ClinVar's pathogenic-side variants from 62.5% to 62.1%, and removes 3 of the 24 reference-discordant pathogenic calls, at 107 correct pathogenic-side calls given up for each.
 On the October release the same cap changes 1,018 calls and gives up 354 correct pathogenic-side calls for the 4 contradictions it avoids, and on the new variants it changes 123 calls and gives up 37 for the one it avoids.
-We did not adopt it, because it changes the combining rule and does not correct a defect: the point system that the classifier follows counts the criteria as independent, the benchmark does not separate the two readings (the 587 ClinVar VUS variants that it keeps at VUS are not shown to be errors, Section 3.5), and an exchange of 107 calls per contradiction is at the level that Section 2.5 takes for a knee, so it does not decide.
+We did not adopt it, because it changes the combining rule and does not correct a defect: the point scale that the classifier follows on the pathogenic side counts the criteria as independent, the benchmark does not separate the two readings (the 587 ClinVar VUS variants that it keeps at VUS are not shown to be errors, Section 3.5), and an exchange of 107 calls per contradiction is at the level that Section 2.5 takes for a knee, so it does not decide.
 
 **A gene with more than one mode of inheritance is classified once for each, and the calls differ for 0.55% of the variants of such genes.**
 Of the 673,278 variants with a call, 87,599 (13.0%) are in 128 genes whose established curations carry more than one mode of inheritance, by the symbol of the annotation, and each is classified against each mode besides the gene as a whole (Appendix Table A13).
@@ -1031,7 +1045,7 @@ A benchmark cannot find a missing condition when the omission does not change an
 Review has a sampling problem of its own, and ours was a cap of 10,000 rows in a discrepancy log that silently limited the first round to the first five chromosomes.
 
 **A threshold belongs to the combining rule beside it.**
-The PM2 threshold moved pathogenic-side recall by 19 points when it was set in v10, by 0.5 in v37, and by 17.9 again when the 2015 table is restored, because the table needs PM2 to lift a null variant to Likely pathogenic and the point system does not.
+The PM2 threshold moved pathogenic-side recall by 19 points when it was set in v10, by 0.5 in v37, and by 17.9 again when the 2015 table is restored on the pathogenic side, because the table needs PM2 to lift a null variant to Likely pathogenic and the point scale does not.
 The cutoffs that define the classes move the pathogenic side more than any numeric threshold that we swept on the default classifier (11 percentage points of recall for one point of cutoff, against 0.5 for the whole range of the PM2 threshold), and they are fixed by the framework and not by the data.
 We showed this for the PM2 threshold, the only threshold that we re-ran under the 2015 table.
 Thresholds that were tuned should be re-measured whenever the rule beside them changes, and the exchange rate between calls gained and errors added is a better unit than the agreement figure.
@@ -1248,6 +1262,13 @@ The real ClinGen rows that test the reading of the field are in `crates/fastvep-
 `18_criteria_status.py` annotates every 40th record of the benchmark to JSON and writes the status of the 28 criteria (Supplementary Table S1).
 The reviewer's workbooks are not in the repository.
 
+The results of each version are in these places.
+The results of v37 are the 89 runs on the April set and the 7 on the October release in `analysis/acmg_benchmark/results/v37_manuscript/` (`runs.tsv`, `holdout_runs.tsv` and `run_matrix.tsv`, with the provenance and the configuration of each run), Tables 3 to 7, Figures 1 to 5 and S1 to S4, and Supplementary Tables S1 to S9 and Appendix Tables A1 to A9, whose 74 files in `manuscript/acmg/data/` are the ones whose names do not begin with v38_.
+The one file among them that was made with the binary of v38 is `criteria_status.csv` of Supplementary Table S1.
+The results of v38 are the 42 runs of Section 3.8 (`runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv` of the same directory, with their provenance files and configurations in its subdirectories provenance and configs, where the files of these runs are named v38_ and the name of the run), their repetition by release 0.5.0 in `analysis/acmg_benchmark/results/v38_v0.5.0/` (all 42 identical), the 23 files of `manuscript/acmg/data/` whose names begin with v38_ (Appendix Tables A10 to A16, which are sheets A10 to A16 of `supplementary_tables.xlsx`), Tables 8 and 9, and the sections "v38", "The full rerun of 4 November 2026", "After v38" and "Release 0.5.0 reproduces v38" of `RUN_VERSIONS.md`.
+The annotated VCFs and the per-variant tables of the v38 runs are in `data/benchmark/manuscript_runs/v38*` on the machine that made them, and are not in the repository.
+The analyses of Sections 3.1 to 3.7 have not been repeated on v38, except for the four thresholds that read inheritance and the runs on gnomAD's joint release (Section 3.8).
+
 ## Declarations
 
 **Author contributions.** M.G. carried out the clinical review of discordant calls over six rounds and contributed curated variant inputs.
@@ -1276,10 +1297,11 @@ P/LP is Pathogenic or Likely pathogenic, B/LB is Likely benign or Benign, and VU
 Each figure repeats this in a footnote.
 ClinVar's classifications are a reference and not ground truth.
 
-**Figure 1. Thresholds that no guideline states trade calls for errors at different rates, and the PM2 threshold matters far more under the 2015 combining table than under the point system.**
+**Figure 1. Thresholds that no guideline states trade calls for errors at different rates, and the PM2 threshold matters far more when the pathogenic side is scored by the 2015 combining table than when it is scored by points.**
 The thresholds of Section 3.3, re-measured on v37.
 (A) Five thresholds on the benign side trade correct benign-side calls for reference-discordant benign calls (the pink line is the count of BP1's veto, from 1 to 25 pathogenic missense variants); open markers are swept values and the filled black marker is the default one.
-(B) Recall of ClinVar 2-star+ pathogenic-side variants against the PM2 threshold for genes not read as recessive-only, under the SVI point system (default) and under the 2015 combining table, and against the threshold for genes read as recessive-only under the point system.
+(B) Recall of ClinVar 2-star+ pathogenic-side variants against the PM2 threshold for genes not read as recessive-only, under the default scheme, which scores the pathogenic side by points ("Points"), and under the 2015 combining table on both sides ("2015 table"), and against the threshold for genes read as recessive-only under the default scheme ("Points, recessive-only").
+The benign side is the 2015 table in all three, so only the pathogenic side differs.
 (C) The BS2 carrier threshold for genes read as dominant-only (v37, which read 50 genes as dominant-only): the change in recall of ClinVar 2-star+ pathogenic-side (red) and benign-side (blue) variants from the default threshold.
 
 **Figure 2. The points that define the classes move the pathogenic side more than any numeric threshold that we swept on the default classifier.**

@@ -9,6 +9,11 @@ The manuscript, its figures and its tables say "default", "threshold", "referenc
 They no longer say "shipped", "bar", "missed diagnosis", "false-benign" or "false-pathogenic call", or BP7's "far boundary".
 The two discordant classes are named for what was measured, a call that disagrees with a ClinVar 2-star+ class, and not for a verdict that the call is wrong or that a diagnosis was missed.
 "Default" is the setting of the version of the classifier that the sentence is about (v37, or v38 where the text says so).
+"Default scheme" is the combining scheme of the default: the point scale of Tavtigian et al. (2020) on the pathogenic side and the 2015 combining table on the benign side.
+"The point scale", or "points" with the side, is its pathogenic half, and "the 2015 table on the benign side" is its other half.
+"The 2015 table on both sides", or "under the 2015 table" of a threshold's sweep, is the setting `use_point_system = false`, which was run.
+"Points on both sides" has no setting and exists only as an offline replay of the recorded criteria (Section 2.7).
+The text does not call the default "the point system", which reads as points on both sides: "the point system" is the scheme of Tavtigian et al. itself, and "the point scale" is the pathogenic half of the default.
 The older words remain only where renaming them would break something that reads them, or would change what the classifier prints: the columns `false_benign` and `false_pathogenic` and the words `shipped` and `bar` in the files of `data/`, the setting names in their `knob` column (for example "BS1 bar" and "BP7 far boundary"), the run names (`v38_oct_shipped`), the scripts and the run descriptions that they write into `analysis/acmg_benchmark/results/`, and the classifier's own output text (the evidence summaries of BS2, BP7 and PM2 and one configuration error, which say "prevalence bar", "far boundary" and "rarity bar").
 Read `false_benign` as the reference-discordant benign calls of the text, and `false_pathogenic` as its reference-discordant pathogenic calls.
 
