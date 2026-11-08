@@ -1,0 +1,19 @@
+name,value,text
+sweeps,12.0,
+sweeps_that_differ_in_shape,4.0,
+sweeps_that_differ_in_the_knee,1.0,
+knee_bs1_first,0.001,
+knee_bs1_complete,0.001,
+knee_bp7_far_boundary_first,300.0,
+knee_bp7_far_boundary_complete,300.0,
+effects,245.0,
+effect_measures,7.0,
+effects_that_changed,7.0,
+effects_that_changed_and_are_small,6.0,
+effect_that_changed,0.0,"v38_sw_no_lowpen_gate false_benign: +1 on the first databases, +2 on the complete ones"
+effect_that_changed,0.0,"v38_sw_no_lowpen_gate opposite: +1 on the first databases, +2 on the complete ones"
+effect_that_changed,0.0,"v38_sw_no_homology_list same_pathogenic: +0 on the first databases, +1 on the complete ones"
+effect_that_changed,1.0,"v38_src_nospliceai opposite: -13 on the first databases, -16 on the complete ones"
+effect_that_changed,0.0,"v38_src_nognomad false_benign: -2 on the first databases, -3 on the complete ones"
+effect_that_changed,0.0,"v38_hk_bp7_walker false_benign: +2 on the first databases, +3 on the complete ones"
+effect_that_changed,0.0,"v38_hk_bp7_walker opposite: +2 on the first databases, +3 on the complete ones"

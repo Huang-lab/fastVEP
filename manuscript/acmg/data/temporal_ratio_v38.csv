@@ -1,8 +1,8 @@
 measure,value,ci_lo,ci_hi,n,k,poisson_p_at_least_observed,new_variants_in_strata_without_april_rate
-"opposite-direction rate, April set",7.125256063889797e-05,4.982024099000021e-05,9.545695739372807e-05,673660,48,,
-"opposite-direction rate, new variants",0.0001673982590581058,9.228297481240982e-05,0.00025252785159125216,107528,18,,
-ratio of the new rate to the April rate,2.3493648166059073,1.2404915169502215,4.12971656589667,10233,,,
-expected opposite-direction calls among the new variants at the April rate by ClinVar direction,7.703062453038964,,,107528,18,0.0010601067302352654,0.0
-expected opposite-direction calls among the new variants at the April rate by ClinVar direction by consequence group,5.655414602394101,,,107528,18,2.7026792148033324e-05,0.0
-expected opposite-direction calls among the new variants at the April rate by ClinVar class,6.6774089432182056,,,107528,18,0.0002084677514836109,0.0
-expected opposite-direction calls among the new variants at the April rate by ClinVar class by consequence group,5.862227276701033,,,107528,18,4.257577964011171e-05,0.0
+"opposite-direction rate, April set",7.570584567882908e-05,5.3381149394621046e-05,0.00010092870363982217,673660,51,,
+"opposite-direction rate, new variants",0.000172297937593687,9.659328192405095e-05,0.00025348968828665177,116078,20,,
+ratio of the new rate to the April rate,2.2758868360659448,1.1908649777097968,3.8358918191136127,10389,,,
+expected opposite-direction calls among the new variants at the April rate by ClinVar direction,8.630353135301885,,,116078,20,0.0006425371217539578,0.0
+expected opposite-direction calls among the new variants at the April rate by ClinVar direction by consequence group,7.199068275396554,,,116078,20,6.462000675959572e-05,0.0
+expected opposite-direction calls among the new variants at the April rate by ClinVar class,7.482985902598717,,,116078,20,0.00010752089670684299,0.0
+expected opposite-direction calls among the new variants at the April rate by ClinVar class by consequence group,7.507574216008299,,,116078,20,0.00011221407285628014,0.0

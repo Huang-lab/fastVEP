@@ -9,10 +9,10 @@ gff3_bytes: 1227780403
 fasta: /Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa
 fasta_bytes: 3151425851
 sa_dir: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/sa_db_ablate/v38_src_noclinvar_protein
-sa_dir_signature: f45880546ac9446fb0d71543f1f1aec9eeffec6f8de307b076a432505a7f0aa4
+sa_dir_signature: aa3597efc660bacfcd881084d5fc45a9573a39a417d1b62cc7916d69561af08c
 fastvep: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/manuscript_bins_v38/fastvep_v38
 fastvep_version: fastvep 0.5.0-rc.1
-repo_commit: 13665f4c9e0079bbba2ceca2a4bcedf22164b8c8
-repo_dirty_files: 48
-annotation_seconds: 37
-recorded_at: 2026-11-08T04:14:29Z
+repo_commit: 3d192119de098738d94b14786bd1e2ba9dff92b0
+repo_dirty_files: 142
+annotation_seconds: 133
+recorded_at: 2026-11-08T21:41:03Z

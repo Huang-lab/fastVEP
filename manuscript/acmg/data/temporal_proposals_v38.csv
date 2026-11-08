@@ -1,9 +1,9 @@
 change,holdout_run,april_run,new_variants,new_same_direction,new_opposite,new_false_benign,new_false_pathogenic,new_with_allele_number_below_2000,new_below_2000_at_or_above_the_bs1_bar,april_delta_same_direction,april_delta_false_benign,april_delta_false_pathogenic,new_delta_same_direction,new_delta_false_benign,new_delta_false_pathogenic,new_delta_plp_correct,new_delta_blb_correct,new_delta_vus_called_plp,new_delta_vus_called_blb,new_calls_changed
-none (v38 on the release),v38_oct_shipped,v38,107528,75607,18,6,12,33.0,3.0,,,,,,,,,,,
-the completed ClinGen file,v38_oct_clingen_complete,v38_gap_clingen_complete,107528,75657,18,6,12,,,848.0,0.0,1.0,50.0,0.0,0.0,51.0,4.0,5.0,0.0,60.0
-PVS1 licensed by Orphanet's loss-of-function label,v38_oct_orphanet_lof,v38_gap_orphanet_lof,107528,75879,20,6,14,,,1795.0,0.0,5.0,272.0,0.0,2.0,280.0,0.0,8.0,0.0,290.0
-both inputs of the PVS1 gap,v38_oct_both,v38_gap_both,107528,75918,20,6,14,,,2067.0,0.0,4.0,311.0,0.0,2.0,320.0,4.0,13.0,0.0,339.0
-BP7 as Walker 2023 describes it,v38_oct_bp7_walker,v38_hk_bp7_walker,107528,80466,18,6,12,,,15552.0,2.0,0.0,4859.0,0.0,0.0,0.0,4872.0,0.0,13.0,4953.0
-BP1's veto without the variant's own record,v38_oct_bp1_loo,v38_hk_bp1_loo,107528,75607,18,6,12,,,0.0,3.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-BP1's veto at a count of 1,v38_oct_bp1_veto1,v38_sw_bp1veto_1,107528,75731,18,6,12,,,1735.0,-2.0,0.0,124.0,0.0,0.0,0.0,-33.0,0.0,-157.0,190.0
-no allele-number floor,v38_oct_no_an_floor,v38_sw_no_an_floor,107528,75607,18,6,12,,,728.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+none (v38 on the release),v38_oct_shipped,v38,116078,84264,20,7,13,53.0,5.0,,,,,,,,,,,
+the completed ClinGen file,v38_oct_clingen_complete,v38_gap_clingen_complete,116078,84316,20,7,13,,,849.0,0.0,1.0,52.0,0.0,0.0,54.0,6.0,7.0,1.0,68.0
+PVS1 licensed by Orphanet's loss-of-function label,v38_oct_orphanet_lof,v38_gap_orphanet_lof,116078,84558,22,7,15,,,1795.0,0.0,5.0,294.0,0.0,2.0,306.0,0.0,12.0,0.0,320.0
+both inputs of the PVS1 gap,v38_oct_both,v38_gap_both,116078,84599,22,7,15,,,2068.0,0.0,4.0,335.0,0.0,2.0,348.0,6.0,18.0,1.0,375.0
+BP7 as Walker 2023 describes it,v38_oct_bp7_walker,v38_hk_bp7_walker,116078,90008,21,8,13,,,17170.0,3.0,0.0,5744.0,1.0,0.0,0.0,5762.0,0.0,18.0,5851.0
+BP1's veto without the variant's own record,v38_oct_bp1_loo,v38_hk_bp1_loo,116078,84264,20,7,13,,,0.0,3.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+BP1's veto at a count of 1,v38_oct_bp1_veto1,v38_sw_bp1veto_1,116078,84401,20,7,13,,,1737.0,-2.0,0.0,137.0,0.0,0.0,0.0,-38.0,0.0,-175.0,213.0
+no allele-number floor,v38_oct_no_an_floor,v38_sw_no_an_floor,116078,84264,20,7,13,,,684.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

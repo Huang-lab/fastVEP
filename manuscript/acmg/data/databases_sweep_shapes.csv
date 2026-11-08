@@ -1,0 +1,13 @@
+sweep,knob,settings,knee_first,knee_factor_first,knee_complete,knee_factor_complete,range_same_direction_first,range_same_direction_complete,gain_signs_first,gain_signs_complete,cost_signs_first,cost_signs_complete,pairs_that_change_order,settings_that_change_order,differs,what_differs
+"PM2 bar, not recessive-only",pm2_ad_af_threshold,9,,1.78,,1.78,511,513,+++++++0,+++++++0,00+++0+0,00+++0+0,0,,False,
+"PM2 bar, recessive-only",pm2_ar_af_threshold,7,,1.0,,1.0,27,27,+++++0,+++++0,000000,000000,0,,False,
+BS1 bar,bs1_af_threshold,7,0.001,5.68,0.001,6.15,15129,15909,------,------,-----0,-----0,1,0.0005 and 0.002,True,
+BS2 homozygote bar,bs2_hom_prevalence_threshold,5,,1.47,,1.43,8581,6926,----,----,---0,---0,0,,False,
+"BS2 carrier bar, dominant-only genes",bs2_ad_prevalence_threshold,6,,2.15,,1.58,3676,3812,-----,-----,---00,---00,2,0 and 0.001; 0 and 0.003,True,
+"BS2 carrier floor, bar off",bs2_ad_min_ac (bar off),4,,2.36,100.0,3.29,3390,3508,---,---,---,---,1,5 and 1000,True,the knee appears at 100
+BP7 far boundary,bp7_max_intron_offset,8,300.0,4.14,300.0,3.88,10753,11801,+++++++,+++++++,+++++++,+++++++,0,,False,
+BP7 PhyloP bar,phylop_conserved,6,,1.0,,1.85,25876,28304,+++++,+++++,0+0++,0++++,0,,True,the cost of the step from 2.0 to 3 goes from zero to positive
+BP1 veto count,bp1_max_pathogenic_missense,6,,6.94,,6.94,4658,4664,+++++,+++++,+++++,+++++,0,,False,
+"PM2 bar, not recessive-only, 2015 table both sides",pm2_ad_af_threshold (Richards 2015 table both sides),5,1e-05,10.5,1e-05,10.5,4242,4241,++++,++++,0+++,0+++,0,,False,
+Likely pathogenic cutoff (points),likely_pathogenic_points,6,5.0,20.6,5.0,20.56,10916,10916,-----,-----,---0-,---0-,0,,False,
+Pathogenic cutoff (points),pathogenic_points,4,,1.0,,1.0,3,3,-00,-00,-00,-00,0,,False,

@@ -3,6 +3,7 @@ BP1 on a ClinVar pathogenic-side variant,IQSEC1,3,12936054,C,T,2,Likely_pathogen
 BP1 on a ClinVar pathogenic-side variant,PRR12,19,49597840,C,T,2,Likely_pathogenic,Likely_benign,PM2_Supporting&BP1&BP4_Moderate,missense_variant,ENST00000418929.7:c.3505C>T,ENSP00000394510.1:p.Arg1169Trp,,,,clinvar,57
 BP4+BP7 on a ClinVar pathogenic-side variant,BBS4,15,72715410,T,C,2,Pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,splice_region_variant,ENST00000268057.9:c.332+8T>C,,7,4.5e-6,6e-06,clinvar,17
 BP4+BP7 on a ClinVar pathogenic-side variant,DST,6,56642725,G,A,2,Likely_pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,intron_variant,ENST00000680361.1:c.1779-222C>T,,13,8.5e-6,7.55e-05,clinvar,31
+BP4+BP7 on a ClinVar pathogenic-side variant,GTPBP3,19,17339046,GGGGA,G,2,Pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,intron_variant,ENST00000324894.13:c.664+23_664+26del,,16,0.0000105,0.0001735,not reviewed,
 BP4+BP7 on a ClinVar pathogenic-side variant,LAMA3,18,23773638,C,T,2,Pathogenic,Likely_benign,BP4&BP7,intron_variant,ENST00000313654.14:c.1273+51C>T,,372,0.0003585,0.006761,needs_evidence,27
 BP4+BP7 on a ClinVar pathogenic-side variant,MOCS1,6,39927576,C,CT,2,Likely_pathogenic,Likely_benign,BP4&BP7,intron_variant,ENST00000340692.10:c.124-122_124-121insA,,21,0.000014,0.000498,needs_evidence,38
 BP4+BP7 on a ClinVar pathogenic-side variant,MYO15A,17,18166434,C,T,2,Pathogenic,Likely_benign,BP4&BP7,synonymous_variant,ENST00000647165.2:c.9861C>T,ENSP00000495481.1:p.Gly3287%3D,127,0.0000865,0.00329,clinvar,26
@@ -21,8 +22,10 @@ BP4+BP7 on a ClinVar pathogenic-side variant,SLC4A11,20,3237656,TC,T,2,Pathogeni
 BP4+BP7 on a ClinVar pathogenic-side variant,TH,11,2171684,C,A,2,Likely_pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,intron_variant,ENST00000352909.8:c.90+13G>T,,3,2e-6,2.5e-06,fastvep,32
 BP4+BP7 on a ClinVar pathogenic-side variant,TH,11,2171684,C,T,2,Likely_pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,intron_variant,ENST00000352909.8:c.90+13G>A,,81,0.0000555,7.1e-05,fastvep,40
 BP4+BP7 on a ClinVar pathogenic-side variant,TH,11,2171687,G,GC,2,Pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,intron_variant,ENST00000352909.8:c.90+9dup,,19,0.000013,6.7e-05,clinvar,15
+BP4+BP7 on a ClinVar pathogenic-side variant,VWF,12,6022888,G,A,2,Pathogenic,Likely_benign,BP4&BP7,synonymous_variant,ENST00000261405.10:c.3390C>T,ENSP00000261405.5:p.Cys1130%3D,2,5e-6,8.5e-06,not reviewed,
 BS1 on a ClinVar pathogenic-side variant,PADI3,1,17280704,C,T,2,Pathogenic,Likely_benign,BS1&BP4,missense_variant,ENST00000375460.3:c.1669C>T,ENSP00000364609.3:p.Arg557Trp,328,0.000224,0.006033,needs_evidence,21
 BS1 on a ClinVar pathogenic-side variant,SLC12A3,16,56869762,C,A,2,Pathogenic,Likely_benign,BS1&BP4,missense_variant,ENST00000563236.6:c.539C>A,ENSP00000456149.2:p.Thr180Lys,338,0.000231,0.008413,clinvar,25
+BS1 on a ClinVar pathogenic-side variant,TMEM216,11,61392563,G,T,2,Pathogenic,Likely_benign,BS1&BP4,upstream_gene_variant,,,210,0.000157,0.005827,not reviewed,
 PM1 with PP2 and PP3 on a ClinVar benign-side variant,CHD7,8,60850517,G,A,2,Likely_benign,Likely_pathogenic,PM1&PM2_Supporting&PP2&PP3_Moderate,missense_variant,ENST00000423902.7:c.5429G>A,ENSP00000392028.1:p.Arg1810Gln,29,0.0000195,0.000116,clinvar,54
 PM1 with PP2 and PP3 on a ClinVar benign-side variant,FBN1,15,48492562,G,C,2,Benign,Likely_pathogenic,PM1&PM2_Supporting&PP2&PP3_Moderate,missense_variant,ENST00000316623.10:c.2753C>G,ENSP00000325527.5:p.Pro918Arg,46,0.0000315,0.0010585,clinvar,30
 PM1 with PP2 and PP3 on a ClinVar benign-side variant,PTCH1,9,95449918,T,A,2,Benign,Likely_pathogenic,PM1&PM2_Supporting&PP2&PP3_Moderate,missense_variant,ENST00000331920.11:c.3472A>T,ENSP00000332353.6:p.Ile1158Phe,10,6.5e-6,0.0001155,clinvar,55

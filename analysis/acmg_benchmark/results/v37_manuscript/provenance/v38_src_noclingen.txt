@@ -9,10 +9,10 @@ gff3_bytes: 1227780403
 fasta: /Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa
 fasta_bytes: 3151425851
 sa_dir: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/sa_db_ablate/v38_src_noclingen
-sa_dir_signature: 0661404b32ba49eeb5b12d8490ac40f93564cbef139b055a9f35e48348a2b7d8
+sa_dir_signature: 40ac04ef65e1484090e4425bfcc30701e63d63a7cc8f8fd0ab5b58aa2ccf8afe
 fastvep: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/manuscript_bins_v38/fastvep_v38
 fastvep_version: fastvep 0.5.0-rc.1
-repo_commit: 13665f4c9e0079bbba2ceca2a4bcedf22164b8c8
-repo_dirty_files: 50
-annotation_seconds: 57
-recorded_at: 2026-11-08T04:17:00Z
+repo_commit: 3d192119de098738d94b14786bd1e2ba9dff92b0
+repo_dirty_files: 142
+annotation_seconds: 149
+recorded_at: 2026-11-08T21:47:48Z

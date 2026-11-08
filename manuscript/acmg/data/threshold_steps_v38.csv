@@ -1,32 +1,32 @@
 knob,from_value,to_value,gain_calls,added_errors,calls_per_error,shipped_between
-BS1 bar,0.02,0.01,5417,0,inf,False
-BS1 bar,0.01,0.005,4493,2,2246.5,True
-BS1 bar,0.005,0.002,4925,6,820.8333333333334,True
-BS1 bar,0.002,0.001,2810,5,562.0,False
-BS1 bar,0.001,0.0005,2571,26,98.88461538461539,False
-BS1 bar,0.0005,0.0002,3302,42,78.61904761904762,False
-BS2 homozygote bar,0.01,0.001,256,0,inf,True
-BS2 homozygote bar,0.001,0.0001,1203,3,401.0,True
-BS2 homozygote bar,0.0001,1e-05,4081,15,272.06666666666666,False
-BS2 homozygote bar,1e-05,1e-06,4380,9,486.6666666666667,False
-BP7 far boundary,0,50,9004,11,818.5454545454545,False
-BP7 far boundary,50,100,968,3,322.6666666666667,False
-BP7 far boundary,100,200,607,3,202.33333333333334,False
-BP7 far boundary,200,300,153,1,153.0,True
-BP7 far boundary,300,500,37,1,37.0,True
-BP7 far boundary,500,1000,48,2,24.0,False
-BP7 far boundary,1000,1000000,440,14,31.428571428571427,False
-BP7 PhyloP bar,1,1.5,5423,0,inf,False
-BP7 PhyloP bar,1.5,2.0,4505,3,1501.6666666666667,True
-BP7 PhyloP bar,2.0,3,6422,0,inf,True
-BP7 PhyloP bar,3,4,3440,1,3440.0,False
-BP7 PhyloP bar,4,1000,6254,1,6254.0,False
+BS1 bar,0.02,0.01,5662,0,inf,False
+BS1 bar,0.01,0.005,4681,3,1560.3333333333333,True
+BS1 bar,0.005,0.002,5145,6,857.5,True
+BS1 bar,0.002,0.001,2979,5,595.8,False
+BS1 bar,0.001,0.0005,2712,28,96.85714285714286,False
+BS1 bar,0.0005,0.0002,3542,44,80.5,False
+BS2 homozygote bar,0.01,0.001,219,0,inf,True
+BS2 homozygote bar,0.001,0.0001,917,3,305.6666666666667,True
+BS2 homozygote bar,0.0001,1e-05,3210,15,214.0,False
+BS2 homozygote bar,1e-05,1e-06,3915,9,435.0,False
+BP7 far boundary,0,50,9931,12,827.5833333333334,False
+BP7 far boundary,50,100,1041,3,347.0,False
+BP7 far boundary,100,200,663,3,221.0,False
+BP7 far boundary,200,300,163,1,163.0,True
+BP7 far boundary,300,500,42,1,42.0,True
+BP7 far boundary,500,1000,56,2,28.0,False
+BP7 far boundary,1000,1000000,488,17,28.705882352941178,False
+BP7 PhyloP bar,1,1.5,5814,0,inf,False
+BP7 PhyloP bar,1.5,2.0,4877,3,1625.6666666666667,True
+BP7 PhyloP bar,2.0,3,7018,1,7018.0,True
+BP7 PhyloP bar,3,4,3802,1,3802.0,False
+BP7 PhyloP bar,4,1000,6973,1,6973.0,False
 BP1 veto count,1,2,111,1,111.0,False
 BP1 veto count,2,3,16,1,16.0,True
 BP1 veto count,3,5,81,3,27.0,True
 BP1 veto count,5,10,142,2,71.0,False
 BP1 veto count,10,25,352,7,50.285714285714285,False
-"PM2 bar, not recessive-only (point system)",0,1e-06,316,0,inf,False
+"PM2 bar, not recessive-only (point system)",0,1e-06,315,0,inf,False
 "PM2 bar, not recessive-only (point system)",1e-06,5e-06,93,0,inf,False
 "PM2 bar, not recessive-only (point system)",5e-06,1e-05,26,1,26.0,False
 "PM2 bar, not recessive-only (point system)",1e-05,2e-05,16,1,16.0,False
