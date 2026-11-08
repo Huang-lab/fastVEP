@@ -2027,7 +2027,9 @@ function renderProvenance() {
   if (p.genome) el.setAttribute('data-genome', p.genome); else el.removeAttribute('data-genome');
 }
 
-// typed, stable, nulls always last
+// typed, stable, nulls always last. One shared collator: localeCompare with options builds a new one on every
+// call, which made a text sort of 50,000 rows take about a second.
+const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 function compareFor(dir) {
   const sign = dir === 'desc' ? -1 : 1;
   return (a, b) => {
@@ -2035,7 +2037,7 @@ function compareFor(dir) {
     const xn = x == null || x === '' || x === '-', yn = y == null || y === '' || y === '-';
     if (xn || yn) return xn && yn ? 0 : xn ? 1 : -1;
     if (typeof x === 'number' && typeof y === 'number') return (x - y) * sign;
-    return String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: 'base' }) * sign;
+    return COLLATOR.compare(String(x), String(y)) * sign;
   };
 }
 
