@@ -106,6 +106,7 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
     "gene_model_generation": 0,
     "gff3_source": "Homo_sapiens.GRCh38.115.gff3",
     "has_fasta": true,
+    "limits": {"max_body_bytes": 10485760, "max_response_bytes": 67108864, "max_request_seconds": 90, "max_parallel": 4},
     "sa_sources": ["ClinVar", "dbSNP"],
     "acmg": {
         "ready": false,
@@ -125,6 +126,8 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
 
 Check `transcripts`, `has_fasta`, and `sa_sources` here before you trust any annotation.
 Each of the three can be missing without the server saying so: a zero transcript count makes every variant `intergenic_variant`, and the other two are the subject of the next section.
+
+`limits` is what one request may cost, so that a client can size its requests instead of finding out with a `413`; see [What one request may cost](#what-one-request-may-cost).
 
 `acmg` is the server's verdict on whether `"acmg": true` will be answered for the default genome, and which of the nine sources the classifier reads are missing if it will not (abridged above: `missing` has one entry for each source that is not loaded); see [ACMG needs the reference stack](#acmg-needs-the-reference-stack).
 
@@ -329,6 +332,29 @@ So the server decides before it classifies:
 `loaded` and `missing` use the `json_key` of each source as its `id`, and each missing source says which criteria read it (`drives`) and what is lost without it (`without`).
 For a genome that is not loaded yet the verdict comes from what its `sa/` directory holds, found once by opening its files, so that a client does not have to load a genome to ask; restart the server after adding databases to a directory.
 
+### What one request may cost
+
+A response is built in memory, and on a 16 GB host that is the one thing a single client can use to take the server down.
+Measured on ClinVar variants against GRCh38, an answer is about 38 KB a variant, 14 KB with `pick`, and 258 KB a variant with `acmg` and no `pick`; 10,000 variants with ACMG came to several gigabytes in the process, and the 10 MiB the server accepts as a body holds some 440,000 variants.
+So a request is bounded, and told how when it is not met:
+
+- **Malformed input is a `400`.**
+  Every record is read before any is annotated, and a line that cannot be read is refused with its number and the parser's reason (`VCF line 2 cannot be read: Invalid POS: foo`).
+  It used to be an internal error, met at the line that failed, with nothing said.
+- **The answer has a size limit.**
+  The annotation is made a batch of variants at a time and written out as it goes.
+  A request whose answer passes `--max-response-bytes` (64 MiB by default) is refused with `413` at the batch that passes it, saying how many variants were done and what to change: fewer variants per request, `pick`, or the command-line tool.
+  The batches are also what bound the memory, since the answer as values is five to ten times the size of its text.
+- **The work has a time limit.**
+  A request that runs past `--max-request-seconds` (90 by default) is refused with `413`, with what was done.
+  Keep it below the read timeout of the proxy in front of the server.
+- **Annotations run in at most `--max-parallel` places** (one for each core by default), because one annotation is one thread and more of them than cores only make each slower and the process larger.
+  A request that finds every place taken waits `--queue-timeout-seconds` (30) for one, and is then turned away with `503` and `Retry-After: 5`.
+  Reads (`/api/status`, `/api/genomes`) do not need a place.
+- **A client that goes away stops its annotation** between batches, instead of finishing an answer nobody will read, and its place comes back.
+
+A client with a large file should send it in batches and halve the batch on a `413`: a thousand variants with `pick` is about 14 MB, which is well inside the default.
+
 ## Choosing the genome
 
 Start the server with `--data-dir` pointing at a directory of genome subdirectories (the layout is described under [Multi-organism setup](../README.md#multi-organism-setup) in the README), and a request can name the genome it wants.
@@ -407,8 +433,10 @@ Failures return the matching HTTP status and a single-field body:
 {"error": "No VCF data provided"}
 ```
 
-`400` carries a caller-facing message, as above; an unknown or empty `genome` is one.
+`400` carries a caller-facing message, as above; an unknown or empty `genome` is one, and so is a VCF line that cannot be read.
 `403` means the request was understood and refused by how the server was started, so changing the request will not help. Currently only the two gene-model-replacing endpoints return it, and the message names the flag that lifts it.
+`413` means the request is larger than this server answers in one go: its answer would pass `--max-response-bytes`, or it ran past `--max-request-seconds`. The message says how many variants were done and what to change.
+`503` means every place for an annotation was taken and none came free in time; it carries `Retry-After`, and the request is worth repeating.
 `422` means the request is well formed and the server could answer it, but not faithfully: ACMG classification was asked of a genome that lacks sources the classifier reads. The body carries the verdict under `acmg` beside `error`, and the request is not counted as a run.
 `500` is always the literal string `Internal server error`; the detail is written to the server log instead, so that paths and parser internals are not returned to clients.
 Check the server's stderr when you get one.
@@ -426,7 +454,11 @@ Check the server's stderr when you get one.
 | `--preload-genomes` | `FASTVEP_PRELOAD_GENOMES` | off | Load every genome of `--data-dir` in the background at startup instead of on its first request |
 | `--distance` | | `5000` | Upstream/downstream distance in bp |
 | `--max-body-size` | | `10485760` | Request body cap in bytes |
-| `--max-concurrent` | | `64` | Concurrent annotation requests |
+| `--max-concurrent` | | `64` | Concurrent requests of any kind; beyond it a request waits |
+| `--max-parallel` | `FASTVEP_MAX_PARALLEL` | cores | Annotations that run at once; a request finds a place or waits `--queue-timeout-seconds` and is turned away with `503` |
+| `--queue-timeout-seconds` | `FASTVEP_QUEUE_TIMEOUT_SECONDS` | `30` | How long a request waits for a place |
+| `--max-response-bytes` | `FASTVEP_MAX_RESPONSE_BYTES` | `67108864` | Largest JSON answer one request may produce; beyond it `413` |
+| `--max-request-seconds` | `FASTVEP_MAX_REQUEST_SECONDS` | `90` | Longest one annotation may run; beyond it `413` |
 | `--stats-file` | `FASTVEP_STATS_FILE` | `stats.json` | Where the served-variant counters persist |
 | `--allow-model-replacement` | `FASTVEP_ALLOW_MODEL_REPLACEMENT` | off | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model; choosing a genome per request does not need it |
 | `--acmg-allow-partial` | `FASTVEP_ACMG_ALLOW_PARTIAL` | off | Answer `"acmg": true` for a genome whose database directory lacks part of the reference stack, saying so in `acmg_stack`, instead of refusing with `422` |
@@ -436,7 +468,7 @@ The three switches take `true`, `1`, `yes` or `on` from their environment variab
 Three things to know about the defaults.
 `--gff3` has none, and a server started without one does not refuse to start: it comes up with `"status": "ok"`, reports `"transcripts": 0`, and answers every request with `intergenic_variant` at HTTP 200.
 `--stats-file` is relative, so a bare `fastvep-web` writes `stats.json` into whatever directory you launched it from; pass an absolute path under a service account's own state directory when running it as a daemon.
-Requests beyond `--max-concurrent` queue rather than fail, which is why raising it is rarely the fix for a slow server.
+Requests beyond `--max-concurrent` queue rather than fail, which is why raising it is rarely the fix for a slow server; `--max-parallel` is the number of annotations that run at once, and a request that cannot get a place in `--queue-timeout-seconds` is turned away with `503`.
 
 ## Which binary
 

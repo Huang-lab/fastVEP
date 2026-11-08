@@ -10,6 +10,7 @@ use axum::http::{Request, StatusCode};
 use fastvep_web::context::AnnotationContext;
 use fastvep_web::genomes::default_genome_name;
 use fastvep_web::handlers::{AppState, ServerConfig, SharedState};
+use fastvep_web::limits::Limits;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,6 +29,7 @@ fn config(data_dir: Option<PathBuf>, allow_model_replacement: bool) -> ServerCon
         distance: 5000,
         allow_model_replacement,
         acmg_allow_partial: false,
+        limits: Limits::default(),
     }
 }
 
@@ -1243,4 +1245,240 @@ async fn with_partial_acmg_allowed_the_list_says_available_but_not_ready() {
         .unwrap();
     assert_eq!(beta["acmg"]["ready"], false);
     assert_eq!(beta["acmg"]["available"], true);
+}
+
+// ---------------------------------------------------------------------------
+// What one request may cost
+// ---------------------------------------------------------------------------
+
+/// The one-transcript server started with these limits.
+fn state_with_limits(limits: Limits) -> AppState {
+    let mut ctx = AnnotationContext::new(None, None, None, 5000).expect("build context");
+    ctx.update_gff3_text(MINI_GFF3).expect("load mini gff3");
+    Arc::new(SharedState::new(
+        ctx,
+        "mini",
+        ServerConfig {
+            limits,
+            ..config(None, false)
+        },
+    ))
+}
+
+fn many_records(n: u32) -> String {
+    (0..n)
+        .map(|i| vcf_line(1000 + i, &format!("v{i}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn a_line_that_cannot_be_read_is_a_400_that_names_it_and_nothing_is_annotated() {
+    let state = test_state();
+    for (vcf, line) in [
+        ("hello world", 1),
+        ("17\t0\t.\tG\tA\t50\tPASS\t.", 1),
+        (
+            "17\t1100\t.\tG\tA\t50\tPASS\t.\n17\tfoo\t.\tG\tA\t50\tPASS\t.",
+            2,
+        ),
+        ("##fileformat=VCFv4.2\n#CHROM\tPOS\n17\t1100\t.\tG", 3),
+    ] {
+        let (status, body) = post_json(&state, "/api/annotate", json!({ "vcf": vcf })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{vcf:?}: {body}");
+        let message = body["error"].as_str().unwrap();
+        assert!(
+            message.contains(&format!("VCF line {line} cannot be read")),
+            "{vcf:?}: {message}"
+        );
+        assert!(body.get("results").is_none(), "{body}");
+    }
+    // Blank lines and comments among the records are not records, as the parser reads them.
+    let (status, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": format!("\n# a comment\n{}\n\n", vcf_line(1100, ".")) }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["count"], 1);
+    // A refused request is not a run.
+    assert_eq!(
+        state
+            .total_variants
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+}
+
+#[tokio::test]
+async fn annotating_in_batches_gives_the_answer_of_annotating_all_at_once() {
+    let state = state_with_limits(Limits {
+        batch_variants: 3,
+        ..Limits::default()
+    });
+    let vcf = format!(
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n{}",
+        many_records(10)
+    );
+    let (status, body) = post_json(&state, "/api/annotate", json!({ "vcf": vcf })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["count"], 10);
+
+    let whole = {
+        let guard = state.ctx.read().unwrap();
+        guard.annotate_vcf_text_with_acmg(&vcf, None, None).unwrap()
+    };
+    assert_eq!(
+        body["results"],
+        Value::Array(whole),
+        "four batches of three, three, three and one"
+    );
+    // The fields that follow the results are all there, whichever order they come in.
+    for field in ["count", "time_ms", "gene_model"] {
+        assert!(body.get(field).is_some(), "{field}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn an_answer_that_passes_the_response_limit_is_refused_and_the_server_goes_on() {
+    let state = state_with_limits(Limits {
+        max_response_bytes: 2_048,
+        batch_variants: 2,
+        ..Limits::default()
+    });
+    let (status, body) =
+        post_json(&state, "/api/annotate", json!({ "vcf": many_records(10) })).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
+    let message = body["error"].as_str().unwrap();
+    assert!(message.contains("larger than the 2 KiB"), "{message}");
+    assert!(message.contains("of 10 variants were done"), "{message}");
+    assert!(message.contains("`pick`"), "{message}");
+    assert!(body.get("results").is_none());
+    assert_eq!(
+        state
+            .total_variants
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+
+    // The server is as it was: a request that fits is answered.
+    let (status, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "."), "pick": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn a_request_that_runs_past_the_time_limit_is_refused_with_what_was_done() {
+    let state = state_with_limits(Limits {
+        max_request_time: std::time::Duration::ZERO,
+        batch_variants: 1,
+        ..Limits::default()
+    });
+    let (status, body) =
+        post_json(&state, "/api/annotate", json!({ "vcf": many_records(3) })).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("longer than the 0 seconds"),
+        "{body}"
+    );
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("of 3 variants were done"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn a_request_that_finds_every_place_taken_is_turned_away_and_told_when_to_come_back() {
+    let state = state_with_limits(Limits {
+        max_parallel: 1,
+        queue_timeout: std::time::Duration::from_millis(50),
+        ..Limits::default()
+    });
+    let held = Arc::clone(&state.compute).acquire_owned().await.unwrap();
+    let resp = router(&state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/annotate")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "vcf": vcf_line(1100, ".") }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(resp.headers().get("retry-after").unwrap(), "5");
+    let (_, body) = read_json(resp).await;
+    assert!(body["error"].as_str().unwrap().contains("busy"), "{body}");
+
+    // Reads do not need a place, and the place comes back.
+    let (status, _) = get(&state, "/api/status").await;
+    assert_eq!(status, StatusCode::OK);
+    drop(held);
+    let (status, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, ".") }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn a_client_that_goes_away_stops_the_annotation_and_frees_its_place() {
+    let state = state_with_limits(Limits {
+        max_parallel: 1,
+        batch_variants: 1,
+        ..Limits::default()
+    });
+    let work = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": many_records(30_000) }),
+    );
+    // The client gives up almost at once; axum drops the handler's future.
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(30), work).await;
+    // The annotation sees the flag between batches and stops: it never counts as a run, and its
+    // place comes back long before 30,000 batches could have run.
+    let started = std::time::Instant::now();
+    while state.compute.available_permits() == 0
+        && started.elapsed() < std::time::Duration::from_secs(5)
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(state.compute.available_permits(), 1, "the place came back");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        state
+            .total_variants
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+}
+
+#[tokio::test]
+async fn status_reports_what_one_request_may_cost() {
+    let (_, body) = get(&test_state(), "/api/status").await;
+    let limits = &body["limits"];
+    assert_eq!(limits["max_body_bytes"], 10 * 1024 * 1024);
+    assert_eq!(limits["max_response_bytes"], 64 * 1024 * 1024);
+    assert_eq!(limits["max_request_seconds"], 90);
+    assert!(limits["max_parallel"].as_u64().unwrap() >= 1);
 }

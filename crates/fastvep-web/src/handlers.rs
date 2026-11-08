@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Instant;
 
@@ -14,6 +14,7 @@ use crate::acmg::{AcmgReadiness, AcmgStack};
 use crate::context::AnnotationContext;
 use crate::errors::AppError;
 use crate::genomes::{resolve_genome_paths, scan_data_dir, GenomeRegistry};
+use crate::limits::Limits;
 
 #[derive(Serialize, Deserialize, Default)]
 struct SavedStats {
@@ -32,6 +33,8 @@ pub struct ServerConfig {
     /// Answer `"acmg": true` for a genome whose database directory lacks part of the reference
     /// stack, saying so in the response, instead of refusing (`--acmg-allow-partial`).
     pub acmg_allow_partial: bool,
+    /// What one request may cost; see [`crate::limits`].
+    pub limits: Limits,
 }
 
 /// The name a gene model uploaded through `/api/upload-gff3` answers to. It is
@@ -78,6 +81,11 @@ pub struct SharedState {
     /// Whether a request for ACMG classification is answered for a genome that lacks part of the
     /// reference stack. Off by default: see [`crate::acmg`] for why the server refuses instead.
     pub acmg_allow_partial: bool,
+    /// What one request may cost, and so how much of the machine a client can take.
+    pub limits: Limits,
+    /// One place for each annotation that may run at once (`limits.max_parallel`). Public so that
+    /// a test can take them all and see what a request that finds none is told.
+    pub compute: Arc<tokio::sync::Semaphore>,
     /// Bumped on every successful gene-model replacement.
     ///
     /// Reported alongside every annotation so a client can tell that two
@@ -124,6 +132,10 @@ impl SharedState {
             total_genomes: AtomicU64::new(0),
             allow_model_replacement: config.allow_model_replacement,
             acmg_allow_partial: config.acmg_allow_partial,
+            compute: Arc::new(tokio::sync::Semaphore::new(
+                config.limits.max_parallel.max(1),
+            )),
+            limits: config.limits,
             gene_model_generation: AtomicU64::new(0),
         }
     }
@@ -169,6 +181,25 @@ impl SharedState {
              fastvep-web with --allow-model-replacement to enable it."
                 .into(),
         ))
+    }
+
+    /// A place for one annotation, waiting up to `limits.queue_timeout` for one to come free.
+    ///
+    /// An annotation is one thread of work and a response held in memory, so more of them than
+    /// cores only make each slower and the process larger. A request that finds every place taken
+    /// and still finds none after the timeout is turned away with `503` and a `Retry-After`, which
+    /// is more use to its client than a connection held open until the proxy gives up on it.
+    async fn compute_permit(&self) -> Result<tokio::sync::OwnedSemaphorePermit, AppError> {
+        let wait = Arc::clone(&self.compute).acquire_owned();
+        match tokio::time::timeout(self.limits.queue_timeout, wait).await {
+            Ok(Ok(permit)) => Ok(permit),
+            _ => Err(AppError::Busy(format!(
+                "This server is busy: {} annotations are running and none finished within {} \
+                 seconds. Try again shortly.",
+                self.limits.max_parallel,
+                self.limits.queue_timeout.as_secs()
+            ))),
+        }
     }
 
     /// Count one annotation run.
@@ -282,6 +313,9 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
         // Whether `"acmg": true` will be answered for the default genome, and the sources
         // that stand in the way if not.
         "acmg": acmg,
+        // How much one request may cost, so that a client can size its requests instead of
+        // finding out with a 413.
+        "limits": state.limits.describe(),
         // So a UI can offer the model-replacing controls only when they will
         // work, instead of finding out with a 403 the user cannot interpret.
         "allow_model_replacement": state.allow_model_replacement,
@@ -470,10 +504,52 @@ pub struct AnnotateRequest {
     acmg: Option<bool>,
 }
 
+/// The answer of one annotation, serialised as it was made.
+///
+/// The elements of `results` are written into one buffer, a batch of variants at a time, so that a
+/// request holds the text of its answer and the values of the batch it is on, and not the whole
+/// answer as values, which is five to ten times the size of its text (see [`crate::limits`]).
+struct ResultsBuffer {
+    /// `{"results":[` and the elements so far, separated by commas.
+    bytes: Vec<u8>,
+    count: usize,
+}
+
+impl ResultsBuffer {
+    const OPEN: &'static [u8] = b"{\"results\":[";
+
+    fn new() -> Self {
+        Self {
+            bytes: Self::OPEN.to_vec(),
+            count: 0,
+        }
+    }
+
+    fn push(&mut self, value: &serde_json::Value) -> Result<(), AppError> {
+        if self.count > 0 {
+            self.bytes.push(b',');
+        }
+        serde_json::to_writer(&mut self.bytes, value).map_err(|e| AppError::Internal(e.into()))?;
+        self.count += 1;
+        Ok(())
+    }
+
+    /// Close the list and add the other fields of the response. `extra` is an object with at
+    /// least one field.
+    fn finish(mut self, extra: serde_json::Value) -> Result<Vec<u8>, AppError> {
+        self.bytes
+            .extend_from_slice(format!("],\"count\":{},", self.count).as_bytes());
+        let tail = serde_json::to_vec(&extra).map_err(|e| AppError::Internal(e.into()))?;
+        // `extra` is `{"a":..., ...}`: its fields continue the object that `OPEN` began.
+        self.bytes.extend_from_slice(&tail[1..]);
+        Ok(self.bytes)
+    }
+}
+
 /// What an annotation produced, and, when classification was asked for, what the classifier
 /// had to read.
 struct Annotated {
-    results: Vec<serde_json::Value>,
+    results: ResultsBuffer,
     /// Present exactly when the request asked for `acmg`: whether every source of the
     /// reference stack was loaded, and which were not.
     acmg_stack: Option<AcmgStack>,
@@ -487,11 +563,78 @@ enum DefaultAnswer {
     NotTheDefault(String),
 }
 
+/// Sets a flag when it is dropped. The handler holds one, so that when the client goes away and
+/// axum drops the handler's future, the annotation running on the blocking pool is told to stop
+/// between batches instead of finishing an answer that nobody will read.
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Everything one annotation needs to know about how it is bounded and whether it still
+/// matters.
+struct Budget<'a> {
+    limits: &'a Limits,
+    started: Instant,
+    cancelled: &'a AtomicBool,
+}
+
+/// A byte count a person can read in a message.
+fn readable_size(bytes: usize) -> String {
+    const MIB: usize = 1024 * 1024;
+    if bytes >= MIB {
+        format!("{} MiB", bytes / MIB)
+    } else {
+        format!("{} KiB", bytes.div_ceil(1024))
+    }
+}
+
+/// Read every record of the request before annotating any, so that a line that cannot be read is
+/// refused with its number and the reason, as a `400`, and not met at record 30,000 as an internal
+/// error. The parser the annotation uses is the one used here, so what passes here parses there.
+///
+/// Returns the header lines and the record lines, each with its place in the input.
+fn read_vcf_lines(vcf_text: &str) -> Result<(Vec<&str>, Vec<&str>), AppError> {
+    let mut headers = Vec::new();
+    let mut records = Vec::new();
+    for (index, line) in vcf_text.lines().enumerate() {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            headers.push(trimmed);
+            continue;
+        }
+        if let Err(e) = fastvep_io::vcf::parse_vcf_line(trimmed) {
+            let message = format!("{e:#}");
+            let shown: String = message.chars().take(200).collect();
+            return Err(AppError::BadRequest(format!(
+                "VCF line {} cannot be read: {}{}",
+                index + 1,
+                shown,
+                if shown.len() < message.len() {
+                    " ..."
+                } else {
+                    ""
+                }
+            )));
+        }
+        records.push(trimmed);
+    }
+    Ok((headers, records))
+}
+
 /// Annotate with one context, attaching ACMG when the request asked for it.
 ///
 /// `genome` is the name the context answers to, for the message of a refusal. A request for
 /// classification is refused before anything is annotated when the genome lacks sources the
-/// classifier reads, unless the server was started to answer anyway: see [`crate::acmg`].
+/// classifier reads, unless the server was started to answer anyway: see [`crate::acmg`]. The
+/// annotation is made a batch of variants at a time, and stops with a `413` when the answer
+/// grows past the response limit or the work past the time limit.
 fn annotate_with(
     ctx: &AnnotationContext,
     genome: &str,
@@ -499,6 +642,7 @@ fn annotate_with(
     pick: Option<PickRequest>,
     acmg_requested: bool,
     allow_partial: bool,
+    budget: &Budget<'_>,
 ) -> Result<Annotated, AppError> {
     let readiness = acmg_requested.then(|| AcmgReadiness::of(ctx.loaded_sources(), allow_partial));
     if let Some(unavailable) = readiness.as_ref().filter(|r| !r.available) {
@@ -522,7 +666,44 @@ fn annotate_with(
     } else {
         None
     };
-    let results = ctx.annotate_vcf_text_with_acmg(vcf_text, pick, acmg_config)?;
+
+    let (headers, records) = read_vcf_lines(vcf_text)?;
+    let mut results = ResultsBuffer::new();
+    let mut batch_text = String::new();
+    for batch in records.chunks(budget.limits.batch_variants.max(1)) {
+        if budget.cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "the client went away; the annotation was stopped"
+            )));
+        }
+        if budget.started.elapsed() > budget.limits.max_request_time {
+            return Err(AppError::TooLarge(format!(
+                "This request takes longer than the {} seconds this server allows one annotation \
+                 ({} of {} variants were done). Send fewer variants per request.",
+                budget.limits.max_request_time.as_secs(),
+                results.count,
+                records.len()
+            )));
+        }
+        batch_text.clear();
+        for line in headers.iter().chain(batch.iter()) {
+            batch_text.push_str(line);
+            batch_text.push('\n');
+        }
+        for value in ctx.annotate_vcf_text_with_acmg(&batch_text, pick, acmg_config)? {
+            results.push(&value)?;
+        }
+        if results.bytes.len() > budget.limits.max_response_bytes {
+            return Err(AppError::TooLarge(format!(
+                "The answer to this request is larger than the {} this server returns in one \
+                 response ({} of {} variants were done). Send fewer variants per request, ask for \
+                 one transcript per variant (`pick`), or run `fastvep annotate` on your own machine.",
+                readable_size(budget.limits.max_response_bytes),
+                results.count,
+                records.len()
+            )));
+        }
+    }
     Ok(Annotated {
         results,
         acmg_stack: readiness.map(|r| r.stack()),
@@ -537,6 +718,8 @@ async fn answer_from_registry(
     vcf_text: String,
     pick: Option<PickRequest>,
     acmg_requested: bool,
+    started: Instant,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<(Annotated, GeneModelId), AppError> {
     if state.genomes.data_dir().is_none() {
         return Err(AppError::BadRequest(format!(
@@ -545,9 +728,17 @@ async fn answer_from_registry(
             state.current_default_genome()
         )));
     }
+    // Loading a genome is not an annotation: a request waits for it without holding a place.
     let genome = state.genomes.get_or_load(&name).await?;
+    let permit = state.compute_permit().await?;
     let ctx = Arc::clone(state);
     let answered = tokio::task::spawn_blocking(move || {
+        let _place = permit;
+        let budget = Budget {
+            limits: &ctx.limits,
+            started,
+            cancelled: &cancelled,
+        };
         let annotated = annotate_with(
             &genome,
             &name,
@@ -555,6 +746,7 @@ async fn answer_from_registry(
             pick,
             acmg_requested,
             ctx.acmg_allow_partial,
+            &budget,
         )?;
         let gene_model = GeneModelId {
             genome: name,
@@ -564,7 +756,7 @@ async fn answer_from_registry(
             // nothing for a generation to count.
             generation: 0,
         };
-        ctx.record_run(annotated.results.len(), true);
+        ctx.record_run(annotated.results.count, true);
         Ok::<_, AppError>((annotated, gene_model))
     })
     .await??;
@@ -574,7 +766,7 @@ async fn answer_from_registry(
 pub async fn annotate(
     State(state): State<AppState>,
     Json(req): Json<AnnotateRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<axum::response::Response, AppError> {
     let vcf_text = req.vcf.unwrap_or_default();
     if vcf_text.is_empty() {
         return Err(AppError::BadRequest("No VCF data provided".into()));
@@ -596,46 +788,61 @@ pub async fn annotate(
     let ctx = Arc::clone(&state);
 
     let start = Instant::now();
-    let first = tokio::task::spawn_blocking(move || {
-        // A read lock is sufficient: annotate_vcf_text_with_acmg only needs
-        // &self, and the ACMG toggle is now passed as a per-call argument
-        // instead of mutating the shared context. Previously this took a
-        // write lock just to flip guard.acmg_config, which serialized every
-        // concurrent request (including unrelated /api/status reads) behind
-        // whichever annotation was running, and let one request's ACMG
-        // preference clobber another's mid-flight.
-        let guard = ctx
-            .ctx
-            .read()
-            .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
-        // Whether the default model is the genome asked for is decided under
-        // the same guard that then answers from it. Decided earlier, a
-        // replacement could land in between and the request would be answered
-        // from a model that no longer has that name.
-        if let Some(ref name) = wanted {
-            if ctx.current_default_genome() != *name {
-                return Ok::<_, AppError>(DefaultAnswer::NotTheDefault(vcf_text));
+    // Held for as long as this future lives: dropped with it, it tells the annotation that the
+    // client has gone.
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _on_drop = CancelOnDrop(Arc::clone(&cancelled));
+    let permit = state.compute_permit().await?;
+    let first = {
+        let cancelled = Arc::clone(&cancelled);
+        tokio::task::spawn_blocking(move || {
+            let _place = permit;
+            // A read lock is sufficient: annotate_vcf_text_with_acmg only needs
+            // &self, and the ACMG toggle is now passed as a per-call argument
+            // instead of mutating the shared context. Previously this took a
+            // write lock just to flip guard.acmg_config, which serialized every
+            // concurrent request (including unrelated /api/status reads) behind
+            // whichever annotation was running, and let one request's ACMG
+            // preference clobber another's mid-flight.
+            let guard = ctx
+                .ctx
+                .read()
+                .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+            // Whether the default model is the genome asked for is decided under
+            // the same guard that then answers from it. Decided earlier, a
+            // replacement could land in between and the request would be answered
+            // from a model that no longer has that name.
+            if let Some(ref name) = wanted {
+                if ctx.current_default_genome() != *name {
+                    return Ok::<_, AppError>(DefaultAnswer::NotTheDefault(vcf_text));
+                }
             }
-        }
-        let gene_model = ctx.gene_model_id(&guard);
-        let annotated = annotate_with(
-            &guard,
-            &gene_model.genome,
-            &vcf_text,
-            pick,
-            acmg_requested,
-            ctx.acmg_allow_partial,
-        )?;
-        // The model's identity was read under the same guard that annotated, so what the
-        // response reports is the model that produced these results and not
-        // whichever one a concurrent upload left behind (#113).
-        drop(guard);
+            let gene_model = ctx.gene_model_id(&guard);
+            let budget = Budget {
+                limits: &ctx.limits,
+                started: start,
+                cancelled: &cancelled,
+            };
+            let annotated = annotate_with(
+                &guard,
+                &gene_model.genome,
+                &vcf_text,
+                pick,
+                acmg_requested,
+                ctx.acmg_allow_partial,
+                &budget,
+            )?;
+            // The model's identity was read under the same guard that annotated, so what the
+            // response reports is the model that produced these results and not
+            // whichever one a concurrent upload left behind (#113).
+            drop(guard);
 
-        ctx.record_run(annotated.results.len(), wanted.is_some());
+            ctx.record_run(annotated.results.count, wanted.is_some());
 
-        Ok(DefaultAnswer::Answered(annotated, gene_model))
-    })
-    .await??;
+            Ok(DefaultAnswer::Answered(annotated, gene_model))
+        })
+        .await??
+    };
 
     let (annotated, gene_model) = match first {
         DefaultAnswer::Answered(annotated, gene_model) => (annotated, gene_model),
@@ -645,24 +852,36 @@ pub async fn annotate(
                     "a request that named no genome was handed back by the default model"
                 ))
             })?;
-            answer_from_registry(&state, name, vcf_text, pick, acmg_requested).await?
+            answer_from_registry(
+                &state,
+                name,
+                vcf_text,
+                pick,
+                acmg_requested,
+                start,
+                Arc::clone(&cancelled),
+            )
+            .await?
         }
     };
 
     let time_ms = start.elapsed().as_millis() as u64;
-    let mut body = serde_json::json!({
-        "results": annotated.results,
-        "count": annotated.results.len(),
+    let mut extra = serde_json::json!({
         "time_ms": time_ms,
         "gene_model": gene_model,
     });
     if let Some(stack) = annotated.acmg_stack {
         // Beside the classifications it qualifies, so that a client that stores or shows them
         // keeps what they rest on with them.
-        body["acmg_stack"] =
+        extra["acmg_stack"] =
             serde_json::to_value(stack).map_err(|e| AppError::Internal(e.into()))?;
     }
-    Ok(Json(body))
+    let body = annotated.results.finish(extra)?;
+    Ok((
+        [(header::CONTENT_TYPE, "application/json")],
+        axum::body::Body::from(body),
+    )
+        .into_response())
 }
 
 pub async fn upload_gff3(

@@ -7,6 +7,7 @@ use fastvep_web::build_router;
 use fastvep_web::context::AnnotationContext;
 use fastvep_web::genomes::default_genome_name;
 use fastvep_web::handlers::{AppState, ServerConfig, SharedState};
+use fastvep_web::limits::Limits;
 
 #[derive(Parser)]
 #[command(name = "fastvep-web")]
@@ -67,9 +68,32 @@ struct Cli {
     #[arg(long, default_value_t = 10_485_760)]
     max_body_size: usize,
 
-    /// Maximum concurrent annotation requests
+    /// Maximum concurrent requests of any kind. Beyond it a request waits; see
+    /// `--max-parallel` for how many annotations run at once.
     #[arg(long, default_value_t = 64)]
     max_concurrent: usize,
+
+    /// Annotations that run at once, for each of which a request holds one thread and the text of its
+    /// answer. Default: the number of cores. A request that finds every place taken waits
+    /// `--queue-timeout-seconds` for one and is then turned away with 503 and a `Retry-After`.
+    #[arg(long, env = "FASTVEP_MAX_PARALLEL")]
+    max_parallel: Option<usize>,
+
+    /// Seconds a request waits for a place to annotate before it is refused with 503.
+    #[arg(long, default_value_t = 30, env = "FASTVEP_QUEUE_TIMEOUT_SECONDS")]
+    queue_timeout_seconds: u64,
+
+    /// Largest JSON answer one request may produce, in bytes. The answer is built in memory, a
+    /// batch of variants at a time, and a request that passes this is refused with 413 at the
+    /// batch that does. On a 16 GB host the default of 64 MiB keeps a few of them in flight beside
+    /// the genomes; see the limits section of docs/API.md for what a variant costs.
+    #[arg(long, default_value_t = 67_108_864, env = "FASTVEP_MAX_RESPONSE_BYTES")]
+    max_response_bytes: usize,
+
+    /// Longest one annotation may run, in seconds, before it is refused with 413. Keep it below
+    /// the read timeout of whatever proxy is in front.
+    #[arg(long, default_value_t = 90, env = "FASTVEP_MAX_REQUEST_SECONDS")]
+    max_request_seconds: u64,
 
     /// Path to a file for persistent statistics tracking
     #[arg(long, default_value = "stats.json", env = "FASTVEP_STATS_FILE")]
@@ -173,6 +197,15 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let default_limits = Limits::default();
+    tracing::info!(
+        "Limits: {} annotations at once, answers up to {} MiB, {} s each, {} s in the queue",
+        cli.max_parallel.unwrap_or(default_limits.max_parallel),
+        cli.max_response_bytes / (1024 * 1024),
+        cli.max_request_seconds,
+        cli.queue_timeout_seconds
+    );
+
     let default_genome = default_genome_name(cli.gff3.as_deref(), data_dir.as_deref());
     tracing::info!("Default genome: {default_genome}");
 
@@ -187,6 +220,17 @@ async fn main() -> anyhow::Result<()> {
                 distance: cli.distance,
                 allow_model_replacement: cli.allow_model_replacement,
                 acmg_allow_partial: cli.acmg_allow_partial,
+                limits: Limits {
+                    max_body_bytes: cli.max_body_size,
+                    max_response_bytes: cli.max_response_bytes,
+                    max_request_time: std::time::Duration::from_secs(cli.max_request_seconds),
+                    max_parallel: cli
+                        .max_parallel
+                        .unwrap_or(default_limits.max_parallel)
+                        .max(1),
+                    queue_timeout: std::time::Duration::from_secs(cli.queue_timeout_seconds),
+                    batch_variants: default_limits.batch_variants,
+                },
             },
         )
         .with_stats(initial_variants, initial_genomes),

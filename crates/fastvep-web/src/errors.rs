@@ -2,6 +2,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
+/// What a client that was turned away for want of a place is told to wait, in seconds.
+const BUSY_RETRY_AFTER_SECONDS: &str = "5";
+
 #[derive(Debug)]
 pub enum AppError {
     Internal(anyhow::Error),
@@ -18,6 +21,13 @@ pub enum AppError {
         message: String,
         acmg: serde_json::Value,
     },
+    /// The request is larger than this server answers in one go: its answer would pass
+    /// `--max-response-bytes`, or it ran past `--max-request-seconds`. The message says what
+    /// to change; see [`crate::limits`].
+    TooLarge(String),
+    /// Every place for an annotation is taken and none came free in time. Not a fault of the
+    /// request: it is told when to come back.
+    Busy(String),
 }
 
 impl IntoResponse for AppError {
@@ -41,6 +51,18 @@ impl IntoResponse for AppError {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 serde_json::json!({"error": message, "acmg": acmg}),
             ),
+            AppError::TooLarge(msg) => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                serde_json::json!({"error": msg}),
+            ),
+            AppError::Busy(msg) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    [(axum::http::header::RETRY_AFTER, BUSY_RETRY_AFTER_SECONDS)],
+                    Json(serde_json::json!({"error": msg})),
+                )
+                    .into_response();
+            }
         };
         (status, Json(body)).into_response()
     }
@@ -96,6 +118,24 @@ mod tests {
         let body = body_json(resp).await;
         assert_eq!(body["error"], "not available");
         assert_eq!(body["acmg"]["ready"], false);
+    }
+
+    #[tokio::test]
+    async fn a_request_that_is_too_large_is_a_413_with_its_message() {
+        let resp = AppError::TooLarge("split it".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body_json(resp).await["error"], "split it");
+    }
+
+    #[tokio::test]
+    async fn a_busy_server_is_a_503_that_says_when_to_come_back() {
+        let resp = AppError::Busy("busy".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            resp.headers().get(axum::http::header::RETRY_AFTER).unwrap(),
+            BUSY_RETRY_AFTER_SECONDS
+        );
+        assert_eq!(body_json(resp).await["error"], "busy");
     }
 
     #[tokio::test]
