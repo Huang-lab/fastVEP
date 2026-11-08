@@ -880,16 +880,18 @@ def fig1_thresholds() -> None:
     # (dx, dy, alignment) of each labelled point, in data units, chosen so no label sits on a line.
     knobs = [
         ("bs1_af_threshold", "BS1 threshold", CAT[0], "0.005", {"0.0002": (0.3, 0, "left"), "0.001": (0.3, -4, "left"), "0.02": (0, 6, "center"), "0.01": (0, 6, "center")}),
-        ("bs2_hom_prevalence_threshold", "BS2 homozygote threshold", CAT[1], "0.001", {"1e-06": (0.3, 0, "left"), "1e-05": (-0.3, 3.5, "right")}),
+        ("bs2_hom_prevalence_threshold", "BS2 homozygote threshold", CAT[1], "0.001", {"1e-06": (-0.3, 3.2, "right")}),
         ("bp7_max_intron_offset", "BP7 intronic distance", CAT[2], "300", {"0": (0, 6, "center"), "50": (0.3, -4, "left"), "1000000": (-0.3, 0, "right")}),
         ("phylop_conserved", "BP7 PhyloP threshold", CAT[3], "2.0", {"1": (0, -4.5, "center"), "1000": (0.3, 0, "left")}),
         ("bp1_max_pathogenic_missense", "BP1 veto count", CAT[4], "3", {"1": (0.3, -3.5, "left"), "25": (0.3, 0, "left")}),
     ]
-    show = {"bs1_af_threshold": {"0.0002", "0.001", "0.01", "0.02"}, "bs2_hom_prevalence_threshold": {"1e-06", "1e-05"},
+    show = {"bs1_af_threshold": {"0.0002", "0.001", "0.01", "0.02"}, "bs2_hom_prevalence_threshold": {"1e-06"},
             "bp7_max_intron_offset": {"0", "50", "1000000"}, "phylop_conserved": {"1", "1000"}, "bp1_max_pathogenic_missense": set()}  # its points sit on the default one and on BP7's line; the caption names the range
+    all_x = [float(base.blb_recall) * 100]
     for knob, label, color, shipped, offs in knobs:
         sub = r[(r.knob == knob) & (r.group == "sweep")].copy()
         sub["v"] = sub.value.astype(str)
+        all_x += [float(v_) * 100 for v_ in sub.blb_recall]
         pts = [(float(base.blb_recall) * 100, int(base.false_benign), shipped)]
         for row in sub.itertuples():
             pts.append((row.blb_recall * 100, int(row.false_benign), row.v))
@@ -906,12 +908,14 @@ def fig1_thresholds() -> None:
                 axA.text(x + dx, y + dy, fmt, fontsize=5.9, color=INK2, ha=ha, va="center")
     axA.plot([float(base.blb_recall) * 100], [int(base.false_benign)], marker="o", ms=MS + 2, mfc=INK, mec=SURFACE, mew=1.5, zorder=5)
     axA.text(float(base.blb_recall) * 100 - 0.35, int(base.false_benign) + 9, "default", fontsize=6.4, color=INK, ha="right", va="center")
-    axA.set_xlim(57, 69.4)
+    # limits that follow the curves (the right margin holds the label of the last BS1 point, which is written to its right)
+    axA.set_xlim(min(all_x) - 1.8, max(all_x) + 2.2)
     axA.set_ylim(-3, 112)
     axA.set_xlabel(f"{CV} B/LB called LB/B (%)")
     axA.set_ylabel(f"{CV} P/LP called LB/B\n(reference-discordant benign, n)")
     hgrid(axA)
-    axA.legend(handles=[Line2D([0], [0], color=c, lw=LW, label=l) for _, l, c, _, _ in knobs], loc="upper left", fontsize=6.6)
+    # the entry of the BS2 threshold is on two lines: the steep end of the BS1 curve rises through the upper left, and a longer line of text meets it
+    axA.legend(handles=[Line2D([0], [0], color=c, lw=LW, label=l.replace("homozygote threshold", "homozygote\nthreshold")) for _, l, c, _, _ in knobs], loc="upper left", fontsize=6.6)
     axA.set_title("Thresholds on the benign side", loc="left", fontsize=8, pad=6)
     panel_letter(axA, "A", x=-0.17, y=1.10)
 
@@ -1125,7 +1129,7 @@ def figS4_frontier() -> None:
 
     # the versions
     ax.plot(line_rows.opposite, line_rows.same_direction_rate * 100, color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=4)
-    ax.plot(complete.opposite, complete.same_direction_rate * 100, color=CAT[0], lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=4)
+    ax.plot(complete.opposite, complete.same_direction_rate * 100, color=CAT[0], lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=7)  # above the black marker of v38, which is one of the two
     # (x factor, y offset, alignment) of each version label, chosen so that none sits on a line
     for run, fx, dy, ha in (("v7", 1.12, -1.5, "left"), ("v8", 1.0, 1.6, "center"), ("v10", 0.86, -1.5, "right"), ("v13", 1.45, 1.4, "left")):
         r = line_rows[line_rows.run == run].iloc[0]
@@ -1150,12 +1154,12 @@ def figS4_frontier() -> None:
         r = curve[curve.rule == rule].iloc[0]
         ax.plot([r.opposite], [r.same_direction_share * 100], ls="none", marker=mk, ms=MS - 1.0, mfc=col, mec=SURFACE, mew=0.9, zorder=5)
     r3 = curve[curve.rule == "R2 + R3"].iloc[0]
-    ax.annotate(f"no frequency rule: {r3.same_direction_share * 100:.1f}%, {int(r3.opposite)}", xy=(r3.opposite, r3.same_direction_share * 100),
+    ax.annotate(f"no frequency rule: {r3.same_direction_share * 100:.1f}%, {int(r3.opposite):,}", xy=(r3.opposite, r3.same_direction_share * 100),
                 xytext=(r3.opposite * 2.0, r3.same_direction_share * 100 - 3.0), fontsize=6.4, color=INK2, ha="center",
                 arrowprops=dict(arrowstyle="-", color=AXIS, lw=0.8, shrinkA=0, shrinkB=3))
     r2 = curve[curve.rule == "R2"].iloc[0]
-    ax.text(r2.opposite * 1.25, r2.same_direction_share * 100, f"R2 alone: {r2.same_direction_share * 100:.1f}%, {int(r2.opposite)}", fontsize=6.4,
-            color=INK2, ha="left", va="center")
+    ax.text(r2.opposite / 1.25, r2.same_direction_share * 100, f"R2 alone: {r2.same_direction_share * 100:.1f}%, {int(r2.opposite)}", fontsize=6.4,
+            color=INK2, ha="right", va="center")
 
     # every variant VUS, and the base
     ax.plot([0], [base.loc["all VUS", "same_direction_share"] * 100], marker="D", ms=MS - 1, mfc=INK2, mec=SURFACE, mew=0.8, zorder=5, ls="none")
