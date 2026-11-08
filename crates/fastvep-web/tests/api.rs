@@ -1478,7 +1478,7 @@ async fn status_reports_what_one_request_may_cost() {
     let (_, body) = get(&test_state(), "/api/status").await;
     let limits = &body["limits"];
     assert_eq!(limits["max_body_bytes"], 10 * 1024 * 1024);
-    assert_eq!(limits["max_response_bytes"], 64 * 1024 * 1024);
+    assert_eq!(limits["max_response_bytes"], 128 * 1024 * 1024);
     assert_eq!(limits["max_request_seconds"], 90);
     assert!(limits["max_parallel"].as_u64().unwrap() >= 1);
 }

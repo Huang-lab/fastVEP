@@ -85,9 +85,13 @@ struct Cli {
 
     /// Largest JSON answer one request may produce, in bytes. The answer is built in memory, a
     /// batch of variants at a time, and a request that passes this is refused with 413 at the
-    /// batch that does. On a 16 GB host the default of 64 MiB keeps a few of them in flight beside
+    /// batch that does. On a 16 GB host the default of 128 MiB keeps a few of them in flight beside
     /// the genomes; see the limits section of docs/API.md for what a variant costs.
-    #[arg(long, default_value_t = 67_108_864, env = "FASTVEP_MAX_RESPONSE_BYTES")]
+    #[arg(
+        long,
+        default_value_t = 134_217_728,
+        env = "FASTVEP_MAX_RESPONSE_BYTES"
+    )]
     max_response_bytes: usize,
 
     /// Longest one annotation may run, in seconds, before it is refused with 413. Keep it below

@@ -106,7 +106,7 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
     "gene_model_generation": 0,
     "gff3_source": "Homo_sapiens.GRCh38.115.gff3",
     "has_fasta": true,
-    "limits": {"max_body_bytes": 10485760, "max_response_bytes": 67108864, "max_request_seconds": 90, "max_parallel": 4},
+    "limits": {"max_body_bytes": 10485760, "max_response_bytes": 134217728, "max_request_seconds": 90, "max_parallel": 4},
     "sa_sources": ["ClinVar", "dbSNP"],
     "acmg": {
         "ready": false,
@@ -343,7 +343,7 @@ So a request is bounded, and told how when it is not met:
   It used to be an internal error, met at the line that failed, with nothing said.
 - **The answer has a size limit.**
   The annotation is made a batch of variants at a time and written out as it goes.
-  A request whose answer passes `--max-response-bytes` (64 MiB by default) is refused with `413` at the batch that passes it, saying how many variants were done and what to change: fewer variants per request, `pick`, or the command-line tool.
+  A request whose answer passes `--max-response-bytes` (128 MiB by default) is refused with `413` at the batch that passes it, saying how many variants were done and what to change: fewer variants per request, `pick`, or the command-line tool.
   The batches are also what bound the memory, since the answer as values is five to ten times the size of its text.
 - **The work has a time limit.**
   A request that runs past `--max-request-seconds` (90 by default) is refused with `413`, with what was done.
@@ -457,7 +457,7 @@ Check the server's stderr when you get one.
 | `--max-concurrent` | | `64` | Concurrent requests of any kind; beyond it a request waits |
 | `--max-parallel` | `FASTVEP_MAX_PARALLEL` | cores | Annotations that run at once; a request finds a place or waits `--queue-timeout-seconds` and is turned away with `503` |
 | `--queue-timeout-seconds` | `FASTVEP_QUEUE_TIMEOUT_SECONDS` | `30` | How long a request waits for a place |
-| `--max-response-bytes` | `FASTVEP_MAX_RESPONSE_BYTES` | `67108864` | Largest JSON answer one request may produce; beyond it `413` |
+| `--max-response-bytes` | `FASTVEP_MAX_RESPONSE_BYTES` | `134217728` | Largest JSON answer one request may produce; beyond it `413` |
 | `--max-request-seconds` | `FASTVEP_MAX_REQUEST_SECONDS` | `90` | Longest one annotation may run; beyond it `413` |
 | `--stats-file` | `FASTVEP_STATS_FILE` | `stats.json` | Where the served-variant counters persist |
 | `--allow-model-replacement` | `FASTVEP_ALLOW_MODEL_REPLACEMENT` | off | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model; choosing a genome per request does not need it |

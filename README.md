@@ -644,7 +644,7 @@ IMPACT is HIGH and AF < 0.01
 | `--max-concurrent` | Max concurrent requests of any kind | `64` |
 | `--max-parallel` | Annotations that run at once; the next request waits `--queue-timeout-seconds` for a place, then gets `503` with `Retry-After` (also `FASTVEP_MAX_PARALLEL` env) | number of cores |
 | `--queue-timeout-seconds` | How long a request waits for a place to annotate (also `FASTVEP_QUEUE_TIMEOUT_SECONDS` env) | `30` |
-| `--max-response-bytes` | Largest JSON answer one request may produce, built in memory a batch of variants at a time; beyond it `413` (also `FASTVEP_MAX_RESPONSE_BYTES` env) | `67108864` |
+| `--max-response-bytes` | Largest JSON answer one request may produce, built in memory a batch of variants at a time; beyond it `413` (also `FASTVEP_MAX_RESPONSE_BYTES` env) | `134217728` |
 | `--max-request-seconds` | Longest one annotation may run; beyond it `413` (also `FASTVEP_MAX_REQUEST_SECONDS` env) | `90` |
 | `--stats-file` | JSON file in which the running totals of variants annotated and genomes loaded are kept (also `FASTVEP_STATS_FILE` env) | `stats.json` |
 | `--allow-model-replacement` | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model of the running server, for every client; choosing a genome per request does not need it (also `FASTVEP_ALLOW_MODEL_REPLACEMENT` env) | off |

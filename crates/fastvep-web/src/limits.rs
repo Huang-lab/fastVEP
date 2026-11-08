@@ -26,7 +26,7 @@
 use std::time::Duration;
 
 /// How many variants are annotated, and serialised, at a time.
-pub const DEFAULT_BATCH_VARIANTS: usize = 250;
+pub const DEFAULT_BATCH_VARIANTS: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct Limits {
@@ -49,7 +49,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             max_body_bytes: 10 * 1024 * 1024,
-            max_response_bytes: 64 * 1024 * 1024,
+            max_response_bytes: 128 * 1024 * 1024,
             max_request_time: Duration::from_secs(90),
             max_parallel: std::thread::available_parallelism().map_or(2, |n| n.get()),
             queue_timeout: Duration::from_secs(30),
