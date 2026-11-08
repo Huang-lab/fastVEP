@@ -164,15 +164,15 @@ EVENTS = [
     (6, "v6: PM2 reads absence as rarity"),
     (8, "v8: review 1 (PVS1 graded; BP4 and PM2 fixes)"),
     (9, "v9: review 2 (PS1 and PM1 stop self-matching)"),
-    (10, "v10: gnomAD QC gates; PM2 and BS2 bars measured"),
+    (10, "v10: gnomAD QC gates; PM2 and BS2 thresholds measured"),
     (11, "v11: SVI point system, pathogenic side"),
-    (12, "v12: BS1 bar moved from 1% to 0.5%"),
+    (12, "v12: BS1 threshold moved from 1% to 0.5%"),
     (13, "v13: --acmg implies --hgvs; BP7 intronic extension live"),
-    (14, "v14: BP7 far boundary; PM1 tests benign variation"),
+    (14, "v14: BP7 intronic distance; PM1 tests benign variation"),
     (16, "v16: PS1 splice path live"),
     (20, "v19 and v20: frequency veto; hypomorph exceptions"),
     (27, "v23 to v27: Ensembl-parity annotation"),
-    (37, "v37: review 6 (HGVS placement, BP7 exon edge, BS2 bar)"),
+    (37, "v37: review 6 (HGVS placement, BP7 exon edge, BS2 threshold)"),
 ]
 
 
@@ -183,7 +183,7 @@ def figS1_trajectory() -> None:
         t[c] = t[c] * 100  # every rate of this figure is drawn as a percentage
     stored = t[t.source.str.startswith("scored")]
     main = stored[stored.mainline]  # the steps on the way: v7 to v37 without v17
-    side = stored[~stored.mainline]  # v17, the opt-in run with the published VCEP bars
+    side = stored[~stored.mainline]  # v17, the opt-in run with the published VCEP thresholds
     # Open markers: v1, a matrix reconstructed from the run's documentation, and v2, v4 to v6, the figures
     # recorded at the time. None of them has a raw output behind it.
     opened = t[~t.source.str.startswith("scored")]
@@ -252,7 +252,7 @@ def figS1_trajectory() -> None:
         Line2D([0], [0], color=CAT[1], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label="Exact (five-tier)"),
         Line2D([0], [0], color=INK2, lw=0, marker="o", ms=MS - 1.5, mfc=SURFACE, mec=INK2, mew=1.2,
                label="v1 (reconstructed) and v2 to v6 (recorded at the time)"),
-        Line2D([0], [0], color=INK2, lw=0, marker="x", ms=4.6, mew=1.3, label="v17: opt-in run with the VCEP bars, not a step"),
+        Line2D([0], [0], color=INK2, lw=0, marker="x", ms=4.6, mew=1.3, label="v17: opt-in run with the VCEP thresholds, not a step"),
     ], loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=6.4)
     panel_letter(axA, "A")
 
@@ -261,9 +261,9 @@ def figS1_trajectory() -> None:
     axB.set_yscale("log")
     opp = main.dropna(subset=["false_benign"])
     axB.plot(opp["order"], opp.false_benign, color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
-             label=f"{CV} P/LP called LB or B (missed diagnosis)")
+             label=f"{CV} P/LP called LB or B (reference-discordant benign)")
     axB.plot(opp["order"], opp.false_pathogenic, color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
-             label=f"{CV} LB or B called P or LP")
+             label=f"{CV} LB or B called P or LP (reference-discordant pathogenic)")
     axB.plot(main["order"], main.opposite, color=INK2, lw=1.0, marker="o", ms=MS - 2.5, mec=SURFACE, mew=0.8, zorder=2, label="Total")
     dotted(axB, opened, "opposite", INK2)
     open_marks(axB, opened.dropna(subset=["opposite"]), "opposite", INK2, ms=MS - 1.5)
@@ -321,7 +321,7 @@ def figS1_trajectory() -> None:
         axk.text(x + 0.034, y, label, fontsize=6.6, color=INK2, va="center", ha="left")
     axk.set_xlim(0, 1)
     axk.set_ylim(0, 1)
-    clinvar_note(fig, "Opposite-direction calls: ClinVar 2-star+ P/LP called LB or B (missed diagnoses) or ClinVar 2-star+ B/LB called P or LP.")
+    clinvar_note(fig, "Opposite-direction calls: ClinVar 2-star+ P/LP called LB or B (reference-discordant benign) or ClinVar 2-star+ B/LB called P or LP (reference-discordant pathogenic).")
     save(fig, "figS1_trajectory")
 
 
@@ -555,10 +555,10 @@ def fig2_points() -> None:
     axB.plot(cut.wrong / 1000, cut.plp_recall * 100, color=CAT[0], lw=LW, zorder=2)
     for r in cut.itertuples():
         shipped = r.lp == 6
-        # a filled black marker is the shipped setting, here and in Figures 1 and 2C; open markers are the others
+        # a filled black marker is the default setting, here and in Figures 1 and 2C; open markers are the others
         axB.plot([r.wrong / 1000], [r.plp_recall * 100], marker="o", ms=MS + (2 if shipped else 0), mfc=INK if shipped else SURFACE,
                  mec=SURFACE if shipped else CAT[0], mew=1.5 if shipped else 1.4, zorder=5 if shipped else 3)
-    lab = {4: (0.9, 0, "4"), 5: (-0.9, 2.4, "5"), 6: (0.9, 0.6, "6 (shipped)"), 7: (0.9, -1.6, "7 and 8"), 9: (0.9, 0, "9")}
+    lab = {4: (0.9, 0, "4"), 5: (-0.9, 2.4, "5"), 6: (0.9, 0.6, "6 (default)"), 7: (0.9, -1.6, "7 and 8"), 9: (0.9, 0, "9")}
     for r in cut.itertuples():
         if r.lp in lab:
             dx, dy, t = lab[r.lp]
@@ -573,7 +573,7 @@ def fig2_points() -> None:
 
     # C: benign-side scheme trade-off
     sch = {
-        "shipped (v37)": "Table (shipped)",
+        "shipped (v37)": "Table (default)",
         "SVI points, both sides, Likely Benign from -1 (Tavtigian)": "Points, from -1",
         "SVI points, both sides, Likely Benign from -2": "Points, from -2",
         "SVI points, both sides, Likely Benign from -3": "Points, from -3",
@@ -589,7 +589,7 @@ def fig2_points() -> None:
                  mec=SURFACE if shipped else CAT[1], mew=1.5 if shipped else 1.4, zorder=5 if shipped else 3)
         dx, dy, ha = place[r.scheme]
         axC.text(r.false_benign + dx, r.blb_recall * 100 + dy, sch[r.scheme], fontsize=6.4, color=INK2, va="center", ha=ha)
-    axC.set_xlabel(f"{CV} P/LP called LB/B\n(missed diagnoses, n)")
+    axC.set_xlabel(f"{CV} P/LP called LB/B\n(reference-discordant benign, n)")
     axC.set_ylabel(f"{CV} B/LB\ncalled LB/B (%)")
     axC.set_xlim(-30, 480)
     axC.set_ylim(30, 80)
@@ -804,17 +804,17 @@ def fig1_thresholds() -> None:
     axB = fig.add_subplot(gs[1])
     axC = fig.add_subplot(gs[2])
 
-    # A: the benign-side trade space. Every knob passes through the shipped point.
+    # A: the benign-side trade space. Every knob passes through the default point.
     # (dx, dy, alignment) of each labelled point, in data units, chosen so no label sits on a line.
     knobs = [
-        ("bs1_af_threshold", "BS1 bar", CAT[0], "0.005", {"0.0002": (0.3, 0, "left"), "0.001": (0.3, -4, "left"), "0.02": (0, 6, "center"), "0.01": (0, 6, "center")}),
-        ("bs2_hom_prevalence_threshold", "BS2 homozygote bar", CAT[1], "0.001", {"1e-06": (0.3, 0, "left"), "1e-05": (-0.3, 3.5, "right")}),
-        ("bp7_max_intron_offset", "BP7 far boundary", CAT[2], "300", {"0": (0, 6, "center"), "50": (0.3, -4, "left"), "1000000": (-0.3, 0, "right")}),
-        ("phylop_conserved", "BP7 PhyloP bar", CAT[3], "2.0", {"1": (0, -4.5, "center"), "1000": (0.3, 0, "left")}),
+        ("bs1_af_threshold", "BS1 threshold", CAT[0], "0.005", {"0.0002": (0.3, 0, "left"), "0.001": (0.3, -4, "left"), "0.02": (0, 6, "center"), "0.01": (0, 6, "center")}),
+        ("bs2_hom_prevalence_threshold", "BS2 homozygote threshold", CAT[1], "0.001", {"1e-06": (0.3, 0, "left"), "1e-05": (-0.3, 3.5, "right")}),
+        ("bp7_max_intron_offset", "BP7 intronic distance", CAT[2], "300", {"0": (0, 6, "center"), "50": (0.3, -4, "left"), "1000000": (-0.3, 0, "right")}),
+        ("phylop_conserved", "BP7 PhyloP threshold", CAT[3], "2.0", {"1": (0, -4.5, "center"), "1000": (0.3, 0, "left")}),
         ("bp1_max_pathogenic_missense", "BP1 veto count", CAT[4], "3", {"1": (0.3, -3.5, "left"), "25": (0.3, 0, "left")}),
     ]
     show = {"bs1_af_threshold": {"0.0002", "0.001", "0.01", "0.02"}, "bs2_hom_prevalence_threshold": {"1e-06", "1e-05"},
-            "bp7_max_intron_offset": {"0", "50", "1000000"}, "phylop_conserved": {"1", "1000"}, "bp1_max_pathogenic_missense": set()}  # its points sit on the shipped one and on BP7's line; the caption names the range
+            "bp7_max_intron_offset": {"0", "50", "1000000"}, "phylop_conserved": {"1", "1000"}, "bp1_max_pathogenic_missense": set()}  # its points sit on the default one and on BP7's line; the caption names the range
     for knob, label, color, shipped, offs in knobs:
         sub = r[(r.knob == knob) & (r.group == "sweep")].copy()
         sub["v"] = sub.value.astype(str)
@@ -833,17 +833,17 @@ def fig1_thresholds() -> None:
                 dx, dy, ha = offs[v]
                 axA.text(x + dx, y + dy, fmt, fontsize=5.9, color=INK2, ha=ha, va="center")
     axA.plot([float(base.blb_recall) * 100], [int(base.false_benign)], marker="o", ms=MS + 2, mfc=INK, mec=SURFACE, mew=1.5, zorder=5)
-    axA.text(float(base.blb_recall) * 100 - 0.35, int(base.false_benign) + 9, "shipped", fontsize=6.4, color=INK, ha="right", va="center")
+    axA.text(float(base.blb_recall) * 100 - 0.35, int(base.false_benign) + 9, "default", fontsize=6.4, color=INK, ha="right", va="center")
     axA.set_xlim(57, 69.4)
     axA.set_ylim(-3, 112)
     axA.set_xlabel(f"{CV} B/LB called LB/B (%)")
-    axA.set_ylabel(f"{CV} P/LP called LB/B\n(missed diagnoses, n)")
+    axA.set_ylabel(f"{CV} P/LP called LB/B\n(reference-discordant benign, n)")
     hgrid(axA)
     axA.legend(handles=[Line2D([0], [0], color=c, lw=LW, label=l) for _, l, c, _, _ in knobs], loc="upper left", fontsize=6.6)
-    axA.set_title("Bars on the benign side", loc="left", fontsize=8, pad=6)
+    axA.set_title("Thresholds on the benign side", loc="left", fontsize=8, pad=6)
     panel_letter(axA, "A", x=-0.17, y=1.10)
 
-    # B: the PM2 bar for dominant genes, under the point system and under the 2015 table
+    # B: the PM2 threshold for dominant genes, under the point system and under the 2015 table
     pm = r[(r.knob == "pm2_ad_af_threshold") & (r.group == "sweep")].copy()
     tb = r[r.knob.str.startswith("pm2_ad_af_threshold (Richards") & (r.group == "interaction")].copy() if "interaction" in set(r.group) else r.iloc[0:0]
     tbase = r[r.name == "v37_sw_table_both_sides"]
@@ -865,21 +865,21 @@ def fig1_thresholds() -> None:
         ptsT.sort()
         axB.plot([p_[0] for p_ in ptsT], [p_[1] for p_ in ptsT], color=CAT[1], lw=LW, marker="o", ms=MS - 1, mec=SURFACE, mew=1, zorder=3, label="2015 table")
     axB.axvline(4e-5, color=AXIS, lw=0.9, zorder=1)
-    axB.text(4e-5 * 1.2, 65.6, "shipped 4e-5 (7e-5\nfor recessive-only)", fontsize=5.8, color=INK2, va="top", ha="left")
+    axB.text(4e-5 * 1.2, 65.6, "default 4e-5 (7e-5\nfor recessive-only)", fontsize=5.8, color=INK2, va="top", ha="left")
     axB.set_xscale("log")
     axB.set_xlim(1.5e-7, 1e-3)
     axB.set_ylim(36, 68)
     axB.set_xticks([2.5e-7, 1e-6, 1e-5, 1e-4])
     axB.set_xticklabels(["0", "1e-6", "1e-5", "1e-4"])
     axB.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
-    axB.set_xlabel("PM2 bar")
+    axB.set_xlabel("PM2 threshold")
     axB.set_ylabel(f"{CV} P/LP\ncalled P/LP (%)")
     hgrid(axB)
     axB.legend(loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=6.0, handlelength=1.8)
-    axB.set_title("PM2 bars, by combining rule", loc="left", fontsize=8, pad=6)
+    axB.set_title("PM2 threshold, by combining rule", loc="left", fontsize=8, pad=6)
     panel_letter(axB, "B", x=-0.27, y=1.10)
 
-    # C: the dominant-gene BS2 carrier bar, change in recall against the shipped 3e-4
+    # C: the dominant-gene BS2 carrier threshold, change in recall against the default 3e-4
     bs = r[(r.knob == "bs2_ad_prevalence_threshold") & (r.group == "sweep")].copy()
     xs, plp, blb = [], [], []
     for row in bs.itertuples():
@@ -899,13 +899,13 @@ def fig1_thresholds() -> None:
     axC.set_xticks([2.0e-5, 1e-4, 1e-3])
     axC.set_xticklabels(["off", "1e-4", "1e-3"])
     axC.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
-    axC.set_xlabel("BS2 carrier bar")
+    axC.set_xlabel("BS2 carrier threshold")
     axC.set_ylabel(f"Change in recall of the\n{CV} class (pp)")
     hgrid(axC)
-    axC.text(3e-4 * 1.15, axC.get_ylim()[1] * 0.92, "shipped\n3e-4", fontsize=6.2, color=INK2, va="top", ha="left")
+    axC.text(3e-4 * 1.15, axC.get_ylim()[1] * 0.92, "default\n3e-4", fontsize=6.2, color=INK2, va="top", ha="left")
     axC.text(4.6e-3, 0.012, "P/LP", fontsize=6.4, color=INK2, ha="right", va="bottom")
     axC.text(4.6e-3, blb[-1] - 0.012, "B/LB", fontsize=6.4, color=INK2, ha="right", va="top")
-    axC.set_title("BS2 carrier bar", loc="left", fontsize=8, pad=6)
+    axC.set_title("BS2 carrier threshold", loc="left", fontsize=8, pad=6)
     panel_letter(axC, "C", x=-0.30, y=1.10)
     clinvar_note(fig, "Panel C: P/LP is the recall of ClinVar 2-star+ P/LP variants and B/LB that of ClinVar 2-star+ B/LB variants.")
     save(fig, "fig1_thresholds")
@@ -985,8 +985,8 @@ def fig3_ablations() -> None:
         y = np.arange(len(b))
         specs = [("d_same_pp", f"Same-direction agreement\nwith {CV} (pp)", INK2, True),
                  ("d_plp_pp", f"{CV} P/LP\ncalled P/LP (pp)", TIER3["P/LP"], True),
-                 ("d_missed", "Missed diagnoses (n)\nfewer is better", TIER3["P/LP"], False),
-                 ("d_fp", "False-pathogenic (n)\nfewer is better", TIER3["B/LB"], False)]
+                 ("d_missed", "Reference-discordant\nbenign calls (n)\nfewer is better", TIER3["P/LP"], False),
+                 ("d_fp", "Reference-discordant\npathogenic calls (n)\nfewer is better", TIER3["B/LB"], False)]
         for k, (col, xl, color, is_pp) in enumerate(specs):
             ax = axs[k]
             vals = b[col].to_numpy()
@@ -1008,7 +1008,7 @@ def fig3_ablations() -> None:
             for sp in ("left",):
                 ax.spines[sp].set_visible(False)
         axs[0].set_title(f"{letter}  {title}", loc="left", fontsize=8, x=-1.05, pad=7, fontweight="bold")
-    clinvar_note(fig, "Missed diagnoses: ClinVar 2-star+ P/LP called LB/B. False-pathogenic: ClinVar 2-star+ B/LB called P/LP.")
+    clinvar_note(fig, "Reference-discordant benign: ClinVar 2-star+ P/LP called LB/B. Reference-discordant pathogenic: ClinVar 2-star+ B/LB called P/LP.")
     save(fig, "fig3_ablations")
 
 
@@ -1049,14 +1049,14 @@ def figS4_frontier() -> None:
         r = main[main.run == run].iloc[0]
         ax.text(r.opposite * fx, r.same_direction_rate * 100 + dy, f"{run}: {int(r.opposite)}", fontsize=6.2, color=INK2, ha=ha, va="center")
 
-    # the rules, at nine frequency bars each
-    style = {"R1": (CAT[1], "o", "R1: benign-side at or above a frequency bar (the bar is labelled)"),
+    # the rules, at nine frequency thresholds each
+    style = {"R1": (CAT[1], "o", "R1: benign-side at or above a frequency threshold (the threshold is labelled)"),
              "R1 + R2": (CAT[3], "s", "R1 and R2: a rare null variant is pathogenic-side"),
              "R1 + R2 + R3": (CAT[2], "^", "R1, R2 and R3: a quiet variant with SpliceAI below 0.2 is benign-side")}
     for rule, (col, mk, lab) in style.items():
         c = curve[curve.rule == rule].sort_values("benign_frequency_bar", ascending=False)
         ax.plot(c.opposite, c.same_direction_share * 100, color=col, lw=1.1, marker=mk, ms=MS - 2.2, mfc=SURFACE, mec=col, mew=1.1, zorder=3, label=lab)
-    # the frequency bar at each end of each line
+    # the frequency threshold at each end of each line
     for rule, (col, mk, lab) in style.items():
         c = curve[curve.rule == rule].set_index("benign_frequency_bar")
         for bar, dx, dy, ha in ((5e-2, 0.80, 0.0, "right"), (1e-4, 1.22, 0.0, "left")):

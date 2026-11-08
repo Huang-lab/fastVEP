@@ -1,0 +1,22 @@
+started_utc	2026-11-07T12:59:51Z
+image	ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+vep	116.3
+docker	29.2.1 cpus=10 mem=8217059328
+fastvep	fv_rc1	fastvep 0.5.0-rc.1	sha256 0063e01bd1435fb1a9dee209f0559e54de87687cefbacfb72aaed1ea231215ff
+inputs	example,inframe,hg002,clinvar,world,edges,lone
+seconds_example	VEP 4	fastVEP 0.9
+seconds_inframe	VEP 21	fastVEP 0.8
+seconds_hg002	VEP 350	fastVEP 1.4
+seconds_clinvar_nohgvs	VEP 1148	fastVEP 1.8
+seconds_clinvar_hgvs	VEP 1471	fastVEP 2.3
+seconds_world_gen	VEP 2	fastVEP 0.0
+seconds_edges_gen	VEP 10	fastVEP 0.1
+seconds_lone_gen	VEP 1	fastVEP 0.0
+started_utc	2026-11-07T13:59:31Z
+image	ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+vep	116.3
+docker	29.2.1 cpus=10 mem=8217059328
+fastvep	fv_rc1	fastvep 0.5.0-rc.1	sha256 0063e01bd1435fb1a9dee209f0559e54de87687cefbacfb72aaed1ea231215ff
+inputs	refseq
+seconds_refseq	VEP 6	fastVEP 0.3
+

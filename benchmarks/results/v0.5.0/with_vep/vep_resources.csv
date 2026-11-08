@@ -1,0 +1,6 @@
+metric,value
+startup_yeast,0.4 sec
+startup_human,0.4 sec
+peak_memory,0.9 GiB
+image_size,0.97 GB unpacked
+image_pull_size,0.31 GB

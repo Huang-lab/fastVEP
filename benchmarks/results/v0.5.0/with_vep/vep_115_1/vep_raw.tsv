@@ -1,0 +1,17 @@
+part	cell	round	wall_s	cpu_s	peak_rss_mib	load1
+scaling	chr22_1000	0	0.45	0.24		1.58
+scaling	chr22_1000	1	0.44	0.25		1.58
+scaling	chr22_1000	2	0.46	0.24		1.58
+scaling	chr22_1000	3	0.46	0.27		1.58
+scaling	chr22_5000	0	6.00	5.76		2.18
+scaling	chr22_5000	1	5.98	5.74		2.57
+scaling	chr22_5000	2	5.98	5.75		2.44
+scaling	chr22_5000	3	6.04	5.80		2.33
+scaling	chr22_10000	0	13.01	12.75		2.25
+scaling	chr22_10000	1	13.02	12.75		2.21
+scaling	chr22_10000	2	12.84	12.58		2.38
+scaling	chr22_10000	3	12.88	12.61		2.32
+scaling	chr22_all	0	85.23	84.78		5.25
+scaling	chr22_all	1	82.67	82.24		3.59
+scaling	chr22_all	2	84.11	83.65		2.35
+scaling	chr22_all	3	83.65	83.20		2.21

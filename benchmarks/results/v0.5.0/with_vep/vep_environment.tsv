@@ -1,0 +1,12 @@
+image	ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+image_id	sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+image_bytes	308995807
+image_unpacked_kib	942944
+docker	29.2.1 cpus=10 mem=8217059328
+flags	--vcf --force_overwrite --no_stats --hgvs --symbol --canonical
+custom_clinvar	--custom file=/custom/clinvar.vcf.gz,short_name=ClinVar,format=vcf,type=exact,fields=CLNSIG%CLNREVSTAT%CLNDN%CLNVC%CLNVCSO%AF_EXAC%AF_TGP%AF_ESP
+custom_gnomad_joint	--custom file=/custom/gnomad_chr22.vcf.gz,short_name=gnomAD,format=vcf,type=exact,fields=AC_joint%AN_joint%AF_joint%nhomalt_joint%AC_joint_XY%AN_joint_XY%AF_joint_afr%AF_joint_amr%AF_joint_asj%AF_joint_eas%AF_joint_fin%AF_joint_mid%AF_joint_nfe%AF_joint_remaining%AF_joint_sas%faf95_joint%fafmax_faf95_max_joint
+clinvar_vcf	clinvar.vcf.gz md5 27166aac6887cb7ac10829de69587993
+runs	3
+load_end	1.83 2.06 2.23
+started_utc	2026-11-07T15:06:21Z

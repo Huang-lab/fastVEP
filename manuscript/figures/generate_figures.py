@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""Generate manuscript figures for fastVEP."""
+"""Generate the manuscript figures for fastVEP from `manuscript/data/` and from nothing else.
+
+Every number a figure prints is read from a CSV there. `manuscript/build_data.py` writes the CSVs from the runs that measured them
+(`benchmarks/results/<build>/`), so a figure cannot quote a measurement that no run made: the labels that used to be typed here
+("4,621 s", "198 s", "93 s", "22/22 fields", the stats strip of Figure 1) are computed, and so are the limits of the axes that they
+would have run off when the numbers changed.
+"""
 
 import csv
+import math
 import os
 
 try:
@@ -27,90 +34,192 @@ C = {
 OC = {'yeast': '#10b981', 'drosophila': '#f59e0b', 'arabidopsis': '#8b5cf6', 'mouse': '#ef4444', 'human': '#3b82f6'}
 OL = {'yeast': 'Yeast', 'drosophila': 'Drosophila', 'arabidopsis': 'Arabidopsis', 'mouse': 'Mouse', 'human': 'Human'}
 
+
 def read_csv(f):
     with open(os.path.join(DATA_DIR, f)) as fh:
         return list(csv.DictReader(fh))
 
 
+def metrics():
+    return {r['metric']: r['value'] for r in read_csv('code_metrics.csv')}
+
+
+def resources():
+    return {r['metric']: r['value'] for r in read_csv('resource_usage.csv')}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Figure 1: the architecture is drawn from the dependencies cargo reports, not from memory.
+
+CRATE_ROLE = {
+    'core': 'Consequence (SO terms) · Allele · Impact · VariantType',
+    'genome': 'Transcript / Exon / Gene · codon tables',
+    'filter': 'filter_vep expressions',
+    'classification': 'ACMG/AMP criteria',
+    'cache': 'GFF3 · FASTA mmap · transcript cache',
+    'consequence': 'SNV / indel / SV predictors',
+    'hgvs': 'HGVS g / c / p',
+    'io': 'VCF in · CSQ / tab / JSON out',
+    'sa': 'fastSA · ClinVar, gnomAD, scores',
+    'annotate': 'shared engine · pick · web servers',
+    'cli': 'annotate · sa-build · sa-convert · filter · cache · web',
+    'web': 'axum production server',
+}
+CRATE_COLOR = {'cli': C['cli'], 'web': C['cli'], 'annotate': C['mid'], 'io': C['mid'], 'consequence': C['mid'], 'hgvs': C['mid'],
+               'filter': C['mid'], 'classification': C['mid'], 'genome': C['data'], 'cache': C['data'], 'sa': C['sa'], 'core': C['core']}
+
+
+def crate_layers():
+    """{crate: set of direct dependencies} with the edges that another path already implies removed, and the layer of each crate."""
+    deps = {}
+    for r in read_csv('crate_dependencies.csv'):
+        deps.setdefault(r['crate'].replace('fastvep-', ''), set()).add(r['depends_on'].replace('fastvep-', ''))
+    crates = set(deps) | {d for ds in deps.values() for d in ds}
+    for c in crates:
+        deps.setdefault(c, set())
+
+    def reach(c, seen=None):
+        out = set()
+        for d in deps[c]:
+            out |= {d} | reach(d)
+        return out
+    reduced = {c: {d for d in deps[c] if not any(d in reach(o) for o in deps[c] if o != d)} for c in crates}
+    layer = {}
+
+    def depth(c):
+        if c not in layer:
+            layer[c] = 0 if not deps[c] else 1 + max(depth(d) for d in deps[c])
+        return layer[c]
+    for c in crates:
+        depth(c)
+    return reduced, layer
+
+
+def layer_order(reduced, layer):
+    """The order of the crates within each layer, by the barycentre of their neighbours, which keeps the arrows from crossing more than they must."""
+    n_layers = max(layer.values()) + 1
+    order = {k: sorted((c for c in layer if layer[c] == k), key=lambda c: list(CRATE_ROLE).index(c)) for k in range(n_layers)}
+    neighbours = {c: set() for c in layer}
+    for c, ds in reduced.items():
+        for d in ds:
+            neighbours[c].add(d)
+            neighbours[d].add(c)
+
+    def x_of(c):
+        members = order[layer[c]]
+        return (members.index(c) + 0.5) / len(members)
+
+    def crossings():
+        edges = [(c, d) for c, ds in reduced.items() for d in ds]
+        n = 0
+        for i, (c1, d1) in enumerate(edges):
+            for c2, d2 in edges[i + 1:]:
+                if len({c1, d1, c2, d2}) < 4:
+                    continue
+                # edges between the same two layers cross when their ends are in opposite orders; an edge that skips a layer is judged on its ends alone
+                if (x_of(c1) - x_of(c2)) * (x_of(d1) - x_of(d2)) < 0:
+                    n += 1
+        return n
+
+    best, best_n = {k: list(v) for k, v in order.items()}, crossings()
+    for sweep in range(8):
+        for k in (range(n_layers - 1, -1, -1) if sweep % 2 == 0 else range(n_layers)):
+            order[k] = sorted(order[k], key=lambda c: (sum(x_of(n) for n in neighbours[c]) / len(neighbours[c])) if neighbours[c] else x_of(c))
+        n = crossings()
+        if n < best_n:
+            best, best_n = {k: list(v) for k, v in order.items()}, n
+    return best
+
+
 def fig1_architecture():
-    """Architecture: (A) tiered crate dependency graph with test counts; (B) annotation data flow."""
+    """Architecture: (A) the crate dependency graph with test counts; (B) annotation data flow."""
+    m, rs = metrics(), resources()
+    reduced, layer = crate_layers()
     if not HAS_MPL: return
-    tests = {'core':20,'genome':18,'cache':54,'consequence':27,'hgvs':25,'io':86,'filter':21,
-             'sa':153,'annotate':5,'classification':147,'cli':76,'web':9}
-    fig = plt.figure(figsize=(18, 8.6))
+    n_layers = max(layer.values()) + 1
+    order = layer_order(reduced, layer)
+    fig = plt.figure(figsize=(18, 9.6))
     gs = fig.add_gridspec(1, 2, width_ratios=[1.75, 1], wspace=0.06)
     axA = fig.add_subplot(gs[0]); axB = fig.add_subplot(gs[1])
 
-    # ================= Panel A: crate architecture (centered rows) =================
-    axA.set_xlim(0, 14); axA.set_ylim(1.0, 9.0); axA.axis('off')
-    CX, H = 7.0, 0.85
-    tier_y = {'bin':7.0,'lib':5.3,'prov':3.6,'core':1.9}
-    for key,lbl,col in [('bin','binaries','#eef2ff'),('lib','libraries','#eef2ff'),
-                        ('prov','data providers','#ecfdf5'),('core','core','#fff7ed')]:
-        y=tier_y[key]
-        axA.add_patch(plt.Rectangle((0,y-0.14),14,H+0.28,facecolor=col,edgecolor='none',zorder=0))
-        axA.text(0.42,y+H/2,lbl,ha='center',va='center',fontsize=8,color='#9aa3b2',style='italic',rotation=90)
-    def arr(x1,y1,x2,y2,c='#94a3b8'): axA.annotate('',xy=(x2,y2),xytext=(x1,y1),arrowprops=dict(arrowstyle='->',color=c,lw=1.1,alpha=0.85),zorder=1)
-    def row(items, y, gap):
-        total=sum(w for _,_,_,w,_ in items)+gap*(len(items)-1)
-        x=CX-total/2; ctr={}
-        for label,sub,color,w,fs in items:
-            axA.add_patch(FancyBboxPatch((x,y),w,H,boxstyle="round,pad=0.1",facecolor=color,edgecolor='#374151',lw=1.3,alpha=0.93,zorder=2))
-            axA.text(x+w/2,y+H/2+0.17,label,ha='center',va='center',fontsize=fs,fontweight='bold',color='white',zorder=3)
-            axA.text(x+w/2,y+H/2-0.19,sub,ha='center',va='center',fontsize=6.8,color='white',alpha=0.93,style='italic',zorder=3)
-            ctr[label.split('-')[-1]]=x+w/2; x+=w+gap
-        return ctr
-    axA.text(CX,8.7,'A. Crate architecture — 12-crate Cargo workspace',ha='center',fontsize=13,fontweight='bold',color='#1f2937')
-    b=row([('fastvep-cli','annotate · sa-build · filter · cache  ·  76 tests',C['cli'],5.2,11),
-           ('fastvep-web','axum production server  ·  9 tests',C['cli'],5.2,11)], tier_y['bin'], 0.9)
-    l=row([('fastvep-io','file I/O  ·  86 tests',C['mid'],2.4,9.3),
-           ('fastvep-annotate','shared engine  ·  5 tests',C['mid'],2.4,9),
-           ('fastvep-consequence','SNV / indel / SV  ·  27 tests',C['mid'],2.7,8.6),
-           ('fastvep-hgvs','HGVS g/c/p  ·  25 tests',C['mid'],2.1,9),
-           ('fastvep-filter','filter_vep  ·  21 tests',C['mid'],2.0,9)], tier_y['lib'], 0.3)
-    p=row([('fastvep-genome','Transcript / Exon / Gene  ·  18 tests',C['data'],3.4,9.3),
-           ('fastvep-cache','GFF3 · FASTA mmap · cache  ·  54 tests',C['data'],4.0,9),
-           ('fastvep-sa','fastSA · ClinVar, gnomAD  ·  153 tests',C['sa'],3.4,9)], tier_y['prov'], 0.5)
-    c=row([('fastvep-core','Consequence (49 SO) · Allele · Impact · VariantType  ·  20 tests',C['core'],7.6,11)], tier_y['core'], 0)
-    # dependency arrows (downward, tier to tier)
-    yb,yl,yp,yc = tier_y['bin'],tier_y['lib'],tier_y['prov'],tier_y['core']
-    arr(b['cli'], yb, l['annotate']-0.25, yl+H); arr(b['web'], yb, l['annotate']+0.25, yl+H)   # binaries -> shared engine
-    arr(l['io'], yl, p['genome'], yp+H); arr(l['consequence'], yl, p['cache'], yp+H)
-    arr(l['consequence']-0.35, yl, p['genome']+0.5, yp+H)
-    for k in ['genome','cache','sa']: arr(p[k], yp, c['core'], yc+H)                            # providers -> core
+    # ================= Panel A: crates by layer =================
+    axA.set_xlim(0, 14); axA.set_ylim(0.1, 9.3); axA.axis('off')
+    H = 1.0
+    ys = {k: 0.45 + (8.0 - 0.45) * k / (n_layers - 1) for k in range(n_layers)}
+    axA.text(7, 9.15, f"A. Crate architecture: {len(layer)}-crate Cargo workspace (an arrow is a direct dependency)", ha='center', fontsize=13, fontweight='bold', color='#1f2937')
+    pos, width = {}, {}
+    for k in range(n_layers):
+        members = order[k]
+        w = min(3.3, 12.6 / len(members) - 0.25)
+        total = len(members) * w + (len(members) - 1) * 0.25
+        x = 7 - total / 2
+        axA.add_patch(plt.Rectangle((0, ys[k] - 0.14), 14, H + 0.28, facecolor='#f8fafc' if k % 2 else '#eef2ff', edgecolor='none', zorder=0))
+        for c in members:
+            tests = m.get(f'tests_fastvep-{c}', '?')
+            axA.add_patch(FancyBboxPatch((x, ys[k]), w, H, boxstyle="round,pad=0.05", facecolor=CRATE_COLOR[c], edgecolor='#374151', lw=1.2, alpha=0.95, zorder=2))
+            axA.text(x + w / 2, ys[k] + H - 0.2, f"fastvep-{c}", ha='center', va='center', fontsize=9.6 if w > 2.4 else 8.8, fontweight='bold', color='white', zorder=3)
+            # the role breaks at its own " · " separators and not inside a phrase
+            role, line = [], ''
+            for part in CRATE_ROLE[c].split(' · '):
+                if line and len(line) + 3 + len(part) > int(w * 11.5):
+                    role.append(line)
+                    line = part
+                else:
+                    line = f"{line} · {part}" if line else part
+            role.append(line)
+            assert len(role) <= 2, (c, role)
+            for i, line in enumerate(role):
+                axA.text(x + w / 2, ys[k] + H - 0.46 - 0.18 * i, line, ha='center', va='center', fontsize=6.9, color='white', alpha=0.97, style='italic', zorder=3)
+            axA.text(x + w / 2, ys[k] + 0.14, f"{tests} tests", ha='center', va='center', fontsize=7.4, color='white', fontweight='bold', alpha=0.97, zorder=3)
+            pos[c], width[c] = (x + w / 2, ys[k]), w
+            x += w + 0.25
+    # the ends of the arrows are spread along the edges of a box, in the order of the boxes they join, so that they do not meet in one point
+    out_edges = {c: sorted(ds, key=lambda d: pos[d][0]) for c, ds in reduced.items()}
+    in_edges = {c: sorted((o for o, ds in reduced.items() if c in ds), key=lambda o: pos[o][0]) for c in layer}
+    spread = lambda i, n, w: 0.0 if n == 1 else (-0.36 + 0.72 * i / (n - 1)) * w
+    for c, ds in out_edges.items():
+        for i, d in enumerate(ds):
+            x1 = pos[c][0] + spread(i, len(ds), width[c])
+            j = in_edges[d].index(c)
+            x2 = pos[d][0] + spread(j, len(in_edges[d]), width[d])
+            axA.annotate('', xy=(x2, pos[d][1] + H + 0.06), xytext=(x1, pos[c][1] - 0.06),
+                         arrowprops=dict(arrowstyle='->', color='#475569', lw=1.1, alpha=0.8, shrinkA=0, shrinkB=0), zorder=1)
 
     # ================= Panel B: annotation data flow =================
-    axB.set_xlim(0,10); axB.set_ylim(1.0,9.0); axB.axis('off')
-    axB.text(5,8.7,'B. Annotation data flow',ha='center',fontsize=13,fontweight='bold',color='#1f2937')
-    stages=[('VCF input','multi-sample · SV · gzip','#64748b'),
-            ('Parse & normalize','fastvep-io',C['mid']),
-            ('Transcript overlap','fastvep-cache · binary search',C['data']),
-            ('Consequence prediction','fastvep-consequence · 49 SO terms',C['mid']),
-            ('HGVS g / c / p','fastvep-hgvs',C['mid']),
-            ('Supplementary annotation','fastvep-sa · .osa / .osa2',C['sa']),
-            ('Output','CSQ (47 fields) · TSV · JSON','#64748b')]
-    n=len(stages); top=7.95; bot=1.5; step=(top-bot)/(n-1)
-    for i,(t,s,col) in enumerate(stages):
-        y=top-i*step
-        axB.add_patch(FancyBboxPatch((1.1,y-0.34),7.8,0.68,boxstyle="round,pad=0.1",facecolor=col,edgecolor='#374151',lw=1.2,alpha=0.92))
-        axB.text(5,y+0.1,t,ha='center',va='center',fontsize=10,fontweight='bold',color='white')
-        axB.text(5,y-0.17,s,ha='center',va='center',fontsize=7.3,color='white',alpha=0.92,style='italic')
-        if i<n-1: axB.annotate('',xy=(5,y-step+0.36),xytext=(5,y-0.38),arrowprops=dict(arrowstyle='->',color='#6b7280',lw=1.8))
+    axB.set_xlim(0, 10); axB.set_ylim(0.1, 9.3); axB.axis('off')
+    axB.text(5, 9.15, 'B. Annotation data flow', ha='center', fontsize=13, fontweight='bold', color='#1f2937')
+    stages = [('VCF input', 'multi-sample · SV · gzip', '#64748b'),
+              ('Parse & normalize', 'fastvep-io', C['mid']),
+              ('Transcript overlap', 'fastvep-cache · binary search', C['data']),
+              ('Consequence prediction', f"fastvep-consequence · {m['so_consequence_types_emitted']} SO terms emitted", C['mid']),
+              ('HGVS g / c / p', 'fastvep-hgvs', C['mid']),
+              ('Supplementary annotation', 'fastvep-sa · .osa / .osa2', C['sa']),
+              ('Output', f"CSQ ({m['csq_output_fields']} fields) · TSV · JSON", '#64748b')]
+    n = len(stages); top = 8.1; bot = 1.5; step = (top - bot) / (n - 1)
+    for i, (t, s, col) in enumerate(stages):
+        y = top - i * step
+        axB.add_patch(FancyBboxPatch((1.1, y - 0.34), 7.8, 0.68, boxstyle="round,pad=0.1", facecolor=col, edgecolor='#374151', lw=1.2, alpha=0.92))
+        axB.text(5, y + 0.1, t, ha='center', va='center', fontsize=10, fontweight='bold', color='white')
+        axB.text(5, y - 0.17, s, ha='center', va='center', fontsize=7.3, color='white', alpha=0.92, style='italic')
+        if i < n - 1: axB.annotate('', xy=(5, y - step + 0.36), xytext=(5, y - 0.38), arrowprops=dict(arrowstyle='->', color='#6b7280', lw=1.8))
 
     # stats strip across the bottom
-    stats='12 crates    ·    ~37,500 LOC    ·    641 tests    ·    49 SO terms    ·    47 CSQ fields    ·    3.3 MB static binary    ·    0 runtime dependencies    ·    fastVEP.org'
-    fig.text(0.5,0.02,stats,ha='center',fontsize=10.5,color='#374151',
-             bbox=dict(boxstyle='round,pad=0.45',facecolor='#f3f4f6',edgecolor='#d1d5db'))
+    stats = (f"{m['crates']} crates    ·    {int(m['total_source_lines']):,} lines of Rust    ·    {int(m['tests_total']):,} tests    ·    "
+             f"{m['so_consequence_types']} SO terms ({m['so_consequence_types_emitted']} emitted)    ·    {m['csq_output_fields']} CSQ fields    ·    "
+             f"{rs['binary_size']} MB binary    ·    no run-time dependency but libc    ·    fastVEP.org")
+    fig.text(0.5, 0.02, stats, ha='center', fontsize=10.5, color='#374151', bbox=dict(boxstyle='round,pad=0.45', facecolor='#f3f4f6', edgecolor='#d1d5db'))
     plt.subplots_adjust(bottom=0.09, top=0.97)
-    for ext in ['png','pdf']: plt.savefig(os.path.join(FIG_DIR, f'fig1_architecture.{ext}'), dpi=300, bbox_inches='tight')
+    for ext in ['png', 'pdf']: plt.savefig(os.path.join(FIG_DIR, f'fig1_architecture.{ext}'), dpi=300, bbox_inches='tight')
     print("Saved fig1_architecture"); plt.close()
 
 
+# ---------------------------------------------------------------------------------------------------------------------
 def fig2_comparison():
     """THE figure: fastVEP vs Ensembl VEP, single-threaded, measured genome-wide."""
     h2h = read_csv('vep_comparison.csv')       # chr22 scaling (single thread)
     gw = read_csv('vep_genomewide.csv')        # genome-wide 3-condition head-to-head
     orgs = read_csv('organism_comparison.csv')
+    giab = read_csv('giab_benchmark.csv')[0]
     if not HAS_MPL: return
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6.5))
@@ -122,35 +231,45 @@ def fig2_comparison():
     ax1.plot(hv, ft, 'o-', color=C['fast'], lw=2.5, ms=9, label='fastVEP (chr22, 1 thread)', zorder=3)
     ax1.plot(hv, vt, 's-', color=C['vep'], lw=2.5, ms=9, label='Ensembl VEP (chr22, 1 thread)', zorder=3)
 
-    # crossover marker
-    ax1.axvspan(1000, 5000, color='#94a3b8', alpha=0.08, zorder=0)
-    ax1.annotate('crossover\n(~2-3K variants)', xy=(2200, 1.4), fontsize=7.5, color='#475569', ha='center', style='italic')
+    # the crossover is where the two curves meet, found by interpolating the log of the ratio between the two points around it
+    cross = None
+    for i in range(1, len(hv)):
+        r0, r1 = math.log(vt[i - 1] / ft[i - 1]), math.log(vt[i] / ft[i])
+        if r0 < 0 <= r1:
+            f = -r0 / (r1 - r0)
+            cross = math.exp(math.log(hv[i - 1]) + f * (math.log(hv[i]) - math.log(hv[i - 1])))
+            lo, hi = hv[i - 1], hv[i]
+            ax1.axvspan(lo, hi, color='#94a3b8', alpha=0.08, zorder=0)
+            ax1.annotate(f'crossover\n(~{cross:,.0f} variants)', xy=(math.sqrt(lo * hi), 0.17), fontsize=7.5, color='#475569', ha='center', va='bottom', style='italic')
+            break
 
-    # genome-wide MEASURED points at 4.05M (VEP = per-chromosome sum)
-    NGW = 4048342
+    # genome-wide MEASURED points (VEP = per-chromosome sum)
+    NGW = int(giab['variants'])
     fv1t = float(gw[0]['fastvep_1t_sec']); fvmt = float(gw[0]['fastvep_mt_sec']); vepgw = float(gw[0]['vep_sec'])
     ax1.plot([hv[-1], NGW], [vt[-1], vepgw], color=C['vep'], lw=1, ls=':', alpha=0.5, zorder=2)
     ax1.plot([hv[-1], NGW], [ft[-1], fv1t], color=C['fast'], lw=1, ls=':', alpha=0.5, zorder=2)
     ax1.scatter([NGW], [vepgw], marker='s', s=150, color=C['vep'], edgecolors='white', lw=1.5, zorder=5)
     ax1.scatter([NGW], [fv1t], marker='o', s=150, color=C['fast'], edgecolors='white', lw=1.5, zorder=5)
-    ax1.scatter([NGW], [fvmt], marker='*', s=340, color=C['fast'], edgecolors='white', lw=1.2, zorder=6)
-    ax1.annotate('VEP whole genome\n4,621 s (per-chr sum)', xy=(NGW, vepgw), xytext=(12, 2),
-                 textcoords='offset points', fontsize=7.5, color=C['vep'], ha='left', va='center', fontweight='bold')
-    ax1.annotate('fastVEP 1-thread\n198 s', xy=(NGW, fv1t), xytext=(-12, 2),
+    ax1.scatter([NGW], [fvmt], marker='*', s=300, color=C['fast'], edgecolors='white', lw=1.2, zorder=6)
+    ax1.annotate(f'VEP whole genome\n{vepgw:,.0f} s (per-chr sum)', xy=(NGW, vepgw), xytext=(-12, -4),
+                 textcoords='offset points', fontsize=7.5, color=C['vep'], ha='right', va='top', fontweight='bold')
+    ax1.annotate(f'fastVEP 1-thread\n{fv1t:.0f} s', xy=(NGW, fv1t), xytext=(-12, 8),
                  textcoords='offset points', fontsize=7.5, color=C['fast'], ha='right')
-    ax1.annotate('fastVEP multi-thread 93 s', xy=(NGW, fvmt), xytext=(-12, -16),
+    ax1.annotate(f'fastVEP multi-thread {fvmt:.0f} s', xy=(NGW, fvmt), xytext=(-12, -16),
                  textcoords='offset points', fontsize=7.5, color=C['fast'], ha='right', fontweight='bold')
 
     # fastVEP multi-organism points
     for d in orgs:
         o = d['organism']; v, t = int(d['variants']), float(d['time_sec'])
         if o == 'human':
-            continue  # shown as the 4.05M genome-wide markers above
-        ax1.scatter(v, t, c=OC.get(o, '#999'), s=150, marker='D', alpha=0.9, edgecolors='white', lw=1.2, zorder=4)
+            continue  # shown as the whole-genome markers above
+        ax1.scatter(v, t, c=OC.get(o, '#999'), s=110, marker='D', alpha=0.95, edgecolors='white', lw=1.0, zorder=4)
         label = f"{OL.get(o,o)} {v/1e6:.1f}M" if v > 500000 else f"{OL.get(o,o)} {v/1e3:.0f}K"
-        ax1.annotate(label, xy=(v, t), xytext=(7, 5), textcoords='offset points', fontsize=7, color='#333')
+        near_star = abs(math.log10(v / NGW)) < 0.1
+        ax1.annotate(label, xy=(v, t), xytext=(9, -11) if near_star else (7, 5), textcoords='offset points', fontsize=7, color='#333')
 
     ax1.set_xscale('log'); ax1.set_yscale('log')
+    ax1.set_ylim(0.14, vepgw * 2.2)
     ax1.set_xlabel('Variants', fontsize=12)
     ax1.set_ylabel('Wall-clock time (seconds)', fontsize=12)
     ax1.set_title('A. Annotation time: fastVEP vs Ensembl VEP (single-thread)', fontsize=12.5, fontweight='bold')
@@ -176,16 +295,18 @@ def fig2_comparison():
     ax2.set_xticks(x); ax2.set_xticklabels(labels, fontsize=10)
     ax2.set_xlabel('Annotation workload (complete human WGS)', fontsize=12)
     ax2.set_ylabel('Wall-clock time, full WGS (s, log scale)', fontsize=11)
-    ax2.set_title('B. Whole genome (4.05M variants): single-thread head-to-head', fontsize=12.5, fontweight='bold')
+    ax2.set_title(f'B. Whole genome ({NGW/1e6:.2f}M variants): single-thread head-to-head', fontsize=12.5, fontweight='bold')
     ax2.grid(True, alpha=0.15, axis='y')
-    ax2.set_ylim(80, 12000)
+    ax2.set_ylim(min(fv) / 2.2, max(vp) * 20)
     for i in x:
         ax2.text(i - w/2, fv[i]*1.05, f'{fv[i]:.0f}s', ha='center', va='bottom', fontsize=8.5, color=C['fast'], fontweight='bold')
         ax2.text(i + w/2, vp[i]*1.05, f'{vp[i]:.0f}s', ha='center', va='bottom', fontsize=8.5, color=C['vep'], fontweight='bold')
-        ax2.text(i, max(vp[i], fv[i])*2.1, f'{sp[i]:.1f}x', ha='center', va='bottom', fontsize=13, fontweight='bold', color='#1f2937')
-    ax2.legend(fontsize=9, loc='lower right')
-    ax2.annotate('fastVEP multi-thread (10 cores): 93-105 s', xy=(0.02, 0.03), xycoords='axes fraction',
-                 fontsize=8, style='italic', color='#475569')
+        ax2.text(i, max(vp[i], fv[i])*2.1, f'{sp[i]:.0f}x' if sp[i] >= 10 else f'{sp[i]:.1f}x', ha='center', va='bottom', fontsize=13, fontweight='bold', color='#1f2937')
+    mt = [float(d['fastvep_mt_sec']) for d in gw]
+    handles, labs = ax2.get_legend_handles_labels()
+    handles.append(plt.Line2D([0], [0], marker='*', color=C['fast'], lw=0, ms=12))
+    labs.append(f'fastVEP, all 10 cores: {min(mt):.0f}-{max(mt):.0f} s (not a bar)')
+    ax2.legend(handles, labs, fontsize=9, loc='upper right', framealpha=0.95)
 
     plt.tight_layout()
     for ext in ['png','pdf']: plt.savefig(os.path.join(FIG_DIR, f'fig2_comparison.{ext}'), dpi=300, bbox_inches='tight')
@@ -193,51 +314,73 @@ def fig2_comparison():
 
 
 def fig3_concordance():
-    """VEP concordance: field-level 100% + identical consequence calls.
+    """Agreement with Ensembl VEP 116.3: the cells that differ on each input, and, on the HG002 sample, by column and by cause.
 
-    The compared set is every CSQ field both tools populate in this
-    configuration. TSL is excluded because Ensembl VEP does not fill it when
-    annotating from a GFF3, and SOURCE because it carries the name of the file
-    each tool was given.
+    The counts are `manuscript/data/vep116_agreement.csv` and `vep116_hg002_columns.csv`, which `validation/measure_vep116.py` writes
+    (they are the counts of Part 3 of docs/VEP_DIVERGENCE.md; `vep116_provenance.md` says where they come from).
     """
-    data = read_csv('vep_concordance.csv')
-    types = read_csv('vep_type_concordance.csv')
+    inputs = read_csv('vep116_agreement.csv')
+    cols = read_csv('vep116_hg002_columns.csv')
+    # the legend of panel B says that every cell that differs has a documented cause: a cell without one is not drawn as if it had
+    assert all(int(c['unclassified']) == 0 for c in cols), "a cell of the HG002 sample differs for a cause that docs/VEP_DIVERGENCE.md does not record"
     if not HAS_MPL: return
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7.5), gridspec_kw={'width_ratios': [1, 1.12]})
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15.5, 7), gridspec_kw={'width_ratios': [1, 1.05]})
 
-    # === Panel A: 23 fields, all 100% concordant (lollipop) ===
-    fields = [d['field'] for d in data]
-    acc = [float(d['accuracy']) for d in data]
-    y = range(len(fields))
-    ax1.hlines(list(y), 0, acc, color=C['success'], lw=2.5, alpha=0.55, zorder=1)
-    ax1.scatter(acc, list(y), color=C['success'], s=90, zorder=3, edgecolors='white', lw=1)
-    for yi in y:
-        ax1.text(101.5, yi, '✓', va='center', ha='center', fontsize=11, color=C['success'], fontweight='bold')
-    ax1.set_yticks(list(y)); ax1.set_yticklabels(fields, fontsize=9.5, fontfamily='monospace')
+    # === Panel A: share of cells that differ, by input (log scale; a dot for each, because a bar on a log axis has the length of its baseline) ===
+    label = {'example': 'VEP example set\n(173 variants)', 'inframe_deletions': 'ClinVar in-frame\ndeletions (400)',
+             'hg002_1in200': 'HG002 call set,\n1-in-200 sample', 'clinvar_1in5': 'ClinVar 2-star+,\n1-in-5, no HGVS columns',
+             'clinvar_1in5_hgvs': 'ClinVar 2-star+,\n1-in-5, with HGVS columns',
+             'world': 'Generated world\n(both strands, multi-ALT)', 'edges': 'Its edges\n(every shape at every boundary)', 'lone_indels': 'Its lone indels\n(shared bases)'}
+    colour = {k: C['fast'] for k in ('example', 'inframe_deletions', 'hg002_1in200', 'clinvar_1in5', 'clinvar_1in5_hgvs')}
+    colour.update({k: C['moderate'] for k in ('world', 'edges', 'lone_indels')})
+    # The RefSeq GFF3 row of the data is not drawn: its cells differ by design in two columns that a RefSeq GFF3 cannot carry (docs/VEP_DIVERGENCE.md).
+    inputs = [r for r in inputs if r['input'] in label]
+    # a log axis has no zero: an input with no cell that differs sits on the left edge, as an open circle
+    floor = 1e-5
+    share = [100.0 * int(r['cells_differ']) / int(r['cells_compared']) for r in inputs]
+    plotted = [max(v, floor) for v in share]
+    y = list(range(len(inputs)))
+    ax1.hlines(y, floor, plotted, color=[colour[r['input']] for r in inputs], lw=2, alpha=0.45, zorder=1)
+    ax1.scatter(plotted, y, s=130, color=[colour[r['input']] if v > 0 else 'white' for r, v in zip(inputs, share)],
+                edgecolors=[colour[r['input']] if v == 0 else 'white' for r, v in zip(inputs, share)], lw=1.6, zorder=3)
+    for yi, r, v, pv in zip(y, inputs, share, plotted):
+        ax1.text(pv * 1.7, yi, f"{int(r['cells_differ']):,} of {int(r['cells_compared']):,} cells ({v:.2g}%)", va='center', fontsize=9, color='#333')
+    ax1.set_yticks(y); ax1.set_yticklabels([label[r['input']] for r in inputs], fontsize=9.5)
     ax1.invert_yaxis()
-    ax1.set_xlim(0, 104); ax1.set_xticks([0, 25, 50, 75, 100])
-    ax1.axvline(100, color=C['success'], ls='--', alpha=0.4, lw=1)
-    ax1.set_xlabel('Concordance with Ensembl VEP v115.1 (%)', fontsize=11)
-    ax1.set_title('A. Field-level concordance: 22/22 fields = 100%\n(2,920 shared transcript-allele pairs)', fontsize=12, fontweight='bold')
+    ax1.set_xscale('log'); ax1.set_xlim(floor, 1000)   # room for the longest label, which ends beyond 10^2
+    ax1.set_xticks([10.0 ** k for k in range(-5, 3)])  # no tick above 100%
+    ax1.minorticks_off()
+    ax1.set_xlabel('Cells that differ from Ensembl VEP 116.3 (% of the cells compared, log scale)', fontsize=11)
+    ax1.set_title('A. Cells that differ, by input', fontsize=12, fontweight='bold')
     ax1.grid(True, alpha=0.2, axis='x')
+    ax1.legend(handles=[plt.Line2D([0], [0], marker='o', color=C['fast'], lw=0, ms=9, label='real call sets'),
+                        plt.Line2D([0], [0], marker='o', color=C['moderate'], lw=0, ms=9, label='generated worlds, built to be hard')],
+               fontsize=9.5, loc='center right', bbox_to_anchor=(1.0, 0.5))
 
-    # === Panel B: consequence-type calls, fastVEP vs VEP (identical) ===
-    tnames = [d['consequence'] for d in types]
-    fv = [int(d['fastvep']) for d in types]
-    vp = [int(d['vep']) for d in types]
-    yb = range(len(tnames)); h = 0.38
-    ax2.barh([i + h/2 for i in yb], fv, h, color=C['fast'], alpha=0.9, label='fastVEP')
-    ax2.barh([i - h/2 for i in yb], vp, h, color=C['vep'], alpha=0.9, label='Ensembl VEP')
-    ax2.set_yticks(list(yb)); ax2.set_yticklabels(tnames, fontsize=9.5, fontfamily='monospace')
+    # === Panel B: the HG002 sample by column, stacked by cause ===
+    names = [c['column'] for c in cols]
+    yb = list(range(len(names)))
+    parts = [('divergence_11_several_alts', C['moderate'], 'alleles of records with several ALTs (divergence 11)'),
+             ('divergence_4_terminator_intron', C['high'], 'an intronic base after the terminator (divergence 4)'),
+             ('divergence_17_three_prime_rule', C['low'], "a change the 3'-rule carries over an intron (divergence 17)")]
+    left = [0] * len(names)
+    for key, colr, lab in parts:
+        vals = [int(c[key]) for c in cols]
+        ax2.barh(yb, vals, left=left, color=colr, alpha=0.9, label=lab)
+        left = [l + v for l, v in zip(left, vals)]
+    rows_n = int(cols[0]['paired_rows'])
+    for yi, tot in zip(yb, left):
+        ax2.text(tot + 25 if tot else 25, yi, f'{tot:,}' if tot else '0', va='center', fontsize=9, color='#333' if tot else C['success'], fontweight='bold' if tot == 0 else 'normal')
+    ax2.set_yticks(yb); ax2.set_yticklabels(names, fontsize=9.5, fontfamily='monospace')
     ax2.invert_yaxis()
-    ax2.set_xscale('log'); ax2.set_xlim(1, 2000)
-    ax2.set_xlabel('Consequence calls (log scale)', fontsize=11)
-    ax2.set_title('B. Consequence calls per type: fastVEP vs VEP\n(identical across all 12 observed types)', fontsize=12, fontweight='bold')
+    ax2.set_xlim(0, max(left) * 1.18)
+    ax2.set_xlabel(f'Cells that differ (of {rows_n:,} paired rows per column)', fontsize=11)
+    total = sum(left)
+    agreeing = sum(1 for t in left if t == 0)
+    ax2.set_title(f'B. HG002 sample, by column: {total:,} cells differ\n({agreeing} of the {len(names)} columns shown agree on every row)', fontsize=12, fontweight='bold')
     ax2.grid(True, alpha=0.2, axis='x')
-    for i in yb:
-        ax2.text(fv[i]*1.15, i, f'{fv[i]:,}', va='center', fontsize=8, color='#444')
-    ax2.legend(fontsize=10, loc='lower right')
+    ax2.legend(title='every differing cell has a documented cause:', title_fontsize=9, fontsize=9, loc='upper right')
 
     plt.tight_layout()
     for ext in ['png','pdf']: plt.savefig(os.path.join(FIG_DIR, f'fig3_concordance.{ext}'), dpi=300, bbox_inches='tight')
@@ -245,22 +388,19 @@ def fig3_concordance():
 
 
 def fig4_consequences():
-    """Consequence distribution (genome-wide, GIAB HG002 full WGS)."""
+    """Consequence distribution (genome-wide, GIAB HG002 full WGS), each call under its most severe term."""
     data = read_csv('consequence_distribution.csv')
+    impact = {r['so_term']: r['impact'] for r in read_csv('so_terms.csv')}
+    giab = read_csv('giab_benchmark.csv')[0]
     if not HAS_MPL: return
     consequences = [d['consequence'] for d in data]
     counts = [int(d['count']) for d in data]
-    impact_map = {'splice_acceptor_variant':'HIGH','splice_donor_variant':'HIGH','stop_gained':'HIGH',
-                  'frameshift_variant':'HIGH','start_lost':'HIGH','stop_lost':'HIGH',
-                  'missense_variant':'MODERATE','inframe_insertion':'MODERATE','inframe_deletion':'MODERATE',
-                  'splice_region_variant':'LOW','synonymous_variant':'LOW','splice_polypyrimidine_tract_variant':'LOW',
-                  'splice_donor_5th_base_variant':'LOW','splice_donor_region_variant':'LOW','stop_retained_variant':'LOW'}
-    colors = [C.get(impact_map.get(c,'MODIFIER').lower(), C['modifier']) for c in consequences]
+    colors = [C[impact[c].lower()] for c in consequences]   # a KeyError means a term that so_terms.csv does not know
     fig, ax = plt.subplots(figsize=(11, 8))
     bars = ax.barh(range(len(consequences)), counts, color=colors, alpha=0.85)
     ax.set_yticks(range(len(consequences))); ax.set_yticklabels(consequences, fontsize=9.5, fontfamily='monospace')
-    ax.invert_yaxis(); ax.set_xlabel('Annotation count (log scale)', fontsize=12)
-    ax.set_title('Predicted Consequence Distribution\n(GIAB HG002 full WGS: 4.05M variants, 50.1M annotations, 26 SO terms)', fontsize=13, fontweight='bold')
+    ax.invert_yaxis(); ax.set_xlabel('Consequence calls (log scale)', fontsize=12)
+    ax.set_title(f"Predicted Consequence Distribution\n(GIAB HG002 full WGS: {int(giab['variants'])/1e6:.2f}M variants, {sum(counts)/1e6:.1f}M calls, {len(consequences)} SO terms as the most severe)", fontsize=13, fontweight='bold')
     ax.grid(True, alpha=0.3, axis='x'); ax.set_xscale('log')
     for bar, count in zip(bars, counts):
         ax.text(bar.get_width()*1.15, bar.get_y()+bar.get_height()/2, f'{count:,}', va='center', fontsize=8.5, color='#555')
@@ -286,49 +426,50 @@ def fig5_organisms():
     # order by transcript count (genome complexity) for both panels
     idx = sorted(range(len(orgs)), key=lambda i: transcripts[i])
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6.4))
 
     # === Panel A: throughput vs genome complexity (consistency) ===
     tx = [transcripts[i] for i in idx]; vp = [vps[i] for i in idx]
     cols = [OC.get(orgs[i], '#999') for i in idx]
-    ax1.axhspan(46000, 86000, color='#94a3b8', alpha=0.10, zorder=0)
+    ax1.axhspan(min(vps), max(vps), color='#94a3b8', alpha=0.10, zorder=0)
     ax1.plot(tx, vp, '-', color='#cbd5e1', lw=1.5, zorder=1)
     ax1.scatter(tx, vp, c=cols, s=260, edgecolors='white', lw=1.8, zorder=3)
-    # per-organism label offsets to avoid collisions (Drosophila/Arabidopsis are adjacent)
-    off = {'yeast': (0, 16, 'center'), 'drosophila': (-42, 16, 'center'),
-           'arabidopsis': (44, -30, 'center'), 'mouse': (0, 16, 'center'), 'human': (-6, 18, 'right')}
-    for i in idx:
-        dx, dy, ha = off.get(orgs[i], (0, 16, 'center'))
+    # label offsets are given by the order along the curve, so that adjacent organisms do not collide
+    shifts = [(6, 16, 'left'), (-42, 16, 'center'), (44, -30, 'center'), (0, 16, 'center'), (-6, 18, 'right')]
+    for rank, i in enumerate(idx):
+        dx, dy, ha = shifts[rank % len(shifts)]
         ax1.annotate(f"{OL.get(orgs[i],orgs[i])}\n{vps[i]:,} v/s",
                      xy=(transcripts[i], vps[i]), xytext=(dx, dy), textcoords='offset points',
                      ha=ha, fontsize=8.5, fontweight='bold', color='#333')
     ax1.set_xscale('log')
     ax1.set_xlabel('Transcripts (genome complexity, log scale)', fontsize=12)
     ax1.set_ylabel('Throughput (variants/sec)', fontsize=12)
-    ax1.set_title('A. Consistent throughput across a 72x range\nof genome complexity (7K-508K transcripts)', fontsize=12, fontweight='bold')
-    ax1.set_ylim(0, 100000)
+    ax1.set_title(f'A. Throughput across a {max(transcripts)/min(transcripts):.0f}x range\nof genome complexity ({min(transcripts)/1000:.0f}K-{max(transcripts)/1000:.0f}K transcripts)', fontsize=12, fontweight='bold')
+    ax1.set_ylim(0, math.ceil(max(vps) * 1.25 / 100000) * 100000)
     ax1.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{x/1000:.0f}K'))
     ax1.grid(True, alpha=0.15)
-    ax1.text(0.5, 0.06, '47-86K variants/sec band', transform=ax1.transAxes, ha='center',
+    ax1.text(0.5, 0.06, f'{min(vps)/1000:.0f}-{max(vps)/1000:.0f}K variants/sec band', transform=ax1.transAxes, ha='center',
              fontsize=8.5, style='italic', color='#64748b')
 
-    # === Panel B: absolute scale — complete datasets, wall-clock ===
+    # === Panel B: absolute scale: complete datasets, wall-clock ===
     yb = range(len(idx))
     nvar = [variants[i] for i in idx]
-    bars = ax2.barh(list(yb), nvar, color=cols, alpha=0.88, height=0.62)
+    ax2.barh(list(yb), nvar, color=cols, alpha=0.88, height=0.62)
     ax2.set_yticks(list(yb))
     ax2.set_yticklabels([f"{OL.get(orgs[i],orgs[i])}" for i in idx], fontsize=11)
-    ax2.set_xscale('log'); ax2.set_xlim(1e5, 1e8)
+    ax2.set_xscale('log'); ax2.set_xlim(1e5, 5e8)
     ax2.set_xlabel('Variants annotated (complete dataset, log scale)', fontsize=12)
-    ax2.set_title('B. Complete gold-standard datasets annotated\n(wall-clock time per dataset)', fontsize=12, fontweight='bold')
+    ax2.set_title('B. Complete datasets annotated\n(wall-clock time per dataset)', fontsize=12, fontweight='bold')
     ax2.grid(True, alpha=0.15, axis='x')
     for i, ii in enumerate(idx):
         t = times[ii]
-        tstr = f"{t:.0f}s" if t < 100 else f"{t/60:.1f} min"
+        tstr = f"{t:.1f}s" if t < 10 else (f"{t:.0f}s" if t < 100 else f"{t/60:.1f} min")
         ax2.text(variants[ii]*1.25, i, f"{variants[ii]/1e6:.2f}M var  ·  {tstr}",
                  va='center', fontsize=9, fontweight='bold', color='#333')
+    fig.text(0.5, 0.005, 'The Drosophila and mouse variant files are in the coordinates of dm3 and GRCm38, against gene models of BDGP6.54 and GRCm39: '
+             'those two runs measure throughput, not annotation.', ha='center', fontsize=8, style='italic', color='#64748b')
 
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0.03, 1, 1))
     for ext in ['png','pdf']: plt.savefig(os.path.join(FIG_DIR, f'fig5_organisms.{ext}'), dpi=300, bbox_inches='tight')
     print("Saved fig5_organisms"); plt.close()
 

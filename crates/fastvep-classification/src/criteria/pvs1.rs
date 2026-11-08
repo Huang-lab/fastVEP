@@ -519,7 +519,7 @@ fn is_lof_intolerant_gene(input: &ClassificationInput, config: &AcmgConfig) -> b
 
     // A curated LOF mechanism enables PVS1 even where constraint does not
     // reach the threshold. Resolved through `effective_mechanism` so the
-    // shipped table and a user's `gene_overrides` are read the same way here
+    // default table and a user's `gene_overrides` are read the same way here
     // as in the gain-of-function gate above; otherwise a gene could be
     // LOF-enabled by one map and GOF-blocked by the other.
     if let Some(mechanism) = config.effective_mechanism(input.gene_symbol.as_deref()) {

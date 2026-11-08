@@ -1,0 +1,8 @@
+measurement,variants,vep_sec
+chr22_scaling,1000,0.64
+chr22_scaling,5000,7.91
+chr22_scaling,10000,24.07
+chr22_scaling,50284,112.51
+wgs_conseq,4048342,6516
+wgs_clinvar,4048342,6662
+wgs_gnomad_clinvar,4048342,7334

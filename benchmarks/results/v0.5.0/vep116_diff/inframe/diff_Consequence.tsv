@@ -1,0 +1,4 @@
+Uploaded_variation	Allele	Feature	VEP	fastVEP
+10_80169068_ACCAGGGTAGGTCACTGGTGGCTGC/A	-	ENST00000437799	stop_retained_variant,3_prime_UTR_variant	coding_sequence_variant,3_prime_UTR_variant
+12_132642254_GCCT/G	-	ENST00000434528	start_lost,inframe_deletion,NMD_transcript_variant	inframe_deletion,NMD_transcript_variant
+12_21483440_TCTC/T	-	ENST00000396093	stop_retained_variant,3_prime_UTR_variant	coding_sequence_variant,3_prime_UTR_variant

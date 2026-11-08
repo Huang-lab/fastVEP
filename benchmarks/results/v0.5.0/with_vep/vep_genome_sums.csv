@@ -1,0 +1,4 @@
+condition,chromosomes,variants,wall_s,cpu_s,matched_clinvar,matched_gnomad
+plain,22,4048342,6516.0,6486.9,,
+clinvar,22,4048342,6661.5,6633.2,44465,
+joint,22,4048342,7333.6,7303.4,44465,103525

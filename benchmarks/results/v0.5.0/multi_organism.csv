@@ -1,0 +1,6 @@
+dataset,organism,variants,time_seconds,variants_per_second
+yeast_full,Yeast,260526,0.4704,553839
+drosophila_full,Drosophila,4438427,9.6160,461567
+arabidopsis_full,Arabidopsis,12883854,27.0025,477136
+mouse_full,Mouse,26062054,65.4077,398455
+human_full,Human,4048342,12.3829,326930

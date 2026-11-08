@@ -337,13 +337,13 @@ mod tests {
 
     #[test]
     fn test_ba1_uses_a_published_per_gene_bar_in_both_directions() {
-        // CDKL5's published bar is 8.3e-5, six hundred times tighter than the
+        // CDKL5's published threshold is 8.3e-5, six hundred times tighter than the
         // 0.05 default: a variant at 1e-4 is common for that disorder and not
         // remotely common in general.
         let cfg = with_gene_ba1("CDKL5", 8.3e-5);
         assert!(evaluate_ba1(&at_frequency("CDKL5", 1e-4), &cfg).met);
         assert!(!evaluate_ba1(&at_frequency("CDKL5", 5e-5), &cfg).met);
-        // A gene the table says nothing about keeps the global bar.
+        // A gene the table says nothing about keeps the global threshold.
         assert!(!evaluate_ba1(&at_frequency("TP53", 1e-4), &cfg).met);
 
         // ABCA4's runs the other way: 0.163, three times looser than default,
@@ -358,7 +358,7 @@ mod tests {
     ///
     /// This is the test that was missing. The exception matcher compared the
     /// whole HGVS string, the unit tests fed it bare `c.` tokens the pipeline
-    /// never produces, and the list shipped inert - BA1 fired on ACAD9, HFE
+    /// never produces, and the list was inert from the start - BA1 fired on ACAD9, HFE
     /// p.His63Asp, MEFV p.Pro369Ser and PIBF1 regardless, calling all four
     /// Benign. Verified end to end afterwards, not just here.
     #[test]
@@ -501,7 +501,7 @@ mod tests {
         );
     }
 
-    /// G6PD p.Val68Met is the one reviewer-named allele that crosses the BA1 bar
+    /// G6PD p.Val68Met is the one reviewer-named allele that crosses the BA1 threshold
     /// as well as BS1's: its population-maximum frequency is 0.131, so without
     /// the exception it would collect Standalone benign evidence.
     #[test]
@@ -572,8 +572,8 @@ mod tests {
     #[test]
     fn test_ba1_reports_tight_thresholds_readably() {
         // The summary used to format both numbers with `{:.2}`, which prints a
-        // bar of 8.3e-5 as "0.00" - fine while every bar was 0.05, actively
-        // misleading once per-gene bars arrived.
+        // threshold of 8.3e-5 as "0.00" - fine while every threshold was 0.05, actively
+        // misleading once per-gene thresholds arrived.
         let cfg = with_gene_ba1("CDKL5", 8.3e-5);
         let summary = evaluate_ba1(&at_frequency("CDKL5", 1e-4), &cfg).summary;
         assert!(summary.contains("8.30e-5"), "{summary}");

@@ -4,7 +4,8 @@ set -euo pipefail
 # fastVEP validation suite — compares against Ensembl VEP Docker on real variant data.
 #
 # Prerequisites:
-#   - fastvep binary in PATH (cargo install --path crates/fastvep-cli)
+#   - the fastvep binary to test: FASTVEP=/path/to/fastvep (default: the `fastvep` on PATH). The script prints its
+#     version, because a `cargo install` made months ago and left on PATH is a build without the fixes being validated
 #   - Docker with ensemblorg/ensembl-vep:release_115.1
 #   - Full human genome data in test_data/organisms/human/
 #   - Mouse data in validation/mouse/ (auto-downloaded if missing)
@@ -15,11 +16,17 @@ set -euo pipefail
 #   ./validation/run_validation.sh mouse        # mouse only
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-RESULTS_DIR="$SCRIPT_DIR/results"
+# PROJECT_DIR is where the data (test_data/) is read and what Docker mounts; it is the checkout this script is in unless it is
+# set, as it has to be when the script is run from a git worktree whose test_data is a link to the main checkout's.
+PROJECT_DIR="${PROJECT_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+RESULTS_DIR="${RESULTS_DIR:-$PROJECT_DIR/validation/results}"
 VEP_IMAGE="ensemblorg/ensembl-vep:release_115.1"
 VEP_CACHE="/tmp/vep_cache"
 HUMAN_DIR="$PROJECT_DIR/test_data/organisms/human"
+
+FASTVEP="${FASTVEP:-$(command -v fastvep || true)}"
+[[ -x "$FASTVEP" ]] || { echo "no fastvep binary: set FASTVEP=/path/to/fastvep" >&2; exit 1; }
+echo "fastVEP: $FASTVEP ($("$FASTVEP" --version))"
 
 mkdir -p "$RESULTS_DIR" "$VEP_CACHE"
 
@@ -27,7 +34,7 @@ mkdir -p "$RESULTS_DIR" "$VEP_CACHE"
 
 run_fastvep() {
     local input="$1" gff3="$2" fasta="$3" output="$4"
-    fastvep annotate -i "$input" --gff3 "$gff3" --fasta "$fasta" \
+    "$FASTVEP" annotate -i "$input" --gff3 "$gff3" --fasta "$fasta" \
         --hgvs --symbol --canonical -o "$output" 2>&1
 }
 
@@ -76,18 +83,25 @@ run_human() {
         return
     fi
 
-    # VEP example (173 chr22 variants)
+    # VEP example (173 variants: 136 on chr22 and 37 on chr21)
     local vep_example="$SCRIPT_DIR/human/vep_example_GRCh38.vcf"
     if [[ -f "$vep_example" ]]; then
         echo ""
-        echo "--- VEP Example (173 chr22 variants, full genome annotations) ---"
+        echo "--- VEP Example (173 variants, full genome annotations) ---"
         echo "  Running fastVEP..."
         run_fastvep "$vep_example" "$human_gff3" "$human_fasta" "$RESULTS_DIR/fastvep_vep_example.vcf"
 
-        echo "  Running Ensembl VEP (requires Docker)..."
-        # VEP needs sorted+indexed GFF3; use the full GFF3 if indexed
-        echo "  NOTE: VEP comparison requires manually prepared sorted GFF3"
-        echo "  Skipping VEP for now — use compare_vep.py on existing results"
+        # VEP reads the GFF3 through tabix and rejects an unindexed one; run_divergence.sh prepares the sorted copy once.
+        local sorted_gff3="$HUMAN_DIR/Homo_sapiens.GRCh38.115.sorted.gff3.gz"
+        if [[ -f "$sorted_gff3" && -f "$sorted_gff3.tbi" ]]; then
+            echo "  Running Ensembl VEP (requires Docker)..."
+            run_vep_docker "validation/human/vep_example_GRCh38.vcf" "${sorted_gff3#"$PROJECT_DIR"/}" \
+                "${human_fasta#"$PROJECT_DIR"/}" "${RESULTS_DIR#"$PROJECT_DIR"/}/vep_vep_example.vcf"
+            echo "  Comparing..."
+            compare "$RESULTS_DIR/fastvep_vep_example.vcf" "$RESULTS_DIR/vep_vep_example.vcf"
+        else
+            echo "  No sorted, indexed GFF3 at $sorted_gff3: run validation/run_divergence.sh once, which prepares it"
+        fi
     fi
 
     # ClinVar in-frame deletions: the only input here that exercises

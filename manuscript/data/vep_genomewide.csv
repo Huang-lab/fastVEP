@@ -1,4 +1,4 @@
 condition,label,fastvep_1t_sec,fastvep_mt_sec,vep_sec,fastvep_1t_vps,fastvep_mt_vps,vep_vps,speedup
-conseq,Consequence,197.84,92.99,4621,20466,43535,876,23.4
-clinvar,+ ClinVar,197.37,93.39,4803,20517,43349,843,24.3
-gnomad_clinvar,+ gnomAD + ClinVar,218.54,104.52,4905,18527,38733,825,22.4
+conseq,Consequence,42.19,11.09,6516,95950,365143,621,154.4
+clinvar,+ ClinVar,44.46,12.28,6662,91062,329670,608,149.9
+gnomad_clinvar,+ gnomAD + ClinVar,54.63,17.02,7334,74099,237858,552,134.2

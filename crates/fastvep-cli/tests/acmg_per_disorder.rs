@@ -6,15 +6,15 @@
 //! was read, the classifier found inheritance only where a disease's *name* said
 //! "dominant" or "recessive", so a gene ClinGen curates as autosomal recessive and
 //! calls "phenylketonuria" was read as having no inheritance at all, and PM2 held
-//! it to the dominant bar. These drive the real `run_annotate` over a GFF3, a FASTA
+//! it to the dominant threshold. These drive the real `run_annotate` over a GFF3, a FASTA
 //! and databases built by `run_sa_build` from files laid out the way
 //! `clingen_gdv_to_oga.py` lays them out, so they fail if any link from the
 //! curated field to the written classification regresses.
 //!
 //! The gene has an autosomal dominant disease and an autosomal recessive one, and
-//! the variant sits at an allele frequency that is above the dominant PM2 bar
+//! the variant sits at an allele frequency that is above the dominant PM2 threshold
 //! (4e-5) and below the recessive one (7e-5). The call for the gene as a whole
-//! takes the strict bar; each mode of inheritance is classified on its own beside
+//! takes the strict threshold; each mode of inheritance is classified on its own beside
 //! it.
 
 use fastvep_cli::pipeline::{run_annotate, run_sa_build, AnnotateConfig, PickFlags};
@@ -201,7 +201,7 @@ fn criterion<'a>(result: &'a Value, prefix: &str) -> &'a Value {
 fn a_gene_with_a_dominant_and_a_recessive_disease_is_classified_against_each() {
     let acmg = acmg_of(&annotate(&[AD_DISEASE, AR_DISEASE], 5e-5, 70, "json", true));
 
-    // The call for the gene as a whole reads it as both, which is the strict bar.
+    // The call for the gene as a whole reads it as both, which is the strict threshold.
     assert!(!met(&acmg, "PM2"), "{acmg}");
     assert_eq!(
         criterion(&acmg, "PM2")["details"]["inheritance_basis"],
@@ -216,8 +216,14 @@ fn a_gene_with_a_dominant_and_a_recessive_disease_is_classified_against_each() {
     assert_eq!(codes, ["AD", "AR"]);
 
     let (ad, ar) = (&per[0], &per[1]);
-    assert!(!met(ad, "PM2"), "5e-5 is above the dominant bar: {ad}");
-    assert!(met(ar, "PM2"), "5e-5 is below the recessive bar: {ar}");
+    assert!(
+        !met(ad, "PM2"),
+        "5e-5 is above the dominant threshold: {ad}"
+    );
+    assert!(
+        met(ar, "PM2"),
+        "5e-5 is below the recessive threshold: {ar}"
+    );
     assert_eq!(criterion(ar, "PM2")["details"]["inheritance_basis"], "AR");
 
     // Each entry names the diseases it was made against, as ClinGen curates them.
@@ -239,7 +245,7 @@ fn a_gene_with_a_dominant_and_a_recessive_disease_is_classified_against_each() {
 #[test]
 fn a_gene_curated_as_recessive_takes_the_recessive_bar_whatever_its_disease_is_called() {
     // The label says nothing about inheritance. Before the tag was read, this
-    // gene was read as having none and PM2 was held to the dominant bar.
+    // gene was read as having none and PM2 was held to the dominant threshold.
     let acmg = acmg_of(&annotate(
         &["phenylketonuria (ClinGen Definitive/AR, MONDO:0009861)"],
         5e-5,

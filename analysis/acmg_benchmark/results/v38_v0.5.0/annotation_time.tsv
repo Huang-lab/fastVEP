@@ -1,0 +1,7 @@
+# /private/tmp/claude-502/-Users-kuan-lin-huang-Projects-fastVEP/696ff2b0-3e7d-47aa-b41a-084d4dfce957/scratchpad/acmg_bins/fastvep_v38 (fastvep 0.5.0-rc.1), started 2026-11-07T08:14:52Z, macOS-26.5.1-arm64-arm-64bit
+threads	run	wall_s	cpu_s	peak_rss_mib
+all	1	24.91	112.8	5386
+all	2	25.32	113.8	5395
+all	3	25.32	114.1	5409
+1	1	74.39	74.9	5253
+score	1	10.84	0.0	0

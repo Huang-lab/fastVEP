@@ -191,7 +191,7 @@ The counts of two cohorts do not combine into a frequency without the per-group 
 
 **Which to build.**
 Measured on the benchmark's 673,278 ClinVar 2-star+ variants (`manuscript/acmg`, Section 3.8), the joint release holds a record for every variant that the exomes hold, with counts that are never lower, and a record for 17,382 more.
-A database built from it changes 13,302 calls, 8,647 of them on intronic and UTR variants, and gives 10,190 more exact calls and 9,321 more calls in direction than the exomes (1.5 and 1.4 points), for one more missed diagnosis and two more false-pathogenic calls, which is about 3,100 calls in direction for each added opposite-direction call.
+A database built from it changes 13,302 calls, 8,647 of them on intronic and UTR variants, and gives 10,190 more exact calls and 9,321 more calls in direction than the exomes (1.5 and 1.4 points), for one more reference-discordant benign call and two more reference-discordant pathogenic calls, which is about 3,100 calls in direction for each added opposite-direction call.
 What it gives up is the region veto (below), and the benchmark can price only part of what the veto does.
 We would build the joint release for classification where no policy requires the region veto, and the exomes where one does.
 The benchmark of the manuscript still reads the exomes, because every other number in it was measured on them.
@@ -206,7 +206,7 @@ Three things about the joint release differ from the exomes and genomes releases
   A database built from the joint release cannot say, so that veto does not act on it, and `sa-build` prints a warning to standard error that it will not.
   The non-PAR flag matters for X-linked genes, where it is what lets BS2 count hemizygotes; the builder derives it for the joint release from the GRCh38 pseudoautosomal coordinates, which agree with gnomAD's own flag at the edges that could be read in the genomes release (`crates/fastvep-sa/src/sources/gnomad.rs` says which).
   A joint database built before v38 has no non-PAR flag, and BS2 counts no hemizygotes from it: rebuild it with the current builder.
-  On every chromosome the veto's absence accounts for 4,075 of the 10,190 more exact calls and 3,473 of the 9,321 more calls in direction, with one more false-pathogenic call; in the exomes the veto also keeps three ClinVar pathogenic-side frameshifts at low-complexity sites (MYO6, and the two PRRT2 frameshifts at Arg217) at Likely pathogenic, where the joint release gives them BS2 and VUS.
+  On every chromosome the veto's absence accounts for 4,075 of the 10,190 more exact calls and 3,473 of the 9,321 more calls in direction, with one more reference-discordant pathogenic call; in the exomes the veto also keeps three ClinVar pathogenic-side frameshifts at low-complexity sites (MYO6, and the two PRRT2 frameshifts at Arg217) at Likely pathogenic, where the joint release gives them BS2 and VUS.
   What the veto prevents at sites that nobody has classified, the benchmark cannot show.
 - **A filter of one callset withholds the frequency criteria of the whole record.**
   The release's FILTER column says only which side failed, so the builder reads the names of the failed filters from `exomes_filters` and `genomes_filters` and reports one that fired in either callset, as the conservative direction for a guard against trusting a frequency.
@@ -246,7 +246,7 @@ The run on 2026-08-31 produced 3,030.
 **What the classifier reads from it.**
 Each phenotype the converter writes ends in a tag made from the curation's own columns, `<disease label> (ClinGen <classification>/<MOI>, <MONDO id>)`, for instance `Bohring-Opitz syndrome (ClinGen Definitive/AD, MONDO:0011510)`.
 The classifier reads the classification (to tell an established disease from a weak one) and the mode of inheritance, a curated field with six values in the export of 11 October 2026: `AD`, `AR`, `XL`, `SD` (semidominant), `MT` and `UD` (undetermined).
-That mode is what PM2's frequency bar (4e-5 for a gene that is not recessive-only, 7e-5 for one that is), BS2's choice of arm and PM3 and BP2's gates depend on.
+That mode is what PM2's frequency threshold (4e-5 for a gene that is not recessive-only, 7e-5 for one that is), BS2's choice of arm and PM3 and BP2's gates depend on.
 `AD` reads as dominant, `AR` as recessive and `SD` as both; `XL`, `MT` and `UD` as neither, which is the arm for unknown inheritance, because ClinGen's `XL` does not say dominant or recessive.
 An OMIM `genemap2.txt` phenotype carries no tag, and for those the words of the phenotype are read as before (`Autosomal dominant`, `{AD}`, "dominant" in the name).
 Before v38 the tag was ignored and the words were read for ClinGen's phenotypes too, so that a gene curated as AR with a disease name that did not say so (phenylketonuria, for PAH) was read as having no inheritance; `docs/ACMG.md` limitation 20 has the history and what it cost.
@@ -254,7 +254,7 @@ Before v38 the tag was ignored and the words were read for ClinGen's phenotypes 
 **A gene with more than one mode of inheritance** (135 genes in the export of 11 October 2026, 124 of them with both an autosomal dominant and an autosomal recessive established disease, among them ATM, ABCC8, ACTA1, ALPL, ANO5 and BRCA1; counted from the export, which is not in the repository) is classified once against each, in addition to the call for the gene as a whole.
 In JSON the result has a `per_disorder` list, one entry for each mode, each naming the diseases it was made against with their MONDO identifiers and ClinGen classifications and holding everything a classification holds.
 A VCF run with `--acmg` has a last CSQ column, `ACMG_DISORDERS`, with one `INHERITANCE:CLASS:CRITERIA` entry for each mode joined by `&`, the criteria that were met joined by `+` (`AD:LB:BS2+BP4&AR:VUS:BP4`), empty for a gene with one mode.
-The call for the gene as a whole is unchanged by it: it reads the modes of the gene together, which is the cautious reading for PM2's bar, BS2's arm and BP2's trans arm (PM3 asks only that one established disease be recessive), and no disorder is picked on your behalf.
+The call for the gene as a whole is unchanged by it: it reads the modes of the gene together, which is the cautious reading for PM2's threshold, BS2's arm and BP2's trans arm (PM3 asks only that one established disease be recessive), and no disorder is picked on your behalf.
 Only established diseases make a mode, and the `disorders` override blocks of an `--acmg-config` remain informational.
 
 **Using real OMIM instead.** `genemap2.txt` from <https://www.omim.org/downloads> populates the same `.oga` and the same json_key; pass it straight to `--source omim`.
@@ -317,7 +317,7 @@ The `SpliceAI` INFO field fastVEP emits therefore carries placeholder positions;
 **gnomAD's phyloP is a different score from UCSC's.**
 gnomAD ships the Zoonomia 241-placental-mammal score.
 UCSC's `phyloP100way` is a 100-way vertebrate alignment.
-They are not interchangeable, and fastVEP's `phylop_conserved` default of 2.0 was measured against the Zoonomia score, so this is the one the shipped threshold expects.
+They are not interchangeable, and fastVEP's `phylop_conserved` default of 2.0 was measured against the Zoonomia score, so this is the one the default threshold expects.
 
 **Coverage is gnomAD's coverage.**
 The exomes release covers capture targets and their flanks, so a deep-intronic variant has no record there and BP7's deep-intronic extension has nothing to read.
@@ -351,7 +351,7 @@ fastvep sa-build --source phylop -i hg38.phyloP100way.wigFix.gz \
     -o ../sa_databases/phylop --assembly GRCh38
 ```
 
-If you take this route, re-check `phylop_conserved` against your own data before trusting BP7: the threshold shipped with fastVEP was measured on the Zoonomia score.
+If you take this route, re-check `phylop_conserved` against your own data before trusting BP7: the default threshold of fastVEP was measured on the Zoonomia score.
 
 ### RepeatMasker (interval level)
 

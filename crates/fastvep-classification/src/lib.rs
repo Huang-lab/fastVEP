@@ -279,7 +279,7 @@ mod tests {
             ..Default::default()
         });
 
-        // AF = 0.02 is above the PM2 bar, so PM2 does not fire; BS1 is not
+        // AF = 0.02 is above the PM2 threshold, so PM2 does not fire; BS1 is not
         // evaluated because the record carries no AN. That leaves PVS1 alone,
         // and the two combining schemes genuinely disagree about it.
         //
@@ -402,9 +402,9 @@ mod tests {
 
     #[test]
     fn test_pm2_takes_the_recessive_bar_in_the_recessive_context_only() {
-        // 5e-5 is above the dominant bar (4e-5) and below the recessive one
+        // 5e-5 is above the dominant threshold (4e-5) and below the recessive one
         // (7e-5). The gene is both, so the headline reads it as unknown and
-        // applies the strict bar; each context applies its own.
+        // applies the strict threshold; each context applies its own.
         let input = dual_inheritance_input(GnomadData {
             all_ac: Some(70),
             all_af: Some(5e-5),
@@ -413,7 +413,10 @@ mod tests {
             ..Default::default()
         });
         let result = classify(&input, &AcmgConfig::default());
-        assert!(!met(&result, "PM2"), "the headline stays on the strict bar");
+        assert!(
+            !met(&result, "PM2"),
+            "the headline stays on the strict threshold"
+        );
 
         let codes: Vec<_> = result
             .per_disorder
@@ -433,8 +436,14 @@ mod tests {
                 .expect("context")
                 .result
         };
-        assert!(!met(by("AD"), "PM2"), "5e-5 is above the dominant bar");
-        assert!(met(by("AR"), "PM2"), "5e-5 is below the recessive bar");
+        assert!(
+            !met(by("AD"), "PM2"),
+            "5e-5 is above the dominant threshold"
+        );
+        assert!(
+            met(by("AR"), "PM2"),
+            "5e-5 is below the recessive threshold"
+        );
     }
 
     #[test]

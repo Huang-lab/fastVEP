@@ -80,12 +80,12 @@ def table_cutoffs() -> str:
     order = [
         ("Likely pathogenic from 4 points", "v37_cut_lp4"),
         ("Likely pathogenic from 5 points", "v37_cut_lp5"),
-        ("Likely pathogenic from 6 points (shipped)", "v37"),
+        ("Likely pathogenic from 6 points (default)", "v37"),
         ("Likely pathogenic from 7 points", "v37_cut_lp7"),
         ("Likely pathogenic from 8 points", "v37_cut_lp8"),
         ("Likely pathogenic from 9 points", "v37_cut_lp9"),
         ("Pathogenic from 9 points", "v37_cut_p9"),
-        ("Pathogenic from 10 points (shipped)", "v37"),
+        ("Pathogenic from 10 points (default)", "v37"),
         ("Pathogenic from 11 points", "v37_cut_p11"),
         ("Pathogenic from 12 points", "v37_cut_p12"),
     ]
@@ -114,11 +114,11 @@ def table_inheritance() -> str:
     r = read("v38_runs.csv").set_index("run")
     order = [
         ("Before: inheritance read from the disease names", "v38_base"),
-        ("**After (shipped)**: curated inheritance; BS2's carriers not counted beside BS1 or BA1", "v38"),
+        ("**After (default)**: curated inheritance; BS2's carriers not counted beside BS1 or BA1", "v38"),
         ("Curated inheritance; BS2's carriers counted beside BS1 and BA1", "v38_alt_unguarded"),
-        ("Shipped, and no BS2 carrier arm for a susceptibility or predisposition disorder", "v38_alt_label_guard"),
+        ("Default, and no BS2 carrier arm for a susceptibility or predisposition disorder", "v38_alt_label_guard"),
         ("Curated inheritance for PM2, PM3 and BP2; BS2 as before", "v38_alt_bs2_as_v37"),
-        ("Shipped, with PP2, PM1 and PP3 capped together at 4 points", "v38_alt_triple_cap"),
+        ("Default, with PP2, PM1 and PP3 capped together at 4 points", "v38_alt_triple_cap"),
     ]
     rows = []
     for label, name in order:
@@ -133,8 +133,8 @@ def table_inheritance() -> str:
             f"{n(x.exact)} ({pct(x.exact / N_ALL)})",
         ])
     return md(
-        ["Setting", "ClinVar P/LP called P/LP (recall)", "ClinVar B/LB called LB/B (recall)", "Missed diagnoses",
-         "False-pathogenic calls", "Same-direction agreement", "Exact agreement"],
+        ["Setting", "ClinVar P/LP called P/LP (recall)", "ClinVar B/LB called LB/B (recall)", "Reference-discordant benign calls",
+         "Reference-discordant pathogenic calls", "Same-direction agreement", "Exact agreement"],
         rows,
     )
 
@@ -162,15 +162,15 @@ def table_joint() -> str:
             change(x.exact, x.d_exact),
         ])
     return md(
-        ["Source of the counts", "Variants", "ClinVar P/LP called P/LP", "ClinVar B/LB called LB/B", "Missed diagnoses",
-         "False-pathogenic calls", "Same-direction agreement (change)", "Exact agreement (change)"],
+        ["Source of the counts", "Variants", "ClinVar P/LP called P/LP", "ClinVar B/LB called LB/B", "Reference-discordant benign calls",
+         "Reference-discordant pathogenic calls", "Same-direction agreement (change)", "Exact agreement (change)"],
         rows,
         align=["l"] + ["r"] * 7,
     )
 
 
 def _step(steps: pd.DataFrame, knob: str, which: int) -> str:
-    """One step of a sweep next to the shipped value: calls gained, and the error it cost."""
+    """One step of a sweep next to the default value: calls gained, and the error it cost."""
     sub = steps[(steps.knob == knob) & (steps.shipped_between)].reset_index(drop=True)
     x = sub.iloc[which]
     cost = int(x.added_errors)
@@ -195,49 +195,49 @@ def table_thresholds() -> str:
     bp1_1 = r.loc["v37_sw_bp1veto_1"]
     bp1_loo1 = r.loc["v37_hk_bp1_loo_veto1"]
     bp1_steps = steps[steps.knob == "BP1 veto count"]
-    # The step v11 to v12 moved the BS1 bar from 1e-2 to 5e-3; the run record says "3.1 pp of benign recall", which is
+    # The step v11 to v12 moved the BS1 threshold from 1e-2 to 5e-3; the run record says "3.1 pp of benign recall", which is
     # the Benign class alone, and the figure the text uses everywhere else is the benign side as a whole.
     tr = read("trajectory.csv").set_index("order")
     v12_missed = int(tr.loc[12].false_benign - tr.loc[11].false_benign)
     v12_pts = f"{(tr.loc[12].blb_recall - tr.loc[11].blb_recall) * 100:.1f}"
     v12_calls = (tr.loc[12].blb_recall - tr.loc[11].blb_recall) * 284_550
     rows = [
-        ["PM2 bar, genes not read as recessive-only: 4e-5",
-         "Swept in v10 under the 2015 table; the median of the published VCEP bars is "
+        ["PM2 threshold, genes not read as recessive-only: 4e-5",
+         "Swept in v10 under the 2015 table; the median of the published VCEP thresholds is "
          + f"{sci(vc.loc['PM2', 'median'])} ({int(vc.loc['PM2', 'genes_with_a_bar'])} genes)",
          _step(steps, "PM2 bar, not recessive-only (point system)", 0), _step(steps, "PM2 bar, not recessive-only (point system)", 1),
          f"Recall {pct(lo)} to {pct(hi)} across strict absence to 5e-4 under the point system; "
          f"{pct(tb0.plp_recall)} to {pct(tb1.plp_recall)} under the 2015 table"],
-        ["PM2 bar, genes read as recessive-only: 7e-5",
-         "Not from the SVI PM2 recommendation, which the code cited and which gives no frequency; equal to the Hearing Loss expert panel's recessive bar. First swept here",
+        ["PM2 threshold, genes read as recessive-only: 7e-5",
+         "Not from the SVI PM2 recommendation, which the code cited and which gives no frequency; equal to the Hearing Loss expert panel's recessive threshold. First swept here",
          _step(steps, "PM2 bar, recessive-only", 0), _step(steps, "PM2 bar, recessive-only", 1),
          f"Flat: recall {pct(rlo, 2)} to {pct(rhi, 2)} and agreement in direction within {rspan} calls from strict absence to 5e-4"],
-        ["BS1 bar: 5e-3",
-         f"Swept on a 1-in-10 sample, where the move from 1e-2 looked free; on the full set it cost {v12_missed} more missed diagnoses for {v12_pts} points of benign-side recall ({n(v12_calls)} calls), and was kept (v12). The median of the published VCEP bars is {sci(vc.loc['BS1', 'median'])}",
+        ["BS1 threshold: 5e-3",
+         f"Swept on a 1-in-10 sample, where the move from 1e-2 looked free; on the full set it cost {v12_missed} more reference-discordant benign calls for {v12_pts} points of benign-side recall ({n(v12_calls)} calls), and was kept (v12). The median of the published VCEP thresholds is {sci(vc.loc['BS1', 'median'])}",
          _step(steps, "BS1 bar", 0), _step(steps, "BS1 bar", 1),
          "Knee at 1e-3 (112 per added error below it); 5e-3 is on the cautious side of the knee"],
-        ["BS2 homozygote bar, every gene not read as dominant-only: 1e-3",
+        ["BS2 homozygote threshold, every gene not read as dominant-only: 1e-3",
          "Swept on the full benchmark (12 Aug): no knee, so set on the prevalence of the commonest recessive conditions",
          _step(steps, "BS2 homozygote bar", 0), _step(steps, "BS2 homozygote bar", 1),
-         "No knee: 463, 291 and 533 calls per added error below the shipped value"],
-        ["BS2 carrier bar, genes read as dominant-only: 3e-4, with an allele count of at least 5",
+         "No knee: 463, 291 and 533 calls per added error below the default value"],
+        ["BS2 carrier threshold, genes read as dominant-only: 3e-4, with an allele count of at least 5",
          "Added after review of one gene (SNRNP200) and swept on the full benchmark (v37)", "-", "-",
-         "Flat: 24 missed diagnoses and 25 false-pathogenic calls at every setting from off to 3e-3"],
+         "Flat: 24 reference-discordant benign calls and 25 reference-discordant pathogenic calls at every setting from off to 3e-3"],
         ["BP1 veto: 3 pathogenic missense variants in the gene",
          "Added in v9 with the veto, after the round-2 review of BP1 firing in genes with a pathogenic missense spectrum; the count was never swept before this paper",
          _step(steps, "BP1 veto count", 0), _step(steps, "BP1 veto count", 1),
-         f"At most {n(bp1_steps.calls_per_error.replace(math.inf, 0).max())} calls per added error at every step, so there is no knee and the shipped count is on the aggressive side of the stricter ones; "
+         f"At most {n(bp1_steps.calls_per_error.replace(math.inf, 0).max())} calls per added error at every step, so there is no knee and the default count is on the aggressive side of the stricter ones; "
          f"a count of 1 gives +{n(bp1_1.same_direction - base.same_direction)} calls in direction and {n(base.same_benign - bp1_1.same_benign)} fewer correct benign-side calls, "
-         f"and {int(base.false_benign - bp1_1.false_benign)} fewer missed diagnoses ({int(base.false_benign - bp1_loo1.false_benign)} fewer when the veto leaves the variant's own record out)"],
-        ["BP7 far boundary: 300 nt",
+         f"and {int(base.false_benign - bp1_1.false_benign)} fewer reference-discordant benign calls ({int(base.false_benign - bp1_loo1.false_benign)} fewer when the veto leaves the variant's own record out)"],
+        ["BP7 intronic distance: 300 nt",
          "Set at the knee of a sweep (v14)",
          _step(steps, "BP7 far boundary", 0), _step(steps, "BP7 far boundary", 1),
          "Knee confirmed: 157 to 849 calls per added error below 300, about 26 to 40 above"],
-        ["BP7 PhyloP bar: 2.0",
+        ["BP7 PhyloP threshold: 2.0",
          "In the first commit, with no source recorded (the 2015 standards say \"not highly conserved\" and give no number). First swept here",
          _step(steps, "BP7 PhyloP bar", 0), _step(steps, "BP7 PhyloP bar", 1),
          f"No knee: at least 1,500 calls per added error at every step; switching the test off adds {n(off.same_benign - base.same_benign)} "
-         f"benign-side calls and {int(off.false_benign - base.false_benign)} missed diagnoses (Section 3.3)"],
+         f"benign-side calls and {int(off.false_benign - base.false_benign)} reference-discordant benign calls (Section 3.3)"],
         ["Allele-number floor for BA1 and BS1: 2,000",
          "From the dataset-size condition of the BA1 recommendation, applied here to the site's allele number and to BS1", "-", "-",
          f"Removing it adds {n(noan.same_direction - base.same_direction)} calls in direction and no opposite-direction call"],
@@ -250,11 +250,11 @@ def table_thresholds() -> str:
          "Fixed by the point system", "-", "-",
          f"9 to 12 points move agreement in direction by at most {n(max(abs(r.loc[f'v37_cut_p{c}'].same_direction - base.same_direction) for c in (9, 11, 12)))} calls"],
         ["BA1 at 5%",
-         f"Fixed by the guideline; the median of the published VCEP bars is {sci(vc.loc['BA1', 'median'])}", "-", "-",
+         f"Fixed by the guideline; the median of the published VCEP thresholds is {sci(vc.loc['BA1', 'median'])}", "-", "-",
          "Not varied"],
     ]
     return md(
-        ["Threshold: shipped value", "How it was set", "Last step before the shipped value", "First step beyond it", "On v37"],
+        ["Threshold: default value", "How it was set", "Last step before the default value", "First step beyond it", "On v37"],
         rows, align=["l", "l", "l", "l", "l"],
     )
 
@@ -288,7 +288,7 @@ def table_decomposition() -> str:
         ["ClinVar VUS called P/LP", "", n(v_p), pct(v_p / N_ALL)],
         ["ClinVar VUS called LB/B", "", n(v_b), pct(v_b / N_ALL)],
         ["Opposite direction", "", n(fb + fp), pct((fb + fp) / N_ALL, 3)],
-        ["&nbsp;&nbsp;ClinVar P/LP called LB/B (missed diagnoses)", "", n(fb), pct(fb / N_ALL, 3)],
+        ["&nbsp;&nbsp;ClinVar P/LP called LB/B (reference-discordant benign calls)", "", n(fb), pct(fb / N_ALL, 3)],
         ["&nbsp;&nbsp;ClinVar LB/B called P/LP", "", n(fp), pct(fp / N_ALL, 3)],
         ["No call", "records with no alternative allele (ALT is a dot)", n(nocall), pct(nocall / N_ALL, 2)],
         ["All records", "", n(N_ALL), "100%"],
@@ -359,7 +359,7 @@ def table_temporal() -> str:
         block("&nbsp;&nbsp;new: not in the April set", "new"),
     ]
     return md(["Set", "Variants", "Same-direction agreement", "ClinVar P/LP called P/LP", "ClinVar LB/B called LB/B", "ClinVar VUS called VUS",
-               "Opposite-direction calls (missed diagnoses and false-pathogenic)"], rows)
+               "Opposite-direction calls (reference-discordant benign and reference-discordant pathogenic)"], rows)
 
 TABLES = {
     "inheritance": table_inheritance,
