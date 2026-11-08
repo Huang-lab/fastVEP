@@ -14,7 +14,7 @@ ClinVar's 2-star+ classifications are a reference and not ground truth, and ever
 - In the main run 1 criterion moves its firing count by more than 5% (BS2); PM2 at Supporting strength moves by +2.2% (Section 7).
 - On the October release agreement in direction goes from 78.1% to 78.3% and opposite-direction calls from 69 to 68; on the 116,078 new variants agreement goes from 72.3% to 72.6% with 20 and 20 opposite-direction calls, and the rate of opposite-direction calls is 2.2 and 2.3 times the April rate (Section 8).
 - The controls reproduce the main run under both classifiers (Section 6).
-- 200 of the 541 checks of `verify_numbers.py` give another value under v37 than the manuscript's (527 of 2159 values), 12 claims differ in truth or wording, 5 of 8 marked tables, 18 of 26 sheets of the workbook and 7 of 9 figures differ (Section 9).
+- 201 of the 548 checks of `verify_numbers.py` give another value under v37 than the manuscript's (528 of 2169 values), 12 claims differ in truth or wording, 5 of 8 marked tables, 18 of 26 sheets of the workbook and 7 of 9 figures differ (Section 9).
 
 The sections:
 
@@ -810,7 +810,7 @@ The PDF files of the figures are not tracked and carry the time they were made, 
 
 ### 9.4 The numbers of the text that differ
 
-`verify_numbers.py` makes 541 checks of 2159 values; under v37 200 of the checks give another value than under v38, 527 values in all (the sentences that set v38 against v37 contain both, so not every one of these is absent from its sentence).
+`verify_numbers.py` makes 548 checks of 2169 values; under v37 201 of the checks give another value than under v38, 528 values in all (the sentences that set v38 against v37 contain both, so not every one of these is absent from its sentence).
 They are listed below by section of the manuscript, each as the line, the phrase that identifies the sentence, and the values that differ, the value under v37 first and the value under v38, which the manuscript has, second.
 A value that is a statement about v37 as history (what v37 read, the trajectory of the numbered versions) does not appear, and a quoted count of `48` is the count of v38 (v37: 49), which the guard reads from the main run.
 A value written `?` is a condition that the guard types (`Ten`, `Five`, `none of the`) and that does not hold under v37; the claims above explain each.
@@ -826,6 +826,7 @@ The numbers inside the marked tables are not checks of `verify_numbers.py` and a
 
 - Line 211, "the reviewer supported ClinVar's class for 13 of the 24 ...": 17 under v37 becomes 16; 25 under v37 becomes 24.
 - Line 216, "Rates use all 673,660 records as the denominator": 0.0077% under v37 becomes 0.0076%; 0.014% under v37 becomes 0.013%; 254,012 under v37 becomes 256,054.
+- Line 216, "so the 51 opposite-direction calls of v38 are": 0.0077% under v37 becomes 0.0076%.
 
 **Section 2.5.**
 

@@ -662,8 +662,8 @@ def trajectory() -> None:
          n(one("v38", "false_pathogenic")), "at both" if one("v37", "false_benign") == one("v38", "false_benign") else "?",
          "on the first databases", str(int(t.loc[37].opposite)), str(int(t.loc[38].opposite)), str(int(t.loc[38].false_benign)),
          "in both" if t.loc[37].false_benign == t.loc[38].false_benign else "?")
-    fact(f"so the {N_OPP} opposite-direction calls of v38 are", p(N_OPP / N_ALL, 4))
-    fact(f"**Supplementary Table S8.** The {N_OPP} opposite-direction calls of v38")
+    fact(f"so the {int(b38.opposite)} opposite-direction calls of v38 are", p(N_OPP / N_ALL, 4))  # the anchors name v38's numbers whatever the base, so that the two bases have one list of checks
+    fact(f"**Supplementary Table S8.** The {int(b38.opposite)} opposite-direction calls of v38")
     fact("Opposite-direction calls had reached a minimum of 25 at v10", str(int(t.loc[10].opposite)), str(int(t.loc[11].opposite)))
     rate = lambda r: r.opposite / r.committed * 100  # noqa: E731
     fact("The matrix stored for v1 holds 31 opposite-direction calls", str(int(t.loc[1].opposite)), n(t.loc[1].committed), n(t.loc[38].committed),
@@ -942,7 +942,7 @@ def ablations() -> None:
     stc = run("v37_hk_strict")
     alone = [run(x).false_benign - base.false_benign for x in (rn("v37_hk_bp1_loo"), rn("v37_sw_no_lowpen_gate"), rn("v37_sw_no_exceptions"))]
     fact("Two further adjustments also read the variant's own ClinVar record", str(int(alone[1])), str(int(alone[2])))
-    fact(f"removed together, the {int(base.false_benign)} reference-discordant benign calls are {int(stc.false_benign)} and the {N_OPP} opposite-direction calls {int(stc.opposite)}.")
+    fact(f"removed together, the {int(b38.false_benign)} reference-discordant benign calls are {int(rv38.loc['v38_hk_strict'].false_benign)} and the {int(b38.opposite)} opposite-direction calls {int(rv38.loc['v38_hk_strict'].opposite)}.", n(base.false_benign), n(stc.false_benign))
     fact("Removed together with the veto's own-record count", str(int(base.false_benign)), str(int(stc.false_benign)), str(int(base.opposite)), str(int(stc.opposite)),
          *[str(int(a)) for a in alone], "exactly the sum" if stc.false_benign - base.false_benign == sum(alone) else "?")
     fact(f"{w(fv('strict_opposite_called_benign'))[2]} of the {w(int(stc.opposite - base.opposite))[1]} added calls are Benign calls", w(fv("strict_opposite_called_benign")), w(int(stc.opposite - base.opposite)),
