@@ -1,0 +1,161 @@
+version,set,measure,first,complete
+v37,April set,variants,673660,673660.0
+v37,April set,exact,425869,431555.0
+v37,April set,same_direction,522886,532688.0
+v37,April set,same_pathogenic,58610,58610.0
+v37,April set,same_benign,177206,187065.0
+v37,April set,vus_exact,287070,287013.0
+v37,April set,opposite,49,52.0
+v37,April set,false_benign,24,27.0
+v37,April set,false_pathogenic,25,25.0
+v37,April set,plp_recall,0.6247601586151026,0.6247601586151026
+v37,April set,blb_recall,0.6227587418731331,0.6574064312071692
+v37,April set,vus_recall,0.9721366213113533,0.9719435959606906
+v37,April set,plp_to_vus,35178,35175.0
+v37,April set,blb_to_vus,106937,97078.0
+v37,April set,BP4,359427,378930.0
+v37,April set,BP7,132615,144948.0
+v37,April set,PP3,68012,69133.0
+v37,April set,PVS1,61341,61342.0
+v37,April set,canonical_splice_variants,13449,13449.0
+v37,April set,PVS1_on_canonical_splice,11541,11542.0
+v38,April set,variants,673660,673660.0
+v38,April set,exact,426022,431727.0
+v38,April set,same_direction,524380,534335.0
+v38,April set,same_pathogenic,58606,58606.0
+v38,April set,same_benign,178888,188914.0
+v38,April set,vus_exact,286886,286815.0
+v38,April set,opposite,48,51.0
+v38,April set,false_benign,24,27.0
+v38,April set,false_pathogenic,24,24.0
+v38,April set,plp_recall,0.6247175201466764,0.6247175201466764
+v38,April set,blb_recall,0.6286698295554384,0.6639044104726761
+v38,April set,vus_recall,0.9715135219337754,0.9712730868478622
+v38,April set,plp_to_vus,35182,35179.0
+v38,April set,blb_to_vus,105256,95230.0
+v38,April set,BP4,359436,378939.0
+v38,April set,BP7,132615,144948.0
+v38,April set,PP3,68012,69133.0
+v38,April set,PVS1,61334,61335.0
+v38,April set,canonical_splice_variants,13449,13449.0
+v38,April set,PVS1_on_canonical_splice,11541,11542.0
+v37,"October release, the variants of the first design",variants,772585,772585.0
+v37,"October release, the variants of the first design",exact,484625,492731.0
+v37,"October release, the variants of the first design",same_direction,591576,604246.0
+v37,"October release, the variants of the first design",same_pathogenic,64310,64308.0
+v37,"October release, the variants of the first design",same_benign,210640,223369.0
+v37,"October release, the variants of the first design",vus_exact,316626,316569.0
+v37,"October release, the variants of the first design",opposite,64,68.0
+v37,"October release, the variants of the first design",false_benign,26,30.0
+v37,"October release, the variants of the first design",false_pathogenic,38,38.0
+v37,"October release, the variants of the first design",plp_recall,0.6271454205024185,0.6271259166796692
+v37,"October release, the variants of the first design",blb_recall,0.6115007664081007,0.6484538297180548
+v37,"October release, the variants of the first design",vus_recall,0.9725072717053109,0.9723321979132432
+v37,"October release, the variants of the first design",plp_to_vus,38208,38206.0
+v37,"October release, the variants of the first design",blb_to_vus,133401,120672.0
+v37,"October release, the variants of the first design",BP4,421194,445008.0
+v37,"October release, the variants of the first design",BP7,165627,180825.0
+v37,"October release, the variants of the first design",PP3,76242,77528.0
+v37,"October release, the variants of the first design",PVS1,67497,67495.0
+v37,"October release, the variants of the first design",canonical_splice_variants,14904,14904.0
+v37,"October release, the variants of the first design",PVS1_on_canonical_splice,12738,12736.0
+v37,"October release, new variants of the first design",variants,107528,107528.0
+v37,"October release, new variants of the first design",exact,66196,68654.0
+v37,"October release, new variants of the first design",same_direction,75348,78228.0
+v37,"October release, new variants of the first design",same_pathogenic,6123,6122.0
+v37,"October release, new variants of the first design",same_benign,33587,36472.0
+v37,"October release, new variants of the first design",vus_exact,35638,35634.0
+v37,"October release, new variants of the first design",opposite,18,19.0
+v37,"October release, new variants of the first design",false_benign,6,7.0
+v37,"October release, new variants of the first design",false_pathogenic,12,12.0
+v37,"October release, new variants of the first design",plp_recall,0.609556993529119,0.6094574415131906
+v37,"October release, new variants of the first design",blb_recall,0.5518640837317823,0.5992671825964082
+v37,"October release, new variants of the first design",vus_recall,0.9731309049205396,0.973021680956802
+v37,"October release, new variants of the first design",plp_to_vus,3916,3916.0
+v37,"October release, new variants of the first design",blb_to_vus,27259,24374.0
+v37,"October release, new variants of the first design",BP4,66142,70561.0
+v37,"October release, new variants of the first design",BP7,33181,36066.0
+v37,"October release, new variants of the first design",PP3,9641,9825.0
+v37,"October release, new variants of the first design",PVS1,6606,6604.0
+v37,"October release, new variants of the first design",canonical_splice_variants,1673,1673.0
+v37,"October release, new variants of the first design",PVS1_on_canonical_splice,1360,1358.0
+v37,"October release, all variants",variants,,781135.0
+v37,"October release, all variants",exact,,497539.0
+v37,"October release, all variants",same_direction,,609923.0
+v37,"October release, all variants",same_pathogenic,,64557.0
+v37,"October release, all variants",same_benign,,226370.0
+v37,"October release, all variants",vus_exact,,318996.0
+v37,"October release, all variants",opposite,,69.0
+v37,"October release, all variants",false_benign,,30.0
+v37,"October release, all variants",false_pathogenic,,39.0
+v37,"October release, all variants",plp_recall,,0.6265662457659197
+v37,"October release, all variants",blb_recall,,0.6468065409265075
+v37,"October release, all variants",vus_recall,,0.9721901371750056
+v37,"October release, all variants",plp_to_vus,,38446.0
+v37,"October release, all variants",blb_to_vus,,123186.0
+v37,"October release, all variants",BP4,,451337.0
+v37,"October release, all variants",BP7,,183502.0
+v37,"October release, all variants",PP3,,78116.0
+v37,"October release, all variants",PVS1,,67810.0
+v37,"October release, all variants",canonical_splice_variants,,15063.0
+v37,"October release, all variants",PVS1_on_canonical_splice,,12846.0
+v38,"October release, the variants of the first design",variants,772585,772585.0
+v38,"October release, the variants of the first design",exact,484891,493034.0
+v38,"October release, the variants of the first design",same_direction,593343,606193.0
+v38,"October release, the variants of the first design",same_pathogenic,64306,64304.0
+v38,"October release, the variants of the first design",same_benign,212575,225496.0
+v38,"October release, the variants of the first design",vus_exact,316462,316393.0
+v38,"October release, the variants of the first design",opposite,63,67.0
+v38,"October release, the variants of the first design",false_benign,26,30.0
+v38,"October release, the variants of the first design",false_pathogenic,37,37.0
+v38,"October release, the variants of the first design",plp_recall,0.6271064128569199,0.6270869090341707
+v38,"October release, the variants of the first design",blb_recall,0.6171181894189233,0.6546286404384783
+v38,"October release, the variants of the first design",vus_recall,0.972003550619362,0.971791619186859
+v38,"October release, the variants of the first design",plp_to_vus,38212,38210.0
+v38,"October release, the variants of the first design",blb_to_vus,131467,118546.0
+v38,"October release, the variants of the first design",BP4,421205,445019.0
+v38,"October release, the variants of the first design",BP7,165627,180825.0
+v38,"October release, the variants of the first design",PP3,76242,77528.0
+v38,"October release, the variants of the first design",PVS1,67490,67488.0
+v38,"October release, the variants of the first design",canonical_splice_variants,14904,14904.0
+v38,"October release, the variants of the first design",PVS1_on_canonical_splice,12738,12736.0
+v38,"October release, new variants of the first design",variants,107528,107528.0
+v38,"October release, new variants of the first design",exact,66298,68771.0
+v38,"October release, new variants of the first design",same_direction,75607,78512.0
+v38,"October release, new variants of the first design",same_pathogenic,6123,6122.0
+v38,"October release, new variants of the first design",same_benign,33857,36768.0
+v38,"October release, new variants of the first design",vus_exact,35627,35622.0
+v38,"October release, new variants of the first design",opposite,18,19.0
+v38,"October release, new variants of the first design",false_benign,6,7.0
+v38,"October release, new variants of the first design",false_pathogenic,12,12.0
+v38,"October release, new variants of the first design",plp_recall,0.609556993529119,0.6094574415131906
+v38,"October release, new variants of the first design",blb_recall,0.5563004222737057,0.6041307241090353
+v38,"October release, new variants of the first design",vus_recall,0.9728305390202611,0.972694009065589
+v38,"October release, new variants of the first design",plp_to_vus,3916,3916.0
+v38,"October release, new variants of the first design",blb_to_vus,26989,24078.0
+v38,"October release, new variants of the first design",BP4,66144,70563.0
+v38,"October release, new variants of the first design",BP7,33181,36066.0
+v38,"October release, new variants of the first design",PP3,9641,9825.0
+v38,"October release, new variants of the first design",PVS1,6606,6604.0
+v38,"October release, new variants of the first design",canonical_splice_variants,1673,1673.0
+v38,"October release, new variants of the first design",PVS1_on_canonical_splice,1360,1358.0
+v38,"October release, all variants",variants,,781135.0
+v38,"October release, all variants",exact,,497880.0
+v38,"October release, all variants",same_direction,,611945.0
+v38,"October release, all variants",same_pathogenic,,64553.0
+v38,"October release, all variants",same_benign,,228572.0
+v38,"October release, all variants",vus_exact,,318820.0
+v38,"October release, all variants",opposite,,68.0
+v38,"October release, all variants",false_benign,,30.0
+v38,"October release, all variants",false_pathogenic,,38.0
+v38,"October release, all variants",plp_recall,,0.6265274232527442
+v38,"October release, all variants",blb_recall,,0.6530983110511713
+v38,"October release, all variants",vus_recall,,0.9716537496838057
+v38,"October release, all variants",plp_to_vus,,38450.0
+v38,"October release, all variants",blb_to_vus,,120985.0
+v38,"October release, all variants",BP4,,451350.0
+v38,"October release, all variants",BP7,,183502.0
+v38,"October release, all variants",PP3,,78116.0
+v38,"October release, all variants",PVS1,,67802.0
+v38,"October release, all variants",canonical_splice_variants,,15063.0
+v38,"October release, all variants",PVS1_on_canonical_splice,,12846.0
