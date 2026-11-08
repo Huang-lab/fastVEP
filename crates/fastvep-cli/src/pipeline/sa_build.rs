@@ -17,6 +17,45 @@ thread_local! {
     /// builders (and the tests that run them side by side) are untouched and cannot affect each
     /// other.
     static ALLOW_EMPTY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+
+    /// The width of the chunks of the `.osa2` databases this thread builds (`--chunk-bits`), when
+    /// the caller asks for one instead of the source's own. Set by [`with_chunk_bits`] for the same
+    /// reason as [`ALLOW_EMPTY`]: the builders and their tests keep their signatures.
+    static CHUNK_BITS: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run `f` with the `.osa2` databases it builds cut into chunks of `2^bits` bases, which is what
+/// `--chunk-bits` means; `None` leaves each source its own width (20, one megabase).
+///
+/// A query loads the whole chunk it falls in, so the width is the cost of a lookup that misses the
+/// cache: the records of a chunk are inflated and indexed to answer for one of them. A source with
+/// a million records in a megabase pays for all of them on every scattered lookup. Measured on the
+/// hosted server, 1,000 scattered GRCh38 variants took 24 s with dbSNP in its one-megabase chunks
+/// (23 ms a lookup, the same on a second pass because the shared cache holds about 30 of the 3,000
+/// chunks) and 0.5 s without it.
+pub fn with_chunk_bits<T>(bits: Option<u32>, f: impl FnOnce() -> T) -> T {
+    CHUNK_BITS.with(|cell| {
+        let before = cell.replace(bits);
+        let out = f();
+        cell.set(before);
+        out
+    })
+}
+
+/// The width asked for with `--chunk-bits` on this thread, if any.
+fn chunk_bits_override() -> Option<u32> {
+    CHUNK_BITS.with(|cell| cell.get())
+}
+
+/// A build that writes a v1 `.osa`, an interval or a gene file has no chunks to narrow, and an
+/// option that does nothing without saying so is the one an operator cannot debug from the outside.
+fn warn_chunk_bits_ignored(source: &str) {
+    if let Some(bits) = chunk_bits_override() {
+        eprintln!(
+            "warning: --chunk-bits {bits} applies to .osa2 databases only; this {source} build \
+             does not write one, so the option was ignored."
+        );
+    }
 }
 
 /// Run `f` with builds that write no record allowed, which is what `--allow-empty` means.
@@ -733,15 +772,18 @@ pub fn run_sa_build_format(
     show_progress: bool,
 ) -> Result<()> {
     match format {
-        "osa" | "v1" => run_sa_build(
-            source,
-            input,
-            output,
-            assembly,
-            name,
-            info_fields,
-            show_progress,
-        ),
+        "osa" | "v1" => {
+            warn_chunk_bits_ignored(source);
+            run_sa_build(
+                source,
+                input,
+                output,
+                assembly,
+                name,
+                info_fields,
+                show_progress,
+            )
+        }
         "osa2" | "v2" => run_sa_build_v2(
             source,
             input,
@@ -763,6 +805,7 @@ pub fn run_sa_build_format(
                     show_progress,
                 )
             } else {
+                warn_chunk_bits_ignored(source);
                 run_sa_build(
                     source,
                     input,
@@ -1289,6 +1332,9 @@ where
         if let Some(date) = vcf_file_date(input) {
             stamped.version = date;
         }
+    }
+    if let Some(bits) = chunk_bits_override() {
+        stamped.chunk_bits = bits;
     }
     let n = match write_osa2_stream(
         out_path,

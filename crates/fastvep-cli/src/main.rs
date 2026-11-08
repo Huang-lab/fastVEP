@@ -439,6 +439,19 @@ enum Commands {
         #[arg(long, default_value = "auto")]
         format: String,
 
+        /// Genomic width of one chunk of an `.osa2` database, as a power of two (1..=20); each
+        /// source keeps its own width (20, one megabase) when this is not given.
+        ///
+        /// A query inflates and indexes the whole chunk it falls in, so a chunk with many records
+        /// makes every lookup that is not in the cache dear. dbSNP, with a record for about one
+        /// base in three, is such a source: 1,000 scattered GRCh38 variants took 24 s against its
+        /// default chunks. Pass 16 (65 kb) for it, for gnomAD, REVEL and any source that holds
+        /// hundreds of thousands of records in a megabase; it costs a few percent of file size
+        /// (12% measured on a SpliceAI-density source) and no change in what a query returns.
+        /// Ignored, with a warning, by a build that does not write an `.osa2`.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=20))]
+        chunk_bits: Option<u32>,
+
         /// Write the database even when no record was found to put in it.
         ///
         /// Off by default, and a build that finds nothing is an error: a database of
@@ -730,19 +743,22 @@ fn main() -> Result<()> {
             name,
             info_fields,
             format,
+            chunk_bits,
             allow_empty,
             no_progress,
-        } => pipeline::with_allow_empty(allow_empty, || {
-            pipeline::run_sa_build_format(
-                &format,
-                &source,
-                &input,
-                &output,
-                &assembly,
-                name.as_deref(),
-                &info_fields,
-                !no_progress,
-            )
+        } => pipeline::with_chunk_bits(chunk_bits, || {
+            pipeline::with_allow_empty(allow_empty, || {
+                pipeline::run_sa_build_format(
+                    &format,
+                    &source,
+                    &input,
+                    &output,
+                    &assembly,
+                    name.as_deref(),
+                    &info_fields,
+                    !no_progress,
+                )
+            })
         })?,
         Commands::SaConvert {
             input,
