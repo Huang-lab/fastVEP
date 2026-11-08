@@ -909,10 +909,9 @@ def opposite_cases(df: pd.DataFrame) -> None:
     opp["group"] = opp.apply(group, axis=1)
     m = opp.merge(rev[["chrom", "pos", "ref", "alt", "ruling", "row"]], on=["chrom", "pos", "ref", "alt"], how="left")
     if m["ruling"].isna().any():
-        if BASE == "v37":
-            sys.exit("an opposite-direction call is not one of the reviewer's 64 rows")
-        # Another classifier can make a call opposite that the reviewer never saw. It stays in the table, marked as not reviewed,
-        # and the calls the reviewer did see keep their rulings, which are carried over by the variant (chromosome, position, alleles).
+        # Another classifier, or the same one on the complete databases, can make a call opposite that the reviewer never saw (v37 did not on the
+        # first databases, where all its calls were among the 64 rows, and has three on the complete ones). It stays in the table, marked as not
+        # reviewed, and the calls the reviewer did see keep their rulings, which are carried over by the variant (chromosome, position, alleles).
         m["ruling"] = m["ruling"].fillna("not reviewed")
         m["row"] = m["row"].fillna("")
     cols = ["group", "gene", "chrom", "pos", "ref", "alt", "stars", "clinvar", "call", "criteria", "consequence", "hgvsc", "hgvsp",

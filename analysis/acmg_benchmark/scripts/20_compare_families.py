@@ -90,7 +90,7 @@ CLASSES, CALLS = st.CLASSES, st.CALLS
 METRICS = ["exact", "same_direction", "same_pathogenic", "same_benign", "vus_exact", "false_benign", "false_pathogenic", "opposite", "plp_recall",
            "blb_recall", "vus_recall", "plp_to_vus", "blb_to_vus", "vus_to_plp", "vus_to_blb", "no_call"]
 KEY = ["chrom", "pos", "ref", "alt"]
-APRIL_N, OCTOBER_N = 673_660, 772_585
+APRIL_N, OCTOBER_N = 673_660, 781_135
 TRI = st.TRI
 
 
@@ -518,11 +518,7 @@ def find_line(lines: list[str], anchor: str) -> int:
 
 
 def new_york_days(times: list[str]) -> str:
-    """The New York date of times that the provenance files record in UTC, which is how the paper dates a run: `7 November 2026`, or `7 to 8 November 2026`.
-
-    The 78 runs of the family v38 that were new were recorded between 03:58 and 04:30 UTC on 8 November, which is the evening of 7 November in New York,
-    and the manuscript dates the runs of v37 in New York (`4 November`, for times that are 4 and 5 November in UTC).
-    """
+    """The New York date of times that the provenance files record in UTC, which is how the paper dates a run: `8 November 2026`, or `8 to 9 November 2026`."""
     days = sorted({dt.datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(ZoneInfo("America/New_York")).date() for t in times})
     if len(days) == 1:
         return f"{days[0].day} {days[0].strftime('%B %Y')}"
@@ -541,7 +537,7 @@ def section_compared(D: Doc, pairs: list[Pair], main: Pair, october: Pair) -> No
     fam37 = [p.v37 for p in pairs if p.dir37.parent == BENCH / "manuscript_runs"]
     fam38 = [p.v38 for p in pairs if p.dir37.parent == BENCH / "manuscript_runs"]
     shared = [x for x in fam38 if is_shared(x)]
-    new38 = [x for x in fam38 if not is_shared(x)]
+    new38 = fam38  # every run of the family was made once, with the complete databases
     c38 = provenance_counts(new38)
     rec = sorted(prov(x)["recorded_at"] for x in new38)
     secs = sorted(int(prov(x)["annotation_seconds"]) for x in new38)
@@ -551,10 +547,10 @@ def section_compared(D: Doc, pairs: list[Pair], main: Pair, october: Pair) -> No
         groups[g] = groups.get(g, 0) + 1
     same_def = definitions_agree(pairs)
     D.h(2, "1. What is compared")
-    D.s(f"The family v37 is the {sum(1 for p in pairs if p.kind == 'april' and p.dir37.parent == BENCH / 'manuscript_runs')} runs on the April set and the {sum(1 for p in pairs if p.kind == 'october')} runs on the October release that `11_manuscript_runs.py` defines, made on 4 November 2026 by binaries built from commit 5d8004a (`binaries.tsv`).")
-    D.s(f"The family v38 is the same {len(fam37)} runs made by the classifier of release 0.5.0, the tag `v0.5.0-rc.1`.")
-    D.s(f"{len(shared)} of them are runs that Section 3.8 had already made under the same names (the sweeps `v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`, whose grids are the family's): they were made on 4 November 2026 by the binary of the working tree that became v38 and made again on 7 November 2026 by the binary of release 0.5.0 with every scored file identical (`results/v38_v0.5.0/rerun_comparison.csv`), so they were not made a third time.")
-    D.s(f"The other {len(new38)} were made on {new_york_days(rec)} (New York; the provenance records UTC, {rec[0][:10]}) by binaries built from the tag, {len([x for x in new38 if x.startswith('v38_oct_')])} of them on the October release, recorded between {rec[0][11:19]} and {rec[-1][11:19]} UTC, three at a time on the ten-core machine (the annotation of one run took {secs[0]} to {secs[-1]} seconds, median {secs[len(secs) // 2]}).")
+    D.s(f"The family v37 is the {sum(1 for p in pairs if p.kind == 'april' and p.dir37.parent == BENCH / 'manuscript_runs')} runs on the April set and the {sum(1 for p in pairs if p.kind == 'october')} runs on the October release that `11_manuscript_runs.py` defines, made on {new_york_days([prov(x)['recorded_at'] for x in fam37])} by binaries built from commit 5d8004a (`binaries.tsv`).")
+    D.s(f"The family v38 is the same {len(fam37)} runs made by the classifier of release 0.5.0, the tag `v0.5.0-rc.1`, with the same databases.")
+    D.s(f"{len(shared)} of them are runs that Section 3.8 also defines under the same names (the sweeps `v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`, whose grids are the family's), and the harness makes each of them once.")
+    D.s(f"The {len(new38)} were made on {new_york_days(rec)} (New York; the provenance records UTC, {rec[0][:10]}) by binaries built from the tag, {len([x for x in new38 if x.startswith('v38_oct_')])} of them on the October release, up to seven at a time on the ten-core machine (the annotation of one run took {secs[0]} to {secs[-1]} seconds, median {secs[len(secs) // 2]}).")
     D.s(f"The binaries were `fastvep_v38` (SHA-256 `70b7c684...`, {c38.get('70b7c684', 0)} runs), `fastvep_cut38` (`de44db94...`, {c38.get('de44db94', 0)} runs, the point cutoffs) and `fastvep_hook38` (`9886d1b5...`, {c38.get('9886d1b5', 0)} runs, BP1's own-record count and BP7's SpliceAI threshold), each built from a clean export of the tag in a target directory of its own by `build_manuscript_binaries.sh`, and `binaries_v38.tsv` records them.")
     D.s(f"The two families are generated by the same functions of `11_manuscript_runs.py` with the name prefix and the binaries as the only parameters, and {same_def[0]} of the {same_def[1]} pairs have the same knob, value, default, removed and replaced annotation files and environment in `run_matrix.tsv` and `run_matrix_v38.tsv`, so a pair differs in the classifier and in nothing else.")
     earlier = [p for p in pairs if p.dir37.parent == BENCH]
@@ -1233,21 +1229,33 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     claims: list[Claim] = []
 
     # ---- the trajectory
+    # v14 to v37 are runs on the first databases (the rows of trajectory.csv), v37 and v38 were run again on the complete ones and their rows are those
+    # runs, so the first-database values of the two come from the comparison of the stacks (`21_compare_databases.py`); a band that took v37's row of
+    # trajectory.csv would end at 79.07% and not at 77.62%
     traj = pd.read_csv(DATA / "trajectory.csv")
-    mainline = traj[traj.mainline.astype(str) == "True"].sort_values("order")
-    band = mainline[(mainline.order >= 14) & (mainline.order <= 37)]
-    steps = mainline[(mainline.order >= 13) & (mainline.order <= 37)].same_direction_rate.diff().abs().dropna()  # from v13's level into the band, as the text counts
+    ovn = pd.read_csv(DATA / "databases_old_vs_new.csv")
+
+    def first_of(version: str, measure: str) -> float:
+        return float(ovn[(ovn.version == version) & (ovn.set == "April set") & (ovn.measure == measure)].iloc[0]["first"])
+
+    mainline = traj[traj.mainline.astype(str) == "True"].sort_values("order").set_index("order", drop=False)
+    first_rate = {k: float(mainline.loc[k].same_direction_rate) for k in mainline.index if 13 <= k <= 36}
+    first_rate[37], first_rate[38] = first_of("v37", "same_direction") / N, first_of("v38", "same_direction") / N
+    band_rates = pd.Series([first_rate[k] for k in sorted(first_rate) if 14 <= k <= 37])
+    steps = pd.Series([abs(first_rate[k] - first_rate[j]) for j, k in zip(sorted(first_rate), sorted(first_rate)[1:]) if k <= 37])  # from v13's level into the band, as the text counts
     early = (mainline[mainline.order <= 13].same_direction_rate.diff().abs() * 100).dropna().sort_values(ascending=False)
-    plp_band = mainline[(mainline.order >= 11) & (mainline.order <= 37)].plp_recall  # v11 to v37: trajectory.csv now ends with v38, which is not in the band
-    blb_band = mainline[(mainline.order >= 13) & (mainline.order <= 37)].blb_recall
-    r37, r38 = h37["same_direction"] / N, h38["same_direction"] / N
+    plp_band = pd.Series([float(mainline.loc[k].plp_recall) for k in mainline.index if 11 <= k <= 36] + [first_of("v37", "plp_recall")])
+    blb_band = pd.Series([float(mainline.loc[k].blb_recall) for k in mainline.index if 13 <= k <= 36] + [first_of("v37", "blb_recall")])
+    r37, r38 = h37["same_direction"] / N, h38["same_direction"] / N  # the complete databases
+    r37f, r38f = first_rate[37], first_rate[38]
     claims.append(Claim(
-        ["flat from the thirteenth version to v37 (77.50% to 77.62%)", "After v13 the headline stopped moving.", "Agreement in direction with ClinVar reached 77.6% at v13 and stayed between"],
-        f"Agreement in direction was flat after the thirteenth version: it stayed between {pc(band.same_direction_rate.min())} and {pc(band.same_direction_rate.max())} for the next {len(band)} runs (v14 to v37, without v17), no run moving it by more than {steps.max() * 100:.2f} points; recall of ClinVar's pathogenic-side variants has stayed between {pc(plp_band.min(), 1)} and {pc(plp_band.max(), 1)} since v11, and recall of its benign-side variants between {pc(blb_band.min(), 1)} and {pc(blb_band.max(), 1)} since v13.",
-        [f"These are statements about the runs v14 to v37 of `trajectory.csv` ({len(band)} runs, and the step from v13 into the band), and they stay true as history.",
-         f"v38 has {pc(r38)} agreement in direction ({n(h38['same_direction'])} calls), {pa(r38 - r37)} points above v37 and {pa(r38 - band.same_direction_rate.max())} points above the top of that band, a step that is {(r38 - r37) / steps.max():.1f} times the largest step between neighbouring runs of v13 to v37.",
-         f"Its recall of pathogenic-side variants is {pc(h38['plp_recall'], 1)}, {'inside' if plp_band.min() <= h38['plp_recall'] <= plp_band.max() else 'outside'} the band, and its recall of benign-side variants is {pc(h38['blb_recall'], 1)}, {pa(h38['blb_recall'] - blb_band.max(), 1)} points {'above' if h38['blb_recall'] > blb_band.max() else 'below'} the top of the band (the benign-side recall is over the same {n(sum(sum(main.m38[t].values()) for t in ('Likely_benign', 'Benign')))} variants as the trajectory's).",
-         f"The manuscript therefore says that the agreement moved once more at v38, by the change of Section 3.8 ({pa(r38 - r37)} points, against {early.iloc[0]:.1f} and {early.iloc[1]:.1f} points for the two largest steps before v13, which line {find_line(manuscript_lines(), 'The two largest steps before v13')} quotes).",
+        ["same-direction agreement on the first databases stayed between", "After v13 the headline stopped moving.", "Agreement in direction with ClinVar reached 77.6% at v13 and stayed between"],
+        f"Agreement in direction was flat after the thirteenth version: it stayed between {pc(band_rates.min())} and {pc(band_rates.max())} for the next {len(band_rates)} runs (v14 to v37, without v17), no run moving it by more than {steps.max() * 100:.2f} points; recall of ClinVar's pathogenic-side variants has stayed between {pc(plp_band.min(), 1)} and {pc(plp_band.max(), 1)} since v11, and recall of its benign-side variants between {pc(blb_band.min(), 1)} and {pc(blb_band.max(), 1)} since v13.",
+        [f"These are statements about the runs v14 to v37 on the first databases ({len(band_rates)} runs, and the step from v13 into the band: the rows of `trajectory.csv`, and for v37 the first-database run of `databases_old_vs_new.csv`), and they stay true as history.",
+         f"v38 on the first databases has {pc(r38f)} agreement in direction, {pa(r38f - r37f)} points above v37 and {pa(r38f - band_rates.max())} points above the top of that band, a step that is {(r38f - r37f) / steps.max():.1f} times the largest step between neighbouring runs of v13 to v37.",
+         f"On the complete databases v37 has {pc(r37)} and v38 {pc(r38)} ({n(h38['same_direction'])} calls), {pa(r37 - r37f)} and {pa(r38 - r38f)} points above their runs on the first databases, {(r37 - r37f) / steps.max():.1f} and {(r38 - r38f) / steps.max():.1f} times the largest step of the band.",
+         f"Its recall of pathogenic-side variants is {pc(h38['plp_recall'], 1)}, {'inside' if plp_band.min() <= h38['plp_recall'] <= plp_band.max() else 'outside'} the band, and its recall of benign-side variants is {pc(h38['blb_recall'], 1)}, {pa(h38['blb_recall'] - blb_band.max(), 1)} points {'above' if h38['blb_recall'] > blb_band.max() else 'below'} the top of the band, which is of the first databases (the benign-side recall is over the same {n(sum(sum(main.m38[t].values()) for t in ('Likely_benign', 'Benign')))} variants as the trajectory's).",
+         f"The manuscript therefore says that the agreement moved once more at v38, by the change of Section 3.8 ({pa(r38f - r37f)} points on the first databases, against {early.iloc[0]:.1f} and {early.iloc[1]:.1f} points for the two largest steps before v13, which line {find_line(manuscript_lines(), 'The two largest steps before v13')} quotes), and that the complete databases moved it by more (Section 3.9).",
          ]))
 
     # ---- the PM2 sweeps
@@ -1393,13 +1401,11 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     # ---- the annotation time and the crate
     prov89 = pd.read_csv(DATA / "provenance_v38.csv")
     prov37 = pd.read_csv(DATA / "provenance_v37.csv")
-    new_apr = [p_.v38 for p_ in pairs if p_.kind == "april" and p_.dir37.parent == BENCH / "manuscript_runs" and not is_shared(p_.v38)]
-    secs_new = sorted(int(prov(x)["annotation_seconds"]) for x in new_apr)
     claims.append(Claim(
-        ["takes about two minutes to annotate in the runs of v37", "Release 0.5.0, which holds v38"],
-        f"A benchmark of 673,660 ClinVar variants of review status two stars or better takes about two minutes to annotate ('a median of {int(prov37.annotation_seconds.median())} seconds over the runs of this paper, made up to three at a time on one Apple M4 machine with 10 cores and 24 GB that another job was also using').",
-        [f"The {len(prov89)} April runs of the family v38 took a median of {int(prov89.annotation_seconds.median())} seconds ({int(prov89.annotation_seconds.min())} to {int(prov89.annotation_seconds.max())}; the {len(new_apr)} made on {new_york_days([prov(x)['recorded_at'] for x in new_apr])} a median of {secs_new[len(secs_new) // 2]}, {secs_new[0]} to {secs_new[-1]}), three at a time on the same machine, by binaries that contain the two speed-ups of 5 November 2026 (`RUN_VERSIONS.md`, 'After v38'), except the {len(prov89) - len(new_apr)} runs of Section 3.8 that were made earlier, and the manuscript keeps the time of the runs of v37 (a median of {int(prov37.annotation_seconds.median())} seconds), gives the time of release 0.5.0 measured alone, and says that the runs of v38 made for this paper were not timed on a quiet machine.",
-         "The individual times are those of runs made three at a time, and a job of mine ran beside some of them, so they are an upper bound and not a timing; the measurement that is one is `results/v38_v0.5.0/annotation_time.tsv`."]))
+        ["takes 25.3 seconds to annotate on every core", "the annotation of one of the 89 runs of v37 took a median of"],
+        "A benchmark of 673,660 ClinVar variants of review status two stars or better 'takes about two minutes to annotate in the runs of v37 (a median of 127 seconds over its 89 runs on the April set, made on 4 November 2026 up to three at a time on one Apple M4 machine with 10 cores and 24 GB that another job was also using) and about ten seconds to score', and release 0.5.0 'was timed alone on the same machine on 7 November 2026: it took 25.3 seconds on every core (the median of three runs), 74 seconds on one thread (one run) and 11 seconds to score'.",
+        [f"The {len(prov37)} April runs of v37 made for this paper took a median of {int(prov37.annotation_seconds.median())} seconds ({int(prov37.annotation_seconds.min())} to {int(prov37.annotation_seconds.max())}) and the {len(prov89)} of v38 a median of {int(prov89.annotation_seconds.median())} ({int(prov89.annotation_seconds.min())} to {int(prov89.annotation_seconds.max())}), made on 8 November 2026 up to seven at a time on the same machine with other work beside them, with the complete databases (which hold 8% more records) and by binaries that contain the two speed-ups of 5 November 2026 for v38 only.",
+         "The manuscript therefore says that the times of these runs are not timings, and keeps the time of release 0.5.0 measured alone on 7 November 2026 on the first databases (`results/v38_v0.5.0/annotation_time.tsv`), which was not repeated with the complete databases (Section 4.4)."]))
     l37, t37_, v37_ver = crate_size("5d8004a")
     l38, t38_, v38_ver = crate_size("v0.5.0-rc.1")
     claims.append(Claim(
@@ -1491,9 +1497,8 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
     D.blank()
     D.s(f"**{where('All 89 runs (Supplementary Table S2) were made by the same harness')}.**")
     D.s(f"Written for v37, the statement was that all 89 runs were made by the same harness, {sum(k37['plain'].values())} with the binary of v37 (SHA-256 `{next(iter(k37['plain']))}...`), {sum(k37['cutoff'].values())} with the build of the first patch and {sum(k37['hook'].values())} with the build of the second.")
-    D.s(f"For the family v38 the split of the 89 April runs is the same, {sum(ca['plain'].values())} plain, {sum(ca['cutoff'].values())} with the cutoff build and {sum(ca['hook'].values())} with the hook build, but the plain runs have two binaries: {', '.join(f'`{k}...` made {v}' for k, v in sorted(ca['plain'].items(), key=lambda kv: -kv[1]))}.")
-    D.s(f"The {ca['plain'].get('f184277d', 0)} runs of Section 3.8 that the family shares carry `f184277d...`, the binary of the working tree that became v38, which release 0.5.0 reproduced (`results/v38_v0.5.0`), and the other plain runs carry `70b7c684...`, the binary built from the tag; the cutoff runs carry `{', '.join(ca['cutoff'])}...` and the hook runs `{', '.join(ca['hook'])}...` (`binaries_v38.tsv`).")
-    D.s("The manuscript says that the plain runs are 73 with the binary built from the tag and that eighteen of them were made first by the binary of the working tree and again by the tag's, and `verify_numbers.py` counts a run of the other binary as made by the tag's only if the repetition by the tag's binary is in `results/v38_v0.5.0` with every scored file identical.")
+    D.s(f"For the family v38 the split of the 89 April runs is the same, {sum(ca['plain'].values())} plain, {sum(ca['cutoff'].values())} with the cutoff build and {sum(ca['hook'].values())} with the hook build, and each kind has one binary: {', '.join(f'`{k}...` made {v}' for k, v in sorted(ca['plain'].items(), key=lambda kv: -kv[1]))} for the plain runs, `{', '.join(ca['cutoff'])}...` for the cutoff runs and `{', '.join(ca['hook'])}...` for the hook runs (`binaries_v38.tsv`).")
+    D.s("`verify_numbers.py` counts a run of another binary than its kind's as a failure, and the 42 runs of Section 3.8 must have been made a second time by the binary of the stored run, with every scored file identical (`results/v38_v0.5.0`).")
 
     D.blank()
     D.s(f"**{where('The three binaries are builds of the tag')}.**")
@@ -1501,10 +1506,11 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
     D.s("The binaries of the family v38 are builds of the tag `v0.5.0-rc.1` (commit c12d9f9), made the same way (`build_manuscript_binaries.sh`, names `v38`, `cut38` and `hook38`); the two patches apply to the tag with every context line matching, the cutoff patch at the line it was written for and the hooks patch with offsets of 2 and 20 lines, the lines that the tree of the tag has gained above its two hunks.")
 
     D.blank()
-    D.s(f"**{where('Eighteen of the plain runs are sweeps')}, {where('The same 96 runs were made for v37', inline=True)}, {where('All but one of the 42 were made twice', inline=True)}.**")
+    D.s(f"**{where('The 38 runs of Section 3.8 on the April set and the 4 on the October release were then made a second time')}, {where('The same 96 runs were made for v37', inline=True)}, {where('All 42 were made on 8 November 2026', inline=True)}.**")
     D.s("Written for v37, the statement was that every run was made twice, in October 2026 and again on 4 November 2026, and that the two sets agree in every scored file.")
-    D.s(f"In the family v38 the {len(shared)} runs of Section 3.8 that it shares were made twice (on 4 November by the binary of the working tree and on 7 November by release 0.5.0, identical in every scored file), and the {len(new_apr) + len(new_oct)} others were made once, on {new_york_days([prov(p_.v38)['recorded_at'] for p_ in new_apr + new_oct])}, so the check that they are right is the controls (Section 6 above), which reproduce the main run in every cell and in the firing count of every criterion.")
-    D.s("The provenance file of each new run records the commit of the checkout that ran the harness (`9574be1` for the first 19 runs and `13665f4` for the rest, because the branch `docs/acmg-scheme-and-versions` was merged while the family was running), which is not the commit of the binary, as the manuscript and `results/v37_manuscript/README.md` say for both families.")
+    D.s(f"In the manuscript now every run of the family was made once on {new_york_days([prov(p_.v38)['recorded_at'] for p_ in family])} with the complete databases, and the 42 runs of Section 3.8 were made a second time by the same binaries into a directory of their own, identical in every scored file (`results/v38_v0.5.0/rerun_comparison.csv`), so the check that the others are right is the controls (Section 6 above), which reproduce the main run in every cell and in the firing count of every criterion.")
+    commits = Counter(prov(p_.v38)["repo_commit"][:7] for p_ in family)
+    D.s(f"The provenance file of each run records the commit of the checkout that ran the harness ({', '.join(f'`{c}` for {k}' for c, k in commits.most_common())}), which is not the commit of the binary, as the manuscript and `results/v37_manuscript/README.md` say for both families.")
 
     D.blank()
     D.s(f"**{where('The prices of all seven steps are measured on v38')}.**")
@@ -1561,7 +1567,10 @@ def check_typed_claims(summary: list[dict], cmp_: dict, eff: pd.DataFrame) -> No
     """The few statements of the text above that are typed and not computed. They hold for these data, and if the data change the script stops
     here and does not write a document that says something the data no longer say."""
     knees = {s_["label"]: (s_["shape"]["v37"]["knee"], s_["shape"]["v38"]["knee"]) for s_ in summary if s_["shape"]["v37"]["knee"] is not None or s_["shape"]["v38"]["knee"] is not None}
-    expected = {"BS1 bar": (0.001, 0.001), "BP7 far boundary": (300.0, 300.0), "PM2 bar, not recessive-only, 2015 table both sides": (1e-05, 1e-05), "Likely pathogenic cutoff (points)": (5.0, 5.0)}
+    # the floor of BS2's carrier arm with the bar off has a knee at 100 alleles under v38 on the complete databases (the largest fall of its exchange rate is
+    # by a factor of 3.3) and none under v37 (2.4) or under v38 on the first databases (2.4), a crossing of the factor of 3 and not a different curve
+    expected = {"BS1 bar": (0.001, 0.001), "BS2 carrier floor, bar off": (None, 100.0), "BP7 far boundary": (300.0, 300.0),
+                "PM2 bar, not recessive-only, 2015 table both sides": (1e-05, 1e-05), "Likely pathogenic cutoff (points)": (5.0, 5.0)}
     assert knees == expected, f"the knees are not the ones that Section 1 of the document names: {knees}"
     sw = {s_["label"]: s_["shape"] for s_ in summary}
     for label in ("BS2 carrier bar, dominant-only genes", "BS2 carrier floor, bar off"):

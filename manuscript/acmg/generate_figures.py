@@ -401,6 +401,7 @@ RULING_COLORS = {
     "neither_supported": CAT[2],
     "needs_evidence": CAT[3],
     "no_verdict": GRID,
+    "not_reviewed": MUTED,
 }
 RULING_LABELS = {
     "clinvar_supported": f"{CV} call supported",
@@ -408,6 +409,7 @@ RULING_LABELS = {
     "neither_supported": "Neither: the reviewer's call is VUS or another class",
     "needs_evidence": "Needs more evidence, or depends on the disorder",
     "no_verdict": "No verdict recorded",
+    "not_reviewed": "Not reviewed: new with the complete databases",
 }
 
 
@@ -473,6 +475,8 @@ def figS3_review() -> None:
         "neither_supported": list(g["neither"]),
         "needs_evidence": list(g["needs_evidence"] + g["disorder_specific"]),
     }
+    if "not reviewed" in g.columns:  # a classifier can make a call opposite that the reviewer never saw (the complete databases add three)
+        series["not_reviewed"] = list(g["not reviewed"])
     stacked_barh(axB, [short[o] for o in order], series, RULING_COLORS, total=list(g["total"]))
     axB.set_xlim(0, 24)
     axB.set_xlabel(f"Opposite-direction calls remaining in {BASE} ({int(g['total'].sum())})")
@@ -480,7 +484,7 @@ def figS3_review() -> None:
     axB.set_title(f"Rulings on the {int(g['total'].sum())} calls that remain", loc="left", fontsize=8, color=INK, pad=6)
     panel_letter(axB, "B", x=-0.42, y=1.07)
 
-    handles = [Patch(fc=RULING_COLORS[c], ec="none", label=RULING_LABELS[c]) for c in cats]
+    handles = [Patch(fc=RULING_COLORS[c], ec="none", label=RULING_LABELS[c]) for c in cats + (["not_reviewed"] if "not_reviewed" in series else [])]
     axL.legend(handles=handles, loc="center", ncol=3, fontsize=6.8, columnspacing=1.6, handlelength=1.2, handleheight=1.0)
     clinvar_note(fig, "Pathogenic-side: P/LP; benign-side: B/LB. An opposite-direction call is a ClinVar 2-star+ pathogenic-side class called benign-side, or the reverse.")
     save(fig, "figS3_review")

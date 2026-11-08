@@ -18,6 +18,18 @@ runs and writes four things, so that the text states no number of the change tha
                                    complete databases: the headline counts and the firing of BP4, BP7, PP3 and of PVS1 on
                                    canonical splice variants (long format: version, set, measure, first, complete)
   databases_opposite_changes.csv   the opposite-direction calls that differ between the two stacks, with the criteria on each side
+  databases_sweeps.csv             every sweep of the paper as a curve with the first and with the complete databases (one row for each
+                                   setting: the metrics under both and the difference)
+  databases_sweep_shapes.csv       one row for each sweep: its knee, the largest fall in its exchange rate, its ranges, the sign of each
+                                   step and the pairs of settings that change order, under both stacks, and whether it differs
+  databases_effects.csv            every switch, source, hook and gap run as an effect (the run less the default under the same
+                                   databases) under both stacks, and whether it changed sign or by more than 20%
+  databases_family_summary.csv     the counts that the manuscript quotes from the two files above (how many sweeps change their knee
+                                   or their shape, how many effects change) and the sweeps that do, with the reason
+
+The runs of the sweeps and effects are the 88 to 89 of the family v38 on the April set that `20_compare_families.py` pairs with the
+family v37, made on both stacks; the machinery that gives a sweep its shape and an effect its flag is that script's, so that the
+two comparisons (the classifier changed, the databases changed) use one definition of a change.
 
 and the report `results/complete_vs_april_databases.md`, which is made from those files.
 
@@ -51,6 +63,7 @@ ROOT = HERE.parents[2]
 BENCH = ROOT / "data/benchmark"
 OUT = ROOT / "manuscript/acmg/data"
 REPORT = ROOT / "analysis/acmg_benchmark/results/complete_vs_april_databases.md"
+RUNS_DIR = ROOT / "analysis/acmg_benchmark/results/v37_manuscript"
 NEW_RUNS = BENCH / "manuscript_runs"
 OLD_RUNS = BENCH / "manuscript_runs_april_databases"
 BED = BENCH / "sa_sources/clinvar_2star_regions.bed"
@@ -342,6 +355,79 @@ def opposite_changes(runs: dict) -> list[dict]:
 # ------------------------------------------------------------------------------------------------ the report
 
 
+def families():
+    """`20_compare_families.py`, which holds the sweeps of the paper, the shape of a sweep and the effect of an ablation."""
+    spec = importlib.util.spec_from_file_location("families20", HERE / "20_compare_families.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["families20"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# The BS2 sweeps of the carrier bar and floor that `20_compare_families.py` pairs with runs of v37 made before the paper's family; the names
+# are the ones it gives the v37 side, which its sweeps look up (`v37_bs2off` is the point of the floor sweep at the default floor).
+EARLIER_BS2 = [
+    ("v37_bs2off", "v38_sw_bs2ad_0", "bs2_ad_prevalence_threshold", "0"), ("v37_bs2prev_3e-5", "v38_sw_bs2ad_3e-05", "bs2_ad_prevalence_threshold", "3e-05"),
+    ("v37_bs2prev_1e-4", "v38_sw_bs2ad_0.0001", "bs2_ad_prevalence_threshold", "0.0001"), ("v37_bs2prev_1e-3", "v38_sw_bs2ad_0.001", "bs2_ad_prevalence_threshold", "0.001"),
+    ("v37_bs2prev_3e-3", "v38_sw_bs2ad_0.003", "bs2_ad_prevalence_threshold", "0.003"), ("v37_bs2ac_20", "v38_sw_bs2ac_20", "bs2_ad_min_ac (bar off)", "20"),
+    ("v37_bs2ac_100", "v38_sw_bs2ac_100", "bs2_ad_min_ac (bar off)", "100"), ("v37_bs2ac_1000", "v38_sw_bs2ac_1000", "bs2_ad_min_ac (bar off)", "1000"),
+]
+
+
+def family_on_both_stacks() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """The runs of the family v38 on the April set, made with the first and with the complete databases, as sweeps and as effects.
+
+    A `Pair` of `20_compare_families.py` is two runs that differ in the classifier, and here its first side (`v37`) is the run on the first
+    databases and its second (`v38`) the run on the complete ones, so every sweep shape and every flag of an effect is that script's, and
+    the columns are renamed to `first` and `complete` when they are written.
+    """
+    f = families()
+    apr37 = pd.read_csv(RUNS_DIR / "runs.tsv", sep="\t").set_index("name")
+    pairs = []
+    for name37, row in apr37.iterrows():
+        name = "v38" + name37[3:]
+        if (OLD_RUNS / name / "concordance_matrix.csv").exists() and (NEW_RUNS / name / "concordance_matrix.csv").exists():
+            m1, f1 = f.read_dir(OLD_RUNS / name, "april")
+            m2, f2 = f.read_dir(NEW_RUNS / name, "april")
+            pairs.append(f.Pair(name37, name, row["group"], row["knob"], str(row["value"]), "april", OLD_RUNS / name, NEW_RUNS / name, m1, m2, f1, f2))
+        else:
+            sys.exit(f"{name} is not in both roots of runs")
+    for name37, name, knob, value in EARLIER_BS2:
+        m1, f1 = f.read_dir(OLD_RUNS / name, "april")
+        m2, f2 = f.read_dir(NEW_RUNS / name, "april")
+        pairs.append(f.Pair(name37, name, "sweep", knob, value, "april", OLD_RUNS / name, NEW_RUNS / name, m1, m2, f1, f2))
+    m1, f1 = f.read_dir(OLD_RUNS / "v38", "april")
+    m2, f2 = f.read_dir(NEW_RUNS / "v38", "april")
+    main = f.Pair("v37", "v38", "baseline", "", "shipped", "april", OLD_RUNS / "v38", NEW_RUNS / "v38", m1, m2, f1, f2)
+    sweep_df, summary = f.sweep_table(pairs, main)
+    eff = f.effects(pairs, main)
+    counts = f.summary_rows(summary, eff)
+    ren = lambda df: df.rename(columns={c: c.replace("_v37", "_first").replace("_v38", "_complete") for c in df.columns}).rename(columns={"v37": "first", "v38": "complete"})  # noqa: E731
+    shapes = []
+    for sw in summary:
+        first, complete = sw["shape"]["v37"], sw["shape"]["v38"]
+        order = sorted(sw["points"], key=lambda o: o["setting"])
+        reasons = []
+        if first["knee"] != complete["knee"]:
+            reasons.append(f"the knee {'appears at ' + format(complete['knee'], 'g') if first['knee'] is None else 'disappears from ' + format(first['knee'], 'g') if complete['knee'] is None else 'moves from ' + format(first['knee'], 'g') + ' to ' + format(complete['knee'], 'g')}")
+        words = {"+": "positive", "-": "negative", "0": "zero"}
+        for key, what in (("gain_signs", "gain"), ("cost_signs", "cost")):
+            for i, (x, y) in enumerate(zip(first[key], complete[key])):
+                if x != y:
+                    reasons.append(f"the {what} of the step from {order[i]['value']} to {order[i + 1]['value']} goes from {words[x]} to {words[y]}")
+        flips = sw["shape"]["flips"]
+        shapes.append({"sweep": sw["label"], "knob": sw["knob"], "settings": sw["n"], "knee_first": first["knee"], "knee_factor_first": round(first["knee_factor"], 2),
+                       "knee_complete": complete["knee"], "knee_factor_complete": round(complete["knee_factor"], 2),
+                       "range_same_direction_first": first["range_same_direction"], "range_same_direction_complete": complete["range_same_direction"],
+                       "gain_signs_first": first["gain_signs"], "gain_signs_complete": complete["gain_signs"], "cost_signs_first": first["cost_signs"], "cost_signs_complete": complete["cost_signs"],
+                       "pairs_that_change_order": len(flips), "settings_that_change_order": "; ".join(f"{a_} and {b_}" for a_, b_ in flips),
+                       "differs": bool(reasons or flips), "what_differs": "; ".join(reasons)})
+    out = [{"name": r["name"].replace("_v37", "_first").replace("_v38", "_complete"), "value": r["value"], "text": ""} for r in counts]
+    flagged = eff[eff.group.isin(["switch", "source", "hook", "gap"]) & ((eff.changed_sign == True) | (eff.changed_by_more_than_20_percent == True) | (eff.appeared_or_vanished == True))]  # noqa: E712
+    out += [{"name": "effect_that_changed", "value": int(r.small_number == False), "text": f"{r.run_v38} {r.metric}: {int(r.effect_v37):+d} on the first databases, {int(r.effect_v38):+d} on the complete ones"} for r in flagged.itertuples()]  # noqa: E712
+    return ren(sweep_df), pd.DataFrame(shapes), ren(eff), pd.DataFrame(out)
+
+
 def n(x) -> str:
     return f"{int(round(float(x))):,}"
 
@@ -354,7 +440,7 @@ def signed(x: float) -> str:
     return f"{int(x):+,}"
 
 
-def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: list[dict], opp: list[dict]) -> None:
+def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: list[dict], opp: list[dict], shapes: pd.DataFrame, fam: pd.DataFrame) -> None:
     pres_df, cause_df, ovn_df, blocks_df = pd.DataFrame(pres), pd.DataFrame(cause_rows), pd.DataFrame(ovn), pd.DataFrame(blocks)
     lines: list[str] = []
 
@@ -473,6 +559,29 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
                         cells.append(fmt(val) if val != "" else "-")
                 s(f"| {sc} | {label} | " + " | ".join(cells) + " |")
         s()
+    counts = {r.name: r.value for r in fam.itertuples() if r.text == ""}
+    s("## The sweeps and the effects of the family")
+    s()
+    differ = shapes[shapes.differs]
+    def knee(label: str, a_: float, b_: float) -> str:
+        return f"{label} is at {a_:g} on both stacks" if a_ == b_ else f"{label} is at {a_:g} on the first databases and at {b_:g} on the complete ones"
+
+    k_bs1 = knee("BS1's", counts["knee_bs1_first"], counts["knee_bs1_complete"])
+    k_bp7 = knee("the far boundary of BP7's", counts["knee_bp7_far_boundary_first"], counts["knee_bp7_far_boundary_complete"])
+    s(f"The {n(counts['sweeps'])} sweeps of the paper keep their shape but for {n(len(differ))}, and {n(counts['sweeps_that_differ_in_the_knee'])} of them differs in its knee ({k_bs1}, {k_bp7}).")
+    s()
+    for r in differ.itertuples():
+        bits = [r.what_differs] if r.what_differs else []
+        if r.pairs_that_change_order:
+            bits.append(f"settings {r.settings_that_change_order} change order")
+        s(f"- {r.sweep}: {'; '.join(bits)}")
+    s()
+    s()
+    s(f"Of the {n(counts['effects'])} effects of the switches, sources, hooks and gap runs on {n(counts['effect_measures'])} measures, {n(counts['effects_that_changed'])} changed sign, appeared or vanished, or changed by more than 20%, and {n(counts['effects_that_changed_and_are_small'])} of those are of fewer than 10 calls.")
+    s()
+    for r in fam[fam["name"] == "effect_that_changed"].itertuples():
+        s(f"- {r.text}{' (fewer than 10 calls)' if int(r.value) == 0 else ''}")
+    s()
     s("## What this file does not say")
     s()
     s("The first databases were not rebuilt, and the run of the extraction that left them short was not repeated, so the cause above is read from the pattern of the records and not observed.")
@@ -509,7 +618,10 @@ def main() -> None:
     write("databases_lost_blocks.csv", blocks)
     write("databases_old_vs_new.csv", ovn)
     write("databases_opposite_changes.csv", opp)
-    report(pres, cause_rows, blocks, ovn, opp)
+    sweeps_df, shapes_df, effects_df, family_summary = family_on_both_stacks()
+    for name, df in (("databases_sweeps.csv", sweeps_df), ("databases_sweep_shapes.csv", shapes_df), ("databases_effects.csv", effects_df), ("databases_family_summary.csv", family_summary)):
+        write(name, df.to_dict("records"))
+    report(pres, cause_rows, blocks, ovn, opp, shapes_df, family_summary)
 
 
 if __name__ == "__main__":
