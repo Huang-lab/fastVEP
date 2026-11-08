@@ -17,9 +17,16 @@ as and an integer column with a blank in it stays integer.
 
 ClinVar's 2-star+ classifications are a reference and not ground truth.
 
+Two bases. The manuscript names the files of v37 (`criteria_firing_v37.csv`). `--base v38` gathers their twins for v38
+(`criteria_firing_v38.csv`, from `13_manuscript_stats.py --base v38`) under the same tables, and the files that have no twin (the
+history of v37) as they are; the captions are read with the names of the twins. The workbook the manuscript ships is v37's and is
+never written by another base: `--write` needs `--out PATH` for the workbook of v38, and `--check` compares that file. Under v37
+the twins of v38 are in no table of a manuscript that says v37, so they are not looked for.
+
 Usage
   build_supplement.py --write    write the workbook, unless it already holds what data/ and manuscript.md now say
   build_supplement.py --check    exit non-zero if the workbook differs from what data/ and manuscript.md now say
+  build_supplement.py --base v38 --write --out /tmp/supplementary_tables_v38.xlsx    the workbook of v38, written elsewhere
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import os
 import re
 import sys
 from pathlib import Path
@@ -40,6 +48,30 @@ HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 MANUSCRIPT = HERE / "manuscript.md"
 WORKBOOK = HERE / "supplementary_tables.xlsx"
+
+
+def _arg(flag: str, default: str) -> str:
+    """A command-line option that the module-level names below need before `main` parses its arguments."""
+    for i, a in enumerate(sys.argv):
+        if a == flag and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1]
+    return default
+
+
+BASE = _arg("--base", os.environ.get("ACMG_BASE", "v37"))
+if BASE not in ("v37", "v38"):
+    sys.exit(f"unknown base {BASE}; choose v37 or v38")
+if BASE != "v37":
+    # the workbook of another base is somewhere of its own: the one in the repository is the manuscript's, which says v37
+    WORKBOOK = Path(_arg("--out", "")) if _arg("--out", "") else HERE / f"supplementary_tables_{BASE}.xlsx.NOT-WRITTEN"
+
+
+def twin(name: str) -> str:
+    """The file of the base for a file the manuscript names: the same name with `_v37` the base's, where that file exists."""
+    other = name.replace("_v37", f"_{BASE}")
+    return other if BASE != "v37" and other != name and (DATA / other).exists() else name
 
 LABEL = re.compile(r"\*\*((?:Supplementary|Appendix) Table ([SA]\d+))\.\*\*[ \t]*")
 FILES = re.compile(r"`([\w.\-]+\.(?:csv|tsv))`")
@@ -69,16 +101,24 @@ def tables() -> list[dict]:
     for para in back.split("\n\n"):
         m = LABEL.match(para)
         if m:
+            files = list(dict.fromkeys(FILES.findall(para)))
+            caption = para[m.end() :]
+            for f in files:  # under another base the table holds the twin, and its caption names the twin
+                caption = caption.replace(f, twin(f))
             found.append(
                 {
                     "name": m.group(1),
                     "id": m.group(2),
-                    "caption": para[m.end() :].replace("`", ""),
-                    "files": list(dict.fromkeys(FILES.findall(para))),
+                    "caption": caption.replace("`", ""),
+                    "files": [twin(f) for f in files],
                 }
             )
     listed = [f for t in found for f in t["files"]]
     present = sorted(p.name for p in DATA.iterdir() if p.suffix in (".csv", ".tsv"))
+    if BASE == "v37":
+        present = [f for f in present if "_v38" not in f]  # the twins of v38 are in no table of a manuscript that says v37
+    else:
+        present = [f for f in present if not ("_v37" in f and (DATA / f.replace("_v37", f"_{BASE}")).exists())]  # the files that the twins replace
     twice = sorted({f for f in listed if listed.count(f) > 1})
     problems = []
     if twice:
@@ -292,7 +332,11 @@ def main() -> None:
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--write", action="store_true", help="write the workbook unless it is already up to date")
     mode.add_argument("--check", action="store_true", help="exit non-zero if the workbook is not up to date")
+    ap.add_argument("--base", choices=["v37", "v38"], default="v37", help="the classifier whose files are gathered (see the docstring)")
+    ap.add_argument("--out", default="", help="the workbook of a base other than v37 (read before the arguments)")
     args = ap.parse_args()
+    if args.write and BASE != "v37" and not args.out:
+        sys.exit(f"the workbook of {BASE} is never written beside the manuscript's: give --out PATH")
     diff = differences()
     if args.check:
         print(f"{WORKBOOK.name}: " + ("up to date" if not diff else f"{len(diff)} difference(s)"))

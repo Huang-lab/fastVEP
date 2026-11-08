@@ -18,9 +18,17 @@ ClinVar's 2-star+ classifications are a reference and not ground truth; every ax
 says "ClinVar 2-star+" (the constant `CV`), and `clinvar_note` puts a footnote under each figure that
 gives the review status, the release and what P/LP, B/LB and VUS stand for.
 
+Two bases. The figures are drawn from the files of a base, the classifier whose final run the tables describe: `--base v37`
+(the default) reads `runs_v37_variants.csv` and the other `_v37` files, which is what the manuscript says, and writes `figures/`.
+`--base v38` reads their twins (`13_manuscript_stats.py --base v38`) with the runs and the labels that name v37 named v38, and needs
+`--out DIR`, because the figures of the repository are the manuscript's and say v37. The code is spelled for v37 and every name
+goes through `fname`, `rn` or `blab`, which change nothing under v37. The figures of the history of the versions (S1, S2 and the
+trajectory in S4) are v37's and are drawn from the files that have no twin.
+
 Usage
   generate_figures.py            all figures
   generate_figures.py 1 S3       figure 1 and supplementary figure S3
+  generate_figures.py --base v38 --out /tmp/figures_v38     every figure for v38, in a directory of your own
 
 Figures 1 to 5 are the main figures, each of which states a conclusion of the paper; Figures S1 to S4
 show how the classifier was developed and reviewed (the runs, the ledger of changes, the reviewer's
@@ -29,6 +37,7 @@ rulings and the frontier of agreement against contradictions) and are in the sup
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -44,6 +53,40 @@ from matplotlib.patches import Patch, Rectangle  # noqa: E402
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 FIG = HERE / "figures"
+
+
+def _arg(flag: str, default: str) -> str:
+    """A command-line option that the module-level names below need before `main` reads its arguments."""
+    for i, a in enumerate(sys.argv):
+        if a == flag and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1]
+    return default
+
+
+BASE = _arg("--base", os.environ.get("ACMG_BASE", "v37"))
+if BASE not in ("v37", "v38"):
+    sys.exit(f"unknown base {BASE}; choose v37 or v38")
+if _arg("--out", ""):
+    FIG = Path(_arg("--out", ""))
+elif BASE != "v37":
+    sys.exit(f"the figures of the repository say v37: give --out DIR for the figures of {BASE}")
+
+
+def fname(name: str) -> str:
+    """The file of a table. Names are spelled for v37, and `_v37` is the base's suffix for another base."""
+    return name.replace("_v37", f"_{BASE}")
+
+
+def rn(name: str) -> str:
+    """A run's name in the family of the base: `v37_sw_no_faf` is `v38_sw_no_faf` under v38."""
+    return BASE + name[3:] if name.startswith("v37") else name
+
+
+def blab(text: str) -> str:
+    """A label that names the classifier, which the code spells v37 (not the history of the versions, which stays)."""
+    return text.replace("v37", BASE)
 
 # ------------------------------------------------------------------------------ tokens
 SURFACE = "#ffffff"
@@ -107,7 +150,7 @@ MS = 5.5  # an 8 px marker
 
 
 def read(name: str) -> pd.DataFrame:
-    return pd.read_csv(DATA / name)
+    return pd.read_csv(DATA / fname(name))
 
 
 def panel_letter(ax, letter: str, x: float = -0.02, y: float = 1.04) -> None:
@@ -407,9 +450,9 @@ def figS3_review() -> None:
     }
     stacked_barh(axB, [short[o] for o in order], series, RULING_COLORS, total=list(g["total"]))
     axB.set_xlim(0, 24)
-    axB.set_xlabel("Opposite-direction calls remaining in v37 (49)")
+    axB.set_xlabel(f"Opposite-direction calls remaining in {BASE} ({int(g['total'].sum())})")
     vgrid(axB)
-    axB.set_title("Rulings on the 49 calls that remain", loc="left", fontsize=8, color=INK, pad=6)
+    axB.set_title(f"Rulings on the {int(g['total'].sum())} calls that remain", loc="left", fontsize=8, color=INK, pad=6)
     panel_letter(axB, "B", x=-0.42, y=1.07)
 
     handles = [Patch(fc=RULING_COLORS[c], ec="none", label=RULING_LABELS[c]) for c in cats]
@@ -547,7 +590,7 @@ def fig2_points() -> None:
     runs = read("runs_v37_variants.csv")
     cut = runs[(runs.group == "cutoff") & (runs.knob == "likely_pathogenic_points")].copy()
     cut["lp"] = cut.value.astype(int)
-    shipped_row = runs[runs.name == "v37"].iloc[[0]].copy()
+    shipped_row = runs[runs.name == BASE].iloc[[0]].copy()
     shipped_row["lp"] = 6
     cut = pd.concat([cut[cut.lp != 6], shipped_row], ignore_index=True)
     cut["wrong"] = cut.vus_to_plp + cut.false_pathogenic
@@ -573,18 +616,18 @@ def fig2_points() -> None:
 
     # C: benign-side scheme trade-off
     sch = {
-        "shipped (v37)": "Table (default)",
+        blab("shipped (v37)"): "Table (default)",
         "SVI points, both sides, Likely Benign from -1 (Tavtigian)": "Points, from -1",
         "SVI points, both sides, Likely Benign from -2": "Points, from -2",
         "SVI points, both sides, Likely Benign from -3": "Points, from -3",
     }
     sub = rep[rep.scheme.isin(sch)].copy()
-    pt = sub[sub.scheme != "shipped (v37)"].sort_values("false_benign")
+    pt = sub[sub.scheme != blab("shipped (v37)")].sort_values("false_benign")
     axC.plot(pt.false_benign, pt.blb_recall * 100, color=CAT[1], lw=LW, zorder=2)
-    place = {"shipped (v37)": (24, 0, "left"), "SVI points, both sides, Likely Benign from -1 (Tavtigian)": (-20, 0, "right"),
+    place = {blab("shipped (v37)"): (24, 0, "left"), "SVI points, both sides, Likely Benign from -1 (Tavtigian)": (-20, 0, "right"),
              "SVI points, both sides, Likely Benign from -2": (28, 0, "left"), "SVI points, both sides, Likely Benign from -3": (26, -0.5, "left")}
     for r in sub.itertuples():
-        shipped = r.scheme == "shipped (v37)"
+        shipped = r.scheme == blab("shipped (v37)")
         axC.plot([r.false_benign], [r.blb_recall * 100], marker="o", ms=MS + (2 if shipped else 0), mfc=INK if shipped else SURFACE,
                  mec=SURFACE if shipped else CAT[1], mew=1.5 if shipped else 1.4, zorder=5 if shipped else 3)
         dx, dy, ha = place[r.scheme]
@@ -757,7 +800,7 @@ def fig5_strata() -> None:
                loc="center", bbox_to_anchor=(0.5, 0.437), ncol=4, fontsize=6.8, columnspacing=1.2, handlelength=1.1, handletextpad=0.4)
 
     # C: the same three classes, April set against the October strata
-    order = [("April set (v37)", "April 2026 set\n(used for tuning)"), ("October, unchanged", "October 2026,\nunchanged"), ("October, new", "October 2026, new\n(not in the April set)")]
+    order = [(blab("April set (v37)"), "April 2026 set\n(used for tuning)"), ("October, unchanged", "October 2026,\nunchanged"), ("October, new", "October 2026, new\n(not in the April set)")]
     classes = [("Pathogenic", "P"), ("Likely_pathogenic", "LP"), ("VUS", "VUS"), ("Likely_benign", "LB"), ("Benign", "B")]
     width = 0.24
     xs = np.arange(len(classes))
@@ -784,7 +827,7 @@ def fig5_strata() -> None:
     nb = tb[(tb.clinvar == "Benign")].set_index("group")
     axC.set_xlim(-0.6, 5.9)
     sr = read("temporal_standardised_recall_v37.csv").set_index("clinvar").loc["Benign"]
-    axC.text(4.62, 50, f"New Benign variants\nare rarer: median\npopulation-maximum\nAF {nb.loc['October, new', 'median_popmax_af']*100:.2f}%, against\n{nb.loc['April set (v37)', 'median_popmax_af']*100:.1f}% in the April set.\nAt April's recall in each\nfrequency band they\nwould be at {sr.new_recall_at_april_recall_per_band*100:.0f}%.",
+    axC.text(4.62, 50, f"New Benign variants\nare rarer: median\npopulation-maximum\nAF {nb.loc['October, new', 'median_popmax_af']*100:.2f}%, against\n{nb.loc[blab('April set (v37)'), 'median_popmax_af']*100:.1f}% in the April set.\nAt April's recall in each\nfrequency band they\nwould be at {sr.new_recall_at_april_recall_per_band*100:.0f}%.",
              fontsize=6.0, color=INK2, ha="left", va="center", linespacing=1.15)
     panel_letter(axC, "C", x=-0.04, y=1.18)
     axC.set_title("", loc="left")
@@ -797,7 +840,7 @@ def fig5_strata() -> None:
 
 def fig1_thresholds() -> None:
     r = read("runs_v37_variants.csv")
-    base = r[r.name == "v37"].iloc[0]
+    base = r[r.name == BASE].iloc[0]
     fig = plt.figure(figsize=(7.2, 3.9))
     gs = fig.add_gridspec(1, 3, width_ratios=[1.45, 1.0, 0.9], wspace=0.55)
     axA = fig.add_subplot(gs[0])
@@ -846,7 +889,7 @@ def fig1_thresholds() -> None:
     # B: the PM2 threshold for dominant genes, under the default scheme (points on the pathogenic side) and under the 2015 table on both sides
     pm = r[(r.knob == "pm2_ad_af_threshold") & (r.group == "sweep")].copy()
     tb = r[r.knob.str.startswith("pm2_ad_af_threshold (Richards") & (r.group == "interaction")].copy() if "interaction" in set(r.group) else r.iloc[0:0]
-    tbase = r[r.name == "v37_sw_table_both_sides"]
+    tbase = r[r.name == rn("v37_sw_table_both_sides")]
 
     def xval(v):
         v = float(v)
@@ -964,8 +1007,8 @@ def _signed(v: float, digits: int = 2) -> str:
 
 def fig3_ablations() -> None:
     r = read("runs_v37_variants.csv")
-    base = r[r.name == "v37"].iloc[0]
-    labels = {**ABLATION_LABELS, **MEASURED_LABELS}
+    base = r[r.name == BASE].iloc[0]
+    labels = {rn(k): v for k, v in {**ABLATION_LABELS, **MEASURED_LABELS}.items()}
     a = r[r.name.isin(labels)].copy()
     a["d_same_pp"] = (a.same_direction - base.same_direction) / 673660 * 100
     a["d_missed"] = a.false_benign - base.false_benign
@@ -973,10 +1016,10 @@ def fig3_ablations() -> None:
     a["d_plp_pp"] = (a.plp_recall - base.plp_recall) * 100
     a["label"] = a.name.map(labels)
 
-    blocks = [("A", "Setting switched off (on for the two opt-in settings): change from v37", a[a.group == "switch"].sort_values("d_same_pp")),
-              ("B", "One source removed from the annotation directory: change from v37", a[a.group == "source"].sort_values("d_same_pp")),
-              ("C", "Departures from the sources, measured by real runs: change from v37",
-               a[a.name.isin(MEASURED_LABELS)].sort_values("d_same_pp"))]
+    blocks = [("A", blab("Setting switched off (on for the two opt-in settings): change from v37"), a[a.group == "switch"].sort_values("d_same_pp")),
+              ("B", blab("One source removed from the annotation directory: change from v37"), a[a.group == "source"].sort_values("d_same_pp")),
+              ("C", blab("Departures from the sources, measured by real runs: change from v37"),
+               a[a.name.isin({rn(k) for k in MEASURED_LABELS})].sort_values("d_same_pp"))]
     nrow = [len(b) for _, _, b in blocks]
     fig = plt.figure(figsize=(7.2, 8.6))
     gs = fig.add_gridspec(3, 4, height_ratios=nrow, width_ratios=[1.5, 1, 0.9, 0.9], hspace=0.42, wspace=0.10)
@@ -1028,7 +1071,7 @@ def figS4_frontier() -> None:
     traj = read("trajectory.csv")
     main = traj[traj.mainline & traj.same_direction_rate.notna() & traj.opposite.notna() & (traj.source == "scored matrix on disk")]
     runs = read("runs_v37_variants.csv")
-    runs = runs[runs.name != "v37"]
+    runs = runs[runs.name != BASE]
     curve = read("baselines_curve_v37.csv")
     base = read("baselines_v37.csv").set_index("rule")
 
@@ -1039,7 +1082,7 @@ def figS4_frontier() -> None:
     hgrid(ax)
     ax.grid(axis="x")
 
-    # the runs of this paper: v37 with one thing changed
+    # the runs of this paper: the base with one thing changed
     ax.plot(runs.opposite, runs.same_direction / N * 100, ls="none", marker="o", ms=2.6, mfc="#b7b6ae", mec="none", alpha=0.75, zorder=2)
 
     # the versions
@@ -1075,12 +1118,12 @@ def figS4_frontier() -> None:
     ax.text(r2.opposite * 1.25, r2.same_direction_share * 100, f"R2 alone: {r2.same_direction_share * 100:.1f}%, {int(r2.opposite)}", fontsize=6.4,
             color=INK2, ha="left", va="center")
 
-    # every variant VUS, and v37
+    # every variant VUS, and the base
     ax.plot([0], [base.loc["all VUS", "same_direction_share"] * 100], marker="D", ms=MS - 1, mfc=INK2, mec=SURFACE, mew=0.8, zorder=5, ls="none")
     ax.text(1.3, base.loc["all VUS", "same_direction_share"] * 100, "every variant VUS", fontsize=6.4, color=INK2, ha="left", va="center")
-    v = base.loc["v37 (the classifier)"]
+    v = base.loc[blab("v37 (the classifier)")]
     ax.plot([v.opposite], [v.same_direction_share * 100], marker="o", ms=MS + 3, mfc=INK, mec=SURFACE, mew=1.5, zorder=6, ls="none")
-    ax.annotate(f"v37: {v.same_direction_share * 100:.1f}%, {int(v.opposite)}", xy=(v.opposite, v.same_direction_share * 100),
+    ax.annotate(f"{BASE}: {v.same_direction_share * 100:.1f}%, {int(v.opposite)}", xy=(v.opposite, v.same_direction_share * 100),
                 xytext=(v.opposite * 0.9, v.same_direction_share * 100 + 4.6), fontsize=6.8, color=INK, ha="center",
                 arrowprops=dict(arrowstyle="-", color=AXIS, lw=0.8, shrinkA=0, shrinkB=3))
     best = base.loc["R1 + R2 + R3"]
@@ -1094,7 +1137,7 @@ def figS4_frontier() -> None:
     ax.set_ylabel(f"Agreement in direction with {CV}\n(% of 673,660 variants)")
     handles = [
         Line2D([0], [0], color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, label="fastVEP versions v7 to v37 (scored matrices)"),
-        Line2D([0], [0], ls="none", marker="o", ms=3.4, mfc="#b7b6ae", mec="none", label="runs of this paper: v37 with one change"),
+        Line2D([0], [0], ls="none", marker="o", ms=3.4, mfc="#b7b6ae", mec="none", label=blab("runs of this paper: v37 with one change")),
     ] + [Line2D([0], [0], color=col, lw=1.1, marker=mk, ms=MS - 2.2, mfc=SURFACE, mec=col, mew=1.1, label=lab) for col, mk, lab in style.values()] + [
         Line2D([0], [0], ls="none", marker="s", ms=MS - 1.0, mfc=CAT[3], mec=SURFACE, label="filled: R2, and R2 with R3, with no frequency rule"),
     ]
@@ -1108,7 +1151,16 @@ FIGS = {"1": fig1_thresholds, "2": fig2_points, "3": fig3_ablations, "4": fig4_a
 
 
 def main() -> None:
-    want = sys.argv[1:] or list(FIGS)
+    # `--base` and `--out` were read at the top; what is left is the names of the figures
+    args, skip = [], False
+    for a in sys.argv[1:]:
+        if skip:
+            skip = False
+        elif a in ("--base", "--out"):
+            skip = True
+        elif not a.startswith(("--base=", "--out=")):
+            args.append(a)
+    want = args or list(FIGS)
     for n in want:
         if n not in FIGS:
             sys.exit(f"no figure {n}; choose from {', '.join(FIGS)}")

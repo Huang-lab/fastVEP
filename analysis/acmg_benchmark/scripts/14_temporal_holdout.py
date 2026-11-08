@@ -49,6 +49,14 @@ Usage
   14_temporal_holdout.py all       prepare, run and table
 
 `run` and `blockers` need FASTVEP_V37_BIN, the binary built at the v37 commit (5d8004a).
+
+  14_temporal_holdout.py --base v38 table      the same for v38 (the default base is v37)
+  14_temporal_holdout.py --base v38 blockers   writes temporal_high_af_blockers_v38.csv; needs FASTVEP_V38_BIN, the binary of
+                                               release 0.5.0 (the tag v0.5.0-rc.1)
+
+Under `--base v38` the October run is `v38_oct_shipped` of `11_manuscript_runs.py --v38 --holdout`, which is made there, and the
+covered subset is the same, so `prepare`, `run` and `all` do not apply and stop with a message; `table` writes the per-variant table
+of that run and `blockers` the table of Section 3.5's counterpart for v38 (`13_manuscript_stats.py --base v38` reads both).
 """
 
 from __future__ import annotations
@@ -70,9 +78,23 @@ CURRENT_RAW = BENCH / "sa_sources/clinvar_20261004.vcf.gz"
 CURRENT_DIR = BENCH / "clinvar_20261004"
 REGIONS = BENCH / "sa_sources/clinvar_2star_regions.bed"
 SUBSET_DIR = BENCH / "clinvar_20261004_covered"
+BASE = "v37"  # the classifier the steps are about: v37, or v38 under `--base v38` (see `set_base`)
 RUN_NAME = "v37_oct2026"
 RUN_DIR = BENCH / f"output_{RUN_NAME}"
 PER_VARIANT = BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"
+
+
+def set_base(base: str) -> None:
+    """Make `table` and `blockers` the steps of `base`: its October run, its per-variant tables and its binary."""
+    global BASE, RUN_NAME, RUN_DIR, PER_VARIANT
+    BASE = base
+    if base == "v37":
+        RUN_NAME = "v37_oct2026"
+        RUN_DIR = BENCH / f"output_{RUN_NAME}"
+    else:
+        RUN_NAME = f"{base}_oct_shipped"
+        RUN_DIR = BENCH / f"manuscript_runs/{RUN_NAME}"
+    PER_VARIANT = BENCH / f"manuscript_runs/{RUN_NAME}_per_variant.tsv.gz"
 
 DIRECTION = {"Pathogenic": "P/LP", "Likely_pathogenic": "P/LP", "VUS": "VUS", "Likely_benign": "B/LB", "Benign": "B/LB"}
 
@@ -162,15 +184,16 @@ def prepare() -> None:
 
 
 def v37_binary() -> Path:
-    """The binary built at the v37 commit, named by FASTVEP_V37_BIN as in `11_manuscript_runs.py`.
+    """The binary of the base: built at the v37 commit for v37 (FASTVEP_V37_BIN), the binary of release 0.5.0 for v38 (FASTVEP_V38_BIN).
 
-    The checkout's own build is its shipped classifier, which is v37 only until the classifier moves on: `run` would
-    score something else under v37's name, and `blockers`, which checks its calls against the per-variant table of v37
-    one by one, would stop on the first call that differs.
+    Named by the variable, as in `11_manuscript_runs.py`. The checkout's own build is its shipped classifier, which is v37 only
+    until the classifier moves on: `run` would score something else under v37's name, and `blockers`, which checks its calls
+    against the per-variant table of the base one by one, would stop on the first call that differs.
     """
-    binary = os.environ.get("FASTVEP_V37_BIN", "")
+    variable, what = ("FASTVEP_V37_BIN", "the v37 commit (5d8004a)") if BASE == "v37" else ("FASTVEP_V38_BIN", "the tag v0.5.0-rc.1, release 0.5.0")
+    binary = os.environ.get(variable, "")
     if not binary or not Path(binary).is_file():
-        sys.exit("FASTVEP_V37_BIN must name the binary built at the v37 commit (5d8004a)")
+        sys.exit(f"{variable} must name the binary built at {what}")
     return Path(binary)
 
 
@@ -228,13 +251,13 @@ def blockers() -> None:
     BS1 gives is counted: BS1 has the lower bar, and the site-level and gene-level blockers withhold BA1 and BS1
     alike. The calls of this second annotation are checked against the table's, one by one.
 
-    Writes manuscript/acmg/data/temporal_high_af_blockers_v37.csv.
+    Writes manuscript/acmg/data/temporal_high_af_blockers_v37.csv (_v38 under --base v38).
     """
     import gzip
     import json
     import tempfile
 
-    out_csv = ROOT / "manuscript/acmg/data/temporal_high_af_blockers_v37.csv"
+    out_csv = ROOT / f"manuscript/acmg/data/temporal_high_af_blockers_{BASE}.csv"
     fastvep = v37_binary()
     gff3 = ROOT / "test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3"
     fasta = ROOT / "test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
@@ -256,7 +279,7 @@ def blockers() -> None:
                 rows.append(r)
         return rows
 
-    sets = (("April set", uncalled(BENCH / "manuscript_runs/v37_per_variant.tsv.gz", False)),
+    sets = (("April set", uncalled(BENCH / f"manuscript_runs/{BASE}_per_variant.tsv.gz", False)),
             ("new variants", uncalled(PER_VARIANT, True)))
     out = []
     with tempfile.TemporaryDirectory(dir=BENCH) as tmp:
@@ -296,7 +319,12 @@ def blockers() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("step", choices=["prepare", "run", "table", "blockers", "all"])
+    ap.add_argument("--base", choices=["v37", "v38"], default="v37", help="the classifier the step is about (default v37; see the docstring)")
     args = ap.parse_args()
+    set_base(args.base)
+    if args.base != "v37" and args.step in ("prepare", "run", "all"):
+        sys.exit(f"under --base {args.base} the October run is {RUN_NAME} of 11_manuscript_runs.py (--v38 --holdout) and the covered subset is "
+                 "the same: only `table` and `blockers` apply")
     if args.step in ("prepare", "all"):
         prepare()
     if args.step in ("run", "all"):
