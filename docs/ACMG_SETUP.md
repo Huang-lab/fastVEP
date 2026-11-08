@@ -191,7 +191,7 @@ The counts of two cohorts do not combine into a frequency without the per-group 
 
 **Which to build.**
 Measured on the benchmark's 673,278 ClinVar 2-star+ variants (`manuscript/acmg`, Section 3.8), the joint release holds a record for every variant that the exomes hold, with counts that are never lower, and a record for 17,382 more.
-A database built from it changes 13,302 calls, 8,647 of them on intronic and UTR variants, and gives 10,190 more exact calls and 9,321 more calls in direction than the exomes (1.5 and 1.4 points), for one more reference-discordant benign call and two more reference-discordant pathogenic calls, which is about 3,100 calls in direction for each added opposite-direction call.
+A database built from it changes 13,412 calls, 8,689 of them on intronic and UTR variants, and gives 10,193 more exact calls and 9,187 more calls in direction than the exomes (1.5 and 1.4 points), for no more reference-discordant benign call and two more reference-discordant pathogenic calls, which is about 4,600 calls in direction for each added opposite-direction call.
 What it gives up is the region veto (below), and the benchmark can price only part of what the veto does.
 We would build the joint release for classification where no policy requires the region veto, and the exomes where one does.
 The benchmark of the manuscript still reads the exomes, because every other number in it was measured on them.
@@ -206,7 +206,7 @@ Three things about the joint release differ from the exomes and genomes releases
   A database built from the joint release cannot say, so that veto does not act on it, and `sa-build` prints a warning to standard error that it will not.
   The non-PAR flag matters for X-linked genes, where it is what lets BS2 count hemizygotes; the builder derives it for the joint release from the GRCh38 pseudoautosomal coordinates, which agree with gnomAD's own flag at the edges that could be read in the genomes release (`crates/fastvep-sa/src/sources/gnomad.rs` says which).
   A joint database built before v38 has no non-PAR flag, and BS2 counts no hemizygotes from it: rebuild it with the current builder.
-  On every chromosome the veto's absence accounts for 4,075 of the 10,190 more exact calls and 3,473 of the 9,321 more calls in direction, with one more reference-discordant pathogenic call; in the exomes the veto also keeps three ClinVar pathogenic-side frameshifts at low-complexity sites (MYO6, and the two PRRT2 frameshifts at Arg217) at Likely pathogenic, where the joint release gives them BS2 and VUS.
+  On every chromosome the veto's absence accounts for 4,075 of the 10,193 more exact calls and 3,374 of the 9,187 more calls in direction, with one more reference-discordant pathogenic call; in the exomes the veto also keeps three ClinVar pathogenic-side frameshifts at low-complexity sites (MYO6, and the two PRRT2 frameshifts at Arg217) at Likely pathogenic, where the joint release gives them BS2 and VUS.
   What the veto prevents at sites that nobody has classified, the benchmark cannot show.
 - **A filter of one callset withholds the frequency criteria of the whole record.**
   The release's FILTER column says only which side failed, so the builder reads the names of the failed filters from `exomes_filters` and `genomes_filters` and reports one that fired in either callset, as the conservative direction for a guard against trusting a frequency.

@@ -18,6 +18,9 @@ The classifier implements all 28 ACMG-AMP evidence criteria and evaluates them f
 
 > **First, build the databases.** Every `--sa-dir ./sa/` below stands for the nine-source reference stack, and the classifier degrades quietly without it: a criterion with no data reports `evaluated: false` instead of firing, so a half-built `--sa-dir` produces VUS rather than an error.
 > [ACMG_SETUP.md](ACMG_SETUP.md) has the verified download URL, build command and measured size for each source, plus `scripts/check_acmg_stack.py` to confirm each one answers a query before you trust a run.
+>
+> **Which databases the benchmark numbers of this document were measured with.** The measurements that this document quotes from the ClinVar benchmark were made with the benchmark's first SpliceAI and PhyloP databases, which lacked 8.2% and 8.3% of the values that gnomAD's file holds for the benchmark's variants, unless a sentence says that they are on the complete databases (the headline of v37 and v38, the pick-order table and the combining-scheme table below are).
+> On the complete databases, which the benchmark now reads, v38 agrees with ClinVar's direction for 534,335 of the 673,660 variants (79.3%, 1.5 points more) with 51 opposite-direction calls (three more), and v37 for 532,688 (79.1%) with 52; `analysis/acmg_benchmark/results/complete_vs_april_databases.md` sets the two side by side.
 
 ### CLI
 
@@ -824,17 +827,17 @@ Severity first, then the same tie-breaks as before, so equal-consequence choices
 MANE - the ordering changes which question is asked first, not which transcripts are eligible.
 
 **That advice is for reporting consequences, and it is not free for an ACMG call.**
-Run over the whole ClinVar 2-star+ benchmark, the classifier of v37 gives (the runs were not repeated on v38, whose default order gives 426,022 exact, 524,380 same-direction and 48 opposite-direction calls):
+Run over the whole ClinVar 2-star+ benchmark on the complete databases, the classifier of v37 gives (the runs were not repeated on v38, whose default order gives 431,727 exact, 534,335 same-direction and 51 opposite-direction calls):
 
 | Run | Exact | Same-direction | Opposite | P same | LP same | LB same | B same |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| default order | 425,869 | 522,886 | 49 | 51,855 | 6,755 | 65,461 | 111,745 |
-| MANE Plus Clinical first | 425,645 | 522,484 | 47 | 51,689 | 6,655 | 65,355 | 111,722 |
-| severity (`rank`) first | 423,481 | 519,120 | 452 | 52,821 | 6,895 | 63,171 | 109,754 |
+| default order | 431,555 | 532,688 | 52 | 51,858 | 6,752 | 71,205 | 115,860 |
+| MANE Plus Clinical first | 431,316 | 532,266 | 50 | 51,692 | 6,651 | 71,080 | 115,832 |
+| severity (`rank`) first | 429,047 | 528,633 | 442 | 52,819 | 6,890 | 68,751 | 113,710 |
 
-Severity first gains 1,106 Pathogenic and Likely pathogenic same-direction calls and loses 4,281 benign-direction ones, and opposite-direction calls rise from 49 to 452.
+Severity first gains 1,099 Pathogenic and Likely pathogenic same-direction calls and loses 4,604 benign-direction ones, and opposite-direction calls rise from 52 to 442.
 It picks the transcript on which the variant looks worst, and an ACMG call made there is a call about the worst reading and not about the variant.
-MANE Plus Clinical first resolves the reviewer's DST row (`c.1779-222C>T` is intronic on MANE Select and `c.64C>T p.Arg22Ter` on the Plus Clinical transcript) and costs 224 exact matches and 402 same-direction ones overall.
+MANE Plus Clinical first resolves the reviewer's DST row (`c.1779-222C>T` is intronic on MANE Select and `c.64C>T p.Arg22Ter` on the Plus Clinical transcript) and costs 239 exact matches and 422 same-direction ones overall.
 A Plus Clinical transcript is added for variants the Select one cannot report (as we read MANE's definition), and is not a better reading of every variant in its gene.
 The supportable form is to report its call beside the MANE Select one when they differ, which is not implemented.
 
@@ -894,14 +897,14 @@ The combining code is the same in v37 and v38 (`combiner.rs` differs by the word
 
 | scheme | measured by | exact | same direction | pathogenic recall | benign recall | reference-discordant benign | reference-discordant pathogenic |
 |---|---|---:|---:|---:|---:|---:|---:|
-| **default: points pathogenic + table benign** | real run | 426,022 | 524,380 | 62.5 % | 62.9 % | 24 | 24 |
-| 2015 table, both sides (`use_point_system = false`) | real run | 424,946 | 519,480 | 57.1 % | 62.9 % | 24 | 14 |
-| points, both sides, Likely Benign from -1 | replay | 350,142 | 474,950 | 62.5 % | 74.1 % | 371 | 24 |
-| points, both sides, Likely Benign from -2 | replay | 367,909 | 474,029 | 62.5 % | 49.9 % | 64 | 24 |
-| points, both sides, Likely Benign from -3 | replay | 364,989 | 455,333 | 62.5 % | 38.4 % | 30 | 24 |
+| **default: points pathogenic + table benign** | real run | 431,727 | 534,335 | 62.5 % | 66.4 % | 27 | 24 |
+| 2015 table, both sides (`use_point_system = false`) | real run | 430,652 | 529,435 | 57.1 % | 66.4 % | 27 | 14 |
+| points, both sides, Likely Benign from -1 | replay | 355,431 | 482,795 | 62.5 % | 77.0 % | 399 | 24 |
+| points, both sides, Likely Benign from -2 | replay | 368,978 | 476,213 | 62.5 % | 50.6 % | 64 | 24 |
+| points, both sides, Likely Benign from -3 | replay | 364,992 | 455,335 | 62.5 % | 38.4 % | 30 | 24 |
 
-Points on both sides with Likely Benign from -1 buys 11.2 points of benign recall for 347 more reference-discordant benign calls, and 205 of its 371 are a lone BP4; it also lowers recall of ClinVar's VUS variants from 97.2 % to 69.6 %.
-Tightening the floor to -2 or -3 does not remove them (64 and 30 remain) and gives up more benign recall than the table has (49.9 % and 38.4 % against 62.9 %).
+Points on both sides with Likely Benign from -1 buys 10.6 points of benign recall for 372 more reference-discordant benign calls, and 233 of its 399 are a lone BP4; it also lowers recall of ClinVar's VUS variants from 97.1 % to 69.5 %.
+Tightening the floor to -2 or -3 does not remove them (64 and 30 remain) and gives up more benign recall than the table has (50.6 % and 38.4 % against 66.4 %).
 The 2015 table on the pathogenic side gives up 4,900 calls in direction and 5.4 points of pathogenic recall to avoid 10 reference-discordant pathogenic calls, so the pathogenic gain of the points is not free.
 Using each scheme where it is the safer one takes the pathogenic gain and keeps the benign calls that the table makes: if ClinVar is right, a benign call on a pathogenic variant and a variant left uncertain are not comparable errors.
 
@@ -1504,11 +1507,11 @@ Output (JSON / VCF CSQ / TSV)
 
 27. **PP2, PM1 and PP3 on one missense variant are counted as three independent criteria.**
     The point system counts criteria as independent, although these three can be correlated, and the reconciliation pass removes only PM1 beside a Strong PP3.
-    On the 673,278 scored variants, 1,591 have all three, 913 of them at Likely pathogenic.
+    On the 673,278 scored variants, 1,592 have all three, 913 of them at Likely pathogenic.
     A combined cap of 4 points (Strong) on the three, by a real run, changes 910 calls, every one from Likely pathogenic to VUS: 320 variants ClinVar calls pathogenic-side, 587 it calls VUS and 3 it calls benign-side.
     It raises agreement in direction by 267 calls and exact agreement by 512, lowers recall of ClinVar's pathogenic-side variants from 62.5% to 62.1%, and avoids 3 reference-discordant pathogenic calls, giving up about 107 correct pathogenic-side calls for each.
     It was not adopted, because it changes the combining rule and does not correct a defect, because the benchmark does not separate the two readings (the 587 ClinVar-VUS variants it keeps at VUS are not shown to be errors), and because 107 calls per contradiction is at the level that the manuscript's knee rule (Section 2.5) leaves undecided.
-    The run is `v38_alt_triple_cap`, built from `manuscript/acmg/replay_validation/inheritance_alternatives_env.patch`; on the October release it changes 1,018 calls and gives up 354 correct pathogenic-side calls for 4 contradictions avoided, and on the new variants 37 for 1 (`manuscript/acmg`, Section 3.8).
+    The run is `v38_alt_triple_cap`, built from `manuscript/acmg/replay_validation/inheritance_alternatives_env.patch`; on the October release it changes 1,019 calls and gives up 355 correct pathogenic-side calls for 4 contradictions avoided, and on the new variants 38 for 1 (`manuscript/acmg`, Section 3.8).
 
 28. **The frequency criteria read gnomAD's exomes in the benchmark, and the joint release adds the genomes at a measured price and without the region flags.**
     The benchmark and the setup guide build the `gnomad` database from the exomes release.
@@ -1517,13 +1520,13 @@ Output (JSON / VCF CSQ / TSV)
     The builder derives `non_par` for GRCh38 from the pseudoautosomal coordinates (chrX 10,001 to 2,781,479 and 155,701,383 to 156,030,895; chrY 10,001 to 2,781,479 and 56,887,903 to 57,217,415), which agree with the flag in gnomAD's genomes file at the edges that could be read (exactly at the end of the first region of the X chromosome, and within the gaps between the records at the others), and `sa-build` prints a warning to standard error that the other two flags are missing.
     A joint database built before v38 has no `nonPar` flag in it, and an absent flag reads as "cannot say", so BS2 counts no hemizygotes from it: rebuild it with the current builder.
     On every chromosome (673,278 benchmark variants) the joint release holds a record for every variant that the exomes hold, with an allele count, an allele number and a count of homozygotes that are never lower, and a record for 17,382 more.
-    A database from it changes 13,302 calls (12,983 on ClinVar benign-side variants, 209 on VUS and 110 on pathogenic-side variants) and gives 10,190 more exact calls and 9,321 more in direction than the exomes, for one more reference-discordant benign call (24 to 25) and two more reference-discordant pathogenic calls (24 to 26).
-    4,075 and 3,473 of those are what the exomes give when the region flags withhold nothing, with one more reference-discordant pathogenic call (24 to 25), so the genomes themselves add 6,115 and 5,848, with one more reference-discordant benign call and one more reference-discordant pathogenic call.
-    A release without the flags gains agreement by giving up the safeguard, and the three added errors and the one removed are variants at a threshold: KMT2C p.Cys391Ter and RAI1 p.Gln280HisfsTer83 become Likely pathogenic because their filtering allele frequency falls from 0.522% and 0.537% to 0.495% and 0.498%, below BS1's threshold of 0.5%, so the site-level frequency veto no longer holds them at VUS; TXNL4A's deletion upstream of the gene (ClinVar Pathogenic) becomes Likely benign because BS1 fires at 0.560%, where the exomes, which cover it with 364,572 alleles against the joint release's 516,266, give 0.384%; NF1 p.Met895Ile becomes Likely pathogenic because the segmental-duplication flag no longer withholds PM2; and PIEZO1's splice-acceptor deletion (ClinVar Benign) stops being Likely pathogenic, at 0.947% against 0.198%.
+    A database from it changes 13,412 calls (13,079 on ClinVar benign-side variants, 222 on VUS and 111 on pathogenic-side variants) and gives 10,193 more exact calls and 9,187 more in direction than the exomes, for no more reference-discordant benign call (27 to 27) and two more reference-discordant pathogenic calls (24 to 26).
+    4,075 and 3,374 of those are what the exomes give when the region flags withhold nothing, with one more reference-discordant pathogenic call (24 to 25), so the genomes themselves add 6,118 and 5,813, with one more reference-discordant pathogenic call and no more reference-discordant benign call.
+    A release without the flags gains agreement by giving up the safeguard, and the four added errors and the two removed are variants at a threshold: KMT2C p.Cys391Ter and RAI1 p.Gln280HisfsTer83 become Likely pathogenic because their filtering allele frequency falls from 0.522% and 0.537% to 0.495% and 0.498%, below BS1's threshold of 0.5%, so the site-level frequency veto no longer holds them at VUS; TXNL4A's deletion upstream of the gene (ClinVar Pathogenic) becomes Likely benign because BS1 fires at 0.560%, where the exomes, which cover it with 364,572 alleles against the joint release's 516,266, give 0.384%; NF1 p.Met895Ile becomes Likely pathogenic because the segmental-duplication flag no longer withholds PM2; PIEZO1's splice-acceptor deletion (ClinVar Benign) stops being Likely pathogenic, at 0.947% against 0.198%; and TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that the complete databases add, stops being Likely benign, because its filtering allele frequency is 0.461% in the joint release against 0.512% in the exomes, below BS1's threshold.
     Thirteen ClinVar pathogenic-side variants lose a pathogenic-side call and 39 gain one.
     Ten of the 13 lose PM2 because their record carries a filter of gnomAD's quality control (AC0 for eight, AS_VQSR for one and both for one): five have a clean record in the exomes, with one to four alleles, and the filter is the genomes', which the database reports because it reports a filter that fired in either callset, and five are not in the exomes at all; three gain BS2 because the low-complexity flag of the exomes had withheld it (MYO6 p.Gln918ThrfsTer24 and PRRT2 p.Arg217ProfsTer8 and p.Arg217GlufsTer12).
     The either-callset rule is deliberate, as the conservative direction for a guard against trusting a frequency, and where the filter is AC0 and the combined count is positive, 741 of the benchmark's variants lose PM2 this way against the exomes without the flags, and 11 calls move, 9 of them on ClinVar pathogenic-side variants.
-    On this benchmark the joint release is the better-measured source for classification, with about 3,100 calls in direction for each added opposite-direction call where the manuscript's knee rule (Section 2.5) is at about a hundred, and what it gives up is the flags, whose protection a benchmark of ClinVar's classified variants cannot measure.
+    On this benchmark the joint release is the better-measured source for classification, with about 4,600 calls in direction for each added opposite-direction call where the manuscript's knee rule (Section 2.5) is at about a hundred, and what it gives up is the flags, whose protection a benchmark of ClinVar's classified variants cannot measure.
     The benchmark of the manuscript still reads the exomes, because every other number in it was measured on them; `ACMG_SETUP.md` says which to build.
     A second gnomAD database in the annotation directory used to answer in place of the first without a message, the later path winning; both annotation loops now record a source that two databases answer, and the command line says so at the end of the run.
     The extraction of the benchmark's 24,350 regions from gnomAD's public files took about 6 hours on one machine, limited by the network (the last 19 chromosomes took 4 hours 46 minutes at about 10 MB/s), and the 24 databases total 610 MB, against 369 MB for the exomes (`manuscript/acmg`, Section 3.8).

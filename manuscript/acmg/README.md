@@ -165,7 +165,7 @@ These are marked in the manuscript with square brackets or are not in it at all.
    When v0.5.0 is tagged, `verify_numbers.py` will still read the candidate.
    Whether the final tag changes any call has to be shown by the repetition of the runs (`scripts/16_compare_runs.py`, as for the 42 runs of `results/v38_v0.5.0/`), and the text has to name the final tag if the author wants it named.
 11. **The gnomAD source of the benchmark.**
-   Section 3.8 measures gnomAD's joint release of exomes and genomes on every chromosome: 10,190 more exact calls and 9,321 more in direction than the exomes, for one more reference-discordant benign call and two more reference-discordant pathogenic calls, and without the region flags that withhold the frequency criteria.
+   Section 3.8 measures gnomAD's joint release of exomes and genomes on every chromosome: 10,193 more exact calls and 9,187 more in direction than the exomes, for no more reference-discordant benign call and two more reference-discordant pathogenic calls, and without the region flags that withhold the frequency criteria.
    `docs/ACMG_SETUP.md` recommends it for classification where no policy requires the region veto, and the benchmark of the paper still reads the exomes, because every other number in the paper was measured on them.
    Moving the benchmark to the joint release would change all of those numbers, so it is left to the author.
 12. **Archiving.**
