@@ -920,6 +920,20 @@ tar czf /opt/fastvep/backup/sa_$(date +%Y%m%d).tar.gz /opt/fastvep/data/*/sa/
 
 ## 7. Scaling (if needed later)
 
+### What has been measured on the 4 vCPU, 16 GB host
+
+These are the figures of fastvep.org on 8 November 2026, with the nine genomes, the nine-source reference stack for GRCh38 and dbSNP loaded.
+
+- **Memory.** 25 minutes after a restart the service held 6.6 GiB (also its peak) of the 15.6 GiB of the host, with 8.8 GiB available; the unit allows 13 GiB and 2 GiB of swap. In the rehearsal about 3.5 GiB of the memory was heap, and the rest is memory-mapped database pages that the kernel takes back under pressure.
+- **Disk.** 59 GB of the 150 GB filesystem are used, by the system, the nine genomes and every database; the databases of GRCh38 are 12 GB, of which dbSNP is 9.2 GB.
+- **Start.** The default genome answered 4.7 s and 4.9 s after two restarts, and the rehearsal of the nine genomes preloaded in about 70 s.
+- **ACMG.** 1,000 ClinVar variants with `acmg` and `pick` took 5.4 s through the API (four requests of 250 variants, the host otherwise idle) and 11.6 s through the command line on two threads, process start included; the two gave the same class and the same criteria for every one of the 1,000.
+- **Scattered lookups.** 4,000 variants spread over the genome, through the dbSNP database alone on two threads, took 18 s with the chunks at 16 bits and 106 s with the chunks at 1 Mb (`docs/SUPPLEMENTARY_ANNOTATIONS.md`).
+
+What has not been measured is several clients at once, or one very long request (tens of thousands of variants).
+The limits (four annotations at a time, two requests a second for each client at nginx, batches of 100 variants or 4,000 rows, an answer of at most 128 MiB, 90 s for a request) come from the memory of the host and the sizes of the answers in `docs/API.md`.
+Run a load test of your own before you raise any of them.
+
 | Situation | Solution | Cost |
 |-----------|----------|------|
 | More traffic | Upgrade to CCX33 (8 vCPU, 32GB) | ~$55/month |
