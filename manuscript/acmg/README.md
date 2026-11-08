@@ -98,8 +98,8 @@ The default scheme is the same in both: points on the pathogenic side and the 20
 - Section 3.8 is the account of what v38 changed, from `analysis/acmg_benchmark/results/v38_family_vs_v37.md`, which sets the 96 runs of v38 against the same 96 of v37, and its Section 9 lists what would read differently under v37.
 - The benign-side recall of Sections 3.1 to 3.7 is over the 284,550 ClinVar benign-side variants, with the 382 records that have no alternative allele counted as no-calls, as in v37's tables.
   The tables of Section 3.8 are over the 284,168 that have a call, because the binaries of v38 write no record for those 382, and Table 8's caption says so.
-- Not re-measured for v38: the time of annotation, which the manuscript quotes for the runs of v37 (a median of 127 seconds, three at a time with another job on the machine) and for release 0.5.0, measured alone on 7 November 2026 (`results/v38_v0.5.0/annotation_time.tsv`).
-  The runs of v38 made for the paper were made three at a time, with a job of ours beside some of them, and are not timings.
+- Not re-measured with the complete databases: the time of annotation, which the manuscript quotes for release 0.5.0, measured alone on 7 November 2026 with the first databases (`results/v38_v0.5.0/annotation_time.tsv`), and for the runs of v37 made on 8 November 2026 (a median of the provenance of the 89 runs, up to seven at a time with other work on the machine).
+  The runs of the paper are not timings, and `scripts/19_time_annotation.py` now reads the complete stack, so that a new measurement is one.
 - Not verified, and said so where it is stated: the reading that the firing counts support for why the PM2 sweep under the 2015 table flattens on v38 (no run sweeps both PM2 thresholds under the 2015 table), and which of the curated tag and the disease names accounts for the larger loss of benign-side calls when the ClinGen file is removed (no per-variant table was made for that run).
 - The language-edited .docx that the co-authors read still says v37 throughout.
   It has to be brought to the text of `manuscript.md` by the corresponding author, and nothing in the repository edits it.
@@ -171,16 +171,11 @@ These are marked in the manuscript with square brackets or are not in it at all.
 12. **Archiving.**
    The bulk outputs (annotated VCFs, per-variant tables of about 20 MB each) are not in the repository.
    A tagged release with a DOI, and a compressed deposit of the per-variant tables, would let every table in `data/` be re-derived without a re-run.
-13. **The SpliceAI and PhyloP databases of the benchmark lack records that the gnomAD file carries.**
-   The benchmark reads SpliceAI and PhyloP databases that were distilled in April from the gnomAD v4.1 exomes file, in the regions of the April ClinVar set (`analysis/acmg_benchmark/scripts/sa_sources/extract_spliceai_phylop_from_gnomad.py`, built as `.osa` files on 29 and 30 April 2026).
-   The databases that fastvep.org serves since 8 November 2026 were built from the whole of the same file (`scripts/extract_gnomad_scores.py` and `fastvep sa-build --chunk-bits 16`).
-   On 1,000 ClinVar variants the complete SpliceAI database holds a record for 774 variants against 710 in the benchmark's, and the complete PhyloP database for 851 against 777.
-   They agree wherever both have a value, and each of the 138 extra values equals the value in the public file (read with tabix on 8 November 2026).
-   Converting the benchmark's SpliceAI file for chromosome 9 to the second format (`fastvep sa-convert`) gives 790,298 records and none of the 15 variants of the sample that are missing there, so the records are not in the file; why they are not was not established.
-   With the same binary and the same ClinVar, ClinGen and gnomAD databases, replacing only the SpliceAI and PhyloP databases by the complete ones moves the April set from 426,022 exact calls (63.24%) and 524,380 in direction (77.84%) with 48 opposite-direction calls, which are the numbers of this paper, to 431,727 exact (64.09%) and 534,335 in direction (79.32%) with 51.
-   The three added opposite-direction calls are ClinVar-Pathogenic variants (TMEM216 upstream, VWF synonymous, GTPBP3 intronic) that gain BP4, and BP7 for two of them, from SpliceAI and PhyloP records that the benchmark's databases lack, and move from VUS to Likely benign.
-   A reader who runs the classifier against complete SpliceAI and PhyloP databases, as fastvep.org does, therefore sees about 1.5 points more calls in direction and 3 more contradictions on this benchmark than the tables of the paper show.
-   Whether to rebuild the two databases from the whole file and repeat the runs, or to report the difference as a limitation of the benchmark, is for the authors; the runs of v38 and of v37 are not repeated here.
+13. **The SpliceAI and PhyloP databases of the benchmark lacked records that the gnomAD file carries, and the benchmark was re-based on complete ones (8 November 2026).**
+   The first databases were distilled in April 2026 from regions of the gnomAD v4.1 exomes file and lacked 8.2% (SpliceAI) and 8.3% (PhyloP) of the values that exist for the benchmark's variants, in 14 batches of the extraction that end early and, for PhyloP, in 457 indels (`analysis/acmg_benchmark/results/complete_databases/README.md`).
+   Every run was made again with databases built from the whole file, the October release is scored whole, and the manuscript, its tables, workbook and figures were regenerated: Section 2.1 says what happened, Section 3.9 and Table 10 set the first databases against the complete ones, and the first drafts, including the version that the co-authors read, are the numbers of the first databases.
+   v38 on the April set goes from 77.84% to 79.32% of agreement in direction and from 48 to 51 opposite-direction calls; the three added are ClinVar-Pathogenic variants (TMEM216, VWF, GTPBP3) that the reviewer has not seen.
+   The decisions that are the authors': whether the history of the first drafts stays in the main text (Sections 2.1, 3.9 and 4.4) or goes to the supplement; whether the reviewer rules on the three added calls; and whether v1 to v36, which were not repeated, are rebuilt (their binaries are not kept).
 
 ## What is not checked
 
