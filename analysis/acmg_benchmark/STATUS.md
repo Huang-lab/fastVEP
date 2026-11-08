@@ -94,10 +94,10 @@ Read by `scripts/11_manuscript_runs.py` and `scripts/14_temporal_holdout.py`; no
 |-----|-----------|---------|--------|
 | **v1** | clinvar + clinvar_protein + gnomad_genes + gnomAD per-chrom + REVEL per-chrom | 54.7 % same-direction baseline | `output_v1/` (matrix only — raw outputs overwritten) |
 | **v7** | v1 + PhyloP + SpliceAI + ClinGen GDV `.oga` + 7 code fixes | 70.8 % same-direction, 313 opposite-direction (0.05 %) | `output_v7/` |
-| **v37** | the databases above | the classifier of Sections 2 to 3.7 of the manuscript: 425,869 exact of 673,660 (63.2 %), 522,886 same-direction (77.6 %), 49 opposite-direction, 382 not called | `output_v37/` |
-| **v38** | v37 reading ClinGen's curated mode of inheritance | the classifier of this release: 426,022 exact of 673,278 scored (63.3 %), 524,380 same-direction (77.9 %), 48 opposite-direction | `manuscript_runs/v38/` |
+| **v37** | the databases above | the classifier at the close of the review rounds, the before of what v38 changes (Section 3.8 of the manuscript): 425,869 exact of 673,660 (63.2 %), 522,886 same-direction (77.6 %), 49 opposite-direction, 382 not called | `output_v37/` |
+| **v38** | v37 reading ClinGen's curated mode of inheritance | the latest classifier, the one of this release (0.5.0) and of every number of the manuscript: 426,022 exact of 673,660 (63.2 %), 524,380 same-direction (77.8 %), 48 opposite-direction, 382 not called (the binaries of v38 write no record for those 382, so 673,278 are scored; the tables of the manuscript put them back as no-calls) | `manuscript_runs/v38/` |
 
-The manuscript's other runs (`manuscript_runs/`, 172 directories and the per-variant tables) are listed in `results/v37_manuscript/README.md`.
+The manuscript's other runs (`manuscript_runs/`, the 96 runs of v38 and the same 96 of v37 with the runs of Section 3.8, and the per-variant tables) are listed in `results/v37_manuscript/README.md`.
 See `RUN_VERSIONS.md` for the per-run SA stack and code-fix diff.
 See `analysis/acmg_benchmark/METHODS.md` for full methodology.
 

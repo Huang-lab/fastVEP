@@ -1,10 +1,13 @@
 # Runs made for the ACMG manuscript
 
-Every run here is a variant of `v37`, the classifier of Sections 2 to 3.7 of the manuscript, made by `run_benchmark.sh` and scored by `03_evaluate_concordance.py`.
-Each differs from `v37` in one setting, one removed evidence source, one point cutoff, one patched setting of a measurement build, or one input.
-`scripts/11_manuscript_runs.py` defines them and writes this directory.
+The runs here are of two families, each a list of 96 runs made by `run_benchmark.sh` and scored by `03_evaluate_concordance.py`: the family v38, the latest classifier (release 0.5.0, the tag `v0.5.0-rc.1`), which is the classifier that the manuscript describes, and the family v37, the classifier at the close of the review rounds (commit `5d8004a`), which is the before of what v38 changes (Section 3.8).
+Each run differs from its family's main run (`v38` or `v37`) in one setting, one removed evidence source, one point cutoff, one patched setting of a measurement build, or one input, and the two families are the same list, so that a pair `v37_x` and `v38_x` differs in the classifier and in nothing else.
+`scripts/11_manuscript_runs.py` defines them (`--family v38`, the default, and `--family v37`) and writes this directory, which keeps the name it had when it held the runs of v37 alone.
+The first section below is the family v37, whose files carry no suffix; the family v38 and the runs of Section 3.8 are the `_v38` files, described in the sections after it.
 
 ClinVar's 2-star+ classifications are a reference and not ground truth.
+
+## The family v37: the runs of the classifier at the close of the review rounds
 
 | File | What it holds |
 |---|---|
@@ -73,7 +76,7 @@ Things to know when reading these provenance files.
 
 ## The family v38: the runs of Sections 2 to 3.7 made again by release 0.5.0
 
-The 96 runs of `v37`'s family (the 89 above on the April set and the 7 of the `holdout` group) were made again by the classifier of release 0.5.0 (the tag `v0.5.0-rc.1`, `c12d9f9`), under the same names with `v38` for `v37`, so that a manuscript that says v38 throughout can be measured against the one that says v37 (`RUN_VERSIONS.md`, "The family v38").
+The 96 runs of `v37`'s family (the 89 above on the April set and the 7 of the `holdout` group) were made again by the classifier of release 0.5.0 (the tag `v0.5.0-rc.1`, `c12d9f9`), under the same names with `v38` for `v37`, so that the manuscript, which says v38, can set the latest classifier against the version in which the review rounds ended, run for run (`RUN_VERSIONS.md`, "The family v38").
 The files are the `_v38` files above, which now hold the runs of Section 3.8 and the family together: `run_matrix_v38.tsv` 120 rows, `runs_v38.tsv` 109 rows (the April set) and `holdout_runs_v38.tsv` 11 rows (the October release), with `provenance/v38_*.txt` and `configs/v38_*.toml` for each, and `binaries_v38.tsv` for the binaries.
 `11_manuscript_runs.py --family v38` writes the 96; `--v38` still writes the 42 of Section 3.8, and the 18 sweeps that both definitions name (`v38_sw_pm2ad_*`, `v38_sw_pm2ar_*`, `v38_sw_bs2hom_*`) are the same runs, made once by the first and used by the second.
 Each pair of runs, `v37_x` and `v38_x`, has the same knob, value, default, replaced annotation files and environment in `run_matrix.tsv` and `run_matrix_v38.tsv`; `analysis/acmg_benchmark/results/v38_family_vs_v37.md` sets each pair against its twin, and its four CSV files hold the numbers.

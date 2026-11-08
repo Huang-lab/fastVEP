@@ -347,7 +347,7 @@ A dominant-only gene is decided in that branch alone.
 Master had no threshold: a dominant-only variant that cleared the floor fired at once, and one below the floor that had a homozygote fell into the recessive branch and could be fired there.
 Neither can reach the recessive branch now, so a variant that clears the floor but not the threshold cannot be fired by its homozygotes.
 
-Each row below is a whole run of the final classifier over the 673,660-variant benchmark ([`run_benchmark.sh`](../analysis/acmg_benchmark/scripts/run_benchmark.sh), one `ACMG_CONFIG` per row, the configurations in [`results/v37/configs`](../analysis/acmg_benchmark/results/v37/configs)), so the rows from "threshold off" down differ in the BS2 setting alone.
+Each row below is a whole run of v37, the classifier at the close of the review rounds (v38, the latest, reads inheritance differently: see the note after the tables), over the 673,660-variant benchmark ([`run_benchmark.sh`](../analysis/acmg_benchmark/scripts/run_benchmark.sh), one `ACMG_CONFIG` per row, the configurations in [`results/v37/configs`](../analysis/acmg_benchmark/results/v37/configs)), so the rows from "threshold off" down differ in the BS2 setting alone.
 The master row is v36 and differs from the threshold-off row by 534 calls that are the other changes of this round.
 The columns count calls in the same direction as ClinVar's 2-star+ classification, which is a reference and not ground truth.
 
@@ -466,10 +466,11 @@ fitted to its own input. The curve's shape is the useful output, not its absolut
 **The knee above belongs to the 2015 combining table, which the sweep was made under.**
 With the point scale that the classifier now uses on the pathogenic side, a lone PVS1 is
 already Likely pathogenic without PM2, and the same sweep is nearly flat: recall of ClinVar's
-pathogenic-side variants moves from 61.97% at strict absence to 62.49% at 5e-4 on v37, and
-from 61.98% to 62.48% on v38, which reads inheritance from ClinGen's curated field.
-Under the 2015 table on the pathogenic side, one switch away, the knee is back (38.8% at
-strict absence and 56.7% at 4e-5).
+pathogenic-side variants moves from 61.98% at strict absence to 62.48% at 5e-4 on v38, which
+reads inheritance from ClinGen's curated field, and from 61.97% to 62.49% on v37.
+Under the 2015 table on the pathogenic side, one switch away, the knee is back, smaller on v38
+than on v37 (51.0% at strict absence and 57.1% at 4e-5 on v38, and 38.8% and 56.7% on v37, which
+reproduced the 37.8% and 56.8% that v10 recorded).
 A threshold can move only the calls that need the criterion it gates, and the combining rule
 decides how many do (`manuscript/acmg`, Section 3.3 and Section 3.8).
 
@@ -823,7 +824,7 @@ Severity first, then the same tie-breaks as before, so equal-consequence choices
 MANE - the ordering changes which question is asked first, not which transcripts are eligible.
 
 **That advice is for reporting consequences, and it is not free for an ACMG call.**
-Run over the whole ClinVar 2-star+ benchmark, the classifier gives:
+Run over the whole ClinVar 2-star+ benchmark, the classifier of v37 gives (the runs were not repeated on v38, whose default order gives 426,022 exact, 524,380 same-direction and 48 opposite-direction calls):
 
 | Run | Exact | Same-direction | Opposite | P same | LP same | LB same | B same |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -887,21 +888,21 @@ Run v10 put **2,319 ClinVar-Pathogenic variants in VUS on `PVS1` and nothing els
 Tavtigian's Likely Benign band opens at `-1`, so a single BP4 is enough for a benign call, where Richards requires two benign supporting criteria or a strong plus a supporting.
 
 **What each scheme gives on the benchmark.**
-The split was decided at v11, and the table below measures it again on v37, over the 673,660 ClinVar 2-star+ records of the April 2026 release (`manuscript/acmg`, Section 3.3 and Appendix Table A2; the figures are in `manuscript/acmg/data/combining_rules_replay_v37.csv`).
-The first two rows are real runs (`v37` and `v37_sw_table_both_sides`), which the replay reproduces cell for cell, and the last three are replays of the recorded criteria, for which no real run was made.
-The combining code is the same in v38, where `combiner.rs` differs from v37's by the wording of a comment, so the scheme is the same and the calls move only through the criteria that v38 reads differently.
+The split was decided at v11, and the table below measures it again on v38, the latest version, over the 673,660 ClinVar 2-star+ records of the April 2026 release (`manuscript/acmg`, Section 3.3 and Appendix Table A2; the figures are in `manuscript/acmg/data/combining_rules_replay_v38.csv`, and `combining_rules_replay_v37.csv` is the same table for v37).
+The first two rows are real runs (`v38` and `v38_sw_table_both_sides`), which the replay reproduces cell for cell, and the last three are replays of the recorded criteria, for which no real run was made.
+The combining code is the same in v37 and v38 (`combiner.rs` differs by the wording of a comment), so the scheme is the same and the calls move only through the criteria that v38 reads differently.
 
 | scheme | measured by | exact | same direction | pathogenic recall | benign recall | reference-discordant benign | reference-discordant pathogenic |
 |---|---|---:|---:|---:|---:|---:|---:|
-| **default: points pathogenic + table benign** | real run | 425,869 | 522,886 | 62.5 % | 62.3 % | 24 | 25 |
-| 2015 table, both sides (`use_point_system = false`) | real run | 424,773 | 517,631 | 56.7 % | 62.3 % | 24 | 14 |
-| points, both sides, Likely Benign from -1 | replay | 349,592 | 473,315 | 62.5 % | 73.9 % | 380 | 25 |
-| points, both sides, Likely Benign from -2 | replay | 367,373 | 471,582 | 62.5 % | 49.6 % | 62 | 25 |
-| points, both sides, Likely Benign from -3 | replay | 364,541 | 451,351 | 62.5 % | 37.0 % | 26 | 25 |
+| **default: points pathogenic + table benign** | real run | 426,022 | 524,380 | 62.5 % | 62.9 % | 24 | 24 |
+| 2015 table, both sides (`use_point_system = false`) | real run | 424,946 | 519,480 | 57.1 % | 62.9 % | 24 | 14 |
+| points, both sides, Likely Benign from -1 | replay | 350,142 | 474,950 | 62.5 % | 74.1 % | 371 | 24 |
+| points, both sides, Likely Benign from -2 | replay | 367,909 | 474,029 | 62.5 % | 49.9 % | 64 | 24 |
+| points, both sides, Likely Benign from -3 | replay | 364,989 | 455,333 | 62.5 % | 38.4 % | 30 | 24 |
 
-Points on both sides with Likely Benign from -1 buys 11.6 points of benign recall for 356 more reference-discordant benign calls, and 218 of its 380 are a lone BP4; it also lowers recall of ClinVar's VUS variants from 97.2 % to 69.2 %.
-Tightening the floor to -2 or -3 does not remove them (62 and 26 remain) and gives up more benign recall than the table has (49.6 % and 37.0 % against 62.3 %).
-The 2015 table on the pathogenic side gives up 5,255 calls in direction and 5.8 points of pathogenic recall to avoid 11 reference-discordant pathogenic calls, so the pathogenic gain of the points is not free.
+Points on both sides with Likely Benign from -1 buys 11.2 points of benign recall for 347 more reference-discordant benign calls, and 205 of its 371 are a lone BP4; it also lowers recall of ClinVar's VUS variants from 97.2 % to 69.6 %.
+Tightening the floor to -2 or -3 does not remove them (64 and 30 remain) and gives up more benign recall than the table has (49.9 % and 38.4 % against 62.9 %).
+The 2015 table on the pathogenic side gives up 4,900 calls in direction and 5.4 points of pathogenic recall to avoid 10 reference-discordant pathogenic calls, so the pathogenic gain of the points is not free.
 Using each scheme where it is the safer one takes the pathogenic gain and keeps the benign calls that the table makes: if ClinVar is right, a benign call on a pathogenic variant and a variant left uncertain are not comparable errors.
 
 Set `use_point_system = false` for the 2015 table on both sides.
@@ -968,7 +969,7 @@ arguments for benignity and the distinction is invisible if it is dropped.
 **What it is worth.** Measured over the full ClinVar 2-star-or-better set when it was
 switched on (v15 in `RUN_VERSIONS.md`), BP3 fired on 1,307 variants, split 688 on
 ClinVar-benign variants against 56 on ClinVar-pathogenic ones - directionally right,
-roughly 12:1; on v37 it fires on 1,296, 684 against 55. Its effect on the headline
+roughly 12:1; on v38 it fires on 1,295, 684 against 55 (1,296 on v37). Its effect on the headline
 was nil: benign recall moved 71.47 % to 71.49 %, and every error count was
 unchanged. That is the expected behaviour of a lone Supporting criterion, which
 cannot reach a classification by itself. BP3 earns its place by being visible to
