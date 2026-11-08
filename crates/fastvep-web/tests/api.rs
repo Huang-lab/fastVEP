@@ -8,14 +8,27 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use fastvep_web::context::AnnotationContext;
-use fastvep_web::handlers::{AppState, SharedState};
+use fastvep_web::genomes::default_genome_name;
+use fastvep_web::handlers::{AppState, ServerConfig, SharedState};
 use serde_json::{json, Value};
-use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, RwLock};
+use std::path::PathBuf;
+use std::sync::Arc;
 use tower::ServiceExt;
 
 const MINI_GFF3: &str = include_str!("../fixtures/mini.gff3");
 const PICK_GFF3: &str = include_str!("../fixtures/pick.gff3");
+
+/// What these tests start a server with. No stats file: they must not write to
+/// the working directory.
+fn config(data_dir: Option<PathBuf>, allow_model_replacement: bool) -> ServerConfig {
+    ServerConfig {
+        data_dir,
+        sa_dir: None,
+        stats_file: None,
+        distance: 5000,
+        allow_model_replacement,
+    }
+}
 
 /// One transcript, no FASTA, no supplementary annotations. Deliberately the
 /// minimum a caller can stand up, so a failure here is the API's fault rather
@@ -23,37 +36,17 @@ const PICK_GFF3: &str = include_str!("../fixtures/pick.gff3");
 fn test_state() -> AppState {
     let mut ctx = AnnotationContext::new(None, None, None, 5000).expect("build context");
     ctx.update_gff3_text(MINI_GFF3).expect("load mini gff3");
-    Arc::new(SharedState {
-        ctx: RwLock::new(ctx),
-        data_dir: None,
-        sa_dir: None,
-        // No stats file: these tests must not write to the working directory.
-        stats_file: None,
-        total_variants: AtomicU64::new(0),
-        total_genomes: AtomicU64::new(0),
-        // The default a server ships with: the gene model is whatever it was
-        // started with, and no request can move it (#113).
-        allow_model_replacement: false,
-        gene_model_generation: AtomicU64::new(0),
-    })
+    // The default a server ships with: the gene model is whatever it was
+    // started with, and no request can move it (#113).
+    Arc::new(SharedState::new(ctx, "mini", config(None, false)))
 }
 
 /// The same, started with `--allow-model-replacement` - the single-user
 /// desktop configuration the browser UI's genome switching needs.
 fn replaceable_state() -> AppState {
-    let state = test_state();
     let mut ctx = AnnotationContext::new(None, None, None, 5000).expect("build context");
     ctx.update_gff3_text(MINI_GFF3).expect("load mini gff3");
-    Arc::new(SharedState {
-        ctx: RwLock::new(ctx),
-        data_dir: state.data_dir.clone(),
-        sa_dir: state.sa_dir.clone(),
-        stats_file: None,
-        total_variants: AtomicU64::new(0),
-        total_genomes: AtomicU64::new(0),
-        allow_model_replacement: true,
-        gene_model_generation: AtomicU64::new(0),
-    })
+    Arc::new(SharedState::new(ctx, "mini", config(None, true)))
 }
 
 /// Two overlapping transcripts of one gene, the first-seen one non-canonical.
@@ -62,16 +55,40 @@ fn replaceable_state() -> AppState {
 fn pick_state() -> AppState {
     let mut ctx = AnnotationContext::new(None, None, None, 5000).expect("build context");
     ctx.update_gff3_text(PICK_GFF3).expect("load pick gff3");
-    Arc::new(SharedState {
-        ctx: RwLock::new(ctx),
-        data_dir: None,
-        sa_dir: None,
-        stats_file: None,
-        total_variants: AtomicU64::new(0),
-        total_genomes: AtomicU64::new(0),
-        allow_model_replacement: false,
-        gene_model_generation: AtomicU64::new(0),
-    })
+    Arc::new(SharedState::new(ctx, "pick", config(None, false)))
+}
+
+/// A data directory of two genomes that answer differently at 17:1100: `alpha`
+/// holds one transcript there and `beta` holds two. The server starts with
+/// `alpha`, the way the hosted one starts with hg38, so a request that gets
+/// the wrong genome shows in how many transcripts come back.
+fn genome_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "fastvep-web-genomes-{}-{}",
+        label,
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (name, file, gff3) in [
+        ("alpha", "mini.gff3", MINI_GFF3),
+        ("beta", "pick.gff3", PICK_GFF3),
+    ] {
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+        std::fs::write(dir.join(name).join(file), gff3).unwrap();
+    }
+    dir
+}
+
+fn multi_genome_state(label: &str, allow_model_replacement: bool) -> AppState {
+    let dir = genome_dir(label);
+    let gff3 = dir.join("alpha").join("mini.gff3");
+    let ctx = AnnotationContext::new(gff3.to_str(), None, None, 5000).expect("build context");
+    let name = default_genome_name(gff3.to_str(), Some(dir.as_path()));
+    Arc::new(SharedState::new(
+        ctx,
+        name,
+        config(Some(dir), allow_model_replacement),
+    ))
 }
 
 fn router(state: &AppState) -> axum::Router {
@@ -462,12 +479,20 @@ async fn oversized_body_is_rejected_rather_than_annotated() {
 }
 
 #[tokio::test]
-async fn genome_endpoints_are_inert_without_a_data_dir() {
+async fn without_a_data_dir_the_only_genome_is_the_one_the_server_started_with() {
     let state = replaceable_state();
 
+    // The list says so, rather than coming back empty and leaving a client to
+    // wonder whether the server has a genome at all.
     let (status, body) = get(&state, "/api/genomes").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["genomes"], json!([]));
+    assert_eq!(body["default"], "mini");
+    let genomes = body["genomes"].as_array().expect("genomes");
+    assert_eq!(genomes.len(), 1, "got {genomes:?}");
+    assert_eq!(genomes[0]["name"], "mini");
+    assert_eq!(genomes[0]["default"], true);
+    assert_eq!(genomes[0]["loaded"], true);
+    assert_eq!(genomes[0]["transcripts"], 1);
 
     let (status, body) = post_json(&state, "/api/load-genome", json!({ "name": "human" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -590,4 +615,303 @@ async fn annotate_reports_the_gene_model_that_answered() {
         before["gene_model"]["generation"], after["gene_model"]["generation"],
         "an undetectable wrong answer is what this field exists to prevent"
     );
+}
+
+// --- choosing the genome per request ---------------------------------------
+//
+// The hosted site serves several genomes from one process, with
+// `--allow-model-replacement` off. A request names its genome and is answered
+// from that genome's own model, so nothing is replaced and no client can move
+// another's answers. What these assert is the part that must not go wrong
+// quietly: the answer comes from the genome that was asked for, the response
+// says which, and a name that is not a genome is never answered from the
+// default instead.
+
+/// The number of transcripts a one-variant request at 17:1100 returns: `alpha`
+/// has one there and `beta` has two.
+async fn transcripts_at_1100(state: &AppState, genome: Option<&str>) -> (usize, Value) {
+    let mut body = json!({ "vcf": vcf_line(1100, "v") });
+    if let Some(genome) = genome {
+        body["genome"] = json!(genome);
+    }
+    let (status, response) = post_json(state, "/api/annotate", body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let n = response["results"][0]["transcript_consequences"]
+        .as_array()
+        .expect("transcript consequences")
+        .len();
+    (n, response["gene_model"].clone())
+}
+
+#[tokio::test]
+async fn status_names_the_default_genome() {
+    let state = multi_genome_state("status", false);
+    let (_, body) = get(&state, "/api/status").await;
+    // This is how a client learns that the server answers per request: a
+    // server that predates it does not send the field.
+    assert_eq!(body["default_genome"], "alpha");
+}
+
+#[tokio::test]
+async fn a_request_without_a_genome_is_answered_from_the_default_and_says_so() {
+    let state = multi_genome_state("default", false);
+    let (n, gene_model) = transcripts_at_1100(&state, None).await;
+    assert_eq!(n, 1);
+    assert_eq!(gene_model["genome"], "alpha");
+}
+
+#[tokio::test]
+async fn a_request_is_answered_from_the_genome_it_names() {
+    let state = multi_genome_state("named", false);
+
+    let (n, gene_model) = transcripts_at_1100(&state, Some("beta")).await;
+    assert_eq!(n, 2, "beta has two transcripts at this position");
+    assert_eq!(gene_model["genome"], "beta");
+    assert_eq!(gene_model["gff3_source"], "pick.gff3");
+    assert_eq!(gene_model["transcripts"], 2);
+
+    // Naming the genome the server started with is the same as naming none.
+    let (n, gene_model) = transcripts_at_1100(&state, Some("alpha")).await;
+    assert_eq!(n, 1);
+    assert_eq!(gene_model["genome"], "alpha");
+
+    // Choosing moved nothing: this needed no `--allow-model-replacement`, and
+    // the default answers exactly as before.
+    let (_, status) = get(&state, "/api/status").await;
+    assert_eq!(status["default_genome"], "alpha");
+    assert_eq!(status["transcripts"], 1);
+    assert_eq!(status["gene_model_generation"], 0);
+    let (n, _) = transcripts_at_1100(&state, None).await;
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn the_other_annotate_options_apply_to_a_named_genome() {
+    let state = multi_genome_state("options", false);
+    let (status, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "v"), "genome": "beta", "pick": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let kept = body["results"][0]["transcript_consequences"]
+        .as_array()
+        .expect("transcript consequences");
+    assert_eq!(kept.len(), 1, "pick reduces a named genome's answer too");
+    assert_eq!(kept[0]["transcript_id"], "TXA");
+    assert_eq!(body["gene_model"]["genome"], "beta");
+
+    let (status, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "v"), "genome": "beta", "acmg": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["results"][0]["transcript_consequences"][0]
+            .get("acmg")
+            .is_some(),
+        "acmg was requested: {body}"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_genome_is_refused_and_never_answered_from_the_default() {
+    let state = multi_genome_state("unknown", false);
+    // A misspelling that quietly returned the default's consequences would
+    // look exactly like a correct answer, which is the failure that matters.
+    for name in [
+        "gamma",
+        "Alpha",
+        "alph",
+        "../alpha",
+        "alpha/../beta",
+        "a\\b",
+    ] {
+        let (status, body) = post_json(
+            &state,
+            "/api/annotate",
+            json!({ "vcf": vcf_line(1100, "v"), "genome": name }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
+        assert!(body.get("results").is_none(), "{name}: {body}");
+        assert!(
+            body["error"].as_str().unwrap().contains("not found"),
+            "{name}: {body}"
+        );
+    }
+    // None of those left anything behind.
+    assert_eq!(state.genomes.loads_started(), 0);
+}
+
+#[tokio::test]
+async fn an_empty_genome_name_is_refused_rather_than_read_as_no_genome() {
+    let state = multi_genome_state("empty", false);
+    let (status, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "v"), "genome": "" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn a_server_without_a_data_dir_serves_only_the_genome_it_started_with() {
+    let state = test_state();
+    let (status, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "v"), "genome": "mouse" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let message = body["error"].as_str().unwrap();
+    assert!(
+        message.contains("--data-dir") && message.contains("'mini'"),
+        "the refusal says what the server does serve: {message}"
+    );
+
+    let (n, gene_model) = transcripts_at_1100(&state, Some("mini")).await;
+    assert_eq!(n, 1);
+    assert_eq!(gene_model["genome"], "mini");
+}
+
+#[tokio::test]
+async fn the_genome_list_says_what_is_loaded_and_which_is_the_default() {
+    let state = multi_genome_state("list", false);
+
+    let (status, before) = get(&state, "/api/genomes").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(before["default"], "alpha");
+    let genomes = before["genomes"].as_array().expect("genomes");
+    let by_name = |name: &str| genomes.iter().find(|g| g["name"] == name).expect(name);
+    assert_eq!(by_name("alpha")["default"], true);
+    assert_eq!(by_name("alpha")["loaded"], true);
+    assert_eq!(by_name("alpha")["transcripts"], 1);
+    assert_eq!(by_name("alpha")["gff3"], "mini.gff3");
+    assert_eq!(by_name("beta")["default"], false);
+    assert_eq!(by_name("beta")["loaded"], false);
+    assert_eq!(by_name("beta")["transcripts"], Value::Null);
+    assert_eq!(by_name("beta")["gff3"], "pick.gff3");
+
+    transcripts_at_1100(&state, Some("beta")).await;
+
+    let (_, after) = get(&state, "/api/genomes").await;
+    let genomes = after["genomes"].as_array().expect("genomes");
+    let beta = genomes.iter().find(|g| g["name"] == "beta").unwrap();
+    assert_eq!(beta["loaded"], true);
+    assert_eq!(beta["transcripts"], 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_first_requests_for_a_genome_share_one_load() {
+    let state = multi_genome_state("concurrent", false);
+    let requests = (0..8).map(|_| {
+        let state = Arc::clone(&state);
+        async move { transcripts_at_1100(&state, Some("beta")).await }
+    });
+    let answers = futures_join_all(requests).await;
+    for (n, gene_model) in &answers {
+        assert_eq!(*n, 2);
+        assert_eq!(gene_model["genome"], "beta");
+    }
+    assert_eq!(
+        state.genomes.loads_started(),
+        1,
+        "eight simultaneous first requests are one load, not eight"
+    );
+}
+
+/// `futures::future::join_all` without the dependency: the requests are
+/// independent, so polling them from separate tasks is the same thing.
+async fn futures_join_all<F>(futures: impl IntoIterator<Item = F>) -> Vec<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    let handles: Vec<_> = futures.into_iter().map(tokio::spawn).collect();
+    let mut out = Vec::with_capacity(handles.len());
+    for handle in handles {
+        out.push(handle.await.expect("task"));
+    }
+    out
+}
+
+#[tokio::test]
+async fn preloading_loads_every_other_genome_and_skips_the_default() {
+    let state = multi_genome_state("preload", false);
+    assert_eq!(state.genomes.loads_started(), 0);
+
+    let loaded = Arc::clone(&state).preload_genomes().await;
+    assert_eq!(loaded, 1, "beta; alpha is the one the server started with");
+    assert_eq!(state.genomes.loads_started(), 1);
+
+    let (_, listing) = get(&state, "/api/genomes").await;
+    let genomes = listing["genomes"].as_array().expect("genomes");
+    assert!(
+        genomes.iter().all(|g| g["loaded"] == true),
+        "everything is loaded: {genomes:?}"
+    );
+}
+
+#[tokio::test]
+async fn named_runs_are_the_ones_counted_as_genome_sessions() {
+    let state = multi_genome_state("counter", false);
+    transcripts_at_1100(&state, None).await;
+    let (_, after_default) = get(&state, "/api/status").await;
+    assert_eq!(after_default["total_variants"], 1);
+    assert_eq!(after_default["total_genomes"], 0);
+
+    transcripts_at_1100(&state, Some("beta")).await;
+    transcripts_at_1100(&state, Some("alpha")).await;
+    let (_, after_named) = get(&state, "/api/status").await;
+    assert_eq!(after_named["total_variants"], 3);
+    assert_eq!(after_named["total_genomes"], 2);
+}
+
+#[tokio::test]
+async fn replacing_the_default_model_renames_it_so_the_old_name_is_not_answered_from_the_new_model()
+{
+    // The trap in routing by name: `alpha` is the default, a client replaces
+    // the default with `beta`, and a later request for `alpha` is answered
+    // from the model that is now in the default slot, which is beta's. Both
+    // answers are well-formed, and only one of them is about alpha.
+    let state = multi_genome_state("rename", true);
+
+    let (status, _) = post_json(&state, "/api/load-genome", json!({ "name": "beta" })).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, now) = get(&state, "/api/status").await;
+    assert_eq!(now["default_genome"], "beta");
+
+    let (n, gene_model) = transcripts_at_1100(&state, Some("alpha")).await;
+    assert_eq!(
+        n, 1,
+        "alpha has one transcript here; beta, now the default, has two"
+    );
+    assert_eq!(gene_model["genome"], "alpha");
+    assert_eq!(
+        gene_model["generation"], 0,
+        "alpha was loaded, not replaced"
+    );
+
+    let (n, gene_model) = transcripts_at_1100(&state, Some("beta")).await;
+    assert_eq!(n, 2);
+    assert_eq!(gene_model["genome"], "beta");
+    assert_eq!(
+        gene_model["generation"], 1,
+        "beta answered from the default slot, which has been replaced once"
+    );
+
+    // An upload is not any genome of the data directory either.
+    let (status, _) = read_json(post_gff3(&state, PICK_GFF3).await).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, now) = get(&state, "/api/status").await;
+    assert_eq!(now["default_genome"], "user-upload");
+    let (n, gene_model) = transcripts_at_1100(&state, Some("alpha")).await;
+    assert_eq!(n, 1, "the upload has two transcripts here; alpha has one");
+    assert_eq!(gene_model["genome"], "alpha");
 }

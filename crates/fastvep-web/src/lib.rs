@@ -8,6 +8,7 @@
 
 pub mod context;
 pub mod errors;
+pub mod genomes;
 pub mod handlers;
 
 use axum::extract::DefaultBodyLimit;

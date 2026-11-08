@@ -1,11 +1,12 @@
+use clap::builder::BoolishValueParser;
 use clap::Parser;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use fastvep_web::build_router;
 use fastvep_web::context::AnnotationContext;
-use fastvep_web::handlers::{AppState, SharedState};
+use fastvep_web::genomes::default_genome_name;
+use fastvep_web::handlers::{AppState, ServerConfig, SharedState};
 
 #[derive(Parser)]
 #[command(name = "fastvep-web")]
@@ -32,8 +33,31 @@ struct Cli {
     sa_dir: Option<String>,
 
     /// Directory containing genome data (subdirs with GFF3 + FASTA per organism)
+    ///
+    /// Every genome in it can be named in the `genome` field of
+    /// `POST /api/annotate`. Each is loaded the first time it is asked for and
+    /// then kept, from its own GFF3, FASTA and `sa/` directory; nothing is
+    /// shared with the gene model given by `--gff3`, and no request changes the
+    /// answers of another.
     #[arg(long, env = "FASTVEP_DATA_DIR")]
     data_dir: Option<String>,
+
+    /// Load every genome of `--data-dir` in the background at startup, instead
+    /// of on its first request.
+    ///
+    /// Off by default: a data directory can hold more genomes than a small
+    /// machine wants resident. With it on the server answers from the `--gff3`
+    /// genome at once and the rest become available as the background load
+    /// reaches them, so no visitor waits for a genome to load. A genome that
+    /// fails to load is logged and fails again, with the reason, on its first
+    /// request.
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new(),
+        env = "FASTVEP_PRELOAD_GENOMES"
+    )]
+    preload_genomes: bool,
 
     /// Upstream/downstream distance in bp
     #[arg(long, default_value_t = 5000)]
@@ -117,16 +141,31 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let state: AppState = Arc::new(SharedState {
-        ctx: RwLock::new(ctx),
-        data_dir,
-        sa_dir,
-        stats_file: Some(cli.stats_file),
-        total_variants: AtomicU64::new(initial_variants),
-        total_genomes: AtomicU64::new(initial_genomes),
-        allow_model_replacement: cli.allow_model_replacement,
-        gene_model_generation: AtomicU64::new(0),
-    });
+    let default_genome = default_genome_name(cli.gff3.as_deref(), data_dir.as_deref());
+    tracing::info!("Default genome: {default_genome}");
+
+    let state: AppState = Arc::new(
+        SharedState::new(
+            ctx,
+            default_genome,
+            ServerConfig {
+                data_dir,
+                sa_dir,
+                stats_file: Some(cli.stats_file),
+                distance: cli.distance,
+                allow_model_replacement: cli.allow_model_replacement,
+            },
+        )
+        .with_stats(initial_variants, initial_genomes),
+    );
+
+    if cli.preload_genomes {
+        let preloading = Arc::clone(&state);
+        tokio::spawn(async move {
+            let loaded = preloading.preload_genomes().await;
+            tracing::info!("Preloaded {loaded} more genomes");
+        });
+    }
 
     let app = build_router(state, cli.max_body_size, cli.max_concurrent);
 
@@ -146,4 +185,43 @@ async fn shutdown_signal() {
         .await
         .expect("Failed to listen for ctrl-c");
     tracing::info!("Shutdown signal received, draining connections...");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Both are plain switches. They read their environment variable through
+    // `BoolishValueParser` so that `FASTVEP_PRELOAD_GENOMES=1`, which is what
+    // anyone writes in a systemd unit, is accepted: clap's default for a bool
+    // takes only `true` and `false`, and refuses `1` at startup with
+    // "invalid value '1'".
+    #[test]
+    fn the_switches_are_flags_and_default_to_off() {
+        let off = Cli::try_parse_from(["fastvep-web"]).unwrap();
+        assert!(!off.preload_genomes && !off.allow_model_replacement);
+
+        let on = Cli::try_parse_from([
+            "fastvep-web",
+            "--preload-genomes",
+            "--allow-model-replacement",
+        ])
+        .unwrap();
+        assert!(on.preload_genomes && on.allow_model_replacement);
+    }
+
+    #[test]
+    fn the_value_parser_accepts_the_usual_spellings_of_true_and_false() {
+        use clap::builder::TypedValueParser;
+        let parser = BoolishValueParser::new();
+        let cmd = clap::Command::new("x");
+        for yes in ["1", "true", "yes", "on", "y", "t"] {
+            let v = parser.parse_ref(&cmd, None, std::ffi::OsStr::new(yes));
+            assert!(v.unwrap(), "{yes}");
+        }
+        for no in ["0", "false", "no", "off", "n", "f"] {
+            let v = parser.parse_ref(&cmd, None, std::ffi::OsStr::new(no));
+            assert!(!v.unwrap(), "{no}");
+        }
+    }
 }
