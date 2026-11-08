@@ -246,6 +246,8 @@
     .alert .alert-title { font-weight: 700; }
     .alert .alert-detail { color: var(--text-dim); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
     .alert .alert-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .alert .acmg-why { margin-top: 8px; font-size: 13px; color: var(--text-dim); }
+    .alert .acmg-missing { margin-top: 6px; }
     .alert-error { border-left-color: var(--high); }
     .alert-error .alert-title, .alert-error .alert-icon { color: var(--high); }
     .alert-warning { border-left-color: var(--moderate); }
@@ -1414,6 +1416,12 @@ async function fetchJson(url, { method = 'GET', body, signal, timeoutMs, type = 
 function httpError(status, data, text) {
   const server = data?.error || (text && text.length < 200 && !/<html/i.test(text) ? text : '');
   if (status === 413) return new ApiError('http', 'That is too much data for one request', 'Split the VCF into smaller files, or run the fastvep command-line tool for large inputs. Servers accept about 10 MB per request by default.', status);
+  // 422 is the server declining to classify, with its verdict on the genome in the body: not a fault in the input.
+  if (status === 422 && parseVerdict(data?.acmg)) {
+    const e = new ApiError('acmg', 'ACMG classification is not available here', server || 'This genome lacks sources the classifier reads.', status);
+    e.verdict = parseVerdict(data.acmg);
+    return e;
+  }
   if (status === 400 || status === 422) return new ApiError('http', 'The server could not use that input', server || 'Check the VCF records and the chosen genome.', status);
   if (status === 403) return new ApiError('http', 'The server refused this request', server, status);
   if (status === 429 || status === 502 || status === 503 || status === 504) return new ApiError('http', 'The server is busy or restarting', 'Wait a moment and try again.', status);
@@ -1874,14 +1882,17 @@ function setStatus(text, { busy = false, done = false, cancel = false } = {}) {
 function hideStatus() { clearTimeout(state.statusTimer); $('statusBar').hidden = true; $('btnCancel').hidden = true; }
 
 function clearAlerts() { $('alertHost').innerHTML = ''; }
-function showAlert(kind, title, detail, { retry = false } = {}) {
+// `extra` is markup the caller built from escaped parts; `actions` are further buttons, each named by what it does.
+function showAlert(kind, title, detail, { retry = false, extra = '', actions = [] } = {}) {
   const host = $('alertHost');
   if (kind === 'error') host.innerHTML = '';
   const icon = { error: '&#9888;', warning: '&#9888;', info: '&#9432;' }[kind];
   const div = document.createElement('div');
   div.className = `alert alert-${kind} fade-in`;
   div.setAttribute('role', kind === 'error' ? 'alert' : 'status');
-  div.innerHTML = `<span class="alert-icon" aria-hidden="true">${icon}</span><div class="alert-body"><div class="alert-title">${esc(title)}</div>${detail ? `<div class="alert-detail">${esc(detail)}</div>` : ''}<div class="alert-actions">${retry ? '<button type="button" class="btn btn-secondary btn-sm" data-alert="retry">Try again</button>' : ''}<button type="button" class="btn btn-ghost btn-sm" data-alert="dismiss">Dismiss</button></div></div>`;
+  const buttons = [retry ? '<button type="button" class="btn btn-secondary btn-sm" data-alert="retry">Try again</button>' : '']
+    .concat(actions.map((a) => `<button type="button" class="btn btn-secondary btn-sm" data-alert="${esc(a.act)}">${esc(a.label)}</button>`)).join('');
+  div.innerHTML = `<span class="alert-icon" aria-hidden="true">${icon}</span><div class="alert-body"><div class="alert-title">${esc(title)}</div>${detail ? `<div class="alert-detail">${esc(detail)}</div>` : ''}${extra}<div class="alert-actions">${buttons}<button type="button" class="btn btn-ghost btn-sm" data-alert="dismiss">Dismiss</button></div></div>`;
   host.appendChild(div);
   div.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
@@ -1927,14 +1938,18 @@ async function annotate() {
   }
   state.abort = new AbortController();
   setBusy(true);
+  // Kept outside the try: the genome can be changed while the request is out, and an error belongs to the one it was sent for.
+  let target = null;
   try {
-    const target = currentTarget();
+    target = currentTarget();
     if (target.kind === 'demo') await annotateDemo(vcfText);
     else await annotateServer(vcfText, target);
   } catch (e) {
     hideStatus();
     if (e?.name === 'AbortError') {
       if (!state.clearing) showAlert('info', 'Annotation cancelled', 'Nothing was changed. Your variants are still in the box.');
+    } else if (e instanceof ApiError && e.kind === 'acmg') {
+      showAcmgRefusal(e, target);
     } else if (e instanceof ApiError) {
       // Results from an earlier run stay put on an ordinary failure, but never beside a mismatch error.
       if (e.kind === 'mismatch') hideResults();
@@ -1948,6 +1963,22 @@ async function annotate() {
     state.abort = null;
     state.clearing = false;
   }
+}
+
+// The server declined ACMG for a genome the page had offered it for: an operator changed the data directory after the page
+// loaded, or the page knew less than the server. Take the server's word. Switch ACMG off for that genome, say why in the
+// server's own sentence, and offer the same analysis without it. "Try again" is not offered: it would be refused again.
+function showAcmgRefusal(e, target) {
+  const verdict = { ...e.verdict, available: false };
+  rememberVerdict(verdictKey(target.genome), verdict);
+  syncPage();
+  // The server's sentence already names each missing source and the criteria it drives; what it leaves out is what each one is for.
+  const why = missingWhyHtml(state.verdicts.get(verdictKey(target.genome)));
+  const detailsHtml = why ? `<details class="acmg-why"><summary>What each missing source is for</summary><dl>${why}</dl></details>` : '';
+  showAlert('error', `ACMG classification was refused for ${target.label}`, e.detail, {
+    extra: `<div class="alert-detail">The ACMG option is now switched off for this genome. Nothing was annotated.</div>${detailsHtml}`,
+    actions: [{ act: 'retry-plain', label: 'Annotate without ACMG' }],
+  });
 }
 
 async function annotateServer(vcfText, target) {
@@ -2545,6 +2576,8 @@ function wireEvents() {
     const act = e.target.closest('[data-alert]')?.dataset.alert;
     if (act === 'dismiss') e.target.closest('.alert').remove();
     if (act === 'retry') annotate();
+    // The 422 already switched ACMG off for that genome, so this asks the same genome again without it.
+    if (act === 'retry-plain') annotate();
   });
 
   // results
