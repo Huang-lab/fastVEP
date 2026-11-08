@@ -843,7 +843,7 @@ def fig1_thresholds() -> None:
     axA.set_title("Thresholds on the benign side", loc="left", fontsize=8, pad=6)
     panel_letter(axA, "A", x=-0.17, y=1.10)
 
-    # B: the PM2 threshold for dominant genes, under the point system and under the 2015 table
+    # B: the PM2 threshold for dominant genes, under the default scheme (points on the pathogenic side) and under the 2015 table on both sides
     pm = r[(r.knob == "pm2_ad_af_threshold") & (r.group == "sweep")].copy()
     tb = r[r.knob.str.startswith("pm2_ad_af_threshold (Richards") & (r.group == "interaction")].copy() if "interaction" in set(r.group) else r.iloc[0:0]
     tbase = r[r.name == "v37_sw_table_both_sides"]

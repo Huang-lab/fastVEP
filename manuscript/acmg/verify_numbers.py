@@ -361,7 +361,7 @@ def thresholds() -> None:
          p(t["0"].plp_recall), p(t4.plp_recall))
     fact("Of the 51,348 pathogenic-side calls", n(pm2dep.loc["Richards 2015 table", "calls_depending_on_pm2"]), n(pm2dep.loc["Richards 2015 table", "of_which_pvs1_and_pm2_only"]),
          p(pm2dep.loc["Richards 2015 table", "of_which_pvs1_and_pm2_only"] / pm2dep.loc["Richards 2015 table", "calls_depending_on_pm2"], 0))
-    fact("The point system counts a lone PVS1 as 8 points", n(pm2dep.loc["shipped: SVI points on the pathogenic side", "calls_depending_on_pm2"]))
+    fact("The point scale of the default scheme counts a lone PVS1 as 8 points", n(pm2dep.loc["shipped: SVI points on the pathogenic side", "calls_depending_on_pm2"]))
 
     def step(knob, i):
         sub = steps[(steps.knob == knob) & steps.shipped_between].reset_index(drop=True)
@@ -482,6 +482,24 @@ def points() -> None:
     m1 = rep.loc["SVI points, both sides, Likely Benign from -1 (Tavtigian)"]
     fact("The table therefore does better than the floors of -2 and -3", str(int(m1.false_benign - base.false_benign)), f"{(m1.blb_recall - base.blb_recall) * 100:.1f}")
     fact("Scoring both sides on the point scale with Likely benign from -1", p(base.vus_recall), p(m1.vus_recall))
+    # The three schemes side by side: the default, the 2015 table on both sides (a real run, which its replay reproduces) and the
+    # point scale on both sides (a replay only), each from the replay of Appendix Table A2.
+    dflt, tbl = rep.loc["shipped (v37)"], rep.loc["Richards 2015 table, both sides"]
+    t4s = run("v37_sw_table_both_sides")
+    pts_rows = [rep.loc[s] for s in ("SVI points, both sides, Likely Benign from -1 (Tavtigian)", "SVI points, both sides, Likely Benign from -2",
+                                     "SVI points, both sides, Likely Benign from -3")]
+    fact("The first two are real runs, the second through the setting",
+         "the second through the setting" if (dflt.exact == base.exact and dflt.same_direction == base.same_direction and t4s.exact == tbl.exact
+                                              and t4s.same_direction == tbl.same_direction and t4s.plp_recall == tbl.plp_recall
+                                              and val.loc["v37_sw_table_both_sides", "cells_differ"] == 0) else "?")
+    fact("The default scheme has 425,869 exact calls", n(dflt.exact), n(dflt.same_direction), p(dflt.plp_recall), p(dflt.blb_recall),
+         str(int(dflt.false_benign)), str(int(dflt.false_pathogenic)))
+    fact("The 2015 table on both sides has 424,773", n(tbl.exact), n(tbl.same_direction), p(tbl.plp_recall), p(tbl.blb_recall), str(int(tbl.false_benign)),
+         str(int(tbl.false_pathogenic)), n(dflt.same_direction - tbl.same_direction), pp(dflt.plp_recall - tbl.plp_recall),
+         str(int(dflt.false_pathogenic - tbl.false_pathogenic)),
+         "on the pathogenic side only" if (dflt.same_benign == tbl.same_benign and dflt.false_benign == tbl.false_benign) else "?")
+    fact("These three point scales are replays of the recorded criteria", *[n(r.exact) for r in pts_rows], *[n(r.same_direction) for r in pts_rows],
+         "fewer exact calls" if all(r.exact < dflt.exact and r.same_direction < dflt.same_direction for r in pts_rows) else "?")
     fact("Removing it raises same-direction agreement by 774", n(run("v37_sw_no_an_floor").same_direction - base.same_direction), "no opposite-direction call" if run("v37_sw_no_an_floor").opposite == base.opposite else "?")
 
 

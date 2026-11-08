@@ -206,8 +206,8 @@ def table_thresholds() -> str:
          "Swept in v10 under the 2015 table; the median of the published VCEP thresholds is "
          + f"{sci(vc.loc['PM2', 'median'])} ({int(vc.loc['PM2', 'genes_with_a_bar'])} genes)",
          _step(steps, "PM2 bar, not recessive-only (point system)", 0), _step(steps, "PM2 bar, not recessive-only (point system)", 1),
-         f"Recall {pct(lo)} to {pct(hi)} across strict absence to 5e-4 under the point system; "
-         f"{pct(tb0.plp_recall)} to {pct(tb1.plp_recall)} under the 2015 table"],
+         f"Recall {pct(lo)} to {pct(hi)} across strict absence to 5e-4 under the default scheme; "
+         f"{pct(tb0.plp_recall)} to {pct(tb1.plp_recall)} under the 2015 table on both sides"],
         ["PM2 threshold, genes read as recessive-only: 7e-5",
          "Not from the SVI PM2 recommendation, which the code cited and which gives no frequency; equal to the Hearing Loss expert panel's recessive threshold. First swept here",
          _step(steps, "PM2 bar, recessive-only", 0), _step(steps, "PM2 bar, recessive-only", 1),
