@@ -14,16 +14,9 @@
   <link rel="icon" type="image/png" href="assets/logo.png">
   <link rel="apple-touch-icon" href="assets/logo.png">
 
-  <!-- Google tag (gtag.js) replaced with user-configurable snippet if needed -->
-  <!--
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-YOURID"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-YOURID');
-  </script>
-  -->
+  <!-- This page fetches nothing from any other origin, on load or during an analysis: people paste variants
+       from patients here, and a script loaded from another origin could read them. An operator who wants
+       usage statistics adds their own tag at the reverse proxy in front of the server, not in this file. -->
 
   <!-- The saved theme goes on before first paint, so a returning visitor never sees the other one flash. -->
   <script>
@@ -2352,7 +2345,6 @@ function showAcmgDetail(index, opener) {
     const m = (d.criteria || []).filter((c) => c.met).map((c) => c.code).join(', ') || 'None';
     return `<div class="acmg-disorder"><span class="acmg-badge acmg-${esc(d.shorthand)}">${esc(prettyWords(d.classification))}</span><span class="moi">${esc(d.inheritance)}</span><span class="names">${esc(names)}</span><span class="met">${esc(m)}</span></div>`;
   }).join('');
-  const c = a.counts || {};
   $('acmgBody').innerHTML = `
     <div class="dialog-head">
       <h2 id="acmgTitle"><span class="acmg-badge acmg-${esc(a.shorthand)}" style="cursor:default">${esc(prettyWords(a.classification) || a.shorthand)}</span><span class="sub">${esc(r.transcript?.gene?.symbol || '')}${r.transcript?.gene?.symbol && (r.hgvsc || r.hgvsp) ? ' &middot; ' : ''}${esc(r.hgvsc || r.hgvsp || '')}</span></h2>
