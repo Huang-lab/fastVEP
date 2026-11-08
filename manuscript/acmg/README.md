@@ -171,6 +171,16 @@ These are marked in the manuscript with square brackets or are not in it at all.
 12. **Archiving.**
    The bulk outputs (annotated VCFs, per-variant tables of about 20 MB each) are not in the repository.
    A tagged release with a DOI, and a compressed deposit of the per-variant tables, would let every table in `data/` be re-derived without a re-run.
+13. **The SpliceAI and PhyloP databases of the benchmark lack records that the gnomAD file carries.**
+   The benchmark reads SpliceAI and PhyloP databases that were distilled in April from the gnomAD v4.1 exomes file, in the regions of the April ClinVar set (`analysis/acmg_benchmark/scripts/sa_sources/extract_spliceai_phylop_from_gnomad.py`, built as `.osa` files on 29 and 30 April 2026).
+   The databases that fastvep.org serves since 8 November 2026 were built from the whole of the same file (`scripts/extract_gnomad_scores.py` and `fastvep sa-build --chunk-bits 16`).
+   On 1,000 ClinVar variants the complete SpliceAI database holds a record for 774 variants against 710 in the benchmark's, and the complete PhyloP database for 851 against 777.
+   They agree wherever both have a value, and each of the 138 extra values equals the value in the public file (read with tabix on 8 November 2026).
+   Converting the benchmark's SpliceAI file for chromosome 9 to the second format (`fastvep sa-convert`) gives 790,298 records and none of the 15 variants of the sample that are missing there, so the records are not in the file; why they are not was not established.
+   With the same binary and the same ClinVar, ClinGen and gnomAD databases, replacing only the SpliceAI and PhyloP databases by the complete ones moves the April set from 426,022 exact calls (63.24%) and 524,380 in direction (77.84%) with 48 opposite-direction calls, which are the numbers of this paper, to 431,727 exact (64.09%) and 534,335 in direction (79.32%) with 51.
+   The three added opposite-direction calls are ClinVar-Pathogenic variants (TMEM216 upstream, VWF synonymous, GTPBP3 intronic) that gain BP4, and BP7 for two of them, from SpliceAI and PhyloP records that the benchmark's databases lack, and move from VUS to Likely benign.
+   A reader who runs the classifier against complete SpliceAI and PhyloP databases, as fastvep.org does, therefore sees about 1.5 points more calls in direction and 3 more contradictions on this benchmark than the tables of the paper show.
+   Whether to rebuild the two databases from the whole file and repeat the runs, or to report the difference as a limitation of the benchmark, is for the authors; the runs of v38 and of v37 are not repeated here.
 
 ## What is not checked
 
