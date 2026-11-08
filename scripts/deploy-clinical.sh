@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================================
-# fastVEP Deployment: CLINICAL (~20GB data)
+# fastVEP Deployment: CLINICAL (~23GB data)
 # ============================================================================
 # Best for: Clinical variant interpretation, research labs
-# Server:   Hetzner CCX23 (4 vCPU, 16GB RAM, 80GB SSD) — $30/month
-# Genomes:  Human GRCh38 + 2-3 model organisms
+# Server:   Hetzner CCX23 (4 vCPU, 16GB RAM, 160GB SSD) - $30/month
+# Genomes:  Human GRCh38 + seven other organisms
 # SA:       ClinVar + dbSNP (rs IDs for every known variant)
 # ============================================================================
 set -euo pipefail
@@ -14,7 +14,7 @@ DATA_DIR="/opt/fastvep/data"
 BIN_DIR="/opt/fastvep/bin"
 
 echo "=== fastVEP Clinical Deployment ==="
-echo "Estimated disk usage: ~20GB"
+echo "Estimated disk usage: ~23GB (the dbSNP build needs 30GB more while it runs)"
 echo ""
 
 # --- 1. Setup directories and copy binaries ---
@@ -49,14 +49,15 @@ fi
 # --- 4. Build SA databases (ClinVar + dbSNP) ---
 echo "[3/6] Building ClinVar database (~40MB)..."
 cd "$DATA_DIR/hg38_ensembl_115/sa"
-if [ ! -f clinvar.osa ]; then
+# sa-build writes .osa2 (.osa in the v1 format); either one means the database is built.
+if [ ! -s clinvar.osa2 ] && [ ! -s clinvar.osa ]; then
     wget -q --show-progress https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
     "$BIN_DIR/fastvep" sa-build --source clinvar -i clinvar.vcf.gz -o clinvar --assembly GRCh38
     rm -f clinvar.vcf.gz
 fi
 
-echo "[4/6] Building dbSNP database (~5GB .osa, ~20GB download — this takes a while)..."
-if [ ! -f dbsnp.osa ]; then
+echo "[4/6] Building dbSNP database (~9.4GB .osa2, ~30GB download; this takes a while)..."
+if [ ! -s dbsnp.osa2 ] && [ ! -s dbsnp.osa ]; then
     wget -q --show-progress https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
     "$BIN_DIR/fastvep" sa-build --source dbsnp -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38
     rm -f GCF_000001405.40.gz
@@ -149,16 +150,17 @@ if [ ! -f Rattus_norvegicus.GRCr8.dna.toplevel.fa ]; then
     samtools faidx Rattus_norvegicus.GRCr8.dna.toplevel.fa
 fi
 
-# Arabidopsis (~200MB)
+# Arabidopsis (~200MB). Ensembl Plants has its own release numbers (63 here, against 115 of Ensembl),
+# and the directory says so, as the other genomes' do.
 echo "  → Arabidopsis (TAIR10)..."
-mkdir -p "$DATA_DIR/arabidopsis_tair10_ensembl_115"
-cd "$DATA_DIR/arabidopsis_tair10_ensembl_115"
-if [ ! -f Arabidopsis_thaliana.TAIR10.60.gff3 ]; then
-    wget -q --show-progress http://ftp.ensemblgenomes.org/pub/plants/release-60/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.60.gff3.gz
-    gunzip Arabidopsis_thaliana.TAIR10.60.gff3.gz
+mkdir -p "$DATA_DIR/arabidopsis_tair10_ensemblplants_63"
+cd "$DATA_DIR/arabidopsis_tair10_ensemblplants_63"
+if [ ! -f Arabidopsis_thaliana.TAIR10.63.gff3 ]; then
+    wget -q --show-progress https://ftp.ensemblgenomes.ebi.ac.uk/pub/plants/release-63/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.63.gff3.gz
+    gunzip Arabidopsis_thaliana.TAIR10.63.gff3.gz
 fi
 if [ ! -f Arabidopsis_thaliana.TAIR10.dna.toplevel.fa ]; then
-    wget -q --show-progress http://ftp.ensemblgenomes.org/pub/plants/release-60/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
+    wget -q --show-progress https://ftp.ensemblgenomes.ebi.ac.uk/pub/plants/release-63/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
     gunzip Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
     samtools faidx Arabidopsis_thaliana.TAIR10.dna.toplevel.fa
 fi
@@ -178,7 +180,7 @@ echo "  ✓ Full variant consequence prediction (508k transcripts)"
 echo "  ✓ HGVS notation"
 echo "  ✓ ClinVar clinical significance"
 echo "  ✓ dbSNP rs IDs for all known variants"
-echo "  ✓ Mouse, Zebrafish, Drosophila genomes"
+echo "  ✓ Mouse, rat, zebrafish, fruit fly, C. elegans, yeast and Arabidopsis genomes"
 echo "  ✗ No population frequencies (gnomAD) — add with deploy-full.sh"
 echo ""
 echo "Next: run 'systemctl start fastvep' or see DEPLOYMENT.md Section 4"
