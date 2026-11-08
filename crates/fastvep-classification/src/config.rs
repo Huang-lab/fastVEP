@@ -341,18 +341,25 @@ pub struct AcmgConfig {
     /// annotation databases built before the FAF columns were extracted.
     #[serde(default = "default_true")]
     pub use_filtering_af: bool,
-    /// Combine criteria with the ClinGen SVI point system (Tavtigian 2020)
-    /// instead of the Richards 2015 combining table.
+    /// Score the PATHOGENIC side with the ClinGen SVI point scale (Tavtigian
+    /// 2020) instead of the Richards 2015 combining table.
     ///
-    /// The two are encodings of the same Bayesian model, and where they
-    /// disagree the point system is the SVI's current recommendation and what
-    /// VCEP specifications are written against. The disagreement that matters
-    /// most is a lone PVS1: 8 points, inside the Likely Pathogenic band, but no
-    /// row of Table 5 matches it, so the table returns Uncertain Significance.
+    /// The benign side keeps the 2015 table whichever way this is set: `true`
+    /// (the default) is points on the pathogenic side and the table on the
+    /// benign side, and `false` is the table on both sides. Points on both
+    /// sides is not a setting; it exists only as the offline replay of the ACMG
+    /// manuscript (`manuscript/acmg`, Section 3.3).
+    ///
+    /// The two are encodings of the same Bayesian model, and the disagreement
+    /// that matters most is a lone PVS1: 8 points, inside the Likely Pathogenic
+    /// band, but no row of the 2015 table matches it, so the table returns
+    /// Uncertain Significance.
     ///
     /// Measured on the ClinVar 2-star+ benchmark, run v10 put **2,319
     /// ClinVar-Pathogenic variants in VUS on `PVS1` and nothing else** - nonsense
-    /// and frameshift variants in haploinsufficient disease genes.
+    /// and frameshift variants in haploinsufficient disease genes. Why the
+    /// benign side stays on the table, and what each scheme gives on v37, is in
+    /// `combiner.rs` and in docs/ACMG.md ("Which combining rules apply").
     #[serde(default = "default_true")]
     pub use_point_system: bool,
     /// Require an established gene-disease relationship before the criteria
