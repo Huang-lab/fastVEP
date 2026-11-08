@@ -887,7 +887,7 @@ Run v10 put **2,319 ClinVar-Pathogenic variants in VUS on `PVS1` and nothing els
 Tavtigian's Likely Benign band opens at `-1`, so a single BP4 is enough for a benign call, where Richards requires two benign supporting criteria or a strong plus a supporting.
 
 **What each scheme gives on the benchmark.**
-The split was decided at v11 on the benchmark sample of the time, and the table below measures it again on v37, over the 673,660 ClinVar 2-star+ records of the April 2026 release (`manuscript/acmg`, Section 3.3 and Appendix Table A2; the figures are in `manuscript/acmg/data/combining_rules_replay_v37.csv`).
+The split was decided at v11, and the table below measures it again on v37, over the 673,660 ClinVar 2-star+ records of the April 2026 release (`manuscript/acmg`, Section 3.3 and Appendix Table A2; the figures are in `manuscript/acmg/data/combining_rules_replay_v37.csv`).
 The first two rows are real runs (`v37` and `v37_sw_table_both_sides`), which the replay reproduces cell for cell, and the last three are replays of the recorded criteria, for which no real run was made.
 The combining code is the same in v38, where `combiner.rs` differs from v37's by the wording of a comment, so the scheme is the same and the calls move only through the criteria that v38 reads differently.
 
