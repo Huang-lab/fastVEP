@@ -2065,13 +2065,20 @@ async function annotateServer(vcfText, target) {
     if (g) { g.loaded = true; g.transcripts = gm.transcripts ?? g.transcripts; }
     if (g && state.selection === g.name) syncGenomeInfo();
   }
-  showResults(rows, { variants: data.results.length, ms: data.time_ms ?? Math.round(performance.now() - t0), warnings: serverWarnings(rows, data.results.length) });
+  showResults(rows, { variants: data.results.length, ms: data.time_ms ?? Math.round(performance.now() - t0), warnings: serverWarnings(rows, data.results.length, data.warnings) });
   refreshStatus();
 }
 
 // An answer that is all `intergenic_variant` is well-formed and almost always the wrong genome or chromosome names.
-function serverWarnings(rows, variants) {
+// `fromServer` is the `warnings` of the answer: databases that could not be read for some lookups, which is
+// "no record" in every cell and says so nowhere else.
+function serverWarnings(rows, variants, fromServer) {
   const out = [];
+  if (Array.isArray(fromServer)) {
+    for (const text of fromServer) {
+      if (typeof text === 'string' && text) out.push({ title: 'A database could not answer for some variants', detail: text });
+    }
+  }
   if (variants >= 3 && rows.length > 0 && rows.every((r) => r.consequences.length === 1 && r.consequences[0] === 'intergenic_variant')) {
     out.push({ title: 'Every variant came back intergenic', detail: 'That usually means the genome does not match the variants, or the chromosome names differ (use 1, 2, X rather than chr1). Check the genome in step 1.' });
   }
