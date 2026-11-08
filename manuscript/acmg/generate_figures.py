@@ -228,6 +228,18 @@ def figS1_trajectory() -> None:
     stored = t[t.source.str.startswith("scored")]
     main = stored[stored.mainline]  # the steps on the way: v7 to v38 without v17
     side = stored[~stored.mainline]  # v17, the opt-in run with the published VCEP thresholds
+    # v37 and v38 were made again with the complete SpliceAI and PhyloP databases and the runs before them were not, so the lines are the runs on
+    # the first databases, which for v37 and v38 come from the comparison of the two (`21_compare_databases.py`), and the runs on the complete
+    # databases are the diamonds beside them.
+    complete = main[main["databases"] == "complete"]
+    oc = read("databases_old_vs_new.csv")
+    first_rows = []
+    for version in ("v37", "v38"):
+        d = oc[(oc.version == version) & (oc.set == "April set")].set_index("measure")["first"].astype(float)
+        first_rows.append({"run": version, "order": int(version[1:]), "same_direction_rate": d["same_direction"] / d["variants"] * 100, "exact_rate": d["exact"] / d["variants"] * 100,
+                           "opposite": d["opposite"], "false_benign": d["false_benign"], "false_pathogenic": d["false_pathogenic"],
+                           "plp_recall": d["plp_recall"] * 100, "blb_recall": d["blb_recall"] * 100})
+    line_rows = pd.concat([main[main["databases"] != "complete"], pd.DataFrame(first_rows)], ignore_index=True)
     # Open markers: v1, a matrix reconstructed from the run's documentation, and v2, v4 to v6, the figures
     # recorded at the time. None of them has a raw output behind it.
     opened = t[~t.source.str.startswith("scored")]
@@ -254,7 +266,11 @@ def figS1_trajectory() -> None:
                  bbox=dict(boxstyle="circle,pad=0.22", fc=INK2, ec="none"), zorder=3)
 
     def stored_line(ax, col, color, **kw):
-        ax.plot(main["order"], main[col], color=color, lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3, **kw)
+        ax.plot(line_rows["order"], line_rows[col], color=color, lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3, **kw)
+
+    def complete_marks(ax, col, color, **kw):
+        """v37 and v38 on the complete databases: diamonds, joined by a dashed line that does not join v36."""
+        ax.plot(complete["order"], complete[col], color=color, lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=4, **kw)
 
     def open_marks(ax, rows, col, color, ms=MS - 1.5):
         ax.plot(rows["order"], rows[col], ls="none", marker="o", ms=ms, mfc=SURFACE, mec=color, mew=1.2, zorder=3)
@@ -271,6 +287,8 @@ def figS1_trajectory() -> None:
     hgrid(axA)
     stored_line(axA, "same_direction_rate", CAT[0])
     stored_line(axA, "exact_rate", CAT[1])
+    complete_marks(axA, "same_direction_rate", CAT[0])
+    complete_marks(axA, "exact_rate", CAT[1])
     dotted(axA, opened, "same_direction_rate", CAT[0])
     dotted(axA, opened, "exact_rate", CAT[1])
     open_marks(axA, opened.dropna(subset=["same_direction_rate"]), "same_direction_rate", CAT[0])
@@ -280,7 +298,7 @@ def figS1_trajectory() -> None:
     axA.set_ylim(45, 80)
     axA.set_yticks(range(45, 81, 5))
     axA.set_ylabel("Agreement with ClinVar 2-star+\n(% of 673,660 variants)")
-    last = main[main.run == "v38"].iloc[0]  # the latest version; v37 is one step before it and 0.2 points below
+    last = complete[complete.run == "v38"].iloc[0]  # the latest version, on the complete databases; v37 is one step before it and 0.3 points below
     axA.text(38.6, last.same_direction_rate, f"{last.same_direction_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
     axA.text(38.6, last.exact_rate, f"{last.exact_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
     v1 = opened[opened.run == "v1"].iloc[0]
@@ -297,18 +315,22 @@ def figS1_trajectory() -> None:
         Line2D([0], [0], color=INK2, lw=0, marker="o", ms=MS - 1.5, mfc=SURFACE, mec=INK2, mew=1.2,
                label="v1 (reconstructed) and v2 to v6 (recorded at the time)"),
         Line2D([0], [0], color=INK2, lw=0, marker="x", ms=4.6, mew=1.3, label="v17: opt-in run with the VCEP thresholds, not a step"),
+        Line2D([0], [0], color=INK2, lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 1.5, mec=SURFACE, label="v37 and v38 again with the complete databases (the lines are the first databases)"),
     ], loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=6.4)
     panel_letter(axA, "A")
 
     # --- opposite-direction calls
     hgrid(axB)
     axB.set_yscale("log")
-    opp = main.dropna(subset=["false_benign"])
+    opp = line_rows.dropna(subset=["false_benign"])
     axB.plot(opp["order"], opp.false_benign, color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
              label=f"{CV} P/LP called LB or B (reference-discordant benign)")
     axB.plot(opp["order"], opp.false_pathogenic, color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
              label=f"{CV} LB or B called P or LP (reference-discordant pathogenic)")
-    axB.plot(main["order"], main.opposite, color=INK2, lw=1.0, marker="o", ms=MS - 2.5, mec=SURFACE, mew=0.8, zorder=2, label="Total")
+    axB.plot(line_rows["order"], line_rows.opposite, color=INK2, lw=1.0, marker="o", ms=MS - 2.5, mec=SURFACE, mew=0.8, zorder=2, label="Total")
+    complete_marks(axB, "false_benign", TIER3["P/LP"])
+    complete_marks(axB, "false_pathogenic", TIER3["B/LB"])
+    complete_marks(axB, "opposite", INK2)
     dotted(axB, opened, "opposite", INK2)
     open_marks(axB, opened.dropna(subset=["opposite"]), "opposite", INK2, ms=MS - 1.5)
     o1 = opened[opened.run == "v1"].iloc[0]
@@ -322,8 +344,8 @@ def figS1_trajectory() -> None:
     axB.set_yticklabels(["10", "30", "100", "300"])
     axB.yaxis.set_minor_locator(matplotlib.ticker.NullLocator())
     axB.set_ylabel("Opposite-direction calls\n(n, log scale)")
-    for run in ("v7", "v13", "v38"):
-        r = main[main.run == run].iloc[0]
+    for run, rows_ in (("v7", line_rows), ("v13", line_rows), ("v38", complete)):
+        r = rows_[rows_.run == run].iloc[0]
         axB.text(r["order"] + 0.35, r.opposite * 1.10, f"{int(r.opposite)}", fontsize=6.8, color=INK2, va="bottom", ha="left")
     handles, labels = axB.get_legend_handles_labels()
     handles.append(Line2D([0], [0], color=INK2, lw=0, marker="o", ms=MS - 1.5, mfc=SURFACE, mec=INK2, mew=1.2))
@@ -335,6 +357,8 @@ def figS1_trajectory() -> None:
     hgrid(axC)
     stored_line(axC, "plp_recall", TIER3["P/LP"])
     stored_line(axC, "blb_recall", TIER3["B/LB"])
+    complete_marks(axC, "plp_recall", TIER3["P/LP"])
+    complete_marks(axC, "blb_recall", TIER3["B/LB"])
     side_marks(axC, "plp_recall", TIER3["P/LP"])
     side_marks(axC, "blb_recall", TIER3["B/LB"])
     axC.set_ylim(40, 70)
@@ -1071,6 +1095,15 @@ def figS4_frontier() -> None:
     N = 673_660
     traj = read("trajectory.csv")
     main = traj[traj.mainline & traj.same_direction_rate.notna() & traj.opposite.notna() & (traj.source == "scored matrix on disk")]
+    # v37 and v38 were made again with the complete SpliceAI and PhyloP databases and the runs before them were not: the line is the versions on
+    # the first databases (v37's and v38's from `21_compare_databases.py`) and the runs on the complete databases are the diamonds (as in Figure S1)
+    complete = main[main["databases"] == "complete"]
+    oc = read("databases_old_vs_new.csv")
+    first_rows = []
+    for version in ("v37", "v38"):
+        d = oc[(oc.version == version) & (oc.set == "April set")].set_index("measure")["first"].astype(float)
+        first_rows.append({"run": version, "order": int(version[1:]), "same_direction_rate": d["same_direction"] / d["variants"], "opposite": d["opposite"]})
+    line_rows = pd.concat([main[main["databases"] != "complete"], pd.DataFrame(first_rows)], ignore_index=True)
     runs = read("runs_v37_variants.csv")
     runs = runs[runs.name != BASE]
     curve = read("baselines_curve_v37.csv")
@@ -1087,10 +1120,11 @@ def figS4_frontier() -> None:
     ax.plot(runs.opposite, runs.same_direction / N * 100, ls="none", marker="o", ms=2.6, mfc="#b7b6ae", mec="none", alpha=0.75, zorder=2)
 
     # the versions
-    ax.plot(main.opposite, main.same_direction_rate * 100, color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=4)
+    ax.plot(line_rows.opposite, line_rows.same_direction_rate * 100, color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=4)
+    ax.plot(complete.opposite, complete.same_direction_rate * 100, color=CAT[0], lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=4)
     # (x factor, y offset, alignment) of each version label, chosen so that none sits on a line
     for run, fx, dy, ha in (("v7", 1.12, -1.5, "left"), ("v8", 1.0, 1.6, "center"), ("v10", 0.86, -1.5, "right"), ("v13", 1.45, 1.4, "left")):
-        r = main[main.run == run].iloc[0]
+        r = line_rows[line_rows.run == run].iloc[0]
         ax.text(r.opposite * fx, r.same_direction_rate * 100 + dy, f"{run}: {int(r.opposite)}", fontsize=6.2, color=INK2, ha=ha, va="center")
 
     # the rules, at nine frequency thresholds each
@@ -1137,7 +1171,8 @@ def figS4_frontier() -> None:
     ax.set_xlabel("Opposite-direction calls (n, log scale)")
     ax.set_ylabel(f"Agreement in direction with {CV}\n(% of 673,660 variants)")
     handles = [
-        Line2D([0], [0], color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, label=f"fastVEP versions {main.run.iloc[0]} to {main.run.iloc[-1]} (scored matrices)"),
+        Line2D([0], [0], color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, label=f"fastVEP versions {main.run.iloc[0]} to {main.run.iloc[-1]} on the first databases (scored matrices)"),
+        Line2D([0], [0], color=CAT[0], lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 2, mec=SURFACE, label="v37 and v38 again, with the complete databases"),
         Line2D([0], [0], ls="none", marker="o", ms=3.4, mfc="#b7b6ae", mec="none", label=blab("runs of this paper: v37 with one change")),
     ] + [Line2D([0], [0], color=col, lw=1.1, marker=mk, ms=MS - 2.2, mfc=SURFACE, mec=col, mew=1.1, label=lab) for col, mk, lab in style.values()] + [
         Line2D([0], [0], ls="none", marker="s", ms=MS - 1.0, mfc=CAT[3], mec=SURFACE, label="filled: R2, and R2 with R3, with no frequency rule"),

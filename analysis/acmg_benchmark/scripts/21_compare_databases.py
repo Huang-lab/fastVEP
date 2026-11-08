@@ -12,8 +12,8 @@ runs and writes four things, so that the text states no number of the change tha
   databases_causes.csv             for SpliceAI and PhyloP, the variants that only the complete databases have, by what explains
                                    them: the tail of a batch of the extraction that ended early, or an indel whose second base
                                    lay just outside the extracted regions (see below)
-  databases_lost_blocks.csv        one row for each batch of the extraction in which the first databases stop short: where, how
-                                   many variants after the last one that has a value, and that nothing follows in the batch
+  databases_lost_blocks.csv        one row for each batch of the extraction in which the first databases stop short: the variants
+                                   of each source that have a value before the break, the variants lost after it, and where
   databases_old_vs_new.csv         v37 and v38, on the April set and on the October release, with the first and with the
                                    complete databases: the headline counts and the firing of BP4, BP7, PP3 and of PVS1 on
                                    canonical splice variants (long format: version, set, measure, first, complete)
@@ -96,12 +96,21 @@ def has_criterion(criteria: pd.Series, code: str) -> pd.Series:
     return criteria.str.contains(rf"(?:^|&){code}(?:_|&|$)", regex=True)
 
 
-def matrix(x: pd.DataFrame, labels: Path) -> dict[str, dict[str, int]]:
-    """The five-tier matrix of a per-variant table with the reference-agreement records that a run did not annotate counted as no-calls."""
+def matrix(x: pd.DataFrame, labels: Path, stratum: str | None = None) -> dict[str, dict[str, int]]:
+    """The five-tier matrix of a per-variant table with the reference-agreement records that a run did not annotate counted as no-calls.
+
+    The records that a run did not annotate are counted from the labels of the set, or of one stratum of the release
+    (`clinvar_20261004/strata.tsv`), so that the matrix has the denominator that the tables of the paper have.
+    """
     m = {t: {c: 0 for c in st.CALLS} for t in st.CLASSES}
     for (t, c), k in x.groupby(["clinvar", "call"]).size().items():
         m[t][c] += int(k)
-    counts = pd.read_csv(labels, sep="\t", dtype=str, usecols=["normalized_class"])["normalized_class"].value_counts()
+    lab = pd.read_csv(labels, sep="\t", dtype=str, usecols=KEY + ["normalized_class"])
+    if stratum is not None:
+        strata = pd.read_csv(BENCH / "clinvar_20261004/strata.tsv", sep="\t", dtype=str)
+        lab = lab.merge(strata, on=KEY, how="left")
+        lab = lab[lab["stratum"] == stratum]
+    counts = lab["normalized_class"].value_counts()
     for t in st.CLASSES:
         short = int(counts[t]) - sum(m[t].values())
         if short < 0:
@@ -110,12 +119,9 @@ def matrix(x: pd.DataFrame, labels: Path) -> dict[str, dict[str, int]]:
     return m
 
 
-def headline(x: pd.DataFrame, labels: Path) -> dict[str, float]:
-    mm = st.matrix_metrics(matrix(x, labels))
-    return {"variants": mm["n"], "exact": mm["exact"], "same_direction": mm["same_direction"], "opposite": mm["opposite"],
-            "false_benign": mm["false_benign"], "false_pathogenic": mm["false_pathogenic"],
-            "plp_recall": mm["plp_recall"], "blb_recall": mm["blb_recall"], "vus_recall": mm["vus_recall"],
-            "plp_to_vus": mm["plp_to_vus"], "blb_to_vus": mm["blb_to_vus"]}
+def headline(x: pd.DataFrame, labels: Path, stratum: str | None = None) -> dict[str, float]:
+    mm = st.matrix_metrics(matrix(x, labels, stratum))
+    return {k: mm[k] for k in ("n",) + tuple(MEASURES[1:])} | {"variants": mm["n"]}
 
 
 def firing(x: pd.DataFrame) -> dict[str, int]:
@@ -159,10 +165,15 @@ def with_alt(x: pd.DataFrame) -> pd.DataFrame:
     return x[x["alt"] != "."]
 
 
+def any_pair(runs: dict, kind: str) -> dict | None:
+    """The tables of both stacks of a set of variants, from either version (which databases a run reads does not depend on the version)."""
+    return runs.get(("v37", kind)) or runs.get(("v38", kind))
+
+
 def presence(runs: dict) -> list[dict]:
     rows = []
     for kind, scope, key_set in (("april", "April set", "april"), ("october", "October release, the variants of the first design", "covered")):
-        pair = runs.get(("v37", kind))
+        pair = any_pair(runs, kind)
         if pair is None:
             continue
         first, complete = with_alt(pair["first"]), with_alt(pair["complete"])
@@ -178,7 +189,7 @@ def presence(runs: dict) -> list[dict]:
                 differ |= both & (first[col] != complete[col])
             rows.append({"set": scope, "source": name, "variants": len(first), "first": int(f.sum()), "complete": int(c.sum()), "only_complete": int((c & ~f).sum()),
                          "only_first": int((f & ~c).sum()), "both": int(both.sum()), "differ_where_both": int(differ.sum())})
-    pair = runs.get(("v37", "october"))
+    pair = any_pair(runs, "october")
     if pair is not None:
         outside = with_alt(pair["complete"]).loc[~with_alt(pair["complete"]).index.isin(pair["first"].index)]
         for name, (present, _) in SOURCES.items():
@@ -202,7 +213,13 @@ def load_regions() -> dict[str, list[tuple[int, int]]]:
 
 
 def causes(runs: dict) -> tuple[list[dict], list[dict]]:
-    """For SpliceAI and PhyloP, why the variants that only the complete databases hold are missing from the first ones."""
+    """For SpliceAI and PhyloP, why the variants that only the complete databases hold are missing from the first ones.
+
+    A batch of the extraction has a tail when the first database has no value for any variant after some point of the batch while
+    the complete database has values for variants after it: the variants of the batch after the last one that the first database
+    has a value for, among those that the complete database has a value for, are the tail. The two sources are written from one
+    `tabix` stream per batch by one script, so a stream that ended early would leave the same tail in both.
+    """
     pair = runs[("v37", "april")]
     first = with_alt(pair["first"])
     complete = with_alt(pair["complete"]).reindex(first.index)
@@ -219,12 +236,13 @@ def causes(runs: dict) -> tuple[list[dict], list[dict]]:
     base["batch"] = base.region // BATCH
     base["indel"] = base.ref.str.len() != base.alt.str.len()
     base["second_base_outside"] = [region_of(c, p + 1) < 0 for c, p in zip(base.chrom, base.pos)]
-    base["pos_n"] = base.pos
-    rows, blocks = [], []
+    rows = []
+    per_batch: dict[tuple[str, int], dict] = {}
     for source, (present, _) in list(SOURCES.items())[:2]:
         f, c = (first[present] != "").values, (complete[present] != "").values
         lost = c & ~f
         tail = pd.Series(False, index=range(len(base)))
+        n_tails = 0
         for (chrom, batch), part in base[(base.region >= 0)].groupby(["chrom", "batch"]):
             idx = part.index.values
             if not lost[idx].any():
@@ -236,29 +254,31 @@ def causes(runs: dict) -> tuple[list[dict], list[dict]]:
             if not in_tail.any():
                 continue
             tail.iloc[idx[in_tail]] = True
+            n_tails += 1
             nreg = len(regions["chr" + chrom])
             first_region = int(batch) * BATCH
-            last_region = min(first_region + BATCH, nreg) - 1
-            blocks.append({"source": source, "chrom": chrom, "batch": int(batch) + 1, "regions_in_batch": last_region - first_region + 1,
-                           "variants_with_a_value_before": int(f[idx][part.pos.values <= last_kept].sum()),
-                           "first_position_lost": int(part.pos.values[in_tail].min()), "last_position_lost": int(part.pos.values[in_tail].max()),
-                           "variants_lost": int(in_tail.sum()),
-                           "variants_after_with_a_value_in_the_first": int((f[idx] & after).sum()),
-                           "variants_after_with_a_value_in_the_complete": int((c[idx] & after & ~lost[idx]).sum())})
+            entry = per_batch.setdefault((chrom, int(batch) + 1), {"chrom": chrom, "batch": int(batch) + 1, "regions_in_batch": min(first_region + BATCH, nreg) - first_region})
+            entry[f"{source.lower()}_with_a_value_before_the_break"] = int(f[idx][part.pos.values <= last_kept].sum())
+            entry[f"{source.lower()}_lost"] = int(in_tail.sum())
+            entry[f"{source.lower()}_first_position_lost"] = int(part.pos.values[in_tail].min())
+            entry[f"{source.lower()}_last_position_lost"] = int(part.pos.values[in_tail].max())
         tail_v = tail.values
         edge = lost & ~tail_v & base.indel.values & base.second_base_outside.values
         other = lost & ~tail_v & ~edge
-        rows.append({"source": source, "variants_lost": int(lost.sum()), "in_the_tail_of_a_batch": int((lost & tail_v).sum()), "batches_with_a_tail": sum(1 for b in blocks if b["source"] == source),
+        rows.append({"source": source, "variants_lost": int(lost.sum()), "in_the_tail_of_a_batch": int((lost & tail_v).sum()), "batches_with_a_tail": n_tails,
                      "indels_with_the_second_base_outside_the_regions": int(edge.sum()), "unexplained": int(other.sum()),
                      "indels_among_the_unexplained": int((other & base.indel.values).sum()),
                      "variants_with_a_value_in_the_complete": int(c.sum()), "share_lost_of_the_complete": float(lost.sum() / c.sum())})
+    blocks = [per_batch[k] for k in sorted(per_batch, key=lambda k: (k[0].rjust(2, "0"), k[1]))]
+    cols = ["chrom", "batch", "regions_in_batch"] + [f"{src}_{what}" for src in ("spliceai", "phylop") for what in ("with_a_value_before_the_break", "lost", "first_position_lost", "last_position_lost")]
+    blocks = [{c: b.get(c, "") for c in cols} for b in blocks]
     return rows, blocks
 
 
 # ------------------------------------------------------------------------------------------------ old against new
 
 
-MEASURES = ["variants", "exact", "same_direction", "opposite", "false_benign", "false_pathogenic", "plp_recall", "blb_recall", "vus_recall", "plp_to_vus", "blb_to_vus"]
+MEASURES = ["variants", "exact", "same_direction", "same_pathogenic", "same_benign", "vus_exact", "opposite", "false_benign", "false_pathogenic", "plp_recall", "blb_recall", "vus_recall", "plp_to_vus", "blb_to_vus"]
 FIRING = ["BP4", "BP7", "PP3", "PVS1", "canonical_splice_variants", "PVS1_on_canonical_splice"]
 
 
@@ -268,30 +288,24 @@ def old_vs_new(runs: dict) -> list[dict]:
     for (version, kind), pair in runs.items():
         first, complete = pair["first"], pair["complete"]
         if kind == "april":
-            groups = [("April set", first, complete, LABELS["april"], LABELS["april"], True)]
+            groups = [("April set", first, complete, LABELS["april"], LABELS["april"], None)]
         else:
             if strata is None:
                 continue
             inside = complete.loc[complete.index.isin(first.index)]
             new_first = first.loc[strata.reindex(first.index).values == "new"]
             new_inside = inside.loc[strata.reindex(inside.index).values == "new"]
-            groups = [("October release, the variants of the first design", first, inside, LABELS["october_covered"], LABELS["october_covered"], True),
-                      ("October release, new variants of the first design", new_first, new_inside, None, None, False),
-                      ("October release, all variants", None, complete, None, LABELS["october"], False)]
-        for scope, f, c, lab_f, lab_c, with_firing in groups:
+            groups = [("October release, the variants of the first design", first, inside, LABELS["october_covered"], LABELS["october_covered"], None),
+                      ("October release, new variants of the first design", new_first, new_inside, LABELS["october_covered"], LABELS["october_covered"], "new"),
+                      ("October release, all variants", None, complete, None, LABELS["october"], None)]
+        for scope, f, c, lab_f, lab_c, stratum in groups:
             vals = {}
             for db, x, lab in (("first", f, lab_f), ("complete", c, lab_c)):
                 if x is None:
                     vals[db] = None
                     continue
-                if lab is None:  # a stratum: no-call records belong to the labels of the whole set, so count what the table holds
-                    h = {"variants": len(x)}
-                    mm = st.matrix_metrics({t: {cc: int(((x.clinvar == t) & (x.call == cc)).sum()) for cc in st.CALLS} for t in st.CLASSES})
-                    h.update({k: mm[k] for k in MEASURES[1:]})
-                else:
-                    h = headline(x, lab)
-                if with_firing or lab is None:
-                    h.update(firing(x))
+                h = headline(x, lab, stratum)
+                h.update(firing(x))
                 vals[db] = h
             for measure in MEASURES + FIRING:
                 a, b = (vals[db].get(measure) if vals[db] is not None else None for db in ("first", "complete"))
@@ -341,7 +355,7 @@ def signed(x: float) -> str:
 
 
 def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: list[dict], opp: list[dict]) -> None:
-    pres_df, cause_df, ovn_df = pd.DataFrame(pres), pd.DataFrame(cause_rows), pd.DataFrame(ovn)
+    pres_df, cause_df, ovn_df, blocks_df = pd.DataFrame(pres), pd.DataFrame(cause_rows), pd.DataFrame(ovn), pd.DataFrame(blocks)
     lines: list[str] = []
 
     def s(text: str = "") -> None:
@@ -376,16 +390,19 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
     s("## Where the missing records are")
     s()
     s(f"The extraction of April read gnomAD in batches of {BATCH} regions of `clinvar_2star_regions.bed`, a chromosome at a time, ignored the exit status of `tabix` and sent its messages to /dev/null.")
-    s(f"The {n(sa.variants_lost)} SpliceAI records that only the complete database holds lie in {int(sa.batches_with_a_tail)} runs, each inside one batch and reaching its end: in each of those batches the first database has values up to a point and none after it, and the complete database has values after it.")
-    s(f"For PhyloP the same is true of {n(pp.in_the_tail_of_a_batch)} of the {n(pp.variants_lost)} records, in {int(pp.batches_with_a_tail)} batches.")
+    s(f"The {n(sa.variants_lost)} SpliceAI records that only the complete database holds lie in {int(sa.batches_with_a_tail)} stretches, each inside one batch and reaching its end: in each of those batches the first database has values up to a point and none after it, and the complete database has values after it.")
     rest = int(pp.variants_lost - pp.in_the_tail_of_a_batch)
     edge = int(pp.indels_with_the_second_base_outside_the_regions)
+    s(f"For PhyloP the same is true of {n(pp.in_the_tail_of_a_batch)} of the {n(pp.variants_lost)} records, in {int(pp.batches_with_a_tail)} batches.")
     if rest == edge and not pp.unexplained:
         s(f"The other {n(rest)} are all indels, and the second base (position + 1) of each lies outside every region of the extraction.")
     else:
         s(f"The other {n(rest)} are indels or not, and for {n(edge)} of them the second base (position + 1) lies outside every region of the extraction, which leaves {n(pp.unexplained)} that neither explanation covers.")
+    both = blocks_df[(blocks_df.spliceai_lost != "") & (blocks_df.phylop_lost != "")]
+    same_start = int((both.spliceai_first_position_lost == both.phylop_first_position_lost).sum())
+    s(f"The batches are the same for the two sources ({len(both)} batches lose records in both of {len(blocks_df)}), and the first lost position is the same in {same_start} of them, as it would be if one stream per batch fed both files, which is how the extraction script works (one `tabix` stream is read once and written to both).")
     s("The pattern is what a stream that ends early gives, and it is not a record of a stream that did: the extraction was not repeated, and the script threw its messages away.")
-    s("`databases_lost_blocks.csv` lists each batch, with the variants that precede the break and the count of variants after it that have a value in either database.")
+    s("`databases_lost_blocks.csv` lists each batch, with the variants of each source that have a value before the break and those lost after it.")
     s()
     s("## The April set")
     s()

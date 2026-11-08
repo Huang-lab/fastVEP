@@ -1463,6 +1463,11 @@ def trajectory() -> None:
 
     v38 is the last row: the main run of the latest classifier (`manuscript_runs/v38`), whose matrix lacks the 382 records with no
     alternative allele that every earlier run counted as no-calls, so they are put back (`force`) and every rate is over 673,660.
+
+    The column `databases` says which SpliceAI and PhyloP databases a run read: v1 read neither, v2 to v36 read the first ones
+    (distilled in April 2026 from regions of the gnomAD file, which lack records of it; `21_compare_databases.py`), and v37 and v38
+    are the runs that were made again with the complete ones, so the step from v36 to v37 holds a change of databases as well as
+    of the classifier. The first databases' values of v37 and v38 are in `databases_old_vs_new.csv`.
     """
     rows = []
 
@@ -1487,13 +1492,13 @@ def trajectory() -> None:
                  "same_direction_rate": m1["same_direction"] / n_all, "exact_rate": m1["exact"] / n_all,
                  "opposite": m1["opposite"], "false_benign": m1["false_benign"], "false_pathogenic": m1["false_pathogenic"],
                  "plp_recall": m1["same_pathogenic"] / (79_823 + 13_989), "blb_recall": m1["same_benign"] / (128_038 + 156_512),
-                 "n": m1["n"], "denominator": n_all, "mainline": True,
+                 "n": m1["n"], "denominator": n_all, "mainline": True, "databases": "none",
                  "same_direction_rate_of_annotated": m1["same_direction"] / m1["n"], "committed": committed(v1)})
     for name, same, exact, opp, src in early:
         rows.append({"run": name, "order": int(name[1:]), "source": "recorded at the time (raw output not preserved)",
                      "note": src, "same_direction_rate": same / 100, "exact_rate": exact / 100 if exact else "",
                      "opposite": opp if opp is not None else "", "false_benign": "", "false_pathogenic": "",
-                     "plp_recall": "", "blb_recall": "", "n": "", "denominator": "", "mainline": True,
+                     "plp_recall": "", "blb_recall": "", "n": "", "denominator": "", "mainline": True, "databases": "first",
                      "same_direction_rate_of_annotated": "", "committed": ""})
     paths = {7: RES / "v7/concordance_matrix.csv", 8: RES / "v8/concordance_matrix.csv"}
     for v in range(9, 38):
@@ -1508,11 +1513,12 @@ def trajectory() -> None:
         rows.append({
             "run": f"v{v}", "order": v, "source": "scored matrix on disk",
             "note": ("opt-in run with the published VCEP bars, not a step on the way (v18 does not carry it)" if v == 17 else
-                     "the latest classifier: the main run of the family made by release 0.5.0, with the 382 reference-agreement records counted as no-calls" if v == 38 else ""),
+                     "the latest classifier: the main run of the family made by release 0.5.0, with the 382 reference-agreement records counted as no-calls, on the complete databases" if v == 38 else
+                     "the main run of v37 on the complete databases" if v == 37 else ""),
             "same_direction_rate": mm["same_direction"] / mm["n"], "exact_rate": mm["exact"] / mm["n"],
             "opposite": mm["opposite"], "false_benign": mm["false_benign"], "false_pathogenic": mm["false_pathogenic"],
             "plp_recall": mm["plp_recall"], "blb_recall": mm["blb_recall"], "n": mm["n"], "denominator": mm["n"],
-            "mainline": v != 17, "same_direction_rate_of_annotated": "", "committed": committed(mat),
+            "mainline": v != 17, "databases": "complete" if v in (37, 38) else "first", "same_direction_rate_of_annotated": "", "committed": committed(mat),
         })
     write("trajectory.csv", sorted(rows, key=lambda r: r["order"]), shared=True)
 
@@ -2325,6 +2331,12 @@ def new_in_index() -> None:
     the held-out run of BP1's veto without the variant's own record makes. The veto counts the gene's pathogenic missense
     records in the index, the variant's own among them, so the run can only change a call where the gene's count is
     exactly at the bar and the variant's own record is in it.
+
+    Two files date the April state of ClinVar, and they differ: the VCF of 4 April 2026 is the file that the benchmark set was drawn
+    from, and the `variant_summary` of 29 April is the one that the protein index was built from. A new variant is by definition not
+    at two stars or better in the VCF; the rows say how many were in it at a lower review status, and how many of those that the
+    `variant_summary` holds at two stars or better were in the VCF at a lower status, which is to say reached two stars in the
+    25 days between the two files.
     """
     pv = OCT_PV
     st = BENCH / "clinvar_20261004/strata.tsv"
@@ -2341,6 +2353,23 @@ def new_in_index() -> None:
     summary = summary.drop_duplicates("k").set_index("k")
     new["k"] = new.chrom + ":" + new.pos + ":" + new.ref + ":" + new.alt
     rec = new.join(summary[["ReviewStatus", "ClinicalSignificance"]], on="k")
+    # the VCF of 4 April: the review status of each new variant in the file that the April set was drawn from
+    import gzip
+
+    in_vcf: dict[str, str] = {}
+    wanted = set(new["k"])
+    with gzip.open(BENCH / "sa_sources/clinvar_20260404.vcf.gz", "rt") as f:
+        for line in f:
+            if line[0] == "#":
+                continue
+            c = line.split("\t", 8)
+            k_ = f"{c[0]}:{c[1]}:{c[3]}:{c[4]}"
+            if k_ in wanted:
+                m = re.search(r"CLNREVSTAT=([^;]+)", c[7])
+                in_vcf[k_] = m.group(1).replace("_", " ") if m else ""
+    two_star = ("criteria provided, multiple submitters, no conflicts", "reviewed by expert panel", "practice guideline")
+    in_vcf_low = {k_: v for k_, v in in_vcf.items() if v not in two_star}
+    rec["in_vcf"] = rec["k"].isin(in_vcf)
     present = rec.ReviewStatus.notna()
     status = rec.ReviewStatus.fillna("")
     sig = rec.ClinicalSignificance.fillna("").str.lower()
@@ -2355,7 +2384,16 @@ def new_in_index() -> None:
             ("    a record reviewed by an expert panel", int(expert.sum())),
             ("    a record of another review status", int((present & ~single & ~multiple & ~expert).sum())),
             ("  without a record in the April variant_summary", int((~present).sum())),
-            ("  with a pathogenic or likely pathogenic record in the April variant_summary", int(plp.sum()))]
+            ("  with a pathogenic or likely pathogenic record in the April variant_summary", int(plp.sum())),
+            ("  in the VCF of 4 April 2026, the file of the April set", len(in_vcf)),
+            ("    at a lower review status than two stars", len(in_vcf_low)),
+            ("    a single-submitter record in that file", sum(1 for v in in_vcf.values() if v == "criteria provided, single submitter")),
+            ("  not in the VCF of 4 April 2026", len(new) - len(in_vcf)),
+            ("  with a record of two stars or better in the April variant_summary", int((multiple | expert).sum())),
+            ("    of those, in the VCF of 4 April at a lower review status", int(((multiple | expert) & rec.in_vcf).sum())),
+            ("    of those, not in the VCF of 4 April", int(((multiple | expert) & ~rec.in_vcf).sum()))]
+    if len(in_vcf) != len(in_vcf_low):
+        sys.exit("a new variant is at two stars or better in the VCF of 4 April, which would have put it in the April set")
     # The test of the held-out run of BP1's veto without the variant's own record.
     index = read_protein_index(SA_DB / "clinvar_protein.oga")
     can = new[(new.clinvar.isin(PATH)) & (new.consequence == "missense_variant")
