@@ -282,6 +282,12 @@ With the variants in position order, and so one chunk loaded for many, the two
 took the same time as no database at all: the width matters when the variants
 are scattered over many chunks, which is what a genome-wide VCF is.
 
+Measured on dbSNP build 157 for GRCh38 (1,391,478,698 records) on the hosted site, 4 vCPUs:
+the file at 16 bits is 9.19 GB, and 4,000 scattered variants went through a whole `annotate` run, process start included, in 18 s,
+against 106 s through the file of 1 Mb chunks that the builder of July had written from the release that was then the latest (9.40 GB), which is 5.9 times faster.
+The two files return the same RS number for 3,883 of the 3,884 variants that have a record.
+The other variant has two current RS numbers in dbSNP for one allele; the older file returned one of them arbitrarily, and the writer now keeps the first record of the source for any run of equal keys, at every width.
+
 Measured on a source built to SpliceAI's density, 300 scattered queries:
 
 | `--chunk-bits` | file size | 300 queries | records annotated |
