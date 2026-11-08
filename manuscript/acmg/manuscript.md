@@ -17,8 +17,9 @@ Running title: ACMG/AMP classification in fastVEP
 ## Abstract
 
 **Background.**
-Software that applies the ACMG/AMP standards must adopt each ClinGen refinement and set the thresholds that no recommendation states.
-We describe how the classification engine of fastVEP, an open-source reimplementation of the Ensembl Variant Effect Predictor, was built, reviewed by a medical geneticist and measured against ClinVar's classifications of review status two stars or better, which are a reference and not ground truth.
+The ACMG/AMP criteria are underspecified (no guideline states many of the thresholds that software must set, and the evidence can be combined by a table or by points that do not give the same call for every combination) and fragmented (the standards of 2015, a long series of ClinGen recommendations that each change criteria that looked settled, and gene-specific specifications).
+Our contribution is how to implement such criteria in software so that the calls agree closely with community opinion, taken here as ClinVar's classifications of review status two stars or better (a reference and not ground truth) and the review of one medical geneticist, and what each choice costs in contradictions, among the settings that we measured.
+We describe the classification engine of fastVEP, an open-source reimplementation of the Ensembl Variant Effect Predictor, in which the choices that the guidelines leave open were measured against that opinion.
 
 **Methods.**
 Thirty-eight numbered versions were scored on 673,660 ClinVar variants (release of 4 April 2026; 32 have stored scored output) over six rounds of review, three of which returned rulings.
@@ -45,10 +46,11 @@ Counting one gnomAD observation as two benign criteria would have added 1,292 mo
 Reading gnomAD's genomes as well as its exomes, through its joint release, would add 9,321 calls in direction (1.38 points) on every chromosome for one more reference-discordant benign call and two more reference-discordant pathogenic calls, and the release lacks the flags that withhold the frequency criteria in repeats.
 
 **Conclusions.**
+What a reader can reuse is the set of implementation choices and the way they were weighed: the default scheme, the reading of each recommendation as the conditions that its text states, and the default of each threshold that no guideline states, each with the agreement and the contradictions that it measured, and the checks that recompute the numbers that the text quotes from the stored runs.
 The largest class of change was a condition that the standards state and a first implementation omitted.
 Agreement in direction does not separate cautious from aggressive calling, so contradictions belong beside it.
 A flat sweep can mean that the setting reaches almost nothing, or that the rule beside it makes the setting irrelevant.
-The remaining discordance is consistent with evidence that a single-sample VCF does not carry, with design choices such as approximating PVS1's mechanism condition, and with an input that was incomplete for a reason we did not establish.
+The agreement is bounded: the thresholds were tuned on the April set, so the figures on the new variants are the fair ones; ClinVar can be wrong or out of date, and the expert opinion is one reviewer's; and the remaining discordance is consistent with evidence that a single-sample VCF does not carry, with design choices such as approximating PVS1's mechanism condition, and with an input that was incomplete for a reason we did not establish.
 
 **Keywords:** variant classification, ACMG/AMP, ClinGen SVI, ClinVar, variant interpretation, benchmarking, fastVEP
 
@@ -74,6 +76,21 @@ A single concordance figure cannot say whether a disagreement is a defect in the
 And the failure that matters most in a clinical setting is not a crash but a plausible wrong answer, such as a pathogenic variant called benign, or a criterion that silently never fires.
 Neither need show up in an agreement figure.
 
+In two words, the criteria are underspecified and fragmented.
+They are underspecified because no guideline states many of the quantities that software must set (the examples above: what frequency is extremely rare, how many carriers make a variant observed in a healthy adult, how far into an intron a variant must lie), and because the evidence can be combined by the table of 2015 or by points, which do not give the same call for every combination of criteria.
+They are fragmented because the rules are spread over the standards of 2015, the general recommendations listed above, each of which changes criteria that looked settled, and the gene-specific specifications of Variant Curation Expert Panels, so that an implementation must commit to a reading of each of them.
+
+Our contribution is how to implement such criteria in software so that the calls agree closely with community opinion, and what each choice costs in contradictions.
+We take community opinion to be two things: ClinVar's classifications of review status two stars or better, which are a reference and not ground truth, and the review of one medical geneticist, who read the calls on which the software and ClinVar disagreed in direction over six rounds.
+The paper gives the implementation choices that follow (the reading of each recommendation, the default of each threshold that no guideline states, and the combining scheme, with the reasons), the agreement and the contradictions that each measured, and the checks that recompute the numbers that the text quotes from the stored runs.
+Agreement is judged by four measures: exact agreement with ClinVar's class, agreement in direction, opposite-direction calls (a pathogenic-side call where ClinVar is benign-side, or the reverse) and the recall of each side, because agreement in direction alone does not separate cautious from aggressive calling.
+
+The claim has four bounds.
+First, "closely" is relative to the settings that we measured, and a default is not always the setting that agrees most: where a sweep did not decide, thresholds were set inside the range of published expert-panel specifications, on the safer side of a trade or at the knee of the exchange rate between correct calls gained and errors added (Section 2.5), and three were not swept at all until this paper.
+Second, the thresholds were tuned on the April benchmark, so only the variants that ClinVar added in October are out of sample.
+Third, ClinVar can be wrong or out of date, and the expert is one reviewer, who saw both calls.
+Fourth, an input of variants alone, with no genotype, pedigree or phenotype of any individual, allows 15 of the 28 criteria, which caps what any annotator of such an input can reach.
+
 Here we describe how the ACMG/AMP classification engine of fastVEP, an open-source Rust reimplementation of the Ensembl Variant Effect Predictor (McLaren et al., 2016), was built, reviewed and measured.
 The engine runs inside the annotation pass, so a benchmark of 673,660 ClinVar variants of review status two stars or better takes about two minutes to annotate in the runs of v37 (a median of 127 seconds over its 89 runs on the April set, made on 4 November 2026 up to three at a time on one Apple M4 machine with 10 cores and 24 GB that another job was also using) and about ten seconds to score.
 Release 0.5.0, which holds v38, two speed-ups of its scoring and the work on the speed of annotation that followed them, and which reproduced 42 of the runs of v38 in every scored file (RUN_VERSIONS.md), was timed alone on the same machine on 7 November 2026 and took 25.3 seconds on every core (the median of three runs), 74 seconds on one thread (one run) and 11 seconds to score; the runs of v38 made for this paper were made three at a time and were not timed on a quiet machine.
@@ -84,13 +101,13 @@ v37 is the version in which the review rounds ended: it took a gene's mode of in
 v38 is the latest version (release 0.5.0): it reads the mode of inheritance that ClinGen curates, does not count BS2's carriers beside BS1 or BA1, and classifies a gene once for each of its modes of inheritance.
 Both are versions of the classifier, every run of either is on GRCh38, and every number is v38's unless the text names v37.
 
-We report the following.
-First, how each guideline was incorporated and how agreement with ClinVar moved from one numbered run to the next (a run bundles several changes, so a change in agreement cannot be assigned to one guideline).
-Second, what expert review found that the benchmark could not, and how the changes fall into a small number of classes.
-Third, how each numeric threshold that no guideline states was chosen and how much it matters in v38, re-measured on that code and not recalled from the version in which it was set.
-Fourth, how much of the agreement depends on ClinVar-derived inputs.
-Fifth, the discordance of v38 with ClinVar's 2-star-and-better classifications, on the benchmark snapshot, on a ClinVar release six months later, and on the variants that reached two stars after all tuning was done.
-Sixth, what v38 changes from v37, the version that the review rounds ended with, measured by the same runs of both (Section 3.8).
+We report six things, and each answers part of how such criteria should be implemented.
+First, how each guideline was incorporated and how agreement with ClinVar moved from one numbered run to the next (a run bundles several changes, so a change in agreement cannot be assigned to one guideline), which gives the readings that the classifier implements.
+Second, what expert review found that the benchmark could not, and how the changes fall into a small number of classes, which shows where a reading goes wrong.
+Third, how each numeric threshold that no guideline states was chosen and how much it matters in v38, re-measured on that code and not recalled from the version in which it was set, which shows which defaults to take care over.
+Fourth, how much of the agreement depends on ClinVar-derived inputs, which bounds how much of it is circular.
+Fifth, the discordance of v38 with ClinVar's 2-star-and-better classifications, on the benchmark snapshot, on a ClinVar release six months later, and on the variants that reached two stars after all tuning was done, which gives how closely the result agrees, in sample and out of it, and at what cost in contradictions.
+Sixth, what v38 changes from v37, the version that the review rounds ended with, measured by the same runs of both (Section 3.8), which shows what one further reading of a source is worth.
 Along the way we read each recommendation that the classifier cites for a number or a grade against its source, and report where the implementation departs from it.
 
 ---
@@ -189,6 +206,7 @@ Four records of CFH and CFI whose classifications are Likely pathogenic and Like
 We kept both labels so that the 38 runs stay comparable: relabeling the four changes exact agreement by one variant and agreement in direction by none, and leaving out the two RYR1 records lowers the number of ClinVar VUS called pathogenic-side by two.
 A variant's gene is the first symbol of the GENEINFO field of its ClinVar record, and the population maximum is the highest allele frequency among the ten population groups that the annotation carries, "other" and "remaining" included, which is what the frequency criteria fall back on where there is no filtering allele frequency.
 We call these classifications a reference and not ground truth throughout.
+Together with the expert review of Section 2.4 they are what this paper means by community opinion: the classifications on which ClinVar's submitters or an expert panel agree, and one reviewer's reading, and not a poll of the field.
 
 Pathogenic-side means Pathogenic or Likely pathogenic and benign-side means Likely benign or Benign (P/LP and B/LB in the tables), and the recall of a ClinVar group is the share of its variants that the classifier puts in the same direction.
 A committed call is a call of one of those four classes, and a quiet variant is a synonymous, intronic (polypyrimidine-tract variants included), untranslated, flanking (upstream or downstream of a gene) or non-coding one.
@@ -1064,6 +1082,26 @@ The reading is as good as the field it reads: ClinGen curates one mode for each 
 
 ## 4. Discussion
 
+**What we recommend implementing, and how closely it agrees with community opinion.**
+Given criteria that are underspecified and fragmented, we recommend implementing them as follows, and each recommendation points to the section that holds its numbers.
+First, combine the criteria that are met by points on the pathogenic side and by the 2015 table on the benign side.
+The table has no row for a lone Very Strong criterion, which the points call Likely pathogenic, and points on the benign side would call a lone Supporting criterion Likely benign, which the table does not.
+Scoring both sides by points raises benign-side recall and adds hundreds of reference-discordant benign calls, and the table on both sides gives up pathogenic-side recall to avoid ten reference-discordant pathogenic calls (Section 3.3).
+Second, implement each criterion with the conditions that its text states, which was the largest class of change (Section 3.2), and read the field that a source curates and not the prose beside it, because v38, which does, gives more calls in direction than v37 (Section 3.8).
+Third, treat each threshold that no guideline states as a measured choice.
+The points that define the classes, BP7's conservation test and the BS1 and BS2 thresholds matter, each at its own exchange rate between correct calls gained and errors added, and the PM2 thresholds under the default scheme, the cutoff for Pathogenic and the allele-number floor each move agreement in direction by fewer than a thousand calls of 673,660 (Section 3.3).
+Fourth, check each input against an independent listing and keep a leave-one-out figure beside every ClinVar-derived input, because the ClinGen file that the benchmark read silently lacked CFTR, and counting a variant's own ClinVar record would add 14.3 points of pathogenic-side recall that comes from the answer itself (Sections 3.4 and 3.5).
+The traps that we measured are the ones to avoid.
+Counting one gnomAD observation as two benign criteria adds 1,292 calls in direction and calls two ClinVar-Pathogenic variants Benign (Section 3.8), and rules with no combining rule or safeguard reach 84.6% agreement in direction with 1,728 contradictions where v38 has 48 (Section 3.5).
+With these choices v38 agrees with ClinVar's class for 63% and with its direction for 78% of the 673,660 records on which every threshold was tuned, and contradicts its direction for 48 (0.0071%).
+On the 107,528 variants that were not in that set, agreement in direction is 70.3% and contradictions are 2.3 times as frequent (Sections 3.1, 3.5 and 3.7).
+That is how closely the implementation agrees, and it is not a quality score: most of the disagreement is a variant that ClinVar classifies and the classifier leaves as VUS, for reasons that the input, the design and an incomplete source explain in part (Section 4.2).
+The recommendation has the bounds of Section 4.4.
+"Closely" is relative to the settings that we measured, and a default is not always the setting that agrees most: agreement in direction is higher with the PM2 threshold at strict absence than at the default, and BP7's conservation test, which the default keeps, gives up many correct benign-side calls to avoid two contradictions, because where a sweep did not decide the defaults were set by the rules of Section 2.5 and not by maximizing agreement (Section 3.3).
+The thresholds were tuned on the April set, so the figures on the new variants are the fair ones, and they are a hold-out of variants and not of genes (Section 3.7).
+ClinVar can be wrong or out of date, and the expert opinion is one reviewer's, who saw both calls (Sections 4.2 and 4.4).
+A sites-only input evaluates 15 of the 28 criteria, which caps what any annotator of such an input can reach, and all of this comes from one tool, one reviewer and one benchmark.
+
 ### 4.1 Principal findings
 
 Six results of this work seem to us worth testing on other classifiers, which we have not done: they come from one tool, one reviewer and one benchmark.
@@ -1196,6 +1234,9 @@ The prices of all seven steps are measured on v38; a completed ClinGen file also
 Each of these can be measured by the harness of this paper before it is adopted, and none should be tuned to the 48, which is why the benefit of a stricter count of BP1's veto, which avoids two of them, is in-sample.
 
 ## 5. Conclusions
+
+The contribution of this work is how to implement underspecified and fragmented ACMG/AMP criteria in software so that the calls agree closely with community opinion, here ClinVar's classifications of review status two stars or better and one reviewer's rulings, and what each choice costs in contradictions.
+The choices, the agreement and the contradictions that each measured, and the checks that recompute the numbers that the text quotes are in this paper for reuse, within the bounds of Section 4.4.
 
 Building a software classifier for the ACMG/AMP standards was largely the work of applying conditions that the standards state and a first implementation omitted (21 of 64 changes), and review of the discordant calls first identified more of the changes (30, by our coding) than any other route.
 On the 673,660 ClinVar 2-star+ variants on which every threshold was tuned, v38 agrees with ClinVar's direction for 77.8% and contradicts it for 48 (0.0071% of the records and 0.013% of those with a pathogenic-side or benign-side class), which are 58 under a strict leave-one-out reading, three of the added calls Benign; none of its 4,038 Pathogenic or 67,733 Benign calls is among the 48, and rules with no combining rule or safeguard reach higher agreement with 36 times as many contradictions.

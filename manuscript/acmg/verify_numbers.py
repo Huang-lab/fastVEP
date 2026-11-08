@@ -1220,6 +1220,43 @@ def abstract_and_intro() -> None:
     fact("That speed allowed 37 numbered benchmark runs in 24 weeks", f"{weeks:.0f} weeks".replace(" weeks", ""), "24 weeks")
 
 
+def contribution() -> None:
+    """The sentences that state the contribution: the problem and the bounds of Section 1, the opening of Section 4 and the lines before the conclusions.
+
+    They quote what other sentences of the paper quote, so each number is tied to the data as the sentence that it summarises is, and each
+    claim that the data decide (which setting agrees more, how many calls a threshold moves) is a condition and not a typed word.
+    """
+    fact("Fourth, an input of variants alone, with no genotype, pedigree or phenotype of any individual, allows", str(len(crit)), str(len(status)))
+    # the opening of the Discussion
+    m1 = rep.loc["SVI points, both sides, Likely Benign from -1 (Tavtigian)"]
+    tbl = run("v37_sw_table_both_sides")
+    fact("Scoring both sides by points raises benign-side recall and adds hundreds of reference-discordant benign calls",
+         "raises benign-side recall" if m1.blb_recall > base.blb_recall else "?",
+         "hundreds of reference-discordant benign calls" if m1.false_benign - base.false_benign >= 100 else "?",
+         "gives up pathogenic-side recall" if tbl.plp_recall < base.plp_recall else "?", w(int(base.false_pathogenic - tbl.false_pathogenic)))
+    span = lambda rs: max(rs.same_direction.max(), base.same_direction) - min(rs.same_direction.min(), base.same_direction)  # noqa: E731
+    cutoffs = [rep.loc[f"shipped, Pathogenic from {k} points"].same_direction for k in (9, 10, 11, 12)]
+    moves = [span(runs[(runs.knob == "pm2_ad_af_threshold") & (runs.group == "sweep")]), span(runs[(runs.knob == "pm2_ar_af_threshold") & (runs.group == "sweep")]),
+             max(cutoffs) - min(cutoffs), abs(run("v37_sw_no_an_floor").same_direction - base.same_direction)]
+    fact("The points that define the classes, BP7's conservation test and the BS1 and BS2 thresholds matter", n(N_ALL),
+         "fewer than a thousand calls" if max(moves) < 1000 else "?")
+    fact("Fourth, check each input against an independent listing", f"{(run('v37_sw_clinvar_informed').plp_recall - base.plp_recall) * 100:.1f}",
+         "CFTR" if pvs1["CFTR null variants in the benchmark (stop, frameshift, canonical splice)"] > 0 else "?")
+    r38 = csv("v38_runs.csv").set_index("run")
+    fact("Counting one gnomAD observation as two benign criteria adds", n(r38.loc["v38_alt_unguarded"].d_same_direction - r38.loc["v38"].d_same_direction),
+         "two ClinVar-Pathogenic variants Benign" if r38.loc["v38_alt_unguarded"].false_benign - r38.loc["v38"].false_benign == 2 else "?",
+         p(baseline.loc["R1 + R2 + R3", "same_direction_share"]), n(baseline.loc["R1 + R2 + R3", "opposite"]), str(N_OPP))
+    nw = temporal[temporal.stratum == "new"].iloc[0]
+    fact("With these choices v38 agrees with ClinVar's class for", p(hl("exact_match").value, 0), p(hl("same_direction").value, 0), n(N_ALL), str(N_OPP),
+         p(hl("opposite").value / N_ALL, 4))
+    fact("On the 107,528 variants that were not in that set, agreement in direction is 70.3%", n(nw.stratum_n), p(nw.same_direction / nw.stratum_n),
+         f"{trate.loc['October, new'].rate / trate.loc['April set'].rate:.1f}")
+    fact("agreement in direction is higher with the PM2 threshold at strict absence than at the default",
+         "agreement in direction is higher with the PM2 threshold at strict absence than at the default" if run("v37_sw_pm2ad_0").same_direction > base.same_direction else "?",
+         "avoid two contradictions" if run("v37_sw_phylop_1000").false_benign - base.false_benign == 2 else "?")
+    fact("A sites-only input evaluates 15 of the 28 criteria, which caps what any annotator", str(len(crit)), str(len(status)))
+
+
 def repository() -> None:
     import importlib
     import subprocess
@@ -1949,7 +1986,7 @@ def binaries() -> None:
     passed.append(f"binaries.tsv: {len(seen)} binaries made {sum(seen.values())} runs")
 
 
-CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, repository, availability, audit, early_trades, criteria_consistency, coverage, v38, binaries, structure]
+CHECKS = [methods, trajectory, review, thresholds, points, ablations, discordance, residual, later_release, discussion, abstract_and_intro, contribution, repository, availability, audit, early_trades, criteria_consistency, coverage, v38, binaries, structure]
 
 
 def main() -> None:
