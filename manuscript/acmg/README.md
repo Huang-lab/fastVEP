@@ -140,30 +140,35 @@ These are marked in the manuscript with square brackets or are not in it at all.
    The Declarations section holds a placeholder for the author's statement.
 3. **Author contributions** are the text of the draft that the co-authors read, marked for all authors to confirm, and **funding and competing interests** are placeholders.
 4. **The title and the abstract** state the main findings and should be read by the author before submission.
-   The abstract is about 940 words (it was about 860 before the sentences that set v38 against v37 were added), the length of a long-form paper, and has to be cut to the limit of the journal chosen; the language-edited version that the co-authors read (a .docx, not in the repository, which says v37 throughout) has a shorter one and another title.
-5. **Pronouns.**
+   The abstract is about 1,215 words (it was about 860 before the sentences that set v38 against v37 and the statement of the contribution were added), the length of a long-form paper, and has to be cut to the limit of the journal chosen; the Background and the Conclusions are the part that states the contribution, and the Methods and the Results hold the detail that can go; the language-edited version that the co-authors read (a .docx, not in the repository, which says v37 throughout) has a shorter one and another title.
+   The title was not changed: it describes the process (incorporation, review, thresholds, discordance) and does not state the contribution, and two titles that do were proposed in the hand-off for the corresponding author to choose from or to reject.
+5. **"Community opinion".**
+   The abstract, the introduction, the discussion and the conclusions say that the contribution is how to implement underspecified and fragmented criteria so that the calls agree closely with community opinion.
+   Section 2.2 defines the term as ClinVar's classifications of review status two stars or better and one reviewer's reading, and says that it is not a poll of the field.
+   Whether the term is acceptable for an expert component of one reviewer who saw both calls is for the authors to settle, and so is whether the sentence that says what the paper recommends (the opening of Section 4) belongs in the Discussion or in the Introduction.
+6. **Pronouns.**
    The manuscript refers to the reviewer as "the reviewer" and "they", because their pronouns are not recorded.
-6. **Whether to change the classifier** on the findings above, and in what order (Section 4.5).
+7. **Whether to change the classifier** on the findings above, and in what order (Section 4.5).
    Each has a price measured in this work, and none should be tuned to the 48 residual calls.
-7. **The commit of v38.**
+8. **The commit of v38.**
    The runs of Section 3.8 were made by a binary built from the working tree that became v38, so their provenance records the commit of the checkout that ran the harness (the commit before the change, and for `v38_joint`, made on 5 November 2026 after the change was committed on a local branch, that commit) and a count of uncommitted files, and `analysis/acmg_benchmark/results/v37_manuscript/binaries.tsv` says what each binary was built from.
    The change is the commit `5293cc0`, merged in pull request #167 (`6504819`), and the manuscript names both; binaries built from the tree of release 0.5.0 (the tag `v0.5.0-rc.1`) made the 42 runs again on 7 November 2026 and reproduce them (`analysis/acmg_benchmark/RUN_VERSIONS.md`, "Release 0.5.0 reproduces v38").
-8. **The decisions that v38 took** (Section 3.8).
+9. **The decisions that v38 took** (Section 3.8).
    v37 had measured a build that made BS2 read the tag (`v37_adtag`) and left the tag unread, because six ClinVar pathogenic-side variants moved toward benign; v38 reads it, for the reason given in Section 3.8 (the unread field answers a question about the name of a disease, and the guard is stated by what it counts), and accepts that four of the six move from Likely pathogenic to VUS.
    The guard against counting BS2 beside BS1 or BA1 was adopted at a cost of 3,615 exact calls on the April set.
    A combined cap on PP2, PM1 and PP3 was not adopted (it raises agreement and lowers recall of pathogenic-side variants).
    The label guard that restores two of the four was not adopted although its exchange rate, about 32 correct benign-side calls for each variant restored, is below the knee of Section 2.5, because it filters on the name of a disease and was written to repair two variants seen in the results.
    BS2's arm for homozygotes and hemizygotes was left as it was, with the same doubling on the X chromosome for 1,301 variants none of which is a ClinVar pathogenic-side variant.
    All are reasoned in the text and measured on the April set and the October release, and each can be reversed with the numbers of Table 8 and Appendix Tables A10 and A12.
-9. **The tag that the manuscript names.**
+10. **The tag that the manuscript names.**
    The manuscript names the first release candidate of release 0.5.0 (`v0.5.0-rc.1`, `c12d9f9`) as the code of v38 and says that "release 0.5.0" means that candidate, because no other tag of it exists yet.
    When v0.5.0 is tagged, `verify_numbers.py` will still read the candidate.
    Whether the final tag changes any call has to be shown by the repetition of the runs (`scripts/16_compare_runs.py`, as for the 42 runs of `results/v38_v0.5.0/`), and the text has to name the final tag if the author wants it named.
-10. **The gnomAD source of the benchmark.**
+11. **The gnomAD source of the benchmark.**
    Section 3.8 measures gnomAD's joint release of exomes and genomes on every chromosome: 10,190 more exact calls and 9,321 more in direction than the exomes, for one more reference-discordant benign call and two more reference-discordant pathogenic calls, and without the region flags that withhold the frequency criteria.
    `docs/ACMG_SETUP.md` recommends it for classification where no policy requires the region veto, and the benchmark of the paper still reads the exomes, because every other number in the paper was measured on them.
    Moving the benchmark to the joint release would change all of those numbers, so it is left to the author.
-11. **Archiving.**
+12. **Archiving.**
    The bulk outputs (annotated VCFs, per-variant tables of about 20 MB each) are not in the repository.
    A tagged release with a DOI, and a compressed deposit of the per-variant tables, would let every table in `data/` be re-derived without a re-run.
 
