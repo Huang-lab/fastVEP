@@ -17,7 +17,8 @@ PhyloP comes out of the same gnomAD INFO column (`phylop`), which also removes t
 That one carries a caveat worth reading before you rely on it, because gnomAD's phyloP is not UCSC's phyloP.
 
 > **The failure mode to design against.** An incomplete `--sa-dir` does not produce an error.
-> `fastvep annotate --acmg` runs, classifies every variant, and silently omits the evidence it has no data for.
+> `fastvep annotate --acmg` runs, classifies every variant, and omits the evidence it has no data for.
+> It names the missing sources once, on stderr, and nothing in the output files changes, so a script that discards stderr never sees it.
 > A missing REVEL database does not fail the run; it turns pathogenic missense variants into VUS.
 > That is why this guide ends with [a verification step](#verify-the-stack-answers) rather than with a build command, and why `sa-build` succeeding is not the thing to check.
 
@@ -28,8 +29,8 @@ The "silent effect if absent" column is the one that matters: fastVEP marks a cr
 
 | Source | `--source` | Scope | Drives | Silent effect if absent |
 |---|---|---|---|---|
-| gnomAD v4.1 sites | `gnomad` | allele | BA1, BS1, BS2, PM2 | No frequency evidence at all: nothing is ever called too common to be pathogenic, and PM2 falls back to ClinVar's frequencies |
-| ClinVar | `clinvar` | allele | PM2 frequency backstop, PM3/BP2 companion lookup, PP5/BP6 | PM2 loses its backstop, so a common variant absent from gnomAD reads as absent from the population |
+| gnomAD v4.1 sites | `gnomad` | allele | BA1, BS1, BS2, PM2 | No frequency evidence at all: BA1, BS1, BS2 and PM2 are not evaluated, so nothing is ever called too common to be pathogenic |
+| ClinVar | `clinvar` | allele | PM2 frequency backstop, BA1/BS1/BS2 low-penetrance gate, PM3/BP2 companion lookup, PP5/BP6 | PM2 loses its backstop, so a common variant absent from gnomAD reads as absent from the population, and a low-penetrance or risk allele can meet BA1, BS1 or BS2 |
 | REVEL v1.3 | `revel` | allele | PP3, BP4 (missense) | No computational evidence on any missense variant |
 | SpliceAI, **from gnomAD's `spliceai_ds_max`** | `spliceai` | allele | PVS1 splice branch, PP3, BP4 (splice), BP7 | No splice prediction: PVS1 cannot check a predicted-intact site, BP7 cannot clear a synonymous variant |
 | PhyloP, **from gnomAD's `phylop`** (Zoonomia) | `phylop` | allele | BP7 conservation tier | BP7 stops distinguishing conserved from unconserved positions |

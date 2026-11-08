@@ -23,6 +23,7 @@
 
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
+use crate::sources::Source;
 
 /// Why a frequency criterion could not be assessed, and whether the reason is a
 /// statement about *this site's short-read data* or about something else.
@@ -45,6 +46,15 @@ pub(crate) struct FrequencyBlocker {
 }
 
 impl FrequencyBlocker {
+    /// The database itself is not open. It says nothing about the reads at this site, so it is
+    /// not a site-level veto, and nothing about the gene either.
+    fn source_not_loaded(reason: String) -> Self {
+        Self {
+            reason,
+            site_level: false,
+        }
+    }
+
     fn gene_level(reason: String) -> Self {
         Self {
             reason,
@@ -202,6 +212,19 @@ pub(crate) fn data_blocker(
     input: &ClassificationInput,
     config: &AcmgConfig,
 ) -> Option<FrequencyBlocker> {
+    // No gnomAD database is open. A variant then has no record because there is nothing to hold
+    // one, which is not the same as gnomAD having seen no carrier, and the annotation looks the
+    // same either way: neither adds a field. Without this, PM2 reads the missing record as
+    // absence (`pm2_absent_when_no_record`) and fires for every variant of the run, and BA1, BS1
+    // and BS2 never can, so a classification made without gnomAD leans one way only.
+    if !input.sources.has(Source::Gnomad) {
+        return Some(FrequencyBlocker::source_not_loaded(
+            "no gnomAD database is loaded, so a variant's absence from it says nothing about \
+             its frequency"
+                .to_string(),
+        ));
+    }
+
     // Curated gene-level homology. Reads from a paralogue or pseudogene mismap
     // onto the gene of interest, so both the frequency and the absence of a
     // frequency are artefacts (Mandelker 2016, PMID 27228465).

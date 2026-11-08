@@ -172,8 +172,10 @@ struct AnnotationContext<'a> {
     /// gnomAD queries need the VCF-style allele rather than fastVEP's
     /// normalised one; set when a gnomAD source is among `sa_providers`.
     normalize_gnomad_queries: bool,
-    /// A tandem-repeat database is loaded, so PM4/BP3 can consult it.
-    repeat_db_loaded: bool,
+    /// Which sources of the classifier's reference stack are open. PM2 needs it to tell a variant
+    /// with no gnomAD record from a run with no gnomAD database, and BP3 to tell a variant outside
+    /// every repeat from a run with no repeat track.
+    sources: fastvep_classification::LoadedSources,
 }
 
 /// What the predictor said of one transcript of a variant, or, for a transcript a reducing pick may
@@ -259,7 +261,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
         pick,
         sample_names,
         normalize_gnomad_queries,
-        repeat_db_loaded,
+        sources,
     } = ctx;
 
     // VEP's known-variant columns, worked out once per alt allele: every
@@ -971,7 +973,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     aa.exon,
                     aa.protein_length,
                     aa.escapes_nmd,
-                    repeat_db_loaded,
+                    sources,
                     fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                     alt_idx
                         .and_then(|i| query_alleles.get(i))
@@ -1884,18 +1886,33 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // every provider for every allele of every variant inside the parallel loop.
     let normalize_gnomad_queries =
         seq_provider.is_some() && sa_providers.iter().any(|sa| sa.json_key() == "gnomad");
-    // BP3 must tell "this variant is not in a repeat" from "no repeat database
-    // was loaded". An interval source only yields an annotation on a hit, so
-    // those two are indistinguishable downstream unless the loaded-source list
-    // is consulted here. Same matching the classifier uses to find the track.
-    let repeat_db_loaded = sa_providers.iter().any(|sa| {
-        let k = sa.json_key().to_lowercase();
-        k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
-    });
     let gene_json_keys: Vec<String> = gene_providers
         .iter()
         .map(|gp| gp.json_key().to_string())
         .collect();
+    // Which sources of the reference stack are open, from the keys in the headers of the
+    // databases. PM2 must tell a variant with no gnomAD record from a run with no gnomAD
+    // database, and BP3 "not in a repeat" from "no repeat track": an annotation adds nothing in
+    // either case, so only this list can say which it was.
+    let sources = fastvep_classification::LoadedSources::from_json_keys(
+        sa_json_keys
+            .iter()
+            .chain(gene_json_keys.iter())
+            .map(String::as_str),
+    );
+    // `--acmg` over a database directory that lacks part of the reference stack does not fail: each
+    // criterion without its data reports `evaluated: false`, and the run ends with a classification
+    // that rests on less evidence and looks like any other. Say so once, on stderr, where the
+    // output files stay what they were.
+    if acmg_config.is_some() {
+        if let Some(shortfall) = sources.shortfall() {
+            eprintln!("warning: --acmg is running on an incomplete reference stack: {shortfall}.");
+            eprintln!(
+                "         The classes below rest on less evidence than the benchmark of the paper's, \
+                 and a VUS can mean that nothing was checked. See docs/ACMG_SETUP.md."
+            );
+        }
+    }
 
     // Curated functional-assay evidence for PS3/BS3. Parsed up front so a
     // malformed row fails before the run starts rather than after an hour of
@@ -2149,7 +2166,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             pick: pick_request,
             sample_names: &sample_names,
             normalize_gnomad_queries,
-            repeat_db_loaded,
+            sources,
         };
         // Phase 2: Annotate the batch (transcript lookup + consequence prediction + HGVS) and
         // render it into the bytes it writes, in one pass on every thread (see `render_batch`).
@@ -2170,7 +2187,7 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                 acmg_cfg,
                 &sample_names,
                 functional_evidence,
-                repeat_db_loaded,
+                sources,
             );
         }
         let records = batch.len() as u64;
@@ -2940,7 +2957,7 @@ fn enrich_compound_het_batch(
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
-    repeat_db_loaded: bool,
+    sources: fastvep_classification::LoadedSources,
 ) {
     // Collect per-gene variant info
     struct VariantGeneInfo {
@@ -3114,7 +3131,7 @@ fn enrich_compound_het_batch(
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
-                repeat_db_loaded,
+                sources,
                 fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                 alt_idx
                     .and_then(|i| query_alleles.get(i))

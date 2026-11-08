@@ -252,22 +252,27 @@ impl AnnotationContext {
         self.transcript_provider.transcript_count()
     }
 
-    /// Whether a repeat-interval source (RepeatMasker or equivalent) is loaded.
+    /// Which sources of the classifier's reference stack are loaded.
     ///
-    /// BP3 needs this to tell "this variant is not in a repeat" from "no repeat
-    /// database was loaded". An interval source only produces an annotation on
-    /// a hit, so those two are indistinguishable from the annotation list alone,
-    /// and reading a miss as the latter makes BP3 report a setup error on every
-    /// in-frame indel outside a repeat.
+    /// The classifier needs this because an annotation says nothing about a source that was
+    /// not opened: a variant with no gnomAD record and a run with no gnomAD database look the
+    /// same, and PM2 reads the first as absence from controls. BP3 is the other reader. An
+    /// interval source only produces an annotation on a hit, so "not in a repeat" and "no
+    /// repeat database was loaded" are indistinguishable from the annotation list alone, and
+    /// reading a miss as the latter makes BP3 report a setup error on every in-frame indel
+    /// outside a repeat.
     ///
-    /// Matched on the same substrings the classifier uses to find the track, so
-    /// a source named such that this returns `true` is exactly a source BP3 will
+    /// Matched on the same keys the classifier reads them by (`Source::from_json_key`), so a
+    /// source named such that this says it is loaded is exactly a source the criteria will
     /// actually read.
-    pub fn repeat_db_loaded(&self) -> bool {
-        self.sa_providers.iter().any(|p| {
-            let k = p.json_key().to_lowercase();
-            k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
-        })
+    pub fn loaded_sources(&self) -> fastvep_classification::LoadedSources {
+        fastvep_classification::LoadedSources::from_json_keys(
+            self.sa_providers.iter().map(|p| p.json_key()).chain(
+                self.gene_providers
+                    .iter()
+                    .map(|g| g.header.json_key.as_str()),
+            ),
+        )
     }
 
     /// Names of loaded supplementary annotation sources.
@@ -364,9 +369,9 @@ impl AnnotationContext {
         pick: Option<PickRequest>,
         acmg_config: Option<&fastvep_classification::AcmgConfig>,
     ) -> Result<Vec<serde_json::Value>> {
-        // Computed once: BP3 must distinguish "not in a repeat" from "no repeat
-        // database loaded", and only the context knows which sources are open.
-        let repeat_db_loaded = self.repeat_db_loaded();
+        // Computed once: PM2 and BP3 must tell "no record" from "no database", and only the
+        // context knows which sources are open.
+        let sources = self.loaded_sources();
         let mut vcf_parser = VcfParser::new(vcf_text.as_bytes())?;
 
         // Extract sample names from VCF #CHROM header
@@ -864,7 +869,7 @@ impl AnnotationContext {
                             aa.exon,
                             aa.protein_length,
                             aa.escapes_nmd,
-                            repeat_db_loaded,
+                            sources,
                             splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                             alt_idx
                                 .and_then(|i| query_alleles.get(i))
@@ -903,7 +908,7 @@ impl AnnotationContext {
                     acmg_cfg,
                     &sample_names,
                     functional_evidence,
-                    repeat_db_loaded,
+                    sources,
                 );
             }
         }
@@ -1459,7 +1464,7 @@ fn enrich_compound_het(
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
-    repeat_db_loaded: bool,
+    sources: fastvep_classification::LoadedSources,
 ) {
     use std::collections::HashMap;
 
@@ -1661,7 +1666,7 @@ fn enrich_compound_het(
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
-                repeat_db_loaded,
+                sources,
                 splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                 alt_idx
                     .and_then(|i| query_alleles.get(i))
