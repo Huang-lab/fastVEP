@@ -70,3 +70,24 @@ Things to know when reading these provenance files.
   It is in the `environment` column of `run_matrix_v38.tsv`, which is the only record of it.
 - The runs of the pilot read the databases of gnomAD's exomes and joint release for chromosomes 21 and 22, and `v38_joint` those of the joint release for all 24, that `build_gnomad_release_per_chrom.sh` builds; they are not in the repository.
 - `v38_joint`'s provenance says `repo_commit` 4078116 with 6 uncommitted files, which are the documentation and the scripts of this change; the binary is the one of the other `v38` runs.
+
+## The family v38: the runs of Sections 2 to 3.7 made again by release 0.5.0
+
+The 96 runs of `v37`'s family (the 89 above on the April set and the 7 of the `holdout` group) were made again by the classifier of release 0.5.0 (the tag `v0.5.0-rc.1`, `c12d9f9`), under the same names with `v38` for `v37`, so that a manuscript that says v38 throughout can be measured against the one that says v37 (`RUN_VERSIONS.md`, "The family v38").
+The files are the `_v38` files above, which now hold the runs of Section 3.8 and the family together: `run_matrix_v38.tsv` 120 rows, `runs_v38.tsv` 109 rows (the April set) and `holdout_runs_v38.tsv` 11 rows (the October release), with `provenance/v38_*.txt` and `configs/v38_*.toml` for each, and `binaries_v38.tsv` for the binaries.
+`11_manuscript_runs.py --family v38` writes the 96; `--v38` still writes the 42 of Section 3.8, and the 18 sweeps that both definitions name (`v38_sw_pm2ad_*`, `v38_sw_pm2ar_*`, `v38_sw_bs2hom_*`) are the same runs, made once by the first and used by the second.
+Each pair of runs, `v37_x` and `v38_x`, has the same knob, value, default, replaced annotation files and environment in `run_matrix.tsv` and `run_matrix_v38.tsv`; `analysis/acmg_benchmark/results/v38_family_vs_v37.md` sets each pair against its twin, and its four CSV files hold the numbers.
+
+| File | What it holds |
+|---|---|
+| `binaries_v38.tsv` | The three binaries that made the new runs: `v38` (SHA-256 `70b7c684...`, 60 runs), `cut38` (`de44db94...`, 9 runs, the point cutoffs) and `hook38` (`9886d1b5...`, 9 runs, BP1's own-record count and BP7's SpliceAI threshold), each built from a clean export of the tag; the 18 runs of Section 3.8 that the family shares were made by the binary of the working tree that became v38 (`f184277d...`, `binaries.tsv`) and made again by `v38` |
+
+Things to know when reading the provenance files of the family v38.
+
+- 78 of the 96 runs were made on 8 November 2026 (between 03:58 and 04:30 UTC) by the three binaries above, built from the tag by `scripts/build_manuscript_binaries.sh` (`V38_REF=v0.5.0-rc.1 NAMES="cut38 hook38"` for the two patched builds); the patches apply to the tag as they are, the cutoff patch with no offset and the hooks patch with offsets of 2 and 20 lines.
+  The other 18 are the runs of Section 3.8, whose provenance says the binary of the working tree and the time of 4 November.
+- The controls (`v38_cut_lp6`, `v38_hk_control`) reproduce `v38` in every cell of the concordance matrix and in the firing count of every criterion, and in every scored file byte for byte.
+- `repo_commit` is `9574be1` for 19 of the 78 and `13665f4` for 59, because the branch with the wording of the default scheme was merged while they were made; it is the commit of the checkout that ran the harness and not the one the binary was built from.
+- Each of the 78 was made once, and the 18 of Section 3.8 twice.
+- The annotated VCF is kept for the same 15 April runs and 7 October runs as the family v37 keeps (`KEEP_VCF`), and the per-variant tables are in `data/benchmark/manuscript_runs/`, which is not in the repository.
+- The 382 ClinVar reference-agreement records (385 on the October release) have `.` as their alternative allele and no call under either classifier; the binaries of v37 write a record for them and the binaries of v38 do not, so the scored matrices of the family v38 hold 673,278 records (the harness counts the other 382 apart), and `13_manuscript_stats.py --base v38` and `20_compare_families.py` put them back as no-calls.

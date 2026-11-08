@@ -181,11 +181,45 @@ python3 manuscript/acmg/build_tables.py --write
 python3 manuscript/acmg/build_tables.py --check
 python3 manuscript/acmg/build_supplement.py --write
 python3 manuscript/acmg/verify_numbers.py
+
+# 6. The family v38: the runs of steps 2 and 3 made again by the classifier of release 0.5.0, under the names `v38_...`, so that
+#    a manuscript that says v38 throughout can be measured against the one that says v37 (RUN_VERSIONS.md, "The family v38").
+#    The two measurement builds are built from the tag the same way as the plain build; 18 of the 96 runs are runs of
+#    step 4 that have the same names and are not made again
+V38_REF=v0.5.0-rc.1 NAMES="v38 cut38 hook38" analysis/acmg_benchmark/scripts/build_manuscript_binaries.sh /path/to/binaries
+export FASTVEP_V38_BIN=/path/to/binaries/fastvep_v38 FASTVEP_CUTOFF38_BIN=/path/to/binaries/fastvep_cut38 \
+       FASTVEP_HOOKS38_BIN=/path/to/binaries/fastvep_hook38
+python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --family v38 --workers 3
+python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --family v38 --holdout --workers 3
+# the same per-variant tables as step 3b makes for v37, then the twin of every table and the comparison
+for run in v38_gap_clingen_complete v38_gap_orphanet_lof v38_gap_both v38_hk_bp1_loo v38_sw_phylop_1000 \
+           v38_hk_bp7_walker v38_sw_bp1veto_1 v38_sw_bp1veto_2 v38_hk_bp1_loo_veto1 v38_hk_bp1_loo_veto2; do
+  python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
+    --run data/benchmark/manuscript_runs/$run --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
+done
+for run in v38_oct_clingen_complete v38_oct_orphanet_lof v38_oct_both v38_oct_bp7_walker v38_oct_bp1_loo v38_oct_bp1_veto1 v38_oct_no_an_floor; do
+  python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
+    --run data/benchmark/manuscript_runs/$run --labels data/benchmark/clinvar_20261004_covered/clinvar_2star_labels.tsv \
+    --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
+done
+python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py --base v38 table
+FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py --base v38 blockers
+python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py --base v38
+python3 analysis/acmg_benchmark/scripts/20_compare_families.py
+# the text still says v37, so under --base v38 the three checks say what it would have to change; the figures and the workbook
+# of v38 are written outside the repository, because the ones in it are the manuscript's
+python3 manuscript/acmg/verify_numbers.py --base v38 --dump /tmp/checks_v38.json
+python3 manuscript/acmg/build_tables.py --base v38 --check
+python3 manuscript/acmg/build_supplement.py --base v38 --write --out /tmp/supplementary_tables_v38.xlsx
+python3 manuscript/acmg/generate_figures.py --base v38 --out /tmp/figures_v38
 ```
+
+Run without `--base`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, `build_tables.py`, `build_supplement.py`, `generate_figures.py` and `verify_numbers.py` are what they were: the tables of v37 are rewritten byte for byte, and the three checks pass on the manuscript as it stands.
+The family v38 has no twin of `trajectory.csv`, `change_ledger.csv`, `review_rounds.csv`, `round6_rulings.tsv`, `clingen_missing_curations.csv`, `criteria_status.csv` and `tavtigian_posterior.csv`, which are the history of the versions before v38, the reviewer's rulings or independent of the classifier.
 
 `run_benchmark.sh` and the scripts that start it read the environment, so a run that is made by hand needs `FASTVEP` set the same way.
 The tables and the checks are deterministic: after the statistics script had run under each of two hash seeds (`PYTHONHASHSEED=0` and `1`) the files of `manuscript/acmg/data/` that it writes were the same, and the figures are byte for byte the same on a rerun.
-Some files are not written by the statistics script: `change_ledger.csv` and `round6_rulings.tsv` are typed from the project's record, `clingen_missing_curations.csv` comes from `15_clingen_complete_export.py`, `temporal_high_af_blockers_v37.csv` from `14_temporal_holdout.py blockers`, `v38_joint_errors.csv` and `v38_joint_pm2_lost.csv` from `17_joint_boundary_cases.py`, and `criteria_status.csv` from `18_criteria_status.py`.
+Some files are not written by the statistics script: `change_ledger.csv` and `round6_rulings.tsv` are typed from the project's record, `clingen_missing_curations.csv` comes from `15_clingen_complete_export.py`, `temporal_high_af_blockers_v37.csv` from `14_temporal_holdout.py blockers` (and `_v38` from `--base v38 blockers`), `v38_joint_errors.csv` and `v38_joint_pm2_lost.csv` from `17_joint_boundary_cases.py`, and `criteria_status.csv` from `18_criteria_status.py`.
 
 The inputs are dated and none of them is in the repository, and the download scripts fetch the current files and not the dated ones: the ClinVar weekly releases of 4 April 2026 (the benchmark and its labels) and of 4 October 2026, the ClinGen Gene-Disease Validity exports of 30 April 2026 (the file the benchmark reads) and of 11 October 2026, and the ClinVar `variant_summary` and gnomAD files of Section 2.2 of the manuscript.
 A rerun on other releases of them is a rerun of the method and not of the paper's numbers.
