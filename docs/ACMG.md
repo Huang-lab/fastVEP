@@ -180,10 +180,12 @@ use_filtering_af = true                     # Test BA1/BS1 against the filtering
 # Both are no-ops against a database built before those columns were extracted.
 
 # ── Combining rules ──
-use_point_system = true                # Score the PATHOGENIC side with the ClinGen SVI point
-                                       # system (Tavtigian 2020) instead of the Richards 2015
-                                       # table. The benign side keeps the 2015 rules either
-                                       # way - see "Which combining rules apply" below for the
+use_point_system = true                # true (the default): score the PATHOGENIC side with the
+                                       # ClinGen SVI point scale (Tavtigian 2020) and decide the
+                                       # BENIGN side with the Richards 2015 table. false: the 2015
+                                       # table on the pathogenic side too. The benign side is the
+                                       # 2015 table either way, and points on both sides is not a
+                                       # setting - see "Which combining rules apply" below for the
                                        # measurement behind that split.
 
 # ── Gene-level preconditions (require omim.oga / ClinGen GDV) ──
@@ -462,12 +464,12 @@ partly from gnomAD frequency, so a frequency threshold tuned against ClinVar is 
 fitted to its own input. The curve's shape is the useful output, not its absolute level.
 
 **The knee above belongs to the 2015 combining table, which the sweep was made under.**
-With the point system that the classifier now uses, a lone PVS1 is already Likely
-pathogenic without PM2, and the same sweep is nearly flat: recall of ClinVar's
+With the point scale that the classifier now uses on the pathogenic side, a lone PVS1 is
+already Likely pathogenic without PM2, and the same sweep is nearly flat: recall of ClinVar's
 pathogenic-side variants moves from 61.97% at strict absence to 62.49% at 5e-4 on v37, and
 from 61.98% to 62.48% on v38, which reads inheritance from ClinGen's curated field.
-Under the 2015 table, one switch away, the knee is back (38.8% at strict absence and 56.7%
-at 4e-5).
+Under the 2015 table on the pathogenic side, one switch away, the knee is back (38.8% at
+strict absence and 56.7% at 4e-5).
 A threshold can move only the calls that need the criterion it gates, and the combining rule
 decides how many do (`manuscript/acmg`, Section 3.3 and Section 3.8).
 
@@ -868,37 +870,39 @@ manual route.
 
 ## Which combining rules apply
 
-Two schemes exist for turning met criteria into a classification, and they are encodings of the
-same Bayesian model: the Richards 2015 combining table, and the ClinGen SVI point system
-(Tavtigian et al. 2020, *Hum Mutat* 41:1734-1737).
-fastVEP uses **the point system for the pathogenic direction and the 2015 table for the benign
-direction**, which is not a compromise but a measured choice.
+Two schemes exist for turning met criteria into a classification, and they are encodings of the same Bayesian model: the Richards 2015 combining table, and the ClinGen SVI point system (Tavtigian et al. 2020, *Hum Mutat* 41:1734-1737).
+fastVEP's default uses **the point scale for the pathogenic direction and the 2015 table for the benign direction**, which is not a compromise but a measured choice.
+`use_point_system` switches the pathogenic direction only: `true` (the default) is points, and `false` is the 2015 table.
+The benign direction is the 2015 table either way, and points on both sides is not a setting of the classifier: the measurement below replays it from the recorded criteria.
 
-Points are 1 / 2 / 4 / 8 for Supporting / Moderate / Strong / Very Strong, summed over met
-pathogenic criteria: `>= 10` Pathogenic, `6..=9` Likely Pathogenic.
+Points are 1 / 2 / 4 / 8 for Supporting / Moderate / Strong / Very Strong, summed over the met pathogenic criteria: `>= 10` Pathogenic, `6..=9` Likely Pathogenic.
+The 2015 table decides the benign direction: a Stand-alone criterion alone, or two Strong criteria, is Benign, and one Strong and one Supporting criterion, or two Supporting criteria, is Likely Benign.
 
-**Why points on the pathogenic side.** The table has a documented gap at a lone PVS1. It scores 8
-points, squarely inside Likely Pathogenic, but matches no row of Table 5, so the table returns
-Uncertain Significance. Run v10 put **2,319 ClinVar-Pathogenic variants in VUS on `PVS1` and nothing
-else** - nonsense and frameshift variants in haploinsufficient disease genes, which is close to the
-least uncertain thing a classifier sees.
+**Why points on the pathogenic side.**
+The table has a documented gap at a lone PVS1.
+It scores 8 points, squarely inside Likely Pathogenic, but matches no row of Table 5, so the table returns Uncertain Significance.
+Run v10 put **2,319 ClinVar-Pathogenic variants in VUS on `PVS1` and nothing else** - nonsense and frameshift variants in haploinsufficient disease genes, which is close to the least uncertain thing a classifier sees.
 
-**Why the table on the benign side.** Tavtigian's Likely Benign band opens at `-1`, so a single BP4
-is enough for a benign call, where Richards requires two benign supporting criteria or a strong plus
-a supporting. Measured on the benchmark:
+**Why the table on the benign side.**
+Tavtigian's Likely Benign band opens at `-1`, so a single BP4 is enough for a benign call, where Richards requires two benign supporting criteria or a strong plus a supporting.
 
-| scheme | pathogenic recall | benign recall | reference-discordant benign |
-|---|---:|---:|---:|
-| 2015 table, both sides | 56.8 % | 56.3 % | 1 |
-| full point system | 63.6 % | 71.7 % | **36** |
-| full points, benign floor tightened to −2 | 63.6 % | **45.6 %** | 5 |
-| **points pathogenic + table benign** | **63.6 %** | **56.3 %** | **1** |
+**What each scheme gives on the benchmark.**
+The split was decided at v11 on the benchmark sample of the time, and the table below measures it again on v37, over the 673,660 ClinVar 2-star+ records of the April 2026 release (`manuscript/acmg`, Section 3.3 and Appendix Table A2; the figures are in `manuscript/acmg/data/combining_rules_replay_v37.csv`).
+The first two rows are real runs (`v37` and `v37_sw_table_both_sides`), which the replay reproduces cell for cell, and the last three are replays of the recorded criteria, for which no real run was made.
+The combining code is the same in v38, where `combiner.rs` differs from v37's by the wording of a comment, so the scheme is the same and the calls move only through the criteria that v38 reads differently.
 
-The full point system buys 15 pp of benign recall for 36 reference-discordant benign calls, and **22 of those 36
-are a lone BP4**. Tightening the band instead removes them but costs more benign recall than the
-table had, because a lone BP4 carries a great many correct benign calls too. Using each scheme where
-it is the safer one takes the pathogenic gain and pays nothing: if ClinVar is right, a benign call on a pathogenic variant and a variant
-left uncertain are not comparable errors.
+| scheme | measured by | exact | same direction | pathogenic recall | benign recall | reference-discordant benign | reference-discordant pathogenic |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **default: points pathogenic + table benign** | real run | 425,869 | 522,886 | 62.5 % | 62.3 % | 24 | 25 |
+| 2015 table, both sides (`use_point_system = false`) | real run | 424,773 | 517,631 | 56.7 % | 62.3 % | 24 | 14 |
+| points, both sides, Likely Benign from -1 | replay | 349,592 | 473,315 | 62.5 % | 73.9 % | 380 | 25 |
+| points, both sides, Likely Benign from -2 | replay | 367,373 | 471,582 | 62.5 % | 49.6 % | 62 | 25 |
+| points, both sides, Likely Benign from -3 | replay | 364,541 | 451,351 | 62.5 % | 37.0 % | 26 | 25 |
+
+Points on both sides with Likely Benign from -1 buys 11.6 points of benign recall for 356 more reference-discordant benign calls, and 218 of its 380 are a lone BP4; it also lowers recall of ClinVar's VUS variants from 97.2 % to 69.2 %.
+Tightening the floor to -2 or -3 does not remove them (62 and 26 remain) and gives up more benign recall than the table has (49.6 % and 37.0 % against 62.3 %).
+The 2015 table on the pathogenic side gives up 5,255 calls in direction and 5.8 points of pathogenic recall to avoid 11 reference-discordant pathogenic calls, so the pathogenic gain of the points is not free.
+Using each scheme where it is the safer one takes the pathogenic gain and keeps the benign calls that the table makes: if ClinVar is right, a benign call on a pathogenic variant and a variant left uncertain are not comparable errors.
 
 Set `use_point_system = false` for the 2015 table on both sides.
 
@@ -1195,7 +1199,20 @@ For a variant in ABCC8, ATM, BRCA1, BRCA2 or PKD1 that is the call to read befor
 
 ## Classification Combination Rules
 
-### Pathogenic (8 rules)
+By default the two directions are decided differently: the pathogenic direction is scored on the point scale, and the benign direction is decided by the 2015 table.
+`use_point_system = false` puts the 2015 table on the pathogenic direction as well, and the benign table is the same in both settings.
+[Which combining rules apply](#which-combining-rules-apply) says why, and what each scheme gives on the benchmark.
+
+### Pathogenic, by default: points (`use_point_system = true`)
+
+Each met pathogenic criterion scores its effective strength: 1 for Supporting, 2 for Moderate, 4 for Strong and 8 for Very Strong (PM2_Supporting scores 1, and PVS1_Moderate scores 2).
+6 to 9 points is Likely Pathogenic, and 10 or more is Pathogenic.
+A lone PVS1 is 8 points and so Likely Pathogenic, and PVS1 with PM2_Supporting is 9 points.
+The triggered rule reads `N pathogenic points (Tavtigian 2020)`.
+
+### Pathogenic, with `use_point_system = false`: the 2015 table
+
+**Pathogenic (8 rules)**
 1. PVS >= 1 AND PS >= 1
 2. PVS >= 1 AND PM >= 2
 3. PVS >= 1 AND PM >= 1 AND PP >= 1
@@ -1205,32 +1222,47 @@ For a variant in ABCC8, ATM, BRCA1, BRCA2 or PKD1 that is the call to read befor
 7. PS >= 1 AND PM >= 2 AND PP >= 2
 8. PS >= 1 AND PM >= 1 AND PP >= 4
 
-### Likely Pathogenic (7 rules)
+**Likely Pathogenic (7 rules)**
 1. PVS >= 1 AND PM >= 1
-2. **PVS >= 1 AND PP >= 1** (ClinGen SVI Sept 2020 — compensates for PM2 downgrade; Bayesian Post_P = 0.988)
+2. **PVS >= 1 AND PP >= 1** (ClinGen SVI Sept 2020, which compensates for the PM2 downgrade; Bayesian Post_P = 0.988)
 3. PS >= 1 AND PM = 1-2
 4. PS >= 1 AND PP >= 2
 5. PM >= 3
 6. PM >= 2 AND PP >= 2
 7. PM >= 1 AND PP >= 4
 
-### Benign (2 rules)
+A lone PVS1 matches none of these rows.
+
+### Benign, in both settings: the 2015 table
+
+**Benign (2 rules)**
 1. BA >= 1 (standalone)
 2. BS >= 2
 
-### Likely Benign (2 rules)
+**Likely Benign (2 rules)**
 1. BS >= 1 AND BP >= 1
 2. BP >= 2
 
+A benign criterion at Moderate strength counts as Strong, and one at Very Strong strength (BP4 from a REVEL score of 0.003 or less) counts as two Strong, so it is Benign on its own.
+
 ### Conflicting Evidence
 
-The combiner evaluates the pathogenic and benign rule sets **independently**. Conflicting → VUS only when **both directions reach a definite call** (P/LP and B/LB simultaneously); otherwise the directional call wins. So:
+Once each direction has been decided, both go through the same rules, in this order (`combine_inner` in `combiner.rs`):
 
-- PVS1 + PM2_Supporting + BP4_Supporting → LP (PVS+PP rule fires; the lone BP4_Supporting doesn't reach LB)
-- PVS1 + 2 BS → VUS (Conflicting — both sides definite)
-- PVS1 + BS1 alone → plain VUS (no benign rule fires; no "Conflicting" label)
+1. The benign side reaches a call, the pathogenic side does not, and a pathogenic criterion at Strong or Very Strong strength is met: VUS, with the reason "Conflicting evidence".
+2. The pathogenic side reaches a call, the benign side does not, and a benign criterion at Stand-alone or Strong strength is met: VUS, with the same reason.
+3. The pathogenic call is Likely Pathogenic, the benign side reaches no call, and gnomAD rejected the site (its own FILTER, a low-complexity tract or a segmental duplication) so that the frequency criteria could not be evaluated, although the frequency withheld would itself have met BA1 or BS1: VUS (the site-level frequency veto).
+4. Both sides reach a call: VUS, with the reason "Conflicting evidence".
+5. Otherwise the side that reaches a call stands, and a variant with no call on either side is VUS.
 
-This replaces the pre-PR9 behavior, which short-circuited any pathogenic-met + benign-met combination to VUS — over-zealous, since sub-threshold benign evidence shouldn't override a definite pathogenic call.
+Rules 1 and 2 keep one direction from calling over Strong evidence of the other: a met PS1 with two supporting benign criteria used to be reported Likely Benign, with the Strong pathogenic evidence discarded (the round-2 review).
+So, by default:
+
+- PVS1 + PM2_Supporting + BP4_Supporting → LP (9 points; the lone supporting benign criterion makes no call and is below Strong)
+- PVS1 + 2 BS → VUS (rule 4: both sides reach a call)
+- PVS1 + BS1 alone → VUS (rule 2: PVS1 alone is 8 points and Likely Pathogenic, and BS1 is a Strong benign criterion that makes no call)
+
+With `use_point_system = false` a lone PVS1 reaches no call, so the second example is VUS by rule 1, and the third is a plain VUS with no "Conflicting" label, because neither side has a call.
 
 ## Trio Analysis
 
@@ -1319,7 +1351,7 @@ crates/fastvep-classification/src/
   sa_extract.rs       # ClassificationInput, typed SA deserialization, GenotypeInfo, CompanionVariant
   disease.rs          # a gene's disease annotation, read: ClinGen's classification, curated inheritance and MONDO id; modes of inheritance
   config.rs           # AcmgConfig, TrioConfig, GeneOverride, TOML loading
-  combiner.rs         # 19 classification combination rules
+  combiner.rs         # combining: points or the 2015 table (pathogenic), the 2015 table (benign), conflict rules
   criteria/
     mod.rs            # evaluate_all_criteria() orchestrator
     pvs1.rs           # PVS1: null variant in LOF gene
