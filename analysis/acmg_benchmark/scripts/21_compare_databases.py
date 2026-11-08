@@ -3,7 +3,7 @@
 
 The benchmark was first built with SpliceAI and PhyloP databases that lack records which the gnomAD file they were distilled
 from carries (`results/complete_databases/README.md`). Every run of the paper was made again with databases built from the
-whole of that file, by the same binaries on the same inputs, and the earlier runs were kept under the names
+whole of that file, by the same classifiers on the same inputs, and the earlier runs were kept under the names
 `manuscript_runs_april_databases/` and `output_v37_april_databases/`. This script reads the per-variant tables of the two sets of
 runs and writes four things, so that the text states no number of the change that a file does not hold.
 
@@ -368,7 +368,7 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
     s("# What the complete databases changed")
     s()
     s("The benchmark was first built with SpliceAI and PhyloP databases that lack records which the gnomAD file they were distilled from carries (`results/complete_databases/README.md`).")
-    s("Every run of the paper was then made again with databases built from the whole of that file, by the same binaries on the same inputs, and the runs on the first databases were kept.")
+    s("Every run of the paper was then made again with databases built from the whole of that file, by the same classifiers on the same inputs, and the runs on the first databases were kept.")
     s("This file sets the two side by side.")
     s("It is written by `scripts/21_compare_databases.py` from the per-variant tables of the runs, and the numbers are in `manuscript/acmg/data/databases_*.csv`.")
     s("REVEL, ClinVar, ClinGen, the ClinVar protein index and RepeatMasker are the same files under both stacks.")
@@ -444,10 +444,12 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
             part = changed[changed.version == v]
             enter, leave, stay = (part[part.change == k] for k in ("enters the opposite-direction calls", "leaves them", "stays, call differs"))
             s(f"Under {v}, {len(enter)} variants enter the opposite-direction calls, {len(leave)} leave them and {len(stay)} stay in them with another call.")
+            s()
             for r in enter.itertuples():
                 s(f"- {r.gene} {r.chrom}:{r.pos} {r.ref}>{r.alt} (ClinVar {r.clinvar}, {r.consequence}): {r.first_call} ({r.first_criteria or 'no criterion'}) becomes {r.complete_call} ({r.complete_criteria or 'no criterion'}); SpliceAI {r.first_spliceai_max or 'none'} to {r.complete_spliceai_max or 'none'}, PhyloP {r.first_phylop or 'none'} to {r.complete_phylop or 'none'}.")
             for r in leave.itertuples():
                 s(f"- {r.gene} {r.chrom}:{r.pos} {r.ref}>{r.alt} (ClinVar {r.clinvar}, {r.consequence}) leaves: {r.first_call} ({r.first_criteria or 'no criterion'}) becomes {r.complete_call} ({r.complete_criteria or 'no criterion'}).")
+            s()
         s()
     october = ovn_df[ovn_df.set.str.startswith("October")]
     if len(october):
@@ -476,8 +478,13 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
     s("The first databases were not rebuilt, and the run of the extraction that left them short was not repeated, so the cause above is read from the pattern of the records and not observed.")
     s("The earlier numbered versions v1 to v36 were not repeated on the complete databases, and their results are on the first ones.")
     s("A comparison of two stacks says what the missing records changed in these runs, and it does not say which stack is closer to the truth, which only ClinVar's classifications can be compared with.")
-    REPORT.write_text("\n".join(lines) + "\n")
-    print(f"  wrote {REPORT.relative_to(ROOT)} ({len(lines)} lines)")
+    text = []
+    for line in lines:  # one blank line between blocks, never two
+        if line == "" and text and text[-1] == "":
+            continue
+        text.append(line)
+    REPORT.write_text("\n".join(text) + "\n")
+    print(f"  wrote {REPORT.relative_to(ROOT)} ({len(text)} lines)")
 
 
 # ------------------------------------------------------------------------------------------------ main
