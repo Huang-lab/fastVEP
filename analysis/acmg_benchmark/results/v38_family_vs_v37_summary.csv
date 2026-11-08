@@ -1,0 +1,12 @@
+name,value
+sweeps,12.0
+sweeps_that_differ_in_shape,4.0
+sweeps_that_differ_in_the_knee,0.0
+knee_bs1_v37,0.001
+knee_bs1_v38,0.001
+knee_bp7_far_boundary_v37,300.0
+knee_bp7_far_boundary_v38,300.0
+effects,245.0
+effect_measures,7.0
+effects_that_changed,11.0
+effects_that_changed_and_are_small,5.0

@@ -19,6 +19,10 @@ trunc_vus_with_pvs1,8
 trunc_vus,9136
 canonical_splice_vus,1446
 canonical_splice_vus_with_pvs1,12
+vus_called_blb,4804
+vus_called_blb_no_benign_criterion,0
+vus_called_blb_one_benign_criterion,122
+vus_called_blb_one_benign_criterion_very_strong_or_standalone,122
 records_without_gene_symbol,4
 alt_dot_records,382
 alt_dot_records_called,0

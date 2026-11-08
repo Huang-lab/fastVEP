@@ -18,4 +18,10 @@ curations in the April export classified before 2024,2213.0
   expected from January to April 2026 if the omission were independent of the date,4.6632825719120135
   expected before 2024 if the omission were independent of the date,64.90468133107727
 "variants of GATM, the gene of the row dated 30 April itself, in the benchmark",163.0
+  with the established ClinGen tag AR alone in the main run,163.0
+  with the established ClinGen tags AD and AR in the run that reads the completed file,163.0
+  whose call differs in the run that reads the completed file,0.0
   whose call or criteria differ in the run that reads the completed file,0.0
+  that lose a PM2 criterion in the run that reads the completed file,0.0
+  lowest allele frequency in gnomAD among those (0 when there are none),0.0
+  highest allele frequency in gnomAD among those (0 when there are none),0.0
