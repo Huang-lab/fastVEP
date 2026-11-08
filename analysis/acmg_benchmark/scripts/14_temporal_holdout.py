@@ -15,13 +15,14 @@ thing to a held-out set available without new data:
   tier_change   in both, class moved within its direction (LB <-> B, LP <-> P)
   direction_change  in both, class moved across a direction (VUS <-> P/LP <-> B/LB)
 
-One restriction is forced by the data and is not a choice. The gnomAD databases the classifier
-reads were extracted for the regions of the April release (`clinvar_2star_regions.bed`, built from
-the VCF positions of its variants), so a variant outside those regions has no gnomAD record, and
-`pm2_absent_when_no_record` would read that as "absent from gnomAD" and fire PM2 on a gap in our
-extract. Only variants whose VCF position lies inside a region are kept, which is the rule that
-decided which April variants had gnomAD data, applied to every variant alike. How many variants
-this drops is reported, not hidden.
+Every 2-star+ variant of the release is scored. The gnomAD, SpliceAI and PhyloP databases the classifier
+reads are built from the whole of the gnomAD v4.1 exomes file (`sa_sources/make_complete_stack.sh`), so a
+variant that the file lacks is absent from gnomAD, which is what PM2 reads, and not absent from an extract.
+This script used to keep only the variants whose VCF position lay inside a region that the April extract had
+fetched (`clinvar_2star_regions.bed`), because a variant outside the regions had no gnomAD record and
+`pm2_absent_when_no_record` would have read that as "absent from gnomAD" and fired PM2 on a gap in the extract;
+the whole release was 116,078 new records and the rule dropped 8,550 of them. With the databases of the whole file
+nothing is dropped.
 
 The ClinVar-derived inputs the classifier reads (`clinvar_protein.oga`, built from the late-April
 variant_summary, and `clinvar.osa`, from the 2026-06-27 release) are not rebuilt: they are what a
@@ -41,7 +42,7 @@ what the stale index can have done.
 ClinVar's 2-star+ classifications are a reference and not ground truth.
 
 Usage (the base is v38, the latest classifier, unless `--base v37` says the classifier at the close of the review rounds)
-  14_temporal_holdout.py prepare   build the covered subset and the strata (the same under both bases)
+  14_temporal_holdout.py prepare   write the strata of the release's 2-star+ variants (the same under both bases)
   14_temporal_holdout.py table     write the per-variant table of the base's October run (v38_oct_shipped, made by
                                    `11_manuscript_runs.py --v38 --holdout`)
   14_temporal_holdout.py blockers  why BA1 and BS1 did not fire on the uncalled Benign variants of 2% or more
@@ -49,7 +50,7 @@ Usage (the base is v38, the latest classifier, unless `--base v37` says the clas
                                    FASTVEP_V38_BIN, the binary of release 0.5.0, the tag v0.5.0-rc.1)
   14_temporal_holdout.py all       prepare and table
 
-  14_temporal_holdout.py --base v37 run        annotate and score the covered subset with run_benchmark.sh (v37_oct2026)
+  14_temporal_holdout.py --base v37 run        annotate and score the release with run_benchmark.sh (v37_oct2026)
   14_temporal_holdout.py --base v37 table      the per-variant table of that run
   14_temporal_holdout.py --base v37 blockers   writes temporal_high_af_blockers_v37.csv; needs FASTVEP_V37_BIN, the binary built
                                                at the v37 commit (5d8004a)
@@ -62,7 +63,6 @@ message; `13_manuscript_stats.py` reads the per-variant table and the blockers o
 from __future__ import annotations
 
 import argparse
-import bisect
 import csv
 import os
 import subprocess
@@ -76,8 +76,8 @@ BENCH = ROOT / "data/benchmark"
 APRIL_LABELS = BENCH / "clinvar_2star_labels.tsv"
 CURRENT_RAW = BENCH / "sa_sources/clinvar_20261004.vcf.gz"
 CURRENT_DIR = BENCH / "clinvar_20261004"
-REGIONS = BENCH / "sa_sources/clinvar_2star_regions.bed"
-SUBSET_DIR = BENCH / "clinvar_20261004_covered"
+SUBSET_DIR = CURRENT_DIR  # the whole release: its VCF and labels are what the runs read, and `prepare` writes the strata beside them
+SA_DB = BENCH / os.environ.get("BENCH_SA_DB", "sa_db_complete")  # the databases of the runs (see 11_manuscript_runs.py)
 BASE = "v38"  # the classifier the steps are about: v38, or v37 under `--base v37` (see `set_base`)
 RUN_NAME = "v38_oct_shipped"
 RUN_DIR = BENCH / f"manuscript_runs/{RUN_NAME}"
@@ -99,27 +99,6 @@ def set_base(base: str) -> None:
 DIRECTION = {"Pathogenic": "P/LP", "Likely_pathogenic": "P/LP", "VUS": "VUS", "Likely_benign": "B/LB", "Benign": "B/LB"}
 
 
-def load_regions() -> dict[str, tuple[list[int], list[int]]]:
-    out: dict[str, tuple[list[int], list[int]]] = {}
-    with REGIONS.open() as f:
-        for line in f:
-            c, s, e = line.split()[:3]
-            c = c.removeprefix("chr")
-            out.setdefault(c, ([], []))
-            out[c][0].append(int(s))
-            out[c][1].append(int(e))
-    return out
-
-
-def covered(regions, chrom: str, pos: int) -> bool:
-    """The VCF position lies inside a region the gnomAD extract fetched (BED start is 0-based)."""
-    if chrom not in regions:
-        return False
-    starts, ends = regions[chrom]
-    i = bisect.bisect_right(starts, pos - 1) - 1
-    return i >= 0 and pos <= ends[i]
-
-
 def stratum(april: dict, key: tuple, cls: str) -> str:
     if key not in april:
         return "new"
@@ -133,54 +112,39 @@ def prepare() -> None:
     if not (CURRENT_DIR / "clinvar_2star_labels.tsv").exists():
         CURRENT_DIR.mkdir(parents=True, exist_ok=True)
         subprocess.run([sys.executable, str(HERE / "01_extract_clinvar_2star.py"), str(CURRENT_RAW), str(CURRENT_DIR)], check=True)
-    regions = load_regions()
     april = {}
     with APRIL_LABELS.open() as f:
         for r in csv.DictReader(f, delimiter="\t"):
             april[(r["chrom"], r["pos"], r["ref"], r["alt"])] = r["normalized_class"]
 
     keep: dict[tuple, str] = {}
-    labels_rows = []
     counts = Counter()
     with (CURRENT_DIR / "clinvar_2star_labels.tsv").open() as f:
-        rd = csv.DictReader(f, delimiter="\t")
-        header = rd.fieldnames
-        for r in rd:
+        for r in csv.DictReader(f, delimiter="\t"):
             key = (r["chrom"], r["pos"], r["ref"], r["alt"])
             st = stratum(april, key, r["normalized_class"])
-            counts[("all", st)] += 1
-            if not covered(regions, r["chrom"], int(r["pos"])):
-                counts[("dropped_outside_extract", st)] += 1
-                continue
             keep[key] = st
-            labels_rows.append(r)
-            counts[("kept", st)] += 1
+            counts[st] += 1
 
-    SUBSET_DIR.mkdir(parents=True, exist_ok=True)
-    with (SUBSET_DIR / "clinvar_2star_labels.tsv").open("w") as f:
-        w = csv.DictWriter(f, fieldnames=header, delimiter="\t", lineterminator="\n")
-        w.writeheader()
-        w.writerows(labels_rows)
     n_vcf = 0
-    with (CURRENT_DIR / "clinvar_2star.vcf").open() as src, (SUBSET_DIR / "clinvar_2star.vcf").open("w") as dst:
+    with (CURRENT_DIR / "clinvar_2star.vcf").open() as src:
         for line in src:
             if line.startswith("#"):
-                dst.write(line)
                 continue
             c = line.split("\t", 5)
-            key = (c[0], c[1], c[3], c[4])
-            if key in keep:
-                dst.write(line)
-                n_vcf += 1
+            if (c[0], c[1], c[3], c[4]) not in keep:
+                sys.exit(f"{c[0]}:{c[1]} {c[3]}>{c[4]} is in the VCF of the release and not in its labels")
+            n_vcf += 1
+    if n_vcf != len(keep):
+        sys.exit(f"the VCF of the release has {n_vcf} records and its labels {len(keep)}")
     with (SUBSET_DIR / "strata.tsv").open("w") as f:
         w = csv.writer(f, delimiter="\t", lineterminator="\n")
         w.writerow(["chrom", "pos", "ref", "alt", "stratum"])
         for (c, p, r, a), st in keep.items():
             w.writerow([c, p, r, a, st])
-    assert n_vcf == len(keep), (n_vcf, len(keep))
-    print(f"kept {len(keep):,} of {sum(v for (k, _), v in counts.items() if k == 'all'):,} current 2-star+ variants")
-    for (k, st), v in sorted(counts.items()):
-        print(f"  {k:26} {st:17} {v:>9,}")
+    print(f"{len(keep):,} 2-star+ variants of the release")
+    for st, v in sorted(counts.items()):
+        print(f"  {st:17} {v:>9,}")
 
 
 def v37_binary() -> Path:
@@ -290,7 +254,7 @@ def blockers() -> None:
                 for r in rows:
                     f.write(f"{r['chrom']}\t{r['pos']}\t.\t{r['ref']}\t{r['alt']}\t.\t.\t.\n")
             subprocess.run([str(fastvep), "annotate", "-i", str(vcf), "-o", str(js), "--gff3", str(gff3), "--fasta", str(fasta),
-                            "--sa-dir", str(BENCH / "sa_db"), "--acmg", "--pick", "--output-format", "json"],
+                            "--sa-dir", str(SA_DB), "--acmg", "--pick", "--output-format", "json"],
                            check=True, stderr=subprocess.DEVNULL)
             records = json.loads(js.read_text())
             if len(records) != len(rows):

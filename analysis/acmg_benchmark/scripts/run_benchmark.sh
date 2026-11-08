@@ -16,7 +16,9 @@
 #   clinvar_2star_labels.tsv  ClinVar's 2-star+ classifications, the reference for concordance
 #                             (a reference, not ground truth; the file was called
 #                             clinvar_2star_truth.tsv, which is still read if the new name is absent)
-#   sa_db/                    built .osa/.osa2/.oga databases
+#   sa_db_complete/           the built .osa/.osa2/.oga databases, SpliceAI, PhyloP and gnomAD from the whole gnomAD v4.1
+#                             exomes file (sa_sources/make_complete_stack.sh; SA_DIR names another directory, for
+#                             instance sa_db, the first stack, whose SpliceAI and PhyloP lack records of that file)
 #   plus test_data/organisms/human/ for the FASTA + GFF3 + cache
 #
 # Outputs (data/benchmark/output_<version>/):
@@ -73,7 +75,7 @@ if [ -z "$LABELS" ]; then
 fi
 GFF3="${GFF3:-$ROOT/test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3}"
 FASTA="${FASTA:-$ROOT/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa}"
-SA_DIR="${SA_DIR:-$ROOT/data/benchmark/sa_db}"
+SA_DIR="${SA_DIR:-$ROOT/data/benchmark/sa_db_complete}"
 FASTVEP="${FASTVEP:-$ROOT/target/release/fastvep}"
 OUT_DIR="${OUT_DIR:-$ROOT/data/benchmark/output_$VERSION}"
 
@@ -106,7 +108,7 @@ for f in "$INPUT" "$LABELS" "$GFF3" "$FASTA" "$FASTVEP"; do
   [ -e "$f" ] || { echo "missing required input: $f" >&2; exit 1; }
 done
 [ -d "$SA_DIR" ] || { echo "missing SA database directory: $SA_DIR" >&2; exit 1; }
-# `sa_db/` and `sa_db` are one directory, and the signature below strips this
+# `sa_db_complete/` and `sa_db_complete` are one directory, and the signature below strips this
 # prefix from every path `find` prints.
 SA_DIR="${SA_DIR%/}"
 

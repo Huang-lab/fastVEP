@@ -60,7 +60,7 @@ Three groups:
                           check that the runs of every chromosome give its calls
           and each of them also on the variants of the October 2026 release (`--holdout --v38`).
   holdout the changes that Section 4.5 proposes, run on the variants of the ClinVar release of
-          4 October 2026 (the covered subset that `14_temporal_holdout.py prepare` writes), so
+          4 October 2026 (its 2-star+ variants whole: `14_temporal_holdout.py prepare` writes their strata), so
           that they are tried on variants that none of them was tuned on. They are run with
           `--holdout`, and are not among the runs of `runs.tsv` (which are all on the April set):
           their matrices are in `holdout_runs.tsv`, and `13_manuscript_stats.py` scores them on
@@ -129,7 +129,10 @@ BENCH = ROOT / "data/benchmark"
 # neither finds the first run's directories already scored and skips them nor overwrites the tables the manuscript reads;
 # `16_compare_runs.py` then compares the two roots.
 OUT_ROOT = Path(os.environ.get("MANUSCRIPT_RUNS_ROOT", BENCH / "manuscript_runs"))
-SA_DB = BENCH / "sa_db"
+# The databases every run reads: `sa_db_complete`, in which SpliceAI, PhyloP and gnomAD are built from the whole of the gnomAD v4.1
+# exomes file (`sa_sources/make_complete_stack.sh`, results/complete_databases/README.md). The benchmark was first made with
+# `sa_db`, whose SpliceAI and PhyloP lack records that the file carries; BENCH_SA_DB=sa_db makes a run on those databases.
+SA_DB = BENCH / os.environ.get("BENCH_SA_DB", "sa_db_complete")
 SA_ABLATE = BENCH / "sa_db_ablate"
 RES = Path(os.environ.get("MANUSCRIPT_RESULTS_DIR", ROOT / "analysis/acmg_benchmark/results/v37_manuscript"))
 RUNNER = ROOT / "analysis/acmg_benchmark/scripts/run_benchmark.sh"
@@ -183,8 +186,8 @@ class Run:
     shipped: str  # the shipped value, as text
     description: str
     toml: list[str] = field(default_factory=list)  # lines of the config, or empty
-    sa_remove: list[str] = field(default_factory=list)  # glob patterns removed from sa_db
-    sa_replace: dict[str, str] = field(default_factory=dict)  # sa_db file name -> file used instead
+    sa_remove: list[str] = field(default_factory=list)  # glob patterns removed from the stack (SA_DB)
+    sa_replace: dict[str, str] = field(default_factory=dict)  # file name in the stack -> file used instead
     env: dict[str, str] = field(default_factory=dict)  # environment the run needs (the cutoff runs)
     inputs: dict[str, str] = field(default_factory=dict)  # INPUT and LABELS of a run that is not on the April set
     binary: str = ""  # the patched build the run needs ("hook"), where its group does not say so
@@ -691,7 +694,7 @@ def holdout_runs(fam: str = "v37") -> list[Run]:
     set were not seen by any sweep, review round or run, so these are the nearest thing to a test
     of a change that was found by reading the April discordances.
     """
-    subset = BENCH / "clinvar_20261004_covered"
+    subset = BENCH / "clinvar_20261004"
     inputs = {"INPUT": str(subset / "clinvar_2star.vcf"), "LABELS": str(subset / "clinvar_2star_labels.tsv")}
     mech = orphanet_mechanisms()
     toml: list[str] = []
@@ -858,8 +861,8 @@ def v38_runs() -> list[Run]:
 
 
 def v38_holdout_runs() -> list[Run]:
-    """The same comparisons on the variants of the 4 October 2026 release (the covered subset)."""
-    subset = BENCH / "clinvar_20261004_covered"
+    """The same comparisons on the 2-star+ variants of the 4 October 2026 release."""
+    subset = BENCH / "clinvar_20261004"
     inputs = {"INPUT": str(subset / "clinvar_2star.vcf"), "LABELS": str(subset / "clinvar_2star_labels.tsv")}
 
     def hold(short, group, what, **kw):
@@ -919,7 +922,7 @@ def write_config(run: Run) -> Path | None:
 
 
 def make_sa_dir(run: Run) -> Path:
-    """A directory of symlinks to every sa_db file except the ones this run removes."""
+    """A directory of symlinks to every file of the stack (SA_DB) except the ones this run removes."""
     import fnmatch
 
     target = SA_ABLATE / run.name
@@ -1059,8 +1062,8 @@ def execute(run: Run) -> tuple[str, bool]:
     cfg = write_config(run)
     if cfg:
         env["ACMG_CONFIG"] = str(cfg)
-    if run.sa_remove or run.sa_replace:
-        env["SA_DIR"] = str(make_sa_dir(run))
+    # Every run names its databases, so that the stack is the one of this script (SA_DB) and not whatever the runner defaults to.
+    env["SA_DIR"] = str(make_sa_dir(run)) if (run.sa_remove or run.sa_replace) else str(SA_DB)
     log = out / "run.log"
     with log.open("w") as lf:
         rc = subprocess.call(
