@@ -1367,6 +1367,25 @@ function parseVerdict(v) {
   };
 }
 
+// Which scale decided a call. The pathogenic side is scored in points (Tavtigian 2020) and the benign side by the
+// 2015 combining table, so it depends on the class, and the classifier says which in its rule text. The page reads
+// that text and names a scale only for a rule it recognises, because a server can also be set to use the table on
+// the pathogenic side, and a rule it does not know should be shown as it is rather than credited to either scale.
+const PATHOGENIC_TABLE_RULES = new Set(['PVS + >=1 PS', 'PVS + >=2 PM', 'PVS + PM + PP', 'PVS + >=2 PP', '>=2 PS', 'PS + >=3 PM', 'PS + 2 PM + >=2 PP', 'PS + PM + >=4 PP',
+  'PVS + PM', 'PVS + >=1 PP (SVI)', 'PS + 1-2 PM', 'PS + >=2 PP', '>=3 PM', '2 PM + >=2 PP', 'PM + >=4 PP']);
+const BENIGN_TABLE_RULES = { 'BA1': 'one stand-alone criterion', '>=2 BS': 'two or more strong criteria', 'BS + BP': 'a strong and a supporting criterion', '>=2 BP': 'two or more supporting criteria' };
+function callBasis(a) {
+  const rule = typeof a.triggered_rule === 'string' ? a.triggered_rule.trim() : '';
+  const pathogenic = a.shorthand === 'P' || a.shorthand === 'LP';
+  const benign = a.shorthand === 'B' || a.shorthand === 'LB';
+  const points = pathogenic ? /^(\d+) pathogenic points \(Tavtigian 2020\)$/.exec(rule) : null;
+  if (points) return { kind: 'points', total: +points[1], line: `Decided by points (Tavtigian et al. 2020): ${points[1]} pathogenic points, where 6 to 9 is Likely pathogenic and 10 or more is Pathogenic.` };
+  if (pathogenic && PATHOGENIC_TABLE_RULES.has(rule)) return { kind: 'table', line: `Decided by the combining table (Richards et al. 2015): ${rule}.` };
+  if (benign && BENIGN_TABLE_RULES[rule]) return { kind: 'table', line: `Decided by the combining table (Richards et al. 2015): ${BENIGN_TABLE_RULES[rule]} (${rule}).` };
+  if (a.shorthand === 'VUS') return { kind: 'none', line: rule ? `Why uncertain: ${endSentence(rule)}` : 'No call: the criteria that were met do not reach a pathogenic or a benign call.' };
+  return { kind: 'other', line: rule ? `Rule that decided this call: ${endSentence(rule)}` : '' };
+}
+
 // ---- state -----------------------------------------------------
 const state = {
   mode: 'unknown', // 'client' (no server) | 'server-multi' (per-request genomes) | 'server-single' (one model per process)
@@ -2482,6 +2501,18 @@ function setColumnsMenu(open) {
   if (panel.getBoundingClientRect().left < 8) { panel.style.right = 'auto'; panel.style.left = '0'; }
 }
 
+// The criteria that were met, counted by strength. Where points decided the call the pathogenic chips carry theirs, so the total
+// can be checked by eye; the benign side is never scored in points. The arithmetic is shown only when it adds up to the total the
+// classifier reported: if the counts and the call disagree, showing less is better than showing a sum that is not the call's.
+function evidenceChips(a, basis) {
+  const c = a.counts || {};
+  const path = [['PVS', c.pathogenic_very_strong, 8, 'c-path'], ['PS', c.pathogenic_strong, 4, 'c-path'], ['PM', c.pathogenic_moderate, 2, 'c-mod'], ['PP', c.pathogenic_supporting, 1, 'c-mod']];
+  const benign = [['BA', c.benign_standalone, 'c-ben'], ['BS', c.benign_strong, 'c-low'], ['BP', c.benign_supporting, 'c-low']];
+  const byPoints = basis.kind === 'points' && path.reduce((t, [, n, w]) => t + (n || 0) * w, 0) === basis.total;
+  return path.map(([k, n, w, cls]) => `<span class="count ${cls}">${k}: ${n || 0}${byPoints && n ? ` (${plural(n * w, 'point')})` : ''}</span>`).join('')
+    + benign.map(([k, n, cls]) => `<span class="count ${cls}">${k}: ${n || 0}</span>`).join('');
+}
+
 let dialogOpener = null;
 function showAcmgDetail(index, opener) {
   const r = state.view[index];
@@ -2502,21 +2533,18 @@ function showAcmgDetail(index, opener) {
     const m = (d.criteria || []).filter((c) => c.met).map((c) => c.code).join(', ') || 'None';
     return `<div class="acmg-disorder"><span class="acmg-badge acmg-${esc(d.shorthand)}">${esc(prettyWords(d.classification))}</span><span class="moi">${esc(d.inheritance)}</span><span class="names">${esc(names)}</span><span class="met">${esc(m)}</span></div>`;
   }).join('');
-  const c = a.counts || {};
+  const basis = callBasis(a);
   $('acmgBody').innerHTML = `
     <div class="dialog-head">
       <h2 id="acmgTitle"><span class="acmg-badge acmg-${esc(a.shorthand)}" style="cursor:default">${esc(prettyWords(a.classification) || a.shorthand)}</span><span class="sub">${esc(r.transcript?.gene?.symbol || '')}${r.transcript?.gene?.symbol && (r.hgvsc || r.hgvsp) ? ' &middot; ' : ''}${esc(r.hgvsc || r.hgvsp || '')}</span></h2>
       <button type="button" class="btn btn-secondary btn-sm" id="acmgClose">Close</button>
     </div>
-    ${a.triggered_rule ? `<p class="acmg-met">Triggered rule: <strong>${esc(a.triggered_rule)}</strong></p>` : ''}
-    <div class="acmg-counts" aria-label="Evidence counts">
-      <span class="count c-path">PVS: ${c.pathogenic_very_strong || 0}</span><span class="count c-path">PS: ${c.pathogenic_strong || 0}</span><span class="count c-mod">PM: ${c.pathogenic_moderate || 0}</span><span class="count c-mod">PP: ${c.pathogenic_supporting || 0}</span>
-      <span class="count c-ben">BA: ${c.benign_standalone || 0}</span><span class="count c-low">BS: ${c.benign_strong || 0}</span><span class="count c-low">BP: ${c.benign_supporting || 0}</span>
-    </div>
+    ${basis.line ? `<p class="acmg-met acmg-basis">${esc(basis.line)}</p>` : ''}
+    <div class="acmg-counts" role="group" aria-label="Criteria met, by strength">${evidenceChips(a, basis)}</div>
     <p class="acmg-met">Met criteria: <strong>${esc(met.map((x) => x.code).join(', ') || 'None')}</strong></p>
     ${dis ? `<div class="acmg-disorders"><div class="acmg-disorders-title">By mode of inheritance</div>${dis}<div class="acmg-disorders-note">The call above reads the modes of this gene together. Each row classifies the variant against the diseases ClinGen curates with that mode of inheritance.</div></div>` : ''}
     <ul class="acmg-criteria-grid">${crit}</ul>
-    <p class="dialog-foot">Based on the ACMG-AMP guidelines (Richards et al. 2015) with ClinGen SVI recommendations. Criteria marked &#x25CB; need clinical data that automated annotation does not have.</p>`;
+    <p class="dialog-foot">The line under the class says what decided this call: points (Tavtigian et al. 2020, ClinGen SVI), the combining table (Richards et al. 2015), or that neither side reached a call. Criteria marked &#x25CB; need clinical data that automated annotation does not have.</p>`;
   dialogOpener = opener || document.activeElement;
   $('acmgDialog').showModal();
   $('acmgClose').focus();
