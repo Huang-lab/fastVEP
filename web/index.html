@@ -297,6 +297,12 @@
     .menu-panel input { accent-color: var(--accent-fill); width: 16px; height: 16px; }
     .menu-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 
+    /* The classes in a run made without part of the reference stack. Amber like the other cautions, and never dismissible: it describes every row below it. */
+    .acmg-banner { display: flex; align-items: flex-start; gap: 10px; padding: 10px 16px; font-size: 13px; background: color-mix(in srgb, var(--moderate) 10%, var(--surface)); border-bottom: 1px solid var(--border); border-left: 4px solid var(--moderate); }
+    .acmg-banner .banner-icon { color: var(--moderate); font-size: 16px; line-height: 1.5; flex-shrink: 0; }
+    .acmg-banner strong { font-weight: 700; }
+    .dialog-body .acmg-banner { margin-bottom: 12px; border: 1px solid var(--border); border-left: 4px solid var(--moderate); border-radius: var(--radius-sm); }
+    .summary-card .stack-note { margin-top: 12px; padding-left: 10px; font-size: 12px; color: var(--text-dim); border-left: 3px solid var(--moderate); }
     .table-wrapper { overflow: auto; max-height: min(640px, 75vh); }
     .table-wrapper:focus-visible { outline-offset: -3px; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
@@ -611,6 +617,7 @@
             </div>
             <span class="row-count" id="rowCount"></span>
           </div>
+          <div class="acmg-banner" id="acmgBanner" role="note" hidden></div>
           <div class="table-wrapper" id="tableWrap" tabindex="0" role="region" aria-label="Annotation results table">
             <table id="resultsTable">
               <caption class="visually-hidden">Variant annotations, one row per transcript consequence. Use the column headings to sort.</caption>
@@ -1367,6 +1374,22 @@ function parseVerdict(v) {
   };
 }
 
+// `acmg_stack` on a successful answer: which sources the classifier did not have. Absent from older servers.
+// Anything but an explicit `complete: true` is treated as incomplete, because the safe mistake is a banner too many.
+function parseStack(s) {
+  if (!s || typeof s !== 'object') return null;
+  return { complete: s.complete === true, missing: Array.isArray(s.missing) ? s.missing.map(String) : [] };
+}
+
+// The sentence that has to travel with every class made without part of the stack, on screen and in each export.
+function stackNote(stack, verdict) {
+  if (!stack || stack.complete) return null;
+  const names = stack.missing.map((id) => verdict?.missing.find((m) => m.id === id)?.label || ACMG_SOURCE_LABELS[id] || id);
+  const lead = names.length ? `Classified without: ${names.join('; ')}.` : 'Classified without part of the reference stack.';
+  const rest = 'Criteria that read them were not evaluated, so a VUS here can mean nothing was checked.';
+  return { lead, rest, text: `${lead} ${rest}` };
+}
+
 // Which scale decided a call. The pathogenic side is scored in points (Tavtigian 2020) and the benign side by the
 // 2015 combining table, so it depends on the class, and the classifier says which in its rule text. The page reads
 // that text and names a scale only for a rule it recognises, because a server can also be set to use the table on
@@ -1573,6 +1596,10 @@ const activeModelLabel = () => {
   return d.speciesName ? d.label : src;
 };
 
+// The separator between the parts of the genome and provenance lines. Parts are joined without spaces, so the break opportunity
+// after the dot is what lets a long file name between two dots wrap instead of pushing the line past a 320 px screen.
+const dot = '<span class="dot" aria-hidden="true">&middot;</span><wbr>';
+
 // ---- genome selector ---------------------------------------------
 function buildGenomeSelector() {
   const sel = $('genomeSelect');
@@ -1616,7 +1643,6 @@ function refreshActiveOption() {
 }
 
 function genomeInfoHtml() {
-  const dot = '<span class="dot" aria-hidden="true">&middot;</span>';
   if (state.mode === 'server-multi') {
     const g = selectedGenome();
     if (!g) return '';
@@ -2022,9 +2048,11 @@ async function annotateServer(vcfText, target) {
   const matched = matchInputRecords(data.results, vcfText);
   if (matched) for (const r of rows) r.variant.orig = matched[r.variant.index];
   const info = target.genome ? describeGenome(gm.genome, gm.gff3_source) : null;
+  // What the classes rest on, from the answer itself: the verdict read before the run can be out of date by now.
+  const stack = acmg ? parseStack(data.acmg_stack) : null;
   state.provenance = {
     kind: 'server', genome: target.genome, label: info ? info.label : target.label, source: gm?.gff3_source || state.legacy.source, transcripts: gm?.transcripts ?? null,
-    generation: gm?.generation ?? null, acmg, pick,
+    generation: gm?.generation ?? null, acmg, pick, stack, stackNote: stackNote(stack, state.verdicts.get(verdictKey(target.genome))),
   };
   if (target.genome && gm) {
     const g = state.genomes.find((x) => x.name === target.genome);
@@ -2131,7 +2159,17 @@ function syncCounters() {
 // ---- results ---------------------------------------------------------
 function hideResults() {
   $('resultsSection').hidden = true;
+  $('acmgBanner').hidden = true;
   state.results = []; state.view = []; state.provenance = null;
+}
+
+// Above the table, where the ACMG column is, and always: the sentence describes every class below it.
+const stackBannerHtml = (note) => `<span class="banner-icon" aria-hidden="true">&#9432;</span><div><strong>${esc(note.lead)}</strong> ${esc(note.rest)}</div>`;
+function renderStackBanner() {
+  const note = state.provenance?.stackNote;
+  const banner = $('acmgBanner');
+  banner.hidden = !(note && state.hasAcmg);
+  if (!banner.hidden) banner.innerHTML = stackBannerHtml(note);
 }
 
 function loadVisibilityPrefs() {
@@ -2162,6 +2200,7 @@ function showResults(rows, { variants, ms, warnings = [] }) {
   $('acmgFilter').value = '';
   buildColumns(rows);
   $('acmgFilter').hidden = !state.hasAcmg;
+  renderStackBanner();
   $('resultsSection').hidden = false;
   $('statVariants').textContent = fmtInt(variants);
   $('statAnnotations').textContent = fmtInt(rows.length);
@@ -2185,13 +2224,13 @@ function showResults(rows, { variants, ms, warnings = [] }) {
 
 function renderProvenance() {
   const p = state.provenance;
-  const dot = '<span class="dot" aria-hidden="true">&middot;</span>';
   const el = $('provenance');
   if (!p) { el.textContent = ''; return; }
   if (p.kind === 'demo') { el.innerHTML = `<strong>${esc(p.label)}</strong>${dot}${esc(p.detail)}`; el.removeAttribute('data-genome'); return; }
   const parts = [`<strong>${esc(p.label)}</strong>`];
   if (p.transcripts != null) parts.push(plural(p.transcripts, 'transcript'));
   if (p.source && p.source !== 'user-upload' && p.source !== p.label) parts.push(`<span class="mono">${esc(p.source)}</span>`);
+  if (p.acmg && p.stack) parts.push(p.stack.complete ? 'ACMG on the full reference stack' : 'ACMG without part of the reference stack');
   el.innerHTML = parts.join(dot);
   if (p.genome) el.setAttribute('data-genome', p.genome); else el.removeAttribute('data-genome');
 }
@@ -2338,7 +2377,7 @@ function renderSummary() {
     <section class="summary-card"><h3>Impact</h3>${bars(Object.entries(imp).filter(([, v]) => v > 0), { color: impColor, labelHtml: (k) => `<span class="impact impact-${k}">${k}</span>`, max: Math.max(1, ...Object.values(imp)) })}</section>
     <section class="summary-card"><h3>Consequence types</h3>${bars(top(cons, 12), { color: (k) => impColor(consImpact(k)) })}${more(cons, 12)}</section>
     <section class="summary-card"><h3>Genes affected</h3>${genes.size ? bars(top(genes, 15), { color: () => 'var(--accent)' }) + more(genes, 15) : '<p class="empty-note">No gene symbols in these results.</p>'}</section>
-    <section class="summary-card"><h3>ACMG-AMP classification</h3>${acmgEntries.length ? bars(acmgEntries, { color: (k) => `var(--acmg-${k.toLowerCase()})`, labelHtml: (k) => `<span class="acmg-badge acmg-${k}">${acmgLabels[k]}</span>` }) : '<p class="empty-note">No ACMG classifications in these results. Turn on the ACMG option and annotate again.</p>'}</section>
+    <section class="summary-card"><h3>ACMG-AMP classification</h3>${acmgEntries.length ? bars(acmgEntries, { color: (k) => `var(--acmg-${k.toLowerCase()})`, labelHtml: (k) => `<span class="acmg-badge acmg-${k}">${acmgLabels[k]}</span>` }) : '<p class="empty-note">No ACMG classifications in these results. Turn on the ACMG option and annotate again.</p>'}${acmgEntries.length && state.provenance?.stackNote ? `<p class="stack-note"><strong>${esc(state.provenance.stackNote.lead)}</strong> ${esc(state.provenance.stackNote.rest)}</p>` : ''}</section>
     <section class="summary-card"><h3>Transcript metadata</h3><dl class="kv">
       <dt>MANE Select</dt><dd>${fmtInt(mane)}</dd><dt>MANE Plus Clinical</dt><dd>${fmtInt(maneClin)}</dd><dt>Canonical</dt><dd>${fmtInt(canonical)}</dd><dt>With CCDS</dt><dd>${fmtInt(ccds)}</dd><dt>Total annotations</dt><dd>${fmtInt(rows.length)}</dd></dl></section>`;
 }
@@ -2349,13 +2388,16 @@ function provenanceComment() {
   if (p.kind === 'demo') return `## fastVEP v${state.version} | ${p.label}: ${p.detail}`;
   const bits = [`fastVEP v${state.version}`, `genome: ${p.label}${p.genome ? ` (${p.genome})` : ''}`];
   if (p.source && p.source !== 'user-upload') bits.push(`gene model: ${p.source}${p.transcripts != null ? `, ${plural(p.transcripts, 'transcript')}` : ''}`);
-  bits.push(`ACMG: ${p.acmg ? 'on' : 'off'}`);
+  bits.push(`ACMG: ${p.acmg ? `on${p.stack ? (p.stack.complete ? ' (full reference stack)' : ' (incomplete reference stack)') : ''}` : 'off'}`);
   return `## ${bits.join(' | ')}`;
 }
 
 const tsvValue = (c, r) => { const v = c.text(r); return v == null || v === '' ? '-' : String(v).replace(/[\t\r\n]/g, ' '); };
+// The same sentence the banner shows, but only where classes are in the file: a file that carries them has to carry what they rest on.
+const exportStackNote = () => (state.hasAcmg ? state.provenance?.stackNote?.text || null : null);
 function buildTsv(limit = Infinity) {
-  const lines = [provenanceComment(), state.columns.map((c) => c.tsv).join('\t')];
+  const note = exportStackNote();
+  const lines = [provenanceComment(), ...(note ? [`## ${note}`] : []), state.columns.map((c) => c.tsv).join('\t')];
   const n = Math.min(limit, state.results.length);
   for (let i = 0; i < n; i++) lines.push(state.columns.map((c) => tsvValue(c, state.results[i])).join('\t'));
   return `${lines.join('\n')}\n`;
@@ -2392,6 +2434,8 @@ function csqEntry(r) {
 function buildVcf() {
   const unmatched = state.results.some((r) => !r.variant.orig);
   const lines = ['##fileformat=VCFv4.2', provenanceComment().replace(/^## /, '##fastVEP_model=')];
+  const stackText = exportStackNote();
+  if (stackText) lines.push(`##fastVEP_acmg_note=${stackText}`);
   if (unmatched) lines.push('##fastVEP_note=REF and ALT are VEP-style alleles (- marks a deletion or insertion) because the input records could not be matched to their results');
   lines.push(`##INFO=<ID=CSQ,Number=.,Type=String,Description="Consequence annotations from fastVEP. Format: ${CSQ_FORMAT.join('|')}">`, '#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO');
   const records = new Map();
@@ -2421,7 +2465,9 @@ function buildJson() {
     if (r.sa) Object.assign(obj, r.sa);
     return obj;
   });
-  return JSON.stringify({ fastvep_version: state.version, model: p ? { kind: p.kind, genome: p.genome ?? null, label: p.label, gene_model_source: p.source ?? null, transcripts: p.transcripts ?? null, acmg: !!p.acmg } : null, results: rows }, null, 2);
+  // The server's own statement about the stack, kept whole, with the sentence added when the classes were made without part of it.
+  const stack = state.hasAcmg && p?.stack ? { complete: p.stack.complete, missing: p.stack.missing, ...(p.stackNote ? { note: p.stackNote.text } : {}) } : undefined;
+  return JSON.stringify({ fastvep_version: state.version, model: p ? { kind: p.kind, genome: p.genome ?? null, label: p.label, gene_model_source: p.source ?? null, transcripts: p.transcripts ?? null, acmg: !!p.acmg } : null, acmg_stack: stack, results: rows }, null, 2);
 }
 
 function downloadFile(name, mime, text) {
@@ -2534,17 +2580,19 @@ function showAcmgDetail(index, opener) {
     return `<div class="acmg-disorder"><span class="acmg-badge acmg-${esc(d.shorthand)}">${esc(prettyWords(d.classification))}</span><span class="moi">${esc(d.inheritance)}</span><span class="names">${esc(names)}</span><span class="met">${esc(m)}</span></div>`;
   }).join('');
   const basis = callBasis(a);
+  const note = state.provenance?.stackNote;
   $('acmgBody').innerHTML = `
     <div class="dialog-head">
       <h2 id="acmgTitle"><span class="acmg-badge acmg-${esc(a.shorthand)}" style="cursor:default">${esc(prettyWords(a.classification) || a.shorthand)}</span><span class="sub">${esc(r.transcript?.gene?.symbol || '')}${r.transcript?.gene?.symbol && (r.hgvsc || r.hgvsp) ? ' &middot; ' : ''}${esc(r.hgvsc || r.hgvsp || '')}</span></h2>
       <button type="button" class="btn btn-secondary btn-sm" id="acmgClose">Close</button>
     </div>
     ${basis.line ? `<p class="acmg-met acmg-basis">${esc(basis.line)}</p>` : ''}
+    ${note ? `<div class="acmg-banner" role="note">${stackBannerHtml(note)}</div>` : ''}
     <div class="acmg-counts" role="group" aria-label="Criteria met, by strength">${evidenceChips(a, basis)}</div>
     <p class="acmg-met">Met criteria: <strong>${esc(met.map((x) => x.code).join(', ') || 'None')}</strong></p>
     ${dis ? `<div class="acmg-disorders"><div class="acmg-disorders-title">By mode of inheritance</div>${dis}<div class="acmg-disorders-note">The call above reads the modes of this gene together. Each row classifies the variant against the diseases ClinGen curates with that mode of inheritance.</div></div>` : ''}
     <ul class="acmg-criteria-grid">${crit}</ul>
-    <p class="dialog-foot">The line under the class says what decided this call: points (Tavtigian et al. 2020, ClinGen SVI), the combining table (Richards et al. 2015), or that neither side reached a call. Criteria marked &#x25CB; need clinical data that automated annotation does not have.</p>`;
+    <p class="dialog-foot">The line under the class says what decided this call: points (Tavtigian et al. 2020, ClinGen SVI), the combining table (Richards et al. 2015), or that neither side reached a call. ${note ? 'Criteria marked &#x25CB; were not evaluated: they need clinical data that automated annotation does not have, or they read a source this run lacked.' : 'Criteria marked &#x25CB; need clinical data that automated annotation does not have.'}</p>`;
   dialogOpener = opener || document.activeElement;
   $('acmgDialog').showModal();
   $('acmgClose').focus();
