@@ -61,7 +61,9 @@ python3 analysis/acmg_benchmark/scripts/09_compare_runs.py \
   --baseline v15 --runs v15_vcep v15_mpc --out /tmp/v15_comparison
 ```
 
-The run script takes about 35 seconds on the ten-core machine of the runs: 25 seconds to annotate 673,660 variants (74 seconds on one thread; `scripts/19_time_annotation.py`, 7 November 2026) and 11 to score, and writes to `data/benchmark/output_v15/`.
+The run script reads the databases of `data/benchmark/sa_db_complete/` (`SA_DIR` names another directory): links to every file of `sa_db/` but its SpliceAI, PhyloP and gnomAD files, which are replaced by 72 files built from the whole of gnomAD's v4.1 exomes file (`results/complete_databases/` holds their checksums and says how they were built and checked, and `scripts/sa_sources/make_complete_stack.sh` makes the directory and stops if a file is not the one that the checksums name).
+The first databases of the benchmark, distilled in April 2026 from regions of that file, lack records that it carries (`results/complete_vs_april_databases.md`), and the runs on them are kept under the names `manuscript_runs_april_databases/` and `output_v37_april_databases/`.
+The run script takes about 35 seconds on the ten-core machine of the runs (measured with the first databases): 25 seconds to annotate 673,660 variants (74 seconds on one thread; `scripts/19_time_annotation.py`, 7 November 2026) and 11 to score, and writes to `data/benchmark/output_v15/`.
 It records what produced the annotation in `run_provenance.txt` beside it: the
 flags, the hash of the binary and of every `--acmg-config` and
 `--functional-evidence` file, which inputs were read (by name and size, not
@@ -92,6 +94,11 @@ The checkout's classifier is v38, and a run called `v37_...` made by it would be
 The provenance file of a run records the commit and the number of uncommitted files of the checkout that ran the harness, which is not the commit of the binary; `results/v37_manuscript/binaries_v38.tsv` and `binaries.tsv` say what each binary was built from.
 
 ```bash
+# 0a. The databases of the runs: the 72 complete files of SpliceAI, PhyloP and gnomAD are copied into data/benchmark/sa_sources/complete/
+#     (they were built on another machine, from the whole of the gnomAD file: results/complete_databases/README.md), and the stack that
+#     the harness reads is made from them and from the files of sa_db/ that did not change
+bash analysis/acmg_benchmark/scripts/sa_sources/make_complete_stack.sh
+
 # 0. The eight binaries, each built from a clean export of its commit in a target directory of its own (the script stops if a
 #    patched build does not contain its patch): for the family v38, v38 (the tag v0.5.0-rc.1, release 0.5.0) and cut38 and
 #    hook38 (the tag with replay_validation/combiner_cutoff_env.patch and bp_hooks_env.patch); for Section 3.8, base (the commit
@@ -138,7 +145,7 @@ python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --workers 3
 python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --holdout --workers 3
 
 # 4. The same 96 runs by the classifier of v37, which are what Section 3.8 sets v38 against, and the later ClinVar release by v37
-#    (prepare writes the covered subset and the strata, which the two versions share)
+#    (prepare writes the strata of the release, which the two versions share, and the 2-star+ variants of the whole release are scored)
 python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --family v37 --workers 3
 python3 analysis/acmg_benchmark/scripts/11_manuscript_runs.py --family v37 --holdout --workers 3
 python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py --base v37 all
@@ -155,7 +162,7 @@ for fam in v37 v38; do
   for run in ${fam}_oct_clingen_complete ${fam}_oct_orphanet_lof ${fam}_oct_both ${fam}_oct_bp7_walker ${fam}_oct_bp1_loo \
              ${fam}_oct_bp1_veto1 ${fam}_oct_no_an_floor; do
     python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
-      --run data/benchmark/manuscript_runs/$run --labels data/benchmark/clinvar_20261004_covered/clinvar_2star_labels.tsv \
+      --run data/benchmark/manuscript_runs/$run --labels data/benchmark/clinvar_20261004/clinvar_2star_labels.tsv \
       --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
   done
 done
@@ -167,7 +174,7 @@ for run in v38 v38_base v38_alt_unguarded v38_alt_label_guard v38_alt_bs2_as_v37
 done
 for run in v38_oct_base v38_oct_shipped v38_oct_alt_unguarded v38_oct_alt_triple_cap; do
   python3 analysis/acmg_benchmark/scripts/12_per_variant_table.py \
-    --run data/benchmark/manuscript_runs/$run --labels data/benchmark/clinvar_20261004_covered/clinvar_2star_labels.tsv \
+    --run data/benchmark/manuscript_runs/$run --labels data/benchmark/clinvar_20261004/clinvar_2star_labels.tsv \
     --out data/benchmark/manuscript_runs/${run}_per_variant.tsv.gz
 done
 python3 analysis/acmg_benchmark/scripts/14_temporal_holdout.py table
@@ -186,9 +193,14 @@ FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/17_jo
 #     disagrees with the groups of criteria that the script states
 FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/18_criteria_status.py
 
-# 7. Every table (the files of v38, which the manuscript reads, and then their twins for v37), then the figures, then the checks
+# 7. Every table (the files of v38, which the manuscript reads, and then their twins for v37), the comparison with the first databases,
+#    then the figures, then the checks
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py --base v37
+# the runs on the first databases against the same runs on the complete ones (results/complete_vs_april_databases.md and the five
+# databases_*.csv files of manuscript/acmg/data/, which Table 10, Figures S1 and S4 and the checks read): it reads the per-variant tables
+# of the runs kept under the names manuscript_runs_april_databases/ and output_v37_april_databases/ (the runs of the first drafts)
+python3 analysis/acmg_benchmark/scripts/21_compare_databases.py
 python3 manuscript/acmg/generate_figures.py
 python3 manuscript/acmg/build_tables.py --write
 python3 manuscript/acmg/build_tables.py --check

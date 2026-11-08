@@ -306,7 +306,7 @@ for chr in {1..22} X Y; do
 done
 ```
 
-Three things about this path are worth knowing before you rely on it.
+Four things about this path are worth knowing before you rely on it.
 
 **The SpliceAI loss does not reach the classification.**
 gnomAD stores only the maximum delta score, so the extractor writes that max into all four DS fields.
@@ -322,6 +322,11 @@ They are not interchangeable, and fastVEP's `phylop_conserved` default of 2.0 wa
 **Coverage is gnomAD's coverage.**
 The exomes release covers capture targets and their flanks, so a deep-intronic variant has no record there and BP7's deep-intronic extension has nothing to read.
 Use the genomes release if that matters to you, or the upstream files below.
+
+**A fetch that ends early leaves a hole, and nothing says so.**
+The first SpliceAI and PhyloP databases of the benchmark were distilled from regions by a script that ignored the exit status of `tabix` and discarded its messages, and they lacked 8.2% and 8.3% of the values that gnomAD's file holds for the benchmark's variants, in 14 batches of 200 regions that each ended early.
+The classifier's output shows nothing of it, and agreement with ClinVar moved by 1.5 points when the databases were completed (`analysis/acmg_benchmark/results/complete_vs_april_databases.md`).
+`scripts/extract_gnomad_scores.py` stops when `tabix` fails; if you write your own extraction, check the exit status of every call, and compare the number of variants that have a value in the database with the number that the file holds.
 
 **Upstream alternatives.**
 Illumina's precomputed SpliceAI (all four components, real DP positions) is at <https://basespace.illumina.com/s/otSPW8hnhaZR> and needs an Illumina account:
@@ -494,22 +499,23 @@ The figures below are what it printed on 2026-08-31:
 | UCSC phyloP100way, 25 files | 5.2 GB, only if you choose it over gnomAD's |
 | Illumina SpliceAI (BaseSpace) | not used; account required |
 
-Built, from the benchmark's own `sa_db`, totalling 1.3 GB:
+Built, from the benchmark's own `sa_db_complete`, totalling 3.4 GB:
 
 | Database | Built size | Coverage |
 |---|---|---|
 | `clinvar.osa` | 50 MB | whole release |
 | `clinvar_protein.oga` | 18 MB | 15,665 genes |
-| `gnomad_chr*.osa2` | 369 MB | region-restricted |
+| `gnomad_chr*.osa2` | 1,914 MB | the whole of gnomAD's exomes file |
 | `gnomad_genes.oga` | 1.5 MB | 18,173 genes |
 | `omim.oga` | 0.4 MB | 2,924 genes |
 | `revel_chr*.osa` | 421 MB | genome-wide |
-| `spliceai_chr*.osa` | 151 MB | region-restricted |
-| `phylop_chr*.osa` | 115 MB | region-restricted |
+| `spliceai_chr*.osa2` | 464 MB | the whole of gnomAD's exomes file |
+| `phylop_chr*.osa2` | 340 MB | the whole of gnomAD's exomes file |
 | `repeatmasker.osi` | 239 MB | whole assembly |
 
-The three region-restricted rows are scoped to the benchmark's ClinVar 2-star+ regions.
-Yours will scale with your own target file.
+The three rows built from gnomAD's file are built from the whole of it, with 16-bit chunks (`--chunk-bits 16`, which keeps a lookup in a database that holds a variant in nearly every chunk cheap).
+The benchmark's first versions of the same three were scoped to its ClinVar 2-star+ regions, and the first SpliceAI and PhyloP databases lacked 8.2% and 8.3% of the values that the file holds for the benchmark's variants, because the extraction ignored the exit status of `tabix` (`analysis/acmg_benchmark/results/complete_databases/README.md`).
+If you scope the extraction to regions, check the exit status of every `tabix` call and the number of records that each batch returns: a stream that ends early leaves a database with a hole in it, and nothing in the classifier's output says so.
 
 ## Keeping the URLs honest
 

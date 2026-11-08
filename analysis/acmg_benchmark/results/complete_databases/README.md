@@ -30,10 +30,24 @@ REVEL, ClinVar, the ClinVar protein index, ClinGen, gnomAD's gene constraints an
 ## Why the first databases were replaced
 
 The first SpliceAI and PhyloP databases were distilled in April 2026 from regions of the same gnomAD file, and they lack records that the file carries.
-On the 673,660 variants of the benchmark, 486,580 have a SpliceAI value under the first databases and 529,992 under the complete ones, and 532,531 have a PhyloP value under the first and 580,460 under the complete.
+Of the 673,278 variants of the benchmark that have an alternative allele (the other 382 are reference-agreement records, which get no call under either stack), 486,580 have a SpliceAI value under the first databases and 529,992 under the complete ones, and 532,531 have a PhyloP value under the first and 580,460 under the complete.
+That is 8.2% of the SpliceAI values and 8.3% of the PhyloP values that exist.
 No variant has a value only under the first databases, and where both have a value the values are the same.
 gnomAD and REVEL have the same variants with a value under both stacks, and the same values.
-`complete_vs_april_databases.md` in the directory above sets what the runs say under each stack side by side.
+`../complete_vs_april_databases.md` sets what the runs say under each stack side by side, and `manuscript/acmg/data/databases_*.csv` hold the numbers.
+
+## Where the first databases lack their records
+
+`scripts/sa_sources/extract_spliceai_phylop_from_gnomad.py` read the gnomAD file in batches of 200 consecutive regions of `data/benchmark/sa_sources/clinvar_2star_regions.bed` (the regions of one chromosome at a time), wrote SpliceAI and PhyloP from the same `tabix` stream, ignored the exit status of `tabix` and sent its messages to /dev/null.
+The variants that only the complete databases have lie in 14 batches, the same 14 for SpliceAI and for PhyloP.
+In each of them the first databases have values up to a point and none after it, while the complete databases have values after it, and the first lost position is the same in both sources in all 14.
+That is 43,412 SpliceAI records and 47,472 PhyloP records.
+The other 457 PhyloP records are those of indels whose second base (position + 1) lies outside every region of the extraction.
+No other record is missing from either source.
+`manuscript/acmg/data/databases_lost_blocks.csv` lists the 14 batches, and `databases_causes.csv` the counts.
+The pattern is what a stream that ends early gives, in a script that does not look at the exit status and does not keep the messages.
+It is not a record of such a stream: the extraction was not repeated, and the messages of April were not kept.
+The regional gnomAD databases of the benchmark were built by `build_gnomad_per_chrom.sh`, which also ignores the exit status of `tabix` and also reads the regions 200 at a time, and they hold every record that the complete ones do for the benchmark's variants.
 
 ## The check of gnomAD
 
