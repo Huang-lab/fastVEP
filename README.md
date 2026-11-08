@@ -257,11 +257,13 @@ fastvep sa-build --source clinvar -i clinvar.vcf.gz -o sa_databases/clinvar --as
 # ACMG benchmark than the exomes alone.
 GNOMAD=https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/exomes
 wget "$GNOMAD/gnomad.exomes.v4.1.sites.chr1.vcf.bgz"
-fastvep sa-build --source gnomad -i gnomad.exomes.v4.1.sites.chr1.vcf.bgz -o sa_databases/gnomad_chr1 --assembly GRCh38
+fastvep sa-build --source gnomad -i gnomad.exomes.v4.1.sites.chr1.vcf.bgz -o sa_databases/gnomad_chr1 --assembly GRCh38 --chunk-bits 16
 
 # ── dbSNP — variant identifiers ──
+# --chunk-bits 16 for the dense sources (dbSNP, gnomAD): a lookup loads a whole chunk, one megabase by default,
+# and 1,000 variants spread over the genome took 24 s against the default dbSNP
 wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
-fastvep sa-build --source dbsnp -i GCF_000001405.40.gz -o sa_databases/dbsnp --assembly GRCh38
+fastvep sa-build --source dbsnp -i GCF_000001405.40.gz -o sa_databases/dbsnp --assembly GRCh38 --chunk-bits 16
 
 # ── COSMIC — somatic mutations (requires license) ──
 # https://cancer.sanger.ac.uk/cosmic/download
@@ -595,6 +597,8 @@ for the parsing rules and the escaping table.
 | `--name` | Display + JSON-key name for `custom_*` sources | derived from input filename |
 | `--info-fields` | Comma-separated INFO keys to extract for `custom_vcf` | all INFO keys |
 | `--format` | On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2). Every allele-level source has a v2 encoder, so `auto` builds the smaller, faster `.osa2` for all of them; gene- and interval-level sources have no v2 form and build `.oga`/`.osi` regardless. See [Choosing v1 vs v2](docs/SUPPLEMENTARY_ANNOTATIONS.md#choosing-v1-vs-v2---format) for when to force `osa`. | `auto` |
+| `--chunk-bits` | Width of the chunks of an `.osa2`, as a power of two (1 to 20). A lookup loads the whole chunk it falls in, so a dense source (dbSNP, gnomAD) answers a scattered lookup several times faster with 16 than at its own width of 20, for about 10% more file and the same answers. See [Chunk width](docs/SUPPLEMENTARY_ANNOTATIONS.md#chunk-width-for-dense-sources---chunk-bits). | each source's own (20) |
+| `--allow-empty` | Write the database even when no record was found to put in it (a build that finds nothing is an error by default) | off |
 
 ### `fastvep sa-convert`
 
@@ -641,7 +645,7 @@ IMPACT is HIGH and AF < 0.01
 | `--bind` | Bind address (also `FASTVEP_BIND` env) | `0.0.0.0` |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--max-body-size` | Max request body in bytes | `10485760` |
-| `--max-concurrent` | Max concurrent requests of any kind | `64` |
+| `--max-concurrent` | Max concurrent requests to each route (each has its own limit) | `64` |
 | `--max-parallel` | Annotations that run at once; the next request waits `--queue-timeout-seconds` for a place, then gets `503` with `Retry-After` (also `FASTVEP_MAX_PARALLEL` env) | number of cores |
 | `--queue-timeout-seconds` | How long a request waits for a place to annotate (also `FASTVEP_QUEUE_TIMEOUT_SECONDS` env) | `30` |
 | `--max-response-bytes` | Largest JSON answer one request may produce, built in memory a batch of variants at a time; beyond it `413` (also `FASTVEP_MAX_RESPONSE_BYTES` env) | `134217728` |

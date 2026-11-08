@@ -309,6 +309,9 @@ pub struct GenomeRegistry {
 pub struct SaInventory {
     pub sources: LoadedSources,
     pub skipped: Vec<SkippedSource>,
+    /// How many databases opened, of any kind: what `has_sa` means. A directory whose only file is
+    /// an empty or truncated database has a file and has none of these.
+    pub databases: usize,
 }
 
 impl GenomeRegistry {
@@ -430,6 +433,7 @@ impl GenomeRegistry {
             return Ok(SaInventory {
                 sources: ctx.loaded_sources(),
                 skipped: ctx.sa_skipped.clone(),
+                databases: ctx.sa_providers.len() + ctx.gene_providers.len(),
             });
         }
         let Some(data_dir) = self.data_dir.as_deref() else {
@@ -468,6 +472,7 @@ fn inspect_sa_dir(dir: &Path) -> SaInventory {
                 .chain(genes.iter().map(|g| g.header.json_key.as_str())),
         ),
         skipped,
+        databases: alleles.len() + genes.len(),
     }
 }
 

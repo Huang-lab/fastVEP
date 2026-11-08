@@ -68,8 +68,9 @@ struct Cli {
     #[arg(long, default_value_t = 10_485_760)]
     max_body_size: usize,
 
-    /// Maximum concurrent requests of any kind. Beyond it a request waits; see
-    /// `--max-parallel` for how many annotations run at once.
+    /// Maximum concurrent requests to each route of the server: every route has a limit of its
+    /// own, so a busy `/api/annotate` does not hold up `/api/status`. Beyond it a request waits;
+    /// see `--max-parallel` for how many annotations run at once.
     #[arg(long, default_value_t = 64)]
     max_concurrent: usize,
 
@@ -234,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
                         .max(1),
                     queue_timeout: std::time::Duration::from_secs(cli.queue_timeout_seconds),
                     batch_variants: default_limits.batch_variants,
+                    batch_rows: default_limits.batch_rows,
                 },
             },
         )

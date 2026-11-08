@@ -8,13 +8,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Instant;
 
-use fastvep_annotate::pick::{PickFlags, PickRequest};
+use fastvep_annotate::pick::{PickFlags, PickMode, PickRequest};
 
 use crate::acmg::{AcmgReadiness, AcmgStack};
 use crate::context::AnnotationContext;
 use crate::errors::AppError;
 use crate::genomes::{resolve_genome_paths, scan_data_dir, GenomeRegistry};
-use crate::limits::Limits;
+use crate::limits::{Limits, MAX_ALT_ALLELES, MAX_COORDINATE};
 
 #[derive(Serialize, Deserialize, Default)]
 struct SavedStats {
@@ -416,8 +416,13 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
                 .loaded(&listing.name)
                 .map(|g| g.transcript_count())
         };
-        let (acmg, skipped) = if is_default {
-            (default_acmg.clone(), default_skipped.clone())
+        // `has_sa` is whether a database opened, not whether a file is there: a genome whose only
+        // database is empty or truncated has a file, is annotated with nothing, and used to be
+        // listed as annotated (the page said "supplementary annotations"). The listing's own
+        // `listing.has_sa` is the scan of the directory, and stays what it is for a directory that
+        // cannot be opened.
+        let (acmg, skipped, has_sa) = if is_default {
+            (default_acmg.clone(), default_skipped.clone(), default_sa)
         } else {
             // Loaded: what the classifier will be told. Not loaded: what its `sa/` directory
             // holds, found once. A directory that cannot be read has none of the sources.
@@ -429,13 +434,14 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
             (
                 AcmgReadiness::of(inventory.sources, state.acmg_allow_partial),
                 skipped_json(&inventory.skipped),
+                inventory.databases > 0,
             )
         };
         genomes.push(serde_json::json!({
             "name": listing.name,
             "gff3": listing.gff3,
             "has_fasta": listing.has_fasta,
-            "has_sa": listing.has_sa,
+            "has_sa": has_sa,
             "loaded": transcripts.is_some(),
             "default": is_default,
             "transcripts": transcripts,
@@ -639,12 +645,47 @@ fn readable_size(bytes: usize) -> String {
     }
 }
 
+/// One data line of a request, read: its text and how many rows its answer will have at most.
+struct Record<'a> {
+    text: &'a str,
+    /// The transcripts the variant overlaps, for each of its alternate alleles: what the answer
+    /// holds a row for. With a reducing `pick` it is one row for each allele, since only the
+    /// winner is kept.
+    rows: usize,
+}
+
+/// A row of the answer is at least this many bytes of JSON without `acmg`, and this many with it,
+/// as measured on ClinVar variants against GRCh38 (about 1 KB and about 8 KB on the average). The
+/// floor is under the average, so that a variant is only refused for its size when it would not
+/// have fitted anyway.
+const ROW_BYTES: usize = 700;
+const ACMG_ROW_BYTES: usize = 5_000;
+
 /// Read every record of the request before annotating any, so that a line that cannot be read is
 /// refused with its number and the reason, as a `400`, and not met at record 30,000 as an internal
 /// error. The parser the annotation uses is the one used here, so what passes here parses there.
 ///
-/// Returns the header lines and the record lines, each with its place in the input.
-fn read_vcf_lines(vcf_text: &str) -> Result<(Vec<&str>, Vec<&str>), AppError> {
+/// The records are also counted for what the answer will cost. A record with more alternate alleles
+/// than [`MAX_ALT_ALLELES`] is refused before it is parsed (the parse is where the cost of the
+/// alleles is), one whose position or END is beyond [`MAX_COORDINATE`] is refused, and the rows of
+/// each are the transcripts it overlaps: the annotation is batched by them, and a variant whose
+/// answer alone would pass the response limit is refused here, with its number, before any work is
+/// spent on it.
+///
+/// Returns the header lines and the records.
+fn read_vcf_lines<'a>(
+    ctx: &AnnotationContext,
+    vcf_text: &'a str,
+    pick: Option<PickRequest>,
+    acmg_requested: bool,
+    limits: &Limits,
+) -> Result<(Vec<&'a str>, Vec<Record<'a>>), AppError> {
+    let reduces = pick.is_some_and(|p| p.mode == PickMode::Reduce);
+    let row_bytes = if acmg_requested {
+        ACMG_ROW_BYTES
+    } else {
+        ROW_BYTES
+    };
     let mut headers = Vec::new();
     let mut records = Vec::new();
     for (index, line) in vcf_text.lines().enumerate() {
@@ -656,23 +697,96 @@ fn read_vcf_lines(vcf_text: &str) -> Result<(Vec<&str>, Vec<&str>), AppError> {
             headers.push(trimmed);
             continue;
         }
-        if let Err(e) = fastvep_io::vcf::parse_vcf_line(trimmed) {
-            let message = format!("{e:#}");
-            let shown: String = message.chars().take(200).collect();
+        let alt_alleles = trimmed
+            .split('\t')
+            .nth(4)
+            .map_or(0, |alt| alt.matches(',').count() + 1);
+        if alt_alleles > MAX_ALT_ALLELES {
             return Err(AppError::BadRequest(format!(
-                "VCF line {} cannot be read: {}{}",
+                "VCF line {} has {} alternate alleles, and this server annotates up to {} for one \
+                 record. Split the record, or run `fastvep annotate` on your own machine.",
                 index + 1,
-                shown,
-                if shown.len() < message.len() {
-                    " ..."
-                } else {
-                    ""
-                }
+                alt_alleles,
+                MAX_ALT_ALLELES
             )));
         }
-        records.push(trimmed);
+        let vf = match fastvep_io::vcf::parse_vcf_line(trimmed) {
+            Ok(vf) => vf,
+            Err(e) => {
+                let message = format!("{e:#}");
+                let shown: String = message.chars().take(200).collect();
+                return Err(AppError::BadRequest(format!(
+                    "VCF line {} cannot be read: {}{}",
+                    index + 1,
+                    shown,
+                    if shown.len() < message.len() {
+                        " ..."
+                    } else {
+                        ""
+                    }
+                )));
+            }
+        };
+        if vf.position.start > MAX_COORDINATE || vf.position.end > MAX_COORDINATE {
+            return Err(AppError::BadRequest(format!(
+                "VCF line {} names a position or END beyond {}, the largest coordinate this \
+                 server annotates.",
+                index + 1,
+                MAX_COORDINATE
+            )));
+        }
+        let alleles = vf.alt_alleles.len().max(1);
+        let overlapped = ctx.overlapping_transcripts(
+            &vf.position.chromosome,
+            vf.position.start,
+            vf.position.end,
+        );
+        let rows = if reduces {
+            alleles
+        } else {
+            overlapped.max(1).saturating_mul(alleles)
+        };
+        let alone = rows.saturating_mul(row_bytes);
+        if alone > limits.max_response_bytes {
+            return Err(AppError::TooLarge(format!(
+                "The variant at VCF line {} overlaps {} transcripts, so its answer alone would be \
+                 about {}, more than the {} this server returns in one response. Ask for one \
+                 transcript per variant (`pick`), or run `fastvep annotate` on your own machine.",
+                index + 1,
+                overlapped,
+                readable_size(alone),
+                readable_size(limits.max_response_bytes),
+            )));
+        }
+        records.push(Record {
+            text: trimmed,
+            rows,
+        });
     }
     Ok((headers, records))
+}
+
+/// Where each batch of records ends: at most `max_variants` of them and, past the first, at most
+/// `max_rows` rows, so that a variant that overlaps thousands of transcripts is annotated nearly
+/// alone and a hundred of them are never held at once.
+fn batch_ends(records: &[Record<'_>], max_variants: usize, max_rows: usize) -> Vec<usize> {
+    let max_variants = max_variants.max(1);
+    let mut ends = Vec::new();
+    let mut start = 0;
+    while start < records.len() {
+        let mut end = start;
+        let mut rows = 0usize;
+        while end < records.len()
+            && end - start < max_variants
+            && (end == start || rows.saturating_add(records[end].rows) <= max_rows)
+        {
+            rows = rows.saturating_add(records[end].rows);
+            end += 1;
+        }
+        ends.push(end);
+        start = end;
+    }
+    ends
 }
 
 /// Annotate with one context, attaching ACMG when the request asked for it.
@@ -714,10 +828,17 @@ fn annotate_with(
         None
     };
 
-    let (headers, records) = read_vcf_lines(vcf_text)?;
+    let (headers, records) = read_vcf_lines(ctx, vcf_text, pick, acmg_requested, budget.limits)?;
     let mut results = ResultsBuffer::new();
     let mut batch_text = String::new();
-    for batch in records.chunks(budget.limits.batch_variants.max(1)) {
+    let mut first = 0;
+    for end in batch_ends(
+        &records,
+        budget.limits.batch_variants,
+        budget.limits.batch_rows,
+    ) {
+        let batch = &records[first..end];
+        first = end;
         if budget.cancelled.load(Ordering::Relaxed) {
             return Err(AppError::Internal(anyhow::anyhow!(
                 "the client went away; the annotation was stopped"
@@ -733,7 +854,11 @@ fn annotate_with(
             )));
         }
         batch_text.clear();
-        for line in headers.iter().chain(batch.iter()) {
+        for line in headers
+            .iter()
+            .copied()
+            .chain(batch.iter().map(|record| record.text))
+        {
             batch_text.push_str(line);
             batch_text.push('\n');
         }
@@ -765,7 +890,6 @@ async fn answer_from_registry(
     vcf_text: String,
     pick: Option<PickRequest>,
     acmg_requested: bool,
-    started: Instant,
     cancelled: Arc<AtomicBool>,
 ) -> Result<(Annotated, GeneModelId), AppError> {
     if state.genomes.data_dir().is_none() {
@@ -781,9 +905,12 @@ async fn answer_from_registry(
     let ctx = Arc::clone(state);
     let answered = tokio::task::spawn_blocking(move || {
         let _place = permit;
+        // The time an annotation is allowed runs from the moment its work begins: not from the
+        // request, which may have waited for a place and for the genome to load, neither of which
+        // is the work.
         let budget = Budget {
             limits: &ctx.limits,
-            started,
+            started: Instant::now(),
             cancelled: &cancelled,
         };
         let annotated = annotate_with(
@@ -839,8 +966,18 @@ pub async fn annotate(
     // client has gone.
     let cancelled = Arc::new(AtomicBool::new(false));
     let _on_drop = CancelOnDrop(Arc::clone(&cancelled));
-    let permit = state.compute_permit().await?;
-    let first = {
+    // A request that names a genome other than the default goes straight to the registry. It used
+    // to take a place first, only to learn there that the default model was not the one asked for,
+    // and then queue a second time for the genome's own annotation. The check under the lock below
+    // stays, for the request that names the default or none, and for a replacement that lands in
+    // between.
+    let names_another_genome = wanted
+        .as_deref()
+        .is_some_and(|name| state.current_default_genome() != name);
+    let first = if names_another_genome {
+        DefaultAnswer::NotTheDefault(vcf_text)
+    } else {
+        let permit = state.compute_permit().await?;
         let cancelled = Arc::clone(&cancelled);
         tokio::task::spawn_blocking(move || {
             let _place = permit;
@@ -867,7 +1004,7 @@ pub async fn annotate(
             let gene_model = ctx.gene_model_id(&guard);
             let budget = Budget {
                 limits: &ctx.limits,
-                started: start,
+                started: Instant::now(),
                 cancelled: &cancelled,
             };
             let annotated = annotate_with(
@@ -905,7 +1042,6 @@ pub async fn annotate(
                 vcf_text,
                 pick,
                 acmg_requested,
-                start,
                 Arc::clone(&cancelled),
             )
             .await?

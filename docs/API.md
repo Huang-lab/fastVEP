@@ -106,7 +106,7 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
     "gene_model_generation": 0,
     "gff3_source": "Homo_sapiens.GRCh38.115.gff3",
     "has_fasta": true,
-    "limits": {"max_body_bytes": 10485760, "max_response_bytes": 134217728, "max_request_seconds": 90, "max_parallel": 4},
+    "limits": {"max_body_bytes": 10485760, "max_response_bytes": 134217728, "max_request_seconds": 90, "max_parallel": 4, "max_alt_alleles": 256},
     "sa_sources": ["ClinVar", "dbSNP"],
     "sa_info": [
         {"key": "clinvar", "name": "ClinVar", "version": "2026-11-02", "assembly": "GRCh38", "files": 1},
@@ -350,12 +350,16 @@ So a request is bounded, and told how when it is not met:
 - **Malformed input is a `400`.**
   Every record is read before any is annotated, and a line that cannot be read is refused with its number and the parser's reason (`VCF line 2 cannot be read: Invalid POS: foo`).
   It used to be an internal error, met at the line that failed, with nothing said.
+  A record with more than 256 alternate alleles (`limits.max_alt_alleles`) is refused before it is parsed, because the cost of annotating one grows with the square of their number (200,000 alleles in a 2.4 MB line ran 108 s), and a position or END beyond 4,294,967,295 is refused because the arithmetic of the annotation overflows there.
 - **The answer has a size limit.**
   The annotation is made a batch of variants at a time and written out as it goes.
+  A batch is at most 100 variants and, past the first, at most 4,000 rows, a row being a transcript that a variant overlaps (for each of its alternate alleles): a variant makes a row for every transcript, so an SNV is a few rows and a deletion of a chromosome arm thousands, and a hundred of those held 2.4 GB before the first byte went out.
+  A variant whose answer alone would pass the limit (it overlaps more than about 190,000 transcripts, or 26,000 with `acmg`, which are 700 and 5,000 bytes a row at least) is refused before it is annotated, with its line and the transcripts it overlaps, and the same request with `pick` is answered.
   A request whose answer passes `--max-response-bytes` (128 MiB by default) is refused with `413` at the batch that passes it, saying how many variants were done and what to change: fewer variants per request, `pick`, or the command-line tool.
   The batches are also what bound the memory, since the answer as values is five to ten times the size of its text.
 - **The work has a time limit.**
   A request that runs past `--max-request-seconds` (90 by default) is refused with `413`, with what was done.
+  The time counts from the start of the work, once the request has a place and its genome is loaded, and not from its arrival: a request that waited 700 ms for a place with 500 ms allowed was refused before it began.
   Keep it below the read timeout of the proxy in front of the server.
 - **Annotations run in at most `--max-parallel` places** (one for each core by default), because one annotation is one thread and more of them than cores only make each slower and the process larger.
   A request that finds every place taken waits `--queue-timeout-seconds` (30) for one, and is then turned away with `503` and `Retry-After: 5`.
@@ -463,7 +467,7 @@ Check the server's stderr when you get one.
 | `--preload-genomes` | `FASTVEP_PRELOAD_GENOMES` | off | Load every genome of `--data-dir` in the background at startup instead of on its first request |
 | `--distance` | | `5000` | Upstream/downstream distance in bp |
 | `--max-body-size` | | `10485760` | Request body cap in bytes |
-| `--max-concurrent` | | `64` | Concurrent requests of any kind; beyond it a request waits |
+| `--max-concurrent` | | `64` | Concurrent requests to each route (every route has its own limit); beyond it a request waits |
 | `--max-parallel` | `FASTVEP_MAX_PARALLEL` | cores | Annotations that run at once; a request finds a place or waits `--queue-timeout-seconds` and is turned away with `503` |
 | `--queue-timeout-seconds` | `FASTVEP_QUEUE_TIMEOUT_SECONDS` | `30` | How long a request waits for a place |
 | `--max-response-bytes` | `FASTVEP_MAX_RESPONSE_BYTES` | `134217728` | Largest JSON answer one request may produce; beyond it `413` |

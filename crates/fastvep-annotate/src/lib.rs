@@ -257,6 +257,18 @@ impl AnnotationContext {
         })
     }
 
+    /// How many transcripts a variant at these coordinates overlaps, with the context's distance
+    /// on each side: the rows its answer has before its alternate alleles multiply them. Counting
+    /// them costs one query of the transcript index and no annotation, which is what lets a
+    /// server size a batch, or refuse a variant, before any work is spent on it.
+    pub fn overlapping_transcripts(&self, chrom: &str, start: u64, end: u64) -> usize {
+        let query_start = start.saturating_sub(self.distance).max(1);
+        let query_end = end.saturating_add(self.distance);
+        self.transcript_provider
+            .get_transcripts(chrom, query_start, query_end)
+            .map_or(0, |transcripts| transcripts.len())
+    }
+
     pub fn transcript_count(&self) -> usize {
         self.transcript_provider.transcript_count()
     }
@@ -431,7 +443,7 @@ impl AnnotationContext {
         for vf in &mut variants {
             let chrom = &vf.position.chromosome;
             let query_start = vf.position.start.saturating_sub(self.distance).max(1);
-            let query_end = vf.position.end + self.distance;
+            let query_end = vf.position.end.saturating_add(self.distance);
             let overlapping = self
                 .transcript_provider
                 .get_transcripts(chrom, query_start, query_end)

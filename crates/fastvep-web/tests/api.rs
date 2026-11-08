@@ -1630,4 +1630,34 @@ async fn the_genome_list_reports_the_skipped_files_of_a_genome_that_is_not_loade
     );
     // The empty database is not a source of the stack and is not counted as one.
     assert_eq!(beta["acmg"]["loaded"], json!([]));
+    // And it is not an annotation: a directory whose only database is empty is listed as having
+    // none, where it used to be listed as annotated and the page said so.
+    assert_eq!(beta["has_sa"], false);
+}
+
+#[tokio::test]
+async fn a_genome_is_listed_as_annotated_when_a_database_opened_whether_or_not_it_is_in_the_stack()
+{
+    let dir = genome_dir("has-sa-opened");
+    let sa = dir.join("beta").join("sa");
+    std::fs::create_dir_all(&sa).unwrap();
+    // dbSNP is a database and not one of the nine sources the classifier reads.
+    write_osa2(&sa, "dbsnp", "dbsnp", "latest", 2);
+    let gff3 = dir.join("alpha").join("mini.gff3");
+    let ctx = AnnotationContext::new(gff3.to_str(), None, None, 5000).expect("build context");
+    let state = Arc::new(SharedState::new(
+        ctx,
+        default_genome_name(gff3.to_str(), Some(dir.as_path())),
+        config(Some(dir), false),
+    ));
+    let (_, listing) = get(&state, "/api/genomes").await;
+    let beta = listing["genomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "beta")
+        .unwrap();
+    assert_eq!(beta["has_sa"], true);
+    assert_eq!(beta["sa_skipped"], json!([]));
+    assert_eq!(beta["acmg"]["loaded"], json!([]));
 }
