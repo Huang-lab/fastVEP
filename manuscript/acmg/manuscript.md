@@ -93,7 +93,10 @@ Along the way we read each recommendation that the classifier cites for a number
 ### 2.1 The classifier and its evidence sources
 
 The classification engine is the `fastvep-classification` crate of fastVEP (version 0.4.0): 14,857 lines of Rust with 340 unit tests at the commit analyzed.
-That commit is v37 (5d8004a), and every number of Sections 2 to 3.7 is v37's; Section 3.8 describes what was changed in the classifier afterwards (v38) and measures it with the same harness.
+That commit is v37 (5d8004a).
+v37 and v38 are versions of the classifier and not builds of the genome: every run of this paper, of either version, is on GRCh38 (Sections 2.2 and 2.8).
+v38 (5293cc0) is the latest version of the classifier and is the classifier of release 0.5.0 (the tag `v0.5.0-rc.1`); Sections 2.10 and 3.8 describe what was changed in it and measure it with the same harness.
+The other numbers of Sections 2 and 3 are v37's, except that the status of the 28 criteria in Section 2.1 (Supplementary Table S1) was read from the engine of v38, and the analyses of Sections 3.1 to 3.7 were not repeated on v38 (Section 3.8 repeats the four thresholds that read inheritance).
 It is called from the annotation loop after consequence prediction and HGVS naming, once per allele and transcript, and with `--pick`, which was used throughout, one transcript is reported per variant, chosen by VEP's default order (MANE Select, MANE Plus Clinical, canonical, APPRIS, TSL, biotype, CCDS, consequence severity; MANE is described by Morales et al., 2022).
 The Ensembl GFF3 that we used holds no APPRIS attribute, so that step of the order does nothing here.
 Both per-variant loops of the code base, the shared annotation library and the command-line batch path, call the same classifier and the same helper for splice context, and each has end-to-end tests.
@@ -1258,6 +1261,13 @@ The real ClinGen rows that test the reading of the field are in `crates/fastvep-
 `17_joint_boundary_cases.py` annotates the variants that the joint release turns into errors, or out of a pathogenic-side call, through both databases.
 `18_criteria_status.py` annotates every 40th record of the benchmark to JSON and writes the status of the 28 criteria (Supplementary Table S1).
 The reviewer's workbooks are not in the repository.
+
+The results of each version are in these places.
+The results of v37 are the 89 runs on the April set and the 7 on the October release in `analysis/acmg_benchmark/results/v37_manuscript/` (`runs.tsv`, `holdout_runs.tsv` and `run_matrix.tsv`, with the provenance and the configuration of each run), Tables 3 to 7, Figures 1 to 5 and S1 to S4, and Supplementary Tables S1 to S9 and Appendix Tables A1 to A9, whose 74 files in `manuscript/acmg/data/` are the ones whose names do not begin with v38_.
+The one file among them that was made with the binary of v38 is `criteria_status.csv` of Supplementary Table S1.
+The results of v38 are the 42 runs of Section 3.8 (`runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv` of the same directory, with their provenance files and configurations in its subdirectories provenance and configs, where the files of these runs are named v38_ and the name of the run), their repetition by release 0.5.0 in `analysis/acmg_benchmark/results/v38_v0.5.0/` (all 42 identical), the 23 files of `manuscript/acmg/data/` whose names begin with v38_ (Appendix Tables A10 to A16, which are sheets A10 to A16 of `supplementary_tables.xlsx`), Tables 8 and 9, and the sections "v38", "The full rerun of 4 November 2026", "After v38" and "Release 0.5.0 reproduces v38" of `RUN_VERSIONS.md`.
+The annotated VCFs and the per-variant tables of the v38 runs are in `data/benchmark/manuscript_runs/v38*` on the machine that made them, and are not in the repository.
+The analyses of Sections 3.1 to 3.7 have not been repeated on v38, except for the four thresholds that read inheritance and the runs on gnomAD's joint release (Section 3.8).
 
 ## Declarations
 
