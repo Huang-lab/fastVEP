@@ -137,8 +137,8 @@ fi
 
 # Rat (~2GB)
 echo "  → Rat (GRCr8)..."
-mkdir -p "$DATA_DIR/rat_mratbn72_ensembl_115"
-cd "$DATA_DIR/rat_mratbn72_ensembl_115"
+mkdir -p "$DATA_DIR/rat_grcr8_ensembl_115"
+cd "$DATA_DIR/rat_grcr8_ensembl_115"
 if [ ! -f Rattus_norvegicus.GRCr8.115.gff3 ]; then
     wget -q --show-progress https://ftp.ensembl.org/pub/release-115/gff3/rattus_norvegicus/Rattus_norvegicus.GRCr8.115.gff3.gz
     gunzip Rattus_norvegicus.GRCr8.115.gff3.gz

@@ -333,7 +333,7 @@ samtools faidx Mus_musculus.GRCm39.dna.primary_assembly.fa
 cd /opt/fastvep/data
 
 # Rat (Rattus norvegicus) - GRCr8
-mkdir -p rat_mratbn72_ensembl_115 && cd rat_mratbn72_ensembl_115
+mkdir -p rat_grcr8_ensembl_115 && cd rat_grcr8_ensembl_115
 wget https://ftp.ensembl.org/pub/release-115/gff3/rattus_norvegicus/Rattus_norvegicus.GRCr8.115.gff3.gz
 gunzip Rattus_norvegicus.GRCr8.115.gff3.gz
 wget https://ftp.ensembl.org/pub/release-115/fasta/rattus_norvegicus/dna/Rattus_norvegicus.GRCr8.dna.toplevel.fa.gz
@@ -544,7 +544,8 @@ EOF
 
 **Option B: Multi-genome (recommended)**
 
-Uses `--data-dir` so users can switch genomes from the web UI dropdown. Each subdirectory of `--data-dir` appears as a selectable genome.
+Uses `--data-dir` so each request can name the genome it wants, and the web UI's dropdown lists every subdirectory of it.
+Nothing is replaced when a visitor chooses, so `--allow-model-replacement` stays off.
 
 ```bash
 cat > /etc/systemd/system/fastvep.service << 'EOF'
@@ -562,17 +563,21 @@ Environment=FASTVEP_PORT=3000
 Environment=FASTVEP_BIND=127.0.0.1
 # Data directory containing one subdirectory per genome (hg38_ensembl_115, hg19_ensembl_113, ...)
 Environment=FASTVEP_DATA_DIR=/opt/fastvep/data
-# The genome loaded at startup (users can switch via the web UI)
+# The genome that answers a request naming none; every other genome of the data directory answers when a request names it
 Environment=FASTVEP_GFF3=/opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.115.gff3
 Environment=FASTVEP_FASTA=/opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.dna.primary_assembly.fa
 Environment=FASTVEP_SA_DIR=/opt/fastvep/data/hg38_ensembl_115/sa
+# Load the other genomes in the background at startup, so no visitor waits for one (true, 1, yes or on)
+Environment=FASTVEP_PRELOAD_GENOMES=true
 
 ExecStart=/opt/fastvep/bin/fastvep-web
 Restart=always
 RestartSec=5
 
 LimitNOFILE=65535
-# Allow more memory for multi-genome switching (a human genome with its sequences takes about 2.6 GiB once loaded, and 4.5 GiB while its cache is first built; yeast takes 54 MiB, mouse 1.1 GiB)
+# Memory with every genome resident: the nine genomes of fastVEP.org took 3.5 GiB of heap and 6.5 GiB of memory-mapped FASTA and SA pages,
+# which the kernel reclaims under pressure (measured on 8 November 2026, right after the first preload, on a 16 GB machine).
+# The preload took about 70 seconds the first time, while the transcript caches were built.
 MemoryMax=24G
 
 [Install]
