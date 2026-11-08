@@ -4,9 +4,14 @@ A high-performance Variant Effect Predictor written in Rust. fastVEP predicts th
 
 fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.ensembl.org/info/docs/tools/vep/index.html) and [Illumina Nirvana](https://github.com/Illumina/Nirvana), while delivering significantly better performance through Rust's zero-cost abstractions and native parallelism.
 
-**Try it now:** A hosted web server is available at [fastVEP.org](https://fastVEP.org) — paste VCF data and get annotated results instantly, no installation required. On 7 November 2026 the server, which runs release 0.3.0, had served **3,427 genome analysis sessions** and annotated **160,983 variants**.
+**Try it now:** A hosted web server is available at [fastVEP.org](https://fastVEP.org) - paste VCF data and get annotated results instantly, no installation required.
+On 7 November 2026 it had served **3,427 genome analysis sessions** and annotated **160,983 variants**.
+Since 8 November 2026 it runs a build of the 0.5.0 release candidate and answers from nine genomes: human (GRCh38 and GRCh37), mouse, rat, zebrafish, fruit fly, *C. elegans*, yeast and Arabidopsis.
 
 The hosted instance is for interactive use in the browser. For programmatic access, run your own server: see the **[REST API guide](docs/API.md)**.
+
+**Questions and discussion:** join the [fastVEP Slack](https://join.slack.com/t/fastvep/shared_invite/zt-4g20tqjvo-wGyIEnN~Ncrc4zXiu_1XJA).
+Bug reports and feature requests belong in [GitHub issues](https://github.com/Huang-lab/fastVEP/issues).
 
 ## Features
 
@@ -184,7 +189,8 @@ fastvep-web --gff3 Homo_sapiens.GRCh38.115.gff3 --fasta Homo_sapiens.GRCh38.dna.
 fastvep-web --gff3 genes.gff3 --fasta ref.fa --sa-dir /path/to/sa_databases/
 ```
 
-Open http://localhost:8080 in your browser. The web interface lets you paste VCF data and view results in an interactive table. Switching gene models in the page needs `--allow-model-replacement`, which is off by default because a replacement changes the answers that every client of the server gets.
+Open http://localhost:8080 in your browser. The web interface lets you paste VCF data and view results in an interactive table. With `--data-dir` the page offers every genome in that directory, and each analysis names the genome it wants, so choosing one needs no flag and changes nobody else's answers.
+Uploading your own GFF3 in the page replaces the server's gene model for every client, so that needs `--allow-model-replacement`, which is off by default.
 
 > **Note:** `fastvep-web` is a separate production-quality binary (axum/tokio, async, multi-connection). The legacy `fastvep web` command still works but is single-threaded.
 
@@ -195,7 +201,7 @@ The same binary serves a JSON API over the same annotation engine, so anything t
 ```bash
 curl -s -X POST http://localhost:8080/api/annotate \
   -H 'Content-Type: application/json' \
-  -d '{"vcf": "17\t43124027\t.\tG\tA\t50\tPASS\t.", "acmg": true}'
+  -d '{"vcf": "17\t43124025\t.\tA\tG\t50\tPASS\t.", "acmg": true}'
 ```
 
 It is designed for self-hosting on a workstation or local network, which is also the only supported way to use it: please do not point scripts at fastVEP.org, which is a single small machine sized for interactive browser use. Bulk VCFs belong in `fastvep annotate`, not in an HTTP request.
@@ -302,11 +308,13 @@ fastvep-web \
   --port 8080
 ```
 
-Eight flags also take an environment variable, for container deployments: `FASTVEP_GFF3`, `FASTVEP_FASTA`, `FASTVEP_SA_DIR`, `FASTVEP_DATA_DIR`, `FASTVEP_PORT`, `FASTVEP_BIND`, `FASTVEP_STATS_FILE` and `FASTVEP_ALLOW_MODEL_REPLACEMENT`.
+Nine flags also take an environment variable, for container deployments: `FASTVEP_GFF3`, `FASTVEP_FASTA`, `FASTVEP_SA_DIR`, `FASTVEP_DATA_DIR`, `FASTVEP_PORT`, `FASTVEP_BIND`, `FASTVEP_STATS_FILE`, `FASTVEP_PRELOAD_GENOMES` and `FASTVEP_ALLOW_MODEL_REPLACEMENT`.
+The two switches accept `true`, `1`, `yes` or `on`.
 
 ### Multi-organism setup
 
-To serve multiple genomes from the web interface, organize data into subdirectories and use `--data-dir`. Each subdirectory is one genome — the server auto-detects GFF3, FASTA, and SA files inside.
+To serve multiple genomes from the web interface, organize data into subdirectories and use `--data-dir`.
+Each subdirectory is one genome, and the server detects the GFF3, FASTA and SA files inside it.
 
 **Directory layout:**
 
@@ -354,9 +362,15 @@ wget -O- https://ftp.ensembl.org/pub/release-115/gff3/danio_rerio/Danio_rerio.GR
 fastvep-web --data-dir genomes/
 ```
 
-Users can switch between organisms from the dropdown in the web UI when the server is started with `--allow-model-replacement` (off by default: without it a request to switch is refused). When a genome has a `sa/` subdirectory, its SA databases are automatically loaded. The dropdown shows "(FASTA + SA)" labels for genomes that have these resources.
+Each analysis names its genome, from the dropdown in the web interface or in the `genome` field of `POST /api/annotate`, and is answered from that genome's own model.
+Nothing is replaced, so choosing a genome needs no `--allow-model-replacement` and cannot change what any other client is answered against.
+A genome is loaded the first time it is asked for and then kept; `--preload-genomes` loads them all in the background at startup instead, so no visitor waits.
+An unknown name is refused rather than answered from the default genome.
+Details and response shapes: [docs/API.md](docs/API.md#choosing-the-genome).
 
-`--sa-dir` is optional — if provided, it serves as a fallback for genomes that don't have their own `sa/` folder. If the directory doesn't exist, the server starts without SA (no error).
+Each genome is read from its own GFF3, FASTA and `sa/` subdirectory.
+`--sa-dir` belongs to the genome given by `--gff3`: it is never lent to another genome of `--data-dir`, so a mouse variant is never annotated with a human ClinVar record.
+If that directory doesn't exist, the server starts without SA (no error).
 
 fastVEP works with any organism — just provide the matching GFF3 (and optionally FASTA for HGVS).
 
@@ -619,14 +633,15 @@ IMPACT is HIGH and AF < 0.01
 | `--gff3` | GFF3 gene annotation file | -- |
 | `--fasta` | Reference FASTA file | -- |
 | `--sa-dir` | Directory containing `.osa` / `.osa2` / `.osi` / `.oga` supplementary annotations | -- |
-| `--data-dir` | Directory of genome subdirectories (for multi-organism switching) | -- |
+| `--data-dir` | Directory of genome subdirectories, one per genome, that a request can name | -- |
+| `--preload-genomes` | Load every genome of `--data-dir` in the background at startup instead of on its first request (also `FASTVEP_PRELOAD_GENOMES` env) | off |
 | `--port` | HTTP port (also `FASTVEP_PORT` env) | `8080` |
 | `--bind` | Bind address (also `FASTVEP_BIND` env) | `0.0.0.0` |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--max-body-size` | Max request body in bytes | `10485760` |
 | `--max-concurrent` | Max concurrent annotation requests | `64` |
 | `--stats-file` | JSON file in which the running totals of variants annotated and genomes loaded are kept (also `FASTVEP_STATS_FILE` env) | `stats.json` |
-| `--allow-model-replacement` | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model of the running server, for every client (also `FASTVEP_ALLOW_MODEL_REPLACEMENT` env) | off |
+| `--allow-model-replacement` | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model of the running server, for every client; choosing a genome per request does not need it (also `FASTVEP_ALLOW_MODEL_REPLACEMENT` env) | off |
 
 ### `fastvep cache`
 
@@ -896,6 +911,11 @@ remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP
 
 Moving a pipeline from `vep`? What fastVEP reads from a VEP installation, a flag-by-flag table, and what is
 not covered (plugins, `--custom`, RefSeq BAM edits) are in **[docs/VEP_MIGRATION.md](docs/VEP_MIGRATION.md)**.
+
+## Community
+
+Join the [fastVEP Slack](https://join.slack.com/t/fastvep/shared_invite/zt-4g20tqjvo-wGyIEnN~Ncrc4zXiu_1XJA) for questions and discussion.
+Bug reports and feature requests belong in [GitHub issues](https://github.com/Huang-lab/fastVEP/issues).
 
 ## Citation
 
