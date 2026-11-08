@@ -2,25 +2,31 @@
 
 Complete guide to hosting fastVEP as a public web service with full human genome annotation (GRCh38) and all supplementary databases.
 
+[fastvep.org](https://fastvep.org) runs this guide on one server with 4 vCPU, 16 GB of RAM and 160 GB of disk.
+It serves nine genomes from one process, with nginx in front.
+
 ## Cost Overview
 
 | Component | Monthly Cost |
 |-----------|-------------|
-| Hetzner CCX23 (4 vCPU, 16GB RAM, 80GB SSD) | ~$30 |
+| Hetzner CCX23 (4 vCPU, 16GB RAM, 160GB SSD) | ~$30 |
 | Cloudflare DNS + CDN (free tier) | $0 |
 | **Total** | **~$30/month** |
 
-Upgrade to CCX33 (8 vCPU, 32GB RAM, 160GB SSD, ~$55/month) if you want headroom for multiple genomes or heavy traffic.
+Upgrade to CCX33 (8 vCPU, 32GB RAM, ~$55/month) if you want headroom for heavy traffic.
 
 ## Deployment Tiers
 
 fastVEP ships with ready-to-run deployment scripts in `scripts/`. Pick the one that fits your server and use case.
 
-| Tier | Script | Disk Used | Server | Cost | What You Get |
-|:-----|:-------|:----------|:-------|:-----|:-------------|
-| **Minimal** | `scripts/deploy-minimal.sh` | ~10 GB | CCX23 (80GB) | ~$30/mo | Human GRCh38 + ClinVar |
-| **Clinical** | `scripts/deploy-clinical.sh` | ~20 GB | CCX23 (80GB) | ~$30/mo | GRCh38 + ClinVar + dbSNP + Mouse/Zebrafish/Drosophila |
-| **Full Research** | `scripts/deploy-full.sh` | ~55 GB | CCX33 (160GB) | ~$55/mo | GRCh38 + GRCh37 + ClinVar + dbSNP + gnomAD v4 + 5 model organisms |
+| Tier | Script | Disk used | What you get |
+|:-----|:-------|:----------|:-------------|
+| **Minimal** | `scripts/deploy-minimal.sh` | ~5 GB | Human GRCh38 + ClinVar |
+| **Clinical** | `scripts/deploy-clinical.sh` | ~23 GB | GRCh38 + ClinVar + dbSNP + seven other organisms (mouse, rat, zebrafish, fruit fly, C. elegans, yeast, Arabidopsis) |
+| **Full Research** | `scripts/deploy-full.sh` | ~26 GB + gnomAD | GRCh38 + GRCh37 + ClinVar (both) + dbSNP (GRCh38) + gnomAD v4.1 genomes (GRCh38) + the same seven organisms |
+
+The disk figures are what the files take on fastvep.org (8 November 2026): the whole data directory, nine genomes with dbSNP and ClinVar on GRCh38 and ClinVar on GRCh37, is 26 GB, of which GRCh38 is 14 GB and its dbSNP 9.4 GB.
+gnomAD is not in that figure: see the sizes below.
 
 ### Quick deploy with scripts
 
@@ -45,8 +51,8 @@ chmod +x /opt/fastvep/bin/fastvep-web /opt/fastvep/bin/fastvep
 
 # 5. Run the deployment script (pick one)
 export FASTVEP_BIN=/root/fastVEP/target/release
-bash scripts/deploy-full.sh        # ← recommended for CCX33 (160GB)
-# OR: bash scripts/deploy-clinical.sh   # for CCX23 (80GB)
+bash scripts/deploy-full.sh        # everything the site serves
+# OR: bash scripts/deploy-clinical.sh   # no GRCh37, no gnomAD
 # OR: bash scripts/deploy-minimal.sh    # quickest, just hg38 + ClinVar
 ```
 
@@ -58,16 +64,21 @@ scp scripts/deploy-full.sh root@Your.server.IP:/root/fastVEP/scripts/
 ssh -i ~/.ssh/fastvep_key root@Your.server.IP 'cd /root/fastVEP && bash scripts/deploy-full.sh'
 ```
 
-The scripts are **idempotent** — you can re-run them safely if interrupted. They skip files that already exist.
+The scripts are **idempotent**: you can re-run them safely if interrupted.
+They skip a file or a database that already exists, and gnomAD is built one chromosome at a time, each into a database of its own, so an interrupted build resumes at the chromosome it stopped in.
 
 > **Which tier should I pick?**
-> - **Minimal** (~10 GB, ~15 min): Fast variant consequence + ClinVar. Fits on 80GB.
-> - **Clinical** (~20 GB, ~1 hour): Adds dbSNP rs IDs + Mouse/Zebrafish/Drosophila.
-> - **Full Research** (~55 GB, ~6-12 hours): Adds gnomAD v4 population frequencies + GRCh37 + 5 model organisms. **Needs CCX33 (160GB) or a Hetzner Volume.**
+> - **Minimal** (~5 GB): fast variant consequence + ClinVar.
+> - **Clinical** (~23 GB once built): adds dbSNP rs IDs and the seven other organisms. The dbSNP build needs 29.6 GB of download space while it runs, and the script deletes the download afterwards.
+> - **Full Research** (~26 GB plus gnomAD, several hours): adds GRCh37 and gnomAD v4.1 population frequencies.
+>
+> All three fit a 160 GB disk.
+> The scripts do not build the rest of the ACMG reference stack: see [ACMG on the web needs the reference stack](#acmg-on-the-web-needs-the-reference-stack).
 
-You can always start with Minimal and upgrade later — the scripts build on each other.
+You can always start with Minimal and upgrade later: the scripts build on each other.
 
-> **Disk space warning**: gnomAD raw VCFs are 7-25 GB **per chromosome**. The Full Research script downloads one chromosome at a time, builds the index, then deletes the VCF to avoid filling the disk. You need ~40 GB of *temporary* free space during the gnomAD build.
+> **Disk space warning**: the gnomAD v4.1 genomes VCFs are 0.6 to 47 GB **per chromosome** (563 GB in all, chr2 is the largest) and the exomes 0.1 to 19 GB (198 GB in all, chr1 is the largest; measured on 8 November 2026).
+> The Full Research script downloads one chromosome at a time, builds its database, then deletes the VCF, so the temporary space it needs is the size of the largest VCF: 47 GB for the genomes.
 
 ## 1. Provision the Server
 
@@ -117,6 +128,18 @@ ufw allow OpenSSH
 ufw allow 'Nginx Full'
 ufw enable
 ```
+
+Then switch SSH to keys only.
+sshd takes the first value it reads for a keyword, and it reads the files of `/etc/ssh/sshd_config.d/` in name order before the rest of `sshd_config`.
+A file named `99-...` therefore cannot undo a `PasswordAuthentication yes` from an earlier one (checked on Ubuntu 24.04 with a competing `50-` file), so name yours to be read first, and look at the effective values instead of trusting the file:
+
+```bash
+printf 'PasswordAuthentication no\nPermitRootLogin prohibit-password\nMaxAuthTries 3\n' > /etc/ssh/sshd_config.d/00-fastvep.conf
+sshd -t && systemctl reload ssh
+sshd -T | grep -E '^(passwordauthentication|permitrootlogin|maxauthtries) '
+```
+
+Keep the session you are in open, and log in again from a second terminal with your key before you close it.
 
 ## 2. Prepare and Build the Binary
 
@@ -203,16 +226,21 @@ fastVEP supports multiple genomes via the `--data-dir` flag. Each subdirectory i
 │       ├── clinvar.osa2
 │       ├── gnomad_chr1.osa2     # one file per chromosome
 │       └── ...
-├── hg19_ensembl_113/
-│   ├── Homo_sapiens.GRCh37.113.gff3
+├── hg37_ensembl_87/
+│   ├── Homo_sapiens.GRCh37.87.gff3
 │   └── ...
 ├── mouse_grcm39_ensembl_115/
 │   ├── Mus_musculus.GRCm39.115.gff3
 │   └── ...
+├── arabidopsis_tair10_ensemblplants_63/
+│   ├── Arabidopsis_thaliana.TAIR10.63.gff3
+│   └── ...
 └── ...
 ```
 
-The dropdown in the web UI will show each directory name (so **name them clearly** — e.g., `hg38_ensembl_115` or `grch37_refseq_110` — not `genome1`).
+The web page builds the dropdown from the directory names, so **name them for what is in them**: the species or build, the annotation source and its release (`hg38_ensembl_115`, `hg37_ensembl_87`, `arabidopsis_tair10_ensemblplants_63`), never `genome1`.
+A name that says a release the files are not from is worse than a vague one: fastvep.org once had a GRCh37 directory named for release 75 that held the release 87 gene set.
+The web server serves every subdirectory that holds a GFF3, and a request names the genome by its directory name.
 
 SSH into the server:
 
@@ -258,17 +286,19 @@ samtools faidx Homo_sapiens.GRCh38.dna.primary_assembly.fa
 cd /opt/fastvep/data
 ```
 
-### Human — GRCh37 / hg19 (Ensembl 113, last GRCh37 release)
+### Human - GRCh37 / hg37 (Ensembl 87 gene set)
 
-Still widely used for clinical and legacy data. Ensembl froze GRCh37 support at release 113.
+Still widely used for clinical and legacy data.
+The Ensembl gene set of GRCh37 is release 87.
+`Homo_sapiens.GRCh37.87.gff3.gz` is the same file (37,903,989 bytes, 20 March 2017) under `release-87`, `release-113` and `current` of `ftp.ensembl.org/pub/grch37/`, so the directory is named after the gene set and not after a release number that changes nothing in it.
 
 ```bash
-mkdir -p hg19_ensembl_113/sa && cd hg19_ensembl_113
+mkdir -p hg37_ensembl_87/sa && cd hg37_ensembl_87
 
-wget https://ftp.ensembl.org/pub/grch37/release-113/gff3/homo_sapiens/Homo_sapiens.GRCh37.87.gff3.gz
+wget https://ftp.ensembl.org/pub/grch37/release-87/gff3/homo_sapiens/Homo_sapiens.GRCh37.87.gff3.gz
 gunzip Homo_sapiens.GRCh37.87.gff3.gz
 
-wget https://ftp.ensembl.org/pub/grch37/release-113/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz
+wget https://ftp.ensembl.org/pub/grch37/release-87/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz
 gunzip Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz
 samtools faidx Homo_sapiens.GRCh37.dna.primary_assembly.fa
 
@@ -318,7 +348,8 @@ cd /opt/fastvep/data
 
 ### Model organisms
 
-All of these are available from Ensembl release 115. Same pattern: `gff3/<species>/` and `fasta/<species>/dna/`.
+All but Arabidopsis are available from Ensembl release 115.
+Same pattern: `gff3/<species>/` and `fasta/<species>/dna/`.
 
 ```bash
 cd /opt/fastvep/data
@@ -377,130 +408,121 @@ gunzip Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
 samtools faidx Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa
 cd /opt/fastvep/data
 
-# Arabidopsis — TAIR10
-mkdir -p arabidopsis_tair10_ensembl_115 && cd arabidopsis_tair10_ensembl_115
-wget http://ftp.ensemblgenomes.org/pub/plants/release-60/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.60.gff3.gz
-gunzip Arabidopsis_thaliana.TAIR10.60.gff3.gz
-wget http://ftp.ensemblgenomes.org/pub/plants/release-60/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
+# Arabidopsis - TAIR10 (Ensembl Plants has its own release numbers: 63 here)
+mkdir -p arabidopsis_tair10_ensemblplants_63 && cd arabidopsis_tair10_ensemblplants_63
+wget https://ftp.ensemblgenomes.ebi.ac.uk/pub/plants/release-63/gff3/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.63.gff3.gz
+gunzip Arabidopsis_thaliana.TAIR10.63.gff3.gz
+wget https://ftp.ensemblgenomes.ebi.ac.uk/pub/plants/release-63/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
 gunzip Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
 samtools faidx Arabidopsis_thaliana.TAIR10.dna.toplevel.fa
 cd /opt/fastvep/data
 ```
 
+Ensembl Plants numbers its releases separately from Ensembl's (`pub/plants/release-63` beside `pub/release-115`), so the directory name says which one it is.
+The TAIR10 sequence file is byte-identical in releases 58 and 63 (SHA-256 checked on 8 November 2026), so moving a server from one to the other changes the gene models and not the FASTA.
+`ftp.ensemblgenomes.org` answers on plain HTTP only; use the `ebi.ac.uk` host above for HTTPS.
+
 ---
 
-### Build supplementary annotation databases (human GRCh38 only)
+### Build supplementary annotation databases (human)
 
-SA databases are human-specific and build-specific. ClinVar/gnomAD/dbSNP have separate GRCh37 and GRCh38 VCFs — make sure you grab the right one for each genome subdirectory.
+SA databases are build-specific.
+ClinVar, gnomAD and dbSNP have separate GRCh37 and GRCh38 files: use the right one for each genome subdirectory, and keep one `sa/` directory to one build.
+
+`sa-build` writes the database under the name it is given, and it replaces a file of that name.
+A source that comes as one file per chromosome therefore needs a name per chromosome (`gnomad_chr1`, `gnomad_chr2`, and so on).
+One name for all of them leaves the database of the last chromosome alone, which says "no record" for the other twenty-two (checked with dbSNP-format input: building two inputs into one name leaves a file byte-identical to the second input built alone).
+A build that finds no record is an error (`--allow-empty` overrides it), because an empty database answers "no record" to every query, and for a frequency source that reads as "absent from the population".
 
 For **hg38_ensembl_115** (GRCh38):
 
 ```bash
 cd /opt/fastvep/data/hg38_ensembl_115/sa
 
-# ClinVar (~190MB download, ~40MB .osa2) — updates monthly
+# ClinVar (about 200 MB download, 43 MB .osa2)
 wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
 /opt/fastvep/bin/fastvep sa-build --source clinvar \
   -i clinvar.vcf.gz -o clinvar --assembly GRCh38
+rm clinvar.vcf.gz
 
-# dbSNP (~20GB download, ~5GB .osa)
+# dbSNP (29.6 GB download, 9.4 GB .osa2)
 wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
 /opt/fastvep/bin/fastvep sa-build --source dbsnp \
   -i GCF_000001405.40.gz -o dbsnp --assembly GRCh38
+rm GCF_000001405.40.gz
 
-# gnomAD v4 genomes (~7-25GB per chromosome VCF, ~30GB .osa total)
-# IMPORTANT: Download ONE chromosome at a time, index it, then delete the VCF.
-# This avoids needing hundreds of GB of temp space.
+# gnomAD v4.1 genomes (0.6-47 GB per chromosome VCF, 563 GB in all)
+# IMPORTANT: download ONE chromosome at a time, build its database, then delete the VCF.
 for chr in {1..22} X; do
   VCF="gnomad.genomes.v4.1.sites.chr${chr}.vcf.bgz"
   wget "https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/genomes/${VCF}"
   /opt/fastvep/bin/fastvep sa-build --source gnomad \
-    -i "$VCF" -o "gnomad_chr${chr}" --assembly GRCh38   # a name per chromosome: sa-build overwrites its output
+    -i "$VCF" -o "gnomad_chr${chr}" --assembly GRCh38   # a name per chromosome
   rm -f "$VCF"   # delete raw VCF to free disk space
   echo "chr${chr} done. Disk free: $(df -h --output=avail /opt/fastvep/data | tail -1 | xargs)"
 done
-
-# 1000 Genomes (~10GB download)
-wget https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/1kGP_high_coverage_Illumina.chr1.filtered.SNV_INDEL_SV_phased_panel.vcf.gz
-/opt/fastvep/bin/fastvep sa-build --source onekg \
-  -i 1kGP_high_coverage_Illumina.chr1.filtered.SNV_INDEL_SV_phased_panel.vcf.gz \
-  -o onekg --assembly GRCh38
-
-# REVEL (667MB zip). sa-build reads a plain or gzipped CSV and not a zip, so cut one chromosome at a time out of it
-# (scripts/build-sa-databases.sh does the same for every chromosome)
-wget https://rothsj06.dmz.hpc.mssm.edu/revel-v1.3_all_chromosomes.zip
-unzip -p revel-v1.3_all_chromosomes.zip | awk -F, -v c=1 'NR==1||$1==c' > revel_chr1.csv
-/opt/fastvep/bin/fastvep sa-build --source revel \
-  -i revel_chr1.csv -o revel_chr1 --assembly GRCh38
-
-# SpliceAI (~30GB download)
-# Manual download from https://basespace.illumina.com/s/otSPW8hnhaZR
-/opt/fastvep/bin/fastvep sa-build --source spliceai \
-  -i spliceai_scores.raw.snv.hg38.vcf.gz -o spliceai --assembly GRCh38
-
-# COSMIC (requires academic/commercial license)
-# Register at https://cancer.sanger.ac.uk/cosmic/download
-
-# Clean up downloaded source files
-rm -f *.vcf.gz *.vcf.bgz *.csv.zip
 ```
 
-For **hg19_ensembl_113** (GRCh37):
+The gnomAD exomes (`.../release/4.1/vcf/exomes/gnomad.exomes.v4.1.sites.chr${chr}.vcf.bgz`, 0.1-19 GB per chromosome, 198 GB in all) are the smaller release, and the one the ACMG benchmark reads; [docs/ACMG_SETUP.md](docs/ACMG_SETUP.md) says which release to build for classification and why.
+A pilot on the fastvep.org server built chromosome 21 of the exomes: 2.25 GB of VCF in 153 s on one core, 2,188,842 records, a 20.7 MB `.osa2`, 89 MB of memory at its peak.
+Scaled by download size that is about 193 million records, a 1.8 GB database and 3.7 core-hours for all chromosomes (an extrapolation from one chromosome, not a measurement).
+The build used one core (99% CPU), so chromosomes can be built side by side, one per core.
+
+The other sources (1000 Genomes, REVEL, AlphaMissense, PhyloP, SpliceAI, gnomAD gene constraints, ClinGen, RepeatMasker) are built by [`scripts/build-sa-databases.sh`](scripts/build-sa-databases.sh).
+[docs/SA_DATABASES.md](docs/SA_DATABASES.md) lists every source, what its download costs, and which need an account.
+
+For **hg37_ensembl_87** (GRCh37):
 
 ```bash
-cd /opt/fastvep/data/hg19_ensembl_113/sa
+cd /opt/fastvep/data/hg37_ensembl_87/sa
 
 # ClinVar GRCh37
 wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/clinvar.vcf.gz
 /opt/fastvep/bin/fastvep sa-build --source clinvar \
   -i clinvar.vcf.gz -o clinvar --assembly GRCh37
+rm clinvar.vcf.gz
 
-# dbSNP GRCh37 (legacy — b151 is the last GRCh37 release)
-wget https://ftp.ncbi.nih.gov/snp/pre_build152/organisms/human_9606_b151_GRCh37p13/VCF/00-All.vcf.gz
+# dbSNP GRCh37 (28.2 GB download; dbSNP build 157, GRCh37.p13, contigs named NC_000001.10 and so on).
+# sa-build maps those contigs for --assembly GRCh37 and refuses to write a database when none matched.
+wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.25.gz
 /opt/fastvep/bin/fastvep sa-build --source dbsnp \
-  -i 00-All.vcf.gz -o dbsnp --assembly GRCh37
+  -i GCF_000001405.25.gz -o dbsnp --assembly GRCh37
+rm GCF_000001405.25.gz
 
-# gnomAD v2.1.1 for GRCh37 (v3+ is GRCh38 only)
-# Same pattern: one chr at a time, index, delete.
-# Note: gnomAD v2.1.1 does NOT have a Y chromosome file — that's expected.
+# gnomAD v2.1.1 for GRCh37 (v3 and v4 are GRCh38 only)
+# Same pattern: one chromosome at a time, a name per chromosome, delete the VCF.
+# gnomAD v2.1.1 has no Y chromosome file; that is expected.
 for chr in {1..22} X; do
   VCF="gnomad.genomes.r2.1.1.sites.${chr}.vcf.bgz"
   wget "https://storage.googleapis.com/gcp-public-data--gnomad/release/2.1.1/vcf/genomes/${VCF}"
   /opt/fastvep/bin/fastvep sa-build --source gnomad \
-    -i "$VCF" -o gnomad --assembly GRCh37
+    -i "$VCF" -o "gnomad_chr${chr}" --assembly GRCh37
   rm -f "$VCF"
 done
-
-# (SpliceAI has separate hg19 and hg38 distributions)
-# Manual download: spliceai_scores.raw.snv.hg19.vcf.gz
-/opt/fastvep/bin/fastvep sa-build --source spliceai \
-  -i spliceai_scores.raw.snv.hg19.vcf.gz -o spliceai --assembly GRCh37
-
-rm -f *.vcf.gz *.vcf.bgz
 ```
 
 ---
 
 ### Disk space estimate per genome
 
-Human GRCh38 with all SA databases:
+Human GRCh38, as it is on fastvep.org (8 November 2026):
 
 | File | Size |
 |------|------|
-| GFF3 | 1.1 GB |
-| GFF3 cache (auto-built on first run) | ~130 MB |
-| FASTA + .fai | 2.9 GB |
-| ClinVar .osa | ~40 MB |
-| dbSNP .osa | ~5 GB |
-| gnomAD .osa | ~30 GB |
-| 1000 Genomes .osa | ~3 GB |
-| REVEL .osa | ~1 GB |
-| SpliceAI .osa | ~5 GB |
-| **Total per human genome** | **~50 GB** |
+| GFF3 | 1.2 GB |
+| GFF3 cache (built on the first start) | 292 MB |
+| FASTA + .fai | 3.2 GB |
+| ClinVar .osa2 | 43 MB |
+| dbSNP .osa2 | 9.4 GB |
+| gnomAD exomes .osa2, all chromosomes | about 1.8 GB (extrapolated from chromosome 21, 20.7 MB) |
+| gnomAD genomes .osa2 | not measured |
+| The other ACMG sources | see [docs/ACMG_SETUP.md](docs/ACMG_SETUP.md) |
 
-Model organisms (without SA): typically 2-4 GB each. The smaller genomes (yeast, arabidopsis) are under 500 MB.
+The whole data directory of fastvep.org, nine genomes, is 26 GB: GRCh38 14 GB, GRCh37 3.6 GB, mouse 3.2 GB, rat 3.1 GB, zebrafish 1.6 GB, and the four small genomes (fruit fly, C. elegans, Arabidopsis, yeast) 0.7 GB together.
+The gnomAD build needs, besides its database, the size of the largest VCF as temporary space (47 GB for the genomes, 19 GB for the exomes).
 
-> **Disk planning**: For 2 human builds (hg38 + hg19) with full SA + a handful of model organisms, plan for ~110-130 GB. Use Hetzner CCX33 (160 GB SSD, ~$55/month) or attach a Hetzner Volume ($0.05/GB/month, e.g., 200GB = $10/month).
+> **Disk planning**: the nine genomes with ClinVar and dbSNP, the gnomAD build's temporary space and the databases of the ACMG stack fit on the 160 GB disk of a CCX23.
+> Attach a Hetzner Volume instead if you add genomes or keep the raw VCFs.
 
 ## 4. Configure the Service
 
@@ -561,7 +583,7 @@ WorkingDirectory=/opt/fastvep
 
 Environment=FASTVEP_PORT=3000
 Environment=FASTVEP_BIND=127.0.0.1
-# Data directory containing one subdirectory per genome (hg38_ensembl_115, hg19_ensembl_113, ...)
+# Data directory containing one subdirectory per genome (hg38_ensembl_115, hg37_ensembl_87, ...)
 Environment=FASTVEP_DATA_DIR=/opt/fastvep/data
 # The genome that answers a request naming none; every other genome of the data directory answers when a request names it
 Environment=FASTVEP_GFF3=/opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.115.gff3
@@ -601,31 +623,66 @@ The first start on a gene model parses its GFF3 and builds the cache, which take
 
 ### nginx reverse proxy
 
+nginx ends TLS, compresses the answers, and turns away a client that sends too much too fast before the server has to look at it.
+
+The rate-limit zones and the compression types belong to the `http` context, which Ubuntu's `nginx.conf` fills from `conf.d/*.conf`.
+They go in a file of their own, and not in the site file: `limit_req_zone` inside a `server` block is refused by `nginx -t` ("directive is not allowed here"; checked on nginx 1.24 of Ubuntu 24.04, which is what the earlier version of this guide had).
+
 ```bash
+cat > /etc/nginx/conf.d/fastvep.conf << 'EOF'
+# An annotation request takes seconds, so the rate is low and the burst is short.
+limit_req_zone  $binary_remote_addr zone=fastvep_annotate:10m rate=2r/s;
+limit_conn_zone $binary_remote_addr zone=fastvep_conn:10m;
+
+# nginx compresses text/html and nothing else unless it is told: the answer of /api/annotate is JSON.
+# A real answer for 200 variants was 3.25 MB, and 0.26 MB (12 times less) with gzip at nginx's default level.
+gzip_types application/json text/plain text/css application/javascript image/svg+xml;
+gzip_min_length 1024;
+gzip_vary on;
+EOF
+
 cat > /etc/nginx/sites-available/fastvep << 'EOF'
 server {
     listen 80;
     server_name your-domain.com;
 
-    # Rate limiting: 10 requests/sec per IP, burst 20
-    limit_req_zone $binary_remote_addr zone=fastvep:10m rate=10r/s;
+    # A VCF is posted inside a JSON string, in which a tab and a newline take two bytes each, so the body is a
+    # little larger than the file. The server refuses a body past 10 MiB (--max-body-size); nginx allows more, so
+    # that the refusal a client sees is the server's.
+    client_max_body_size 12m;
 
-    location / {
-        limit_req zone=fastvep burst=20 nodelay;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Frame-Options SAMEORIGIN always;
+
+    location = /api/annotate {
+        limit_req  zone=fastvep_annotate burst=10 nodelay;
+        limit_req_status 429;
+        limit_conn fastvep_conn 8;
+        limit_conn_status 429;
 
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
+        proxy_set_header Connection "";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # Increase body size for large VCF uploads
-        client_max_body_size 10M;
+        # The server stops a request at 90 s (--max-request-seconds). nginx waits a little longer, so that the
+        # client reads the server's answer and not a 504.
+        proxy_read_timeout 150s;
+        proxy_send_timeout 150s;
+    }
 
-        # Timeouts for slow annotation requests
-        proxy_read_timeout 120s;
-        proxy_send_timeout 120s;
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 EOF
@@ -635,6 +692,9 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 ```
 
+This configuration was run in a container with the same nginx (1.24.0, Ubuntu 24.04): `nginx -t` passes, the 12th request of a burst of 15 to `/api/annotate` is answered `429`, a 13 MiB body is answered `413` and an 11 MiB one passes, the three headers are sent, and a JSON answer is gzipped.
+Do not put an `add_header` inside a `location` of your own without repeating these three: nginx drops the inherited ones as soon as a block defines any.
+
 ### TLS with Let's Encrypt, Cloudflare, or Hostinger
 
 **Option A: Let's Encrypt (free, auto-renewing)**
@@ -642,7 +702,17 @@ nginx -t && systemctl reload nginx
 ```bash
 certbot --nginx -d your-domain.com
 # Follow prompts; auto-renews via systemd timer
+certbot renew --dry-run   # proves the renewal works before you rely on it
 ```
+
+Once a dry run of the renewal has succeeded, tell browsers to use HTTPS only.
+Put this line beside the other `add_header` lines, in the `server` block with `listen 443` that certbot made:
+
+```nginx
+add_header Strict-Transport-Security "max-age=31536000" always;
+```
+
+A browser that has seen it refuses plain HTTP to your domain for a year, so do not add it while the certificate can still fail.
 
 **Option B: Hostinger (Direct DNS)**
 
@@ -703,24 +773,58 @@ If you bought your domain on Hostinger and want to point it directly to your Het
    - Speed → Auto Minify: Enable HTML/CSS/JS minification
    - Analytics: Monitor traffic and threats for free
 
+## ACMG on the web needs the reference stack
+
+The classifier reads nine databases ([docs/ACMG_SETUP.md](docs/ACMG_SETUP.md) lists them and what each drives).
+A genome whose `sa/` directory lacks one can still be annotated, but its ACMG classes would rest on less evidence than they appear to, and nothing in a VUS says that the evidence was never looked at.
+So the web server answers `"acmg": true` only for a genome that holds all nine, and refuses the request for any other with `422`, naming what is missing.
+`--acmg-allow-partial` answers it anyway and says so in each answer; leave it off on a server other people use.
+`/api/status` and `/api/genomes` carry the verdict (`acmg.ready`, `acmg.missing`), and the web page offers ACMG only for a genome where it will be answered.
+The details are in [docs/API.md](docs/API.md#acmg-needs-the-reference-stack).
+
+Serving ACMG for a genome is therefore a matter of building the stack into its `sa/` directory:
+
+```bash
+# Five of the nine sources: ClinVar, its protein and splice index, gnomAD gene constraints, ClinGen and
+# RepeatMasker (about 1 GB of downloads; docs/SA_DATABASES.md has the manifest)
+scripts/build-sa-databases.sh --assembly GRCh38 --out /opt/fastvep/data/hg38_ensembl_115/sa --sources small
+# The other four: gnomAD itself, REVEL, and SpliceAI and PhyloP, which come out of the gnomAD files.
+# docs/ACMG_SETUP.md builds them, and says which gnomAD release to build
+python3 scripts/check_acmg_stack.py \
+  --gff3 /opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.115.gff3 \
+  --fasta /opt/fastvep/data/hg38_ensembl_115/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+  --sa-dir /opt/fastvep/data/hg38_ensembl_115/sa
+systemctl restart fastvep
+```
+
+`check_acmg_stack.py` annotates eight real ClinVar variants and exits non-zero when a source answers nothing, so a build that succeeded and a stack that answers are not confused.
+The one cost that is large is gnomAD, which the build script keeps whole on disk: on a 160 GB disk build it one chromosome at a time and delete each VCF, as the loop of the GRCh38 section above does (the 47 GB largest genomes VCF and the 19 GB largest exomes VCF are the temporary space), or restrict it to regions with `--regions`.
+GRCh37 and the other organisms have no ACMG stack here, and the server says so for each when asked.
+
 ## 5. Verify
 
 ```bash
 # From your machine
 curl -s https://your-domain.com/api/status | python3 -m json.tool
+```
 
-# Should show:
-# {
-#     "status": "ok",
-#     "transcripts": 509650,
-#     "has_fasta": true,
-#     "sa_sources": ["ClinVar", "dbSNP", "gnomAD", ...]
-# }
+The answer is described in [docs/API.md](docs/API.md#4-verify-it-is-up).
+Read four things in it before you trust an annotation:
 
-# Test annotation
+- `transcripts` is not zero (a zero makes every variant `intergenic_variant`).
+- `has_fasta` is true.
+- `sa_sources` and `sa_info` list the databases you built, with the release date of each, and `sa_skipped` is empty (a file that was found and not loaded is named there).
+- If you serve ACMG, `acmg.ready` is true: the server refuses `"acmg": true` for a genome that lacks a source of the reference stack, and says which.
+
+`GET /api/genomes` says the same for each genome of the data directory.
+
+```bash
+curl -s https://your-domain.com/api/genomes | python3 -m json.tool | head -60
+
+# Test annotation: a request names its genome ("genome": "mouse_grcm39_ensembl_115"); this one names none and gets the default
 curl -s -X POST https://your-domain.com/api/annotate \
   -H 'Content-Type: application/json' \
-  -d '{"vcf": "1\t65565\t.\tA\tG\t50\tPASS\t.", "pick": false}' | python3 -m json.tool
+  -d '{"vcf": "17\t43124025\t.\tA\tG\t50\tPASS\t.", "pick": false}' | python3 -m json.tool
 ```
 
 ## 6. Maintenance
@@ -731,26 +835,43 @@ curl -s -X POST https://your-domain.com/api/annotate \
 # Build new release on dev machine
 cross build --release --target x86_64-unknown-linux-gnu -p fastvep-web
 
-# Deploy (< 1 minute downtime)
+# Upload beside the running binary, keep the previous one, move the new one into place, restart
 scp target/x86_64-unknown-linux-gnu/release/fastvep-web root@YOUR_SERVER_IP:/opt/fastvep/bin/fastvep-web.new
 ssh root@YOUR_SERVER_IP '
-  mv /opt/fastvep/bin/fastvep-web.new /opt/fastvep/bin/fastvep-web
-  chmod +x /opt/fastvep/bin/fastvep-web
+  set -e
+  cd /opt/fastvep/bin
+  chmod +x fastvep-web.new
+  cp -p fastvep-web fastvep-web.previous
+  mv fastvep-web.new fastvep-web
   systemctl restart fastvep
 '
+
+# Look at /api/status (version, genomes, acmg). To go back:
+# ssh root@YOUR_SERVER_IP 'cd /opt/fastvep/bin && mv fastvep-web.previous fastvep-web && systemctl restart fastvep'
 ```
+
+The `mv` replaces the file in one step, so a copy that is still running keeps the file it started from.
+A change that you cannot take back with the previous binary, such as a new data layout, is better tried first on another port with its own `FASTVEP_STATS_FILE`, beside the running service, and swapped in once `/api/status` and a few annotations look right.
 
 ### Update SA databases
 
+ClinVar is the one that moves.
+Build the new database outside `sa/`, move it in, and restart, because a server opens its databases when it starts:
+
 ```bash
-# ClinVar updates monthly
 ssh root@YOUR_SERVER_IP
-cd /tmp
+G=/opt/fastvep/data/hg38_ensembl_115        # and hg37_ensembl_87 with vcf_GRCh37 below
+mkdir -p $G/build.tmp && cd $G/build.tmp
 wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
-/opt/fastvep/bin/fastvep sa-build --source clinvar \
-  -i clinvar.vcf.gz -o /opt/fastvep/data/sa/clinvar
+/opt/fastvep/bin/fastvep sa-build --source clinvar -i clinvar.vcf.gz -o clinvar --assembly GRCh38
+mv clinvar.osa2 $G/sa/clinvar.osa2          # same filesystem: the move is atomic
+cd .. && rm -r build.tmp
 systemctl restart fastvep
+curl -s https://your-domain.com/api/status | python3 -m json.tool | grep -A3 '"clinvar"'   # the version is the release date
 ```
+
+If the database you replace is in the older v1 format (`clinvar.osa` with `clinvar.osa.idx`), remove both files when the `.osa2` goes in.
+A directory loads every database it holds, and when two of them know the same variant under one key the one that sorts last by path is kept ([docs/ACMG_SETUP.md](docs/ACMG_SETUP.md) says how the run reports it), so do not leave the choice to the order of two file names.
 
 ### Monitoring
 
@@ -762,19 +883,31 @@ systemctl status fastvep
 journalctl -u fastvep -f
 
 # Memory usage
-ps aux | grep fastvep-web
+systemctl show fastvep -p MemoryCurrent
 
 # Disk usage
 du -sh /opt/fastvep/data/*
+df -h /
+```
+
+The journal grows without anyone watching it: on fastvep.org it had reached 3.9 GB.
+Give it a ceiling:
+
+```bash
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=500M\nMaxRetentionSec=1month\n' > /etc/systemd/journald.conf.d/fastvep.conf
+systemctl restart systemd-journald
+journalctl --disk-usage
 ```
 
 ### Backups
 
-The only state that matters is the SA databases (everything else is re-downloadable):
+Everything that is downloaded can be downloaded again, but not as it was: ClinVar moves, and a result is only reproducible against the release it was made with.
+Keep the databases of the releases you have served:
 
 ```bash
-# Weekly backup of SA databases (add to crontab)
-tar czf /opt/fastvep/backup/sa_$(date +%Y%m%d).tar.gz /opt/fastvep/data/sa/
+# Weekly backup of the SA databases (add to crontab)
+tar czf /opt/fastvep/backup/sa_$(date +%Y%m%d).tar.gz /opt/fastvep/data/*/sa/
 ```
 
 ## 7. Scaling (if needed later)
@@ -783,7 +916,7 @@ tar czf /opt/fastvep/backup/sa_$(date +%Y%m%d).tar.gz /opt/fastvep/data/sa/
 |-----------|----------|------|
 | More traffic | Upgrade to CCX33 (8 vCPU, 32GB) | ~$55/month |
 | High availability | Second server + Cloudflare load balancing | ~$60/month |
-| Multiple genomes | Use `--data-dir` with subdirectories per organism | Same server |
+| Multiple genomes | Use `--data-dir` with subdirectories per organism (nine on the 16 GB server of fastvep.org) | Same server |
 | Batch WGS jobs | Run `fastvep` CLI in background, rate-limited | Same server |
 | Global users | Add a second server in another region | ~$60/month |
 
@@ -800,11 +933,12 @@ Users (browser)
       │
       ▼
   Hetzner CCX23 ($30/mo)
-  ├─ nginx (reverse proxy, rate limiting)
+  ├─ nginx (TLS, compression, rate limiting)
   └─ fastvep-web (port 3000)
-     ├─ 510k transcripts (GRCh38, Ensembl 115)
-     ├─ FASTA reference (memory-mapped, 2.9GB)
-     └─ SA databases
+     ├─ nine genomes, each with its own transcripts, FASTA and SA databases
+     │  (GRCh38 answers a request that names none: 510k transcripts, Ensembl 115)
+     ├─ FASTA references (memory-mapped)
+     └─ SA databases of GRCh38, as many as you built
         ├─ ClinVar
         ├─ gnomAD v4
         ├─ dbSNP
