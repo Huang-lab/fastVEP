@@ -1,0 +1,19 @@
+kind,gene,chrom,pos,ref,alt,stars,clinvar,call,criteria,consequence
+BP4+BP7 on a ClinVar pathogenic-side variant,ABCA4,1,94030953,C,T,3,Pathogenic,Likely_benign,BS1&BP4&BP7,intron_variant
+BP4+BP7 on a ClinVar pathogenic-side variant,HEXA,15,72353667,C,G,2,Pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,intron_variant
+BP4+BP7 on a ClinVar pathogenic-side variant,IFT122,3,129460971,C,A,2,Pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,intron_variant
+BP4+BP7 on a ClinVar pathogenic-side variant,NUP107,12,68691922,A,AACTCCATCACTTTTCTGTATTTTTACTTTTTTGTTTTTTTTTAAGGTTACTAATCTGGATGACAGTAACTGGGCAGCTGCATT,2,Likely_pathogenic,Likely_benign,BP4&BP7,intron_variant
+BP4+BP7 on a ClinVar pathogenic-side variant,PKD1,16,2090850,CGCCCAGCCCCGCGCCCACCG,C,2,Pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,intron_variant
+BP4+BP7 on a ClinVar pathogenic-side variant,SLC7A9,19,32864639,G,A,2,Likely_pathogenic,Likely_benign,PM2_Supporting&BP4&BP7,synonymous_variant
+PVS1 on a ClinVar benign-side variant,ALMS1,2,73385927,AG,A,2,Benign,Likely_pathogenic,PVS1,frameshift_variant
+PVS1 on a ClinVar benign-side variant,CACNA1G,17,50619827,G,A,2,Likely_benign,Likely_pathogenic,PVS1,splice_donor_variant
+PVS1 on a ClinVar benign-side variant,CCNQ,X,153599019,G,GC,2,Benign,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant
+PVS1 on a ClinVar benign-side variant,MAP3K14,17,45286926,C,CG,2,Benign,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant
+PVS1 on a ClinVar benign-side variant,ORAI1,12,121626872,C,CCCCG,2,Benign,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant
+PVS1 on a ClinVar benign-side variant,PRKDC,8,47893255,A,AG,2,Benign,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant
+PVS1 on a ClinVar benign-side variant,SMARCA2,9,2039775,A,AGC,2,Likely_benign,Likely_pathogenic,PVS1,frameshift_variant
+PVS1 on a ClinVar benign-side variant,TRPV4,12,109793929,C,T,2,Likely_benign,Likely_pathogenic,PVS1&PM2_Supporting,splice_donor_variant
+PVS1 on a ClinVar benign-side variant,UNC93B1,11,67997692,A,AG,2,Benign,Likely_pathogenic,PVS1&PM2_Supporting,frameshift_variant
+missense pathogenic-side call on PP2 and PP3 for a ClinVar benign-side variant,COL1A1,17,50195641,G,C,2,Benign,Likely_pathogenic,PM1&PM2_Supporting&PP2&PP3_Moderate,missense_variant
+missense pathogenic-side call on PP2 and PP3 for a ClinVar benign-side variant,COL1A1,17,50199443,C,T,2,Benign,Likely_pathogenic,PM2_Supporting&PP2&PP3_Strong,missense_variant
+missense pathogenic-side call on PP2 and PP3 for a ClinVar benign-side variant,KCNH1,1,211107315,C,T,2,Likely_benign,Likely_pathogenic,PM2_Supporting&PP2&PP3_Strong,missense_variant

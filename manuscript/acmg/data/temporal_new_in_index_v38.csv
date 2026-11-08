@@ -1,0 +1,15 @@
+measure,n
+new variants of the covered release,107528
+  with a record in the April variant_summary,105920
+    a single-submitter record,98623
+    a record with multiple submitters and no conflict,6256
+    a record reviewed by an expert panel,54
+    a record of another review status,987
+  without a record in the April variant_summary,1608
+  with a pathogenic or likely pathogenic record in the April variant_summary,9234
+"new ClinVar pathogenic or likely pathogenic missense variants in genes where BP1 can fire (pLI at least 0.9, missense z below 2)",94
+  with their own residue change among the gene's pathogenic missense records in the April protein index,77
+"  of them in a gene with exactly 3 such records, so that leaving the own record out lifts the veto",2
+"    of those, with BP4 (BP1 with BP4 gives Likely benign, BP1 alone gives VUS)",0
+April ClinVar pathogenic or likely pathogenic missense variants in genes where BP1 can fire,790
+  April set: with their own residue change among the gene's pathogenic missense records in the April protein index,788
