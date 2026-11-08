@@ -106,7 +106,15 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
     "gene_model_generation": 0,
     "gff3_source": "Homo_sapiens.GRCh38.115.gff3",
     "has_fasta": true,
-    "sa_sources": ["ClinVar", "COSMIC", "dbSNP", "gnomAD", "1000 Genomes", "SpliceAI"],
+    "sa_sources": ["ClinVar", "dbSNP"],
+    "acmg": {
+        "ready": false,
+        "available": false,
+        "loaded": ["clinvar"],
+        "missing": [
+            {"id": "gnomad", "label": "gnomAD allele frequencies", "scope": "allele", "drives": ["BA1", "BS1", "BS2", "PM2"], "without": "no population frequency: ..."}
+        ]
+    },
     "status": "ok",
     "total_genomes": 0,
     "total_variants": 0,
@@ -117,6 +125,8 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
 
 Check `transcripts`, `has_fasta`, and `sa_sources` here before you trust any annotation.
 Each of the three can be missing without the server saying so: a zero transcript count makes every variant `intergenic_variant`, and the other two are the subject of the next section.
+
+`acmg` is the server's verdict on whether `"acmg": true` will be answered for the default genome, and which of the nine sources the classifier reads are missing if it will not (abridged above: `missing` has one entry for each source that is not loaded); see [ACMG needs the reference stack](#acmg-needs-the-reference-stack).
 
 `allow_model_replacement` says whether a request can change the gene model on this server; `gene_model_generation` counts how many times one has.
 A UI can read the first to decide whether to offer its model-replacing controls at all, rather than finding out with a `403` a user cannot interpret.
@@ -176,7 +186,7 @@ The two marked endpoints replace the gene model for every client of the server, 
 | `flag_pick` | bool | `false` | Return every consequence, with `"pick": 1` on the one `pick` would have kept. VEP's `--flag_pick`. |
 | `flag_pick_allele` | bool | `false` | As `flag_pick`, marking the pick per allele. |
 | `flag_pick_allele_gene` | bool | `false` | As `flag_pick`, marking the pick per allele and gene. |
-| `acmg` | bool | `false` | Attach ACMG-AMP classification to each consequence. |
+| `acmg` | bool | `false` | Attach ACMG-AMP classification to each consequence. Refused with `422` for a genome whose database directory lacks part of the reference stack; see [ACMG needs the reference stack](#acmg-needs-the-reference-stack). |
 
 At most one of the six pick switches may be set; the request is read in the order listed.
 
@@ -290,7 +300,34 @@ Which of these agrees with VEP, measured, is in [docs/VEP_DIVERGENCE.md](VEP_DIV
 > `most_severe_consequence` is computed from the transcripts actually reported, so with `"pick": true` it describes the picked transcript, not the whole locus.
 
 Setting `"acmg": true` adds an `acmg` object to each transcript consequence with the classification, the per-criterion verdicts, and the evidence counts.
-Classification quality depends on which supplementary databases are loaded, so read [docs/ACMG_SETUP.md](ACMG_SETUP.md) before relying on it.
+What it can say depends on which supplementary databases are loaded, which the next section is about.
+
+### ACMG needs the reference stack
+
+The classifier reads nine supplementary sources: gnomAD, ClinVar, REVEL, SpliceAI, PhyloP, gnomAD gene constraint, ClinGen gene-disease validity, ClinVar's protein and splice index, and a repeat track ([docs/ACMG_SETUP.md](ACMG_SETUP.md)).
+A criterion with none of its source reports `evaluated: false` and nothing else.
+A server that holds only some of the nine therefore answers `"acmg": true` with a classification that rests on less evidence than it appears to, almost always VUS, and nothing in a VUS says that the evidence was never looked at.
+So the server decides before it classifies:
+
+- A genome whose database directory holds all nine is *ready*, and `"acmg": true` is answered.
+  The response carries `"acmg_stack": {"complete": true, "missing": []}` beside the results.
+- Any other genome is refused with HTTP `422` before anything is annotated, and the body says what is missing:
+
+  ```json
+  {
+    "error": "ACMG classification is not available for genome 'hg38_ensembl_115': 8 of the 9 sources it reads are not loaded, and a classification made without them would rest on less evidence than it appears to. Missing: gnomAD allele frequencies (BA1, BS1, BS2, PM2); ...",
+    "acmg": {"ready": false, "available": false, "loaded": ["clinvar"], "missing": [{"id": "gnomad", "label": "gnomAD allele frequencies", "scope": "allele", "drives": ["BA1", "BS1", "BS2", "PM2"], "without": "..."}]}
+  }
+  ```
+
+- `--acmg-allow-partial` (`FASTVEP_ACMG_ALLOW_PARTIAL`) answers anyway, for a run where an incomplete stack is deliberate.
+  Every response then carries `"acmg_stack": {"complete": false, "missing": ["gnomad", ...]}`, so that a client that stores or shows the classifications keeps what they rest on with them.
+  A criterion that reads a missing source is `evaluated: false`; PM2 in particular is not evaluated when no gnomAD database is loaded, where it used to be met for every variant.
+
+`GET /api/status`, for the default genome, and each entry of `GET /api/genomes` carry the same verdict in `acmg`, so that a client can offer classification only where it will be answered and say why where it will not.
+`ready` means all nine are loaded; `available` means a request for ACMG will be answered, and differs from `ready` only under `--acmg-allow-partial`.
+`loaded` and `missing` use the `json_key` of each source as its `id`, and each missing source says which criteria read it (`drives`) and what is lost without it (`without`).
+For a genome that is not loaded yet the verdict comes from what its `sa/` directory holds, found once by opening its files, so that a client does not have to load a genome to ask; restart the server after adding databases to a directory.
 
 ## Choosing the genome
 
@@ -337,7 +374,9 @@ How a chosen genome is served:
   A misspelling that quietly returned human consequences for a mouse variant would look exactly like a correct answer.
   Names are matched against what is on disk letter for letter, on filesystems that ignore case as well.
 - Every answer is the same as the one the server gives when it is started on that genome alone, and the options of `/api/annotate` (`pick`, `acmg` and the rest) apply to a chosen genome as they do to the default.
-  ACMG-AMP classification is defined for human variants, so a client should not ask for it on any other genome: the server computes it for whatever it is asked about.
+  ACMG-AMP classification is defined for human variants, and a genome with no supplementary annotations holds none of the sources it reads, so the server refuses it there ([ACMG needs the reference stack](#acmg-needs-the-reference-stack)).
+- A genome is loaded by a task of its own, and a request only waits for the outcome, so a client that gives up while a genome loads neither stops the load nor starts a second one.
+  A load that fails is not remembered: the next request tries again.
 
 ### Replacing the default genome
 
@@ -370,6 +409,7 @@ Failures return the matching HTTP status and a single-field body:
 
 `400` carries a caller-facing message, as above; an unknown or empty `genome` is one.
 `403` means the request was understood and refused by how the server was started, so changing the request will not help. Currently only the two gene-model-replacing endpoints return it, and the message names the flag that lifts it.
+`422` means the request is well formed and the server could answer it, but not faithfully: ACMG classification was asked of a genome that lacks sources the classifier reads. The body carries the verdict under `acmg` beside `error`, and the request is not counted as a run.
 `500` is always the literal string `Internal server error`; the detail is written to the server log instead, so that paths and parser internals are not returned to clients.
 Check the server's stderr when you get one.
 
@@ -389,8 +429,9 @@ Check the server's stderr when you get one.
 | `--max-concurrent` | | `64` | Concurrent annotation requests |
 | `--stats-file` | `FASTVEP_STATS_FILE` | `stats.json` | Where the served-variant counters persist |
 | `--allow-model-replacement` | `FASTVEP_ALLOW_MODEL_REPLACEMENT` | off | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model; choosing a genome per request does not need it |
+| `--acmg-allow-partial` | `FASTVEP_ACMG_ALLOW_PARTIAL` | off | Answer `"acmg": true` for a genome whose database directory lacks part of the reference stack, saying so in `acmg_stack`, instead of refusing with `422` |
 
-The two switches take `true`, `1`, `yes` or `on` from their environment variable.
+The three switches take `true`, `1`, `yes` or `on` from their environment variable.
 
 Three things to know about the defaults.
 `--gff3` has none, and a server started without one does not refuse to start: it comes up with `"status": "ok"`, reports `"transcripts": 0`, and answers every request with `intergenic_variant` at HTTP 200.

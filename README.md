@@ -190,6 +190,7 @@ fastvep-web --gff3 genes.gff3 --fasta ref.fa --sa-dir /path/to/sa_databases/
 ```
 
 Open http://localhost:8080 in your browser. The web interface lets you paste VCF data and view results in an interactive table. With `--data-dir` the page offers every genome in that directory, and each analysis names the genome it wants, so choosing one needs no flag and changes nobody else's answers.
+ACMG classification is offered for a genome only when its database directory holds all nine sources the classifier reads; for any other the checkbox is disabled and names what is missing, and the API refuses with `422` (`--acmg-allow-partial` answers anyway and says so in every response; [docs/API.md](docs/API.md#acmg-needs-the-reference-stack)).
 Uploading your own GFF3 in the page replaces the server's gene model for every client, so that needs `--allow-model-replacement`, which is off by default.
 
 > **Note:** `fastvep-web` is a separate production-quality binary (axum/tokio, async, multi-connection). The legacy `fastvep web` command still works but is single-threaded.
@@ -280,7 +281,8 @@ ls -la sa_databases/*.osa2 sa_databases/*.osa
 > The classifier reads a specific nine-source stack: gnomAD, ClinVar, REVEL, SpliceAI, PhyloP, ClinGen Gene-Disease Validity, gnomAD gene constraints, the ClinVar protein/splice index, and RepeatMasker.
 > All of it is public and none of it needs an account, because **SpliceAI and PhyloP are distilled from gnomAD's own `spliceai_ds_max` and `phylop` INFO fields rather than downloaded from Illumina BaseSpace and UCSC**, and the disease-gene source is ClinGen Gene-Disease Validity rather than OMIM.
 > The guide gives the verified download URL, build command and measured size for each, explains what silently stops working when one is missing, and ends with `scripts/check_acmg_stack.py`, which annotates eight probe variants and tells you which sources actually answered.
-> An incomplete `--sa-dir` does not error; it quietly turns pathogenic variants into VUS.
+> An incomplete `--sa-dir` does not error; it turns pathogenic variants into VUS.
+> `fastvep annotate --acmg` prints which sources are missing, once, on stderr, and `fastvep-web` refuses to classify a genome that lacks any of them.
 
 ### Step 3: Run the CLI annotator
 
@@ -308,8 +310,8 @@ fastvep-web \
   --port 8080
 ```
 
-Nine flags also take an environment variable, for container deployments: `FASTVEP_GFF3`, `FASTVEP_FASTA`, `FASTVEP_SA_DIR`, `FASTVEP_DATA_DIR`, `FASTVEP_PORT`, `FASTVEP_BIND`, `FASTVEP_STATS_FILE`, `FASTVEP_PRELOAD_GENOMES` and `FASTVEP_ALLOW_MODEL_REPLACEMENT`.
-The two switches accept `true`, `1`, `yes` or `on`.
+Ten flags also take an environment variable, for container deployments: `FASTVEP_GFF3`, `FASTVEP_FASTA`, `FASTVEP_SA_DIR`, `FASTVEP_DATA_DIR`, `FASTVEP_PORT`, `FASTVEP_BIND`, `FASTVEP_STATS_FILE`, `FASTVEP_PRELOAD_GENOMES`, `FASTVEP_ACMG_ALLOW_PARTIAL` and `FASTVEP_ALLOW_MODEL_REPLACEMENT`.
+The three switches accept `true`, `1`, `yes` or `on`.
 
 ### Multi-organism setup
 
@@ -642,6 +644,7 @@ IMPACT is HIGH and AF < 0.01
 | `--max-concurrent` | Max concurrent annotation requests | `64` |
 | `--stats-file` | JSON file in which the running totals of variants annotated and genomes loaded are kept (also `FASTVEP_STATS_FILE` env) | `stats.json` |
 | `--allow-model-replacement` | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model of the running server, for every client; choosing a genome per request does not need it (also `FASTVEP_ALLOW_MODEL_REPLACEMENT` env) | off |
+| `--acmg-allow-partial` | Answer a request for ACMG classification for a genome whose database directory lacks part of the nine-source reference stack, saying so in every response, instead of refusing it with `422` (also `FASTVEP_ACMG_ALLOW_PARTIAL` env) | off |
 
 ### `fastvep cache`
 

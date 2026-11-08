@@ -27,6 +27,7 @@ fn config(data_dir: Option<PathBuf>, allow_model_replacement: bool) -> ServerCon
         stats_file: None,
         distance: 5000,
         allow_model_replacement,
+        acmg_allow_partial: false,
     }
 }
 
@@ -88,6 +89,23 @@ fn multi_genome_state(label: &str, allow_model_replacement: bool) -> AppState {
         ctx,
         name,
         config(Some(dir), allow_model_replacement),
+    ))
+}
+
+/// [`multi_genome_state`] started with `--acmg-allow-partial`, for the tests that look at what
+/// ACMG returns and not at whether the genome may be classified.
+fn multi_genome_state_allowing_partial_acmg(label: &str) -> AppState {
+    let dir = genome_dir(label);
+    let gff3 = dir.join("alpha").join("mini.gff3");
+    let ctx = AnnotationContext::new(gff3.to_str(), None, None, 5000).expect("build context");
+    let name = default_genome_name(gff3.to_str(), Some(dir.as_path()));
+    Arc::new(SharedState::new(
+        ctx,
+        name,
+        ServerConfig {
+            acmg_allow_partial: true,
+            ..config(Some(dir), false)
+        },
     ))
 }
 
@@ -234,9 +252,24 @@ async fn coding_variant_without_a_fasta_reports_the_generic_term() {
     );
 }
 
+/// The same one-transcript server, started with `--acmg-allow-partial`: the fixture has no
+/// supplementary annotations, so without the switch it would refuse every request for ACMG.
+fn partial_acmg_state() -> AppState {
+    let mut ctx = AnnotationContext::new(None, None, None, 5000).expect("build context");
+    ctx.update_gff3_text(MINI_GFF3).expect("load mini gff3");
+    Arc::new(SharedState::new(
+        ctx,
+        "mini",
+        ServerConfig {
+            acmg_allow_partial: true,
+            ..config(None, false)
+        },
+    ))
+}
+
 #[tokio::test]
 async fn acmg_is_attached_only_when_requested() {
-    let state = test_state();
+    let state = partial_acmg_state();
     let vcf = vcf_line(1100, ".");
 
     let (status, off) = post_json(&state, "/api/annotate", json!({ "vcf": vcf })).await;
@@ -687,7 +720,7 @@ async fn a_request_is_answered_from_the_genome_it_names() {
 
 #[tokio::test]
 async fn the_other_annotate_options_apply_to_a_named_genome() {
-    let state = multi_genome_state("options", false);
+    let state = multi_genome_state_allowing_partial_acmg("options");
     let (status, body) = post_json(
         &state,
         "/api/annotate",
@@ -914,4 +947,300 @@ async fn replacing_the_default_model_renames_it_so_the_old_name_is_not_answered_
     let (n, gene_model) = transcripts_at_1100(&state, Some("alpha")).await;
     assert_eq!(n, 1, "the upload has two transcripts here; alpha has one");
     assert_eq!(gene_model["genome"], "alpha");
+}
+
+// ---------------------------------------------------------------------------
+// ACMG needs the reference stack
+// ---------------------------------------------------------------------------
+
+/// Write a database directory that holds all nine sources of the reference stack, each with
+/// one record, so that the files open and carry the keys the classifier reads them by.
+fn write_reference_stack(sa_dir: &std::path::Path) {
+    use fastvep_sa::common::{GeneRecord, IntervalRecord};
+    use fastvep_sa::fields::{Field, FieldType};
+    use fastvep_sa::gene::{GeneHeader, GeneIndex};
+    use fastvep_sa::interval::{IntervalHeader, IntervalIndex};
+    use fastvep_sa::writer_v2::{Osa2Metadata, Osa2Record, Osa2Writer};
+
+    std::fs::create_dir_all(sa_dir).unwrap();
+    let field = Field {
+        field: "AF".into(),
+        alias: "af".into(),
+        ftype: FieldType::Float,
+        multiplier: 1_000_000,
+        zigzag: false,
+        missing_value: u32::MAX,
+        missing_string: ".".into(),
+        description: "allele frequency".into(),
+    };
+    for (stem, key) in [
+        ("gnomad", "gnomad"),
+        ("clinvar", "clinvar"),
+        ("revel", "revel"),
+        ("spliceai", "spliceAI"),
+        ("phylop", "phylop"),
+    ] {
+        let metadata = Osa2Metadata {
+            format_version: 2,
+            name: key.into(),
+            version: "test".into(),
+            assembly: "GRCh38".into(),
+            json_key: key.into(),
+            match_by_allele: true,
+            is_array: false,
+            is_positional: false,
+            chunk_bits: 20,
+            description: String::new(),
+        };
+        let records = vec![Osa2Record {
+            chrom: "chr1".into(),
+            position: 1000,
+            ref_allele: b"A".to_vec(),
+            alt_allele: b"G".to_vec(),
+            values: vec![field.encode_float(0.25)],
+            json_blob: None,
+        }];
+        let file = std::fs::File::create(sa_dir.join(format!("{stem}.osa2"))).unwrap();
+        Osa2Writer::new(metadata, vec![field.clone()])
+            .write_all(std::io::BufWriter::new(file), &records)
+            .unwrap();
+    }
+    for key in ["gnomad_genes", "omim", "clinvar_protein"] {
+        let mut index = GeneIndex::new(GeneHeader {
+            schema_version: fastvep_sa::common::SCHEMA_VERSION,
+            json_key: key.into(),
+            name: key.into(),
+            version: "test".into(),
+            assembly: "GRCh38".into(),
+        });
+        index.add(GeneRecord {
+            gene_symbol: "NOSUCHGENE".into(),
+            json: "{}".into(),
+        });
+        let mut file = std::fs::File::create(sa_dir.join(format!("{key}.oga"))).unwrap();
+        index.write_to(&mut file).unwrap();
+    }
+    let mut repeats = IntervalIndex::new(IntervalHeader {
+        schema_version: fastvep_sa::common::SCHEMA_VERSION,
+        json_key: "repeatmasker".into(),
+        name: "RepeatMasker".into(),
+        version: "test".into(),
+        assembly: "GRCh38".into(),
+    });
+    repeats.add(IntervalRecord {
+        chrom: "chr1".into(),
+        start: 10,
+        end: 20,
+        json: "{}".into(),
+    });
+    repeats.sort();
+    let mut file = std::fs::File::create(sa_dir.join("repeatmasker.osi")).unwrap();
+    repeats.write_to(&mut file).unwrap();
+}
+
+/// Three genomes: `alpha` (the default, with the whole stack in its `sa/`), `beta` with no
+/// supplementary annotations, and `gamma` with the whole stack, which is not loaded until asked
+/// for.
+fn genomes_with_and_without_the_stack(label: &str, allow_partial: bool) -> AppState {
+    let dir = genome_dir(label);
+    write_reference_stack(&dir.join("alpha").join("sa"));
+    std::fs::create_dir_all(dir.join("gamma")).unwrap();
+    std::fs::write(dir.join("gamma").join("mini.gff3"), MINI_GFF3).unwrap();
+    write_reference_stack(&dir.join("gamma").join("sa"));
+    let gff3 = dir.join("alpha").join("mini.gff3");
+    let sa = dir.join("alpha").join("sa");
+    let ctx =
+        AnnotationContext::new(gff3.to_str(), None, sa.to_str(), 5000).expect("build context");
+    let name = default_genome_name(gff3.to_str(), Some(dir.as_path()));
+    Arc::new(SharedState::new(
+        ctx,
+        name,
+        ServerConfig {
+            acmg_allow_partial: allow_partial,
+            ..config(Some(dir), false)
+        },
+    ))
+}
+
+#[tokio::test]
+async fn status_says_whether_acmg_will_be_answered_and_what_stands_in_the_way() {
+    let (status, body) = get(&test_state(), "/api/status").await;
+    assert_eq!(status, StatusCode::OK);
+    let acmg = &body["acmg"];
+    assert_eq!(acmg["ready"], false, "{acmg}");
+    assert_eq!(acmg["available"], false, "{acmg}");
+    assert_eq!(acmg["loaded"], json!([]));
+    let missing = acmg["missing"]
+        .as_array()
+        .expect("a list of missing sources");
+    assert_eq!(missing.len(), 9);
+    let gnomad = missing
+        .iter()
+        .find(|m| m["id"] == "gnomad")
+        .expect("gnomAD is listed");
+    assert_eq!(gnomad["drives"], json!(["BA1", "BS1", "BS2", "PM2"]));
+    assert!(gnomad["without"]
+        .as_str()
+        .unwrap()
+        .contains("population frequency"));
+
+    let (_, body) = get(
+        &genomes_with_and_without_the_stack("status-full", false),
+        "/api/status",
+    )
+    .await;
+    assert_eq!(body["acmg"]["ready"], true, "{}", body["acmg"]);
+    assert_eq!(body["acmg"]["available"], true);
+    assert_eq!(body["acmg"]["missing"], json!([]));
+    assert_eq!(body["acmg"]["loaded"].as_array().unwrap().len(), 9);
+}
+
+#[tokio::test]
+async fn a_request_for_acmg_on_a_genome_without_the_stack_is_refused_and_says_why() {
+    let state = test_state();
+    let vcf = vcf_line(1100, ".");
+
+    let (status, body) =
+        post_json(&state, "/api/annotate", json!({ "vcf": vcf, "acmg": true })).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body.get("results").is_none(),
+        "nothing is annotated: {body}"
+    );
+    let message = body["error"].as_str().unwrap();
+    assert!(
+        message.contains("not available for genome 'mini'"),
+        "{message}"
+    );
+    assert!(message.contains("9 of the 9 sources"), "{message}");
+    assert_eq!(body["acmg"]["available"], false);
+    assert_eq!(body["acmg"]["missing"].as_array().unwrap().len(), 9);
+
+    // The same variant without ACMG is answered: only the classification is refused.
+    let (status, body) = post_json(&state, "/api/annotate", json!({ "vcf": vcf })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("acmg_stack").is_none(), "{body}");
+    // A refused request is not a run, and is not counted as one.
+    assert_eq!(
+        state
+            .total_variants
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_partial_stack_is_answered_when_the_operator_allowed_it_and_the_response_says_so() {
+    let (status, body) = post_json(
+        &partial_acmg_state(),
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "."), "acmg": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["acmg_stack"]["complete"], false);
+    assert_eq!(body["acmg_stack"]["missing"].as_array().unwrap().len(), 9);
+    assert!(body["acmg_stack"]["missing"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("gnomad")));
+    // And PM2 does not read the missing database as absence from controls.
+    let criteria = body["results"][0]["transcript_consequences"][0]["acmg"]["criteria"]
+        .as_array()
+        .unwrap();
+    let pm2 = criteria
+        .iter()
+        .find(|c| c["code"].as_str().unwrap().starts_with("PM2"))
+        .expect("PM2 is reported");
+    assert_eq!(pm2["evaluated"], false, "{pm2}");
+    assert_eq!(pm2["met"], false, "{pm2}");
+}
+
+#[tokio::test]
+async fn a_genome_with_the_whole_stack_is_classified_and_the_response_says_the_stack_was_complete()
+{
+    let state = genomes_with_and_without_the_stack("full", false);
+    // The default genome (alpha) and one loaded on request (gamma) both hold it.
+    for genome in [None, Some("gamma")] {
+        let mut request = json!({ "vcf": vcf_line(1100, "."), "acmg": true });
+        if let Some(g) = genome {
+            request["genome"] = json!(g);
+        }
+        let (status, body) = post_json(&state, "/api/annotate", request).await;
+        assert_eq!(status, StatusCode::OK, "{genome:?}: {body}");
+        assert_eq!(
+            body["acmg_stack"],
+            json!({ "complete": true, "missing": [] }),
+            "{genome:?}"
+        );
+        let acmg = &body["results"][0]["transcript_consequences"][0]["acmg"];
+        assert!(acmg["classification"].is_string(), "{genome:?}: {body}");
+    }
+    // A genome of the same server that lacks the stack is still refused.
+    let (status, body) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "."), "acmg": true, "genome": "beta" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("genome 'beta'"));
+}
+
+#[tokio::test]
+async fn the_genome_list_says_for_each_genome_whether_it_can_be_classified_before_it_is_loaded() {
+    let state = genomes_with_and_without_the_stack("listing", false);
+    let (_, body) = get(&state, "/api/genomes").await;
+    let by_name = |name: &str| -> Value {
+        body["genomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is listed: {body}"))
+            .clone()
+    };
+    // The default one: loaded, with the stack.
+    assert_eq!(by_name("alpha")["acmg"]["ready"], true);
+    // gamma has not been asked for, and its directory says it can be classified.
+    let gamma = by_name("gamma");
+    assert_eq!(gamma["loaded"], false);
+    assert_eq!(gamma["acmg"]["ready"], true, "{gamma}");
+    assert_eq!(gamma["acmg"]["loaded"].as_array().unwrap().len(), 9);
+    // beta has no sa/ directory at all.
+    let beta = by_name("beta");
+    assert_eq!(beta["acmg"]["ready"], false);
+    assert_eq!(beta["acmg"]["missing"].as_array().unwrap().len(), 9);
+
+    // Loading gamma changes nothing about what the list says of it.
+    let (status, _) = post_json(
+        &state,
+        "/api/annotate",
+        json!({ "vcf": vcf_line(1100, "."), "genome": "gamma" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = get(&state, "/api/genomes").await;
+    let gamma = body["genomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "gamma")
+        .unwrap();
+    assert_eq!(gamma["loaded"], true);
+    assert_eq!(gamma["acmg"]["ready"], true);
+}
+
+#[tokio::test]
+async fn with_partial_acmg_allowed_the_list_says_available_but_not_ready() {
+    let state = genomes_with_and_without_the_stack("listing-partial", true);
+    let (_, body) = get(&state, "/api/genomes").await;
+    let beta = body["genomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "beta")
+        .unwrap();
+    assert_eq!(beta["acmg"]["ready"], false);
+    assert_eq!(beta["acmg"]["available"], true);
 }

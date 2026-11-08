@@ -92,6 +92,26 @@ struct Cli {
         env = "FASTVEP_ALLOW_MODEL_REPLACEMENT"
     )]
     allow_model_replacement: bool,
+
+    /// Answer `"acmg": true` for a genome whose database directory lacks part of the ACMG
+    /// reference stack.
+    ///
+    /// Off by default. The classifier reads nine supplementary sources
+    /// (docs/ACMG_SETUP.md); without one, the criteria that read it report
+    /// `evaluated: false` and the result is a classification that rests on less evidence than
+    /// it appears to, almost always VUS. A server that holds ClinVar and dbSNP only would
+    /// answer every request for ACMG that way, and nothing in a VUS says it was not given the
+    /// evidence. So by default such a request is refused with HTTP 422 and the list of what is
+    /// missing, and `GET /api/status` and `GET /api/genomes` say which genomes can be
+    /// classified. Turn this on for a run where an incomplete stack is deliberate: every
+    /// response then carries `acmg_stack` with the sources that were missing.
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new(),
+        env = "FASTVEP_ACMG_ALLOW_PARTIAL"
+    )]
+    acmg_allow_partial: bool,
 }
 
 #[tokio::main]
@@ -139,6 +159,13 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    if cli.acmg_allow_partial {
+        tracing::warn!(
+            "--acmg-allow-partial is set: ACMG classification is answered for genomes whose \
+             database directory lacks part of the reference stack. Each response says which \
+             sources were missing."
+        );
+    }
     if cli.allow_model_replacement {
         tracing::warn!(
             "--allow-model-replacement is set: any client may replace the gene model for every \
@@ -159,6 +186,7 @@ async fn main() -> anyhow::Result<()> {
                 stats_file: Some(cli.stats_file),
                 distance: cli.distance,
                 allow_model_replacement: cli.allow_model_replacement,
+                acmg_allow_partial: cli.acmg_allow_partial,
             },
         )
         .with_stats(initial_variants, initial_genomes),
@@ -204,15 +232,16 @@ mod tests {
     #[test]
     fn the_switches_are_flags_and_default_to_off() {
         let off = Cli::try_parse_from(["fastvep-web"]).unwrap();
-        assert!(!off.preload_genomes && !off.allow_model_replacement);
+        assert!(!off.preload_genomes && !off.allow_model_replacement && !off.acmg_allow_partial);
 
         let on = Cli::try_parse_from([
             "fastvep-web",
             "--preload-genomes",
             "--allow-model-replacement",
+            "--acmg-allow-partial",
         ])
         .unwrap();
-        assert!(on.preload_genomes && on.allow_model_replacement);
+        assert!(on.preload_genomes && on.allow_model_replacement && on.acmg_allow_partial);
     }
 
     #[test]

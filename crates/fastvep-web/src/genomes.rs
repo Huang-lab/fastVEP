@@ -32,7 +32,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use tokio::sync::watch;
+use fastvep_classification::LoadedSources;
+use tokio::sync::{watch, OnceCell};
 
 use crate::context::AnnotationContext;
 use crate::errors::AppError;
@@ -296,6 +297,9 @@ pub struct GenomeRegistry {
     loads: Loads,
     loads_started: AtomicUsize,
     loader: Loader,
+    /// Which sources of the reference stack a genome's `sa/` directory holds, found once by
+    /// opening its files, for the genomes that are not loaded and so have no context to ask.
+    inventories: Mutex<HashMap<String, Arc<OnceCell<LoadedSources>>>>,
 }
 
 impl GenomeRegistry {
@@ -310,6 +314,7 @@ impl GenomeRegistry {
             loads: Arc::new(Mutex::new(HashMap::new())),
             loads_started: AtomicUsize::new(0),
             loader,
+            inventories: Mutex::new(HashMap::new()),
         }
     }
 
@@ -405,6 +410,46 @@ impl GenomeRegistry {
             tx.send_replace(Some(outcome));
         });
     }
+
+    /// Which sources of the reference stack the genome's database directory holds.
+    ///
+    /// A genome that is loaded answers from its context, which is what the classifier will be
+    /// told. One that is not has its `sa/` directory opened once, with the loaders a real load
+    /// uses, so that a file that cannot be opened is missing here as it would be there.
+    pub async fn sa_sources(&self, name: &str) -> Result<LoadedSources, AppError> {
+        if let Some(ctx) = self.loaded(name) {
+            return Ok(ctx.loaded_sources());
+        }
+        let Some(data_dir) = self.data_dir.as_deref() else {
+            return Err(AppError::BadRequest("No data directory configured".into()));
+        };
+        let paths = resolve_genome_paths(data_dir, name)?;
+        let cell = {
+            let mut inventories = self.inventories.lock().unwrap_or_else(|p| p.into_inner());
+            Arc::clone(inventories.entry(name.to_string()).or_default())
+        };
+        let sources = cell
+            .get_or_try_init(|| async {
+                let Some(sa_dir) = paths.sa_dir else {
+                    return Ok::<_, AppError>(LoadedSources::default());
+                };
+                Ok(tokio::task::spawn_blocking(move || inspect_sa_dir(&sa_dir)).await?)
+            })
+            .await?;
+        Ok(*sources)
+    }
+}
+
+/// The sources of the reference stack a database directory holds, by opening its files.
+fn inspect_sa_dir(dir: &Path) -> LoadedSources {
+    let alleles = fastvep_annotate::load_sa_providers(dir).unwrap_or_default();
+    let genes = fastvep_annotate::load_gene_providers(dir).unwrap_or_default();
+    LoadedSources::from_json_keys(
+        alleles
+            .iter()
+            .map(|p| p.json_key())
+            .chain(genes.iter().map(|g| g.header.json_key.as_str())),
+    )
 }
 
 /// Build the context of one genome from its own files and nothing else.
@@ -743,5 +788,13 @@ mod tests {
             .expect("the second try loads");
         assert_eq!(second.transcript_count(), 1);
         assert_eq!(registry.loads_started(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_genome_with_no_sa_directory_holds_no_source_of_the_stack() {
+        let registry = GenomeRegistry::new(Some(tiny_genome("inventory-none")), 5000);
+        let sources = registry.sa_sources("alpha").await.unwrap();
+        assert_eq!(sources.missing().count(), 9);
+        assert!(registry.sa_sources("nonexistent").await.is_err());
     }
 }

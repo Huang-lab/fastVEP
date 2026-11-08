@@ -40,5 +40,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Error handling
 anyhow = { workspace = true }
 
+[dev-dependencies]
+# Tiny supplementary databases for the tests of which sources a genome holds.
+fastvep-sa = { workspace = true }
+tempfile = { workspace = true }
+
 [lints]
 workspace = true

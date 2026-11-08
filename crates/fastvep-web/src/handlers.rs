@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use fastvep_annotate::pick::{PickFlags, PickRequest};
 
+use crate::acmg::{AcmgReadiness, AcmgStack};
 use crate::context::AnnotationContext;
 use crate::errors::AppError;
 use crate::genomes::{resolve_genome_paths, scan_data_dir, GenomeRegistry};
@@ -28,6 +29,9 @@ pub struct ServerConfig {
     /// Upstream/downstream distance of the genomes loaded on request.
     pub distance: u64,
     pub allow_model_replacement: bool,
+    /// Answer `"acmg": true` for a genome whose database directory lacks part of the reference
+    /// stack, saying so in the response, instead of refusing (`--acmg-allow-partial`).
+    pub acmg_allow_partial: bool,
 }
 
 /// The name a gene model uploaded through `/api/upload-gff3` answers to. It is
@@ -71,6 +75,9 @@ pub struct SharedState {
     /// Choosing a genome per request (`"genome"` in `/api/annotate`) replaces
     /// nothing and needs no flag.
     pub allow_model_replacement: bool,
+    /// Whether a request for ACMG classification is answered for a genome that lacks part of the
+    /// reference stack. Off by default: see [`crate::acmg`] for why the server refuses instead.
+    pub acmg_allow_partial: bool,
     /// Bumped on every successful gene-model replacement.
     ///
     /// Reported alongside every annotation so a client can tell that two
@@ -116,6 +123,7 @@ impl SharedState {
             total_variants: AtomicU64::new(0),
             total_genomes: AtomicU64::new(0),
             allow_model_replacement: config.allow_model_replacement,
+            acmg_allow_partial: config.acmg_allow_partial,
             gene_model_generation: AtomicU64::new(0),
         }
     }
@@ -249,7 +257,7 @@ pub async fn logo_png() -> impl IntoResponse {
 /// `default_genome` is also how a client learns that this server answers per
 /// request: an older server does not send it.
 pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let (transcripts, gff3_source, has_fasta, sa_sources, generation, default_genome) = {
+    let (transcripts, gff3_source, has_fasta, sa_sources, generation, default_genome, acmg) = {
         let guard = state.ctx.read().unwrap();
         (
             guard.transcript_count(),
@@ -258,6 +266,7 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
             guard.sa_source_names(),
             state.gene_model_generation.load(Ordering::Relaxed),
             state.current_default_genome(),
+            AcmgReadiness::of(guard.loaded_sources(), state.acmg_allow_partial),
         )
     };
     Json(serde_json::json!({
@@ -270,6 +279,9 @@ pub async fn status(State(state): State<AppState>) -> Json<serde_json::Value> {
         "default_genome": default_genome,
         "has_fasta": has_fasta,
         "sa_sources": sa_sources,
+        // Whether `"acmg": true` will be answered for the default genome, and the sources
+        // that stand in the way if not.
+        "acmg": acmg,
         // So a UI can offer the model-replacing controls only when they will
         // work, instead of finding out with a 403 the user cannot interpret.
         "allow_model_replacement": state.allow_model_replacement,
@@ -292,7 +304,7 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
     };
 
     // Taken under one guard, so the entry and the name it carries agree.
-    let (default_name, default_gff3, default_fasta, default_sa, default_transcripts) = {
+    let (default_name, default_gff3, default_fasta, default_sa, default_transcripts, default_acmg) = {
         let guard = state.ctx.read().unwrap();
         (
             state.current_default_genome(),
@@ -300,6 +312,7 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
             guard.seq_provider.is_some(),
             !guard.sa_source_names().is_empty(),
             guard.transcript_count(),
+            AcmgReadiness::of(guard.loaded_sources(), state.acmg_allow_partial),
         )
     };
 
@@ -313,6 +326,7 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
             "loaded": true,
             "default": true,
             "transcripts": default_transcripts,
+            "acmg": default_acmg,
         }));
     }
     for listing in scanned {
@@ -325,6 +339,18 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
                 .loaded(&listing.name)
                 .map(|g| g.transcript_count())
         };
+        let acmg = if is_default {
+            default_acmg.clone()
+        } else {
+            // Loaded: what the classifier will be told. Not loaded: what its `sa/` directory
+            // holds, found once. A directory that cannot be read has none of the sources.
+            let sources = state
+                .genomes
+                .sa_sources(&listing.name)
+                .await
+                .unwrap_or_default();
+            AcmgReadiness::of(sources, state.acmg_allow_partial)
+        };
         genomes.push(serde_json::json!({
             "name": listing.name,
             "gff3": listing.gff3,
@@ -333,6 +359,7 @@ pub async fn list_genomes(State(state): State<AppState>) -> Json<serde_json::Val
             "loaded": transcripts.is_some(),
             "default": is_default,
             "transcripts": transcripts,
+            "acmg": acmg,
         }));
     }
 
@@ -443,21 +470,43 @@ pub struct AnnotateRequest {
     acmg: Option<bool>,
 }
 
+/// What an annotation produced, and, when classification was asked for, what the classifier
+/// had to read.
+struct Annotated {
+    results: Vec<serde_json::Value>,
+    /// Present exactly when the request asked for `acmg`: whether every source of the
+    /// reference stack was loaded, and which were not.
+    acmg_stack: Option<AcmgStack>,
+}
+
 /// What the default model made of a request.
 enum DefaultAnswer {
-    Answered(Vec<serde_json::Value>, GeneModelId),
+    Answered(Annotated, GeneModelId),
     /// The request named a genome and the default model is not it. The VCF text
     /// comes back so that a request of up to the body limit is not copied.
     NotTheDefault(String),
 }
 
 /// Annotate with one context, attaching ACMG when the request asked for it.
+///
+/// `genome` is the name the context answers to, for the message of a refusal. A request for
+/// classification is refused before anything is annotated when the genome lacks sources the
+/// classifier reads, unless the server was started to answer anyway: see [`crate::acmg`].
 fn annotate_with(
     ctx: &AnnotationContext,
+    genome: &str,
     vcf_text: &str,
     pick: Option<PickRequest>,
     acmg_requested: bool,
-) -> anyhow::Result<Vec<serde_json::Value>> {
+    allow_partial: bool,
+) -> Result<Annotated, AppError> {
+    let readiness = acmg_requested.then(|| AcmgReadiness::of(ctx.loaded_sources(), allow_partial));
+    if let Some(unavailable) = readiness.as_ref().filter(|r| !r.available) {
+        return Err(AppError::AcmgUnavailable {
+            message: unavailable.refusal(genome),
+            acmg: serde_json::to_value(unavailable).map_err(|e| AppError::Internal(e.into()))?,
+        });
+    }
     // Borrow the existing config instead of cloning it; only build a
     // fresh default when none is loaded (no need to deep-clone
     // gene_overrides/ba1_exceptions on every ACMG-enabled request).
@@ -473,7 +522,11 @@ fn annotate_with(
     } else {
         None
     };
-    ctx.annotate_vcf_text_with_acmg(vcf_text, pick, acmg_config)
+    let results = ctx.annotate_vcf_text_with_acmg(vcf_text, pick, acmg_config)?;
+    Ok(Annotated {
+        results,
+        acmg_stack: readiness.map(|r| r.stack()),
+    })
 }
 
 /// Answer from a genome of the data directory other than the default one,
@@ -484,7 +537,7 @@ async fn answer_from_registry(
     vcf_text: String,
     pick: Option<PickRequest>,
     acmg_requested: bool,
-) -> Result<(Vec<serde_json::Value>, GeneModelId), AppError> {
+) -> Result<(Annotated, GeneModelId), AppError> {
     if state.genomes.data_dir().is_none() {
         return Err(AppError::BadRequest(format!(
             "Genome '{}' not found. This server was started without --data-dir and serves only '{}'.",
@@ -495,7 +548,14 @@ async fn answer_from_registry(
     let genome = state.genomes.get_or_load(&name).await?;
     let ctx = Arc::clone(state);
     let answered = tokio::task::spawn_blocking(move || {
-        let results = annotate_with(&genome, &vcf_text, pick, acmg_requested)?;
+        let annotated = annotate_with(
+            &genome,
+            &name,
+            &vcf_text,
+            pick,
+            acmg_requested,
+            ctx.acmg_allow_partial,
+        )?;
         let gene_model = GeneModelId {
             genome: name,
             gff3_source: genome.gff3_source.clone(),
@@ -504,8 +564,8 @@ async fn answer_from_registry(
             // nothing for a generation to count.
             generation: 0,
         };
-        ctx.record_run(results.len(), true);
-        Ok::<_, anyhow::Error>((results, gene_model))
+        ctx.record_run(annotated.results.len(), true);
+        Ok::<_, AppError>((annotated, gene_model))
     })
     .await??;
     Ok(answered)
@@ -554,24 +614,31 @@ pub async fn annotate(
         // from a model that no longer has that name.
         if let Some(ref name) = wanted {
             if ctx.current_default_genome() != *name {
-                return Ok::<_, anyhow::Error>(DefaultAnswer::NotTheDefault(vcf_text));
+                return Ok::<_, AppError>(DefaultAnswer::NotTheDefault(vcf_text));
             }
         }
-        let results = annotate_with(&guard, &vcf_text, pick, acmg_requested)?;
-        // Read the model's identity before releasing the lock, so what the
+        let gene_model = ctx.gene_model_id(&guard);
+        let annotated = annotate_with(
+            &guard,
+            &gene_model.genome,
+            &vcf_text,
+            pick,
+            acmg_requested,
+            ctx.acmg_allow_partial,
+        )?;
+        // The model's identity was read under the same guard that annotated, so what the
         // response reports is the model that produced these results and not
         // whichever one a concurrent upload left behind (#113).
-        let gene_model = ctx.gene_model_id(&guard);
         drop(guard);
 
-        ctx.record_run(results.len(), wanted.is_some());
+        ctx.record_run(annotated.results.len(), wanted.is_some());
 
-        Ok(DefaultAnswer::Answered(results, gene_model))
+        Ok(DefaultAnswer::Answered(annotated, gene_model))
     })
     .await??;
 
-    let (results, gene_model) = match first {
-        DefaultAnswer::Answered(results, gene_model) => (results, gene_model),
+    let (annotated, gene_model) = match first {
+        DefaultAnswer::Answered(annotated, gene_model) => (annotated, gene_model),
         DefaultAnswer::NotTheDefault(vcf_text) => {
             let name = genome.ok_or_else(|| {
                 AppError::Internal(anyhow::anyhow!(
@@ -583,12 +650,19 @@ pub async fn annotate(
     };
 
     let time_ms = start.elapsed().as_millis() as u64;
-    Ok(Json(serde_json::json!({
-        "results": results,
-        "count": results.len(),
+    let mut body = serde_json::json!({
+        "results": annotated.results,
+        "count": annotated.results.len(),
         "time_ms": time_ms,
         "gene_model": gene_model,
-    })))
+    });
+    if let Some(stack) = annotated.acmg_stack {
+        // Beside the classifications it qualifies, so that a client that stores or shows them
+        // keeps what they rest on with them.
+        body["acmg_stack"] =
+            serde_json::to_value(stack).map_err(|e| AppError::Internal(e.into()))?;
+    }
+    Ok(Json(body))
 }
 
 pub async fn upload_gff3(

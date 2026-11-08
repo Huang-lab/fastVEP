@@ -64,6 +64,10 @@ fastvep annotate \
 4. Click any badge to view the full evidence detail modal showing all 28 criteria
 5. The **Summary** tab includes an ACMG classification distribution chart
 
+The checkbox is available only for a genome whose database directory holds all nine sources of the reference stack.
+For any other genome it is disabled and the page names the sources that are missing, because a classification made without them would rest on less evidence than it appears to (see [Missing sources](#missing-sources)).
+`POST /api/annotate` with `"acmg": true` for such a genome is refused with HTTP 422 and the same list, and `--acmg-allow-partial` answers it anyway and says so in the response ([docs/API.md](API.md#acmg-needs-the-reference-stack)).
+
 ## CLI Parameters
 
 | Flag | Description | Default |
@@ -951,6 +955,7 @@ PM2 used to be the exception: it read a variant with no gnomAD record as absent 
 It now declines when no gnomAD database is loaded, whatever `pm2_absent_when_no_record` says, and so do BA1, BS1 and BS2.
 That setting is about a database that is loaded and holds no record of the variant (limitation 30), which is a different statement.
 
+`fastvep-web` goes further than a warning, because the people who read its answers are not the ones who built its databases: it refuses to classify a genome that lacks any of the nine sources, and `GET /api/status` and `GET /api/genomes` say which genomes can be classified.
 The nine sources are named once, in `crates/fastvep-classification/src/sources.rs` (`REFERENCE_STACK`), with the criteria that read each of them and what a classification loses without it.
 The command line, the web server and this document all read from that list.
 A test classifies a set of inputs with each source and without it and fails if a criterion that is not listed under a source changes when the source is removed, so the list cannot drift from the criteria.

@@ -52,8 +52,10 @@ pub enum SourceScope {
 }
 
 /// What the classifier knows about a source.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SourceInfo {
+    /// Not serialised: `id` names the source for anything outside this crate.
+    #[serde(skip)]
     pub source: Source,
     /// The `json_key` its database registers under, which is what `--sa-dir` is read by: the key
     /// comes from the header of the file, and the name of the file does not matter.
