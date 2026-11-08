@@ -27,7 +27,7 @@ pub use fastvep_annotate::pick::{
 };
 pub use sa_build::{
     run_sa_build, run_sa_build_format, run_sa_build_v2, run_sa_convert, source_from_json_key,
-    source_has_decomposed_osa2, source_supports_osa2, OSA2_DECOMPOSED_SOURCES,
+    source_has_decomposed_osa2, source_supports_osa2, with_allow_empty, OSA2_DECOMPOSED_SOURCES,
     OSA2_SUPPORTED_SOURCES,
 };
 

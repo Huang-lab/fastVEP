@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
     annotate_intergenic, annotate_sa_only_scaffold, hgvs_allele_on_transcript, hgvsg_per_alt,
-    load_gene_providers, load_sa_providers, splice_context, RowTranscripts,
+    load_gene_providers_reporting, load_sa_providers_reporting, splice_context, RowTranscripts,
 };
 
 const BATCH_SIZE: usize = 1024;
@@ -1693,13 +1693,18 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // (issue #78). `tracing` has no subscriber installed in the CLI.
     let sa_providers: Vec<Box<dyn AnnotationProvider>> = if let Some(ref dir) = config.sa_dir {
         let t0 = std::time::Instant::now();
-        let loaded = load_sa_providers(Path::new(dir))?;
+        let (loaded, skipped) = load_sa_providers_reporting(Path::new(dir))?;
         eprintln!(
             "Loaded {} supplementary annotation source(s) from {} in {:.1}s",
             loaded.len(),
             dir,
             t0.elapsed().as_secs_f64()
         );
+        // `tracing` has no subscriber here, so a file that was skipped would be a source that is
+        // silently missing from every row.
+        for source in &skipped {
+            eprintln!("warning: {source}");
+        }
         loaded
     } else {
         Vec::new()
@@ -1739,7 +1744,10 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         }
         Vec::new()
     } else if let Some(ref dir) = config.sa_dir {
-        let loaded = load_gene_providers(Path::new(dir))?;
+        let (loaded, skipped) = load_gene_providers_reporting(Path::new(dir))?;
+        for source in &skipped {
+            eprintln!("warning: {source}");
+        }
         if !loaded.is_empty() {
             eprintln!(
                 "Loaded {} gene-level annotation source(s) from {}",

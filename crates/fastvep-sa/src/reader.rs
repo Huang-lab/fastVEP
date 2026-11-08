@@ -461,6 +461,10 @@ impl AnnotationProvider for SaReader {
         &self.metadata
     }
 
+    fn is_empty(&self) -> bool {
+        self.index.chromosomes.values().all(Vec::is_empty)
+    }
+
     fn annotate_position(
         &self,
         chrom: &str,

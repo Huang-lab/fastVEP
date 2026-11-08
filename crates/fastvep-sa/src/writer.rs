@@ -159,6 +159,11 @@ impl SaWriter {
         Ok(())
     }
 
+    /// Whether no record has been written: the index names no block of any chromosome.
+    pub fn is_empty(&self) -> bool {
+        self.index.chromosomes.values().all(Vec::is_empty)
+    }
+
     /// Write the index file.
     pub fn write_index<W: Write>(&self, writer: &mut W) -> Result<()> {
         self.index.write_to(writer)

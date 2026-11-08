@@ -439,6 +439,18 @@ enum Commands {
         #[arg(long, default_value = "auto")]
         format: String,
 
+        /// Write the database even when no record was found to put in it.
+        ///
+        /// Off by default, and a build that finds nothing is an error: a database of
+        /// nothing opens without complaint and answers every query with "no record",
+        /// which for a frequency source reads as "absent from the population". The
+        /// usual cause is that none of the chromosome names of the input matched
+        /// `--assembly` (NCBI names contigs by RefSeq accession). Pass this when an
+        /// empty database is what is meant, such as the shard of a chromosome that
+        /// has no record in the regions being built.
+        #[arg(long, default_value_t = false)]
+        allow_empty: bool,
+
         /// Suppress periodic progress output
         #[arg(long, default_value_t = false)]
         no_progress: bool,
@@ -467,6 +479,18 @@ enum Commands {
         /// (with most lookups failing) to 0.5s, for 12% more file size.
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=20))]
         chunk_bits: u32,
+
+        /// Write the database even when no record was found to put in it.
+        ///
+        /// Off by default, and a build that finds nothing is an error: a database of
+        /// nothing opens without complaint and answers every query with "no record",
+        /// which for a frequency source reads as "absent from the population". The
+        /// usual cause is that none of the chromosome names of the input matched
+        /// `--assembly` (NCBI names contigs by RefSeq accession). Pass this when an
+        /// empty database is what is meant, such as the shard of a chromosome that
+        /// has no record in the regions being built.
+        #[arg(long, default_value_t = false)]
+        allow_empty: bool,
 
         /// Suppress periodic progress output
         #[arg(long, default_value_t = false)]
@@ -706,21 +730,25 @@ fn main() -> Result<()> {
             name,
             info_fields,
             format,
+            allow_empty,
             no_progress,
-        } => pipeline::run_sa_build_format(
-            &format,
-            &source,
-            &input,
-            &output,
-            &assembly,
-            name.as_deref(),
-            &info_fields,
-            !no_progress,
-        )?,
+        } => pipeline::with_allow_empty(allow_empty, || {
+            pipeline::run_sa_build_format(
+                &format,
+                &source,
+                &input,
+                &output,
+                &assembly,
+                name.as_deref(),
+                &info_fields,
+                !no_progress,
+            )
+        })?,
         Commands::SaConvert {
             input,
             output,
             chunk_bits,
+            allow_empty,
             no_progress,
         } => {
             // Default the output alongside the input: `foo.osa` -> `foo.osa2`.
@@ -731,7 +759,9 @@ fn main() -> Result<()> {
                     .to_string_lossy()
                     .into_owned()
             });
-            pipeline::run_sa_convert(&input, &output, chunk_bits, !no_progress)?
+            pipeline::with_allow_empty(allow_empty, || {
+                pipeline::run_sa_convert(&input, &output, chunk_bits, !no_progress)
+            })?
         }
         Commands::Filter {
             input,
