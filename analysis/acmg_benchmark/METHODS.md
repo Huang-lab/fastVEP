@@ -123,7 +123,7 @@ compatibility.
 
 | Inheritance | Threshold |
 |-------------|-----|
-| Not recessive-only (AD, both, unknown) | AF ≤ 0.00004 (set at v10 by a sweep under the 2015 table; nearly flat under the point system) |
+| Not recessive-only (AD, both, unknown) | AF ≤ 0.00004 (set at v10 by a sweep under the 2015 table; nearly flat under the default scheme) |
 | Recessive-only | AF ≤ 0.00007 (0.007%; swept for the ACMG manuscript: flat) |
 | Per-gene override | Wins over inheritance default |
 

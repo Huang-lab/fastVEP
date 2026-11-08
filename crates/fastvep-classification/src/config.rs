@@ -128,7 +128,7 @@ pub struct AcmgConfig {
     /// Hearing Loss VCEP (specifications GN005 and GN023), and the project's
     /// record does not say where it came from. Swept for the ACMG
     /// manuscript (`manuscript/acmg`, Section 3.3) from strict absence to 5e-4
-    /// under the point system: flat, with recall within 0.02 points and no change
+    /// under the default scheme: flat, with recall within 0.02 points and no change
     /// in reference-discordant benign calls or reference-discordant pathogenic calls.
     #[serde(default = "default_pm2_ar")]
     pub pm2_ar_af_threshold: f64,
