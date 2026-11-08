@@ -158,6 +158,14 @@ runs37 = pd.read_csv(DATA / "runs_v37_variants.csv").set_index("name")
 base37 = runs37.loc["v37"]
 rv38 = pd.read_csv(DATA / "runs_v38_variants.csv").set_index("name")  # v38's family, whatever the base: the sentences that set v38 against v37 read it, so they are the same under both bases
 b38 = rv38.loc["v38"]
+_ovn = pd.read_csv(DATA / "databases_old_vs_new.csv")
+
+
+def first_(version: str, measure: str) -> float:
+    """A measure of a version on the April set under the first databases (`21_compare_databases.py`)."""
+    return float(_ovn[(_ovn.version == version) & (_ovn.set == "April set") & (_ovn.measure == measure)].iloc[0]["first"])
+
+
 facts38 = pd.read_csv(DATA / "facts_v38.csv").set_index("name")["value"]
 steps37 = pd.read_csv(DATA / "threshold_steps_v37.csv")
 traj = csv("trajectory.csv").set_index("order")
@@ -654,6 +662,8 @@ def trajectory() -> None:
          n(one("v38", "false_pathogenic")), "at both" if one("v37", "false_benign") == one("v38", "false_benign") else "?",
          "on the first databases", str(int(t.loc[37].opposite)), str(int(t.loc[38].opposite)), str(int(t.loc[38].false_benign)),
          "in both" if t.loc[37].false_benign == t.loc[38].false_benign else "?")
+    fact(f"so the {N_OPP} opposite-direction calls of v38 are", p(N_OPP / N_ALL, 4))
+    fact(f"**Supplementary Table S8.** The {N_OPP} opposite-direction calls of v38")
     fact("Opposite-direction calls had reached a minimum of 25 at v10", str(int(t.loc[10].opposite)), str(int(t.loc[11].opposite)))
     rate = lambda r: r.opposite / r.committed * 100  # noqa: E731
     fact("The matrix stored for v1 holds 31 opposite-direction calls", str(int(t.loc[1].opposite)), n(t.loc[1].committed), n(t.loc[38].committed),
@@ -932,6 +942,7 @@ def ablations() -> None:
     stc = run("v37_hk_strict")
     alone = [run(x).false_benign - base.false_benign for x in (rn("v37_hk_bp1_loo"), rn("v37_sw_no_lowpen_gate"), rn("v37_sw_no_exceptions"))]
     fact("Two further adjustments also read the variant's own ClinVar record", str(int(alone[1])), str(int(alone[2])))
+    fact(f"removed together, the {int(base.false_benign)} reference-discordant benign calls are {int(stc.false_benign)} and the {N_OPP} opposite-direction calls {int(stc.opposite)}.")
     fact("Removed together with the veto's own-record count", str(int(base.false_benign)), str(int(stc.false_benign)), str(int(base.opposite)), str(int(stc.opposite)),
          *[str(int(a)) for a in alone], "exactly the sum" if stc.false_benign - base.false_benign == sum(alone) else "?")
     fact(f"{w(fv('strict_opposite_called_benign'))[2]} of the {w(int(stc.opposite - base.opposite))[1]} added calls are Benign calls", w(fv("strict_opposite_called_benign")), w(int(stc.opposite - base.opposite)),
@@ -960,6 +971,9 @@ def ablations() -> None:
     nb, ng, nm, ne, nl = (run(k) for k in (rn("v37_sw_no_bp1_veto"), rn("v37_sw_no_gene_validity"), rn("v37_sw_no_mechanism_gate"), rn("v37_sw_no_exceptions"), rn("v37_sw_no_lowpen_gate")))
     fact("Four safeguards remove errors and cost no calls", f"or {int(base.false_benign - run('v37_hk_bp1_loo_veto1').false_benign)} with the own record left out", n(-d("v37_sw_no_bp1_veto")), str(int(nb.false_benign - base.false_benign)), n(-d("v37_sw_no_mechanism_gate")),
          str(int(nm.false_pathogenic - base.false_pathogenic)), str(int(ne.false_benign - base.false_benign)), str(int(nl.false_benign - base.false_benign)))
+    fact(f"and the ClinVar low-penetrance gate ({int(nl.false_benign - base.false_benign)})")
+    fact(f"ClinVar's low-penetrance gate ({int(nl.false_benign - base.false_benign)} reference-discordant benign calls when removed)")
+    fact(f"and Section 3.6 returns to the {int(base.false_benign - ph.false_benign)}.")
     fact("Reading absence from gnomAD as rarity for PM2 gains 1,499", n(-d("v37_sw_pm2_needs_record")))
     nh, nf = run("v37_sw_no_homology_list"), run("v37_sw_no_faf")
     fact("Three more remove errors at a price in calls", n(d("v37_sw_no_gene_validity")), str(int(ng.false_pathogenic - base.false_pathogenic)),
@@ -1290,8 +1304,10 @@ def later_release() -> None:
 def discussion() -> None:
     t = traj
     m = mainline
-    fact("Agreement in direction with ClinVar reached 77.6% at v13", p(t.loc[13].same_direction_rate), f"{m.loc[14:37].same_direction_rate.min() * 100:.2f}%", f"{m.loc[14:37].same_direction_rate.max() * 100:.2f}%",
-         str(int(t.loc[13].opposite)), str(int(t.loc[37].opposite)), str(int((ledger.run.str.extract(r"v(\d+)")[0].astype(int) >= 13).sum())), str(len(m.loc[14:37])))
+    # v14 to v37 are runs on the first databases (v37's from the comparison of the stacks), and v37 and v38 on the complete ones are the rows of the trajectory
+    band_first = [float(m.loc[k].same_direction_rate) for k in m.loc[14:36].index] + [first_("v37", "same_direction") / N_ALL]
+    fact("Agreement in direction with ClinVar reached 77.6% at v13", p(t.loc[13].same_direction_rate), f"{min(band_first) * 100:.2f}%", f"{max(band_first) * 100:.2f}%",
+         str(int(t.loc[13].opposite)), n(first_("v37", "opposite")), str(int((ledger.run.str.extract(r"v(\d+)")[0].astype(int) >= 13).sum())), str(len(band_first)), "on the first databases")
     fact("A project that watched only agreement would have concluded at v13",
          f"{baseline.loc['R1 + R2 + R3', 'opposite'] / baseline.loc[lab('v37 (the classifier)'), 'opposite']:.0f}")
     fact("The PM2 threshold moved pathogenic-side recall by 19 points", "19", f"{(run('v37_sw_pm2ad_0.0005').plp_recall - run('v37_sw_pm2ad_0').plp_recall) * 100:.1f}",
@@ -1646,6 +1662,7 @@ def coverage() -> None:
     fact("Even so 3,470 of the 5,184 variants", n(closure.loc[rn("v37_gap_both")].gap_variants))
     fact("### 3.6 The 51 opposite-direction calls that remain", str(N_OPP))
     fact("The last review round (v26) held 64 opposite-direction calls, and 48 of the 51 in v38 are among them", str(N_REV), str(N_OPP), w(N_OPP - N_REV)[1] if N_OPP - N_REV == 3 else "?")
+    fact("So none of the 48 is new since that table was sent", "briefly had " + str(int(traj.loc[31].opposite)), "on the first databases" if traj.loc[31].databases == "first" else "?")
     fact("Each of the 48 had already been in the table of an earlier round", str(N_REV))
     fact("**Table 6. The 51 opposite-direction calls of v38", str(N_OPP))
     fact("Supplementary Table S8 lists the 51 calls with their criteria", str(N_OPP))
@@ -1666,8 +1683,8 @@ def coverage() -> None:
     f38v = pd.read_csv(DATA / "v38_facts.csv").set_index("name")["value"]
     fact("(it fired on 7,234 of the 7,328 variants that meet BS1", n(f38v["ad_only_variants_with_bs1_and_bs2"]), n(f38v["ad_only_variants_with_bs1"]))
     fact("The same 96 runs were made for v37", n(len(harness) + len(hold)), "The same 96 runs" if same_96() else "?")
-    fact("Agreement in direction with ClinVar reached 77.6% at v13 and stayed between", p(t.loc[38].same_direction_rate, 2), f"{(t.loc[38].same_direction_rate - t.loc[37].same_direction_rate) * 100:.2f} points",
-         str(int(t.loc[38].opposite)))
+    fact("Agreement in direction with ClinVar reached 77.6% at v13 and stayed between", p(first_("v38", "same_direction") / N_ALL, 2), f"{(first_('v38', 'same_direction') - first_('v37', 'same_direction')) / N_ALL * 100:.2f} points",
+         n(first_("v38", "opposite")), p(t.loc[37].same_direction_rate, 2), p(t.loc[38].same_direction_rate, 2), str(int(t.loc[37].opposite)), str(int(t.loc[38].opposite)))
     gix37 = runs37.loc["v37_sw_table_both_sides"].same_pathogenic - runs37.loc["v37_ix_table_pm2ad_0"].same_pathogenic
     fact("The PM2 threshold moved pathogenic-side recall by 19 points when it was set in v10", f"{gix37 / 93_812 * 100:.1f}",
          f"{(run('v37_sw_table_both_sides').same_pathogenic - run('v37_ix_table_pm2ad_0').same_pathogenic) / 93_812 * 100:.1f}")

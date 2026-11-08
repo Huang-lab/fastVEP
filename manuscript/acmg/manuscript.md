@@ -213,7 +213,7 @@ A committed call is a call of one of those four classes, and a quiet variant is 
 The scorer takes the call on the picked transcript.
 A call is exact if it equals ClinVar's class; same-direction if both are pathogenic-side (Pathogenic or Likely pathogenic), both benign-side, or both VUS; and opposite if ClinVar is pathogenic-side and the call benign-side, or the reverse.
 An opposite call is a reference-discordant benign call when ClinVar is pathogenic-side and a reference-discordant pathogenic call when ClinVar is benign-side.
-Rates use all 673,660 records as the denominator, which is the smaller figure: the 295,298 ClinVar VUS cannot be contradicted, so the 48 opposite-direction calls of v38 are 0.0076% of the records, 0.013% of the 378,362 with a pathogenic-side or benign-side class and 0.020% of the 256,054 committed calls.
+Rates use all 673,660 records as the denominator, which is the smaller figure: the 295,298 ClinVar VUS cannot be contradicted, so the 51 opposite-direction calls of v38 are 0.0076% of the records, 0.013% of the 378,362 with a pathogenic-side or benign-side class and 0.020% of the 256,054 committed calls.
 Among the 673,660 records, 382 have `.` as their alternative allele.
 Each of them names the reference sequence itself in its HGVS expression (for example `NC_000001.11:g.12358644=`), and ClinVar classifies every one of them as benign-side (377 Benign and 5 Likely benign in the labels of the benchmark).
 There is no alternative allele to annotate, so they receive no call, and the scorer counts them as not concordant, which lowers the recall of benign-side variants by at most 382 of 284,550.
@@ -631,7 +631,7 @@ The dependence on ClinVar-derived inputs is therefore small in agreement and lar
 The veto is protective, but it protects by reading ClinVar's other classifications in the gene, which in a benchmark against ClinVar is part of the circularity that this section sets out to measure.
 The veto itself counts the variant's own record, which PS1 and PM1 do not: in a measurement build in which the veto leaves it out, reference-discordant benign calls are 30 and not 27, so 3 of the 28 that the veto avoids rest on the variant's own record (FBXO28, PCGF2 and SBF1, each a ClinVar-pathogenic missense variant whose own entry is the third of the three that the veto needs).
 A benchmark against ClinVar cannot separate that dependence from the classifier's own skill, because other variants' ClinVar classifications are evidence in the guideline's own terms (PS1 and PM5 are defined by them).
-Two further adjustments also read the variant's own ClinVar record or followed the reviewer's rows: ClinVar's low-penetrance gate (2 reference-discordant benign call when removed) and the curated frequency-exception list (6).
+Two further adjustments also read the variant's own ClinVar record or followed the reviewer's rows: ClinVar's low-penetrance gate (2 reference-discordant benign calls when removed) and the curated frequency-exception list (6).
 Removed together with the veto's own-record count, the three raise reference-discordant benign calls from 27 to 38, exactly the sum of the three alone (3, 2 and 6), and opposite-direction calls from 51 to 62, so 62 is the figure when the adjustments that read the own record or followed the reviewer's rows are removed together, and the veto itself and the other changes that followed the review remain.
 Three of the eleven added calls are Benign calls on ClinVar-pathogenic variants (one SERPINA1 variant once the low-penetrance gate is gone, and two G6PD variants once the exception list is), so the zero for Benign calls that Section 3.5 reports rests on two of the 15 curated alleles (both G6PD) and one ClinVar-derived gate.
 
@@ -647,10 +647,10 @@ Removing REVEL, the source specific to missense variants, lowers agreement by 0.
 **The same two sources carry most of the reference-discordant benign calls.**
 Removing SpliceAI or PhyloP lowers reference-discordant benign calls from 27 to 4 and 5, because BP7 is behind 22 of the 27.
 BP7 is a criterion of high yield and high cost: 144,486 of its 144,948 firings (99.7%) are on ClinVar benign-side variants, and without it 84,759 calls in direction are lost to avoid those 22 reference-discordant benign calls, about 4,000 calls for each.
-Section 3.3 shows that much of that price is paid for the conservation test and not for BP7's other conditions, and Section 3.6 returns to the 20.
+Section 3.3 shows that much of that price is paid for the conservation test and not for BP7's other conditions, and Section 3.6 returns to the 22.
 
 **Most design decisions pay for themselves, and three do not clearly do so.**
-Four safeguards remove errors and cost no calls: the BP1 veto (keeping it gains 4,240 calls and avoids 28 reference-discordant benign calls, and a stricter count would avoid 2 more, or 1 with the own record left out, Section 3.3), the gate on disease mechanism for PVS1 (146 calls and 12 reference-discordant pathogenic calls), the curated list of 15 frequency-exception alleles (6 reference-discordant benign calls) and the ClinVar low-penetrance gate (1).
+Four safeguards remove errors and cost no calls: the BP1 veto (keeping it gains 4,240 calls and avoids 28 reference-discordant benign calls, and a stricter count would avoid 2 more, or 1 with the own record left out, Section 3.3), the gate on disease mechanism for PVS1 (146 calls and 12 reference-discordant pathogenic calls), the curated list of 15 frequency-exception alleles (6 reference-discordant benign calls) and the ClinVar low-penetrance gate (2).
 Reading absence from gnomAD as rarity for PM2 gains 1,499 calls and no error.
 Three more remove errors at a price in calls: the gene-disease validity gate costs 193 calls to avoid 10 reference-discordant pathogenic calls (about 19 calls per error), the homologous-gene list 373 calls to avoid 1 reference-discordant benign call (about 373 per error), and the filtering allele frequency 1,898 calls to avoid 8 reference-discordant benign calls (about 237 per reference-discordant benign call), while adding 4 reference-discordant pathogenic calls.
 Their prices are all below the 858 calls per added error at which we kept the BS1 threshold where it was, so by that standard each is worth paying.
@@ -782,7 +782,7 @@ The benchmark cannot say which is right, and Section 3.7 asks whether ClinVar la
 ### 3.6 The 51 opposite-direction calls that remain
 
 The last review round (v26) held 64 opposite-direction calls, and 48 of the 51 in v38 are among them; the other three are new with the complete databases, and the reviewer has not seen them (Section 3.9).
-So none of the 48 is new since that table was sent (one run, v31, briefly had 65 opposite-direction calls; Table 6, Figure S3B).
+So none of the 48 is new since that table was sent (one run, v31, briefly had 65 opposite-direction calls on the first databases; Table 6, Figure S3B).
 The 16 that were repaired all became VUS and none became the other class, and the reviewer had supported ClinVar's call on 14 of them (of the other two, one was coded neither and one depends on the disorder).
 Each of the 48 had already been in the table of an earlier round (17 since round 3, 2 since round 4 and 29 since round 5), so they are the calls that several rounds of changes left standing.
 
@@ -1167,7 +1167,7 @@ A sites-only input evaluates 15 of the 28 criteria, which caps what any annotato
 Six results of this work seem to us worth testing on other classifiers, which we have not done: they come from one tool, one reviewer and one benchmark.
 
 **The aggregate stopped rewarding the work.**
-Agreement in direction with ClinVar reached 77.6% at v13 and stayed between 77.50% and 79.07% for the next 23 runs (v14 to v37), while the work of those runs cut opposite-direction calls from 94 to 52 and the ledger records 20 further changes; the one change since, v38, moved it by 0.24 points, to 79.32%, and cut the opposite-direction calls to 51.
+Agreement in direction with ClinVar reached 77.6% at v13 and stayed between 77.50% and 77.62% for the next 23 runs (v14 to v37) on the first databases, while the work of those runs cut opposite-direction calls from 94 to 49 and the ledger records 20 further changes; the one change since, v38, moved it by 0.22 points, to 77.84%, and cut the opposite-direction calls to 48 (with the complete databases v37 and v38 reach 79.07% and 79.32%, with 52 and 51 opposite-direction calls, Section 3.9).
 A project that watched only agreement would have concluded at v13 that the work was finished, and simple rules with no combining rule or safeguard reach higher agreement with 36 times as many contradictions (Section 3.5).
 The two largest steps before v13 (8.8 and 5.2 points, from figures recorded at the time) were mostly plumbing: SpliceAI and PhyloP reaching the criteria that read them, and two conditions of the guidelines that criteria had not applied (an absent variant read as absent for PM2, and BP4's confinement to splice questions).
 The measures that moved late were counts of rare, severe errors, which are small numbers, and they are the ones a clinician would act on.
@@ -1189,7 +1189,7 @@ Re-measuring also turned up two thresholds that had never been swept and mattere
 Counting a variant's own ClinVar record would add 14.3 points of pathogenic-side recall, and the classifier excludes it from PS1 and PM1.
 Removing every ClinVar-derived input costs 0.78 points of agreement and adds 31 reference-discordant benign calls (27 to 58) and takes the opposite-direction calls from 51 to 79, 28 of the reference-discordant benign calls because it removes the BP1 veto.
 The veto reads other variants' ClinVar classifications to apply BP1's condition on the mechanism of the gene, so in a benchmark against ClinVar its protection is itself part of the dependence.
-It also counts the variant's own record, and 3 of the 28 rest on it: with that and the two other adjustments that read the own record or followed the reviewer's rows removed together, the 24 reference-discordant benign calls are 38 and the 51 opposite-direction calls 62.
+It also counts the variant's own record, and 3 of the 28 rest on it: with that and the two other adjustments that read the own record or followed the reviewer's rows removed together, the 27 reference-discordant benign calls are 38 and the 51 opposite-direction calls 62.
 Reporting both figures is what makes the claim checkable.
 
 **An input can be incomplete without anything showing, and a check against an independent listing can find it.**
@@ -1535,7 +1535,7 @@ For v38 itself, the 89 runs made for this paper and the 8 earlier runs of the do
 
 **Supplementary Table S7.** The PVS1 gap and the ClinGen file: truncating variants without PVS1, by gene and by the reason PVS1 is absent (`pvs1_gap_v38.csv`, `pvs1_gap_genes_v38.csv`, `pvs1_gap_reasons_v38.csv`); the 112 rows that complete the ClinGen export of 30 April, 104 of them curations that it lacked (`clingen_missing_curations.csv`, `clingen_missing_summary_v38.csv`); the 558 null variants of CFTR, each with its transcript, its call in v38 and the call that the completed file gives (`cftr_null_variants_v38.csv`); and what the three runs that change an input do to the gap (`pvs1_gap_closure_v38.csv`).
 
-**Supplementary Table S8.** The 48 opposite-direction calls of v38 with their criteria, gnomAD counts and rulings, and the rulings by kind of call (`opposite_direction_v38.csv`, `opposite_direction_by_group_v38.csv`).
+**Supplementary Table S8.** The 51 opposite-direction calls of v38 with their criteria, gnomAD counts and rulings, and the rulings by kind of call (`opposite_direction_v38.csv`, `opposite_direction_by_group_v38.csv`).
 
 **Supplementary Table S9.** The later ClinVar release: the strata, recall by class, the opposite-direction rates and their ratio with its interval, the 20 opposite-direction calls on the new variants, and the seven proposed changes run on the new variants (`temporal_v38.csv`, `temporal_by_class_v38.csv`, `temporal_opposite_rates_v38.csv`, `temporal_ratio_v38.csv`, `temporal_new_opposite_v38.csv`, `temporal_proposals_v38.csv`).
 
