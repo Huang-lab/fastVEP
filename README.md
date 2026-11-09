@@ -4,9 +4,14 @@ A high-performance Variant Effect Predictor written in Rust. fastVEP predicts th
 
 fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.ensembl.org/info/docs/tools/vep/index.html) and [Illumina Nirvana](https://github.com/Illumina/Nirvana), while delivering significantly better performance through Rust's zero-cost abstractions and native parallelism.
 
-**Try it now:** A hosted web server is available at [fastVEP.org](https://fastVEP.org) — paste VCF data and get annotated results instantly, no installation required. On 7 November 2026 the server, which runs release 0.3.0, had served **3,427 genome analysis sessions** and annotated **160,983 variants**.
+**Try it now:** A hosted web server is available at [fastVEP.org](https://fastVEP.org) - paste VCF data and get annotated results instantly, no installation required.
+On 7 November 2026 it had served **3,427 genome analysis sessions** and annotated **160,983 variants**.
+Since 8 November 2026 it runs a build of the 0.5.0 release candidate and answers from nine genomes: human (GRCh38 and GRCh37), mouse, rat, zebrafish, fruit fly, *C. elegans*, yeast and Arabidopsis.
 
 The hosted instance is for interactive use in the browser. For programmatic access, run your own server: see the **[REST API guide](docs/API.md)**.
+
+**Questions and discussion:** join the [fastVEP Slack](https://join.slack.com/t/fastvep/shared_invite/zt-4g20tqjvo-wGyIEnN~Ncrc4zXiu_1XJA).
+Bug reports and feature requests belong in [GitHub issues](https://github.com/Huang-lab/fastVEP/issues).
 
 ## Features
 
@@ -184,7 +189,11 @@ fastvep-web --gff3 Homo_sapiens.GRCh38.115.gff3 --fasta Homo_sapiens.GRCh38.dna.
 fastvep-web --gff3 genes.gff3 --fasta ref.fa --sa-dir /path/to/sa_databases/
 ```
 
-Open http://localhost:8080 in your browser. The web interface lets you paste VCF data and view results in an interactive table. Switching gene models in the page needs `--allow-model-replacement`, which is off by default because a replacement changes the answers that every client of the server gets.
+Open http://localhost:8080 in your browser.
+The web interface lets you paste VCF data and view results in an interactive table.
+With `--data-dir` the page offers every genome in that directory, and each analysis names the genome it wants, so choosing one needs no flag and changes nobody else's answers.
+ACMG classification is offered for a genome only when its database directory holds all nine sources the classifier reads; for any other the checkbox is disabled and names what is missing, and the API refuses with `422` (`--acmg-allow-partial` answers anyway and says so in every response; [docs/API.md](docs/API.md#acmg-needs-the-reference-stack)).
+Uploading your own GFF3 in the page replaces the server's gene model for every client, so that needs `--allow-model-replacement`, which is off by default.
 
 > **Note:** `fastvep-web` is a separate production-quality binary (axum/tokio, async, multi-connection). The legacy `fastvep web` command still works but is single-threaded.
 
@@ -195,7 +204,7 @@ The same binary serves a JSON API over the same annotation engine, so anything t
 ```bash
 curl -s -X POST http://localhost:8080/api/annotate \
   -H 'Content-Type: application/json' \
-  -d '{"vcf": "17\t43124027\t.\tG\tA\t50\tPASS\t.", "acmg": true}'
+  -d '{"vcf": "17\t43124025\t.\tA\tG\t50\tPASS\t.", "acmg": true}'
 ```
 
 It is designed for self-hosting on a workstation or local network, which is also the only supported way to use it: please do not point scripts at fastVEP.org, which is a single small machine sized for interactive browser use. Bulk VCFs belong in `fastvep annotate`, not in an HTTP request.
@@ -230,7 +239,7 @@ samtools faidx Homo_sapiens.GRCh38.dna.primary_assembly.fa
 For every source, for both GRCh38 and GRCh37, with download URLs, sizes, which ones need an account, and a script that does the downloading and building, see [docs/SA_DATABASES.md](docs/SA_DATABASES.md).
 The quickest way to try supplementary annotation is `scripts/build-sa-databases.sh --assembly GRCh38`, which builds the small open sources in a few minutes.
 
-Each supplementary database (ClinVar, gnomAD, etc.) is built in **two steps** — *download the source file*, then run `fastvep sa-build` to convert it into a fastSA database (a `.osa2` file by default; a `.osa` + `.osa.idx` pair under `--format osa`). **`sa-build` is a converter, not a downloader; if you skip the download, the resulting database will be empty and your annotations will silently come back blank.** After each build, check that the file size matches the expected magnitude (column below); a few-KB database is the tell that the source file wasn't real.
+Each supplementary database (ClinVar, gnomAD, etc.) is built in **two steps** - *download the source file*, then run `fastvep sa-build` to convert it into a fastSA database (a `.osa2` file by default; a `.osa` + `.osa.idx` pair under `--format osa`). **`sa-build` is a converter, not a downloader.** Handed a missing, truncated or wrong-build file it finds no record to write, and it stops with an error that names the usual causes instead of writing a database of nothing (`--allow-empty` writes one anyway, for the shard of a chromosome that has no record in your regions). After each build, check that the file size matches the expected magnitude (column below); a few-KB database is the tell that the source file wasn't real. A release that dates itself (a VCF with a `##fileDate=` line, as ClinVar's does) is stamped with that date, which `GET /api/status` reports, so that a database says how old it is.
 
 ```bash
 mkdir -p sa_databases
@@ -250,11 +259,13 @@ fastvep sa-build --source clinvar -i clinvar.vcf.gz -o sa_databases/clinvar --as
 # ACMG benchmark than the exomes alone.
 GNOMAD=https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/exomes
 wget "$GNOMAD/gnomad.exomes.v4.1.sites.chr1.vcf.bgz"
-fastvep sa-build --source gnomad -i gnomad.exomes.v4.1.sites.chr1.vcf.bgz -o sa_databases/gnomad_chr1 --assembly GRCh38
+fastvep sa-build --source gnomad -i gnomad.exomes.v4.1.sites.chr1.vcf.bgz -o sa_databases/gnomad_chr1 --assembly GRCh38 --chunk-bits 16
 
 # ── dbSNP — variant identifiers ──
+# --chunk-bits 16 for the dense sources (dbSNP, gnomAD): a lookup loads a whole chunk, one megabase by default,
+# and 1,000 variants spread over the genome took 24 s against the default dbSNP
 wget https://ftp.ncbi.nih.gov/snp/latest_release/VCF/GCF_000001405.40.gz
-fastvep sa-build --source dbsnp -i GCF_000001405.40.gz -o sa_databases/dbsnp --assembly GRCh38
+fastvep sa-build --source dbsnp -i GCF_000001405.40.gz -o sa_databases/dbsnp --assembly GRCh38 --chunk-bits 16
 
 # ── COSMIC — somatic mutations (requires license) ──
 # https://cancer.sanger.ac.uk/cosmic/download
@@ -274,7 +285,8 @@ ls -la sa_databases/*.osa2 sa_databases/*.osa
 > The classifier reads a specific nine-source stack: gnomAD, ClinVar, REVEL, SpliceAI, PhyloP, ClinGen Gene-Disease Validity, gnomAD gene constraints, the ClinVar protein/splice index, and RepeatMasker.
 > All of it is public and none of it needs an account, because **SpliceAI and PhyloP are distilled from gnomAD's own `spliceai_ds_max` and `phylop` INFO fields rather than downloaded from Illumina BaseSpace and UCSC**, and the disease-gene source is ClinGen Gene-Disease Validity rather than OMIM.
 > The guide gives the verified download URL, build command and measured size for each, explains what silently stops working when one is missing, and ends with `scripts/check_acmg_stack.py`, which annotates eight probe variants and tells you which sources actually answered.
-> An incomplete `--sa-dir` does not error; it quietly turns pathogenic variants into VUS.
+> An incomplete `--sa-dir` does not error; it turns pathogenic variants into VUS.
+> `fastvep annotate --acmg` prints which sources are missing, once, on stderr, and `fastvep-web` refuses to classify a genome that lacks any of them.
 
 ### Step 3: Run the CLI annotator
 
@@ -302,11 +314,13 @@ fastvep-web \
   --port 8080
 ```
 
-Eight flags also take an environment variable, for container deployments: `FASTVEP_GFF3`, `FASTVEP_FASTA`, `FASTVEP_SA_DIR`, `FASTVEP_DATA_DIR`, `FASTVEP_PORT`, `FASTVEP_BIND`, `FASTVEP_STATS_FILE` and `FASTVEP_ALLOW_MODEL_REPLACEMENT`.
+Fourteen flags also take an environment variable, for container deployments: `FASTVEP_GFF3`, `FASTVEP_FASTA`, `FASTVEP_SA_DIR`, `FASTVEP_DATA_DIR`, `FASTVEP_PORT`, `FASTVEP_BIND`, `FASTVEP_STATS_FILE`, `FASTVEP_PRELOAD_GENOMES`, `FASTVEP_ACMG_ALLOW_PARTIAL`, `FASTVEP_ALLOW_MODEL_REPLACEMENT`, `FASTVEP_MAX_PARALLEL`, `FASTVEP_QUEUE_TIMEOUT_SECONDS`, `FASTVEP_MAX_RESPONSE_BYTES` and `FASTVEP_MAX_REQUEST_SECONDS`.
+The three switches accept `true`, `1`, `yes` or `on`.
 
 ### Multi-organism setup
 
-To serve multiple genomes from the web interface, organize data into subdirectories and use `--data-dir`. Each subdirectory is one genome — the server auto-detects GFF3, FASTA, and SA files inside.
+To serve multiple genomes from the web interface, organize data into subdirectories and use `--data-dir`.
+Each subdirectory is one genome, and the server detects the GFF3, FASTA and SA files inside it.
 
 **Directory layout:**
 
@@ -354,9 +368,15 @@ wget -O- https://ftp.ensembl.org/pub/release-115/gff3/danio_rerio/Danio_rerio.GR
 fastvep-web --data-dir genomes/
 ```
 
-Users can switch between organisms from the dropdown in the web UI when the server is started with `--allow-model-replacement` (off by default: without it a request to switch is refused). When a genome has a `sa/` subdirectory, its SA databases are automatically loaded. The dropdown shows "(FASTA + SA)" labels for genomes that have these resources.
+Each analysis names its genome, from the dropdown in the web interface or in the `genome` field of `POST /api/annotate`, and is answered from that genome's own model.
+Nothing is replaced, so choosing a genome needs no `--allow-model-replacement` and cannot change what any other client is answered against.
+A genome is loaded the first time it is asked for and then kept; `--preload-genomes` loads them all in the background at startup instead, so no visitor waits.
+An unknown name is refused rather than answered from the default genome.
+Details and response shapes: [docs/API.md](docs/API.md#choosing-the-genome).
 
-`--sa-dir` is optional — if provided, it serves as a fallback for genomes that don't have their own `sa/` folder. If the directory doesn't exist, the server starts without SA (no error).
+Each genome is read from its own GFF3, FASTA and `sa/` subdirectory.
+`--sa-dir` belongs to the genome given by `--gff3`: it is never lent to another genome of `--data-dir`, so a mouse variant is never annotated with a human ClinVar record.
+If that directory doesn't exist, the server starts without SA (no error).
 
 fastVEP works with any organism — just provide the matching GFF3 (and optionally FASTA for HGVS).
 
@@ -579,6 +599,8 @@ for the parsing rules and the escaping table.
 | `--name` | Display + JSON-key name for `custom_*` sources | derived from input filename |
 | `--info-fields` | Comma-separated INFO keys to extract for `custom_vcf` | all INFO keys |
 | `--format` | On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2). Every allele-level source has a v2 encoder, so `auto` builds the smaller, faster `.osa2` for all of them; gene- and interval-level sources have no v2 form and build `.oga`/`.osi` regardless. See [Choosing v1 vs v2](docs/SUPPLEMENTARY_ANNOTATIONS.md#choosing-v1-vs-v2---format) for when to force `osa`. | `auto` |
+| `--chunk-bits` | Width of the chunks of an `.osa2`, as a power of two (1 to 20). A lookup loads the whole chunk it falls in, so a dense source (dbSNP, gnomAD) answers a scattered lookup several times faster with 16 than at its own width of 20, for about 10% more file and the same answers. See [Chunk width](docs/SUPPLEMENTARY_ANNOTATIONS.md#chunk-width-for-dense-sources---chunk-bits). | each source's own (20) |
+| `--allow-empty` | Write the database even when no record was found to put in it (a build that finds nothing is an error by default) | off |
 
 ### `fastvep sa-convert`
 
@@ -619,14 +641,20 @@ IMPACT is HIGH and AF < 0.01
 | `--gff3` | GFF3 gene annotation file | -- |
 | `--fasta` | Reference FASTA file | -- |
 | `--sa-dir` | Directory containing `.osa` / `.osa2` / `.osi` / `.oga` supplementary annotations | -- |
-| `--data-dir` | Directory of genome subdirectories (for multi-organism switching) | -- |
+| `--data-dir` | Directory of genome subdirectories, one per genome, that a request can name | -- |
+| `--preload-genomes` | Load every genome of `--data-dir` in the background at startup instead of on its first request (also `FASTVEP_PRELOAD_GENOMES` env) | off |
 | `--port` | HTTP port (also `FASTVEP_PORT` env) | `8080` |
 | `--bind` | Bind address (also `FASTVEP_BIND` env) | `0.0.0.0` |
 | `--distance` | Upstream/downstream distance in bp | `5000` |
 | `--max-body-size` | Max request body in bytes | `10485760` |
-| `--max-concurrent` | Max concurrent annotation requests | `64` |
+| `--max-concurrent` | Max concurrent requests to each route (each has its own limit) | `64` |
+| `--max-parallel` | Annotations that run at once; the next request waits `--queue-timeout-seconds` for a place, then gets `503` with `Retry-After` (also `FASTVEP_MAX_PARALLEL` env) | number of cores |
+| `--queue-timeout-seconds` | How long a request waits for a place to annotate (also `FASTVEP_QUEUE_TIMEOUT_SECONDS` env) | `30` |
+| `--max-response-bytes` | Largest JSON answer one request may produce, built in memory a batch of variants at a time; beyond it `413` (also `FASTVEP_MAX_RESPONSE_BYTES` env) | `134217728` |
+| `--max-request-seconds` | Longest one annotation may run; beyond it `413` (also `FASTVEP_MAX_REQUEST_SECONDS` env) | `90` |
 | `--stats-file` | JSON file in which the running totals of variants annotated and genomes loaded are kept (also `FASTVEP_STATS_FILE` env) | `stats.json` |
-| `--allow-model-replacement` | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model of the running server, for every client (also `FASTVEP_ALLOW_MODEL_REPLACEMENT` env) | off |
+| `--allow-model-replacement` | Let `/api/upload-gff3` and `/api/load-genome` replace the gene model of the running server, for every client; choosing a genome per request does not need it (also `FASTVEP_ALLOW_MODEL_REPLACEMENT` env) | off |
+| `--acmg-allow-partial` | Answer a request for ACMG classification for a genome whose database directory lacks part of the nine-source reference stack, saying so in every response, instead of refusing it with `422` (also `FASTVEP_ACMG_ALLOW_PARTIAL` env) | off |
 
 ### `fastvep cache`
 
@@ -896,6 +924,11 @@ remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP
 
 Moving a pipeline from `vep`? What fastVEP reads from a VEP installation, a flag-by-flag table, and what is
 not covered (plugins, `--custom`, RefSeq BAM edits) are in **[docs/VEP_MIGRATION.md](docs/VEP_MIGRATION.md)**.
+
+## Community
+
+Join the [fastVEP Slack](https://join.slack.com/t/fastvep/shared_invite/zt-4g20tqjvo-wGyIEnN~Ncrc4zXiu_1XJA) for questions and discussion.
+Bug reports and feature requests belong in [GitHub issues](https://github.com/Huang-lab/fastVEP/issues).
 
 ## Citation
 

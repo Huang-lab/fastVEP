@@ -6,9 +6,12 @@
 //! without binding a socket, which is what lets the JSON contract documented in
 //! `docs/API.md` be asserted rather than described.
 
+pub mod acmg;
 pub mod context;
 pub mod errors;
+pub mod genomes;
 pub mod handlers;
+pub mod limits;
 
 use axum::extract::DefaultBodyLimit;
 use axum::http::{header, Method};

@@ -1,3 +1,4 @@
+use crate::sources::{LoadedSources, Source};
 use fastvep_core::is_canonical_dinucleotide_offset;
 use fastvep_core::{Consequence, Impact};
 use fastvep_core::{GeneAnnotation, HgvsPlacement, SpliceContext, SupplementaryAnnotation};
@@ -749,6 +750,11 @@ pub struct ClassificationInput {
     pub same_splice_position_pathogenic: Option<bool>,
     /// Whether variant overlaps a repeat region (from RepeatMasker .osi).
     pub in_repeat_region: Option<bool>,
+    /// Which sources of the reference stack the run has open, as opposed to which of them
+    /// had a record for this variant. A source that is not loaded and a source that holds no
+    /// record add the same nothing to the annotation, and PM2 reads "no record" as evidence
+    /// of absence, so it must be able to tell the two apart (see [`crate::sources`]).
+    pub sources: LoadedSources,
     /// The variant's VCF-form position as `(chrom, pos, ref, alt)`, on the
     /// build the run is annotating against.
     ///
@@ -924,7 +930,7 @@ pub fn extract_classification_input(
     exon: Option<(u32, u32)>,
     protein_length: Option<u64>,
     escapes_nmd: Option<bool>,
-    repeat_db_loaded: bool,
+    sources: LoadedSources,
     same_splice_position_pathogenic: Option<bool>,
     variant_coordinates: Option<(String, u64, String, String)>,
     is_pure_insertion: Option<bool>,
@@ -1032,7 +1038,7 @@ pub fn extract_classification_input(
             let k = key.to_lowercase();
             k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
         });
-        match (hit, repeat_db_loaded) {
+        match (hit, sources.has(Source::Repeats)) {
             (true, _) => Some(true),
             (false, true) => Some(false),
             (false, false) => None,
@@ -1121,6 +1127,7 @@ pub fn extract_classification_input(
         same_splice_position_pathogenic,
         variant_coordinates,
         in_repeat_region,
+        sources,
         is_pure_insertion,
         // BP7 exon-edge / deep-intronic signals (Walker 2023), and where HGVS
         // places an indel, all measured by the annotation pass.
@@ -1311,9 +1318,9 @@ mod tests {
             exon,
             protein_length,
             escapes_nmd,
-            false, // repeat_db_loaded: no interval source in these unit tests
-            None,  // same_splice_position_pathogenic: resolved by the caller
-            None,  // variant_coordinates: these unit tests are transcript-level
+            LoadedSources::default(), // no source is open in these unit tests
+            None,                     // same_splice_position_pathogenic: resolved by the caller
+            None,                     // variant_coordinates: these unit tests are transcript-level
             None,
             None,
             &[],
@@ -1657,6 +1664,121 @@ mod tests {
         );
     }
 
+    /// `LoadedSources` names a database by the key in its header, and the extraction reads the
+    /// annotation of a database by the same key. If the two disagreed, a source could be counted
+    /// as loaded and never read (or read and counted as missing), and the missing-source
+    /// handling would be wrong in the one place nobody looks. Every spelling the extraction
+    /// accepts must be recognised, to the same source, and a spelling it does not accept must
+    /// not be.
+    #[test]
+    fn the_keys_that_name_a_source_are_the_keys_the_extraction_reads() {
+        use crate::sources::Source;
+        let extract = |allele: &[(String, String)], genes: &[&GeneAnnotation]| {
+            extract_classification_input(
+                &[Consequence::MissenseVariant],
+                Impact::Moderate,
+                Some("TEST"),
+                true,
+                None,
+                None,
+                None,
+                SpliceContext::default(),
+                None,
+                None,
+                None,
+                LoadedSources::default(),
+                None,
+                None,
+                None,
+                None,
+                allele,
+                genes,
+                &[],
+                None,
+                None,
+                None,
+                vec![],
+            )
+        };
+        let allele_keys: &[(&str, Source, &str)] = &[
+            ("gnomad", Source::Gnomad, "{}"),
+            ("clinvar", Source::Clinvar, "{}"),
+            ("revel", Source::Revel, "{}"),
+            ("spliceai", Source::SpliceAi, "{}"),
+            ("spliceAi", Source::SpliceAi, "{}"),
+            ("spliceAI", Source::SpliceAi, "{}"),
+            ("splice_ai", Source::SpliceAi, "{}"),
+        ];
+        for (key, source, json) in allele_keys {
+            assert_eq!(Source::from_json_key(key), Some(*source), "{key}");
+            let input = extract(&[(key.to_string(), json.to_string())], &[]);
+            let read = match source {
+                Source::Gnomad => input.gnomad.is_some(),
+                Source::Clinvar => input.clinvar.is_some(),
+                Source::Revel => input.revel.is_some(),
+                Source::SpliceAi => input.splice_ai.is_some(),
+                _ => unreachable!(),
+            };
+            assert!(read, "the extraction does not read `{key}`");
+        }
+        for key in ["phylop", "phyloP"] {
+            assert_eq!(Source::from_json_key(key), Some(Source::PhyloP), "{key}");
+            let input = extract(&[(key.to_string(), "\"1.5\"".to_string())], &[]);
+            assert_eq!(
+                input.phylop,
+                Some(1.5),
+                "the extraction does not read `{key}`"
+            );
+        }
+        let gene = |key: &str, json: &str| GeneAnnotation {
+            gene_symbol: "TEST".into(),
+            json_key: key.into(),
+            json_string: json.into(),
+        };
+        for (key, source, json) in [
+            ("gnomad_genes", Source::GnomadGenes, "{}"),
+            ("gnomad_gene", Source::GnomadGenes, "{}"),
+            ("omim", Source::Omim, "{}"),
+            (
+                "clinvar_protein",
+                Source::ClinvarProtein,
+                "{\"proteinVariants\":[]}",
+            ),
+        ] {
+            assert_eq!(Source::from_json_key(key), Some(source), "{key}");
+            let annotation = gene(key, json);
+            let input = extract(&[], &[&annotation]);
+            let read = match source {
+                Source::GnomadGenes => input.gene_constraints.is_some(),
+                Source::Omim => input.omim.is_some(),
+                Source::ClinvarProtein => input.clinvar_protein.is_some(),
+                _ => unreachable!(),
+            };
+            assert!(read, "the extraction does not read `{key}`");
+        }
+        for key in ["repeatmasker", "simple_repeat", "RepeatMasker"] {
+            assert_eq!(Source::from_json_key(key), Some(Source::Repeats), "{key}");
+            // A hit in a track whose key says repeat is what the extraction calls "in a repeat".
+            let input = extract(&[(key.to_string(), "[]".to_string())], &[]);
+            assert_eq!(
+                input.in_repeat_region,
+                Some(true),
+                "the extraction does not read `{key}`"
+            );
+        }
+        // Keys that neither side reads.
+        for key in [
+            "GNOMAD",
+            "Gnomad",
+            "gnomad_exomes",
+            "dbsnp",
+            "dbnsfp",
+            "gerp",
+        ] {
+            assert_eq!(Source::from_json_key(key), None, "{key}");
+        }
+    }
+
     /// What the annotation pass worked out about where the change sits reaches
     /// the criteria unchanged, and an unasked answer stays unasked.
     #[test]
@@ -1674,7 +1796,7 @@ mod tests {
                 None,
                 None,
                 None,
-                false,
+                LoadedSources::default(),
                 None,
                 None,
                 None,

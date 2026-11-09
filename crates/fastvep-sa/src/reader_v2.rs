@@ -706,6 +706,18 @@ impl AnnotationProvider for Osa2Reader {
         &self.sa_metadata
     }
 
+    fn is_empty(&self) -> bool {
+        // A chromosome is known from the entries of its chunks, so a database whose build wrote
+        // no record has the metadata and the field schema and no chromosome at all.
+        self.chrom_index.is_empty()
+    }
+
+    fn chromosomes(&self) -> Option<Vec<String>> {
+        let mut names: Vec<String> = self.chrom_index.keys().cloned().collect();
+        names.sort();
+        Some(names)
+    }
+
     fn annotate_position(
         &self,
         chrom: &str,

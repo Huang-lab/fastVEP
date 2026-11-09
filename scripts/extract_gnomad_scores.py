@@ -46,15 +46,38 @@ downloaded whole.
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 
 URL = ("https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/"
        "vcf/{kind}/gnomad.{kind}.v4.1.sites.chr{chrom}.vcf.bgz")
 
-SPLICE_RE = re.compile(r"(?:^|;)spliceai_ds_max=([^;]+)")
-PHYLOP_RE = re.compile(r"(?:^|;)phylop=([^;]+)")
+# The two INFO fields, found as bytes. A record of gnomAD's exomes carries about 3 KB of INFO, and
+# the regular expressions that did this (`(?:^|;)spliceai_ds_max=([^;]+)`) have no literal to
+# search for, so they were tried at every position of it: about 100 microseconds a record, which
+# made reading the 198 GB of the exomes cost about eight core-hours. `bytes.find` of the literal
+# does the same and costs one.
+SPLICE_KEY = b"spliceai_ds_max="
+PHYLOP_KEY = b"phylop="
+
+
+def info_value(info, key):
+    """The value of the first `key=value` field of an INFO string, as the pattern
+    `(?:^|;)key([^;]+)` finds it: the key at the start of the string or after a `;`, and a
+    value of at least one character, which runs to the next `;`. An occurrence that has no
+    value, or is part of another key, is passed over for the next one."""
+    start = 0
+    while True:
+        i = info.find(key, start)
+        if i < 0:
+            return None
+        if i == 0 or info[i - 1] == 0x3B:
+            begin = i + len(key)
+            end = info.find(b";", begin)
+            value = info[begin:] if end < 0 else info[begin:end]
+            if value:
+                return value
+        start = i + 1
 
 # tabix takes regions as argv, so they are fed in batches to stay under the
 # platform's argument-length limit. 200 matches the benchmark's build scripts.
@@ -111,46 +134,47 @@ def main():
         batches = [[f"chr{args.chrom}"]]
 
     sa_n = pp_n = 0
-    with open(sa_path, "w") as sa_out, open(pp_path, "w") as pp_out:
-        sa_out.write("##fileformat=VCFv4.2\n")
-        sa_out.write('##INFO=<ID=SpliceAI,Number=.,Type=String,'
-                     'Description="SpliceAI max delta score from gnomAD '
-                     'spliceai_ds_max; the four DS fields carry the same max '
-                     'and the DP fields are placeholders">\n')
-        sa_out.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+    # Bytes throughout: nothing here is anything but ASCII, and decoding the 3 KB of each record
+    # to text and encoding what is written back was a share of the cost.
+    with open(sa_path, "wb") as sa_out, open(pp_path, "wb") as pp_out:
+        sa_out.write(b"##fileformat=VCFv4.2\n")
+        sa_out.write(b'##INFO=<ID=SpliceAI,Number=.,Type=String,'
+                     b'Description="SpliceAI max delta score from gnomAD '
+                     b'spliceai_ds_max; the four DS fields carry the same max '
+                     b'and the DP fields are placeholders">\n')
+        sa_out.write(b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
 
         for batch in batches:
             proc = subprocess.Popen(["tabix", url, *batch],
                                     stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, text=True)
+                                    stderr=subprocess.PIPE, bufsize=1 << 20)
             for line in proc.stdout:
-                if not line or line.startswith("#"):
+                if not line or line.startswith(b"#"):
                     continue
-                cols = line.rstrip("\n").split("\t")
+                cols = line.rstrip(b"\n").split(b"\t", 8)
                 if len(cols) < 8:
                     continue
                 chrom, pos, ref, alts, info = (cols[0], cols[1], cols[3],
                                                cols[4], cols[7])
 
-                m = SPLICE_RE.search(info)
-                if m and m.group(1) not in (".", ""):
-                    ds = m.group(1)
-                    for alt in alts.split(","):
-                        if alt in (".", "*"):
+                ds = info_value(info, SPLICE_KEY)
+                if ds is not None and ds != b".":
+                    for alt in alts.split(b","):
+                        if alt in (b".", b"*"):
                             continue
                         sa_out.write(
-                            f"{chrom}\t{pos}\t.\t{ref}\t{alt}\t.\t.\t"
-                            f"SpliceAI={alt}|gnomad|{ds}|{ds}|{ds}|{ds}|0|0|0|0\n")
+                            b"%b\t%b\t.\t%b\t%b\t.\t.\tSpliceAI=%b|gnomad|%b|%b|%b|%b|0|0|0|0\n"
+                            % (chrom, pos, ref, alt, alt, ds, ds, ds, ds))
                         sa_n += 1
 
                 # PhyloP is per position, not per allele, so one row per record.
-                q = PHYLOP_RE.search(info)
-                if q and q.group(1) not in (".", ""):
-                    pp_out.write(f"{chrom}\t{pos}\t{q.group(1)}\n")
+                q = info_value(info, PHYLOP_KEY)
+                if q is not None and q != b".":
+                    pp_out.write(b"%b\t%b\t%b\n" % (chrom, pos, q))
                     pp_n += 1
             proc.wait()
             if proc.returncode != 0:
-                sys.exit("tabix failed: " + (proc.stderr.read() or "").strip())
+                sys.exit("tabix failed: " + (proc.stderr.read() or b"").decode(errors="replace").strip())
 
     print(f"chr{args.chrom}: spliceai={sa_n:,} -> {sa_path}", file=sys.stderr)
     print(f"chr{args.chrom}: phylop={pp_n:,} -> {pp_path}", file=sys.stderr)

@@ -23,6 +23,7 @@
 
 use crate::config::AcmgConfig;
 use crate::sa_extract::ClassificationInput;
+use crate::sources::Source;
 
 /// Why a frequency criterion could not be assessed, and whether the reason is a
 /// statement about *this site's short-read data* or about something else.
@@ -45,6 +46,15 @@ pub(crate) struct FrequencyBlocker {
 }
 
 impl FrequencyBlocker {
+    /// The database itself is not open. It says nothing about the reads at this site, so it is
+    /// not a site-level veto, and nothing about the gene either.
+    fn source_not_loaded(reason: String) -> Self {
+        Self {
+            reason,
+            site_level: false,
+        }
+    }
+
     fn gene_level(reason: String) -> Self {
         Self {
             reason,
@@ -202,6 +212,33 @@ pub(crate) fn data_blocker(
     input: &ClassificationInput,
     config: &AcmgConfig,
 ) -> Option<FrequencyBlocker> {
+    // No gnomAD database is open. A variant then has no record because there is nothing to hold
+    // one, which is not the same as gnomAD having seen no carrier, and the annotation looks the
+    // same either way: neither adds a field. Without this, PM2 reads the missing record as
+    // absence (`pm2_absent_when_no_record`) and fires for every variant of the run, and BA1, BS1
+    // and BS2 never can, so a classification made without gnomAD leans one way only.
+    if !input.sources.has(Source::Gnomad) {
+        return Some(FrequencyBlocker::source_not_loaded(
+            "no gnomAD database is loaded, so a variant's absence from it says nothing about \
+             its frequency"
+                .to_string(),
+        ));
+    }
+    // A gnomAD database is open and holds nothing of this variant's chromosome: one shard of a
+    // per-chromosome build, or a chromosome that failed to build. The same "no record" again, for
+    // the same reason, and it is what a gnomAD of chromosome X alone said of every variant of
+    // chromosomes 1 to 22.
+    if !input.sources.covers_variant(Source::Gnomad) {
+        let chromosome = match input.variant_coordinates.as_ref() {
+            Some((chrom, ..)) => format!("chromosome {chrom}"),
+            None => "this variant's chromosome".to_string(),
+        };
+        return Some(FrequencyBlocker::source_not_loaded(format!(
+            "the gnomAD database that is loaded holds no record of {chromosome}, so a variant's \
+             absence from it says nothing about its frequency"
+        )));
+    }
+
     // Curated gene-level homology. Reads from a paralogue or pseudogene mismap
     // onto the gene of interest, so both the frequency and the absence of a
     // frequency are artefacts (Mandelker 2016, PMID 27228465).

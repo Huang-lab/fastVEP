@@ -9,8 +9,8 @@ Benchmark-specific scripts live in [`analysis/acmg_benchmark/scripts/`](../analy
 | `extract_gnomad_scores.py` | Distils SpliceAI and PhyloP databases out of the gnomAD v4.1 sites VCF, so neither needs its own download. |
 | `build-sa-databases.sh` | Downloads and builds every publicly available supplementary annotation source for GRCh37 or GRCh38. The manifest is [`docs/SA_DATABASES.md`](../docs/SA_DATABASES.md). |
 | `deploy-minimal.sh` | Human GRCh38 gene models and reference sequence, and ClinVar. |
-| `deploy-clinical.sh` | The clinical deployment: human plus ClinVar and dbSNP. |
-| `deploy-full.sh` | Human GRCh38 and GRCh37 with ClinVar, dbSNP and gnomAD, and five more organisms. It does not build the rest of the ACMG stack (REVEL, SpliceAI, PhyloP, constraint, ClinGen, RepeatMasker): `build-sa-databases.sh` does. |
+| `deploy-clinical.sh` | The clinical deployment: human GRCh38 plus ClinVar and dbSNP, and seven other organisms. |
+| `deploy-full.sh` | Human GRCh38 and GRCh37 with ClinVar, dbSNP and gnomAD (a database for each chromosome), and seven other organisms. It does not build the rest of the ACMG stack (REVEL, SpliceAI, PhyloP, constraint, ClinGen, RepeatMasker): `build-sa-databases.sh` does, and the web server refuses ACMG for a genome that lacks it. |
 | `release.sh` | Drafts the changelog entry and sets the version in `Cargo.toml` and `Cargo.lock`; the commit, the tag and the push are yours ([`docs/RELEASING.md`](../docs/RELEASING.md)). |
 | `check-release-tarball.sh` | Unpacks a release archive, checks its checksum, starts its binaries and annotates the README's example; the release workflow runs it on every archive before anything is published. |
 

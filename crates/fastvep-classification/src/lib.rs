@@ -16,6 +16,7 @@ pub mod criteria;
 pub mod disease;
 pub mod functional;
 pub mod sa_extract;
+pub mod sources;
 #[cfg(test)]
 mod test_support;
 pub mod types;
@@ -27,6 +28,7 @@ pub use sa_extract::{
     extract_classification_input, is_pure_insertion, reads_exon_edge, reads_hgvs_placement,
     same_splice_position_pathogenic, ClassificationInput, CompanionVariant, GenotypeInfo,
 };
+pub use sources::{LoadedSources, Source, SourceInfo, SourceScope, REFERENCE_STACK};
 pub use types::{
     AcmgClassification, AcmgResult, DisorderClassification, DisorderRef, EvidenceCounts,
     EvidenceCriterion,
