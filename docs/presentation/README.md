@@ -12,10 +12,10 @@ It was tested in Chrome 156 on macOS, and it uses only standard features of curr
 - The speed and agreement-with-VEP numbers were measured on 7 November 2026 on an Apple M4, with a binary built from the tag of that release (v0.5.0-rc.1, c12d9f9; `benchmarks/results/v0.5.0/with_vep/environment.tsv:13-17`), and are the files of `benchmarks/results/v0.5.0/`.
 - Every command on a slide was run on 8 November 2026 with the release binary of `fastVEP-v0.5.0-rc.1-aarch64-apple-darwin.tar.gz`, or is shown in the shape that its documentation gives, with its flags checked against the help of that binary (the tables below say which).
 - Every ACMG number is v38's, except that the version history on slide 30 plots the values of v1 to v38 as the manuscript records them: each version at its run of the time, and v37 and v38 on the final benchmark databases.
-  They are from the manuscript at commit `7814589` of the branch `docs/acmg-scheme-and-versions` (`manuscript/acmg/manuscript.md` and the tables of its `data/` directory).
+  They are from the manuscript at commit `2a293d0` of the branch `docs/acmg-scheme-and-versions` (`manuscript/acmg/manuscript.md` and the tables of its `data/` directory).
   v38 is the classifier of release 0.5.0, which for now is the release candidate.
 - The manuscript is unpublished.
-  Its branch `docs/acmg-scheme-and-versions` is on GitHub at commit `7814589` (`git ls-remote origin`, 8 November 2026) and is not merged to master, so the commit that the footers cite is opened on that branch.
+  Its branch `docs/acmg-scheme-and-versions` is not merged to master, and the commit that the footers cite, `2a293d0`, is a commit of that branch, which is opened on that branch once the author has pushed it (`git ls-remote origin` listed the branch at `7814589` on 8 November 2026, and the commits after it, up to `2a293d0`, are pushed by the author with the paper).
   The deck cites no publication for it.
 - The deck says what the manuscript says and no more: agreement with ClinVar 2-star+ and with one reviewer is how closely the calls agree with community opinion, and it is not accuracy and not validation.
   The four bounds of slide 28 are the manuscript's, in its words.
@@ -101,7 +101,7 @@ The print was checked on the PDF files that Chrome's print engine writes, and no
 
 Paths are of this repository at the commit that the deck branches from (`9574be1`), unless a row says otherwise.
 `summary.tsv` is `benchmarks/results/v0.5.0/with_vep/summary.tsv`, with the line numbers of the file.
-`MS` is `manuscript/acmg/manuscript.md` at commit `7814589`, with its line numbers, and `MS data` is `manuscript/acmg/data/` at that commit.
+`MS` is `manuscript/acmg/manuscript.md` at commit `2a293d0`, with its line numbers, and `MS data` is `manuscript/acmg/data/` at that commit.
 `DEPLOYMENT` is `DEPLOYMENT.md` of the branch `feat/web-genomes` at commit `95e4d2a`, with its line numbers.
 A date is the day on which the command was run or the request made.
 
@@ -112,7 +112,7 @@ A date is the day on which the command was run or the request made.
 | 1, 4 | 4,048,342 variants of GIAB HG002; 42.2, 44.5 and 54.6 s on one thread; 11.1 and 17.0 s on every core | `summary.tsv:18,20,24` and `:19,25`, `with_vep/environment.tsv:26`, `README.md:797-803` |
 | 1, 2, 4 | The call set has chromosomes 1 to 22 only | `benchmarks/run_vep_side.py:17,144`, `with_vep/vep_genome_sums.csv:2-4` |
 | 2, 4 | VEP 116.3 took 6,516, 6,662 and 7,334 s (109 minutes for the first) | `with_vep/vep_baseline.csv:6-8`, `README.md:799-801` |
-| 2 | The criteria are underspecified and fragmented | MS:20, 64-66 |
+| 2 | The criteria are underspecified and fragmented | MS:20, 68-70 |
 | 3 | 49 consequence terms are defined and 38 are emitted | `README.md:13`, `benchmarks/results/v0.5.0/so_terms.csv` |
 | 3, 7, 11 | The CSQ has 49 fields (50 with `--acmg`), matching Ensembl VEP's extended format, of which the last two are fastVEP's; formats vcf, tab and json | `README.md:20,655`, `fastvep filter` printed `CSQ format: 49 fields` and `50 fields` on 8 Nov 2026; no file of this deck compares the field order with VEP's own VCF output |
 | 3, 10 | The engine is a port of VEP's, it writes VEP's columns, and it accepts the VEP flags it has in VEP's spelling | `docs/VEP_MIGRATION.md:4-6,40`, `fastvep annotate --help` |
@@ -161,31 +161,31 @@ A date is the day on which the command was run or the request made.
 | 15 | A run without the stack classifies from what is loaded; the stack check exits non-zero; fastvep.org refuses a genome without the stack with HTTP 422 | `docs/ACMG.md:19`, `docs/ACMG_SETUP.md:394`; `https://fastvep.org/api/annotate` answered HTTP 422 to `"acmg": true` for `mouse_grcm39_ensembl_115` at about 19:27 EST on 8 Nov 2026; `crates/fastvep-web/src/acmg.rs` and `errors.rs` of the branch `feat/web-genomes` (not in the tag or in master) |
 | 15 | 1,731 tests passed, 0 failed, 1 ignored (macOS) | `cargo test --workspace` on this commit, 8 Nov 2026; `README.md:759` gives 1,732 on Linux |
 | 15 | 20,363 records in nine fixtures of VEP 116.3's own output | `README.md:870`, `crates/fastvep-cli/fixtures/vep_tab_*/in.vcf` |
-| 16 | The contribution, community opinion, the four measures | MS:20-21, 64-71 |
-| 17 | 38 versions, 6 rounds, 673,660 variants | MS:24, 90, 200 |
-| 17 | The reviewer read the opposite-direction calls only; most thresholds were swept, three first for the paper, and seven numbers were not varied; the unit of the process is a run, re-run after every change | MS:247 (what the reviewer saw), MS:263 and 271 (the sweeps, the three and the seven numbers), MS:223-224 (the run) |
-| 17 | The opposite-direction calls are counted from v6 on | MS data `trajectory.csv` (v1 holds a count reconstructed from its documentation, v2 to v5 none, v6 the first one recorded), MS:236, 396 |
-| 18 | The nine sources and what they feed | `scripts/check_acmg_stack.py` output of 8 Nov 2026, MS:167-184 (Table 2), `docs/ACMG_SETUP.md:26-39` |
-| 18 | 15 of 28 criteria can be applied to a sites-only input, and why 13 are not | MS:26, 118-131, MS data `criteria_status.csv` |
-| 18 | What ClinVar feeds: the PM2 backstop, a gate for BS1 and BS2, the counts of PS1 and PM1 | MS:180 (Table 2); the check lists PM3, BP2, PP5 and BP6 as well (`docs/ACMG_SETUP.md:32`) |
-| 19 | The point scale, the 2015 table, and the reason for the split | MS:136-141 |
-| 19 | 66.4% to 77.0% and 27 to 399 (a replay, Likely benign from -1 point); 62.5% to 57.1% and 10 fewer (a run) | MS:604-609, MS data `combining_rules_replay_v38.csv` |
-| 19 | Recall is the share of a ClinVar group that receives a call in the same direction | MS:209 |
-| 20 | 64.1%, 79.3%, 51 and their intervals | MS:671, 696, MS data `headline_v38.csv` |
-| 20 | 116,078 new variants, 72.6%, 2.3 times (1.2 to 3.8) | MS:859, 865, 882 (Table 7), MS data `temporal_v38.csv` and `temporal_ratio_v38.csv` |
-| 20, 21, 22 | Agreement in direction means the same side (pathogenic, benign or uncertain), so a VUS against a ClinVar VUS counts: 286,815 of the 431,727 exact records; every variant VUS scores 43.8% | MS:214, 705, MS data `confusion_3x3_v38.csv` (VUS to VUS 286,815) |
-| 20 | 62 under a strict leave-one-out reading; the new variants lie in 4,862 genes, all but 157 in the April set (a hold-out of variants and almost not of genes); 98.4% had a record in the April variant_summary and 92% of all of them a single-submitter one (114,218 with a record, of which 106,607 single-submitter, 6,505 multiple submitters without conflict, 54 expert panel, 1,052 other) | MS:1260, 1309; MS:842, 906, MS data `temporal_new_genes_v38.csv` and `temporal_new_in_index_v38.csv` |
-| 21 | The segments of the bar, 93.6% of 139,325; the share 1.3% of the segment of ClinVar VUS called pathogenic- or benign-side is computed (3,610 and 4,873 of 673,660, which Table 5 gives as 0.5% and 0.7%) | MS:674-695 (Table 5), MS data `confusion_3x3_v38.csv` and `headline_v38.csv` |
-| 21 | 10,694, 5,184, 20,072 (17,098 with a lone BP4 and 2,974 with a lone BS1) and the 104 missing curations; the paper does not apportion them | MS:729, 735, 771, 754, 1218-1221 |
-| 22 | The four rows and 36 times | MS:705-709, MS data `baselines_v38.csv` |
-| 22 | None of the 4,039 Pathogenic or 67,733 Benign calls is among the 51; the zero for Benign is informative (15 expected) and the zero for Pathogenic is not (1.7 expected); 62 and three added Benign calls under the strict reading | MS:713-714, 1309, 636 |
-| 23 | Split the combining scheme: points on both sides (a replay, Likely benign from -1 point) gain 10.6 points of benign-side recall for 372 more contradictions; the 2015 table on both sides gives up 5.4 points of pathogenic-side recall to avoid 10 | MS:141, 604-609, 1147-1149, MS data `combining_rules_replay_v38.csv` |
-| 23 | 21 of the 64 changes were a condition of a guideline that a criterion did not apply, and review of the opposite-direction calls first identified 30 of the 64 (by our coding) | MS:400-405, 1150, MS data `change_ledger.csv` |
-| 23 | The Likely pathogenic cutoff, BP7's conservation test, BS1 and BS2 matter; the PM2 thresholds and the allele-number floor move agreement in direction by under 1,000 calls (534,835 against 534,335 for PM2; 684 for the floor) | MS:1151-1152, 494, 617, and Table 3 (MS:466-486) for the exchange rates |
-| 23 | The three rules reach 85.6% with 1,817 contradictions, v38 79.3% with 51 | MS:707, 1155, MS data `baselines_v38.csv` |
-| 23 | The ClinGen file lacked 104 curations, CFTR among them; every null variant of CFTR in the benchmark was called VUS; no aggregate showed it | MS:750-754, 1153, 1196-1198 |
-| 23 | Counting BS2 beside BS1 or BA1 adds 638 calls in direction and calls two ClinVar-Pathogenic variants Benign | MS:965-974, 1155 |
-| 23 | One tool, one reviewer, one benchmark | MS:1163 |
+| 16 | The contribution, community opinion, the four measures | MS:20-21, 68-75 |
+| 17 | 38 versions, 6 rounds, 673,660 variants | MS:28, 94, 199, 249 |
+| 17 | The reviewer read the opposite-direction calls only; most thresholds were swept, three first for the paper, and seven numbers were not varied; the unit of the process is a run, re-run after every change | MS:246 (what the reviewer saw), MS:262 and 270 (the sweeps, the three and the seven numbers), MS:222-223 (the run) |
+| 17 | The opposite-direction calls are counted from v6 on | MS data `trajectory.csv` (v1 holds a count reconstructed from its documentation, v2 to v5 none, v6 the first one recorded), MS:235, 393 |
+| 18 | The nine sources and what they feed | `scripts/check_acmg_stack.py` output of 8 Nov 2026, MS:173-190 (Table 2), `docs/ACMG_SETUP.md:26-39` |
+| 18 | 15 of 28 criteria can be applied to a sites-only input, and why 13 are not | MS:24, 42, 124-137, MS data `criteria_status.csv` |
+| 18 | What ClinVar feeds: the PM2 backstop, a gate for BS1 and BS2, the counts of PS1 and PM1 | MS:186 (Table 2); the check lists PM3, BP2, PP5 and BP6 as well (`docs/ACMG_SETUP.md:32`) |
+| 19 | The point scale, the 2015 table, and the reason for the split | MS:142-147 |
+| 19 | 66.4% to 77.0% and 27 to 399 (a replay, Likely benign from -1 point); 62.5% to 57.1% and 10 fewer (a run) | MS:600-607, MS data `combining_rules_replay_v38.csv` |
+| 19 | Recall is the share of a ClinVar group that receives a call in the same direction | MS:208 |
+| 20 | 64.1%, 79.3%, 51 and their intervals | MS:668, 693, MS data `headline_v38.csv` |
+| 20 | 116,078 new variants, 72.6%, 2.3 times (1.2 to 3.8) | MS:856, 862, 879 (Table 7), MS data `temporal_v38.csv` and `temporal_ratio_v38.csv` |
+| 20, 21, 22 | Agreement in direction means the same side (pathogenic, benign or uncertain), so a VUS against a ClinVar VUS counts: 286,815 of the 431,727 exact records; every variant VUS scores 43.8% | MS:213, 702, MS data `confusion_3x3_v38.csv` (VUS to VUS 286,815) |
+| 20 | 62 under a strict leave-one-out reading; the new variants lie in 4,862 genes, all but 157 in the April set (a hold-out of variants and almost not of genes); 98.4% had a record in the April variant_summary and 92% of all of them a single-submitter one (114,218 with a record, of which 106,607 single-submitter, 6,505 multiple submitters without conflict, 54 expert panel, 1,052 other) | MS:1198, 1243; MS:839, 903, MS data `temporal_new_genes_v38.csv` and `temporal_new_in_index_v38.csv` |
+| 21 | The segments of the bar, 93.6% of 139,325; the share 1.3% of the segment of ClinVar VUS called pathogenic- or benign-side is computed (3,610 and 4,873 of 673,660, which Table 5 gives as 0.5% and 0.7%) | MS:671-692 (Table 5), MS data `confusion_3x3_v38.csv` and `headline_v38.csv` |
+| 21 | 10,694, 5,184, 20,072 (17,098 with a lone BP4 and 2,974 with a lone BS1) and the 104 missing curations; the paper does not apportion them | MS:726, 732, 768, 751, 1156-1159 |
+| 22 | The four rows and 36 times | MS:702-706, MS data `baselines_v38.csv` |
+| 22 | None of the 4,039 Pathogenic or 67,733 Benign calls is among the 51; the zero for Benign is informative (15 expected) and the zero for Pathogenic is not (1.7 expected); 62 and three added Benign calls under the strict reading | MS:710-711, 1243, 633 |
+| 23 | Split the combining scheme: points on both sides (a replay, Likely benign from -1 point) gain 10.6 points of benign-side recall for 372 more contradictions; the 2015 table on both sides gives up 5.4 points of pathogenic-side recall to avoid 10 | MS:147, 601-606, 1087-1089, MS data `combining_rules_replay_v38.csv` |
+| 23 | 21 of the 64 changes were a condition of a guideline that a criterion did not apply, and review of the opposite-direction calls first identified 30 of the 64 (by our coding) | MS:397-402, 1090, MS data `change_ledger.csv` |
+| 23 | The Likely pathogenic cutoff, BP7's conservation test, BS1 and BS2 matter; the PM2 thresholds and the allele-number floor move agreement in direction by under 1,000 calls (534,835 against 534,335 for PM2; 684 for the floor) | MS:1091-1092, 491, 614, and Table 3 (MS:463-483) for the exchange rates |
+| 23 | The three rules reach 85.6% with 1,817 contradictions, v38 79.3% with 51 | MS:704, 1095, MS data `baselines_v38.csv` |
+| 23 | The ClinGen file lacked 104 curations, CFTR among them; every null variant of CFTR in the benchmark was called VUS; no aggregate showed it | MS:747-751, 1093, 1136-1138, 1187 |
+| 23 | Counting BS2 beside BS1 or BA1 adds 638 calls in direction and calls two ClinVar-Pathogenic variants Benign | MS:962-971, 1094-1095 |
+| 23 | One tool, one reviewer, one benchmark | MS:1103 |
 | 24 | The build commands | `docs/ACMG_SETUP.md:88-312`, `docs/SA_DATABASES.md:20-30`, `scripts/README.md:8-10,38-49`, the usage text of `scripts/build-sa-databases.sh` (`--regions`, `--chroms`, the default chromosomes 1 to 22 and X) |
 | 24 | No account, 198.4 GB, 3.4 GB (3,448,659,975 bytes in `data/benchmark/sa_db_complete`, measured on 8 Nov 2026, following its links; the table of `docs/ACMG_SETUP.md` on master lists region-restricted databases and totals 1.3 GB), ClinVar is re-released weekly, pin a dated release | `docs/ACMG_SETUP.md:9,120-121,128,154-159,497` |
 | 24 | The small tier took 593 s, 0.9 GB of downloads (911,527,527 bytes), 304 MB of databases (304,092,314 bytes) | `scripts/build-sa-databases.sh` run 8 Nov 2026 (exit 0): the sizes of the files it wrote |
@@ -194,23 +194,23 @@ A date is the day on which the command was run or the request made.
 | 25 | The eight test variants are on chromosomes 1, 2, 7, 10, 14 and 17, and eight of the nine sources pass when they answer at any one of them and RepeatMasker, through BP3, only when BP3 is evaluated on all eight: a stack for chromosome 22 alone fails, one for chromosome 17 alone passes | `scripts/check_acmg_stack.py:46-55,171-193`, and runs of the check on stacks of one chromosome (8 Nov 2026) |
 | 26 | The command; the four calls and criteria | `docs/ACMG_SETUP.md:435-446`, run 8 Nov 2026 |
 | 26 | A default run reports 26 of the 28 criteria; with `--pick` the call is made on the picked transcript | `docs/ACMG.md:7`, `docs/ACMG.md:776` |
-| 26 | ClinVar of 27 June 2026 | MS:180 (Table 2) |
+| 26 | ClinVar of 27 June 2026 | MS:186 (Table 2) |
 | 27 | The web page and the badges | `docs/ACMG.md:57-63`, `docs/API.md:154,261` |
 | 27 | GRCh38 has all nine sources loaded and `/api/status` says available and ready; the other eight genomes do not; `"acmg": true` was answered with HTTP 200 and an `acmg` object on each consequence; the page offers the option ticked and enabled, with the hint that all 9 reference sources are loaded | `https://fastvep.org/api/status`, `/api/genomes` and `/api/annotate` at 18:58 UTC (`/api/status` again at 19:15 EST) and the page in a browser at 19:44 UTC, 8 Nov 2026 |
 | 27 | The rule of the gate: all nine sources, with gnomAD for every autosome and X that the gene model has transcripts on, else HTTP 422 and the list of what is missing unless the operator allows partial stacks | `crates/fastvep-web/src/acmg.rs:11-18,64-67`, `crates/fastvep-annotate/src/coverage.rs:34-37` and `errors.rs` of the branch `feat/web-genomes` at e068377, the live build (it is in neither the tag nor master) |
 | 27 | A request with `"acmg": true` for a genome without the stack is refused with HTTP 422 and an error that names the missing sources | `https://fastvep.org/api/annotate` for `mouse_grcm39_ensembl_115`, at about 19:27 EST, 8 Nov 2026 |
 | 27 | What a request costs: 1,000 ClinVar variants with ACMG and pick took 5.0 s alone and 8.0 s each when four ran at once (500 variants a second in all); six at once were all answered, two after waiting for a permit; 10,000 variants over the genome were refused with HTTP 413 after 7,300, which is what 128 MiB holds (the source does not say whether that request asked for ACMG or pick) | `DEPLOYMENT:932-934` and `DEPLOYMENT:938-939` (a second instance of the same binary, beside the live service, on the host of 4 vCPU and 16 GB), 8 Nov 2026; the limit is `max_response_bytes` 134,217,728 in `/api/status` |
 | 27 | The release's `fastvep-web` has no `acmg` object in `/api/status` and answers `"acmg": true` with a classification from whatever is loaded | the release's `fastvep-web` run on a copy of `tests/test.gff3`, 8 Nov 2026 |
-| 28 | The research-use sentence | MS:1288 |
-| 28 | The four bounds, and the hold-out of variants and almost not of genes | MS:73-77, 906, 1161 |
+| 28 | The research-use sentence | MS:1222 |
+| 28 | The four bounds, and the hold-out of variants and almost not of genes | MS:77-81, 903, 1101 |
 | 29 | The links, the Slack invitation and the citation | the header and footer of https://fastvep.org, 8 Nov 2026; `README.md:900-909`; `gh repo view` |
 | 29 | Binaries for macOS (Apple silicon) and Linux | `README.md:66-70`, the assets of the release |
-| 29 | The manuscript is unpublished and its declarations are still to be completed; its branch is on GitHub at commit `7814589` and not on master | MS:1420-1436; `git ls-remote origin`, 8 Nov 2026 |
-| 30 | The trajectory: each version at its run of the time, and v37 and v38 on the final benchmark databases (column `databases` of `trajectory.csv`); v3 and v17 not plotted; what v1 to v6 are; the line of contradictions starts at v6 and v1's 31 rest on 74,355 variants (v38: 256,054) | MS data `trajectory.csv`, MS:234-238, 373-396 |
-| 30 | The sentence about the levels before v37 (v37: 77.62% and 49 contradictions at the time, 79.07% and 52 on the final databases) | MS:383, 387, and MS data `trajectory.csv` for v37 on the final databases |
-| 30 | 77.6% at v13 and 77.50% to 77.62% for the next 23 runs, 94 to 49, v10's 25 against v38's 51, and 6,632 | MS:383, 387, 389, 1170, 1252 |
+| 29 | The manuscript is unpublished and its declarations are still to be completed; its branch is not on master, and the commit that the footers cite is `2a293d0` | MS:1353-1369 |
+| 30 | The trajectory: each version at its run of the time, and v37 and v38 on the final benchmark databases (column `databases` of `trajectory.csv`); v3 and v17 not plotted; what v1 to v6 are; the line of contradictions starts at v6 and v1's 31 rest on 74,355 variants (v38: 256,054) | MS data `trajectory.csv`, MS:233-237, 370-393 |
+| 30 | The sentence about the versions before v37 (v37: 77.62% and 49 contradictions as run at the time, 79.07% and 52 on the final databases) | MS:371, 384, 1430 (the legend of Figure S1), and MS data `trajectory.csv` (the row of v37 is its run on the final databases, and its columns `*_of_the_time` are its run at the time) |
+| 30 | 77.6% at v13 and 77.50% to 77.62% for the next 23 runs, 94 to 49, v10's 25 against v38's 51, and 6,632 | MS:381, 384, 386, 1110, 1190 |
 | 31 | The flag table | `docs/VEP_MIGRATION.md:25-30,42-62,96-101,201-205`, `fastvep cache --help`, `README.md:825` |
-| 32 | The options and the configuration fields; the default of `pm2_ad_af_threshold` is 0.00004 and 0.0 is the strict-absence reading | `docs/ACMG.md:41-54,70-75,83-118`, `docs/ACMG_SETUP.md:428`, `fastvep annotate --help`, MS:466-486 |
+| 32 | The options and the configuration fields; the default of `pm2_ad_af_threshold` is 0.00004 and 0.0 is the strict-absence reading | `docs/ACMG.md:41-54,70-75,83-118`, `docs/ACMG_SETUP.md:428`, `fastvep annotate --help`, MS:463-483 |
 
 ## Every command on a slide
 
@@ -250,8 +250,9 @@ Where a run used a copy of the transcript cache of the Ensembl 115 GFF3 passed w
 - Facts: independent reviewers audited every claim of every slide and of every note, and this file, against its source, recomputed every number and ran the commands again.
   VEP's 6,662 s of slide 4 is 6,661.46 s before rounding, which the repository's README and CSV round to 6,662, and the deck keeps the repository's figure.
   The ratios of the chr22 table are those of the unrounded medians.
-  The ACMG numbers of slides 17 to 23, 28 and 30 were recomputed from the data tables of the manuscript at commit `7814589`, the runs of slides 24 to 26 from their outputs, and the cost of a request on slide 27 from `DEPLOYMENT.md` and `/api/status`.
+  The ACMG numbers of slides 17 to 23, 28 and 30 were recomputed from the data tables of the manuscript at commit `2a293d0`, the runs of slides 24 to 26 from their outputs, and the cost of a request on slide 27 from `DEPLOYMENT.md` and `/api/status`.
   A further reviewer audited the slides that changed, their notes and this file against their sources and recomputed every number: it found no wrong number, and what it found in wording, scope and traceability was corrected.
+  A last, short review read the slides, notes, footers and rows of this file that depend on the manuscript against its final commit, recomputed every plotted point and number of slide 30, and found no wrong number and no wrong slide reference; its eight findings, of wording, citation and one chart marker, were corrected.
 
 ## What is not in the deck, and why
 
@@ -264,10 +265,10 @@ Where a run used a copy of the transcript cache of the Ensembl 115 GFF3 passed w
 
 ## Which numbers come from which commit
 
-- The ACMG numbers of slides 17 to 23, 28 and 30 are the manuscript's at commit `7814589` of the branch `docs/acmg-scheme-and-versions`: its text, and the `_v38.csv` and other files of its `manuscript/acmg/data/` directory.
+- The ACMG numbers of slides 17 to 23, 28 and 30 are the manuscript's at commit `2a293d0` of the branch `docs/acmg-scheme-and-versions`: its text, and the `_v38.csv` and other files of its `manuscript/acmg/data/` directory.
 - The runs of slides 24 to 26 (the size of the benchmark's stack, the check of the stack and the four calls) were made on 8 November 2026 with the release binary on `data/benchmark/sa_db_complete`, the stack that the benchmark of that commit reads.
 - The cost of a request on slide 27 is `DEPLOYMENT.md` of the branch `feat/web-genomes` at commit `95e4d2a`, and the rest of that slide is the live site on 8 November 2026.
-- The section, table and line numbers in this file are those of commit `7814589`.
+- The section, table and line numbers in this file are those of commit `2a293d0`.
   If the manuscript changes, its sections move: read each claim again in the new text and do not follow the number given here.
 
 If the manuscript changes, check these slides against its text and its data tables, and point the footers at the new commit and file names:
