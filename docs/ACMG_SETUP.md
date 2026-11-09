@@ -324,8 +324,8 @@ The exomes release covers capture targets and their flanks, so a deep-intronic v
 Use the genomes release if that matters to you, or the upstream files below.
 
 **A fetch that ends early leaves a hole, and nothing says so.**
-The first SpliceAI and PhyloP databases of the benchmark were distilled from regions by a script that ignored the exit status of `tabix` and discarded its messages, and they lacked 8.2% and 8.3% of the values that gnomAD's file holds for the benchmark's variants, in 14 batches of 200 regions that each ended early.
-The classifier's output shows nothing of it, and agreement with ClinVar moved by 1.5 points when the databases were completed (`analysis/acmg_benchmark/results/complete_vs_april_databases.md`).
+A database that is distilled from regions by a script that ignores the exit status of `tabix` and discards its messages can hold fewer records than the file it came from, and the classifier's output shows nothing of it: a criterion whose record is missing simply does not fire.
+The ClinGen file that the benchmark read lacked 104 curations, CFTR among them, and showed nothing either (`ACMG.md`, limitation 23).
 `scripts/extract_gnomad_scores.py` stops when `tabix` fails; if you write your own extraction, check the exit status of every call, and compare the number of variants that have a value in the database with the number that the file holds.
 
 **Upstream alternatives.**
