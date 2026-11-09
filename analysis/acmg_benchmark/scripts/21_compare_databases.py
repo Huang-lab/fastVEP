@@ -3,9 +3,9 @@
 
 The benchmark was first built with SpliceAI and PhyloP databases that lack records which the gnomAD file they were distilled
 from carries (`results/complete_databases/README.md`). Every run of the paper was made again with databases built from the
-whole of that file, by the same classifiers on the same inputs, and the earlier runs were kept under the names
-`manuscript_runs_april_databases/` and `output_v37_april_databases/`. This script reads the per-variant tables of the two sets of
-runs and writes the files below into `results/complete_vs_april_databases/`, with the report that is made from them. It is an internal
+whole of that file, by the same classifiers on the same inputs. The earlier runs were made under the names
+`manuscript_runs_april_databases/` and `output_v37_april_databases/` and are not kept. Given the per-variant tables of the two sets of
+runs, this script writes the files below into `results/complete_vs_april_databases/`, with the report that is made from them. It is an internal
 record, and the files are not tables of the paper. Two steps read them: `13_manuscript_stats.py` takes v37 and v38 as they were run at
 the time from `databases_old_vs_new.csv` for the trajectory, and `verify_numbers.py` takes a SpliceAI value from
 `databases_opposite_changes.csv`.
@@ -43,12 +43,14 @@ no message. That is what the first databases show: every variant that only the c
 batch that reaches the end of the batch, apart from indels whose second base (position + 1) is outside every region. The pattern
 is what a stream that ends early gives, and this script does not show that a stream did: the extraction was not repeated.
 
-Inputs (all under `data/benchmark/`): `manuscript_runs/` and `manuscript_runs_april_databases/` (the per-variant tables of `v37`,
+Inputs of a full run (all under `data/benchmark/`; the second root is not kept, so on a checkout without it only `--report-only` runs):
+`manuscript_runs/` and `manuscript_runs_april_databases/` (the per-variant tables of `v37`,
 `v38`, `v37_oct2026` and `v38_oct_shipped`), `clinvar_2star_labels.tsv`, `clinvar_20261004/clinvar_2star_labels.tsv` and
 `clinvar_20261004_covered/clinvar_2star_labels.tsv`, `clinvar_20261004/strata.tsv`, and `sa_sources/clinvar_2star_regions.bed`.
 
 Usage
-  21_compare_databases.py            write the CSV files and the report
+  21_compare_databases.py                 write the CSV files and the report (needs the runs of both roots)
+  21_compare_databases.py --report-only   write the report from the CSV files that are committed
 """
 
 from __future__ import annotations
@@ -610,7 +612,27 @@ def write(name: str, rows: list[dict]) -> None:
     print(f"  wrote {name} ({len(rows)} rows)")
 
 
+def report_only() -> None:
+    """Write the report from the committed CSV files, for a checkout without the runs that made them.
+
+    It is the text of `report()` over the rows that `main()` wrote, and it comes out the same byte for byte. The rows are read as text where
+    `main()` holds text: a SpliceAI maximum of "0.00" is a string there, and true, and read as the float 0.0 it would print as "none".
+    """
+
+    def rows(name: str, dtype=None) -> list[dict]:
+        return pd.read_csv(OUT / name, keep_default_na=False, dtype=dtype).to_dict("records")
+
+    pres, cause_rows, blocks, ovn = (rows(f"databases_{kind}.csv") for kind in ("presence", "causes", "lost_blocks", "old_vs_new"))
+    opp = rows("databases_opposite_changes.csv", dtype=str)
+    shapes = pd.read_csv(OUT / "databases_sweep_shapes.csv", keep_default_na=False)
+    fam = pd.read_csv(OUT / "databases_family_summary.csv", keep_default_na=False)
+    report(pres, cause_rows, blocks, ovn, opp, shapes, fam)
+
+
 def main() -> None:
+    if "--report-only" in sys.argv[1:]:
+        report_only()
+        return
     runs = sets_of_runs()
     if ("v37", "april") not in runs:
         sys.exit("the per-variant tables of v37 on the April set are missing from one of the two roots")
