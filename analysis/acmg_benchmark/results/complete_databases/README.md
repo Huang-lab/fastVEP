@@ -34,7 +34,7 @@ Of the 673,278 variants of the benchmark that have an alternative allele (the ot
 That is 8.2% of the SpliceAI values and 8.3% of the PhyloP values that exist.
 No variant has a value only under the first databases, and where both have a value the values are the same.
 gnomAD and REVEL have the same variants with a value under both stacks, and the same values.
-`../complete_vs_april_databases.md` sets what the runs say under each stack side by side, and `manuscript/acmg/data/databases_*.csv` hold the numbers.
+`../complete_vs_april_databases.md` sets what the runs say under each stack side by side, and `../complete_vs_april_databases/databases_*.csv` hold the numbers.
 
 ## Where the first databases lack their records
 
@@ -44,7 +44,7 @@ In each of them the first databases have values up to a point and none after it,
 That is 43,412 SpliceAI records and 47,472 PhyloP records.
 The other 457 PhyloP records are those of indels whose second base (position + 1) lies outside every region of the extraction.
 No other record is missing from either source.
-`manuscript/acmg/data/databases_lost_blocks.csv` lists the 14 batches, and `databases_causes.csv` the counts.
+`../complete_vs_april_databases/databases_lost_blocks.csv` lists the 14 batches, and `databases_causes.csv` the counts.
 The pattern is what a stream that ends early gives, in a script that does not look at the exit status and does not keep the messages.
 It is not a record of such a stream: the extraction was not repeated, and the messages of April were not kept.
 The regional gnomAD databases of the benchmark were built by `build_gnomad_per_chrom.sh`, which also ignores the exit status of `tabix` and also reads the regions 200 at a time, and they hold every record that the complete ones do for the benchmark's variants.

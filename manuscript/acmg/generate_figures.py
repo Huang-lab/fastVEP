@@ -401,7 +401,7 @@ RULING_LABELS = {
     "neither_supported": "Neither: the reviewer's call is VUS or another class",
     "needs_evidence": "Needs more evidence, or depends on the disorder",
     "no_verdict": "No verdict recorded",
-    "not_reviewed": "Not reviewed: new with the complete databases",
+    "not_reviewed": "Not reviewed: not in the last round",
 }
 
 
@@ -467,7 +467,7 @@ def figS3_review() -> None:
         "neither_supported": list(g["neither"]),
         "needs_evidence": list(g["needs_evidence"] + g["disorder_specific"]),
     }
-    if "not reviewed" in g.columns:  # a classifier can make a call opposite that the reviewer never saw (the complete databases add three)
+    if "not reviewed" in g.columns:  # a classifier can make a call opposite that the reviewer never saw (three of the 51 were not in the last round)
         series["not_reviewed"] = list(g["not reviewed"])
     stacked_barh(axB, [short[o] for o in order], series, RULING_COLORS, total=list(g["total"]))
     axB.set_xlim(0, 24)

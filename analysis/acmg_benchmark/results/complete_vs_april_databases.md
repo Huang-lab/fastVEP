@@ -3,7 +3,7 @@
 The benchmark was first built with SpliceAI and PhyloP databases that lack records which the gnomAD file they were distilled from carries (`results/complete_databases/README.md`).
 Every run of the paper was then made again with databases built from the whole of that file, by the same classifiers on the same inputs, and the runs on the first databases were kept.
 This file sets the two side by side.
-It is written by `scripts/21_compare_databases.py` from the per-variant tables of the runs, and the numbers are in `manuscript/acmg/data/databases_*.csv`.
+It is written by `scripts/21_compare_databases.py` from the per-variant tables of the runs, and the numbers are in `results/complete_vs_april_databases/databases_*.csv`.
 REVEL, ClinVar, ClinGen, the ClinVar protein index and RepeatMasker are the same files under both stacks.
 
 ## What the first databases lacked

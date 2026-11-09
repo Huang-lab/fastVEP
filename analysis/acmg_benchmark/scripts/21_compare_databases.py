@@ -5,7 +5,10 @@ The benchmark was first built with SpliceAI and PhyloP databases that lack recor
 from carries (`results/complete_databases/README.md`). Every run of the paper was made again with databases built from the
 whole of that file, by the same classifiers on the same inputs, and the earlier runs were kept under the names
 `manuscript_runs_april_databases/` and `output_v37_april_databases/`. This script reads the per-variant tables of the two sets of
-runs and writes four things, so that the text states no number of the change that a file does not hold.
+runs and writes the files below into `results/complete_vs_april_databases/`, with the report that is made from them. It is an internal
+record, and the files are not tables of the paper. Two steps read them: `13_manuscript_stats.py` takes v37 and v38 as they were run at
+the time from `databases_old_vs_new.csv` for the trajectory, and `verify_numbers.py` takes a SpliceAI value from
+`databases_opposite_changes.csv`.
 
   databases_presence.csv           for each source (SpliceAI, PhyloP, gnomAD, REVEL), how many variants have a value under each
                                    stack, how many only under the complete one, and in how many the two values differ
@@ -31,7 +34,7 @@ The runs of the sweeps and effects are the 88 to 89 of the family v38 on the Apr
 family v37, made on both stacks; the machinery that gives a sweep its shape and an effect its flag is that script's, so that the
 two comparisons (the classifier changed, the databases changed) use one definition of a change.
 
-and the report `results/complete_vs_april_databases.md`, which is made from those files.
+and the report `results/complete_vs_april_databases.md`.
 
 Why the first databases lack records. `extract_spliceai_phylop_from_gnomad.py` read gnomAD in batches of 200 regions of
 `clinvar_2star_regions.bed` (the regions of each chromosome, in file order), ignored the exit status of `tabix` and sent its messages
@@ -61,7 +64,7 @@ import pandas as pd
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 BENCH = ROOT / "data/benchmark"
-OUT = ROOT / "manuscript/acmg/data"
+OUT = ROOT / "analysis/acmg_benchmark/results/complete_vs_april_databases"  # next to the report that is made from the files
 REPORT = ROOT / "analysis/acmg_benchmark/results/complete_vs_april_databases.md"
 RUNS_DIR = ROOT / "analysis/acmg_benchmark/results/v37_manuscript"
 NEW_RUNS = BENCH / "manuscript_runs"
@@ -458,7 +461,7 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
     s("The benchmark was first built with SpliceAI and PhyloP databases that lack records which the gnomAD file they were distilled from carries (`results/complete_databases/README.md`).")
     s("Every run of the paper was then made again with databases built from the whole of that file, by the same classifiers on the same inputs, and the runs on the first databases were kept.")
     s("This file sets the two side by side.")
-    s("It is written by `scripts/21_compare_databases.py` from the per-variant tables of the runs, and the numbers are in `manuscript/acmg/data/databases_*.csv`.")
+    s("It is written by `scripts/21_compare_databases.py` from the per-variant tables of the runs, and the numbers are in `results/complete_vs_april_databases/databases_*.csv`.")
     s("REVEL, ClinVar, ClinGen, the ClinVar protein index and RepeatMasker are the same files under both stacks.")
     s()
     s("## What the first databases lacked")

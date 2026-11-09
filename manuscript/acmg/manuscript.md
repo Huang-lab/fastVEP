@@ -24,17 +24,15 @@ We describe how the classification engine of fastVEP, an open-source reimplement
 Thirty-eight versions were scored on 673,660 ClinVar variants (April 2026) over six review rounds.
 The latest, v38, was applied unchanged to ClinVar's October release, whose 116,078 new variants are the only out-of-sample ones, because every threshold was tuned on the April set.
 The input is a sites-only VCF, which allows 15 of 28 criteria.
-The first drafts used SpliceAI and PhyloP databases lacking 8% of their values; every run was repeated with complete ones.
 
 **Results.**
 On the April set v38 agrees with ClinVar's class for 64.1% and its direction for 79.3%, with 51 contradictions (0.0076%).
 On the new variants agreement in direction is 72.6% and contradictions are 2.3 times as frequent (95% interval 1.2 to 3.8).
-The complete databases added 1.5 points of agreement and three contradictions.
 The reviewer supported ClinVar on 29 of 48 contradictions seen.
 
 **Conclusions.**
 The choices, each with its agreement and contradictions, are reusable.
-Agreement alone does not separate cautious from aggressive calling, and an input can be incomplete without anything showing, as the first databases and an earlier ClinGen file were.
+Agreement alone does not separate cautious from aggressive calling, and an input can be incomplete without anything showing, as a ClinGen file that lacked CFTR was.
 The agreement is bounded: ClinVar can be wrong, there was one reviewer, and a sites-only input allows 15 of 28 criteria.
 
 **Keywords:** variant classification, ACMG/AMP, ClinGen SVI, ClinVar, variant interpretation, benchmarking, fastVEP
@@ -85,18 +83,17 @@ v37 is the version in which the review rounds ended, which took a gene's mode of
 Both combine the criteria that are met by the same default scheme, points on the pathogenic side and the 2015 table on the benign side, because the table has no row for a lone Very Strong criterion, which the points call Likely pathogenic, and points on the benign side would call a lone Supporting criterion Likely benign, which the table does not (Section 3.3).
 
 The engine runs inside the annotation pass, so a benchmark of 673,660 ClinVar variants of review status two stars or better takes 25.3 seconds to annotate on every core of one Apple M4 machine with 10 cores and 24 GB, 74 seconds on one thread, and 11 seconds to score.
-Those times are of release 0.5.0, which holds v38 and the speed-ups of annotation that followed it, timed alone on 7 November 2026 (the median of three runs on every core and one run on one thread) with the first databases, which are smaller than the complete ones; they were not measured again with the complete databases.
+Those times are of release 0.5.0, which holds v38 and the speed-ups of annotation that followed it, timed alone on 7 November 2026 (the median of three runs on every core and one run on one thread) with a stack of databases that is smaller than the final one, and were not measured again with the final stack.
 The runs of this paper were made on 8 November 2026 several at a time on the same machine, with other work beside them, and the annotation of one of the 89 runs of v37 took a median of 272 seconds, so those times are not timings.
 That speed allowed 37 numbered benchmark runs in 24 weeks (21 April to 6 October 2026), a 38th (v38) in November, and a medical geneticist reviewed the calls on which the software and ClinVar disagreed in direction over six numbered rounds, in three of which they returned an annotated workbook.
 
-We report seven things, and each answers part of how such criteria should be implemented.
+We report six things, and each answers part of how such criteria should be implemented.
 First, how each guideline was incorporated and how agreement with ClinVar moved from one numbered run to the next (a run bundles several changes, so a change in agreement cannot be assigned to one guideline), which gives the readings that the classifier implements.
 Second, what expert review found that the benchmark could not, and how the changes fall into a small number of classes, which shows where a reading goes wrong.
 Third, how each numeric threshold that no guideline states was chosen and how much it matters in v38, re-measured on that code and not recalled from the version in which it was set, which shows which defaults to take care over.
 Fourth, how much of the agreement depends on ClinVar-derived inputs, which bounds how much of it is circular.
 Fifth, the discordance of v38 with ClinVar's 2-star-and-better classifications, on the benchmark snapshot, on a ClinVar release six months later, and on the variants that reached two stars after all tuning was done, which gives how closely the result agrees, in sample and out of it, and at what cost in contradictions.
 Sixth, what v38 changes from v37, the version that the review rounds ended with, measured by the same runs of both (Section 3.8), which shows what one further reading of a source is worth.
-Seventh, what the databases that the criteria read changed, by the same runs on the first databases of this work, which lacked 8% of the values of two sources, and on the complete ones (Section 3.9), which shows how far an input that is incomplete without anything showing can move the agreement and the contradictions.
 Along the way we read each recommendation that the classifier cites for a number or a grade against its source, and report where the implementation departs from it.
 
 ---
@@ -184,13 +181,6 @@ Two of them (ClinVar and ClinGen) come from the community that produces the refe
 | Ensembl (McLaren et al., 2016) | release 115 GFF3 and GRCh38 primary-assembly FASTA | consequence, HGVS, PVS1 tree inputs |
 
 The three sources that come from the sites file of gnomAD's exomes (the population counts, SpliceAI and PhyloP) are read from databases built from the whole of that file, one for each source and chromosome: 72 files, whose checksums, build and check are in `analysis/acmg_benchmark/results/complete_databases/`.
-The first drafts of this paper, including the version that the co-authors read, rested on SpliceAI and PhyloP databases that had been distilled in April 2026 from regions of the same file, and these lacked records that the file carries.
-Of the 673,278 variants of the benchmark that have an alternative allele, 486,580 had a SpliceAI value in the first database and 532,531 a PhyloP value, where the complete databases have 529,992 and 580,460, so that the first lacked 8.2% and 8.3% of the values that exist; no variant had a value only in the first databases, and where both had one the values were the same (Appendix Table A1).
-A comparison of the databases that were built from the whole file for the web server with the benchmark's found the gap on 8 November 2026, and every run of this paper was then made again with the complete databases, by the same classifiers on the same inputs.
-Every number of this paper is from those runs, and Section 3.9 sets them against the runs on the first databases.
-The first databases lack their records in 14 stretches of SpliceAI and 14 of PhyloP, each of which lies in one batch of 200 regions of the extraction and reaches the end of the batch, and PhyloP lacks the records of 457 more indels whose second base lay outside the extracted regions (Appendix Table A1).
-That is the pattern that a stream which ended early leaves, in an extraction that did not check the exit status of `tabix` and discarded its messages, and we did not repeat the extraction to show that a stream ended.
-On the April set the regional gnomAD databases of the benchmark and the complete ones gave the same call, the same criteria and the same fields for each of the 673,660 variants, so the counts that the frequency criteria read were not affected, and REVEL, ClinVar, ClinGen and RepeatMasker are the same files as before.
 
 ### 2.2 Reference set, scoring and definitions
 
@@ -223,7 +213,7 @@ There is no alternative allele to annotate, so they receive no call, and the sco
 The unit of the process is a run: the full benchmark annotated with `fastvep annotate --acmg --pick` and scored by one script.
 After every change to criteria, thresholds, data or annotation, the benchmark was re-run and compared with the run before it.
 We refer to each numbered run as v1 to v38.
-The runs v1 to v36 were made with the first databases and were not repeated; v37 and v38, with their families of runs, were made again with the complete ones (Sections 2.1 and 3.9).
+v37 and v38, with their families of runs, are on the final benchmark databases (Section 2.1), and the other runs are as they were scored when they were made (Section 3.1).
 From v37 on, the harness records what produced an annotation (flags, the hash of the binary and of every configuration, which inputs were read, and the commit) and refuses to reuse an annotation that something else produced.
 From v9 on, runs are scored in a leave-one-out mode in which a variant's own ClinVar record is excluded from the evidence that PS1 and PM1 read; a run that lets the record count is called ClinVar-informed.
 PM5 cannot match its own record, because it asks for a different amino acid change at the same residue, and the critical region of PVS1 reads residues downstream of the variant.
@@ -280,11 +270,10 @@ The two point cutoffs of the pathogenic side, Likely pathogenic from 6 points an
 Two departures from the sources that we found while reading them again were measured with a second measurement build, made with a patch that exposes through the environment BP1's veto counting a variant's own ClinVar record and BP7's SpliceAI threshold (`bp_hooks_env.patch`): a control, BP1 without the own record, BP7 with SpliceAI at most 0.1, and BP7 with that and no conservation test (4 runs); a fifth run with the same build removes together the three adjustments that read the variant's own ClinVar record or followed the reviewer's rows (BP1's veto counting that record, ClinVar's low-penetrance gate and the curated frequency-exception list), each of which had been measured alone; two more runs with that build give BP1's veto a count of 1 and a count of 2 and leave the variant's own record out, the pair that Section 4.5 proposes together.
 Three runs change an input to see what the gap in PVS1 of Section 3.5 is made of: the ClinGen file with the curations that its export lacked put back, PVS1 licensed for genes that Orphanet labels as a loss-of-function disease, and both (3 runs).
 With nothing set, each measurement build is the default classifier: the control of each reproduces v38 in every cell of the concordance matrix and in the firing count of every criterion (Appendix Table A1).
-All 89 runs (Supplementary Table S2) were made by the same harness on 8 November 2026, with the complete databases: 73 with the plain build of v38 (SHA-256 `70b7c684...`), 9 with the build of the first patch and 7 with the build of the second.
+All 89 runs (Supplementary Table S2) were made by the same harness on 8 November 2026, on the final benchmark databases: 73 with the plain build of v38 (SHA-256 `70b7c684...`), 9 with the build of the first patch and 7 with the build of the second.
 The three binaries are builds of the tag `v0.5.0-rc.1` (c12d9f9), the release that holds v38, the second and the third with one patch each, and each was made from a clean export of the tag in a target directory of its own (`build_manuscript_binaries.sh`).
 The same 96 runs were made for v37 with binaries built from commit 5d8004a (plain build SHA-256 `1b8e7c46...`), the main run `v37` and the earlier runs of the BS2 threshold included.
 The 38 runs of Section 3.8 on the April set and the 4 on the October release were then made a second time on 8 November 2026, into a directory of their own, by the same binaries on the same inputs, and the two sets agree in every scored file and in every cell of the concordance matrix and firing counts of every run (`analysis/acmg_benchmark/results/v38_v0.5.0/rerun_comparison.csv`).
-Every run had been made before with the first databases (Section 2.1), by builds of the working tree that became v38, of the tag and, for v37, of commit 5d8004a and of earlier commits of its branch, and the sets of those runs that were made twice agreed in every scored file (RUN_VERSIONS.md); the runs of this paper are the later ones.
 The provenance file of each run of either version is in the repository, and records the flags, the hash of the binary and of every configuration, the inputs read (by name and size, not content), and the commit and number of uncommitted files of the checkout that ran the harness.
 The harness refuses to reuse an annotation unless the binary, the flags, the configuration and the inputs are those that made it; the environment variable that sets a run of a patched build is not part of that check and is recorded in the run matrix, not in the provenance file.
 
@@ -303,7 +292,6 @@ We use the real runs wherever one exists, and the replay only for the benign-sid
 
 To test v38 on variants that none of its tuning used, we applied it unchanged to ClinVar's release of 4 October 2026, extracted the same way (781,135 records at two stars or better), and scored all of them.
 The databases are built from the whole of the gnomAD file, so a variant has its record wherever gnomAD has one, and no rule decides which variants are scored.
-The first drafts scored only the 772,585 variants whose position lay inside the regions of the April extract, because the databases then held only those regions and a variant outside them had no gnomAD record, which PM2 would read as absence; Section 3.9 gives what changed.
 Variants are assigned to four strata by comparison with the April set: new (not in it), unchanged, class changed within its direction, and class changed across a direction.
 A new variant is not one that ClinVar did not hold in April: 98.1% of them are in the VCF of 4 April, the file of the April set, at a lower review status, and 98.4% have a record in the `variant_summary` of 29 April from which the protein index was built (Section 3.7).
 The ClinVar-derived indices the classifier reads were not rebuilt.
@@ -316,7 +304,7 @@ To ask whether the higher rate of opposite-direction calls on the new variants i
 Variants within a gene are not independent, so confidence intervals for the headline rates come from a gene-cluster bootstrap with 2,000 resamples (95% percentile interval), and proportions inside one table cell from the exact binomial (Clopper-Pearson) interval (Clopper and Pearson, 1934), which treats variants as independent.
 The study is descriptive and we report no hypothesis tests; the interval of the ratio of the rates in Section 3.7 comes from a bootstrap that resamples genes jointly across the two sets, and so allows for the uncertainty of the April rate, which a Poisson comparison with it would not.
 Analysis used Python 3.9.6 with pandas 2.3.3, NumPy 2.0.2, SciPy 1.13.1 and matplotlib 3.9.4; the binary was built with Rust 1.98.0.
-Every number in the text and every table and figure is produced by `analysis/acmg_benchmark/scripts/11_manuscript_runs.py`, `12_per_variant_table.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, `15_clingen_complete_export.py` and `21_compare_databases.py`, and by `manuscript/acmg/generate_figures.py`, from the scored runs; the aggregates that no other table holds are in Appendix Table A3.
+Every number in the text and every table and figure is produced by `analysis/acmg_benchmark/scripts/11_manuscript_runs.py`, `12_per_variant_table.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, and `15_clingen_complete_export.py`, and by `manuscript/acmg/generate_figures.py`, from the scored runs; the aggregates that no other table holds are in Appendix Table A3.
 
 ### 2.10 The changes of v38 and how they were measured
 
@@ -364,7 +352,7 @@ The four thresholds that read inheritance (the PM2 threshold for genes read as r
 The adopted change, the first and the last alternative and the commit before the change were applied unchanged to the release of 4 October 2026 (Section 2.8) in 4 runs.
 Three runs on every chromosome compare the gnomAD exomes with the joint release and with the exomes when the region flags withhold nothing, and a pilot of the same three runs on chromosomes 21 and 22, made before the other chromosomes had been extracted, was kept as a check.
 In all there are 38 runs on the April set and 4 on the October release, each with the provenance record of Section 2.6.
-All 42 were made on 8 November 2026 with the complete databases, by binaries built from clean exports of the commit before the change and of the tag of release 0.5.0 (the adopted change, and the adopted change with the patch; `build_manuscript_binaries.sh`), and then once more by the same binaries into a directory of their own; the two sets agree in every scored file and in every cell of the concordance matrix and firing counts of every run (Section 2.6 and Data and code availability).
+All 42 were made on 8 November 2026 on the final benchmark databases, by binaries built from clean exports of the commit before the change and of the tag of release 0.5.0 (the adopted change, and the adopted change with the patch; `build_manuscript_binaries.sh`), and then once more by the same binaries into a directory of their own; the two sets agree in every scored file and in every cell of the concordance matrix and firing counts of every run (Section 2.6 and Data and code availability).
 
 ## 3. Results
 
@@ -781,14 +769,14 @@ The benchmark cannot say which is right, and Section 3.7 asks whether ClinVar la
 
 ### 3.6 The 51 opposite-direction calls that remain
 
-The last review round (v26) held 64 opposite-direction calls, and 48 of the 51 in v38 are among them; the other three are new with the complete databases, and the reviewer has not seen them (Section 3.9).
+The last review round (v26) held 64 opposite-direction calls, and 48 of the 51 in v38 are among them; the other three (TMEM216, VWF and GTPBP3) were not in that table, and the reviewer has not seen them.
 So none of the 48 is new since that table was sent (one run, v31, briefly had 65 opposite-direction calls; Table 6, Figure S3B).
 The 16 that were repaired all became VUS and none became the other class, and the reviewer had supported ClinVar's call on 14 of them (of the other two, one was coded neither and one depends on the disorder).
 Each of the 48 had already been in the table of an earlier round (17 since round 3, 2 since round 4 and 29 since round 5), so they are the calls that several rounds of changes left standing.
 
 **Table 6. The 51 opposite-direction calls of v38, by the evidence behind the call and the ruling of the last review round.**
 Rulings are our coding of the reviewer's text (Section 2.4), not categories the reviewer assigned, and Supplementary Table S8 lists the 51 calls with their criteria, gnomAD counts and rulings.
-The three calls that the complete databases add were not in that round, and the last column counts them.
+Three calls were not in that round, and the last column counts them.
 ClinVar here is ClinVar 2-star+ of the release of 4 April 2026 (Section 2.2).
 
 <!-- table:residual:begin -->
@@ -817,7 +805,7 @@ Two of the five (KDM2B and PHKB) are also truncations in the first coding exon, 
 The reviewer's other reasons were a haplotype in which the variant is always in cis with a second variant and the pair is not pathogenic (BRCA1); a splice-site variant in the 5' UTR of one RUNX1 isoform; a gene without an OMIM disease (RYK); a site that failed quality control in gnomAD (NOTCH2); a site covered in under half of gnomAD exomes (PRODH); and, for two variants (RYR1 and ARMC9), a call that is correct for the recessive disorder.
 
 **BP4 and BP7 on a variant ClinVar calls pathogenic or likely pathogenic (22).**
-These are the 22 reference-discordant benign calls of Section 3.4 that rest on BP7, two of them (VWF and GTPBP3) added by the complete databases.
+These are the 22 reference-discordant benign calls of Section 3.4 that rest on BP7, two of them (VWF and GTPBP3) not in the last round.
 Eighteen are intronic, three synonymous and one in the splice region, with SpliceAI below 0.2 and PhyloP below 2.0, which is what BP7 asks.
 The reviewer saw 20 of the 22.
 The reviewer supported ClinVar for 10, and for several noted genetic or functional evidence of an effect on splicing (POLR3A c.1909+22G>A, at an allele frequency of 2.5e-3 in gnomAD, is one: the reviewer cites affected individuals and some functional data).
@@ -827,7 +815,7 @@ One of the 20 that the reviewer saw (DST) is a stop-gained variant on the MANE P
 **PM1, PP2 and PP3 on a variant ClinVar calls benign or likely benign (3), BS1 on a variant ClinVar calls pathogenic or likely pathogenic (3) and BP1 on pathogenic missense variants (2).**
 The first three (CHD7, FBN1 and PTCH1) reach 6 points through PM1, PM2, PP2 and PP3 at Moderate strength, and the reviewer supported ClinVar on all three.
 The BS1 pair (PADI3 and SLC12A3) are seen in 328 and 338 gnomAD alleles, with population-maximum frequencies of 0.6% and 0.8%; the reviewer noted a homozygote in gnomAD and a disorder (Gitelman syndrome) for SLC12A3, supported ClinVar there, and asked for a deeper look at PADI3.
-A third BS1 call, TMEM216 11:61392563 G>T (upstream of the gene), has BP4 beside BS1 from a SpliceAI value of 0.07 that the first databases lacked, and the reviewer has not seen it (Section 3.9).
+A third BS1 call, TMEM216 11:61392563 G>T (upstream of the gene), has BP4 beside BS1 from a SpliceAI value of 0.07, and the reviewer has not seen it.
 The BP1 pair (IQSEC1 and PRR12) are in genes with two and one pathogenic or likely pathogenic missense records in the ClinVar protein index, the variant's own among them, so BP1's veto does not apply (a count of 1 would withhold BP1 for both, for PRR12 only through its own record and for IQSEC1 also through p.Thr343Met, Section 3.3), and the reviewer supported ClinVar on both.
 
 No change of one threshold would remove these calls as a class, except that a stricter count of BP1's veto acts on the BP1 pair (Section 3.3).
@@ -1062,7 +1050,7 @@ Five of the six are at the threshold of BS1, a filtering allele frequency of 0.5
 KMT2C p.Cys391Ter (ClinVar Likely benign) and RAI1 p.Gln280HisfsTer83 (Benign) are null variants at sites that failed gnomAD's variant-quality filter, which withholds the frequency criteria, and the site-level frequency veto (Section 2.7) holds a call that rests on PVS1 alone at VUS where the withheld frequency would have met BS1.
 Their filtering allele frequencies are 0.522% and 0.537% in the exomes and 0.495% and 0.498% in the joint release, so the veto does not act there and both are called Likely pathogenic.
 PIEZO1's splice-acceptor deletion (ClinVar Benign) is the same case in the other direction, with 0.198% in the exomes and 0.947% in the joint release, so the veto holds it at VUS where the exomes called it Likely pathogenic.
-TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that the complete databases add (Section 3.9), has a filtering allele frequency of 0.512% in the exomes, so that BS1 fires and the call is Likely benign, and 0.461% in the joint release, so that BS1 does not fire and the call is VUS.
+TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that the reviewer has not seen, has a filtering allele frequency of 0.512% in the exomes, so that BS1 fires and the call is Likely benign, and 0.461% in the joint release, so that BS1 does not fire and the call is VUS.
 TXNL4A's deletion upstream of the gene (ClinVar Pathogenic) is covered by 364,572 alleles in the exomes, with a filtering allele frequency of 0.384%, and by 516,266 in the joint release, with 0.560%, so BS1 fires and the call is Likely benign.
 NF1 p.Met895Ile (ClinVar Likely benign) is called Likely pathogenic because PM2, which the segmental-duplication flag of the exomes had withheld, fires.
 Thirteen ClinVar pathogenic-side variants lose a pathogenic-side call and 39 gain one.
@@ -1082,63 +1070,6 @@ The gains are measured against ClinVar's benign-side classes, which submitters m
 The guard against counting BS2 beside BS1 was written after TTR and VWF were seen, and both are old variants, so no variant of the benchmark tests it.
 The calls for each mode of inheritance are not scored, and the benchmark has no class that could score them.
 The reading is as good as the field it reads: ClinGen curates one mode for each curation, and the file of the benchmark is the export of April, which lacks 104 curations (Section 3.5).
-
-### 3.9 What the complete databases changed
-
-Every number of Sections 3.1 to 3.8 is from runs with the complete SpliceAI, PhyloP and gnomAD databases, and this section sets them against the same runs with the first databases (Section 2.1), which are the numbers that the first drafts of this paper reported (Table 10; Appendix Table A1 holds the rest).
-
-**Table 10. The runs of v37 and v38 with the first databases and with the complete ones.**
-The first databases are the SpliceAI and PhyloP databases of April 2026, which lack records that the complete ones hold (Section 2.1), and each pair of columns is the same classifier on the same inputs with the two sets of databases.
-Rates are over all records of the set, and a ClinVar class is that of the 2-star+ record of the release of 4 April 2026 for the April set and of 4 October 2026 for the October release.
-Opposite-direction calls are given as the total, with reference-discordant benign calls and reference-discordant pathogenic calls in brackets, and "variants with" counts the variants whose call carries the criterion at any strength.
-The first drafts scored the 772,585 variants of the October release that lie in the regions of the April extract, 107,528 of them new (Section 2.8), and the complete databases score the whole release, so that its cells for the first databases are empty.
-
-<!-- table:databases:begin -->
-| Measure | v37, first databases | v37, complete databases | v38, first databases | v38, complete databases |
-|:---|---:|---:|---:|---:|
-| **April set** (673,660 variants): exact agreement | 425,869 (63.2%) | 431,555 (64.1%) | 426,022 (63.2%) | 431,727 (64.1%) |
-| Agreement in direction | 522,886 (77.6%) | 532,688 (79.1%) | 524,380 (77.8%) | 534,335 (79.3%) |
-| Opposite-direction calls (reference-discordant benign and reference-discordant pathogenic) | 49 (24 and 25) | 52 (27 and 25) | 48 (24 and 24) | 51 (27 and 24) |
-| Recall of ClinVar pathogenic-side variants | 62.5% | 62.5% | 62.5% | 62.5% |
-| Recall of ClinVar benign-side variants | 62.3% | 65.7% | 62.9% | 66.4% |
-| Variants with BP4 | 359,427 | 378,930 | 359,436 | 378,939 |
-| Variants with BP7 | 132,615 | 144,948 | 132,615 | 144,948 |
-| Variants with PP3 | 68,012 | 69,133 | 68,012 | 69,133 |
-| Canonical splice variants with PVS1 (of 13,449) | 11,541 | 11,542 | 11,541 | 11,542 |
-| **October release**, the 772,585 variants that the first drafts scored: agreement in direction | 591,576 (76.6%) | 604,246 (78.2%) | 593,343 (76.8%) | 606,193 (78.5%) |
-| Opposite-direction calls, of the 772,585 | 64 (26 and 38) | 68 (30 and 38) | 63 (26 and 37) | 67 (30 and 37) |
-| The 107,528 new variants among them: agreement in direction | 75,348 (70.1%) | 78,228 (72.8%) | 75,607 (70.3%) | 78,512 (73.0%) |
-| Opposite-direction calls, of the 107,528 | 18 (6 and 12) | 19 (7 and 12) | 18 (6 and 12) | 19 (7 and 12) |
-| The whole release (781,135 variants): agreement in direction | - | 609,923 (78.1%) | - | 611,945 (78.3%) |
-| Opposite-direction calls, of the 781,135 | - | 69 (30 and 39) | - | 68 (30 and 38) |
-<!-- table:databases:end -->
-
-**The complete databases add 1.5 points of agreement in direction and three contradictions to v38, and as much to v37, and the gain is on the benign side.**
-Under v38 agreement in direction rises from 524,380 (77.84%) to 534,335 (79.32%) of the 673,660 variants and exact agreement from 426,022 (63.24%) to 431,727 (64.09%), and the opposite-direction calls go from 48 to 51: the reference-discordant benign calls from 24 to 27, and the reference-discordant pathogenic calls stay at 24.
-Under v37 agreement in direction rises from 522,886 (77.62%) to 532,688 (79.07%) and the opposite-direction calls from 49 to 52, so that what v38 changes from v37 is much the same on both sets of databases: 1,494 more calls in direction on the first and 1,647 more on the complete.
-Recall of ClinVar's benign-side variants rises from 62.9% to 66.4%, because 10,026 more of them are called benign-side (178,888 to 188,914), and recall of its pathogenic-side variants stays at 62.5% (58,606 are called pathogenic-side under both).
-The records that the first databases lacked are SpliceAI and PhyloP values that BP4, BP7 and PP3 read: BP4 fires on 19,503 more variants (359,436 to 378,939), BP7 on 12,333 more (132,615 to 144,948) and PP3 on 1,121 more (68,012 to 69,133).
-PVS1 on canonical splice variants, which has to pass a check on SpliceAI, fires on one more of the 13,449 (11,541 to 11,542), so that the splice path of PVS1 is hardly touched.
-
-**The three contradictions that the complete databases add are ClinVar-Pathogenic variants that the first databases left as VUS.**
-Each is called Likely benign on a SpliceAI value of 0.07 or below with BP4, and two with BP7 as well, from records that the first databases lacked: TMEM216 11:61392563 G>T (upstream of the gene; SpliceAI 0.07, PhyloP -0.668; BS1 and BP4), VWF 12:6022888 G>A (synonymous; SpliceAI 0.00, PhyloP -0.105; BP4 and BP7) and GTPBP3 19:17339046 GGGGA>G (intronic; SpliceAI 0.00, PhyloP 0.312; PM2, BP4 and BP7) (Appendix Table A1).
-None is a Benign call, none is among the 64 calls that the reviewer saw in the last round (Section 3.6), and the same three enter under v37.
-They are calls of the kind that Section 3.6 describes for BP4 and BP7 on a ClinVar pathogenic-side variant, and the reviewer has not ruled on them.
-
-**On the October release the complete databases add 1.7 points of agreement in direction to the variants that the first drafts scored, and make the rule that selected them unnecessary.**
-The first drafts scored the 772,585 variants of ClinVar's release of 4 October 2026 that lie in the regions of the April extract (Section 2.8), and the complete databases score all 781,135.
-On the 772,585, agreement in direction rises from 593,343 (76.80%) to 606,193 (78.46%) and the opposite-direction calls from 63 to 67 (the reference-discordant benign calls from 26 to 30, and the reference-discordant pathogenic calls stay at 37); on the 107,528 new variants among them it rises from 75,607 (70.31%) to 78,512 (73.02%) and the opposite-direction calls from 18 to 19.
-The 8,550 variants that the first drafts left out add one opposite-direction call and agree in direction for 67.3% (5,752); the whole release has 611,945 (78.34%) and 68 opposite-direction calls, 30 reference-discordant benign and 38 reference-discordant pathogenic (Table 10).
-
-**The sweeps and the ablations keep their conclusions, and the removal of SpliceAI is the one effect that changes by more than a few calls.**
-Of the 12 sweeps, 4 differ in a detail between the two sets of databases and 8 do not, and the rule of Section 2.5 finds the knee of the BS1 threshold at 1e-3 and of BP7's distance at 300 nucleotides under both (Appendix Table A1).
-The details are the order of two settings of the BS1 bar and of the BS2 carrier bar and floor, which change order between settings that agree within 744 calls of each other; the step of BP7's PhyloP bar from 2 to 3, which adds one reference-discordant benign call on the complete databases and none on the first; and the largest fall in the exchange rate of the BS2 carrier floor with the bar off, which goes from a factor of 2.4 (1,470 to 623 calls per added error) to 3.3 (1,578 to 480), and neither fall reaches the hundred or fewer that Section 2.5 asks of a knee.
-Of the 245 effects of the single switches, the removals of one source, the hook runs and the runs that fill the PVS1 gap, on seven measures, 7 changed sign, appeared or vanished, or changed by more than 20%, and 6 of the 7 are of fewer than 10 calls.
-The one that is larger is the removal of SpliceAI, which takes away 16 opposite-direction calls on the complete databases where it took away 13 on the first (Section 3.4).
-
-**The earlier versions were not repeated.**
-The numbered versions v1 to v36 were made with the first databases, and their rows in Figure S1 and in Supplementary Table S2 are on them, so that the step from v36 to v37 in those rows holds the change of databases as well as the sixth round of review (Section 3.1).
-The completion of the databases moved agreement in direction by 1.5 points, which is more than any step after v13 on the first databases (the largest, 0.22 points, is v38's).
 
 ## 4. Discussion
 
@@ -1199,9 +1130,7 @@ Nothing in an aggregate showed it, and the review could not, because a VUS is no
 We found it by asking why one gene had no PVS1.
 A mechanical check would have found it sooner: list the genes in which ClinVar's pathogenic truncating variants have no route to PVS1, and compare them with an independent listing.
 That check flags 625 genes (576 of them not in the file), of which the completed ClinGen file explains 23 and the file with Orphanet's label 170, so it is a prompt for review and not a detector, and here one input defect sat among many gaps of design.
-The first SpliceAI and PhyloP databases of the benchmark were a second instance: they lacked 8.2% and 8.3% of the values that gnomAD's file holds for the benchmark's variants, in batches of an extraction that ended early, and the classifier, which leaves BP4 and BP7 unmet when a record is missing, showed nothing of it.
-The headline moved by 1.5 points and three ClinVar-Pathogenic variants became contradictions when the databases were completed (Section 3.9).
-It was found by comparing the databases built for the web server from the whole file with the benchmark's, which is a check against an independent build, and a count of the variants that have a value for each source, set against the count of a second build, would have found it at once.
+More generally, a database that is built from a source file can be checked against an independent listing of the same records, or against the count of the records of its source.
 
 **A flat sweep can mean that the setting reaches almost nothing, or that the rule beside it makes the setting irrelevant, and an input read from prose can hide the first.**
 The sweep of the BS2 carrier threshold was flat in v37 because the classifier took inheritance from the words of the disease names, which made 50 genes dominant-only where the curated field in the same string makes 746; read from the field the threshold is a trade (Sections 3.3 and 3.8).
@@ -1217,7 +1146,7 @@ Almost none of the discordance is contradiction: 51 of 673,660 records (0.0076%)
 Almost all the rest is a defined ClinVar class that the classifier leaves as VUS (130,409 records).
 Part of that is evidence that a single-sample VCF does not carry (segregation, de novo status, phenotype specificity, functional assays, case counts), and 13 of the 28 criteria cannot fire in this benchmark.
 Part is design: 10,694 of the 35,179 pathogenic-side variants called VUS sit one point below the Likely pathogenic cutoff, 5,184 are the PVS1 gap, and of the 95,230 benign-side variants called VUS 20,072 carry a lone BP4 or BS1, which the 2015 table on the benign side does not call, and 24,771 carry PM2 only.
-And part is an input that was incomplete (Sections 3.5 and 3.9).
+And part is an input that was incomplete (Section 3.5).
 We cannot apportion the three from the aggregate or from the VCF.
 A VUS from an annotator that has these inputs is a statement about the inputs, and it does not mean what a VUS from a laboratory means.
 A further 102,608 records are in the right direction at the wrong tier, and for the pathogenic-side half the boundary falls one point above where a lone null variant with PM2 lands: 41,549 of the 48,278 ClinVar Pathogenic variants called Likely pathogenic are at 9 points.
@@ -1246,7 +1175,7 @@ Check that a benchmark can see what is being tested, because it cannot validate 
 Keep a leave-one-out mode and report the ClinVar-informed figure beside it, so that a reader can see the size of the circularity, and apply it to every ClinVar-derived input, which we did not do for BP1's veto.
 Report a baseline of simple rules, and the contradictions, beside the agreement figure, because agreement can be exceeded by calling aggressively.
 Record what produced every annotation, and refuse to reuse one that something else produced, because a cache that was right for an older parser is intact and is not safe to read, as the repository's own transcript cache showed when a parser was fixed (issues 95 and 98).
-Check each input against an independent listing, because a missing record degrades quietly: the benchmark's first SpliceAI and PhyloP databases lacked 8% of their values until a second build was compared with them.
+Check each input against an independent listing, because a missing record degrades quietly: the ClinGen file that the benchmark read lacked CFTR and 103 other curations, and nothing in the output showed it.
 Read the field that a source curates and not the prose beside it, and test the reading on the source's own rows: the words of the disease names made 117 genes dominant-only or recessive-only where the curated field makes 2,056, the sweep of the BS2 carrier threshold that reached 50 of them was flat, the effect of the field on a call was seen only in a measurement of a patched build, and a test over 185 genes of real ClinGen rows now fails if the reading moves.
 Check what a second source of the same kind does to the first: a second gnomAD database in the same directory answered in place of the first without a message until the command line reported it.
 Count severe errors as a primary measure beside agreement, and say which errors weigh more: by that count v10 (25 opposite-direction calls) was better than v38 (51), and it was given up for 6,632 correct pathogenic-side calls, which is a trade and not an improvement.
@@ -1260,10 +1189,6 @@ The ledger of 64 items and its classes are our own coding of the project's recor
 All thresholds were tuned on the April benchmark and its discordances, so the April figures are in-sample (the 51 are 62 when the three adjustments that read the own record or followed the reviewer's rows are removed), and the October hold-out is a hold-out of variants and not of genes, of a release six months later, whose new variants were mostly in ClinVar in April at a lower review status.
 The price of an error was not applied uniformly: the trades accepted at v11 and v13 cost 214 and 315 correct calls per added error (on 31 and 36 errors), and at the BS2 and BS1 thresholds we declined trades at 306 and 858 (on 3 and 6 errors), and in v38 we declined the label guard that restores two ClinVar-Pathogenic variants at about 32 correct benign-side calls for each, below the knee of Section 2.5, because it reads the name of a disease (Section 3.8); each decision rests on its own recorded reasons.
 The ClinVar-derived inputs of the classifier were built from releases of 29 April and 27 June 2026 and the reference is the VCF of 4 April, so the three are not one snapshot.
-The databases are a limit of the history of the study.
-The first drafts, including the version that the co-authors read, rested on SpliceAI and PhyloP databases that lacked 8.2% and 8.3% of the values that exist for the benchmark's variants (Section 2.1), and every run of this paper was made again with complete ones, but the numbered versions v1 to v36 were not, so their rows in Figure S1 and in Supplementary Table S2 are on the first databases and the step from v36 to v37 in them holds the change of databases (Section 3.9).
-The cause of the gaps is read from the pattern of the records, in stretches that end where a batch of the extraction ends, and was not reproduced, and the complete databases were built on the host of the web server and not on the machine of the benchmark: their checksums tie the copies to the files that were built there.
-The reviewer saw the calls of the first databases, and has not ruled on the three contradictions that the complete databases add (Section 3.9).
 The reference is a selection (two stars and above, SNVs and indels of at most 100 bases): it excludes records with conflicting classifications (six of the nine BA1-exception alleles of Ghosh et al. are among them in later releases, and a seventh, HFE, was absent from April and is in October) and records with a single submitter.
 It also has no negative controls, and its mix of classes (25% pathogenic-side among the defined classes) fixes the precision figures: a different mix would give different precision for the same calls.
 A variant's call is the call on one picked transcript, and other transcripts can differ.
@@ -1391,18 +1316,17 @@ Whiffin, N., Minikel, E., Walsh, R., et al. (2017). Using high-resolution varian
 ## Data and code availability
 
 fastVEP is open source under the Apache License 2.0 at https://github.com/Huang-lab/fastVEP.
-The analysis of this paper is in the repository under `analysis/acmg_benchmark/` (the benchmark harness `run_benchmark.sh`, the run record `RUN_VERSIONS.md`, and the scripts `11_manuscript_runs.py`, `12_per_variant_table.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, `15_clingen_complete_export.py` and `16_compare_runs.py`, which compares a rerun with the runs it repeats, `20_compare_families.py`, which sets the runs of v38 against the same runs of v37, `21_compare_databases.py`, which sets the runs on the first databases against the runs on the complete ones, and `build_manuscript_binaries.sh`, which builds the binaries) and under `manuscript/acmg/` (this manuscript, the tables it reads in `data/` and the workbook `supplementary_tables.xlsx` that gathers them, `build_tables.py`, `build_supplement.py`, `verify_numbers.py`, `generate_figures.py`, the figures, and the patches `replay_validation/combiner_cutoff_env.patch` and `replay_validation/bp_hooks_env.patch` that expose the two point cutoffs, and BP1's own-record count and BP7's SpliceAI threshold, for the runs of Table 4 and of Sections 3.3 and 3.4).
+The analysis of this paper is in the repository under `analysis/acmg_benchmark/` (the benchmark harness `run_benchmark.sh`, the run record `RUN_VERSIONS.md`, and the scripts `11_manuscript_runs.py`, `12_per_variant_table.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, `15_clingen_complete_export.py` and `16_compare_runs.py`, which compares a rerun with the runs it repeats, `20_compare_families.py`, which sets the runs of v38 against the same runs of v37, and `build_manuscript_binaries.sh`, which builds the binaries) and under `manuscript/acmg/` (this manuscript, the tables it reads in `data/` and the workbook `supplementary_tables.xlsx` that gathers them, `build_tables.py`, `build_supplement.py`, `verify_numbers.py`, `generate_figures.py`, the figures, and the patches `replay_validation/combiner_cutoff_env.patch` and `replay_validation/bp_hooks_env.patch` that expose the two point cutoffs, and BP1's own-record count and BP7's SpliceAI threshold, for the runs of Table 4 and of Sections 3.3 and 3.4).
 The scored concordance matrix, the criterion firing counts and the provenance file of each run made for this paper (96 runs of v38, 89 on the April set and 7 on the October release, and the same 96 runs of v37) are in `analysis/acmg_benchmark/results/v37_manuscript/`, a directory that keeps the name it had when it held the runs of v37 alone; the provenance records the flags, the SHA-256 of the binary and of every configuration, the inputs read, and the commit and the number of uncommitted files of the checkout that ran the harness, which is not the commit of the binary: `binaries_v38.tsv` in the same directory says what each of the five binaries of v38 was built from (the three of the family and the two of Section 3.8), and `binaries.tsv` what each of the three of v37 was built from.
 The binaries of the family v38 are three builds of the tag `v0.5.0-rc.1` (`c12d9f9`, release 0.5.0): the plain one, and the two with the patches that expose the point cutoffs and the BP1 and BP7 settings (`build_manuscript_binaries.sh`); the runs of Section 3.8 were also made by a build of the commit before the change and by a build of the tag with the patch of the alternatives.
-The databases of the runs are 72 files built from the whole of gnomAD's exomes file (gnomAD, SpliceAI and PhyloP, for each chromosome), whose checksums, build and checks are in `analysis/acmg_benchmark/results/complete_databases/`; they are not in the repository, `analysis/acmg_benchmark/scripts/sa_sources/make_complete_stack.sh` makes the directory that the runs read from them and the unchanged files of the first stack, and `analysis/acmg_benchmark/results/complete_vs_april_databases.md` sets the runs on the first databases, which the first drafts reported and which are kept on the machine that made them, against the runs on the complete ones.
+The databases of the runs are 72 files built from the whole of gnomAD's exomes file (gnomAD, SpliceAI and PhyloP, for each chromosome), whose checksums, build and checks are in `analysis/acmg_benchmark/results/complete_databases/`; they are not in the repository, and `analysis/acmg_benchmark/scripts/sa_sources/make_complete_stack.sh` makes the directory that the runs read from them and the files of the other sources.
 The annotated VCFs (about 250 MB each), the per-variant tables, the annotation databases and the ClinVar, gnomAD, ClinGen and Ensembl inputs are not in the repository.
 Table 2 and Section 2.2 give their sources and versions, and the ClinVar files are the weekly releases dated 4 April and 4 October 2026.
 Orphanet's association table is the public Orphadata product 6 (`build_gene_disease_attributes.py` gives the command).
 The ClinGen export that completes the file of 30 April is a public download of 11 October 2026 (`15_clingen_complete_export.py` gives the command), and the 112 rows it adds, 104 of them curations that the April file lacked, are listed with the status of each in `manuscript/acmg/data/clingen_missing_curations.csv`.
 The runs that Section 3.8 made on its own, 38 on the April set and 4 on the October release, are in the same files (`runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv`, with their provenance files), and 18 of the 38 are sweeps that belong to the family of 96 as well, so the family adds 71 runs on the April set and 7 on the October release to them.
 The classifier of v38 is the commit `5293cc0`, merged with its documentation and two speed-ups in pull request #167 (`6504819`), and release 0.5.0 (the tag `v0.5.0-rc.1`, `c12d9f9`) holds it.
-The 38 runs of Section 3.8 on the April set and the 4 on the October release were made a second time on 8 November 2026 by the same binaries, and the two sets agree in every scored file, and in every record of the annotated VCFs that both keep (`analysis/acmg_benchmark/results/v38_v0.5.0/rerun_comparison.csv`; `analysis/acmg_benchmark/RUN_VERSIONS.md`, "The benchmark is re-based on the complete databases").
-On the first databases the same runs had been made by builds of the working tree that became v38 and then by builds of the tag, and agreed in every scored file (`RUN_VERSIONS.md`, "Release 0.5.0 reproduces v38").
+The 38 runs of Section 3.8 on the April set and the 4 on the October release were made a second time on 8 November 2026 by the same binaries, and the two sets agree in every scored file, and in every record of the annotated VCFs that both keep (`analysis/acmg_benchmark/results/v38_v0.5.0/rerun_comparison.csv`; `analysis/acmg_benchmark/RUN_VERSIONS.md`).
 The alternatives of Section 3.8 are read from the environment by a build of `manuscript/acmg/replay_validation/inheritance_alternatives_env.patch`.
 The real ClinGen rows that test the reading of the field are in `crates/fastvep-cli/fixtures/clingen/` and are made by `analysis/acmg_benchmark/scripts/sa_sources/make_clingen_parse_fixture.py`, and the databases of gnomAD's exomes, genomes and joint release are built by `build_gnomad_release_per_chrom.sh` in the same directory.
 `17_joint_boundary_cases.py` annotates the variants that the joint release turns into errors, or out of a pathogenic-side call, through both databases.
@@ -1410,7 +1334,7 @@ The real ClinGen rows that test the reading of the field are in `crates/fastvep-
 The reviewer's workbooks are not in the repository, and the remarks of the reviewer that Sections 3.2 and 3.6 report are read from them and are not checked by `verify_numbers.py`.
 
 The results of the two versions are in these places.
-The results of v38, which is the version of every number of this paper unless it names v37, are the 96 runs of v38 in `analysis/acmg_benchmark/results/v37_manuscript/` (`runs_v38.tsv`, `holdout_runs_v38.tsv`, `run_matrix_v38.tsv` and `binaries_v38.tsv`, with the provenance and the configuration of each run in the subdirectories provenance and configs, where the files of these runs are named v38_ and the name of the run), their repetition in `analysis/acmg_benchmark/results/v38_v0.5.0/` (the 42 runs of Section 3.8, 18 of which are the sweeps that they share with the family, all identical to the first runs), the 67 tables of `manuscript/acmg/data/` that have a twin for each version (`headline_v38.csv` and the others, `_v38` in the name), the 23 files whose names begin with v38_ (Appendix Tables A10 to A16, which are sheets A10 to A16 of `supplementary_tables.xlsx`), Tables 3 to 9, Figures 1 to 5 and S1 to S4, Supplementary Tables S1 to S9 and Appendix Tables A1 to A16, and the sections "v38", "The full rerun of 4 November 2026", "After v38", "Release 0.5.0 reproduces v38", "The family v38" and "The benchmark is re-based on the complete databases" of `RUN_VERSIONS.md`.
+The results of v38, which is the version of every number of this paper unless it names v37, are the 96 runs of v38 in `analysis/acmg_benchmark/results/v37_manuscript/` (`runs_v38.tsv`, `holdout_runs_v38.tsv`, `run_matrix_v38.tsv` and `binaries_v38.tsv`, with the provenance and the configuration of each run in the subdirectories provenance and configs, where the files of these runs are named v38_ and the name of the run), their repetition in `analysis/acmg_benchmark/results/v38_v0.5.0/` (the 42 runs of Section 3.8, 18 of which are the sweeps that they share with the family, all identical to the runs that they repeat), the 67 tables of `manuscript/acmg/data/` that have a twin for each version (`headline_v38.csv` and the others, `_v38` in the name), the 23 files whose names begin with v38_ (Appendix Tables A10 to A16, which are sheets A10 to A16 of `supplementary_tables.xlsx`), Tables 3 to 9, Figures 1 to 5 and S1 to S4, Supplementary Tables S1 to S9 and Appendix Tables A1 to A16, and the sections "v38", "The full rerun of 4 November 2026", "After v38", "Release 0.5.0 reproduces v38" and "The family v38" of `RUN_VERSIONS.md`.
 The results of v37, the before of every difference that v38 makes, are the same 96 runs of v37 in the same directory (`runs.tsv`, `holdout_runs.tsv`, `run_matrix.tsv` and `binaries.tsv`) and the 67 twin tables with `_v37` in the name, which `13_manuscript_stats.py --base v37` writes and `build_tables.py --base v37`, `build_supplement.py --base v37 --out` and `generate_figures.py --base v37 --out` turn into the tables, the workbook and the figures of v37; `verify_numbers.py --base v37` lists, sentence by sentence, the numbers of the text that v38 changed.
 `analysis/acmg_benchmark/results/v38_family_vs_v37.md`, with its five CSV files, sets the two versions against each other run for run.
 Seven files of `manuscript/acmg/data/` belong to neither version: `change_ledger.csv`, `review_rounds.csv` and `trajectory.csv` hold the history of the numbered versions, `round6_rulings.tsv` is the reviewer's own ruling, `clingen_missing_curations.csv` lists the rows of the ClinGen export, `criteria_status.csv` is read from the engine of v38, and `tavtigian_posterior.csv` is arithmetic of the framework.
@@ -1426,7 +1350,7 @@ All authors read and approved the final version.
 [To be confirmed by all authors.]
 
 **Use of AI assistance.** [To be completed by the author.
-The analysis scripts, the figures and the first draft of this manuscript were produced with the assistance of Claude (Anthropic) working as a coding agent in the project repository, and the author has not yet reviewed them in full.]
+The analysis scripts, the figures and the text of this manuscript were produced with the assistance of Claude (Anthropic) working as a coding agent in the project repository, and the author has not yet reviewed them in full.]
 
 **Funding.** [To be completed by the author.]
 
@@ -1509,7 +1433,7 @@ Classes and routes are our coding of the project's record.
 **Figure S3. What the reviewer ruled.**
 (A) The rulings on the rows of the three workbooks the reviewer returned, in rounds 1, 2 and 6, in five categories: the ClinVar 2-star+ call supported, fastVEP's call supported, neither (the reviewer's call is VUS or another class), more evidence needed or dependent on the disorder, and no verdict recorded.
 Rounds 1 and 2 are decoded from cell colors against each workbook's key, and round 6 is our coding of the reviewer's text (Appendix Table A4).
-(B) The 51 opposite-direction calls of v38, by the evidence behind the call, with the rulings of the last round; the three that the complete databases add were not in it.
+(B) The 51 opposite-direction calls of v38, by the evidence behind the call, with the rulings of the last round; three of them were not in it.
 
 **Figure S4. Agreement in direction against opposite-direction calls.**
 Each point is a classifier, on 673,660 variants: the versions v7 to v36 with stored scored matrices at their runs of the time (blue, joined in order) and v37 and v38 on the final benchmark databases (the diamonds, joined by a dashed line), the runs of this paper and the earlier runs of the dominant-gene BS2 settings, each v38 with one change (gray), every variant called VUS (the diamond at zero), and three rules with no combining rule, gene-level gate or safeguard at nine frequency thresholds each, with the second rule alone and the second with the third also given with no frequency rule (the filled markers).
@@ -1545,7 +1469,7 @@ For v38 itself, the 89 runs made for this paper and the 8 earlier runs of the do
 Further tables, in the order in which the text cites them.
 A ClinVar class in these tables is, as in the supplementary tables, the class of a ClinVar 2-star+ record.
 
-**Appendix Table A1.** The measurement builds, the databases and the provenance of every run: the comparison of the controls of the two builds with v38 (`controls_v38.csv`), the calls that became opposite-direction in the runs that test BP1's veto and BP7 (`hook_new_opposite_v38.csv`), the calls that a stricter count of BP1's veto removes and the records of the protein index behind them (`bp1_veto_count_resolved_v38.csv`, `bp1_index_counts_v38.csv`), the binary, commit and annotation time of each run (`provenance_v38.csv`), and the first databases against the complete ones: how many variants have a SpliceAI, PhyloP, gnomAD and REVEL value under each, why the first lack theirs and in which batches of the extraction, v37 and v38 under each, the opposite-direction calls that differ, and the sweeps and the effects of the family under each (`databases_presence.csv`, `databases_causes.csv`, `databases_lost_blocks.csv`, `databases_old_vs_new.csv`, `databases_opposite_changes.csv`, `databases_sweeps.csv`, `databases_sweep_shapes.csv`, `databases_effects.csv`, `databases_family_summary.csv`).
+**Appendix Table A1.** The measurement builds and the provenance of every run: the comparison of the controls of the two builds with v38 (`controls_v38.csv`), the calls that became opposite-direction in the runs that test BP1's veto and BP7 (`hook_new_opposite_v38.csv`), the calls that a stricter count of BP1's veto removes and the records of the protein index behind them (`bp1_veto_count_resolved_v38.csv`, `bp1_index_counts_v38.csv`), the binary, commit and annotation time of each run (`provenance_v38.csv`).
 
 **Appendix Table A2.** The offline replay of the combining rules under alternative schemes and cutoffs, its validation against real runs, and the number of calls that the replay cannot reproduce because the site-level frequency veto holds them at VUS (`combining_rules_replay_v38.csv`, `replay_validation_v38.csv`, `replay_veto_v38.csv`, `pm2_dependence_v38.csv`, `full_points_false_benign_signatures_v38.csv`).
 

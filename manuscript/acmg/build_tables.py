@@ -425,62 +425,8 @@ def table_temporal() -> str:
     return md(["Set", "Variants", "Same-direction agreement", "ClinVar P/LP called P/LP", "ClinVar LB/B called LB/B", "ClinVar VUS called VUS",
                "Opposite-direction calls (reference-discordant benign and reference-discordant pathogenic)"], rows)
 
-def table_databases() -> str:
-    """Table 10: v37 and v38 with the first databases and with the complete ones, from `databases_old_vs_new.csv`.
-
-    The file is made by `21_compare_databases.py` from the per-variant tables of the runs on both stacks and holds both versions
-    whatever the base is, so the table is the same under `--base v37`. The whole October release was scored only with the complete
-    databases (the first drafts scored the 772,585 variants that a gnomAD extract covered), so its first-database cells are empty.
-    """
-    d = pd.read_csv(DATA / "databases_old_vs_new.csv")
-
-    def get(version: str, scope: str, measure: str, db: str) -> float:
-        x = d[(d.version == version) & (d.set == scope) & (d.measure == measure)]
-        return float(x.iloc[0][db])
-
-    def row(label: str, scope: str, measure: str, fmt) -> list[str]:
-        cells = []
-        for version in ("v37", "v38"):
-            for db in ("first", "complete"):
-                cells.append("-" if math.isnan(get(version, scope, measure, db)) else fmt(version, scope, measure, db))
-        return [label] + cells
-
-    def count_rate(version: str, scope: str, measure: str, db: str) -> str:
-        return f"{n(get(version, scope, measure, db))} ({pct(get(version, scope, measure, db) / get(version, scope, 'variants', db), 1)})"
-
-    def opposite(version: str, scope: str, measure: str, db: str) -> str:
-        return f"{n(get(version, scope, 'opposite', db))} ({n(get(version, scope, 'false_benign', db))} and {n(get(version, scope, 'false_pathogenic', db))})"
-
-    def plain(version: str, scope: str, measure: str, db: str) -> str:
-        return n(get(version, scope, measure, db))
-
-    def share(version: str, scope: str, measure: str, db: str) -> str:
-        return pct(get(version, scope, measure, db), 1)
-
-    april, covered, new, whole = "April set", "October release, the variants of the first design", "October release, new variants of the first design", "October release, all variants"
-    k = lambda scope: n(get("v38", scope, "variants", "complete"))  # noqa: E731
-    rows = [
-        row(f"**April set** ({k(april)} variants): exact agreement", april, "exact", count_rate),
-        row("Agreement in direction", april, "same_direction", count_rate),
-        row("Opposite-direction calls (reference-discordant benign and reference-discordant pathogenic)", april, "opposite", opposite),
-        row("Recall of ClinVar pathogenic-side variants", april, "plp_recall", share),
-        row("Recall of ClinVar benign-side variants", april, "blb_recall", share),
-        row("Variants with BP4", april, "BP4", plain),
-        row("Variants with BP7", april, "BP7", plain),
-        row("Variants with PP3", april, "PP3", plain),
-        row(f"Canonical splice variants with PVS1 (of {n(get('v38', april, 'canonical_splice_variants', 'complete'))})", april, "PVS1_on_canonical_splice", plain),
-        row(f"**October release**, the {k(covered)} variants that the first drafts scored: agreement in direction", covered, "same_direction", count_rate),
-        row(f"Opposite-direction calls, of the {k(covered)}", covered, "opposite", opposite),
-        row(f"The {k(new)} new variants among them: agreement in direction", new, "same_direction", count_rate),
-        row(f"Opposite-direction calls, of the {k(new)}", new, "opposite", opposite),
-        row(f"The whole release ({k(whole)} variants): agreement in direction", whole, "same_direction", count_rate),
-        row(f"Opposite-direction calls, of the {k(whole)}", whole, "opposite", opposite),
-    ]
-    return md(["Measure", "v37, first databases", "v37, complete databases", "v38, first databases", "v38, complete databases"], rows)
-
 
 TABLES = {
-    "databases": table_databases,
     "inheritance": table_inheritance,
     "joint": table_joint,
     "thresholds": table_thresholds,

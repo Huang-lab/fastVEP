@@ -1468,7 +1468,7 @@ def trajectory() -> None:
     step from v36 to v37 holds a change of databases as well as of the classifier. v37 and v38 as they were run at the time are the
     columns that end in `_of_the_time` (the other rows leave them empty, because the row is the run of the time): they are read from
     the comparison of the runs on the two sets of databases (`databases_old_vs_new.csv`, written by `21_compare_databases.py`, which
-    has to have run first).
+    has to have run first; its files are in `results/complete_vs_april_databases/`).
     """
     rows = []
 
@@ -1522,7 +1522,7 @@ def trajectory() -> None:
             "mainline": v != 17, "databases": "final" if v in (37, 38) else "of the time", "same_direction_rate_of_annotated": "", "committed": committed(mat),
         })
     # v37 and v38 as they were run at the time, with the databases that were loaded then
-    rec = OUT / "databases_old_vs_new.csv"
+    rec = RES / "complete_vs_april_databases/databases_old_vs_new.csv"
     if not rec.exists():
         sys.exit(f"{rec} is missing: run 21_compare_databases.py before this step")
     then = pd.read_csv(rec)

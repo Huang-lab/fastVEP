@@ -1880,7 +1880,7 @@ Every run of the paper was then made again with the complete databases, and the 
 
 ### What was found
 
-- The missing records are in 14 batches of 200 regions of the extraction (the same 14 for SpliceAI and for PhyloP, with the same first lost position, as one `tabix` stream per batch feeds both files) and, for PhyloP, in 457 indels whose second base lies outside every region; nothing else is missing, and where both databases have a value it is the same (`manuscript/acmg/data/databases_*.csv`).
+- The missing records are in 14 batches of 200 regions of the extraction (the same 14 for SpliceAI and for PhyloP, with the same first lost position, as one `tabix` stream per batch feeds both files) and, for PhyloP, in 457 indels whose second base lies outside every region; nothing else is missing, and where both databases have a value it is the same (`analysis/acmg_benchmark/results/complete_vs_april_databases/databases_*.csv`).
   The pattern is that of a stream that ends early, and the extraction script ignored the exit status of `tabix` and threw its messages away; the extraction was not repeated, so that the cause is read from the pattern and not observed.
 - On the April set v38 goes from 426,022 to 431,727 exact calls (63.24% to 64.09%) and from 524,380 to 534,335 calls in direction (77.84% to 79.32%), and from 48 to 51 opposite-direction calls; v37 goes from 522,886 to 532,688 in direction (77.62% to 79.07%) and from 49 to 52.
   The three added are ClinVar-Pathogenic variants called Likely benign on BP4 (and BP7 for two): TMEM216 11:61392563 G>T, VWF 12:6022888 G>A and GTPBP3 19:17339046 GGGGA>G.

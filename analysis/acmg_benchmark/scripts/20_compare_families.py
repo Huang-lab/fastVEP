@@ -1249,7 +1249,7 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     # runs, so the first-database values of the two come from the comparison of the stacks (`21_compare_databases.py`); a band that took v37's row of
     # trajectory.csv would end at 79.07% and not at 77.62%
     traj = pd.read_csv(DATA / "trajectory.csv")
-    ovn = pd.read_csv(DATA / "databases_old_vs_new.csv")
+    ovn = pd.read_csv(ROOT / "analysis/acmg_benchmark/results/complete_vs_april_databases/databases_old_vs_new.csv")
 
     def first_of(version: str, measure: str) -> float:
         return float(ovn[(ovn.version == version) & (ovn.set == "April set") & (ovn.measure == measure)].iloc[0]["first"])

@@ -44,6 +44,7 @@ import pandas as pd
 
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
+DB_REC = HERE.parents[1] / "analysis/acmg_benchmark/results/complete_vs_april_databases"  # the comparison of the runs on two sets of databases: an internal record, not a table of the paper
 LINES = (HERE / "manuscript.md").read_text().splitlines()
 N_ALL = 673_660
 
@@ -316,144 +317,9 @@ def hlc(metric: str):
 
 
 def databases() -> None:
-    """The first databases and the complete ones (Sections 2.1 and 3.9): what the first lacked, where, and what the runs say under each.
-
-    `21_compare_databases.py` writes the five `databases_*.csv` files from the per-variant tables of the runs on both stacks, and
-    they hold both versions whatever the base is.
-    """
-    pres = pd.read_csv(DATA / "databases_presence.csv")
-    cause = pd.read_csv(DATA / "databases_causes.csv").set_index("source")
-    blocks = pd.read_csv(DATA / "databases_lost_blocks.csv")
+    """The databases of the benchmark (Section 2.1): the three sources that come from gnomAD's exomes file are 72 databases built from the whole of it."""
     manifest = pd.read_csv(HERE.parents[1] / "analysis/acmg_benchmark/results/complete_databases/manifest.tsv", sep="\t")
-    ap = pres[pres.set == "April set"].set_index("source")
-    sa, pp, gn, rv = ap.loc["SpliceAI"], ap.loc["PhyloP"], ap.loc["gnomAD"], ap.loc["REVEL"]
     fact("are read from databases built from the whole of that file, one for each source and chromosome", str(len(manifest)))
-    fact("Of the 673,278 variants of the benchmark that have an alternative allele", n(sa["variants"]), n(sa["first"]), n(pp["first"]), n(sa["complete"]), n(pp["complete"]),
-         p(sa.only_complete / sa.complete), p(pp.only_complete / pp.complete),
-         "no variant had a value only in the first databases" if sa.only_first == 0 and pp.only_first == 0 else "?",
-         "where both had one the values were the same" if sa.differ_where_both == 0 and pp.differ_where_both == 0 else "?")
-    fact("The first databases lack their records in 14 stretches of SpliceAI and 14 of PhyloP", n(cause.loc["SpliceAI", "batches_with_a_tail"]), n(cause.loc["PhyloP", "batches_with_a_tail"]), "200",
-         n(cause.loc["PhyloP", "indels_with_the_second_base_outside_the_regions"]),
-         "reaches the end of the batch" if cause.loc["SpliceAI", "unexplained"] == 0 and cause.loc["PhyloP", "unexplained"] == 0 else "?",
-         "more indels" if cause.loc["PhyloP", "indels_with_the_second_base_outside_the_regions"] == cause.loc["PhyloP", "variants_lost"] - cause.loc["PhyloP", "in_the_tail_of_a_batch"] else "?")
-    fact("On the April set the regional gnomAD databases of the benchmark and the complete ones gave the same call", n(N_ALL),
-         "so the counts that the frequency criteria read were not affected" if gn.only_complete == 0 and gn.only_first == 0 and gn.differ_where_both == 0 else "?",
-         "REVEL" if rv.only_complete == 0 and rv.only_first == 0 and rv.differ_where_both == 0 else "?")
-    # the batches that the section on the databases names are the rows of the file: the same batches for both sources, with the same first lost position
-    both = blocks[blocks.spliceai_lost.notna() & blocks.phylop_lost.notna()]
-    if len(both) != len(blocks) or len(blocks) != int(cause.loc["SpliceAI", "batches_with_a_tail"]):
-        failures.append("databases_lost_blocks.csv: the batches that lose SpliceAI records are not the batches that lose PhyloP records, or not the number that databases_causes.csv counts")
-
-    # Section 3.9: the runs on the first databases and on the complete ones
-    ovn = pd.read_csv(DATA / "databases_old_vs_new.csv")
-    chg = pd.read_csv(DATA / "databases_opposite_changes.csv", dtype=str, keep_default_na=False)
-    a_set, c_set, nw_set, w_set = "April set", "October release, the variants of the first design", "October release, new variants of the first design", "October release, all variants"
-
-    def g(version: str, scope: str, measure: str, db: str) -> float:
-        return float(ovn[(ovn.version == version) & (ovn.set == scope) & (ovn.measure == measure)].iloc[0][db])
-
-    def rate(version: str, scope: str, measure: str, db: str) -> str:
-        return p(g(version, scope, measure, db) / g(version, scope, "variants", db), 2)
-
-    def both_dbs(version: str, scope: str, measure: str, fmt=n) -> list[str]:
-        return [fmt(g(version, scope, measure, "first")), fmt(g(version, scope, measure, "complete"))]
-
-    d_dir = lambda v: g(v, a_set, "same_direction", "complete") - g(v, a_set, "same_direction", "first")  # noqa: E731
-    fact("Under v38 agreement in direction rises from 524,380", *both_dbs("v38", a_set, "same_direction"), rate("v38", a_set, "same_direction", "first"), rate("v38", a_set, "same_direction", "complete"),
-         *both_dbs("v38", a_set, "exact"), rate("v38", a_set, "exact", "first"), rate("v38", a_set, "exact", "complete"), n(g("v38", a_set, "variants", "first")),
-         *both_dbs("v38", a_set, "opposite"), *both_dbs("v38", a_set, "false_benign"),
-         "stay at " + n(g("v38", a_set, "false_pathogenic", "complete")) if g("v38", a_set, "false_pathogenic", "first") == g("v38", a_set, "false_pathogenic", "complete") else "?")
-    fact("Under v37 agreement in direction rises from 522,886", *both_dbs("v37", a_set, "same_direction"), rate("v37", a_set, "same_direction", "first"), rate("v37", a_set, "same_direction", "complete"),
-         *both_dbs("v37", a_set, "opposite"),
-         n(g("v38", a_set, "same_direction", "first") - g("v37", a_set, "same_direction", "first")), n(g("v38", a_set, "same_direction", "complete") - g("v37", a_set, "same_direction", "complete")))
-    fact("The complete databases add 1.5 points of agreement in direction and three contradictions", f"{d_dir('v38') / g('v38', a_set, 'variants', 'first') * 100:.1f}",
-         w(int(g("v38", a_set, "opposite", "complete") - g("v38", a_set, "opposite", "first")))[1],
-         "as much to v37" if f"{d_dir('v37') / g('v37', a_set, 'variants', 'first') * 100:.1f}" == f"{d_dir('v38') / g('v38', a_set, 'variants', 'first') * 100:.1f}" or abs(d_dir("v37") - d_dir("v38")) < 300 else "?")
-    fact("Recall of ClinVar's benign-side variants rises from 62.9% to 66.4%", p(g("v38", a_set, "blb_recall", "first")), p(g("v38", a_set, "blb_recall", "complete")),
-         n(g("v38", a_set, "same_benign", "complete") - g("v38", a_set, "same_benign", "first")), *both_dbs("v38", a_set, "same_benign"),
-         p(g("v38", a_set, "plp_recall", "complete")) if g("v38", a_set, "plp_recall", "first") == g("v38", a_set, "plp_recall", "complete") else "?",
-         n(g("v38", a_set, "same_pathogenic", "complete")) if g("v38", a_set, "same_pathogenic", "first") == g("v38", a_set, "same_pathogenic", "complete") else "?")
-    fact("The records that the first databases lacked are SpliceAI and PhyloP values that BP4, BP7 and PP3 read", *[n(g("v38", a_set, m, "complete") - g("v38", a_set, m, "first")) for m in ("BP4", "BP7", "PP3")],
-         *both_dbs("v38", a_set, "BP4"), *both_dbs("v38", a_set, "BP7"), *both_dbs("v38", a_set, "PP3"))
-    fact("PVS1 on canonical splice variants, which has to pass a check on SpliceAI", w(int(g("v38", a_set, "PVS1_on_canonical_splice", "complete") - g("v38", a_set, "PVS1_on_canonical_splice", "first")))[1],
-         n(g("v38", a_set, "canonical_splice_variants", "complete")), *both_dbs("v38", a_set, "PVS1_on_canonical_splice"))
-    # the three variants that enter the opposite-direction calls
-    entered = chg[(chg.version == "v38") & (chg.change == "enters the opposite-direction calls")]
-    entered37 = chg[(chg.version == "v37") & (chg.change == "enters the opposite-direction calls")]
-    if len(chg[(chg.version == "v38") & (chg.change != "enters the opposite-direction calls")]):
-        failures.append("databases_opposite_changes.csv: a v38 variant leaves the opposite-direction calls or changes its call inside them, which Section 3.9 does not say")
-    pos = lambda gene: entered[entered.gene == gene].iloc[0]  # noqa: E731
-    tm, vw, gt = pos("TMEM216"), pos("VWF"), pos("GTPBP3")
-    r6 = csv("round6_rows_v37.csv")
-    seen = set(zip(r6.chrom.astype(str), r6.pos.astype(str), r6.ref, r6.alt))
-    fact("Each is called Likely benign on a SpliceAI value of 0.07 or below with BP4", *[f"{x.gene} {x.chrom}:{x.pos} {x.ref}>{x.alt}" for x in (tm, vw, gt)],
-         max(float(x.complete_spliceai_max) for x in (tm, vw, gt)) <= 0.07 and f"{float(tm.complete_spliceai_max):.2f}" or "?",
-         f"{float(tm.complete_spliceai_max):.2f}", f"{float(vw.complete_spliceai_max):.2f}", f"{float(gt.complete_spliceai_max):.2f}",
-         f"{float(tm.complete_phylop):g}", f"{float(vw.complete_phylop):g}", f"{float(gt.complete_phylop):.3f}",
-         "BS1 and BP4" if tm.complete_criteria == "BS1&BP4" else "?", "BP4 and BP7" if vw.complete_criteria == "BP4&BP7" else "?", "PM2, BP4 and BP7" if gt.complete_criteria == "PM2_Supporting&BP4&BP7" else "?",
-         "and two with BP7 as well" if sum("BP7" in x.complete_criteria for x in (tm, vw, gt)) == 2 and all("BP4" in x.complete_criteria for x in (tm, vw, gt)) else "?")
-    fact("The three contradictions that the complete databases add are ClinVar-Pathogenic variants that the first databases left as VUS", w(len(entered))[1],
-         "ClinVar-Pathogenic variants that the first databases left as VUS" if all(x.clinvar == "Pathogenic" for x in (tm, vw, gt)) and all(x.first_call == "VUS" and x.complete_call == "Likely_benign" for x in (tm, vw, gt)) else "?")
-    fact("None is a Benign call, none is among the 64 calls that the reviewer saw in the last round", "None is a Benign call" if all(x.complete_call != "Benign" for x in (tm, vw, gt)) else "?",
-         "none is among the 64 calls" if not any((x.chrom, x.pos, x.ref, x.alt) in seen for x in (tm, vw, gt)) else "?",
-         "the same three enter under v37" if sorted(zip(entered37.gene, entered37.pos)) == sorted(zip(entered.gene, entered.pos)) else "?")
-    fact("On the October release the complete databases add 1.7 points of agreement in direction", f"{(g('v38', c_set, 'same_direction', 'complete') - g('v38', c_set, 'same_direction', 'first')) / g('v38', c_set, 'variants', 'first') * 100:.1f}")
-    fact("The first drafts scored the 772,585 variants of ClinVar's release of 4 October 2026", n(g("v38", c_set, "variants", "first")), n(g("v38", w_set, "variants", "complete")))
-    fact("On the 772,585, agreement in direction rises from 593,343", *both_dbs("v38", c_set, "same_direction"), rate("v38", c_set, "same_direction", "first"), rate("v38", c_set, "same_direction", "complete"),
-         *both_dbs("v38", c_set, "opposite"), *both_dbs("v38", c_set, "false_benign"),
-         "stay at " + n(g("v38", c_set, "false_pathogenic", "complete")) if g("v38", c_set, "false_pathogenic", "first") == g("v38", c_set, "false_pathogenic", "complete") else "?",
-         n(g("v38", nw_set, "variants", "first")), *both_dbs("v38", nw_set, "same_direction"), rate("v38", nw_set, "same_direction", "first"), rate("v38", nw_set, "same_direction", "complete"),
-         *both_dbs("v38", nw_set, "opposite"))
-    out_n = g("v38", w_set, "variants", "complete") - g("v38", c_set, "variants", "complete")
-    out_dir = g("v38", w_set, "same_direction", "complete") - g("v38", c_set, "same_direction", "complete")
-    fact("The 8,550 variants that the first drafts left out add one opposite-direction call", n(out_n), w(int(g("v38", w_set, "opposite", "complete") - g("v38", c_set, "opposite", "complete")))[1],
-         p(out_dir / out_n), n(out_dir), n(g("v38", w_set, "same_direction", "complete")), rate("v38", w_set, "same_direction", "complete"), n(g("v38", w_set, "opposite", "complete")),
-         n(g("v38", w_set, "false_benign", "complete")), n(g("v38", w_set, "false_pathogenic", "complete")))
-    sa_share, pp_share = sa["only_complete"] / sa["complete"], pp["only_complete"] / pp["complete"]
-    gain = d_dir("v38") / g("v38", a_set, "variants", "first") * 100
-    fact("The first SpliceAI and PhyloP databases of the benchmark were a second instance", p(sa_share), p(pp_share))
-    fact("Check each input against an independent listing, because a missing record degrades quietly", p(sa_share, 0), p(pp_share, 0) if p(sa_share, 0) == p(pp_share, 0) else "?")
-    fact("The first drafts, including the version that the co-authors read, rested on SpliceAI and PhyloP databases that lacked", p(sa_share), p(pp_share))
-    traj_ = pd.read_csv(DATA / "trajectory.csv").set_index("order")
-    first_rate = {k: float(traj_.loc[k].same_direction_rate) for k in range(13, 37) if k in traj_.index and traj_.loc[k].mainline}
-    first_rate[37] = g("v37", a_set, "same_direction", "first") / g("v37", a_set, "variants", "first")
-    first_rate[38] = g("v38", a_set, "same_direction", "first") / g("v38", a_set, "variants", "first")
-    ks = sorted(first_rate)
-    steps_first = {k: abs(first_rate[k] - first_rate[j]) for j, k in zip(ks, ks[1:])}
-    biggest = max(steps_first, key=steps_first.get)
-    fact("The completion of the databases moved agreement in direction by 1.5 points", f"{d_dir('v38') / g('v38', a_set, 'variants', 'first') * 100:.1f}",
-         f"{steps_first[biggest] * 100:.2f} points" if biggest == 38 and d_dir("v38") / g("v38", a_set, "variants", "first") > steps_first[biggest] else "?", "v38's")
-
-    # the sweeps and the effects of the family on both stacks (`21_compare_databases.py` makes them with `20_compare_families.py`'s definitions of a shape and of a change)
-    shapes = pd.read_csv(DATA / "databases_sweep_shapes.csv", dtype={"settings_that_change_order": str}).set_index("sweep")
-    swp = pd.read_csv(DATA / "databases_sweeps.csv", dtype={"setting": str})
-    fam = pd.read_csv(DATA / "databases_family_summary.csv")
-    cnt = {r["name"]: r["value"] for _, r in fam[fam.text.isna()].iterrows()}
-    kept = [k for k in shapes.index if not shapes.loc[k, "differs"]]
-    sd = lambda label, value, db: float(swp[(swp.sweep == label) & (swp.setting == value)].iloc[0][f"same_direction_{db}"])  # noqa: E731
-    gaps = []
-    for label in shapes.index:
-        for pair in str(shapes.loc[label, "settings_that_change_order"]).split("; "):
-            if " and " in pair:
-                a_, b_ = pair.split(" and ")
-                gaps += [abs(sd(label, a_, db) - sd(label, b_, db)) for db in ("first", "complete")]
-    fb = lambda value, db: float(swp[(swp.sweep == "BP7 PhyloP bar") & (swp.setting == value)].iloc[0][f"false_benign_{db}"])  # noqa: E731
-    floor = shapes.loc["BS2 carrier floor, bar off"]
-    nsp = fam[fam["name"] == "effect_that_changed"]
-    big_effects = nsp[nsp.value == 1]
-    spl = re.findall(r"-?\d+", big_effects.iloc[0].text.split(":", 1)[1]) if len(big_effects) == 1 and "nospliceai opposite" in big_effects.iloc[0].text else []
-    fact("Of the 12 sweeps, 4 differ in a detail between the two sets of databases and 8 do not", str(int(cnt["sweeps"])), str(len(shapes[shapes.differs])), str(len(kept)),
-         "1e-3" if shapes.loc["BS1 bar", "knee_first"] == shapes.loc["BS1 bar", "knee_complete"] == 0.001 else "?",
-         "300 nucleotides" if shapes.loc["BP7 far boundary", "knee_first"] == shapes.loc["BP7 far boundary", "knee_complete"] == 300 else "?",
-         "under both" if int(cnt["sweeps_that_differ_in_the_knee"]) == 0 else "?")
-    fact("The details are the order of two settings of the BS1 bar", n(max(gaps)),
-         "one reference-discordant benign call on the complete databases and none on the first" if fb("3", "complete") - fb("2.0", "complete") == 1 and fb("3", "first") - fb("2.0", "first") == 0 else "?",
-         f"{floor.knee_factor_first:.1f}", f"{floor.knee_factor_complete:.1f}", n(floor.fall_from_rate_first), n(floor.fall_to_rate_first), n(floor.fall_from_rate_complete), n(floor.fall_to_rate_complete),
-         "neither fall reaches the hundred or fewer" if min(floor.fall_to_rate_first, floor.fall_to_rate_complete) > 150 and pd.isna(floor.knee_first) and pd.isna(floor.knee_complete) else "?",
-         "BS2 carrier bar" if shapes.loc["BS2 carrier bar, dominant-only genes", "pairs_that_change_order"] > 0 and shapes.loc["BS1 bar", "pairs_that_change_order"] > 0 else "?")
-    fact("7 changed sign, appeared or vanished, or changed by more than 20%, and 6 of the 7", str(int(cnt["effects"])), w(int(cnt["effect_measures"]))[1], str(int(cnt["effects_that_changed"])),
-         str(int(cnt["effects_that_changed_and_are_small"])), "20%", "6 of the 7" if f"{int(cnt['effects_that_changed_and_are_small'])} of the {int(cnt['effects_that_changed'])}" == "6 of the 7" else "?")
-    fact("The one that is larger is the removal of SpliceAI", str(abs(int(spl[1]))) if len(spl) == 2 else "?", str(abs(int(spl[0]))) if len(spl) == 2 else "?")
 
 
 def methods() -> None:
@@ -506,7 +372,7 @@ def methods() -> None:
     fact("Each of the other 15 was evaluated for some records and met for some", "15" if ok and len(from_variant) == 15 else "?")
     prov37 = pd.read_csv(DATA / "provenance_v37.csv")
     # The harness runs were made at once, several at a time on one machine, and are not timings; the timing is release 0.5.0 timed alone on 7 November 2026
-    # (`results/v38_v0.5.0/annotation_time.tsv`), with the first databases (the file is the one that the first drafts quoted and was not measured again)
+    # (`results/v38_v0.5.0/annotation_time.tsv`), with a stack of databases that is smaller than the final one (the file was not measured again)
     # The same 96 runs: the runs of the two families have the same names but for the prefix, and v37's family has as many (the base's family is v37's own under v37)
     same_96_runs = same_96()
     # The repetition of the runs by release 0.5.0 (`results/v38_v0.5.0`): which runs, and whether the table that says they agree says so for each
@@ -560,8 +426,7 @@ def methods() -> None:
     built37 = binaries37[binaries37.sha256.str.startswith(kind_binary(k37_plain))]
     fact("The same 96 runs were made for v37 with binaries built from commit 5d8004a", kind_binary(k37_plain),
          "5d8004a" if len(built37) == 1 and "commit 5d8004a" in built37.iloc[0].built_from else "?", n(len(prov37) + len(hold37)) if same_96_runs else "?")
-    # Every run of a kind is made by the binary of its kind: a run that another binary made is a failure. (The first drafts had 18 sweeps that the
-    # binary of the working tree that became v38 made first and the tag's made again; the runs of this paper were all made by the tag's.)
+    # Every run of a kind is made by the binary of its kind: a run that another binary made is a failure.
     for kind, df in kinds.items():
         for name, prefix in zip(df.run, df.binary_sha256_prefix):
             if prefix != kind_bin[kind]:
@@ -1393,23 +1258,17 @@ def abstract_and_intro() -> None:
 
     t = traj
     nw = temporal[temporal.stratum == "new"].iloc[0]
-    ovn = pd.read_csv(DATA / "databases_old_vs_new.csv")
-    cs = pd.read_csv(DATA / "databases_causes.csv").set_index("source")
-    a_set = "April set"
-    one = lambda v, k, db: float(ovn[(ovn.version == v) & (ovn.set == a_set) & (ovn.measure == k)].iloc[0][db])  # noqa: E731
-    share = lambda src: cs.loc[src, "variants_lost"] / cs.loc[src, "variants_with_a_value_in_the_complete"]  # noqa: E731
     # the abstract (every number of it is a function of the data)
     fact("The ACMG/AMP criteria are underspecified and fragmented.")
     fact("Thirty-eight versions were scored on 673,660 ClinVar variants", n(N_ALL), "Thirty-eight" if int(t.index.max()) == 38 else "?", "six review rounds" if len(rounds) == 3 else "?")
     fact("whose 116,078 new variants are the only out-of-sample ones", n(nw.stratum_n))
     fact("The input is a sites-only VCF, which allows 15 of 28 criteria", str(len(crit)), str(len(status)))
-    fact("The first drafts used SpliceAI and PhyloP databases lacking 8% of their values", p(share("SpliceAI"), 0), p(share("PhyloP"), 0) if p(share("SpliceAI"), 0) == p(share("PhyloP"), 0) else "?")
     fact("On the April set v38 agrees with ClinVar's class for 64.1%", p(hl("exact_match").value), p(hl("same_direction").value), str(N_OPP), f"{hl('opposite_rate').value * 100:.4f}%")
     fact("On the new variants agreement in direction is 72.6%", p(nw.same_direction / nw.stratum_n), f"{trate.loc['October, new'].rate / trate.loc['April set'].rate:.1f}", f"{ratio.iloc[2].ci_lo:.1f}", f"{ratio.iloc[2].ci_hi:.1f}")
-    fact("The complete databases added 1.5 points of agreement and three contradictions", f"{(one('v38', 'same_direction', 'complete') - one('v38', 'same_direction', 'first')) / N_ALL * 100:.1f}",
-         w(int(one("v38", "opposite", "complete") - one("v38", "opposite", "first")))[1])
     tot_rev = res_by_group[["clinvar", "fastvep", "neither", "needs_evidence", "disorder_specific"]].sum()
     fact("The reviewer supported ClinVar on 29 of 48 contradictions seen", str(int(tot_rev.clinvar)), str(N_REV))
+    fact("Agreement alone does not separate cautious from aggressive calling, and an input can be incomplete without anything showing",
+         "CFTR" if pvs1["CFTR null variants in the benchmark (stop, frameshift, canonical splice)"] > 0 else "?")
     fact("The agreement is bounded: ClinVar can be wrong, there was one reviewer, and a sites-only input allows 15 of 28 criteria", str(len(crit)), str(len(status)))
     # the introduction
     weeks = (datetime.date(2026, 10, 6) - datetime.date(2026, 4, 21)).days / 7
@@ -1613,7 +1472,7 @@ def coverage() -> None:
     fact("The BS1 pair (PADI3 and SLC12A3)", n(pad.gnomad_ac), n(slc.gnomad_ac), p(pad.gnomad_popmax_af), p(slc.gnomad_popmax_af))
     tm216 = opp[opp.gene == "TMEM216"].iloc[0]
     fact("A third BS1 call, TMEM216 11:61392563 G>T (upstream of the gene)", f"{tm216.chrom}:{tm216.pos} {tm216.ref}>{tm216.alt}", "BP4" if "BP4" in tm216.criteria and "BS1" in tm216.criteria else "?",
-         "0.07" if "0.07" in str(csv("databases_opposite_changes.csv").query("gene == 'TMEM216'").complete_spliceai_max.iloc[0]) else "?", "the reviewer has not seen it" if tm216.ruling == "not reviewed" else "?")
+         "0.07" if "0.07" in str(pd.read_csv(DB_REC / "databases_opposite_changes.csv").query("gene == 'TMEM216'").complete_spliceai_max.iloc[0]) else "?", "the reviewer has not seen it" if tm216.ruling == "not reviewed" else "?")
     nopp = csv("temporal_new_opposite_v37.csv")
     fact("the opposite-direction rates and their ratio with its interval, the 20 opposite-direction calls on the new variants", n(len(nopp)))
     kinds = nopp.kind.value_counts()
@@ -1681,6 +1540,7 @@ def coverage() -> None:
     fact("The recall of ClinVar's benign-side variants is over the 284,168 that have a call", n(n_blb_called), n(n_blb), n(c5.loc[["Likely_benign", "Benign"], "NoCall"].sum()),
          f"{(b38.same_benign / n_blb_called - b38.same_benign / n_blb) * 100:.1f} points higher")
     fact("The reading is as good as the field it reads", n(missing[LACKED]))
+    fact("Check each input against an independent listing, because a missing record degrades quietly", "CFTR", n(missing[LACKED] - 1))
     f38v = pd.read_csv(DATA / "v38_facts.csv").set_index("name")["value"]
     fact("(it fired on 7,234 of the 7,328 variants that meet BS1", n(f38v["ad_only_variants_with_bs1_and_bs2"]), n(f38v["ad_only_variants_with_bs1"]))
     fact("The same 96 runs were made for v37", n(len(harness) + len(hold)), "The same 96 runs" if same_96() else "?")
@@ -1767,7 +1627,7 @@ def v38() -> None:
     fact("In all there are 38 runs on the April set and 4 on the October release", n(len(runs38)), n(len(hold38)))
     again42 = pd.read_csv(HERE.parents[1] / "analysis/acmg_benchmark/results/v38_v0.5.0/rerun_comparison.csv")
     again42 = again42[again42.kind == "run"]
-    fact("All 42 were made on 8 November 2026 with the complete databases", n(len(again42)),
+    fact("All 42 were made on 8 November 2026 on the final benchmark databases", n(len(again42)),
          "8 November 2026" if {new_york_date(rerun_recorded_at(x)) for x in again42.name} == {"2026-11-08"} else "?",
          "agree in every scored file" if set(again42.name) == set(runs38.name) | set(hold38.name) and (again42.identical == "yes").all() else "?")
     shared = [x for x in runs38.name if x.startswith(("v38_sw_pm2ad_", "v38_sw_pm2ar_", "v38_sw_bs2hom_"))]
@@ -2019,7 +1879,7 @@ def v38() -> None:
     straddle = {s for s in ("KMT2C", "RAI1", "PIEZO1", "TXNL4A", "NF1", "TMEM216") if (faf(s, "exomes") - bar) * (faf(s, "joint") - bar) < 0}
     fact("Five of the six are at the threshold of BS1, a filtering allele frequency of 0.5%", w(len(straddle))[2], w(len(straddle) + 1)[1], p(bar),
          "the sixth belongs to the missing flags" if straddle == {"KMT2C", "RAI1", "PIEZO1", "TXNL4A", "TMEM216"} else "?")
-    fact("TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that the complete databases add", pct3(faf("TMEM216", "exomes")), pct3(faf("TMEM216", "joint")),
+    fact("TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that the reviewer has not seen", pct3(faf("TMEM216", "exomes")), pct3(faf("TMEM216", "joint")),
          "Likely benign" if one("TMEM216", "exomes").call == "Likely_benign" and one("TMEM216", "exomes").bs1_met else "?", "the call is VUS" if one("TMEM216", "joint").call == "VUS" and not one("TMEM216", "joint").bs1_met else "?",
          "ClinVar Pathogenic" if one("TMEM216", "exomes").clinvar == "Pathogenic" else "?")
     km, ra = one("KMT2C", "exomes"), one("RAI1", "exomes")
