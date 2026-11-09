@@ -514,7 +514,7 @@
         <div>
           <label class="visually-hidden" for="vcfInput">VCF records</label>
           <textarea id="vcfInput" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="vcfHint" placeholder="Paste VCF records here, or try an example below.&#10;&#10;#CHROM  POS    ID  REF  ALT  QUAL  FILTER  INFO&#10;1       69080  .   C    T    30    PASS    .&#10;&#10;SNVs, insertions, deletions, multi-allelic sites and MNVs are supported."></textarea>
-          <p class="hint" id="vcfHint">Tab-separated, header lines optional, Ensembl-style chromosome names (1, 2, X).<span class="kbd-hint"> Press <kbd id="shortcutKey">Ctrl</kbd>+<kbd>Enter</kbd> to annotate.</span></p>
+          <p class="hint" id="vcfHint">One variant per line: CHROM POS ID REF ALT, separated by tabs or spaces. Header lines are optional.<span class="kbd-hint"> Press <kbd id="shortcutKey">Ctrl</kbd>+<kbd>Enter</kbd> to annotate.</span></p>
           <p class="field-error" id="vcfError" role="alert" hidden></p>
           <div class="examples" id="examples" role="group" aria-label="Examples">
             <span>Examples:</span>
@@ -1976,6 +1976,45 @@ function showAlert(kind, title, detail, { retry = false, extra = '', actions = [
 // ---- annotation ---------------------------------------------------
 const countRecords = (text) => text.split('\n').filter((l) => l && !l.startsWith('#')).length;
 
+// What a person pastes is often CHROM POS ID REF ALT cut from a table, a terminal or a ClinVar page: spaces for tabs, and no QUAL, FILTER or
+// INFO. The placeholder of the box is written that way too. The parser of this page and the server's both read the 8 tab-separated columns of
+// a VCF record, and the server refuses a line that has fewer ("VCF line has fewer than 8 fields") while this parser skipped it without a word,
+// which showed as "Done: 0 variants". So a line is completed first: a tab for each run of spaces, and "." for each column that is missing.
+// A record that already has its tabs and its 8 columns is not touched. A line of fewer than 5 columns, or whose POS is not a number, is not a
+// variant: it is counted apart and left as it is.
+function readVcfInput(text) {
+  let completed = 0, records = 0;
+  const skipped = [];
+  const lines = text.split(/\r?\n/).map((line, i) => {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) return line;
+    const tabbed = line.includes('\t');
+    const f = tabbed ? line.split('\t') : t.split(/\s+/);
+    if (f.length < 5 || !/^\d+$/.test(f[1])) { skipped.push({ n: i + 1, line: t }); return line; }
+    records++;
+    if (tabbed && f.length >= 8) return line;
+    completed++;
+    while (f.length < 8) f.push('.');
+    return f.join('\t');
+  });
+  return { text: lines.join('\n'), completed, records, skipped };
+}
+
+// After a run that worked, say what was done to the text, so that no result is a reading of lines that the person did not write.
+// The server refuses the whole text at the first line it cannot read; the demo reads what it can, so it has to say what it left out.
+function noteVcfInput(input, target) {
+  if (input.completed > 0) {
+    showAlert('info', `Read ${plural(input.completed, 'line')} as VCF records`,
+      'Spaces were taken as tabs, and the columns after ALT that were missing (QUAL, FILTER, INFO) were filled in with ".". The text in the box is unchanged.');
+  }
+  if (input.skipped.length > 0 && target.kind === 'demo') {
+    const first = input.skipped[0];
+    const shown = first.line.length > 60 ? `${first.line.slice(0, 60)}…` : first.line;
+    showAlert('warning', `${plural(input.skipped.length, 'line')} could not be read and ${input.skipped.length === 1 ? 'was' : 'were'} left out`,
+      `Line ${first.n} is not a variant: "${shown}". Each variant needs CHROM, POS, ID, REF and ALT, and POS is a number.`);
+  }
+}
+
 function setBusy(busy) {
   state.busy = busy;
   const btn = $('btnAnnotate');
@@ -1997,14 +2036,24 @@ function currentTarget() {
 async function annotate() {
   if (state.busy) return;
   await state.ready;
-  const vcfText = $('vcfInput').value.trim();
-  if (!vcfText) {
+  const typed = $('vcfInput').value.trim();
+  if (!typed) {
     const err = $('vcfError');
     err.textContent = 'Paste or upload some variants first.';
     err.hidden = false;
     $('vcfInput').focus();
     return;
   }
+  const input = readVcfInput(typed);
+  if (input.records === 0) {
+    hideStatus();
+    const err = $('vcfError');
+    err.textContent = 'No variant could be read. Give one per line as CHROM, POS, ID, REF and ALT, separated by tabs or spaces, for example: 13 32319298 . G T';
+    err.hidden = false;
+    $('vcfInput').focus();
+    return;
+  }
+  const vcfText = input.text;
   $('vcfError').hidden = true;
   clearAlerts();
   // Never answer from a model the user did not pick: "Upload a GFF3 file" with no file chosen would otherwise fall through to whatever is loaded.
@@ -2020,6 +2069,7 @@ async function annotate() {
     target = currentTarget();
     if (target.kind === 'demo') await annotateDemo(vcfText);
     else await annotateServer(vcfText, target);
+    noteVcfInput(input, target);
   } catch (e) {
     hideStatus();
     if (e?.name === 'AbortError') {
