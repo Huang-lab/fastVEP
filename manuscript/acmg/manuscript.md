@@ -18,22 +18,28 @@ Running title: ACMG/AMP classification in fastVEP
 
 **Background.**
 The ACMG/AMP criteria are underspecified and fragmented.
-We describe how the classification engine of fastVEP, an open-source reimplementation of the Ensembl Variant Effect Predictor, implements them so that its calls agree with ClinVar's classifications of two stars or better (a reference, not ground truth) and one geneticist's review, and what each choice costs in contradictions (opposite-direction calls).
+We describe how fastVEP, an open-source reimplementation of the Ensembl Variant Effect Predictor, implements them so that its calls agree with ClinVar's classifications of two stars or better (a reference, not ground truth) and one geneticist's review, and what each choice costs in contradictions (opposite-direction calls).
+
+**Implementation.**
+The classifier, v38, reads nine public evidence sources and evaluates 15 of the 28 criteria for a sites-only VCF.
+It combines met criteria by points on the pathogenic side and by the 2015 table on the benign side.
 
 **Methods.**
-Thirty-eight versions were scored on 673,660 ClinVar variants (April 2026) over six review rounds.
-The latest, v38, was applied unchanged to ClinVar's October release, whose 116,078 new variants are the only out-of-sample ones, because every threshold was tuned on the April set.
-The input is a sites-only VCF, which allows 15 of 28 criteria.
+Thirty-eight versions were scored on 673,660 ClinVar variants (April 2026), and every threshold was tuned on that set.
+v38 was applied unchanged to ClinVar's October release, whose 116,078 new variants are the only out-of-sample ones.
 
 **Results.**
 On the April set v38 agrees with ClinVar's class for 64.1% and its direction for 79.3%, with 51 contradictions (0.0076%).
 On the new variants agreement in direction is 72.6% and contradictions are 2.3 times as frequent (95% interval 1.2 to 3.8).
 The reviewer supported ClinVar on 29 of 48 contradictions seen.
 
-**Conclusions.**
-The choices, each with its agreement and contradictions, are reusable.
-Agreement alone does not separate cautious from aggressive calling, and an input can be incomplete without anything showing, as a ClinGen file that lacked CFTR was.
-The agreement is bounded: ClinVar can be wrong, there was one reviewer, and a sites-only input allows 15 of 28 criteria.
+**Lessons.**
+The largest class of change, 21 of 64, was a guideline condition that a criterion had left out.
+Agreement alone does not separate cautious from aggressive calling: simple rules reach 85.6% with 1,817 contradictions.
+An input can be incomplete without anything showing, as a ClinGen file that lacked CFTR was.
+
+**Bounds.**
+ClinVar can be wrong, there was one reviewer, and a sites-only input allows 15 of 28 criteria.
 
 **Keywords:** variant classification, ACMG/AMP, ClinGen SVI, ClinVar, variant interpretation, benchmarking, fastVEP
 
@@ -79,7 +85,7 @@ Two versions of the classifier appear throughout.
 They are versions of the classifier and not builds of the genome: every run of either is on GRCh38.
 v38 is the latest, and every number in this paper is v38's unless the text names v37.
 v38 is the classifier of fastVEP release 0.5.0, which for now is the release candidate `v0.5.0-rc.1` (Section 2.1): it reads the mode of inheritance that ClinGen curates, does not count BS2's carriers beside BS1 or BA1, and classifies a gene once for each of its modes of inheritance.
-v37 is the version in which the review rounds ended, which took a gene's mode of inheritance from the words of its disease names; it appears here as the history of the numbered versions v1 to v37 and as the before of what v38 changes (Section 3.8).
+v37 is the version in which the review rounds ended, which took a gene's mode of inheritance from the words of its disease names; it appears here in the numbered versions v1 to v37 and as the reference of the comparison in Section 3.8.
 Both combine the criteria that are met by the same default scheme, points on the pathogenic side and the 2015 table on the benign side, because the table has no row for a lone Very Strong criterion, which the points call Likely pathogenic, and points on the benign side would call a lone Supporting criterion Likely benign, which the table does not (Section 3.3).
 
 The engine runs inside the annotation pass, so a benchmark of 673,660 ClinVar variants of review status two stars or better takes 25.3 seconds to annotate on every core of one Apple M4 machine with 10 cores and 24 GB, 74 seconds on one thread, and 11 seconds to score.
@@ -87,13 +93,16 @@ Those times are of release 0.5.0, which holds v38 and the speed-ups of annotatio
 The runs of this paper were made on 8 November 2026 several at a time on the same machine, with other work beside them, and the annotation of one of the 89 runs of v37 took a median of 272 seconds, so those times are not timings.
 That speed allowed 37 numbered benchmark runs in 24 weeks (21 April to 6 October 2026), a 38th (v38) in November, and a medical geneticist reviewed the calls on which the software and ClinVar disagreed in direction over six numbered rounds, in three of which they returned an annotated workbook.
 
-We report six things, and each answers part of how such criteria should be implemented.
-First, how each guideline was incorporated and how agreement with ClinVar moved from one numbered run to the next (a run bundles several changes, so a change in agreement cannot be assigned to one guideline), which gives the readings that the classifier implements.
-Second, what expert review found that the benchmark could not, and how the changes fall into a small number of classes, which shows where a reading goes wrong.
-Third, how each numeric threshold that no guideline states was chosen and how much it matters in v38, re-measured on that code and not recalled from the version in which it was set, which shows which defaults to take care over.
-Fourth, how much of the agreement depends on ClinVar-derived inputs, which bounds how much of it is circular.
-Fifth, the discordance of v38 with ClinVar's 2-star-and-better classifications, on the benchmark snapshot, on a ClinVar release six months later, and on the variants that reached two stars after all tuning was done, which gives how closely the result agrees, in sample and out of it, and at what cost in contradictions.
-Sixth, what v38 changes from v37, the version that the review rounds ended with, measured by the same runs of both (Section 3.8), which shows what one further reading of a source is worth.
+We report the implementation and what we learned from building it.
+The implementation is the reading of each recommendation that the classifier takes, the default of each threshold that no guideline states, and the combining scheme, with the reasons (Section 2.1, Tables 1 to 3 and Section 3.3).
+We learned seven things, and each answers part of how such criteria should be implemented.
+First, how agreement with ClinVar moved from one numbered run to the next (a run bundles several changes, so a change in agreement cannot be assigned to one guideline), which gives the readings that the classifier implements (Section 3.1).
+Second, what expert review found that the benchmark could not, and how the changes fall into a small number of classes, which shows where a reading goes wrong (Section 3.2).
+Third, how each numeric threshold that no guideline states was chosen and how much it matters in v38, re-measured on that code and not recalled from the version in which it was set, which shows which defaults to take care over (Section 3.3).
+Fourth, how much of the agreement depends on ClinVar-derived inputs, which bounds how much of it is circular (Section 3.4).
+Fifth, the discordance of v38 with ClinVar's 2-star-and-better classifications, on the benchmark snapshot, on a ClinVar release six months later, and on the variants that reached two stars after all tuning was done, which gives how closely the result agrees, in sample and out of it, and at what cost in contradictions (Sections 3.5 to 3.7).
+Sixth, what reading the mode of inheritance that ClinGen curates changes, measured by the same runs under v38 and under v37, which shows what one further reading of a source is worth (Section 3.8).
+Seventh, the traps that we met and measured, such as an input that is incomplete without anything showing (a ClinGen file that lacked CFTR, Section 3.5) and one gnomAD observation counted as two benign criteria (Section 3.8), which shows what to check in any implementation.
 Along the way we read each recommendation that the classifier cites for a number or a grade against its source, and report where the implementation departs from it.
 
 ---
@@ -107,7 +116,7 @@ The tag is `v0.5.0-rc.1` (c12d9f9), the first release candidate of fastVEP relea
 v37 (5d8004a) is the version in which the review rounds ended: it took the mode of inheritance from the words of the disease names, and its crate was 14,857 lines of Rust with 340 unit tests (version 0.4.0).
 v38 reads the mode of inheritance that ClinGen curates, does not count BS2's carriers beside BS1 or BA1, and classifies a gene once for each of its modes of inheritance (Sections 2.10 and 3.8).
 v37 and v38 are versions of the classifier and not builds of the genome: every run of this paper, of either version, is on GRCh38 (Sections 2.2 and 2.8).
-Every number of this paper is v38's unless it names v37, which it does for the history of the numbered versions v1 to v37 and as the before of a difference between the two (Section 3.8).
+Every number of this paper is v38's unless it names v37, which it does for the numbered versions v1 to v37 and as the reference of the comparison in Section 3.8.
 It is called from the annotation loop after consequence prediction and HGVS naming, once per allele and transcript, and with `--pick`, which was used throughout, one transcript is reported per variant, chosen by VEP's default order (MANE Select, MANE Plus Clinical, canonical, APPRIS, TSL, biotype, CCDS, consequence severity; MANE is described by Morales et al., 2022).
 The Ensembl GFF3 that we used holds no APPRIS attribute, so that step of the order does nothing here.
 Both per-variant loops of the code base, the shared annotation library and the command-line batch path, call the same classifier and the same helper for splice context, and each has end-to-end tests.

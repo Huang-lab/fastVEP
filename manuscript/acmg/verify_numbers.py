@@ -1260,16 +1260,24 @@ def abstract_and_intro() -> None:
     nw = temporal[temporal.stratum == "new"].iloc[0]
     # the abstract (every number of it is a function of the data)
     fact("The ACMG/AMP criteria are underspecified and fragmented.")
-    fact("Thirty-eight versions were scored on 673,660 ClinVar variants", n(N_ALL), "Thirty-eight" if int(t.index.max()) == 38 else "?", "six review rounds" if len(rounds) == 3 else "?")
+    # the abstract has to stay within the limit that the journals ask for (the labels count as words)
+    abstract = " ".join(LINES[LINES.index("## Abstract") + 1:next(i for i, line in enumerate(LINES) if line.startswith("**Keywords:**"))])
+    if len(abstract.split()) > 250:
+        failures.append(f"the abstract has {len(abstract.split())} words, and the limit is 250")
+    src_runs = [name for name in runs.index if name.startswith(rn("v37") + "_src_")]  # the nine evidence sources of Table 2, each removed once (Figure 3B)
+    fact("The classifier, v38, reads nine public evidence sources and evaluates 15 of the 28 criteria for a sites-only VCF", w(len(src_runs))[1], str(len(crit)), str(len(status)))
+    fact("Thirty-eight versions were scored on 673,660 ClinVar variants", n(N_ALL), "Thirty-eight" if int(t.index.max()) == 38 else "?", "April 2026")
     fact("whose 116,078 new variants are the only out-of-sample ones", n(nw.stratum_n))
-    fact("The input is a sites-only VCF, which allows 15 of 28 criteria", str(len(crit)), str(len(status)))
     fact("On the April set v38 agrees with ClinVar's class for 64.1%", p(hl("exact_match").value), p(hl("same_direction").value), str(N_OPP), f"{hl('opposite_rate').value * 100:.4f}%")
     fact("On the new variants agreement in direction is 72.6%", p(nw.same_direction / nw.stratum_n), f"{trate.loc['October, new'].rate / trate.loc['April set'].rate:.1f}", f"{ratio.iloc[2].ci_lo:.1f}", f"{ratio.iloc[2].ci_hi:.1f}")
     tot_rev = res_by_group[["clinvar", "fastvep", "neither", "needs_evidence", "disorder_specific"]].sum()
     fact("The reviewer supported ClinVar on 29 of 48 contradictions seen", str(int(tot_rev.clinvar)), str(N_REV))
-    fact("Agreement alone does not separate cautious from aggressive calling, and an input can be incomplete without anything showing",
+    fact("The largest class of change, 21 of 64, was a guideline condition that a criterion had left out", str(int(ledger["class"].value_counts().max())), str(len(ledger)),
+         "The largest class of change" if ledger["class"].value_counts().idxmax() == "G" else "?")
+    fact("Agreement alone does not separate cautious from aggressive calling: simple rules reach 85.6%", p(baseline.loc["R1 + R2 + R3", "same_direction_share"]), n(baseline.loc["R1 + R2 + R3", "opposite"]))
+    fact("An input can be incomplete without anything showing, as a ClinGen file that lacked CFTR was",
          "CFTR" if pvs1["CFTR null variants in the benchmark (stop, frameshift, canonical splice)"] > 0 else "?")
-    fact("The agreement is bounded: ClinVar can be wrong, there was one reviewer, and a sites-only input allows 15 of 28 criteria", str(len(crit)), str(len(status)))
+    fact("ClinVar can be wrong, there was one reviewer, and a sites-only input allows 15 of 28 criteria", str(len(crit)), str(len(status)))
     # the introduction
     weeks = (datetime.date(2026, 10, 6) - datetime.date(2026, 4, 21)).days / 7
     fact("That speed allowed 37 numbered benchmark runs in 24 weeks", f"{weeks:.0f} weeks".replace(" weeks", ""), "24 weeks")
