@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""What the complete databases changed: the runs with the first databases set against the same runs with the complete ones.
+"""What the complete databases changed: the runs made with the databases of April 2026 set against the same runs made with the complete ones.
 
-The benchmark was first built with SpliceAI and PhyloP databases that lack records which the gnomAD file they were distilled
-from carries (`results/complete_databases/README.md`). Every run of the paper was made again with databases built from the
-whole of that file, by the same classifiers on the same inputs. The earlier runs were made under the names
-`manuscript_runs_april_databases/` and `output_v37_april_databases/` and are not kept. Given the per-variant tables of the two sets of
-runs, this script writes the files below into `results/complete_vs_april_databases/`, with the report that is made from them. It is an internal
+The SpliceAI and PhyloP databases of April 2026 lack records which the gnomAD file they were distilled from carries
+(`results/complete_databases/README.md`). Every run of the paper is made with databases built from the whole of that file, and this
+script sets those runs against the same runs made with the databases of April 2026, by the same classifiers on the same inputs. The
+latter were made under the names `manuscript_runs_april_databases/` and `output_v37_april_databases/` and are not kept. Given the
+per-variant tables of the two sets of runs, this script writes the files below into `results/complete_vs_april_databases/`, with the
+report that is made from them. It is an internal
 record, and the files are not tables of the paper. Two steps read them: `13_manuscript_stats.py` takes v37 and v38 as they were run at
 the time from `databases_old_vs_new.csv` for the trajectory, and `verify_numbers.py` takes a SpliceAI value from
 `databases_opposite_changes.csv`.
@@ -15,13 +16,13 @@ the time from `databases_old_vs_new.csv` for the trajectory, and `verify_numbers
   databases_causes.csv             for SpliceAI and PhyloP, the variants that only the complete databases have, by what explains
                                    them: the tail of a batch of the extraction that ended early, or an indel whose second base
                                    lay just outside the extracted regions (see below)
-  databases_lost_blocks.csv        one row for each batch of the extraction in which the first databases stop short: the variants
+  databases_lost_blocks.csv        one row for each batch of the extraction in which the databases of April 2026 stop short: the variants
                                    of each source that have a value before the break, the variants lost after it, and where
-  databases_old_vs_new.csv         v37 and v38, on the April set and on the October release, with the first and with the
+  databases_old_vs_new.csv         v37 and v38, on the April set and on the October release, with the databases of April 2026 and with the
                                    complete databases: the headline counts and the firing of BP4, BP7, PP3 and of PVS1 on
                                    canonical splice variants (long format: version, set, measure, first, complete)
   databases_opposite_changes.csv   the opposite-direction calls that differ between the two stacks, with the criteria on each side
-  databases_sweeps.csv             every sweep of the paper as a curve with the first and with the complete databases (one row for each
+  databases_sweeps.csv             every sweep of the paper as a curve with the databases of April 2026 and with the complete databases (one row for each
                                    setting: the metrics under both and the difference)
   databases_sweep_shapes.csv       one row for each sweep: its knee, the largest fall in its exchange rate, its ranges, the sign of each
                                    step and the pairs of settings that change order, under both stacks, and whether it differs
@@ -36,10 +37,10 @@ two comparisons (the classifier changed, the databases changed) use one definiti
 
 and the report `results/complete_vs_april_databases.md`.
 
-Why the first databases lack records. `extract_spliceai_phylop_from_gnomad.py` read gnomAD in batches of 200 regions of
+Why the databases of April 2026 lack records. `extract_spliceai_phylop_from_gnomad.py` read gnomAD in batches of 200 regions of
 `clinvar_2star_regions.bed` (the regions of each chromosome, in file order), ignored the exit status of `tabix` and sent its messages
 to /dev/null. A batch whose stream ended early would therefore have left the databases without every record after the break and
-no message. That is what the first databases show: every variant that only the complete databases hold lies in a run of one
+no message. That is what the databases of April 2026 show: every variant that only the complete databases hold lies in a run of one
 batch that reaches the end of the batch, apart from indels whose second base (position + 1) is outside every region. The pattern
 is what a stream that ends early gives, and this script does not show that a stream did: the extraction was not repeated.
 
@@ -156,7 +157,7 @@ def firing(x: pd.DataFrame) -> dict[str, int]:
 def sets_of_runs() -> dict[tuple[str, str], dict]:
     """The tables of both stacks for each version and set, each restricted to the variants of one set of variants.
 
-    The October runs of the first stack hold the 772,585 variants that a gnomAD extract covered (`clinvar_20261004_covered`), and
+    The October runs made with the databases of April 2026 hold the 772,585 variants that a gnomAD extract covered (`clinvar_20261004_covered`), and
     the runs of the complete stack hold all 781,135. A comparison of the stacks is over the variants that both hold; the complete
     stack's other 8,550 are counted apart.
     """
@@ -177,7 +178,7 @@ def with_alt(x: pd.DataFrame) -> pd.DataFrame:
 
     The 382 reference-agreement records (ALT is a dot) get no call under either stack, and the table of v37 holds a row for each
     where the table of v38 holds none, so a count of the variants that have a value for a source depends on which table is read
-    unless they are left out: PhyloP, which is looked up by position, has a value for 312 of them under the first databases and 348
+    unless they are left out: PhyloP, which is looked up by position, has a value for 312 of them under the databases of April 2026 and 348
     under the complete ones in the table of v37, and SpliceAI, which is looked up by allele, for none.
     """
     return x[x["alt"] != "."]
@@ -190,7 +191,7 @@ def any_pair(runs: dict, kind: str) -> dict | None:
 
 def presence(runs: dict) -> list[dict]:
     rows = []
-    for kind, scope, key_set in (("april", "April set", "april"), ("october", "October release, the variants of the first design", "covered")):
+    for kind, scope, key_set in (("april", "April set", "april"), ("october", "October release, the variants in the regions of the April 2026 extract", "covered")):
         pair = any_pair(runs, kind)
         if pair is None:
             continue
@@ -211,7 +212,7 @@ def presence(runs: dict) -> list[dict]:
     if pair is not None:
         outside = with_alt(pair["complete"]).loc[~with_alt(pair["complete"]).index.isin(pair["first"].index)]
         for name, (present, _) in SOURCES.items():
-            rows.append({"set": "October release, the variants outside the first design", "source": name, "variants": len(outside), "first": "", "complete": int((outside[present] != "").sum()),
+            rows.append({"set": "October release, the variants outside the regions of the April 2026 extract", "source": name, "variants": len(outside), "first": "", "complete": int((outside[present] != "").sum()),
                          "only_complete": "", "only_first": "", "both": "", "differ_where_both": ""})
     return rows
 
@@ -231,10 +232,10 @@ def load_regions() -> dict[str, list[tuple[int, int]]]:
 
 
 def causes(runs: dict) -> tuple[list[dict], list[dict]]:
-    """For SpliceAI and PhyloP, why the variants that only the complete databases hold are missing from the first ones.
+    """For SpliceAI and PhyloP, why the variants that only the complete databases hold are missing from the ones of April 2026.
 
-    A batch of the extraction has a tail when the first database has no value for any variant after some point of the batch while
-    the complete database has values for variants after it: the variants of the batch after the last one that the first database
+    A batch of the extraction has a tail when the database of April 2026 has no value for any variant after some point of the batch while
+    the complete database has values for variants after it: the variants of the batch after the last one that the database of April 2026
     has a value for, among those that the complete database has a value for, are the tail. The two sources are written from one
     `tabix` stream per batch by one script, so a stream that ended early would leave the same tail in both.
     """
@@ -313,8 +314,8 @@ def old_vs_new(runs: dict) -> list[dict]:
             inside = complete.loc[complete.index.isin(first.index)]
             new_first = first.loc[strata.reindex(first.index).values == "new"]
             new_inside = inside.loc[strata.reindex(inside.index).values == "new"]
-            groups = [("October release, the variants of the first design", first, inside, LABELS["october_covered"], LABELS["october_covered"], None),
-                      ("October release, new variants of the first design", new_first, new_inside, LABELS["october_covered"], LABELS["october_covered"], "new"),
+            groups = [("October release, the variants in the regions of the April 2026 extract", first, inside, LABELS["october_covered"], LABELS["october_covered"], None),
+                      ("October release, new variants in the regions of the April 2026 extract", new_first, new_inside, LABELS["october_covered"], LABELS["october_covered"], "new"),
                       ("October release, all variants", None, complete, None, LABELS["october"], None)]
         for scope, f, c, lab_f, lab_c, stratum in groups:
             vals = {}
@@ -380,10 +381,10 @@ EARLIER_BS2 = [
 
 
 def family_on_both_stacks() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """The runs of the family v38 on the April set, made with the first and with the complete databases, as sweeps and as effects.
+    """The runs of the family v38 on the April set, made with the databases of April 2026 and with the complete ones, as sweeps and as effects.
 
-    A `Pair` of `20_compare_families.py` is two runs that differ in the classifier, and here its first side (`v37`) is the run on the first
-    databases and its second (`v38`) the run on the complete ones, so every sweep shape and every flag of an effect is that script's, and
+    A `Pair` of `20_compare_families.py` is two runs that differ in the classifier, and here its first side (`v37`) is the run on
+    the databases of April 2026 and its second (`v38`) the run on the complete ones, so every sweep shape and every flag of an effect is that script's, and
     the columns are renamed to `first` and `complete` when they are written.
     """
     f = families()
@@ -431,7 +432,7 @@ def family_on_both_stacks() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, p
                        "differs": bool(reasons or flips), "what_differs": "; ".join(reasons)})
     out = [{"name": r["name"].replace("_v37", "_first").replace("_v38", "_complete"), "value": r["value"], "text": ""} for r in counts]
     flagged = eff[eff.group.isin(["switch", "source", "hook", "gap"]) & ((eff.changed_sign == True) | (eff.changed_by_more_than_20_percent == True) | (eff.appeared_or_vanished == True))]  # noqa: E712
-    out += [{"name": "effect_that_changed", "value": int(r.small_number == False), "text": f"{r.run_v38} {r.metric}: {int(r.effect_v37):+d} on the first databases, {int(r.effect_v38):+d} on the complete ones"} for r in flagged.itertuples()]  # noqa: E712
+    out += [{"name": "effect_that_changed", "value": int(r.small_number == False), "text": f"{r.run_v38} {r.metric}: {int(r.effect_v37):+d} on the databases of April 2026, {int(r.effect_v38):+d} on the complete ones"} for r in flagged.itertuples()]  # noqa: E712
     return ren(sweep_df), pd.DataFrame(shapes), ren(eff), pd.DataFrame(out)
 
 
@@ -460,30 +461,30 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
 
     s("# What the complete databases changed")
     s()
-    s("The benchmark was first built with SpliceAI and PhyloP databases that lack records which the gnomAD file they were distilled from carries (`results/complete_databases/README.md`).")
-    s("Every run of the paper was then made again with databases built from the whole of that file, by the same classifiers on the same inputs, and the runs on the first databases were kept.")
+    s("The SpliceAI and PhyloP databases of April 2026 lack records which the gnomAD file they were distilled from carries (`results/complete_databases/README.md`).")
+    s("Every run of the paper is made with databases built from the whole of that file; this record sets those runs against the same runs made with the databases of April 2026, by the same classifiers on the same inputs.")
     s("This file sets the two side by side.")
     s("It is written by `scripts/21_compare_databases.py` from the per-variant tables of the runs, and the numbers are in `results/complete_vs_april_databases/databases_*.csv`.")
     s("REVEL, ClinVar, ClinGen, the ClinVar protein index and RepeatMasker are the same files under both stacks.")
     s()
-    s("## What the first databases lacked")
+    s("## What the databases of April 2026 lack")
     s()
     april = pres_df[pres_df.set == "April set"]
-    s("| Source | Variants with a value under the first databases | Under the complete databases | Only under the complete | Only under the first | Differing where both have one |")
+    s("| Source | Variants with a value under the databases of April 2026 | Under the complete databases | Only under the complete | Only under April 2026 | Differing where both have one |")
     s("|:---|---:|---:|---:|---:|---:|")
     for r in april.itertuples():
         s(f"| {r.source} | {n(r.first)} | {n(r.complete)} | {n(r.only_complete)} | {n(r.only_first)} | {n(r.differ_where_both)} |")
     s()
     s(f"The table is over the {n(april.iloc[0].variants)} variants of the April set that have an alternative allele (the other 382 are reference-agreement records, which get no call).")
     sa, pp = (cause_df[cause_df.source == x].iloc[0] for x in ("SpliceAI", "PhyloP"))
-    s(f"The complete SpliceAI database has a value for {n(sa.variants_with_a_value_in_the_complete)} of them and the first for {n(sa.variants_with_a_value_in_the_complete - sa.variants_lost)}, so the first lacks {pct(sa.share_lost_of_the_complete, 1)} of the records that exist; for PhyloP the shares are {n(pp.variants_with_a_value_in_the_complete)} and {n(pp.variants_with_a_value_in_the_complete - pp.variants_lost)}, and {pct(pp.share_lost_of_the_complete, 1)}.")
-    s("No variant has a value only under the first databases, and where both have one the values are the same, so the complete databases add records and change none.")
+    s(f"The complete SpliceAI database has a value for {n(sa.variants_with_a_value_in_the_complete)} of them and the databases of April 2026 for {n(sa.variants_with_a_value_in_the_complete - sa.variants_lost)}, so they lack {pct(sa.share_lost_of_the_complete, 1)} of the records that exist; for PhyloP the shares are {n(pp.variants_with_a_value_in_the_complete)} and {n(pp.variants_with_a_value_in_the_complete - pp.variants_lost)}, and {pct(pp.share_lost_of_the_complete, 1)}.")
+    s("No variant has a value only under the databases of April 2026, and where both have one the values are the same, so the complete databases add records and change none.")
     s("gnomAD and REVEL have the same variants with a value, and the same values, under both stacks.")
     s()
     s("## Where the missing records are")
     s()
     s(f"The extraction of April read gnomAD in batches of {BATCH} regions of `clinvar_2star_regions.bed`, a chromosome at a time, ignored the exit status of `tabix` and sent its messages to /dev/null.")
-    s(f"The {n(sa.variants_lost)} SpliceAI records that only the complete database holds lie in {int(sa.batches_with_a_tail)} stretches, each inside one batch and reaching its end: in each of those batches the first database has values up to a point and none after it, and the complete database has values after it.")
+    s(f"The {n(sa.variants_lost)} SpliceAI records that only the complete database holds lie in {int(sa.batches_with_a_tail)} stretches, each inside one batch and reaching its end: in each of those batches the database of April 2026 has values up to a point and none after it, and the complete database has values after it.")
     rest = int(pp.variants_lost - pp.in_the_tail_of_a_batch)
     edge = int(pp.indels_with_the_second_base_outside_the_regions)
     s(f"For PhyloP the same is true of {n(pp.in_the_tail_of_a_batch)} of the {n(pp.variants_lost)} records, in {int(pp.batches_with_a_tail)} batches.")
@@ -500,7 +501,7 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
     s("## The April set")
     s()
     scope = "April set"
-    s("| Measure | v37, first databases | v37, complete | v38, first databases | v38, complete |")
+    s("| Measure | v37, April 2026 | v37, complete | v38, April 2026 | v38, complete |")
     s("|:---|---:|---:|---:|---:|")
 
     def line(label: str, measure: str, fmt) -> None:
@@ -548,10 +549,10 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
     if len(october):
         s("## The October release")
         s()
-        s("The first design kept the 772,585 variants of the release that a gnomAD extract covered, and the complete databases need no such rule, so the release is scored whole (781,135 variants at two stars or better).")
+        s("The databases of April 2026 hold the regions of the April 2026 extract only, so a run on them scores the 772,585 variants of the October release that lie in those regions; the complete databases need no such rule, so the release is scored whole (781,135 variants at two stars or better).")
         s("The rows below set the two stacks side by side over the variants that both hold, and the last rows give the complete stack on the whole release.")
         s()
-        s("| Set | Measure | v37, first | v37, complete | v38, first | v38, complete |")
+        s("| Set | Measure | v37, April 2026 | v37, complete | v38, April 2026 | v38, complete |")
         s("|:---|:---|---:|---:|---:|---:|")
         for sc in october.set.drop_duplicates():
             for measure, label, fmt in (("variants", "Variants", n), ("same_direction", "Agreement in direction", n), ("opposite", "Opposite-direction calls", n)):
@@ -571,7 +572,7 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
     s()
     differ = shapes[shapes.differs]
     def knee(label: str, a_: float, b_: float) -> str:
-        return f"{label} is at {a_:g} on both stacks" if a_ == b_ else f"{label} is at {a_:g} on the first databases and at {b_:g} on the complete ones"
+        return f"{label} is at {a_:g} on both stacks" if a_ == b_ else f"{label} is at {a_:g} on the databases of April 2026 and at {b_:g} on the complete ones"
 
     k_bs1 = knee("BS1's", counts["knee_bs1_first"], counts["knee_bs1_complete"])
     k_bp7 = knee("the far boundary of BP7's", counts["knee_bp7_far_boundary_first"], counts["knee_bp7_far_boundary_complete"])
@@ -591,8 +592,8 @@ def report(pres: list[dict], cause_rows: list[dict], blocks: list[dict], ovn: li
     s()
     s("## What this file does not say")
     s()
-    s("The first databases were not rebuilt, and the run of the extraction that left them short was not repeated, so the cause above is read from the pattern of the records and not observed.")
-    s("The earlier numbered versions v1 to v36 were not repeated on the complete databases, and their results are on the first ones.")
+    s("The databases of April 2026 were not rebuilt, and the run of the extraction that left them short was not repeated, so the cause above is read from the pattern of the records and not observed.")
+    s("The numbered versions v1 to v36 were not repeated on the complete databases, and their results are on the databases of April 2026.")
     s("A comparison of two stacks says what the missing records changed in these runs, and it does not say which stack is closer to the truth, which only ClinVar's classifications can be compared with.")
     text = []
     for line in lines:  # one blank line between blocks, never two
