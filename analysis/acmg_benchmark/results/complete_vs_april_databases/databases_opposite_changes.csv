@@ -1,0 +1,7 @@
+version,gene,chrom,pos,ref,alt,clinvar,consequence,first_call,complete_call,first_criteria,complete_criteria,change,first_spliceai_max,complete_spliceai_max,first_phylop,complete_phylop
+v37,TMEM216,11,61392563,G,T,Pathogenic,upstream_gene_variant,VUS,Likely_benign,BS1,BS1&BP4,enters the opposite-direction calls,,0.07,,-0.668
+v37,VWF,12,6022888,G,A,Pathogenic,synonymous_variant,VUS,Likely_benign,,BP4&BP7,enters the opposite-direction calls,,0.00,,-0.105
+v37,GTPBP3,19,17339046,GGGGA,G,Pathogenic,intron_variant,VUS,Likely_benign,PM2_Supporting,PM2_Supporting&BP4&BP7,enters the opposite-direction calls,,0.00,,0.312
+v38,TMEM216,11,61392563,G,T,Pathogenic,upstream_gene_variant,VUS,Likely_benign,BS1,BS1&BP4,enters the opposite-direction calls,,0.07,,-0.668
+v38,VWF,12,6022888,G,A,Pathogenic,synonymous_variant,VUS,Likely_benign,,BP4&BP7,enters the opposite-direction calls,,0.00,,-0.105
+v38,GTPBP3,19,17339046,GGGGA,G,Pathogenic,intron_variant,VUS,Likely_benign,PM2_Supporting,PM2_Supporting&BP4&BP7,enters the opposite-direction calls,,0.00,,0.312

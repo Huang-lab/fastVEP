@@ -1,17 +1,17 @@
 set,uncalled_benign_variants_at_2e-2_or_more,reason_bs1_did_not_fire,variants,share
-April set,7899,"BS1 met, alone",2011,0.25458918850487405
-April set,7899,gnomAD low-complexity flag,1513,0.1915432333206735
-April set,7899,gnomAD segmental-duplication flag,1196,0.15141157108494746
-April set,7899,allele number below the floor,1010,0.1278642866185593
-April set,7899,gnomAD FILTER,859,0.10874794277756678
-April set,7899,"BS1 met, with other criteria",508,0.06431193822002786
-April set,7899,gene on the homology list,467,0.05912140777313584
-April set,7899,evaluated and not met (filtering allele frequency below the bar),335,0.04241043170021522
-new variants,238,gnomAD low-complexity flag,124,0.5210084033613446
-new variants,238,gnomAD FILTER,56,0.23529411764705882
-new variants,238,"BS1 met, alone",23,0.09663865546218488
-new variants,238,evaluated and not met (filtering allele frequency below the bar),17,0.07142857142857142
-new variants,238,"BS1 met, with other criteria",8,0.03361344537815126
-new variants,238,gnomAD segmental-duplication flag,5,0.02100840336134454
-new variants,238,gene on the homology list,4,0.01680672268907563
-new variants,238,allele number below the floor,1,0.004201680672268907
+April set,6700,gnomAD low-complexity flag,1417,0.21149253731343284
+April set,6700,gnomAD segmental-duplication flag,1141,0.17029850746268657
+April set,6700,"BS1 met, alone",1070,0.15970149253731344
+April set,6700,allele number below the floor,951,0.14194029850746268
+April set,6700,gnomAD FILTER,799,0.11925373134328358
+April set,6700,"BS1 met, with other criteria",536,0.08
+April set,6700,gene on the homology list,462,0.06895522388059701
+April set,6700,evaluated and not met (filtering allele frequency below the bar),324,0.04835820895522388
+new variants,275,gnomAD low-complexity flag,141,0.5127272727272727
+new variants,275,gnomAD FILTER,72,0.26181818181818184
+new variants,275,evaluated and not met (filtering allele frequency below the bar),22,0.08
+new variants,275,"BS1 met, alone",16,0.05818181818181818
+new variants,275,gnomAD segmental-duplication flag,9,0.03272727272727273
+new variants,275,"BS1 met, with other criteria",9,0.03272727272727273
+new variants,275,gene on the homology list,4,0.014545454545454545
+new variants,275,allele number below the floor,2,0.007272727272727273

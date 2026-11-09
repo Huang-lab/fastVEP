@@ -123,7 +123,7 @@ compatibility.
 
 | Inheritance | Threshold |
 |-------------|-----|
-| Not recessive-only (AD, both, unknown) | AF ≤ 0.00004 (set at v10 by a sweep under the 2015 table; nearly flat under the point system) |
+| Not recessive-only (AD, both, unknown) | AF ≤ 0.00004 (set at v10 by a sweep under the 2015 table; nearly flat under the default scheme) |
 | Recessive-only | AF ≤ 0.00007 (0.007%; swept for the ACMG manuscript: flat) |
 | Per-gene override | Wins over inheritance default |
 
@@ -211,6 +211,10 @@ no opposite-direction call on the ClinVar 2-star+ benchmark.
 
 ### Combination Rules (19 = 18 Richards 2015 + 1 SVI Sept 2020)
 
+The list below is the 2015 table with the SVI rule of September 2020.
+By default it decides the benign direction only: the pathogenic direction is scored on the point scale of Tavtigian et al. (2020), where 6 to 9 points is Likely Pathogenic and 10 or more is Pathogenic.
+The pathogenic rules below apply with `use_point_system = false`, which puts the 2015 table on both directions (`docs/ACMG.md`, "Which combining rules apply" and "Classification Combination Rules").
+
 **Benign:**
 1. BA1 standalone → Benign
 2. ≥2 BS → Benign
@@ -242,6 +246,7 @@ no opposite-direction call on the ClinVar 2-star+ benchmark.
 **independently**. The result is VUS-Conflicting only when **both**
 directions reach a definite call (P/LP and B/LB). Otherwise the
 directional call wins.
+The classifier has since added two guards and a veto to this rule: a call is withheld when the other direction holds Strong evidence without reaching a call, and a Likely Pathogenic call is held at VUS at a site that gnomAD rejected where the withheld frequency would have met BA1 or BS1 (`docs/ACMG.md`, "Conflicting Evidence").
 
 ### Trio Analysis
 
@@ -291,11 +296,11 @@ opposite-direction calls).
 |--------|-------|---------|
 | ClinVar (.osa) | `fastvep sa-build --source clinvar` from `clinvar.vcf.gz` | 4,438,232 (the release of 27 June 2026, as built for v37 and v38; v7 read 4,402,501) |
 | ClinVar gene index (.oga) | `--source clinvar_protein` from `variant_summary.txt.gz` | 15,665 genes (protein + canonical-splice indices) |
-| gnomAD v4.1 exomes (.osa, per-chrom) | tabix-extracted to ClinVar 2-star+ regions (24,350 merged ranges, `bedtools merge -d 5000`), `--source gnomad` per chrom (chr1..22, X, Y; there is no mitochondrial file) | 24 × .osa2 |
+| gnomAD v4.1 exomes (.osa2, per-chrom) | the benchmark reads databases built from the whole of the file (`sa_db_complete/`, with the SpliceAI and PhyloP databases below: 72 files whose checksums and build are in `results/complete_databases/`), `--source gnomad --chunk-bits 16` per chrom (chr1..22, X, Y; there is no mitochondrial file); the regional files of `sa_db/` (tabix-extracted to ClinVar 2-star+ regions, 24,350 merged ranges, `bedtools merge -d 5000`) are not read, and hold the same records for the benchmark's variants | 24 × .osa2 |
 | gnomAD v4.1 gene constraints (.oga) | `--source gnomad_gene` from `gnomad.v4.1.constraint_metrics.tsv` | 18,173 genes |
 | REVEL v1.3 (.osa, per-chrom) | per-chromosome split from `revel-v1.3_all_chromosomes.zip` to bound RAM | 24 × .osa |
-| **SpliceAI (.osa, per-chrom)** | distilled from gnomAD v4.1 INFO field `spliceai_ds_max` (gnomAD v4 already includes SpliceAI scores; no separate download) | 24 × .osa |
-| **PhyloP (.osa, per-chrom)** | distilled from gnomAD v4.1 INFO field `phylop` (Zoonomia 241-mammal score; gnomAD v4 already includes it) | 24 × .osa |
+| **SpliceAI (.osa2, per-chrom)** | distilled from gnomAD v4.1 INFO field `spliceai_ds_max` (gnomAD v4 already includes SpliceAI scores; no separate download) over the whole file (`scripts/extract_gnomad_scores.py`, `--source spliceai --chunk-bits 16`); the `.osa` files of `sa_db/` are not read (`results/complete_databases/README.md`) | 24 × .osa2 |
+| **PhyloP (.osa2, per-chrom)** | distilled from gnomAD v4.1 INFO field `phylop` (Zoonomia 241-mammal score; gnomAD v4 already includes it) over the whole file as above; the `.osa` files of `sa_db/` are not read | 24 × .osa2 |
 | **ClinGen Gene-Disease Validity (.oga)** | `--source omim` from `data/benchmark/sa_sources/clingen_gdv.tsv` (ClinGen public CSV converted to genemap2 layout, **every** classification including Limited/Disputed/Refuted/No Known Disease Relationship, so the gate can tell "curated and found wanting" from "not curated"; keeping only Definitive/Strong/Moderate is what run v10 measured as costing PVS1 on 1,497 truth-pathogenic nulls). **Preferred over OMIM `genemap2.txt`** per ClinGen SVI / Abou Tayoun 2018: ClinGen uses a multi-curator scored rubric that classifies rather than omits weak relationships. Real OMIM `genemap2.txt` is also accepted (registration-gated at omim.org); both populate the same `omim` json_key. | 2,924 genes as built for v27 (a fresh download on 2026-08-31 gives 3,030) |
 | **RepeatMasker (.osi)** | `--source custom_bed --name repeatmasker` from UCSC `rmsk.txt.gz` via `repeatmasker_to_bed.py`. The `--name` must contain `repeat`: the classifier finds the track by key substring, so any other name loads and is ignored. Drives BP3. | 5.3 M intervals |
 

@@ -154,8 +154,8 @@ Its output (`vep_baseline.csv` and the files beside it) is in `benchmarks/result
 `fastvep annotate --acmg --pick`, then scores per-class concordance
 against the ClinVar review-panel call.
 ClinVar's classifications are a reference and not ground truth.
-The classifier of this release is v38 ([`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md), Section 3.8 of the manuscript in [`manuscript/acmg/`](../manuscript/acmg/)).
-Of the 673,278 variants of the April 2026 ClinVar release that it scores it agrees exactly with 426,022 (63.3 %), in direction with 524,380 (77.9 %),
+The classifier of this release is v38, the latest version ([`analysis/acmg_benchmark/RUN_VERSIONS.md`](../analysis/acmg_benchmark/RUN_VERSIONS.md); the manuscript in [`manuscript/acmg/`](../manuscript/acmg/) describes it, and its Section 3.8 says what it changed from v37).
+Of the 673,660 variants of the April 2026 ClinVar release (673,278 of them have a call) it agrees exactly with 426,022 (63.2 %), in direction with 524,380 (77.8 %),
 and calls 48 in the opposite direction (0.007 %): 24 ClinVar pathogenic or likely pathogenic variants called likely benign or benign, and 24 the other way.
 The scored matrix, the firing counts and the provenance of every run of the manuscript are in
 [`analysis/acmg_benchmark/results/v37_manuscript/`](../analysis/acmg_benchmark/results/v37_manuscript/).

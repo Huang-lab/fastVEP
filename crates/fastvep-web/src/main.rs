@@ -1,11 +1,13 @@
+use clap::builder::BoolishValueParser;
 use clap::Parser;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use fastvep_web::build_router;
 use fastvep_web::context::AnnotationContext;
-use fastvep_web::handlers::{AppState, SharedState};
+use fastvep_web::genomes::default_genome_name;
+use fastvep_web::handlers::{AppState, ServerConfig, SharedState};
+use fastvep_web::limits::Limits;
 
 #[derive(Parser)]
 #[command(name = "fastvep-web")]
@@ -32,8 +34,31 @@ struct Cli {
     sa_dir: Option<String>,
 
     /// Directory containing genome data (subdirs with GFF3 + FASTA per organism)
+    ///
+    /// Every genome in it can be named in the `genome` field of
+    /// `POST /api/annotate`. Each is loaded the first time it is asked for and
+    /// then kept, from its own GFF3, FASTA and `sa/` directory; nothing is
+    /// shared with the gene model given by `--gff3`, and no request changes the
+    /// answers of another.
     #[arg(long, env = "FASTVEP_DATA_DIR")]
     data_dir: Option<String>,
+
+    /// Load every genome of `--data-dir` in the background at startup, instead
+    /// of on its first request.
+    ///
+    /// Off by default: a data directory can hold more genomes than a small
+    /// machine wants resident. With it on the server answers from the `--gff3`
+    /// genome at once and the rest become available as the background load
+    /// reaches them, so no visitor waits for a genome to load. A genome that
+    /// fails to load is logged and fails again, with the reason, on its first
+    /// request.
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new(),
+        env = "FASTVEP_PRELOAD_GENOMES"
+    )]
+    preload_genomes: bool,
 
     /// Upstream/downstream distance in bp
     #[arg(long, default_value_t = 5000)]
@@ -43,9 +68,37 @@ struct Cli {
     #[arg(long, default_value_t = 10_485_760)]
     max_body_size: usize,
 
-    /// Maximum concurrent annotation requests
+    /// Maximum concurrent requests to each route of the server: every route has a limit of its
+    /// own, so a busy `/api/annotate` does not hold up `/api/status`. Beyond it a request waits;
+    /// see `--max-parallel` for how many annotations run at once.
     #[arg(long, default_value_t = 64)]
     max_concurrent: usize,
+
+    /// Annotations that run at once, for each of which a request holds one thread and the text of its
+    /// answer. Default: the number of cores. A request that finds every place taken waits
+    /// `--queue-timeout-seconds` for one and is then turned away with 503 and a `Retry-After`.
+    #[arg(long, env = "FASTVEP_MAX_PARALLEL")]
+    max_parallel: Option<usize>,
+
+    /// Seconds a request waits for a place to annotate before it is refused with 503.
+    #[arg(long, default_value_t = 30, env = "FASTVEP_QUEUE_TIMEOUT_SECONDS")]
+    queue_timeout_seconds: u64,
+
+    /// Largest JSON answer one request may produce, in bytes. The answer is built in memory, a
+    /// batch of variants at a time, and a request that passes this is refused with 413 at the
+    /// batch that does. On a 16 GB host the default of 128 MiB keeps a few of them in flight beside
+    /// the genomes; see the limits section of docs/API.md for what a variant costs.
+    #[arg(
+        long,
+        default_value_t = 134_217_728,
+        env = "FASTVEP_MAX_RESPONSE_BYTES"
+    )]
+    max_response_bytes: usize,
+
+    /// Longest one annotation may run, in seconds, before it is refused with 413. Keep it below
+    /// the read timeout of whatever proxy is in front.
+    #[arg(long, default_value_t = 90, env = "FASTVEP_MAX_REQUEST_SECONDS")]
+    max_request_seconds: u64,
 
     /// Path to a file for persistent statistics tracking
     #[arg(long, default_value = "stats.json", env = "FASTVEP_STATS_FILE")]
@@ -61,8 +114,33 @@ struct Cli {
     /// single-user desktop run, where the browser UI's own genome switching
     /// needs it; leave it off for anything several people share, and the gene
     /// model becomes a property of how the server was started.
-    #[arg(long, default_value_t = false, env = "FASTVEP_ALLOW_MODEL_REPLACEMENT")]
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new(),
+        env = "FASTVEP_ALLOW_MODEL_REPLACEMENT"
+    )]
     allow_model_replacement: bool,
+
+    /// Answer `"acmg": true` for a genome whose database directory lacks part of the ACMG
+    /// reference stack.
+    ///
+    /// Off by default. The classifier reads nine supplementary sources
+    /// (docs/ACMG_SETUP.md); without one, the criteria that read it report
+    /// `evaluated: false` and the result is a classification that rests on less evidence than
+    /// it appears to, almost always VUS. A server that holds ClinVar and dbSNP only would
+    /// answer every request for ACMG that way, and nothing in a VUS says it was not given the
+    /// evidence. So by default such a request is refused with HTTP 422 and the list of what is
+    /// missing, and `GET /api/status` and `GET /api/genomes` say which genomes can be
+    /// classified. Turn this on for a run where an incomplete stack is deliberate: every
+    /// response then carries `acmg_stack` with the sources that were missing.
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        value_parser = BoolishValueParser::new(),
+        env = "FASTVEP_ACMG_ALLOW_PARTIAL"
+    )]
+    acmg_allow_partial: bool,
 }
 
 #[tokio::main]
@@ -110,6 +188,13 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    if cli.acmg_allow_partial {
+        tracing::warn!(
+            "--acmg-allow-partial is set: ACMG classification is answered for genomes whose \
+             database directory lacks part of the reference stack. Each response says which \
+             sources were missing."
+        );
+    }
     if cli.allow_model_replacement {
         tracing::warn!(
             "--allow-model-replacement is set: any client may replace the gene model for every \
@@ -117,16 +202,53 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let state: AppState = Arc::new(SharedState {
-        ctx: RwLock::new(ctx),
-        data_dir,
-        sa_dir,
-        stats_file: Some(cli.stats_file),
-        total_variants: AtomicU64::new(initial_variants),
-        total_genomes: AtomicU64::new(initial_genomes),
-        allow_model_replacement: cli.allow_model_replacement,
-        gene_model_generation: AtomicU64::new(0),
-    });
+    let default_limits = Limits::default();
+    tracing::info!(
+        "Limits: {} annotations at once, answers up to {} MiB, {} s each, {} s in the queue",
+        cli.max_parallel.unwrap_or(default_limits.max_parallel),
+        cli.max_response_bytes / (1024 * 1024),
+        cli.max_request_seconds,
+        cli.queue_timeout_seconds
+    );
+
+    let default_genome = default_genome_name(cli.gff3.as_deref(), data_dir.as_deref());
+    tracing::info!("Default genome: {default_genome}");
+
+    let state: AppState = Arc::new(
+        SharedState::new(
+            ctx,
+            default_genome,
+            ServerConfig {
+                data_dir,
+                sa_dir,
+                stats_file: Some(cli.stats_file),
+                distance: cli.distance,
+                allow_model_replacement: cli.allow_model_replacement,
+                acmg_allow_partial: cli.acmg_allow_partial,
+                limits: Limits {
+                    max_body_bytes: cli.max_body_size,
+                    max_response_bytes: cli.max_response_bytes,
+                    max_request_time: std::time::Duration::from_secs(cli.max_request_seconds),
+                    max_parallel: cli
+                        .max_parallel
+                        .unwrap_or(default_limits.max_parallel)
+                        .max(1),
+                    queue_timeout: std::time::Duration::from_secs(cli.queue_timeout_seconds),
+                    batch_variants: default_limits.batch_variants,
+                    batch_rows: default_limits.batch_rows,
+                },
+            },
+        )
+        .with_stats(initial_variants, initial_genomes),
+    );
+
+    if cli.preload_genomes {
+        let preloading = Arc::clone(&state);
+        tokio::spawn(async move {
+            let loaded = preloading.preload_genomes().await;
+            tracing::info!("Preloaded {loaded} more genomes");
+        });
+    }
 
     let app = build_router(state, cli.max_body_size, cli.max_concurrent);
 
@@ -146,4 +268,44 @@ async fn shutdown_signal() {
         .await
         .expect("Failed to listen for ctrl-c");
     tracing::info!("Shutdown signal received, draining connections...");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Both are plain switches. They read their environment variable through
+    // `BoolishValueParser` so that `FASTVEP_PRELOAD_GENOMES=1`, which is what
+    // anyone writes in a systemd unit, is accepted: clap's default for a bool
+    // takes only `true` and `false`, and refuses `1` at startup with
+    // "invalid value '1'".
+    #[test]
+    fn the_switches_are_flags_and_default_to_off() {
+        let off = Cli::try_parse_from(["fastvep-web"]).unwrap();
+        assert!(!off.preload_genomes && !off.allow_model_replacement && !off.acmg_allow_partial);
+
+        let on = Cli::try_parse_from([
+            "fastvep-web",
+            "--preload-genomes",
+            "--allow-model-replacement",
+            "--acmg-allow-partial",
+        ])
+        .unwrap();
+        assert!(on.preload_genomes && on.allow_model_replacement && on.acmg_allow_partial);
+    }
+
+    #[test]
+    fn the_value_parser_accepts_the_usual_spellings_of_true_and_false() {
+        use clap::builder::TypedValueParser;
+        let parser = BoolishValueParser::new();
+        let cmd = clap::Command::new("x");
+        for yes in ["1", "true", "yes", "on", "y", "t"] {
+            let v = parser.parse_ref(&cmd, None, std::ffi::OsStr::new(yes));
+            assert!(v.unwrap(), "{yes}");
+        }
+        for no in ["0", "false", "no", "off", "n", "f"] {
+            let v = parser.parse_ref(&cmd, None, std::ffi::OsStr::new(no));
+            assert!(!v.unwrap(), "{no}");
+        }
+    }
 }

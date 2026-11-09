@@ -1,0 +1,5 @@
+reason,variants,genes,variants_in_constrained_genes
+no route to loss of function as the mechanism,4696,575,0
+every ClinGen curation of the gene is weak (validity gate),463,38,74
+a route to loss of function is met but PVS1 is not (other),20,8,0
+the curated mechanism is gain of function or dominant negative (mechanism gate),5,4,2

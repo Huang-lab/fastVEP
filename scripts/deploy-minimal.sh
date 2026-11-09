@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================================
-# fastVEP Deployment: MINIMAL (~10GB data)
+# fastVEP Deployment: MINIMAL (~5GB data)
 # ============================================================================
 # Best for: Demos, testing, budget-conscious deployments
-# Server:   Hetzner CCX23 (4 vCPU, 16GB RAM, 80GB SSD) — $30/month
+# Server:   Hetzner CCX23 (4 vCPU, 16GB RAM, 160GB SSD) - $30/month
 # Genomes:  Human GRCh38 only
 # SA:       ClinVar only (free, tiny, most clinically useful)
 # ============================================================================
@@ -14,7 +14,7 @@ DATA_DIR="/opt/fastvep/data"
 BIN_DIR="/opt/fastvep/bin"
 
 echo "=== fastVEP Minimal Deployment ==="
-echo "Estimated disk usage: ~10GB"
+echo "Estimated disk usage: ~5GB"
 echo ""
 
 # --- 1. Setup directories and copy binaries ---
@@ -49,7 +49,8 @@ fi
 # --- 4. Build ClinVar SA database ---
 echo "[3/4] Building ClinVar database (~40MB)..."
 cd "$DATA_DIR/hg38_ensembl_115/sa"
-if [ ! -f clinvar.osa ]; then
+# sa-build writes clinvar.osa2 (clinvar.osa in the v1 format); either one means it is built.
+if [ ! -s clinvar.osa2 ] && [ ! -s clinvar.osa ]; then
     wget -q --show-progress https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
     "$BIN_DIR/fastvep" sa-build --source clinvar -i clinvar.vcf.gz -o clinvar --assembly GRCh38
     rm -f clinvar.vcf.gz

@@ -150,6 +150,18 @@ impl IndexedTranscriptProvider {
         self.by_chrom.values().map(|v| v.len()).sum()
     }
 
+    /// The contigs that have at least one transcript, as the gene model names them.
+    pub fn chromosomes(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self
+            .by_chrom
+            .iter()
+            .filter(|(_, transcripts)| !transcripts.is_empty())
+            .map(|(name, _)| name.as_ref())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
     /// Resolve a query chromosome to the stored key, falling back to chr↔bare
     /// and mitochondrial aliases. Lets a `chr17` VCF match a cache built with
     /// `17` (and vice versa) instead of silently returning no transcripts.

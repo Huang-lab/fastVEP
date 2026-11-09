@@ -12,7 +12,7 @@ PM5,pathogenic,Moderate,from the variant,ClinVar protein index,,16835,16821,385
 PM6,pathogenic,Moderate,needs genotypes of a proband,"assumed de novo, parentage unconfirmed",a trio VCF (--proband --mother --father),16835,0,0
 PP1,pathogenic,Supporting,needs case-level data,co-segregation in a family,not read,16835,0,0
 PP2,pathogenic,Supporting,from the variant,gene constraint; ClinGen gene-disease validity,,16835,16054,1685
-PP3,pathogenic,Supporting,from the variant,REVEL; SpliceAI,,16835,14217,1738
+PP3,pathogenic,Supporting,from the variant,REVEL; SpliceAI,,16835,14802,1773
 PP4,pathogenic,Supporting,needs case-level data,a phenotype specific to the gene's disease,not read,16835,0,0
 PP5,pathogenic,Supporting,off by default,a reputable source reports the variant as pathogenic,use_pp5_bp6 in the configuration,0,0,0
 BA1,benign,Standalone,from the variant,gnomAD,,16835,12276,1450
@@ -23,7 +23,7 @@ BS4,benign,Strong,needs case-level data,lack of segregation in a family,not read
 BP1,benign,Supporting,from the variant,gene constraint; ClinVar protein index,,16835,16773,154
 BP2,benign,Supporting,needs genotypes of a proband,in trans with a pathogenic variant for a dominant disorder or in cis with one,the proband's genotype and its other variants in the gene,16835,0,0
 BP3,benign,Supporting,from the variant,consequence; RepeatMasker,,16835,16835,28
-BP4,benign,Supporting,from the variant,REVEL; SpliceAI,,16835,14217,8968
+BP4,benign,Supporting,from the variant,REVEL; SpliceAI,,16835,14802,9469
 BP5,benign,Supporting,needs case-level data,an alternative molecular basis for the disease in the patient,not read,16835,0,0
 BP6,benign,Supporting,off by default,a reputable source reports the variant as benign,use_pp5_bp6 in the configuration,0,0,0
-BP7,benign,Supporting,from the variant,consequence; SpliceAI; PhyloP; exon position,,16835,15769,3362
+BP7,benign,Supporting,from the variant,consequence; SpliceAI; PhyloP; exon position,,16835,16154,3696

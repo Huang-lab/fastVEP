@@ -243,6 +243,9 @@ pub fn run_oga_build(source: &str, input: &str, output: &str, assembly: &str) ->
     };
 
     eprintln!("Parsed {} records from {}", records.len(), source);
+    if records.is_empty() {
+        crate::pipeline::sa_build::refuse_empty_build(source, input, assembly, &[])?;
+    }
 
     let header = GeneHeader {
         schema_version: SCHEMA_VERSION,

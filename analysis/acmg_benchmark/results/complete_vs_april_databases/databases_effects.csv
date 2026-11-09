@@ -1,0 +1,680 @@
+group,run_first,run_complete,knob,value,metric,effect_first,effect_complete,effect_delta,changed_sign,appeared_or_vanished,relative_change,changed_by_more_than_20_percent,small_number
+sweep,v37_sw_pm2ad_0,v38_sw_pm2ad_0,pm2_ad_af_threshold,0,same_direction,498,500,2,False,False,0.004016064257028112,False,False
+sweep,v37_sw_pm2ad_0,v38_sw_pm2ad_0,pm2_ad_af_threshold,0,same_pathogenic,-460,-459,1,False,False,0.002173913043478261,False,False
+sweep,v37_sw_pm2ad_0,v38_sw_pm2ad_0,pm2_ad_af_threshold,0,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0,v38_sw_pm2ad_0,pm2_ad_af_threshold,0,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0,v38_sw_pm2ad_0,pm2_ad_af_threshold,0,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0,v38_sw_pm2ad_0,pm2_ad_af_threshold,0,opposite,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0,v38_sw_pm2ad_0,pm2_ad_af_threshold,0,exact,526,526,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_1e-06,v38_sw_pm2ad_1e-06,pm2_ad_af_threshold,1e-06,same_direction,416,416,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_1e-06,v38_sw_pm2ad_1e-06,pm2_ad_af_threshold,1e-06,same_pathogenic,-144,-144,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_1e-06,v38_sw_pm2ad_1e-06,pm2_ad_af_threshold,1e-06,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_1e-06,v38_sw_pm2ad_1e-06,pm2_ad_af_threshold,1e-06,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_1e-06,v38_sw_pm2ad_1e-06,pm2_ad_af_threshold,1e-06,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_1e-06,v38_sw_pm2ad_1e-06,pm2_ad_af_threshold,1e-06,opposite,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_1e-06,v38_sw_pm2ad_1e-06,pm2_ad_af_threshold,1e-06,exact,430,429,-1,False,False,0.002325581395348837,False,False
+sweep,v37_sw_pm2ad_5e-06,v38_sw_pm2ad_5e-06,pm2_ad_af_threshold,5e-06,same_direction,222,222,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_5e-06,v38_sw_pm2ad_5e-06,pm2_ad_af_threshold,5e-06,same_pathogenic,-51,-51,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_5e-06,v38_sw_pm2ad_5e-06,pm2_ad_af_threshold,5e-06,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_5e-06,v38_sw_pm2ad_5e-06,pm2_ad_af_threshold,5e-06,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_5e-06,v38_sw_pm2ad_5e-06,pm2_ad_af_threshold,5e-06,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_5e-06,v38_sw_pm2ad_5e-06,pm2_ad_af_threshold,5e-06,opposite,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_5e-06,v38_sw_pm2ad_5e-06,pm2_ad_af_threshold,5e-06,exact,233,233,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_1e-05,v38_sw_pm2ad_1e-05,pm2_ad_af_threshold,1e-05,same_direction,105,105,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_1e-05,v38_sw_pm2ad_1e-05,pm2_ad_af_threshold,1e-05,same_pathogenic,-25,-25,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_1e-05,v38_sw_pm2ad_1e-05,pm2_ad_af_threshold,1e-05,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_1e-05,v38_sw_pm2ad_1e-05,pm2_ad_af_threshold,1e-05,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_1e-05,v38_sw_pm2ad_1e-05,pm2_ad_af_threshold,1e-05,false_pathogenic,-2,-2,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_1e-05,v38_sw_pm2ad_1e-05,pm2_ad_af_threshold,1e-05,opposite,-2,-2,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_1e-05,v38_sw_pm2ad_1e-05,pm2_ad_af_threshold,1e-05,exact,110,110,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_2e-05,v38_sw_pm2ad_2e-05,pm2_ad_af_threshold,2e-05,same_direction,40,40,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_2e-05,v38_sw_pm2ad_2e-05,pm2_ad_af_threshold,2e-05,same_pathogenic,-9,-9,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_2e-05,v38_sw_pm2ad_2e-05,pm2_ad_af_threshold,2e-05,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_2e-05,v38_sw_pm2ad_2e-05,pm2_ad_af_threshold,2e-05,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_2e-05,v38_sw_pm2ad_2e-05,pm2_ad_af_threshold,2e-05,false_pathogenic,-1,-1,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_2e-05,v38_sw_pm2ad_2e-05,pm2_ad_af_threshold,2e-05,opposite,-1,-1,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_2e-05,v38_sw_pm2ad_2e-05,pm2_ad_af_threshold,2e-05,exact,42,42,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_0.0001,v38_sw_pm2ad_0.0001,pm2_ad_af_threshold,0.0001,same_direction,-10,-10,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_0.0001,v38_sw_pm2ad_0.0001,pm2_ad_af_threshold,0.0001,same_pathogenic,5,5,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0001,v38_sw_pm2ad_0.0001,pm2_ad_af_threshold,0.0001,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0001,v38_sw_pm2ad_0.0001,pm2_ad_af_threshold,0.0001,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0001,v38_sw_pm2ad_0.0001,pm2_ad_af_threshold,0.0001,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0001,v38_sw_pm2ad_0.0001,pm2_ad_af_threshold,0.0001,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0001,v38_sw_pm2ad_0.0001,pm2_ad_af_threshold,0.0001,exact,-10,-10,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_0.0002,v38_sw_pm2ad_0.0002,pm2_ad_af_threshold,0.0002,same_direction,-12,-12,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_0.0002,v38_sw_pm2ad_0.0002,pm2_ad_af_threshold,0.0002,same_pathogenic,10,10,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_0.0002,v38_sw_pm2ad_0.0002,pm2_ad_af_threshold,0.0002,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0002,v38_sw_pm2ad_0.0002,pm2_ad_af_threshold,0.0002,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0002,v38_sw_pm2ad_0.0002,pm2_ad_af_threshold,0.0002,false_pathogenic,1,1,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0002,v38_sw_pm2ad_0.0002,pm2_ad_af_threshold,0.0002,opposite,1,1,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0002,v38_sw_pm2ad_0.0002,pm2_ad_af_threshold,0.0002,exact,-17,-17,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_0.0005,v38_sw_pm2ad_0.0005,pm2_ad_af_threshold,0.0005,same_direction,-13,-13,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_0.0005,v38_sw_pm2ad_0.0005,pm2_ad_af_threshold,0.0005,same_pathogenic,10,10,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ad_0.0005,v38_sw_pm2ad_0.0005,pm2_ad_af_threshold,0.0005,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0005,v38_sw_pm2ad_0.0005,pm2_ad_af_threshold,0.0005,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0005,v38_sw_pm2ad_0.0005,pm2_ad_af_threshold,0.0005,false_pathogenic,1,1,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0005,v38_sw_pm2ad_0.0005,pm2_ad_af_threshold,0.0005,opposite,1,1,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ad_0.0005,v38_sw_pm2ad_0.0005,pm2_ad_af_threshold,0.0005,exact,-18,-18,0,False,False,0.0,False,False
+sweep,v37_sw_bs1_0.0002,v38_sw_bs1_0.0002,bs1_af_threshold,0.0002,same_direction,-1700,-1077,623,False,False,0.3664705882352941,True,False
+sweep,v37_sw_bs1_0.0002,v38_sw_bs1_0.0002,bs1_af_threshold,0.0002,same_pathogenic,-493,-493,0,False,False,0.0,False,False
+sweep,v37_sw_bs1_0.0002,v38_sw_bs1_0.0002,bs1_af_threshold,0.0002,same_benign,13608,14378,770,False,False,0.056584362139917695,False,False
+sweep,v37_sw_bs1_0.0002,v38_sw_bs1_0.0002,bs1_af_threshold,0.0002,false_benign,79,83,4,False,False,0.05063291139240506,False,False
+sweep,v37_sw_bs1_0.0002,v38_sw_bs1_0.0002,bs1_af_threshold,0.0002,false_pathogenic,-9,-9,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.0002,v38_sw_bs1_0.0002,bs1_af_threshold,0.0002,opposite,70,74,4,False,False,0.05714285714285714,False,False
+sweep,v37_sw_bs1_0.0002,v38_sw_bs1_0.0002,bs1_af_threshold,0.0002,exact,-8520,-8325,195,False,False,0.022887323943661973,False,False
+sweep,v37_sw_bs1_0.0005,v38_sw_bs1_0.0005,bs1_af_threshold,0.0005,same_direction,4096,4560,464,False,False,0.11328125,False,False
+sweep,v37_sw_bs1_0.0005,v38_sw_bs1_0.0005,bs1_af_threshold,0.0005,same_pathogenic,-165,-165,0,False,False,0.0,False,False
+sweep,v37_sw_bs1_0.0005,v38_sw_bs1_0.0005,bs1_af_threshold,0.0005,same_benign,10306,10836,530,False,False,0.05142635358043858,False,False
+sweep,v37_sw_bs1_0.0005,v38_sw_bs1_0.0005,bs1_af_threshold,0.0005,false_benign,37,39,2,False,False,0.05405405405405406,False,False
+sweep,v37_sw_bs1_0.0005,v38_sw_bs1_0.0005,bs1_af_threshold,0.0005,false_pathogenic,-8,-8,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.0005,v38_sw_bs1_0.0005,bs1_af_threshold,0.0005,opposite,29,31,2,False,False,0.06896551724137931,False,False
+sweep,v37_sw_bs1_0.0005,v38_sw_bs1_0.0005,bs1_af_threshold,0.0005,exact,-1876,-1767,109,False,False,0.05810234541577825,False,False
+sweep,v37_sw_bs1_0.001,v38_sw_bs1_0.001,bs1_af_threshold,0.001,same_direction,5452,5808,356,False,False,0.0652971386647102,False,False
+sweep,v37_sw_bs1_0.001,v38_sw_bs1_0.001,bs1_af_threshold,0.001,same_pathogenic,-64,-64,0,False,False,0.0,False,False
+sweep,v37_sw_bs1_0.001,v38_sw_bs1_0.001,bs1_af_threshold,0.001,same_benign,7735,8124,389,False,False,0.050290885585003234,False,False
+sweep,v37_sw_bs1_0.001,v38_sw_bs1_0.001,bs1_af_threshold,0.001,false_benign,11,11,0,False,False,0.0,False,False
+sweep,v37_sw_bs1_0.001,v38_sw_bs1_0.001,bs1_af_threshold,0.001,false_pathogenic,-5,-5,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.001,v38_sw_bs1_0.001,bs1_af_threshold,0.001,opposite,6,6,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.001,v38_sw_bs1_0.001,bs1_af_threshold,0.001,exact,666,745,79,False,False,0.11861861861861862,False,False
+sweep,v37_sw_bs1_0.002,v38_sw_bs1_0.002,bs1_af_threshold,0.002,same_direction,4327,4534,207,False,False,0.04783914952623065,False,False
+sweep,v37_sw_bs1_0.002,v38_sw_bs1_0.002,bs1_af_threshold,0.002,same_pathogenic,-21,-21,0,False,False,0.0,False,False
+sweep,v37_sw_bs1_0.002,v38_sw_bs1_0.002,bs1_af_threshold,0.002,same_benign,4925,5145,220,False,False,0.04467005076142132,False,False
+sweep,v37_sw_bs1_0.002,v38_sw_bs1_0.002,bs1_af_threshold,0.002,false_benign,6,6,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.002,v38_sw_bs1_0.002,bs1_af_threshold,0.002,false_pathogenic,-2,-2,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.002,v38_sw_bs1_0.002,bs1_af_threshold,0.002,opposite,4,4,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.002,v38_sw_bs1_0.002,bs1_af_threshold,0.002,exact,1110,1141,31,False,False,0.027927927927927927,False,False
+sweep,v37_sw_bs1_0.01,v38_sw_bs1_0.01,bs1_af_threshold,0.01,same_direction,-4325,-4506,-181,False,False,0.04184971098265896,False,False
+sweep,v37_sw_bs1_0.01,v38_sw_bs1_0.01,bs1_af_threshold,0.01,same_pathogenic,6,6,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.01,v38_sw_bs1_0.01,bs1_af_threshold,0.01,same_benign,-4493,-4681,-188,False,False,0.04184286668150456,False,False
+sweep,v37_sw_bs1_0.01,v38_sw_bs1_0.01,bs1_af_threshold,0.01,false_benign,-2,-3,-1,False,False,0.5,True,True
+sweep,v37_sw_bs1_0.01,v38_sw_bs1_0.01,bs1_af_threshold,0.01,false_pathogenic,2,2,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.01,v38_sw_bs1_0.01,bs1_af_threshold,0.01,opposite,0,-1,-1,False,True,,True,True
+sweep,v37_sw_bs1_0.01,v38_sw_bs1_0.01,bs1_af_threshold,0.01,exact,-1832,-1848,-16,False,False,0.008733624454148471,False,False
+sweep,v37_sw_bs1_0.02,v38_sw_bs1_0.02,bs1_af_threshold,0.02,same_direction,-9677,-10101,-424,False,False,0.04381523199338638,False,False
+sweep,v37_sw_bs1_0.02,v38_sw_bs1_0.02,bs1_af_threshold,0.02,same_pathogenic,7,7,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.02,v38_sw_bs1_0.02,bs1_af_threshold,0.02,same_benign,-9910,-10343,-433,False,False,0.04369323915237134,False,False
+sweep,v37_sw_bs1_0.02,v38_sw_bs1_0.02,bs1_af_threshold,0.02,false_benign,-2,-3,-1,False,False,0.5,True,True
+sweep,v37_sw_bs1_0.02,v38_sw_bs1_0.02,bs1_af_threshold,0.02,false_pathogenic,6,6,0,False,False,0.0,False,True
+sweep,v37_sw_bs1_0.02,v38_sw_bs1_0.02,bs1_af_threshold,0.02,opposite,4,3,-1,False,False,0.25,True,True
+sweep,v37_sw_bs1_0.02,v38_sw_bs1_0.02,bs1_af_threshold,0.02,exact,-4620,-4673,-53,False,False,0.011471861471861472,False,False
+sweep,v37_sw_bs2hom_1e-06,v38_sw_bs2hom_1e-06,bs2_hom_prevalence_threshold,1e-06,same_direction,8325,6707,-1618,False,False,0.19435435435435436,False,False
+sweep,v37_sw_bs2hom_1e-06,v38_sw_bs2hom_1e-06,bs2_hom_prevalence_threshold,1e-06,same_pathogenic,-14,-14,0,False,False,0.0,False,False
+sweep,v37_sw_bs2hom_1e-06,v38_sw_bs2hom_1e-06,bs2_hom_prevalence_threshold,1e-06,same_benign,9664,8042,-1622,False,False,0.16783940397350994,False,False
+sweep,v37_sw_bs2hom_1e-06,v38_sw_bs2hom_1e-06,bs2_hom_prevalence_threshold,1e-06,false_benign,27,27,0,False,False,0.0,False,False
+sweep,v37_sw_bs2hom_1e-06,v38_sw_bs2hom_1e-06,bs2_hom_prevalence_threshold,1e-06,false_pathogenic,-5,-5,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_1e-06,v38_sw_bs2hom_1e-06,bs2_hom_prevalence_threshold,1e-06,opposite,22,22,0,False,False,0.0,False,False
+sweep,v37_sw_bs2hom_1e-06,v38_sw_bs2hom_1e-06,bs2_hom_prevalence_threshold,1e-06,exact,17285,16956,-329,False,False,0.01903384437373445,False,False
+sweep,v37_sw_bs2hom_1e-05,v38_sw_bs2hom_1e-05,bs2_hom_prevalence_threshold,1e-05,same_direction,5025,3874,-1151,False,False,0.2290547263681592,True,False
+sweep,v37_sw_bs2hom_1e-05,v38_sw_bs2hom_1e-05,bs2_hom_prevalence_threshold,1e-05,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_1e-05,v38_sw_bs2hom_1e-05,bs2_hom_prevalence_threshold,1e-05,same_benign,5284,4127,-1157,False,False,0.21896290688872067,True,False
+sweep,v37_sw_bs2hom_1e-05,v38_sw_bs2hom_1e-05,bs2_hom_prevalence_threshold,1e-05,false_benign,18,18,0,False,False,0.0,False,False
+sweep,v37_sw_bs2hom_1e-05,v38_sw_bs2hom_1e-05,bs2_hom_prevalence_threshold,1e-05,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_1e-05,v38_sw_bs2hom_1e-05,bs2_hom_prevalence_threshold,1e-05,opposite,15,15,0,False,False,0.0,False,False
+sweep,v37_sw_bs2hom_1e-05,v38_sw_bs2hom_1e-05,bs2_hom_prevalence_threshold,1e-05,exact,11311,11057,-254,False,False,0.022456016267350366,False,False
+sweep,v37_sw_bs2hom_0.0001,v38_sw_bs2hom_0.0001,bs2_hom_prevalence_threshold,0.0001,same_direction,1187,902,-285,False,False,0.2401010951979781,True,False
+sweep,v37_sw_bs2hom_0.0001,v38_sw_bs2hom_0.0001,bs2_hom_prevalence_threshold,0.0001,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_0.0001,v38_sw_bs2hom_0.0001,bs2_hom_prevalence_threshold,0.0001,same_benign,1203,917,-286,False,False,0.23773898586866168,True,False
+sweep,v37_sw_bs2hom_0.0001,v38_sw_bs2hom_0.0001,bs2_hom_prevalence_threshold,0.0001,false_benign,3,3,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_0.0001,v38_sw_bs2hom_0.0001,bs2_hom_prevalence_threshold,0.0001,false_pathogenic,-1,-1,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_0.0001,v38_sw_bs2hom_0.0001,bs2_hom_prevalence_threshold,0.0001,opposite,2,2,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_0.0001,v38_sw_bs2hom_0.0001,bs2_hom_prevalence_threshold,0.0001,exact,2322,2226,-96,False,False,0.041343669250646,False,False
+sweep,v37_sw_bs2hom_0.01,v38_sw_bs2hom_0.01,bs2_hom_prevalence_threshold,0.01,same_direction,-256,-219,37,False,False,0.14453125,False,False
+sweep,v37_sw_bs2hom_0.01,v38_sw_bs2hom_0.01,bs2_hom_prevalence_threshold,0.01,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_0.01,v38_sw_bs2hom_0.01,bs2_hom_prevalence_threshold,0.01,same_benign,-256,-219,37,False,False,0.14453125,False,False
+sweep,v37_sw_bs2hom_0.01,v38_sw_bs2hom_0.01,bs2_hom_prevalence_threshold,0.01,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_0.01,v38_sw_bs2hom_0.01,bs2_hom_prevalence_threshold,0.01,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_0.01,v38_sw_bs2hom_0.01,bs2_hom_prevalence_threshold,0.01,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bs2hom_0.01,v38_sw_bs2hom_0.01,bs2_hom_prevalence_threshold,0.01,exact,-587,-583,4,False,False,0.0068143100511073255,False,False
+sweep,v37_sw_pm2ar_0,v38_sw_pm2ar_0,pm2_ar_af_threshold,0,same_direction,23,23,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ar_0,v38_sw_pm2ar_0,pm2_ar_af_threshold,0,same_pathogenic,-39,-39,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ar_0,v38_sw_pm2ar_0,pm2_ar_af_threshold,0,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0,v38_sw_pm2ar_0,pm2_ar_af_threshold,0,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0,v38_sw_pm2ar_0,pm2_ar_af_threshold,0,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0,v38_sw_pm2ar_0,pm2_ar_af_threshold,0,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0,v38_sw_pm2ar_0,pm2_ar_af_threshold,0,exact,-545,-546,-1,False,False,0.001834862385321101,False,False
+sweep,v37_sw_pm2ar_1e-06,v38_sw_pm2ar_1e-06,pm2_ar_af_threshold,1e-06,same_direction,27,27,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ar_1e-06,v38_sw_pm2ar_1e-06,pm2_ar_af_threshold,1e-06,same_pathogenic,-25,-25,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ar_1e-06,v38_sw_pm2ar_1e-06,pm2_ar_af_threshold,1e-06,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-06,v38_sw_pm2ar_1e-06,pm2_ar_af_threshold,1e-06,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-06,v38_sw_pm2ar_1e-06,pm2_ar_af_threshold,1e-06,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-06,v38_sw_pm2ar_1e-06,pm2_ar_af_threshold,1e-06,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-06,v38_sw_pm2ar_1e-06,pm2_ar_af_threshold,1e-06,exact,-327,-327,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ar_1e-05,v38_sw_pm2ar_1e-05,pm2_ar_af_threshold,1e-05,same_direction,5,5,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-05,v38_sw_pm2ar_1e-05,pm2_ar_af_threshold,1e-05,same_pathogenic,-9,-9,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-05,v38_sw_pm2ar_1e-05,pm2_ar_af_threshold,1e-05,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-05,v38_sw_pm2ar_1e-05,pm2_ar_af_threshold,1e-05,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-05,v38_sw_pm2ar_1e-05,pm2_ar_af_threshold,1e-05,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-05,v38_sw_pm2ar_1e-05,pm2_ar_af_threshold,1e-05,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_1e-05,v38_sw_pm2ar_1e-05,pm2_ar_af_threshold,1e-05,exact,-106,-106,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ar_2e-05,v38_sw_pm2ar_2e-05,pm2_ar_af_threshold,2e-05,same_direction,2,2,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_2e-05,v38_sw_pm2ar_2e-05,pm2_ar_af_threshold,2e-05,same_pathogenic,-4,-4,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_2e-05,v38_sw_pm2ar_2e-05,pm2_ar_af_threshold,2e-05,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_2e-05,v38_sw_pm2ar_2e-05,pm2_ar_af_threshold,2e-05,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_2e-05,v38_sw_pm2ar_2e-05,pm2_ar_af_threshold,2e-05,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_2e-05,v38_sw_pm2ar_2e-05,pm2_ar_af_threshold,2e-05,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_2e-05,v38_sw_pm2ar_2e-05,pm2_ar_af_threshold,2e-05,exact,-62,-62,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ar_0.0002,v38_sw_pm2ar_0.0002,pm2_ar_af_threshold,0.0002,same_direction,1,1,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0002,v38_sw_pm2ar_0.0002,pm2_ar_af_threshold,0.0002,same_pathogenic,7,7,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0002,v38_sw_pm2ar_0.0002,pm2_ar_af_threshold,0.0002,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0002,v38_sw_pm2ar_0.0002,pm2_ar_af_threshold,0.0002,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0002,v38_sw_pm2ar_0.0002,pm2_ar_af_threshold,0.0002,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0002,v38_sw_pm2ar_0.0002,pm2_ar_af_threshold,0.0002,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0002,v38_sw_pm2ar_0.0002,pm2_ar_af_threshold,0.0002,exact,25,25,0,False,False,0.0,False,False
+sweep,v37_sw_pm2ar_0.0005,v38_sw_pm2ar_0.0005,pm2_ar_af_threshold,0.0005,same_direction,1,1,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0005,v38_sw_pm2ar_0.0005,pm2_ar_af_threshold,0.0005,same_pathogenic,7,7,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0005,v38_sw_pm2ar_0.0005,pm2_ar_af_threshold,0.0005,same_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0005,v38_sw_pm2ar_0.0005,pm2_ar_af_threshold,0.0005,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0005,v38_sw_pm2ar_0.0005,pm2_ar_af_threshold,0.0005,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0005,v38_sw_pm2ar_0.0005,pm2_ar_af_threshold,0.0005,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_pm2ar_0.0005,v38_sw_pm2ar_0.0005,pm2_ar_af_threshold,0.0005,exact,33,33,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_1,v38_sw_bp1veto_1,bp1_max_pathogenic_missense,1,same_direction,1735,1737,2,False,False,0.0011527377521613833,False,False
+sweep,v37_sw_bp1veto_1,v38_sw_bp1veto_1,bp1_max_pathogenic_missense,1,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_1,v38_sw_bp1veto_1,bp1_max_pathogenic_missense,1,same_benign,-127,-127,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_1,v38_sw_bp1veto_1,bp1_max_pathogenic_missense,1,false_benign,-2,-2,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_1,v38_sw_bp1veto_1,bp1_max_pathogenic_missense,1,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_1,v38_sw_bp1veto_1,bp1_max_pathogenic_missense,1,opposite,-2,-2,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_1,v38_sw_bp1veto_1,bp1_max_pathogenic_missense,1,exact,1777,1779,2,False,False,0.0011254924029262803,False,False
+sweep,v37_sw_bp1veto_2,v38_sw_bp1veto_2,bp1_max_pathogenic_missense,2,same_direction,850,850,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_2,v38_sw_bp1veto_2,bp1_max_pathogenic_missense,2,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_2,v38_sw_bp1veto_2,bp1_max_pathogenic_missense,2,same_benign,-16,-16,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_2,v38_sw_bp1veto_2,bp1_max_pathogenic_missense,2,false_benign,-1,-1,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_2,v38_sw_bp1veto_2,bp1_max_pathogenic_missense,2,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_2,v38_sw_bp1veto_2,bp1_max_pathogenic_missense,2,opposite,-1,-1,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_2,v38_sw_bp1veto_2,bp1_max_pathogenic_missense,2,exact,858,858,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_5,v38_sw_bp1veto_5,bp1_max_pathogenic_missense,5,same_direction,-359,-359,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_5,v38_sw_bp1veto_5,bp1_max_pathogenic_missense,5,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_5,v38_sw_bp1veto_5,bp1_max_pathogenic_missense,5,same_benign,81,81,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_5,v38_sw_bp1veto_5,bp1_max_pathogenic_missense,5,false_benign,3,3,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_5,v38_sw_bp1veto_5,bp1_max_pathogenic_missense,5,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_5,v38_sw_bp1veto_5,bp1_max_pathogenic_missense,5,opposite,3,3,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_5,v38_sw_bp1veto_5,bp1_max_pathogenic_missense,5,exact,-395,-395,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_10,v38_sw_bp1veto_10,bp1_max_pathogenic_missense,10,same_direction,-1183,-1187,-4,False,False,0.0033812341504649195,False,False
+sweep,v37_sw_bp1veto_10,v38_sw_bp1veto_10,bp1_max_pathogenic_missense,10,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_10,v38_sw_bp1veto_10,bp1_max_pathogenic_missense,10,same_benign,223,223,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_10,v38_sw_bp1veto_10,bp1_max_pathogenic_missense,10,false_benign,5,5,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_10,v38_sw_bp1veto_10,bp1_max_pathogenic_missense,10,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_10,v38_sw_bp1veto_10,bp1_max_pathogenic_missense,10,opposite,5,5,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_10,v38_sw_bp1veto_10,bp1_max_pathogenic_missense,10,exact,-1295,-1299,-4,False,False,0.003088803088803089,False,False
+sweep,v37_sw_bp1veto_25,v38_sw_bp1veto_25,bp1_max_pathogenic_missense,25,same_direction,-2923,-2927,-4,False,False,0.0013684570646595963,False,False
+sweep,v37_sw_bp1veto_25,v38_sw_bp1veto_25,bp1_max_pathogenic_missense,25,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_25,v38_sw_bp1veto_25,bp1_max_pathogenic_missense,25,same_benign,575,575,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_25,v38_sw_bp1veto_25,bp1_max_pathogenic_missense,25,false_benign,12,12,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_25,v38_sw_bp1veto_25,bp1_max_pathogenic_missense,25,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp1veto_25,v38_sw_bp1veto_25,bp1_max_pathogenic_missense,25,opposite,12,12,0,False,False,0.0,False,False
+sweep,v37_sw_bp1veto_25,v38_sw_bp1veto_25,bp1_max_pathogenic_missense,25,exact,-3219,-3223,-4,False,False,0.0012426219322771047,False,False
+sweep,v37_sw_phylop_1,v38_sw_phylop_1,phylop_conserved,1,same_direction,-9887,-10647,-760,False,False,0.07686861535349448,False,False
+sweep,v37_sw_phylop_1,v38_sw_phylop_1,phylop_conserved,1,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1,v38_sw_phylop_1,phylop_conserved,1,same_benign,-9928,-10691,-763,False,False,0.07685334407735697,False,False
+sweep,v37_sw_phylop_1,v38_sw_phylop_1,phylop_conserved,1,false_benign,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1,v38_sw_phylop_1,phylop_conserved,1,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1,v38_sw_phylop_1,phylop_conserved,1,opposite,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1,v38_sw_phylop_1,phylop_conserved,1,exact,-7290,-7868,-578,False,False,0.07928669410150892,False,False
+sweep,v37_sw_phylop_1.5,v38_sw_phylop_1.5,phylop_conserved,1.5,same_direction,-4486,-4856,-370,False,False,0.08247882300490414,False,False
+sweep,v37_sw_phylop_1.5,v38_sw_phylop_1.5,phylop_conserved,1.5,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1.5,v38_sw_phylop_1.5,phylop_conserved,1.5,same_benign,-4505,-4877,-372,False,False,0.08257491675915649,False,False
+sweep,v37_sw_phylop_1.5,v38_sw_phylop_1.5,phylop_conserved,1.5,false_benign,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1.5,v38_sw_phylop_1.5,phylop_conserved,1.5,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1.5,v38_sw_phylop_1.5,phylop_conserved,1.5,opposite,-3,-3,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1.5,v38_sw_phylop_1.5,phylop_conserved,1.5,exact,-3323,-3610,-287,False,False,0.08636773999398134,False,False
+sweep,v37_sw_phylop_3,v38_sw_phylop_3,phylop_conserved,3,same_direction,6389,6981,592,False,False,0.09265925809985913,False,False
+sweep,v37_sw_phylop_3,v38_sw_phylop_3,phylop_conserved,3,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_3,v38_sw_phylop_3,phylop_conserved,3,same_benign,6422,7018,596,False,False,0.09280597944565556,False,False
+sweep,v37_sw_phylop_3,v38_sw_phylop_3,phylop_conserved,3,false_benign,0,1,1,False,True,,True,True
+sweep,v37_sw_phylop_3,v38_sw_phylop_3,phylop_conserved,3,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_3,v38_sw_phylop_3,phylop_conserved,3,opposite,0,1,1,False,True,,True,True
+sweep,v37_sw_phylop_3,v38_sw_phylop_3,phylop_conserved,3,exact,4764,5215,451,False,False,0.09466834592779177,False,False
+sweep,v37_sw_phylop_4,v38_sw_phylop_4,phylop_conserved,4,same_direction,9805,10759,954,False,False,0.0972972972972973,False,False
+sweep,v37_sw_phylop_4,v38_sw_phylop_4,phylop_conserved,4,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_4,v38_sw_phylop_4,phylop_conserved,4,same_benign,9862,10820,958,False,False,0.09714053944433178,False,False
+sweep,v37_sw_phylop_4,v38_sw_phylop_4,phylop_conserved,4,false_benign,1,2,1,False,False,1.0,True,True
+sweep,v37_sw_phylop_4,v38_sw_phylop_4,phylop_conserved,4,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_4,v38_sw_phylop_4,phylop_conserved,4,opposite,1,2,1,False,False,1.0,True,True
+sweep,v37_sw_phylop_4,v38_sw_phylop_4,phylop_conserved,4,exact,7330,8056,726,False,False,0.09904502046384721,False,False
+sweep,v37_sw_phylop_1000,v38_sw_phylop_1000,phylop_conserved,1000,same_direction,15989,17657,1668,False,False,0.10432172118331352,False,False
+sweep,v37_sw_phylop_1000,v38_sw_phylop_1000,phylop_conserved,1000,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1000,v38_sw_phylop_1000,phylop_conserved,1000,same_benign,16116,17793,1677,False,False,0.10405807892777365,False,False
+sweep,v37_sw_phylop_1000,v38_sw_phylop_1000,phylop_conserved,1000,false_benign,2,3,1,False,False,0.5,True,True
+sweep,v37_sw_phylop_1000,v38_sw_phylop_1000,phylop_conserved,1000,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_phylop_1000,v38_sw_phylop_1000,phylop_conserved,1000,opposite,2,3,1,False,False,0.5,True,True
+sweep,v37_sw_phylop_1000,v38_sw_phylop_1000,phylop_conserved,1000,exact,12069,13336,1267,False,False,0.10497970005799984,False,False
+sweep,v37_sw_bp7far_0,v38_sw_bp7far_0,bp7_max_intron_offset,0,same_direction,-10547,-11586,-1039,False,False,0.09851142504977718,False,False
+sweep,v37_sw_bp7far_0,v38_sw_bp7far_0,bp7_max_intron_offset,0,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_0,v38_sw_bp7far_0,bp7_max_intron_offset,0,same_benign,-10732,-11798,-1066,False,False,0.09932910920611256,False,False
+sweep,v37_sw_bp7far_0,v38_sw_bp7far_0,bp7_max_intron_offset,0,false_benign,-18,-19,-1,False,False,0.05555555555555555,False,False
+sweep,v37_sw_bp7far_0,v38_sw_bp7far_0,bp7_max_intron_offset,0,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_0,v38_sw_bp7far_0,bp7_max_intron_offset,0,opposite,-18,-19,-1,False,False,0.05555555555555555,False,False
+sweep,v37_sw_bp7far_0,v38_sw_bp7far_0,bp7_max_intron_offset,0,exact,-5871,-6453,-582,False,False,0.09913132345426673,False,False
+sweep,v37_sw_bp7far_50,v38_sw_bp7far_50,bp7_max_intron_offset,50,same_direction,-1650,-1781,-131,False,False,0.07939393939393939,False,False
+sweep,v37_sw_bp7far_50,v38_sw_bp7far_50,bp7_max_intron_offset,50,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_50,v38_sw_bp7far_50,bp7_max_intron_offset,50,same_benign,-1728,-1867,-139,False,False,0.08043981481481481,False,False
+sweep,v37_sw_bp7far_50,v38_sw_bp7far_50,bp7_max_intron_offset,50,false_benign,-7,-7,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_50,v38_sw_bp7far_50,bp7_max_intron_offset,50,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_50,v38_sw_bp7far_50,bp7_max_intron_offset,50,opposite,-7,-7,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_50,v38_sw_bp7far_50,bp7_max_intron_offset,50,exact,-304,-339,-35,False,False,0.11513157894736842,False,False
+sweep,v37_sw_bp7far_100,v38_sw_bp7far_100,bp7_max_intron_offset,100,same_direction,-721,-784,-63,False,False,0.08737864077669903,False,False
+sweep,v37_sw_bp7far_100,v38_sw_bp7far_100,bp7_max_intron_offset,100,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_100,v38_sw_bp7far_100,bp7_max_intron_offset,100,same_benign,-760,-826,-66,False,False,0.0868421052631579,False,False
+sweep,v37_sw_bp7far_100,v38_sw_bp7far_100,bp7_max_intron_offset,100,false_benign,-4,-4,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_100,v38_sw_bp7far_100,bp7_max_intron_offset,100,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_100,v38_sw_bp7far_100,bp7_max_intron_offset,100,opposite,-4,-4,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_100,v38_sw_bp7far_100,bp7_max_intron_offset,100,exact,-137,-156,-19,False,False,0.1386861313868613,False,False
+sweep,v37_sw_bp7far_200,v38_sw_bp7far_200,bp7_max_intron_offset,200,same_direction,-141,-151,-10,False,False,0.07092198581560284,False,False
+sweep,v37_sw_bp7far_200,v38_sw_bp7far_200,bp7_max_intron_offset,200,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_200,v38_sw_bp7far_200,bp7_max_intron_offset,200,same_benign,-153,-163,-10,False,False,0.06535947712418301,False,False
+sweep,v37_sw_bp7far_200,v38_sw_bp7far_200,bp7_max_intron_offset,200,false_benign,-1,-1,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_200,v38_sw_bp7far_200,bp7_max_intron_offset,200,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_200,v38_sw_bp7far_200,bp7_max_intron_offset,200,opposite,-1,-1,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_200,v38_sw_bp7far_200,bp7_max_intron_offset,200,exact,-31,-32,-1,False,False,0.03225806451612903,False,False
+sweep,v37_sw_bp7far_500,v38_sw_bp7far_500,bp7_max_intron_offset,500,same_direction,15,19,4,False,False,0.26666666666666666,True,False
+sweep,v37_sw_bp7far_500,v38_sw_bp7far_500,bp7_max_intron_offset,500,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_500,v38_sw_bp7far_500,bp7_max_intron_offset,500,same_benign,37,42,5,False,False,0.13513513513513514,False,False
+sweep,v37_sw_bp7far_500,v38_sw_bp7far_500,bp7_max_intron_offset,500,false_benign,1,1,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_500,v38_sw_bp7far_500,bp7_max_intron_offset,500,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_500,v38_sw_bp7far_500,bp7_max_intron_offset,500,opposite,1,1,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_500,v38_sw_bp7far_500,bp7_max_intron_offset,500,exact,-12,-11,1,False,False,0.08333333333333333,False,False
+sweep,v37_sw_bp7far_1000,v38_sw_bp7far_1000,bp7_max_intron_offset,1000,same_direction,48,51,3,False,False,0.0625,False,False
+sweep,v37_sw_bp7far_1000,v38_sw_bp7far_1000,bp7_max_intron_offset,1000,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_1000,v38_sw_bp7far_1000,bp7_max_intron_offset,1000,same_benign,85,98,13,False,False,0.15294117647058825,False,False
+sweep,v37_sw_bp7far_1000,v38_sw_bp7far_1000,bp7_max_intron_offset,1000,false_benign,3,3,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_1000,v38_sw_bp7far_1000,bp7_max_intron_offset,1000,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_1000,v38_sw_bp7far_1000,bp7_max_intron_offset,1000,opposite,3,3,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_1000,v38_sw_bp7far_1000,bp7_max_intron_offset,1000,exact,-7,-14,-7,False,False,1.0,True,False
+sweep,v37_sw_bp7far_1000000,v38_sw_bp7far_1000000,bp7_max_intron_offset,1000000,same_direction,206,215,9,False,False,0.043689320388349516,False,False
+sweep,v37_sw_bp7far_1000000,v38_sw_bp7far_1000000,bp7_max_intron_offset,1000000,same_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_1000000,v38_sw_bp7far_1000000,bp7_max_intron_offset,1000000,same_benign,525,586,61,False,False,0.11619047619047619,False,False
+sweep,v37_sw_bp7far_1000000,v38_sw_bp7far_1000000,bp7_max_intron_offset,1000000,false_benign,17,20,3,False,False,0.17647058823529413,False,False
+sweep,v37_sw_bp7far_1000000,v38_sw_bp7far_1000000,bp7_max_intron_offset,1000000,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_sw_bp7far_1000000,v38_sw_bp7far_1000000,bp7_max_intron_offset,1000000,opposite,17,20,3,False,False,0.17647058823529413,False,False
+sweep,v37_sw_bp7far_1000000,v38_sw_bp7far_1000000,bp7_max_intron_offset,1000000,exact,-47,-71,-24,False,False,0.5106382978723404,True,False
+switch,v37_sw_pm2_moderate,v38_sw_pm2_moderate,pm2_downgrade_to_supporting,false,same_direction,4567,4567,0,False,False,0.0,False,False
+switch,v37_sw_pm2_moderate,v38_sw_pm2_moderate,pm2_downgrade_to_supporting,false,same_pathogenic,10432,10432,0,False,False,0.0,False,False
+switch,v37_sw_pm2_moderate,v38_sw_pm2_moderate,pm2_downgrade_to_supporting,false,same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pm2_moderate,v38_sw_pm2_moderate,pm2_downgrade_to_supporting,false,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pm2_moderate,v38_sw_pm2_moderate,pm2_downgrade_to_supporting,false,false_pathogenic,14,14,0,False,False,0.0,False,False
+switch,v37_sw_pm2_moderate,v38_sw_pm2_moderate,pm2_downgrade_to_supporting,false,opposite,14,14,0,False,False,0.0,False,False
+switch,v37_sw_pm2_moderate,v38_sw_pm2_moderate,pm2_downgrade_to_supporting,false,exact,33218,33221,3,False,False,9.031248118489976e-05,False,False
+switch,v37_sw_pm2_needs_record,v38_sw_pm2_needs_record,pm2_absent_when_no_record,false,same_direction,-1499,-1499,0,False,False,0.0,False,False
+switch,v37_sw_pm2_needs_record,v38_sw_pm2_needs_record,pm2_absent_when_no_record,false,same_pathogenic,-2737,-2737,0,False,False,0.0,False,False
+switch,v37_sw_pm2_needs_record,v38_sw_pm2_needs_record,pm2_absent_when_no_record,false,same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pm2_needs_record,v38_sw_pm2_needs_record,pm2_absent_when_no_record,false,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pm2_needs_record,v38_sw_pm2_needs_record,pm2_absent_when_no_record,false,false_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pm2_needs_record,v38_sw_pm2_needs_record,pm2_absent_when_no_record,false,opposite,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pm2_needs_record,v38_sw_pm2_needs_record,pm2_absent_when_no_record,false,exact,-1489,-1489,0,False,False,0.0,False,False
+switch,v37_sw_table_both_sides,v38_sw_table_both_sides,use_point_system,false,same_direction,-4900,-4900,0,False,False,0.0,False,False
+switch,v37_sw_table_both_sides,v38_sw_table_both_sides,use_point_system,false,same_pathogenic,-5058,-5059,-1,False,False,0.00019770660340055358,False,False
+switch,v37_sw_table_both_sides,v38_sw_table_both_sides,use_point_system,false,same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_table_both_sides,v38_sw_table_both_sides,use_point_system,false,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_table_both_sides,v38_sw_table_both_sides,use_point_system,false,false_pathogenic,-10,-10,0,False,False,0.0,False,False
+switch,v37_sw_table_both_sides,v38_sw_table_both_sides,use_point_system,false,opposite,-10,-10,0,False,False,0.0,False,False
+switch,v37_sw_table_both_sides,v38_sw_table_both_sides,use_point_system,false,exact,-1076,-1075,1,False,False,0.0009293680297397769,False,False
+switch,v37_sw_no_gene_validity,v38_sw_no_gene_validity,require_gene_disease_validity,false,same_direction,193,193,0,False,False,0.0,False,False
+switch,v37_sw_no_gene_validity,v38_sw_no_gene_validity,require_gene_disease_validity,false,same_pathogenic,621,621,0,False,False,0.0,False,False
+switch,v37_sw_no_gene_validity,v38_sw_no_gene_validity,require_gene_disease_validity,false,same_benign,-3,-3,0,False,False,0.0,False,True
+switch,v37_sw_no_gene_validity,v38_sw_no_gene_validity,require_gene_disease_validity,false,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_gene_validity,v38_sw_no_gene_validity,require_gene_disease_validity,false,false_pathogenic,10,10,0,False,False,0.0,False,False
+switch,v37_sw_no_gene_validity,v38_sw_no_gene_validity,require_gene_disease_validity,false,opposite,10,10,0,False,False,0.0,False,False
+switch,v37_sw_no_gene_validity,v38_sw_no_gene_validity,require_gene_disease_validity,false,exact,-317,-317,0,False,False,0.0,False,False
+switch,v37_sw_no_mechanism_gate,v38_sw_no_mechanism_gate,mechanism_gates_pvs1,false,same_direction,-146,-146,0,False,False,0.0,False,False
+switch,v37_sw_no_mechanism_gate,v38_sw_no_mechanism_gate,mechanism_gates_pvs1,false,same_pathogenic,6,6,0,False,False,0.0,False,True
+switch,v37_sw_no_mechanism_gate,v38_sw_no_mechanism_gate,mechanism_gates_pvs1,false,same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_mechanism_gate,v38_sw_no_mechanism_gate,mechanism_gates_pvs1,false,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_mechanism_gate,v38_sw_no_mechanism_gate,mechanism_gates_pvs1,false,false_pathogenic,12,12,0,False,False,0.0,False,False
+switch,v37_sw_no_mechanism_gate,v38_sw_no_mechanism_gate,mechanism_gates_pvs1,false,opposite,12,12,0,False,False,0.0,False,False
+switch,v37_sw_no_mechanism_gate,v38_sw_no_mechanism_gate,mechanism_gates_pvs1,false,exact,-148,-148,0,False,False,0.0,False,False
+switch,v37_sw_no_lowpen_gate,v38_sw_no_lowpen_gate,clinvar_low_penetrance_blocks_benign_frequency,false,same_direction,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_lowpen_gate,v38_sw_no_lowpen_gate,clinvar_low_penetrance_blocks_benign_frequency,false,same_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_lowpen_gate,v38_sw_no_lowpen_gate,clinvar_low_penetrance_blocks_benign_frequency,false,same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_lowpen_gate,v38_sw_no_lowpen_gate,clinvar_low_penetrance_blocks_benign_frequency,false,false_benign,1,2,1,False,False,1.0,True,True
+switch,v37_sw_no_lowpen_gate,v38_sw_no_lowpen_gate,clinvar_low_penetrance_blocks_benign_frequency,false,false_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_lowpen_gate,v38_sw_no_lowpen_gate,clinvar_low_penetrance_blocks_benign_frequency,false,opposite,1,2,1,False,False,1.0,True,True
+switch,v37_sw_no_lowpen_gate,v38_sw_no_lowpen_gate,clinvar_low_penetrance_blocks_benign_frequency,false,exact,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_region_flags,v38_sw_no_region_flags,gnomad_region_flags_block_frequency,false,same_direction,3473,3374,-99,False,False,0.028505614742297725,False,False
+switch,v37_sw_no_region_flags,v38_sw_no_region_flags,gnomad_region_flags_block_frequency,false,same_pathogenic,28,28,0,False,False,0.0,False,False
+switch,v37_sw_no_region_flags,v38_sw_no_region_flags,gnomad_region_flags_block_frequency,false,same_benign,3549,3456,-93,False,False,0.026204564666103127,False,False
+switch,v37_sw_no_region_flags,v38_sw_no_region_flags,gnomad_region_flags_block_frequency,false,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_region_flags,v38_sw_no_region_flags,gnomad_region_flags_block_frequency,false,false_pathogenic,1,1,0,False,False,0.0,False,True
+switch,v37_sw_no_region_flags,v38_sw_no_region_flags,gnomad_region_flags_block_frequency,false,opposite,1,1,0,False,False,0.0,False,True
+switch,v37_sw_no_region_flags,v38_sw_no_region_flags,gnomad_region_flags_block_frequency,false,exact,4075,4075,0,False,False,0.0,False,False
+switch,v37_sw_no_faf,v38_sw_no_faf,use_filtering_af,false,same_direction,1917,1898,-19,False,False,0.0099113197704747,False,False
+switch,v37_sw_no_faf,v38_sw_no_faf,use_filtering_af,false,same_pathogenic,-20,-20,0,False,False,0.0,False,False
+switch,v37_sw_no_faf,v38_sw_no_faf,use_filtering_af,false,same_benign,2123,2113,-10,False,False,0.004710315591144607,False,False
+switch,v37_sw_no_faf,v38_sw_no_faf,use_filtering_af,false,false_benign,8,8,0,False,False,0.0,False,True
+switch,v37_sw_no_faf,v38_sw_no_faf,use_filtering_af,false,false_pathogenic,-4,-4,0,False,False,0.0,False,True
+switch,v37_sw_no_faf,v38_sw_no_faf,use_filtering_af,false,opposite,4,4,0,False,False,0.0,False,True
+switch,v37_sw_no_faf,v38_sw_no_faf,use_filtering_af,false,exact,1598,1589,-9,False,False,0.005632040050062578,False,False
+switch,v37_sw_clinvar_informed,v38_sw_clinvar_informed,exclude_self_from_clinvar_evidence,false,same_direction,13445,13452,7,False,False,0.0005206396429899591,False,False
+switch,v37_sw_clinvar_informed,v38_sw_clinvar_informed,exclude_self_from_clinvar_evidence,false,same_pathogenic,13445,13452,7,False,False,0.0005206396429899591,False,False
+switch,v37_sw_clinvar_informed,v38_sw_clinvar_informed,exclude_self_from_clinvar_evidence,false,same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_clinvar_informed,v38_sw_clinvar_informed,exclude_self_from_clinvar_evidence,false,false_benign,-4,-4,0,False,False,0.0,False,True
+switch,v37_sw_clinvar_informed,v38_sw_clinvar_informed,exclude_self_from_clinvar_evidence,false,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+switch,v37_sw_clinvar_informed,v38_sw_clinvar_informed,exclude_self_from_clinvar_evidence,false,opposite,-7,-7,0,False,False,0.0,False,True
+switch,v37_sw_clinvar_informed,v38_sw_clinvar_informed,exclude_self_from_clinvar_evidence,false,exact,4897,4898,1,False,False,0.00020420665713702266,False,False
+switch,v37_sw_no_homology_list,v38_sw_no_homology_list,homology_unreliable_genes,[],same_direction,376,373,-3,False,False,0.007978723404255319,False,False
+switch,v37_sw_no_homology_list,v38_sw_no_homology_list,homology_unreliable_genes,[],same_pathogenic,0,1,1,False,True,,True,True
+switch,v37_sw_no_homology_list,v38_sw_no_homology_list,homology_unreliable_genes,[],same_benign,378,374,-4,False,False,0.010582010582010581,False,False
+switch,v37_sw_no_homology_list,v38_sw_no_homology_list,homology_unreliable_genes,[],false_benign,1,1,0,False,False,0.0,False,True
+switch,v37_sw_no_homology_list,v38_sw_no_homology_list,homology_unreliable_genes,[],false_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_homology_list,v38_sw_no_homology_list,homology_unreliable_genes,[],opposite,1,1,0,False,False,0.0,False,True
+switch,v37_sw_no_homology_list,v38_sw_no_homology_list,homology_unreliable_genes,[],exact,516,516,0,False,False,0.0,False,False
+switch,v37_sw_no_exceptions,v38_sw_no_exceptions,ba1_exceptions,[],same_direction,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_exceptions,v38_sw_no_exceptions,ba1_exceptions,[],same_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_exceptions,v38_sw_no_exceptions,ba1_exceptions,[],same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_exceptions,v38_sw_no_exceptions,ba1_exceptions,[],false_benign,6,6,0,False,False,0.0,False,True
+switch,v37_sw_no_exceptions,v38_sw_no_exceptions,ba1_exceptions,[],false_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_exceptions,v38_sw_no_exceptions,ba1_exceptions,[],opposite,6,6,0,False,False,0.0,False,True
+switch,v37_sw_no_exceptions,v38_sw_no_exceptions,ba1_exceptions,[],exact,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_bp1_veto,v38_sw_no_bp1_veto,bp1_max_pathogenic_missense,1000000,same_direction,-4233,-4240,-7,False,False,0.001653673517599811,False,False
+switch,v37_sw_no_bp1_veto,v38_sw_no_bp1_veto,bp1_max_pathogenic_missense,1000000,same_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_bp1_veto,v38_sw_no_bp1_veto,bp1_max_pathogenic_missense,1000000,same_benign,919,919,0,False,False,0.0,False,False
+switch,v37_sw_no_bp1_veto,v38_sw_no_bp1_veto,bp1_max_pathogenic_missense,1000000,false_benign,28,28,0,False,False,0.0,False,False
+switch,v37_sw_no_bp1_veto,v38_sw_no_bp1_veto,bp1_max_pathogenic_missense,1000000,false_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_bp1_veto,v38_sw_no_bp1_veto,bp1_max_pathogenic_missense,1000000,opposite,28,28,0,False,False,0.0,False,False
+switch,v37_sw_no_bp1_veto,v38_sw_no_bp1_veto,bp1_max_pathogenic_missense,1000000,exact,-4745,-4752,-7,False,False,0.0014752370916754477,False,False
+switch,v37_sw_no_pm1_benign_half,v38_sw_no_pm1_benign_half,pm1_max_benign_in_window,1000000,same_direction,272,272,0,False,False,0.0,False,False
+switch,v37_sw_no_pm1_benign_half,v38_sw_no_pm1_benign_half,pm1_max_benign_in_window,1000000,same_pathogenic,381,381,0,False,False,0.0,False,False
+switch,v37_sw_no_pm1_benign_half,v38_sw_no_pm1_benign_half,pm1_max_benign_in_window,1000000,same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_pm1_benign_half,v38_sw_no_pm1_benign_half,pm1_max_benign_in_window,1000000,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_pm1_benign_half,v38_sw_no_pm1_benign_half,pm1_max_benign_in_window,1000000,false_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_pm1_benign_half,v38_sw_no_pm1_benign_half,pm1_max_benign_in_window,1000000,opposite,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_pm1_benign_half,v38_sw_no_pm1_benign_half,pm1_max_benign_in_window,1000000,exact,-30,-30,0,False,False,0.0,False,False
+switch,v37_sw_no_an_floor,v38_sw_no_an_floor,min_an_for_frequency_criteria,0,same_direction,728,684,-44,False,False,0.06043956043956044,False,False
+switch,v37_sw_no_an_floor,v38_sw_no_an_floor,min_an_for_frequency_criteria,0,same_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_an_floor,v38_sw_no_an_floor,min_an_for_frequency_criteria,0,same_benign,735,691,-44,False,False,0.05986394557823129,False,False
+switch,v37_sw_no_an_floor,v38_sw_no_an_floor,min_an_for_frequency_criteria,0,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_an_floor,v38_sw_no_an_floor,min_an_for_frequency_criteria,0,false_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_an_floor,v38_sw_no_an_floor,min_an_for_frequency_criteria,0,opposite,0,0,0,False,False,0.0,False,True
+switch,v37_sw_no_an_floor,v38_sw_no_an_floor,min_an_for_frequency_criteria,0,exact,1289,1289,0,False,False,0.0,False,False
+switch,v37_sw_pp3_cap_moderate,v38_sw_pp3_cap_moderate,pp3_max_strength,"""Moderate""",same_direction,715,715,0,False,False,0.0,False,False
+switch,v37_sw_pp3_cap_moderate,v38_sw_pp3_cap_moderate,pp3_max_strength,"""Moderate""",same_pathogenic,-315,-315,0,False,False,0.0,False,False
+switch,v37_sw_pp3_cap_moderate,v38_sw_pp3_cap_moderate,pp3_max_strength,"""Moderate""",same_benign,2,2,0,False,False,0.0,False,True
+switch,v37_sw_pp3_cap_moderate,v38_sw_pp3_cap_moderate,pp3_max_strength,"""Moderate""",false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pp3_cap_moderate,v38_sw_pp3_cap_moderate,pp3_max_strength,"""Moderate""",false_pathogenic,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pp3_cap_moderate,v38_sw_pp3_cap_moderate,pp3_max_strength,"""Moderate""",opposite,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pp3_cap_moderate,v38_sw_pp3_cap_moderate,pp3_max_strength,"""Moderate""",exact,936,936,0,False,False,0.0,False,False
+switch,v37_sw_pvs1_nmd50,v38_sw_pvs1_nmd50,pvs1_nmd_50nt_rule,true,same_direction,-603,-603,0,False,False,0.0,False,False
+switch,v37_sw_pvs1_nmd50,v38_sw_pvs1_nmd50,pvs1_nmd_50nt_rule,true,same_pathogenic,-685,-685,0,False,False,0.0,False,False
+switch,v37_sw_pvs1_nmd50,v38_sw_pvs1_nmd50,pvs1_nmd_50nt_rule,true,same_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pvs1_nmd50,v38_sw_pvs1_nmd50,pvs1_nmd_50nt_rule,true,false_benign,0,0,0,False,False,0.0,False,True
+switch,v37_sw_pvs1_nmd50,v38_sw_pvs1_nmd50,pvs1_nmd_50nt_rule,true,false_pathogenic,-1,-1,0,False,False,0.0,False,True
+switch,v37_sw_pvs1_nmd50,v38_sw_pvs1_nmd50,pvs1_nmd_50nt_rule,true,opposite,-1,-1,0,False,False,0.0,False,True
+switch,v37_sw_pvs1_nmd50,v38_sw_pvs1_nmd50,pvs1_nmd_50nt_rule,true,exact,18,18,0,False,False,0.0,False,False
+source,v37_src_noclinvar_protein,v38_src_noclinvar_protein,noclinvar_protein,removed,same_direction,-5236,-5242,-6,False,False,0.001145912910618793,False,False
+source,v37_src_noclinvar_protein,v38_src_noclinvar_protein,noclinvar_protein,removed,same_pathogenic,-1983,-1983,0,False,False,0.0,False,False
+source,v37_src_noclinvar_protein,v38_src_noclinvar_protein,noclinvar_protein,removed,same_benign,920,920,0,False,False,0.0,False,False
+source,v37_src_noclinvar_protein,v38_src_noclinvar_protein,noclinvar_protein,removed,false_benign,28,28,0,False,False,0.0,False,False
+source,v37_src_noclinvar_protein,v38_src_noclinvar_protein,noclinvar_protein,removed,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+source,v37_src_noclinvar_protein,v38_src_noclinvar_protein,noclinvar_protein,removed,opposite,25,25,0,False,False,0.0,False,False
+source,v37_src_noclinvar_protein,v38_src_noclinvar_protein,noclinvar_protein,removed,exact,-7203,-7211,-8,False,False,0.0011106483409690406,False,False
+source,v37_src_noclinvar_all,v38_src_noclinvar_all,noclinvar_all,removed,same_direction,-5237,-5243,-6,False,False,0.0011456940996753867,False,False
+source,v37_src_noclinvar_all,v38_src_noclinvar_all,noclinvar_all,removed,same_pathogenic,-1980,-1980,0,False,False,0.0,False,False
+source,v37_src_noclinvar_all,v38_src_noclinvar_all,noclinvar_all,removed,same_benign,920,920,0,False,False,0.0,False,False
+source,v37_src_noclinvar_all,v38_src_noclinvar_all,noclinvar_all,removed,false_benign,30,31,1,False,False,0.03333333333333333,False,False
+source,v37_src_noclinvar_all,v38_src_noclinvar_all,noclinvar_all,removed,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+source,v37_src_noclinvar_all,v38_src_noclinvar_all,noclinvar_all,removed,opposite,27,28,1,False,False,0.037037037037037035,False,False
+source,v37_src_noclinvar_all,v38_src_noclinvar_all,noclinvar_all,removed,exact,-7206,-7214,-8,False,False,0.0011101859561476548,False,False
+source,v37_src_norevel,v38_src_norevel,norevel,removed,same_direction,-5952,-5921,31,False,False,0.005208333333333333,False,False
+source,v37_src_norevel,v38_src_norevel,norevel,removed,same_pathogenic,-781,-770,11,False,False,0.014084507042253521,False,False
+source,v37_src_norevel,v38_src_norevel,norevel,removed,same_benign,-11012,-10990,22,False,False,0.0019978205593897567,False,False
+source,v37_src_norevel,v38_src_norevel,norevel,removed,false_benign,-2,-2,0,False,False,0.0,False,True
+source,v37_src_norevel,v38_src_norevel,norevel,removed,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+source,v37_src_norevel,v38_src_norevel,norevel,removed,opposite,-5,-5,0,False,False,0.0,False,True
+source,v37_src_norevel,v38_src_norevel,norevel,removed,exact,-2831,-2826,5,False,False,0.0017661603673613563,False,False
+source,v37_src_nospliceai,v38_src_nospliceai,nospliceai,removed,same_direction,-108084,-118039,-9955,False,False,0.0921042892565042,False,False
+source,v37_src_nospliceai,v38_src_nospliceai,nospliceai,removed,same_pathogenic,-15,-15,0,False,False,0.0,False,False
+source,v37_src_nospliceai,v38_src_nospliceai,nospliceai,removed,same_benign,-108692,-118718,-10026,False,False,0.09224229934125787,False,False
+source,v37_src_nospliceai,v38_src_nospliceai,nospliceai,removed,false_benign,-20,-23,-3,False,False,0.15,False,False
+source,v37_src_nospliceai,v38_src_nospliceai,nospliceai,removed,false_pathogenic,7,7,0,False,False,0.0,False,True
+source,v37_src_nospliceai,v38_src_nospliceai,nospliceai,removed,opposite,-13,-16,-3,False,False,0.23076923076923078,True,False
+source,v37_src_nospliceai,v38_src_nospliceai,nospliceai,removed,exact,-62753,-68458,-5705,False,False,0.09091198827147706,False,False
+source,v37_src_nophylop,v38_src_nophylop,nophylop,removed,same_direction,-77774,-84759,-6985,False,False,0.08981150513024919,False,False
+source,v37_src_nophylop,v38_src_nophylop,nophylop,removed,same_pathogenic,0,0,0,False,False,0.0,False,True
+source,v37_src_nophylop,v38_src_nophylop,nophylop,removed,same_benign,-78130,-85156,-7026,False,False,0.08992704466914117,False,False
+source,v37_src_nophylop,v38_src_nophylop,nophylop,removed,false_benign,-20,-22,-2,False,False,0.1,False,False
+source,v37_src_nophylop,v38_src_nophylop,nophylop,removed,false_pathogenic,0,0,0,False,False,0.0,False,True
+source,v37_src_nophylop,v38_src_nophylop,nophylop,removed,opposite,-20,-22,-2,False,False,0.1,False,False
+source,v37_src_nophylop,v38_src_nophylop,nophylop,removed,exact,-56333,-61419,-5086,False,False,0.0902845578967923,False,False
+source,v37_src_noconstraint,v38_src_noconstraint,noconstraint,removed,same_direction,1933,1936,3,False,False,0.0015519917227108122,False,False
+source,v37_src_noconstraint,v38_src_noconstraint,noconstraint,removed,same_pathogenic,-3786,-3785,1,False,False,0.0002641310089804543,False,False
+source,v37_src_noconstraint,v38_src_noconstraint,noconstraint,removed,same_benign,-401,-401,0,False,False,0.0,False,False
+source,v37_src_noconstraint,v38_src_noconstraint,noconstraint,removed,false_benign,-2,-2,0,False,False,0.0,False,True
+source,v37_src_noconstraint,v38_src_noconstraint,noconstraint,removed,false_pathogenic,-6,-6,0,False,False,0.0,False,True
+source,v37_src_noconstraint,v38_src_noconstraint,noconstraint,removed,opposite,-8,-8,0,False,False,0.0,False,True
+source,v37_src_noconstraint,v38_src_noconstraint,noconstraint,removed,exact,5048,5050,2,False,False,0.0003961965134706815,False,False
+source,v37_src_noclingen,v38_src_noclingen,noclingen,removed,same_direction,-44685,-44819,-134,False,False,0.002998769161911156,False,False
+source,v37_src_noclingen,v38_src_noclingen,noclingen,removed,same_pathogenic,-43866,-43866,0,False,False,0.0,False,False
+source,v37_src_noclingen,v38_src_noclingen,noclingen,removed,same_benign,-1845,-1994,-149,False,False,0.08075880758807588,False,False
+source,v37_src_noclingen,v38_src_noclingen,noclingen,removed,false_benign,0,0,0,False,False,0.0,False,True
+source,v37_src_noclingen,v38_src_noclingen,noclingen,removed,false_pathogenic,-13,-13,0,False,False,0.0,False,False
+source,v37_src_noclingen,v38_src_noclingen,noclingen,removed,opposite,-13,-13,0,False,False,0.0,False,False
+source,v37_src_noclingen,v38_src_noclingen,noclingen,removed,exact,-6882,-6893,-11,False,False,0.0015983725661145017,False,False
+source,v37_src_norepeat,v38_src_norepeat,norepeat,removed,same_direction,-52,-52,0,False,False,0.0,False,False
+source,v37_src_norepeat,v38_src_norepeat,norepeat,removed,same_pathogenic,0,0,0,False,False,0.0,False,True
+source,v37_src_norepeat,v38_src_norepeat,norepeat,removed,same_benign,-57,-57,0,False,False,0.0,False,False
+source,v37_src_norepeat,v38_src_norepeat,norepeat,removed,false_benign,0,0,0,False,False,0.0,False,True
+source,v37_src_norepeat,v38_src_norepeat,norepeat,removed,false_pathogenic,0,0,0,False,False,0.0,False,True
+source,v37_src_norepeat,v38_src_norepeat,norepeat,removed,opposite,0,0,0,False,False,0.0,False,True
+source,v37_src_norepeat,v38_src_norepeat,norepeat,removed,exact,-6,-6,0,False,False,0.0,False,True
+source,v37_src_nognomad,v38_src_nognomad,nognomad,removed,same_direction,-48029,-45934,2095,False,False,0.04361947989756189,False,False
+source,v37_src_nognomad,v38_src_nognomad,nognomad,removed,same_pathogenic,-3223,-3222,1,False,False,0.00031026993484331366,False,False
+source,v37_src_nognomad,v38_src_nognomad,nognomad,removed,same_benign,-47550,-45481,2069,False,False,0.043512092534174554,False,False
+source,v37_src_nognomad,v38_src_nognomad,nognomad,removed,false_benign,-2,-3,-1,False,False,0.5,True,True
+source,v37_src_nognomad,v38_src_nognomad,nognomad,removed,false_pathogenic,23,23,0,False,False,0.0,False,False
+source,v37_src_nognomad,v38_src_nognomad,nognomad,removed,opposite,21,20,-1,False,False,0.047619047619047616,False,False
+source,v37_src_nognomad,v38_src_nognomad,nognomad,removed,exact,-67335,-67421,-86,False,False,0.0012771961090072028,False,False
+interaction,v37_ix_table_pm2ad_0,v38_ix_table_pm2ad_0,pm2_ad_af_threshold (Richards 2015 table both sides),0,same_direction,-9067,-9066,1,False,False,0.00011029006286533584,False,False
+interaction,v37_ix_table_pm2ad_0,v38_ix_table_pm2ad_0,pm2_ad_af_threshold (Richards 2015 table both sides),0,same_pathogenic,-10758,-10758,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_0,v38_ix_table_pm2ad_0,pm2_ad_af_threshold (Richards 2015 table both sides),0,same_benign,0,0,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_0,v38_ix_table_pm2ad_0,pm2_ad_af_threshold (Richards 2015 table both sides),0,false_benign,0,0,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_0,v38_ix_table_pm2ad_0,pm2_ad_af_threshold (Richards 2015 table both sides),0,false_pathogenic,-17,-17,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_0,v38_ix_table_pm2ad_0,pm2_ad_af_threshold (Richards 2015 table both sides),0,opposite,-17,-17,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_0,v38_ix_table_pm2ad_0,pm2_ad_af_threshold (Richards 2015 table both sides),0,exact,-358,-358,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_1e-06,v38_ix_table_pm2ad_1e-06,pm2_ad_af_threshold (Richards 2015 table both sides),1e-06,same_direction,-6180,-6181,-1,False,False,0.00016181229773462783,False,False
+interaction,v37_ix_table_pm2ad_1e-06,v38_ix_table_pm2ad_1e-06,pm2_ad_af_threshold (Richards 2015 table both sides),1e-06,same_pathogenic,-7237,-7238,-1,False,False,0.0001381788033715628,False,False
+interaction,v37_ix_table_pm2ad_1e-06,v38_ix_table_pm2ad_1e-06,pm2_ad_af_threshold (Richards 2015 table both sides),1e-06,same_benign,0,0,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_1e-06,v38_ix_table_pm2ad_1e-06,pm2_ad_af_threshold (Richards 2015 table both sides),1e-06,false_benign,0,0,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_1e-06,v38_ix_table_pm2ad_1e-06,pm2_ad_af_threshold (Richards 2015 table both sides),1e-06,false_pathogenic,-17,-17,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_1e-06,v38_ix_table_pm2ad_1e-06,pm2_ad_af_threshold (Richards 2015 table both sides),1e-06,opposite,-17,-17,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_1e-06,v38_ix_table_pm2ad_1e-06,pm2_ad_af_threshold (Richards 2015 table both sides),1e-06,exact,-432,-433,-1,False,False,0.0023148148148148147,False,False
+interaction,v37_ix_table_pm2ad_1e-05,v38_ix_table_pm2ad_1e-05,pm2_ad_af_threshold (Richards 2015 table both sides),1e-05,same_direction,-5111,-5111,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_1e-05,v38_ix_table_pm2ad_1e-05,pm2_ad_af_threshold (Richards 2015 table both sides),1e-05,same_pathogenic,-5477,-5478,-1,False,False,0.00018258170531312764,False,False
+interaction,v37_ix_table_pm2ad_1e-05,v38_ix_table_pm2ad_1e-05,pm2_ad_af_threshold (Richards 2015 table both sides),1e-05,same_benign,0,0,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_1e-05,v38_ix_table_pm2ad_1e-05,pm2_ad_af_threshold (Richards 2015 table both sides),1e-05,false_benign,0,0,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_1e-05,v38_ix_table_pm2ad_1e-05,pm2_ad_af_threshold (Richards 2015 table both sides),1e-05,false_pathogenic,-15,-15,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_1e-05,v38_ix_table_pm2ad_1e-05,pm2_ad_af_threshold (Richards 2015 table both sides),1e-05,opposite,-15,-15,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_1e-05,v38_ix_table_pm2ad_1e-05,pm2_ad_af_threshold (Richards 2015 table both sides),1e-05,exact,-906,-905,1,False,False,0.0011037527593818985,False,False
+interaction,v37_ix_table_pm2ad_0.0001,v38_ix_table_pm2ad_0.0001,pm2_ad_af_threshold (Richards 2015 table both sides),0.0001,same_direction,-4825,-4825,0,False,False,0.0,False,False
+interaction,v37_ix_table_pm2ad_0.0001,v38_ix_table_pm2ad_0.0001,pm2_ad_af_threshold (Richards 2015 table both sides),0.0001,same_pathogenic,-4946,-4947,-1,False,False,0.0002021835826930853,False,False
+interaction,v37_ix_table_pm2ad_0.0001,v38_ix_table_pm2ad_0.0001,pm2_ad_af_threshold (Richards 2015 table both sides),0.0001,same_benign,0,0,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_0.0001,v38_ix_table_pm2ad_0.0001,pm2_ad_af_threshold (Richards 2015 table both sides),0.0001,false_benign,0,0,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_0.0001,v38_ix_table_pm2ad_0.0001,pm2_ad_af_threshold (Richards 2015 table both sides),0.0001,false_pathogenic,-8,-8,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_0.0001,v38_ix_table_pm2ad_0.0001,pm2_ad_af_threshold (Richards 2015 table both sides),0.0001,opposite,-8,-8,0,False,False,0.0,False,True
+interaction,v37_ix_table_pm2ad_0.0001,v38_ix_table_pm2ad_0.0001,pm2_ad_af_threshold (Richards 2015 table both sides),0.0001,exact,-1104,-1103,1,False,False,0.0009057971014492754,False,False
+cutoff,v37_cut_lp4,v38_cut_lp4,likely_pathogenic_points,4,same_direction,-509,-514,-5,False,False,0.009823182711198428,False,False
+cutoff,v37_cut_lp4,v38_cut_lp4,likely_pathogenic_points,4,same_pathogenic,13358,13364,6,False,False,0.0004491690372810301,False,False
+cutoff,v37_cut_lp4,v38_cut_lp4,likely_pathogenic_points,4,same_benign,-11,-11,0,False,False,0.0,False,False
+cutoff,v37_cut_lp4,v38_cut_lp4,likely_pathogenic_points,4,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp4,v38_cut_lp4,likely_pathogenic_points,4,false_pathogenic,105,105,0,False,False,0.0,False,False
+cutoff,v37_cut_lp4,v38_cut_lp4,likely_pathogenic_points,4,opposite,105,105,0,False,False,0.0,False,False
+cutoff,v37_cut_lp4,v38_cut_lp4,likely_pathogenic_points,4,exact,-10924,-10935,-11,False,False,0.0010069571585499817,False,False
+cutoff,v37_cut_lp5,v38_cut_lp5,likely_pathogenic_points,5,same_direction,4672,4673,1,False,False,0.00021404109589041095,False,False
+cutoff,v37_cut_lp5,v38_cut_lp5,likely_pathogenic_points,5,same_pathogenic,10675,10676,1,False,False,9.36768149882904e-05,False,False
+cutoff,v37_cut_lp5,v38_cut_lp5,likely_pathogenic_points,5,same_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp5,v38_cut_lp5,likely_pathogenic_points,5,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp5,v38_cut_lp5,likely_pathogenic_points,5,false_pathogenic,17,17,0,False,False,0.0,False,False
+cutoff,v37_cut_lp5,v38_cut_lp5,likely_pathogenic_points,5,opposite,17,17,0,False,False,0.0,False,False
+cutoff,v37_cut_lp5,v38_cut_lp5,likely_pathogenic_points,5,exact,-3670,-3670,0,False,False,0.0,False,False
+cutoff,v37_cut_lp6,v38_cut_lp6,likely_pathogenic_points,6,same_direction,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp6,v38_cut_lp6,likely_pathogenic_points,6,same_pathogenic,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp6,v38_cut_lp6,likely_pathogenic_points,6,same_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp6,v38_cut_lp6,likely_pathogenic_points,6,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp6,v38_cut_lp6,likely_pathogenic_points,6,false_pathogenic,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp6,v38_cut_lp6,likely_pathogenic_points,6,opposite,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp6,v38_cut_lp6,likely_pathogenic_points,6,exact,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp7,v38_cut_lp7,likely_pathogenic_points,7,same_direction,-995,-993,2,False,False,0.0020100502512562816,False,False
+cutoff,v37_cut_lp7,v38_cut_lp7,likely_pathogenic_points,7,same_pathogenic,-3254,-3253,1,False,False,0.00030731407498463427,False,False
+cutoff,v37_cut_lp7,v38_cut_lp7,likely_pathogenic_points,7,same_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp7,v38_cut_lp7,likely_pathogenic_points,7,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp7,v38_cut_lp7,likely_pathogenic_points,7,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+cutoff,v37_cut_lp7,v38_cut_lp7,likely_pathogenic_points,7,opposite,-3,-3,0,False,False,0.0,False,True
+cutoff,v37_cut_lp7,v38_cut_lp7,likely_pathogenic_points,7,exact,1586,1587,1,False,False,0.0006305170239596469,False,False
+cutoff,v37_cut_lp8,v38_cut_lp8,likely_pathogenic_points,8,same_direction,-1257,-1256,1,False,False,0.0007955449482895784,False,False
+cutoff,v37_cut_lp8,v38_cut_lp8,likely_pathogenic_points,8,same_pathogenic,-3532,-3532,0,False,False,0.0,False,False
+cutoff,v37_cut_lp8,v38_cut_lp8,likely_pathogenic_points,8,same_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp8,v38_cut_lp8,likely_pathogenic_points,8,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp8,v38_cut_lp8,likely_pathogenic_points,8,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+cutoff,v37_cut_lp8,v38_cut_lp8,likely_pathogenic_points,8,opposite,-3,-3,0,False,False,0.0,False,True
+cutoff,v37_cut_lp8,v38_cut_lp8,likely_pathogenic_points,8,exact,1566,1567,1,False,False,0.0006385696040868455,False,False
+cutoff,v37_cut_lp9,v38_cut_lp9,likely_pathogenic_points,9,same_direction,-6244,-6243,1,False,False,0.00016015374759769378,False,False
+cutoff,v37_cut_lp9,v38_cut_lp9,likely_pathogenic_points,9,same_pathogenic,-8688,-8689,-1,False,False,0.00011510128913443831,False,False
+cutoff,v37_cut_lp9,v38_cut_lp9,likely_pathogenic_points,9,same_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp9,v38_cut_lp9,likely_pathogenic_points,9,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_lp9,v38_cut_lp9,likely_pathogenic_points,9,false_pathogenic,-13,-13,0,False,False,0.0,False,False
+cutoff,v37_cut_lp9,v38_cut_lp9,likely_pathogenic_points,9,opposite,-13,-13,0,False,False,0.0,False,False
+cutoff,v37_cut_lp9,v38_cut_lp9,likely_pathogenic_points,9,exact,484,486,2,False,False,0.004132231404958678,False,False
+cutoff,v37_cut_p9,v38_cut_p9,pathogenic_points,9,same_direction,3,3,0,False,False,0.0,False,True
+cutoff,v37_cut_p9,v38_cut_p9,pathogenic_points,9,same_pathogenic,3,3,0,False,False,0.0,False,True
+cutoff,v37_cut_p9,v38_cut_p9,pathogenic_points,9,same_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p9,v38_cut_p9,pathogenic_points,9,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p9,v38_cut_p9,pathogenic_points,9,false_pathogenic,1,1,0,False,False,0.0,False,True
+cutoff,v37_cut_p9,v38_cut_p9,pathogenic_points,9,opposite,1,1,0,False,False,0.0,False,True
+cutoff,v37_cut_p9,v38_cut_p9,pathogenic_points,9,exact,37200,37203,3,False,False,8.064516129032258e-05,False,False
+cutoff,v37_cut_p11,v38_cut_p11,pathogenic_points,11,same_direction,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p11,v38_cut_p11,pathogenic_points,11,same_pathogenic,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p11,v38_cut_p11,pathogenic_points,11,same_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p11,v38_cut_p11,pathogenic_points,11,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p11,v38_cut_p11,pathogenic_points,11,false_pathogenic,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p11,v38_cut_p11,pathogenic_points,11,opposite,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p11,v38_cut_p11,pathogenic_points,11,exact,-3093,-3095,-2,False,False,0.0006466214031684449,False,False
+cutoff,v37_cut_p12,v38_cut_p12,pathogenic_points,12,same_direction,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p12,v38_cut_p12,pathogenic_points,12,same_pathogenic,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p12,v38_cut_p12,pathogenic_points,12,same_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p12,v38_cut_p12,pathogenic_points,12,false_benign,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p12,v38_cut_p12,pathogenic_points,12,false_pathogenic,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p12,v38_cut_p12,pathogenic_points,12,opposite,0,0,0,False,False,0.0,False,True
+cutoff,v37_cut_p12,v38_cut_p12,pathogenic_points,12,exact,-3131,-3133,-2,False,False,0.0006387735547748323,False,False
+hook,v37_hk_control,v38_hk_control,"measurement build, nothing set",-,same_direction,0,0,0,False,False,0.0,False,True
+hook,v37_hk_control,v38_hk_control,"measurement build, nothing set",-,same_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_control,v38_hk_control,"measurement build, nothing set",-,same_benign,0,0,0,False,False,0.0,False,True
+hook,v37_hk_control,v38_hk_control,"measurement build, nothing set",-,false_benign,0,0,0,False,False,0.0,False,True
+hook,v37_hk_control,v38_hk_control,"measurement build, nothing set",-,false_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_control,v38_hk_control,"measurement build, nothing set",-,opposite,0,0,0,False,False,0.0,False,True
+hook,v37_hk_control,v38_hk_control,"measurement build, nothing set",-,exact,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo,v38_hk_bp1_loo,"BP1 veto, own ClinVar record excluded",on,same_direction,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo,v38_hk_bp1_loo,"BP1 veto, own ClinVar record excluded",on,same_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo,v38_hk_bp1_loo,"BP1 veto, own ClinVar record excluded",on,same_benign,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo,v38_hk_bp1_loo,"BP1 veto, own ClinVar record excluded",on,false_benign,3,3,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo,v38_hk_bp1_loo,"BP1 veto, own ClinVar record excluded",on,false_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo,v38_hk_bp1_loo,"BP1 veto, own ClinVar record excluded",on,opposite,3,3,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo,v38_hk_bp1_loo,"BP1 veto, own ClinVar record excluded",on,exact,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp7_spliceai01,v38_hk_bp7_spliceai01,BP7 SpliceAI bar,0.1 or below,same_direction,-338,-381,-43,False,False,0.12721893491124261,False,False
+hook,v37_hk_bp7_spliceai01,v38_hk_bp7_spliceai01,BP7 SpliceAI bar,0.1 or below,same_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp7_spliceai01,v38_hk_bp7_spliceai01,BP7 SpliceAI bar,0.1 or below,same_benign,-338,-381,-43,False,False,0.12721893491124261,False,False
+hook,v37_hk_bp7_spliceai01,v38_hk_bp7_spliceai01,BP7 SpliceAI bar,0.1 or below,false_benign,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp7_spliceai01,v38_hk_bp7_spliceai01,BP7 SpliceAI bar,0.1 or below,false_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp7_spliceai01,v38_hk_bp7_spliceai01,BP7 SpliceAI bar,0.1 or below,opposite,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp7_spliceai01,v38_hk_bp7_spliceai01,BP7 SpliceAI bar,0.1 or below,exact,-52,-59,-7,False,False,0.1346153846153846,False,False
+hook,v37_hk_bp7_walker,v38_hk_bp7_walker,BP7 as Walker 2023 describes it,"SpliceAI at most 0.1, no conservation test",same_direction,15552,17170,1618,False,False,0.1040380658436214,False,False
+hook,v37_hk_bp7_walker,v38_hk_bp7_walker,BP7 as Walker 2023 describes it,"SpliceAI at most 0.1, no conservation test",same_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp7_walker,v38_hk_bp7_walker,BP7 as Walker 2023 describes it,"SpliceAI at most 0.1, no conservation test",same_benign,15679,17306,1627,False,False,0.10376937304675043,False,False
+hook,v37_hk_bp7_walker,v38_hk_bp7_walker,BP7 as Walker 2023 describes it,"SpliceAI at most 0.1, no conservation test",false_benign,2,3,1,False,False,0.5,True,True
+hook,v37_hk_bp7_walker,v38_hk_bp7_walker,BP7 as Walker 2023 describes it,"SpliceAI at most 0.1, no conservation test",false_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp7_walker,v38_hk_bp7_walker,BP7 as Walker 2023 describes it,"SpliceAI at most 0.1, no conservation test",opposite,2,3,1,False,False,0.5,True,True
+hook,v37_hk_bp7_walker,v38_hk_bp7_walker,BP7 as Walker 2023 describes it,"SpliceAI at most 0.1, no conservation test",exact,12005,13265,1260,False,False,0.10495626822157435,False,False
+hook,v37_hk_strict,v38_hk_strict,"the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together",BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list,same_direction,0,0,0,False,False,0.0,False,True
+hook,v37_hk_strict,v38_hk_strict,"the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together",BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list,same_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_strict,v38_hk_strict,"the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together",BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list,same_benign,0,0,0,False,False,0.0,False,True
+hook,v37_hk_strict,v38_hk_strict,"the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together",BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list,false_benign,10,11,1,False,False,0.1,False,False
+hook,v37_hk_strict,v38_hk_strict,"the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together",BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list,false_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_strict,v38_hk_strict,"the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together",BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list,opposite,10,11,1,False,False,0.1,False,False
+hook,v37_hk_strict,v38_hk_strict,"the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together",BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list,exact,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto1,v38_hk_bp1_loo_veto1,"BP1 veto count, own ClinVar record excluded",1,same_direction,1735,1737,2,False,False,0.0011527377521613833,False,False
+hook,v37_hk_bp1_loo_veto1,v38_hk_bp1_loo_veto1,"BP1 veto count, own ClinVar record excluded",1,same_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto1,v38_hk_bp1_loo_veto1,"BP1 veto count, own ClinVar record excluded",1,same_benign,-127,-127,0,False,False,0.0,False,False
+hook,v37_hk_bp1_loo_veto1,v38_hk_bp1_loo_veto1,"BP1 veto count, own ClinVar record excluded",1,false_benign,-1,-1,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto1,v38_hk_bp1_loo_veto1,"BP1 veto count, own ClinVar record excluded",1,false_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto1,v38_hk_bp1_loo_veto1,"BP1 veto count, own ClinVar record excluded",1,opposite,-1,-1,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto1,v38_hk_bp1_loo_veto1,"BP1 veto count, own ClinVar record excluded",1,exact,1777,1779,2,False,False,0.0011254924029262803,False,False
+hook,v37_hk_bp1_loo_veto2,v38_hk_bp1_loo_veto2,"BP1 veto count, own ClinVar record excluded",2,same_direction,850,850,0,False,False,0.0,False,False
+hook,v37_hk_bp1_loo_veto2,v38_hk_bp1_loo_veto2,"BP1 veto count, own ClinVar record excluded",2,same_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto2,v38_hk_bp1_loo_veto2,"BP1 veto count, own ClinVar record excluded",2,same_benign,-16,-16,0,False,False,0.0,False,False
+hook,v37_hk_bp1_loo_veto2,v38_hk_bp1_loo_veto2,"BP1 veto count, own ClinVar record excluded",2,false_benign,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto2,v38_hk_bp1_loo_veto2,"BP1 veto count, own ClinVar record excluded",2,false_pathogenic,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto2,v38_hk_bp1_loo_veto2,"BP1 veto count, own ClinVar record excluded",2,opposite,0,0,0,False,False,0.0,False,True
+hook,v37_hk_bp1_loo_veto2,v38_hk_bp1_loo_veto2,"BP1 veto count, own ClinVar record excluded",2,exact,858,858,0,False,False,0.0,False,False
+gap,v37_gap_clingen_complete,v38_gap_clingen_complete,ClinGen gene-disease file,the 30 April export plus the curations it lacked,same_direction,848,849,1,False,False,0.0011792452830188679,False,False
+gap,v37_gap_clingen_complete,v38_gap_clingen_complete,ClinGen gene-disease file,the 30 April export plus the curations it lacked,same_pathogenic,852,852,0,False,False,0.0,False,False
+gap,v37_gap_clingen_complete,v38_gap_clingen_complete,ClinGen gene-disease file,the 30 April export plus the curations it lacked,same_benign,20,21,1,False,False,0.05,False,False
+gap,v37_gap_clingen_complete,v38_gap_clingen_complete,ClinGen gene-disease file,the 30 April export plus the curations it lacked,false_benign,0,0,0,False,False,0.0,False,True
+gap,v37_gap_clingen_complete,v38_gap_clingen_complete,ClinGen gene-disease file,the 30 April export plus the curations it lacked,false_pathogenic,1,1,0,False,False,0.0,False,True
+gap,v37_gap_clingen_complete,v38_gap_clingen_complete,ClinGen gene-disease file,the 30 April export plus the curations it lacked,opposite,1,1,0,False,False,0.0,False,True
+gap,v37_gap_clingen_complete,v38_gap_clingen_complete,ClinGen gene-disease file,the 30 April export plus the curations it lacked,exact,151,151,0,False,False,0.0,False,False
+gap,v37_gap_orphanet_lof,v38_gap_orphanet_lof,PVS1 licensed by Orphanet's loss-of-function label,1042 genes,same_direction,1795,1795,0,False,False,0.0,False,False
+gap,v37_gap_orphanet_lof,v38_gap_orphanet_lof,PVS1 licensed by Orphanet's loss-of-function label,1042 genes,same_pathogenic,1829,1829,0,False,False,0.0,False,False
+gap,v37_gap_orphanet_lof,v38_gap_orphanet_lof,PVS1 licensed by Orphanet's loss-of-function label,1042 genes,same_benign,-3,-3,0,False,False,0.0,False,True
+gap,v37_gap_orphanet_lof,v38_gap_orphanet_lof,PVS1 licensed by Orphanet's loss-of-function label,1042 genes,false_benign,0,0,0,False,False,0.0,False,True
+gap,v37_gap_orphanet_lof,v38_gap_orphanet_lof,PVS1 licensed by Orphanet's loss-of-function label,1042 genes,false_pathogenic,5,5,0,False,False,0.0,False,True
+gap,v37_gap_orphanet_lof,v38_gap_orphanet_lof,PVS1 licensed by Orphanet's loss-of-function label,1042 genes,opposite,5,5,0,False,False,0.0,False,True
+gap,v37_gap_orphanet_lof,v38_gap_orphanet_lof,PVS1 licensed by Orphanet's loss-of-function label,1042 genes,exact,246,246,0,False,False,0.0,False,False
+gap,v37_gap_both,v38_gap_both,the complete ClinGen file and Orphanet's label together,1042 genes,same_direction,2067,2068,1,False,False,0.0004837929366231253,False,False
+gap,v37_gap_both,v38_gap_both,the complete ClinGen file and Orphanet's label together,1042 genes,same_pathogenic,2103,2103,0,False,False,0.0,False,False
+gap,v37_gap_both,v38_gap_both,the complete ClinGen file and Orphanet's label together,1042 genes,same_benign,17,18,1,False,False,0.058823529411764705,False,False
+gap,v37_gap_both,v38_gap_both,the complete ClinGen file and Orphanet's label together,1042 genes,false_benign,0,0,0,False,False,0.0,False,True
+gap,v37_gap_both,v38_gap_both,the complete ClinGen file and Orphanet's label together,1042 genes,false_pathogenic,4,4,0,False,False,0.0,False,True
+gap,v37_gap_both,v38_gap_both,the complete ClinGen file and Orphanet's label together,1042 genes,opposite,4,4,0,False,False,0.0,False,True
+gap,v37_gap_both,v38_gap_both,the complete ClinGen file and Orphanet's label together,1042 genes,exact,292,292,0,False,False,0.0,False,False
+sweep,v37_bs2off,v38_sw_bs2ad_0,bs2_ad_prevalence_threshold,0,same_direction,-1593,-705,888,False,False,0.5574387947269304,True,False
+sweep,v37_bs2off,v38_sw_bs2ad_0,bs2_ad_prevalence_threshold,0,same_pathogenic,-439,-439,0,False,False,0.0,False,False
+sweep,v37_bs2off,v38_sw_bs2ad_0,bs2_ad_prevalence_threshold,0,same_benign,9897,10950,1053,False,False,0.10639587753864807,False,False
+sweep,v37_bs2off,v38_sw_bs2ad_0,bs2_ad_prevalence_threshold,0,false_benign,23,27,4,False,False,0.17391304347826086,False,False
+sweep,v37_bs2off,v38_sw_bs2ad_0,bs2_ad_prevalence_threshold,0,false_pathogenic,-6,-6,0,False,False,0.0,False,True
+sweep,v37_bs2off,v38_sw_bs2ad_0,bs2_ad_prevalence_threshold,0,opposite,17,21,4,False,False,0.23529411764705882,True,False
+sweep,v37_bs2off,v38_sw_bs2ad_0,bs2_ad_prevalence_threshold,0,exact,-4754,-4168,586,False,False,0.12326461926798485,False,False
+sweep,v37_bs2prev_3e-5,v38_sw_bs2ad_3e-05,bs2_ad_prevalence_threshold,3e-05,same_direction,2083,2474,391,False,False,0.18771003360537686,False,False
+sweep,v37_bs2prev_3e-5,v38_sw_bs2ad_3e-05,bs2_ad_prevalence_threshold,3e-05,same_pathogenic,-76,-76,0,False,False,0.0,False,False
+sweep,v37_bs2prev_3e-5,v38_sw_bs2ad_3e-05,bs2_ad_prevalence_threshold,3e-05,same_benign,4856,5294,438,False,False,0.09019769357495881,False,False
+sweep,v37_bs2prev_3e-5,v38_sw_bs2ad_3e-05,bs2_ad_prevalence_threshold,3e-05,false_benign,7,9,2,False,False,0.2857142857142857,True,True
+sweep,v37_bs2prev_3e-5,v38_sw_bs2ad_3e-05,bs2_ad_prevalence_threshold,3e-05,false_pathogenic,-3,-3,0,False,False,0.0,False,True
+sweep,v37_bs2prev_3e-5,v38_sw_bs2ad_3e-05,bs2_ad_prevalence_threshold,3e-05,opposite,4,6,2,False,False,0.5,True,True
+sweep,v37_bs2prev_3e-5,v38_sw_bs2ad_3e-05,bs2_ad_prevalence_threshold,3e-05,exact,-232,-48,184,False,False,0.7931034482758621,True,False
+sweep,v37_bs2prev_1e-4,v38_sw_bs2ad_0.0001,bs2_ad_prevalence_threshold,0.0001,same_direction,1548,1699,151,False,False,0.09754521963824289,False,False
+sweep,v37_bs2prev_1e-4,v38_sw_bs2ad_0.0001,bs2_ad_prevalence_threshold,0.0001,same_pathogenic,-14,-14,0,False,False,0.0,False,False
+sweep,v37_bs2prev_1e-4,v38_sw_bs2ad_0.0001,bs2_ad_prevalence_threshold,0.0001,same_benign,2144,2306,162,False,False,0.07555970149253731,False,False
+sweep,v37_bs2prev_1e-4,v38_sw_bs2ad_0.0001,bs2_ad_prevalence_threshold,0.0001,false_benign,3,3,0,False,False,0.0,False,True
+sweep,v37_bs2prev_1e-4,v38_sw_bs2ad_0.0001,bs2_ad_prevalence_threshold,0.0001,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2prev_1e-4,v38_sw_bs2ad_0.0001,bs2_ad_prevalence_threshold,0.0001,opposite,3,3,0,False,False,0.0,False,True
+sweep,v37_bs2prev_1e-4,v38_sw_bs2ad_0.0001,bs2_ad_prevalence_threshold,0.0001,exact,350,397,47,False,False,0.13428571428571429,False,False
+sweep,v37_bs2prev_1e-3,v38_sw_bs2ad_0.001,bs2_ad_prevalence_threshold,0.001,same_direction,-849,-893,-44,False,False,0.05182567726737338,False,False
+sweep,v37_bs2prev_1e-3,v38_sw_bs2ad_0.001,bs2_ad_prevalence_threshold,0.001,same_pathogenic,4,4,0,False,False,0.0,False,True
+sweep,v37_bs2prev_1e-3,v38_sw_bs2ad_0.001,bs2_ad_prevalence_threshold,0.001,same_benign,-1012,-1065,-53,False,False,0.05237154150197629,False,False
+sweep,v37_bs2prev_1e-3,v38_sw_bs2ad_0.001,bs2_ad_prevalence_threshold,0.001,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2prev_1e-3,v38_sw_bs2ad_0.001,bs2_ad_prevalence_threshold,0.001,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2prev_1e-3,v38_sw_bs2ad_0.001,bs2_ad_prevalence_threshold,0.001,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2prev_1e-3,v38_sw_bs2ad_0.001,bs2_ad_prevalence_threshold,0.001,exact,-280,-287,-7,False,False,0.025,False,False
+sweep,v37_bs2prev_3e-3,v38_sw_bs2ad_0.003,bs2_ad_prevalence_threshold,0.003,same_direction,-1262,-1338,-76,False,False,0.060221870047543584,False,False
+sweep,v37_bs2prev_3e-3,v38_sw_bs2ad_0.003,bs2_ad_prevalence_threshold,0.003,same_pathogenic,4,4,0,False,False,0.0,False,True
+sweep,v37_bs2prev_3e-3,v38_sw_bs2ad_0.003,bs2_ad_prevalence_threshold,0.003,same_benign,-1460,-1549,-89,False,False,0.06095890410958904,False,False
+sweep,v37_bs2prev_3e-3,v38_sw_bs2ad_0.003,bs2_ad_prevalence_threshold,0.003,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2prev_3e-3,v38_sw_bs2ad_0.003,bs2_ad_prevalence_threshold,0.003,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2prev_3e-3,v38_sw_bs2ad_0.003,bs2_ad_prevalence_threshold,0.003,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2prev_3e-3,v38_sw_bs2ad_0.003,bs2_ad_prevalence_threshold,0.003,exact,-415,-422,-7,False,False,0.016867469879518072,False,False
+sweep,v37_bs2ac_20,v38_sw_bs2ac_20,bs2_ad_min_ac (bar off),20,same_direction,1797,2309,512,False,False,0.2849193099610462,True,False
+sweep,v37_bs2ac_20,v38_sw_bs2ac_20,bs2_ad_min_ac (bar off),20,same_pathogenic,-116,-116,0,False,False,0.0,False,False
+sweep,v37_bs2ac_20,v38_sw_bs2ac_20,bs2_ad_min_ac (bar off),20,same_benign,5997,6558,561,False,False,0.09354677338669334,False,False
+sweep,v37_bs2ac_20,v38_sw_bs2ac_20,bs2_ad_min_ac (bar off),20,false_benign,9,12,3,False,False,0.3333333333333333,True,False
+sweep,v37_bs2ac_20,v38_sw_bs2ac_20,bs2_ad_min_ac (bar off),20,false_pathogenic,-4,-4,0,False,False,0.0,False,True
+sweep,v37_bs2ac_20,v38_sw_bs2ac_20,bs2_ad_min_ac (bar off),20,opposite,5,8,3,False,False,0.6,True,True
+sweep,v37_bs2ac_20,v38_sw_bs2ac_20,bs2_ad_min_ac (bar off),20,exact,-796,-522,274,False,False,0.3442211055276382,True,False
+sweep,v37_bs2ac_100,v38_sw_bs2ac_100,bs2_ad_min_ac (bar off),100,same_direction,1213,1335,122,False,False,0.10057708161582853,False,False
+sweep,v37_bs2ac_100,v38_sw_bs2ac_100,bs2_ad_min_ac (bar off),100,same_pathogenic,-10,-10,0,False,False,0.0,False,False
+sweep,v37_bs2ac_100,v38_sw_bs2ac_100,bs2_ad_min_ac (bar off),100,same_benign,1635,1756,121,False,False,0.07400611620795107,False,False
+sweep,v37_bs2ac_100,v38_sw_bs2ac_100,bs2_ad_min_ac (bar off),100,false_benign,2,2,0,False,False,0.0,False,True
+sweep,v37_bs2ac_100,v38_sw_bs2ac_100,bs2_ad_min_ac (bar off),100,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2ac_100,v38_sw_bs2ac_100,bs2_ad_min_ac (bar off),100,opposite,2,2,0,False,False,0.0,False,True
+sweep,v37_bs2ac_100,v38_sw_bs2ac_100,bs2_ad_min_ac (bar off),100,exact,347,397,50,False,False,0.1440922190201729,False,False
+sweep,v37_bs2ac_1000,v38_sw_bs2ac_1000,bs2_ad_min_ac (bar off),1000,same_direction,-1117,-1199,-82,False,False,0.07341092211280215,False,False
+sweep,v37_bs2ac_1000,v38_sw_bs2ac_1000,bs2_ad_min_ac (bar off),1000,same_pathogenic,4,4,0,False,False,0.0,False,True
+sweep,v37_bs2ac_1000,v38_sw_bs2ac_1000,bs2_ad_min_ac (bar off),1000,same_benign,-1306,-1400,-94,False,False,0.07197549770290965,False,False
+sweep,v37_bs2ac_1000,v38_sw_bs2ac_1000,bs2_ad_min_ac (bar off),1000,false_benign,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2ac_1000,v38_sw_bs2ac_1000,bs2_ad_min_ac (bar off),1000,false_pathogenic,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2ac_1000,v38_sw_bs2ac_1000,bs2_ad_min_ac (bar off),1000,opposite,0,0,0,False,False,0.0,False,True
+sweep,v37_bs2ac_1000,v38_sw_bs2ac_1000,bs2_ad_min_ac (bar off),1000,exact,-318,-325,-7,False,False,0.0220125786163522,False,False

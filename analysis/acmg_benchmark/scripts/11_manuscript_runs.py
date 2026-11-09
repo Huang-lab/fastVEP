@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
 """Run the threshold sweeps and leave-one-out ablations the ACMG manuscript reports.
 
-Every run here is a variant of `v37`, the final classifier, made by
+Every run here is a variant of `v38`, the latest classifier (release 0.5.0, the tag `v0.5.0-rc.1`), made by
 `run_benchmark.sh` so that it is scored by `03_evaluate_concordance.py` and records
 what produced it. A variant of a run is a run of its own, so each one has its own
-version name, `v37_<knob>_<value>`.
+version name, `v38_<knob>_<value>`.
+
+The runs are defined once, for a family: `v38` (the classifier of release 0.5.0, names `v38_<...>`, the default) and `v37`
+(the classifier at the close of the review rounds, the commit 5d8004a, names `v37_<...>`). The two families are made by the
+same functions below with the name prefix, the binaries and the names of two controls as their only parameters, so that they
+can differ in the classifier and in nothing else (`--family`). The family `v37` is the list that this script made first, on
+the classifier that the paper's review rounds ended with, and it is kept so that what v38 changes can be measured run for
+run (`20_compare_families.py`). The family `v38` is the same list made by the later classifier, and it takes in the runs of
+Section 3.8 that are members of it (`v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`, which have the grids of the
+family): they are not made again, and `main` stops if Section 3.8 defines one of them differently from the family. Section
+3.8's own runs (`--v38`: the change from the commit before v38 to v38, with the alternatives) are unchanged, and so are their
+files, to which the runs of the family `v38` add rows.
 
 Three groups:
 
   sweep   one numeric threshold varied alone, everything else the shipped default.
-          The shipped value is `v37` itself and is not re-run.
+          The shipped value is the family's own main run (`v38`, or `v37`) and is not re-run.
   switch  one boolean or list setting turned off (or, for the two opt-in settings,
           on), everything else the shipped default.
   source  one supplementary-annotation source removed from `--sa-dir`, by symlinking
@@ -27,11 +38,11 @@ Three groups:
           binary built from `manuscript/acmg/replay_validation/bp_hooks_env.patch` (BP1's veto
           counting a variant's own ClinVar record, and BP7's SpliceAI bar); name it in
           FASTVEP_HOOKS_BIN. With no environment variable set it is the shipped classifier,
-          which the control run `v37_hk_control` checks cell for cell.
+          which the control run `v38_hk_control` (`v37_hk_control` in the family v37) checks cell for cell.
   gap     what the PVS1 gap of Section 3.5 is made of: the ClinGen file with the curations the
           April export lacked put back, and PVS1 licensed by Orphanet's loss-of-function label
           for genes that no other route reaches. Needs the files named in `gap_inputs()`.
-  v38     what changed after v37 (Section 3.8): the classifier reading ClinGen's curated inheritance,
+  v38     what v38 changed (Section 3.8): the classifier reading ClinGen's curated inheritance,
           classifying a gene against each of its modes of inheritance, and not counting BS2's carriers
           beside BS1 or BA1. Four kinds of run, kept apart from the rest (their names start `v38`, they
           are written to `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv`, and the
@@ -49,7 +60,7 @@ Three groups:
                           check that the runs of every chromosome give its calls
           and each of them also on the variants of the October 2026 release (`--holdout --v38`).
   holdout the changes that Section 4.5 proposes, run on the variants of the ClinVar release of
-          4 October 2026 (the covered subset that `14_temporal_holdout.py prepare` writes), so
+          4 October 2026 (its 2-star+ variants whole: `14_temporal_holdout.py prepare` writes their strata), so
           that they are tried on variants that none of them was tuned on. They are run with
           `--holdout`, and are not among the runs of `runs.tsv` (which are all on the April set):
           their matrices are in `holdout_runs.tsv`, and `13_manuscript_stats.py` scores them on
@@ -66,23 +77,34 @@ Outputs (MANUSCRIPT_RUNS_ROOT and MANUSCRIPT_RESULTS_DIR name another root and a
       provenance/<name>.txt
       runs.tsv             one row per run: the 5x6 concordance matrix and the
                            firing count of every criterion, read back from the scored files
+      run_matrix_v38.tsv, runs_v38.tsv, holdout_runs_v38.tsv
+                           the same for every run whose name starts `v38`: Section 3.8's, then the family v38's
 
 Usage
-  11_manuscript_runs.py                 run everything that has not been run
+  11_manuscript_runs.py                 run everything that has not been run (the family v38, the default)
   11_manuscript_runs.py --workers 2     two runs at a time
   11_manuscript_runs.py --only pm2ad    only runs whose name contains the text
   11_manuscript_runs.py --list          print the matrix and stop
   11_manuscript_runs.py --collect       rebuild runs.tsv from the scored files and stop
   11_manuscript_runs.py --holdout       the runs of the `holdout` group (the others are not run)
+  11_manuscript_runs.py --family v37    the family v37 in place of v38 (with --list: print its matrix; with --holdout: its
+                                        seven runs on the October release); what this script listed and ran before v38
+                                        was the default
+  11_manuscript_runs.py --v38           the runs of Section 3.8 (the change from the commit before v38, and its alternatives)
 
-  FASTVEP_V37_BIN=/path/to/v37/fastvep 11_manuscript_runs.py --workers 3
-  FASTVEP_CUTOFF_BIN=/path/to/patched/fastvep 11_manuscript_runs.py --only cut
+  export FASTVEP_V38_BIN=/path/to/fastvep_v38 FASTVEP_CUTOFF38_BIN=/path/to/fastvep_cut38 FASTVEP_HOOKS38_BIN=/path/to/fastvep_hook38
+  11_manuscript_runs.py --workers 3        (and again with --holdout); the runs that Section 3.8 made are found scored and
+                                           not made again, so a second invocation makes nothing
+  FASTVEP_V37_BIN=/path/to/v37/fastvep 11_manuscript_runs.py --family v37 --workers 3
+  FASTVEP_CUTOFF_BIN=/path/to/patched/fastvep 11_manuscript_runs.py --family v37 --only cut
 
 The binary of every run is named by an environment variable, and a run whose variable is not set is not run:
-FASTVEP_V37_BIN for the runs that are v37 with one setting changed (the script stops if it is missing, because the
-checkout's own build is the classifier of the checkout and not v37 once the classifier has moved on), and the
-variable of its group for a patched build or a build of Section 3.8 (FASTVEP_CUTOFF_BIN, FASTVEP_HOOKS_BIN,
-FASTVEP_V38_BIN, FASTVEP_V38_BASE_BIN, FASTVEP_V38_ALT_BIN), which is skipped where it is not set.
+FASTVEP_V37_BIN for the runs of the family v37 that are v37 with one setting changed, and FASTVEP_V38_BIN for those of
+the family v38 that are v38 with one setting changed (the script stops if it is missing, because the checkout's own
+build is the classifier of the checkout and not v37 or v38 once the classifier has moved on), and the variable of its
+group for a patched build or a build of Section 3.8 (FASTVEP_CUTOFF_BIN and FASTVEP_HOOKS_BIN, built from v37, and
+FASTVEP_CUTOFF38_BIN and FASTVEP_HOOKS38_BIN, built from v38, all four by `build_manuscript_binaries.sh`;
+FASTVEP_V38_BIN, FASTVEP_V38_BASE_BIN, FASTVEP_V38_ALT_BIN for Section 3.8), which is skipped where it is not set.
 
 Every sweep and ablation is fitted to, and scored against, ClinVar's 2-star+
 classifications, which are a reference and not ground truth.
@@ -107,7 +129,10 @@ BENCH = ROOT / "data/benchmark"
 # neither finds the first run's directories already scored and skips them nor overwrites the tables the manuscript reads;
 # `16_compare_runs.py` then compares the two roots.
 OUT_ROOT = Path(os.environ.get("MANUSCRIPT_RUNS_ROOT", BENCH / "manuscript_runs"))
-SA_DB = BENCH / "sa_db"
+# The databases every run reads: `sa_db_complete`, in which SpliceAI, PhyloP and gnomAD are built from the whole of the gnomAD v4.1
+# exomes file (`sa_sources/make_complete_stack.sh`, results/complete_databases/README.md). The benchmark was first made with
+# `sa_db`, whose SpliceAI and PhyloP lack records that the file carries; BENCH_SA_DB=sa_db makes a run on those databases.
+SA_DB = BENCH / os.environ.get("BENCH_SA_DB", "sa_db_complete")
 SA_ABLATE = BENCH / "sa_db_ablate"
 RES = Path(os.environ.get("MANUSCRIPT_RESULTS_DIR", ROOT / "analysis/acmg_benchmark/results/v37_manuscript"))
 RUNNER = ROOT / "analysis/acmg_benchmark/scripts/run_benchmark.sh"
@@ -145,6 +170,11 @@ KEEP_VCF = {
     "v38_chr2122_joint",
     "v38_joint",
 }
+# The family v38 keeps the annotated VCF of every run whose v37 twin is kept, so that the same call-by-call analyses can be made of it.
+KEEP_VCF |= {"v38_" + n.removeprefix("v37_") for n in KEEP_VCF if n.startswith("v37_")}
+
+# The two families of runs (see the module docstring): the classifier of Sections 2 to 3.7 and the one of release 0.5.0.
+FAMILIES = ("v37", "v38")
 
 
 @dataclass
@@ -156,14 +186,14 @@ class Run:
     shipped: str  # the shipped value, as text
     description: str
     toml: list[str] = field(default_factory=list)  # lines of the config, or empty
-    sa_remove: list[str] = field(default_factory=list)  # glob patterns removed from sa_db
-    sa_replace: dict[str, str] = field(default_factory=dict)  # sa_db file name -> file used instead
+    sa_remove: list[str] = field(default_factory=list)  # glob patterns removed from the stack (SA_DB)
+    sa_replace: dict[str, str] = field(default_factory=dict)  # file name in the stack -> file used instead
     env: dict[str, str] = field(default_factory=dict)  # environment the run needs (the cutoff runs)
     inputs: dict[str, str] = field(default_factory=dict)  # INPUT and LABELS of a run that is not on the April set
     binary: str = ""  # the patched build the run needs ("hook"), where its group does not say so
 
 
-def sweeps() -> list[Run]:
+def sweeps(fam: str = "v37") -> list[Run]:
     grids = [
         (
             "pm2_ad_af_threshold",
@@ -198,7 +228,7 @@ def sweeps() -> list[Run]:
             "bp1veto",
             [1, 2, 5, 10, 25],
             "3",
-            "number of ClinVar pathogenic missense variants in a gene at which BP1's veto applies (no veto at all is v37_sw_no_bp1_veto)",
+            f"number of ClinVar pathogenic missense variants in a gene at which BP1's veto applies (no veto at all is {fam}_sw_no_bp1_veto)",
         ),
         (
             "phylop_conserved",
@@ -214,7 +244,7 @@ def sweeps() -> list[Run]:
             label = f"{v:g}"
             out.append(
                 Run(
-                    name=f"v37_sw_{short}_{label}",
+                    name=f"{fam}_sw_{short}_{label}",
                     group="sweep",
                     knob=knob,
                     value=label,
@@ -226,7 +256,7 @@ def sweeps() -> list[Run]:
     for v in [0, 50, 100, 200, 500, 1000, 1_000_000]:
         out.append(
             Run(
-                name=f"v37_sw_bp7far_{v}",
+                name=f"{fam}_sw_bp7far_{v}",
                 group="sweep",
                 knob="bp7_max_intron_offset",
                 value=str(v),
@@ -248,10 +278,10 @@ def sweeps() -> list[Run]:
     return out
 
 
-def switches() -> list[Run]:
+def switches(fam: str = "v37") -> list[Run]:
     def sw(short, knob, value, shipped, what, toml=None):
         return Run(
-            name=f"v37_sw_{short}",
+            name=f"{fam}_sw_{short}",
             group="switch",
             knob=knob,
             value=value,
@@ -376,10 +406,10 @@ def switches() -> list[Run]:
     ]
 
 
-def sources() -> list[Run]:
+def sources(fam: str = "v37") -> list[Run]:
     def src(short, remove, what, toml=None):
         return Run(
-            name=f"v37_src_{short}",
+            name=f"{fam}_src_{short}",
             group="source",
             knob=short,
             value="removed",
@@ -423,7 +453,7 @@ def sources() -> list[Run]:
     ]
 
 
-def interactions() -> list[Run]:
+def interactions(fam: str = "v37") -> list[Run]:
     """The PM2 sweep again, with the Richards 2015 table on both sides.
 
     PM2 was set at 4e-5 in v10, under the 2015 table, where a lone PVS1 matched no row and
@@ -436,7 +466,7 @@ def interactions() -> list[Run]:
         label = f"{v:g}"
         out.append(
             Run(
-                name=f"v37_ix_table_pm2ad_{label}",
+                name=f"{fam}_ix_table_pm2ad_{label}",
                 group="interaction",
                 knob="pm2_ad_af_threshold (Richards 2015 table both sides)",
                 value=label,
@@ -448,7 +478,7 @@ def interactions() -> list[Run]:
     return out
 
 
-def cutoffs() -> list[Run]:
+def cutoffs(fam: str = "v37") -> list[Run]:
     """The point cutoffs of the pathogenic side, by real runs of a patched binary.
 
     Likely pathogenic from 6 points and Pathogenic from 10 are constants in `combiner.rs`. The
@@ -456,19 +486,19 @@ def cutoffs() -> list[Run]:
     does is measured and not only replayed from the criteria a variant met.
     """
     out = []
-    # 6 is the shipped cutoff: that run is the control, which must reproduce v37 exactly, because
-    # it shows that the patched binary behaves as the shipped one does apart from the two cutoffs.
+    # 6 is the shipped cutoff: that run is the control, which must reproduce the family's own run (v37 or v38) exactly,
+    # because it shows that the patched binary behaves as the shipped one does apart from the two cutoffs.
     for lp in (4, 5, 6, 7, 8, 9):
         out.append(
             Run(
-                name=f"v37_cut_lp{lp}",
+                name=f"{fam}_cut_lp{lp}",
                 group="cutoff",
                 knob="likely_pathogenic_points",
                 value=str(lp),
                 shipped="6",
                 description=(
                     f"Likely pathogenic from {lp} pathogenic points"
-                    + (" (the shipped value: a control that must reproduce v37)" if lp == 6 else " (6 is shipped)")
+                    + (f" (the shipped value: a control that must reproduce {fam})" if lp == 6 else " (6 is shipped)")
                 ),
                 env={"FASTVEP_LP_CUT": str(lp)},
             )
@@ -476,7 +506,7 @@ def cutoffs() -> list[Run]:
     for p in (9, 11, 12):
         out.append(
             Run(
-                name=f"v37_cut_p{p}",
+                name=f"{fam}_cut_p{p}",
                 group="cutoff",
                 knob="pathogenic_points",
                 value=str(p),
@@ -488,23 +518,23 @@ def cutoffs() -> list[Run]:
     return out
 
 
-def hooks() -> list[Run]:
+def hooks(fam: str = "v37") -> list[Run]:
     """BP1 and BP7 measured by real runs of a build that exposes one setting of each.
 
-    `v37_hk_control` has nothing set, and must reproduce v37 in every cell: that is what
-    licenses reading the other three as the shipped classifier with one thing changed.
+    `<family>_hk_control` has nothing set, and must reproduce the family's own run (v37 or v38) in every cell: that is
+    what licenses reading the other three as the shipped classifier with one thing changed.
     """
     return [
         Run(
-            name="v37_hk_control",
+            name=f"{fam}_hk_control",
             group="hook",
             knob="measurement build, nothing set",
             value="-",
             shipped="-",
-            description="the measurement build with no hook set (a control that must reproduce v37)",
+            description=f"the measurement build with no hook set (a control that must reproduce {fam})",
         ),
         Run(
-            name="v37_hk_bp1_loo",
+            name=f"{fam}_hk_bp1_loo",
             group="hook",
             knob="BP1 veto, own ClinVar record excluded",
             value="on",
@@ -517,7 +547,7 @@ def hooks() -> list[Run]:
             env={"FASTVEP_BP1_LOO": "1"},
         ),
         Run(
-            name="v37_hk_bp7_spliceai01",
+            name=f"{fam}_hk_bp7_spliceai01",
             group="hook",
             knob="BP7 SpliceAI bar",
             value="0.1 or below",
@@ -526,7 +556,7 @@ def hooks() -> list[Run]:
             env={"FASTVEP_BP7_SPLICEAI_BENIGN": "1"},
         ),
         Run(
-            name="v37_hk_bp7_walker",
+            name=f"{fam}_hk_bp7_walker",
             group="hook",
             knob="BP7 as Walker 2023 describes it",
             value="SpliceAI at most 0.1, no conservation test",
@@ -536,7 +566,7 @@ def hooks() -> list[Run]:
             env={"FASTVEP_BP7_SPLICEAI_BENIGN": "1"},
         ),
         Run(
-            name="v37_hk_strict",
+            name=f"{fam}_hk_strict",
             group="hook",
             knob="the adjustments that read the variant's own ClinVar record or followed the reviewer's rows, removed together",
             value="BP1's veto leaves out the own record; no low-penetrance gate; no frequency-exception list",
@@ -554,7 +584,7 @@ def hooks() -> list[Run]:
         # so the pair is measured and not added up from the two runs that change one each.
         *[
             Run(
-                name=f"v37_hk_bp1_loo_veto{count}",
+                name=f"{fam}_hk_bp1_loo_veto{count}",
                 group="hook",
                 knob="BP1 veto count, own ClinVar record excluded",
                 value=str(count),
@@ -610,7 +640,7 @@ def orphanet_mechanisms() -> dict[str, str]:
     return out
 
 
-def gaps() -> list[Run]:
+def gaps(fam: str = "v37") -> list[Run]:
     mech = orphanet_mechanisms()
     toml: list[str] = []
     for gene, m in mech.items():
@@ -618,7 +648,7 @@ def gaps() -> list[Run]:
     complete = {"omim.oga": str(gap_inputs()["complete_oga"])}
     return [
         Run(
-            name="v37_gap_clingen_complete",
+            name=f"{fam}_gap_clingen_complete",
             group="gap",
             knob="ClinGen gene-disease file",
             value="the 30 April export plus the curations it lacked",
@@ -631,7 +661,7 @@ def gaps() -> list[Run]:
             sa_replace=complete,
         ),
         Run(
-            name="v37_gap_orphanet_lof",
+            name=f"{fam}_gap_orphanet_lof",
             group="gap",
             knob="PVS1 licensed by Orphanet's loss-of-function label",
             value=f"{len(mech)} genes",
@@ -643,7 +673,7 @@ def gaps() -> list[Run]:
             toml=toml,
         ),
         Run(
-            name="v37_gap_both",
+            name=f"{fam}_gap_both",
             group="gap",
             knob="the complete ClinGen file and Orphanet's label together",
             value=f"{len(mech)} genes",
@@ -655,15 +685,16 @@ def gaps() -> list[Run]:
     ]
 
 
-def holdout_runs() -> list[Run]:
+def holdout_runs(fam: str = "v37") -> list[Run]:
     """The changes that Section 4.5 proposes, on the variants of the 4 October 2026 release.
 
-    Each differs from `v37_oct2026` (the shipped classifier on that release) in one change that
+    Each differs from the family's run of the shipped classifier on that release (`v37_oct2026`, made by
+    `14_temporal_holdout.py`, for v37; `v38_oct_shipped` for v38) in one change that
     the manuscript measured on the April set. The release's variants that were not in the April
     set were not seen by any sweep, review round or run, so these are the nearest thing to a test
     of a change that was found by reading the April discordances.
     """
-    subset = BENCH / "clinvar_20261004_covered"
+    subset = BENCH / "clinvar_20261004"
     inputs = {"INPUT": str(subset / "clinvar_2star.vcf"), "LABELS": str(subset / "clinvar_2star_labels.tsv")}
     mech = orphanet_mechanisms()
     toml: list[str] = []
@@ -672,7 +703,7 @@ def holdout_runs() -> list[Run]:
     complete = {"omim.oga": str(gap_inputs()["complete_oga"])}
 
     def hold(short, what, **kw):
-        return Run(name=f"v37_oct_{short}", group="holdout", knob=what, value="-", shipped="-",
+        return Run(name=f"{fam}_oct_{short}", group="holdout", knob=what, value="-", shipped="-",
                    description=f"{what}, on the variants of the 4 October 2026 release", inputs=inputs, **kw)
 
     return [
@@ -697,6 +728,12 @@ V38_BINARIES = {"inherit": "FASTVEP_V38_BIN", "inherit_base": "FASTVEP_V38_BASE_
 # checkout's build would be a run of something else under v37's name.
 V37_BINARY = "FASTVEP_V37_BIN"
 PATCHED_BINARIES = {"cutoff": "FASTVEP_CUTOFF_BIN", "hook": "FASTVEP_HOOKS_BIN", **V38_BINARIES}
+# The same three kinds of binary for each family. The family v38's plain binary is the one that Section 3.8's `inherit`
+# group is made by (the release's own, the tag v0.5.0-rc.1), and its two patched builds are the patches of the family v37
+# applied to that tree (`build_manuscript_binaries.sh`, names `cut38` and `hook38`).
+PLAIN_BINARY = {"v37": V37_BINARY, "v38": V38_BINARIES["inherit"]}
+CUTOFF_BINARY = {"v37": "FASTVEP_CUTOFF_BIN", "v38": "FASTVEP_CUTOFF38_BIN"}
+HOOK_BINARY = {"v37": "FASTVEP_HOOKS_BIN", "v38": "FASTVEP_HOOKS38_BIN"}
 PILOT = BENCH / "pilot_chr2122"
 SA_JOINT = BENCH / "sa_db_joint"
 CHROMS = [str(c) for c in range(1, 23)] + ["X", "Y"]
@@ -706,12 +743,28 @@ def is_v38(run: Run) -> bool:
     return run.name.startswith("v38")
 
 
+def family_of(run: Run) -> str:
+    """The family a run belongs to: by its name, as `is_v38` says which of the output files it goes to."""
+    return "v38" if is_v38(run) else "v37"
+
+
 def binary_variable(run: Run) -> str:
     """The environment variable that names the binary this run is made by."""
     kind = run.binary or run.group
     if kind == "joint":
         kind = "inherit"
-    return PATCHED_BINARIES.get(kind, V37_BINARY)
+    fam = family_of(run)
+    return {"cutoff": CUTOFF_BINARY[fam], "hook": HOOK_BINARY[fam], **V38_BINARIES}.get(kind, PLAIN_BINARY[fam])
+
+
+def must_have_plain_binary(run: Run) -> bool:
+    """Whether the script stops when the plain binary of the run's family is not named, in place of skipping the run.
+
+    That is every run of a family that is its classifier with one setting changed. A patched build and the runs of
+    Section 3.8 are skipped where their variable is not set, as they always have been.
+    """
+    kind = run.binary or run.group
+    return kind not in ("cutoff", "hook", "joint", *V38_BINARIES)
 
 
 def ensure_pilot_inputs() -> None:
@@ -808,8 +861,8 @@ def v38_runs() -> list[Run]:
 
 
 def v38_holdout_runs() -> list[Run]:
-    """The same comparisons on the variants of the 4 October 2026 release (the covered subset)."""
-    subset = BENCH / "clinvar_20261004_covered"
+    """The same comparisons on the 2-star+ variants of the 4 October 2026 release."""
+    subset = BENCH / "clinvar_20261004"
     inputs = {"INPUT": str(subset / "clinvar_2star.vcf"), "LABELS": str(subset / "clinvar_2star_labels.tsv")}
 
     def hold(short, group, what, **kw):
@@ -826,8 +879,35 @@ def v38_holdout_runs() -> list[Run]:
     ]
 
 
-def all_runs() -> list[Run]:
-    return sweeps() + switches() + sources() + interactions() + cutoffs() + hooks() + gaps()
+def all_runs(fam: str = "v37") -> list[Run]:
+    return sweeps(fam) + switches(fam) + sources(fam) + interactions(fam) + cutoffs(fam) + hooks(fam) + gaps(fam)
+
+
+def v38_family(section38: list[Run]) -> tuple[list[Run], list[Run]]:
+    """The family v38 (what `all_runs("v38") + holdout_runs("v38")` define) and, of it, the runs that Section 3.8 has not made.
+
+    Section 3.8 swept three of the four thresholds that read inheritance on the grids of the family
+    (`v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`), so those are members of the family under the same names and
+    are not made again. They keep Section 3.8's definition (its group, `inherit`, and its description). A member is only
+    the same run if the setting is the same, so the two definitions are compared and the script stops at a difference:
+    a run that was made with another grid would otherwise stand in the family's sweep under its name.
+
+    Returns the whole family, in the family's order and with Section 3.8's definition for the shared runs, and the runs
+    of it that the matrix does not hold yet.
+    """
+    have = {r.name: r for r in section38}
+    fam, new = [], []
+    for r in all_runs("v38") + holdout_runs("v38"):
+        old = have.get(r.name)
+        if old is None:
+            fam.append(r)
+            new.append(r)
+            continue
+        key = lambda x: (x.knob, x.value, x.shipped, x.toml, x.sa_remove, x.sa_replace, x.env, x.inputs, x.binary)  # noqa: E731
+        if key(old) != key(r):
+            sys.exit(f"{r.name}: Section 3.8 defines it as {key(old)} and the family as {key(r)}, so it is not a member of the family")
+        fam.append(old)
+    return fam, new
 
 
 def write_config(run: Run) -> Path | None:
@@ -842,7 +922,7 @@ def write_config(run: Run) -> Path | None:
 
 
 def make_sa_dir(run: Run) -> Path:
-    """A directory of symlinks to every sa_db file except the ones this run removes."""
+    """A directory of symlinks to every file of the stack (SA_DB) except the ones this run removes."""
     import fnmatch
 
     target = SA_ABLATE / run.name
@@ -919,8 +999,13 @@ def collect(runs: list[Run]) -> None:
     # `runs.tsv` and `holdout_runs.tsv` whole, do not change when they are made.
     apr = [r for r in scored if r[0].group != "holdout" and not is_v38(r[0])]
     hold = [r for r in scored if r[0].group == "holdout" and not is_v38(r[0])]
-    write_runs(RES / "runs.tsv", apr)
-    write_runs(RES / "holdout_runs.tsv", hold)
+    # A family none of whose runs is on this machine leaves its files alone. They are tracked and the bulk outputs are not, and the family that
+    # this script runs by default is v38: a machine that has made only that family would otherwise write the two files of v37 with a header
+    # and no row, over the results that the manuscript's twin tables for v37 are made from.
+    if apr:
+        write_runs(RES / "runs.tsv", apr)
+    if hold:
+        write_runs(RES / "holdout_runs.tsv", hold)
     if any(is_v38(r[0]) for r in scored):
         write_runs(RES / "runs_v38.tsv", [r for r in scored if is_v38(r[0]) and r[0].group != "holdout"])
         write_runs(RES / "holdout_runs_v38.tsv", [r for r in scored if is_v38(r[0]) and r[0].group == "holdout"])
@@ -942,9 +1027,10 @@ def collect(runs: list[Run]) -> None:
                  ",".join(run.sa_remove), ",".join(sorted(run.sa_replace)),
                  " ".join(f"{k}={v}" for k, v in sorted(run.env.items()))]
             )
-    print(f"collected {len(apr)} of {len([r for r in runs if r.group != 'holdout'])} runs "
-          f"into {RES / 'runs.tsv'} and {len(hold)} of "
-          f"{len([r for r in runs if r.group == 'holdout'])} held-out runs into {RES / 'holdout_runs.tsv'}"
+    print((f"collected {len(apr)} of {len([r for r in runs if r.group != 'holdout'])} runs "
+           f"into {RES / 'runs.tsv'} and {len(hold)} of "
+           f"{len([r for r in runs if r.group == 'holdout'])} held-out runs into {RES / 'holdout_runs.tsv'}"
+           if apr or hold else "no run of the family v37 is on disk, so runs.tsv and holdout_runs.tsv are as they were")
           + (f"; {len([r for r in scored if is_v38(r[0])])} runs of Section 3.8 into the files with `v38` in their names"
              if any(is_v38(r[0]) for r in scored) else ""))
 
@@ -976,8 +1062,8 @@ def execute(run: Run) -> tuple[str, bool]:
     cfg = write_config(run)
     if cfg:
         env["ACMG_CONFIG"] = str(cfg)
-    if run.sa_remove or run.sa_replace:
-        env["SA_DIR"] = str(make_sa_dir(run))
+    # Every run names its databases, so that the stack is the one of this script (SA_DB) and not whatever the runner defaults to.
+    env["SA_DIR"] = str(make_sa_dir(run)) if (run.sa_remove or run.sa_replace) else str(SA_DB)
     log = out / "run.log"
     with log.open("w") as lf:
         rc = subprocess.call(
@@ -1003,27 +1089,45 @@ def main() -> None:
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--collect", action="store_true")
     ap.add_argument("--holdout", action="store_true", help="run the held-out group (on the 4 October 2026 release) and nothing else")
-    ap.add_argument("--v38", action="store_true", help="run the runs of Section 3.8 (what changed after v37) in place of the others")
+    ap.add_argument("--v38", action="store_true", help="run the runs of Section 3.8 (what v38 changed from the commit before it) in place of the others")
+    ap.add_argument("--family", choices=FAMILIES, default="v38",
+                    help="the family of runs to list and to run: v38, the runs made by the classifier of release 0.5.0 (the default), or v37, "
+                         "the same runs made by the classifier at the close of the review rounds (what this script listed and ran first)")
     args = ap.parse_args()
 
-    runs = all_runs() + holdout_runs() + v38_runs() + v38_holdout_runs()
+    section38 = v38_runs() + v38_holdout_runs()
+    family38, new38 = v38_family(section38)
+    # Every run, in the order that decides the order of the rows of the files: the family v37, Section 3.8, then the rest of the family v38.
+    runs = all_runs() + holdout_runs() + section38 + new38
     names = [r.name for r in runs]
     if len(set(names)) != len(names):
         sys.exit("duplicate run names in the matrix")
     if args.list:
-        for r in runs:
+        shown = runs[: len(runs) - len(new38)] if args.family == "v37" else family38
+        for r in shown:
             print(f"{r.group:7} {r.name:34} {r.description}")
-        print(f"{len(runs)} runs")
+        print(f"{len(shown)} runs")
         return
     if args.collect:
         collect(runs)
         return
 
-    todo = [r for r in runs if args.only in r.name and (r.group == "holdout") == args.holdout and is_v38(r) == args.v38]
-    if any(binary_variable(r) == V37_BINARY and not (OUT_ROOT / r.name / "concordance_matrix.csv").exists() for r in todo) \
-            and not os.environ.get(V37_BINARY):
-        sys.exit(f"{V37_BINARY} is not set: it names the binary built at the v37 commit (5d8004a), which makes every run "
-                 "that is not made by a patched build or a build of Section 3.8 (see the module docstring)")
+    if args.v38:
+        pool = section38
+    elif args.family == "v38":
+        pool = family38
+    else:
+        pool = [r for r in runs if not is_v38(r)]
+    todo = [r for r in pool if args.only in r.name and (r.group == "holdout") == args.holdout]
+    for fam in FAMILIES:
+        variable = PLAIN_BINARY[fam]
+        if not os.environ.get(variable) and any(
+            family_of(r) == fam and must_have_plain_binary(r) and not (OUT_ROOT / r.name / "concordance_matrix.csv").exists() for r in todo
+        ):
+            what = ("built at the v37 commit (5d8004a)" if fam == "v37" else
+                    "of release 0.5.0 (built from the tag v0.5.0-rc.1)")
+            sys.exit(f"{variable} is not set: it names the binary {what}, which makes every run of the family {fam} that is not made "
+                     "by a patched build or a build of Section 3.8 (see the module docstring)")
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
     if any(str(PILOT) in v for r in todo for v in r.inputs.values()):
         ensure_pilot_inputs()

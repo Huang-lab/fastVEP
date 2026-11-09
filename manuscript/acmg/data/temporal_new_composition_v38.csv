@@ -1,0 +1,31 @@
+consequence_group,clinvar,n
+Canonical splice site,B/LB,23
+Canonical splice site,P/LP,1624
+Canonical splice site,VUS,185
+Frameshift or nonsense,B/LB,39
+Frameshift or nonsense,P/LP,5885
+Frameshift or nonsense,VUS,623
+In-frame or protein-altering,B/LB,244
+In-frame or protein-altering,P/LP,85
+In-frame or protein-altering,VUS,848
+Intronic,B/LB,12954
+Intronic,P/LP,63
+Intronic,VUS,335
+Missense,B/LB,3468
+Missense,P/LP,2406
+Missense,VUS,34666
+"Other (flank, non-coding, unscored)",B/LB,1605
+"Other (flank, non-coding, unscored)",P/LP,245
+"Other (flank, non-coding, unscored)",VUS,1009
+Splice region,B/LB,10433
+Splice region,P/LP,143
+Splice region,VUS,1184
+Start or stop loss,B/LB,6
+Start or stop loss,P/LP,63
+Start or stop loss,VUS,61
+Synonymous,B/LB,37095
+Synonymous,P/LP,6
+Synonymous,VUS,91
+UTR,B/LB,511
+UTR,P/LP,14
+UTR,VUS,164

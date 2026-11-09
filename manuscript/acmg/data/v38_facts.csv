@@ -28,3 +28,22 @@ base_vs_v37_variants_with_other_criteria_or_call,25
 base_vs_v37_variants_with_another_call,4
 base_vs_v37_differing_variants_that_are_indels,25
 base_vs_v37_differing_variants_called_lp_by_v37_and_vus_in_clinvar,4
+opposite_in_v37,52
+opposite_in_v38,51
+opposite_left_in_v38,1
+opposite_entered_in_v38,0
+left_opposite_variant,8:116866762 C>T
+left_opposite_gene,RAD21
+left_opposite_consequence,splice_acceptor_variant
+left_opposite_clinvar,Likely_benign
+left_opposite_stars,2
+left_opposite_call_v37,Likely_pathogenic
+left_opposite_criteria_v37,PVS1
+left_opposite_call_v38,VUS
+left_opposite_criteria_v38,PVS1&BS2
+left_opposite_tags_v38,AD
+left_opposite_gnomad_ac,2630
+left_opposite_gnomad_an,1381576
+left_opposite_gnomad_hc,3
+left_opposite_popmax_af,0.0023185
+left_opposite_in_round6,1

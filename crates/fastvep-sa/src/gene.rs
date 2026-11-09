@@ -55,6 +55,11 @@ impl GeneIndex {
         self.genes.len()
     }
 
+    /// Whether the index holds no gene: a build that found nothing to write.
+    pub fn is_empty(&self) -> bool {
+        self.genes.is_empty()
+    }
+
     /// Serialize to a writer.
     ///
     /// The genes are written in the order of their symbols. `genes` is a `HashMap`, whose iteration order is
