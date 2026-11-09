@@ -520,7 +520,7 @@
             <span>Examples:</span>
             <button type="button" class="chip" data-example="coding">OR4F5 coding (missense, frameshift, UTR)</button>
             <button type="button" class="chip" data-example="splicing">OR4F5 splice sites</button>
-            <button type="button" class="chip" data-example="noncoding">lncRNA + intergenic</button>
+            <button type="button" class="chip" data-example="noncoding">lncRNA exon, intron and flanks</button>
           </div>
           <p class="hint" id="examplesNote" hidden></p>
         </div>
@@ -761,7 +761,8 @@ const EXAMPLES = {
 1\t67000\t.\tA\tG\t30\tPASS\t.\t## intron_variant (mid-intron)
 1\t60000\t.\tA\tG\t30\tPASS\t.\t## upstream_gene_variant`,
 
-  // Non-coding: lncRNA exon/intron + intergenic + downstream
+  // Non-coding: lncRNA exon, intron, upstream and downstream. No intergenic example: the model holds two genes 1.3 kb
+  // apart, so every base it can speak for is within 5 kb of one of them, and farther out it knows nothing.
   noncoding: `##fileformat=VCFv4.2
 ## Non-coding variants near lncRNA ENSG00000290826 (ENST00000642116)
 ## lncRNA exons: 57598-57653, 58700-58856, 62916-64116
@@ -769,8 +770,7 @@ const EXAMPLES = {
 1\t57620\t.\tA\tG\t30\tPASS\t.\t## non_coding_transcript_exon_variant (exon 1)
 1\t59000\t.\tC\tT\t30\tPASS\t.\t## intron_variant (intron 2)
 1\t55000\t.\tG\tA\t30\tPASS\t.\t## upstream_gene_variant
-1\t64200\t.\tT\tC\t30\tPASS\t.\t## downstream_gene_variant
-1\t200000\t.\tA\tG\t30\tPASS\t.\t## intergenic_variant`,
+1\t64200\t.\tT\tC\t30\tPASS\t.\t## downstream_gene_variant`,
 };
 
 // Parse GFF3 into transcript models
@@ -891,11 +891,30 @@ function predict(variant, transcripts, distance) {
     }
   }
   if (results.length === 0) {
+    // Between genes of the model is intergenic. Outside the span that the model covers (or on a chromosome it does not hold)
+    // the model knows nothing, and a label there would be a claim it cannot make: 13:32319298 is a BRCA2 stop codon, and a
+    // model of OR4F5 and one lncRNA on chr1 would have called it intergenic. Such a variant gets no row, and a warning.
+    const span = modelSpans(transcripts).get(normChrom(chrom));
+    if (!span || end < span.start - distance || start > span.end + distance) return results;
     for (const alt of alts) {
       results.push({ allele: alt, transcript: null, consequences: ['intergenic_variant'], impact: 'MODIFIER', cdna: null, cds: null, protein: null, aa: null, codons: null, exon: null, intron: null, dist: null });
     }
   }
   return results;
+}
+
+// The first and last base that the model has a transcript for, on each chromosome.
+function modelSpans(transcripts) {
+  if (transcripts._spans) return transcripts._spans;
+  const spans = new Map();
+  for (const t of transcripts) {
+    const c = normChrom(t.chr);
+    const s = spans.get(c);
+    if (!s) spans.set(c, { start: t.start, end: t.end });
+    else { s.start = Math.min(s.start, t.start); s.end = Math.max(s.end, t.end); }
+  }
+  transcripts._spans = spans;
+  return spans;
 }
 
 function predictAllele(start, end, ref, alt, tr, dist) {
@@ -1171,7 +1190,8 @@ function predictAllele(start, end, ref, alt, tr, dist) {
   return r;
 }
 
-function impactRank(imp) { return {HIGH:0,MODERATE:1,LOW:2,MODIFIER:3}[imp]||3; }
+// `|| 3` made HIGH (rank 0) rank 3, the rank of MODIFIER: the demo labelled a splice donor variant MODIFIER.
+function impactRank(imp) { const k = {HIGH:0,MODERATE:1,LOW:2,MODIFIER:3}[imp]; return k === undefined ? 3 : k; }
 
 // ============================================================
 // Application: genomes, server calls, results, exports
@@ -2094,9 +2114,11 @@ async function annotateDemo(vcfText) {
   const variants = parseVCF(vcfText);
   const pick = $('optPick').checked;
   const rows = [];
+  const outside = [];
   for (const v of variants) {
     const variant = { chrom: v.chrom, start: v.start, end: v.end, id: v.id, origPos: v.origPos, origRef: v.origRef, origAlt: v.origAlt, orig: { pos: v.origPos, ref: v.origRef, alt: v.origAlt, id: v.id, qual: v.qual, filter: v.filter } };
     let preds = predict(v, transcripts, 5000);
+    if (preds.length === 0) { outside.push(v); continue; }
     if (pick) {
       const canonical = preds.filter((p) => p.transcript?.canonical);
       const picked = canonical.length > 0 ? canonical : preds.slice(0, 1);
@@ -2107,7 +2129,7 @@ async function annotateDemo(vcfText) {
     for (const p of preds) rows.push(fromEngine(p, v, variant));
   }
   state.provenance = { kind: 'demo', label: custom ? `Your GFF3 (${state.customGff3Name})` : DEMO_LABEL, detail: custom ? `${plural(transcripts.length, 'transcript')}, analysed in your browser` : DEMO_DETAIL };
-  showResults(rows, { variants: variants.length, ms: performance.now() - t0, warnings: demoWarnings(variants, transcripts, rows) });
+  showResults(rows, { variants: variants.length, ms: performance.now() - t0, warnings: demoWarnings(variants, transcripts, rows, outside) });
 }
 
 function fromEngine(p, v, variant) {
@@ -2122,13 +2144,18 @@ function fromEngine(p, v, variant) {
 }
 
 const normChrom = (c) => c.replace(/^chr/i, '');
-function demoWarnings(variants, transcripts, rows) {
+function demoWarnings(variants, transcripts, rows, outside = []) {
   if (variants.length === 0 || transcripts.length === 0) return [];
-  const varChroms = new Set(variants.map((v) => normChrom(v.chrom)));
-  const gffChroms = new Set(transcripts.map((t) => normChrom(t.chr)));
-  if (![...varChroms].some((c) => gffChroms.has(c))) {
-    return [{ title: 'Chromosome mismatch: no variant overlaps the gene model',
-      detail: `Variant chromosomes: ${[...varChroms].sort().join(', ')}. Gene model chromosomes: ${[...gffChroms].sort().join(', ')}. Check that both use the same naming (1 or chr1).` }];
+  const spans = modelSpans(transcripts);
+  if (outside.length > 0) {
+    // A variant outside the model gets no row: the model cannot say what is there, and a label would be a claim.
+    const covered = spans.size > 3 ? `${spans.size} chromosomes of your GFF3` : [...spans].map(([c, s]) => `chromosome ${c}, ${fmtInt(s.start)}-${fmtInt(s.end)}`).join('; ');
+    const missing = [...new Set(outside.map((v) => normChrom(v.chrom)).filter((c) => !spans.has(c)))].sort().slice(0, 8);
+    const all = outside.length === variants.length;
+    return [{
+      title: all ? 'No variant lies in the region of this gene model, so none was annotated' : `${outside.length} of ${variants.length} variants lie outside the gene model and were not annotated`,
+      detail: `The model covers ${covered}.${missing.length ? ` It holds nothing on chromosome ${missing.join(', ')}.` : ''} A variant outside it gets no row, because the model cannot say what is there. Annotate whole genomes on fastvep.org or with the command-line tool.`,
+    }];
   }
   if (rows.length > 0 && rows.every((r) => r.consequences.length === 1 && r.consequences[0] === 'intergenic_variant') && variants.length > 2) {
     const varMin = Math.min(...variants.map((v) => v.start));
@@ -2137,11 +2164,6 @@ function demoWarnings(variants, transcripts, rows) {
     const gffMax = Math.max(...transcripts.map((t) => t.end));
     return [{ title: 'Every variant came back intergenic: possible coordinate mismatch',
       detail: `Variants span ${fmtInt(varMin)}-${fmtInt(varMax)}; the gene model spans ${fmtInt(gffMin)}-${fmtInt(gffMax)}. The variants may lie outside the regions this model covers.` }];
-  }
-  const missing = [...varChroms].filter((c) => !gffChroms.has(c));
-  if (missing.length > 0) {
-    const n = variants.filter((v) => !gffChroms.has(normChrom(v.chrom))).length;
-    return [{ title: `${n} of ${variants.length} variants are on chromosomes the gene model does not cover`, detail: `Missing: ${missing.sort().join(', ')}. They are reported as intergenic.` }];
   }
   return [];
 }
@@ -2203,7 +2225,22 @@ function buildColumns(rows) {
 }
 const visibleColumns = () => state.columns.filter((c) => state.visible.has(c.key));
 
+// Rows arrive in transcript order, which puts the upstream_gene_variant of a neighbouring gene above the stop_gained of the
+// gene that holds the variant (13:32319298 G>T listed ZAR1L before BRCA2). The variants stay in the order of the input; within
+// one, the most severe consequence comes first, then MANE Select, MANE Plus Clinical and the canonical transcript, and ties keep
+// the order of the answer. A click on a column header sorts as it always did.
+function readingOrder(rows) {
+  const group = new Map();
+  for (const r of rows) { const k = `${r.loc}\t${r.allele}`; if (!group.has(k)) group.set(k, group.size); }
+  const mane = (r) => (r.transcript?.mane_select ? 0 : r.transcript?.mane_plus_clinical ? 1 : r.transcript?.canonical ? 2 : 3);
+  return rows
+    .map((r, i) => ({ r, i, g: group.get(`${r.loc}\t${r.allele}`) }))
+    .sort((a, b) => a.g - b.g || impactRank(a.r.impact) - impactRank(b.r.impact) || mane(a.r) - mane(b.r) || a.i - b.i)
+    .map((x) => x.r);
+}
+
 function showResults(rows, { variants, ms, warnings = [] }) {
+  rows = readingOrder(rows);
   state.results = rows;
   state.dirty = { summary: true, raw: true };
   state.sort = { key: null, dir: 'asc' };
