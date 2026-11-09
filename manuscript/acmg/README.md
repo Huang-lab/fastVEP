@@ -152,7 +152,7 @@ These are marked in the manuscript with square brackets or are not in it at all.
 6. **Pronouns.**
    The manuscript refers to the reviewer as "the reviewer" and "they", because their pronouns are not recorded.
 7. **Whether to change the classifier** on the findings above, and in what order (Section 4.5).
-   Each has a price measured in this work, and none should be tuned to the 48 residual calls.
+   Each has a price measured in this work, and none should be tuned to the 51 residual calls.
 8. **The commit of v38.**
    The runs of the paper were made on 8 November 2026 by binaries built from clean exports of the tag `v0.5.0-rc.1` (the family v38, and the alternatives of Section 3.8 with a patch), of the commit before the change and of commit `5d8004a` (v37), and `binaries_v38.tsv` and `binaries.tsv` of `analysis/acmg_benchmark/results/v37_manuscript/` say what each binary was built from.
    The provenance of a run records the commit and the number of uncommitted files of the checkout that ran the harness, which is not the commit of the binary.
