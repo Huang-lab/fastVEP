@@ -514,7 +514,6 @@ Built, from the benchmark's own `sa_db_complete`, totalling 3.4 GB:
 | `repeatmasker.osi` | 239 MB | whole assembly |
 
 The three rows built from gnomAD's file are built from the whole of it, with 16-bit chunks (`--chunk-bits 16`, which keeps a lookup in a database that holds a variant in nearly every chunk cheap).
-The benchmark's first versions of the same three were scoped to its ClinVar 2-star+ regions, and the first SpliceAI and PhyloP databases lacked 8.2% and 8.3% of the values that the file holds for the benchmark's variants, because the extraction ignored the exit status of `tabix` (`analysis/acmg_benchmark/results/complete_databases/README.md`).
 If you scope the extraction to regions, check the exit status of every `tabix` call and the number of records that each batch returns: a stream that ends early leaves a database with a hole in it, and nothing in the classifier's output says so.
 
 ## Keeping the URLs honest

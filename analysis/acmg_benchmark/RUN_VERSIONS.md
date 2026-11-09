@@ -1746,7 +1746,7 @@ To check that the code that is merged gives the calls that the manuscript report
 
 ## The family v38: the 96 runs of Section 2.6 made again by release 0.5.0 (8 November 2026)
 
-When these runs were made the manuscript said v37 in Sections 2 to 3.7, and the analyses of those sections had not been repeated on v38; the manuscript has since been re-based on v38 (the last section of this file), and this section records the work as it was done on 8 November 2026, when `--base v37` was still the default of the scripts.
+This section records the 96 runs of the family v38 as they were made on 8 November 2026, when `--base v37` was still the default of the scripts.
 To measure what a manuscript that says v38 throughout would have to change, every run that `11_manuscript_runs.py` defines for v37 was made again by the classifier of release 0.5.0 (the tag `v0.5.0-rc.1`, `c12d9f9`): the 89 runs on the April set and the 7 on the October release.
 The runs are named as the family v37's are, with `v38` for `v37` (`v38_sw_bs1_0.01`, `v38_src_noclingen` and `v38_oct_both` are examples), and `11_manuscript_runs.py --family v38` generates them from the same functions, so that a pair differs in the classifier and in nothing else: 96 of the 96 pairs have the same knob, value, default, replaced annotation files and environment in `run_matrix.tsv` and `run_matrix_v38.tsv`.
 18 of the 96 are runs that Section 3.8 had already made under these names (`v38_sw_pm2ad_*`, `v38_sw_pm2ar_*` and `v38_sw_bs2hom_*`, whose grids are the family's), made again on 7 November 2026 by release 0.5.0 with every scored file identical, so they were not made a third time.
@@ -1800,112 +1800,33 @@ The other 78 were made on 8 November 2026, and `results/v38_family_vs_v37.md` se
 - The files without a twin are `trajectory.csv`, `change_ledger.csv`, `review_rounds.csv`, `round6_rulings.tsv`, `clingen_missing_curations.csv`, `criteria_status.csv` and `tavtigian_posterior.csv`; the rows and rules of round 6 have twins (`round6_rows_v38.csv`, `round6_rules_v38.csv`) because they say what became of the reviewer's 64 rows under the classifier.
 
 
-## The manuscript is re-based on v38 (8 November 2026)
+## The databases of the paper's runs (8 November 2026)
 
-The manuscript described v37, the version in which the review rounds ended, and a co-author read its numbers as v37's.
-v38 is the latest classifier (release 0.5.0, the tag `v0.5.0-rc.1`), and it is also the version of the latest analyses, so the manuscript now says v38 everywhere that it quotes a result.
-v37 appears in it only as the history of the numbered versions v1 to v37 and as the before of a difference between the two, which is Section 3.8.
-v37 and v38 are versions of the classifier and not builds of the genome: every run of either is on GRCh38.
-The default combining scheme is the same in both, points on the pathogenic side and the 2015 table on the benign side.
-No run was made and the classifier was not changed for this: the 96 runs of each version, the twin tables and the comparison of the section above are what the text now reads.
+The runs of the paper read `data/benchmark/sa_db_complete/`: every database of the benchmark's stack, with gnomAD, SpliceAI and PhyloP built from the whole of the gnomAD v4.1 exomes file.
+The 72 files (those three sources for each of 24 chromosomes, `.osa2`, 16-bit chunks) were built on the host of fastvep.org, copied to `data/benchmark/sa_sources/complete/` and checked against `results/complete_databases/SHA256SUMS`; `scripts/sa_sources/make_complete_stack.sh` makes the stack by linking every file of `sa_db/` but those three sources and putting the 72 files in their place.
+`run_benchmark.sh`, `11_manuscript_runs.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, `17_joint_boundary_cases.py`, `18_criteria_status.py` and `19_time_annotation.py` read it by default (`SA_DIR` and `BENCH_SA_DB` name another stack).
+The October release is scored whole (781,135 variants), because the databases cover every position.
 
-### What was done
+### The runs
 
-- The defaults of the scripts were flipped.
-  `11_manuscript_runs.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, `build_tables.py`, `build_supplement.py`, `generate_figures.py` and `verify_numbers.py` are about v38 unless they are given `--base v37` (`--family v37` for the runs), and `build_manuscript_binaries.sh` builds the three binaries of the family v38 first.
-  Run with `--base v37`, `13_manuscript_stats.py` rewrites the twins for v37 as before (checked on the full run under both bases: the only tracked files that differ from the commit before are the six named in the next item, which gained rows), and the other scripts write the tables, workbook and figures of v37 outside the repository.
-  `20_compare_families.py` now reads the manuscript as the text of v38, and Section 9 of `results/v38_family_vs_v37.md` lists what would read differently under v37.
-- The manuscript, its tables, workbook and figures were regenerated from the files of v38.
-  `data/trajectory.csv` has a row for v38 (the 38th run), Figure S1 shows it (key item 14), and Figure S1 is the same under both bases because the trajectory is history.
-  Five more tracked files gained rows that the new text quotes: `clingen_missing_summary_v37.csv` and `_v38.csv` (the calls and the criteria of GATM's variants apart, the tags of the two runs, and the variants that lose PM2 with their allele frequencies), `v38_facts.csv` (the variant that leaves the opposite-direction calls at v38, with its calls, criteria and gnomAD counts) and `facts_v37.csv` and `_v38.csv` (the benign-side calls of ClinVar's VUS variants, and how many rest on one criterion), and `results/v38_family_vs_v37_summary.csv` is new (the counts of sweeps and effects that the text quotes from the comparison).
-- Section 3.8 became the account of what v38 changed from v37, from `results/v38_family_vs_v37.md`: the main run (+153 exact calls and +1,494 in direction, one opposite-direction call fewer, which is the RAD21 variant 8:116866762 C>T), the sweeps (the knees are the same, the BS2 carrier threshold and its floor stop being flat, the PM2 sweep under the 2015 table keeps a third of its range), the ablations (11 of 245 effects changed, 5 of them of fewer than 10 calls, and the large one is the removal of the ClinGen file, which costs 1,845 correct benign-side calls under v38 and 163 under v37) and the October release.
-  Twelve statements changed in truth or wording and are listed in Section 9.1 of the comparison: the flat trajectory after v13, the annotation time, the size of the crate, the reviewer's rulings on the residual calls (29 of 48), the regrade of PVS1 (2 calls, 7 on v37), the flat PM2 sweeps, the PM2 sweep under the 2015 table (it rises at every step as v37 does and by about a third as much, so it no longer reproduces the rise that v10 recorded), the BS2 carrier threshold, the dependence on ClinVar-derived inputs (28 reference-discordant benign calls rest on the BP1 veto), the row dated on the day of the ClinGen export, the PVS1 calls on benign-side variants (21 and five common in gnomAD, where the RAD21 variant has left), and the new Benign variants of 2% or more (the highest bands carry 1.8 of the 4.1 points that the mix does not explain, 43%).
-- The benign-side recall is over 284,550 variants in Sections 3.1 to 3.7, as in the tables of v37, and over the 284,168 that have a call in the tables of Section 3.8 (the binaries of v38 write no record for the 382 reference-agreement records); Table 8's caption says so.
-- `verify_numbers.py` finds a number only where it is a number of its own: not inside a longer number, and (after the audit below) not inside a name such as `PM2` or `v38`, a hash, a power such as `4e-5` or a percentage.
-  The first change, that a number is a whole number and not a part of a longer one, found a sentence of Section 3.7 that said 2 and 5 reference-discordant pathogenic calls for the completed ClinGen file and for both inputs of the PVS1 gap on the April set, where the data say 1 and 4: the old check had found the 1 inside '1,795' and the 4 inside '848'.
-  A few more checks were added for numbers that no check anchored (the 48, the benign-side recall of both denominators, the counts of a sentence of Section 4.1), and a scan of every number of the text against the checks of its line was run to find the rest; the stale ones it found (a 49 in Sections 2.5 and 3.3, a 46,718, a 950, a 1,865, a 58,610 and a 67,700, among others) were corrected.
-- The plain-binary failure of `verify_numbers.py --base v38` is resolved without relaxing it: a run that another binary made counts as made by the binary of its kind only if the same run was made again by that binary, with every scored file identical (`results/v38_v0.5.0/rerun_comparison.csv`, and the provenance of the repetition names the binary), and the check reads both files and does not take them on trust.
-  The 18 shared sweeps carry `f184277d...` and were repeated by `70b7c684...` with every scored file identical, so the plain kind is one binary; a run for which no such repetition exists is a failure.
-  The table that says the files are identical is not taken alone either: the concordance matrix and the firing counts of the repetition, which are in the repository (`runs_v38.tsv` of `results/v38_v0.5.0/` and of `results/v37_manuscript/`), must be the stored run's in every cell, and the date of the repetition is its New York date.
-
-- Two audits of 8 November 2026, one of the manuscript against the data and one of the scripts and the guard (which also changed each number of a checked sentence to see whether a check noticed), found what the first pass had left, and every finding was recomputed before it was acted on.
-  In the manuscript: a count of truncating variants at full strength that was still v37's (4, where v38 has 8), the denominator of the benign-side calls of ClinVar's VUS variants (4,616 for 4,804, which the guard had held as a typed value, so that it enforced the stale one), the span of the recessive-only PM2 sweep in Table 3 (26 for 27: `build_tables.py` left the default out of it), an ALPK1 sentence that still described two variants, a leak of the validity gate that the text assigned to v38 (it was v37's, and v38 closes it), a statement that the sweep under the 2015 table does not reproduce v10's knee (it reproduces its steps, at a third of the rise), the description of release 0.5.0 (it holds the work on speed that followed v38 and reproduced 42 runs), and several statements of how the runs were made.
-  In the guard: `has()` refuses a number inside a name, a hash, a power or a percentage; the spelled-out counts that passed on the 1 of `PM1` or `PVS1` are found by their words; the fourth term of the PVS1 strengths, the 122 and the 4,804 (now rows of `facts_v37.csv` and `facts_v38.csv`), the RAD21 variant of the October release, IQSEC1 and PRR12, the New York date of the repetition and the cell of Table 3 are tied to the data; and the claims about the families (the same 96 runs, the plain build at commit 5d8004a) are checked.
-  In the scripts: a collection step of `11_manuscript_runs.py` wrote `runs.tsv` and `holdout_runs.tsv` of v37 with a header and no row on a machine that holds only the family v38 (which the script now runs by default), and it now leaves them alone; the comparison paired the values of a check by position where the genes that a sentence names are six under v37 and five under v38; and its text dated the 78 new runs on 8 November, which is the UTC date, where the paper dates them in New York (7 November).
-- A note on dates.
-  The provenance files record times in UTC, and this file and the manuscript give the dates of the earlier runs as the dates in New York (the rerun of 4 November 2026 was recorded between 02:05 and 02:28 UTC on 5 November, and the repetition by release 0.5.0 between 07:23 and 07:37 UTC on 7 November, the same date in both).
-  The 78 runs of the family v38 were recorded between 03:58 and 04:30 UTC on 8 November, which is the evening of 7 November in New York, and this file's section on the family gives their date as 8 November, in UTC; the manuscript gives no date for them, and says only that they were made once, after the repetition by release 0.5.0.
-
-### What was checked
-
-- `build_tables.py --check` (7 marked tables, none stale), `build_supplement.py --check` (the workbook of 26 sheets is up to date) and `verify_numbers.py` (2,012 values found in their sentences, no failure) pass on the committed tree.
-- Under `--base v37` the same three scripts say what v38 changed: 5 of 7 marked tables, 18 of 26 sheets and 7 of 9 figures differ, and `verify_numbers.py --base v37` fails on the sentences whose numbers v38 changed (the list is in Section 9.4 of the comparison).
-- The figures were redrawn from the files of v38, are byte for byte the same on a second drawing, and were read one by one.
-
-### What was not done
-
-- The time of annotation was not measured again.
-  The manuscript quotes the median of the runs of v37 (127 seconds, three at a time with another job on the machine), the time of release 0.5.0 measured alone on 7 November 2026 (25.3 seconds on every core, 74 seconds on one thread, 11 seconds to score; `results/v38_v0.5.0/annotation_time.tsv`), and says that the runs of v38 were made three at a time and are not timings.
-- Not verified, and said so where it is stated: why the PM2 sweep under the 2015 table loses most of its range on v38 (the reading that the firing counts support has not been tested by a run that sweeps both PM2 thresholds under the 2015 table), and which of the curated tag and the words of the disease names accounts for the larger loss of benign-side calls when the ClinGen file is removed (no per-variant table was made for that run).
-- The remarks of the reviewer that the manuscript paraphrases are read from workbooks that are not in the repository, and `verify_numbers.py` does not check them.
-  The remark on how common each of the five PVS1 variants is in gnomAD was read from the returned workbook of round 6 when the manuscript was re-based (KDM2B and PHKB: too common in gnomAD; EDN3 and PIEZO1: more than 1,000 carriers; FMR1: 210 hemizygotes and one homozygote, and why the population frequencies were not applied).
-- The language-edited .docx that the co-authors read still says v37 throughout and was not edited.
-
-## The benchmark is re-based on the complete databases (8 November 2026)
-
-The numbers of the sections above are measured with the SpliceAI and PhyloP databases that the benchmark first used, unless a section says otherwise.
-Those databases were distilled in April 2026 from regions of gnomAD's v4.1 exomes file, and they lacked records that the file carries.
-Of the 673,278 variants with an alternative allele, 486,580 had a SpliceAI value and 532,531 a PhyloP value in them, where databases built from the whole file have 529,992 and 580,460, so that the first lacked 8.2% and 8.3% of the values that exist.
-The gap was found on 8 November 2026, when the databases for the web server were built from the whole file and compared with the benchmark's on 1,000 ClinVar variants.
-Every run of the paper was then made again with the complete databases, and the manuscript, its tables, workbook and figures were regenerated from them.
-
-### What was done
-
-- The 72 complete files (gnomAD, SpliceAI and PhyloP for each of 24 chromosomes, `.osa2`, 16-bit chunks) were built on the host of fastvep.org from the whole of the gnomAD file, copied to `data/benchmark/sa_sources/complete/` and checked against `results/complete_databases/SHA256SUMS`.
-  `scripts/sa_sources/make_complete_stack.sh` made `data/benchmark/sa_db_complete/`, which links every file of `sa_db/` but the three sources and puts the 72 files in their place.
-- The complete gnomAD was adopted only after a check on the April set: with the complete SpliceAI and PhyloP databases and the binary of the tag, the benchmark's regional gnomAD databases and the complete ones gave the same call, the same criteria and the same SpliceAI, PhyloP, gnomAD, REVEL and ClinVar fields for each of the 673,660 variants.
-- `run_benchmark.sh`, `11_manuscript_runs.py`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, `17_joint_boundary_cases.py`, `18_criteria_status.py` and `19_time_annotation.py` read `sa_db_complete` by default (`SA_DIR` and `BENCH_SA_DB` name another stack).
-  The October release is scored whole (781,135 variants): `14_temporal_holdout.py prepare` no longer keeps only the 772,585 variants that lie in the regions of the April extract, which the complete databases make unnecessary.
-- The runs on the first databases were kept under the names `manuscript_runs_april_databases/`, `manuscript_runs_v0.5.0_april_databases/` and `output_v37*_april_databases/`, and `scripts/21_compare_databases.py` reads their per-variant tables.
-- Every run was made again by the same binaries on 8 November 2026, several at a time on the ten-core machine, so that the annotation times are not timings: the 96 runs of the family v38 and the 96 of the family v37, the 20 runs of Section 3.8 on the April set and the 4 on the October release that are not in the family, the main run of v37 with its eight runs of BS2's settings and its two orders of picking a transcript, and the run of v37 on the October release.
+- The 96 runs of the family v38 and the 96 of the family v37, the 20 runs of Section 3.8 on the April set and the 4 on the October release that are not in the family, and the main run of v37 with its runs of BS2's settings were made with these databases on 8 November 2026 by the same binaries, several at a time on the ten-core machine, so that their annotation times are not timings.
   The provenance of the 216 runs of `results/v37_manuscript/` and of the 42 repeated ones of `results/v38_v0.5.0/` was recorded between 20:23 and 23:05 UTC (15:23 and 18:05 in New York).
-- The 42 runs of Section 3.8 (38 on the April set and 4 on the October release) were then made a second time into `data/benchmark/manuscript_runs_v0.5.0/` by the same binaries, and `16_compare_runs.py` finds every scored file and every record of the 15 annotated VCFs that both keep identical (`results/v38_v0.5.0/rerun_comparison.csv`).
-  The annotated VCFs of the repetition were deleted after the comparison, as those of the earlier repetitions were.
-- `13_manuscript_stats.py` (both bases), `14_temporal_holdout.py blockers`, `17_joint_boundary_cases.py`, `18_criteria_status.py`, `21_compare_databases.py` and `20_compare_families.py` were run again, then `generate_figures.py`, `build_tables.py --write` and `build_supplement.py --write`.
-- `verify_numbers.py`, `build_tables.py` and `generate_figures.py` gained what the re-base needs: a check of the databases, Table 10, the comparison of the first and the complete databases in Figures S1 and S4, the separation of the calls that the reviewer saw from the ones that he did not (Figure S3), and the axes of Figure 1A, which follow the curves.
-- `21_compare_databases.py` also sets every sweep and every ablation of the family v38 on the first databases against the same run on the complete ones, with the rules of `20_compare_families.py` for the shape of a sweep and the change of an effect.
-  Its first form found a knee in the carrier floor of BS2 because the exchange rate fell by a factor of 3.3, from 1,578 calls per added error to 480, which is not the fall to about a hundred that Section 2.5 of the manuscript describes, so the rule of `20_compare_families.py` now asks of the step after the fall that it be worth 150 calls per error or fewer.
-  The knees that the paper names do not change (BS1 at 1e-3 and BP7's distance at 300), and the PM2 sweep under the 2015 table has its knee at 1e-5 under v38 only (880 calls per error to 84, against 3,410 to 484 under v37).
-- `13_manuscript_stats.py --base v37` no longer stops when a contradiction of v37 is not one of the reviewer's 64 rows of round 6, because v37 has three of them on the complete databases and they are marked as not reviewed, as v38's are.
+- The 42 runs of Section 3.8 (38 on the April set and 4 on the October release) were made a second time into `data/benchmark/manuscript_runs_v0.5.0/` by the same binaries, and `16_compare_runs.py` finds every scored file and every record of the 15 annotated VCFs that both keep identical (`results/v38_v0.5.0/rerun_comparison.csv`).
+  The annotated VCFs of the repetition were deleted after the comparison.
+- The complete gnomAD was adopted after a check on the April set: with the same SpliceAI and PhyloP databases and the binary of the tag, the benchmark's regional gnomAD databases and the complete ones give the same call, the same criteria and the same SpliceAI, PhyloP, gnomAD, REVEL and ClinVar fields for each of the 673,660 variants.
+- `13_manuscript_stats.py` (both bases), `14_temporal_holdout.py blockers`, `17_joint_boundary_cases.py`, `18_criteria_status.py` and `20_compare_families.py` were run on these runs, then `generate_figures.py`, `build_tables.py --write` and `build_supplement.py --write`; `build_tables.py --check`, `build_supplement.py --check` and `verify_numbers.py` pass on the committed tree.
+- `20_compare_families.py` asks of a knee that the step after the fall be worth 150 calls per error or fewer, which is the fall to about a hundred that Section 2.5 of the manuscript describes; the PM2 sweep under the 2015 table has its knee at 1e-5 under v38 only (880 calls per error to 84, against 3,410 to 484 under v37).
 
-### What was found
+### What was not repeated
 
-- The missing records are in 14 batches of 200 regions of the extraction (the same 14 for SpliceAI and for PhyloP, with the same first lost position, as one `tabix` stream per batch feeds both files) and, for PhyloP, in 457 indels whose second base lies outside every region; nothing else is missing, and where both databases have a value it is the same (`analysis/acmg_benchmark/results/complete_vs_april_databases/databases_*.csv`).
-  The pattern is that of a stream that ends early, and the extraction script ignored the exit status of `tabix` and threw its messages away; the extraction was not repeated, so that the cause is read from the pattern and not observed.
-- On the April set v38 goes from 426,022 to 431,727 exact calls (63.24% to 64.09%) and from 524,380 to 534,335 calls in direction (77.84% to 79.32%), and from 48 to 51 opposite-direction calls; v37 goes from 522,886 to 532,688 in direction (77.62% to 79.07%) and from 49 to 52.
-  The three added are ClinVar-Pathogenic variants called Likely benign on BP4 (and BP7 for two): TMEM216 11:61392563 G>T, VWF 12:6022888 G>A and GTPBP3 19:17339046 GGGGA>G.
-- Recall of ClinVar's benign-side variants goes from 62.9% to 66.4%, and recall of pathogenic-side variants stays at 62.5%: BP4 fires on 19,503 more variants, BP7 on 12,333 more and PP3 on 1,121 more, and PVS1 on canonical splice variants on one more.
-- On the October release v38 has 611,945 calls in direction on the whole release (78.34%) and 68 opposite-direction calls; on the 116,078 new variants it has 72.6% and 20, 2.3 times the April rate (95% interval 1.2 to 3.8).
-- Of the 12 sweeps of the paper, 4 differ in a detail between the two sets of databases (two settings that agree within 744 calls change order in three sweeps, and one step of BP7's PhyloP bar adds a reference-discordant benign call where it added none), and of the 245 effects of the single switches, sources, hook runs and gap runs, 7 changed sign, appeared or vanished, or changed by more than 20%, 6 of them by fewer than 10 calls; the one that is larger is the removal of SpliceAI, which takes away 16 opposite-direction calls where it took away 13.
-- BP7's conservation test, when it is switched off, adds three reference-discordant benign calls (TMEM231, NF1 and MAPT) where it added two (NF1 and MAPT), for 17,793 correct benign-side calls.
-- gnomAD's joint release adds 9,187 calls in direction for two opposite-direction calls on the complete databases where it added 9,321 for three, because TMEM216's call is removed by the joint release (its filtering allele frequency is 0.461% there and 0.512% in the exomes).
+- The numbered versions v1 to v36: their binaries were not kept, so their rows in Figure S1 and in `trajectory.csv` are the runs of the time (the column `databases` says "of the time" for them and "final" for v37 and v38, and the columns `*_of_the_time` keep the earlier run of v37 and v38).
+- The annotation time: `results/v38_v0.5.0/annotation_time.tsv` and the times of the manuscript are those of release 0.5.0 timed alone on 7 November 2026, with a stack of databases smaller than the final one.
+- The reviewer has not ruled on the three opposite-direction calls that the last round did not see (TMEM216 11:61392563 G>T, VWF 12:6022888 G>A and GTPBP3 19:17339046 GGGGA>G).
 
-### What differs from the first drafts
+### A note on dates
 
-- Every run of this paper is made once by the binary of its kind: the 18 sweeps of Section 3.8 that the family shares were first made by the binary of the working tree that became v38 (`f184277d...`), which was not kept, and the three builds of that tree and the first build of the commit before the change are no longer in `binaries.tsv`; the runs of Section 3.8 were made by the tag's builds (`70b7c684...`, `87ebbc9a...`) and by the build of the commit before the change (`6d30419c...`), and `binaries_v38.tsv` lists the five builds of the tag and of that commit.
-- The repetition by the same binaries replaces the repetition by release 0.5.0 of the first drafts; the check that the code that is merged gives the calls of the working tree was made on the first databases and is recorded in "Release 0.5.0 reproduces v38".
-- The numbered versions v1 to v36 were not repeated: their binaries were not kept, and their rows in Figure S1 and in `trajectory.csv` are on the first databases (the column `databases` says so).
-- The annotation of the benchmark was not timed again, so `results/v38_v0.5.0/annotation_time.tsv` and the times of the manuscript are of the first databases.
+The provenance files record times in UTC, and this file and the manuscript give the dates of the runs as the dates in New York.
+The rerun of 4 November 2026 was recorded between 02:05 and 02:28 UTC on 5 November, and the repetition by release 0.5.0 between 07:23 and 07:37 UTC on 7 November, the same date in both.
+The 78 runs of the family v38 were recorded between 03:58 and 04:30 UTC on 8 November, which is the evening of 7 November in New York; this file's section on the family gives their date as 8 November, in UTC.
 
-### What was checked
-
-- `build_tables.py --check` (8 marked tables, none stale), `build_supplement.py --check` (the workbook of 26 sheets is up to date) and `verify_numbers.py` pass on the committed tree.
-- The complete databases give the same call as the benchmark's regional gnomAD databases on all 673,660 variants, so the gnomAD of the benchmark was not changed in effect and only SpliceAI and PhyloP differ.
-- The figures were redrawn from the files of the complete runs, read one by one against the figures of the first databases, and the axes of Figure 1A and a label of Figure S4 were corrected where the new data left the frame or the legend.
-
-### What was not done
-
-- The extraction of April was not repeated to show that a `tabix` stream ended early.
-- The reviewer has not ruled on the three calls that the complete databases add.
-- The language-edited .docx that the co-authors read was not edited, and it still gives the numbers of the first databases.
-- The classifier was not changed.
+The comparison of the stack that these databases replaced with the one the runs now read is kept in `results/complete_vs_april_databases.md`, and the manifest in `results/complete_databases/README.md`.
