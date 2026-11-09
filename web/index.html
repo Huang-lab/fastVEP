@@ -879,8 +879,13 @@ function parseVCF(text) {
 function predict(variant, transcripts, distance) {
   const results = [];
   const {chrom, start, end, ref: refA, alts} = variant;
+  // Names are compared without a "chr" prefix, as the server does and as the fallback below does for the span: compared as written,
+  // chr1:65568 met no transcript of a model written with 1, fell through to "intergenic" and was called so inside the coding sequence of
+  // OR4F5, and a GFF3 written with chr1 never met a VCF written with 1.
+  const key = normChrom(chrom);
   for (const tr of transcripts) {
-    if (tr.chr !== chrom) continue;
+    if (tr.chrKey === undefined) tr.chrKey = normChrom(tr.chr);
+    if (tr.chrKey !== key) continue;
     const overlaps = start <= tr.end + distance && end >= tr.start - distance;
     if (!overlaps) continue;
     for (const alt of alts) {
