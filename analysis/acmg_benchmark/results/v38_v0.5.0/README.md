@@ -2,7 +2,7 @@
 
 These are the 38 runs of Section 3.8 of the ACMG manuscript on the April 2026 release of ClinVar and the 4 on the October release, made a second time on 8 November 2026 by the same binaries as the first time (the tag `v0.5.0-rc.1`, `c12d9f9`, for the adopted change and its alternatives, and the build of the commit before the change for `v38_base` and `v38_oct_base`), on the final benchmark databases, to check that the runs reproduce.
 `analysis/acmg_benchmark/RUN_VERSIONS.md` is the account of it.
-The repetition of 7 November 2026 by release 0.5.0, made with the databases of April 2026, is "Release 0.5.0 reproduces v38" in the same file, and its outputs are in `data/benchmark/manuscript_runs_v0.5.0_april_databases/`.
+The repetition of 7 November 2026 by release 0.5.0, made with the databases of April 2026, is "Release 0.5.0 reproduces v38" in the same file; its outputs are not kept.
 
 | File | What it holds |
 |------|---------------|

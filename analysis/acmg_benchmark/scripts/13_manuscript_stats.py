@@ -1467,8 +1467,8 @@ def trajectory() -> None:
     loaded when they were run ("of the time"), and v37 and v38 are the runs on the final benchmark databases ("final"), so that the
     step from v36 to v37 holds a change of databases as well as of the classifier. v37 and v38 as they were run at the time are the
     columns that end in `_of_the_time` (the other rows leave them empty, because the row is the run of the time): they are read from
-    the comparison of the runs on the two sets of databases (`databases_old_vs_new.csv`, written by `21_compare_databases.py`, which
-    has to have run first; its files are in `results/complete_vs_april_databases/`).
+    the comparison of the runs on the two sets of databases (`databases_old_vs_new.csv`, written by `21_compare_databases.py` from runs
+    that are not kept; it is committed, with its files, in `results/complete_vs_april_databases/`).
     """
     rows = []
 
@@ -1524,7 +1524,7 @@ def trajectory() -> None:
     # v37 and v38 as they were run at the time, with the databases that were loaded then
     rec = RES / "complete_vs_april_databases/databases_old_vs_new.csv"
     if not rec.exists():
-        sys.exit(f"{rec} is missing: run 21_compare_databases.py before this step")
+        sys.exit(f"{rec} is missing: it is committed with the repository (21_compare_databases.py wrote it from runs that are not kept)")
     then = pd.read_csv(rec)
     then = then[then["set"] == "April set"].set_index(["version", "measure"])["first"].astype(float)
     of_the_time = ["same_direction_rate_of_the_time", "exact_rate_of_the_time", "opposite_of_the_time", "false_benign_of_the_time",

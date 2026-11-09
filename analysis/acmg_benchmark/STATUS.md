@@ -65,7 +65,7 @@ before a fresh build.
 ## Built SA databases (`sa_db/` and `sa_db_complete/`)
 
 The benchmark reads `sa_db_complete/`, a directory of links to the files of `sa_db/` except gnomAD, SpliceAI and PhyloP, which are the 72 files of `sa_sources/complete/`: built from the whole of gnomAD's v4.1 exomes file on the host of fastvep.org on 8 November 2026 (`results/complete_databases/` holds their checksums and says how they were built and checked; `scripts/sa_sources/make_complete_stack.sh` makes the directory).
-`sa_db/` stays because every other file of `sa_db_complete/` is a link into it; its own gnomAD, SpliceAI and PhyloP files are regional extractions that the benchmark does not read (`results/complete_databases/README.md`), and the runs made with them are what `results/complete_vs_april_databases.md` sets against the runs of the paper.
+`sa_db/` stays because every other file of `sa_db_complete/` is a link into it; its own gnomAD, SpliceAI and PhyloP files are regional extractions that the benchmark does not read (`results/complete_databases/README.md`), and the record of the runs made with them, set against the runs of the paper, is `results/complete_vs_april_databases.md`.
 
 | Source | Status | Records | Path |
 |--------|--------|---------|------|
@@ -100,7 +100,7 @@ Read by `scripts/11_manuscript_runs.py` and `scripts/14_temporal_holdout.py`; no
 | **v37** | the databases of `sa_db_complete/` | the classifier at the close of the review rounds, the reference of what v38 changes (Section 3.8 of the manuscript): 431,555 exact of 673,660 (64.1 %), 532,688 same-direction (79.1 %), 52 opposite-direction, 382 not called | `output_v37/` |
 | **v38** | v37 reading ClinGen's curated mode of inheritance, on the databases of `sa_db_complete/` | the latest classifier, the one of this release (0.5.0) and of every number of the manuscript: 431,727 exact of 673,660 (64.1 %), 534,335 same-direction (79.3 %), 51 opposite-direction, 382 not called (the binaries of v38 write no record for those 382, so 673,278 are scored; the tables of the manuscript put them back as no-calls) | `manuscript_runs/v38/` |
 
-The manuscript's other runs (`manuscript_runs/`, the 96 runs of v38 and the same 96 of v37 with the runs of Section 3.8, and the per-variant tables) are listed in `results/v37_manuscript/README.md`; the runs made with the databases of April 2026 are kept under the names `manuscript_runs_april_databases/`, `manuscript_runs_v0.5.0_april_databases/` and `output_v37*_april_databases/`, and `results/complete_vs_april_databases.md` sets them against the runs of the paper.
+The manuscript's other runs (`manuscript_runs/`, the 96 runs of v38 and the same 96 of v37 with the runs of Section 3.8, and the per-variant tables) are listed in `results/v37_manuscript/README.md`; the runs made with the databases of April 2026 are not kept, and `results/complete_vs_april_databases.md` is the record of them set against the runs of the paper.
 See `RUN_VERSIONS.md` for the per-run SA stack and code-fix diff.
 See `analysis/acmg_benchmark/METHODS.md` for full methodology.
 
