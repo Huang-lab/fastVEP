@@ -370,7 +370,8 @@ All 42 were made on 8 November 2026 with the complete databases, by binaries bui
 
 ### 3.1 Thirty-eight runs: where agreement came from, and where it stopped
 
-Same-direction agreement with ClinVar rose from 51.0% in v1 (a matrix reconstructed from the run's documentation) to 77.8% in v38 on the first databases and to 79.3% on the complete ones (Figure S1A; Supplementary Table S2 gives every run, and Section 3.9 what the complete databases changed).
+Same-direction agreement with ClinVar rose from 51.0% in v1 (a matrix reconstructed from the run's documentation) to 79.3% in v38 (Figure S1A; Supplementary Table S2 gives every run).
+Versions before v37 are shown as scored at the time, on the databases of the time; the same code scores 79.07% on the final databases for v37, against 77.62% then.
 Almost all of that rise came in the first 13 runs, and the largest steps were mostly plumbing and not new guidance.
 Agreement rose 8.8 points between v2 and v4, when SpliceAI and PhyloP results finally reached the criteria that read them (items 6 and 7 of the ledger of Section 3.2), and 5.2 points between v5 and v6, when a variant absent from gnomAD began to count as absent for PM2 and BP4's splice path was confined to splice questions (items 9 and 10 of the ledger), two conditions of the guidelines that the criteria had not applied.
 The first review (v7 to v8) added 2.8 points.
@@ -380,18 +381,17 @@ Recall of ClinVar's pathogenic-side variants fell from 63.2% at v8 to 45.6% at v
 Agreement then rose by 3.2 points at v10, which bundled a rebuilt gnomAD database with its quality fields, the gene-level gates, and the first two measured thresholds (the PM2 threshold and the BS2 prevalence threshold), by 0.9 points each for the SVI point scale on the pathogenic side (v11) and the BS1 threshold (v12), and by 1.6 points at v13, when `--acmg` was made to enable HGVS and the criteria that read it came alive.
 
 After v13 the headline stopped moving.
-Across the next 23 runs (v14 to v37, without v17) same-direction agreement on the first databases stayed between 77.50% and 77.62%, and no run moved it by more than 0.07 points.
-The 38th run, v38, which reads the mode of inheritance that ClinGen curates (Section 3.8), moved it by 0.22 points to 77.84%, the one step after v13 of more than 0.07 points.
-Repeated with the complete databases, v37 and v38 reach 79.07% and 79.32%, which is 1.5 points more than the first databases give each of them, and more than every step since v13 (Section 3.9).
+Across the next 23 runs (v14 to v37 as run at the time, without v17) same-direction agreement stayed between 77.50% and 77.62%, and no run moved it by more than 0.07 points.
+The 38th run, v38, which reads the mode of inheritance that ClinGen curates (Section 3.8), moved it by 0.22 points as run at the time, to 77.84%, the one step after v13 of more than 0.07 points.
 The work did not stop, and its effect shows in the other panels.
-Opposite-direction calls fell from 94 at v13 to 49 at v37 and 48 at v38 on the first databases, reference-discordant benign calls from 50 to 24 at both, and reference-discordant pathogenic calls from 44 to 25 at v37 and 24 at v38 (Figure S1B); with the complete databases v37 has 52 and v38 has 51, with 27 reference-discordant benign calls in both.
+Opposite-direction calls fell from 94 at v13 to 49 at v37 and 48 at v38 as run at the time, reference-discordant benign calls from 50 to 24 at both, and reference-discordant pathogenic calls from 44 to 25 at v37 and 24 at v38 (Figure S1B); on the final databases v37 has 52 and v38 has 51, with 27 reference-discordant benign calls in both.
 The path was not monotonic.
 Opposite-direction calls had reached a minimum of 25 at v10 and then rose to 56 at v11, when a lone PVS1 became Likely pathogenic under the point scale of the pathogenic side, which gained 6,632 correct pathogenic-side calls for 31 additional reference-discordant pathogenic calls.
 They rose again at v13, when BP7's intronic extension started to fire, which gained 11,339 benign-side calls for 36 additional reference-discordant benign calls.
 Both were trades made on purpose and recorded as trades, and Section 3.3 returns to how they were weighed.
 The matrix stored for v1 holds 31 opposite-direction calls, fewer than v38, because v1 committed to only 74,355 variants where v38 commits to 256,054; per committed call, contradictions fell from 0.042% in v1 to 0.020% in v37 and in v38, with a minimum of 0.011% at v10.
 
-Recall of ClinVar's pathogenic-side variants in direction has stayed between 62.0 and 62.5% since v11, and recall of its benign-side variants between 62.3 and 62.7% from v13 to v37 and 62.9% at v38 on the first databases, and is 65.7% and 66.4% for v37 and v38 on the complete ones (Figure S1C).
+Recall of ClinVar's pathogenic-side variants in direction has stayed between 62.0 and 62.5% since v11, and recall of its benign-side variants between 62.3 and 62.7% from v13 to v37 and 62.9% at v38 as run at the time, and is 65.7% and 66.4% for v37 and v38 on the final databases (Figure S1C).
 That flat line is the structural fact about the benchmark that Section 3.5 examines.
 The agreement figures also have an uneven past: the raw output of v1 to v6 was not kept, and v2 and v4 to v6 are quoted from the figures recorded at the time with denominators that we could not check, so their values carry less weight than the stored runs from v7.
 
@@ -782,7 +782,7 @@ The benchmark cannot say which is right, and Section 3.7 asks whether ClinVar la
 ### 3.6 The 51 opposite-direction calls that remain
 
 The last review round (v26) held 64 opposite-direction calls, and 48 of the 51 in v38 are among them; the other three are new with the complete databases, and the reviewer has not seen them (Section 3.9).
-So none of the 48 is new since that table was sent (one run, v31, briefly had 65 opposite-direction calls on the first databases; Table 6, Figure S3B).
+So none of the 48 is new since that table was sent (one run, v31, briefly had 65 opposite-direction calls; Table 6, Figure S3B).
 The 16 that were repaired all became VUS and none became the other class, and the reviewer had supported ClinVar's call on 14 of them (of the other two, one was coded neither and one depends on the disorder).
 Each of the 48 had already been in the table of an earlier round (17 since round 3, 2 since round 4 and 29 since round 5), so they are the calls that several rounds of changes left standing.
 
@@ -1167,7 +1167,7 @@ A sites-only input evaluates 15 of the 28 criteria, which caps what any annotato
 Six results of this work seem to us worth testing on other classifiers, which we have not done: they come from one tool, one reviewer and one benchmark.
 
 **The aggregate stopped rewarding the work.**
-Agreement in direction with ClinVar reached 77.6% at v13 and stayed between 77.50% and 77.62% for the next 23 runs (v14 to v37) on the first databases, while the work of those runs cut opposite-direction calls from 94 to 49 and the ledger records 20 further changes; the one change since, v38, moved it by 0.22 points, to 77.84%, and cut the opposite-direction calls to 48 (with the complete databases v37 and v38 reach 79.07% and 79.32%, with 52 and 51 opposite-direction calls, Section 3.9).
+Agreement in direction with ClinVar reached 77.6% at v13 and stayed between 77.50% and 77.62% for the next 23 runs (v14 to v37 as run at the time), while the work of those runs cut opposite-direction calls from 94 to 49 and the ledger records 20 further changes; the one change since, v38, moved it by 0.22 points as run at the time, to 77.84%, and cut the opposite-direction calls to 48 (on the final databases v37 and v38 are at 79.07% and 79.32%, with 52 and 51 opposite-direction calls, Section 3.1).
 A project that watched only agreement would have concluded at v13 that the work was finished, and simple rules with no combining rule or safeguard reach higher agreement with 36 times as many contradictions (Section 3.5).
 The two largest steps before v13 (8.8 and 5.2 points, from figures recorded at the time) were mostly plumbing: SpliceAI and PhyloP reaching the criteria that read them, and two conditions of the guidelines that criteria had not applied (an absent variant read as absent for PM2, and BP4's confinement to splice questions).
 The measures that moved late were counts of rare, severe errors, which are small numbers, and they are the ones a clinician would act on.
@@ -1493,7 +1493,8 @@ Figure S2 shows no ClinVar class.
 Open markers are v1, a matrix reconstructed from the documentation of the run, and v2 and v4 to v6, which were recorded at the time; no raw output of them was kept.
 v1 annotated 627,376 of the records, and its 54.7% of those is 51.0% of all records.
 The cross marks v17, the opt-in run with the published VCEP thresholds, which is not a step on the way and is left out of the lines.
-The lines are the runs with the first databases, which lack records of SpliceAI and PhyloP (Section 2.1), and for v37 and v38 they are read from the comparison of the first databases with the complete ones (Appendix Table A1); the diamonds are v37 and v38 run again with the complete databases (the rows of Supplementary Table S2), joined by a dashed line that does not join v36, because the step between them holds the change of databases (Section 3.9).
+Each version is drawn at its run of the time, except v37 and v38, the diamonds, which are on the final benchmark databases and are joined by a dashed line that does not join v36.
+In every panel, versions before v37 are shown as scored at the time, on the databases of the time; the same code scores 79.07% on the final databases for v37, against 77.62% then.
 (B) Opposite-direction calls on a log scale: ClinVar 2-star+ pathogenic-side variants called benign-side (reference-discordant benign calls), ClinVar 2-star+ benign-side variants called pathogenic-side, and their total; open markers as in A, and v6 is the recorded total.
 (C) Same-direction recall for ClinVar 2-star+ pathogenic-side and benign-side variants; the values of v1 (10.9% and 19.0%) are below the axis.
 The 14 numbered markers are the changes listed under the panels.
@@ -1511,7 +1512,7 @@ Rounds 1 and 2 are decoded from cell colors against each workbook's key, and rou
 (B) The 51 opposite-direction calls of v38, by the evidence behind the call, with the rulings of the last round; the three that the complete databases add were not in it.
 
 **Figure S4. Agreement in direction against opposite-direction calls.**
-Each point is a classifier, on 673,660 variants: the versions v7 to v38 with stored scored matrices (blue, joined in order, with the first databases; the diamonds are v37 and v38 with the complete ones), the runs of this paper and the earlier runs of the dominant-gene BS2 settings, each v38 with one change (gray), every variant called VUS (the diamond at zero), and three rules with no combining rule, gene-level gate or safeguard at nine frequency thresholds each, with the second rule alone and the second with the third also given with no frequency rule (the filled markers).
+Each point is a classifier, on 673,660 variants: the versions v7 to v36 with stored scored matrices at their runs of the time (blue, joined in order) and v37 and v38 on the final benchmark databases (the diamonds, joined by a dashed line), the runs of this paper and the earlier runs of the dominant-gene BS2 settings, each v38 with one change (gray), every variant called VUS (the diamond at zero), and three rules with no combining rule, gene-level gate or safeguard at nine frequency thresholds each, with the second rule alone and the second with the third also given with no frequency rule (the filled markers).
 R1 calls a variant benign-side when its population-maximum allele frequency is at or above the threshold (the thresholds at the two ends of each line are labeled, and the point at 0.001 of the last rule is annotated), R2 adds a pathogenic-side call for a stop-gained, frameshift, canonical splice or start-lost variant that is absent from gnomAD or below 1e-4, and R3 adds a benign-side call for a quiet variant (synonymous, intronic, untranslated, flanking or non-coding) with SpliceAI below 0.2.
 The horizontal axis is on a log scale above 10.
 
@@ -1522,7 +1523,7 @@ A ClinVar class in these tables is the class of a ClinVar 2-star+ record of the 
 **Supplementary Table S1.** The 28 criteria and the benchmark: what each needs, whether the benchmark can apply it and, on every 40th record of the benchmark annotated to JSON, how often the engine could evaluate it and how often it met it (`criteria_status.csv`, made by `18_criteria_status.py`); and how often each of the 15 computable criteria fires in v38, at which strengths, and on variants of which ClinVar class (`criteria_firing_v38.csv`).
 
 **Supplementary Table S2.** The versions and the runs of this paper.
-For 37 of the 38 versions (v3 was a partial run that was overwritten before it was preserved), the agreement, the opposite-direction calls and the recall of each, with the number of variants each committed to, the denominator of each, and the marker of v17 (`trajectory.csv`; v1 is a reconstructed matrix and v2 and v4 to v6 are the figures recorded at the time).
+For 37 of the 38 versions (v3 was a partial run that was overwritten before it was preserved), the agreement, the opposite-direction calls and the recall of each, with the number of variants each committed to, the denominator of each, and the marker of v17 (`trajectory.csv`; v1 is a reconstructed matrix and v2 and v4 to v6 are the figures recorded at the time; v37 and v38 are on the final benchmark databases, with their runs of the time beside them).
 For v38 itself, the 89 runs made for this paper and the 8 earlier runs of the dominant-gene BS2 settings, with the main run (98 rows), the concordance matrix, the firing counts and the settings (`runs_v38_variants.csv`; the run matrix, the matrices of the seven runs on the October release and the provenance files are in `analysis/acmg_benchmark/results/v37_manuscript/`).
 
 **Supplementary Table S3.** The ledger of 64 changes: run, class, route of discovery and source in the project record (`change_ledger.csv`).

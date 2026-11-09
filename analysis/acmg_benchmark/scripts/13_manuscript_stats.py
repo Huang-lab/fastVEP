@@ -1463,10 +1463,12 @@ def trajectory() -> None:
     v38 is the last row: the main run of the latest classifier (`manuscript_runs/v38`), whose matrix lacks the 382 records with no
     alternative allele that every earlier run counted as no-calls, so they are put back (`force`) and every rate is over 673,660.
 
-    The column `databases` says which SpliceAI and PhyloP databases a run read: v1 read neither, v2 to v36 read the first ones
-    (distilled in April 2026 from regions of the gnomAD file, which lack records of it; `21_compare_databases.py`), and v37 and v38
-    are the runs that were made again with the complete ones, so the step from v36 to v37 holds a change of databases as well as
-    of the classifier. The first databases' values of v37 and v38 are in `databases_old_vs_new.csv`.
+    The column `databases` says which SpliceAI and PhyloP databases a run read: v1 read neither, v2 to v36 read the ones that were
+    loaded when they were run ("of the time"), and v37 and v38 are the runs on the final benchmark databases ("final"), so that the
+    step from v36 to v37 holds a change of databases as well as of the classifier. v37 and v38 as they were run at the time are the
+    columns that end in `_of_the_time` (the other rows leave them empty, because the row is the run of the time): they are read from
+    the comparison of the runs on the two sets of databases (`databases_old_vs_new.csv`, written by `21_compare_databases.py`, which
+    has to have run first).
     """
     rows = []
 
@@ -1497,7 +1499,7 @@ def trajectory() -> None:
         rows.append({"run": name, "order": int(name[1:]), "source": "recorded at the time (raw output not preserved)",
                      "note": src, "same_direction_rate": same / 100, "exact_rate": exact / 100 if exact else "",
                      "opposite": opp if opp is not None else "", "false_benign": "", "false_pathogenic": "",
-                     "plp_recall": "", "blb_recall": "", "n": "", "denominator": "", "mainline": True, "databases": "first",
+                     "plp_recall": "", "blb_recall": "", "n": "", "denominator": "", "mainline": True, "databases": "of the time",
                      "same_direction_rate_of_annotated": "", "committed": ""})
     paths = {7: RES / "v7/concordance_matrix.csv", 8: RES / "v8/concordance_matrix.csv"}
     for v in range(9, 38):
@@ -1512,14 +1514,33 @@ def trajectory() -> None:
         rows.append({
             "run": f"v{v}", "order": v, "source": "scored matrix on disk",
             "note": ("opt-in run with the published VCEP bars, not a step on the way (v18 does not carry it)" if v == 17 else
-                     "the latest classifier: the main run of the family made by release 0.5.0, with the 382 reference-agreement records counted as no-calls, on the complete databases" if v == 38 else
-                     "the main run of v37 on the complete databases" if v == 37 else ""),
+                     "the latest classifier: the main run of the family made by release 0.5.0, with the 382 reference-agreement records counted as no-calls, on the final databases" if v == 38 else
+                     "the main run of v37 on the final databases" if v == 37 else ""),
             "same_direction_rate": mm["same_direction"] / mm["n"], "exact_rate": mm["exact"] / mm["n"],
             "opposite": mm["opposite"], "false_benign": mm["false_benign"], "false_pathogenic": mm["false_pathogenic"],
             "plp_recall": mm["plp_recall"], "blb_recall": mm["blb_recall"], "n": mm["n"], "denominator": mm["n"],
-            "mainline": v != 17, "databases": "complete" if v in (37, 38) else "first", "same_direction_rate_of_annotated": "", "committed": committed(mat),
+            "mainline": v != 17, "databases": "final" if v in (37, 38) else "of the time", "same_direction_rate_of_annotated": "", "committed": committed(mat),
         })
-    write("trajectory.csv", sorted(rows, key=lambda r: r["order"]), shared=True)
+    # v37 and v38 as they were run at the time, with the databases that were loaded then
+    rec = OUT / "databases_old_vs_new.csv"
+    if not rec.exists():
+        sys.exit(f"{rec} is missing: run 21_compare_databases.py before this step")
+    then = pd.read_csv(rec)
+    then = then[then["set"] == "April set"].set_index(["version", "measure"])["first"].astype(float)
+    of_the_time = ["same_direction_rate_of_the_time", "exact_rate_of_the_time", "opposite_of_the_time", "false_benign_of_the_time",
+                   "false_pathogenic_of_the_time", "plp_recall_of_the_time", "blb_recall_of_the_time"]
+    base_columns = list(rows[0])
+    for r in rows:
+        v = f"v{r['order']}"
+        if v in ("v37", "v38"):
+            n_all_then = then[(v, "variants")]
+            r.update({"same_direction_rate_of_the_time": then[(v, "same_direction")] / n_all_then, "exact_rate_of_the_time": then[(v, "exact")] / n_all_then,
+                      "opposite_of_the_time": int(then[(v, "opposite")]), "false_benign_of_the_time": int(then[(v, "false_benign")]),
+                      "false_pathogenic_of_the_time": int(then[(v, "false_pathogenic")]), "plp_recall_of_the_time": then[(v, "plp_recall")],
+                      "blb_recall_of_the_time": then[(v, "blb_recall")]})
+        else:
+            r.update({k: "" for k in of_the_time})
+    write("trajectory.csv", pd.DataFrame(sorted(rows, key=lambda r: r["order"]))[base_columns + of_the_time], shared=True)
 
 
 def runs_tables() -> None:

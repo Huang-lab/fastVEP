@@ -158,17 +158,17 @@ runs37 = pd.read_csv(DATA / "runs_v37_variants.csv").set_index("name")
 base37 = runs37.loc["v37"]
 rv38 = pd.read_csv(DATA / "runs_v38_variants.csv").set_index("name")  # v38's family, whatever the base: the sentences that set v38 against v37 read it, so they are the same under both bases
 b38 = rv38.loc["v38"]
-_ovn = pd.read_csv(DATA / "databases_old_vs_new.csv")
-
-
-def first_(version: str, measure: str) -> float:
-    """A measure of a version on the April set under the first databases (`21_compare_databases.py`)."""
-    return float(_ovn[(_ovn.version == version) & (_ovn.set == "April set") & (_ovn.measure == measure)].iloc[0]["first"])
-
-
 facts38 = pd.read_csv(DATA / "facts_v38.csv").set_index("name")["value"]
 steps37 = pd.read_csv(DATA / "threshold_steps_v37.csv")
 traj = csv("trajectory.csv").set_index("order")
+
+
+def then(version: int, column: str) -> float:
+    """v37 or v38 as it was run at the time, with the databases that were loaded then: the columns `*_of_the_time` of the trajectory.
+    The rows of the trajectory are the runs on the final benchmark databases."""
+    return float(traj.loc[version][f"{column}_of_the_time"])
+
+
 steps = csv("threshold_steps_v37.csv")
 head = csv("headline_v37.csv").set_index("metric", drop=False)
 c5 = csv("confusion_5x5_v37.csv").pivot(index="clinvar", columns="fastvep", values="n")
@@ -626,19 +626,23 @@ def methods() -> None:
 def trajectory() -> None:
     t = traj
     m = mainline
-    # v37 and v38 were run again with the complete databases, and the rows of the trajectory are those runs; the series that the text calls flat is the
-    # one on the first databases, in which v14 to v36 are the rows and v37 and v38 are read from the comparison of the two stacks
-    ovn = pd.read_csv(DATA / "databases_old_vs_new.csv")
-    one = lambda v, k, db="first": float(ovn[(ovn.version == v) & (ovn.set == "April set") & (ovn.measure == k)].iloc[0][db])  # noqa: E731
-    first_rate = {k: float(t.loc[k].same_direction_rate) for k in m.loc[14:36].index}
-    first_rate[37] = one("v37", "same_direction") / N_ALL
-    first_rate[13] = float(t.loc[13].same_direction_rate)
-    first_rate[38] = one("v38", "same_direction") / N_ALL
-    ks = sorted(first_rate)
-    steps_first = {k: abs(first_rate[k] - first_rate[j]) for j, k in zip(ks, ks[1:])}
-    fact("For 37 of the 38 versions (v3 was a partial run", str(len(t)), str(int(t.index.max())), "v3" if 3 not in t.index else "?")
-    fact("Same-direction agreement with ClinVar rose from 51.0% in v1", p(t.loc[1].same_direction_rate), p(first_rate[38]), p(t.loc[38].same_direction_rate),
-         "on the first databases and to" if (t.databases[[1, 7, 36]] != "complete").all() and t.loc[38].databases == "complete" else "?")
+    # v1 to v36 are each at their run of the time, and v37 and v38 are on the final benchmark databases (the column `databases`); v37 and v38 as they were
+    # run at the time are the columns that end in `_of_the_time`, and the band that the text calls flat is made of the runs of the time
+    shown_at_the_time = bool(t.databases[t.index < 37].isin(["none", "of the time"]).all() and t.databases[[37, 38]].eq("final").all())
+    time_rate = {k: float(t.loc[k].same_direction_rate) for k in m.loc[14:36].index}
+    time_rate[37] = then(37, "same_direction_rate")
+    time_rate[13] = float(t.loc[13].same_direction_rate)
+    time_rate[38] = then(38, "same_direction_rate")
+    ks = sorted(time_rate)
+    steps_time = {k: abs(time_rate[k] - time_rate[j]) for j, k in zip(ks, ks[1:])}
+    fact("For 37 of the 38 versions (v3 was a partial run", str(len(t)), str(int(t.index.max())), "v3" if 3 not in t.index else "?",
+         "v37 and v38 are on the final benchmark databases" if shown_at_the_time else "?")
+    fact("Same-direction agreement with ClinVar rose from 51.0% in v1", p(t.loc[1].same_direction_rate), p(t.loc[38].same_direction_rate))
+    # the one sentence that says what the trajectory shows: v37 on the two sets of databases is the only pair that was measured for a version of the trajectory
+    fact("Versions before v37 are shown as scored at the time", p(then(37, "same_direction_rate"), 2), p(t.loc[37].same_direction_rate, 2),
+         "on the databases of the time" if shown_at_the_time else "?")
+    fact("In every panel, versions before v37 are shown as scored at the time", p(then(37, "same_direction_rate"), 2), p(t.loc[37].same_direction_rate, 2),
+         "on the databases of the time" if shown_at_the_time else "?")
     fact("Agreement rose 8.8 points between v2 and v4", f"{(t.loc[4].same_direction_rate - t.loc[2].same_direction_rate) * 100:.1f}",
          f"{(t.loc[6].same_direction_rate - t.loc[5].same_direction_rate) * 100:.1f}")
     fact("The first review (v7 to v8) added 2.8 points", f"{(t.loc[8].same_direction_rate - t.loc[7].same_direction_rate) * 100:.1f}")
@@ -648,19 +652,16 @@ def trajectory() -> None:
     fact("Agreement then rose by 3.2 points at v10", f"{(t.loc[10].same_direction_rate - t.loc[9].same_direction_rate) * 100:.1f}",
          f"{(t.loc[11].same_direction_rate - t.loc[10].same_direction_rate) * 100:.1f}",
          f"{(t.loc[13].same_direction_rate - t.loc[12].same_direction_rate) * 100:.1f}")
-    after = [first_rate[k] for k in ks if 14 <= k <= 37]
-    step = max(steps_first[k] for k in ks if 14 <= k <= 37)
-    fact("Across the next 23 runs (v14 to v37, without v17)", str(len(after)), p(min(after), 2), p(max(after), 2), f"{step * 100:.2f}", "on the first databases")
-    # v38 is the one step after v13 that is larger than the largest of the 23: 0.22 points, to 77.84%, and the complete databases then give v37 and v38 their own rates
-    fact("The 38th run, v38, which reads the mode of inheritance that ClinGen curates", p(first_rate[38], 2), f"{(first_rate[38] - first_rate[37]) * 100:.2f} points",
-         "the one step after v13 of more than" if sum(1 for k in steps_first if steps_first[k] > step) == 1 and max(steps_first, key=steps_first.get) == 38 else "?", f"{step * 100:.2f}")
-    fact("Repeated with the complete databases, v37 and v38 reach 79.07% and 79.32%", p(t.loc[37].same_direction_rate, 2), p(t.loc[38].same_direction_rate, 2),
-         f"{(t.loc[38].same_direction_rate - first_rate[38]) * 100:.1f} points more" if f"{(t.loc[38].same_direction_rate - first_rate[38]) * 100:.1f}" == f"{(t.loc[37].same_direction_rate - first_rate[37]) * 100:.1f}" else "?",
-         "more than every step since v13" if (t.loc[37].same_direction_rate - first_rate[37]) > max(steps_first.values()) else "?")
-    fact("Opposite-direction calls fell from 94 at v13 to 49 at v37 and 48 at v38", str(int(t.loc[13].opposite)), n(one("v37", "opposite")), n(one("v38", "opposite")),
-         str(int(t.loc[13].false_benign)), n(one("v37", "false_benign")), n(one("v38", "false_benign")), str(int(t.loc[13].false_pathogenic)), n(one("v37", "false_pathogenic")),
-         n(one("v38", "false_pathogenic")), "at both" if one("v37", "false_benign") == one("v38", "false_benign") else "?",
-         "on the first databases", str(int(t.loc[37].opposite)), str(int(t.loc[38].opposite)), str(int(t.loc[38].false_benign)),
+    after = [time_rate[k] for k in ks if 14 <= k <= 37]
+    step = max(steps_time[k] for k in ks if 14 <= k <= 37)
+    fact("Across the next 23 runs (v14 to v37 as run at the time, without v17)", str(len(after)), p(min(after), 2), p(max(after), 2), f"{step * 100:.2f}", "as run at the time")
+    # v38 is the one step after v13 that is larger than the largest of the 23: 0.22 points, to 77.84%, as run at the time
+    fact("The 38th run, v38, which reads the mode of inheritance that ClinGen curates", f"{(time_rate[38] - time_rate[37]) * 100:.2f} points", p(time_rate[38], 2), "as run at the time",
+         "the one step after v13 of more than" if sum(1 for k in steps_time if steps_time[k] > step) == 1 and max(steps_time, key=steps_time.get) == 38 else "?", f"{step * 100:.2f}")
+    fact("Opposite-direction calls fell from 94 at v13 to 49 at v37 and 48 at v38", str(int(t.loc[13].opposite)), n(then(37, "opposite")), n(then(38, "opposite")),
+         str(int(t.loc[13].false_benign)), n(then(37, "false_benign")), n(then(38, "false_benign")), str(int(t.loc[13].false_pathogenic)), n(then(37, "false_pathogenic")),
+         n(then(38, "false_pathogenic")), "at both" if then(37, "false_benign") == then(38, "false_benign") else "?",
+         "as run at the time", str(int(t.loc[37].opposite)), str(int(t.loc[38].opposite)), str(int(t.loc[38].false_benign)),
          "in both" if t.loc[37].false_benign == t.loc[38].false_benign else "?")
     fact(f"so the {int(b38.opposite)} opposite-direction calls of v38 are", p(N_OPP / N_ALL, 4))  # the anchors name v38's numbers whatever the base, so that the two bases have one list of checks
     fact(f"**Supplementary Table S8.** The {int(b38.opposite)} opposite-direction calls of v38")
@@ -669,10 +670,10 @@ def trajectory() -> None:
     fact("The matrix stored for v1 holds 31 opposite-direction calls", str(int(t.loc[1].opposite)), n(t.loc[1].committed), n(t.loc[38].committed),
          f"{rate(t.loc[1]):.3f}%", f"{rate(t.loc[37]):.3f}%", f"{rate(t.loc[38]):.3f}%", f"{min(rate(t.loc[i]) for i in range(7, 39)):.3f}%",
          "in v37 and in v38" if f"{rate(t.loc[37]):.3f}" == f"{rate(t.loc[38]):.3f}" else "?")
-    blb_first = [float(t.loc[k].blb_recall) for k in m.loc[13:36].index] + [one("v37", "blb_recall")]
+    blb_time = [float(t.loc[k].blb_recall) for k in m.loc[13:36].index] + [then(37, "blb_recall")]
     fact("Recall of ClinVar's pathogenic-side variants in direction has stayed between",
          f"{m.loc[11:38].plp_recall.min() * 100:.1f}", f"{m.loc[11:38].plp_recall.max() * 100:.1f}",
-         f"{min(blb_first) * 100:.1f}", f"{max(blb_first) * 100:.1f}", p(one("v38", "blb_recall"), 1), p(t.loc[37].blb_recall, 1), p(t.loc[38].blb_recall, 1))
+         f"{min(blb_time) * 100:.1f}", f"{max(blb_time) * 100:.1f}", p(then(38, "blb_recall"), 1), p(t.loc[37].blb_recall, 1), p(t.loc[38].blb_recall, 1), "as run at the time")
 
 
 # --------------------------------------------------------------------------------- Section 3.2
@@ -1304,10 +1305,10 @@ def later_release() -> None:
 def discussion() -> None:
     t = traj
     m = mainline
-    # v14 to v37 are runs on the first databases (v37's from the comparison of the stacks), and v37 and v38 on the complete ones are the rows of the trajectory
-    band_first = [float(m.loc[k].same_direction_rate) for k in m.loc[14:36].index] + [first_("v37", "same_direction") / N_ALL]
-    fact("Agreement in direction with ClinVar reached 77.6% at v13", p(t.loc[13].same_direction_rate), f"{min(band_first) * 100:.2f}%", f"{max(band_first) * 100:.2f}%",
-         str(int(t.loc[13].opposite)), n(first_("v37", "opposite")), str(int((ledger.run.str.extract(r"v(\d+)")[0].astype(int) >= 13).sum())), str(len(band_first)), "on the first databases")
+    # v14 to v37 as they were run at the time (v37's from its columns of the run of the time), and v37 and v38 on the final databases are the rows of the trajectory
+    band_time = [float(m.loc[k].same_direction_rate) for k in m.loc[14:36].index] + [then(37, "same_direction_rate")]
+    fact("Agreement in direction with ClinVar reached 77.6% at v13", p(t.loc[13].same_direction_rate), f"{min(band_time) * 100:.2f}%", f"{max(band_time) * 100:.2f}%",
+         str(int(t.loc[13].opposite)), n(then(37, "opposite")), str(int((ledger.run.str.extract(r"v(\d+)")[0].astype(int) >= 13).sum())), str(len(band_time)), "as run at the time")
     fact("A project that watched only agreement would have concluded at v13",
          f"{baseline.loc['R1 + R2 + R3', 'opposite'] / baseline.loc[lab('v37 (the classifier)'), 'opposite']:.0f}")
     fact("The PM2 threshold moved pathogenic-side recall by 19 points", "19", f"{(run('v37_sw_pm2ad_0.0005').plp_recall - run('v37_sw_pm2ad_0').plp_recall) * 100:.1f}",
@@ -1662,7 +1663,7 @@ def coverage() -> None:
     fact("Even so 3,470 of the 5,184 variants", n(closure.loc[rn("v37_gap_both")].gap_variants))
     fact("### 3.6 The 51 opposite-direction calls that remain", str(N_OPP))
     fact("The last review round (v26) held 64 opposite-direction calls, and 48 of the 51 in v38 are among them", str(N_REV), str(N_OPP), w(N_OPP - N_REV)[1] if N_OPP - N_REV == 3 else "?")
-    fact("So none of the 48 is new since that table was sent", "briefly had " + str(int(traj.loc[31].opposite)), "on the first databases" if traj.loc[31].databases == "first" else "?")
+    fact("So none of the 48 is new since that table was sent", "briefly had " + str(int(traj.loc[31].opposite)), "briefly had 65" if traj.loc[31].databases == "of the time" else "?")
     fact("Each of the 48 had already been in the table of an earlier round", str(N_REV))
     fact("**Table 6. The 51 opposite-direction calls of v38", str(N_OPP))
     fact("Supplementary Table S8 lists the 51 calls with their criteria", str(N_OPP))
@@ -1683,8 +1684,8 @@ def coverage() -> None:
     f38v = pd.read_csv(DATA / "v38_facts.csv").set_index("name")["value"]
     fact("(it fired on 7,234 of the 7,328 variants that meet BS1", n(f38v["ad_only_variants_with_bs1_and_bs2"]), n(f38v["ad_only_variants_with_bs1"]))
     fact("The same 96 runs were made for v37", n(len(harness) + len(hold)), "The same 96 runs" if same_96() else "?")
-    fact("Agreement in direction with ClinVar reached 77.6% at v13 and stayed between", p(first_("v38", "same_direction") / N_ALL, 2), f"{(first_('v38', 'same_direction') - first_('v37', 'same_direction')) / N_ALL * 100:.2f} points",
-         n(first_("v38", "opposite")), p(t.loc[37].same_direction_rate, 2), p(t.loc[38].same_direction_rate, 2), str(int(t.loc[37].opposite)), str(int(t.loc[38].opposite)))
+    fact("Agreement in direction with ClinVar reached 77.6% at v13 and stayed between", p(then(38, "same_direction_rate"), 2), f"{(then(38, 'same_direction_rate') - then(37, 'same_direction_rate')) * 100:.2f} points",
+         n(then(38, "opposite")), p(t.loc[37].same_direction_rate, 2), p(t.loc[38].same_direction_rate, 2), str(int(t.loc[37].opposite)), str(int(t.loc[38].opposite)), "as run at the time")
     gix37 = runs37.loc["v37_sw_table_both_sides"].same_pathogenic - runs37.loc["v37_ix_table_pm2ad_0"].same_pathogenic
     fact("The PM2 threshold moved pathogenic-side recall by 19 points when it was set in v10", f"{gix37 / 93_812 * 100:.1f}",
          f"{(run('v37_sw_table_both_sides').same_pathogenic - run('v37_ix_table_pm2ad_0').same_pathogenic) / 93_812 * 100:.1f}")
