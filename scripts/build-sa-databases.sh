@@ -21,6 +21,7 @@ OUT="sa_databases"
 WORK=""
 SOURCES="small"
 CHROMS=""
+CHUNK_BITS=""
 REGIONS=""
 GNOMAD_RELEASE="exomes"
 FASTVEP="${FASTVEP:-fastvep}"
@@ -41,6 +42,11 @@ Usage: build-sa-databases.sh --assembly GRCh37|GRCh38 [options]
                         large: gnomad onekg alphamissense revel phylop dbsnp
   --chroms LIST       restrict the per-chromosome sources (gnomad, onekg, revel,
                       phylop) to e.g. 21,22,X. Default: 1-22 and X
+  --chunk-bits N      width of the chunks of the allele databases, 2^N bases (1 to 20;
+                      each source keeps its own width, 20, without it). A lookup loads a
+                      whole chunk, so for a dense source (dbsnp, gnomad) 16 makes a
+                      scattered lookup several times cheaper for 10% of file size;
+                      see docs/SUPPLEMENTARY_ANNOTATIONS.md
   --regions BED       gnomad only: fetch just these regions with tabix instead of
                       downloading whole chromosomes
   --gnomad-release R  exomes (default) or genomes. GRCh38 is v4.1, GRCh37 is v2.1.1
@@ -59,6 +65,7 @@ while [ $# -gt 0 ]; do
         --work) WORK="$2"; shift 2 ;;
         --sources) SOURCES="$2"; shift 2 ;;
         --chroms) CHROMS="$2"; shift 2 ;;
+        --chunk-bits) CHUNK_BITS="$2"; shift 2 ;;
         --regions) REGIONS="$2"; shift 2 ;;
         --gnomad-release) GNOMAD_RELEASE="$2"; shift 2 ;;
         --fastvep) FASTVEP="$2"; shift 2 ;;
@@ -72,6 +79,12 @@ case "$ASSEMBLY" in
     *) echo "--assembly GRCh37 or GRCh38 is required" >&2; exit 2 ;;
 esac
 case "$GNOMAD_RELEASE" in exomes|genomes) ;; *) echo "--gnomad-release: exomes or genomes" >&2; exit 2 ;; esac
+if [ -n "$CHUNK_BITS" ]; then
+    case "$CHUNK_BITS" in
+        ''|*[!0-9]*) echo "--chunk-bits: a whole number from 1 to 20" >&2; exit 2 ;;
+    esac
+    if [ "$CHUNK_BITS" -lt 1 ] || [ "$CHUNK_BITS" -gt 20 ]; then echo "--chunk-bits: a whole number from 1 to 20" >&2; exit 2; fi
+fi
 case "$SOURCES" in
     small) SOURCES="$SMALL" ;;
     large) SOURCES="$LARGE" ;;
@@ -106,8 +119,13 @@ fetch() {
 build() {
     local source="$1" input="$2" name="$3"; shift 3
     local log n
+    # The width applies to the allele-level sources that write an .osa2; the others have no chunks to narrow.
+    local width=()
+    if [ -n "$CHUNK_BITS" ]; then
+        case "$source" in gnomad|onekg|alphamissense|revel|phylop|spliceai|dbsnp) width=(--chunk-bits "$CHUNK_BITS") ;; esac
+    fi
     log="$("$FASTVEP" sa-build --source "$source" -i "$input" -o "$OUT/$name" \
-        --assembly "$ASSEMBLY" --no-progress "$@" 2>&1)" || { echo "$log" >&2; exit 1; }
+        --assembly "$ASSEMBLY" --no-progress ${width[@]+"${width[@]}"} "$@" 2>&1)" || { echo "$log" >&2; exit 1; }
     # Allele sources report "(N records)"; interval sources report "Parsed N".
     n="$(printf '%s\n' "$log" | grep -Eo '\(([0-9,]+) (records|genes)\)|Parsed [0-9,]+' | tail -1 | grep -Eo '[0-9][0-9,]*' | tr -d , || true)"
     if [ -z "$n" ] || [ "$n" -eq 0 ]; then

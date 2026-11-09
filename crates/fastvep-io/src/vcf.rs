@@ -260,7 +260,7 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
                 } else {
                     "-".to_string()
                 };
-                start += 1;
+                start = start.saturating_add(1);
 
                 alt_allele_strs = alt_allele_strs
                     .iter()
@@ -292,7 +292,7 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
                 } else {
                     "-".to_string()
                 };
-                start += 1;
+                start = start.saturating_add(1);
             }
 
             // A record with one ALT whose length differs from the REF's is what Ensembl calls a
@@ -305,18 +305,22 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
             // sees, all follow from it. A record with several ALTs is not minimised in release
             // 116 and is not here.
             let (r, a) = trim_shared_ends(&ref_allele_str, &alt_allele_strs[0]);
-            start += r.0 as u64;
+            start = start.saturating_add(r.0 as u64);
             ref_allele_str = r.1;
             alt_allele_strs[0] = a;
         }
     }
 
     // Calculate end position
+    // Saturating: a POS near the top of the range of a `u64` is a record that is refused by whoever
+    // bounds coordinates, and not one that panics here in a debug build and wraps in a release one.
     let end = if ref_allele_str == "-" {
         // Insertion: end = start - 1 (zero-length interval in Ensembl convention)
         start - 1
     } else {
-        start + ref_allele_str.len() as u64 - 1
+        start
+            .saturating_add(ref_allele_str.len() as u64)
+            .saturating_sub(1)
     };
 
     // Build allele string: "REF/ALT1/ALT2". Ensembl's holds an ALT that repeats the reference or

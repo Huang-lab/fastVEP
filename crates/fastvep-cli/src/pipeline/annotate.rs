@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // Shared annotation utilities from fastvep-annotate (used by batch pipeline).
 use fastvep_annotate::{
     annotate_intergenic, annotate_sa_only_scaffold, hgvs_allele_on_transcript, hgvsg_per_alt,
-    load_gene_providers, load_sa_providers, splice_context, RowTranscripts,
+    load_gene_providers_reporting, load_sa_providers_reporting, splice_context, RowTranscripts,
 };
 
 const BATCH_SIZE: usize = 1024;
@@ -172,8 +172,13 @@ struct AnnotationContext<'a> {
     /// gnomAD queries need the VCF-style allele rather than fastVEP's
     /// normalised one; set when a gnomAD source is among `sa_providers`.
     normalize_gnomad_queries: bool,
-    /// A tandem-repeat database is loaded, so PM4/BP3 can consult it.
-    repeat_db_loaded: bool,
+    /// Which sources of the classifier's reference stack are open. PM2 needs it to tell a variant
+    /// with no gnomAD record from a run with no gnomAD database, and BP3 to tell a variant outside
+    /// every repeat from a run with no repeat track.
+    sources: fastvep_classification::LoadedSources,
+    /// Which chromosomes the gnomAD databases hold, so that a variant on another is not called
+    /// absent from the population: a database of some chromosomes says "no record" for the rest.
+    coverage: &'a fastvep_annotate::SourceCoverage,
 }
 
 /// What the predictor said of one transcript of a variant, or, for a transcript a reducing pick may
@@ -259,7 +264,8 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
         pick,
         sample_names,
         normalize_gnomad_queries,
-        repeat_db_loaded,
+        sources,
+        coverage,
     } = ctx;
 
     // VEP's known-variant columns, worked out once per alt allele: every
@@ -971,7 +977,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     aa.exon,
                     aa.protein_length,
                     aa.escapes_nmd,
-                    repeat_db_loaded,
+                    coverage.sources_for(sources, &vf.position.chromosome),
                     fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                     alt_idx
                         .and_then(|i| query_alleles.get(i))
@@ -1691,13 +1697,18 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // (issue #78). `tracing` has no subscriber installed in the CLI.
     let sa_providers: Vec<Box<dyn AnnotationProvider>> = if let Some(ref dir) = config.sa_dir {
         let t0 = std::time::Instant::now();
-        let loaded = load_sa_providers(Path::new(dir))?;
+        let (loaded, skipped) = load_sa_providers_reporting(Path::new(dir))?;
         eprintln!(
             "Loaded {} supplementary annotation source(s) from {} in {:.1}s",
             loaded.len(),
             dir,
             t0.elapsed().as_secs_f64()
         );
+        // `tracing` has no subscriber here, so a file that was skipped would be a source that is
+        // silently missing from every row.
+        for source in &skipped {
+            eprintln!("warning: {source}");
+        }
         loaded
     } else {
         Vec::new()
@@ -1737,7 +1748,10 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         }
         Vec::new()
     } else if let Some(ref dir) = config.sa_dir {
-        let loaded = load_gene_providers(Path::new(dir))?;
+        let (loaded, skipped) = load_gene_providers_reporting(Path::new(dir))?;
+        for source in &skipped {
+            eprintln!("warning: {source}");
+        }
         if !loaded.is_empty() {
             eprintln!(
                 "Loaded {} gene-level annotation source(s) from {}",
@@ -1884,18 +1898,51 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     // every provider for every allele of every variant inside the parallel loop.
     let normalize_gnomad_queries =
         seq_provider.is_some() && sa_providers.iter().any(|sa| sa.json_key() == "gnomad");
-    // BP3 must tell "this variant is not in a repeat" from "no repeat database
-    // was loaded". An interval source only yields an annotation on a hit, so
-    // those two are indistinguishable downstream unless the loaded-source list
-    // is consulted here. Same matching the classifier uses to find the track.
-    let repeat_db_loaded = sa_providers.iter().any(|sa| {
-        let k = sa.json_key().to_lowercase();
-        k.contains("repeat") || k.contains("repeatmasker") || k.contains("simple_repeat")
-    });
     let gene_json_keys: Vec<String> = gene_providers
         .iter()
         .map(|gp| gp.json_key().to_string())
         .collect();
+    // Which sources of the reference stack are open, from the keys in the headers of the
+    // databases. PM2 must tell a variant with no gnomAD record from a run with no gnomAD
+    // database, and BP3 "not in a repeat" from "no repeat track": an annotation adds nothing in
+    // either case, so only this list can say which it was.
+    let sources = fastvep_classification::LoadedSources::from_json_keys(
+        sa_json_keys
+            .iter()
+            .chain(gene_json_keys.iter())
+            .map(String::as_str),
+    );
+    // `--acmg` over a database directory that lacks part of the reference stack does not fail: each
+    // criterion without its data reports `evaluated: false`, and the run ends with a classification
+    // that rests on less evidence and looks like any other. Say so once, on stderr, where the
+    // output files stay what they were.
+    // Which chromosomes the gnomAD databases hold. A database of some chromosomes opens without
+    // complaint and says "no record" for the rest, which PM2 reads as absence from the population:
+    // the classifier declines the frequency criteria for a variant on a chromosome that no loaded
+    // gnomAD holds, and the run says which chromosomes of the gene model those are.
+    let coverage = fastvep_annotate::SourceCoverage::of(&sa_providers);
+    if acmg_config.is_some() {
+        if let Some(shortfall) = sources.shortfall() {
+            eprintln!("warning: --acmg is running on an incomplete reference stack: {shortfall}.");
+            eprintln!(
+                "         The classes below rest on less evidence than the benchmark of the paper's, \
+                 and a VUS can mean that nothing was checked. See docs/ACMG_SETUP.md."
+            );
+        }
+        let wanted = fastvep_annotate::expected_chromosomes(transcript_provider.chromosomes());
+        let lacks = coverage.gnomad_lacks(&wanted);
+        if !lacks.is_empty() {
+            eprintln!(
+                "warning: --acmg: the gnomAD databases that are loaded hold nothing of chromosomes {}, \
+                 which the gene model has transcripts on.",
+                fastvep_annotate::describe_chromosomes(&lacks)
+            );
+            eprintln!(
+                "         PM2, BA1, BS1 and BS2 are not evaluated for a variant there (no record would \
+                 read as absent from the population). Build the missing chromosomes: docs/ACMG_SETUP.md."
+            );
+        }
+    }
 
     // Curated functional-assay evidence for PS3/BS3. Parsed up front so a
     // malformed row fails before the run starts rather than after an hour of
@@ -2149,7 +2196,8 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
             pick: pick_request,
             sample_names: &sample_names,
             normalize_gnomad_queries,
-            repeat_db_loaded,
+            sources,
+            coverage: &coverage,
         };
         // Phase 2: Annotate the batch (transcript lookup + consequence prediction + HGVS) and
         // render it into the bytes it writes, in one pass on every thread (see `render_batch`).
@@ -2170,7 +2218,8 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
                 acmg_cfg,
                 &sample_names,
                 functional_evidence,
-                repeat_db_loaded,
+                sources,
+                &coverage,
             );
         }
         let records = batch.len() as u64;
@@ -2940,7 +2989,8 @@ fn enrich_compound_het_batch(
     acmg_cfg: &fastvep_classification::AcmgConfig,
     sample_names: &[String],
     functional_evidence: Option<&fastvep_classification::FunctionalEvidenceIndex>,
-    repeat_db_loaded: bool,
+    sources: fastvep_classification::LoadedSources,
+    coverage: &fastvep_annotate::SourceCoverage,
 ) {
     // Collect per-gene variant info
     struct VariantGeneInfo {
@@ -3114,7 +3164,7 @@ fn enrich_compound_het_batch(
                 aa.exon,
                 aa.protein_length,
                 aa.escapes_nmd,
-                repeat_db_loaded,
+                coverage.sources_for(sources, &vf.position.chromosome),
                 fastvep_annotate::splice_ps1_evidence(aa, &gene_anns, &query_alleles, alt_idx),
                 alt_idx
                     .and_then(|i| query_alleles.get(i))

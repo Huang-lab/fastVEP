@@ -16,7 +16,9 @@ The classifier implements all 28 ACMG-AMP evidence criteria and evaluates them f
 
 ## Quick Start
 
-> **First, build the databases.** Every `--sa-dir ./sa/` below stands for the nine-source reference stack, and the classifier degrades quietly without it: a criterion with no data reports `evaluated: false` instead of firing, so a half-built `--sa-dir` produces VUS rather than an error.
+> **First, build the databases.** Every `--sa-dir ./sa/` below stands for the nine-source reference stack.
+> A source that is missing does not stop a run: each criterion that reads it reports `evaluated: false` instead of firing, so a half-built `--sa-dir` produces VUS rather than an error.
+> The command line says which sources are missing, once, on stderr (see [Missing sources](#missing-sources)).
 > [ACMG_SETUP.md](ACMG_SETUP.md) has the verified download URL, build command and measured size for each source, plus `scripts/check_acmg_stack.py` to confirm each one answers a query before you trust a run.
 
 ### CLI
@@ -62,6 +64,10 @@ fastvep annotate \
 4. Click any badge to view the full evidence detail modal showing all 28 criteria
 5. The **Summary** tab includes an ACMG classification distribution chart
 
+The checkbox is available only for a genome whose database directory holds all nine sources of the reference stack.
+For any other genome it is disabled and the page names the sources that are missing, because a classification made without them would rest on less evidence than it appears to (see [Missing sources](#missing-sources)).
+`POST /api/annotate` with `"acmg": true` for such a genome is refused with HTTP 422 and the same list, and `--acmg-allow-partial` answers it anyway and says so in the response ([docs/API.md](API.md#acmg-needs-the-reference-stack)).
+
 ## CLI Parameters
 
 | Flag | Description | Default |
@@ -95,7 +101,8 @@ pm2_af_threshold = 0.0001      # Legacy single-threshold field, retained for bac
 pm2_absent_when_no_record = true  # PM2: a variant with no gnomAD record is read as absent (unless ClinVar's own
                                # population frequencies say it is not extremely rare). Coverage is not read, so
                                # this includes sites that gnomAD could not see; false leaves PM2 not evaluated
-                               # wherever there is no record. See limitation 30.
+                               # wherever there is no record. A run with no gnomAD database loaded at all never
+                               # reads a missing record as absence, whatever this says. See limitation 30.
 
 # ── REVEL thresholds (ClinGen SVI calibrated, Pejaver 2022) ──
 pp3_revel_supporting = 0.644   # PP3 Supporting
@@ -911,12 +918,12 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 | Source | SA Key | Used By | Description |
 |---|---|---|---|
 | **gnomAD** | `gnomad` | BA1, BS1, BS2, PM2 | Per-population allele frequencies + AN + homozygote counts (BA1/BS1 max-pop AF; BA1/BS1 require AN ≥ 2,000) |
-| **ClinVar** | `clinvar` | PP5, BP6 (off by default per SVI); PS4 only when `use_clinvar_stars_as_ps4_proxy = true` | Clinical significance, review status, phenotypes; companion-variant lookups for PM3 / BP2 |
+| **ClinVar** | `clinvar` | PM2 (frequency backstop), BA1, BS1 and BS2 (low-penetrance gate), PM3 and BP2 (companion lookup); PP5, BP6 (off by default per SVI); PS4 only when `use_clinvar_stars_as_ps4_proxy = true` | Clinical significance, review status, phenotypes, population frequencies (ExAC, 1000 Genomes, ESP); companion-variant lookups for PM3 / BP2 |
 | **REVEL** | `revel` | PP3 (missense), BP4 (missense, including Very Strong band ≤ 0.003) | Missense pathogenicity score (0-1); not applied to non-missense per Pejaver 2022 |
 | **SpliceAI** | `spliceai` | PP3 (caps at Supporting per Walker 2023), BP4 (≤ 0.1 → Supporting), BP7 | Splice site delta scores |
 | **dbNSFP** | `dbnsfp` | Transparency-only (SIFT / PolyPhen surfaced in `details`) | The pre-PR1 ≥3-of-4 consensus path was removed per Pejaver 2022. |
-| **1000 Genomes** | `onekg` | PM2 (supplement) | Population frequencies |
-| **TOPMed** | `topmed` | PM2 (supplement) | Population frequencies |
+
+The 1000 Genomes (`onekg`), TOPMed (`topmed`), AlphaMissense, PrimateAI, dbSNP and COSMIC databases can be built and loaded, and their values appear in the annotation, but no criterion reads them ([ACMG_SETUP.md](ACMG_SETUP.md#what-is-deliberately-not-in-the-stack)).
 
 ### Positional Sources (`.osa` / `.osa2`)
 
@@ -937,6 +944,29 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 | Source | SA Key | Used By | Description |
 |---|---|---|---|
 | **RepeatMasker** | `repeatmasker` | BP3 | Repeat region intervals (`.osi`). Built from the UCSC track - see [Building the RepeatMasker track](#building-the-repeatmasker-track-bp3) |
+
+### Missing sources
+
+A run that lacks a source of the reference stack is not an error, and it is not silent either.
+The command line prints, once and on stderr, which of the nine sources are not loaded and which criteria read each of them (`warning: --acmg is running on an incomplete reference stack: ...`).
+The output files are not changed by it, so a script that discards stderr does not see it.
+A criterion that reads a source that is not loaded reports `evaluated: false`.
+PM2 used to be the exception: it read a variant with no gnomAD record as absent from controls whether or not a gnomAD database was loaded, so a run without one met PM2 for every variant it classified.
+It now declines when no gnomAD database is loaded, whatever `pm2_absent_when_no_record` says, and so do BA1, BS1 and BS2.
+That setting is about a database that is loaded and holds no record of the variant (limitation 30), which is a different statement.
+
+A source can also be loaded and hold only some of the genome, and for gnomAD that is the same mistake.
+A database built for some chromosomes (one shard of a per-chromosome build, a region-restricted build, a chromosome that failed to build and was not noticed) opens without complaint and says "no record" for every variant of the others, which PM2 reads as absence from the population.
+A deployment script of this project once built a gnomAD of chromosome X alone.
+The classifier is told, for each variant, whether the gnomAD databases that are loaded hold its chromosome, and declines PM2, BA1, BS1 and BS2 for a variant on one that they do not (`holds no record of chromosome 1`), whatever the genome; chromosomes are compared without their `chr` prefix, and the shards of one source count as the union of what they hold.
+The command line says which chromosomes of the gene model the loaded gnomAD lacks (`warning: --acmg: the gnomAD databases that are loaded hold nothing of chromosomes ...`), and the web server counts a gnomAD that lacks a chromosome of the gene model's autosomes or X as missing, so the genome is not classified until it is built (Y and the mitochondrial genome are left out of that, because the gnomAD of GRCh37 has no Y: a variant there is declined one by one).
+A database that cannot say which chromosomes it holds is read as holding all of them.
+
+`fastvep-web` goes further than a warning, because the people who read its answers are not the ones who built its databases: it refuses to classify a genome that lacks any of the nine sources, and `GET /api/status` and `GET /api/genomes` say which genomes can be classified.
+The nine sources are named once, in `crates/fastvep-classification/src/sources.rs` (`REFERENCE_STACK`), with the criteria that read each of them and what a classification loses without it.
+The command line, the web server and this document all read from that list.
+A test classifies a set of inputs with each source and without it and fails if a criterion that is not listed under a source changes when the source is removed, so the list cannot drift from the criteria.
+It found one that the documents had missed: ClinVar's low-penetrance gate also withholds BA1.
 
 ### Building the RepeatMasker track (BP3)
 
@@ -1504,6 +1534,7 @@ Output (JSON / VCF CSQ / TSV)
 
 30. **PM2 reads a variant with no gnomAD record as absent, whether or not gnomAD could have seen the site.**
     The classifier reads no coverage: a database holds the records of the variants that gnomAD called, and a variant that is not among them has no record and no allele number to say whether its site was covered.
+A run with no gnomAD database loaded at all is not this case: PM2 is not evaluated for it, because no variant has a record there to be missing.
     With `pm2_absent_when_no_record = true`, the default, PM2 is met for such a variant unless ClinVar's own population frequencies show that it is not extremely rare, and that includes sites that the exomes do not cover.
     The reviewer of the benchmark gave a site covered in under half of gnomAD's exomes (PRODH) as a reason for one of the PVS1 calls on a ClinVar benign-side variant.
     Setting it to `false` leaves PM2 not evaluated wherever there is no record, which on the benchmark costs 0.22 points of agreement and 2.9 points of pathogenic-side recall (`manuscript/acmg`, Section 3.4 and Figure 3A).

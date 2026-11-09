@@ -10,8 +10,14 @@
 //! actually exercising, so a new field is added in exactly one place. The
 //! defaults here are deliberately inert: no annotations, no consequences, no
 //! genotypes, so nothing fires unless a test asks for it.
+//!
+//! Every source of the reference stack is open and none has a record for the
+//! variant: a complete database directory and a variant it does not know, which is
+//! the situation the criteria were written for. A test of what a missing source does
+//! overrides `sources`.
 
 use crate::sa_extract::ClassificationInput;
+use crate::sources::LoadedSources;
 use fastvep_core::Impact;
 
 /// A `ClassificationInput` with every annotation absent.
@@ -47,6 +53,7 @@ pub(crate) fn minimal_input() -> ClassificationInput {
         same_splice_position_pathogenic: None,
         variant_coordinates: None,
         in_repeat_region: None,
+        sources: LoadedSources::all(),
         is_pure_insertion: None,
         at_exon_edge: None,
         intronic_offset: None,

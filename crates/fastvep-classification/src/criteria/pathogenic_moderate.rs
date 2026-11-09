@@ -430,9 +430,10 @@ fn evaluate_pm2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
         // Configurable via `pm2_absent_when_no_record` (default true).
         // Set false for partial-coverage runs where gnomAD .osa covers
         // only some input regions and you want PM2 silenced outside that
-        // coverage. Note that when `--sa-dir` includes no gnomAD .osa at
-        // all, `input.gnomad` is None for every variant — disable this
-        // flag in that case (or load gnomAD) to avoid firing PM2 globally.
+        // coverage. A run that has no gnomAD database at all never reaches
+        // this branch: `data_blocker` declines first (`sources.gnomad`), so
+        // the flag no longer has to be turned off to keep PM2 from firing
+        // for every variant of such a run.
         details.insert("gnomad_allAf".into(), serde_json::Value::Null);
         details.insert("pm2_absent_when_no_record".into(), serde_json::json!(true));
 
@@ -1165,6 +1166,54 @@ mod tests {
         });
         let result = evaluate_pm2(&input, &AcmgConfig::default());
         assert!(result.met);
+    }
+
+    #[test]
+    fn test_pm2_is_not_evaluated_when_no_gnomad_database_is_loaded_whatever_the_setting() {
+        // A variant has no gnomAD record because nothing was asked, which is not the same as gnomAD
+        // having seen no carrier, and `pm2_absent_when_no_record` is about the second. Reading the
+        // first as absence met PM2 for every variant of a run that never opened gnomAD.
+        for absent_when_no_record in [true, false] {
+            let cfg = AcmgConfig {
+                pm2_absent_when_no_record: absent_when_no_record,
+                ..Default::default()
+            };
+            let mut input = make_input(vec![Consequence::MissenseVariant], None);
+            input.sources = crate::sources::LoadedSources::from_json_keys(["clinvar", "revel"]);
+            let result = evaluate_pm2(&input, &cfg);
+            assert!(!result.met, "{result:?}");
+            assert!(!result.evaluated, "{result:?}");
+            assert!(
+                result.summary.contains("no gnomAD database is loaded"),
+                "{}",
+                result.summary
+            );
+        }
+    }
+
+    #[test]
+    fn test_pm2_is_not_evaluated_on_a_chromosome_the_loaded_gnomad_holds_nothing_of() {
+        // A gnomAD of chromosome X alone, which is what deploy-full.sh once built, is open and says
+        // "no record" for every variant of chromosomes 1 to 22. That is not absence from the
+        // population, and the stack as a whole is complete, so only the variant knows.
+        let cfg = AcmgConfig::default();
+        let mut covered = make_input(vec![Consequence::MissenseVariant], None);
+        covered.variant_coordinates = Some(("X".into(), 1_000, "A".into(), "G".into()));
+        let met = evaluate_pm2(&covered, &cfg);
+        assert!(met.met && met.evaluated, "{met:?}");
+
+        let mut uncovered = make_input(vec![Consequence::MissenseVariant], None);
+        uncovered.variant_coordinates = Some(("1".into(), 1_000, "A".into(), "G".into()));
+        uncovered.sources =
+            crate::sources::LoadedSources::all().without_coverage(crate::sources::Source::Gnomad);
+        let result = evaluate_pm2(&uncovered, &cfg);
+        assert!(!result.met, "{result:?}");
+        assert!(!result.evaluated, "{result:?}");
+        assert!(
+            result.summary.contains("holds no record of chromosome 1"),
+            "{}",
+            result.summary
+        );
     }
 
     #[test]

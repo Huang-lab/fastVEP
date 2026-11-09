@@ -350,6 +350,10 @@ impl AnnotationProvider for OsiReader {
         &self.metadata
     }
 
+    fn is_empty(&self) -> bool {
+        self.index.intervals.values().all(Vec::is_empty)
+    }
+
     fn annotate_position(
         &self,
         chrom: &str,
