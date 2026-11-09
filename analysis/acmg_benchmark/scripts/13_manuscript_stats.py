@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Every number and table the ACMG manuscript reports about v37 (and, for Section 3.8, about v38).
+"""Every number and table the ACMG manuscript reports about v38, the latest classifier, and the same tables for v37, the before of what v38 changes.
 
 Reads the per-variant table of the final run (`12_per_variant_table.py`), the
 concordance matrix of every other run on disk, and the sweeps and ablations of
@@ -20,9 +20,36 @@ ClinVar's `Pathogenic/Likely pathogenic` is scored as `Pathogenic` and its
 `Benign/Likely benign` as `Benign`, so `exact` is a strict measure and
 `same-direction` the fair one.
 
+Two bases. The tables are written for a base, the classifier whose final run they describe: `--base v38` (the default) writes the
+files the manuscript reads, `headline_v38.csv`, `confusion_5x5_v38.csv` and the rest, from the family of runs that
+`11_manuscript_runs.py` made with the classifier of release 0.5.0, and `--base v37` writes their twins for v37, `headline_v37.csv` and
+the rest, from the family of runs of the classifier at the close of the review rounds, which are the before of the differences that
+Section 3.8 reports. Each base has one file for every table that holds a measurement of the final classifier, with the same columns
+and the same rows, and `v38` where the v37 file says `v37` (in a file name, a run name or a label). The code is spelled for v37 and
+every name goes through `fname`, `rn` or `lab`, which turn it into the base's; under v37 they change nothing, which is how the files
+of v37 stay what they were before v38 became the default, but for the few rows that the text quotes and no table held
+(`clingen_missing_summary_v37.csv` and `facts_v37.csv` have more rows than they had).
+
+What belongs to neither base is the same under both, and every invocation runs its steps: the trajectory of the benchmark from v1 to v38
+(`trajectory.csv`), the reviewer's rounds (`review_rounds.csv`; the change ledger and `round6_rulings.tsv` are typed from the project's
+record), the tables of Section 3.8 (`v38_*.csv`, about the change from the commit before v38 to v38) and a file that holds nothing that
+depends on the base (`tavtigian_posterior.csv`). Three of them (`trajectory.csv`, `review_rounds.csv` and `tavtigian_posterior.csv`)
+are written under v38, and under v37 they are checked to be the file that is there; the others do not depend on the base either, and
+each base that runs them writes the same bytes. The rows and rules of round 6 (`round6_rows_*.csv`, `round6_rules_*.csv`) have a file for each base, because they say what
+became of the reviewer's 64 rows under it (the calls that are still opposite, 48 under v38 and 49 under v37) and not what the
+reviewer did.
+
+The 382 ClinVar reference-agreement records (ALT is '.') are no-call under both classifiers, but v37's binaries write a record for
+them and v38's do not, so v37's matrices and per-variant tables hold the 673,660 records of the benchmark and v38's hold 673,278
+(the harness counts the other 382 apart). The tables of the paper are over all 673,660, so under `--base v38` the missing records
+are put back as the no-call rows v37's table holds for them (`reinstate`), and the matrices get the same no-calls (`fill_nocall`);
+the files of Section 3.8 are made from the tables as they are and keep the 673,278, which changes their class recalls and nothing
+else (the benign-side recall has the 382 in its denominator everywhere but there, where it is over the 284,168 that have a call).
+
 Usage
-  13_manuscript_stats.py            write every table
+  13_manuscript_stats.py            write every table for v38
   13_manuscript_stats.py --only headline,stars
+  13_manuscript_stats.py --base v37 write the files of v37 (`--only` works as above)
 """
 
 from __future__ import annotations
@@ -30,6 +57,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import os
 import re
 import sys
 from collections import Counter
@@ -42,10 +70,26 @@ from scipy import stats
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 BENCH = ROOT / "data/benchmark"
+SA_DB = BENCH / os.environ.get("BENCH_SA_DB", "sa_db_complete")  # the databases of the runs (11_manuscript_runs.py)
 OUT = ROOT / "manuscript/acmg/data"
 RES = ROOT / "analysis/acmg_benchmark/results"
 PER_VARIANT = BENCH / "manuscript_runs/v37_per_variant.tsv.gz"
 RUNS = RES / "v37_manuscript/runs.tsv"
+
+# The base the tables are written for (see the docstring), set by `set_base`. The code is spelled for v37.
+BASES = ("v37", "v38")
+BASE = "v37"
+SFX = "_v37"
+BASE_RUN = BENCH / "output_v37"  # the directory of the base's main run
+OCT_RUN = "v37_oct2026"  # the base's run of the shipped classifier on the October release
+OCT_PV = BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"
+# v38's binaries write no record for a reference-agreement record, v37's do: the table that has them is the skeleton that the
+# records of another base are put back into (`reinstate`), and the labels count each class (`fill_nocall`)
+SKELETON = {"april": BENCH / "manuscript_runs/v37_per_variant.tsv.gz", "october": BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"}
+LABELS = {"april": BENCH / "clinvar_2star_labels.tsv", "october": BENCH / "clinvar_20261004/clinvar_2star_labels.tsv"}
+
+# The base whose invocation writes the files that belong to neither base (`shared`): the other base checks that they are the same.
+WRITER = "v38"
 
 CLASSES = ["Pathogenic", "Likely_pathogenic", "VUS", "Likely_benign", "Benign"]
 CALLS = CLASSES + ["NoCall"]
@@ -58,28 +102,122 @@ BEN = ("Likely_benign", "Benign")
 # --------------------------------------------------------------------------- helpers
 
 
-def write(name: str, rows: list[dict] | pd.DataFrame) -> None:
+def set_base(base: str) -> None:
+    """Make every table that follows the twin for `base`: its files, its runs and the names it writes."""
+    global BASE, SFX, PER_VARIANT, RUNS, BASE_RUN, OCT_RUN, OCT_PV
+    if base not in BASES:
+        sys.exit(f"unknown base {base}; choose from {', '.join(BASES)}")
+    BASE, SFX = base, f"_{base}"
+    PER_VARIANT = BENCH / f"manuscript_runs/{base}_per_variant.tsv.gz"
+    RUNS = RES / ("v37_manuscript/runs.tsv" if base == "v37" else f"v37_manuscript/runs_{base}.tsv")
+    BASE_RUN = BENCH / "output_v37" if base == "v37" else BENCH / f"manuscript_runs/{base}"
+    OCT_RUN = "v37_oct2026" if base == "v37" else f"{base}_oct_shipped"
+    OCT_PV = BENCH / f"manuscript_runs/{OCT_RUN}_per_variant.tsv.gz"
+
+
+def fname(name: str) -> str:
+    """The file a table is written to or read from. Names are spelled for v37, and `_v37` is the base's suffix for another base."""
+    return name.replace("_v37", SFX)
+
+
+def rn(name: str) -> str:
+    """A run's name in the family of the base: the code spells v37's runs, and under v38 `v37_hk_bp7_walker` is `v38_hk_bp7_walker`."""
+    return BASE + name[3:] if name.startswith("v37") else name
+
+
+def lab(text: str) -> str:
+    """A label or a column name that names the classifier, which the code spells v37: `shipped (v37)` is `shipped (v38)` under v38."""
+    return text.replace("v37", BASE)
+
+
+def write(name: str, rows: list[dict] | pd.DataFrame, shared: bool = False) -> None:
+    """Write a table. A `shared` one holds nothing that depends on the base: the base `WRITER` writes it and the other checks it."""
     OUT.mkdir(parents=True, exist_ok=True)
     df = rows if isinstance(rows, pd.DataFrame) else pd.DataFrame(rows)
+    name = fname(name)
+    if shared and BASE != WRITER:
+        text = df.to_csv(index=False, lineterminator="\n")
+        if not (OUT / name).exists() or (OUT / name).read_text() != text:
+            sys.exit(f"{name} is meant to hold nothing that depends on the base, and the file that is there is not the one {BASE} gives")
+        print(f"  {name} is the file that is there ({len(df)} rows)")
+        return
     df.to_csv(OUT / name, index=False, lineterminator="\n")
     print(f"  wrote {name} ({len(df)} rows)")
 
 
+def reinstate(x: pd.DataFrame, kind: str) -> pd.DataFrame:
+    """The records that a run did not annotate, put back as the no-call rows that v37's table holds for them (see the docstring).
+
+    A no-op for v37, whose tables hold every record. For another base the missing records are the ClinVar reference-agreement
+    records and no others, which is checked, and they go back in the places that v37's table has them in.
+    """
+    if BASE == "v37":
+        return x
+    sk = pd.read_csv(SKELETON[kind], sep="\t", dtype=str, keep_default_na=False)
+    key = lambda d: d["chrom"] + "\t" + d["pos"] + "\t" + d["ref"] + "\t" + d["alt"]  # noqa: E731
+    ks, kx = key(sk), key(x)
+    if kx.duplicated().any() or not kx.isin(ks).all():
+        sys.exit("a per-variant table holds a record that the skeleton (v37's table) does not, or one twice")
+    absent = ~ks.isin(set(kx))
+    back = sk[absent]
+    if (back.alt != ".").any() or (back.call != "NoCall").any():
+        sys.exit("a record the run did not annotate is not a no-call reference-agreement record: the table cannot be completed")
+    pos = pd.Series(range(len(sk)), index=ks)
+    out = pd.concat([x, back], ignore_index=True)
+    out["_o"] = key(out).map(pos)
+    return out.sort_values("_o", kind="stable").drop(columns="_o").reset_index(drop=True)
+
+
+def read_pv(path: Path, kind: str = "april") -> pd.DataFrame:
+    """A per-variant table as text, completed for the base (`reinstate`)."""
+    return reinstate(pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False), kind)
+
+
+_LABEL_COUNTS: dict[str, dict[str, int]] = {}
+
+
+def label_counts(kind: str) -> dict[str, int]:
+    """The records of each ClinVar class in the labels of the set (read once)."""
+    if kind not in _LABEL_COUNTS:
+        counts = pd.read_csv(LABELS[kind], sep="\t", dtype=str, usecols=["normalized_class"])["normalized_class"].value_counts()
+        _LABEL_COUNTS[kind] = {t: int(counts[t]) for t in CLASSES}
+    return _LABEL_COUNTS[kind]
+
+
+def fill_nocall(m: dict[str, dict[str, int]], kind: str = "april", force: bool = False) -> dict[str, dict[str, int]]:
+    """A matrix with the reference-agreement records that its run did not annotate counted as no-call, as v37's matrices count them.
+
+    Under v37 the matrices of the base hold them already and are returned as they are; `force` fills whatever the base is, for a
+    table that belongs to neither (the trajectory has v38's matrix in it under both bases), and changes a matrix that is complete in nothing.
+    """
+    if BASE == "v37" and not force:
+        return m
+    lab_ = label_counts(kind)
+    for t in CLASSES:
+        short = lab_[t] - sum(m[t].values())
+        if short:
+            if short < 0 or m[t]["NoCall"]:
+                sys.exit(f"the matrix has {-short} more {t} records than the labels, or no-calls already")
+            m[t]["NoCall"] += short
+    return m
+
+
 def load() -> pd.DataFrame:
-    df = pd.read_csv(PER_VARIANT, sep="\t", dtype=str, keep_default_na=False)
+    df = read_pv(PER_VARIANT)
     df["cv3"] = df["clinvar"].map(TRI)
     df["fv3"] = df["call"].map(TRI)
     df["stars"] = df["stars"].astype(int)
     return df
 
 
-def read_matrix(path: Path) -> dict[str, dict[str, int]]:
+def read_matrix(path: Path, kind: str | None = None, force: bool = False) -> dict[str, dict[str, int]]:
+    """A run's matrix; with a `kind` ("april" or "october") its no-calls are filled in for the base (`fill_nocall`)."""
     rows = list(csv.reader(path.open()))
     hdr = rows[0][1:]
     m = {r[0]: {c: int(v) for c, v in zip(hdr, r[1:])} for r in rows[1:]}
     for t in CLASSES:
         m[t].setdefault("NoCall", 0)
-    return m
+    return fill_nocall(m, kind, force) if kind else m
 
 
 def matrix_metrics(m: dict[str, dict[str, int]]) -> dict[str, float]:
@@ -351,7 +489,7 @@ def replay(codes: list[str], *, scheme: str = "shipped", lp_cut: int = 6, p_cut:
 
 
 def headline(df: pd.DataFrame) -> None:
-    m = read_matrix(BENCH / "output_v37/concordance_matrix.csv")
+    m = read_matrix(BASE_RUN / "concordance_matrix.csv", "april")
     mm = matrix_metrics(m)
     scored = mm["n"] - mm["no_call"]
     if mm["n"] != len(df):
@@ -437,7 +575,7 @@ def headline(df: pd.DataFrame) -> None:
 
 
 def confusion(df: pd.DataFrame) -> None:
-    m = read_matrix(BENCH / "output_v37/concordance_matrix.csv")
+    m = read_matrix(BASE_RUN / "concordance_matrix.csv", "april")
     rows = []
     for t in CLASSES:
         for p in CALLS:
@@ -571,7 +709,7 @@ def points_tables(df: pd.DataFrame) -> None:
         for name, prior in (("framework prior 0.10", 0.10), ("benchmark prior", prior_bench)):
             odds = (350 ** (pts / 8)) * prior / (1 - prior)
             rows.append({"points": pts, "prior": name, "prior_value": prior, "posterior": odds / (1 + odds)})
-    write("tavtigian_posterior.csv", rows)
+    write("tavtigian_posterior.csv", rows, shared=True)  # from ClinVar's labels alone: the same for every base
 
 
 def replay_tables(df: pd.DataFrame) -> None:
@@ -609,7 +747,7 @@ def replay_tables(df: pd.DataFrame) -> None:
         return m
 
     schemes = [
-        ("shipped (v37)", {}),
+        (lab("shipped (v37)"), {}),
         ("Richards 2015 table, both sides", {"scheme": "table"}),
         ("SVI points, both sides, Likely Benign from -1 (Tavtigian)", {"scheme": "points", "lb_floor": 1}),
         ("SVI points, both sides, Likely Benign from -2", {"scheme": "points", "lb_floor": 2}),
@@ -654,17 +792,17 @@ def validate_replay(call, codes, nocall, matrix_of) -> None:
     That is the only difference a faithful replay should show, so the check is that a difference
     is of that shape and not that there is none.
     """
-    checks = [("v37", BENCH / "output_v37/concordance_matrix.csv", {}),
-              ("v37_sw_table_both_sides", BENCH / "manuscript_runs/v37_sw_table_both_sides/concordance_matrix.csv", {"scheme": "table"})]
+    checks = [(BASE, BASE_RUN / "concordance_matrix.csv", {}),
+              (rn("v37_sw_table_both_sides"), BENCH / f"manuscript_runs/{rn('v37_sw_table_both_sides')}/concordance_matrix.csv", {"scheme": "table"})]
     # lp6 is the shipped cutoff run on the patched binary: the control that the patch changes nothing else.
-    checks += [(f"v37_cut_lp{n}", BENCH / f"manuscript_runs/v37_cut_lp{n}/concordance_matrix.csv", {"lp_cut": n}) for n in (4, 5, 6, 7, 8, 9)]
-    checks += [(f"v37_cut_p{n}", BENCH / f"manuscript_runs/v37_cut_p{n}/concordance_matrix.csv", {"p_cut": n}) for n in (9, 11, 12)]
+    checks += [(rn(f"v37_cut_lp{n}"), BENCH / f"manuscript_runs/{rn(f'v37_cut_lp{n}')}/concordance_matrix.csv", {"lp_cut": n}) for n in (4, 5, 6, 7, 8, 9)]
+    checks += [(rn(f"v37_cut_p{n}"), BENCH / f"manuscript_runs/{rn(f'v37_cut_p{n}')}/concordance_matrix.csv", {"p_cut": n}) for n in (9, 11, 12)]
     rows = []
     for name, path, kw in checks:
         if not path.exists():
             print(f"  (no real run {name}: not validated)")
             continue
-        real = read_matrix(path)
+        real = read_matrix(path, "april")
         pred = np.array([call(c, nc, i, **kw) for i, (c, nc) in enumerate(zip(codes, nocall))])
         rep_m = matrix_of(pred)
         diff = {t: {p: real[t][p] - rep_m[t][p] for p in CALLS} for t in CLASSES}
@@ -686,7 +824,7 @@ def validate_replay(call, codes, nocall, matrix_of) -> None:
         print(f"  replay vs {name}: {len(cells)} of 30 cells differ, {moved} variants, veto-shaped={veto_shaped}")
         if not veto_shaped:
             sys.exit(f"the replay of {name} differs from the real run in a way the site-level veto does not explain: {cells}")
-        if name in ("v37", "v37_sw_table_both_sides", "v37_cut_lp6") and cells:
+        if name in (BASE, rn("v37_sw_table_both_sides"), rn("v37_cut_lp6")) and cells:
             sys.exit(f"the replay of {name} must reproduce the real run exactly, and does not: {cells}")
     write("replay_validation_v37.csv", rows)
 
@@ -771,7 +909,11 @@ def opposite_cases(df: pd.DataFrame) -> None:
     opp["group"] = opp.apply(group, axis=1)
     m = opp.merge(rev[["chrom", "pos", "ref", "alt", "ruling", "row"]], on=["chrom", "pos", "ref", "alt"], how="left")
     if m["ruling"].isna().any():
-        sys.exit("an opposite-direction call is not one of the reviewer's 64 rows")
+        # A classifier can make a call opposite that the reviewer never saw (v37 and v38 each have three that were not among the 64 rows of the last
+        # round). It stays in the table, marked as not reviewed, and the calls the reviewer did see keep their rulings, which are carried over by
+        # the variant (chromosome, position, alleles).
+        m["ruling"] = m["ruling"].fillna("not reviewed")
+        m["row"] = m["row"].fillna("")
     cols = ["group", "gene", "chrom", "pos", "ref", "alt", "stars", "clinvar", "call", "criteria", "consequence", "hgvsc", "hgvsp",
             "gnomad_ac", "gnomad_af", "gnomad_popmax_af", "ruling", "row"]
     write("opposite_direction_v37.csv", m[cols].sort_values(["group", "gene"]))
@@ -780,16 +922,16 @@ def opposite_cases(df: pd.DataFrame) -> None:
     t = t.reset_index()
     write("opposite_direction_by_group_v37.csv", t)
 
-    # All 64 rows: what became of them.
+    # All 64 rows: what became of them under the base (the reviewer's rulings are the same under both).
     all64 = rev.merge(df[["chrom", "pos", "ref", "alt", "call", "criteria", "cv3", "fv3"]], on=["chrom", "pos", "ref", "alt"])
     all64["still_opposite"] = ((all64.cv3 == "P/LP") & (all64.fv3 == "B/LB")) | ((all64.cv3 == "B/LB") & (all64.fv3 == "P/LP"))
-    all64["v37_call"] = all64["call"]
+    all64[f"{BASE}_call"] = all64["call"]
     write("round6_rows_v37.csv", all64[["row", "gene", "chrom", "pos", "ref", "alt", "clinvar_class", "stars",
-                                       "fastvep_call_at_round6", "v37_call", "still_opposite", "ruling", "rule", "seen_in_round"]])
+                                       "fastvep_call_at_round6", f"{BASE}_call", "still_opposite", "ruling", "rule", "seen_in_round"]])
 
-    # Which coding rule produced each ruling, for all 64 rows and for the 49 that are still opposite.
+    # Which coding rule produced each ruling, for all 64 rows and for the ones that are still opposite (49 under v37).
     rows = []
-    for label, sub in (("all 64 rows of round 6", all64), ("the 49 still opposite in v37", all64[all64.still_opposite])):
+    for label, sub in (("all 64 rows of round 6", all64), (f"the {int(all64.still_opposite.sum())} still opposite in {BASE}", all64[all64.still_opposite])):
         t = pd.crosstab(sub["rule"], sub["ruling"])
         for rule in t.index:
             for ruling in t.columns:
@@ -1009,7 +1151,7 @@ def baselines(df: pd.DataFrame) -> None:
                 "blb_concordant_share": ((pred == "B/LB") & (cv == "B/LB")).sum() / cb if cb else ""}
 
     v = pd.Series("VUS", index=df.index)
-    rows = [score("v37 (the classifier)", "the ACMG/AMP classification of this paper", df["fv3"])]
+    rows = [score(lab("v37 (the classifier)"), "the ACMG/AMP classification of this paper", df["fv3"])]
     rows.append(score("all VUS", "every variant VUS", v))
     r1 = v.copy()
     r1[af >= 1e-3] = "B/LB"
@@ -1068,12 +1210,12 @@ def baselines(df: pd.DataFrame) -> None:
     wrong_left = r2_wrong & (df["fv3"] == "VUS")
     write("baselines_r2_vs_v37.csv", [
         {"measure": "pathogenic-side calls of the second rule that ClinVar calls pathogenic-side", "n": int(r2_correct.sum())},
-        {"measure": "  that v37 leaves as VUS", "n": int(left.sum())},
-        {"measure": "    with a PVS1 criterion in v37, at a lower strength or held back", "n": int((left & pvs1).sum())},
-        {"measure": "    with no PVS1 criterion in v37", "n": int((left & ~pvs1).sum())},
+        {"measure": lab("  that v37 leaves as VUS"), "n": int(left.sum())},
+        {"measure": lab("    with a PVS1 criterion in v37, at a lower strength or held back"), "n": int((left & pvs1).sum())},
+        {"measure": lab("    with no PVS1 criterion in v37"), "n": int((left & ~pvs1).sum())},
         {"measure": "pathogenic-side calls of the second rule that ClinVar calls benign-side", "n": int(r2_wrong.sum())},
-        {"measure": "  that v37 leaves as VUS", "n": int(wrong_left.sum())},
-        {"measure": "    with no PVS1 criterion in v37", "n": int((wrong_left & ~pvs1).sum())}])
+        {"measure": lab("  that v37 leaves as VUS"), "n": int(wrong_left.sum())},
+        {"measure": lab("    with no PVS1 criterion in v37"), "n": int((wrong_left & ~pvs1).sum())}])
 
     # What each tier of the call is worth: of the variants called at each of the five tiers, how many
     # ClinVar puts in the same direction, in VUS, and in the opposite direction.
@@ -1114,7 +1256,7 @@ def cftr_null_variants(base: pd.DataFrame, complete: pd.DataFrame) -> None:
         "hgvsc": cf.hgvsc, "hgvsp": cf.hgvsp,
         "clinvar": cf.clinvar, "review_stars": cf.stars,
         "gnomad_ac": cf.gnomad_ac, "gnomad_an": cf.gnomad_an,
-        "v37_call": cf.call, "v37_criteria": cf.criteria,
+        lab("v37_call"): cf.call, lab("v37_criteria"): cf.criteria,
         "complete_clingen_call": cf.call_complete, "complete_clingen_criteria": cf.criteria_complete,
     }).sort_values("pos")
     write("cftr_null_variants_v37.csv", out)
@@ -1130,24 +1272,24 @@ def gap_runs() -> None:
     those are then called pathogenic-side, and every change of call that the run makes, by ClinVar
     class, with the variants that become false-pathogenic one by one.
     """
-    base = pd.read_csv(PER_VARIANT, sep="\t", dtype=str, keep_default_na=False)
+    base = read_pv(PER_VARIANT)
     key = ["chrom", "pos", "ref", "alt"]
     for d in (base,):
         d["cv3"] = d["clinvar"].map(TRI)
         d["fv3"] = d["call"].map(TRI)
         d["pvs1"] = d["criteria"].str.contains("PVS1")
     gap = base[base.consequence.isin(["stop_gained", "frameshift_variant"]) & (base.cv3 == "P/LP") & ~base.pvs1]
-    names = {"v37_gap_clingen_complete": "ClinGen file with the omitted curations put back",
-             "v37_gap_orphanet_lof": "PVS1 licensed by Orphanet's loss-of-function label",
-             "v37_gap_both": "both"}
+    names = {rn("v37_gap_clingen_complete"): "ClinGen file with the omitted curations put back",
+             rn("v37_gap_orphanet_lof"): "PVS1 licensed by Orphanet's loss-of-function label",
+             rn("v37_gap_both"): "both"}
     rows, new_fp, per_gene = [], [], []
     complete = None
     for run, label in names.items():
-        x = pd.read_csv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz", sep="\t", dtype=str, keep_default_na=False)
+        x = read_pv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz")
         x["cv3"] = x["clinvar"].map(TRI)
         x["fv3"] = x["call"].map(TRI)
         x["pvs1"] = x["criteria"].str.contains("PVS1")
-        if run == "v37_gap_clingen_complete":
+        if run == rn("v37_gap_clingen_complete"):
             complete = x
         g = gap[key + ["gene"]].merge(x[key + ["pvs1", "fv3"]], on=key)
         b = base[key + ["gene", "cv3", "fv3", "call", "pvs1", "criteria", "clinvar", "consequence", "gnomad_popmax_af"]].merge(
@@ -1175,7 +1317,7 @@ def gap_runs() -> None:
         })
         fp = changed[(changed.cv3 == "B/LB") & (changed.fv3_new == "P/LP")]
         for r in fp.itertuples():
-            new_fp.append({"run": run, "gene": r.gene, "clinvar": r.clinvar, "call_in_v37": r.call, "call_in_run": r.call_new,
+            new_fp.append({"run": run, "gene": r.gene, "clinvar": r.clinvar, lab("call_in_v37"): r.call, "call_in_run": r.call_new,
                            "criteria_in_run": r.criteria_new, "consequence": r.consequence, "popmax_af": r.gnomad_popmax_af})
         top = g[g.pvs1].gene.value_counts().head(12)
         for gn, k in top.items():
@@ -1193,9 +1335,13 @@ def gap_runs() -> None:
     # The one row dated on the day of the export is in a gene whose calls are checked here to be the same with and
     # without the completed file, because the runs that read the completed file carry it.
     day_gene = cur[cur.status == "export day"].gene.iloc[0]
-    v37 = pd.read_csv(PER_VARIANT, sep="\t", dtype=str, keep_default_na=False)
-    done = pd.read_csv(BENCH / "manuscript_runs/v37_gap_clingen_complete_per_variant.tsv.gz", sep="\t", dtype=str, keep_default_na=False)
-    both = v37[v37.gene == day_gene].merge(done[key + ["call", "criteria"]], on=key, suffixes=("", "_run"))
+    v37 = read_pv(PER_VARIANT)  # the base's own table (v37's under v37)
+    done = read_pv(BENCH / f"manuscript_runs/{rn('v37_gap_clingen_complete')}_per_variant.tsv.gz")
+    both = v37[v37.gene == day_gene].merge(done[key + ["call", "criteria", "clingen_tags"]], on=key, suffixes=("", "_run"))
+    # PM2 is a code of its own at each strength (PM2_Supporting, PM2_Moderate), so the codes are compared whole.
+    has_pm2 = lambda s: s.str.split("&").map(lambda codes: any(c.startswith("PM2") for c in codes))  # noqa: E731
+    lost_pm2 = both[has_pm2(both.criteria) & ~has_pm2(both.criteria_run)]
+    lost_af = lost_pm2.gnomad_ac.astype(float) / lost_pm2.gnomad_an.astype(float)
     write("clingen_missing_summary_v37.csv", [
         {"measure": "curations in the 30 April export", "n": len(april)},
         {"measure": "rows of the 11 October export dated on or before 30 April whose gene and disease pair the April export lacks", "n": len(cur)},
@@ -1221,8 +1367,17 @@ def gap_runs() -> None:
         {"measure": "  expected before 2024 if the omission were independent of the date",
          "n": len(lacked) * int((april["CLASSIFICATION DATE"].str[:4].astype(int) < 2024).sum()) / len(april)},
         {"measure": f"variants of {day_gene}, the gene of the row dated 30 April itself, in the benchmark", "n": len(both)},
+        # The call and the criteria are counted apart because they differ under v38 and not under v37: v38 reads the curated tag, and the
+        # completed file adds a dominant curation beside the recessive one, so the gene stops being read as recessive-only and PM2 takes its
+        # lower threshold (the tags of the two runs are counted here, because the reason is a statement about them).
+        {"measure": "  with the established ClinGen tag AR alone in the main run", "n": int((both.clingen_tags == "AR").sum())},
+        {"measure": "  with the established ClinGen tags AD and AR in the run that reads the completed file", "n": int((both.clingen_tags_run == "AD+AR").sum())},
+        {"measure": "  whose call differs in the run that reads the completed file", "n": int((both.call != both.call_run).sum())},
         {"measure": "  whose call or criteria differ in the run that reads the completed file",
-         "n": int(((both.call != both.call_run) | (both.criteria != both.criteria_run)).sum())}])
+         "n": int(((both.call != both.call_run) | (both.criteria != both.criteria_run)).sum())},
+        {"measure": "  that lose a PM2 criterion in the run that reads the completed file", "n": len(lost_pm2)},
+        {"measure": "  lowest allele frequency in gnomAD among those (0 when there are none)", "n": float(lost_af.min()) if len(lost_af) else 0.0},
+        {"measure": "  highest allele frequency in gnomAD among those (0 when there are none)", "n": float(lost_af.max()) if len(lost_af) else 0.0}])
 
 
 def hook_runs() -> None:
@@ -1231,35 +1386,35 @@ def hook_runs() -> None:
     Each is a run of the final classifier that differs from v37 in one setting, with its per-variant
     table made by `12_per_variant_table.py`. A call that was already opposite in v37 is not listed.
     """
-    base = pd.read_csv(PER_VARIANT, sep="\t", dtype=str, keep_default_na=False)
+    base = read_pv(PER_VARIANT)
     key = ["chrom", "pos", "ref", "alt"]
     base["cv3"] = base["clinvar"].map(TRI)
     rows = []
-    for run in ("v37_hk_bp1_loo", "v37_hk_bp1_loo_veto1", "v37_hk_bp1_loo_veto2", "v37_sw_phylop_1000", "v37_hk_bp7_walker"):
-        x = pd.read_csv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz", sep="\t", dtype=str, keep_default_na=False)
+    for run in map(rn, ("v37_hk_bp1_loo", "v37_hk_bp1_loo_veto1", "v37_hk_bp1_loo_veto2", "v37_sw_phylop_1000", "v37_hk_bp7_walker")):
+        x = read_pv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz")
         x["fv3"] = x["call"].map(TRI)
         b = base[key + ["gene", "cv3", "call", "criteria", "consequence", "hgvsc", "gnomad_popmax_af"]].merge(
             x[key + ["call", "fv3", "criteria"]], on=key, suffixes=("", "_run"))
         was_opp = ((b.cv3 == "P/LP") & (b.call.map(TRI) == "B/LB")) | ((b.cv3 == "B/LB") & (b.call.map(TRI) == "P/LP"))
         now_opp = ((b.cv3 == "P/LP") & (b.fv3 == "B/LB")) | ((b.cv3 == "B/LB") & (b.fv3 == "P/LP"))
         for r in b[now_opp & ~was_opp].itertuples():
-            rows.append({"run": run, "gene": r.gene, "clinvar": TRI[r.cv3] if r.cv3 in TRI else r.cv3, "call_in_v37": r.call, "call_in_run": r.call_run,
-                         "criteria_in_v37": r.criteria, "criteria_in_run": r.criteria_run, "consequence": r.consequence,
+            rows.append({"run": run, "gene": r.gene, "clinvar": TRI[r.cv3] if r.cv3 in TRI else r.cv3, lab("call_in_v37"): r.call, "call_in_run": r.call_run,
+                         lab("criteria_in_v37"): r.criteria, "criteria_in_run": r.criteria_run, "consequence": r.consequence,
                          "popmax_af": r.gnomad_popmax_af})
     write("hook_new_opposite_v37.csv", rows)
 
     # The opposite-direction calls of v37 that a stricter count for BP1's veto removes: the two BP1 calls of Section 3.6 and no other,
     # with and without the variant's own record in the count.
     resolved = []
-    for run in ("v37_sw_bp1veto_1", "v37_sw_bp1veto_2", "v37_hk_bp1_loo_veto1", "v37_hk_bp1_loo_veto2"):
-        x = pd.read_csv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz", sep="\t", dtype=str, keep_default_na=False)
+    for run in map(rn, ("v37_sw_bp1veto_1", "v37_sw_bp1veto_2", "v37_hk_bp1_loo_veto1", "v37_hk_bp1_loo_veto2")):
+        x = read_pv(BENCH / f"manuscript_runs/{run}_per_variant.tsv.gz")
         b = base[key + ["gene", "cv3", "call", "criteria"]].merge(x[key + ["call", "criteria"]], on=key, suffixes=("", "_run"))
         b["fv3"] = b["call_run"].map(TRI)
         was_opp = ((b.cv3 == "P/LP") & (b.call.map(TRI) == "B/LB")) | ((b.cv3 == "B/LB") & (b.call.map(TRI) == "P/LP"))
         now_opp = ((b.cv3 == "P/LP") & (b.fv3 == "B/LB")) | ((b.cv3 == "B/LB") & (b.fv3 == "P/LP"))
         for r in b[was_opp & ~now_opp].itertuples():
-            resolved.append({"run": run, "gene": r.gene, "clinvar": r.cv3, "call_in_v37": r.call, "call_in_run": r.call_run,
-                             "criteria_in_v37": r.criteria, "criteria_in_run": r.criteria_run})
+            resolved.append({"run": run, "gene": r.gene, "clinvar": r.cv3, lab("call_in_v37"): r.call, "call_in_run": r.call_run,
+                             lab("criteria_in_v37"): r.criteria, "criteria_in_run": r.criteria_run})
         if (now_opp & ~was_opp).any():
             sys.exit(f"{run} makes a call opposite-direction that was not")
     write("bp1_veto_count_resolved_v37.csv", resolved)
@@ -1268,12 +1423,12 @@ def hook_runs() -> None:
     # gene, and whether the variant's own is among them. The two BP1 calls of v37 are calls that the veto would have prevented at
     # a stricter count, and the three that the measurement build with the own record left out adds are calls that the own
     # record was keeping from BP1.
-    index = read_protein_index(BENCH / "sa_db/clinvar_protein.oga")
+    index = read_protein_index(SA_DB / "clinvar_protein.oga")
     own_rows = []
     for r in base[(base.cv3 == "P/LP") & (base.call.map(TRI) == "B/LB") & base.criteria.str.contains("BP1")].itertuples():
-        own_rows.append(_index_row(index, r.gene, r.hgvsp, "opposite-direction in v37, with BP1"))
-    loo = pd.read_csv(BENCH / "manuscript_runs/v37_hk_bp1_loo_per_variant.tsv.gz", sep="\t", dtype=str, keep_default_na=False)
-    x = loo.merge(base[key + ["call", "cv3"]], on=key, suffixes=("", "_v37"))
+        own_rows.append(_index_row(index, r.gene, r.hgvsp, lab("opposite-direction in v37, with BP1")))
+    loo = read_pv(BENCH / f"manuscript_runs/{rn('v37_hk_bp1_loo')}_per_variant.tsv.gz")
+    x = loo.merge(base[key + ["call", "cv3"]], on=key, suffixes=("", "_v37"))  # `_v37` here is only the suffix of the base's own call
     for r in x[(x.cv3 == "P/LP") & (x.call.map(TRI) == "B/LB") & (x.call_v37.map(TRI) != "B/LB")].itertuples():
         own_rows.append(_index_row(index, r.gene, r.hgvsp, "opposite-direction only when the veto leaves its own record out"))
     write("bp1_index_counts_v37.csv", own_rows)
@@ -1283,7 +1438,8 @@ def provenance_summary() -> None:
     """What produced each run of this paper, read from the provenance files in the repository."""
     rows = []
     # the runs on the April set; the held-out runs on the October release have provenance files too, and are not among them
-    april_runs = set(pd.read_csv(RES / "v37_manuscript/runs.tsv", sep="\t", usecols=["name"])["name"])
+    # (under another base these are the runs of its family, the names of v37's April runs with the base's prefix)
+    april_runs = {rn(n) for n in pd.read_csv(RES / "v37_manuscript/runs.tsv", sep="\t", usecols=["name"])["name"]}
     for f in sorted((RES / "v37_manuscript/provenance").glob("*.txt")):
         if f.stem not in april_runs:
             continue
@@ -1303,6 +1459,16 @@ def trajectory() -> None:
     the documentation of the run (`results/v1/README.md`), and holds 31 opposite-direction calls where the
     run record says 36. v17 is not a step on the way: it is the opt-in run with the published VCEP bars,
     which v18 does not carry, so it is marked and left out of every range the text quotes.
+
+    v38 is the last row: the main run of the latest classifier (`manuscript_runs/v38`), whose matrix lacks the 382 records with no
+    alternative allele that every earlier run counted as no-calls, so they are put back (`force`) and every rate is over 673,660.
+
+    The column `databases` says which SpliceAI and PhyloP databases a run read: v1 read neither, v2 to v36 read the ones that were
+    loaded when they were run ("of the time"), and v37 and v38 are the runs on the final benchmark databases ("final"), so that the
+    step from v36 to v37 holds a change of databases as well as of the classifier. v37 and v38 as they were run at the time are the
+    columns that end in `_of_the_time` (the other rows leave them empty, because the row is the run of the time): they are read from
+    the comparison of the runs on the two sets of databases (`databases_old_vs_new.csv`, written by `21_compare_databases.py`, which
+    has to have run first; its files are in `results/complete_vs_april_databases/`).
     """
     rows = []
 
@@ -1327,32 +1493,54 @@ def trajectory() -> None:
                  "same_direction_rate": m1["same_direction"] / n_all, "exact_rate": m1["exact"] / n_all,
                  "opposite": m1["opposite"], "false_benign": m1["false_benign"], "false_pathogenic": m1["false_pathogenic"],
                  "plp_recall": m1["same_pathogenic"] / (79_823 + 13_989), "blb_recall": m1["same_benign"] / (128_038 + 156_512),
-                 "n": m1["n"], "denominator": n_all, "mainline": True,
+                 "n": m1["n"], "denominator": n_all, "mainline": True, "databases": "none",
                  "same_direction_rate_of_annotated": m1["same_direction"] / m1["n"], "committed": committed(v1)})
     for name, same, exact, opp, src in early:
         rows.append({"run": name, "order": int(name[1:]), "source": "recorded at the time (raw output not preserved)",
                      "note": src, "same_direction_rate": same / 100, "exact_rate": exact / 100 if exact else "",
                      "opposite": opp if opp is not None else "", "false_benign": "", "false_pathogenic": "",
-                     "plp_recall": "", "blb_recall": "", "n": "", "denominator": "", "mainline": True,
+                     "plp_recall": "", "blb_recall": "", "n": "", "denominator": "", "mainline": True, "databases": "of the time",
                      "same_direction_rate_of_annotated": "", "committed": ""})
     paths = {7: RES / "v7/concordance_matrix.csv", 8: RES / "v8/concordance_matrix.csv"}
     for v in range(9, 38):
         p = BENCH / f"output_v{v}/concordance_matrix.csv"
         if p.exists():
             paths[v] = p
+    paths[38] = BENCH / "manuscript_runs/v38/concordance_matrix.csv"
     # v9 is reported leave-one-out, which is what the run directory holds.
     for v, p in sorted(paths.items()):
-        mat = read_matrix(p)
+        mat = read_matrix(p, "april", force=True) if v == 38 else read_matrix(p)
         mm = matrix_metrics(mat)
         rows.append({
             "run": f"v{v}", "order": v, "source": "scored matrix on disk",
-            "note": "opt-in run with the published VCEP bars, not a step on the way (v18 does not carry it)" if v == 17 else "",
+            "note": ("opt-in run with the published VCEP bars, not a step on the way (v18 does not carry it)" if v == 17 else
+                     "the latest classifier: the main run of the family made by release 0.5.0, with the 382 reference-agreement records counted as no-calls, on the final databases" if v == 38 else
+                     "the main run of v37 on the final databases" if v == 37 else ""),
             "same_direction_rate": mm["same_direction"] / mm["n"], "exact_rate": mm["exact"] / mm["n"],
             "opposite": mm["opposite"], "false_benign": mm["false_benign"], "false_pathogenic": mm["false_pathogenic"],
             "plp_recall": mm["plp_recall"], "blb_recall": mm["blb_recall"], "n": mm["n"], "denominator": mm["n"],
-            "mainline": v != 17, "same_direction_rate_of_annotated": "", "committed": committed(mat),
+            "mainline": v != 17, "databases": "final" if v in (37, 38) else "of the time", "same_direction_rate_of_annotated": "", "committed": committed(mat),
         })
-    write("trajectory.csv", sorted(rows, key=lambda r: r["order"]))
+    # v37 and v38 as they were run at the time, with the databases that were loaded then
+    rec = RES / "complete_vs_april_databases/databases_old_vs_new.csv"
+    if not rec.exists():
+        sys.exit(f"{rec} is missing: run 21_compare_databases.py before this step")
+    then = pd.read_csv(rec)
+    then = then[then["set"] == "April set"].set_index(["version", "measure"])["first"].astype(float)
+    of_the_time = ["same_direction_rate_of_the_time", "exact_rate_of_the_time", "opposite_of_the_time", "false_benign_of_the_time",
+                   "false_pathogenic_of_the_time", "plp_recall_of_the_time", "blb_recall_of_the_time"]
+    base_columns = list(rows[0])
+    for r in rows:
+        v = f"v{r['order']}"
+        if v in ("v37", "v38"):
+            n_all_then = then[(v, "variants")]
+            r.update({"same_direction_rate_of_the_time": then[(v, "same_direction")] / n_all_then, "exact_rate_of_the_time": then[(v, "exact")] / n_all_then,
+                      "opposite_of_the_time": int(then[(v, "opposite")]), "false_benign_of_the_time": int(then[(v, "false_benign")]),
+                      "false_pathogenic_of_the_time": int(then[(v, "false_pathogenic")]), "plp_recall_of_the_time": then[(v, "plp_recall")],
+                      "blb_recall_of_the_time": then[(v, "blb_recall")]})
+        else:
+            r.update({k: "" for k in of_the_time})
+    write("trajectory.csv", pd.DataFrame(sorted(rows, key=lambda r: r["order"]))[base_columns + of_the_time], shared=True)
 
 
 def runs_tables() -> None:
@@ -1360,15 +1548,25 @@ def runs_tables() -> None:
         print("  (no runs.tsv yet: skipping sweeps and ablations)")
         return
     r = pd.read_csv(RUNS, sep="\t")
+    r_all = r
+    if BASE != "v37":
+        # `runs_v38.tsv` holds Section 3.8's runs and the family's. The family is v37's list of runs in its order, under the base's
+        # names, and a run that Section 3.8 made and the family shares carries Section 3.8's group (`inherit`), which here is a sweep.
+        order = [rn(n) for n in pd.read_csv(RES / "v37_manuscript/runs.tsv", sep="\t", usecols=["name"])["name"]]
+        lacking = [n for n in order if n not in set(r.name)]
+        if lacking:
+            sys.exit(f"{len(lacking)} runs of the {BASE} family are not in {RUNS.name} (made them with 11_manuscript_runs.py --family {BASE} and collected?): {lacking[:5]}")
+        r = r.set_index("name").loc[order].reset_index()
+        r["group"] = r["group"].replace({"inherit": "sweep"})
     rows = []
 
     def mat_of(row):
-        return {t: {p: int(row[f"cm_{t}__{p}"]) for p in CALLS} for t in CLASSES}
+        return fill_nocall({t: {p: int(row[f"cm_{t}__{p}"]) for p in CALLS} for t in CLASSES}, "april")
 
-    base = read_matrix(BENCH / "output_v37/concordance_matrix.csv")
+    base = read_matrix(BASE_RUN / "concordance_matrix.csv", "april")
     firing = {}
     # Criterion firing counts for the baseline, from its own file.
-    with (BENCH / "output_v37/criterion_firing_rates.csv").open() as f:
+    with (BASE_RUN / "criterion_firing_rates.csv").open() as f:
         for row in csv.DictReader(f):
             firing[row["criterion"]] = sum(int(row[f"{c}_fired"]) for c in CLASSES)
 
@@ -1379,26 +1577,37 @@ def runs_tables() -> None:
                                       "false_benign", "false_pathogenic", "plp_recall", "blb_recall", "vus_recall",
                                       "plp_to_vus", "blb_to_vus", "vus_to_plp", "vus_to_blb")}, **(fire or {})}
 
-    out = [line("v37", "baseline", "", "shipped", "", base, {f"fire_{c}": v for c, v in firing.items()})]
+    out = [line(BASE, "baseline", "", "shipped", "", base, {f"fire_{c}": v for c, v in firing.items()})]
     for _, row in r.iterrows():
         fire = {c: int(row[c]) for c in r.columns if c.startswith("fire_")}
         out.append(line(row["name"], row["group"], row["knob"], str(row["value"]), str(row["shipped"]), mat_of(row), fire))
-    # The dominant-gene BS2 bar: the sweep that was already run on this stack (v37 variants).
-    bs2 = [("v37_bs2off", "0"), ("v37_bs2prev_3e-5", "3e-05"), ("v37_bs2prev_1e-4", "0.0001"),
-           ("v37_bs2prev_1e-3", "0.001"), ("v37_bs2prev_3e-3", "0.003")]
-    for name, val in bs2:
-        p = BENCH / f"output_{name}/concordance_matrix.csv"
-        if p.exists():
-            out.append(line(name, "sweep", "bs2_ad_prevalence_threshold", val, "0.0003", read_matrix(p)))
-    for name, val in [("v37_bs2ac_20", "20"), ("v37_bs2ac_100", "100"), ("v37_bs2ac_1000", "1000")]:
-        p = BENCH / f"output_{name}/concordance_matrix.csv"
-        if p.exists():
-            out.append(line(name, "sweep", "bs2_ad_min_ac (bar off)", val, "5 (with bar 3e-4)", read_matrix(p)))
+    # The dominant-gene BS2 bar: the sweep that was already run on this stack (v37 variants). Under v38 the same grids are the runs
+    # of Section 3.8 (`v38_sw_bs2ad_*` and `v38_sw_bs2ac_*`), which stand in these rows under the names the rows have for v37.
+    bs2 = [("v37_bs2off", "0", "v38_sw_bs2ad_0"), ("v37_bs2prev_3e-5", "3e-05", "v38_sw_bs2ad_3e-05"),
+           ("v37_bs2prev_1e-4", "0.0001", "v38_sw_bs2ad_0.0001"), ("v37_bs2prev_1e-3", "0.001", "v38_sw_bs2ad_0.001"),
+           ("v37_bs2prev_3e-3", "0.003", "v38_sw_bs2ad_0.003")]
+    ac = [("v37_bs2ac_20", "20", "v38_sw_bs2ac_20"), ("v37_bs2ac_100", "100", "v38_sw_bs2ac_100"), ("v37_bs2ac_1000", "1000", "v38_sw_bs2ac_1000")]
+
+    def earlier(name: str, run38: str):
+        if BASE == "v37":
+            p = BENCH / f"output_{name}/concordance_matrix.csv"
+            return read_matrix(p) if p.exists() else None
+        row = r_all[r_all.name == run38]
+        return mat_of(row.iloc[0]) if not row.empty else None
+
+    for name, val, run38 in bs2:
+        m = earlier(name, run38)
+        if m is not None:
+            out.append(line(rn(name), "sweep", "bs2_ad_prevalence_threshold", val, "0.0003", m))
+    for name, val, run38 in ac:
+        m = earlier(name, run38)
+        if m is not None:
+            out.append(line(rn(name), "sweep", "bs2_ad_min_ac (bar off)", val, "5 (with bar 3e-4)", m))
     write("runs_v37_variants.csv", out)
 
     # The controls of the two measurement builds: with nothing set, each must be the shipped classifier.
     rows = []
-    for name in ("v37_cut_lp6", "v37_hk_control"):
+    for name in map(rn, ("v37_cut_lp6", "v37_hk_control")):
         row = r[r["name"] == name]
         if row.empty:
             continue
@@ -1406,8 +1615,8 @@ def runs_tables() -> None:
         cells = sum(got[t][pp] == base[t][pp] for t in CLASSES for pp in CALLS)
         fires = [c for c in r.columns if c.startswith("fire_")]
         same_fire = sum(int(row.iloc[0][c]) == firing.get(c.removeprefix("fire_"), 0) for c in fires)
-        rows.append({"run": name, "cells_equal_to_v37": cells, "cells": len(CLASSES) * len(CALLS),
-                     "criteria_firing_equal_to_v37": same_fire, "criteria": len(fires)})
+        rows.append({"run": name, lab("cells_equal_to_v37"): cells, "cells": len(CLASSES) * len(CALLS),
+                     lab("criteria_firing_equal_to_v37"): same_fire, "criteria": len(fires)})
     write("controls_v37.csv", rows)
 
 
@@ -1447,7 +1656,7 @@ def threshold_steps() -> None:
     f = DATA_RUNS()
     if f is None:
         return
-    base = f[f.name == "v37"].iloc[0]
+    base = f[f.name == BASE].iloc[0]
     knobs = [
         ("bs1_af_threshold", "same_benign", "false_benign", "BS1 bar", "0.005"),
         ("bs2_hom_prevalence_threshold", "same_benign", "false_benign", "BS2 homozygote bar", "0.001"),
@@ -1553,8 +1762,18 @@ def facts(df: pd.DataFrame) -> None:
     splice = df[(df.cv3 == "P/LP") & (df.fv3 == "VUS") & df.consequence.isin(["splice_donor_variant", "splice_acceptor_variant"])]
     out += [("canonical_splice_vus", len(splice)), ("canonical_splice_vus_with_pvs1", int(splice.criteria.str.contains("PVS1").sum()))]
 
+    # The benign-side calls of ClinVar's VUS variants: each rests on two or more benign criteria or on one at Very Strong or Stand-alone strength,
+    # which is what the 2015 table needs for a benign-side call. The signatures table keeps only the 25 most common signatures of a cell, so it
+    # cannot count the calls that rest on one criterion, and the sentence that quotes them was checked against a typed 4,616 until v38 made it 4,804.
+    vus_blb = df[(df.cv3 == "VUS") & (df.fv3 == "B/LB")]
+    benign_points = vus_blb["criteria"].map(lambda s_: [code_points(c)[1] for c in s_.split("&") if c and code_points(c)[0] == "B"])
+    one_benign = benign_points[benign_points.map(len) == 1]
+    out += [("vus_called_blb", len(vus_blb)), ("vus_called_blb_no_benign_criterion", int((benign_points.map(len) == 0).sum())),
+            ("vus_called_blb_one_benign_criterion", len(one_benign)),
+            ("vus_called_blb_one_benign_criterion_very_strong_or_standalone", int(one_benign.map(lambda b_: b_[0] == 8).sum()))]
+
     # The residual calls: gnomAD counts of the PVS1-on-benign-side group, and the consequence classes of the BP4+BP7 group.
-    res = pd.read_csv(OUT / "opposite_direction_v37.csv", dtype=str)
+    res = pd.read_csv(OUT / fname("opposite_direction_v37.csv"), dtype=str)
     res["ac"] = pd.to_numeric(res["gnomad_ac"], errors="coerce")
     res["af"] = pd.to_numeric(res["gnomad_af"], errors="coerce")
     res["popmax"] = pd.to_numeric(res["gnomad_popmax_af"], errors="coerce")
@@ -1578,7 +1797,7 @@ def facts(df: pd.DataFrame) -> None:
             ("alt_dot_clinvar_benign_side", int((alt_dot.cv3 == "B/LB").sum())), ("alt_dot_hgvs_is_reference", reference_hgvs)]
     # The reviewer's rulings on the 49, by kind of contradiction (our coding; Section 3.6): "missed diagnosis" and "false-pathogenic"
     # name the direction of the error against ClinVar and are not a finding that ClinVar is right.
-    rul = pd.read_csv(OUT / "opposite_direction_v37.csv", dtype=str)
+    rul = pd.read_csv(OUT / fname("opposite_direction_v37.csv"), dtype=str)
     is_fb = rul["clinvar"].isin(["Pathogenic", "Likely_pathogenic"])
     out += [("reviewer_supported_clinvar_false_benign", int(((rul.ruling == "clinvar") & is_fb).sum())),
             ("reviewer_supported_clinvar_false_pathogenic", int(((rul.ruling == "clinvar") & ~is_fb).sum()))]
@@ -1601,10 +1820,11 @@ def facts(df: pd.DataFrame) -> None:
     semicolon = sorted(set(cg[cg["DISEASE LABEL"].str.contains(";") & cg["GENE SYMBOL"].isin(weak_only)]["GENE SYMBOL"]))
     out += [("clingen_weak_only_genes", len(weak_only)), ("clingen_weak_only_genes_with_semicolon_label", ",".join(semicolon)),
             ("clingen_weak_only_semicolon_genes_in_benchmark", int(df.gene.isin(semicolon).sum()))]
-    # How the classifier reads inheritance, which PM2's two bars and BS2's two arms branch on: from the disease names in the
+    # How the classifier reads inheritance, which PM2's two bars and BS2's two arms branch on. Up to v37: from the disease names in the
     # ClinGen file, by the substring rules of `OmimData::has_dominant_inheritance` and `has_recessive_inheritance`
     # (`sa_extract.rs`), over the phenotypes of the file the benchmark's database was built from (the genemap parser splits
-    # them on ';'). The MOI column is not read.
+    # them on ';'); the MOI column is not read. From v38 on (`reads_curated` below): from the curated tag of each established
+    # curation, `AD` dominant, `AR` recessive and `SD` both (`disease.rs`).
     def weak_tag(p_: str) -> bool:
         parts = p_.split("(ClinGen ")
         return len(parts) > 1 and parts[1].split("/")[0].strip() in weak_cls
@@ -1627,6 +1847,18 @@ def facts(df: pd.DataFrame) -> None:
                 return True
         return False
 
+    def reads_curated(ps: list[str], kind: str) -> bool:
+        for p_ in ps:
+            m_ = re.search(r"\(ClinGen ([^/]+)/([^,)]+)", p_)
+            if not m_ or m_.group(1).strip() in weak_cls:
+                continue
+            tag = m_.group(2).strip()
+            if (kind == "ad" and tag in ("AD", "SD")) or (kind == "ar" and tag in ("AR", "SD")):
+                return True
+        return False
+
+    if BASE != "v37":
+        reads = reads_curated  # noqa: F811 - what the classifier of the base reads
     kinds_ = Counter()
     for ps in phen.values():
         d_, r_ = reads(ps, "ad"), reads(ps, "ar")
@@ -1655,7 +1887,7 @@ def facts(df: pd.DataFrame) -> None:
     # The strict reading of Section 3.4 (v37_hk_strict) and what its added contradictions are called: the three adjustments it removes
     # are 15 curated alleles, ClinVar's low-penetrance gate and the veto's own-record count, and a Benign call among them contradicts
     # ClinVar's pathogenic-side class at the tier that the abstract says has none.
-    strict = pd.read_csv(BENCH / "manuscript_runs/v37_hk_strict/discrepancies.tsv", sep="\t", dtype=str, keep_default_na=False)
+    strict = pd.read_csv(BENCH / f"manuscript_runs/{rn('v37_hk_strict')}/discrepancies.tsv", sep="\t", dtype=str, keep_default_na=False)
     s_opp = strict[(strict.clinvar.isin(PATH) & strict.predicted.isin(BEN)) | (strict.clinvar.isin(BEN) & strict.predicted.isin(PATH))]
     out += [("strict_opposite_calls", len(s_opp)), ("strict_opposite_called_benign", int((s_opp.predicted == "Benign").sum())),
             ("strict_opposite_called_pathogenic", int((s_opp.predicted == "Pathogenic").sum())),
@@ -1710,7 +1942,7 @@ def facts(df: pd.DataFrame) -> None:
 
 
 def DATA_RUNS():
-    p = OUT / "runs_v37_variants.csv"
+    p = OUT / fname("runs_v37_variants.csv")
     return pd.read_csv(p) if p.exists() else None
 
 
@@ -1813,7 +2045,7 @@ def review_rounds() -> None:
     # Shares are taken over the rows that carry a recorded verdict, the same denominator in every round.
     df["rows_with_verdict"] = df["rows"] - df["no_verdict"]
     df["clinvar_share_of_verdicts"] = df["clinvar_supported"] / df["rows_with_verdict"]
-    write("review_rounds.csv", df)
+    write("review_rounds.csv", df, shared=True)
 
 
 def holdout_rates(apr: pd.DataFrame, octo: pd.DataFrame) -> None:
@@ -1952,17 +2184,17 @@ def holdout_rates(apr: pd.DataFrame, octo: pd.DataFrame) -> None:
 
 
 def temporal() -> None:
-    """The final classifier against ClinVar 2026-10-04: the whole covered set and each stratum of it.
+    """The final classifier against ClinVar 2026-10-04: the whole release (its 2-star+ variants) and each stratum of it.
 
     Strata are defined in `14_temporal_holdout.py`: `new` variants were not in the April benchmark set
     at all, so no iteration, review round or sweep ever saw them.
     """
-    pv = BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"
-    st = BENCH / "clinvar_20261004_covered/strata.tsv"
+    pv = OCT_PV
+    st = BENCH / "clinvar_20261004/strata.tsv"
     if not (pv.exists() and st.exists()):
         print("  (no October run yet: skipping)")
         return
-    df = pd.read_csv(pv, sep="\t", dtype=str, keep_default_na=False)
+    df = read_pv(pv, "october")
     df["cv3"] = df["clinvar"].map(TRI)
     df["fv3"] = df["call"].map(TRI)
     df["stars"] = df["stars"].astype(int)
@@ -1992,7 +2224,7 @@ def temporal() -> None:
                             "opposite": fb + fp, "false_benign": fb, "false_pathogenic": fp})
         return out
 
-    rows = block(df, "all covered")
+    rows = block(df, "all")
     for name in ("unchanged", "tier_change", "direction_change", "new"):
         rows += block(df[df.stratum == name], name)
     # By review status within the new variants (the 3-star ones are expert-panel calls).
@@ -2020,7 +2252,7 @@ def temporal() -> None:
     # Class-wise same-direction recall, April set against the October strata, with the allele-frequency
     # context that explains the one class that moved (novel Benign variants are rarer than the old ones).
     apr = load()  # every record, NoCall included, as in the October strata: a reference-agreement record is not a concordant call
-    groups = [("April set (v37)", apr), ("October, unchanged", df[df.stratum == "unchanged"]),
+    groups = [(lab("April set (v37)"), apr), ("October, unchanged", df[df.stratum == "unchanged"]),
               ("October, new", df[df.stratum == "new"])]
     rows = []
     for name, sub in groups:
@@ -2054,35 +2286,10 @@ def temporal() -> None:
     newopp["kind"] = newopp.apply(kind, axis=1)
     write("temporal_new_opposite_v37.csv", newopp[["kind", "gene", "chrom", "pos", "ref", "alt", "stars", "clinvar", "call", "criteria", "consequence"]].sort_values(["kind", "gene"]))
 
-    # How many October records the gnomAD extract covers, by stratum, and how many the rule drops.
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("temporal_holdout", HERE / "14_temporal_holdout.py")
-    th = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(th)
-    regions = th.load_regions()
-    apr_cls = {(r["chrom"], r["pos"], r["ref"], r["alt"]): r["normalized_class"]
-               for r in csv.DictReader((BENCH / "clinvar_2star_labels.tsv").open(), delimiter="\t")}
-    cov = Counter()
-    with (BENCH / "clinvar_20261004/clinvar_2star_labels.tsv").open() as f:
-        for r in csv.DictReader(f, delimiter="\t"):
-            key = (r["chrom"], r["pos"], r["ref"], r["alt"])
-            st_ = th.stratum(apr_cls, key, r["normalized_class"])
-            cov[(st_, "covered" if th.covered(regions, r["chrom"], int(r["pos"])) else "outside the extract")] += 1
-    rows = []
-    for name in ("unchanged", "tier_change", "direction_change", "new"):
-        k, d = cov[(name, "covered")], cov[(name, "outside the extract")]
-        rows.append({"stratum": name, "records": k + d, "covered": k, "outside_the_extract": d})
-    rows.append({"stratum": "all", "records": sum(cov.values()), "covered": sum(v for (a, b), v in cov.items() if b == "covered"),
-                 "outside_the_extract": sum(v for (a, b), v in cov.items() if b != "covered")})
-    write("temporal_coverage_v37.csv", rows)
-    if rows[-1]["covered"] != len(df):
-        sys.exit("the covered count does not match the October run")
-
     # The rate of opposite-direction calls, with an exact interval, for the April set and each October stratum.
     rows = []
     for name, sub in (("April set", load()), ("October, unchanged", df[df.stratum == "unchanged"]), ("October, new", df[df.stratum == "new"]),
-                      ("October, all covered", df)):
+                      ("October, all", df)):
         k = int((((sub.cv3 == "P/LP") & (sub.fv3 == "B/LB")) | ((sub.cv3 == "B/LB") & (sub.fv3 == "P/LP"))).sum())
         lo, hi = clopper_pearson(k, len(sub))
         rows.append({"set": name, "opposite": k, "records": len(sub), "rate": k / len(sub), "ci_lo": lo, "ci_hi": hi})
@@ -2092,7 +2299,7 @@ def temporal() -> None:
     # What became of the 49 residual opposite-direction calls of the April set in the later release.
     # A call that is still in the 2-star+ set keeps its class (or moves); one that left it was, in
     # the raw release, either downgraded in review status or reclassified to Conflicting.
-    res = pd.read_csv(OUT / "opposite_direction_v37.csv", dtype=str)
+    res = pd.read_csv(OUT / fname("opposite_direction_v37.csv"), dtype=str)
     in_oct = df.set_index(["chrom", "pos", "ref", "alt"])
     missing = {}
     rows = []
@@ -2122,9 +2329,9 @@ def temporal() -> None:
                     if not missing:
                         break
     if missing:
-        sys.exit(f"{len(missing)} of the April opposite-direction calls are neither in the October covered set nor in the October release")
+        sys.exit(f"{len(missing)} of the April opposite-direction calls are neither in the October release's 2-star+ set nor in the raw release")
     write("april_opposite_in_october_v37.csv", rows)
-    april_genes = set(pd.read_csv(PER_VARIANT, sep="\t", usecols=["gene"], dtype=str)["gene"])
+    april_genes = set(read_pv(PER_VARIANT)["gene"])
     new_genes = set(new["gene"])
     print(f"  new variants: {len(new):,} in {len(new_genes):,} genes, {len(new_genes - april_genes):,} of them not in the April set")
     # The protein index that PS1, PM1, PM5 and the BP1 veto read was not rebuilt, so it lacks the records added since April.
@@ -2144,14 +2351,20 @@ def new_in_index() -> None:
     the held-out run of BP1's veto without the variant's own record makes. The veto counts the gene's pathogenic missense
     records in the index, the variant's own among them, so the run can only change a call where the gene's count is
     exactly at the bar and the variant's own record is in it.
+
+    Two files date the April state of ClinVar, and they differ: the VCF of 4 April 2026 is the file that the benchmark set was drawn
+    from, and the `variant_summary` of 29 April is the one that the protein index was built from. A new variant is by definition not
+    at two stars or better in the VCF; the rows say how many were in it at a lower review status, and how many of those that the
+    `variant_summary` holds at two stars or better were in the VCF at a lower status, which is to say reached two stars in the
+    25 days between the two files.
     """
-    pv = BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"
-    st = BENCH / "clinvar_20261004_covered/strata.tsv"
+    pv = OCT_PV
+    st = BENCH / "clinvar_20261004/strata.tsv"
     if not (pv.exists() and st.exists()):
         print("  (no October run yet: skipping)")
         return
     key = ["chrom", "pos", "ref", "alt"]
-    new = pd.read_csv(pv, sep="\t", dtype=str, keep_default_na=False).merge(pd.read_csv(st, sep="\t", dtype=str), on=key, how="left")
+    new = read_pv(pv, "october").merge(pd.read_csv(st, sep="\t", dtype=str), on=key, how="left")
     new = new[new.stratum == "new"].copy()
     summary = pd.read_csv(BENCH / "sa_sources/variant_summary.txt.gz", sep="\t", dtype=str, low_memory=False,
                           usecols=["Assembly", "Chromosome", "PositionVCF", "ReferenceAlleleVCF", "AlternateAlleleVCF", "ReviewStatus", "ClinicalSignificance"])
@@ -2160,6 +2373,23 @@ def new_in_index() -> None:
     summary = summary.drop_duplicates("k").set_index("k")
     new["k"] = new.chrom + ":" + new.pos + ":" + new.ref + ":" + new.alt
     rec = new.join(summary[["ReviewStatus", "ClinicalSignificance"]], on="k")
+    # the VCF of 4 April: the review status of each new variant in the file that the April set was drawn from
+    import gzip
+
+    in_vcf: dict[str, str] = {}
+    wanted = set(new["k"])
+    with gzip.open(BENCH / "sa_sources/clinvar_20260404.vcf.gz", "rt") as f:
+        for line in f:
+            if line[0] == "#":
+                continue
+            c = line.split("\t", 8)
+            k_ = f"{c[0]}:{c[1]}:{c[3]}:{c[4]}"
+            if k_ in wanted:
+                m = re.search(r"CLNREVSTAT=([^;]+)", c[7])
+                in_vcf[k_] = m.group(1).replace("_", " ") if m else ""
+    two_star = ("criteria provided, multiple submitters, no conflicts", "reviewed by expert panel", "practice guideline")
+    in_vcf_low = {k_: v for k_, v in in_vcf.items() if v not in two_star}
+    rec["in_vcf"] = rec["k"].isin(in_vcf)
     present = rec.ReviewStatus.notna()
     status = rec.ReviewStatus.fillna("")
     sig = rec.ClinicalSignificance.fillna("").str.lower()
@@ -2167,16 +2397,25 @@ def new_in_index() -> None:
     single = status == "criteria provided, single submitter"
     multiple = status == "criteria provided, multiple submitters, no conflicts"
     expert = status.isin(["reviewed by expert panel", "practice guideline"])
-    rows = [("new variants of the covered release", len(new)),
+    rows = [("new variants of the release", len(new)),
             ("  with a record in the April variant_summary", int(present.sum())),
             ("    a single-submitter record", int(single.sum())),
             ("    a record with multiple submitters and no conflict", int(multiple.sum())),
             ("    a record reviewed by an expert panel", int(expert.sum())),
             ("    a record of another review status", int((present & ~single & ~multiple & ~expert).sum())),
             ("  without a record in the April variant_summary", int((~present).sum())),
-            ("  with a pathogenic or likely pathogenic record in the April variant_summary", int(plp.sum()))]
+            ("  with a pathogenic or likely pathogenic record in the April variant_summary", int(plp.sum())),
+            ("  in the VCF of 4 April 2026, the file of the April set", len(in_vcf)),
+            ("    at a lower review status than two stars", len(in_vcf_low)),
+            ("    a single-submitter record in that file", sum(1 for v in in_vcf.values() if v == "criteria provided, single submitter")),
+            ("  not in the VCF of 4 April 2026", len(new) - len(in_vcf)),
+            ("  with a record of two stars or better in the April variant_summary", int((multiple | expert).sum())),
+            ("    of those, in the VCF of 4 April at a lower review status", int(((multiple | expert) & rec.in_vcf).sum())),
+            ("    of those, not in the VCF of 4 April", int(((multiple | expert) & ~rec.in_vcf).sum()))]
+    if len(in_vcf) != len(in_vcf_low):
+        sys.exit("a new variant is at two stars or better in the VCF of 4 April, which would have put it in the April set")
     # The test of the held-out run of BP1's veto without the variant's own record.
-    index = read_protein_index(BENCH / "sa_db/clinvar_protein.oga")
+    index = read_protein_index(SA_DB / "clinvar_protein.oga")
     can = new[(new.clinvar.isin(PATH)) & (new.consequence == "missense_variant")
               & (pd.to_numeric(new.pli, errors="coerce") >= 0.9) & (pd.to_numeric(new.mis_z, errors="coerce") < 2)]
     in_index, at_bar, at_bar_bp4 = 0, 0, 0
@@ -2187,7 +2426,7 @@ def new_in_index() -> None:
             at_bar += 1
             at_bar_bp4 += "BP4" in r.criteria
     # the same count for the April set, where the index was built from the records of the variants themselves
-    april = pd.read_csv(PER_VARIANT, sep="\t", dtype=str, keep_default_na=False)
+    april = read_pv(PER_VARIANT)
     a_can = april[(april.clinvar.isin(PATH)) & (april.consequence == "missense_variant")
                   & (pd.to_numeric(april.pli, errors="coerce") >= 0.9) & (pd.to_numeric(april.mis_z, errors="coerce") < 2)]
     a_in_index = sum(_index_row(index, r.gene, r.hgvsp, "")["own_record_among_them"] for r in a_can.itertuples())
@@ -2209,16 +2448,16 @@ def proposals() -> None:
     a test of it.
     The per-variant table of each run is made by `12_per_variant_table.py` from the run's annotated VCF.
     """
-    st = BENCH / "clinvar_20261004_covered/strata.tsv"
-    base_path = BENCH / "manuscript_runs/v37_oct2026_per_variant.tsv.gz"
+    st = BENCH / "clinvar_20261004/strata.tsv"
+    base_path = OCT_PV
     changes = [
-        ("the completed ClinGen file", "v37_oct_clingen_complete", "v37_gap_clingen_complete"),
-        ("PVS1 licensed by Orphanet's loss-of-function label", "v37_oct_orphanet_lof", "v37_gap_orphanet_lof"),
-        ("both inputs of the PVS1 gap", "v37_oct_both", "v37_gap_both"),
-        ("BP7 as Walker 2023 describes it", "v37_oct_bp7_walker", "v37_hk_bp7_walker"),
-        ("BP1's veto without the variant's own record", "v37_oct_bp1_loo", "v37_hk_bp1_loo"),
-        ("BP1's veto at a count of 1", "v37_oct_bp1_veto1", "v37_sw_bp1veto_1"),
-        ("no allele-number floor", "v37_oct_no_an_floor", "v37_sw_no_an_floor"),
+        ("the completed ClinGen file", rn("v37_oct_clingen_complete"), rn("v37_gap_clingen_complete")),
+        ("PVS1 licensed by Orphanet's loss-of-function label", rn("v37_oct_orphanet_lof"), rn("v37_gap_orphanet_lof")),
+        ("both inputs of the PVS1 gap", rn("v37_oct_both"), rn("v37_gap_both")),
+        ("BP7 as Walker 2023 describes it", rn("v37_oct_bp7_walker"), rn("v37_hk_bp7_walker")),
+        ("BP1's veto without the variant's own record", rn("v37_oct_bp1_loo"), rn("v37_hk_bp1_loo")),
+        ("BP1's veto at a count of 1", rn("v37_oct_bp1_veto1"), rn("v37_sw_bp1veto_1")),
+        ("no allele-number floor", rn("v37_oct_no_an_floor"), rn("v37_sw_no_an_floor")),
     ]
     if not (st.exists() and base_path.exists()) or not all((BENCH / f"manuscript_runs/{h}_per_variant.tsv.gz").exists() for _, h, _ in changes):
         print("  (the held-out runs have no per-variant tables yet: skipping)")
@@ -2227,7 +2466,7 @@ def proposals() -> None:
     strata = pd.read_csv(st, sep="\t", dtype=str)
 
     def load(path: Path) -> pd.DataFrame:
-        x = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
+        x = read_pv(path, "october")
         x = x.merge(strata, on=key, how="left")
         x = x[x.stratum == "new"].copy()
         x["cv3"] = x["clinvar"].map(TRI)
@@ -2242,12 +2481,12 @@ def proposals() -> None:
 
     base = load(base_path)
     mb = metrics(base)
-    runs = pd.read_csv(OUT / "runs_v37_variants.csv").set_index("name")
+    runs = pd.read_csv(OUT / fname("runs_v37_variants.csv")).set_index("name")
     an = pd.to_numeric(base["gnomad_an"].replace("", np.nan), errors="coerce")
     popmax = pd.to_numeric(base["gnomad_popmax_af"].replace("", np.nan), errors="coerce")
     # The floor only matters at a site with a record (an absent record has no frequency to withhold) and a frequency at or above the
     # lowest bar that it gates, BS1's 5e-3, so the run tests it on the variants that are both.
-    rows = [{"change": "none (v37 on the release)", "holdout_run": "v37_oct2026", "april_run": "v37", "new_variants": len(base),
+    rows = [{"change": lab("none (v37 on the release)"), "holdout_run": OCT_RUN, "april_run": BASE, "new_variants": len(base),
              "new_same_direction": mb["same"], "new_opposite": mb["missed"] + mb["fp"], "new_false_benign": mb["missed"], "new_false_pathogenic": mb["fp"],
              "new_with_allele_number_below_2000": int((an < 2000).sum()),
              "new_below_2000_at_or_above_the_bs1_bar": int(((an < 2000) & (popmax >= 5e-3)).sum())}]
@@ -2256,7 +2495,7 @@ def proposals() -> None:
         if x["call"].isna().any():
             sys.exit(f"{hold} lacks calls for some new variants")
         m = metrics(x)
-        a, a0 = runs.loc[apr], runs.loc["v37"]
+        a, a0 = runs.loc[apr], runs.loc[BASE]
         rows.append({"change": label, "holdout_run": hold, "april_run": apr, "new_variants": len(x),
                      "april_delta_same_direction": int(a.same_direction - a0.same_direction),
                      "april_delta_false_benign": int(a.false_benign - a0.false_benign),
@@ -2284,6 +2523,21 @@ def proposals() -> None:
 
 V38_RUNS = RES / "v37_manuscript/runs_v38.tsv"
 V38_HOLD = RES / "v37_manuscript/holdout_runs_v38.tsv"
+# The groups of the runs of Section 3.8 on the April set in `runs_v38.tsv`, which also holds the family v38's runs (their groups are
+# those of the family v37: sweep, switch, source, interaction, cutoff, hook and gap). The three sweeps that the family shares with
+# Section 3.8 keep Section 3.8's group, `inherit`.
+SECTION38_GROUPS = ["inherit", "inherit_base", "inherit_alt", "joint"]
+
+
+def section38(r: pd.DataFrame) -> pd.DataFrame:
+    """The runs of Section 3.8 among the rows of `runs_v38.tsv`, and only the criteria that they fire.
+
+    The family v38's runs share the file, and one of them (`v38_sw_pm2_moderate`) fires a criterion code, PM2 at Moderate strength,
+    that no run of Section 3.8 does, which would put a column of zeros beside theirs and change the tables that count the codes
+    (`v38_controls.csv` and `v38_criteria_firing.csv`).
+    """
+    r = r[r.group.isin(SECTION38_GROUPS)]
+    return r.drop(columns=[c for c in r.columns if c.startswith("fire_") and not (r[c] > 0).any()])
 N_RECORDS = 673_660
 V38_LABELS = {
     "v38_base": "before: inheritance read from the disease names",
@@ -2324,7 +2578,7 @@ def v38_stats() -> None:
     if not V38_RUNS.exists():
         print("  (no v38 runs yet: skipping)")
         return
-    r = pd.read_csv(V38_RUNS, sep="\t")
+    r = section38(pd.read_csv(V38_RUNS, sep="\t"))
     rows, base = [], None
     for name, label in V38_LABELS.items():
         sel = r[r.name == name]
@@ -2431,6 +2685,23 @@ def v38_stats() -> None:
               ("base_vs_v37_differing_variants_that_are_indels", int((differ.ref.str.len() != differ.alt.str.len()).sum())),
               ("base_vs_v37_differing_variants_called_lp_by_v37_and_vus_in_clinvar",
                int(((differ.call == "Likely_pathogenic") & (differ.call_base == "VUS") & (differ.clinvar == "VUS")).sum()))]
+    # The opposite-direction calls of the main run under v37 and under v38: which leave the set and which enter it. The text says that one
+    # leaves and none enters, and what the variant that leaves is and why its call changed (the criteria are those of the two runs).
+    p37, p38 = v38_pv("v37"), cache["v38"]
+    opposite = lambda d: set(map(tuple, d[((d.cv3 == "P/LP") & (d.fv3 == "B/LB")) | ((d.cv3 == "B/LB") & (d.fv3 == "P/LP"))][KEY].values))  # noqa: E731
+    o37, o38 = opposite(p37), opposite(p38)
+    left, entered = sorted(o37 - o38), sorted(o38 - o37)
+    facts += [("opposite_in_v37", len(o37)), ("opposite_in_v38", len(o38)), ("opposite_left_in_v38", len(left)), ("opposite_entered_in_v38", len(entered))]
+    if len(left) == 1:
+        k = left[0]
+        x37 = p37.set_index(KEY).loc[k]
+        x38 = p38.set_index(KEY).loc[k]
+        facts += [("left_opposite_variant", f"{k[0]}:{k[1]} {k[2]}>{k[3]}"), ("left_opposite_gene", x38.symbol or x38.gene), ("left_opposite_consequence", x38.consequence), ("left_opposite_clinvar", x38.clinvar),
+                  ("left_opposite_stars", x38.stars), ("left_opposite_call_v37", x37.call), ("left_opposite_criteria_v37", x37.criteria),
+                  ("left_opposite_call_v38", x38.call), ("left_opposite_criteria_v38", x38.criteria), ("left_opposite_tags_v38", x38.clingen_tags),
+                  ("left_opposite_gnomad_ac", int(x38.gnomad_ac)), ("left_opposite_gnomad_an", int(x38.gnomad_an)), ("left_opposite_gnomad_hc", int(x38.gnomad_hc)),
+                  ("left_opposite_popmax_af", float(x38.gnomad_popmax_af)), ("left_opposite_in_round6", int(k in {tuple(r_) for r_ in
+                      pd.read_csv(OUT / "round6_rulings.tsv", sep="\t", dtype=str)[["chrom", "pos", "ref", "alt"]].values.tolist()}))]
     write("v38_facts.csv", [{"name": k, "value": v} for k, v in facts])
 
 
@@ -2524,8 +2795,8 @@ def v38_inheritance_reading() -> None:
 
 
 def v38_holdout() -> None:
-    """The shipped change and the alternatives on the 4 October 2026 release: all covered variants and the new ones."""
-    st = BENCH / "clinvar_20261004_covered/strata.tsv"
+    """The shipped change and the alternatives on the 4 October 2026 release: all its variants and the new ones."""
+    st = BENCH / "clinvar_20261004/strata.tsv"
     names = ["v38_oct_base", "v38_oct_shipped", "v38_oct_alt_unguarded", "v38_oct_alt_triple_cap"]
     if not st.exists() or not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in names):
         print("  (the held-out v38 runs have no per-variant tables yet: skipping)")
@@ -2534,8 +2805,8 @@ def v38_holdout() -> None:
     runs = {n: v38_pv(n).merge(strata, on=KEY, how="left") for n in names}
     base = runs["v38_oct_base"]
     rows = []
-    for scope in ("all covered", "new"):
-        sel = (lambda x: x) if scope == "all covered" else (lambda x: x[x.stratum == "new"])
+    for scope in ("all", "new"):
+        sel = (lambda x: x) if scope == "all" else (lambda x: x[x.stratum == "new"])
         b = sel(base).set_index(KEY)
         for n in names:
             x = sel(runs[n]).set_index(KEY).reindex(b.index)
@@ -2569,7 +2840,7 @@ def v38_sweeps() -> None:
     if not V38_RUNS.exists():
         print("  (no v38 runs yet: skipping)")
         return
-    r = pd.read_csv(V38_RUNS, sep="\t")
+    r = section38(pd.read_csv(V38_RUNS, sep="\t"))
     base_row = r[r.name == "v38"]
     if base_row.empty:
         return
@@ -2650,7 +2921,7 @@ def v38_per_disorder() -> None:
 def v38_triple() -> None:
     """A combined cap of 4 points on PP2, PM1 and PP3, by real runs on the April set and on the October release."""
     out = []
-    spec = [("April set", "v38", "v38_alt_triple_cap", None), ("October, all covered", "v38_oct_shipped", "v38_oct_alt_triple_cap", "all"),
+    spec = [("April set", "v38", "v38_alt_triple_cap", None), ("October, all", "v38_oct_shipped", "v38_oct_alt_triple_cap", "all"),
             ("October, new variants", "v38_oct_shipped", "v38_oct_alt_triple_cap", "new")]
     for label, a, b, scope in spec:
         if not all((BENCH / f"manuscript_runs/{n}_per_variant.tsv.gz").exists() for n in (a, b)):
@@ -2658,7 +2929,7 @@ def v38_triple() -> None:
             continue
         x, y = v38_pv(a), v38_pv(b)
         if scope == "new":
-            st = pd.read_csv(BENCH / "clinvar_20261004_covered/strata.tsv", sep="\t", dtype=str)
+            st = pd.read_csv(BENCH / "clinvar_20261004/strata.tsv", sep="\t", dtype=str)
             x = x.merge(st, on=KEY, how="left")
             x = x[x.stratum == "new"]
             y = y.merge(x[KEY], on=KEY)
@@ -2684,7 +2955,7 @@ def v38_joint() -> None:
     if not V38_RUNS.exists():
         print("  (no v38 runs yet: skipping)")
         return
-    r = pd.read_csv(V38_RUNS, sep="\t")
+    r = section38(pd.read_csv(V38_RUNS, sep="\t"))
     rows, changes = [], []
     # the denominators: the variants of chr21 and chr22 are the pilot's, every record of the benchmark is the full run's
     sets = [("chr21 and chr22", ["v38_chr2122_exomes", "v38_chr2122_exomes_noflags", "v38_chr2122_joint"], "v38_chr2122_exomes"),
@@ -2798,10 +3069,12 @@ def v38_joint() -> None:
         write("v38_joint_coverage.csv", coverage)
 
 
+# `opposite` is before `facts` because `facts` reads the file that `opposite` writes (a table of the base that has not been
+# written yet is read from nowhere, and a stale one is read for the wrong classifier).
 STEPS = {
     "headline": headline, "confusion": confusion, "stars": by_stars, "consequence": by_consequence,
-    "offdiagonal": offdiagonal, "points": points_tables, "replay": replay_tables, "pm2dep": pm2_dependence, "criteria": criteria_table, "facts": facts,
-    "opposite": opposite_cases, "genes": gene_level, "pvs1gap": pvs1_gap, "baselines": baselines,
+    "offdiagonal": offdiagonal, "points": points_tables, "replay": replay_tables, "pm2dep": pm2_dependence, "criteria": criteria_table,
+    "opposite": opposite_cases, "facts": facts, "genes": gene_level, "pvs1gap": pvs1_gap, "baselines": baselines,
 }
 NO_DF = {"v38": v38_stats, "v38reading": v38_inheritance_reading, "v38holdout": v38_holdout, "v38sweeps": v38_sweeps, "v38disorder": v38_per_disorder, "v38triple": v38_triple, "v38joint": v38_joint, "vcep": vcep_bars, "gaprun": gap_runs, "hooks": hook_runs, "prov": provenance_summary, "trajectory": trajectory, "runs": runs_tables, "steps": threshold_steps, "rounds": review_rounds, "temporal": temporal, "newindex": new_in_index, "proposals": proposals}
 
@@ -2809,7 +3082,11 @@ NO_DF = {"v38": v38_stats, "v38reading": v38_inheritance_reading, "v38holdout": 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", default="", help="comma-separated step names")
+    ap.add_argument("--base", choices=BASES, default="v38",
+                    help="the classifier whose final run the tables describe: v38, the latest (the default), writes the files the manuscript "
+                         "reads, and v37 writes their twins for the classifier at the close of the review rounds (see the docstring)")
     args = ap.parse_args()
+    set_base(args.base)
     want = [s for s in args.only.split(",") if s] or list(STEPS) + list(NO_DF)
     df = None
     for name in want:

@@ -1,0 +1,3 @@
+source,variants_lost,in_the_tail_of_a_batch,batches_with_a_tail,indels_with_the_second_base_outside_the_regions,unexplained,indels_among_the_unexplained,variants_with_a_value_in_the_complete,share_lost_of_the_complete
+SpliceAI,43412,43412,14,0,0,0,529992,0.08191067034974113
+PhyloP,47929,47472,14,457,0,0,580460,0.08257071977397237

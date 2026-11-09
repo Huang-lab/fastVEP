@@ -1,0 +1,121 @@
+consequence_group,clinvar,fastvep,n,row_total,row_fraction
+Canonical splice site,P/LP,P/LP,11046,12492,0.8842459173871278
+Canonical splice site,P/LP,VUS,1446,12492,0.11575408261287223
+Canonical splice site,P/LP,B/LB,0,12492,0.0
+Canonical splice site,P/LP,NoCall,0,12492,0.0
+Canonical splice site,VUS,P/LP,464,836,0.5550239234449761
+Canonical splice site,VUS,VUS,372,836,0.4449760765550239
+Canonical splice site,VUS,B/LB,0,836,0.0
+Canonical splice site,VUS,NoCall,0,836,0.0
+Canonical splice site,B/LB,P/LP,6,121,0.049586776859504134
+Canonical splice site,B/LB,VUS,100,121,0.8264462809917356
+Canonical splice site,B/LB,B/LB,15,121,0.12396694214876033
+Canonical splice site,B/LB,NoCall,0,121,0.0
+Frameshift or nonsense,P/LP,P/LP,43448,52584,0.8262589380800244
+Frameshift or nonsense,P/LP,VUS,9136,52584,0.17374106191997565
+Frameshift or nonsense,P/LP,B/LB,0,52584,0.0
+Frameshift or nonsense,P/LP,NoCall,0,52584,0.0
+Frameshift or nonsense,VUS,P/LP,845,2578,0.3277734678044996
+Frameshift or nonsense,VUS,VUS,1733,2578,0.6722265321955004
+Frameshift or nonsense,VUS,B/LB,0,2578,0.0
+Frameshift or nonsense,VUS,NoCall,0,2578,0.0
+Frameshift or nonsense,B/LB,P/LP,15,257,0.058365758754863814
+Frameshift or nonsense,B/LB,VUS,202,257,0.7859922178988327
+Frameshift or nonsense,B/LB,B/LB,40,257,0.1556420233463035
+Frameshift or nonsense,B/LB,NoCall,0,257,0.0
+In-frame or protein-altering,P/LP,P/LP,3,856,0.0035046728971962616
+In-frame or protein-altering,P/LP,VUS,853,856,0.9964953271028038
+In-frame or protein-altering,P/LP,B/LB,0,856,0.0
+In-frame or protein-altering,P/LP,NoCall,0,856,0.0
+In-frame or protein-altering,VUS,P/LP,0,3970,0.0
+In-frame or protein-altering,VUS,VUS,3963,3970,0.9982367758186398
+In-frame or protein-altering,VUS,B/LB,7,3970,0.0017632241813602015
+In-frame or protein-altering,VUS,NoCall,0,3970,0.0
+In-frame or protein-altering,B/LB,P/LP,0,1115,0.0
+In-frame or protein-altering,B/LB,VUS,963,1115,0.863677130044843
+In-frame or protein-altering,B/LB,B/LB,152,1115,0.13632286995515694
+In-frame or protein-altering,B/LB,NoCall,0,1115,0.0
+Intronic,P/LP,P/LP,0,419,0.0
+Intronic,P/LP,VUS,401,419,0.9570405727923628
+Intronic,P/LP,B/LB,18,419,0.04295942720763723
+Intronic,P/LP,NoCall,0,419,0.0
+Intronic,VUS,P/LP,0,1469,0.0
+Intronic,VUS,VUS,1257,1469,0.8556841388699796
+Intronic,VUS,B/LB,212,1469,0.14431586113002043
+Intronic,VUS,NoCall,0,1469,0.0
+Intronic,B/LB,P/LP,0,59974,0.0
+Intronic,B/LB,VUS,10630,59974,0.17724347217127423
+Intronic,B/LB,B/LB,49344,59974,0.8227565278287258
+Intronic,B/LB,NoCall,0,59974,0.0
+Missense,P/LP,P/LP,4109,23105,0.17784029430859122
+Missense,P/LP,VUS,18992,23105,0.8219865829906946
+Missense,P/LP,B/LB,4,23105,0.00017312270071413114
+Missense,P/LP,NoCall,0,23105,0.0
+Missense,VUS,P/LP,2301,267671,0.008596373906773614
+Missense,VUS,VUS,261184,267671,0.9757650249746891
+Missense,VUS,B/LB,4186,267671,0.01563860111853731
+Missense,VUS,NoCall,0,267671,0.0
+Missense,B/LB,P/LP,3,37762,7.944494465335522e-05
+Missense,B/LB,VUS,18196,37762,0.48186007097081723
+Missense,B/LB,B/LB,19563,37762,0.5180604840845294
+Missense,B/LB,NoCall,0,37762,0.0
+"Other (flank, non-coding, unscored)",P/LP,P/LP,0,2041,0.0
+"Other (flank, non-coding, unscored)",P/LP,VUS,2040,2041,0.9995100440960314
+"Other (flank, non-coding, unscored)",P/LP,B/LB,1,2041,0.0004899559039686428
+"Other (flank, non-coding, unscored)",P/LP,NoCall,0,2041,0.0
+"Other (flank, non-coding, unscored)",VUS,P/LP,0,8067,0.0
+"Other (flank, non-coding, unscored)",VUS,VUS,8035,8067,0.9960332217676956
+"Other (flank, non-coding, unscored)",VUS,B/LB,32,8067,0.003966778232304451
+"Other (flank, non-coding, unscored)",VUS,NoCall,0,8067,0.0
+"Other (flank, non-coding, unscored)",B/LB,P/LP,0,9422,0.0
+"Other (flank, non-coding, unscored)",B/LB,VUS,5316,9422,0.5642114200806623
+"Other (flank, non-coding, unscored)",B/LB,B/LB,3724,9422,0.3952451708766716
+"Other (flank, non-coding, unscored)",B/LB,NoCall,382,9422,0.0405434090426661
+Splice region,P/LP,P/LP,0,1428,0.0
+Splice region,P/LP,VUS,1427,1428,0.9992997198879552
+Splice region,P/LP,B/LB,1,1428,0.0007002801120448179
+Splice region,P/LP,NoCall,0,1428,0.0
+Splice region,VUS,P/LP,0,7265,0.0
+Splice region,VUS,VUS,7233,7265,0.9955953200275293
+Splice region,VUS,B/LB,32,7265,0.0044046799724707505
+Splice region,VUS,NoCall,0,7265,0.0
+Splice region,B/LB,P/LP,0,25080,0.0
+Splice region,B/LB,VUS,15832,25080,0.6312599681020734
+Splice region,B/LB,B/LB,9248,25080,0.36874003189792665
+Splice region,B/LB,NoCall,0,25080,0.0
+Start or stop loss,P/LP,P/LP,0,632,0.0
+Start or stop loss,P/LP,VUS,632,632,1.0
+Start or stop loss,P/LP,B/LB,0,632,0.0
+Start or stop loss,P/LP,NoCall,0,632,0.0
+Start or stop loss,VUS,P/LP,0,358,0.0
+Start or stop loss,VUS,VUS,358,358,1.0
+Start or stop loss,VUS,B/LB,0,358,0.0
+Start or stop loss,VUS,NoCall,0,358,0.0
+Start or stop loss,B/LB,P/LP,0,42,0.0
+Start or stop loss,B/LB,VUS,29,42,0.6904761904761905
+Start or stop loss,B/LB,B/LB,13,42,0.30952380952380953
+Start or stop loss,B/LB,NoCall,0,42,0.0
+Synonymous,P/LP,P/LP,0,110,0.0
+Synonymous,P/LP,VUS,107,110,0.9727272727272728
+Synonymous,P/LP,B/LB,3,110,0.02727272727272727
+Synonymous,P/LP,NoCall,0,110,0.0
+Synonymous,VUS,P/LP,0,757,0.0
+Synonymous,VUS,VUS,567,757,0.7490092470277411
+Synonymous,VUS,B/LB,190,757,0.2509907529722589
+Synonymous,VUS,NoCall,0,757,0.0
+Synonymous,B/LB,P/LP,0,139882,0.0
+Synonymous,B/LB,VUS,40288,139882,0.2880141833831372
+Synonymous,B/LB,B/LB,99594,139882,0.7119858166168628
+Synonymous,B/LB,NoCall,0,139882,0.0
+UTR,P/LP,P/LP,0,145,0.0
+UTR,P/LP,VUS,145,145,1.0
+UTR,P/LP,B/LB,0,145,0.0
+UTR,P/LP,NoCall,0,145,0.0
+UTR,VUS,P/LP,0,2327,0.0
+UTR,VUS,VUS,2113,2327,0.9080360979802321
+UTR,VUS,B/LB,214,2327,0.09196390201976794
+UTR,VUS,NoCall,0,2327,0.0
+UTR,B/LB,P/LP,0,10895,0.0
+UTR,B/LB,VUS,3674,10895,0.3372189077558513
+UTR,B/LB,B/LB,7221,10895,0.6627810922441487
+UTR,B/LB,NoCall,0,10895,0.0

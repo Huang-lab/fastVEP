@@ -1,0 +1,21 @@
+set,rule,ruling,rows
+all 64 rows of round 6,class,clinvar,19
+all 64 rows of round 6,class,fastvep,2
+all 64 rows of round 6,class,neither,8
+all 64 rows of round 6,disorder,disorder_specific,2
+all 64 rows of round 6,evidence,clinvar,13
+all 64 rows of round 6,evidence,fastvep,1
+all 64 rows of round 6,review,needs_evidence,6
+all 64 rows of round 6,stated,clinvar,11
+all 64 rows of round 6,stated,fastvep,1
+all 64 rows of round 6,stated,neither,1
+the 48 still opposite in v38,class,clinvar,10
+the 48 still opposite in v38,class,fastvep,2
+the 48 still opposite in v38,class,neither,7
+the 48 still opposite in v38,disorder,disorder_specific,1
+the 48 still opposite in v38,evidence,clinvar,10
+the 48 still opposite in v38,evidence,fastvep,1
+the 48 still opposite in v38,review,needs_evidence,6
+the 48 still opposite in v38,stated,clinvar,9
+the 48 still opposite in v38,stated,fastvep,1
+the 48 still opposite in v38,stated,neither,1

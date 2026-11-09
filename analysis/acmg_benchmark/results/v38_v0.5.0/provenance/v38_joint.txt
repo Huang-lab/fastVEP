@@ -9,10 +9,10 @@ gff3_bytes: 1227780403
 fasta: /Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa
 fasta_bytes: 3151425851
 sa_dir: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/sa_db_ablate/v38_joint
-sa_dir_signature: 2fd1d5d4951bdf21f699a9df1d69f0cff62b14f76b75f7f95321f525ccb162c2
-fastvep: /private/tmp/claude-502/-Users-kuan-lin-huang-Projects-fastVEP/696ff2b0-3e7d-47aa-b41a-084d4dfce957/scratchpad/acmg_bins/fastvep_v38
+sa_dir_signature: b3081014c32adb584e2cfc75a6a2a1add34e1863508f39405de0f61c48469764
+fastvep: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/manuscript_bins_v38/fastvep_v38
 fastvep_version: fastvep 0.5.0-rc.1
-repo_commit: aa5e5eeceeac3ae69a43581ef167e638061ee8d7
-repo_dirty_files: 29
-annotation_seconds: 41
-recorded_at: 2026-11-07T07:35:28Z
+repo_commit: 40c94ce68c95cd9f11e6cd5d175677f9a8a7fbb7
+repo_dirty_files: 312
+annotation_seconds: 34
+recorded_at: 2026-11-08T23:02:52Z

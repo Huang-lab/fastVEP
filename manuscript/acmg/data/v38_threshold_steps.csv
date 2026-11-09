@@ -1,5 +1,5 @@
 knob,from_value,to_value,gain_calls,added_errors,calls_per_error,shipped_between
-"PM2 bar, not recessive-only",0,1e-06,316,0,inf,False
+"PM2 bar, not recessive-only",0,1e-06,315,0,inf,False
 "PM2 bar, not recessive-only",1e-06,5e-06,93,0,inf,False
 "PM2 bar, not recessive-only",5e-06,1e-05,26,1,26.0,False
 "PM2 bar, not recessive-only",1e-05,2e-05,16,1,16.0,False
@@ -13,12 +13,12 @@ knob,from_value,to_value,gain_calls,added_errors,calls_per_error,shipped_between
 "PM2 bar, recessive-only",2e-05,7e-05,4,0,inf,True
 "PM2 bar, recessive-only",7e-05,0.0002,7,0,inf,True
 "PM2 bar, recessive-only",0.0002,0.0005,0,0,inf,False
-BS2 bar for individuals with no functional copy,0.01,0.001,256,0,inf,True
-BS2 bar for individuals with no functional copy,0.001,0.0001,1203,3,401.0,True
-BS2 bar for individuals with no functional copy,0.0001,1e-05,4081,15,272.06666666666666,False
-BS2 bar for individuals with no functional copy,1e-05,1e-06,4380,9,486.6666666666667,False
-"BS2 carrier bar, dominant-only genes",0.003,0.001,448,0,inf,False
-"BS2 carrier bar, dominant-only genes",0.001,0.0003,1012,0,inf,True
-"BS2 carrier bar, dominant-only genes",0.0003,0.0001,2144,3,714.6666666666666,True
-"BS2 carrier bar, dominant-only genes",0.0001,3e-05,2712,4,678.0,False
-"BS2 carrier bar, dominant-only genes",3e-05,0,5041,16,315.0625,False
+BS2 bar for individuals with no functional copy,0.01,0.001,219,0,inf,True
+BS2 bar for individuals with no functional copy,0.001,0.0001,917,3,305.6666666666667,True
+BS2 bar for individuals with no functional copy,0.0001,1e-05,3210,15,214.0,False
+BS2 bar for individuals with no functional copy,1e-05,1e-06,3915,9,435.0,False
+"BS2 carrier bar, dominant-only genes",0.003,0.001,484,0,inf,False
+"BS2 carrier bar, dominant-only genes",0.001,0.0003,1065,0,inf,True
+"BS2 carrier bar, dominant-only genes",0.0003,0.0001,2306,3,768.6666666666666,True
+"BS2 carrier bar, dominant-only genes",0.0001,3e-05,2988,6,498.0,False
+"BS2 carrier bar, dominant-only genes",3e-05,0,5656,18,314.22222222222223,False

@@ -1,0 +1,17 @@
+set,uncalled_benign_variants_at_2e-2_or_more,reason_bs1_did_not_fire,variants,share
+April set,6641,gnomAD low-complexity flag,1417,0.21337148019876526
+April set,6641,gnomAD segmental-duplication flag,1141,0.17181147417557596
+April set,6641,"BS1 met, alone",1088,0.16383074838126788
+April set,6641,allele number below the floor,905,0.13627465743110978
+April set,6641,gnomAD FILTER,799,0.1203132058424936
+April set,6641,"BS1 met, with other criteria",550,0.0828188525824424
+April set,6641,gene on the homology list,462,0.06956783616925162
+April set,6641,evaluated and not met (filtering allele frequency below the bar),279,0.04201174521909351
+new variants,274,gnomAD low-complexity flag,141,0.5145985401459854
+new variants,274,gnomAD FILTER,72,0.26277372262773724
+new variants,274,evaluated and not met (filtering allele frequency below the bar),20,0.072992700729927
+new variants,274,"BS1 met, alone",17,0.06204379562043796
+new variants,274,gnomAD segmental-duplication flag,9,0.032846715328467155
+new variants,274,"BS1 met, with other criteria",9,0.032846715328467155
+new variants,274,gene on the homology list,4,0.014598540145985401
+new variants,274,allele number below the floor,2,0.0072992700729927005

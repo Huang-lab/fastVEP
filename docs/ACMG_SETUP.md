@@ -196,7 +196,7 @@ The counts of two cohorts do not combine into a frequency without the per-group 
 
 **Which to build.**
 Measured on the benchmark's 673,278 ClinVar 2-star+ variants (`manuscript/acmg`, Section 3.8), the joint release holds a record for every variant that the exomes hold, with counts that are never lower, and a record for 17,382 more.
-A database built from it changes 13,302 calls, 8,647 of them on intronic and UTR variants, and gives 10,190 more exact calls and 9,321 more calls in direction than the exomes (1.5 and 1.4 points), for one more reference-discordant benign call and two more reference-discordant pathogenic calls, which is about 3,100 calls in direction for each added opposite-direction call.
+A database built from it changes 13,412 calls, 8,689 of them on intronic and UTR variants, and gives 10,193 more exact calls and 9,187 more calls in direction than the exomes (1.5 and 1.4 points), for no more reference-discordant benign call and two more reference-discordant pathogenic calls, which is about 4,600 calls in direction for each added opposite-direction call.
 What it gives up is the region veto (below), and the benchmark can price only part of what the veto does.
 We would build the joint release for classification where no policy requires the region veto, and the exomes where one does.
 The benchmark of the manuscript still reads the exomes, because every other number in it was measured on them.
@@ -211,7 +211,7 @@ Three things about the joint release differ from the exomes and genomes releases
   A database built from the joint release cannot say, so that veto does not act on it, and `sa-build` prints a warning to standard error that it will not.
   The non-PAR flag matters for X-linked genes, where it is what lets BS2 count hemizygotes; the builder derives it for the joint release from the GRCh38 pseudoautosomal coordinates, which agree with gnomAD's own flag at the edges that could be read in the genomes release (`crates/fastvep-sa/src/sources/gnomad.rs` says which).
   A joint database built before v38 has no non-PAR flag, and BS2 counts no hemizygotes from it: rebuild it with the current builder.
-  On every chromosome the veto's absence accounts for 4,075 of the 10,190 more exact calls and 3,473 of the 9,321 more calls in direction, with one more reference-discordant pathogenic call; in the exomes the veto also keeps three ClinVar pathogenic-side frameshifts at low-complexity sites (MYO6, and the two PRRT2 frameshifts at Arg217) at Likely pathogenic, where the joint release gives them BS2 and VUS.
+  On every chromosome the veto's absence accounts for 4,075 of the 10,193 more exact calls and 3,374 of the 9,187 more calls in direction, with one more reference-discordant pathogenic call; in the exomes the veto also keeps three ClinVar pathogenic-side frameshifts at low-complexity sites (MYO6, and the two PRRT2 frameshifts at Arg217) at Likely pathogenic, where the joint release gives them BS2 and VUS.
   What the veto prevents at sites that nobody has classified, the benchmark cannot show.
 - **A filter of one callset withholds the frequency criteria of the whole record.**
   The release's FILTER column says only which side failed, so the builder reads the names of the failed filters from `exomes_filters` and `genomes_filters` and reports one that fired in either callset, as the conservative direction for a guard against trusting a frequency.
@@ -311,7 +311,7 @@ for chr in {1..22} X Y; do
 done
 ```
 
-Three things about this path are worth knowing before you rely on it.
+Four things about this path are worth knowing before you rely on it.
 
 **The SpliceAI loss does not reach the classification.**
 gnomAD stores only the maximum delta score, so the extractor writes that max into all four DS fields.
@@ -327,6 +327,11 @@ They are not interchangeable, and fastVEP's `phylop_conserved` default of 2.0 wa
 **Coverage is gnomAD's coverage.**
 The exomes release covers capture targets and their flanks, so a deep-intronic variant has no record there and BP7's deep-intronic extension has nothing to read.
 Use the genomes release if that matters to you, or the upstream files below.
+
+**A fetch that ends early leaves a hole, and nothing says so.**
+A database that is distilled from regions by a script that ignores the exit status of `tabix` and discards its messages can hold fewer records than the file it came from, and the classifier's output shows nothing of it: a criterion whose record is missing simply does not fire.
+The ClinGen file that the benchmark read lacked 104 curations, CFTR among them, and showed nothing either (`ACMG.md`, limitation 23).
+`scripts/extract_gnomad_scores.py` stops when `tabix` fails; if you write your own extraction, check the exit status of every call, and compare the number of variants that have a value in the database with the number that the file holds.
 
 **Upstream alternatives.**
 Illumina's precomputed SpliceAI (all four components, real DP positions) is at <https://basespace.illumina.com/s/otSPW8hnhaZR> and needs an Illumina account:
@@ -499,22 +504,22 @@ The figures below are what it printed on 2026-08-31:
 | UCSC phyloP100way, 25 files | 5.2 GB, only if you choose it over gnomAD's |
 | Illumina SpliceAI (BaseSpace) | not used; account required |
 
-Built, from the benchmark's own `sa_db`, totalling 1.3 GB:
+Built, from the benchmark's own `sa_db_complete`, totalling 3.4 GB:
 
 | Database | Built size | Coverage |
 |---|---|---|
 | `clinvar.osa` | 50 MB | whole release |
 | `clinvar_protein.oga` | 18 MB | 15,665 genes |
-| `gnomad_chr*.osa2` | 369 MB | region-restricted |
+| `gnomad_chr*.osa2` | 1,914 MB | the whole of gnomAD's exomes file |
 | `gnomad_genes.oga` | 1.5 MB | 18,173 genes |
 | `omim.oga` | 0.4 MB | 2,924 genes |
 | `revel_chr*.osa` | 421 MB | genome-wide |
-| `spliceai_chr*.osa` | 151 MB | region-restricted |
-| `phylop_chr*.osa` | 115 MB | region-restricted |
+| `spliceai_chr*.osa2` | 464 MB | the whole of gnomAD's exomes file |
+| `phylop_chr*.osa2` | 340 MB | the whole of gnomAD's exomes file |
 | `repeatmasker.osi` | 239 MB | whole assembly |
 
-The three region-restricted rows are scoped to the benchmark's ClinVar 2-star+ regions.
-Yours will scale with your own target file.
+The three rows built from gnomAD's file are built from the whole of it, with 16-bit chunks (`--chunk-bits 16`, which keeps a lookup in a database that holds a variant in nearly every chunk cheap).
+If you scope the extraction to regions, check the exit status of every `tabix` call and the number of records that each batch returns: a stream that ends early leaves a database with a hole in it, and nothing in the classifier's output says so.
 
 ## Keeping the URLs honest
 

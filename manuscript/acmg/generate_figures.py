@@ -18,9 +18,17 @@ ClinVar's 2-star+ classifications are a reference and not ground truth; every ax
 says "ClinVar 2-star+" (the constant `CV`), and `clinvar_note` puts a footnote under each figure that
 gives the review status, the release and what P/LP, B/LB and VUS stand for.
 
+Two bases. The figures are drawn from the files of a base, the classifier whose final run the tables describe: `--base v38`
+(the default, the latest classifier, which is what the manuscript says) reads `runs_v38_variants.csv` and the other `_v38` files
+(`13_manuscript_stats.py`) and writes `figures/`. `--base v37` reads their twins for v37, the classifier at the close of the review
+rounds, with the runs and the labels that name v38 named v37, and needs `--out DIR`, because the figures of the repository are the
+manuscript's and say v38. The code is spelled for v37 and every name goes through `fname`, `rn` or `blab`, which turn it into the
+base's. The figures of the history of the versions (S1, S2 and the trajectory in S4) are drawn from the files that have no twin.
+
 Usage
   generate_figures.py            all figures
   generate_figures.py 1 S3       figure 1 and supplementary figure S3
+  generate_figures.py --base v37 --out /tmp/figures_v37     every figure for v37, in a directory of your own
 
 Figures 1 to 5 are the main figures, each of which states a conclusion of the paper; Figures S1 to S4
 show how the classifier was developed and reviewed (the runs, the ledger of changes, the reviewer's
@@ -29,6 +37,7 @@ rulings and the frontier of agreement against contradictions) and are in the sup
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -44,6 +53,40 @@ from matplotlib.patches import Patch, Rectangle  # noqa: E402
 HERE = Path(__file__).resolve().parent
 DATA = HERE / "data"
 FIG = HERE / "figures"
+
+
+def _arg(flag: str, default: str) -> str:
+    """A command-line option that the module-level names below need before `main` reads its arguments."""
+    for i, a in enumerate(sys.argv):
+        if a == flag and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1]
+    return default
+
+
+BASE = _arg("--base", os.environ.get("ACMG_BASE", "v38"))
+if BASE not in ("v37", "v38"):
+    sys.exit(f"unknown base {BASE}; choose v37 or v38")
+if _arg("--out", ""):
+    FIG = Path(_arg("--out", ""))
+elif BASE != "v38":
+    sys.exit(f"the figures of the repository say v38: give --out DIR for the figures of {BASE}")
+
+
+def fname(name: str) -> str:
+    """The file of a table. Names are spelled for v37, and `_v37` is the base's suffix for another base."""
+    return name.replace("_v37", f"_{BASE}")
+
+
+def rn(name: str) -> str:
+    """A run's name in the family of the base: `v37_sw_no_faf` is `v38_sw_no_faf` under v38."""
+    return BASE + name[3:] if name.startswith("v37") else name
+
+
+def blab(text: str) -> str:
+    """A label that names the classifier, which the code spells v37 (not the history of the versions, which stays)."""
+    return text.replace("v37", BASE)
 
 # ------------------------------------------------------------------------------ tokens
 SURFACE = "#ffffff"
@@ -107,7 +150,7 @@ MS = 5.5  # an 8 px marker
 
 
 def read(name: str) -> pd.DataFrame:
-    return pd.read_csv(DATA / name)
+    return pd.read_csv(DATA / fname(name))
 
 
 def panel_letter(ax, letter: str, x: float = -0.02, y: float = 1.04) -> None:
@@ -173,6 +216,7 @@ EVENTS = [
     (20, "v19 and v20: frequency veto; hypomorph exceptions"),
     (27, "v23 to v27: Ensembl-parity annotation"),
     (37, "v37: review 6 (HGVS placement, BP7 exon edge, BS2 threshold)"),
+    (38, "v38: reads ClinGen's curated mode of inheritance"),
 ]
 
 
@@ -182,8 +226,12 @@ def figS1_trajectory() -> None:
     for c in ("same_direction_rate", "exact_rate", "plp_recall", "blb_recall"):
         t[c] = t[c] * 100  # every rate of this figure is drawn as a percentage
     stored = t[t.source.str.startswith("scored")]
-    main = stored[stored.mainline]  # the steps on the way: v7 to v37 without v17
+    main = stored[stored.mainline]  # the steps on the way: v7 to v38 without v17
     side = stored[~stored.mainline]  # v17, the opt-in run with the published VCEP thresholds
+    # each version is drawn at its run of the time, except v37 and v38, which are on the final benchmark databases (the column `databases` of
+    # `trajectory.csv`): those two are the diamonds, joined by a dashed line that does not join v36
+    final = main[main["databases"] == "final"]
+    line_rows = main[main["databases"] != "final"]
     # Open markers: v1, a matrix reconstructed from the run's documentation, and v2, v4 to v6, the figures
     # recorded at the time. None of them has a raw output behind it.
     opened = t[~t.source.str.startswith("scored")]
@@ -210,7 +258,11 @@ def figS1_trajectory() -> None:
                  bbox=dict(boxstyle="circle,pad=0.22", fc=INK2, ec="none"), zorder=3)
 
     def stored_line(ax, col, color, **kw):
-        ax.plot(main["order"], main[col], color=color, lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3, **kw)
+        ax.plot(line_rows["order"], line_rows[col], color=color, lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3, **kw)
+
+    def final_marks(ax, col, color, **kw):
+        """v37 and v38 on the final benchmark databases: diamonds, joined by a dashed line that does not join v36."""
+        ax.plot(final["order"], final[col], color=color, lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=4, **kw)
 
     def open_marks(ax, rows, col, color, ms=MS - 1.5):
         ax.plot(rows["order"], rows[col], ls="none", marker="o", ms=ms, mfc=SURFACE, mec=color, mew=1.2, zorder=3)
@@ -227,6 +279,8 @@ def figS1_trajectory() -> None:
     hgrid(axA)
     stored_line(axA, "same_direction_rate", CAT[0])
     stored_line(axA, "exact_rate", CAT[1])
+    final_marks(axA, "same_direction_rate", CAT[0])
+    final_marks(axA, "exact_rate", CAT[1])
     dotted(axA, opened, "same_direction_rate", CAT[0])
     dotted(axA, opened, "exact_rate", CAT[1])
     open_marks(axA, opened.dropna(subset=["same_direction_rate"]), "same_direction_rate", CAT[0])
@@ -236,9 +290,9 @@ def figS1_trajectory() -> None:
     axA.set_ylim(45, 80)
     axA.set_yticks(range(45, 81, 5))
     axA.set_ylabel("Agreement with ClinVar 2-star+\n(% of 673,660 variants)")
-    v37 = main[main.run == "v37"].iloc[0]
-    axA.text(37.6, v37.same_direction_rate, f"{v37.same_direction_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
-    axA.text(37.6, v37.exact_rate, f"{v37.exact_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
+    last = final[final.run == "v38"].iloc[0]  # the latest version, on the final databases; v37 is one step before it and 0.3 points below
+    axA.text(38.6, last.same_direction_rate, f"{last.same_direction_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
+    axA.text(38.6, last.exact_rate, f"{last.exact_rate:.1f}%", color=INK2, fontsize=7, va="center", ha="left")
     v1 = opened[opened.run == "v1"].iloc[0]
     axA.annotate("v1: 51.0% of all records\n(54.7% of the 627,376 it annotated)", xy=(1.2, v1.same_direction_rate - 0.5),
                  xytext=(8.0, 47.6), fontsize=6.4, color=INK2, ha="left", va="center",
@@ -253,18 +307,22 @@ def figS1_trajectory() -> None:
         Line2D([0], [0], color=INK2, lw=0, marker="o", ms=MS - 1.5, mfc=SURFACE, mec=INK2, mew=1.2,
                label="v1 (reconstructed) and v2 to v6 (recorded at the time)"),
         Line2D([0], [0], color=INK2, lw=0, marker="x", ms=4.6, mew=1.3, label="v17: opt-in run with the VCEP thresholds, not a step"),
+        Line2D([0], [0], color=INK2, lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 1.5, mec=SURFACE, label="v37 and v38 on the final benchmark databases"),
     ], loc="lower right", bbox_to_anchor=(1.0, 0.0), fontsize=6.4)
     panel_letter(axA, "A")
 
     # --- opposite-direction calls
     hgrid(axB)
     axB.set_yscale("log")
-    opp = main.dropna(subset=["false_benign"])
+    opp = line_rows.dropna(subset=["false_benign"])
     axB.plot(opp["order"], opp.false_benign, color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
              label=f"{CV} P/LP called LB or B (reference-discordant benign)")
     axB.plot(opp["order"], opp.false_pathogenic, color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, mew=1, zorder=3,
              label=f"{CV} LB or B called P or LP (reference-discordant pathogenic)")
-    axB.plot(main["order"], main.opposite, color=INK2, lw=1.0, marker="o", ms=MS - 2.5, mec=SURFACE, mew=0.8, zorder=2, label="Total")
+    axB.plot(line_rows["order"], line_rows.opposite, color=INK2, lw=1.0, marker="o", ms=MS - 2.5, mec=SURFACE, mew=0.8, zorder=2, label="Total")
+    final_marks(axB, "false_benign", TIER3["P/LP"])
+    final_marks(axB, "false_pathogenic", TIER3["B/LB"])
+    final_marks(axB, "opposite", INK2)
     dotted(axB, opened, "opposite", INK2)
     open_marks(axB, opened.dropna(subset=["opposite"]), "opposite", INK2, ms=MS - 1.5)
     o1 = opened[opened.run == "v1"].iloc[0]
@@ -278,8 +336,8 @@ def figS1_trajectory() -> None:
     axB.set_yticklabels(["10", "30", "100", "300"])
     axB.yaxis.set_minor_locator(matplotlib.ticker.NullLocator())
     axB.set_ylabel("Opposite-direction calls\n(n, log scale)")
-    for run in ("v7", "v13", "v37"):
-        r = main[main.run == run].iloc[0]
+    for run, rows_ in (("v7", line_rows), ("v13", line_rows), ("v38", final)):
+        r = rows_[rows_.run == run].iloc[0]
         axB.text(r["order"] + 0.35, r.opposite * 1.10, f"{int(r.opposite)}", fontsize=6.8, color=INK2, va="bottom", ha="left")
     handles, labels = axB.get_legend_handles_labels()
     handles.append(Line2D([0], [0], color=INK2, lw=0, marker="o", ms=MS - 1.5, mfc=SURFACE, mec=INK2, mew=1.2))
@@ -291,15 +349,17 @@ def figS1_trajectory() -> None:
     hgrid(axC)
     stored_line(axC, "plp_recall", TIER3["P/LP"])
     stored_line(axC, "blb_recall", TIER3["B/LB"])
+    final_marks(axC, "plp_recall", TIER3["P/LP"])
+    final_marks(axC, "blb_recall", TIER3["B/LB"])
     side_marks(axC, "plp_recall", TIER3["P/LP"])
     side_marks(axC, "blb_recall", TIER3["B/LB"])
     axC.set_ylim(40, 70)
     axC.set_yticks(range(40, 71, 5))
     axC.set_ylabel(f"Same-direction recall\n(% of the {CV} class)")
     axC.text(1.0, 41.0, "v1: 10.9% and 19.0%, below the axis", fontsize=6.4, color=INK2, ha="left", va="bottom")
-    axC.set_xlabel("Benchmark run (v1 to v37)")
-    axC.set_xlim(0, 40)
-    axC.set_xticks([1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37])
+    axC.set_xlabel("Benchmark run (v1 to v38)")
+    axC.set_xlim(0, 41.5)
+    axC.set_xticks([1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 38])
     axC.legend(handles=[Line2D([0], [0], color=TIER3["P/LP"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label=f"{CV} P/LP called P or LP"),
                         Line2D([0], [0], color=TIER3["B/LB"], lw=LW, marker="o", ms=MS - 1.5, mec=SURFACE, label=f"{CV} B/LB called LB or B")],
                loc="lower right", fontsize=6.6)
@@ -333,6 +393,7 @@ RULING_COLORS = {
     "neither_supported": CAT[2],
     "needs_evidence": CAT[3],
     "no_verdict": GRID,
+    "not_reviewed": MUTED,
 }
 RULING_LABELS = {
     "clinvar_supported": f"{CV} call supported",
@@ -340,6 +401,7 @@ RULING_LABELS = {
     "neither_supported": "Neither: the reviewer's call is VUS or another class",
     "needs_evidence": "Needs more evidence, or depends on the disorder",
     "no_verdict": "No verdict recorded",
+    "not_reviewed": "Not reviewed: not in the last round",
 }
 
 
@@ -405,14 +467,16 @@ def figS3_review() -> None:
         "neither_supported": list(g["neither"]),
         "needs_evidence": list(g["needs_evidence"] + g["disorder_specific"]),
     }
+    if "not reviewed" in g.columns:  # a classifier can make a call opposite that the reviewer never saw (three of the 51 were not in the last round)
+        series["not_reviewed"] = list(g["not reviewed"])
     stacked_barh(axB, [short[o] for o in order], series, RULING_COLORS, total=list(g["total"]))
     axB.set_xlim(0, 24)
-    axB.set_xlabel("Opposite-direction calls remaining in v37 (49)")
+    axB.set_xlabel(f"Opposite-direction calls remaining in {BASE} ({int(g['total'].sum())})")
     vgrid(axB)
-    axB.set_title("Rulings on the 49 calls that remain", loc="left", fontsize=8, color=INK, pad=6)
+    axB.set_title(f"Rulings on the {int(g['total'].sum())} calls that remain", loc="left", fontsize=8, color=INK, pad=6)
     panel_letter(axB, "B", x=-0.42, y=1.07)
 
-    handles = [Patch(fc=RULING_COLORS[c], ec="none", label=RULING_LABELS[c]) for c in cats]
+    handles = [Patch(fc=RULING_COLORS[c], ec="none", label=RULING_LABELS[c]) for c in cats + (["not_reviewed"] if "not_reviewed" in series else [])]
     axL.legend(handles=handles, loc="center", ncol=3, fontsize=6.8, columnspacing=1.6, handlelength=1.2, handleheight=1.0)
     clinvar_note(fig, "Pathogenic-side: P/LP; benign-side: B/LB. An opposite-direction call is a ClinVar 2-star+ pathogenic-side class called benign-side, or the reverse.")
     save(fig, "figS3_review")
@@ -547,7 +611,7 @@ def fig2_points() -> None:
     runs = read("runs_v37_variants.csv")
     cut = runs[(runs.group == "cutoff") & (runs.knob == "likely_pathogenic_points")].copy()
     cut["lp"] = cut.value.astype(int)
-    shipped_row = runs[runs.name == "v37"].iloc[[0]].copy()
+    shipped_row = runs[runs.name == BASE].iloc[[0]].copy()
     shipped_row["lp"] = 6
     cut = pd.concat([cut[cut.lp != 6], shipped_row], ignore_index=True)
     cut["wrong"] = cut.vus_to_plp + cut.false_pathogenic
@@ -573,18 +637,18 @@ def fig2_points() -> None:
 
     # C: benign-side scheme trade-off
     sch = {
-        "shipped (v37)": "Table (default)",
+        blab("shipped (v37)"): "Table (default)",
         "SVI points, both sides, Likely Benign from -1 (Tavtigian)": "Points, from -1",
         "SVI points, both sides, Likely Benign from -2": "Points, from -2",
         "SVI points, both sides, Likely Benign from -3": "Points, from -3",
     }
     sub = rep[rep.scheme.isin(sch)].copy()
-    pt = sub[sub.scheme != "shipped (v37)"].sort_values("false_benign")
+    pt = sub[sub.scheme != blab("shipped (v37)")].sort_values("false_benign")
     axC.plot(pt.false_benign, pt.blb_recall * 100, color=CAT[1], lw=LW, zorder=2)
-    place = {"shipped (v37)": (24, 0, "left"), "SVI points, both sides, Likely Benign from -1 (Tavtigian)": (-20, 0, "right"),
+    place = {blab("shipped (v37)"): (24, 0, "left"), "SVI points, both sides, Likely Benign from -1 (Tavtigian)": (-20, 0, "right"),
              "SVI points, both sides, Likely Benign from -2": (28, 0, "left"), "SVI points, both sides, Likely Benign from -3": (26, -0.5, "left")}
     for r in sub.itertuples():
-        shipped = r.scheme == "shipped (v37)"
+        shipped = r.scheme == blab("shipped (v37)")
         axC.plot([r.false_benign], [r.blb_recall * 100], marker="o", ms=MS + (2 if shipped else 0), mfc=INK if shipped else SURFACE,
                  mec=SURFACE if shipped else CAT[1], mew=1.5 if shipped else 1.4, zorder=5 if shipped else 3)
         dx, dy, ha = place[r.scheme]
@@ -757,7 +821,7 @@ def fig5_strata() -> None:
                loc="center", bbox_to_anchor=(0.5, 0.437), ncol=4, fontsize=6.8, columnspacing=1.2, handlelength=1.1, handletextpad=0.4)
 
     # C: the same three classes, April set against the October strata
-    order = [("April set (v37)", "April 2026 set\n(used for tuning)"), ("October, unchanged", "October 2026,\nunchanged"), ("October, new", "October 2026, new\n(not in the April set)")]
+    order = [(blab("April set (v37)"), "April 2026 set\n(used for tuning)"), ("October, unchanged", "October 2026,\nunchanged"), ("October, new", "October 2026, new\n(not in the April set)")]
     classes = [("Pathogenic", "P"), ("Likely_pathogenic", "LP"), ("VUS", "VUS"), ("Likely_benign", "LB"), ("Benign", "B")]
     width = 0.24
     xs = np.arange(len(classes))
@@ -784,7 +848,7 @@ def fig5_strata() -> None:
     nb = tb[(tb.clinvar == "Benign")].set_index("group")
     axC.set_xlim(-0.6, 5.9)
     sr = read("temporal_standardised_recall_v37.csv").set_index("clinvar").loc["Benign"]
-    axC.text(4.62, 50, f"New Benign variants\nare rarer: median\npopulation-maximum\nAF {nb.loc['October, new', 'median_popmax_af']*100:.2f}%, against\n{nb.loc['April set (v37)', 'median_popmax_af']*100:.1f}% in the April set.\nAt April's recall in each\nfrequency band they\nwould be at {sr.new_recall_at_april_recall_per_band*100:.0f}%.",
+    axC.text(4.62, 50, f"New Benign variants\nare rarer: median\npopulation-maximum\nAF {nb.loc['October, new', 'median_popmax_af']*100:.2f}%, against\n{nb.loc[blab('April set (v37)'), 'median_popmax_af']*100:.1f}% in the April set.\nAt April's recall in each\nfrequency band they\nwould be at {sr.new_recall_at_april_recall_per_band*100:.0f}%.",
              fontsize=6.0, color=INK2, ha="left", va="center", linespacing=1.15)
     panel_letter(axC, "C", x=-0.04, y=1.18)
     axC.set_title("", loc="left")
@@ -797,7 +861,7 @@ def fig5_strata() -> None:
 
 def fig1_thresholds() -> None:
     r = read("runs_v37_variants.csv")
-    base = r[r.name == "v37"].iloc[0]
+    base = r[r.name == BASE].iloc[0]
     fig = plt.figure(figsize=(7.2, 3.9))
     gs = fig.add_gridspec(1, 3, width_ratios=[1.45, 1.0, 0.9], wspace=0.55)
     axA = fig.add_subplot(gs[0])
@@ -808,16 +872,18 @@ def fig1_thresholds() -> None:
     # (dx, dy, alignment) of each labelled point, in data units, chosen so no label sits on a line.
     knobs = [
         ("bs1_af_threshold", "BS1 threshold", CAT[0], "0.005", {"0.0002": (0.3, 0, "left"), "0.001": (0.3, -4, "left"), "0.02": (0, 6, "center"), "0.01": (0, 6, "center")}),
-        ("bs2_hom_prevalence_threshold", "BS2 homozygote threshold", CAT[1], "0.001", {"1e-06": (0.3, 0, "left"), "1e-05": (-0.3, 3.5, "right")}),
+        ("bs2_hom_prevalence_threshold", "BS2 homozygote threshold", CAT[1], "0.001", {"1e-06": (-0.3, 3.2, "right")}),
         ("bp7_max_intron_offset", "BP7 intronic distance", CAT[2], "300", {"0": (0, 6, "center"), "50": (0.3, -4, "left"), "1000000": (-0.3, 0, "right")}),
         ("phylop_conserved", "BP7 PhyloP threshold", CAT[3], "2.0", {"1": (0, -4.5, "center"), "1000": (0.3, 0, "left")}),
         ("bp1_max_pathogenic_missense", "BP1 veto count", CAT[4], "3", {"1": (0.3, -3.5, "left"), "25": (0.3, 0, "left")}),
     ]
-    show = {"bs1_af_threshold": {"0.0002", "0.001", "0.01", "0.02"}, "bs2_hom_prevalence_threshold": {"1e-06", "1e-05"},
+    show = {"bs1_af_threshold": {"0.0002", "0.001", "0.01", "0.02"}, "bs2_hom_prevalence_threshold": {"1e-06"},
             "bp7_max_intron_offset": {"0", "50", "1000000"}, "phylop_conserved": {"1", "1000"}, "bp1_max_pathogenic_missense": set()}  # its points sit on the default one and on BP7's line; the caption names the range
+    all_x = [float(base.blb_recall) * 100]
     for knob, label, color, shipped, offs in knobs:
         sub = r[(r.knob == knob) & (r.group == "sweep")].copy()
         sub["v"] = sub.value.astype(str)
+        all_x += [float(v_) * 100 for v_ in sub.blb_recall]
         pts = [(float(base.blb_recall) * 100, int(base.false_benign), shipped)]
         for row in sub.itertuples():
             pts.append((row.blb_recall * 100, int(row.false_benign), row.v))
@@ -834,19 +900,21 @@ def fig1_thresholds() -> None:
                 axA.text(x + dx, y + dy, fmt, fontsize=5.9, color=INK2, ha=ha, va="center")
     axA.plot([float(base.blb_recall) * 100], [int(base.false_benign)], marker="o", ms=MS + 2, mfc=INK, mec=SURFACE, mew=1.5, zorder=5)
     axA.text(float(base.blb_recall) * 100 - 0.35, int(base.false_benign) + 9, "default", fontsize=6.4, color=INK, ha="right", va="center")
-    axA.set_xlim(57, 69.4)
+    # limits that follow the curves (the right margin holds the label of the last BS1 point, which is written to its right)
+    axA.set_xlim(min(all_x) - 1.8, max(all_x) + 2.2)
     axA.set_ylim(-3, 112)
     axA.set_xlabel(f"{CV} B/LB called LB/B (%)")
     axA.set_ylabel(f"{CV} P/LP called LB/B\n(reference-discordant benign, n)")
     hgrid(axA)
-    axA.legend(handles=[Line2D([0], [0], color=c, lw=LW, label=l) for _, l, c, _, _ in knobs], loc="upper left", fontsize=6.6)
+    # the entry of the BS2 threshold is on two lines: the steep end of the BS1 curve rises through the upper left, and a longer line of text meets it
+    axA.legend(handles=[Line2D([0], [0], color=c, lw=LW, label=l.replace("homozygote threshold", "homozygote\nthreshold")) for _, l, c, _, _ in knobs], loc="upper left", fontsize=6.6)
     axA.set_title("Thresholds on the benign side", loc="left", fontsize=8, pad=6)
     panel_letter(axA, "A", x=-0.17, y=1.10)
 
-    # B: the PM2 threshold for dominant genes, under the point system and under the 2015 table
+    # B: the PM2 threshold for dominant genes, under the default scheme (points on the pathogenic side) and under the 2015 table on both sides
     pm = r[(r.knob == "pm2_ad_af_threshold") & (r.group == "sweep")].copy()
     tb = r[r.knob.str.startswith("pm2_ad_af_threshold (Richards") & (r.group == "interaction")].copy() if "interaction" in set(r.group) else r.iloc[0:0]
-    tbase = r[r.name == "v37_sw_table_both_sides"]
+    tbase = r[r.name == rn("v37_sw_table_both_sides")]
 
     def xval(v):
         v = float(v)
@@ -964,8 +1032,8 @@ def _signed(v: float, digits: int = 2) -> str:
 
 def fig3_ablations() -> None:
     r = read("runs_v37_variants.csv")
-    base = r[r.name == "v37"].iloc[0]
-    labels = {**ABLATION_LABELS, **MEASURED_LABELS}
+    base = r[r.name == BASE].iloc[0]
+    labels = {rn(k): v for k, v in {**ABLATION_LABELS, **MEASURED_LABELS}.items()}
     a = r[r.name.isin(labels)].copy()
     a["d_same_pp"] = (a.same_direction - base.same_direction) / 673660 * 100
     a["d_missed"] = a.false_benign - base.false_benign
@@ -973,10 +1041,10 @@ def fig3_ablations() -> None:
     a["d_plp_pp"] = (a.plp_recall - base.plp_recall) * 100
     a["label"] = a.name.map(labels)
 
-    blocks = [("A", "Setting switched off (on for the two opt-in settings): change from v37", a[a.group == "switch"].sort_values("d_same_pp")),
-              ("B", "One source removed from the annotation directory: change from v37", a[a.group == "source"].sort_values("d_same_pp")),
-              ("C", "Departures from the sources, measured by real runs: change from v37",
-               a[a.name.isin(MEASURED_LABELS)].sort_values("d_same_pp"))]
+    blocks = [("A", blab("Setting switched off (on for the two opt-in settings): change from v37"), a[a.group == "switch"].sort_values("d_same_pp")),
+              ("B", blab("One source removed from the annotation directory: change from v37"), a[a.group == "source"].sort_values("d_same_pp")),
+              ("C", blab("Departures from the sources, measured by real runs: change from v37"),
+               a[a.name.isin({rn(k) for k in MEASURED_LABELS})].sort_values("d_same_pp"))]
     nrow = [len(b) for _, _, b in blocks]
     fig = plt.figure(figsize=(7.2, 8.6))
     gs = fig.add_gridspec(3, 4, height_ratios=nrow, width_ratios=[1.5, 1, 0.9, 0.9], hspace=0.42, wspace=0.10)
@@ -1021,14 +1089,18 @@ def figS4_frontier() -> None:
     """Agreement in direction against opposite-direction calls, for the versions, the runs of this paper and simple rules.
 
     The point of the figure is that agreement does not say how cautious a classifier is: rules with no combining rule,
-    gene-level gate or safeguard reach a higher agreement than v37 by accepting many times as many contradictions, and at
-    the number of contradictions that v37 has, or ten times it, they agree far less.
+    gene-level gate or safeguard reach a higher agreement than the base classifier by accepting many times as many
+    contradictions, and at the number of contradictions that the base has, or ten times it, they agree far less.
     """
     N = 673_660
     traj = read("trajectory.csv")
     main = traj[traj.mainline & traj.same_direction_rate.notna() & traj.opposite.notna() & (traj.source == "scored matrix on disk")]
+    # each version at its run of the time, except v37 and v38, which are on the final benchmark databases: the line is v7 to v36, and the two
+    # final runs are the diamonds, joined by a dashed line (as in Figure S1)
+    final = main[main["databases"] == "final"]
+    line_rows = main[main["databases"] != "final"]
     runs = read("runs_v37_variants.csv")
-    runs = runs[runs.name != "v37"]
+    runs = runs[runs.name != BASE]
     curve = read("baselines_curve_v37.csv")
     base = read("baselines_v37.csv").set_index("rule")
 
@@ -1039,14 +1111,15 @@ def figS4_frontier() -> None:
     hgrid(ax)
     ax.grid(axis="x")
 
-    # the runs of this paper: v37 with one thing changed
+    # the runs of this paper: the base with one thing changed
     ax.plot(runs.opposite, runs.same_direction / N * 100, ls="none", marker="o", ms=2.6, mfc="#b7b6ae", mec="none", alpha=0.75, zorder=2)
 
     # the versions
-    ax.plot(main.opposite, main.same_direction_rate * 100, color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=4)
+    ax.plot(line_rows.opposite, line_rows.same_direction_rate * 100, color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=4)
+    ax.plot(final.opposite, final.same_direction_rate * 100, color=CAT[0], lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 2, mec=SURFACE, mew=0.8, zorder=7)  # above the black marker of v38, which is one of the two
     # (x factor, y offset, alignment) of each version label, chosen so that none sits on a line
     for run, fx, dy, ha in (("v7", 1.12, -1.5, "left"), ("v8", 1.0, 1.6, "center"), ("v10", 0.86, -1.5, "right"), ("v13", 1.45, 1.4, "left")):
-        r = main[main.run == run].iloc[0]
+        r = line_rows[line_rows.run == run].iloc[0]
         ax.text(r.opposite * fx, r.same_direction_rate * 100 + dy, f"{run}: {int(r.opposite)}", fontsize=6.2, color=INK2, ha=ha, va="center")
 
     # the rules, at nine frequency thresholds each
@@ -1068,19 +1141,19 @@ def figS4_frontier() -> None:
         r = curve[curve.rule == rule].iloc[0]
         ax.plot([r.opposite], [r.same_direction_share * 100], ls="none", marker=mk, ms=MS - 1.0, mfc=col, mec=SURFACE, mew=0.9, zorder=5)
     r3 = curve[curve.rule == "R2 + R3"].iloc[0]
-    ax.annotate(f"no frequency rule: {r3.same_direction_share * 100:.1f}%, {int(r3.opposite)}", xy=(r3.opposite, r3.same_direction_share * 100),
+    ax.annotate(f"no frequency rule: {r3.same_direction_share * 100:.1f}%, {int(r3.opposite):,}", xy=(r3.opposite, r3.same_direction_share * 100),
                 xytext=(r3.opposite * 2.0, r3.same_direction_share * 100 - 3.0), fontsize=6.4, color=INK2, ha="center",
                 arrowprops=dict(arrowstyle="-", color=AXIS, lw=0.8, shrinkA=0, shrinkB=3))
     r2 = curve[curve.rule == "R2"].iloc[0]
-    ax.text(r2.opposite * 1.25, r2.same_direction_share * 100, f"R2 alone: {r2.same_direction_share * 100:.1f}%, {int(r2.opposite)}", fontsize=6.4,
-            color=INK2, ha="left", va="center")
+    ax.text(r2.opposite / 1.25, r2.same_direction_share * 100, f"R2 alone: {r2.same_direction_share * 100:.1f}%, {int(r2.opposite)}", fontsize=6.4,
+            color=INK2, ha="right", va="center")
 
-    # every variant VUS, and v37
+    # every variant VUS, and the base
     ax.plot([0], [base.loc["all VUS", "same_direction_share"] * 100], marker="D", ms=MS - 1, mfc=INK2, mec=SURFACE, mew=0.8, zorder=5, ls="none")
     ax.text(1.3, base.loc["all VUS", "same_direction_share"] * 100, "every variant VUS", fontsize=6.4, color=INK2, ha="left", va="center")
-    v = base.loc["v37 (the classifier)"]
+    v = base.loc[blab("v37 (the classifier)")]
     ax.plot([v.opposite], [v.same_direction_share * 100], marker="o", ms=MS + 3, mfc=INK, mec=SURFACE, mew=1.5, zorder=6, ls="none")
-    ax.annotate(f"v37: {v.same_direction_share * 100:.1f}%, {int(v.opposite)}", xy=(v.opposite, v.same_direction_share * 100),
+    ax.annotate(f"{BASE}: {v.same_direction_share * 100:.1f}%, {int(v.opposite)}", xy=(v.opposite, v.same_direction_share * 100),
                 xytext=(v.opposite * 0.9, v.same_direction_share * 100 + 4.6), fontsize=6.8, color=INK, ha="center",
                 arrowprops=dict(arrowstyle="-", color=AXIS, lw=0.8, shrinkA=0, shrinkB=3))
     best = base.loc["R1 + R2 + R3"]
@@ -1093,8 +1166,9 @@ def figS4_frontier() -> None:
     ax.set_xlabel("Opposite-direction calls (n, log scale)")
     ax.set_ylabel(f"Agreement in direction with {CV}\n(% of 673,660 variants)")
     handles = [
-        Line2D([0], [0], color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, label="fastVEP versions v7 to v37 (scored matrices)"),
-        Line2D([0], [0], ls="none", marker="o", ms=3.4, mfc="#b7b6ae", mec="none", label="runs of this paper: v37 with one change"),
+        Line2D([0], [0], color=CAT[0], lw=LW, marker="o", ms=MS - 2, mec=SURFACE, label=f"fastVEP versions {main.run.iloc[0]} to {line_rows.run.iloc[-1]} at their runs of the time (scored matrices)"),
+        Line2D([0], [0], color=CAT[0], lw=1.0, ls=(0, (3, 2)), marker="D", ms=MS - 2, mec=SURFACE, label="v37 and v38 on the final benchmark databases"),
+        Line2D([0], [0], ls="none", marker="o", ms=3.4, mfc="#b7b6ae", mec="none", label=blab("runs of this paper: v37 with one change")),
     ] + [Line2D([0], [0], color=col, lw=1.1, marker=mk, ms=MS - 2.2, mfc=SURFACE, mec=col, mew=1.1, label=lab) for col, mk, lab in style.values()] + [
         Line2D([0], [0], ls="none", marker="s", ms=MS - 1.0, mfc=CAT[3], mec=SURFACE, label="filled: R2, and R2 with R3, with no frequency rule"),
     ]
@@ -1108,7 +1182,16 @@ FIGS = {"1": fig1_thresholds, "2": fig2_points, "3": fig3_ablations, "4": fig4_a
 
 
 def main() -> None:
-    want = sys.argv[1:] or list(FIGS)
+    # `--base` and `--out` were read at the top; what is left is the names of the figures
+    args, skip = [], False
+    for a in sys.argv[1:]:
+        if skip:
+            skip = False
+        elif a in ("--base", "--out"):
+            skip = True
+        elif not a.startswith(("--base=", "--out=")):
+            args.append(a)
+    want = args or list(FIGS)
     for n in want:
         if n not in FIGS:
             sys.exit(f"no figure {n}; choose from {', '.join(FIGS)}")

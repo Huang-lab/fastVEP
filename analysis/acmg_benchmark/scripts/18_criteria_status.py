@@ -141,7 +141,7 @@ def main() -> None:
         written = sample_vcf(args.every, vcf)
         subprocess.run(
             [binary, "annotate", "-i", str(vcf), "-o", str(out), "--gff3", str(GFF3), "--fasta", str(FASTA),
-             "--sa-dir", str(BENCH / "sa_db"), "--acmg", "--pick", "--output-format", "json"],
+             "--sa-dir", str(BENCH / os.environ.get("BENCH_SA_DB", "sa_db_complete")), "--acmg", "--pick", "--output-format", "json"],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         for variant in top_level_objects(out):

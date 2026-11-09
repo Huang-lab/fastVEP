@@ -1,0 +1,8 @@
+gene,variants,reason,clingen_curations,clinvar_most_named_condition,variants_naming_it
+RASA1,40,every ClinGen curation of the gene is weak (validity gate),Noonan syndrome (Disputed),Capillary malformation-arteriovenous malformation syndrome,39
+TGFB3,13,every ClinGen curation of the gene is weak (validity gate),arrhythmogenic right ventricular cardiomyopathy (Limited); familial thoracic aortic aneurysm and aortic dissection (Limited),Rienhoff syndrome,13
+LRP2,11,every ClinGen curation of the gene is weak (validity gate),congenital heart disease (No Known Disease Relationship),Donnai-Barrow syndrome,10
+VPS13D,5,every ClinGen curation of the gene is weak (validity gate),Leigh syndrome (Limited),Autosomal recessive cerebellar ataxia-saccadic intrusion syndrome,2
+SLC12A5,3,every ClinGen curation of the gene is weak (validity gate),developmental and epileptic encephalopathy (Limited),"Developmental and epileptic encephalopathy, 34",3
+PTPN11,2,the curated mechanism is gain of function or dominant negative (mechanism gate),Costello syndrome (Disputed); Noonan syndrome (Definitive); Noonan syndrome with multiple lentigines (Definitive); cardiofaciocutaneous syndrome (Disputed),RASopathy,2
+DMXL2,2,every ClinGen curation of the gene is weak (validity gate),nonsyndromic genetic hearing loss (Limited),DMXL2-related disorder,1

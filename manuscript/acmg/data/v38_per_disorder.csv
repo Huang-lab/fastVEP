@@ -5,8 +5,8 @@ genes among them,128
 variants whose modes of inheritance meet different criteria,4437
 "  of them, BS2 is met under one mode and not another",2976
 "  of them, PM2_Supporting is met under one mode and not another",1461
-variants whose modes of inheritance give different classes,482
-variants whose modes of inheritance give different directions,435
+variants whose modes of inheritance give different classes,492
+variants whose modes of inheritance give different directions,441
 ClinVar P/LP variants in such genes,20754
 "  of them, modes of inheritance give different classes",15
 "  of them, modes of inheritance give different directions",14
@@ -14,5 +14,5 @@ ClinVar VUS variants in such genes,34600
 "  of them, modes of inheritance give different classes",88
 "  of them, modes of inheritance give different directions",88
 ClinVar B/LB variants in such genes,32245
-"  of them, modes of inheritance give different classes",379
-"  of them, modes of inheritance give different directions",333
+"  of them, modes of inheritance give different classes",389
+"  of them, modes of inheritance give different directions",339

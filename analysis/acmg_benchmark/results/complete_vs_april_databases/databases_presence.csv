@@ -1,0 +1,13 @@
+set,source,variants,first,complete,only_complete,only_first,both,differ_where_both
+April set,SpliceAI,673278,486580,529992,43412,0,486580,0
+April set,PhyloP,673278,532531,580460,47929,0,532531,0
+April set,gnomAD,673278,537038,537038,0,0,537038,0
+April set,REVEL,673278,347292,347292,0,0,347292,0
+"October release, the variants of the first design",SpliceAI,772200,562673,612846,50173,0,562673,0
+"October release, the variants of the first design",PhyloP,772200,613613,668797,55184,0,613613,0
+"October release, the variants of the first design",gnomAD,772200,620765,620765,0,0,620765,0
+"October release, the variants of the first design",REVEL,772200,382142,382142,0,0,382142,0
+"October release, the variants outside the first design",SpliceAI,8549,,7750,,,,
+"October release, the variants outside the first design",PhyloP,8549,,7980,,,,
+"October release, the variants outside the first design",gnomAD,8549,,7931,,,,
+"October release, the variants outside the first design",REVEL,8549,,3032,,,,

@@ -25,7 +25,8 @@ one callset that withholds it, or a frequency above the bar (`manuscript/acmg/da
     17_joint_boundary_cases.py [--exomes v38] [--joint v38_joint]
 
 Needs `FASTVEP_V38_BIN` (the binary that made both runs), the per-variant tables of the two runs
-(`12_per_variant_table.py`) and the joint databases in `data/benchmark/sa_db_joint/`.
+(`12_per_variant_table.py`) and the joint databases in `data/benchmark/sa_db_joint/`. The databases of the exomes run are
+`data/benchmark/sa_db_complete/` (`BENCH_SA_DB` names another), and the joint run replaces only its gnomAD files.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[3]
 BENCH = ROOT / "data/benchmark"
 RUNS = BENCH / "manuscript_runs"
-SA_DB = BENCH / "sa_db"
+SA_DB = BENCH / os.environ.get("BENCH_SA_DB", "sa_db_complete")  # the databases of the runs (11_manuscript_runs.py)
 SA_JOINT = BENCH / "sa_db_joint"
 OUT = ROOT / "manuscript/acmg/data/v38_joint_errors.csv"
 OUT_PM2 = ROOT / "manuscript/acmg/data/v38_joint_pm2_lost.csv"
