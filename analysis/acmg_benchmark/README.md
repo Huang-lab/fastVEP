@@ -62,7 +62,7 @@ python3 analysis/acmg_benchmark/scripts/09_compare_runs.py \
 ```
 
 The run script reads the databases of `data/benchmark/sa_db_complete/` (`SA_DIR` names another directory): links to every file of `sa_db/` but its SpliceAI, PhyloP and gnomAD files, which are replaced by 72 files built from the whole of gnomAD's v4.1 exomes file (`results/complete_databases/` holds their checksums and says how they were built and checked, and `scripts/sa_sources/make_complete_stack.sh` makes the directory and stops if a file is not the one that the checksums name).
-The SpliceAI, PhyloP and gnomAD files of `sa_db/` itself are not read by the benchmark (`results/complete_databases/README.md`); the runs made with them are kept under the names `manuscript_runs_april_databases/` and `output_v37_april_databases/`, and `results/complete_vs_april_databases.md` sets them against the runs of the paper.
+The SpliceAI, PhyloP and gnomAD files of `sa_db/` itself are not read by the benchmark (`results/complete_databases/README.md`); the runs made with them are not kept, and `results/complete_vs_april_databases.md` is the record of them set against the runs of the paper.
 The run script takes about 35 seconds on the ten-core machine of the runs (measured alone on 7 November 2026, with a stack of databases that is smaller than the final one): 25 seconds to annotate 673,660 variants (74 seconds on one thread; `scripts/19_time_annotation.py`, 7 November 2026) and 11 to score, and writes to `data/benchmark/output_v15/`.
 It records what produced the annotation in `run_provenance.txt` beside it: the
 flags, the hash of the binary and of every `--acmg-config` and
@@ -195,9 +195,9 @@ FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/18_cr
 
 # 7. The runs of the paper against the same runs made with the databases of April 2026 (results/complete_vs_april_databases.md and the
 #    databases_*.csv files of results/complete_vs_april_databases/: an internal record, which no table of the paper holds; the trajectory
-#    reads databases_old_vs_new.csv, so this comes first): it reads the per-variant tables of the runs kept under the names
-#    manuscript_runs_april_databases/ and output_v37_april_databases/
-python3 analysis/acmg_benchmark/scripts/21_compare_databases.py
+#    reads databases_old_vs_new.csv). The runs made with the databases of April 2026 are not kept, so the CSV files are committed inputs
+#    of the steps below, and this step writes only the report from them
+python3 analysis/acmg_benchmark/scripts/21_compare_databases.py --report-only
 #    Then every table (the files of v38, which the manuscript reads, and then their twins for v37), then the figures, then the checks
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py --base v37

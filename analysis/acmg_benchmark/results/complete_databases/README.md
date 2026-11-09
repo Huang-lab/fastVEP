@@ -8,7 +8,7 @@ This directory records the 72 files, how they were built, and how they were chec
 
 - `gnomad_chr*.osa2`, `spliceai_chr*.osa2` and `phylop_chr*.osa2` for chromosomes 1 to 22, X and Y: 72 files, 2,718,429,803 bytes.
 - All are `.osa2` files of format version 2 for GRCh38, with 16-bit chunks (`chunk_bits` is 16 in each file's `fastsa/metadata.json`).
-  The first databases of the benchmark have 20-bit chunks for gnomAD and are `.osa` files of the first format for SpliceAI and PhyloP.
+  The databases of April 2026 have 20-bit chunks for gnomAD and are `.osa` files of format version 1 for SpliceAI and PhyloP.
   The reader of the tag `v0.5.0-rc.1`, and the readers of the commits 9d84be0 and 5d8004a, read `chunk_bits` from each file.
 - `manifest.tsv` lists each file with its size, its SHA-256 and the fields of its metadata, and `SHA256SUMS` is the same checksums in the form `sha256sum -c` reads.
 
@@ -22,25 +22,25 @@ The copies were compared with the host's files by their SHA-256 on 8 November 20
 
 ## How the benchmark reads them
 
-`scripts/sa_sources/make_complete_stack.sh` makes `data/benchmark/sa_db_complete/`, a directory of links to every file of the first stack `data/benchmark/sa_db/` except its SpliceAI, PhyloP and gnomAD files, and to these 72 files in their place.
+`scripts/sa_sources/make_complete_stack.sh` makes `data/benchmark/sa_db_complete/`, a directory of links to every file of the stack of April 2026, `data/benchmark/sa_db/`, except its SpliceAI, PhyloP and gnomAD files, and to these 72 files in their place.
 It stops if any of the 72 files lacks the checksum of `SHA256SUMS`.
-REVEL, ClinVar, the ClinVar protein index, ClinGen, gnomAD's gene constraints and RepeatMasker are the same files as in the first stack, because their dates are part of the design of the benchmark.
+REVEL, ClinVar, the ClinVar protein index, ClinGen, gnomAD's gene constraints and RepeatMasker are the same files as in the stack of April 2026, because their dates are part of the design of the benchmark.
 `run_benchmark.sh` and `11_manuscript_runs.py` read `sa_db_complete` by default, and `SA_DIR` and `BENCH_SA_DB` name another stack.
 
-## Why the first databases were replaced
+## What the databases of April 2026 lack
 
-The first SpliceAI and PhyloP databases were distilled in April 2026 from regions of the same gnomAD file, and they lack records that the file carries.
-Of the 673,278 variants of the benchmark that have an alternative allele (the other 382 are reference-agreement records, which get no call under either stack), 486,580 have a SpliceAI value under the first databases and 529,992 under the complete ones, and 532,531 have a PhyloP value under the first and 580,460 under the complete.
+The SpliceAI and PhyloP databases of April 2026 were distilled from regions of the same gnomAD file, and they lack records that the file carries.
+Of the 673,278 variants of the benchmark that have an alternative allele (the other 382 are reference-agreement records, which get no call under either stack), 486,580 have a SpliceAI value under the databases of April 2026 and 529,992 under the complete ones, and 532,531 have a PhyloP value under the databases of April 2026 and 580,460 under the complete ones.
 That is 8.2% of the SpliceAI values and 8.3% of the PhyloP values that exist.
-No variant has a value only under the first databases, and where both have a value the values are the same.
+No variant has a value only under the databases of April 2026, and where both have a value the values are the same.
 gnomAD and REVEL have the same variants with a value under both stacks, and the same values.
 `../complete_vs_april_databases.md` sets what the runs say under each stack side by side, and `../complete_vs_april_databases/databases_*.csv` hold the numbers.
 
-## Where the first databases lack their records
+## Where the databases of April 2026 lack their records
 
 `scripts/sa_sources/extract_spliceai_phylop_from_gnomad.py` read the gnomAD file in batches of 200 consecutive regions of `data/benchmark/sa_sources/clinvar_2star_regions.bed` (the regions of one chromosome at a time), wrote SpliceAI and PhyloP from the same `tabix` stream, ignored the exit status of `tabix` and sent its messages to /dev/null.
 The variants that only the complete databases have lie in 14 batches, the same 14 for SpliceAI and for PhyloP.
-In each of them the first databases have values up to a point and none after it, while the complete databases have values after it, and the first lost position is the same in both sources in all 14.
+In each of them the databases of April 2026 have values up to a point and none after it, while the complete databases have values after it, and the first lost position is the same in both sources in all 14.
 That is 43,412 SpliceAI records and 47,472 PhyloP records.
 The other 457 PhyloP records are those of indels whose second base (position + 1) lies outside every region of the extraction.
 No other record is missing from either source.
