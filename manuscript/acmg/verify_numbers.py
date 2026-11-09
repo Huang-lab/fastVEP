@@ -1391,6 +1391,14 @@ def availability() -> None:
         if not ok:
             failures.append(f"Data and code availability names {token!r}, which the repository does not hold")
     passed.append(f"Data and code availability: {found} names found in the repository")
+    # the files of data/ by kind: the tables that have a twin for each version, the files of Section 3.8, and the files that belong to neither version
+    on_disk = sorted(f.name for f in DATA.iterdir() if f.suffix in (".csv", ".tsv"))
+    twins = [f for f in on_disk if "_v38" in f and not f.startswith("v38_") and f.replace("_v38", "_v37") in on_disk]
+    neither = [f for f in on_disk if not f.startswith("v38_") and "_v37" not in f and "_v38" not in f]
+    fact("that have a twin for each version", n(len(twins)))
+    fact("and the 66 twin tables with `_v37` in the name", n(len(twins)))
+    fact("the 23 files whose names begin with v38_", n(len([f for f in on_disk if f.startswith("v38_")])))
+    fact("Seven files of `manuscript/acmg/data/` belong to neither version", w(len(neither)))
 
 
 def audit() -> None:
