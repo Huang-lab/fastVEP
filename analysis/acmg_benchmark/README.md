@@ -62,8 +62,8 @@ python3 analysis/acmg_benchmark/scripts/09_compare_runs.py \
 ```
 
 The run script reads the databases of `data/benchmark/sa_db_complete/` (`SA_DIR` names another directory): links to every file of `sa_db/` but its SpliceAI, PhyloP and gnomAD files, which are replaced by 72 files built from the whole of gnomAD's v4.1 exomes file (`results/complete_databases/` holds their checksums and says how they were built and checked, and `scripts/sa_sources/make_complete_stack.sh` makes the directory and stops if a file is not the one that the checksums name).
-The first databases of the benchmark, distilled in April 2026 from regions of that file, lack records that it carries (`results/complete_vs_april_databases.md`), and the runs on them are kept under the names `manuscript_runs_april_databases/` and `output_v37_april_databases/`.
-The run script takes about 35 seconds on the ten-core machine of the runs (measured with the first databases): 25 seconds to annotate 673,660 variants (74 seconds on one thread; `scripts/19_time_annotation.py`, 7 November 2026) and 11 to score, and writes to `data/benchmark/output_v15/`.
+The SpliceAI, PhyloP and gnomAD files of `sa_db/` itself are not read by the benchmark (`results/complete_databases/README.md`); the runs made with them are kept under the names `manuscript_runs_april_databases/` and `output_v37_april_databases/`, and `results/complete_vs_april_databases.md` sets them against the runs of the paper.
+The run script takes about 35 seconds on the ten-core machine of the runs (measured alone on 7 November 2026, with a stack of databases that is smaller than the final one): 25 seconds to annotate 673,660 variants (74 seconds on one thread; `scripts/19_time_annotation.py`, 7 November 2026) and 11 to score, and writes to `data/benchmark/output_v15/`.
 It records what produced the annotation in `run_provenance.txt` beside it: the
 flags, the hash of the binary and of every `--acmg-config` and
 `--functional-evidence` file, which inputs were read (by name and size, not
@@ -193,14 +193,14 @@ FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/17_jo
 #     disagrees with the groups of criteria that the script states
 FASTVEP_V38_BIN="$FASTVEP_V38_BIN" python3 analysis/acmg_benchmark/scripts/18_criteria_status.py
 
-# 7. Every table (the files of v38, which the manuscript reads, and then their twins for v37), the comparison with the first databases,
-#    then the figures, then the checks
+# 7. The runs of the paper against the same runs made with the databases of April 2026 (results/complete_vs_april_databases.md and the
+#    databases_*.csv files of results/complete_vs_april_databases/: an internal record, which no table of the paper holds; the trajectory
+#    reads databases_old_vs_new.csv, so this comes first): it reads the per-variant tables of the runs kept under the names
+#    manuscript_runs_april_databases/ and output_v37_april_databases/
+python3 analysis/acmg_benchmark/scripts/21_compare_databases.py
+#    Then every table (the files of v38, which the manuscript reads, and then their twins for v37), then the figures, then the checks
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py
 python3 analysis/acmg_benchmark/scripts/13_manuscript_stats.py --base v37
-# the runs on the first databases against the same runs on the complete ones (results/complete_vs_april_databases.md and the five
-# databases_*.csv files of manuscript/acmg/data/, which Table 10, Figures S1 and S4 and the checks read): it reads the per-variant tables
-# of the runs kept under the names manuscript_runs_april_databases/ and output_v37_april_databases/ (the runs of the first drafts)
-python3 analysis/acmg_benchmark/scripts/21_compare_databases.py
 python3 manuscript/acmg/generate_figures.py
 python3 manuscript/acmg/build_tables.py --write
 python3 manuscript/acmg/build_tables.py --check
@@ -221,8 +221,8 @@ python3 manuscript/acmg/generate_figures.py --base v37 --out /tmp/figures_v37
 ```
 
 Run without `--base`, `13_manuscript_stats.py`, `14_temporal_holdout.py`, `build_tables.py`, `build_supplement.py`, `generate_figures.py` and `verify_numbers.py` are about v38, the files of which the manuscript reads, and the three checks pass on the manuscript as it stands.
-With `--base v37` they are about v37: `13_manuscript_stats.py` writes the twins of the tables (`_v37` where the file of v38 has `_v38`), and writes them as they were when v37 was the base but for the rows that the re-based text quotes (`facts_v37.csv` and `clingen_missing_summary_v37.csv` have more rows), the other scripts write the tables, workbook and figures of v37 outside the repository, and `verify_numbers.py` fails on the sentences whose numbers v38 changed, which is its list of them and not a fault of the data.
-Seven files have no twin: `trajectory.csv`, `change_ledger.csv`, `review_rounds.csv`, `round6_rulings.tsv`, `clingen_missing_curations.csv`, `criteria_status.csv` and `tavtigian_posterior.csv`, which are the history of the numbered versions (the trajectory ends with v38), the reviewer's rulings or independent of the classifier.
+With `--base v37` they are about v37: `13_manuscript_stats.py` writes the twins of the tables (`_v37` where the file of v38 has `_v38`), and writes them as they were when v37 was the base but for the rows that the text quotes (`facts_v37.csv` and `clingen_missing_summary_v37.csv` have more rows), the other scripts write the tables, workbook and figures of v37 outside the repository, and `verify_numbers.py` fails on the sentences whose numbers v38 changed, which is its list of them and not a fault of the data.
+Seven files have no twin: `trajectory.csv`, `change_ledger.csv`, `review_rounds.csv`, `round6_rulings.tsv`, `clingen_missing_curations.csv`, `criteria_status.csv` and `tavtigian_posterior.csv`, which are the record of the numbered versions (the trajectory ends with v38), the reviewer's rulings or independent of the classifier.
 
 `run_benchmark.sh` and the scripts that start it read the environment, so a run that is made by hand needs `FASTVEP` set the same way.
 The tables and the checks are deterministic: after the statistics script had run under each of two hash seeds (`PYTHONHASHSEED=0` and `1`) the files of `manuscript/acmg/data/` that it writes were the same, and the figures are byte for byte the same on a rerun.

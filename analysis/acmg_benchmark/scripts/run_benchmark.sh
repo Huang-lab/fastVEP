@@ -18,7 +18,7 @@
 #                             clinvar_2star_truth.tsv, which is still read if the new name is absent)
 #   sa_db_complete/           the built .osa/.osa2/.oga databases, SpliceAI, PhyloP and gnomAD from the whole gnomAD v4.1
 #                             exomes file (sa_sources/make_complete_stack.sh; SA_DIR names another directory, for
-#                             instance sa_db, the first stack, whose SpliceAI and PhyloP lack records of that file)
+#                             instance sa_db, whose SpliceAI, PhyloP and gnomAD files are regional extractions)
 #   plus test_data/organisms/human/ for the FASTA + GFF3 + cache
 #
 # Outputs (data/benchmark/output_<version>/):

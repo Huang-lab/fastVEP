@@ -24,15 +24,14 @@ Seven more runs (`holdout`) apply one change each to the variants of the October
 
 Things to know when reading the provenance files.
 
-- The runs were made on 8 November 2026, with the complete databases, by three binaries built from clean exports of commit `5d8004a`, the merge that made `v37`, each in a target directory of its own.
+- The runs were made on 8 November 2026, on the final benchmark databases, by three binaries built from clean exports of commit `5d8004a`, the merge that made `v37`, each in a target directory of its own.
   78 runs used the plain build (SHA-256 `1b8e7c46...`).
   The 9 cutoff runs (`v37_cut_*`) used the build with `manuscript/acmg/replay_validation/combiner_cutoff_env.patch` (`d79ad4f5...`), which differs from the code of v37 in eight lines (six added, two removed).
   9 runs used the build with `bp_hooks_env.patch` (`823086d3...`), which reads BP1's own-record count and BP7's SpliceAI threshold from the environment: the 7 `hook` runs and the two held-out runs that change those settings.
   `binaries.tsv` lists every binary that made a run, with what it was built from and how many runs it made.
-- Each of these runs was made once on 8 November 2026, with the complete databases, and none is a repetition of the others.
-  The same runs had been made twice before with the first databases (on 6, 11 and 22 October 2026 by binaries built at earlier commits of the branch, and again on 4 November 2026 by the binaries above), and those two sets agreed in every scored file of every run and in every record of the annotated VCFs that both kept (`rerun_comparison.csv` is that comparison and was not made again; `RUN_VERSIONS.md`, "The full rerun of 4 November 2026").
-  The runs of 8 November are not a third repetition of them, because the databases differ.
-  The scored CSV files of the runs of 6 October ended their lines with CR LF, and the scoring script now writes LF.
+- Each of these runs was made once on 8 November 2026, on the final benchmark databases, and none is a repetition of the others.
+  `RUN_VERSIONS.md` is the account of the runs.
+  The scoring script writes LF at the end of every line.
 - The run at the default cutoff (`v37_cut_lp6`) is a control of the cutoff build and reproduces `v37` in every cell.
   `v37_hk_control`, with nothing set, is the control of the hook build and reproduces `v37` in every cell and in the firing count of every criterion.
 - The 7 `holdout` runs used the plain build, except `v37_oct_bp7_walker` and `v37_oct_bp1_loo`, which used the hook build; the three that change the ClinGen file or Orphanet's label need the files of the `gap` runs.
@@ -62,13 +61,12 @@ The 4 on the October release are `v38_oct_base`, `v38_oct_shipped`, `v38_oct_alt
 
 Things to know when reading these provenance files.
 
-- Three binaries made the runs, all on 8 November 2026, with the complete databases.
+- Three binaries made the runs, all on 8 November 2026, on the final benchmark databases.
   `v38_base` and `v38_oct_base` used the binary of the commit before the change, `9d84be0` (SHA-256 `6d30419c...`), whose classification code is `v37`'s (the two differ in comments only) and whose annotation layer is newer: its run differs from `v37`'s in the criteria of 25 indels and in the call of 4 of them.
   7 runs, the alternatives and their control among them, used a build of `manuscript/acmg/replay_validation/inheritance_alternatives_env.patch` on the tag (`87ebbc9a...`).
   The other 33, the adopted change among them, used the plain build of the tag `v0.5.0-rc.1` (`70b7c684...`).
   `binaries_v38.tsv` says what each was built from.
 - Each of the 42 was made a second time by the same binary, into `data/benchmark/manuscript_runs_v0.5.0/`, and the two sets agree in every scored file and in the 15 annotated VCFs that both kept (`../v38_v0.5.0/rerun_comparison.csv`).
-  Every one of them had been made before with the first databases, by builds of the working tree that became `v38` (`f184277d...`, `a2bb20ee...`, `f6e7f4ca...`) and by builds of the tag, and those sets agreed (`RUN_VERSIONS.md`, "v38" and "Release 0.5.0 reproduces v38"); the runs of this directory are not repetitions of those, because the databases differ.
 - `repo_commit` is the commit of the checkout that ran the harness (the commits of the branch of 8 November 2026) and not the one a binary was built from; `repo_dirty_files` counts the modified and untracked files, which include the results of the runs themselves, and so differs from run to run.
 - The environment variable that sets a run of the alternatives build (`FASTVEP_ALT`, with the values `g1_off`, `g3`, `bs2_names,g1_off` and `triple_cap`) is not in the provenance file.
   It is in the `environment` column of `run_matrix_v38.tsv`, which is the only record of it.
@@ -87,7 +85,7 @@ Each pair of runs, `v37_x` and `v38_x`, has the same knob, value, default, repla
 
 Things to know when reading the provenance files of the family v38.
 
-- All 96 runs were made on 8 November 2026, with the complete databases, by the three binaries of the family (`v38`, `cut38` and `hook38`), built from the tag by `scripts/build_manuscript_binaries.sh` (`V38_REF=v0.5.0-rc.1 NAMES="cut38 hook38"` for the two patched builds); the patches apply to the tag as they are, the cutoff patch with no offset and the hooks patch with offsets of 2 and 20 lines.
+- All 96 runs were made on 8 November 2026, on the final benchmark databases, by the three binaries of the family (`v38`, `cut38` and `hook38`), built from the tag by `scripts/build_manuscript_binaries.sh` (`V38_REF=v0.5.0-rc.1 NAMES="cut38 hook38"` for the two patched builds); the patches apply to the tag as they are, the cutoff patch with no offset and the hooks patch with offsets of 2 and 20 lines.
   The 18 that Section 3.8 also defines were made once and are used by both.
 - The controls (`v38_cut_lp6`, `v38_hk_control`) reproduce `v38` in every cell of the concordance matrix and in the firing count of every criterion, and in every scored file byte for byte.
 - `repo_commit` is the commit of the checkout that ran the harness, which moved during the day (`3d8c331` to `54c9477`), and not the one the binary was built from.

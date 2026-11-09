@@ -27,7 +27,7 @@ the rest, from the family of runs of the classifier at the close of the review r
 Section 3.8 reports. Each base has one file for every table that holds a measurement of the final classifier, with the same columns
 and the same rows, and `v38` where the v37 file says `v37` (in a file name, a run name or a label). The code is spelled for v37 and
 every name goes through `fname`, `rn` or `lab`, which turn it into the base's; under v37 they change nothing, which is how the files
-of v37 stay what they were before v38 became the default, but for the few rows that the re-based text quotes and no table held
+of v37 stay what they were before v38 became the default, but for the few rows that the text quotes and no table held
 (`clingen_missing_summary_v37.csv` and `facts_v37.csv` have more rows than they had).
 
 What belongs to neither base is the same under both, and every invocation runs its steps: the trajectory of the benchmark from v1 to v38
@@ -909,9 +909,9 @@ def opposite_cases(df: pd.DataFrame) -> None:
     opp["group"] = opp.apply(group, axis=1)
     m = opp.merge(rev[["chrom", "pos", "ref", "alt", "ruling", "row"]], on=["chrom", "pos", "ref", "alt"], how="left")
     if m["ruling"].isna().any():
-        # Another classifier, or the same one on the complete databases, can make a call opposite that the reviewer never saw (v37 did not on the
-        # first databases, where all its calls were among the 64 rows, and has three on the complete ones). It stays in the table, marked as not
-        # reviewed, and the calls the reviewer did see keep their rulings, which are carried over by the variant (chromosome, position, alleles).
+        # A classifier can make a call opposite that the reviewer never saw (v37 and v38 each have three that were not among the 64 rows of the last
+        # round). It stays in the table, marked as not reviewed, and the calls the reviewer did see keep their rulings, which are carried over by
+        # the variant (chromosome, position, alleles).
         m["ruling"] = m["ruling"].fillna("not reviewed")
         m["row"] = m["row"].fillna("")
     cols = ["group", "gene", "chrom", "pos", "ref", "alt", "stars", "clinvar", "call", "criteria", "consequence", "hgvsc", "hgvsp",

@@ -39,7 +39,7 @@ Section 9 of the document reads `manuscript/acmg/manuscript.md`, which says v38,
 the file as it stands, and it runs `verify_numbers.py --base v37` and `--base v38` with `--dump` and sets the two dumps side by side (the
 numbers of the text that differ under v37), builds the workbook and the figures of v37 in a temporary directory, and compares the tables
 that `build_tables.py --base v37` makes with the text. The statements that it quotes are those of the manuscript as it stands, and the
-wording that they had when the manuscript was written for v37 is in the script. The few
+wording that they have for v37 is in the script. The few
 statements of the text above that are typed and not computed (which sweeps have a knee, which four variants lose a pathogenic-side
 call, which sweeps are flat, which is the large effect) are asserted by `check_typed_claims`, so the script stops and does not write a
 document that the data contradict.
@@ -291,10 +291,10 @@ def knee_of(steps: list[dict]) -> tuple[float | None, float]:
     Section 2.5 of the manuscript takes the knee of a curve to be the point past which the exchange rate falls from hundreds of calls per
     added error to about a hundred or fewer. Here it is the setting that the two neighbouring steps of the largest fall share, when the fall
     is by a factor of 3 or more, the first step is worth 150 calls per error or more and the second 150 or fewer; otherwise there is no
-    knee. The rule gives the knees that the manuscript names, BS1 at 1e-3 and the far boundary of BP7 at 300, under both versions and on both
-    sets of databases, and none for the other sweeps that the manuscript says have none. (The first form of the rule asked only for the
-    factor of 3 and the first step; on the complete databases the carrier floor of BS2 with the bar off then fell by a factor of 3.3, from 1,578
-    calls per error to 480, which is not the fall to about a hundred that Section 2.5 describes, and the rule now asks for it.)
+    knee. The rule gives the knees that the manuscript names, BS1 at 1e-3 and the far boundary of BP7 at 300, under both versions, and none
+    for the other sweeps that the manuscript says have none. (It asks for the fall to about a hundred and not only for the factor of 3:
+    the carrier floor of BS2 with the bar off falls by a factor of 3.3, from 1,578 calls per error to 480, which is not the fall to about a
+    hundred that Section 2.5 describes.)
     Returns the setting and the factor of the largest fall.
     """
     factor, before, after, where = largest_fall(steps)
@@ -548,7 +548,7 @@ def section_compared(D: Doc, pairs: list[Pair], main: Pair, october: Pair) -> No
     fam37 = [p.v37 for p in pairs if p.dir37.parent == BENCH / "manuscript_runs"]
     fam38 = [p.v38 for p in pairs if p.dir37.parent == BENCH / "manuscript_runs"]
     shared = [x for x in fam38 if is_shared(x)]
-    new38 = fam38  # every run of the family was made once, with the complete databases
+    new38 = fam38  # every run of the family was made once, on the final benchmark databases
     c38 = provenance_counts(new38)
     rec = sorted(prov(x)["recorded_at"] for x in new38)
     secs = sorted(int(prov(x)["annotation_seconds"]) for x in new38)
@@ -1245,33 +1245,31 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     claims: list[Claim] = []
 
     # ---- the trajectory
-    # v14 to v37 are runs on the first databases (the rows of trajectory.csv), v37 and v38 were run again on the complete ones and their rows are those
-    # runs, so the first-database values of the two come from the comparison of the stacks (`21_compare_databases.py`); a band that took v37's row of
-    # trajectory.csv would end at 79.07% and not at 77.62%
+    # v14 to v36 are the runs of the time (the rows of trajectory.csv), and v37 and v38 are on the final databases (their rows), so v37 and v38 as they
+    # were run at the time are the columns `*_of_the_time`; a band that took v37's row of trajectory.csv would end at 79.07% and not at 77.62%
     traj = pd.read_csv(DATA / "trajectory.csv")
-    ovn = pd.read_csv(ROOT / "analysis/acmg_benchmark/results/complete_vs_april_databases/databases_old_vs_new.csv")
 
-    def first_of(version: str, measure: str) -> float:
-        return float(ovn[(ovn.version == version) & (ovn.set == "April set") & (ovn.measure == measure)].iloc[0]["first"])
+    def of_the_time(version: str, column: str) -> float:
+        return float(traj[traj.run == version].iloc[0][f"{column}_of_the_time"])
 
     mainline = traj[traj.mainline.astype(str) == "True"].sort_values("order").set_index("order", drop=False)
-    first_rate = {k: float(mainline.loc[k].same_direction_rate) for k in mainline.index if 13 <= k <= 36}
-    first_rate[37], first_rate[38] = first_of("v37", "same_direction") / N, first_of("v38", "same_direction") / N
-    band_rates = pd.Series([first_rate[k] for k in sorted(first_rate) if 14 <= k <= 37])
-    steps = pd.Series([abs(first_rate[k] - first_rate[j]) for j, k in zip(sorted(first_rate), sorted(first_rate)[1:]) if k <= 37])  # from v13's level into the band, as the text counts
+    time_rate = {k: float(mainline.loc[k].same_direction_rate) for k in mainline.index if 13 <= k <= 36}
+    time_rate[37], time_rate[38] = of_the_time("v37", "same_direction_rate"), of_the_time("v38", "same_direction_rate")
+    band_rates = pd.Series([time_rate[k] for k in sorted(time_rate) if 14 <= k <= 37])
+    steps = pd.Series([abs(time_rate[k] - time_rate[j]) for j, k in zip(sorted(time_rate), sorted(time_rate)[1:]) if k <= 37])  # from v13's level into the band, as the text counts
     early = (mainline[mainline.order <= 13].same_direction_rate.diff().abs() * 100).dropna().sort_values(ascending=False)
-    plp_band = pd.Series([float(mainline.loc[k].plp_recall) for k in mainline.index if 11 <= k <= 36] + [first_of("v37", "plp_recall")])
-    blb_band = pd.Series([float(mainline.loc[k].blb_recall) for k in mainline.index if 13 <= k <= 36] + [first_of("v37", "blb_recall")])
-    r37, r38 = h37["same_direction"] / N, h38["same_direction"] / N  # the complete databases
-    r37f, r38f = first_rate[37], first_rate[38]
+    plp_band = pd.Series([float(mainline.loc[k].plp_recall) for k in mainline.index if 11 <= k <= 36] + [of_the_time("v37", "plp_recall")])
+    blb_band = pd.Series([float(mainline.loc[k].blb_recall) for k in mainline.index if 13 <= k <= 36] + [of_the_time("v37", "blb_recall")])
+    r37, r38 = h37["same_direction"] / N, h38["same_direction"] / N  # the final databases
+    r37t, r38t = time_rate[37], time_rate[38]
     claims.append(Claim(
-        ["same-direction agreement on the first databases stayed between", "After v13 the headline stopped moving.", "Agreement in direction with ClinVar reached 77.6% at v13 and stayed between"],
+        ["After v13 the headline stopped moving.", "Agreement in direction with ClinVar reached 77.6% at v13 and stayed between"],
         f"Agreement in direction was flat after the thirteenth version: it stayed between {pc(band_rates.min())} and {pc(band_rates.max())} for the next {len(band_rates)} runs (v14 to v37, without v17), no run moving it by more than {steps.max() * 100:.2f} points; recall of ClinVar's pathogenic-side variants has stayed between {pc(plp_band.min(), 1)} and {pc(plp_band.max(), 1)} since v11, and recall of its benign-side variants between {pc(blb_band.min(), 1)} and {pc(blb_band.max(), 1)} since v13.",
-        [f"These are statements about the runs v14 to v37 on the first databases ({len(band_rates)} runs, and the step from v13 into the band: the rows of `trajectory.csv`, and for v37 the first-database run of `databases_old_vs_new.csv`), and they stay true as history.",
-         f"v38 on the first databases has {pc(r38f)} agreement in direction, {pa(r38f - r37f)} points above v37 and {pa(r38f - band_rates.max())} points above the top of that band, a step that is {(r38f - r37f) / steps.max():.1f} times the largest step between neighbouring runs of v13 to v37.",
-         f"On the complete databases v37 has {pc(r37)} and v38 {pc(r38)} ({n(h38['same_direction'])} calls), {pa(r37 - r37f)} and {pa(r38 - r38f)} points above their runs on the first databases, {(r37 - r37f) / steps.max():.1f} and {(r38 - r38f) / steps.max():.1f} times the largest step of the band.",
-         f"Its recall of pathogenic-side variants is {pc(h38['plp_recall'], 1)}, {'inside' if plp_band.min() <= h38['plp_recall'] <= plp_band.max() else 'outside'} the band, and its recall of benign-side variants is {pc(h38['blb_recall'], 1)}, {pa(h38['blb_recall'] - blb_band.max(), 1)} points {'above' if h38['blb_recall'] > blb_band.max() else 'below'} the top of the band, which is of the first databases (the benign-side recall is over the same {n(sum(sum(main.m38[t].values()) for t in ('Likely_benign', 'Benign')))} variants as the trajectory's).",
-         f"The manuscript therefore says that the agreement moved once more at v38, by the change of Section 3.8 ({pa(r38f - r37f)} points on the first databases, against {early.iloc[0]:.1f} and {early.iloc[1]:.1f} points for the two largest steps before v13, which line {find_line(manuscript_lines(), 'The two largest steps before v13')} quotes), and that the complete databases moved it by more (Section 3.9).",
+        [f"These are statements about the runs of the time, v14 to v37 ({len(band_rates)} runs, and the step from v13 into the band: the rows of `trajectory.csv`, and for v37 its columns `*_of_the_time`), and they stay true.",
+         f"v38 as run at the time has {pc(r38t)} agreement in direction, {pa(r38t - r37t)} points above v37 and {pa(r38t - band_rates.max())} points above the top of that band, a step that is {(r38t - r37t) / steps.max():.1f} times the largest step between neighbouring runs of v13 to v37.",
+         f"On the final databases v37 has {pc(r37)} and v38 {pc(r38)} ({n(h38['same_direction'])} calls), {pa(r37 - r37t)} and {pa(r38 - r38t)} points above their runs of the time, {(r37 - r37t) / steps.max():.1f} and {(r38 - r38t) / steps.max():.1f} times the largest step of the band.",
+         f"Its recall of pathogenic-side variants is {pc(h38['plp_recall'], 1)}, {'inside' if plp_band.min() <= h38['plp_recall'] <= plp_band.max() else 'outside'} the band, and its recall of benign-side variants is {pc(h38['blb_recall'], 1)}, {pa(h38['blb_recall'] - blb_band.max(), 1)} points {'above' if h38['blb_recall'] > blb_band.max() else 'below'} the top of the band, which is of the runs of the time (the benign-side recall is over the same {n(sum(sum(main.m38[t].values()) for t in ('Likely_benign', 'Benign')))} variants as the trajectory's).",
+         f"The manuscript therefore says that the agreement moved once more at v38, by the change of Section 3.8 ({pa(r38t - r37t)} points as run at the time, against {early.iloc[0]:.1f} and {early.iloc[1]:.1f} points for the two largest steps before v13, which line {find_line(manuscript_lines(), 'The two largest steps before v13')} quotes).",
          ]))
 
     # ---- the PM2 sweeps
@@ -1370,9 +1368,9 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
         [f"Under v38 the group has {int(obg38.loc[grp, 'total'])} calls ({int(f38['pvs1_benign_lone_pvs1'])} a lone PVS1 and {int(f38['pvs1_benign_pvs1_pm2'])} PVS1 with PM2), because the RAD21 variant of Section 3 above left it: {int(f38['pvs1_benign_common_n'])} are seen in {n(f38['pvs1_benign_common_ac_min'])} to {n(f38['pvs1_benign_common_ac_max'])} gnomAD alleles ({str(f38['pvs1_benign_common_genes']).replace(',', ', ')}), at allele frequencies of {float(f38['pvs1_benign_common_af_min']) * 1e4:.1f}e-4 to {float(f38['pvs1_benign_common_af_max']) * 1e3:.1f}e-3 and population-maximum frequencies of {float(f38['pvs1_benign_common_popmax_min']) * 100:.2f}% to {float(f38['pvs1_benign_common_popmax_max']) * 100:.1f}%, {float(f38['pvs1_benign_common_popmax_min']) / 2.5e-4:.0f} to {float(f38['pvs1_benign_common_popmax_max']) / 2.5e-4:.0f} times the median published threshold, and BS1 fired for {'none' if int(f38['pvs1_benign_common_bs1_fired']) == 0 else str(int(f38['pvs1_benign_common_bs1_fired']))} of them.",
          f"In round 6 {ruling_text(gone[0].ruling, gone[0].rule)} on the RAD21 variant, so the manuscript says that the reviewer supported ClinVar on all {word(f38['pvs1_benign_common_n'])} (the RAD21 variant is {'the only one of the six that is no longer in the group' if len(gone) == 1 else 'one of those that are no longer in the group'}).",
          "The reviewer's remarks on how common each variant is in gnomAD are in the reviewer's own workbook and not in `round6_rulings.tsv`, so neither this script nor `verify_numbers.py` can check them.",
-         "When the manuscript was written for v37 it said that the reviewer remarked for five of the six that the variant is too common in gnomAD.",
+         "For v37 the manuscript says that the reviewer remarked for five of the six that the variant is too common in gnomAD.",
          "The manuscript now says four of the five (KDM2B and PHKB in those words, EDN3 and PIEZO1 as more than 1,000 carriers) and, for FMR1, its 210 hemizygotes and one homozygote and a question why the population frequencies were not applied.",
-         "That is a reading of the returned workbook on the machine that made the paper, made when the manuscript was re-based, and the workbook is not in the repository."]))
+         "That is a reading of the returned workbook on the machine that made the paper, and the workbook is not in the repository."]))
 
     # ---- the reviewer's rulings
     tot37 = obg37[["clinvar", "fastvep", "neither", "needs_evidence", "disorder_specific"]].sum()
@@ -1420,8 +1418,8 @@ def claims_of(pairs: list[Pair], main: Pair, october: Pair, summary: list[dict],
     claims.append(Claim(
         ["takes 25.3 seconds to annotate on every core", "the annotation of one of the 89 runs of v37 took a median of"],
         "A benchmark of 673,660 ClinVar variants of review status two stars or better 'takes about two minutes to annotate in the runs of v37 (a median of 127 seconds over its 89 runs on the April set, made on 4 November 2026 up to three at a time on one Apple M4 machine with 10 cores and 24 GB that another job was also using) and about ten seconds to score', and release 0.5.0 'was timed alone on the same machine on 7 November 2026: it took 25.3 seconds on every core (the median of three runs), 74 seconds on one thread (one run) and 11 seconds to score'.",
-        [f"The {len(prov37)} April runs of v37 made for this paper took a median of {int(prov37.annotation_seconds.median())} seconds ({int(prov37.annotation_seconds.min())} to {int(prov37.annotation_seconds.max())}) and the {len(prov89)} of v38 a median of {int(prov89.annotation_seconds.median())} ({int(prov89.annotation_seconds.min())} to {int(prov89.annotation_seconds.max())}), made on 8 November 2026 several at a time on the same machine with other work beside them, with the complete databases (which hold 8% more records) and by binaries that contain the two speed-ups of 5 November 2026 for v38 only.",
-         "The manuscript therefore says that the times of these runs are not timings, and keeps the time of release 0.5.0 measured alone on 7 November 2026 on the first databases (`results/v38_v0.5.0/annotation_time.tsv`), which was not repeated with the complete databases (Section 4.4)."]))
+        [f"The {len(prov37)} April runs of v37 made for this paper took a median of {int(prov37.annotation_seconds.median())} seconds ({int(prov37.annotation_seconds.min())} to {int(prov37.annotation_seconds.max())}) and the {len(prov89)} of v38 a median of {int(prov89.annotation_seconds.median())} ({int(prov89.annotation_seconds.min())} to {int(prov89.annotation_seconds.max())}), made on 8 November 2026 several at a time on the same machine with other work beside them, on the final databases and by binaries that contain the two speed-ups of 5 November 2026 for v38 only.",
+         "The manuscript therefore says that the times of these runs are not timings, and keeps the time of release 0.5.0 measured alone on 7 November 2026 with a stack of databases that is smaller than the final one (`results/v38_v0.5.0/annotation_time.tsv`), which was not repeated with the final stack (Section 1)."]))
     l37, t37_, v37_ver = crate_size("5d8004a")
     l38, t38_, v38_ver = crate_size("v0.5.0-rc.1")
     claims.append(Claim(
@@ -1468,7 +1466,7 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
         lines_ = sorted({find_line(ms, a) for a in cl.anchors})
         where = ", ".join(dict.fromkeys(section_of(x, heads) for x in lines_))
         D.s(f"**{'Line' if len(lines_) == 1 else 'Lines'} {', '.join(str(x) for x in lines_)} ({where}).**")
-        D.s(f"Written for v37, the statement read: {cl.says}")
+        D.s(f"For v37 the statement reads: {cl.says}")
         for e in cl.evidence[:-1] if hasattr(cl, "table") else cl.evidence:
             D.s(e)
         if hasattr(cl, "table"):
@@ -1494,8 +1492,7 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
     v37_files = [f for f in all_files if not f.startswith("v38_") and "_v38" not in f]
     no_twin = [f for f in v37_files if "_v37" not in f or f.replace("_v37", "_v38") not in all_files]
     history = [f for f in no_twin if f in ("trajectory.csv", "change_ledger.csv", "review_rounds.csv")]
-    independent = {"clingen_missing_curations.csv": "a list of the rows of the ClinGen export", "criteria_status.csv": "read from the engine of v38 already", "tavtigian_posterior.csv": "arithmetic of the framework, which `13_manuscript_stats.py` checks to be the file that is there",
-                   **{f: "a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions" for f in no_twin if f.startswith("databases_")}}
+    independent = {"clingen_missing_curations.csv": "a list of the rows of the ClinGen export", "criteria_status.csv": "read from the engine of v38 already", "tavtigian_posterior.csv": "arithmetic of the framework, which `13_manuscript_stats.py` checks to be the file that is there"}
     assert set(no_twin) == set(history) | {"round6_rulings.tsv"} | set(independent), f"the files without a twin are not the ones that Section 9.2 describes: {no_twin}"
 
     def where(anchor: str, inline: bool = False) -> str:
@@ -1505,7 +1502,7 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
     D.blank()
     D.s(f"**{where('The analyses of Sections 3.1 to 3.7 were made on v38 and on v37')} and {where('Every number of this paper is v38', inline=True)}.**")
     D.s("The manuscript says that every number is v38's unless it names v37, and that the analyses of Sections 3.1 to 3.7 were made on both versions, except for what needs a reviewer or a run that the repository does not have.")
-    D.s(f"Written for v37 it said that the analyses of Sections 3.1 to 3.7 had not been repeated on v38, except for the four thresholds that read inheritance and the runs on gnomAD's joint release (Section 3.8).")
+    D.s(f"For v37 it says that the analyses of Sections 3.1 to 3.7 have not been repeated on v38, except for the four thresholds that read inheritance and the runs on gnomAD's joint release (Section 3.8).")
     D.s(f"The family v38 repeats the {len(family)} runs of Section 2.6 ({len([p_ for p_ in family if p_.kind == 'april'])} on the April set and {len(new_oct)} on the October release) with the classifier of release 0.5.0, and `13_manuscript_stats.py --base v38` and `14_temporal_holdout.py --base v38` write {len(twins)} twin tables of `manuscript/acmg/data/` from them (`_v38` where the file of v37 has `_v37` in its name), which is what lets the manuscript say that Sections 3.1 to 3.7 were repeated on v38.")
     why_no = [f"{', '.join(f'`{f}`' for f in history)} are the history of the numbered versions", "`round6_rulings.tsv` is the reviewer's own ruling"] + [f"`{f}` is {why}" for f, why in independent.items()]
     D.s(f"{len(no_twin)} of the {len(v37_files)} files of `manuscript/acmg/data/` that are not v38's own have no twin: {'; '.join(why_no)}.")
@@ -1513,30 +1510,29 @@ def section_rewording(D: Doc, pairs: list[Pair], main: Pair, october: Pair, summ
 
     D.blank()
     D.s(f"**{where('All 89 runs (Supplementary Table S2) were made by the same harness')}.**")
-    D.s(f"Written for v37, the statement was that all 89 runs were made by the same harness, {sum(k37['plain'].values())} with the binary of v37 (SHA-256 `{next(iter(k37['plain']))}...`), {sum(k37['cutoff'].values())} with the build of the first patch and {sum(k37['hook'].values())} with the build of the second.")
+    D.s(f"For v37 the statement is that all 89 runs were made by the same harness, {sum(k37['plain'].values())} with the binary of v37 (SHA-256 `{next(iter(k37['plain']))}...`), {sum(k37['cutoff'].values())} with the build of the first patch and {sum(k37['hook'].values())} with the build of the second.")
     D.s(f"For the family v38 the split of the 89 April runs is the same, {sum(ca['plain'].values())} plain, {sum(ca['cutoff'].values())} with the cutoff build and {sum(ca['hook'].values())} with the hook build, and each kind has one binary: {', '.join(f'`{k}...` made {v}' for k, v in sorted(ca['plain'].items(), key=lambda kv: -kv[1]))} for the plain runs, `{', '.join(ca['cutoff'])}...` for the cutoff runs and `{', '.join(ca['hook'])}...` for the hook runs (`binaries_v38.tsv`).")
     D.s("`verify_numbers.py` counts a run of another binary than its kind's as a failure, and the 42 runs of Section 3.8 must have been made a second time by the binary of the stored run, with every scored file identical (`results/v38_v0.5.0`).")
 
     D.blank()
     D.s(f"**{where('The three binaries are builds of the tag')}.**")
-    D.s("Written for v37, the statement was that the three binaries are builds of commit 5d8004a, each from a clean export in a target directory of its own (`build_manuscript_binaries.sh`).")
+    D.s("For v37 the statement is that the three binaries are builds of commit 5d8004a, each from a clean export in a target directory of its own (`build_manuscript_binaries.sh`).")
     D.s("The binaries of the family v38 are builds of the tag `v0.5.0-rc.1` (commit c12d9f9), made the same way (`build_manuscript_binaries.sh`, names `v38`, `cut38` and `hook38`); the two patches apply to the tag with every context line matching, the cutoff patch at the line it was written for and the hooks patch with offsets of 2 and 20 lines, the lines that the tree of the tag has gained above its two hunks.")
 
     D.blank()
     D.s(f"**{where('The 38 runs of Section 3.8 on the April set and the 4 on the October release were then made a second time')}, {where('The same 96 runs were made for v37', inline=True)}, {where('All 42 were made on 8 November 2026', inline=True)}.**")
-    D.s("Written for v37, the statement was that every run was made twice, in October 2026 and again on 4 November 2026, and that the two sets agree in every scored file.")
-    D.s(f"In the manuscript now every run of the family was made once on {new_york_days([prov(p_.v38)['recorded_at'] for p_ in family])} with the complete databases, and the 42 runs of Section 3.8 were made a second time by the same binaries into a directory of their own, identical in every scored file (`results/v38_v0.5.0/rerun_comparison.csv`), so the check that the others are right is the controls (Section 6 above), which reproduce the main run in every cell and in the firing count of every criterion.")
+    D.s(f"Every run of the family was made once on {new_york_days([prov(p_.v38)['recorded_at'] for p_ in family])} on the final benchmark databases, and the 42 runs of Section 3.8 were made a second time by the same binaries into a directory of their own, identical in every scored file (`results/v38_v0.5.0/rerun_comparison.csv`), so the check that the others are right is the controls (Section 6 above), which reproduce the main run in every cell and in the firing count of every criterion.")
     commits = Counter(prov(p_.v38)["repo_commit"][:7] for p_ in family)
     D.s(f"The provenance file of each run records the commit of the checkout that ran the harness ({', '.join(f'`{c}` for {k}' for c, k in commits.most_common())}), which is not the commit of the binary, as the manuscript and `results/v37_manuscript/README.md` say for both families.")
 
     D.blank()
     D.s(f"**{where('The prices of all seven steps are measured on v38')}.**")
-    D.s("Written for v37, the statement was that the prices of the first six steps of Section 4.5 were measured on v37 and not repeated on v38, and that the seventh was measured on v38.")
+    D.s("For v37 the statement is that the prices of the first six steps of Section 4.5 were measured on v37 and not repeated on v38, and that the seventh was measured on v38.")
     D.s(f"All seven are measured on v38 in the family (`temporal_proposals_v38.csv`, the April and the October columns), and the numbers of the steps are in 9.4 below (lines {', '.join(str(find_line(ms, a_)) for a_ in ('First, complete the ClinGen input', 'Third, BP7 as the splicing recommendation describes it', 'Fourth, BP1', 'Sixth, review of the allele-number floor'))}).")
 
     D.blank()
     D.s(f"**{where('The scored concordance matrix, the criterion firing counts and the provenance file of each run made for this paper')}, {where('The results of v38, which is the version of every number', inline=True)}.**")
-    D.s("Written for v37, the statement listed the results of v37 as the 89 runs on the April set and the 7 on the October release in `analysis/acmg_benchmark/results/v37_manuscript/` with `binaries.tsv`, whose 74 files in `manuscript/acmg/data/` were the ones whose names do not begin with `v38_`, and the results of v38 as the 42 runs of Section 3.8, their repetition by release 0.5.0 and the 23 files of `manuscript/acmg/data/` whose names begin with `v38_`.")
+    D.s("For v37 the statement lists the results of v37 as the 89 runs on the April set and the 7 on the October release in `analysis/acmg_benchmark/results/v37_manuscript/` with `binaries.tsv`, whose 74 files in `manuscript/acmg/data/` were the ones whose names do not begin with `v38_`, and the results of v38 as the 42 runs of Section 3.8, their repetition by release 0.5.0 and the 23 files of `manuscript/acmg/data/` whose names begin with `v38_`.")
     D.s(f"The manuscript now lists the results of v38 first and those of v37 as the before: the family v38 adds {len(new_apr)} runs on the April set and {len(new_oct)} on the October release to `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv` of the same directory (the {len(shared)} shared runs were already there), with their provenance files and configurations, `binaries_v38.tsv`, the {len(twins)} twin tables whose names have `_v38` in them, each with its twin for v37 ({'the 67 pairs that the manuscript counts' if len(twins) == 67 else 'not the number of pairs that the manuscript counts'}), the {len(section38)} files that begin with `v38_` ({'the 23 that the manuscript counts' if len(section38) == 23 else 'not the number that the manuscript counts'}) and the {len(no_twin)} that belong to neither version ({'the seven that the manuscript counts' if len(no_twin) == 7 else 'not the number that the manuscript counts'}), this comparison with its five CSV files, and the per-variant tables of the new runs in `data/benchmark/manuscript_runs/` (not in the repository).")
 
     D.h(3, "9.3 The tables, the workbook and the figures")
@@ -1621,7 +1617,7 @@ def section_summary(D: Doc, pairs: list[Pair], main_pair: Pair, october: Pair, s
     ra, rb = pd.read_csv(DATA / "temporal_ratio_v37.csv"), pd.read_csv(DATA / "temporal_ratio_v38.csv")
     xa, xb = ra[ra.measure.str.startswith("ratio")].iloc[0], rb[rb.measure.str.startswith("ratio")].iloc[0]
     D.out += ["# The runs of the family v38 against the runs of the family v37", ""]
-    D.s("This file sets the classifier of release 0.5.0 (v38), the latest, against v37, the classifier at the close of the review rounds, which the ACMG manuscript described until it was re-based on v38, run for run, on the same inputs and by the same harness.")
+    D.s("This file sets the classifier of release 0.5.0 (v38), the latest, against v37, the classifier at the close of the review rounds, run for run, on the same inputs and by the same harness.")
     D.s("It is written by `analysis/acmg_benchmark/scripts/20_compare_families.py` from the scored files of the runs and the tables of `manuscript/acmg/data/`, and every number in it is read from them.")
     D.s("ClinVar's 2-star+ classifications are a reference and not ground truth, and every agreement here is with them and nothing stronger.")
     D.h(2, "Summary")

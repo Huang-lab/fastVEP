@@ -1,6 +1,6 @@
 # The runs of the family v38 against the runs of the family v37
 
-This file sets the classifier of release 0.5.0 (v38), the latest, against v37, the classifier at the close of the review rounds, which the ACMG manuscript described until it was re-based on v38, run for run, on the same inputs and by the same harness.
+This file sets the classifier of release 0.5.0 (v38), the latest, against v37, the classifier at the close of the review rounds, run for run, on the same inputs and by the same harness.
 It is written by `analysis/acmg_benchmark/scripts/20_compare_families.py` from the scored files of the runs and the tables of `manuscript/acmg/data/`, and every number in it is read from them.
 ClinVar's 2-star+ classifications are a reference and not ground truth, and every agreement here is with them and nothing stronger.
 
@@ -14,7 +14,7 @@ ClinVar's 2-star+ classifications are a reference and not ground truth, and ever
 - In the main run 1 criterion moves its firing count by more than 5% (BS2); PM2 at Supporting strength moves by +2.2% (Section 7).
 - On the October release agreement in direction goes from 78.1% to 78.3% and opposite-direction calls from 69 to 68; on the 116,078 new variants agreement goes from 72.3% to 72.6% with 20 and 20 opposite-direction calls, and the rate of opposite-direction calls is 2.2 and 2.3 times the April rate (Section 8).
 - The controls reproduce the main run under both classifiers (Section 6).
-- 201 of the 548 checks of `verify_numbers.py` give another value under v37 than the manuscript's (528 of 2169 values), 12 claims differ in truth or wording, 5 of 8 marked tables, 18 of 26 sheets of the workbook and 7 of 9 figures differ (Section 9).
+- 202 of the 531 checks of `verify_numbers.py` give another value under v37 than the manuscript's (529 of 2039 values), 12 claims differ in truth or wording, 5 of 7 marked tables, 18 of 26 sheets of the workbook and 7 of 9 figures differ (Section 9).
 
 The sections:
 
@@ -681,77 +681,77 @@ The sentences that say what v37 read (the inheritance read from the words of the
 
 ### 9.1 Claims whose truth or wording differs
 
-**Lines 87, 89 (Section 1).**
-Written for v37, the statement read: A benchmark of 673,660 ClinVar variants of review status two stars or better 'takes about two minutes to annotate in the runs of v37 (a median of 127 seconds over its 89 runs on the April set, made on 4 November 2026 up to three at a time on one Apple M4 machine with 10 cores and 24 GB that another job was also using) and about ten seconds to score', and release 0.5.0 'was timed alone on the same machine on 7 November 2026: it took 25.3 seconds on every core (the median of three runs), 74 seconds on one thread (one run) and 11 seconds to score'.
-The 89 April runs of v37 made for this paper took a median of 272 seconds (71 to 466) and the 89 of v38 a median of 92 (54 to 186), made on 8 November 2026 several at a time on the same machine with other work beside them, with the complete databases (which hold 8% more records) and by binaries that contain the two speed-ups of 5 November 2026 for v38 only.
-The manuscript therefore says that the times of these runs are not timings, and keeps the time of release 0.5.0 measured alone on 7 November 2026 on the first databases (`results/v38_v0.5.0/annotation_time.tsv`), which was not repeated with the complete databases (Section 4.4).
+**Lines 91, 93 (Section 1).**
+For v37 the statement reads: A benchmark of 673,660 ClinVar variants of review status two stars or better 'takes about two minutes to annotate in the runs of v37 (a median of 127 seconds over its 89 runs on the April set, made on 4 November 2026 up to three at a time on one Apple M4 machine with 10 cores and 24 GB that another job was also using) and about ten seconds to score', and release 0.5.0 'was timed alone on the same machine on 7 November 2026: it took 25.3 seconds on every core (the median of three runs), 74 seconds on one thread (one run) and 11 seconds to score'.
+The 89 April runs of v37 made for this paper took a median of 272 seconds (71 to 466) and the 89 of v38 a median of 92 (54 to 186), made on 8 November 2026 several at a time on the same machine with other work beside them, on the final databases and by binaries that contain the two speed-ups of 5 November 2026 for v38 only.
+The manuscript therefore says that the times of these runs are not timings, and keeps the time of release 0.5.0 measured alone on 7 November 2026 with a stack of databases that is smaller than the final one (`results/v38_v0.5.0/annotation_time.tsv`), which was not repeated with the final stack (Section 1).
 
-**Lines 108, 110 (Section 2.1).**
-Written for v37, the statement read: The classification engine is the `fastvep-classification` crate of fastVEP (version 0.4.0): 14,857 lines of Rust with 340 unit tests at the commit analyzed.
+**Lines 114, 116 (Section 2.1).**
+For v37 the statement reads: The classification engine is the `fastvep-classification` crate of fastVEP (version 0.4.0): 14,857 lines of Rust with 340 unit tests at the commit analyzed.
 The method that gives these figures for 5d8004a (`src` files of the crate, `#[test]` attributes) gives 14,857 lines and 340 tests there, version 0.4.0, and 16,746 lines and 398 tests at the tag `v0.5.0-rc.1` (c12d9f9), version 0.5.0-rc.1, and the manuscript gives both.
 
-**Lines 211, 806, 807, 808, 1227 (Section 2.2, Section 3.6, Section 4.2).**
-Written for v37, the statement read: For 30 of the 49 (61%) opposite-direction calls the reviewer supported ClinVar's call (13 of the 27 reference-discordant benign calls and 17 of the 25 reference-discordant pathogenic calls), for 4 fastVEP's, for 8 the reviewer's own call was VUS, for 6 more evidence was needed and for 1 the answer depends on the disorder; of the 30 rulings for ClinVar, 11 follow from a class that the reviewer stated, 9 from the reviewer's statement that ClinVar is correct and 10 from evidence for ClinVar's class without naming one.
+**Lines 210, 803, 804, 805, 1165 (Section 2.2, Section 3.6, Section 4.2).**
+For v37 the statement reads: For 30 of the 49 (61%) opposite-direction calls the reviewer supported ClinVar's call (13 of the 27 reference-discordant benign calls and 17 of the 25 reference-discordant pathogenic calls), for 4 fastVEP's, for 8 the reviewer's own call was VUS, for 6 more evidence was needed and for 1 the answer depends on the disorder; of the 30 rulings for ClinVar, 11 follow from a class that the reviewer stated, 9 from the reviewer's statement that ClinVar is correct and 10 from evidence for ClinVar's class without naming one.
 Under v38 the reviewer's rulings on the 48 calls give ClinVar 29 (60%; 13 of the 27 reference-discordant benign calls and 16 of the 24 reference-discordant pathogenic calls), fastVEP 4, neither 8, more evidence 6 and the disorder 1; the rulings for ClinVar are 10 from a class, 9 from a statement and 10 from evidence (`round6_rules_v38.csv`).
 16 of the 64 rows of round 6 are no longer opposite under v38 (15 under v37), and the reviewer supported ClinVar's call on 14 of them (13 under v37); the one that was added is the RAD21 variant, which the reviewer first saw in round 5.
 The calls of the 48 were first seen by the reviewer in round 3 for 17, round 4 for 2 and round 5 for 29 (v37: 17, 2 and 30).
 
-**Lines 382, 383, 1170 (Section 3.1, Section 4.1).**
-Written for v37, the statement read: Agreement in direction was flat after the thirteenth version: it stayed between 77.50% and 77.62% for the next 23 runs (v14 to v37, without v17), no run moving it by more than 0.07 points; recall of ClinVar's pathogenic-side variants has stayed between 62.0% and 62.5% since v11, and recall of its benign-side variants between 62.3% and 62.7% since v13.
-These are statements about the runs v14 to v37 on the first databases (23 runs, and the step from v13 into the band: the rows of `trajectory.csv`, and for v37 the first-database run of `databases_old_vs_new.csv`), and they stay true as history.
-v38 on the first databases has 77.84% agreement in direction, 0.22 points above v37 and 0.22 points above the top of that band, a step that is 3.0 times the largest step between neighbouring runs of v13 to v37.
-On the complete databases v37 has 79.07% and v38 79.32% (534,335 calls), 1.46 and 1.48 points above their runs on the first databases, 19.5 and 19.8 times the largest step of the band.
-Its recall of pathogenic-side variants is 62.5%, inside the band, and its recall of benign-side variants is 66.4%, 3.7 points above the top of the band, which is of the first databases (the benign-side recall is over the same 284,550 variants as the trajectory's).
-The manuscript therefore says that the agreement moved once more at v38, by the change of Section 3.8 (0.22 points on the first databases, against 8.8 and 5.2 points for the two largest steps before v13, which line 1172 quotes), and that the complete databases moved it by more (Section 3.9).
+**Lines 380, 1110 (Section 3.1, Section 4.1).**
+For v37 the statement reads: Agreement in direction was flat after the thirteenth version: it stayed between 77.50% and 77.62% for the next 23 runs (v14 to v37, without v17), no run moving it by more than 0.07 points; recall of ClinVar's pathogenic-side variants has stayed between 62.0% and 62.5% since v11, and recall of its benign-side variants between 62.3% and 62.7% since v13.
+These are statements about the runs of the time, v14 to v37 (23 runs, and the step from v13 into the band: the rows of `trajectory.csv`, and for v37 its columns `*_of_the_time`), and they stay true.
+v38 as run at the time has 77.84% agreement in direction, 0.22 points above v37 and 0.22 points above the top of that band, a step that is 3.0 times the largest step between neighbouring runs of v13 to v37.
+On the final databases v37 has 79.07% and v38 79.32% (534,335 calls), 1.46 and 1.48 points above their runs of the time, 19.5 and 19.8 times the largest step of the band.
+Its recall of pathogenic-side variants is 62.5%, inside the band, and its recall of benign-side variants is 66.4%, 3.7 points above the top of the band, which is of the runs of the time (the benign-side recall is over the same 284,550 variants as the trajectory's).
+The manuscript therefore says that the agreement moved once more at v38, by the change of Section 3.8 (0.22 points as run at the time, against 8.8 and 5.2 points for the two largest steps before v13, which line 1112 quotes).
 
-**Line 450 (Section 3.2).**
-Written for v37, the statement read: Regrading the two PVS1 grades by one step would change 7 of 673,660 calls (6 from VUS to Likely pathogenic and 1 from Benign to VUS), by a replay that is an upper bound, because the recorded code does not say which branch gave a PVS1_Moderate; so few change because a grade one step lower plus PM2 seldom reaches 6 points either way.
+**Line 447 (Section 3.2).**
+For v37 the statement reads: Regrading the two PVS1 grades by one step would change 7 of 673,660 calls (6 from VUS to Likely pathogenic and 1 from Benign to VUS), by a replay that is an upper bound, because the recorded code does not say which branch gave a PVS1_Moderate; so few change because a grade one step lower plus PM2 seldom reaches 6 points either way.
 The same replay on the recorded criteria of v38 changes 2 calls (1 from VUS to Likely pathogenic and 1 from Benign to VUS), still an upper bound.
-5 of the 7 variants that change under v37 do not under v38: 5 carry no PVS1 at all in the commit before the change, which differs from v37 in the criteria of 25 indels (Section 3.8, line 922), 0 lose it in the change itself, and none keeps PVS1 and stops changing.
+5 of the 7 variants that change under v37 do not under v38: 5 carry no PVS1 at all in the commit before the change, which differs from v37 in the criteria of 25 indels (Section 3.8, line 919), 0 lose it in the change itself, and none keeps PVS1 and stops changing.
 The reason that the manuscript gives for the small number holds a fortiori.
 
-**Lines 491, 495, 497 (Section 3.3).**
-Written for v37, the statement read: On v37 the sweep of the PM2 threshold for genes not read as recessive-only is almost flat (recall 61.97% to 62.49%, 489 variants of 93,812), the sweep for recessive-only genes is flat as well (recall 62.46% to 62.48%, agreement varying by 10 calls, no change in either kind of reference-discordant call), and 'the two thresholds therefore acted on nearly every gene and on 67 genes, and a flat sweep says what a threshold does to the calls it reaches, not what a threshold would do if inheritance were read from a correct field'.
+**Lines 488, 492, 494 (Section 3.3).**
+For v37 the statement reads: On v37 the sweep of the PM2 threshold for genes not read as recessive-only is almost flat (recall 61.97% to 62.49%, 489 variants of 93,812), the sweep for recessive-only genes is flat as well (recall 62.46% to 62.48%, agreement varying by 10 calls, no change in either kind of reference-discordant call), and 'the two thresholds therefore acted on nearly every gene and on 67 genes, and a flat sweep says what a threshold does to the calls it reaches, not what a threshold would do if inheritance were read from a correct field'.
 Under v38 the first sweep moves recall across 61.98% to 62.48% (469 variants) and reference-discordant pathogenic calls from 21 to 25: it is still almost flat.
 The second moves recall across 62.43% to 62.48% and agreement by 27 calls, and changes neither kind of reference-discordant call under either classifier: it is still flat.
-v38 reads 1,310 genes as recessive-only where v37 read 67, so the manuscript gives the count of genes of both versions, and says that the sweep of the recessive-only threshold, which reached 67 genes and now reaches 1,310, stays flat (line 497).
+v38 reads 1,310 genes as recessive-only where v37 read 67, so the manuscript gives the count of genes of both versions, and says that the sweep of the recessive-only threshold, which reached 67 genes and now reaches 1,310, stays flat (line 494).
 
-**Lines 499, 500, 502, 1182 (Section 3.3, Section 4.1).**
-Written for v37, the statement read: Under the 2015 combining table the same sweep is steep: recall of pathogenic-side variants is 38.8% at strict absence, 46.8% at 1e-6, 54.1% at 1e-5, 56.7% at 4e-5, 57.4% at 1e-4; raising the threshold from strict absence to 4e-5 gains 16,781 of 93,812 variants for 7 more reference-discordant pathogenic calls, 'which is the knee that v10 recorded: the sweep then gave 37.8% at strict absence and 56.8% at 4e-5'; and the PM2 threshold moved pathogenic-side recall by 19 points when it was set in v10, by 0.5 in v37 and by 17.9 again when the 2015 table is restored.
+**Lines 496, 497, 499, 1122 (Section 3.3, Section 4.1).**
+For v37 the statement reads: Under the 2015 combining table the same sweep is steep: recall of pathogenic-side variants is 38.8% at strict absence, 46.8% at 1e-6, 54.1% at 1e-5, 56.7% at 4e-5, 57.4% at 1e-4; raising the threshold from strict absence to 4e-5 gains 16,781 of 93,812 variants for 7 more reference-discordant pathogenic calls, 'which is the knee that v10 recorded: the sweep then gave 37.8% at strict absence and 56.8% at 4e-5'; and the PM2 threshold moved pathogenic-side recall by 19 points when it was set in v10, by 0.5 in v37 and by 17.9 again when the 2015 table is restored.
 Under v38 the recall is 51.0% at strict absence, 54.8% at 1e-6, 56.6% at 1e-5, 57.1% at 4e-5, 57.2% at 1e-4.
 Raising the threshold from strict absence to 4e-5 gains 5,699 variants (6.1 points) for 7 more reference-discordant pathogenic calls under v38, against 16,781 (17.9 points) for 7 under v37.
 v10's sweep (37.8% at strict absence and 56.8% at 4e-5) is reproduced by v37 (38.8% and 56.7%) and not by v38 (51.0% and 57.1%), so the manuscript says that v37 reproduced the sweep that v10 recorded and that v38 rises at every step as v37 does and by about a third as much (Section 4.10 below finds the shape the same step for step and the knee at 1e-5 under both), and Section 4.1 quotes 6.1 points for v38 and 17.9 for v37.
 The sweep is still the steeper one: it moves recall 12 times as far as the same sweep under the default scheme (5,699 against 469 variants), where under v37 it moves it 34 times as far, and the statement that the combining rule decides how many calls depend on PM2 holds under v38: 51,703 calls depend on PM2 under the 2015 table (46,207 on PVS1 and PM2 alone) and 5,496 under the default scheme (v37: 51,346, 45,853 and 5,493).
 A reading that the firing counts support, and that no run tests (no run sweeps both PM2 thresholds under the 2015 table): at strict absence PM2 still fires on 229,154 variants under v38 against 133,152 under v37, because the 1,310 genes that v38 reads as recessive-only keep their own threshold, which this sweep does not change.
 
-**Lines 553, 555, 560 (Section 3.3).**
-Written for v37, the statement read: In v37 the BS2 carrier threshold for genes read as dominant-only is flat, because it reached 50 genes: switching it off and setting it at 3e-3 change the numbers of reference-discordant benign and reference-discordant pathogenic calls by nothing (27 and 25 throughout), and the default 3e-4 recovers 70 pathogenic-side calls relative to no threshold (58,540 to 58,610) and gives up 547 benign-side calls (187,612 to 187,065), 'and nothing above it recovers another'.
-The manuscript says that the threshold is a trade on the 746 genes that v38 reads as dominant-only, where it was flat on the 50 that v37 read (line 560).
+**Lines 550, 552, 557 (Section 3.3).**
+For v37 the statement reads: In v37 the BS2 carrier threshold for genes read as dominant-only is flat, because it reached 50 genes: switching it off and setting it at 3e-3 change the numbers of reference-discordant benign and reference-discordant pathogenic calls by nothing (27 and 25 throughout), and the default 3e-4 recovers 70 pathogenic-side calls relative to no threshold (58,540 to 58,610) and gives up 547 benign-side calls (187,612 to 187,065), 'and nothing above it recovers another'.
+The manuscript says that the threshold is a trade on the 746 genes that v38 reads as dominant-only, where it was flat on the 50 that v37 read (line 557).
 Under v38 the reference-discordant benign calls across the settings (off, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3) are 54/36/30/27/27/27 and the reference-discordant pathogenic calls 18/21/24/24/24/24 (under v37 27/27/27/27/27/27 and 25/25/25/25/25/25).
 The default recovers 439 pathogenic-side calls relative to no threshold (58,167 to 58,606) and gives up 10,950 benign-side calls (199,864 to 188,914), against 70 and 547 under v37.
 Above the default, 1e-3 recovers 4 more pathogenic-side calls (58,606 to 58,610), so 'nothing above it recovers another' does not hold under v38 (it holds under v37, where the count stays at 58,610).
 
-**Lines 630, 1190 (Section 3.4, Section 4.1).**
-Written for v37, the statement read: Without the ClinVar protein and splice index, reference-discordant benign calls rise from 27 to 54, and from 27 to 56 with the allele-level record as well, and 'the 27 are the same variants as appear when BP1's veto is switched off'; removing every ClinVar-derived input 'takes the opposite-direction calls from 49 to 74, 27 of the reference-discordant benign calls because it removes the BP1 veto'.
+**Lines 627, 1130 (Section 3.4, Section 4.1).**
+For v37 the statement reads: Without the ClinVar protein and splice index, reference-discordant benign calls rise from 27 to 54, and from 27 to 56 with the allele-level record as well, and 'the 27 are the same variants as appear when BP1's veto is switched off'; removing every ClinVar-derived input 'takes the opposite-direction calls from 49 to 74, 27 of the reference-discordant benign calls because it removes the BP1 veto'.
 Under v38 the index removal adds 28 reference-discordant benign calls (from 27 to 55) and removing the allele-level record as well adds 31 (to 58), and the 28 are the same variants as appear when BP1's veto is switched off (28 added, the same set), so the manuscript says 28 where the sentence for v37 had 27; the allele-level record accounts for 3 of the additions under v38 where it accounts for 2 under v37.
 
-**Lines 755, 756 (Section 3.5).**
-Written for v37, the statement read: The completed ClinGen file adds one row (GATM, Moderate) dated 04:00 UTC on 30 April, after the April file was saved, and it 'changes none of the 163 calls on GATM's variants'.
+**Lines 752, 753 (Section 3.5).**
+For v37 the statement reads: The completed ClinGen file adds one row (GATM, Moderate) dated 04:00 UTC on 30 April, after the April file was saved, and it 'changes none of the 163 calls on GATM's variants'.
 Under v38 the call of 0 of the 163 variants changes (0 under v37) and the call or criteria of 6 do (0 under v37; `clingen_missing_summary_v38.csv`), so the manuscript says that the file changes none of the calls and then that it changes the criteria of 6.
 The 6 variants lose PM2_Supporting; they are seen in 61 to 89 gnomAD alleles, at allele frequencies of 4.2e-05 to 6.1e-05, between PM2's two thresholds (4e-5 for genes not read as recessive-only and 7e-5 for recessive-only genes, Section 3.3).
 The established ClinGen tags of GATM's variants are AR in the main run and AD+AR in the run that reads the completed file (the same under v37), so under v38, which reads the tag, the gene stops being read as recessive-only and PM2 takes the lower threshold for it.
 
-**Lines 812, 813, 814, 815 (Section 3.6).**
-Written for v37, the statement read: Section 3.6 groups 22 calls of PVS1 on a variant that ClinVar calls benign or likely benign: 11 a lone PVS1 and 11 PVS1 with PM2; 6 are seen in 611 to 4,892 gnomAD alleles (EDN3, FMR1, KDM2B, PHKB, PIEZO1, RAD21) with population-maximum frequencies of 0.23% to 1.5%; BS1 fired for none of them, their population-maximum frequencies being 9 to 59 times the median published threshold of 2.5e-4; the reviewer supported ClinVar on all six, 'remarking for five of them that the variant is too common in gnomAD'.
+**Lines 809, 810, 811, 812 (Section 3.6).**
+For v37 the statement reads: Section 3.6 groups 22 calls of PVS1 on a variant that ClinVar calls benign or likely benign: 11 a lone PVS1 and 11 PVS1 with PM2; 6 are seen in 611 to 4,892 gnomAD alleles (EDN3, FMR1, KDM2B, PHKB, PIEZO1, RAD21) with population-maximum frequencies of 0.23% to 1.5%; BS1 fired for none of them, their population-maximum frequencies being 9 to 59 times the median published threshold of 2.5e-4; the reviewer supported ClinVar on all six, 'remarking for five of them that the variant is too common in gnomAD'.
 Under v38 the group has 21 calls (10 a lone PVS1 and 11 PVS1 with PM2), because the RAD21 variant of Section 3 above left it: 5 are seen in 611 to 4,892 gnomAD alleles (EDN3, FMR1, KDM2B, PHKB, PIEZO1), at allele frequencies of 5.6e-4 to 3.3e-3 and population-maximum frequencies of 0.37% to 1.5%, 15 to 59 times the median published threshold, and BS1 fired for none of them.
 In round 6 the reviewer supported ClinVar's call (by a class that the reviewer stated) on the RAD21 variant, so the manuscript says that the reviewer supported ClinVar on all five (the RAD21 variant is the only one of the six that is no longer in the group).
 The reviewer's remarks on how common each variant is in gnomAD are in the reviewer's own workbook and not in `round6_rulings.tsv`, so neither this script nor `verify_numbers.py` can check them.
-When the manuscript was written for v37 it said that the reviewer remarked for five of the six that the variant is too common in gnomAD.
+For v37 the manuscript says that the reviewer remarked for five of the six that the variant is too common in gnomAD.
 The manuscript now says four of the five (KDM2B and PHKB in those words, EDN3 and PIEZO1 as more than 1,000 carriers) and, for FMR1, its 210 hemizygotes and one homozygote and a question why the population frequencies were not applied.
-That is a reading of the returned workbook on the machine that made the paper, made when the manuscript was re-based, and the workbook is not in the repository.
+That is a reading of the returned workbook on the machine that made the paper, and the workbook is not in the repository.
 
-**Line 871 (Section 3.7).**
-Written for v37, the statement read: What remains of the fall in recall of the new Benign variants, once the mix of nine bands of population-maximum frequency is taken as the April recall in each band, 'is mostly in the highest bands (the two at 2% or more carry 1.9 of the 3.3 points that the mix does not explain)'.
+**Line 868 (Section 3.7).**
+For v37 the statement reads: What remains of the fall in recall of the new Benign variants, once the mix of nine bands of population-maximum frequency is taken as the April recall in each band, 'is mostly in the highest bands (the two at 2% or more carry 1.9 of the 3.3 points that the mix does not explain)'.
 Under v38 the two bands at 2% or more carry 1.8 of the 4.7 points (39%) where under v37 they carry 1.9 of 3.3 (56%), so the manuscript no longer says 'mostly in the highest bands' and says that what remains is spread over the bands; the unexplained part is larger (4.7 points against 3.3).
 The positive and negative contributions of each band to the points that the mix does not explain (the points are the band's share of the new Benign variants times the April recall less the new recall, so a negative figure means the new variants are called benign-side more often than the April ones of that band):
 
@@ -769,39 +769,38 @@ The positive and negative contributions of each band to the points that the mix 
 
 ### 9.2 Statements about how the runs were made and what was measured on v38
 
-**Line 1418 (Data and code availability) and line 113 (Section 2.1).**
+**Line 1351 (Data and code availability) and line 119 (Section 2.1).**
 The manuscript says that every number is v38's unless it names v37, and that the analyses of Sections 3.1 to 3.7 were made on both versions, except for what needs a reviewer or a run that the repository does not have.
-Written for v37 it said that the analyses of Sections 3.1 to 3.7 had not been repeated on v38, except for the four thresholds that read inheritance and the runs on gnomAD's joint release (Section 3.8).
+For v37 it says that the analyses of Sections 3.1 to 3.7 have not been repeated on v38, except for the four thresholds that read inheritance and the runs on gnomAD's joint release (Section 3.8).
 The family v38 repeats the 96 runs of Section 2.6 (89 on the April set and 7 on the October release) with the classifier of release 0.5.0, and `13_manuscript_stats.py --base v38` and `14_temporal_holdout.py --base v38` write 66 twin tables of `manuscript/acmg/data/` from them (`_v38` where the file of v37 has `_v37` in its name), which is what lets the manuscript say that Sections 3.1 to 3.7 were repeated on v38.
-16 of the 82 files of `manuscript/acmg/data/` that are not v38's own have no twin: `change_ledger.csv`, `review_rounds.csv`, `trajectory.csv` are the history of the numbered versions; `round6_rulings.tsv` is the reviewer's own ruling; `clingen_missing_curations.csv` is a list of the rows of the ClinGen export; `criteria_status.csv` is read from the engine of v38 already; `tavtigian_posterior.csv` is arithmetic of the framework, which `13_manuscript_stats.py` checks to be the file that is there; `databases_causes.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions; `databases_effects.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions; `databases_family_summary.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions; `databases_lost_blocks.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions; `databases_old_vs_new.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions; `databases_opposite_changes.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions; `databases_presence.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions; `databases_sweep_shapes.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions; `databases_sweeps.csv` is a comparison of the first and the complete databases (`21_compare_databases.py`), which holds both versions.
+7 of the 73 files of `manuscript/acmg/data/` that are not v38's own have no twin: `change_ledger.csv`, `review_rounds.csv`, `trajectory.csv` are the history of the numbered versions; `round6_rulings.tsv` is the reviewer's own ruling; `clingen_missing_curations.csv` is a list of the rows of the ClinGen export; `criteria_status.csv` is read from the engine of v38 already; `tavtigian_posterior.csv` is arithmetic of the framework, which `13_manuscript_stats.py` checks to be the file that is there.
 What was not repeated on v38 is what needs a reviewer or a run that the repository does not have: the review rounds, the ledger, and the runs of round 6, which need builds that are not in the repository.
 
-**Line 283 (Section 2.6).**
-Written for v37, the statement was that all 89 runs were made by the same harness, 73 with the binary of v37 (SHA-256 `1b8e7c46...`), 9 with the build of the first patch and 7 with the build of the second.
+**Line 282 (Section 2.6).**
+For v37 the statement is that all 89 runs were made by the same harness, 73 with the binary of v37 (SHA-256 `1b8e7c46...`), 9 with the build of the first patch and 7 with the build of the second.
 For the family v38 the split of the 89 April runs is the same, 73 plain, 9 with the cutoff build and 7 with the hook build, and each kind has one binary: `70b7c684...` made 73 for the plain runs, `de44db94...` for the cutoff runs and `9886d1b5...` for the hook runs (`binaries_v38.tsv`).
 `verify_numbers.py` counts a run of another binary than its kind's as a failure, and the 42 runs of Section 3.8 must have been made a second time by the binary of the stored run, with every scored file identical (`results/v38_v0.5.0`).
 
-**Line 284 (Section 2.6).**
-Written for v37, the statement was that the three binaries are builds of commit 5d8004a, each from a clean export in a target directory of its own (`build_manuscript_binaries.sh`).
+**Line 283 (Section 2.6).**
+For v37 the statement is that the three binaries are builds of commit 5d8004a, each from a clean export in a target directory of its own (`build_manuscript_binaries.sh`).
 The binaries of the family v38 are builds of the tag `v0.5.0-rc.1` (commit c12d9f9), made the same way (`build_manuscript_binaries.sh`, names `v38`, `cut38` and `hook38`); the two patches apply to the tag with every context line matching, the cutoff patch at the line it was written for and the hooks patch with offsets of 2 and 20 lines, the lines that the tree of the tag has gained above its two hunks.
 
-**Line 286 (Section 2.6), line 285 (Section 2.6), line 367 (Section 2.10).**
-Written for v37, the statement was that every run was made twice, in October 2026 and again on 4 November 2026, and that the two sets agree in every scored file.
-In the manuscript now every run of the family was made once on 8 November 2026 with the complete databases, and the 42 runs of Section 3.8 were made a second time by the same binaries into a directory of their own, identical in every scored file (`results/v38_v0.5.0/rerun_comparison.csv`), so the check that the others are right is the controls (Section 6 above), which reproduce the main run in every cell and in the firing count of every criterion.
+**Line 285 (Section 2.6), line 284 (Section 2.6), line 364 (Section 2.10).**
+Every run of the family was made once on 8 November 2026 on the final benchmark databases, and the 42 runs of Section 3.8 were made a second time by the same binaries into a directory of their own, identical in every scored file (`results/v38_v0.5.0/rerun_comparison.csv`), so the check that the others are right is the controls (Section 6 above), which reproduce the main run in every cell and in the firing count of every criterion.
 The provenance file of each run records the commit of the checkout that ran the harness (`3d19211` for 48, `4ec9cb6` for 30, `93b8745` for 18), which is not the commit of the binary, as the manuscript and `results/v37_manuscript/README.md` say for both families.
 
-**Line 1300 (Section 4.5).**
-Written for v37, the statement was that the prices of the first six steps of Section 4.5 were measured on v37 and not repeated on v38, and that the seventh was measured on v38.
-All seven are measured on v38 in the family (`temporal_proposals_v38.csv`, the April and the October columns), and the numbers of the steps are in 9.4 below (lines 1293, 1295, 1296, 1298).
+**Line 1234 (Section 4.5).**
+For v37 the statement is that the prices of the first six steps of Section 4.5 were measured on v37 and not repeated on v38, and that the seventh was measured on v38.
+All seven are measured on v38 in the family (`temporal_proposals_v38.csv`, the April and the October columns), and the numbers of the steps are in 9.4 below (lines 1227, 1229, 1230, 1232).
 
-**Line 1395 (Data and code availability), line 1413 (Data and code availability).**
-Written for v37, the statement listed the results of v37 as the 89 runs on the April set and the 7 on the October release in `analysis/acmg_benchmark/results/v37_manuscript/` with `binaries.tsv`, whose 74 files in `manuscript/acmg/data/` were the ones whose names do not begin with `v38_`, and the results of v38 as the 42 runs of Section 3.8, their repetition by release 0.5.0 and the 23 files of `manuscript/acmg/data/` whose names begin with `v38_`.
-The manuscript now lists the results of v38 first and those of v37 as the before: the family v38 adds 71 runs on the April set and 7 on the October release to `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv` of the same directory (the 18 shared runs were already there), with their provenance files and configurations, `binaries_v38.tsv`, the 66 twin tables whose names have `_v38` in them, each with its twin for v37 (not the number of pairs that the manuscript counts), the 23 files that begin with `v38_` (the 23 that the manuscript counts) and the 16 that belong to neither version (not the number that the manuscript counts), this comparison with its five CSV files, and the per-variant tables of the new runs in `data/benchmark/manuscript_runs/` (not in the repository).
+**Line 1329 (Data and code availability), line 1346 (Data and code availability).**
+For v37 the statement lists the results of v37 as the 89 runs on the April set and the 7 on the October release in `analysis/acmg_benchmark/results/v37_manuscript/` with `binaries.tsv`, whose 74 files in `manuscript/acmg/data/` were the ones whose names do not begin with `v38_`, and the results of v38 as the 42 runs of Section 3.8, their repetition by release 0.5.0 and the 23 files of `manuscript/acmg/data/` whose names begin with `v38_`.
+The manuscript now lists the results of v38 first and those of v37 as the before: the family v38 adds 71 runs on the April set and 7 on the October release to `runs_v38.tsv`, `holdout_runs_v38.tsv` and `run_matrix_v38.tsv` of the same directory (the 18 shared runs were already there), with their provenance files and configurations, `binaries_v38.tsv`, the 66 twin tables whose names have `_v38` in them, each with its twin for v37 (not the number of pairs that the manuscript counts), the 23 files that begin with `v38_` (the 23 that the manuscript counts) and the 7 that belong to neither version (the seven that the manuscript counts), this comparison with its five CSV files, and the per-variant tables of the new runs in `data/benchmark/manuscript_runs/` (not in the repository).
 
 ### 9.3 The tables, the workbook and the figures
 
-`build_tables.py --base v37 --check` finds 5 of the 8 marked tables of the manuscript different from the text, which says v38: thresholds, cutoffs, decomposition, residual, temporal.
-They are Table 3 (`thresholds`), Table 4 (`cutoffs`), Table 5 (`decomposition`), Table 6 (`residual`), Table 7 (`temporal`); the ones that do not differ are Table 8 (`inheritance`, in Section 3.8), Table 9 (`joint`, in Section 3.8), Table 10 (`databases`, in Section 3.9).
+`build_tables.py --base v37 --check` finds 5 of the 7 marked tables of the manuscript different from the text, which says v38: thresholds, cutoffs, decomposition, residual, temporal.
+They are Table 3 (`thresholds`), Table 4 (`cutoffs`), Table 5 (`decomposition`), Table 6 (`residual`), Table 7 (`temporal`); the ones that do not differ are Table 8 (`inheritance`, in Section 3.8), Table 9 (`joint`, in Section 3.8).
 `build_tables.py --base v37 --write-to PATH` writes the manuscript with the tables of v37 to a file and leaves `manuscript.md` as it is.
 The words of a cell of Table 3 differ and not only its numbers, in the row 'BS2 carrier threshold, genes read as dominant-only: 3e-4, with an allele count of at least 5': under v37 it reads 'Flat: 27 reference-discordant benign calls and 25 reference-discordant pathogenic calls at every setting from off to 3e-3' and under v38, as in the manuscript, 'Not flat: 27 to 54 reference-discordant benign calls and 18 to 24 reference-discordant pathogenic calls from off to 3e-3'.
 The workbook of v37 (`build_supplement.py --base v37 --write --out PATH`) has the same 26 sheets, and 18 of them differ from `supplementary_tables.xlsx`: Contents, S1, S2, S4, S5, S6, S7, S8, S9, A1, A2, A3, A4, A5, A6, A7, A8, A9; the same are S3, A10, A11, A12, A13, A14, A15, A16.
@@ -810,7 +809,7 @@ The PDF files of the figures are not tracked and carry the time they were made, 
 
 ### 9.4 The numbers of the text that differ
 
-`verify_numbers.py` makes 548 checks of 2169 values; under v37 201 of the checks give another value than under v38, 528 values in all (the sentences that set v38 against v37 contain both, so not every one of these is absent from its sentence).
+`verify_numbers.py` makes 531 checks of 2039 values; under v37 202 of the checks give another value than under v38, 529 values in all (the sentences that set v38 against v37 contain both, so not every one of these is absent from its sentence).
 They are listed below by section of the manuscript, each as the line, the phrase that identifies the sentence, and the values that differ, the value under v37 first and the value under v38, which the manuscript has, second.
 A value that is a statement about v37 as history (what v37 read, the trajectory of the numbered versions) does not appear, and a quoted count of `48` is the count of v38 (v37: 49), which the guard reads from the main run.
 A value written `?` is a condition that the guard types (`Ten`, `Five`, `none of the`) and that does not hold under v37; the claims above explain each.
@@ -818,252 +817,253 @@ The numbers inside the marked tables are not checks of `verify_numbers.py` and a
 
 **Abstract.**
 
-- Line 30, "On the April set v38 agrees with ClinVar's class for 64.1%": 79.1% under v37 becomes 79.3%; 52 under v37 becomes 51; 0.0077% under v37 becomes 0.0076%.
-- Line 31, "On the new variants agreement in direction is 72.6%": 72.3% under v37 becomes 72.6%; 2.2 under v37 becomes 2.3; 3.7 under v37 becomes 3.8.
-- Line 33, "The reviewer supported ClinVar on 29 of 48 contradictions seen": 30 under v37 becomes 29; 49 under v37 becomes 48.
+- Line 32, "On the April set v38 agrees with ClinVar's class for 64.1%": 79.1% under v37 becomes 79.3%; 52 under v37 becomes 51; 0.0077% under v37 becomes 0.0076%.
+- Line 33, "On the new variants agreement in direction is 72.6%": 72.3% under v37 becomes 72.6%; 2.2 under v37 becomes 2.3; 3.7 under v37 becomes 3.8.
+- Line 34, "The reviewer supported ClinVar on 29 of 48 contradictions seen": 30 under v37 becomes 29; 49 under v37 becomes 48.
+- Line 38, "Agreement alone does not separate cautious from aggressive calling: ...": 1,819 under v37 becomes 1,817.
 
 **Section 2.2.**
 
-- Line 211, "the reviewer supported ClinVar's class for 13 of the 24 ...": 17 under v37 becomes 16; 25 under v37 becomes 24.
-- Line 216, "Rates use all 673,660 records as the denominator": 0.0077% under v37 becomes 0.0076%; 0.014% under v37 becomes 0.013%; 254,012 under v37 becomes 256,054.
-- Line 216, "so the 51 opposite-direction calls of v38 are": 0.0077% under v37 becomes 0.0076%.
+- Line 210, "the reviewer supported ClinVar's class for 13 of the 24 ...": 17 under v37 becomes 16; 25 under v37 becomes 24.
+- Line 215, "Rates use all 673,660 records as the denominator": 0.0077% under v37 becomes 0.0076%; 0.014% under v37 becomes 0.013%; 254,012 under v37 becomes 256,054.
+- Line 215, "so the 51 opposite-direction calls of v38 are": 0.0077% under v37 becomes 0.0076%.
 
 **Section 2.5.**
 
-- Line 270, "so the 51 residual calls of Section 3.6 are in-sample": 52 under v37 becomes 51; 58 under v37 becomes 57; 63 under v37 becomes 62.
+- Line 269, "so the 51 residual calls of Section 3.6 are in-sample": 52 under v37 becomes 51; 58 under v37 becomes 57; 63 under v37 becomes 62.
 
 **Section 2.6.**
 
-- Line 283, "All 89 runs (Supplementary Table S2) were made by the same harness": 1b8e7c46 under v37 becomes 70b7c684.
+- Line 282, "All 89 runs (Supplementary Table S2) were made by the same harness": 1b8e7c46 under v37 becomes 70b7c684.
 
 **Section 3.2.**
 
-- Line 449, "Regrading both by one step would change 2 of 673,660 calls": 7 under v37 becomes 2; 6 under v37 becomes 1.
+- Line 446, "Regrading both by one step would change 2 of 673,660 calls": 7 under v37 becomes 2; 6 under v37 becomes 1.
 
 **Section 3.3.**
 
-- Line 475, "PM2 threshold, genes read as recessive-only: 7e-5": recall 62.46% to 62.48% under v37 becomes recall 62.43% to 62.48%; within 10 calls under v37 becomes within 27 calls.
-- Line 489, "of the 2,924 genes of the ClinGen file it reads 1,310 as ...": 67 under v37 becomes 1,310; 50 under v37 becomes 746; 12 under v37 becomes 169; 2,795 under v37 becomes 699.
-- Line 492, "Across strict absence and every threshold from 1e-6 to 5e-4": 61.97% under v37 becomes 61.98%; 62.49% under v37 becomes 62.48%; 489 under v37 becomes 469.
-- Line 493, "It reaches 62.47% at the default 4e-5": 62.48% under v37 becomes 62.47%; 6 under v37 becomes 5.
-- Line 494, "Reference-discordant pathogenic calls rise from 21 at strict absence": 22 under v37 becomes 21; 25 under v37 becomes 24; 26 under v37 becomes 25; 533,218 under v37 becomes 534,835; 532,688 under v37 becomes 534,335.
-- Line 495, "The threshold for recessive-only genes, which the code attributed": 62.46 under v37 becomes 62.43; 10 under v37 becomes 27.
-- Line 496, "The two thresholds therefore act on nearly every gene and on the ...": 67 under v37 becomes 1,310.
-- Line 500, "Recall of pathogenic-side variants is 51.0% at strict absence": 38.8% under v37 becomes 51.0%; 46.8% under v37 becomes 54.8%; 54.1% under v37 becomes 56.6%; 56.7% under v37 becomes 57.1%; 57.4% under v37 becomes 57.2%.
-- Line 501, "Raising the threshold from strict absence to 4e-5 gains 5,699": 16,781 under v37 becomes 5,699; 17.9 points under v37 becomes 6.1 points.
-- Line 502, "The sweep that v10 recorded under this table": 38.8% under v37 becomes 51.0%; 56.7% under v37 becomes 57.1%; 16,781 under v37 becomes 5,699; 17.9 points under v37 becomes 6.1 points; a condition that does not hold under v37 becomes by about a third as much.
-- Line 503, "It is still the steeper sweep: it moves recall 12 times as far": 34 times as far under v37 becomes 12 times as far; 16,781 under v37 becomes 5,699; 489 under v37 becomes 469.
-- Line 504, "Why v38 flattens it is a reading that the firing counts support and ...": 133,152 under v37 becomes 229,154; 67 under v37 becomes 1,310.
-- Line 506, "Of the 51,703 pathogenic-side calls": 51,346 under v37 becomes 51,703; 45,853 under v37 becomes 46,207.
-- Line 507, "The point scale of the default scheme counts a lone PVS1 as 8 points": 5,493 under v37 becomes 5,496.
-- Line 513, "Moving it from 200 to 300 nucleotides buys 163": 167 under v37 becomes 163; 45 under v37 becomes 42; 59 under v37 becomes 56; 505 under v37 becomes 488.
-- Line 514, "The default 300 is at the corner": 859 under v37 becomes 828; 167 under v37 becomes 163; 45 under v37 becomes 42; 30 under v37 becomes 28.
-- Line 515, "Turning the extension off is not free either": 10,309 under v37 becomes 9,931.
-- Line 517, "The steps from 1e-3 to 1e-6 are worth": 333 under v37 becomes 306; 222 under v37 becomes 214; 473 under v37 becomes 435.
-- Line 519, "Between 2e-2 and 5e-3 (default), lowering the threshold buys": 12,031 under v37 becomes 10,343.
-- Line 520, "Below the default value the exchange rate is 858": 970 under v37 becomes 858; 664 under v37 becomes 596; 109 under v37 becomes 97; 87 under v37 becomes 81.
-- Line 521, "By the knee rule that fixed BP7's bound": 3.2 under v37 becomes 2.9; 9,141 under v37 becomes 8,124.
-- Line 532, "Raising the threshold from 1 to 1.5 gains 5,814": 5,919 under v37 becomes 5,814; 4,952 under v37 becomes 4,877; 1,651 under v37 becomes 1,626.
-- Line 533, "Beyond the default value, raising it to 3 gains 7,018": 7,148 under v37 becomes 7,018; 3,886 under v37 becomes 3,802; 7,167 under v37 becomes 6,973.
-- Line 534, "rests on three events": 6,100 under v37 becomes 5,900.
-- Line 535, "Switching the test off, which follows the caution of Walker et al.": 18,201 under v37 becomes 17,793; 18,065 under v37 becomes 17,657; 2.7 under v37 becomes 2.6.
-- Line 537, "Asking that SpliceAI be at most 0.1, as BP4 does": 351 under v37 becomes 381; 446 under v37 becomes 487; 550,307 under v37 becomes 551,505; 81.7% under v37 becomes 81.9%; 17,619 under v37 becomes 17,170.
-- Line 538, "We have not changed the classifier: the three variants": 18,000 under v37 becomes 17,000.
-- Line 539, "On the 116,078 variants that were not in the April set, BP7 as the ...": 5,850 under v37 becomes 5,744.
-- Line 542, "the veto itself avoids 28 reference-discordant benign calls relative ...": 27 under v37 becomes 28.
-- Line 543, "At a count of 1, BP1 is withheld in every gene": 1,718 under v37 becomes 1,737; 149 under v37 becomes 127; 1,867 under v37 becomes 1,864.
-- Line 544, "The rise is those 1,864 variants staying VUS": 149 under v37 becomes 127; 1,867 under v37 becomes 1,864.
-- Line 546, "With the variant's own record left out of the count as well (Section ...": 1,718 under v37 becomes 1,737; 149 under v37 becomes 127.
-- Line 547, "At a count of 2 without that change the figures are": 849 under v37 becomes 850; 17 under v37 becomes 16.
-- Line 549, "No step gives more than 111 calls per added reference-discordant ...": 132 under v37 becomes 111.
-- Line 550, "Both are among the 51 and were found in the set on which the count ...": 52 under v37 becomes 51; Both are among the 52 under v37 becomes Both are among the 51.
-- Line 554, "On the 746 genes that v38 reads as dominant-only the threshold is not ...": 50 under v37 becomes 746; a condition that does not hold under v37 becomes not flat.
-- Line 555, "Switching it off, so that an allele count of at least five alone ...": 27 under v37 becomes 54; 25 under v37 becomes 18; 27 under v37 becomes 36; 27 under v37 becomes 30.
-- Line 556, "From 3e-3 to the default each step adds benign-side calls and no error": 46 under v37 becomes 484; 70 under v37 becomes 1,065; no added error under v37 becomes 769; no added error under v37 becomes 498; no added error under v37 becomes 314.
-- Line 557, "The default 3e-4 recovers 439 pathogenic-side calls": 58,540 under v37 becomes 58,167; 58,610 under v37 becomes 58,606; 70 under v37 becomes 439; 187,612 under v37 becomes 199,864; 187,065 under v37 becomes 188,914; 547 under v37 becomes 10,950; 0 under v37 becomes 4.
-- Line 558, "With the threshold off, a floor of 20 alleles gives 39": 27 under v37 becomes 39; 27 under v37 becomes 29.
-- Line 564, "Variants with 0 or 1 point": 22,453 under v37 becomes 20,573; 97,445 under v37 becomes 98,099; 4.3% under v37 becomes 4.5%; 8.5% under v37 becomes 8.4%.
-- Line 565, "At 2 points the share is 10.7%": 10.9% under v37 becomes 10.7%; 21.8% under v37 becomes 21.9%; 26.6% under v37 becomes 25.7%.
-- Line 566, "At 5 points it jumps to 64.1%": 64.0% under v37 becomes 64.1%; 10,486 under v37 becomes 10,638; 16,391 under v37 becomes 16,595; 35.9% under v37 becomes 35.8%; 59.1% under v37 becomes 59.0%; 94.8% under v37 becomes 94.9%.
-- Line 568, "Moving the Likely pathogenic cutoff from 6 to 5 points": 73.7% under v37 becomes 73.9%; 10,524 under v37 becomes 10,676.
-- Line 569, "It does so at the price of 6,003 more ClinVar-VUS variants": 5,947 under v37 becomes 6,003; 19 under v37 becomes 17.
-- Line 570, "Agreement in direction rises by 4,673 calls": 4,577 under v37 becomes 4,673; 3,624 under v37 becomes 3,670.
-- Line 571, "A cutoff of 4 reaches 76.7% recall": 17,465 under v37 becomes 17,477; 139 under v37 becomes 129.
-- Line 572, "Raising the cutoff to 7 or 8 gives up": 3,256 under v37 becomes 3,253; 52.8% under v37 becomes 53.2%.
-- Line 576, "It does move exact agreement": 468,467 under v37 becomes 468,930; 431,555 under v37 becomes 431,727.
-- Line 577, "Of the 58,201 Likely pathogenic calls": 58,231 under v37 becomes 58,201; 46,716 under v37 becomes 47,053; 80% under v37 becomes 81%; 45,853 under v37 becomes 46,207; 41,234 under v37 becomes 41,549.
-- Line 604, "The default scheme has 431,727 exact calls": 431,555 under v37 becomes 431,727; 532,688 under v37 becomes 534,335; 65.7% under v37 becomes 66.4%; 25 under v37 becomes 24.
-- Line 605, "The 2015 table on both sides has 430,652": 430,460 under v37 becomes 430,652; 527,433 under v37 becomes 529,435; 56.7% under v37 becomes 57.1%; 65.7% under v37 becomes 66.4%; 5,255 under v37 becomes 4,900; 5.8 under v37 becomes 5.4; 11 under v37 becomes 10.
-- Line 607, "Scoring both sides on the point scale with Likely benign from -1": 65.7% under v37 becomes 66.4%; 76.9% under v37 becomes 77.0%; 409 under v37 becomes 399; 247 under v37 becomes 233.
-- Line 607, "Scoring both sides on the point scale with Likely benign from -1": 97.2% under v37 becomes 97.1%; 69.1% under v37 becomes 69.5%.
-- Line 608, "Tightening the floor to -2 gives 50.6% recall": 50.5% under v37 becomes 50.6%; 62 under v37 becomes 64; 37.0% under v37 becomes 38.4%; 26 under v37 becomes 30.
-- Line 609, "The table therefore does better than the floors of -2 and -3": 382 under v37 becomes 372; 11.2 under v37 becomes 10.6.
-- Line 610, "These three point scales are replays of the recorded criteria": 354,968 under v37 becomes 355,431; 368,627 under v37 becomes 368,978; 364,543 under v37 becomes 364,992; 481,524 under v37 becomes 482,795; 474,149 under v37 becomes 476,213; 451,352 under v37 becomes 455,335.
-- Line 617, "Removing it raises same-direction agreement by 684": 736 under v37 becomes 684.
+- Line 472, "PM2 threshold, genes read as recessive-only: 7e-5": recall 62.46% to 62.48% under v37 becomes recall 62.43% to 62.48%; within 10 calls under v37 becomes within 27 calls.
+- Line 486, "of the 2,924 genes of the ClinGen file it reads 1,310 as ...": 67 under v37 becomes 1,310; 50 under v37 becomes 746; 12 under v37 becomes 169; 2,795 under v37 becomes 699.
+- Line 489, "Across strict absence and every threshold from 1e-6 to 5e-4": 61.97% under v37 becomes 61.98%; 62.49% under v37 becomes 62.48%; 489 under v37 becomes 469.
+- Line 490, "It reaches 62.47% at the default 4e-5": 62.48% under v37 becomes 62.47%; 6 under v37 becomes 5.
+- Line 491, "Reference-discordant pathogenic calls rise from 21 at strict absence": 22 under v37 becomes 21; 25 under v37 becomes 24; 26 under v37 becomes 25; 533,218 under v37 becomes 534,835; 532,688 under v37 becomes 534,335.
+- Line 492, "The threshold for recessive-only genes, which the code attributed": 62.46 under v37 becomes 62.43; 10 under v37 becomes 27.
+- Line 493, "The two thresholds therefore act on nearly every gene and on the ...": 67 under v37 becomes 1,310.
+- Line 497, "Recall of pathogenic-side variants is 51.0% at strict absence": 38.8% under v37 becomes 51.0%; 46.8% under v37 becomes 54.8%; 54.1% under v37 becomes 56.6%; 56.7% under v37 becomes 57.1%; 57.4% under v37 becomes 57.2%.
+- Line 498, "Raising the threshold from strict absence to 4e-5 gains 5,699": 16,781 under v37 becomes 5,699; 17.9 points under v37 becomes 6.1 points.
+- Line 499, "The sweep that v10 recorded under this table": 38.8% under v37 becomes 51.0%; 56.7% under v37 becomes 57.1%; 16,781 under v37 becomes 5,699; 17.9 points under v37 becomes 6.1 points; a condition that does not hold under v37 becomes by about a third as much.
+- Line 500, "It is still the steeper sweep: it moves recall 12 times as far": 34 times as far under v37 becomes 12 times as far; 16,781 under v37 becomes 5,699; 489 under v37 becomes 469.
+- Line 501, "Why v38 flattens it is a reading that the firing counts support and ...": 133,152 under v37 becomes 229,154; 67 under v37 becomes 1,310.
+- Line 503, "Of the 51,703 pathogenic-side calls": 51,346 under v37 becomes 51,703; 45,853 under v37 becomes 46,207.
+- Line 504, "The point scale of the default scheme counts a lone PVS1 as 8 points": 5,493 under v37 becomes 5,496.
+- Line 510, "Moving it from 200 to 300 nucleotides buys 163": 167 under v37 becomes 163; 45 under v37 becomes 42; 59 under v37 becomes 56; 505 under v37 becomes 488.
+- Line 511, "The default 300 is at the corner": 859 under v37 becomes 828; 167 under v37 becomes 163; 45 under v37 becomes 42; 30 under v37 becomes 28.
+- Line 512, "Turning the extension off is not free either": 10,309 under v37 becomes 9,931.
+- Line 514, "The steps from 1e-3 to 1e-6 are worth": 333 under v37 becomes 306; 222 under v37 becomes 214; 473 under v37 becomes 435.
+- Line 516, "Between 2e-2 and 5e-3 (default), lowering the threshold buys": 12,031 under v37 becomes 10,343.
+- Line 517, "Below the default value the exchange rate is 858": 970 under v37 becomes 858; 664 under v37 becomes 596; 109 under v37 becomes 97; 87 under v37 becomes 81.
+- Line 518, "By the knee rule that fixed BP7's bound": 3.2 under v37 becomes 2.9; 9,141 under v37 becomes 8,124.
+- Line 529, "Raising the threshold from 1 to 1.5 gains 5,814": 5,919 under v37 becomes 5,814; 4,952 under v37 becomes 4,877; 1,651 under v37 becomes 1,626.
+- Line 530, "Beyond the default value, raising it to 3 gains 7,018": 7,148 under v37 becomes 7,018; 3,886 under v37 becomes 3,802; 7,167 under v37 becomes 6,973.
+- Line 531, "rests on three events": 6,100 under v37 becomes 5,900.
+- Line 532, "Switching the test off, which follows the caution of Walker et al.": 18,201 under v37 becomes 17,793; 18,065 under v37 becomes 17,657; 2.7 under v37 becomes 2.6.
+- Line 534, "Asking that SpliceAI be at most 0.1, as BP4 does": 351 under v37 becomes 381; 446 under v37 becomes 487; 550,307 under v37 becomes 551,505; 81.7% under v37 becomes 81.9%; 17,619 under v37 becomes 17,170.
+- Line 535, "We have not changed the classifier: the three variants": 18,000 under v37 becomes 17,000.
+- Line 536, "On the 116,078 variants that were not in the April set, BP7 as the ...": 5,850 under v37 becomes 5,744.
+- Line 539, "the veto itself avoids 28 reference-discordant benign calls relative ...": 27 under v37 becomes 28.
+- Line 540, "At a count of 1, BP1 is withheld in every gene": 1,718 under v37 becomes 1,737; 149 under v37 becomes 127; 1,867 under v37 becomes 1,864.
+- Line 541, "The rise is those 1,864 variants staying VUS": 149 under v37 becomes 127; 1,867 under v37 becomes 1,864.
+- Line 543, "With the variant's own record left out of the count as well (Section ...": 1,718 under v37 becomes 1,737; 149 under v37 becomes 127.
+- Line 544, "At a count of 2 without that change the figures are": 849 under v37 becomes 850; 17 under v37 becomes 16.
+- Line 546, "No step gives more than 111 calls per added reference-discordant ...": 132 under v37 becomes 111.
+- Line 547, "Both are among the 51 and were found in the set on which the count ...": 52 under v37 becomes 51; Both are among the 52 under v37 becomes Both are among the 51.
+- Line 551, "On the 746 genes that v38 reads as dominant-only the threshold is not ...": 50 under v37 becomes 746; a condition that does not hold under v37 becomes not flat.
+- Line 552, "Switching it off, so that an allele count of at least five alone ...": 27 under v37 becomes 54; 25 under v37 becomes 18; 27 under v37 becomes 36; 27 under v37 becomes 30.
+- Line 553, "From 3e-3 to the default each step adds benign-side calls and no error": 46 under v37 becomes 484; 70 under v37 becomes 1,065; no added error under v37 becomes 769; no added error under v37 becomes 498; no added error under v37 becomes 314.
+- Line 554, "The default 3e-4 recovers 439 pathogenic-side calls": 58,540 under v37 becomes 58,167; 58,610 under v37 becomes 58,606; 70 under v37 becomes 439; 187,612 under v37 becomes 199,864; 187,065 under v37 becomes 188,914; 547 under v37 becomes 10,950; 0 under v37 becomes 4.
+- Line 555, "With the threshold off, a floor of 20 alleles gives 39": 27 under v37 becomes 39; 27 under v37 becomes 29.
+- Line 561, "Variants with 0 or 1 point": 22,453 under v37 becomes 20,573; 97,445 under v37 becomes 98,099; 4.3% under v37 becomes 4.5%; 8.5% under v37 becomes 8.4%.
+- Line 562, "At 2 points the share is 10.7%": 10.9% under v37 becomes 10.7%; 21.8% under v37 becomes 21.9%; 26.6% under v37 becomes 25.7%.
+- Line 563, "At 5 points it jumps to 64.1%": 64.0% under v37 becomes 64.1%; 10,486 under v37 becomes 10,638; 16,391 under v37 becomes 16,595; 35.9% under v37 becomes 35.8%; 59.1% under v37 becomes 59.0%; 94.8% under v37 becomes 94.9%.
+- Line 565, "Moving the Likely pathogenic cutoff from 6 to 5 points": 73.7% under v37 becomes 73.9%; 10,524 under v37 becomes 10,676.
+- Line 566, "It does so at the price of 6,003 more ClinVar-VUS variants": 5,947 under v37 becomes 6,003; 19 under v37 becomes 17.
+- Line 567, "Agreement in direction rises by 4,673 calls": 4,577 under v37 becomes 4,673; 3,624 under v37 becomes 3,670.
+- Line 568, "A cutoff of 4 reaches 76.7% recall": 17,465 under v37 becomes 17,477; 139 under v37 becomes 129.
+- Line 569, "Raising the cutoff to 7 or 8 gives up": 3,256 under v37 becomes 3,253; 52.8% under v37 becomes 53.2%.
+- Line 573, "It does move exact agreement": 468,467 under v37 becomes 468,930; 431,555 under v37 becomes 431,727.
+- Line 574, "Of the 58,201 Likely pathogenic calls": 58,231 under v37 becomes 58,201; 46,716 under v37 becomes 47,053; 80% under v37 becomes 81%; 45,853 under v37 becomes 46,207; 41,234 under v37 becomes 41,549.
+- Line 601, "The default scheme has 431,727 exact calls": 431,555 under v37 becomes 431,727; 532,688 under v37 becomes 534,335; 65.7% under v37 becomes 66.4%; 25 under v37 becomes 24.
+- Line 602, "The 2015 table on both sides has 430,652": 430,460 under v37 becomes 430,652; 527,433 under v37 becomes 529,435; 56.7% under v37 becomes 57.1%; 65.7% under v37 becomes 66.4%; 5,255 under v37 becomes 4,900; 5.8 under v37 becomes 5.4; 11 under v37 becomes 10.
+- Line 604, "Scoring both sides on the point scale with Likely benign from -1": 65.7% under v37 becomes 66.4%; 76.9% under v37 becomes 77.0%; 409 under v37 becomes 399; 247 under v37 becomes 233.
+- Line 604, "Scoring both sides on the point scale with Likely benign from -1": 97.2% under v37 becomes 97.1%; 69.1% under v37 becomes 69.5%.
+- Line 605, "Tightening the floor to -2 gives 50.6% recall": 50.5% under v37 becomes 50.6%; 62 under v37 becomes 64; 37.0% under v37 becomes 38.4%; 26 under v37 becomes 30.
+- Line 606, "The table therefore does better than the floors of -2 and -3": 382 under v37 becomes 372; 11.2 under v37 becomes 10.6.
+- Line 607, "These three point scales are replays of the recorded criteria": 354,968 under v37 becomes 355,431; 368,627 under v37 becomes 368,978; 364,543 under v37 becomes 364,992; 481,524 under v37 becomes 482,795; 474,149 under v37 becomes 476,213; 451,352 under v37 becomes 455,335.
+- Line 614, "Removing it raises same-direction agreement by 684": 736 under v37 becomes 684.
 
 **Section 3.4.**
 
-- Line 625, "**Counting a variant's own ClinVar record would add 14.3 points": 0.77 under v37 becomes 0.78.
-- Line 625, "**Counting a variant's own ClinVar record would add 14.3 points of ...": 52 under v37 becomes 51; 78 under v37 becomes 79.
-- Line 627, "Letting it count, as the runs before v9 did": 13,447 under v37 becomes 13,452.
-- Line 627, "Letting it count, as the runs before v9 did": of the 52 under v37 becomes of the 51.
-- Line 628, "Removing the ClinVar protein and splice index": 5,165 under v37 becomes 5,242; 0.77 under v37 becomes 0.78.
-- Line 630, "The dependence on ClinVar-derived inputs is therefore small": 54 under v37 becomes 55; 27 under v37 becomes 28.
-- Line 630, "The dependence on ClinVar-derived inputs is therefore small in ...": 56 under v37 becomes 58; 78 under v37 becomes 79; 52 under v37 becomes 51.
-- Line 632, "The veto itself counts the variant's own record": 27 under v37 becomes 28.
-- Line 635, "Removed together with the veto's own-record count": 52 under v37 becomes 51; 63 under v37 becomes 62.
-- Line 639, "Removing SpliceAI lowers agreement in direction by 118,039": 116,479 under v37 becomes 118,039; 17.3 under v37 becomes 17.5; 65.7% under v37 becomes 66.4%; 24.6% under v37 becomes 24.7%.
-- Line 640, "Removing PhyloP lowers it by 84,759": 86,603 under v37 becomes 84,759; 12.9 under v37 becomes 12.6; 35.2% under v37 becomes 36.5%; 44,291 under v37 becomes 45,934; 6.6 under v37 becomes 6.8.
-- Line 641, "Without SpliceAI, 219,372 of the 268,243 BP4 firings are lost": 219,363 under v37 becomes 219,372; 268,234 under v37 becomes 268,243.
-- Line 643, "On the pathogenic side, removing the ClinGen gene-disease file": 43,174 under v37 becomes 44,819; 6.4 under v37 becomes 6.7; 48,546 under v37 becomes 48,541; 61,342 under v37 becomes 61,335.
-- Line 644, "Removing gnomAD gene constraint takes out PP2 and BP1 entirely": 1,908 under v37 becomes 1,936.
-- Line 645, "Removing REVEL, the source specific to missense variants": 0.77 under v37 becomes 0.88; 31 under v37 becomes 52.
-- Line 649, "BP7 is a criterion of high yield and high cost": 86,603 under v37 becomes 84,759.
-- Line 653, "Four safeguards remove errors and cost no calls": 4,163 under v37 becomes 4,240; 27 under v37 becomes 28; 147 under v37 becomes 146; 13 under v37 becomes 12.
-- Line 655, "Three more remove errors at a price in calls": 387 under v37 becomes 373; 2 under v37 becomes 1; 194 under v37 becomes 373; 2,286 under v37 becomes 1,898; 286 under v37 becomes 237.
-- Line 656, "Their prices are all below the 858 calls": 970 under v37 becomes 858.
-- Line 659, "The gnomAD region flags": 3,198 under v37 becomes 3,374; 736 under v37 becomes 684.
-- Line 662, "Two opt-in settings change little": 712 under v37 becomes 715.
-- Line 665, "PM2 at Moderate, as in the 2015 standards": 11.0 under v37 becomes 11.1; 10,280 under v37 becomes 10,432; 4,475 under v37 becomes 4,567; 320 under v37 becomes 326.
-- Line 666, "The 2015 table on both sides loses 4,900 calls": 5,255 under v37 becomes 4,900; 5.8 under v37 becomes 5.4; 11 under v37 becomes 10.
+- Line 622, "**Counting a variant's own ClinVar record would add 14.3 points": 0.77 under v37 becomes 0.78.
+- Line 622, "**Counting a variant's own ClinVar record would add 14.3 points of ...": 52 under v37 becomes 51; 78 under v37 becomes 79.
+- Line 624, "Letting it count, as the runs before v9 did": 13,447 under v37 becomes 13,452.
+- Line 624, "Letting it count, as the runs before v9 did": of the 52 under v37 becomes of the 51.
+- Line 625, "Removing the ClinVar protein and splice index": 5,165 under v37 becomes 5,242; 0.77 under v37 becomes 0.78.
+- Line 627, "The dependence on ClinVar-derived inputs is therefore small": 54 under v37 becomes 55; 27 under v37 becomes 28.
+- Line 627, "The dependence on ClinVar-derived inputs is therefore small in ...": 56 under v37 becomes 58; 78 under v37 becomes 79; 52 under v37 becomes 51.
+- Line 629, "The veto itself counts the variant's own record": 27 under v37 becomes 28.
+- Line 632, "Removed together with the veto's own-record count": 52 under v37 becomes 51; 63 under v37 becomes 62.
+- Line 636, "Removing SpliceAI lowers agreement in direction by 118,039": 116,479 under v37 becomes 118,039; 17.3 under v37 becomes 17.5; 65.7% under v37 becomes 66.4%; 24.6% under v37 becomes 24.7%.
+- Line 637, "Removing PhyloP lowers it by 84,759": 86,603 under v37 becomes 84,759; 12.9 under v37 becomes 12.6; 35.2% under v37 becomes 36.5%; 44,291 under v37 becomes 45,934; 6.6 under v37 becomes 6.8.
+- Line 638, "Without SpliceAI, 219,372 of the 268,243 BP4 firings are lost": 219,363 under v37 becomes 219,372; 268,234 under v37 becomes 268,243.
+- Line 640, "On the pathogenic side, removing the ClinGen gene-disease file": 43,174 under v37 becomes 44,819; 6.4 under v37 becomes 6.7; 48,546 under v37 becomes 48,541; 61,342 under v37 becomes 61,335.
+- Line 641, "Removing gnomAD gene constraint takes out PP2 and BP1 entirely": 1,908 under v37 becomes 1,936.
+- Line 642, "Removing REVEL, the source specific to missense variants": 0.77 under v37 becomes 0.88; 31 under v37 becomes 52.
+- Line 646, "BP7 is a criterion of high yield and high cost": 86,603 under v37 becomes 84,759.
+- Line 650, "Four safeguards remove errors and cost no calls": 4,163 under v37 becomes 4,240; 27 under v37 becomes 28; 147 under v37 becomes 146; 13 under v37 becomes 12.
+- Line 652, "Three more remove errors at a price in calls": 387 under v37 becomes 373; 2 under v37 becomes 1; 194 under v37 becomes 373; 2,286 under v37 becomes 1,898; 286 under v37 becomes 237.
+- Line 653, "Their prices are all below the 858 calls": 970 under v37 becomes 858.
+- Line 656, "The gnomAD region flags": 3,198 under v37 becomes 3,374; 736 under v37 becomes 684.
+- Line 659, "Two opt-in settings change little": 712 under v37 becomes 715.
+- Line 662, "PM2 at Moderate, as in the 2015 standards": 11.0 under v37 becomes 11.1; 10,280 under v37 becomes 10,432; 4,475 under v37 becomes 4,567; 320 under v37 becomes 326.
+- Line 663, "The 2015 table on both sides loses 4,900 calls": 5,255 under v37 becomes 4,900; 5.8 under v37 becomes 5.4; 11 under v37 becomes 10.
 
 **Section 3.5.**
 
-- Line 671, "On the benchmark snapshot, v38 reproduces ClinVar's class for": 431,555 under v37 becomes 431,727; 532,688 under v37 becomes 534,335; 79.1% under v37 becomes 79.3%; 78.4 under v37 becomes 78.6; 79.8 under v37 becomes 80.0.
-- Line 695, "Of the 139,325 records that are not in the same direction": 140,972 under v37 becomes 139,325; 132,253 under v37 becomes 130,409; 93.8% under v37 becomes 93.6%; 8,285 under v37 becomes 8,483; 5.9% under v37 becomes 6.1%; 52 under v37 becomes 51.
-- Line 696, "The opposite-direction rate is 0.0076% of records": 0.0077% under v37 becomes 0.0076%; 0.0055 under v37 becomes 0.0054; 0.0102 under v37 becomes 0.0100; 25 under v37 becomes 24; 0.009% under v37 becomes 0.008%.
-- Line 697, "A further 102,608 records (15.2%)": 101,133 under v37 becomes 102,608; 15.0% under v37 becomes 15.2%; 98,699 under v37 becomes 100,135; 48,302 under v37 becomes 48,278; 50,397 under v37 becomes 51,857.
-- Line 699, "Of the 62,240 variants called pathogenic-side": 62,249 under v37 becomes 62,240; 58,610 under v37 becomes 58,606; 191,763 under v37 becomes 193,814; 97.6% under v37 becomes 97.5%; 187,065 under v37 becomes 188,914; 96.7 under v37 becomes 96.6; 98.3 under v37 becomes 98.2.
-- Line 700, "Recall is much lower than precision on both sides": 65.7% under v37 becomes 66.4%; 64.2 under v37 becomes 64.9; 67.4 under v37 becomes 68.0; 97.2% under v37 becomes 97.1%; 96.6 under v37 becomes 96.5.
-- Line 702, "Among the 1,273 genes with at least ten": 232 under v37 becomes 233.
-- Line 706, "Calling a variant benign-side when its population-maximum allele ...": about 19 points less under v37 becomes about 20 points less.
-- Line 707, "Adding a pathogenic-side call for a stop-gained": 867 under v37 becomes 865; 6.6 under v37 becomes 6.3; 1,819 under v37 becomes 1,817; 54 under v37 becomes 52; 35 under v37 becomes 36.
-- Line 708, "Without the frequency rule, the last two rules give": 1.2 points above v37 under v37 becomes 1.0 points above v38; 1,042 under v37 becomes 1,040; 54 under v37 becomes 52; no threshold of the first rule brings the three rules below 1042 contradictions under v37 becomes no threshold of the first rule brings the three rules below 1040 contradictions.
-- Line 711, "The rules are not worse than v38 at everything": 54 under v37 becomes 52; 25 under v37 becomes 24; 9,967 under v37 becomes 9,970; 4,218 under v37 becomes 4,221; 43 under v37 becomes 41; 54 under v37 becomes 52.
-- Line 713, "The tiers of v38 are informative in the same way, with their ...": 4,018 under v37 becomes 4,039; 0.092% under v37 becomes 0.091%; 67,700 under v37 becomes 67,733; 25 under v37 becomes 24; 58,231 under v37 becomes 58,201; 0.043% under v37 becomes 0.041%; 124,063 under v37 becomes 126,081; 0.022% under v37 becomes 0.021%.
-- Line 715, "Its 4,039 Pathogenic calls are ClinVar pathogenic-side": 4,018 under v37 becomes 4,039; 3,998 under v37 becomes 4,019; 67,700 under v37 becomes 67,733; 67,455 under v37 becomes 67,408; 99.6% under v37 becomes 99.5%; 245 under v37 becomes 325; 25 under v37 becomes 24.
-- Line 718, "The 3-star records, which are expert-panel classifications": 37.5% under v37 becomes 38.7%; 66.3% under v37 becomes 66.9%; 62.4% under v37 becomes 61.2%.
-- Line 723, "Variants called pathogenic-side are almost all null variants": 54,498 under v37 becomes 54,494.
-- Line 723, "Variants called pathogenic-side are almost all null variants": 58,610 under v37 becomes 58,606.
-- Line 724, "Among ClinVar's pathogenic-side variants, 88.4%": 0.3% under v37 becomes 0.4%.
-- Line 725, "Among ClinVar's benign-side variants the picture is the reverse": 82.1% under v37 becomes 82.3%; 70.9% under v37 becomes 71.2%; 64.7% under v37 becomes 66.3%; 49.8% under v37 becomes 51.8%.
-- Line 727, "**Where the 35,179 pathogenic-side variants called VUS come from": 35,175 under v37 becomes 35,179.
-- Line 729, "By the evidence that was met, 10,694": 10,542 under v37 becomes 10,694; 30.0% under v37 becomes 30.4%; 10,455 under v37 becomes 10,391; 29.7% under v37 becomes 29.5%; 14,165 under v37 becomes 14,077; 13 under v37 becomes 17.
-- Line 731, "By consequence, 18,992": 9,129 under v37 becomes 9,136.
-- Line 732, "The concentration in genes is high": 2,715 under v37 becomes 2,716.
-- Line 735, "Of the 52,584 ClinVar pathogenic-side stop-gained and frameshift ...": 52,581 under v37 becomes 52,584; 47,397 under v37 becomes 47,400.
-- Line 736, "Those 5,184 are 57% of the 9,136": 9,129 under v37 becomes 9,136.
-- Line 756, "It does change the criteria of 6 of them under v38": 0 under v37 becomes 6; 0 under v37 becomes 6; 0.0e-5 under v37 becomes 4.2e-5; 0.0e-5 under v37 becomes 6.1e-5.
-- Line 761, "The run adds 852 correct pathogenic-side calls": a condition that does not hold under v37 becomes 1 reference-discordant pathogenic call, a frameshift variant of ALPK1 that ClinVar calls Benign, at an allele frequency of 2.3e-4.
-- Line 765, "With the complete ClinGen file as well": 2,053 under v37 becomes 2,068; 5 under v37 becomes 4; 411 under v37 becomes 517.
-- Line 768, "The other 3,952 truncating variants": 3,945 under v37 becomes 3,952; 3,062 under v37 becomes 3,066; 463 under v37 becomes 462; 4 at full strength under v37 becomes 8 at full strength.
-- Line 770, "**Where the 95,230 benign-side variants called VUS come from": 97,078 under v37 becomes 95,230.
-- Line 771, "Of the ClinVar benign-side variants that are called VUS, 24,771": 24,732 under v37 becomes 24,771; 25.5% under v37 becomes 26.0%; 22,994 under v37 becomes 23,520; 23.7% under v37 becomes 24.7%; 18,789 under v37 becomes 17,098; 19.4% under v37 becomes 18.0%; 10,424 under v37 becomes 10,148; 2,943 under v37 becomes 2,974; 3.0% under v37 becomes 3.1%.
-- Line 773, "At least 48,291 of these variants (51%) carry PM2": 47,726 under v37 becomes 48,291; 49% under v37 becomes 51%; 18,789 under v37 becomes 17,098; 2,943 under v37 becomes 2,974; 10,424 under v37 becomes 10,148.
-- Line 775, "**The 3,610 and 4,873 variants where v38 commits": 3,614 under v37 becomes 3,610; 4,671 under v37 becomes 4,873.
-- Line 776, "The pathogenic-side calls are PP2 with PM2": 1,195 under v37 becomes 1,198; 1,136 under v37 becomes 1,134; 164 under v37 becomes 159.
-- Line 777, "The benign-side calls are chiefly BP1 with BP4": 3,679 under v37 becomes 3,675; 4,671 under v37 becomes 4,873; 4,671 under v37 becomes 4,873.
-- Line 778, "Each pathogenic-side call stands on 6 or more points": 4,671 under v37 becomes 4,873.
+- Line 668, "On the benchmark snapshot, v38 reproduces ClinVar's class for": 431,555 under v37 becomes 431,727; 532,688 under v37 becomes 534,335; 79.1% under v37 becomes 79.3%; 78.4 under v37 becomes 78.6; 79.8 under v37 becomes 80.0.
+- Line 692, "Of the 139,325 records that are not in the same direction": 140,972 under v37 becomes 139,325; 132,253 under v37 becomes 130,409; 93.8% under v37 becomes 93.6%; 8,285 under v37 becomes 8,483; 5.9% under v37 becomes 6.1%; 52 under v37 becomes 51.
+- Line 693, "The opposite-direction rate is 0.0076% of records": 0.0077% under v37 becomes 0.0076%; 0.0055 under v37 becomes 0.0054; 0.0102 under v37 becomes 0.0100; 25 under v37 becomes 24; 0.009% under v37 becomes 0.008%.
+- Line 694, "A further 102,608 records (15.2%)": 101,133 under v37 becomes 102,608; 15.0% under v37 becomes 15.2%; 98,699 under v37 becomes 100,135; 48,302 under v37 becomes 48,278; 50,397 under v37 becomes 51,857.
+- Line 696, "Of the 62,240 variants called pathogenic-side": 62,249 under v37 becomes 62,240; 58,610 under v37 becomes 58,606; 191,763 under v37 becomes 193,814; 97.6% under v37 becomes 97.5%; 187,065 under v37 becomes 188,914; 96.7 under v37 becomes 96.6; 98.3 under v37 becomes 98.2.
+- Line 697, "Recall is much lower than precision on both sides": 65.7% under v37 becomes 66.4%; 64.2 under v37 becomes 64.9; 67.4 under v37 becomes 68.0; 97.2% under v37 becomes 97.1%; 96.6 under v37 becomes 96.5.
+- Line 699, "Among the 1,273 genes with at least ten": 232 under v37 becomes 233.
+- Line 703, "Calling a variant benign-side when its population-maximum allele ...": about 19 points less under v37 becomes about 20 points less.
+- Line 704, "Adding a pathogenic-side call for a stop-gained": 867 under v37 becomes 865; 6.6 under v37 becomes 6.3; 1,819 under v37 becomes 1,817; 54 under v37 becomes 52; 35 under v37 becomes 36.
+- Line 705, "Without the frequency rule, the last two rules give": 1.2 points above v37 under v37 becomes 1.0 points above v38; 1,042 under v37 becomes 1,040; 54 under v37 becomes 52; no threshold of the first rule brings the three rules below 1042 contradictions under v37 becomes no threshold of the first rule brings the three rules below 1040 contradictions.
+- Line 708, "The rules are not worse than v38 at everything": 54 under v37 becomes 52; 25 under v37 becomes 24; 9,967 under v37 becomes 9,970; 4,218 under v37 becomes 4,221; 43 under v37 becomes 41; 54 under v37 becomes 52.
+- Line 710, "The tiers of v38 are informative in the same way, with their ...": 4,018 under v37 becomes 4,039; 0.092% under v37 becomes 0.091%; 67,700 under v37 becomes 67,733; 25 under v37 becomes 24; 58,231 under v37 becomes 58,201; 0.043% under v37 becomes 0.041%; 124,063 under v37 becomes 126,081; 0.022% under v37 becomes 0.021%.
+- Line 712, "Its 4,039 Pathogenic calls are ClinVar pathogenic-side": 4,018 under v37 becomes 4,039; 3,998 under v37 becomes 4,019; 67,700 under v37 becomes 67,733; 67,455 under v37 becomes 67,408; 99.6% under v37 becomes 99.5%; 245 under v37 becomes 325; 25 under v37 becomes 24.
+- Line 715, "The 3-star records, which are expert-panel classifications": 37.5% under v37 becomes 38.7%; 66.3% under v37 becomes 66.9%; 62.4% under v37 becomes 61.2%.
+- Line 720, "Variants called pathogenic-side are almost all null variants": 54,498 under v37 becomes 54,494.
+- Line 720, "Variants called pathogenic-side are almost all null variants": 58,610 under v37 becomes 58,606.
+- Line 721, "Among ClinVar's pathogenic-side variants, 88.4%": 0.3% under v37 becomes 0.4%.
+- Line 722, "Among ClinVar's benign-side variants the picture is the reverse": 82.1% under v37 becomes 82.3%; 70.9% under v37 becomes 71.2%; 64.7% under v37 becomes 66.3%; 49.8% under v37 becomes 51.8%.
+- Line 724, "**Where the 35,179 pathogenic-side variants called VUS come from": 35,175 under v37 becomes 35,179.
+- Line 726, "By the evidence that was met, 10,694": 10,542 under v37 becomes 10,694; 30.0% under v37 becomes 30.4%; 10,455 under v37 becomes 10,391; 29.7% under v37 becomes 29.5%; 14,165 under v37 becomes 14,077; 13 under v37 becomes 17.
+- Line 728, "By consequence, 18,992": 9,129 under v37 becomes 9,136.
+- Line 729, "The concentration in genes is high": 2,715 under v37 becomes 2,716.
+- Line 732, "Of the 52,584 ClinVar pathogenic-side stop-gained and frameshift ...": 52,581 under v37 becomes 52,584; 47,397 under v37 becomes 47,400.
+- Line 733, "Those 5,184 are 57% of the 9,136": 9,129 under v37 becomes 9,136.
+- Line 753, "It does change the criteria of 6 of them under v38": 0 under v37 becomes 6; 0 under v37 becomes 6; 0.0e-5 under v37 becomes 4.2e-5; 0.0e-5 under v37 becomes 6.1e-5.
+- Line 758, "The run adds 852 correct pathogenic-side calls": a condition that does not hold under v37 becomes 1 reference-discordant pathogenic call, a frameshift variant of ALPK1 that ClinVar calls Benign, at an allele frequency of 2.3e-4.
+- Line 762, "With the complete ClinGen file as well": 2,053 under v37 becomes 2,068; 5 under v37 becomes 4; 411 under v37 becomes 517.
+- Line 765, "The other 3,952 truncating variants": 3,945 under v37 becomes 3,952; 3,062 under v37 becomes 3,066; 463 under v37 becomes 462; 4 at full strength under v37 becomes 8 at full strength.
+- Line 767, "**Where the 95,230 benign-side variants called VUS come from": 97,078 under v37 becomes 95,230.
+- Line 768, "Of the ClinVar benign-side variants that are called VUS, 24,771": 24,732 under v37 becomes 24,771; 25.5% under v37 becomes 26.0%; 22,994 under v37 becomes 23,520; 23.7% under v37 becomes 24.7%; 18,789 under v37 becomes 17,098; 19.4% under v37 becomes 18.0%; 10,424 under v37 becomes 10,148; 2,943 under v37 becomes 2,974; 3.0% under v37 becomes 3.1%.
+- Line 770, "At least 48,291 of these variants (51%) carry PM2": 47,726 under v37 becomes 48,291; 49% under v37 becomes 51%; 18,789 under v37 becomes 17,098; 2,943 under v37 becomes 2,974; 10,424 under v37 becomes 10,148.
+- Line 772, "**The 3,610 and 4,873 variants where v38 commits": 3,614 under v37 becomes 3,610; 4,671 under v37 becomes 4,873.
+- Line 773, "The pathogenic-side calls are PP2 with PM2": 1,195 under v37 becomes 1,198; 1,136 under v37 becomes 1,134; 164 under v37 becomes 159.
+- Line 774, "The benign-side calls are chiefly BP1 with BP4": 3,679 under v37 becomes 3,675; 4,671 under v37 becomes 4,873; 4,671 under v37 becomes 4,873.
+- Line 775, "Each pathogenic-side call stands on 6 or more points": 4,671 under v37 becomes 4,873.
 
 **Section 3.6.**
 
-- Line 782, "### 3.6 The 51 opposite-direction calls that remain": 52 under v37 becomes 51.
-- Line 784, "The last review round (v26) held 64 opposite-direction calls": 49 under v37 becomes 48.
-- Line 784, "The last review round (v26) held 64 opposite-direction calls, and 48 ...": 49 under v37 becomes 48; 52 under v37 becomes 51.
-- Line 786, "The 16 that were repaired all became VUS": 15 under v37 becomes 16; 13 under v37 becomes 14.
-- Line 787, "Each of the 48 had already been in the table of an earlier round": 30 under v37 becomes 29.
-- Line 787, "Each of the 48 had already been in the table of an earlier round": 49 under v37 becomes 48.
-- Line 789, "**Table 6. The 51 opposite-direction calls of v38": 52 under v37 becomes 51.
-- Line 790, "Supplementary Table S8 lists the 51 calls with their criteria": 52 under v37 becomes 51.
-- Line 806, "For 29 of the 48 (60%)": 30 under v37 becomes 29; 61% under v37 becomes 60%.
-- Line 806, "For 29 of the 48 (60%) the reviewer supported ClinVar's call": 49 under v37 becomes 48; 17 under v37 becomes 16; 25 under v37 becomes 24.
-- Line 807, "So for 29 of the 48 the reviewer judged ClinVar's call the better": 30 under v37 becomes 29.
-- Line 808, "Of the 29 rulings for ClinVar, 10 follow from a class": 30 under v37 becomes 29; 11 under v37 becomes 10.
-- Line 809, "Five of the 51 (10%) are no longer in the 2-star+ set": 52 under v37 becomes 51.
-- Line 810, "The 51 fall into five groups": 52 under v37 becomes 51.
-- Line 812, "**PVS1 on a variant ClinVar calls benign or likely benign (": (22) under v37 becomes (21).
-- Line 812, "**PVS1 on a variant ClinVar calls benign or likely benign (21)": 22 under v37 becomes 21.
-- Line 813, "Ten of these are a lone PVS1 and 11 are PVS1 with PM2": a condition that does not hold under v37 becomes Ten.
-- Line 814, "Five are seen in 611 to 4,892 gnomAD alleles": ?, 611, 4,892, 5.6e-4, 3.3e-3, EDN3, FMR1, KDM2B, PHKB, PIEZO1, RAD21, 0.23%, 1.5% under v37 becomes Five, 611, 4,892, 5.6e-4, 3.3e-3, EDN3, FMR1, KDM2B, PHKB, PIEZO1, 0.37%, 1.5%.
-- Line 815, "BS1, which tests the filtering allele frequency against 5e-3": 9 under v37 becomes 15; a condition that does not hold under v37 becomes the reviewer supported ClinVar on all five.
-- Line 834, "A disease-specific frequency threshold could act on about seven of ...": a condition that does not hold under v37 becomes seven; 49 under v37 becomes 48; six under v37 becomes five.
+- Line 779, "### 3.6 The 51 opposite-direction calls that remain": 52 under v37 becomes 51.
+- Line 781, "The last review round (v26) held 64 opposite-direction calls": 49 under v37 becomes 48.
+- Line 781, "The last review round (v26) held 64 opposite-direction calls, and 48 ...": 49 under v37 becomes 48; 52 under v37 becomes 51.
+- Line 783, "The 16 that were repaired all became VUS": 15 under v37 becomes 16; 13 under v37 becomes 14.
+- Line 784, "Each of the 48 had already been in the table of an earlier round": 30 under v37 becomes 29.
+- Line 784, "Each of the 48 had already been in the table of an earlier round": 49 under v37 becomes 48.
+- Line 786, "**Table 6. The 51 opposite-direction calls of v38": 52 under v37 becomes 51.
+- Line 787, "Supplementary Table S8 lists the 51 calls with their criteria": 52 under v37 becomes 51.
+- Line 803, "For 29 of the 48 (60%)": 30 under v37 becomes 29; 61% under v37 becomes 60%.
+- Line 803, "For 29 of the 48 (60%) the reviewer supported ClinVar's call": 49 under v37 becomes 48; 17 under v37 becomes 16; 25 under v37 becomes 24.
+- Line 804, "So for 29 of the 48 the reviewer judged ClinVar's call the better": 30 under v37 becomes 29.
+- Line 805, "Of the 29 rulings for ClinVar, 10 follow from a class": 30 under v37 becomes 29; 11 under v37 becomes 10.
+- Line 806, "Five of the 51 (10%) are no longer in the 2-star+ set": 52 under v37 becomes 51.
+- Line 807, "The 51 fall into five groups": 52 under v37 becomes 51.
+- Line 809, "**PVS1 on a variant ClinVar calls benign or likely benign (": (22) under v37 becomes (21).
+- Line 809, "**PVS1 on a variant ClinVar calls benign or likely benign (21)": 22 under v37 becomes 21.
+- Line 810, "Ten of these are a lone PVS1 and 11 are PVS1 with PM2": a condition that does not hold under v37 becomes Ten.
+- Line 811, "Five are seen in 611 to 4,892 gnomAD alleles": ?, 611, 4,892, 5.6e-4, 3.3e-3, EDN3, FMR1, KDM2B, PHKB, PIEZO1, RAD21, 0.23%, 1.5% under v37 becomes Five, 611, 4,892, 5.6e-4, 3.3e-3, EDN3, FMR1, KDM2B, PHKB, PIEZO1, 0.37%, 1.5%.
+- Line 812, "BS1, which tests the filtering allele frequency against 5e-3": 9 under v37 becomes 15; a condition that does not hold under v37 becomes the reviewer supported ClinVar on all five.
+- Line 831, "A disease-specific frequency threshold could act on about seven of ...": a condition that does not hold under v37 becomes seven; 49 under v37 becomes 48; six under v37 becomes five.
 
 **Section 3.7.**
 
-- Line 840, "A further 8,603 of the April variants have left the set": 52 under v37 becomes 51.
-- Line 862, "**On variants that were never in the benchmark, agreement in ...": 72.3% under v37 becomes 72.6%; 79.1% under v37 becomes 79.3%; 2.2 under v37 becomes 2.3.
-- Line 863, "Across all 781,135 records of the release": 78.1% under v37 becomes 78.3%; 69 under v37 becomes 68; 39 under v37 becomes 38.
-- Line 863, "Across all 781,135 records of the release, agreement in direction is": 79.1% under v37 becomes 79.3%.
-- Line 864, "On the 662,668 variants whose class did not change": 79.2% under v37 becomes 79.4%; 47 under v37 becomes 46.
-- Line 865, "On the 116,078 new variants agreement in direction is 72.6%": 72.3% under v37 becomes 72.6%; 97.2% under v37 becomes 97.1%; 59.5% under v37 becomes 60.0%; 97.2% under v37 becomes 97.1%; 65.7% under v37 becomes 66.4%.
-- Line 866, "The new variants are a different mix of ClinVar classes": 76.1% under v37 becomes 76.4%; 3.0 under v37 becomes 2.9; 6.8 under v37 becomes 6.7; 3.9 under v37 becomes 3.8; 2.9 under v37 becomes 3.0.
-- Line 868, "New Benign variants are much rarer than the old ones": 74.0% under v37 becomes 74.9%; 56.9% under v37 becomes 58.3%; 55.6% under v37 becomes 56.0%; 60.0% under v37 becomes 60.4%.
-- Line 869, "At the April recall of each of nine bands of population-maximum ...": 60.2% under v37 becomes 63.0%; 81% under v37 becomes 72%; 13.8 under v37 becomes 11.9; 17.2 under v37 becomes 16.6; 59.9% under v37 becomes 60.4%.
-- Line 870, "We made the split into nine bands after a split into six": 65% under v37 becomes 57%.
-- Line 871, "What remains is spread over the bands": 1.9 under v37 becomes 1.8; 3.3 under v37 becomes 4.7; a condition that does not hold under v37 becomes 39%; 1.1 under v37 becomes 1.0.
-- Line 872, "The two at 2% or more have the widest gaps between the April recall ...": 478 under v37 becomes 479; 63% under v37 becomes 64%; 275 under v37 becomes 274.
-- Line 873, "Annotating those 274 again with the details of each criterion shows ...": 275 under v37 becomes 274.
-- Line 875, "For 20 (7%) the criteria were evaluated": 22 under v37 becomes 20; 8% under v37 becomes 7%.
-- Line 876, "Another 26 met BS1 and stay at VUS": 25 under v37 becomes 26; 16 under v37 becomes 17.
-- Line 882, "Among the new variants it is 0.017%": 2.2 under v37 becomes 2.3; 0.0077% under v37 becomes 0.0076%; 3.7 under v37 becomes 3.8.
-- Line 883, "The mix of ClinVar class and consequence does not explain the excess": 7.4 under v37 becomes 7.2; 7.9 under v37 becomes 7.5; 7.9 under v37 becomes 7.5; 8.9 under v37 becomes 8.6.
-- Line 890, "BP7 as the splicing recommendation describes it adds 5,744 calls in ...": 5,850 under v37 becomes 5,744; 5.0% under v37 becomes 4.9%; 2.6% under v37 becomes 2.5%; 17,619 under v37 becomes 17,170.
-- Line 891, "The completed ClinGen file adds 52 calls in direction": 48 under v37 becomes 52; 834 under v37 becomes 849; 2 under v37 becomes 1; 331 under v37 becomes 335; 2,053 under v37 becomes 2,068; 5 under v37 becomes 4; 166 under v37 becomes 168; 411 under v37 becomes 517.
-- Line 894, "BP1's veto at a count of 1 gives 137 more calls in direction": 134 under v37 becomes 137; 41 under v37 becomes 38; 1,718 under v37 becomes 1,737.
-- Line 902, "Of the 8,483 April variants where the classifier committed against a ...": 8,285 under v37 becomes 8,483.
-- Line 903, "The 46 residual calls that are still in the set are unchanged in class": 47 under v37 becomes 46.
+- Line 837, "A further 8,603 of the April variants have left the set": 52 under v37 becomes 51.
+- Line 859, "**On variants that were never in the benchmark, agreement in ...": 72.3% under v37 becomes 72.6%; 79.1% under v37 becomes 79.3%; 2.2 under v37 becomes 2.3.
+- Line 860, "Across all 781,135 records of the release": 78.1% under v37 becomes 78.3%; 69 under v37 becomes 68; 39 under v37 becomes 38.
+- Line 860, "Across all 781,135 records of the release, agreement in direction is": 79.1% under v37 becomes 79.3%.
+- Line 861, "On the 662,668 variants whose class did not change": 79.2% under v37 becomes 79.4%; 47 under v37 becomes 46.
+- Line 862, "On the 116,078 new variants agreement in direction is 72.6%": 72.3% under v37 becomes 72.6%; 97.2% under v37 becomes 97.1%; 59.5% under v37 becomes 60.0%; 97.2% under v37 becomes 97.1%; 65.7% under v37 becomes 66.4%.
+- Line 863, "The new variants are a different mix of ClinVar classes": 76.1% under v37 becomes 76.4%; 3.0 under v37 becomes 2.9; 6.8 under v37 becomes 6.7; 3.9 under v37 becomes 3.8; 2.9 under v37 becomes 3.0.
+- Line 865, "New Benign variants are much rarer than the old ones": 74.0% under v37 becomes 74.9%; 56.9% under v37 becomes 58.3%; 55.6% under v37 becomes 56.0%; 60.0% under v37 becomes 60.4%.
+- Line 866, "At the April recall of each of nine bands of population-maximum ...": 60.2% under v37 becomes 63.0%; 81% under v37 becomes 72%; 13.8 under v37 becomes 11.9; 17.2 under v37 becomes 16.6; 59.9% under v37 becomes 60.4%.
+- Line 867, "We made the split into nine bands after a split into six": 65% under v37 becomes 57%.
+- Line 868, "What remains is spread over the bands": 1.9 under v37 becomes 1.8; 3.3 under v37 becomes 4.7; a condition that does not hold under v37 becomes 39%; 1.1 under v37 becomes 1.0.
+- Line 869, "The two at 2% or more have the widest gaps between the April recall ...": 478 under v37 becomes 479; 63% under v37 becomes 64%; 275 under v37 becomes 274.
+- Line 870, "Annotating those 274 again with the details of each criterion shows ...": 275 under v37 becomes 274.
+- Line 872, "For 20 (7%) the criteria were evaluated": 22 under v37 becomes 20; 8% under v37 becomes 7%.
+- Line 873, "Another 26 met BS1 and stay at VUS": 25 under v37 becomes 26; 16 under v37 becomes 17.
+- Line 879, "Among the new variants it is 0.017%": 2.2 under v37 becomes 2.3; 0.0077% under v37 becomes 0.0076%; 3.7 under v37 becomes 3.8.
+- Line 880, "The mix of ClinVar class and consequence does not explain the excess": 7.4 under v37 becomes 7.2; 7.9 under v37 becomes 7.5; 7.9 under v37 becomes 7.5; 8.9 under v37 becomes 8.6.
+- Line 887, "BP7 as the splicing recommendation describes it adds 5,744 calls in ...": 5,850 under v37 becomes 5,744; 5.0% under v37 becomes 4.9%; 2.6% under v37 becomes 2.5%; 17,619 under v37 becomes 17,170.
+- Line 888, "The completed ClinGen file adds 52 calls in direction": 48 under v37 becomes 52; 834 under v37 becomes 849; 2 under v37 becomes 1; 331 under v37 becomes 335; 2,053 under v37 becomes 2,068; 5 under v37 becomes 4; 166 under v37 becomes 168; 411 under v37 becomes 517.
+- Line 891, "BP1's veto at a count of 1 gives 137 more calls in direction": 134 under v37 becomes 137; 41 under v37 becomes 38; 1,718 under v37 becomes 1,737.
+- Line 899, "Of the 8,483 April variants where the classifier committed against a ...": 8,285 under v37 becomes 8,483.
+- Line 900, "The 46 residual calls that are still in the set are unchanged in class": 47 under v37 becomes 46.
 
 **Section 4.**
 
-- Line 1149, "Scoring both sides by points raises benign-side recall and adds ...": 11 under v37 becomes 10.
-- Line 1155, "Counting one gnomAD observation as two benign criteria adds": 1,819 under v37 becomes 1,817; 52 under v37 becomes 51.
-- Line 1156, "With these choices v38 agrees with ClinVar's class for": 52 under v37 becomes 51; 0.0077% under v37 becomes 0.0076%.
-- Line 1157, "On the 116,078 variants that were not in that set, agreement in ...": 72.3% under v37 becomes 72.6%; 2.2 under v37 becomes 2.3; 3.7 under v37 becomes 3.8.
+- Line 1089, "Scoring both sides by points raises benign-side recall and adds ...": 11 under v37 becomes 10.
+- Line 1095, "Counting one gnomAD observation as two benign criteria adds": 1,819 under v37 becomes 1,817; 52 under v37 becomes 51.
+- Line 1096, "With these choices v38 agrees with ClinVar's class for": 52 under v37 becomes 51; 0.0077% under v37 becomes 0.0076%.
+- Line 1097, "On the 116,078 variants that were not in that set, agreement in ...": 72.3% under v37 becomes 72.6%; 2.2 under v37 becomes 2.3; 3.7 under v37 becomes 3.8.
 
 **Section 4.1.**
 
-- Line 1171, "A project that watched only agreement would have concluded at v13": 35 under v37 becomes 36.
-- Line 1182, "The PM2 threshold moved pathogenic-side recall by 19 points": 17.9 under v37 becomes 6.1.
-- Line 1182, "The PM2 threshold moved pathogenic-side recall by 19 points when it ...": 17.9 under v37 becomes 6.1.
-- Line 1190, "Removing every ClinVar-derived input costs 0.78 points": 0.77 under v37 becomes 0.78; 29 under v37 becomes 31; 56 under v37 becomes 58.
-- Line 1190, "Removing every ClinVar-derived input costs 0.78 points of agreement": 27 under v37 becomes 28.
-- Line 1190, "takes the opposite-direction calls from 51 to 79": 52 under v37 becomes 51; 78 under v37 becomes 79.
-- Line 1192, "It also counts the variant's own record, and 3 of the 28 rest on it": 27 under v37 becomes 28; 63 under v37 becomes 62.
-- Line 1192, "It also counts the variant's own record, and 3 of the 28 rest on it": 52 under v37 becomes 51; 27 under v37 becomes 28; 63 under v37 becomes 62.
+- Line 1111, "A project that watched only agreement would have concluded at v13": 35 under v37 becomes 36.
+- Line 1122, "The PM2 threshold moved pathogenic-side recall by 19 points": 17.9 under v37 becomes 6.1.
+- Line 1122, "The PM2 threshold moved pathogenic-side recall by 19 points when it ...": 17.9 under v37 becomes 6.1.
+- Line 1130, "Removing every ClinVar-derived input costs 0.78 points": 0.77 under v37 becomes 0.78; 29 under v37 becomes 31; 56 under v37 becomes 58.
+- Line 1130, "Removing every ClinVar-derived input costs 0.78 points of agreement": 27 under v37 becomes 28.
+- Line 1130, "takes the opposite-direction calls from 51 to 79": 52 under v37 becomes 51; 78 under v37 becomes 79.
+- Line 1132, "It also counts the variant's own record, and 3 of the 28 rest on it": 27 under v37 becomes 28; 63 under v37 becomes 62.
+- Line 1132, "It also counts the variant's own record, and 3 of the 28 rest on it": 52 under v37 becomes 51; 27 under v37 becomes 28; 63 under v37 becomes 62.
 
 **Section 4.2.**
 
-- Line 1216, "Almost none of the discordance is contradiction": 52 under v37 becomes 51; 0.0077% under v37 becomes 0.0076%.
-- Line 1217, "Almost all the rest is a defined ClinVar class that the classifier ...": 132,253 under v37 becomes 130,409.
-- Line 1219, "Part is design: 10,694 of the 35,179": 10,542 under v37 becomes 10,694; 35,175 under v37 becomes 35,179; 97,078 under v37 becomes 95,230; 21,732 under v37 becomes 20,072; 24,732 under v37 becomes 24,771.
-- Line 1223, "at the wrong tier, and for the pathogenic-side half": 101,133 under v37 becomes 102,608; 41,234 under v37 becomes 41,549; 48,302 under v37 becomes 48,278.
-- Line 1224, "The classifier's calls are therefore best read with their error ...": 62,249 under v37 becomes 62,240.
-- Line 1224, "The classifier's calls are therefore best read with their error ...": 4,018 under v37 becomes 4,039; 67,700 under v37 becomes 67,733.
-- Line 1227, "In the last round the reviewer supported ClinVar on 60% of the 48": 49 under v37 becomes 48.
-- Line 1227, "In the last round the reviewer supported ClinVar on 60% of the 48": 61% under v37 becomes 60%.
-- Line 1236, "Five of the 51 residual variants (10%) had left the 2-star+ set by ...": 52 under v37 becomes 51.
-- Line 1239, "A discordance with ClinVar is a prompt to look": 49 under v37 becomes 48.
+- Line 1154, "Almost none of the discordance is contradiction": 52 under v37 becomes 51; 0.0077% under v37 becomes 0.0076%.
+- Line 1155, "Almost all the rest is a defined ClinVar class that the classifier ...": 132,253 under v37 becomes 130,409.
+- Line 1157, "Part is design: 10,694 of the 35,179": 10,542 under v37 becomes 10,694; 35,175 under v37 becomes 35,179; 97,078 under v37 becomes 95,230; 21,732 under v37 becomes 20,072; 24,732 under v37 becomes 24,771.
+- Line 1161, "at the wrong tier, and for the pathogenic-side half": 101,133 under v37 becomes 102,608; 41,234 under v37 becomes 41,549; 48,302 under v37 becomes 48,278.
+- Line 1162, "The classifier's calls are therefore best read with their error ...": 62,249 under v37 becomes 62,240.
+- Line 1162, "The classifier's calls are therefore best read with their error ...": 4,018 under v37 becomes 4,039; 67,700 under v37 becomes 67,733.
+- Line 1165, "In the last round the reviewer supported ClinVar on 60% of the 48": 49 under v37 becomes 48.
+- Line 1165, "In the last round the reviewer supported ClinVar on 60% of the 48": 61% under v37 becomes 60%.
+- Line 1174, "Five of the 51 residual variants (10%) had left the 2-star+ set by ...": 52 under v37 becomes 51.
+- Line 1177, "A discordance with ClinVar is a prompt to look": 49 under v37 becomes 48.
 
 **Section 4.3.**
 
-- Line 1252, "Count severe errors as a primary measure beside agreement": 52 under v37 becomes 51.
+- Line 1190, "Count severe errors as a primary measure beside agreement": 52 under v37 becomes 51.
 
 **Section 4.4.**
 
-- Line 1258, "saw only the opposite-direction calls and none of the 35,179": 35,175 under v37 becomes 35,179.
-- Line 1260, "All thresholds were tuned on the April benchmark and its discordances": 52 under v37 becomes 51; 63 under v37 becomes 62.
-- Line 1261, "The price of an error was not applied uniformly": 333 under v37 becomes 306; 970 under v37 becomes 858.
-- Line 1271, "The benchmark's classifier reads the gnomAD exomes only": 64% under v37 becomes 66%.
+- Line 1196, "saw only the opposite-direction calls and none of the 35,179": 35,175 under v37 becomes 35,179.
+- Line 1198, "All thresholds were tuned on the April benchmark and its discordances": 52 under v37 becomes 51; 63 under v37 becomes 62.
+- Line 1199, "The price of an error was not applied uniformly": 333 under v37 becomes 306; 970 under v37 becomes 858.
+- Line 1205, "The benchmark's classifier reads the gnomAD exomes only": 64% under v37 becomes 66%.
 
 **Section 4.5.**
 
-- Line 1293, "First, complete the ClinGen input": 834 under v37 becomes 849; 2 under v37 becomes 1; 48 under v37 becomes 52.
-- Line 1295, "Third, BP7 as the splicing recommendation describes it": 17,619 under v37 becomes 17,170; 5,850 under v37 becomes 5,744.
-- Line 1296, "Fourth, BP1's veto leaving out the variant's own record": 1,718 under v37 becomes 1,737; 149 under v37 becomes 127; 134 under v37 becomes 137.
-- Line 1298, "Sixth, review of the allele-number floor": 736 under v37 becomes 684.
-- Line 1301, "Each of these can be measured by the harness of this paper before it ...": 52 under v37 becomes 51.
+- Line 1227, "First, complete the ClinGen input": 834 under v37 becomes 849; 2 under v37 becomes 1; 48 under v37 becomes 52.
+- Line 1229, "Third, BP7 as the splicing recommendation describes it": 17,619 under v37 becomes 17,170; 5,850 under v37 becomes 5,744.
+- Line 1230, "Fourth, BP1's veto leaving out the variant's own record": 1,718 under v37 becomes 1,737; 149 under v37 becomes 127; 134 under v37 becomes 137.
+- Line 1232, "Sixth, review of the allele-number floor": 736 under v37 becomes 684.
+- Line 1235, "Each of these can be measured by the harness of this paper before it ...": 52 under v37 becomes 51.
 
 **Section 5.**
 
-- Line 1309, "On the 673,660 ClinVar 2-star+ variants on which every threshold was ...": 79.1% under v37 becomes 79.3%; 52 under v37 becomes 51; 0.0077% under v37 becomes 0.0076%; 0.014% under v37 becomes 0.013%; 63 under v37 becomes 62; 4,018 under v37 becomes 4,039; 67,700 under v37 becomes 67,733; 35 under v37 becomes 36.
-- Line 1310, "On the 116,078 variants that were not in the April set, agreement in ...": 72.3% under v37 becomes 72.6%; 2.2 under v37 becomes 2.3; 3.7 under v37 becomes 3.8.
+- Line 1243, "On the 673,660 ClinVar 2-star+ variants on which every threshold was ...": 79.1% under v37 becomes 79.3%; 52 under v37 becomes 51; 0.0077% under v37 becomes 0.0076%; 0.014% under v37 becomes 0.013%; 63 under v37 becomes 62; 4,018 under v37 becomes 4,039; 67,700 under v37 becomes 67,733; 35 under v37 becomes 36.
+- Line 1244, "On the 116,078 variants that were not in the April set, agreement in ...": 72.3% under v37 becomes 72.6%; 2.2 under v37 becomes 2.3; 3.7 under v37 becomes 3.8.

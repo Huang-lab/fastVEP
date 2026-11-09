@@ -65,7 +65,7 @@ before a fresh build.
 ## Built SA databases (`sa_db/` and `sa_db_complete/`)
 
 The benchmark reads `sa_db_complete/`, a directory of links to the files of `sa_db/` except gnomAD, SpliceAI and PhyloP, which are the 72 files of `sa_sources/complete/`: built from the whole of gnomAD's v4.1 exomes file on the host of fastvep.org on 8 November 2026 (`results/complete_databases/` holds their checksums and says how they were built and checked; `scripts/sa_sources/make_complete_stack.sh` makes the directory).
-`sa_db/` is the first stack, whose SpliceAI and PhyloP databases were distilled in April 2026 from regions of the same file and lack 8.2% and 8.3% of the values that exist for the benchmark's variants (`results/complete_vs_april_databases.md`); it is kept because the runs on it are the comparison of the paper and because every other file of `sa_db_complete/` is a link into it.
+`sa_db/` stays because every other file of `sa_db_complete/` is a link into it; its own gnomAD, SpliceAI and PhyloP files are regional extractions that the benchmark does not read (`results/complete_databases/README.md`), and the runs made with them are what `results/complete_vs_april_databases.md` sets against the runs of the paper.
 
 | Source | Status | Records | Path |
 |--------|--------|---------|------|
@@ -74,9 +74,9 @@ The benchmark reads `sa_db_complete/`, a directory of links to the files of `sa_
 | `gnomad_genes.oga` | ✅ | 18,173 genes | `sa_db/gnomad_genes.oga` |
 | `omim.oga` (ClinGen GDV) | ✅ | 2,419 genes | `sa_db/omim.oga` |
 | `revel_chr1..22,X,Y.osa` | ✅ | 24 chrom files | `sa_db/revel_chr*.osa` |
-| `gnomad_chr1..22,X,Y.osa2` | ✅ | 24 chrom files (v2; there is no mitochondrial file); the first stack's are regional, the benchmark reads the complete ones (16-bit chunks, 1,914 MB) | `sa_db_complete/gnomad_chr*.osa2` (the regional files: `sa_db/gnomad_chr*.osa2`) |
-| `phylop_chr1..22,X,Y.osa2` | ✅ | 24 chrom files built from the whole file (340 MB; the first stack's `.osa` files lack records) | `sa_db_complete/phylop_chr*.osa2` (first stack: `sa_db/phylop_chr*.osa`) |
-| `spliceai_chr1..22,X,Y.osa2` | ✅ | 24 chrom files built from the whole file (464 MB; the first stack's `.osa` files lack records) | `sa_db_complete/spliceai_chr*.osa2` (first stack: `sa_db/spliceai_chr*.osa`) |
+| `gnomad_chr1..22,X,Y.osa2` | ✅ | 24 chrom files built from the whole file (v2; there is no mitochondrial file; 16-bit chunks, 1,914 MB) | `sa_db_complete/gnomad_chr*.osa2` (`sa_db/gnomad_chr*.osa2` is not read) |
+| `phylop_chr1..22,X,Y.osa2` | ✅ | 24 chrom files built from the whole file (340 MB) | `sa_db_complete/phylop_chr*.osa2` (`sa_db/phylop_chr*.osa` is not read) |
+| `spliceai_chr1..22,X,Y.osa2` | ✅ | 24 chrom files built from the whole file (464 MB) | `sa_db_complete/spliceai_chr*.osa2` (`sa_db/spliceai_chr*.osa` is not read) |
 
 ## Files of the manuscript's later runs (under `data/benchmark/`)
 
@@ -84,7 +84,7 @@ Read by `scripts/11_manuscript_runs.py` and `scripts/14_temporal_holdout.py`; no
 
 | Path | Status | What it is | Made by |
 |------|--------|------------|---------|
-| `sa_sources/clinvar_20261004.vcf.gz` | ✅ | the ClinVar release of 4 October 2026 | downloaded; `scripts/14_temporal_holdout.py prepare` extracts its 781,135 2-star+ variants, which the runs score whole, to `clinvar_20261004/` with their strata, and the 772,585 that lie in the regions of the April extract to `clinvar_20261004_covered/`, which only the comparison with the first databases reads (`scripts/21_compare_databases.py`) |
+| `sa_sources/clinvar_20261004.vcf.gz` | ✅ | the ClinVar release of 4 October 2026 | downloaded; `scripts/14_temporal_holdout.py prepare` extracts its 781,135 2-star+ variants, which the runs score whole, to `clinvar_20261004/` with their strata, and the 772,585 that lie in the regions of the April extract to `clinvar_20261004_covered/`, which only `scripts/21_compare_databases.py` reads |
 | `sa_sources/clingen_gene_validity_20261011.csv`, `clingen_gene_validity_complete.csv`, `clingen_gdv_complete.tsv` | ✅ | the ClinGen export of 11 October 2026 and the April file completed with the curations it lacked | `scripts/15_clingen_complete_export.py` |
 | `sa_replace/omim_complete.oga` | ✅ | the ClinGen database of the completed file, which the three `gap` runs and three of the October runs use in place of `sa_db/omim.oga` | `fastvep sa-build --source omim` |
 | `sa_db_joint/gnomad_chr*.osa2` | ✅ | gnomAD v4.1 joint exomes and genomes for all 24 chromosomes (610 MB; the extraction took about 6 hours, limited by the network), which `v38_joint` reads and the pilot of Section 3.8 reads for 21 and 22 | `scripts/sa_sources/build_gnomad_release_per_chrom.sh joint` (resumable by batch) |
@@ -97,10 +97,10 @@ Read by `scripts/11_manuscript_runs.py` and `scripts/14_temporal_holdout.py`; no
 |-----|-----------|---------|--------|
 | **v1** | clinvar + clinvar_protein + gnomad_genes + gnomAD per-chrom + REVEL per-chrom | 54.7 % same-direction baseline | `output_v1/` (matrix only — raw outputs overwritten) |
 | **v7** | v1 + PhyloP + SpliceAI + ClinGen GDV `.oga` + 7 code fixes | 70.8 % same-direction, 313 opposite-direction (0.05 %) | `output_v7/` |
-| **v37** | the complete databases (`sa_db_complete/`) | the classifier at the close of the review rounds, the before of what v38 changes (Section 3.8 of the manuscript): 431,555 exact of 673,660 (64.1 %), 532,688 same-direction (79.1 %), 52 opposite-direction, 382 not called; with the first databases the same classifier gave 425,869 exact (63.2 %), 522,886 same-direction (77.6 %) and 49 opposite-direction (`output_v37_april_databases/`) | `output_v37/` |
-| **v38** | v37 reading ClinGen's curated mode of inheritance, on the complete databases | the latest classifier, the one of this release (0.5.0) and of every number of the manuscript: 431,727 exact of 673,660 (64.1 %), 534,335 same-direction (79.3 %), 51 opposite-direction, 382 not called (the binaries of v38 write no record for those 382, so 673,278 are scored; the tables of the manuscript put them back as no-calls); with the first databases it gave 426,022 exact (63.2 %), 524,380 same-direction (77.8 %) and 48 opposite-direction (`manuscript_runs_april_databases/v38/`) | `manuscript_runs/v38/` |
+| **v37** | the databases of `sa_db_complete/` | the classifier at the close of the review rounds, the reference of what v38 changes (Section 3.8 of the manuscript): 431,555 exact of 673,660 (64.1 %), 532,688 same-direction (79.1 %), 52 opposite-direction, 382 not called | `output_v37/` |
+| **v38** | v37 reading ClinGen's curated mode of inheritance, on the databases of `sa_db_complete/` | the latest classifier, the one of this release (0.5.0) and of every number of the manuscript: 431,727 exact of 673,660 (64.1 %), 534,335 same-direction (79.3 %), 51 opposite-direction, 382 not called (the binaries of v38 write no record for those 382, so 673,278 are scored; the tables of the manuscript put them back as no-calls) | `manuscript_runs/v38/` |
 
-The manuscript's other runs (`manuscript_runs/`, the 96 runs of v38 and the same 96 of v37 with the runs of Section 3.8, and the per-variant tables) are listed in `results/v37_manuscript/README.md`; the runs that the first drafts reported, made with the first databases, are kept under the names `manuscript_runs_april_databases/`, `manuscript_runs_v0.5.0_april_databases/` and `output_v37*_april_databases/`, and `results/complete_vs_april_databases.md` sets the two side by side.
+The manuscript's other runs (`manuscript_runs/`, the 96 runs of v38 and the same 96 of v37 with the runs of Section 3.8, and the per-variant tables) are listed in `results/v37_manuscript/README.md`; the runs made with the databases of April 2026 are kept under the names `manuscript_runs_april_databases/`, `manuscript_runs_v0.5.0_april_databases/` and `output_v37*_april_databases/`, and `results/complete_vs_april_databases.md` sets them against the runs of the paper.
 See `RUN_VERSIONS.md` for the per-run SA stack and code-fix diff.
 See `analysis/acmg_benchmark/METHODS.md` for full methodology.
 
