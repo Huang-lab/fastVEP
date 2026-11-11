@@ -5,6 +5,39 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-11
+
+A release about speed and about reading what Ensembl VEP 116 reads.
+Open Targets measured the release candidate at 5 to 7 times faster than v0.4.0 on a release of 7.9 million variants, with byte-identical output, and a migrated `vep` command line now runs as typed and writes the columns VEP writes.
+As in 0.4.0, most of the fixes are a wrong answer that looked right: a start loss written as the wrong HGVSp, a RefSeq transcript named as VEP would not name it, a known variant reported as novel.
+Each entry names the consequence and not the edit.
+
+### Added
+
+- **cli / io**: VEP's optional columns in tab output in VEP's order, HGVSg and HGVS_OFFSET as VEP writes them, and the known-variant columns (AF, MAX_AF, CLIN_SIG, SOMATIC, PHENO, PUBMED) as VEP 116 works them out per allele (#139).
+- **cli**: `--total_length`, `--no_escape`, `--force_overwrite`, VEP's underscore spellings of shared flags (`--af_1kg --check_existing`), and the exclusion of readthrough, artifact and predicted transcripts, so that a migrated `vep` command line runs (#139).
+- **web**: every hosted genome is served per request, ACMG is offered only where its reference stack is whole, and what one request may cost is bounded (#175).
+- **acmg**: the mode of inheritance that ClinGen curates is read, and a gene is classified against each of its modes of inheritance.
+- **benchmark / validation / manuscript**: the ACMG benchmark, its manuscript and the head-to-head with Ensembl VEP 116.3 are scripted, and a number in the text is checked against the data that measured it.
+
+### Changed
+
+- **performance**: the transcript cache is written as zstd frames with a table and decoded side by side, a damaged cache is refused where it used to load or abort, and a small run takes a quarter of the time (#166).
+- **performance**: the `fastvep` binary uses mimalloc, a run of 100,000 variants takes 19 to 34% less time, and a run with a large `--distance` does a third of the work because transcripts are chosen before their rows are built (#166, #168).
+- **performance**: tab rows are written into one buffer, batches are formatted on every thread and written in order, known variants are looked up per thread, and many smaller allocations were removed from the per-variant loop (#139).
+
+### Fixed
+
+- **cache**: VEP's `.csi` index is read and known variants are matched as VEP matches them, so `--cache-dir` stops reporting known variants as novel (#142).
+- **gff**: RefSeq transcripts, genes, biotypes and protein versions are named as Ensembl VEP names them, and a transcript carries the symbol source, canonical flag, MANE accession and CDS state that VEP's own caches give it (#139).
+- **consequence / hgvs**: consequences at a start or stop codon, across an intron, in an intron of 13 bases or fewer, and for a deletion of a whole transcript are those of VEP 116, with HGVSc and HGVSp written to match (p.Met1? for a lost initiator) (#139).
+- **io**: ALT alleles are upper-cased, an ALT that repeats the reference is no allele, a lone indel is minimised from both ends, and `*`, gVCF placeholders and `N` are no longer annotated as variants (#139).
+- **sv**: every transcript is no longer dropped when VCF and GFF3 contigs differ by a `chr` prefix (#132, #135).
+- **sa**: GRCh37 coordinates for REVEL and dbNSFP, a warning when one `--sa-dir` mixes assemblies, and gene databases written in symbol order (#133, #136, #137, #138).
+- **acmg**: HGVS placement for indels, the BP7 exon edge and BS2's carrier bar were answered from the round-6 review (#140).
+- **web**: the demo model no longer calls a BRCA2 stop codon intergenic, compares chromosome names without a `chr` prefix, and a pasted `CHROM POS ID REF ALT` line annotates instead of failing or reading as zero variants (#176, #180).
+- **benchmarks**: `run_benchmark.sh` no longer dies at its first echo, needs bash 4, writes a sixth column or times a failed run as a fast one.
+
 ## [0.4.0] — 2026-09-24
 
 A correctness release. Most of what follows is a wrong answer that looked
