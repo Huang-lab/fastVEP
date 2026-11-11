@@ -375,7 +375,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fastvep-annotate"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "fastvep-cache",
@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-cache"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-classification"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "fastvep-core",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-consequence"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fastvep-core",
  "fastvep-genome",
@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "thiserror",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-filter"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "fastvep-core",
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-genome"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fastvep-core",
  "serde",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-hgvs"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fastvep-core",
  "fastvep-genome",
@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-io"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "fastvep-core",
@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-sa"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -536,7 +536,7 @@ dependencies = [
 
 [[package]]
 name = "fastvep-web"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
