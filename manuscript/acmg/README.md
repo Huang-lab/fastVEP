@@ -131,7 +131,7 @@ These are marked in the manuscript with square brackets or are not in it at all.
 1. **The reviewer.**
    The reviewer is M.G., an author, and W.C., who advised on a subset of the cases, is an author too; the manuscript names them in the author line and in Sections 2.4 and the Declarations.
    The manuscript describes the reviewer's rulings and paraphrases their reasons.
-   It quotes only the heading of the list that came with the round-1 workbook ("Discordance categories") and does not reproduce their notes, and `data/round6_rulings.tsv` holds our coding of the text and not the text.
+   It quotes only the heading of the list that came with the round-1 workbook ("Discordance categories") and does not reproduce their notes, and `data/round6_rulings.tsv` and `data/round7_rulings.tsv` hold our coding of the text and not the text.
    Whether the text may be quoted or published as a supplementary column is for the authors to settle.
    The workbooks they returned are not in the repository.
 2. **Disclosure of AI assistance.**
@@ -165,9 +165,9 @@ These are marked in the manuscript with square brackets or are not in it at all.
    BS2's arm for homozygotes and hemizygotes was left as it was, with the same doubling on the X chromosome for 1,301 variants none of which is a ClinVar pathogenic-side variant.
    All are reasoned in the text and measured on the April set and the October release, and each can be reversed with the numbers of Table 8 and Appendix Tables A10 and A12.
 10. **The tag that the manuscript names.**
-   The manuscript names the first release candidate of release 0.5.0 (`v0.5.0-rc.1`, `c12d9f9`) as the code of v38 and says that "release 0.5.0" means that candidate, because no other tag of it exists yet.
-   When v0.5.0 is tagged, `verify_numbers.py` will still read the candidate.
-   Whether the final tag changes any call has to be shown by the repetition of the runs (`scripts/16_compare_runs.py`, as for the 42 runs of `results/v38_v0.5.0/`), and the text has to name the final tag if the author wants it named.
+   The manuscript names the first release candidate of release 0.5.0 (`v0.5.0-rc.1`, `c12d9f9`) as the code that made its runs, and states that the final tag `v0.5.0` (`19a159f`, 11 November 2026) gives the same calls on the base run, with 512 fewer PM2_Supporting calls on mitochondrial variants (`results/v38_tag_v0.5.0/`, `RUN_VERSIONS.md`).
+   Only the base run was repeated by the tag, and the 41 other runs of Section 3.8 were not, so the paper does not say that the tag reproduces them.
+   Repeating them with `V38_REF=v0.5.0` is the check that the author may want before the paper says "release 0.5.0" without the candidate.
 11. **The gnomAD source of the benchmark.**
    Section 3.8 measures gnomAD's joint release of exomes and genomes on every chromosome: 10,193 more exact calls and 9,187 more in direction than the exomes, for no more reference-discordant benign call and two more reference-discordant pathogenic calls, and without the region flags that withhold the frequency criteria.
    `docs/ACMG_SETUP.md` recommends it for classification where no policy requires the region veto, and the benchmark of the paper still reads the exomes, because every other number in the paper was measured on them.
@@ -176,8 +176,12 @@ These are marked in the manuscript with square brackets or are not in it at all.
    The bulk outputs (annotated VCFs, per-variant tables of about 20 MB each) are not in the repository.
    A tagged release with a DOI, and a compressed deposit of the per-variant tables, would let every table in `data/` be re-derived without a re-run.
 13. **The three calls that the last review round did not see.**
-   TMEM216, VWF and GTPBP3 are ClinVar-Pathogenic variants called Likely benign, each on BP4, and they are among the 51 opposite-direction calls of v38 and not among the 64 calls that the reviewer ruled on in round 6 (Section 3.6).
-   Whether the reviewer rules on them is for the authors to settle.
+   TMEM216, VWF and GTPBP3 are ClinVar-Pathogenic variants called Likely benign, each on BP4, and they were among the 51 opposite-direction calls of v38 and not among the 64 calls that the reviewer ruled on in round 6 (Section 3.6).
+   The reviewer ruled on them on 10 November 2026 (`LAST3_FOR_REVIEWopposite_direction_v38_MG.xls`), and `data/round7_rulings.tsv` holds our coding of the three notes.
+   TMEM216 and VWF are coded as supporting ClinVar (the reviewer states Pathogenic, with experimental evidence for VWF and a founder variant with a mild phenotype for TMEM216).
+   GTPBP3 is coded neither: the reviewer reads it as VUS on MANE Select and notes that other transcripts may be relevant.
+   That coding of GTPBP3 is a judgment, and the author may prefer "depends on the disorder".
+   The reviewer's note on TMEM216 also points at a gate that BP4's splice path lacks for a variant outside the transcript, which Section 3.6 records and does not change.
    The benchmark's gnomAD, SpliceAI and PhyloP databases are built from the whole gnomAD file, and the manifest is `analysis/acmg_benchmark/results/complete_databases/README.md`.
 
 ## What is not checked

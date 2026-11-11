@@ -1,0 +1,18 @@
+provenance_version: 2
+args: annotate --acmg --pick
+acmg_config_sha256: none
+fastvep_sha256: 1a2ab48dedbb22c578c45b26176dd52dd2d6f3f601af496518d5c444b7c5ddc5
+input: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/clinvar_2star.vcf
+input_bytes: 390168954
+gff3: /Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3
+gff3_bytes: 1227780403
+fasta: /Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa
+fasta_bytes: 3151425851
+sa_dir: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/sa_db_complete
+sa_dir_signature: 01b66920cf2ef4db92243a17d15759b5efada32865098c90bb6d2a7535f95e78
+fastvep: /Users/kuan-lin.huang/Projects/fastVEP/data/benchmark/bins_v0.5.0_tag/fastvep_v38
+fastvep_version: fastvep 0.5.0
+repo_commit: 044eff0aec656a50f404933e2e3f872044ef621b
+repo_dirty_files: 2
+annotation_seconds: 40
+recorded_at: 2026-11-11T14:59:15Z

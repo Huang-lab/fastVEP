@@ -1716,6 +1716,17 @@ What was checked is that nothing a run records moved.
 What was not checked: a run with a configuration other than the default, a run of an alternatives build, or the databases of the joint release.
 The binary of the second set remains the one that made the runs of `binaries.tsv`, and the build of the tree after the change made none.
 
+## The tag v0.5.0 against the candidate (11 November 2026)
+
+The tag `v0.5.0` (`19a159f`) is not the tree of the candidate `v0.5.0-rc.1` (`c12d9f9`): 46 files of `crates/` differ, 16 of them in `fastvep-classification` (the largest change is the new `sources.rs`, 889 lines, which says what each source drives).
+`V38_REF=v0.5.0 NAMES="v38" scripts/build_manuscript_binaries.sh` built `fastvep 0.5.0` (SHA-256 `1a2ab48d...`) and `scripts/run_benchmark.sh v38_tag_v050` made the base run of v38 with it, on the same databases (signature `01b66920...`), input and flags as the stored run (`results/v38_tag_v0.5.0/`, whose provenance is `run_provenance.txt`).
+
+- The concordance matrix is identical, and so is the list of discrepancies (SHA-256 `a9c8cc7a...` for both): every one of the 673,660 calls is the same.
+- Three scored files differ, all in the firing counts of PM2_Supporting: 90,174 calls in the rule distribution under the candidate and 89,662 under the tag (512 fewer), and 71,827 to 71,805 on Pathogenic, 12,115 to 12,029 on Likely pathogenic, 249,466 to 249,255 on VUS, 87,287 to 87,260 on Likely benign and 20,882 to 20,678 on Benign.
+- All 550 mitochondrial records carry PM2_Supporting in the annotated VCF of the candidate's run and none does in the tag's.
+  This is the rule that declines the frequency criteria on a chromosome the loaded gnomAD holds nothing of (the nuclear gnomAD has no MT), which came into master with the web server's pull request (#175).
+- The 41 other runs of Section 3.8 were not made again by the tag.
+
 ## Release 0.5.0 reproduces v38 (7 November 2026)
 
 The runs of Section 3.8 of the manuscript were made by binaries built from the working tree that became v38, which was committed afterwards (`5293cc0`, merged in pull request #167 as `6504819`).
@@ -1821,7 +1832,7 @@ The October release is scored whole (781,135 variants), because the databases co
 
 - The numbered versions v1 to v36: their binaries were not kept, so their rows in Figure S1 and in `trajectory.csv` are the runs of the time (the column `databases` says "of the time" for them and "final" for v37 and v38, and the columns `*_of_the_time` keep the earlier run of v37 and v38).
 - The annotation time: `results/v38_v0.5.0/annotation_time.tsv` and the times of the manuscript are those of release 0.5.0 timed alone on 7 November 2026, with a stack of databases smaller than the final one.
-- The reviewer has not ruled on the three opposite-direction calls that the last round did not see (TMEM216 11:61392563 G>T, VWF 12:6022888 G>A and GTPBP3 19:17339046 GGGGA>G).
+- The 42 runs of Section 3.8 were repeated by the candidate and not by the tag `v0.5.0`: only the base run of v38 was made again by the tag (the next section).
 
 ### A note on dates
 

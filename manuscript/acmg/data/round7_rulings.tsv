@@ -1,0 +1,4 @@
+gene	chrom	pos	ref	alt	ruling	rule	note
+TMEM216	11	61392563	G	T	clinvar	class	Pathogenic; BP4 wrongly called and BS1 does not apply (mild isolated RP phenotype, founder variant, experimental evidence)
+VWF	12	6022888	G	A	clinvar	class	Pathogenic; BP7 incorrectly called (synonymous rare variant with experimental evidence)
+GTPBP3	19	17339046	GGGGA	G	neither	class	VUS on MANE Select; other transcripts may be clinically relevant
