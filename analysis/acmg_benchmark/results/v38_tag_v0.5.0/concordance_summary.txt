@@ -1,0 +1,75 @@
+ClinVar 2-star+ concordance against fastvep ACMG classifier (real data)
+===========================================================================
+
+ClinVar records:     673,660
+Classified:          673,278
+ClinVar not annotated: 382
+
+Per-class breakdown (entire dataset):
+clinvar                       n    exact   same_dir   opposite  no_call
+Pathogenic                79823     3576      51854         21        0
+Likely_pathogenic         13989     6309       6752          6        0
+VUS                      295298   286815     286815          0        0
+Likely_benign            128033    69649      71679          7        0
+Benign                   156135    65378     117235         17        0
+
+TOTAL                    673278   431727     534335         51        0
+
+Exact-match rate:        64.1%
+Same-direction rate:     79.4%
+Opposite-direction rate: 0.0%
+NoCall rate:             0.0%
+
+Top 25 criteria signatures (sorted criterion code combos):
+     89662  PM2_Supporting
+     60236  BP4+PM2_Supporting
+     58096  BP4_Moderate+PM2_Supporting
+     55025  BP4+BP7+PM2_Supporting
+     46207  PM2_Supporting+PVS1
+     30169  BP4+BP7
+     25307  BP4
+     21846  BA1+BP4+BP7+BS2
+     20703  (none)
+     20084  BP4+BP7+BS1
+     19521  PM2_Supporting+PP3
+     16986  PM2_Supporting+PP2
+     15223  BP4_Moderate
+     14321  PM2_Supporting+PP3_Moderate
+     12836  BA1+BP4+BP7
+     11389  BP4+BS1
+     10275  BP4_Moderate+PM2_Supporting+PP2
+      7996  BA1+BP4+BS2
+      7719  BP4+PM2_Supporting+PP2
+      6589  BP4_Moderate+BS1
+      5578  PM1+PM2_Supporting+PM5
+      5468  PM2_Supporting+PP2+PP3_Moderate
+      5243  PVS1
+      4959  PM2_Supporting+PP2+PP3
+      4921  BA1+BP4
+
+Criterion fire counts by ClinVar class:
+criterion                           Pathogenic       Likely_pathogenic                     VUS           Likely_benign                  Benign
+BA1                                          0                       0                      13                     796                   56272
+BP1                                          6                       4                    5260                     319                     882
+BP3                                         46                       9                     556                     203                     481
+BP4                                       1155                     164                   55973                   97711                  113240
+BP4_Moderate                               145                      56                   84529                    4771                   16434
+BP4_Strong                                   1                       0                    3156                     264                    1133
+BP4_Very_Strong                              0                       0                     126                      15                      66
+BP7                                         22                       6                     434                   69274                   75212
+BS1                                         45                       1                     391                    8557                   37845
+BS2                                         12                       0                     347                    1864                   40677
+PM1                                       7910                    2446                    8200                      77                     226
+PM2_Supporting                           71805                   12029                  249255                   87260                   20678
+PM4                                        679                     238                    4018                     323                     810
+PM5                                       9858                    2792                    3913                      43                      94
+PP2                                       4632                    1363                   55813                    2218                    4261
+PP3                                       2996                    1052                   28072                    1387                    2592
+PP3_Moderate                              2743                    1081                   21468                     157                     339
+PP3_Strong                                1769                     703                    4719                      22                      33
+PS1                                        988                     210                      74                       0                       0
+PS1_Supporting                            4221                     508                      29                       0                       2
+PVS1                                     48567                    5937                    1312                      12                      35
+PVS1_Moderate                              362                     108                     109                       1                       6
+PVS1_Strong                               2828                     240                     179                       1                       4
+PVS1_Supporting                            812                     128                     672                       5                      17
