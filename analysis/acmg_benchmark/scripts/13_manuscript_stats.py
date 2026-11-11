@@ -908,6 +908,11 @@ def opposite_cases(df: pd.DataFrame) -> None:
 
     opp["group"] = opp.apply(group, axis=1)
     m = opp.merge(rev[["chrom", "pos", "ref", "alt", "ruling", "row"]], on=["chrom", "pos", "ref", "alt"], how="left")
+    # Round 7 (10 Nov 2026) ruled on the three calls that round 6 had not seen (TMEM216, VWF and GTPBP3). Its rows are kept in their own file and
+    # not in round6_rulings.tsv, because that file is the 64 rows of round 6 and the tables that count "all 64" read it whole.
+    r7 = pd.read_csv(OUT / "round7_rulings.tsv", sep="\t", dtype=str)[["chrom", "pos", "ref", "alt", "ruling"]]
+    m = m.merge(r7.rename(columns={"ruling": "ruling7"}), on=["chrom", "pos", "ref", "alt"], how="left")
+    m["ruling"] = m["ruling"].fillna(m.pop("ruling7"))
     if m["ruling"].isna().any():
         # A classifier can make a call opposite that the reviewer never saw (v37 and v38 each have three that were not among the 64 rows of the last
         # round). It stays in the table, marked as not reviewed, and the calls the reviewer did see keep their rulings, which are carried over by
@@ -1798,6 +1803,9 @@ def facts(df: pd.DataFrame) -> None:
     # The reviewer's rulings on the 49, by kind of contradiction (our coding; Section 3.6): "missed diagnosis" and "false-pathogenic"
     # name the direction of the error against ClinVar and are not a finding that ClinVar is right.
     rul = pd.read_csv(OUT / fname("opposite_direction_v37.csv"), dtype=str)
+    # Round 6 only: the three calls that round 7 ruled on afterwards are in round7_rulings.tsv and the text counts them apart.
+    r7 = pd.read_csv(OUT / "round7_rulings.tsv", sep="\t", dtype=str)
+    rul = rul[~rul.set_index(["chrom", "pos", "ref", "alt"]).index.isin(r7.set_index(["chrom", "pos", "ref", "alt"]).index)]
     is_fb = rul["clinvar"].isin(["Pathogenic", "Likely_pathogenic"])
     out += [("reviewer_supported_clinvar_false_benign", int(((rul.ruling == "clinvar") & is_fb).sum())),
             ("reviewer_supported_clinvar_false_pathogenic", int(((rul.ruling == "clinvar") & ~is_fb).sum()))]

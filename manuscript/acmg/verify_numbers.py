@@ -152,8 +152,11 @@ base = runs.loc[BASE]
 N_OPP = int(base.opposite)  # the opposite-direction calls of the base: 51 for v38, 52 for v37
 N_REV = int(csv("round6_rows_v37.csv").still_opposite.astype(str).eq("True").sum())  # the ones of them that the reviewer saw in the last round: 48
 _opp_rows = csv("opposite_direction_v37.csv")
+_r7 = pd.read_csv(DATA / "round7_rulings.tsv", sep="\t", dtype=str)  # the three calls that the reviewer ruled on after the last round
+_in_r7 = _opp_rows[["chrom", "pos", "ref", "alt"]].astype(str).apply(tuple, axis=1).isin(set(_r7[["chrom", "pos", "ref", "alt"]].astype(str).apply(tuple, axis=1)))  # as strings: the CSV reader makes chromosome 11 an integer and X a string
+_in_r7 = _in_r7.to_numpy()
 _is_fb = _opp_rows.clinvar.isin(("Pathogenic", "Likely_pathogenic"))
-REV_FB, REV_FP = int((_is_fb & (_opp_rows.ruling != "not reviewed")).sum()), int((~_is_fb & (_opp_rows.ruling != "not reviewed")).sum())  # the ones that the reviewer saw, by direction: 24 and 24
+REV_FB, REV_FP = int((_is_fb & ~_in_r7).sum()), int((~_is_fb & ~_in_r7).sum())  # the ones that the reviewer saw, by direction: 24 and 24
 # v37's own rows and steps, for the checks of Section 3.8 that set v38 against them (the same objects under v37)
 runs37 = pd.read_csv(DATA / "runs_v37_variants.csv").set_index("name")
 base37 = runs37.loc["v37"]
@@ -197,6 +200,7 @@ sigs = csv("signatures_offdiagonal_v37.csv")
 gene = csv("gene_level_v37.csv")
 res_by_group = csv("opposite_direction_by_group_v37.csv").set_index("group")
 r6 = csv("round6_rows_v37.csv")
+res_by_group_r6 = pd.crosstab(_opp_rows[~_in_r7].group, _opp_rows[~_in_r7].ruling)  # round 6 alone: the 48 calls that the last round saw
 temporal = csv("temporal_v37.csv")
 tclass = csv("temporal_by_class_v37.csv")
 trate = csv("temporal_opposite_rates_v37.csv").set_index("set")
@@ -1025,7 +1029,7 @@ def residual() -> None:
     kept = r6[r6.still_opposite.astype(str) == "True"]
     sr = kept.seen_in_round.value_counts()
     fact("Each of the 48 had already been in the table of an earlier round", str(sr["round 3"]), str(sr["round 4"]), str(sr["round 5"]))
-    tot = res_by_group[["clinvar", "fastvep", "neither", "needs_evidence", "disorder_specific"]].sum()
+    tot = res_by_group_r6[["clinvar", "fastvep", "neither", "needs_evidence", "disorder_specific"]].sum()
     fact("For 29 of the 48 (60%)", str(int(tot.clinvar)), p(tot.clinvar / N_REV, 0), str(int(tot.fastvep)), p(tot.fastvep / N_REV, 0), str(int(tot.neither)), str(int(tot.needs_evidence)), str(int(tot.disorder_specific)))
     fact("So for 29 of the 48 the reviewer judged ClinVar's call the better", str(int(tot.clinvar)), str(N_REV - int(tot.clinvar)))
     r49 = rules64[(rules64.set == f"the {N_REV} still opposite in {BASE}") & (rules64.ruling == "clinvar")].set_index("rule").rows
@@ -1042,8 +1046,8 @@ def residual() -> None:
     fact("BS1, which tests the filtering allele frequency against 5e-3", "did not fire for any of the five" if fv("pvs1_benign_common_bs1_fired") == 0 else "?",
          n(fv("pvs1_benign_common_popmax_min") / 2.5e-4), n(fv("pvs1_benign_common_popmax_max") / 2.5e-4),
          "the reviewer supported ClinVar on all five" if len(asked) == len(common_genes) == 5 and (asked.ruling == "clinvar").all() else "?")
-    fact("A disease-specific frequency threshold could act on about seven of the 48 that the reviewer saw", w(int(fv("pvs1_benign_common_n")) + 2)[1] if int(fv("pvs1_benign_common_n")) + 2 == 7 else "?", str(N_REV),
-         w(int(fv("pvs1_benign_common_n")))[1], "BS1" if int(res_by_group.loc["BS1 on a ClinVar pathogenic-side variant", "total"] - res_by_group.loc["BS1 on a ClinVar pathogenic-side variant", "not reviewed"]) == 2 else "?")
+    fact("A disease-specific frequency threshold could act on about eight of the 51", w(int(fv("pvs1_benign_common_n")) + 3)[1] if int(fv("pvs1_benign_common_n")) + 3 == 8 else "?", str(N_OPP),
+         w(int(fv("pvs1_benign_common_n")))[1], "BS1" if int(res_by_group.loc["BS1 on a ClinVar pathogenic-side variant", "total"]) == 3 else "?")
     fact(f"{w(int(fv('bp4bp7_intron_variant')))[2]} are intronic, {w(int(fv('bp4bp7_synonymous_variant')))[1]} synonymous and {w(int(fv('bp4bp7_splice_region_variant')))[1]} in the splice region")
 
 
@@ -1270,7 +1274,7 @@ def abstract_and_intro() -> None:
     fact("whose 116,078 new variants are the only out-of-sample ones", n(nw.stratum_n))
     fact("On the April set v38 agrees with ClinVar's class for 64.1%", p(hl("exact_match").value), p(hl("same_direction").value), str(N_OPP), f"{hl('opposite_rate').value * 100:.4f}%")
     fact("On the new variants agreement in direction is 72.6%", p(nw.same_direction / nw.stratum_n), f"{trate.loc['October, new'].rate / trate.loc['April set'].rate:.1f}", f"{ratio.iloc[2].ci_lo:.1f}", f"{ratio.iloc[2].ci_hi:.1f}")
-    tot_rev = res_by_group[["clinvar", "fastvep", "neither", "needs_evidence", "disorder_specific"]].sum()
+    tot_rev = res_by_group_r6[["clinvar", "fastvep", "neither", "needs_evidence", "disorder_specific"]].sum()
     fact("The reviewer supported ClinVar on 29 of 48 contradictions seen", str(int(tot_rev.clinvar)), str(N_REV))
     fact("The largest class of change, 21 of 64, was a guideline condition that a criterion had left out", str(int(ledger["class"].value_counts().max())), str(len(ledger)),
          "The largest class of change" if ledger["class"].value_counts().idxmax() == "G" else "?")
@@ -1398,7 +1402,7 @@ def availability() -> None:
     fact("that have a twin for each version", n(len(twins)))
     fact("and the 66 twin tables with `_v37` in the name", n(len(twins)))
     fact("the 23 files whose names begin with v38_", n(len([f for f in on_disk if f.startswith("v38_")])))
-    fact("Seven files of `manuscript/acmg/data/` belong to neither version", w(len(neither)))
+    fact("Eight files of `manuscript/acmg/data/` belong to neither version", w(len(neither)))
 
 
 def audit() -> None:
@@ -1479,8 +1483,8 @@ def coverage() -> None:
     fact("**PVS1 on a variant ClinVar calls benign or likely benign (21)", str(int(pvs1_group.total)))
     fact("**BP4 and BP7 on a variant ClinVar calls pathogenic or likely pathogenic (22)", str(int(bp47_group.total)))
     fact("These are the 22 reference-discordant benign calls of Section 3.4 that rest on BP7", str(int(bp47_group.total)), str(int(base.false_benign - run("v37_src_nophylop").false_benign)), "VWF and GTPBP3")
-    fact("The reviewer saw 20 of the 22", str(int(bp47_group.total - bp47_group["not reviewed"])), str(int(bp47_group.total)))
-    fact("The reviewer supported ClinVar for 10", str(int(bp47_group.clinvar)))
+    fact("The reviewer saw 20 of the 22", str(int(bp47_group.total) - int(_in_r7[(_opp_rows.group == "BP4+BP7 on a ClinVar pathogenic-side variant").values].sum())), str(int(bp47_group.total)))
+    fact("Of the 20, the reviewer supported ClinVar for 10", str(int(bp47_group.clinvar) - int(((_opp_rows.group == "BP4+BP7 on a ClinVar pathogenic-side variant") & _in_r7 & (_opp_rows.ruling == "clinvar")).sum())))
     opp = csv("opposite_direction_v37.csv")
     pol = opp[opp.gene == "POLR3A"].iloc[0]
     fact("POLR3A c.1909+22G>A, at an allele frequency of 2.5e-3", f"{pol.gnomad_af * 1e3:.1f}e-3")
@@ -1488,7 +1492,7 @@ def coverage() -> None:
     fact("The BS1 pair (PADI3 and SLC12A3)", n(pad.gnomad_ac), n(slc.gnomad_ac), p(pad.gnomad_popmax_af), p(slc.gnomad_popmax_af))
     tm216 = opp[opp.gene == "TMEM216"].iloc[0]
     fact("A third BS1 call, TMEM216 11:61392563 G>T (upstream of the gene)", f"{tm216.chrom}:{tm216.pos} {tm216.ref}>{tm216.alt}", "BP4" if "BP4" in tm216.criteria and "BS1" in tm216.criteria else "?",
-         "0.07" if "0.07" in str(pd.read_csv(DB_REC / "databases_opposite_changes.csv").query("gene == 'TMEM216'").complete_spliceai_max.iloc[0]) else "?", "the reviewer has not seen it" if tm216.ruling == "not reviewed" else "?")
+         "0.07" if "0.07" in str(pd.read_csv(DB_REC / "databases_opposite_changes.csv").query("gene == 'TMEM216'").complete_spliceai_max.iloc[0]) else "?", "supported ClinVar" if tm216.ruling == "clinvar" and bool(_in_r7[(_opp_rows.gene == "TMEM216").values].all()) else "?")
     nopp = csv("temporal_new_opposite_v37.csv")
     fact("the opposite-direction rates and their ratio with its interval, the 20 opposite-direction calls on the new variants", n(len(nopp)))
     kinds = nopp.kind.value_counts()
@@ -1518,7 +1522,7 @@ def coverage() -> None:
          f"{(max(pm2.plp_recall.max(), base.plp_recall) - min(pm2.plp_recall.min(), base.plp_recall)) * 100:.1f}")
     fact("Counting a variant's own ClinVar record would add 14.3 points of pathogenic-side recall, and the classifier excludes it", f"{(run('v37_sw_clinvar_informed').plp_recall - base.plp_recall) * 100:.1f}")
     fact("A ClinVar agreement of 64% exact and 79% in direction", p(hl("exact_match").value, 0), p(hl("same_direction").value, 0))
-    tot = res_by_group[["clinvar", "fastvep"]].sum()
+    tot = res_by_group_r6[["clinvar", "fastvep"]].sum()
     fact("In the last round the reviewer supported ClinVar on 60% of the 48", p(tot.clinvar / N_REV, 0), p(tot.fastvep / N_REV, 0))
     fact("saw only the opposite-direction calls and none of the 35,179", n(cell("P/LP", "VUS")))
     fact("is read from the mode that ClinGen curates for each of the", n(fv("clingen_genes_in_file")))
@@ -1542,6 +1546,8 @@ def coverage() -> None:
     fact("Each of the 48 had already been in the table of an earlier round", str(N_REV))
     fact("**Table 6. The 51 opposite-direction calls of v38", str(N_OPP))
     fact("Supplementary Table S8 lists the 51 calls with their criteria", str(N_OPP))
+    _tot = res_by_group.sum()
+    fact("so that over all 51 the reviewer supported ClinVar on 31 (61%)", str(int(_tot.clinvar)), p(_tot.clinvar / _tot.total, 0), str(int(_tot.fastvep)), str(int(_tot.neither)), str(int(_tot.needs_evidence)), str(int(_tot.disorder_specific)), str(int(_tot.total)))
     fact("For 29 of the 48 (60%) the reviewer supported ClinVar's call", str(N_REV), str(int(fv("reviewer_supported_clinvar_false_benign"))), str(REV_FB),
          str(int(fv("reviewer_supported_clinvar_false_pathogenic"))), str(REV_FP))
     fact("for the other 19 the reviewer did not side with ClinVar", str(N_REV - int(tot.clinvar)))
@@ -1895,7 +1901,7 @@ def v38() -> None:
     straddle = {s for s in ("KMT2C", "RAI1", "PIEZO1", "TXNL4A", "NF1", "TMEM216") if (faf(s, "exomes") - bar) * (faf(s, "joint") - bar) < 0}
     fact("Five of the six are at the threshold of BS1, a filtering allele frequency of 0.5%", w(len(straddle))[2], w(len(straddle) + 1)[1], p(bar),
          "the sixth belongs to the missing flags" if straddle == {"KMT2C", "RAI1", "PIEZO1", "TXNL4A", "TMEM216"} else "?")
-    fact("TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that the reviewer has not seen", pct3(faf("TMEM216", "exomes")), pct3(faf("TMEM216", "joint")),
+    fact("TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that were not in the last round of review", pct3(faf("TMEM216", "exomes")), pct3(faf("TMEM216", "joint")),
          "Likely benign" if one("TMEM216", "exomes").call == "Likely_benign" and one("TMEM216", "exomes").bs1_met else "?", "the call is VUS" if one("TMEM216", "joint").call == "VUS" and not one("TMEM216", "joint").bs1_met else "?",
          "ClinVar Pathogenic" if one("TMEM216", "exomes").clinvar == "Pathogenic" else "?")
     km, ra = one("KMT2C", "exomes"), one("RAI1", "exomes")

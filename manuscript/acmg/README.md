@@ -131,7 +131,7 @@ These are marked in the manuscript with square brackets or are not in it at all.
 1. **The reviewer.**
    The reviewer is M.G., an author, and W.C., who advised on a subset of the cases, is an author too; the manuscript names them in the author line and in Sections 2.4 and the Declarations.
    The manuscript describes the reviewer's rulings and paraphrases their reasons.
-   It quotes only the heading of the list that came with the round-1 workbook ("Discordance categories") and does not reproduce their notes, and `data/round6_rulings.tsv` holds our coding of the text and not the text.
+   It quotes only the heading of the list that came with the round-1 workbook ("Discordance categories") and does not reproduce their notes, and `data/round6_rulings.tsv` and `data/round7_rulings.tsv` hold our coding of the text and not the text.
    Whether the text may be quoted or published as a supplementary column is for the authors to settle.
    The workbooks they returned are not in the repository.
 2. **Disclosure of AI assistance.**
@@ -176,8 +176,12 @@ These are marked in the manuscript with square brackets or are not in it at all.
    The bulk outputs (annotated VCFs, per-variant tables of about 20 MB each) are not in the repository.
    A tagged release with a DOI, and a compressed deposit of the per-variant tables, would let every table in `data/` be re-derived without a re-run.
 13. **The three calls that the last review round did not see.**
-   TMEM216, VWF and GTPBP3 are ClinVar-Pathogenic variants called Likely benign, each on BP4, and they are among the 51 opposite-direction calls of v38 and not among the 64 calls that the reviewer ruled on in round 6 (Section 3.6).
-   Whether the reviewer rules on them is for the authors to settle.
+   TMEM216, VWF and GTPBP3 are ClinVar-Pathogenic variants called Likely benign, each on BP4, and they were among the 51 opposite-direction calls of v38 and not among the 64 calls that the reviewer ruled on in round 6 (Section 3.6).
+   The reviewer ruled on them on 10 November 2026 (`LAST3_FOR_REVIEWopposite_direction_v38_MG.xls`), and `data/round7_rulings.tsv` holds our coding of the three notes.
+   TMEM216 and VWF are coded as supporting ClinVar (the reviewer states Pathogenic, with experimental evidence for VWF and a founder variant with a mild phenotype for TMEM216).
+   GTPBP3 is coded neither: the reviewer reads it as VUS on MANE Select and notes that other transcripts may be relevant.
+   That coding of GTPBP3 is a judgment, and the author may prefer "depends on the disorder".
+   The reviewer's note on TMEM216 also points at a gate that BP4's splice path lacks for a variant outside the transcript, which Section 3.6 records and does not change.
    The benchmark's gnomAD, SpliceAI and PhyloP databases are built from the whole gnomAD file, and the manifest is `analysis/acmg_benchmark/results/complete_databases/README.md`.
 
 ## What is not checked

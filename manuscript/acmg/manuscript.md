@@ -778,29 +778,30 @@ The benchmark cannot say which is right, and Section 3.7 asks whether ClinVar la
 
 ### 3.6 The 51 opposite-direction calls that remain
 
-The last review round (v26) held 64 opposite-direction calls, and 48 of the 51 in v38 are among them; the other three (TMEM216, VWF and GTPBP3) were not in that table, and the reviewer has not seen them.
+The last review round (v26) held 64 opposite-direction calls, and 48 of the 51 in v38 are among them; the other three (TMEM216, VWF and GTPBP3) were not in that table, and the reviewer ruled on them afterwards, on 10 November 2026 (Table 6).
 So none of the 48 is new since that table was sent (one run, v31, briefly had 65 opposite-direction calls; Table 6, Figure S3B).
 The 16 that were repaired all became VUS and none became the other class, and the reviewer had supported ClinVar's call on 14 of them (of the other two, one was coded neither and one depends on the disorder).
 Each of the 48 had already been in the table of an earlier round (17 since round 3, 2 since round 4 and 29 since round 5), so they are the calls that several rounds of changes left standing.
 
 **Table 6. The 51 opposite-direction calls of v38, by the evidence behind the call and the ruling of the last review round.**
 Rulings are our coding of the reviewer's text (Section 2.4), not categories the reviewer assigned, and Supplementary Table S8 lists the 51 calls with their criteria, gnomAD counts and rulings.
-Three calls were not in that round, and the last column counts them.
+Three calls were not in that round; the reviewer ruled on them afterwards (TMEM216 and VWF for ClinVar, GTPBP3 coded neither), and the table counts them with the rest.
 ClinVar here is ClinVar 2-star+ of the release of 4 April 2026 (Section 2.2).
 
 <!-- table:residual:begin -->
-| Evidence behind the call | Calls | ClinVar supported | fastVEP supported | Neither | Needs more evidence | Depends on the disorder | Not reviewed |
-|:---|---:|---:|---:|---:|---:|---:|---:|
-| PVS1 on a ClinVar benign or likely benign variant | 21 | 13 | 2 | 3 | 2 | 1 | 0 |
-| BP4 and BP7 on a ClinVar pathogenic or likely pathogenic variant | 22 | 10 | 2 | 5 | 3 | 0 | 2 |
-| PM1, PP2 and PP3 on a ClinVar benign or likely benign variant | 3 | 3 | 0 | 0 | 0 | 0 | 0 |
-| BS1 on a ClinVar pathogenic or likely pathogenic variant | 3 | 1 | 0 | 0 | 1 | 0 | 1 |
-| BP1 on a ClinVar pathogenic or likely pathogenic variant | 2 | 2 | 0 | 0 | 0 | 0 | 0 |
-| All | 51 | 29 | 4 | 8 | 6 | 1 | 3 |
+| Evidence behind the call | Calls | ClinVar supported | fastVEP supported | Neither | Needs more evidence | Depends on the disorder |
+|:---|---:|---:|---:|---:|---:|---:|
+| PVS1 on a ClinVar benign or likely benign variant | 21 | 13 | 2 | 3 | 2 | 1 |
+| BP4 and BP7 on a ClinVar pathogenic or likely pathogenic variant | 22 | 11 | 2 | 6 | 3 | 0 |
+| PM1, PP2 and PP3 on a ClinVar benign or likely benign variant | 3 | 3 | 0 | 0 | 0 | 0 |
+| BS1 on a ClinVar pathogenic or likely pathogenic variant | 3 | 2 | 0 | 0 | 1 | 0 |
+| BP1 on a ClinVar pathogenic or likely pathogenic variant | 2 | 2 | 0 | 0 | 0 | 0 |
+| All | 51 | 31 | 4 | 9 | 6 | 1 |
 <!-- table:residual:end -->
 
-The reviewer saw 48 of the 51.
+The reviewer saw 48 of the 51 in the last round and the other three afterwards.
 For 29 of the 48 (60%) the reviewer supported ClinVar's call (13 of the 24 reference-discordant benign calls that the reviewer saw, and 16 of the 24 reference-discordant pathogenic calls), for 4 (8%) fastVEP's, for 8 the reviewer's own call was VUS, for 6 more evidence was needed and for 1 the answer depends on the disorder.
+The three later rulings are two for ClinVar (VWF, where the reviewer gave experimental evidence and held BP7 to be wrongly called, and TMEM216, a founder variant with a mild phenotype, for which the reviewer held BP4 to be wrongly called and BS1 not to apply) and one VUS (GTPBP3, which the reviewer reads as VUS on the MANE Select transcript while noting that other transcripts may be clinically relevant), so that over all 51 the reviewer supported ClinVar on 31 (61%), fastVEP on 4, VUS on 9, more evidence on 6 and the disorder on 1.
 So for 29 of the 48 the reviewer judged ClinVar's call the better, which is not the same as the classifier being wrong in each of them, and for the other 19 the reviewer did not side with ClinVar.
 Of the 29 rulings for ClinVar, 10 follow from a class that the reviewer stated, 9 from the reviewer's statement that ClinVar is correct, and 10 from evidence that the reviewer gave for ClinVar's class without naming one (Appendix Table A4).
 Five of the 51 (10%) are no longer in the 2-star+ set in the October release, where ClinVar records them as having conflicting classifications, against 1.3% of all April variants that left it.
@@ -816,19 +817,20 @@ The reviewer's other reasons were a haplotype in which the variant is always in 
 **BP4 and BP7 on a variant ClinVar calls pathogenic or likely pathogenic (22).**
 These are the 22 reference-discordant benign calls of Section 3.4 that rest on BP7, two of them (VWF and GTPBP3) not in the last round.
 Eighteen are intronic, three synonymous and one in the splice region, with SpliceAI below 0.2 and PhyloP below 2.0, which is what BP7 asks.
-The reviewer saw 20 of the 22.
-The reviewer supported ClinVar for 10, and for several noted genetic or functional evidence of an effect on splicing (POLR3A c.1909+22G>A, at an allele frequency of 2.5e-3 in gnomAD, is one: the reviewer cites affected individuals and some functional data).
+The reviewer saw 20 of the 22 in the last round, and ruled on the other two (VWF and GTPBP3) afterwards.
+Of the 20, the reviewer supported ClinVar for 10, and for several noted genetic or functional evidence of an effect on splicing (POLR3A c.1909+22G>A, at an allele frequency of 2.5e-3 in gnomAD, is one: the reviewer cites affected individuals and some functional data).
 For 9 the reviewer's remark is that ClinVar's classification appears to predate the current MANE transcripts, including the two TH variants on which the reviewer supported fastVEP.
 One of the 20 that the reviewer saw (DST) is a stop-gained variant on the MANE Plus Clinical transcript and a deep-intronic variant on the MANE Select transcript that the pick chose, and the reviewer asked that Plus Clinical take precedence where both exist, which is a question of transcript policy that we have not changed.
 
 **PM1, PP2 and PP3 on a variant ClinVar calls benign or likely benign (3), BS1 on a variant ClinVar calls pathogenic or likely pathogenic (3) and BP1 on pathogenic missense variants (2).**
 The first three (CHD7, FBN1 and PTCH1) reach 6 points through PM1, PM2, PP2 and PP3 at Moderate strength, and the reviewer supported ClinVar on all three.
 The BS1 pair (PADI3 and SLC12A3) are seen in 328 and 338 gnomAD alleles, with population-maximum frequencies of 0.6% and 0.8%; the reviewer noted a homozygote in gnomAD and a disorder (Gitelman syndrome) for SLC12A3, supported ClinVar there, and asked for a deeper look at PADI3.
-A third BS1 call, TMEM216 11:61392563 G>T (upstream of the gene), has BP4 beside BS1 from a SpliceAI value of 0.07, and the reviewer has not seen it.
+A third BS1 call, TMEM216 11:61392563 G>T (upstream of the gene), has BP4 beside BS1 from a SpliceAI value of 0.07, and the reviewer, ruling on it after the last round, supported ClinVar: BS1 does not apply to a founder variant with a mild phenotype, and BP4 is wrongly called for a variant upstream of the gene.
+The second remark points at a gate that BP4's splice path lacks, since it fires on a variant outside the transcript, where a splice score says nothing about a regulatory effect; we have not counted the variants that a gate would change.
 The BP1 pair (IQSEC1 and PRR12) are in genes with two and one pathogenic or likely pathogenic missense records in the ClinVar protein index, the variant's own among them, so BP1's veto does not apply (a count of 1 would withhold BP1 for both, for PRR12 only through its own record and for IQSEC1 also through p.Thr343Met, Section 3.3), and the reviewer supported ClinVar on both.
 
 No change of one threshold would remove these calls as a class, except that a stricter count of BP1's veto acts on the BP1 pair (Section 3.3).
-A disease-specific frequency threshold could act on about seven of the 48 that the reviewer saw (the five common variants of PVS1 and the two of BS1), a transcript policy on a handful, and for the rest of the others the reviewer's remarks point to phase, case-level or functional evidence.
+A disease-specific frequency threshold could act on about eight of the 51 (the five common variants of PVS1 and the three of BS1), a transcript policy on a handful, and for the rest of the others the reviewer's remarks point to phase, case-level or functional evidence.
 We have not put them on the curated exception list, which holds 15 alleles, because a list long enough to hide the residual would no longer be a statement about the classifier.
 
 ### 3.7 A later ClinVar release, and the variants that were not in the April set
@@ -1059,7 +1061,7 @@ Five of the six are at the threshold of BS1, a filtering allele frequency of 0.5
 KMT2C p.Cys391Ter (ClinVar Likely benign) and RAI1 p.Gln280HisfsTer83 (Benign) are null variants at sites that failed gnomAD's variant-quality filter, which withholds the frequency criteria, and the site-level frequency veto (Section 2.7) holds a call that rests on PVS1 alone at VUS where the withheld frequency would have met BS1.
 Their filtering allele frequencies are 0.522% and 0.537% in the exomes and 0.495% and 0.498% in the joint release, so the veto does not act there and both are called Likely pathogenic.
 PIEZO1's splice-acceptor deletion (ClinVar Benign) is the same case in the other direction, with 0.198% in the exomes and 0.947% in the joint release, so the veto holds it at VUS where the exomes called it Likely pathogenic.
-TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that the reviewer has not seen, has a filtering allele frequency of 0.512% in the exomes, so that BS1 fires and the call is Likely benign, and 0.461% in the joint release, so that BS1 does not fire and the call is VUS.
+TMEM216's variant upstream of the gene (ClinVar Pathogenic), one of the three contradictions that were not in the last round of review, has a filtering allele frequency of 0.512% in the exomes, so that BS1 fires and the call is Likely benign, and 0.461% in the joint release, so that BS1 does not fire and the call is VUS.
 TXNL4A's deletion upstream of the gene (ClinVar Pathogenic) is covered by 364,572 alleles in the exomes, with a filtering allele frequency of 0.384%, and by 516,266 in the joint release, with 0.560%, so BS1 fires and the call is Likely benign.
 NF1 p.Met895Ile (ClinVar Likely benign) is called Likely pathogenic because PM2, which the segmental-duplication flag of the exomes had withheld, fires.
 Thirteen ClinVar pathogenic-side variants lose a pathogenic-side call and 39 gain one.
@@ -1346,7 +1348,7 @@ The results of the two versions are in these places.
 The results of v38, which is the version of every number of this paper unless it names v37, are the 96 runs of v38 in `analysis/acmg_benchmark/results/v37_manuscript/` (`runs_v38.tsv`, `holdout_runs_v38.tsv`, `run_matrix_v38.tsv` and `binaries_v38.tsv`, with the provenance and the configuration of each run in the subdirectories provenance and configs, where the files of these runs are named v38_ and the name of the run), their repetition in `analysis/acmg_benchmark/results/v38_v0.5.0/` (the 42 runs of Section 3.8, 18 of which are the sweeps that they share with the family, all identical to the runs that they repeat), the 66 tables of `manuscript/acmg/data/` that have a twin for each version (`headline_v38.csv` and the others, `_v38` in the name), the 23 files whose names begin with v38_ (Appendix Tables A10 to A16, which are sheets A10 to A16 of `supplementary_tables.xlsx`), Tables 3 to 9, Figures 1 to 5 and S1 to S4, Supplementary Tables S1 to S9 and Appendix Tables A1 to A16, and the sections "v38", "The full rerun of 4 November 2026", "After v38", "Release 0.5.0 reproduces v38" and "The family v38" of `RUN_VERSIONS.md`.
 The results of v37, the reference of every difference that v38 makes, are the same 96 runs of v37 in the same directory (`runs.tsv`, `holdout_runs.tsv`, `run_matrix.tsv` and `binaries.tsv`) and the 66 twin tables with `_v37` in the name, which `13_manuscript_stats.py --base v37` writes and `build_tables.py --base v37`, `build_supplement.py --base v37 --out` and `generate_figures.py --base v37 --out` turn into the tables, the workbook and the figures of v37; `verify_numbers.py --base v37` lists, sentence by sentence, the numbers of the text that v38 changed.
 `analysis/acmg_benchmark/results/v38_family_vs_v37.md`, with its five CSV files, sets the two versions against each other run for run.
-Seven files of `manuscript/acmg/data/` belong to neither version: `change_ledger.csv`, `review_rounds.csv` and `trajectory.csv` hold the record of the numbered versions, `round6_rulings.tsv` is the reviewer's own ruling, `clingen_missing_curations.csv` lists the rows of the ClinGen export, `criteria_status.csv` is read from the engine of v38, and `tavtigian_posterior.csv` is arithmetic of the framework.
+Eight files of `manuscript/acmg/data/` belong to neither version: `change_ledger.csv`, `review_rounds.csv` and `trajectory.csv` hold the record of the numbered versions, `round6_rulings.tsv` and `round7_rulings.tsv` are the reviewer's own rulings, `clingen_missing_curations.csv` lists the rows of the ClinGen export, `criteria_status.csv` is read from the engine of v38, and `tavtigian_posterior.csv` is arithmetic of the framework.
 The annotated VCFs and the per-variant tables of the runs are in `data/benchmark/manuscript_runs/` on the machine that made them, and are not in the repository.
 The analyses of Sections 3.1 to 3.7 were made on v38 and on v37; what was not repeated on v38 is what needs a reviewer or a run that the repository does not have, which is the review rounds, the ledger and the runs of round 6, which need builds that the repository does not hold.
 
@@ -1442,7 +1444,7 @@ Classes and routes are our coding of the project's record.
 **Figure S3. What the reviewer ruled.**
 (A) The rulings on the rows of the three workbooks the reviewer returned, in rounds 1, 2 and 6, in five categories: the ClinVar 2-star+ call supported, fastVEP's call supported, neither (the reviewer's call is VUS or another class), more evidence needed or dependent on the disorder, and no verdict recorded.
 Rounds 1 and 2 are decoded from cell colors against each workbook's key, and round 6 is our coding of the reviewer's text (Appendix Table A4).
-(B) The 51 opposite-direction calls of v38, by the evidence behind the call, with the rulings of the last round; three of them were not in it.
+(B) The 51 opposite-direction calls of v38, by the evidence behind the call, with the rulings of the last round and, for the three that were not in it (TMEM216, VWF and GTPBP3), the rulings that the reviewer gave afterwards (`round7_rulings.tsv`).
 
 **Figure S4. Agreement in direction against opposite-direction calls.**
 Each point is a classifier, on 673,660 variants: the versions v7 to v36 with stored scored matrices at their runs of the time (blue, joined in order) and v37 and v38 on the final benchmark databases (the diamonds, joined by a dashed line), the runs of this paper and the earlier runs of the dominant-gene BS2 settings, each v38 with one change (gray), every variant called VUS (the diamond at zero), and three rules with no combining rule, gene-level gate or safeguard at nine frequency thresholds each, with the second rule alone and the second with the third also given with no frequency rule (the filled markers).
@@ -1484,7 +1486,7 @@ A ClinVar class in these tables is, as in the supplementary tables, the class of
 
 **Appendix Table A3.** The aggregates that the text quotes from the per-variant table and that no other table holds (`facts_v38.csv`).
 
-**Appendix Table A4.** The rulings of the three returned workbooks (`review_rounds.csv`), the 64 rows of the last round and what became of them (`round6_rows_v38.csv`), and the rulings with our coding of them (`round6_rulings.tsv`, `round6_rules_v38.csv`).
+**Appendix Table A4.** The rulings of the three returned workbooks (`review_rounds.csv`), the 64 rows of the last round and what became of them (`round6_rows_v38.csv`), and the rulings with our coding of them (`round6_rulings.tsv`, `round6_rules_v38.csv`; `round7_rulings.tsv` holds the three calls that the reviewer ruled on afterwards).
 We coded the reviewer's round-6 text by five rules, which a row can satisfy in more than one way; the column `rule` of `round6_rulings.tsv` records the one that decided it.
 (1, class, 29 rows) The text states a class: it is compared with the two calls and coded ClinVar when its direction is ClinVar's, fastVEP when it is fastVEP's, and neither when it is VUS; a pair of classes that includes VUS (one row) was coded by its other member.
 (2, stated, 13 rows) The text says who is right, or that both calls are discordant with the reviewer's: coded as stated.
