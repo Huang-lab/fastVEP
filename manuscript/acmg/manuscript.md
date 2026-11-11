@@ -84,7 +84,7 @@ Here we describe how the ACMG/AMP classification engine of fastVEP, an open-sour
 Two versions of the classifier appear throughout.
 They are versions of the classifier and not builds of the genome: every run of either is on GRCh38.
 v38 is the latest, and every number in this paper is v38's unless the text names v37.
-v38 is the classifier of fastVEP release 0.5.0, which for now is the release candidate `v0.5.0-rc.1` (Section 2.1): it reads the mode of inheritance that ClinGen curates, does not count BS2's carriers beside BS1 or BA1, and classifies a gene once for each of its modes of inheritance.
+v38 is the classifier of fastVEP release 0.5.0, whose runs here were made by its release candidate `v0.5.0-rc.1` (Section 2.1): it reads the mode of inheritance that ClinGen curates, does not count BS2's carriers beside BS1 or BA1, and classifies a gene once for each of its modes of inheritance.
 v37 is the version in which the review rounds ended, which took a gene's mode of inheritance from the words of its disease names; it appears here in the numbered versions v1 to v37 and as the reference of the comparison in Section 3.8.
 Both combine the criteria that are met by the same default scheme, points on the pathogenic side and the 2015 table on the benign side, because the table has no row for a lone Very Strong criterion, which the points call Likely pathogenic, and points on the benign side would call a lone Supporting criterion Likely benign, which the table does not (Section 3.3).
 
@@ -112,7 +112,8 @@ Along the way we read each recommendation that the classifier cites for a number
 ### 2.1 The classifier and its evidence sources
 
 The classification engine is the `fastvep-classification` crate of fastVEP (version 0.5.0-rc.1): 16,746 lines of Rust with 398 unit tests at the tag that made the runs of this paper.
-The tag is `v0.5.0-rc.1` (c12d9f9), the first release candidate of fastVEP release 0.5.0 and the only tag of it so far, so that "release 0.5.0" in this paper means that candidate, and the classifier in it is v38 (5293cc0), the latest version.
+The runs of this paper were made by binaries of the tag `v0.5.0-rc.1` (c12d9f9), the first release candidate of fastVEP release 0.5.0, and the classifier in it is v38 (5293cc0), the latest version.
+The release itself is the tag `v0.5.0` (19a159f, 11 November 2026), and the base run on the 673,660 records, made again by a binary built from it, gives the same concordance matrix and the same list of discordant calls as the candidate, with 512 fewer PM2_Supporting calls (90,174 and 89,662) because no mitochondrial variant carries PM2 in it (`results/v38_tag_v0.5.0/`).
 v37 (5d8004a) is the version in which the review rounds ended: it took the mode of inheritance from the words of the disease names, and its crate was 14,857 lines of Rust with 340 unit tests (version 0.4.0).
 v38 reads the mode of inheritance that ClinGen curates, does not count BS2's carriers beside BS1 or BA1, and classifies a gene once for each of its modes of inheritance (Sections 2.10 and 3.8).
 v37 and v38 are versions of the classifier and not builds of the genome: every run of this paper, of either version, is on GRCh38 (Sections 2.2 and 2.8).

@@ -165,9 +165,9 @@ These are marked in the manuscript with square brackets or are not in it at all.
    BS2's arm for homozygotes and hemizygotes was left as it was, with the same doubling on the X chromosome for 1,301 variants none of which is a ClinVar pathogenic-side variant.
    All are reasoned in the text and measured on the April set and the October release, and each can be reversed with the numbers of Table 8 and Appendix Tables A10 and A12.
 10. **The tag that the manuscript names.**
-   The manuscript names the first release candidate of release 0.5.0 (`v0.5.0-rc.1`, `c12d9f9`) as the code of v38 and says that "release 0.5.0" means that candidate, because no other tag of it exists yet.
-   When v0.5.0 is tagged, `verify_numbers.py` will still read the candidate.
-   Whether the final tag changes any call has to be shown by the repetition of the runs (`scripts/16_compare_runs.py`, as for the 42 runs of `results/v38_v0.5.0/`), and the text has to name the final tag if the author wants it named.
+   The manuscript names the first release candidate of release 0.5.0 (`v0.5.0-rc.1`, `c12d9f9`) as the code that made its runs, and states that the final tag `v0.5.0` (`19a159f`, 11 November 2026) gives the same calls on the base run, with 512 fewer PM2_Supporting calls on mitochondrial variants (`results/v38_tag_v0.5.0/`, `RUN_VERSIONS.md`).
+   Only the base run was repeated by the tag, and the 41 other runs of Section 3.8 were not, so the paper does not say that the tag reproduces them.
+   Repeating them with `V38_REF=v0.5.0` is the check that the author may want before the paper says "release 0.5.0" without the candidate.
 11. **The gnomAD source of the benchmark.**
    Section 3.8 measures gnomAD's joint release of exomes and genomes on every chromosome: 10,193 more exact calls and 9,187 more in direction than the exomes, for no more reference-discordant benign call and two more reference-discordant pathogenic calls, and without the region flags that withhold the frequency criteria.
    `docs/ACMG_SETUP.md` recommends it for classification where no policy requires the region veto, and the benchmark of the paper still reads the exomes, because every other number in the paper was measured on them.

@@ -1337,7 +1337,7 @@ def repository() -> None:
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=True).stdout
 
-    lacking = [ref for ref in ("v0.5.0-rc.1", "5d8004a", "5293cc0") if subprocess.run(["git", "cat-file", "-e", f"{ref}^{{commit}}"], cwd=root, capture_output=True).returncode != 0]
+    lacking = [ref for ref in ("v0.5.0-rc.1", "v0.5.0", "5d8004a", "5293cc0") if subprocess.run(["git", "cat-file", "-e", f"{ref}^{{commit}}"], cwd=root, capture_output=True).returncode != 0]
     if lacking:
         failures.append(f"the sentences about the crate, the tag and the commits need {', '.join(lacking)}, which this clone lacks (git fetch --tags --unshallow)")
         return
@@ -1349,13 +1349,17 @@ def repository() -> None:
     (l38, t38, ver38), (l37, t37, ver37) = crate("v0.5.0-rc.1"), crate("5d8004a")
     is_ancestor = lambda a, b: subprocess.run(["git", "merge-base", "--is-ancestor", a, b], cwd=root).returncode == 0  # noqa: E731
     fact("The classification engine is the `fastvep-classification` crate", n(l38), n(t38), ver38)
-    # the paper calls the candidate "release 0.5.0" for as long as no other tag of 0.5.0 exists, so the text is stale the day that v0.5.0 is tagged
-    only_rc = git("tag", "--list", "v0.5*").split() == ["v0.5.0-rc.1"]
-    fact("The tag is `v0.5.0-rc.1` (c12d9f9), the first release candidate of fastVEP release 0.5.0", git("rev-parse", "--short=7", "v0.5.0-rc.1^{commit}").strip(),
-         "the only tag of it so far" if only_rc else "?",
+    # the runs were made by the candidate; the final tag was run once more (the base run), and the files of that run are in results/v38_tag_v0.5.0
+    tagdir = HERE.parents[1] / "analysis/acmg_benchmark/results/v38_tag_v0.5.0"
+    rule = lambda f: pd.read_csv(tagdir / f, index_col=0).iloc[:, 0]  # noqa: E731
+    rc_rule, tag_rule = rule("candidate_rule_distribution.csv"), rule("rule_distribution.csv")
+    same_calls = (tagdir / "concordance_matrix.csv").read_bytes().replace(b"\r\n", b"\n") == (tagdir / "candidate_concordance_matrix.csv").read_bytes()
+    fact("The release itself is the tag `v0.5.0` (19a159f, 11 November 2026)", git("rev-parse", "--short=7", "v0.5.0^{commit}").strip(),
+         "the same concordance matrix" if same_calls else "?", n(int(rc_rule["PM2_Supporting"] - tag_rule["PM2_Supporting"])), n(int(rc_rule["PM2_Supporting"])), n(int(tag_rule["PM2_Supporting"])))
+    fact("The runs of this paper were made by binaries of the tag `v0.5.0-rc.1` (c12d9f9), the first release candidate of fastVEP release 0.5.0", git("rev-parse", "--short=7", "v0.5.0-rc.1^{commit}").strip(),
          "5293cc0" if is_ancestor("5293cc0", "v0.5.0-rc.1") and git("log", "-1", "--format=%s", "5293cc0").startswith("fix(acmg): read the mode of inheritance") else "?")
     fact("v37 (5d8004a) is the version in which the review rounds ended", git("rev-parse", "--short=7", "5d8004a").strip(), n(l37), n(t37), ver37)
-    fact("v38 is the classifier of fastVEP release 0.5.0, which for now is the release candidate", "`v0.5.0-rc.1`" if only_rc else "?")
+    fact("v38 is the classifier of fastVEP release 0.5.0, whose runs here were made by its release candidate", "`v0.5.0-rc.1`")
     fact("v37 and v38 are versions of the classifier and not builds of the genome", "GRCh38")
     v = {m: importlib.import_module(m).__version__ for m in ("pandas", "numpy", "scipy", "matplotlib")}
     fact("Analysis used Python", f"pandas {v['pandas']}", f"NumPy {v['numpy']}", f"SciPy {v['scipy']}", f"matplotlib {v['matplotlib']}", f"Python {sys.version.split()[0]}")
