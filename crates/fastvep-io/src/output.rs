@@ -465,7 +465,7 @@ fn write_acmg_disorders(per_disorder: &[serde_json::Value], buf: &mut String) {
 /// buffer.
 ///
 /// Five of these substitutions are the ones Ensembl VEP makes, measured
-/// against 115.1 by `validation/run_escaping_probe.sh` rather than assumed:
+/// against 116.3 by `validation/run_escaping_probe.sh` rather than assumed:
 /// `,` and `|` become `&`, `;` becomes `%3B`, `=` becomes `%3D` (VEP writes a
 /// synonymous HGVSp as `ENSP00000269305.1:p.Thr125%3D`), and a space becomes
 /// `_`. Note that VEP is not self-consistent on `=` - the value it appends to
@@ -2158,7 +2158,7 @@ fn json_leaf_to_string(value: &Value) -> String {
 /// **Exactly one character was dropped from this set**, the colon, because it
 /// is reserved by nothing and encoding it only cost legibility - `#123`
 /// reported an `FV_CLINVAR_PROTEIN` value with sixty `%3A` in it. Ensembl VEP
-/// 115.1 writes `:` through literally (`validation/run_escaping_probe.sh`
+/// 116.3 writes `:` through literally (`validation/run_escaping_probe.sh`
 /// measures this), and so does fastVEP's own CSQ writer - every HGVSc carries
 /// one - so encoding it here contradicted the same record's CSQ column.
 ///
@@ -3494,7 +3494,7 @@ mod tests {
         assert_eq!(escape_vcf_subfield("a%b"), "a%25b");
         assert_eq!(escape_vcf_subfield("a\tb"), "a%09b");
 
-        // Reserved by nothing, and VEP 115.1 writes it through literally, as
+        // Reserved by nothing, and VEP 116.3 writes it through literally, as
         // fastVEP's own CSQ column already did - every HGVSc carries one. The
         // single character #123 is about.
         assert_eq!(
