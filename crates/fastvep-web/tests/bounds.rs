@@ -104,7 +104,7 @@ async fn variants_that_overlap_many_transcripts_are_annotated_a_few_at_a_time() 
         100,
         Limits {
             batch_rows: 150,
-            max_response_bytes: 150_000,
+            max_response_bytes: 80_000,
             ..Limits::default()
         },
     );
@@ -120,8 +120,9 @@ async fn variants_that_overlap_many_transcripts_are_annotated_a_few_at_a_time() 
         .and_then(|t| t.split(' ').next())
         .and_then(|n| n.parse().ok())
         .unwrap_or(99);
-    // A variant of this genome is about 40 KB of answer and the limit is 147 KiB, so the fourth
-    // variant is the one that passes it. All ten is the old batch.
+    // A variant of this genome is about 21 KB of answer (a structural variant's rows have no HGVS, as
+    // in VEP) and the limit is 78 KiB, so the fourth variant is the one that passes it. All ten is
+    // the old batch.
     assert!(
         (2..=6).contains(&done),
         "{done} variants were annotated before the refusal: {message}"
@@ -172,6 +173,29 @@ async fn a_record_with_more_alternate_alleles_than_the_server_annotates_is_refus
     let message = error_of(&body);
     assert!(
         message.contains("VCF line 2 has 257 alternate alleles") && message.contains("256"),
+        "{message}"
+    );
+    let (status, body) = post(&st, json!({ "vcf": line(256) })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// A tandem repeat is annotated as a small variant with an allele for each count of its `RN`, and
+/// the ALT column (`<CNV:TR>`) does not say how many: a record whose INFO lists a million of them was
+/// 1.1 GB of rows for each transcript it met.
+#[tokio::test]
+async fn a_tandem_repeat_that_lists_more_alleles_than_the_server_annotates_is_refused() {
+    let st = state(2, Limits::default());
+    let line = |n: usize| {
+        let ones = vec!["1"; n].join(",");
+        format!(
+            "17\t10100\t.\tC\t<CNV:TR>\t.\t.\tSVTYPE=CNV;END=10110;SVLEN=10;RUS=A;RUC=1;RN={ones}"
+        )
+    };
+    let (status, body) = post(&st, json!({ "vcf": format!("#header\n{}", line(257)) })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let message = error_of(&body);
+    assert!(
+        message.contains("VCF line 2 lists 257 repeat alleles") && message.contains("256"),
         "{message}"
     );
     let (status, body) = post(&st, json!({ "vcf": line(256) })).await;

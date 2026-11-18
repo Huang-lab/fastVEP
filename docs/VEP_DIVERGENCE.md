@@ -348,15 +348,17 @@ the record.
 A missing alt allele is indistinguishable from an alt that had no consequence, in a file whose
 reader is deciding what to report on.
 So `--pick` reduces to one transcript and keeps that transcript's annotation for every allele,
-and the option for VEP's behaviour is `--pick-allele`, which agrees with it exactly.
+and the option for VEP's behaviour is `--pick-allele`, which keeps the same entries.
 `--flag-pick` flags the same set `--pick` would have kept, for the same reason.
 
-The four allele-scoped options agree with VEP on which transcript wins as well as how many
-entries survive: over five two-alt sites at overlapping-gene loci on chromosome 22 (HDHD5,
-HIRA/C22orf39, GNB1L/RTL10, PI4KA/SERPIND1, CLTCL1/SLC25A1), `--pick-allele-gene` and
-`--flag-pick-allele-gene` picked the same (allele, gene, transcript) set as VEP at 5 of 5, once
-the comparison is restricted to the genes VEP reports at all - see the `ncRNA_gene` note under
-[What is measured](#what-is-measured).
+A variant that no transcript is beside has only its `intergenic_variant` rows, one for each allele, and all three flagging forms flag them, so that a filter on `PICK is 1` keeps the variant (6,940 of the 50,284 variants of chromosome 22 of HG002 have nothing else, in 7,001 rows).
+Ensembl flags them as well, which a run of VEP 116.3 in `--gff` mode over that chromosome shows.
+`--flag_pick_allele` and `--flag_pick_allele_gene` flag the row of every allele, as fastVEP does: the `PICK` cell of all 7,001 rows is the same in both tools, where the build before flagged none of them.
+`--flag_pick` flags the first allele's row only, which is 6,940 of the 7,001 rows; the 61 it leaves are the rows of the second allele of 61 sites that have two.
+fastVEP flags every allele's row for `--flag-pick` too, for the reason above.
+
+At five two-alt sites at overlapping-gene loci on chromosome 22 (HDHD5, HIRA/C22orf39, GNB1L/RTL10, PI4KA/SERPIND1, CLTCL1/SLC25A1), `--pick-allele-gene` and `--flag-pick-allele-gene` picked the same (allele, gene, transcript) set as VEP at 5 of 5, once the comparison is restricted to the genes VEP reports at all - see the `ncRNA_gene` note under [What is measured](#what-is-measured).
+Over the whole of that chromosome the transcript that wins is not always VEP's: where every criterion before the ninth ties, VEP keeps the longer transcript and fastVEP the lower ID, which [Which transcript `--pick` keeps](#which-transcript---pick-keeps) counts.
 
 ### 11. An allele of a record with several ALTs is described as it would be alone
 
@@ -570,23 +572,60 @@ A change that does lose the initiator is `p.Met1?` ([divergence 15](#15-a-change
 
 These are fastVEP's remaining defects, not disagreements.
 
-### `--pick`'s last tie-break
+### Which transcript `--pick` keeps
 
-| Gap | Rows | What it looks like |
-|---|---:|---|
-| The ninth tie-break, transcript length, is not available | 1 of 5 two-alt overlapping-gene sites on chromosome 22 | PI4KA/SERPIND1 at `22:20780916`. Both transcripts are MANE Select and canonical for their own gene, both TSL 1, both protein_coding, both carry a CCDS, and both are `intron_variant` - so all eight tiers of `--pick-order` tie. VEP then breaks the tie on transcript length and reports PI4KA; fastVEP breaks it on transcript ID and reports SERPIND1 |
+Ensembl VEP 116.3 (`--gff`) and fastVEP were run over chromosome 22 of HG002 (50,284 variants) on the same gene models with each of the three flagging forms, and the transcript that each flags was compared row by row (`validation/compare_pick.py`, which also says why a pair differs).
+They flag another transcript for 0.6 to 2.4 % of the groups they pick in, and every difference is one of three things:
 
-`TranscriptVariation` does not carry a transcript length, which is why `--pick-order length` is
-rejected with a message saying so rather than accepted and ignored.
-The tie is only reachable where a pick compares transcripts of *different* genes, so it affects
-`--pick`, `--pick-allele` and their flagging forms, and never `--pick-allele-gene`, which compares
-within one gene.
+| Flag | Groups with a transcript | A different transcript is flagged | VEP's is the longer | fastVEP's has a CCDS and VEP's has the better term | fastVEP's is of a type VEP does not read |
+|---|---:|---:|---:|---:|---:|
+| `--flag_pick`, a group is a variant | 43,323 | 1,035 | 1,014 | 12 | 9 |
+| `--flag_pick_allele`, a variant and an allele | 43,839 | 1,047 | 1,025 | 12 | 10 |
+| `--flag_pick_allele_gene`, a variant, an allele and a gene | 67,649 | 419 | 398 | 21 | 0 |
+
+- **The ninth tie-break, transcript length, is not available (398 to 1,025 groups).**
+  Where every criterion before it ties, VEP keeps the transcript with the longest sequence, and fastVEP the one with the lowest ID.
+  VEP's length is that of the coding sequence (with the bases of the start phase) when the transcript has a translation, which decides 288 of the 398 groups of the per-gene form, and the sum of the lengths of the exons when it has not (110).
+  It is reached inside a gene as well as between genes, wherever a gene's transcripts do not differ in a MANE, canonical or TSL tag, as the isoforms of most non-coding genes do not: the two lncRNA transcripts of ENSG00000290711, ENST00000787738 (1,928 exon bases) and ENST00000787739 (2,007), have the same biotype and consequence, and VEP flags the second where fastVEP flags the first.
+  Between genes it is the same: at `22:20780916` two MANE Select transcripts of two genes (PI4KA and SERPIND1) tie on all eight criteria, and VEP reports PI4KA.
+  `TranscriptVariation` does not carry a transcript length, which is why `--pick-order length` is rejected with a message saying so rather than accepted and ignored.
+- **A `ccdsid` of the GFF3 is a pick criterion here, and VEP's `--gff` reader does not read it (12 to 21 groups).**
+  `BaseGXF.pm` gives a transcript its `transcript_support_level`, the `MANE_Select`, `MANE_Plus_Clinical` and GENCODE tags and the canonical flag, and neither a CCDS nor an APPRIS, so the CCDS criterion never separates two transcripts there.
+  fastVEP reads both from the GFF3 (`ccdsid`, the `appris_*` tags), so a transcript with a CCDS beats one without it before the rank is looked at: ENST00000406566 (CCDS82708.1, `downstream_gene_variant`) is kept over ENST00000451479 (`intron_variant`) of SLC35E4, and VEP keeps the second, for the better term.
+  This is a difference in what the two readers know, not a rule of VEP's that fastVEP lacks.
+- **A transcript of a type VEP does not read (9 and 10 groups).**
+  fastVEP flags an `unconfirmed_transcript` that VEP's reader skips (see *Structural variants* of Part 3 and VEP_MIGRATION.md).
+
+The tie is reached wherever the earlier criteria tie, so it affects every form of the option, `--pick-allele-gene` included.
+Changing it moves the transcript that `--pick` keeps for these variants, and with it what the ACMG classification (which runs on the picked transcript in the benchmark) is given, so it is not done without running that benchmark again.
 
 ### Consequence terms
 
 None that was measured against release 116.3: the rows of [Part 3](#coding-consequence-terms) are what is left.
 The one gap this section listed against 115.1, `3_prime_UTR_variant` and `5_prime_UTR_variant` missing on a change that spans the end of a transcript whose coding region reaches it (CHEK2 `22:28711907 ACT>A`, ENST00000439200), was Ensembl's `_before_coding` and `_after_coding` being plain `overlap` calls against an interval that can be empty.
 It is `stop_retained_variant,3_prime_UTR_variant` in both tools now.
+
+### Structural variants
+
+These come from running Ensembl VEP 116.3 (and its own Perl reader of a record) and fastVEP over records that the generated world of the golden does not hold, and are not changed.
+`docs/STRUCTURAL_VARIANTS.md` has what is changed and what is kept on purpose, and what is Ensembl VEP's own artifact and not a gap of fastVEP's: its rows for a record depend on the records read with it (`--buffer_size`).
+
+- **A tandem repeat read as bases, at the edges of its INFO.**
+  VEP checks `--max_sv_size` on the small variant that it makes of the repeat, and fastVEP on the record before it is expanded, so a repeat whose bases are under a small limit while its interval is over it (`--max_sv_size 30` with `RUC=14;RB=28` over 39 bases) is a small deletion in VEP and has no row here; and with `--max_sv_size 0`, where VEP's `max_sv_size || 5000` still expands, fastVEP writes no row.
+  A repeat whose interval runs past the end of the contig has no row in VEP (its reference is shorter than the interval), and a `tandem_repeat` `intergenic_variant` row here.
+  An allele with a count of nothing (`RN=1,1;RUS=CA,CA;RUC=0,5`) makes VEP's allele string `REF//ALT`, which its `minimise_alleles` does not match, so only the first allele is kept and trimmed; fastVEP keeps both, untrimmed.
+  The alleles are bounded together by `--max_sv_size` here, where VEP bounds each run of a unit, and a repeat of more than 1,024 alleles stays a structural variant.
+- **`cds_start_NF` is read from the sequence.**
+  The `--gff` reader of VEP never sets it (it reads the MANE, GENCODE and canonical tags only), so `start_lost` and `start_retained_variant` are written for a deletion over the first codon of a transcript whose first codon is not `ATG`, or whose first CDS exon has a phase above 0; fastVEP flags such a transcript as VEP's cache does, and does not write them (`chr1 1000 . C <DEL> . . END=1003` over a transcript whose CDS starts with `CTG`: VEP `start_lost,feature_truncation,inframe_deletion,start_retained_variant`, fastVEP `feature_truncation,inframe_deletion`).
+  It is so for a small variant on such a transcript as well.
+- **A transcript is its mRNA record.**
+  VEP recalculates a transcript's start and end from its exons when they carry no `rank` attribute (`BaseGXF.pm`, `add_Exon` of `Transcript.pm`), and keeps the mRNA's when they do; fastVEP always keeps the mRNA's.
+  On a GFF3 whose mRNA is wider than its exons and has no `rank`, the `DISTANCE` and the upstream and downstream terms of a small variant differ as well (a deletion 900 bases before the exons: 900 in VEP, 800 here); the GFF3 of Ensembl and of RefSeq have one extent for both.
+- **A record with fewer than eight columns** (`chr1 1060 x C <DUP>`) is annotated by VEP, whose reader of a structural variant fills in the missing ones, and skipped by fastVEP with "fewer than 8 fields".
+- **An `INFO` number that is not a whole number** (`SVLEN=1.5`, `END=+30`) is read to its integer part here, where Perl reads the number itself and writes `1085.7` for a coordinate.
+- **The order of rows** is by the transcripts' IDs here, and VEP sorts the keys of its table, which are the ID with `_` and the number its GFF reader counts up from 0 (`_get_transcript_key`, and the first transcript, whose number is false, has none), so that the two orders differ where one ID is the start of another.
+  With the transcripts of the fixture renamed `ENST1`, `ENST10`, `ENST100`, `ENST1000` and `ENST10000`, both tools write the same 17,284 rows and VEP writes `ENST10` before `ENST1` (`_` sorts after the digits) in 3,162 of 6,679 records, where fastVEP writes `ENST1` first.
+  The IDs of Ensembl's GFF3 are one length, so its rows are in VEP's order.
 
 ### HGVSc
 
@@ -1115,7 +1154,7 @@ That is 76 of the 4,753 rows of the edge fixture for the cDNA and 62 for the CDS
 In a transcript with a frameshift intron it is also every change within 12 bases of an exon (301 rows for the cDNA and 212 for the CDS in the frameshift-intron world below).
 The two flags are the ones `HGVSp` asks for, `Transcript::pre_exon` and `Transcript::pre_coding`, defined once.
 VEP's VCF writer blanks a cell that is a bare `-` and not `-/1403`, so a CSQ field has the dash over the total and an empty field where there is no total.
-The structural variants fastVEP writes no position for are given no total either.
+A structural variant's row has its totals like any other (7,157 of the 17,284 rows of the golden of `vep_tab_sv` have one, as VEP's do), and one that covers the whole of a transcript has no position in a cell and so no total.
 
 - **JSON.** VEP's JSON writer makes `cdna_start` and `cdna_end` by splitting the cell at its first `-`, and with a total that gives the wrong answer: 1,525 of the 1,633 ranges of the edge fixture have their start for an end, and the 90 single positions are the string `"5/1403"`, for both.
   fastVEP does not reproduce that and writes no totals in JSON, and says so on stderr: a wrong end is not worth matching.
@@ -1186,6 +1225,16 @@ The two are the same for a record that is already minimal and padded by one base
 A record with several ALTs is not minimised in release 116, and is not here: in 115 a minimised indel switched on `split_variants` for the whole input (`InputBuffer::next`), which split such a record into one variant per ALT, and in 116 those lines are commented out, so it is annotated whole.
 `fixtures/vep_tab_lone_indels` is 1,500 records written the way a caller that does not trim writes them, a prefix the alleles share (the anchor and up to two more bases), the bases that change and a suffix they share (none to three), as a deletion, an insertion or a replacement, and what VEP 116.3 wrote for them; `vep_tab_lone_indels_golden.rs` holds fastVEP to it.
 All the columns it compares, `Consequence`, `IMPACT`, `HGVSc` and `HGVS_OFFSET` among them, agree on all 3,176 rows but for the 26 cells `vep_tab_lone_indels_golden.rs` lists, each asserted to still differ: 9 of the `--gff` reader and the stop codon (divergences 5 and 13), and 17 of divergences 14, 15 and 17.
+
+### Structural variants
+
+**The fixture `vep_tab_sv`: 6,692 records on 10 transcripts, 17,284 rows of VEP 116.3, and the same 17,284 rows in fastVEP, in the same order, with every one of the 23 compared columns VEP's but for 5 cells.**
+The records are every class VEP has a rule for, laid over every place on every transcript where one end of a variant can be on another kind of sequence than the other, with the records that are about how a record is read (`END` and `SVLEN`, the type from `SVTYPE`, several ALTs, breakends of every notation, tandem repeats, and the ones VEP skips).
+`vep_tab_sv_golden.rs` holds it, and lists the 5 cells, each asserted to still differ: all are of a tandem repeat with several alleles, which is a record with several ALTs, and are divergence 11 (an allele is described as it would be alone).
+`validation/run_sv_world.py` makes the same comparison on worlds of other seeds, and eight of them (139,860 rows of VEP 116.3) have no row that is only in one tool, no row out of order, and no cell that differs but those of divergence 11, 5 to 7 for each seed.
+
+[STRUCTURAL_VARIANTS.md](STRUCTURAL_VARIANTS.md) has the rules, and where fastVEP is not VEP outside the fixture: a breakend that has no mate is `feature_truncation` inside a transcript as in a `vep` run with its statistics, and not as in a `--no_stats` run (49 of 104 breakend rows differ between the two runs of VEP, all of them this term); `<*>` and `<NON_REF>` have no row; the rows of a breakend whose mate is on another contig, which VEP does not write the same way twice, are written one way; a variant is never paired with a transcript of another contig, which VEP's `--gff` reader can do; and a mate's contig is matched with or without `chr`, where VEP compares names letter for letter (so a file that spells a contig two ways, as gnomAD-SV does with `21` and `chr21`, gets the rows of one spelling only).
+On real call sets the strict F1 of the vep-rs paper against VEP is 0.9999 for the structural variants of ClinVar on chromosome 21, and for a 1-in-4 sample of gnomAD-SV on chromosome 21 0.9052 as the file is written and 0.9993 with its contig spelled one way (`validation/sv_one_spelling.sh`); STRUCTURAL_VARIANTS.md section 10 says what the rest is.
 
 ### A RefSeq GFF3
 
@@ -1432,7 +1481,7 @@ calls plain missense.
 
 ## Fixed since this document was last measured
 
-Forty defects are gone, and the numbers above are what is left.
+Forty-two defects are gone, and the numbers above are what is left.
 Each was measured the same way before and after, on the same samples: the row counts below are
 what the fix removed.
 
@@ -1478,3 +1527,5 @@ what the fix removed.
 | A variation file shorter than its index says panicked in the bgzf reader on the first variant | | It is refused when the cache is opened |
 | `--sa-only` refused a run for leaving every transcript out when an exclusion flag was given | | The exclusion flags are ignored under `--sa-only`, as every other transcript flag is |
 | A flag of Ensembl VEP that fastvep refuses was answered with clap's guess at what was meant | `--assembly` was "similar" to `--symbol`, `--bam` to `--acmg`, `--no_stats` to `--no_escape` | Each flag the migration page lists says what there is instead |
+| `--flag-pick*` left a variant that no transcript is beside without a flagged row | 7,001 of the 718,065 rows of chromosome 22 of HG002, the rows of 6,940 of its 50,284 variants, for each of the three forms; none of the ClinVar 1-in-5 sample | A filter on `PICK is 1`, which these options are for, left such a variant out of the answer. Ensembl flags its `intergenic_variant` rows, and all three flagging forms do now ([divergence 10](#10---pick-keeps-every-allele-of-the-transcript-it-picks) says which rows, as a run of VEP 116.3 over that chromosome shows). The 7,001 are the only rows that differ from the build before, in the `PICK` cell and in no other |
+| The ranks of `splice_donor_5th_base_variant` and `splice_region_variant`, and the impacts of `TFBS_ablation`, `TFBS_amplification`, `regulatory_region_ablation` and `regulatory_region_amplification`, were not release 116.3's | no row of the VCF or tab output of any input of the identity sweep (`benchmarks/results/identity_sweep/`), because a row never has both terms (`splice_region_variant` is left off where the fifth base of a donor is hit) and a row's terms are in rank order; the `most_severe_consequence` of 3 of the 4,048,342 JSON records of HG002, each a variant with `splice_region_variant` on one transcript and `splice_donor_5th_base_variant` on another (9:136697606, 15:73341070 and 19:48638150, listed in `json_difference.txt` of the sweep); a `--pick` between two transcripts that tie on every criterion before the rank and differ in these two terms alone kept the other one. VEP 116.3 writes `splice_donor_5th_base_variant` as the `most_severe_consequence` of all three records | The table of `Consequence` is `%OVERLAP_CONSEQUENCES` of 116.3 now, and `the_ranks_and_impacts_are_those_of_release_116_3` holds every rank and impact to it |

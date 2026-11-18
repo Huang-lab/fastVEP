@@ -75,6 +75,7 @@ fn allocations_during<F: FnOnce()>(f: F) -> usize {
 fn annotation(allele: &str) -> AlleleAnnotation {
     AlleleAnnotation {
         allele: Allele::Sequence(allele.as_bytes().to_vec()),
+        sv_allele: None,
         consequences: vec![Consequence::MissenseVariant],
         impact: Impact::Moderate,
         location: TranscriptLocation {
@@ -150,8 +151,7 @@ fn projection_allocations_stay_within_budget_with_and_without_a_payload() {
         minimised: false,
         most_severe_consequence: Some(Consequence::MissenseVariant),
         variant_type: VariantType::Snv,
-        sv_end: None,
-        sv_len: None,
+        sv: None,
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     };

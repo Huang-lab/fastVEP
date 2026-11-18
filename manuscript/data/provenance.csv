@@ -19,3 +19,9 @@ with_vep_started_utc,2026-11-07T14:09:54Z
 with_vep_finished_utc,2026-11-07T14:39:27Z
 with_vep_parts,"startup,scaling,memory,formats,wgs,wgs_joint"
 results_directory,benchmarks/results/v0.5.0
+build_directory,benchmarks/results/v0.6.0
+build_binary_version,fastvep 0.6.0
+build_built_from,"commit 4addb07 (release: v0.6.0), cargo build --release --locked -p fastvep-cli, in a clean worktree"
+build_binary_sha256,51658615f17201cfdc40578f468ef3fc66b1324eeb26dc8deec4a85da5a6baaf
+build_binary_bytes,6016512
+build_rustc,rustc 1.98.0 (88d9e12ae 2026-08-18)

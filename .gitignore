@@ -23,6 +23,14 @@ conda-bld/
 # Benchmark data and output (scripts are tracked)
 benchmarks/output/
 benchmarks/*.fastvep.cache
+# the cut inputs and the outputs that a benchmark script keeps while it runs, in a results directory whose
+# summary files are tracked
+benchmarks/results/*/work/
+benchmarks/results/*/out/
+benchmarks/results/*/res/
+benchmarks/results/*/in/
+benchmarks/results/*/sa/
+benchmarks/results/*/gm/
 
 # Auto-generated caches
 *.fastvep.cache

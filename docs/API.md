@@ -125,7 +125,7 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
     "total_genomes": 0,
     "total_variants": 0,
     "transcripts": 509650,
-    "version": "0.5.0"
+    "version": "0.6.0"
 }
 ```
 
@@ -307,7 +307,7 @@ A variant that overlaps no transcript at all is left untouched, because there it
 The three `flag_pick*` switches return everything and mark the winner with `"pick": 1` on the chosen `transcript_consequences` entries, so a client can apply its own rule and still see what the hierarchy chose.
 The key is absent, not `0`, on the entries that were not picked and on every entry of a request that picked nothing.
 
-Which of these agrees with VEP, measured, is in [docs/VEP_DIVERGENCE.md](VEP_DIVERGENCE.md#10---pick-keeps-every-allele-of-the-transcript-it-picks): the four allele-scoped switches agree exactly, and `pick` / `flag_pick` keep every allele of the winning transcript where VEP would drop all but one.
+Which of these agrees with VEP, measured, is in [docs/VEP_DIVERGENCE.md](VEP_DIVERGENCE.md#10---pick-keeps-every-allele-of-the-transcript-it-picks): the four allele-scoped switches keep the same entries, though not always the same transcript where VEP breaks a tie on its length ([which transcript `--pick` keeps](VEP_DIVERGENCE.md#which-transcript---pick-keeps)), and `pick` / `flag_pick` keep every allele of the winning transcript where VEP would drop all but one.
 
 > **`pick` does not mean "most severe".**
 > Severity is the *last* tie-break in that order, so where genes overlap, a neighbouring gene's MANE transcript outranks a non-MANE transcript the variant actually disrupts, and the reported consequence can be `upstream_gene_variant` on the neighbour rather than the damaging term on the real target.

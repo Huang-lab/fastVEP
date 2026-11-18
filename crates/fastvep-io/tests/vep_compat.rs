@@ -308,8 +308,8 @@ fn test_all_consequence_types_have_valid_so_terms() {
         Consequence::InframeDeletion,
         Consequence::MissenseVariant,
         Consequence::ProteinAlteringVariant,
-        Consequence::SpliceRegionVariant,
         Consequence::SpliceDonorFifthBaseVariant,
+        Consequence::SpliceRegionVariant,
         Consequence::SpliceDonorRegionVariant,
         Consequence::SplicePolypyrimidineTractVariant,
         Consequence::IncompleteTerminalCodonVariant,
@@ -490,6 +490,7 @@ fn mock_vf_missense() -> VariationFeature {
             biotype: "protein_coding".into(),
             allele_annotations: vec![AlleleAnnotation {
                 allele: Allele::from_str("C"),
+                sv_allele: None,
                 consequences: vec![Consequence::MissenseVariant],
                 impact: Impact::Moderate,
                 location: TranscriptLocation {
@@ -540,8 +541,7 @@ fn mock_vf_missense() -> VariationFeature {
         minimised: false,
         most_severe_consequence: Some(Consequence::MissenseVariant),
         variant_type: VariantType::Snv,
-        sv_end: None,
-        sv_len: None,
+        sv: None,
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     }
@@ -605,6 +605,7 @@ fn test_csq_frameshift_codon_format() {
             biotype: "protein_coding".into(),
             allele_annotations: vec![AlleleAnnotation {
                 allele: Allele::Deletion,
+                sv_allele: None,
                 consequences: vec![Consequence::FrameshiftVariant],
                 impact: Impact::High,
                 location: TranscriptLocation {
@@ -655,8 +656,7 @@ fn test_csq_frameshift_codon_format() {
         minimised: false,
         most_severe_consequence: Some(Consequence::FrameshiftVariant),
         variant_type: VariantType::Unknown,
-        sv_end: None,
-        sv_len: None,
+        sv: None,
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     };
@@ -840,6 +840,7 @@ fn test_csq_frameshift_full_42_field_match() {
             biotype: "protein_coding".into(),
             allele_annotations: vec![AlleleAnnotation {
                 allele: Allele::Deletion,
+                sv_allele: None,
                 consequences: vec![Consequence::FrameshiftVariant],
                 impact: Impact::High,
                 location: TranscriptLocation {
@@ -890,8 +891,7 @@ fn test_csq_frameshift_full_42_field_match() {
         minimised: false,
         most_severe_consequence: Some(Consequence::FrameshiftVariant),
         variant_type: VariantType::Unknown,
-        sv_end: None,
-        sv_len: None,
+        sv: None,
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     };
@@ -995,6 +995,7 @@ fn test_csq_downstream_variant_match() {
             biotype: "transcribed_unprocessed_pseudogene".into(),
             allele_annotations: vec![AlleleAnnotation {
                 allele: Allele::from_str("C"),
+                sv_allele: None,
                 consequences: vec![Consequence::DownstreamGeneVariant],
                 impact: Impact::Modifier,
                 location: TranscriptLocation::default(),
@@ -1035,8 +1036,7 @@ fn test_csq_downstream_variant_match() {
         minimised: false,
         most_severe_consequence: Some(Consequence::DownstreamGeneVariant),
         variant_type: VariantType::Unknown,
-        sv_end: None,
-        sv_len: None,
+        sv: None,
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     };
@@ -1087,6 +1087,7 @@ fn test_csq_intron_variant_match() {
             biotype: "protein_coding".into(),
             allele_annotations: vec![AlleleAnnotation {
                 allele: Allele::from_str("T"),
+                sv_allele: None,
                 consequences: vec![Consequence::IntronVariant],
                 impact: Impact::Modifier,
                 location: TranscriptLocation {
@@ -1134,8 +1135,7 @@ fn test_csq_intron_variant_match() {
         minimised: false,
         most_severe_consequence: Some(Consequence::IntronVariant),
         variant_type: VariantType::Unknown,
-        sv_end: None,
-        sv_len: None,
+        sv: None,
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     };

@@ -35,6 +35,10 @@ pub struct Flank {
 #[derive(Debug, Clone)]
 pub struct AlleleConsequenceResult {
     pub allele: Allele,
+    /// For a structural variant, the allele of the variant the row answers for, which has the
+    /// label the `Allele` column says (`deletion`, `A[chr1:2500[`); `allele` is then the ALT of the
+    /// record the row answers for. `None` for a small variant.
+    pub sv_allele: Option<fastvep_core::AlleleNo>,
     pub consequences: Vec<Consequence>,
     pub impact: Impact,
     /// Transcript-relative coordinate pairs, in *strand order*: `start` is the
@@ -395,6 +399,7 @@ impl ConsequencePredictor {
         if *alt_allele == Allele::Missing {
             return AlleleConsequenceResult {
                 allele: alt_allele.clone(),
+                sv_allele: None,
                 consequences: Vec::new(),
                 impact: Impact::Modifier,
                 cdna_start: None,
@@ -435,6 +440,7 @@ impl ConsequencePredictor {
             let impact = Consequence::worst_impact(&consequences).unwrap_or(Impact::Modifier);
             return AlleleConsequenceResult {
                 allele: alt_allele.clone(),
+                sv_allele: None,
                 consequences,
                 impact,
                 cdna_start: None,
@@ -682,6 +688,7 @@ impl ConsequencePredictor {
 
         AlleleConsequenceResult {
             allele: alt_allele.clone(),
+            sv_allele: None,
             consequences,
             impact,
             cdna_start,
@@ -1540,6 +1547,19 @@ mod tests {
     use super::*;
     use crate::edits::complement;
 
+    /// The predictor's row is built for every variant, transcript and allele like the writers' row
+    /// (`fastvep_io::variant::AlleleAnnotation`), and is 464 bytes, which the loop was measured with;
+    /// the label it carries for a structural variant is a position of four bytes for that reason.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn a_result_is_no_larger_than_the_one_that_was_measured() {
+        assert!(
+            std::mem::size_of::<AlleleConsequenceResult>() <= 464,
+            "AlleleConsequenceResult is {} bytes",
+            std::mem::size_of::<AlleleConsequenceResult>()
+        );
+    }
+
     #[test]
     fn protein_range_sorts_a_reverse_strand_pair() {
         // The trap this exists to remove: on the reverse strand the raw pair
@@ -1798,6 +1818,7 @@ mod tests {
     fn bare_result() -> AlleleConsequenceResult {
         AlleleConsequenceResult {
             allele: Allele::from_str("A"),
+            sv_allele: None,
             consequences: vec![],
             impact: Impact::Modifier,
             cdna_start: None,

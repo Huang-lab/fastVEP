@@ -175,6 +175,24 @@ enum Commands {
         #[arg(long, alias = "no_escape")]
         no_escape: bool,
 
+        /// Do not annotate a variant whose end is more than this many bases from its start, as
+        /// VEP's `--max_sv_size` (its default is 10,000,000; `-1` is no limit). A structural
+        /// variant, or a deletion written in bases, that long is skipped with a warning.
+        #[arg(
+            long,
+            alias = "max_sv_size",
+            allow_hyphen_values = true,
+            value_name = "BASES"
+        )]
+        max_sv_size: Option<i64>,
+
+        /// Read an insertion (`<INS>`, a mobile element insertion) as the point between `POS` and
+        /// `POS + 1`, which is what the VCF specification describes. Ensembl VEP, and so the
+        /// default here, reads one that has an `SVLEN` as the interval of that many bases after
+        /// `POS`, which can reach an exon that the point does not. Not a VEP option.
+        #[arg(long)]
+        sv_insertion_as_point: bool,
+
         /// Accepted for the sake of a `vep` command line, and does nothing:
         /// `fastvep annotate` always writes over its output file, which is what
         /// VEP's `--force_overwrite` asks for.
@@ -609,6 +627,8 @@ fn main() -> Result<()> {
             show_ref_allele,
             total_length,
             no_escape,
+            max_sv_size,
+            sv_insertion_as_point,
             force_overwrite: _,
             exclude_predicted,
             exclude_readthrough,
@@ -694,6 +714,8 @@ fn main() -> Result<()> {
                 compat: pipeline::CompatFlags {
                     total_length,
                     no_escape,
+                    max_sv_size,
+                    sv_insertion_as_point,
                 },
                 exclude: pipeline::TranscriptExclusions {
                     predicted: exclude_predicted,

@@ -226,6 +226,33 @@ pub fn splice_effects(
     }
 }
 
+/// What `splice_effects` reads of a structural variant: the whole of its span is the one region that
+/// differs (`_get_differing_regions` of `StructuralVariationOverlapAllele` is `[{ s => 0, e => end -
+/// start }]`), so the alleles have nothing to say and are left out. A span that starts one base
+/// past its end is an insertion, as for a small variant.
+pub fn span_effects(transcript: &Transcript, start: u64, end: u64) -> SpanEffects {
+    let splice = splice_effects(transcript, start, end, &Allele::Deletion, &Allele::Deletion);
+    // Ensembl's `intron` flag (`_overlapped_introns` is not empty): within three bases of some
+    // intron, a frameshift intron included. It gates `intron_variant` and the polypyrimidine term.
+    // A small variant's loop has this test inside the one that it runs for each intron anyway, and
+    // asks it of the introns it does not set aside; a structural variant asks it here, once.
+    let mut near_intron = false;
+    for_each_intron(transcript, |intron_start, intron_end| {
+        near_intron |= overlaps(start, end, intron_start.saturating_sub(3), intron_end + 3);
+    });
+    SpanEffects {
+        splice,
+        near_intron,
+    }
+}
+
+/// What the splice rules and the `intron` flag say of a structural variant's span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpanEffects {
+    pub splice: SpliceEffects,
+    pub near_intron: bool,
+}
+
 /// The genomic stretches of a variant that Ensembl actually tests against a
 /// splice site: the runs of bases where the reference and alternate strings
 /// differ, not the reference allele's whole span.

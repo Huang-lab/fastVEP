@@ -56,6 +56,26 @@ pub fn chrom_aliases(chrom: &str) -> Vec<String> {
     out
 }
 
+/// Whether two names spell one contig under the mechanical rules of [`chrom_aliases`]: the same name,
+/// the same with or without `chr`, or two of the mitochondrial spellings.
+///
+/// For names that both come from the user's own files (the contig of a record and the one of its
+/// mate), where nothing has to be allocated to ask. A name in an annotation source is not compared
+/// this way: whether it is the contig of a record is what its provider answers
+/// (`TranscriptProvider::get_transcripts`), which also reads a synonyms file.
+pub fn same_contig(a: &str, b: &str) -> bool {
+    fn bare(name: &str) -> &str {
+        name.strip_prefix("chr")
+            .filter(|s| !s.is_empty())
+            .unwrap_or(name)
+    }
+    fn is_mito(name: &str) -> bool {
+        matches!(name, "M" | "MT")
+    }
+    let (a, b) = (bare(a), bare(b));
+    a == b || (is_mito(a) && is_mito(b))
+}
+
 /// Invert [`chrom_aliases`] over a known set of contig names: every accepted
 /// spelling mapped to the canonical name actually present in `canonical`.
 ///
@@ -320,7 +340,7 @@ impl ChromSynonyms {
 
 #[cfg(test)]
 mod chrom_alias_tests {
-    use super::chrom_aliases;
+    use super::{chrom_aliases, same_contig};
 
     #[test]
     fn chr_prefix_round_trips() {
@@ -418,6 +438,20 @@ mod chrom_alias_tests {
         // chr-strip case and could match unrelated index keys.
         let aliases = chrom_aliases("");
         assert_eq!(aliases, vec![String::new()]);
+    }
+
+    #[test]
+    fn contigs_that_differ_by_chr_or_in_the_mitochondrial_spelling_are_one() {
+        assert!(same_contig("chr1", "1"));
+        assert!(same_contig("1", "chr1"));
+        assert!(same_contig("chrX", "X"));
+        assert!(same_contig("chrM", "MT"));
+        assert!(same_contig("M", "chrMT"));
+        assert!(!same_contig("chr1", "2"));
+        assert!(!same_contig("chr1", "chr11"));
+        // a bare `chr` is a name
+        assert!(same_contig("chr", "chr"));
+        assert!(!same_contig("chr", ""));
     }
 }
 

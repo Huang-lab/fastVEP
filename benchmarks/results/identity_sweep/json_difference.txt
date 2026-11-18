@@ -1,0 +1,7 @@
+# benchmarks/json_line_diff.py master.json final.json: the records of the JSON of the whole of HG002 (case hg002_json of run_identity_sweep.sh, 4,048,342 records) that the build of master and the build with the structural variant rules write differently.
+# The columns are the contig, the position, the alleles, the key, the value of master and the value of the build with the rules. The two outputs differ by 24 bytes, 8 for each of the 3 records.
+# The comparison was made with the build of the tree of the release before its version was set; the release binary (0.6.0) writes the same bytes (17,659,634,322, MD5 b14ba4228898ad4d1875c7d24fdb9a0d in identity.tsv), so the three records are its as well.
+9	136697606	T/G	most_severe_consequence	"splice_region_variant"	"splice_donor_5th_base_variant"
+15	73341070	GTGT/GT/-	most_severe_consequence	"splice_region_variant"	"splice_donor_5th_base_variant"
+19	48638150	AGAC/-	most_severe_consequence	"splice_region_variant"	"splice_donor_5th_base_variant"
+lines compared: 662774123; lines that differ: 3; records they are in: 3

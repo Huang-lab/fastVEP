@@ -1,11 +1,11 @@
 metric,value,unit
-binary_size,5.8,MB
+binary_size,6.0,MB
 cache_load_yeast_7k_1_thread,0.03,sec
 cache_load_human_509k_1_thread,0.86,sec
 cache_load_human_509k_8_threads,0.37,sec
 peak_memory_100k_variants,2.6,GiB
 peak_memory_100k_variants_no_fasta_consequence_only,1.2,GiB
-binary_bytes,5834640,bytes
+binary_bytes,6016512,bytes
 external_dependencies,0,count
 vep_image_size_unpacked,0.97,GB
 vep_image_unpacked_bytes,965574656,bytes

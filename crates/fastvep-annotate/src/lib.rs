@@ -12,6 +12,7 @@ pub mod coverage;
 mod hgvs_normalize;
 mod hgvsp;
 pub mod pick;
+pub mod sv;
 
 pub use colocated::known_cells;
 pub use coverage::{
@@ -74,6 +75,10 @@ pub struct AnnotationContext {
     pub gene_providers: Vec<fastvep_sa::gene::GeneIndex>,
     /// ACMG-AMP classification configuration (None = disabled).
     pub acmg_config: Option<fastvep_classification::AcmgConfig>,
+    /// Read an insertion as the point between `POS` and `POS + 1`, as the VCF specification
+    /// describes it, and not as the interval of its `SVLEN` bases that Ensembl VEP reads (the
+    /// default). See [`fastvep_io::vcf::ParseOptions::insertion_as_point`].
+    pub sv_insertion_as_point: bool,
     /// Curated functional-assay evidence supplying PS3/BS3 (None = not provided).
     ///
     /// PS3 and BS3 are the two criteria that cannot be computed from variant
@@ -258,6 +263,7 @@ impl AnnotationContext {
             sa_skipped,
             gene_providers,
             acmg_config: None,
+            sv_insertion_as_point: false,
         })
     }
 
@@ -442,7 +448,11 @@ impl AnnotationContext {
         // And which chromosomes the gnomAD databases hold: a variant on another has no record
         // because there is nothing to hold one, which PM2 must not read as absence.
         let coverage = self.coverage();
-        let mut vcf_parser = VcfParser::new(vcf_text.as_bytes())?;
+        let mut vcf_parser =
+            VcfParser::new(vcf_text.as_bytes())?.with_options(fastvep_io::vcf::ParseOptions {
+                insertion_as_point: self.sv_insertion_as_point,
+                ..Default::default()
+            });
 
         // Extract sample names from VCF #CHROM header
         let sample_names: Vec<String> = vcf_parser
@@ -465,15 +475,27 @@ impl AnnotationContext {
         let functional_evidence = self.functional_evidence.as_ref();
 
         for vf in &mut variants {
+            // A structural variant is paired with its transcripts, and predicted, as Ensembl VEP
+            // does it (`sv`): by the window of each of its positions and by the class it was given.
+            // `fastvep annotate` asks the same function.
+            if let Some(sequence) = self.seq_provider.as_deref() {
+                sv::expand_tandem_repeat(
+                    vf,
+                    sequence as &dyn SequenceProvider,
+                    Some(fastvep_io::vcf::DEFAULT_MAX_SV_SIZE),
+                );
+            }
+            let sv::Overlap {
+                transcripts: overlapping,
+                predictions: sv_run,
+            } = sv::overlap(&self.transcript_provider, vf, self.distance);
+            let is_sv = vf.sv.is_some();
             let chrom = &vf.position.chromosome;
-            let query_start = vf.position.start.saturating_sub(self.distance).max(1);
-            let query_end = vf.position.end.saturating_add(self.distance);
-            let overlapping = self
-                .transcript_provider
-                .get_transcripts(chrom, query_start, query_end)
-                .unwrap_or_default();
 
-            if overlapping.is_empty() {
+            if is_sv && sv_run.is_none() {
+                // no transcript is paired with it: one `intergenic_variant` for each of its alleles
+                sv::annotate_sv_intergenic(vf);
+            } else if !is_sv && overlapping.is_empty() {
                 // The variant's own HGVSg is there whether or not a transcript is (VEP's
                 // intergenic output ends in the function that writes it), and the transcript
                 // rows of this loop have it under `hgvs`, so these do.
@@ -504,19 +526,28 @@ impl AnnotationContext {
                     }
                 }
             } else {
-                let result = self.predictor.predict(
-                    &vf.position,
-                    &vf.ref_allele,
-                    &vf.alt_alleles,
-                    &overlapping,
-                    None,
-                );
+                let consequences: Vec<fastvep_consequence::TranscriptConsequence> = match sv_run {
+                    // one for each transcript, in the order they were found in, which is the
+                    // order of `overlapping`
+                    Some(predictions) => predictions.into_iter().map(|p| p.consequence).collect(),
+                    None => {
+                        self.predictor
+                            .predict(
+                                &vf.position,
+                                &vf.ref_allele,
+                                &vf.alt_alleles,
+                                &overlapping,
+                                None,
+                            )
+                            .transcript_consequences
+                    }
+                };
 
                 // The reference an HGVS description is written against: the genome's, where the
                 // VCF has `N` and where its REF is not the reference's (`reference_for_hgvs`).
                 // Read only for a run that writes a description, as `fastvep annotate` does: it is
                 // a read of the FASTA for every record.
-                let hgvs_ref = if self.hgvs {
+                let hgvs_ref = if self.hgvs && !is_sv {
                     reference_for_hgvs(
                         self.seq_provider
                             .as_deref()
@@ -533,7 +564,7 @@ impl AnnotationContext {
                 // HGVSg is the variant's, the same on every transcript row, and
                 // reading the reference to place it is not free: made once per
                 // record, as `fastvep annotate` does.
-                let hgvsg_by_alt = if self.hgvs {
+                let hgvsg_by_alt = if self.hgvs && !is_sv {
                     hgvsg_per_alt(
                         self.seq_provider
                             .as_deref()
@@ -548,7 +579,7 @@ impl AnnotationContext {
                     Vec::new()
                 };
 
-                for (i, tc) in result.transcript_consequences.iter().enumerate() {
+                for (i, tc) in consequences.iter().enumerate() {
                     // `predict` returns one consequence per transcript it was
                     // handed, in that order, so index `i` is the match. The
                     // scan is the fallback for a predictor that ever stops
@@ -579,6 +610,7 @@ impl AnnotationContext {
                             .map(|ac| {
                                 let mut ann = AlleleAnnotation {
                                     allele: ac.allele.clone(),
+                                    sv_allele: ac.sv_allele,
                                     consequences: ac.consequences.clone(),
                                     impact: ac.impact,
                                     location: ac.location,
@@ -606,7 +638,8 @@ impl AnnotationContext {
                                 // own position
                                 let mut shift = 0u64;
 
-                                if self.hgvs {
+                                // none of a structural variant's rows has an HGVS description
+                                if self.hgvs && !is_sv {
                                     ann.hgvsg = vf
                                         .alt_alleles
                                         .iter()
@@ -891,7 +924,13 @@ impl AnnotationContext {
             }
 
             // ACMG-AMP classification pass (after all SA annotations are attached)
-            if let Some(acmg_cfg) = acmg_config {
+            //
+            // ACMG-AMP (Richards 2015) is a classification of a sequence change. A structural
+            // variant has the terms of a sequence change in a row (`frameshift_variant` for a
+            // deletion inside an exon, `start_lost` for an inversion over a start codon), and PVS1
+            // would read them as what they are for a base, so it is not given a classification: the
+            // criteria for copy number variants are another document's (Riggs 2020).
+            if let Some(acmg_cfg) = acmg_config.filter(|_| vf.sv.is_none()) {
                 // Parse sample genotypes if trio config is present
                 let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, &sample_names);
 
@@ -962,7 +1001,7 @@ impl AnnotationContext {
                             vec![], // companion_variants populated in second pass
                         );
                         let result = fastvep_classification::classify(&input, acmg_cfg);
-                        aa.acmg_classification = serde_json::to_value(&result).ok();
+                        aa.acmg_classification = serde_json::to_value(&result).ok().map(Box::new);
                     }
                 }
             }
@@ -1003,6 +1042,7 @@ pub fn annotate_sa_only_scaffold(vf: &mut VariationFeature) {
             biotype: "-".into(),
             allele_annotations: vec![AlleleAnnotation {
                 allele: alt.clone(),
+                sv_allele: None,
                 consequences: vec![],
                 impact: fastvep_core::Impact::Modifier,
                 splice: Default::default(),
@@ -1052,6 +1092,7 @@ pub fn annotate_intergenic(vf: &mut VariationFeature) {
             biotype: "-".into(),
             allele_annotations: vec![AlleleAnnotation {
                 allele: alt.clone(),
+                sv_allele: None,
                 consequences: vec![Consequence::IntergenicVariant],
                 impact: fastvep_core::Impact::Modifier,
                 splice: Default::default(),
@@ -1572,6 +1613,10 @@ fn enrich_compound_het(
     let mut gene_variants: HashMap<String, Vec<VariantGeneInfo>> = HashMap::new();
 
     for (vf_idx, vf) in variants.iter().enumerate() {
+        // a structural variant has no classification to enrich (see the pass above)
+        if vf.sv.is_some() {
+            continue;
+        }
         let trio_genotypes = extract_trio_genotypes(vf, acmg_cfg, sample_names);
         let proband_gt = &trio_genotypes.0;
 
@@ -1778,7 +1823,7 @@ fn enrich_compound_het(
             let result = fastvep_classification::classify(&input, acmg_cfg);
             variants[info.vf_idx].transcript_variations[info.tv_idx].allele_annotations
                 [info.aa_idx]
-                .acmg_classification = serde_json::to_value(&result).ok();
+                .acmg_classification = serde_json::to_value(&result).ok().map(Box::new);
         }
     }
 }

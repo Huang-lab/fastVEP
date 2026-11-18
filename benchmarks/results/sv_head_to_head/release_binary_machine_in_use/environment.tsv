@@ -1,0 +1,12 @@
+key	value
+date	2026-11-18T03:37:45Z
+machine	Apple M4, 10 cores, 24 GiB
+os	macOS 26.5.1, Darwin 25.5.0
+load_average_at_start	3.20 3.80 5.70
+docker	29.2.1, 10 CPUs, 8217059328 bytes
+vep_image	ensemblorg/ensembl-vep@sha256:2a46b0ba4ac544a87136aad92af92050ccbbf09098c1ce306d7e88ef7ed19aa3
+fastvep_version	fastvep 0.6.0
+fastvep_sha256	51658615f17201cfdc40578f468ef3fc66b1324eeb26dc8deec4a85da5a6baaf
+gff3_sha256	9bf4bd781bb7b57be170e4a98855776e8bd09540451779ed7cf84ac0a70d77e8
+input	R1_gnomad_sv_v41_chr21_q.vcf	8158 records	sha256 c832f5851b5e0fdc8d0d7fcd9292f7668de9fa4e942b888e477f1045c50958f2
+input	R2_clinvar_chr21_sv.vcf	3060 records	sha256 91058f418f74fbb4b7855ea20640ce6ba10dc2c8aa0043f2341f68e888ab6d21

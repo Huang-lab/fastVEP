@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Count what Table 1, Table 9 and Figure 1 of the manuscript quote about the code, from the source.
 
-    manuscript/code_metrics.py --out benchmarks/results/v0.5.0        # writes code_metrics.csv, so_terms.csv, crate_dependencies.csv
+    manuscript/code_metrics.py --out benchmarks/results/v0.6.0        # writes code_metrics.csv, so_terms.csv, crate_dependencies.csv
     manuscript/code_metrics.py --root /path/to/another/checkout --print
 
 The rules are the ones that reproduce the numbers of `code_metrics.csv` as they stood on 29 July 2026 (the lines of every crate, to the
@@ -19,7 +19,7 @@ line, at the commit that wrote them), so a change in a number is a change in the
     web_gui_lines                  the lines of web/index.html
     crates                         the members of the workspace
 
-`so_terms.csv` is the rank, the term, the impact and whether a predictor emits it, for each of the 49 variants: Supplementary Table S1 and the
+`so_terms.csv` is the rank, the term, the impact and whether a predictor emits it, for each of the 41 terms of the enum: Supplementary Table S1 and the
 colours of Figure 4 are drawn from it. `crate_dependencies.csv` is the edges between the workspace crates as `cargo metadata` gives them
 (a normal dependency, not a dev-dependency): the arrows of Figure 1.
 

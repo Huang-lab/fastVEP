@@ -15,8 +15,8 @@ Bug reports and feature requests belong in [GitHub issues](https://github.com/Hu
 
 ## Features
 
-- **Variant Consequence Prediction** — Classifies variants using [Sequence Ontology](http://www.sequenceontology.org/) terms: 49 are defined and the predictors emit 38 of them (missense, frameshift, splice donor, copy_number_change, transcript_ablation, etc.; `manuscript/data/so_terms.csv` lists each)
-- **Structural Variant Support** — Full SV pipeline: `<DEL>`, `<DUP>`, `<INV>`, `<CNV>`, `<BND>`, `<INS>`, `<STR>` with SV-specific consequence prediction
+- **Variant Consequence Prediction** - Classifies variants using [Sequence Ontology](http://www.sequenceontology.org/) terms: 41 are defined, those of Ensembl VEP 116.3, and the predictors emit 33 of them (missense, frameshift, splice donor, transcript_ablation, feature_truncation, etc.; `manuscript/data/so_terms.csv` lists each)
+- **Structural Variant Support** - The classes, intervals and consequence terms of Ensembl VEP 116.3 for `<DEL>`, `<DUP>`, `<INV>`, `<CNV>`, `<INS>`, mobile elements, tandem repeats (read as bases when the INFO has them) and breakends, held to VEP cell by cell over 17,284 rows (see [docs/STRUCTURAL_VARIANTS.md](docs/STRUCTURAL_VARIANTS.md))
 - **Supplementary Annotations** — Direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, MitoMap via the native fastSA format (v1: zstd block compression; v2: echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding). Both use a shared, thread-scaled, byte-budgeted LRU cache of decompressed blocks/chunks and lock-free reads, so a dense whole-genome source (e.g. SpliceAI, dbSNP) queried in parallel stays fast without re-decompressing the same data
 - **Prediction Scores** — PhyloP, GERP, REVEL, SpliceAI, PrimateAI, DANN, AlphaMissense conservation and pathogenicity scores; SIFT/PolyPhen via dbNSFP
 - **Gene-Level Annotations** — OMIM phenotypes, gnomAD gene constraint (pLI, LOEUF), ClinGen gene-disease validity
@@ -27,7 +27,7 @@ Bug reports and feature requests belong in [GitHub issues](https://github.com/Hu
 - **Regulatory regions** — not annotated yet: the library has a parser and an interval index for Ensembl regulatory-build GFF3 (`fastvep-cache::regulatory`), but no command uses them, `--regulatory` is refused, and the five regulatory columns of the CSQ are empty
 - **Mitochondrial Support** — Circular coordinate handling, vertebrate mitochondrial codon table (NCBI table 2)
 - **Custom Annotations** — User-provided VCF (`--source custom_vcf`) and BED (`--source custom_bed`) files; `.osi` interval databases load alongside `.osa` via `--sa-dir`
-- **ACMG-AMP Classification** — `--acmg` runs the full Richards 2015 + ClinGen SVI rule set (28 criteria, configurable thresholds, trio / compound-het support via `--proband`/`--mother`/`--father`)
+- **ACMG-AMP Classification** - `--acmg` runs the full Richards 2015 + ClinGen SVI rule set (28 criteria, configurable thresholds, trio / compound-het support via `--proband`/`--mother`/`--father`) for sequence changes; a structural variant is given no classification
 - **VEP `--merged` Cache** — `--gff3` is repeatable on `annotate` and `cache`; combine Ensembl + RefSeq in a single run with per-transcript SOURCE labels
 - **`--sa-only` Mode** — Skip the default CSQ pipeline and emit only supplementary annotations, useful for re-annotating already-annotated VCFs
 - **Gzipped inputs** — `annotate` auto-detects gzip-compressed VCF, GFF3, and FASTA by magic bytes, with a `.gz` / `.bgz` filename fallback. A `.gff3.gz` that has a `.tbi` is still read through tabix. A `.fai` applies only to an uncompressed FASTA, because its offsets address that file; a gzipped FASTA is loaded into memory
@@ -560,6 +560,8 @@ for the parsing rules and the escaping table.
 | `--show-ref-allele` | Add `REF_ALLELE` to tab output (the VCF `CSQ` always has it). VEP's `--show_ref_allele`. (`--explicit-alleles` puts `REF` right after `Allele` instead) | off |
 | `--total-length` | Write the length each position is counted in after `cDNA_position`, `CDS_position` and `Protein_position`, `14/203`, in tab and VCF output (JSON writes numbers). VEP's `--total_length` | off |
 | `--no-escape` | Do not percent-escape HGVS strings: a synonymous `HGVSp` ends in `=` and not `%3D`, and the space of a gene symbol in the VCF `CSQ` is `_` and not `%20`. VEP's `--no_escape` | off |
+| `--sv-insertion-as-point` | Read an insertion (`<INS>`, a mobile element insertion) as the point between `POS` and `POS + 1`, as the VCF specification describes it. Ensembl VEP, and so the default, reads one that has an `SVLEN` as the interval of that many bases after `POS`, which can reach an exon that the point does not. Not a VEP option | off |
+| `--max-sv-size` | Do not annotate a variant, of any kind, whose end is more than this many bases from its start, and do not read a tandem repeat longer than this as bases; the variant is skipped with a warning. VEP's `--max_sv_size` (`-1` is no limit, and then no tandem repeat is read as bases, as in VEP) | 10000000 |
 | `--force-overwrite` | Accepted so that a `vep` command line is not refused, and does nothing: `fastvep annotate` always writes over its output file, which is what VEP's `--force_overwrite` asks for | -- |
 | `--exclude-predicted` | Leave out RefSeq's predicted transcripts, `XM_` and `XR_`. VEP's `--exclude_predicted`, which is `not stable_id match ^X._`, and so is this. A variant left with no transcript is an `intergenic_variant` | off |
 | `--exclude-readthrough` | Leave out the transcripts the annotation tags `readthrough_transcript`, which span two genes. VEP's Ensembl cache is built without them and a GFF3 has them, so give it to match `vep --cache` | off |
@@ -579,7 +581,7 @@ for the parsing rules and the escaping table.
 | `--sa-only` | Skip the default CSQ annotation and emit only supplementary annotations from `--sa-dir` (requires `--sa-dir`) | off |
 | `--cache-dir` | VEP's tabix variation cache, for `Existing_variation`: a directory of `{chr}/all_vars.gz` files, each with a `.csi` or `.tbi` index (what `convert_cache.pl` and the indexed-cache download provide). Only known variants come from it: gene models come from `--gff3`, and VEP's `{start}-{end}.gz` transcript slices are never read. Naming a cache is VEP's `--check_existing`: `Existing_variation`, `CLIN_SIG`, `SOMATIC` and `PHENO`; the frequencies and the PubMed ids need `--af*`, `--max-af` and `--pubmed`, as in VEP. Matching follows VEP's (anchored and minimal indels match, as in `--check_existing`). A directory with no variation file, or a file with no index, stops the run. Contigs are matched through a `chr_synonyms.txt` in the directory and the `chr`/`MT` naming rules | -- |
 | `--transcript-cache` | Path to binary transcript cache file (overrides the auto-managed `<gff3>.fastvep.cache` sidecar) | -- |
-| `--acmg` | Run ACMG-AMP classification (Richards 2015 + ClinGen SVI); adds `ACMG` + `ACMG_CRITERIA` to CSQ, and a last `ACMG_DISORDERS` column with the call against each mode of inheritance of a gene that has more than one | off |
+| `--acmg` | Run ACMG-AMP classification (Richards 2015 + ClinGen SVI); adds `ACMG` + `ACMG_CRITERIA` to CSQ, and a last `ACMG_DISORDERS` column with the call against each mode of inheritance of a gene that has more than one; a structural variant (a symbolic ALT or a breakend) is not classified | off |
 | `--acmg-config` | TOML file with custom ACMG thresholds | built-in defaults |
 | `--functional-evidence` | Curated functional-evidence TSV supplying PS3/BS3 (columns: chrom, pos, ref, alt, criterion, strength, pmid, note); an entry also suppresses PP3/BP4/BP7 for that variant | -- |
 | `--proband` / `--mother` / `--father` | Sample names for trio analysis — enables PS2 (de novo), PM6, BP2 | -- |
@@ -731,20 +733,20 @@ Structured JSON with `transcript_consequences` array per variant, including supp
 
 ## Consequence Types
 
-fastVEP predicts 49 consequence types organized by impact:
+fastVEP defines the 41 consequence types of Ensembl VEP 116.3, organized by impact:
 
 | Impact | Consequences |
 |--------|-------------|
-| **HIGH** | transcript_ablation, splice_acceptor_variant, splice_donor_variant, stop_gained, frameshift_variant, stop_lost, start_lost, transcript_amplification, TFBS_ablation, regulatory_region_ablation |
-| **MODERATE** | inframe_insertion, inframe_deletion, missense_variant, protein_altering_variant, regulatory_region_amplification, TFBS_amplification |
-| **LOW** | splice_region_variant, splice_donor_5th_base_variant, splice_donor_region_variant, splice_polypyrimidine_tract_variant, synonymous_variant, start_retained_variant, stop_retained_variant, incomplete_terminal_codon_variant |
-| **MODIFIER** | coding_sequence_variant, 5_prime_UTR_variant, 3_prime_UTR_variant, non_coding_transcript_exon_variant, intron_variant, upstream_gene_variant, downstream_gene_variant, intergenic_variant, copy_number_change, copy_number_increase, copy_number_decrease, short_tandem_repeat_change, transcript_variant, and others |
+| **HIGH** | transcript_ablation, splice_acceptor_variant, splice_donor_variant, stop_gained, frameshift_variant, stop_lost, start_lost, transcript_amplification, feature_elongation, feature_truncation |
+| **MODERATE** | inframe_insertion, inframe_deletion, missense_variant, protein_altering_variant, TFBS_ablation |
+| **LOW** | splice_donor_5th_base_variant, splice_region_variant, splice_donor_region_variant, splice_polypyrimidine_tract_variant, synonymous_variant, start_retained_variant, stop_retained_variant, incomplete_terminal_codon_variant |
+| **MODIFIER** | coding_sequence_variant, 5_prime_UTR_variant, 3_prime_UTR_variant, non_coding_transcript_exon_variant, intron_variant, NMD_transcript_variant, non_coding_transcript_variant, coding_transcript_variant, upstream_gene_variant, downstream_gene_variant, intergenic_variant, and others (TFBS_amplification, TF_binding_site_variant, regulatory_region_ablation, regulatory_region_amplification, regulatory_region_variant, sequence_variant, mature_miRNA_variant) |
 
 ## Architecture
 
 ```
 crates/
-  fastvep-core/         # Core types: Consequence (49 SO terms), VariantType, Allele, Impact
+  fastvep-core/         # Core types: Consequence (41 SO terms), VariantType, Allele, Impact
   fastvep-genome/       # Transcript, Exon, Gene, CodonTable, mitochondrial codon table
   fastvep-cache/        # GFF3 parser, FASTA reader, annotation providers, regulatory regions,
                        #   the binary transcript cache (zstd frames, decoded side by side)
@@ -784,7 +786,7 @@ tests/                 # Test data: chr1 (OR4F5) and chr17 (BRCA1) VCF + GFF3
 ## Running Tests
 
 ```bash
-cargo test --workspace          # 1,731 tests on macOS, 1,732 on Linux, all must pass
+cargo test --workspace          # 1,889 tests run on macOS, 1,890 on Linux, all must pass
 cargo test -p fastvep-consequence  # Consequence prediction tests (incl. SV)
 cargo test -p fastvep-filter       # Filter engine tests
 cargo test -p fastvep-sa           # Supplementary annotation format tests
@@ -845,8 +847,28 @@ VEP (which tabix-fetches only overlapping GFF regions) is therefore faster at 1,
 | Resource | Ensembl VEP | fastVEP |
 |----------|-------------|---------|
 | Peak memory (100K variants) | 0.94 GiB (the peak of the VEP process) | 2.6 GiB (the whole gene model, with its sequences, is in memory) |
-| Binary / install size | 0.97 GB (the Docker image, unpacked; 0.31 GB to pull) | **5.8 MB** |
+| Binary / install size | 0.97 GB (the Docker image, unpacked; 0.31 GB to pull) | **6.0 MB** |
 | Dependencies | Perl (5.22 or later recommended), the Perl libraries Archive::Zip and DBI, a C compiler, and what its `INSTALL.pl` fetches (the README of ensembl-vep release/115.2) | **None** at run time (a C compiler to build) |
+
+### Structural variants
+
+Structural variants are annotated by the rules of Ensembl VEP 116.3 ([docs/STRUCTURAL_VARIANTS.md](docs/STRUCTURAL_VARIANTS.md)).
+Measured on 2026-11-17 on the machine of this section, with an earlier build of the code of this release (`benchmarks/results/sv_head_to_head/` has every run, the machine and the hash of the binary; `benchmarks/run_sv_head_to_head.sh` is the command), over the GRCh38 Ensembl 115 GFF3 and FASTA, with tab output: the median of 5 runs of fastVEP and 3 of Ensembl VEP 116.3 (Docker, one process, `--gff`, `--no_stats`), each after a run that is not timed.
+
+| Input | Records | Ensembl VEP | fastVEP, 1 thread | Speedup | fastVEP, 10 cores | Speedup |
+|-------|--------:|------------:|------------------:|--------:|------------------:|--------:|
+| gnomAD-SV v4.1, chromosome 21, a 1-in-4 sample | 8,158 | 20.9s | 1.25s | **16.7×** | 0.70s | **30.0×** |
+| ClinVar structural variants, chromosome 21 | 3,060 | 14.5s | 0.94s | **15.4×** | 0.39s | **36.8×** |
+
+The binary that ships retires -0.05% and -0.03% of the instructions of that build on these two inputs (`instructions_release_vs_measured.tsv`), and timed again in a session in which the machine was in use (the load average at the start was 3.2) its fastest runs on one thread are 1.23s and 0.93s, within 2% of the medians above, and its medians 1.31s and 1.01s (`release_binary_machine_in_use/`).
+
+These are small inputs: a run of fastVEP is mostly its transcript cache (about 0.9s on one thread), where the start-up of Ensembl VEP is 0.36s of its 14.5s and 20.9s and the rest is its records, so the ratio rises with the size of the input, as in the chr22 table above.
+
+Small variants are written as the build without the rules writes them, and take about as long.
+On every benchmark input of the repository the output is byte for byte that of master and of a rebuild of the release candidate but for two changes that were made on purpose: `--flag-pick*` flags the `intergenic_variant` rows that it left without a flag (6,940 of the 50,284 variants of chromosome 22 of HG002, in 7,001 rows), as Ensembl VEP 116.3 does, and the ranks of `splice_donor_5th_base_variant` and `splice_region_variant` are release 116.3's, which changes the `most_severe_consequence` of 3 of the 4,048,342 JSON records of HG002 (each a variant with the one term on a transcript and the other on another) (`benchmarks/run_identity_sweep.sh`, [`benchmarks/results/identity_sweep/`](benchmarks/results/identity_sweep/)).
+The two builds were run in turn, the order alternating from round to round, on 16 workloads (HG002 as a sample and as a whole genome with and without a FASTA, with ClinVar and with gnomAD, as VCF, tab and JSON; ClinVar with `--acmg`; the four other organisms): the fastest run of each build differs by -1.0% to +1.4% from one build to the other (a laptop varies by about 3% from one round to the next, and by tens of percent when it stalls; [`benchmarks/results/small_variant_regression/`](benchmarks/results/small_variant_regression/)).
+The work that a run does is told by the instructions that it retires, which other load on the machine does not move: on one thread the two builds differ by -0.39% to +0.23% in 6 of the 8 workloads, by +0.67% for JSON and by +1.86% for tab output, which also takes 1.4% longer in its fastest run; the cost of tab output is not in the lines of the tab writer that changed (restoring them as master has them leaves it; `tab_output_cost.tsv` of the results has the instructions of each build, on one thread over the 1-in-5 sample, the median of three runs).
+The binary of the release does the same work as the build that was timed: on one thread it retires -0.4% to +0.6% of the instructions of that build over a 1-in-20 sample of HG002 as VCF, tab and JSON ([`benchmarks/results/small_variant_regression/instructions_release_vs_timed.txt`](benchmarks/results/small_variant_regression/instructions_release_vs_timed.txt)).
 
 ### Threads and memory
 
@@ -875,6 +897,7 @@ fastVEP's consequence and HGVS output is a port of Ensembl VEP's own model, and 
 VEP ran in Docker (`ensemblorg/ensembl-vep:release_116.3`) in `--gff` mode over the same GRCh38 Ensembl 115 GFF3 and FASTA that fastVEP reads, with `--tab --symbol --biotype --canonical --numbers --variant_class --show_ref_allele --hgvs --hgvsg`, and `validation/compare_tab.py` pairs the rows of the two outputs and compares them cell by cell (27 columns with the HGVS columns and 23 without them: a GFF3 has no symbol source, HGNC identifier or CDS flags, so VEP's `--gff` reader writes `-` where fastVEP, like VEP's own cache, fills them).
 The counts below were measured on 7 November 2026 with the binary of 0.5.0 (`validation/measure_vep116.py` makes every row of the table in one command), and are the counts that commit `5048fc5` gave on 27 October 2026, to the cell.
 The two builds write the same bytes on every input of the comparison that can be run without VEP, as a VCF and as the tab output of this comparison (11 runs, the whole HG002 call set among them; `validation/compare_builds.py`, [`benchmarks/results/v0.5.0/identity_vs_5048fc5/`](benchmarks/results/v0.5.0/identity_vs_5048fc5/)).
+The build with the structural variant rules writes the same bytes on all of them as well, as a rebuild of the release candidate that measured these counts (a clean export of `v0.5.0-rc.1`, `c12d9f9`) and as master (11 runs each: [`identity_vs_rc1/`](benchmarks/results/v0.6.0/identity_vs_rc1/) and [`identity_vs_master/`](benchmarks/results/v0.6.0/identity_vs_master/)), so the counts below describe it too.
 
 | Input | Records | Paired rows | Cells compared | Cells that differ |
 |---|---:|---:|---:|---:|
@@ -895,7 +918,28 @@ On a RefSeq GFF3 (chr21 and chr22 of GRCh38.p14, the 527 variants of the sample 
 
 **The shapes that disagree.**
 A real callset holds few of them, so the generated worlds are built to hold many, and their rates are the rates on those shapes.
-Smaller worlds of the same kinds, with the output that VEP 116.3 wrote for them, are fixtures of the test suite (20,363 records in nine fixtures), and the 26 tests that compare fastVEP's output with them pass.
+Smaller worlds of the same kinds, with the output that VEP 116.3 wrote for them, are fixtures of the test suite (27,055 records in ten fixtures), and the 31 tests that compare fastVEP's output with them pass.
+
+**Structural variants.**
+Structural variants are compared the same way, by the F1 of the sets of distinct (`Location`, `Allele`, `Feature`, `Feature_type`, `Consequence` terms) tuples that the vep-rs paper used (`validation/score_strict_key.py`), against Ensembl VEP 116.3 in `--gff` mode over the same GFF3 and FASTA.
+[docs/STRUCTURAL_VARIANTS.md](docs/STRUCTURAL_VARIANTS.md) has the rules, and every place where fastVEP is not VEP.
+
+| Input | Records | Ensembl VEP rows | fastVEP rows | F1 |
+|---|---:|---:|---:|---:|
+| A generated world (`crates/fastvep-cli/fixtures/vep_tab_sv`), every cell of 23 columns but 5 HGVS cells | 6,692 | 17,284 | 17,284 | 1.0000 |
+| Another world, from another seed | 6,741 | 17,475 | 17,475 | 1.0000 |
+| 9 of the 13 synthetic files of the vep-rs validation set (SNVs, MNVs, indels, symbolic deletions, insertions, duplications, inversions, copy number, repeats, mobile elements, multi-allelic and imprecise records) | 11,950 | 454,951 | 454,951 | 1.0000 |
+| The same set's explicit large alleles (file 04) | 400 | 10,790 | 10,790 | 0.9983 |
+| Its breakends (file 09) | 1,400 | 68,938 | 71,433 | 0.9816 |
+| Its `<*>` alleles and VCF 4.5 features (files 10 and 13) | 1,650 | 44,933 | 37,592 | 0.0000 and 0.8808 |
+| The structural variants of ClinVar on chromosome 21 | 3,060 | 62,045 | 62,045 | 0.9999 |
+| gnomAD-SV v4.1 on chromosome 21, a 1-in-4 sample, as published | 8,158 | 109,318 | 105,851 | 0.9052 |
+| The same, with the contig spelled `chr21` throughout (`validation/sv_one_spelling.sh`) | 8,158 | 104,823 | 104,966 | 0.9993 |
+
+`validation/run_sv_world.py` makes the first comparison on worlds of other seeds: eight of them (139,860 rows of Ensembl VEP 116.3) have every row in both tools, in the same order, and every cell the same but the 5 to 7 cells of each that are divergence 11 ([`benchmarks/results/vep_oracle/sv_worlds.txt`](benchmarks/results/vep_oracle/sv_worlds.txt)).
+
+What differs is not the rules: the rows of Ensembl VEP's `<*>` allele, which fastVEP gives no row (as for a gVCF's reference block); in the breakend file, 903 tuples on single breakends, which are Ensembl VEP's buffer (the rows of a record depend on the records read with it, and run one record at a time it writes fastVEP's rows for every such breakend), and 1,672 rows for the mates of breakends on another chromosome that only fastVEP writes (Ensembl VEP does not write the rows of such a mate the same way twice, with a buffer of one either); a breakend with no mate inside a transcript, which has `feature_truncation` in a run of Ensembl VEP with its statistics and not in one with `--no_stats`, and fastVEP follows the first; and, in the gnomAD-SV file, what Ensembl VEP's own reader does with it.
+That file spells the contig `21` in one column and `chr21` in another, and Ensembl VEP compares contig names letter for letter, so for 572 of the 8,158 records the mate rows are only fastVEP's, and for others it writes the rows of one spelling or the other, and its `--gff` mode pairs 905 records with transcripts of other chromosomes, which its buffer does (run one record at a time the strict F1 is 0.9724); with one spelling the two outputs differ in 157 of 104,973 tuples, 136 of them on `unconfirmed_transcript` features, a type that Ensembl VEP's reader ignores.
 
 **HGVSp under in-frame indels.**
 For a two-residue deletion in the poly-glutamate C-terminus of NT5C2 (`10:103089678 TTCCTCC>T`) fastVEP writes `p.Glu560_Glu561del`, the 3'-most placement that HGVS asks for, and Ensembl `p.Glu559_Glu560del`: Ensembl's 3'-shift stops short of the end of the protein in two ways, both of which are in release 116 as they were in 115 (divergence 9).

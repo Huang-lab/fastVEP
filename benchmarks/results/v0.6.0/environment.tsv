@@ -1,0 +1,7 @@
+binary_version	fastvep 0.6.0
+built_from	commit 4addb07 (release: v0.6.0), cargo build --release --locked -p fastvep-cli, in a clean worktree
+binary_sha256	51658615f17201cfdc40578f468ef3fc66b1324eeb26dc8deec4a85da5a6baaf
+binary_bytes	6016512
+rustc	rustc 1.98.0 (88d9e12ae 2026-08-18)
+system	macOS 26.5.1, Darwin 25.5.0
+cpu	Apple M4, 10 cores, 24 GiB

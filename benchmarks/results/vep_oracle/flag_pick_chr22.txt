@@ -1,0 +1,25 @@
+# Ensembl VEP 116.3 (--gff) and fastVEP 0.6.0 over chromosome 22 of GIAB HG002 (50,284 variants), same gene models and reference, each flagging form.
+# validation/compare_pick.py --by <group> --gff3 Homo_sapiens.GRCh38.115.gff3 VEP.tab FASTVEP.tab
+
+--by variant: 43323 groups with a transcript row in both tables, 1035 with another transcript flagged
+     716  the longer one: VEP's transcript is longer (exons)
+     298  the longer one: VEP's transcript is longer (coding sequence)
+      12  a better term: fastVEP's transcript has a CCDS
+       9  not a row of VEP's: its type is unconfirmed_transcript
+  Ensembl VEP: 6961 variants with no transcript, 7022 rows, 6961 of them flagged
+  fastVEP: 6940 variants with no transcript, 7001 rows, 7001 of them flagged
+
+--by allele: 43839 groups with a transcript row in both tables, 1047 with another transcript flagged
+     725  the longer one: VEP's transcript is longer (exons)
+     300  the longer one: VEP's transcript is longer (coding sequence)
+      12  a better term: fastVEP's transcript has a CCDS
+      10  not a row of VEP's: its type is unconfirmed_transcript
+  Ensembl VEP: 6961 variants with no transcript, 7022 rows, 7022 of them flagged
+  fastVEP: 6940 variants with no transcript, 7001 rows, 7001 of them flagged
+
+--by allele-gene: 67649 groups with a transcript row in both tables, 419 with another transcript flagged
+     288  the longer one: VEP's transcript is longer (coding sequence)
+     110  the longer one: VEP's transcript is longer (exons)
+      21  a better term: fastVEP's transcript has a CCDS
+  Ensembl VEP: 6961 variants with no transcript, 7022 rows, 7022 of them flagged
+  fastVEP: 6940 variants with no transcript, 7001 rows, 7001 of them flagged

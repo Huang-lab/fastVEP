@@ -250,12 +250,38 @@ pub(crate) fn load_one_gff3(
     }
 }
 
+/// The regions of the VCF's contigs a run reads from a tabix GFF3: for each contig, one span from
+/// `distance` before its first variant to `distance` after its last.
+///
+/// A variant is where its record puts it (`POS`) and, for a structural variant, wherever it reaches:
+/// a deletion of 100 kb is paired with every transcript along its 100 kb (the end is read as the
+/// annotation reads it), and a breakend's mate is paired with the transcripts around the mate, on
+/// the contig that the mate names. A span of `POS +- distance` leaves those out of the load, and the
+/// rows that would have been written for them are missing from the answer without a word.
 fn prescan_vcf_regions(vcf_path: &str, distance: u64) -> Result<Vec<(String, u64, u64)>> {
     let input_reader = open_vcf_input_reader(vcf_path)
         .with_context(|| format!("Pre-scanning VCF: {}", vcf_path))?;
     let reader = io::BufReader::new(input_reader);
 
     let mut regions: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut widen = |chrom: &str, from: u64, to: u64| {
+        let (start, end) = (from.saturating_sub(distance), to.saturating_add(distance));
+        match regions.get_mut(chrom) {
+            Some(entry) => {
+                entry.0 = entry.0.min(start);
+                entry.1 = entry.1.max(end);
+            }
+            None => {
+                regions.insert(chrom.to_string(), (start, end));
+            }
+        }
+    };
+    // no limit on the size: a deletion larger than `--max_sv_size` is skipped by the run, and a
+    // region that was loaded for it costs only the time
+    let options = fastvep_io::vcf::ParseOptions {
+        max_sv_size: None,
+        ..Default::default()
+    };
 
     for line in reader.lines() {
         let line = line?;
@@ -263,20 +289,31 @@ fn prescan_vcf_regions(vcf_path: &str, distance: u64) -> Result<Vec<(String, u64
             continue;
         }
         let mut fields = line.split('\t');
-        let chrom = match fields.next() {
-            Some(c) => c.to_string(),
-            None => continue,
+        let Some(chrom) = fields.next() else {
+            continue;
         };
-        let pos: u64 = match fields.next().and_then(|p| p.parse().ok()) {
-            Some(p) => p,
-            None => continue,
+        let Some(pos) = fields.next().and_then(|p| p.parse::<u64>().ok()) else {
+            continue;
         };
-        let start = pos.saturating_sub(distance);
-        let end = pos + distance;
+        widen(chrom, pos, pos);
 
-        let entry = regions.entry(chrom).or_insert((start, end));
-        entry.0 = entry.0.min(start);
-        entry.1 = entry.1.max(end);
+        // Only a record that has a symbolic allele, a breakend or an SVTYPE can reach beyond its
+        // position, and it is read whole to find out how far.
+        let alt = fields.nth(2).unwrap_or("");
+        let info = fields.nth(2).unwrap_or("");
+        let may_reach = alt.contains(['<', '[', ']'])
+            || alt.starts_with('.')
+            || alt.ends_with('.')
+            || info.contains("SVTYPE");
+        if !may_reach {
+            continue;
+        }
+        if let Ok(vf) = fastvep_io::vcf::parse_vcf_line_with(&line, &options) {
+            widen(chrom, vf.position.start, vf.position.end);
+            for (mate_chrom, mate_pos) in vf.sv.iter().flat_map(|sv| sv.mates()) {
+                widen(mate_chrom, mate_pos, mate_pos);
+            }
+        }
     }
 
     Ok(regions

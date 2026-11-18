@@ -17,11 +17,12 @@ Here we present fastVEP, a complete reimplementation of the VEP variant annotati
 fastVEP annotates the complete GIAB HG002 clinical whole-genome sequencing benchmark (4.05 million high-confidence variants) against the full Ensembl GRCh38 gene model (509,650 transcripts) in 11 seconds on ten cores.
 Benchmarks on complete variant call sets of five organisms, up to 26 million mouse variants and 12.9 million Arabidopsis variants, sustain 326,930 to 553,839 variants per second (for two of the five the variant file is in an older assembly than the gene model, so the figure is of throughput only).
 In single-threaded head-to-head benchmarks on the same complete WGS, fastVEP annotates 134-154x faster than Ensembl VEP 116.3, which requires approximately 109 minutes for the equivalent consequence-only run.
+Structural variants are annotated by the rules of Ensembl VEP 116.3, and agree with its output in every row, and in every cell but five, of 6,692 generated records; on a gnomAD-SV and a ClinVar call set of chromosome 21 they take 1.25 s and 0.94 s on one thread, 15 to 17 times faster than Ensembl VEP.
 A hosted web server is available at https://fastVEP.org.
 Against Ensembl VEP 116.3, fastVEP's output on a systematic sample of an ordinary whole-genome call set (186,055 paired rows) agrees in every row on the consequence terms, impact, amino acid and codon changes, positions, gene symbols and biotypes, and in 99.92% of the 5.0 million cells compared; the 3,851 cells that differ are all HGVS descriptions, each with a documented cause, nearly all of them alleles of multi-allelic records that fastVEP describes as each would be alone.
 On a 1-in-5 sample of ClinVar 2-star+ variants (84.7 million cells), 99.9965% agree.
-Beyond core consequence prediction, fastVEP provides a comprehensive supplementary annotation framework (fastSA) with native binary format for direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, and MitoMap databases; prediction and conservation scores including PhyloP, GERP, REVEL, SpliceAI, PrimateAI, and SIFT/PolyPhen via dbNSFP; structural variant annotation (DEL, DUP, INV, CNV, BND) with SV-specific consequence prediction; gene-level annotations from OMIM and gnomAD gene constraint metrics; a filter_vep-compatible expression-based filter engine; multi-sample genotype parsing; and mitochondrial-specific variant handling.
-fastVEP supports both GRCh38 and GRCh37 genome builds, ships as a single 5.8 MB executable whose only run-time dependency is the system C library, defines 49 Sequence Ontology consequence terms (38 of which its predictors emit), outputs 49 VEP-compatible CSQ annotation fields, supports VCF, tab-delimited, and JSON output formats, generates HGVS nomenclature, and includes a built-in web interface for interactive variant annotation.
+Beyond core consequence prediction, fastVEP provides a comprehensive supplementary annotation framework (fastSA) with native binary format for direct integration with ClinVar, gnomAD, dbSNP, COSMIC, 1000 Genomes, TOPMed, and MitoMap databases; prediction and conservation scores including PhyloP, GERP, REVEL, SpliceAI, PrimateAI, and SIFT/PolyPhen via dbNSFP; structural variant annotation by the rules of Ensembl VEP 116.3 (deletions, duplications, inversions, copy number variants, insertions, mobile elements, tandem repeats and breakends); gene-level annotations from OMIM and gnomAD gene constraint metrics; a filter_vep-compatible expression-based filter engine; multi-sample genotype parsing; and mitochondrial-specific variant handling.
+fastVEP supports both GRCh38 and GRCh37 genome builds, ships as a single 6.0 MB executable whose only run-time dependency is the system C library, defines the 41 Sequence Ontology consequence terms of Ensembl VEP 116.3 (33 of which its predictors emit), outputs 49 VEP-compatible CSQ annotation fields, supports VCF, tab-delimited, and JSON output formats, generates HGVS nomenclature, and includes a built-in web interface for interactive variant annotation.
 fastVEP is open source under the Apache 2.0 license and is available at https://github.com/Huang-lab/fastVEP.
 
 **Keywords:** variant annotation, variant effect prediction, Rust, genomics, bioinformatics, VCF, HGVS, consequence prediction
@@ -56,36 +57,36 @@ fastVEP achieves throughputs of 326,930 to 553,839 variants per second across fi
 ### 2.1 Architecture Overview
 
 fastVEP is organized as a Cargo workspace containing twelve modular crates (libraries), following Rust's principle of composable, independently testable components (Figure 1).
-The twelve crates hold 81,319 lines of Rust source (the physical lines of their `src` directories, with the unit tests inside them; `manuscript/code_metrics.py` counts them).
+The twelve crates hold 88,294 lines of Rust source (the physical lines of their `src` directories, with the unit tests inside them; `manuscript/code_metrics.py` counts them).
 
 **Table 1. fastVEP crate architecture and responsibilities.**
 Tests are the `#[test]` and `#[tokio::test]` attributes of each crate's `src` and `tests` directories (`manuscript/code_metrics.py`); one of them is marked `#[ignore]` and one is compiled on Linux only (`#[cfg(target_os = "linux")]`).
 
 | Crate | Tests | Responsibility |
 |-------|-------|----------------|
-| `fastvep-core` | 43 | Core genomic types: `GenomicPosition`, `Strand`, `Allele` (incl. `Symbolic` for SVs), `VariantType`, `Consequence` (49 SO terms), `Impact`, `SupplementaryAnnotation`, `GeneAnnotation` |
+| `fastvep-core` | 63 | Core genomic types: `GenomicPosition`, `Strand`, `Allele` (incl. `Symbolic` for SVs), `VariantType`, the structural variant model (`SvClass`, the alleles of a variant, tandem repeats), `Consequence` (the 41 SO terms of Ensembl VEP 116.3), `Impact`, `SupplementaryAnnotation`, `GeneAnnotation` |
 | `fastvep-genome` | 65 | Transcript, Exon, Gene, Translation models; `CodonTable` (standard + mitochondrial NCBI table 2); coordinate mapping; mitochondrial circular genome handling |
 | `fastvep-cache` | 190 | Annotation source providers: GFF3 parser, FASTA reader (in-memory and mmap-indexed), the binary transcript cache (bincode in zstd frames), VEP cache variation lookup, `AnnotationProvider`/`GeneAnnotationProvider` traits; a parser and interval index for regulatory-build GFF3 that no command calls |
-| `fastvep-consequence` | 83 | Consequence prediction engine: small-variant predictor (splice site detection, coding consequences) + structural variant predictor (transcript ablation/amplification, CNV, breakend, feature truncation/elongation) |
+| `fastvep-consequence` | 94 | Consequence prediction engine: small-variant predictor (splice site detection, coding consequences) + structural variant predictor (a port of the consequence definitions of Ensembl VEP 116.3 that a structural variant reaches: transcript ablation/amplification, feature truncation/elongation, the frame, start and stop terms, the UTR, intron and flank terms) |
 | `fastvep-hgvs` | 49 | HGVS nomenclature generation: HGVSg (genomic), HGVSc (coding DNA), HGVSp (protein), including frameshift termination scanning |
-| `fastvep-io` | 148 | VCF parser with allele normalization and structural variant detection; output formatters (VCF CSQ, tab, JSON); multi-sample FORMAT/GT/DP/GQ/AD parsing; VEP compatibility integration tests |
+| `fastvep-io` | 172 | VCF parser with allele normalization and the reading of a structural variant record (routing, class, interval, skips, breakends); output formatters (VCF CSQ, tab, JSON); multi-sample FORMAT/GT/DP/GQ/AD parsing; VEP compatibility integration tests |
 | `fastvep-filter` | 21 | Filter engine: tokenizer, recursive-descent parser, AST evaluator; filter_vep-compatible syntax (is, !=, <, >, in, match, and, or, not, parentheses) |
-| `fastvep-sa` | 232 | Supplementary annotation format: v1 (.osa, zstd block compression, mmap reader), v2 (.osa2, echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding, lock-free mmap reads, shared byte-budgeted LRU cache), .osi (interval-based for SVs), .oga (gene-level); source parsers for ClinVar, gnomAD (v2/v4, incl. v4.1 joint), dbSNP, COSMIC, 1000G, TOPMed, MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI, PrimateAI, AlphaMissense, dbNSFP; custom VCF/BED providers; compact variant encoding (Var32, kmer16, zigzag) |
-| `fastvep-annotate` | 185 | Shared annotation engine (variant overlap, consequence prediction, HGVS, supplementary-annotation lookup and the pick): the `AnnotationContext` of both web servers. The `fastvep annotate` command line has a record loop of its own in `fastvep-cli` and calls the same helpers |
-| `fastvep-classification` | 400 | ACMG/AMP variant classification engine (28 criteria; measured against ClinVar in a separate manuscript) |
-| `fastvep-cli` | 290 | CLI binary (mimalloc is its allocator): `annotate` (pipeline with SA provider integration), `sa-build` and `sa-convert` (database builder and converter), `filter`, `cache`, `web` (embedded server) |
-| `fastvep-web` | 27 | Standalone production HTTP annotation server (axum/tokio) with REST API and static single-page UI |
-| **Total** | **1,733** | |
+| `fastvep-sa` | 234 | Supplementary annotation format: v1 (.osa, zstd block compression, mmap reader), v2 (.osa2, echtvar-inspired chunked ZIP with Var32 encoding, parallel u32 value arrays, delta encoding, lock-free mmap reads, shared byte-budgeted LRU cache), .osi (interval-based for SVs), .oga (gene-level); source parsers for ClinVar, gnomAD (v2/v4, incl. v4.1 joint), dbSNP, COSMIC, 1000G, TOPMed, MitoMap, PhyloP, GERP, DANN, REVEL, SpliceAI, PrimateAI, AlphaMissense, dbNSFP; custom VCF/BED providers; compact variant encoding (Var32, kmer16, zigzag) |
+| `fastvep-annotate` | 189 | Shared annotation engine (variant overlap, the pairing of a structural variant with its transcripts, consequence prediction, HGVS, supplementary-annotation lookup and the pick): the `AnnotationContext` of both web servers. The `fastvep annotate` command line has a record loop of its own in `fastvep-cli` and calls the same helpers |
+| `fastvep-classification` | 412 | ACMG/AMP variant classification engine (28 criteria; measured against ClinVar in a separate manuscript) |
+| `fastvep-cli` | 320 | CLI binary (mimalloc is its allocator): `annotate` (pipeline with SA provider integration), `sa-build` and `sa-convert` (database builder and converter), `filter`, `cache`, `web` (embedded server) |
+| `fastvep-web` | 82 | Standalone production HTTP annotation server (axum/tokio) with REST API and static single-page UI |
+| **Total** | **1,891** | |
 
 ### 2.2 Data Model
 
 fastVEP's core data model is defined in `fastvep-core` and `fastvep-genome`.
 Genomic positions use 1-based, inclusive coordinates consistent with the Ensembl convention.
 Variant alleles are represented as an enum distinguishing nucleotide sequences, deletions, missing alleles (`*`), and symbolic alleles (`<DEL>`, `<DUP>`, `<INV>`, etc.) for structural variants.
-The `VariantType` enum classifies variants as SNV, insertion, deletion, indel, MNV, or one of seven structural variant types (CopyNumberVariation, CopyNumberLoss, CopyNumberGain, TandemDuplication, Inversion, TranslocationBreakend, ShortTandemRepeatVariation).
-The `Consequence` enum encodes 49 Sequence Ontology terms (41 from Ensembl VEP plus 8 SV-specific terms: copy_number_change, copy_number_increase, copy_number_decrease, short_tandem_repeat_change/expansion/contraction, unidirectional_gene_fusion, transcript_variant), each associated with a severity rank and impact classification (HIGH, MODERATE, LOW, MODIFIER).
-The predictors produce 38 of the 49.
-The other 11 (`mature_miRNA_variant`, `TFBS_ablation`, `TFBS_amplification`, `TF_binding_site_variant`, `regulatory_region_ablation`, `regulatory_region_amplification`, `regulatory_region_variant`, `sequence_variant`, `short_tandem_repeat_expansion`, `short_tandem_repeat_contraction` and `unidirectional_gene_fusion`) are defined and no predictor emits them (`manuscript/data/so_terms.csv`).
+The `VariantType` enum classifies variants as SNV, insertion, deletion, indel, MNV or structural; a structural variant carries a model of its own (Section 2.10): one of the 18 classes that Ensembl VEP names, and an allele for each ALT and, for a breakend, for its own position and for each mate.
+The `Consequence` enum encodes the 41 Sequence Ontology terms of Ensembl VEP 116.3, each associated with a severity rank and impact classification (HIGH, MODERATE, LOW, MODIFIER).
+The predictors produce 33 of the 41.
+The other 8 (`mature_miRNA_variant`, `TFBS_ablation`, `TFBS_amplification`, `TF_binding_site_variant`, `regulatory_region_ablation`, `regulatory_region_amplification`, `regulatory_region_variant` and `sequence_variant`) are defined and no predictor emits them (`manuscript/data/so_terms.csv`).
 
 Transcript models include full gene structure with exons, coding regions, UTRs, and translation metadata.
 The coordinate mapping system supports bidirectional conversion between genomic, cDNA, CDS, and protein positions, correctly handling both forward and reverse strand genes.
@@ -109,7 +110,7 @@ The normalization is tested by 30 integration tests whose records are copied fro
 
 ### 2.4 Consequence Prediction Engine
 
-The consequence prediction engine is the computational core of fastVEP, implemented in `fastvep-consequence` (5,879 lines).
+The consequence prediction engine is the computational core of fastVEP, implemented in `fastvep-consequence` (6,627 lines).
 For each variant, the predictor:
 
 1. **Identifies overlapping transcripts** within a configurable upstream/downstream distance (default 5,000 bp).
@@ -202,7 +203,7 @@ This trait-based design allows transparent substitution of annotation sources --
 ### 2.8 Web Interface
 
 fastVEP includes a built-in web interface accessible via `fastvep web --gff3 <file> --fasta <file> --port 8080`.
-The interface is a single-page application (2,650 lines of HTML/CSS/JavaScript) embedded directly in the binary using Rust's `include_str!` macro, requiring no external files or dependencies.
+The interface is a single-page application (2,855 lines of HTML/CSS/JavaScript) embedded directly in the binary using Rust's `include_str!` macro, requiring no external files or dependencies.
 
 The web interface operates in two modes.
 When served by the fastVEP binary (`fastvep web`), annotation requests are handled by the Rust backend via a REST API (`POST /api/annotate`) through the shared annotation engine.
@@ -248,15 +249,25 @@ By default (`--format auto`), `sa-build` writes the v2 `.osa2` format for the al
 
 ### 2.10 Structural Variant Support
 
-fastVEP supports annotation of structural variants including deletions (`<DEL>`), duplications (`<DUP>`, `<DUP:TANDEM>`), inversions (`<INV>`), copy number variants (`<CNV>`, `<CN0>`-`<CN4>`), breakends (`<BND>`), insertions (`<INS>`), and short tandem repeats (`<STR>`).
-The VCF parser detects symbolic alleles, parses the SV-specific INFO fields SVTYPE, END and SVLEN, and classifies each variant into one of the `VariantType` categories.
+fastVEP annotates a structural variant by the rules of Ensembl VEP 116.3: the same records are read as structural variants, with the same class, the same interval, the same transcripts paired with them and the same terms for each pair (`docs/STRUCTURAL_VARIANTS.md` lists the rules and where fastVEP is not VEP).
+The rules were read from the Perl source of the release and checked against what it writes (Section 3.11), and the code that holds them is one module for each question: the classes and the alleles of a variant (`fastvep-core`), the reading of a record (`fastvep-io`), the pairing of a variant with its transcripts (`fastvep-annotate`, called by both per-variant loops) and the terms (`fastvep-consequence`).
 
-The `SvConsequencePredictor` determines consequences based on the overlap between the SV interval and transcript models:
-- **Complete containment:** transcript_ablation (for deletions) or transcript_amplification (for duplications)
-- **Partial overlap:** feature_truncation, feature_elongation, coding_sequence_variant (if CDS affected), splice_acceptor_variant (if splice sites affected)
-- **Copy number:** copy_number_change, copy_number_increase, copy_number_decrease
-- **Breakends:** transcript_variant, coding_sequence_variant (if landing in CDS)
-- **Repeat expansions:** short_tandem_repeat_change
+A record is a structural variant when its alleles are not bases alone and it has an `SVTYPE`, a symbolic allele or a breakend (`<DEL>`, `A[chr1:2500[`, `.A`).
+Its class is one of the 18 that Ensembl names (insertion, deletion, duplication, tandem duplication, tandem repeat, copy number variation, inversion, breakpoint and the mobile element classes), read from the alleles or, where they do not start with a type, from `SVTYPE`; a type that Ensembl has no class for (`<CPX>`, `<STR>`) is a record that it skips with a warning, and so does fastVEP.
+The interval starts one base after `POS`, which is the padding base, and ends `|SVLEN|` bases on, or at `END` (`SVLEN` is read first, as Ensembl reads it).
+A deletion with no extent, an interval that ends before it starts and a variant longer than `--max-sv-size` (10 Mb by default, as in VEP) are skipped.
+A tandem repeat whose INFO gives the repeat unit and how often it occurs is annotated as the small variant that Ensembl makes of it, over the bases of the reference.
+A breakend has an allele for its own position and one for each mate, and a transcript is paired with a variant when its window of `--distance` holds the interval or the position of a mate, on the contig that the mate names.
+
+The terms are Ensembl's, for the consequence definitions that a structural variant can reach, with a function for each predicate and the tiers, the flags and the order of the original (`fastvep_consequence::sv_predictor`):
+- **Complete overlap:** `transcript_ablation` for a deletion, and `transcript_amplification` for a duplication, a tandem duplication or a tandem repeat, each alone.
+- **Partial overlap:** `feature_truncation` and `feature_elongation` (both HIGH in release 116.3), `frameshift_variant` and `inframe_deletion` for a deletion inside one exon, `start_lost`, `stop_lost`, `start_retained_variant`, `coding_sequence_variant`, the UTR, intron and polypyrimidine tract terms and those of the transcript's biotype, with `cDNA_position`, `CDS_position`, `Protein_position`, `EXON` and `INTRON` for the whole interval.
+- **Beside a transcript:** `upstream_gene_variant` and `downstream_gene_variant` with their distance, and `intergenic_variant` where no transcript is paired.
+- **Breakends:** each allele has `feature_truncation` where its own position, or its mate's, lies in the transcript.
+
+Ensembl VEP does not write the terms for a copy number change, a repeat change, a fusion or the loss of an exon, and fastVEP does not define them.
+The places where fastVEP is not Ensembl are listed in Section 10 of `docs/STRUCTURAL_VARIANTS.md`; the ones that change rows are: a breakend with no mate inside a transcript has `feature_truncation`, as in a `vep` run with its statistics and not in a `--no_stats` run; `<*>` and `<NON_REF>` have no row, and a real ALT beside them is annotated; a variant is never paired with a transcript of another contig, which Ensembl's `--gff` mode can do; a mate's contig is matched with or without `chr`, where Ensembl compares the names letter for letter; the rows of a breakend whose mate is on another contig, which Ensembl does not write the same way twice, are written one way; a structural variant has no `--acmg` classification; `--pick` keeps every allele of the transcript it picks and `--pick-allele` a row for each ALT, where Ensembl keeps one row of a structural variant for both; and `--overlaps` is not implemented.
+`--sv-insertion-as-point` reads an insertion as the point between `POS` and `POS + 1`, as the VCF specification describes it, and not as the interval of its `SVLEN` bases that Ensembl reads (which reaches an exon that the point does not for 4.6% of the insertions of a gnomAD-SV sample, Section 3.11); it is off by default, so that the rows are Ensembl's.
 
 ### 2.11 Filter Engine
 
@@ -278,7 +289,7 @@ Rust was chosen for fastVEP based on several properties relevant to bioinformati
 
 1. **Zero-cost abstractions**: Generic code compiles to direct function calls; the provider traits are also used as trait objects (`Box<dyn AnnotationProvider>`), at the price of one virtual call per lookup.
 2. **Memory safety without garbage collection**: Rust's ownership system eliminates entire classes of bugs (use-after-free, data races, null pointer dereferences) while avoiding the unpredictable pause times of garbage-collected languages.
-3. **Self-contained executables**: fastVEP compiles to a single 5.8 MB executable whose only run-time dependency is the system C library (libSystem on macOS, glibc 2.34 or newer for the Linux archives), simplifying deployment in HPC environments, Docker containers, and clinical pipelines.
+3. **Self-contained executables**: fastVEP compiles to a single 6.0 MB executable whose only run-time dependency is the system C library (libSystem on macOS, glibc 2.34 or newer for the Linux archives), simplifying deployment in HPC environments, Docker containers, and clinical pipelines.
 4. **Ecosystem maturity**: The Rust bioinformatics ecosystem includes production-quality crates for genomic file formats (noodles, rust-htslib), interval trees (coitrees), and parallelism (rayon).
 
 ---
@@ -344,7 +355,7 @@ The comparison with 115.1 that the repository also holds (September 2026) was ma
 
 The comparisons below were made on 7 November 2026 with the binary of Section 5.2, by one command (`validation/measure_vep116.py`).
 Every count is the one that the build at commit 5048fc5 gave on 27 October 2026, to the cell.
-Ensembl VEP's output does not depend on the build of fastVEP it is compared with, so the counts of one build describe any build that writes the same bytes, and these two do: their output is byte-identical, as a VCF and as a table with the flags of this comparison, on the 173 variants of the VEP example set, the stratified ClinVar sample of 6,600 variants, the 1-in-5 sample of the ClinVar 2-star+ set that is compared below, the 1-in-200 sample of HG002 that is compared below and the 400 in-frame deletions, and as a VCF on the whole HG002 call set (4,048,342 records, 11.1 GB; 11 runs in all; `validation/compare_builds.py`, `benchmarks/results/v0.5.0/identity_vs_5048fc5/`).
+Ensembl VEP's output does not depend on the build of fastVEP it is compared with, so the counts of one build describe any build that writes the same bytes, and these two do: their output is byte-identical, as a VCF and as a table with the flags of this comparison, on the 173 variants of the VEP example set, the stratified ClinVar sample of 6,600 variants, the 1-in-5 sample of the ClinVar 2-star+ set that is compared below, the 1-in-200 sample of HG002 that is compared below and the 400 in-frame deletions, and as a VCF on the whole HG002 call set (4,048,342 records, 11.1 GB; 11 runs in all; `validation/compare_builds.py`, `benchmarks/results/v0.5.0/identity_vs_5048fc5/`), and so is that of the build with the structural variant rules, against a rebuild of the release candidate and against master (11 runs each; `benchmarks/results/v0.6.0/identity_vs_rc1/` and `identity_vs_master/`).
 
 On a systematic 1-in-200 sample of the GIAB HG002 call set (20,241 variants, 186,055 paired rows, 5,023,485 cells), `Consequence`, `IMPACT`, `Amino_acids`, `Codons`, `cDNA_position`, `CDS_position`, `Protein_position`, `Location`, `REF_ALLELE`, `VARIANT_CLASS`, `DISTANCE`, `STRAND`, `EXON`, `INTRON`, `SYMBOL` and `BIOTYPE` agree on every paired row (Figure 3A), and 3,851 cells (0.077%) differ, all of them in four HGVS columns: `HGVS_OFFSET` 2,070, `HGVSc` 1,729, `HGVSg` 35 and `HGVSp` 17.
 Each has a documented cause (Figure 3B).
@@ -371,7 +382,7 @@ Ensembl stops short of the end of the protein in two ways, both of which are in 
 
 | Metric | Ensembl VEP (Perl) | fastVEP (Rust) | Improvement |
 |--------|-------------------|---------------|-------------|
-| Binary/install size | 0.97 GB (Docker image, unpacked; 0.31 GB to pull) | 5.8 MB | 165x smaller |
+| Binary/install size | 0.97 GB (Docker image, unpacked; 0.31 GB to pull) | 6.0 MB | 160x smaller |
 | Startup (7K transcripts, yeast) | 0.36 sec (a run of one variant, container included) | 0.03 sec | 12x |
 | Startup (510K transcripts, human) | 0.36 sec (a run of one variant, container included) | 0.86 sec (1 thread), 0.37 sec (8 threads) | VEP 2.4x faster on one thread, equal on eight |
 | Peak memory (100,000 variants, human) | 0.94 GiB | 2.6 GiB (whole gene model with sequences); 1.2 GiB without a FASTA | VEP 2.8x less |
@@ -383,7 +394,7 @@ Ensembl VEP's run of one variant takes 0.36 seconds for either gene model, of wh
 The first run on a gene model, which parses the GFF3 and writes the cache, takes 13.0 seconds on ten cores for the human model, and the cache is 129 MB.
 The cache holds the whole gene model with its sequences in memory: a run of 100,000 variants peaks at 2.6 GiB whatever the number of threads (2.64 GiB on one, 2.64 GiB on eight, 2.65 GiB on ten) and, without a FASTA (consequence prediction only, no HGVS), at 1.2 GiB.
 Ensembl VEP's process peaks at 0.94 GiB on the same 100,000 variants (the peak resident set of the VEP process in its container), so for an input of this size it needs 2.8 times less memory; it holds the regions its input overlaps and not the whole gene model, and a single-process whole-genome run of VEP 115.1 exhausted the 7.65 GiB of its container above 2.7 million variants in July 2026 (not repeated with 116.3), which is why its genome-wide time is measured per chromosome.
-The release binary is compiled with LTO, a single codegen unit and stripped symbols (5.8 MB).
+The release binary is compiled with LTO, a single codegen unit and stripped symbols (6.0 MB).
 Variants are processed in a streaming fashion without buffering the entire input in memory, so peak memory is the gene model and not the variants (a run of one variant peaks at 2.57 GiB), and memory-mapped FASTA access avoids loading the full reference genome.
 
 ### 3.5 Output Format Performance
@@ -490,27 +501,27 @@ This distribution is consistent with expectation for a single genome dominated b
 
 ### 3.9 Test Suite Coverage
 
-fastVEP's correctness was validated through a comprehensive test suite of 1,733 tests (`#[test]` and `#[tokio::test]` functions): on macOS arm64 with rustc 1.98.0, 1,731 of them run and pass, one is ignored and one is compiled on Linux only.
+fastVEP's correctness was validated through a comprehensive test suite of 1,891 tests (`#[test]` and `#[tokio::test]` functions): on macOS arm64 with rustc 1.98.0, 1,889 of them run and pass, one is ignored and one is compiled on Linux only.
 Table 9 summarizes coverage across the crates.
 
 **Table 9. Test suite coverage.**
 
 | Category | Tests | Coverage |
 |----------|-------|----------|
-| Core types and SO terms | 43 | All 49 consequence terms (41 standard + 8 SV-specific), severity ranking, impact classification, SO term round-trip parsing, VariantType classification |
+| Core types and SO terms | 63 | All 41 consequence terms, severity ranking, impact classification, SO term round-trip parsing, VariantType classification, the 18 structural variant classes and their reading of a type |
 | Genome models | 65 | Transcript construction, exon/intron identification, coordinate mapping, codon translation (all 64 codons, standard + mitochondrial table), circular MT coordinate wrapping |
 | Annotation sources | 190 | GFF3 parsing (Ensembl and RefSeq), FASTA reading, the transcript cache (format, frames, damaged files), VEP cache info.txt, tabix variation lookup, a parser for regulatory-build GFF3 |
-| Consequence prediction | 83 | All major consequence categories (small variants + SV: transcript_ablation, transcript_amplification, feature_truncation, copy_number_decrease, upstream/downstream for SVs), the splice terms, frameshift introns |
+| Consequence prediction | 94 | All major consequence categories (small variants + SV: transcript_ablation, transcript_amplification, feature_truncation and elongation, the frame, start and stop terms of a deletion, upstream/downstream for SVs), the splice terms, frameshift introns |
 | HGVS nomenclature | 49 | HGVSg, HGVSc, HGVSp (SNV, deletion, insertion, frameshift, stop lost, MNV, UTR, intronic, repeats, the initiator) |
-| I/O and VEP compatibility | 148 | VCF parsing (incl. SV parsing), allele normalization, chromosome prefix handling, CSQ, tab and JSON output (30 integration tests of VEP's test patterns, 3 of multi-sample parsing) |
+| I/O and VEP compatibility | 172 | VCF parsing (incl. SV parsing), allele normalization, chromosome prefix handling, CSQ, tab and JSON output (30 integration tests of VEP's test patterns, 3 of multi-sample parsing) |
 | Filter engine | 21 | Tokenizer, parser (simple/compound/nested expressions), evaluator (equality, numeric comparison, in operator, and/or/not, parentheses, missing fields, case-insensitive matching) |
-| Supplementary annotations | 232 | fastSA v1 format round-trip (writer -> reader), v2 format round-trip (.osa2 chunked ZIP with Var32 binary search, delta encoding, parallel u32 arrays), interval overlap queries, gene annotation lookup, source parsers (ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed, MitoMap, PhyloP, GERP, REVEL, SpliceAI, PrimateAI, dbNSFP, OMIM, gnomAD gene scores), custom VCF/BED providers, shared cache sizing and parallel no-thrash regression |
-| Shared annotation engine | 185 | The pick (`--pick*`), per-record annotation, supplementary-annotation lookup, allocation budgets of the per-variant loop |
-| ACMG/AMP classification | 400 | The 28 criteria, combining rules, thresholds and configuration, the mode of inheritance, disease reading |
-| Command line | 290 | `annotate`, `sa-build`, `sa-convert`, `cache` and `filter` end to end, VEP flag handling, golden files against VEP 116.3, the damaged-cache cases |
-| Web server | 27 | REST API contract, genome loading, limits |
+| Supplementary annotations | 234 | fastSA v1 format round-trip (writer -> reader), v2 format round-trip (.osa2 chunked ZIP with Var32 binary search, delta encoding, parallel u32 arrays), interval overlap queries, gene annotation lookup, source parsers (ClinVar, gnomAD, dbSNP, COSMIC, 1000G, TOPMed, MitoMap, PhyloP, GERP, REVEL, SpliceAI, PrimateAI, dbNSFP, OMIM, gnomAD gene scores), custom VCF/BED providers, shared cache sizing and parallel no-thrash regression |
+| Shared annotation engine | 189 | The pick (`--pick*`), per-record annotation, supplementary-annotation lookup, allocation budgets of the per-variant loop |
+| ACMG/AMP classification | 412 | The 28 criteria, combining rules, thresholds and configuration, the mode of inheritance, disease reading |
+| Command line | 320 | `annotate`, `sa-build`, `sa-convert`, `cache` and `filter` end to end, VEP flag handling, golden files against VEP 116.3, the damaged-cache cases |
+| Web server | 82 | REST API contract, genome loading, limits |
 | **Agreement with Ensembl VEP 116.3** | -- | 99.92% of 5.0 million cells on a 1-in-200 sample of HG002, 99.9965% of 84.7 million on a 1-in-5 sample of ClinVar 2-star+ (Section 3.3) |
-| **Golden files of VEP 116.3** | 26 | Nine fixtures of generated worlds (20,363 records) with the output that VEP 116.3 wrote for them, compared with fastVEP's cell by cell (counted above, in the tests of the command line) |
+| **Golden files of VEP 116.3** | 31 | Ten fixtures of generated worlds (27,055 records) with the output that VEP 116.3 wrote for them, compared with fastVEP's cell by cell (counted above, in the tests of the command line) |
 
 ### 3.10 Feature Comparison
 
@@ -519,11 +530,11 @@ Table 9 summarizes coverage across the crates.
 | Feature | Ensembl VEP | Nirvana | fastVEP |
 |---------|-------------|---------|--------|
 | Language | Perl 5.22+ | C# | Rust |
-| SO consequence terms | 41 | ~40 | 49 defined (38 emitted) |
+| SO consequence terms | 41 | ~40 | 41 defined (33 emitted) |
 | CSQ output fields | 30 (default) | N/A (JSON) | 49 (extended; 5 always empty) |
 | Splice site categories | 6 | 3 | 6 (donor, acceptor, region, 5th base, donor region, polypyrimidine) |
 | VCF input | Yes | Yes | Yes |
-| Structural variants | Limited | Yes | Yes (DEL, DUP, INV, CNV, BND, STR) |
+| Structural variants | Limited | Yes | Yes (the classes and terms of Ensembl VEP 116.3: DEL, DUP, INV, CNV, INS, mobile elements, tandem repeats, BND) |
 | ClinVar | Via plugin | Yes | Yes (direct, fastSA) |
 | gnomAD | Via plugin | Yes | Yes (direct, fastSA) |
 | dbSNP | Via cache | Yes | Yes (direct, fastSA) |
@@ -545,9 +556,93 @@ Table 9 summarizes coverage across the crates.
 | Parallelism | Fork-based | Lambda | Thread-based (rayon) |
 | Web interface | REST API | -- | Built-in GUI + REST API |
 | Installation | Complex | dotnet | `cargo build --release`, or a release archive |
-| Binary size | 0.97 GB (Docker image, unpacked) | not measured | 5.8 MB |
+| Binary size | 0.97 GB (Docker image, unpacked) | not measured | 6.0 MB |
 | Dependencies | Perl, Archive::Zip, DBI and what `INSTALL.pl` fetches | .NET runtime | None at run time (a C compiler to build) |
 | Agreement with Ensembl VEP 116.3 | Reference | -- | 99.92% of the cells of an HG002 sample, 99.9965% of a ClinVar sample |
+
+### 3.11 Structural Variant Annotation
+
+The rules of Section 2.10 were measured as the rest of fastVEP is, against Ensembl VEP 116.3 in `--gff` mode over the same GFF3 and FASTA (Section 5.3).
+
+**Generated worlds.**
+A world of ten transcripts of every shape (both strands, with and without UTRs, a frameshift intron, a skipped exon, non-coding, nonsense-mediated decay, a miRNA and an antisense transcript) holds 6,692 records: every class that Ensembl has a rule for, laid over every place on every transcript where one end of a variant can be on another kind of sequence than the other, and the records that are about how a record is read (`END` and `SVLEN`, the type taken from `SVTYPE`, several ALTs, breakends in every notation, tandem repeats and the records that Ensembl skips).
+Ensembl VEP wrote 17,284 rows for them.
+fastVEP writes the same rows, in the same order, and 23 columns of them are Ensembl's in every cell but five, which are the `HGVSc`, `HGVSg` and `HGVS_OFFSET` of tandem repeats with several alleles (a record with several ALTs, which fastVEP describes allele by allele: divergence 11 of the repository's record).
+A second world, made with another seed (6,741 records, 17,475 rows), gives the same result, and the two per-variant loops (the command line's, and the library's that the web server runs) write the same rows for both.
+
+**Call sets.**
+Table 11 gives the agreement on the 13 synthetic files of the structural variant validation set of vep-rs (15,400 records), on a 1-in-4 sample of the structural variants of gnomAD-SV v4.1 on chromosome 21 (8,158 records) and on the structural variants of ClinVar on chromosome 21 (3,060 records), by the measure of the vep-rs paper: the F1 of the sets of tuples (`Location`, `Allele`, `Feature`, `Feature_type` and the sorted `Consequence` terms).
+
+**Table 11. Agreement with Ensembl VEP 116.3 on structural variants (F1 of the set of tuples; `validation/score_strict_key.py`).**
+Ensembl VEP 116.3 in `--gff` mode over the GRCh38 Ensembl 115 GFF3 and FASTA; the first two rows are the generated worlds, run with its default options, and the others with `--no_stats` except where the last column says so.
+
+| Input | Records | Ensembl VEP rows | fastVEP rows | F1 | The rest |
+|-------|---------|------------------|--------------|----|----------|
+| Generated world | 6,692 | 17,284 | 17,284 | 1.0000 | 5 HGVS cells, outside the key |
+| Generated world, another seed | 6,741 | 17,475 | 17,475 | 1.0000 | the same 5 kinds of cell |
+| vep-rs files 01-03, 05-08, 11, 12 (9 files) | 11,950 | 454,951 | 454,951 | 1.0000 | |
+| vep-rs file 04 (explicit alleles) | 400 | 10,790 | 10,790 | 0.9983 | 18 rows of deletions written in bases |
+| vep-rs file 09 (breakends) | 1,400 | 68,938 | 71,433 | 0.9816 | single breakends, which are VEP's buffer, and mates on another chromosome, which VEP writes differently each time; default options |
+| vep-rs files 10 and 13 (`<*>` and VCF 4.5) | 1,650 | 44,933 | 37,592 | 0.0000 and 0.8808 | the rows of `<*>` |
+| ClinVar structural variants, chromosome 21 | 3,060 | 62,045 | 62,045 | 0.9999 | |
+| gnomAD-SV v4.1, chromosome 21, 1-in-4 sample | 8,158 | 109,318 | 105,851 | 0.9052 | the file spells the contig two ways; default options |
+| the same, the contig spelled `chr21` throughout | 8,158 | 104,823 | 104,966 | 0.9993 | the contig column, `CHR2`, the GFF3 and the FASTA; default options |
+
+The gnomAD-SV row is 0.9052 because of the file and of Ensembl's `--gff` reader, and not because of the rules.
+The file spells the contig `21` in its contig column and `chr21` in `CHR2`, and Ensembl compares contig names letter for letter (`_compare_seq_region_names`), so for the 572 breakends of the sample whose `CHR2` is spelled with `chr` (463 with the mate on the same contig, and 109 with a mate on chrX, chr22 or chrY) it writes the rows of one spelling and not of the other, whichever the GFF3 uses, where fastVEP takes `chr21` and `21` for one contig and writes both.
+Its `--gff` mode also asks which variants overlap a transcript before the transcript has a contig (`AnnotationType/Transcript.pm`), and pairs 905 of the records with transcripts of other chromosomes (11,930 of its 109,318 rows), which its buffer of records causes: run one record at a time the strict F1 is 0.9724.
+With the contig written one way throughout (the next row; `validation/sv_one_spelling.sh`), the two outputs have an F1 of 0.9993 on all 8,158 records.
+The 150 tuples that only fastVEP writes are 136 on `unconfirmed_transcript` features, a type that Ensembl's GFF3 reader ignores (its log says so), and 14 intergenic rows of 7 breakends whose mate is on a chromosome that the reference of this run lacks; the 7 that only Ensembl writes are the `intergenic_variant` rows of 7 variants whose only neighbours are such transcripts.
+The rows of a breakend whose mate is on another contig are not the same from one run of Ensembl VEP to the next (three runs over file 09 gave 68,938, 68,846 and 68,880 rows, and the 6 of its 1,389 records that differ are all of this kind), but that moves the F1 of file 09 by 0.0006 at most (0.9816, 0.9810 and 0.9812 against the three runs): of its 2,575 differing tuples, 903 are on 40 single breakends, which are Ensembl VEP's buffer (the rows of a record depend on the records read with it, and run one record at a time, with `--buffer_size 1`, it writes fastVEP's rows for every single, symbolic and same-contig breakend of the file in three runs), and 1,672 are rows for the mates of breakends on another chromosome that only fastVEP writes, which Ensembl VEP does not write the same way twice even with a buffer of one (1,989, 2,049 and 1,839 tuples in three runs); a breakend with no mate inside a transcript has `feature_truncation` in a run with its statistics and not in a run with `--no_stats` (49 of 104 rows of a probe, nothing else differing), which is why files 09 and the generated worlds were run with its default options.
+The rows of files 10 and 13 are those that Ensembl writes for the allele `<*>`, which it annotates as an allele of that name and fastVEP does not (Section 2.10).
+
+**Speed.**
+Table 12 gives the time of a whole run over the two real call sets.
+fastVEP annotates the gnomAD-SV sample 16.7 times faster than Ensembl VEP on one thread and 30 times faster on every core, and the ClinVar structural variants 15.4 and 37 times.
+These are the ratios of a small input.
+A run of fastVEP starts by reading its transcript cache (0.86 s on one thread and 0.37 s on eight, Section 3.1), which is most of its time here, while the start-up of Ensembl VEP is 0.36 s of its 14.5 s and 20.9 s (Table 4); the ratio rises with the size of the input, as it does in Table 2.
+
+**Table 12. Time of a whole run on two structural variant call sets.**
+Apple M4, Ensembl VEP 116.3 in Docker (one process, `--gff` mode, `--no_stats`: the time of `docker run`), fastVEP with its binary transcript cache, tab output, GRCh38 Ensembl 115 gene model and FASTA; the median of 3 runs of Ensembl VEP and of 5 of fastVEP, after one run of each that is not timed.
+
+| Input | Records | Ensembl VEP | fastVEP, 1 thread | Speed-up | fastVEP, 10 cores | Speed-up |
+|-------|---------|-------------|-------------------|----------|-------------------|----------|
+| gnomAD-SV v4.1, chromosome 21, 1-in-4 sample | 8,158 | 20.9 s | 1.25 s | 16.7x | 0.70 s | 30.0x |
+| ClinVar structural variants, chromosome 21 | 3,060 | 14.5 s | 0.94 s | 15.4x | 0.39 s | 36.8x |
+
+**Small variants.**
+The structural variant rules change no byte of what a run over small variants writes on any benchmark input of the repository but two that were changed on purpose (`benchmarks/run_identity_sweep.sh`: 25 cases, the whole of HG002 in the conditions of Table 3 and as JSON, chromosome 22 in three formats and with each pick option, the four other organisms and the three ClinVar 2-star+ sets with and without `--acmg`, each against master and a rebuild of the release candidate): `--flag-pick*` flags the `intergenic_variant` rows that it left without a flag (6,940 of the 50,284 variants of chromosome 22 of HG002, in 7,001 rows), as Ensembl VEP 116.3 does, and the ranks of `splice_donor_5th_base_variant` and `splice_region_variant` are release 116.3's, which changes the `most_severe_consequence` of 3 of the 4,048,342 JSON records of HG002 (each a variant with the one term on a transcript and the other on another).
+Run in turn by the build with the rules and by the build of master (Table 13), the 16 workloads of the table give the same bytes but for the JSON one.
+A laptop varies from one round to the next by about 3%, more while someone uses it, and a round now and then by tens of percent (by up to 31% within a pair), which only lengthens a run: the fastest run of each build over the rounds differs by -1.0% to +1.4% from one build to the other, and the medians by -7.0% to +2.9%.
+The work that a run does is told by the instructions that it retires, which no other load on the machine moves: on one thread the two builds differ by -0.39% to +0.23% in 6 of the 8 workloads, by +0.67% for JSON and by +1.86% for tab output, which also takes 1.4% longer in its fastest run; the cost of tab output is not in the lines of the tab writer that changed (restoring them as master has them leaves it; `tab_output_cost.tsv` of the results has the instructions of each build, on one thread over the 1-in-5 sample, the median of three runs).
+The binary of the release does the same work as the build that was timed: on one thread it retires -0.4% to +0.6% of the instructions of that build over a 1-in-20 sample of HG002 as VCF, tab and JSON (`benchmarks/results/small_variant_regression/instructions_release_vs_timed.txt`).
+A row of a variant carries the number of the structural variant's allele that it answers for (four bytes), and is 616 bytes, within the 632 that the loop was measured with, because the ACMG classification that only a run with `--acmg` fills is a pointer to it and not the value; a unit test holds the row to the 632.
+
+**Table 13. The build with the structural variant rules against the build of master, on small variants.**
+Apple M4, in use for other work while it ran (the load average at the start was 1.7); the two builds run in turn, one run of each per round and the order alternating from round to round, after a round that is not timed and where the outputs are compared byte for byte; the output of each run is removed before the next (`benchmarks/run_small_variant_regression.sh`, `benchmarks/results/small_variant_regression/`, which says what the two binaries are).
+The call set is GIAB HG002 v4.2.1; the 1-in-20 sample is every 20th of its records, tab output with the flags of Table 3 and `--numbers --variant-class --show-ref-allele --total-length`; chromosome 22 is written as VCF with `--hgvs --symbol --canonical`; the whole genome and its 1-in-5 sample are consequences only (no FASTA), as VCF, unless the line says `--hgvs`, which is the workload of Table 3 (a FASTA and `--hgvs --symbol --canonical`).
+The databases are those of the head-to-head (Table 3), the ClinVar sample is every 10th record of the 2-star+ set against the databases of the ACMG benchmark, and the organisms are the files of Table 7.
+"Instructions, median of the pairs" is the median over the rounds of the difference between the instructions that the two runs of a round retired (`/usr/bin/time -l`); on every core the threads that wait move them by 0.5% to 0.8%, so they are given for one thread.
+The JSON run differs by the 8 characters of `splice_donor_5th_base_variant` over `splice_region_variant` in the `most_severe_consequence` of one record (`benchmarks/results/identity_sweep/json_difference.txt` lists the 3 of the whole genome).
+
+| Workload | Variants | Threads | Master | With the structural variant rules | Difference of the medians | Difference of the fastest runs | Instructions, median of the pairs | Rounds | Same bytes |
+|----------|----------|---------|--------|-----------------------------------|---------------------------|--------------------------------|-----------------------------------|--------|------------|
+| HG002, 1-in-20 sample, tab, the flags of Table 3 | 202,417 | 10 | 0.86 s | 0.84 s | -1.5% | -0.7% | (threads wait) | 12 | yes |
+| HG002, chromosome 22, `--hgvs` | 50,284 | 1 | 1.61 s | 1.61 s | +0.2% | +0.0% | +0.14% | 5 | yes |
+| HG002, 1-in-5 sample, consequences only | 809,668 | 1 | 6.78 s | 6.74 s | -0.6% | -0.7% | +0.16% | 10 | yes |
+| HG002, 1-in-5 sample, consequences only, tab | 809,668 | 1 | 4.46 s | 4.50 s | +0.9% | +1.4% | +1.86% | 10 | yes |
+| HG002, 1-in-5 sample, `--hgvs`, JSON | 809,668 | 1 | 13.02 s | 12.97 s | -0.4% | +0.8% | +0.67% | 5 | no, 8 bytes |
+| HG002, 1-in-5 sample, `--hgvs`, with ClinVar | 809,668 | 1 | 10.34 s | 10.23 s | -1.0% | -1.0% | +0.14% | 10 | yes |
+| HG002, 1-in-5 sample, `--hgvs`, with ClinVar and the joint gnomAD | 809,668 | 1 | 16.06 s | 15.68 s | -2.3% | -0.3% | +0.07% | 10 | yes |
+| HG002, whole genome, consequences only | 4,048,342 | 1 | 30.09 s | 29.80 s | -1.0% | -0.8% | -0.39% | 5 | yes |
+| HG002, whole genome, consequences only | 4,048,342 | 10 | 9.64 s | 9.62 s | -0.1% | -0.8% | (threads wait) | 8 | yes |
+| HG002, whole genome, `--hgvs` (the workload of Table 3) | 4,048,342 | 1 | 41.43 s | 42.63 s | +2.9% | -0.3% | +0.23% | 3 | yes |
+| HG002, whole genome, `--hgvs` (the workload of Table 3) | 4,048,342 | 10 | 12.91 s | 12.00 s | -7.0% | +1.4% | (threads wait) | 5 | yes |
+| ClinVar 2-star+, 1-in-10 sample, `--acmg --pick` | 67,366 | 10 | 17.12 s | 17.15 s | +0.2% | +1.0% | (threads wait) | 5 | yes |
+| Yeast, all variants, `--hgvs` | 260,526 | 10 | 0.42 s | 0.43 s | +1.7% | +1.4% | (threads wait) | 5 | yes |
+| Drosophila, all variants, `--hgvs` | 4,438,427 | 10 | 9.02 s | 9.17 s | +1.7% | +0.8% | (threads wait) | 5 | yes |
+| Arabidopsis, all variants, `--hgvs` | 12,883,854 | 10 | 25.69 s | 25.90 s | +0.8% | +1.1% | (threads wait) | 3 | yes |
+| Mouse, all variants, `--hgvs` | 26,062,054 | 10 | 59.48 s | 58.01 s | -2.5% | +0.7% | (threads wait) | 3 | yes |
 
 ---
 
@@ -556,6 +651,7 @@ Table 9 summarizes coverage across the crates.
 ### 4.1 Performance Implications
 
 Benchmarks on the GIAB HG002 gold-standard dataset demonstrate that fastVEP annotates a complete human WGS 134-154x faster than Ensembl VEP 116.3 single-threaded (Table 3), and completes the same genome in about 11 seconds (~365,044 variants per second) with its default multi-threaded pipeline.
+Structural variants are annotated at the speed of Table 12 (Section 3.11), and the rules for them change the time of the fastest run over small variants by -1.0% to +1.4% (Table 13).
 The fixed binary-cache start-up of 0.9 seconds dominates only at small variant counts; as input grows, single-threaded throughput rises to 95,955 variants per second on the full 4.05M-variant WGS, demonstrating efficient amortization of the start-up cost.
 
 The practical implications are substantial: annotating 500,000 variants takes roughly 5 seconds with single-threaded fastVEP (about 1.4 seconds multi-threaded; extrapolated from the whole-genome runs, not run), compared to approximately 13 minutes with single-threaded Ensembl VEP 116.3 at its measured 621 variants per second.
@@ -571,6 +667,8 @@ On a 1-in-5 sample of the ClinVar 2-star+ call set, 99.9965% of 84.7 million cel
 On the generated worlds built to be hard, 99.56%, 99.92% and 99.97% of the cells agree.
 
 These numbers were measured on 7 November 2026 with the binary of Section 5.2, and are those that the build of 27 October 2026 gave, to the cell (Section 3.3).
+On structural variants (Section 3.11) the output agrees with Ensembl VEP 116.3 in every row, and in every cell but five, of 6,692 generated records, and by the F1 of the paper that measured the other tool, with 1.0000 on 9 of the 13 synthetic files of its validation set, 0.9999 on the structural variants of ClinVar on chromosome 21 and 0.9993 on those of gnomAD-SV once the contig is spelled one way in the file and in the reference.
+Where Ensembl's output is an artifact of its `--gff` reader or of how a file spells a contig (a variant paired with a transcript of another chromosome, the rows of a breakend's mate lost to `chr21` and `21` being two contigs) fastVEP does not reproduce it, and `docs/STRUCTURAL_VARIANTS.md` lists each such place and each rule that is Ensembl's and looks wrong.
 
 Where HGVS or the Sequence Ontology says that Ensembl's output is wrong, fastVEP does not reproduce it, and the divergence record lists every such case with the row counts.
 A nomenclature string that enters a clinical record should follow the standard even where the reference implementation does not, and the 3'-maximal placement of a deletion at a protein terminus (NT5C2, Section 3.3) is the plainest example.
@@ -653,6 +751,10 @@ Supplementary-annotation format benchmarks (`benchmarks/run_sa_formats.py`) buil
 Cross-organism benchmarks used full gene models and FASTA references for yeast (*S. cerevisiae* R64-1-1, Ensembl 115), Drosophila (BDGP6.54, Ensembl 115), Arabidopsis (TAIR10, Ensembl Plants 60), mouse (GRCm39, Ensembl 115), and human (GRCh38, Ensembl 115), and variant call sets from Ensembl/SGD variation (yeast), DGRP2 (Drosophila), the Ensembl Plants variation release 113 (Arabidopsis), the Mouse Genomes Project CAST/EiJ strain (mouse) and GIAB HG002 v4.2.1 (human).
 The Drosophila file is in the coordinates of dm3 and the mouse file in those of GRCm38, against gene models of BDGP6.54 and GRCm39: these two benchmarks measure throughput, and the consequences they predict are not those of the variants.
 
+The structural variant timings of Section 3.11 (Table 12) were made on 17 November 2026 on the same machine, with Docker 29.2.1 and the same image of Ensembl VEP 116.3, by `benchmarks/run_sv_head_to_head.sh`, which runs each input once on each side that is not timed and then 5 rounds of fastVEP (one thread with `RAYON_NUM_THREADS=1`, and every core) and 3 of Ensembl VEP, one run at a time, with the machine held awake and nothing else of ours running (the load averages of 1, 5 and 15 minutes at the start were 1.19 2.43 2.74).
+The binary is an earlier build of the code of this release, built with `cargo build --release -p fastvep-cli` (rustc 1.98.0, the release profile above; it prints `fastvep 0.5.0`; SHA-256 b33186a81fb2...), and the inputs, the machine and the SHA-256 of the binary, of the gene model and of each input are in `benchmarks/results/sv_head_to_head/`.
+The binary that ships retires -0.05% and -0.03% of the instructions of that build on these two inputs (`instructions_release_vs_measured.tsv`), and timed again in a session in which the machine was in use (the load average at the start was 3.2) its fastest runs on one thread are 1.23 s and 0.93 s, within 2% of the medians of Table 12, and its medians 1.31 s and 1.01 s (`release_binary_machine_in_use/`).
+Table 13 was made by `benchmarks/run_small_variant_regression.sh` from a build of the working tree before the version was set (SHA-256 f4fddcc27624...) and from the build of master at commit ed17877, in turn, in the session of the same evening; it reads the HG002 call set whole, cuts the samples and chromosome 22 from it, and compares the outputs of the two builds byte for byte before it times anything (`benchmarks/results/small_variant_regression/`).
 Binary size is that of the release-compiled executable, whose release profile strips symbols.
 
 ### 5.3 Accuracy Validation
@@ -664,14 +766,17 @@ The comparisons of Section 3.3 were made on 7 November 2026 with the binary of S
 The build at commit 5048fc5 gave the same counts on 27 October 2026, and `validation/compare_builds.py`, which runs two builds over the inputs and compares their outputs byte for byte, shows that the two write the same bytes.
 The comparison with VEP's own caches was made on the earlier day, because the extracted caches are no longer on disk.
 
+The structural variants were compared in the same way, with `--tab` and the same flags except that Ensembl VEP ran with its statistics on for the generated worlds and for file 09 (a run with `--no_stats` leaves out the `feature_truncation` of a breakend that has no mate, Section 3.11): the two generated worlds are made by `crates/fastvep-cli/fixtures/vep_tab_sv/gen_world.py` (one seed each; `regen.sh` runs Ensembl VEP from its pinned image over the first and keeps what it wrote), and `validation/score_strict_key.py` scores the other sets by the key of the vep-rs paper.
+The last row of Table 11 is made by `validation/sv_one_spelling.sh`, which cuts the GFF3 and the FASTA to chromosome 21, names it `chr21` in them and in the contig column of the VCF, and runs both tools over that (Ensembl VEP with its statistics on, and three runs of it wrote the same rows).
+The 13 synthetic files are those of `tests/sv_validation/grch38` in the vep-rs repository (commit 37c909d), the gnomAD-SV sample is 1 in 4 of the chromosome 21 records of release 4.1, and the ClinVar set is the deletions, duplications, insertions, inversions and copy number records on chromosome 21 of the ClinVar VCF dated 15 November 2026.
 Every disagreeing row of every comparison is classified in `docs/VEP_DIVERGENCE.md`.
 Where the cause is in Ensembl's Perl code, the routine was read, and `_shift_3prime` was extracted from the release 115.1 image and executed on synthetic peptides to confirm the mechanism.
 
 ### 5.4 Testing
 
 Tests use Rust's built-in test framework (`#[test]` and `#[tokio::test]`).
-The release has 1,733 of them: on macOS arm64 with rustc 1.98.0, 1,731 ran and passed, one was ignored (it needs a file that `fixtures/vep_match/regen.sh` makes) and one is compiled on Linux only (`cargo test --workspace --no-fail-fast --locked`; `benchmarks/results/v0.5.0/tests_executed.csv`); the continuous integration runs `cargo fmt`, `cargo clippy -- -D warnings` and `cargo test` on every change.
-Tests of compatibility with Ensembl VEP compare fastVEP with VEP's own output, which the repository keeps as golden files made by `regen.sh` scripts that run VEP 116.3 (nine fixtures of generated worlds, 20,363 records, among others), and with patterns of VEP's own test suite (`Parser_VCF.t` and the test VCF files of release 115).
+The release has 1,891 of them: on macOS arm64 with rustc 1.98.0, 1,889 ran and passed, one was ignored (it needs a file that `fixtures/vep_match/regen.sh` makes) and one is compiled on Linux only (`cargo test --workspace --no-fail-fast --locked`; `manuscript/data/tests_executed.csv`); the continuous integration runs `cargo fmt`, `cargo clippy -- -D warnings` and `cargo test` on every change.
+Tests of compatibility with Ensembl VEP compare fastVEP with VEP's own output, which the repository keeps as golden files made by `regen.sh` scripts that run VEP 116.3 (ten fixtures of generated worlds, 27,055 records, among others), and with patterns of VEP's own test suite (`Parser_VCF.t` and the test VCF files of release 115).
 Other tests count the allocations of the per-variant loop with a counting allocator, compare the output of runs on one thread and on many byte for byte, and damage the transcript cache in every way the loader has to refuse.
 The standard genetic code implementation was validated by testing all 64 codons against the NCBI translation table 1.
 
@@ -745,7 +850,7 @@ The Drosophila and mouse variant files are in older assemblies than their gene m
 
 ## Supplementary Materials
 
-### Supplementary Table S1. The 49 SO consequence terms defined in fastVEP, and whether a predictor emits each.
+### Supplementary Table S1. The 41 SO consequence terms of Ensembl VEP 116.3 defined in fastVEP, and whether a predictor emits each.
 
 | Rank | SO Term | Impact | Emitted | Description |
 |------|---------|--------|---------|-------------|
@@ -757,14 +862,14 @@ The Drosophila and mouse variant files are in older assemblies than their gene m
 | 6 | stop_lost | HIGH | yes | Loss of stop codon |
 | 7 | start_lost | HIGH | yes | Loss of start codon (ATG) |
 | 8 | transcript_amplification | HIGH | yes | Transcript amplification |
-| 9 | feature_elongation | MODIFIER | yes | Feature elongation |
-| 10 | feature_truncation | MODIFIER | yes | Feature truncation |
+| 9 | feature_elongation | HIGH | yes | Feature elongation |
+| 10 | feature_truncation | HIGH | yes | Feature truncation |
 | 11 | inframe_insertion | MODERATE | yes | Insertion divisible by 3 in CDS |
 | 12 | inframe_deletion | MODERATE | yes | Deletion divisible by 3 in CDS |
 | 13 | missense_variant | MODERATE | yes | Different amino acid |
 | 14 | protein_altering_variant | MODERATE | yes | Protein sequence change (complex) |
-| 15 | splice_region_variant | LOW | yes | 3-8 bp into intron or 1-3 bp into exon |
-| 16 | splice_donor_5th_base_variant | LOW | yes | 5th intronic base from donor |
+| 15 | splice_donor_5th_base_variant | LOW | yes | 5th intronic base from donor |
+| 16 | splice_region_variant | LOW | yes | 3-8 bp into intron or 1-3 bp into exon |
 | 17 | splice_donor_region_variant | LOW | yes | Positions 3-6 from donor |
 | 18 | splice_polypyrimidine_tract_variant | LOW | yes | 3 to 17 bases in front of an exon |
 | 19 | incomplete_terminal_codon_variant | LOW | yes | Incomplete codon at CDS end |
@@ -782,26 +887,18 @@ The Drosophila and mouse variant files are in older assemblies than their gene m
 | 31 | coding_transcript_variant | MODIFIER | yes | In coding transcript |
 | 32 | upstream_gene_variant | MODIFIER | yes | Within 5 kb upstream |
 | 33 | downstream_gene_variant | MODIFIER | yes | Within 5 kb downstream |
-| 34 | TFBS_ablation | HIGH | no | TF binding site ablation |
-| 35 | TFBS_amplification | MODERATE | no | TF binding site amplification |
+| 34 | TFBS_ablation | MODERATE | no | TF binding site ablation |
+| 35 | TFBS_amplification | MODIFIER | no | TF binding site amplification |
 | 36 | TF_binding_site_variant | MODIFIER | no | In TF binding site |
-| 37 | regulatory_region_ablation | HIGH | no | Regulatory region ablation |
-| 38 | regulatory_region_amplification | MODERATE | no | Regulatory region amplification |
+| 37 | regulatory_region_ablation | MODIFIER | no | Regulatory region ablation |
+| 38 | regulatory_region_amplification | MODIFIER | no | Regulatory region amplification |
 | 39 | regulatory_region_variant | MODIFIER | no | In regulatory region |
 | 40 | intergenic_variant | MODIFIER | yes | Between genes |
 | 41 | sequence_variant | MODIFIER | no | Generic sequence variant |
-| 42 | copy_number_change | MODIFIER | yes | Copy number variation (unspecified) |
-| 43 | copy_number_increase | MODIFIER | yes | Copy number gain |
-| 44 | copy_number_decrease | MODIFIER | yes | Copy number loss |
-| 45 | short_tandem_repeat_change | MODIFIER | yes | STR length change |
-| 46 | short_tandem_repeat_expansion | MODIFIER | no | STR expansion |
-| 47 | short_tandem_repeat_contraction | MODIFIER | no | STR contraction |
-| 48 | unidirectional_gene_fusion | MODIFIER | no | Gene fusion from breakend |
-| 49 | transcript_variant | MODIFIER | yes | Generic SV overlap with transcript |
 
 ### Supplementary Table S2. Raw benchmark data.
 
 All benchmark data are available as CSV files in the `manuscript/data/` directory of the fastVEP repository, written by `manuscript/build_data.py` from the runs in `benchmarks/results/v0.5.0/` (every run, the machine, the hash of the binary and of each input).
-Files include: `vep_comparison.csv` (chromosome 22 single-threaded scaling head-to-head), `vep_genomewide.csv` (whole-genome single-threaded head-to-head across the three annotation workloads), `organism_comparison.csv` and `scaling.csv` (cross-organism throughput), `giab_benchmark.csv` (the human whole genome), `resource_usage.csv` (memory, binary and start-up), `format_comparison.csv` (output format performance), `consequence_distribution.csv` (genome-wide consequence distribution), `vep116_agreement.csv` and `vep116_hg002_columns.csv` (agreement with Ensembl VEP 116.3; `vep116_provenance.md` says where the counts come from), `code_metrics.csv`, `so_terms.csv` and `crate_dependencies.csv` (implementation statistics), `vep_baseline.csv` (Ensembl VEP 116.3's times, one run of each chromosome summed) and `provenance.csv` (what the numbers were measured with).
+Files include: `sv_agreement.csv`, `sv_timing.csv` and `small_variant_regression.csv` (Section 3.11), `vep_comparison.csv` (chromosome 22 single-threaded scaling head-to-head), `vep_genomewide.csv` (whole-genome single-threaded head-to-head across the three annotation workloads), `organism_comparison.csv` and `scaling.csv` (cross-organism throughput), `giab_benchmark.csv` (the human whole genome), `resource_usage.csv` (memory, binary and start-up), `format_comparison.csv` (output format performance), `consequence_distribution.csv` (genome-wide consequence distribution), `vep116_agreement.csv` and `vep116_hg002_columns.csv` (agreement with Ensembl VEP 116.3; `vep116_provenance.md` says where the counts come from), `code_metrics.csv`, `so_terms.csv` and `crate_dependencies.csv` (implementation statistics), `vep_baseline.csv` (Ensembl VEP 116.3's times, one run of each chromosome summed) and `provenance.csv` (what the numbers were measured with).
 All figures are regenerated from these files by `manuscript/figures/generate_figures.py`, and `manuscript/verify_numbers.py` checks that the text quotes them.
 Table 6 (fastSA v1 against v2) is from `sa_formats.csv` and `sa_formats_annotation.csv` of the results directory.

@@ -49,26 +49,32 @@ fn fixture(world: &str, name: &str) -> PathBuf {
         .join(name)
 }
 
-type Key = (String, u64, String, String, String);
+/// `(chromosome, start, end, id, allele_string, transcript, allele)`: a structural variant is not
+/// named by its start and its alleles, which a dozen of them share.
+type Key = (String, u64, u64, String, String, String, String);
 
-/// `(chromosome, start, allele_string, transcript, allele)` to the fields above, from the JSON
-/// either loop writes.
+/// The rows of every variant to the fields above, from the JSON either loop writes: one for each
+/// transcript and allele, and for a variant with no transcript beside it the rows of the alleles'
+/// `intergenic_variant`.
 fn by_row(variants: &[Value]) -> BTreeMap<Key, BTreeMap<&'static str, Value>> {
     let mut rows = BTreeMap::new();
     for v in variants {
-        let (chrom, start, alleles) = (
+        let (chrom, start, end, id, alleles) = (
             v["seq_region_name"].as_str().unwrap().to_string(),
             v["start"].as_u64().unwrap(),
+            v["end"].as_u64().unwrap(),
+            v["id"].as_str().unwrap_or("-").to_string(),
             v["allele_string"].as_str().unwrap().to_string(),
         );
-        for tc in v["transcript_consequences"]
-            .as_array()
+        for tc in ["transcript_consequences", "intergenic_consequences"]
             .into_iter()
-            .flatten()
+            .flat_map(|section| v[section].as_array().into_iter().flatten())
         {
             let key = (
                 chrom.clone(),
                 start,
+                end,
+                id.clone(),
                 alleles.clone(),
                 tc["transcript_id"].as_str().unwrap_or("-").to_string(),
                 tc["variant_allele"].as_str().unwrap_or("-").to_string(),
@@ -285,6 +291,14 @@ fn the_two_loops_agree_on_the_world_of_repeats_over_introns() {
         0,
         1000,
     );
+}
+
+/// Structural variants: every class, placed over every kind of boundary of a transcript, breakends
+/// with and without mates, and the records Ensembl skips and the tandem repeats it turns into small
+/// variants. Both loops call one module for them, and this is what holds it to being one answer.
+#[test]
+fn the_two_loops_agree_on_structural_variants() {
+    compare("vep_tab_sv", &fixture("vep_tab_sv", "in.vcf"), 1000, 15_000);
 }
 
 #[test]

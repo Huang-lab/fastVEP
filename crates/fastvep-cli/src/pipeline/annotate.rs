@@ -12,7 +12,7 @@ use fastvep_cache::fasta::ReferenceFasta;
 use fastvep_cache::info::CacheInfo;
 use fastvep_cache::providers::{
     FastaSequenceProvider, IndexedTranscriptProvider, KnownSite, MatchedVariant, SequenceProvider,
-    TabixVariationProvider, TranscriptProvider, VariationProvider,
+    TabixVariationProvider, VariationProvider,
 };
 use fastvep_cache::transcript_cache::StaleCacheFormat;
 use fastvep_consequence::{ConsequencePredictor, Flank, TranscriptConsequence};
@@ -55,6 +55,24 @@ pub struct CompatFlags {
     /// `--no_escape`: the `=` of a synonymous `HGVSp` is not written `%3D` and the space of a VCF
     /// `SYMBOL` is `_` and not `%20`.
     pub no_escape: bool,
+    /// `--max_sv_size`: a variant whose end is more than this many bases from its start is not
+    /// annotated, as VEP's (default 10,000,000; `-1` for no limit). `None` is the default.
+    pub max_sv_size: Option<i64>,
+    /// `--sv-insertion-as-point` (not Ensembl VEP's): an insertion is the point between `POS` and
+    /// `POS + 1`, as the VCF specification describes it, and not the interval of its `SVLEN` bases
+    /// that VEP reads. See `docs/STRUCTURAL_VARIANTS.md`.
+    pub sv_insertion_as_point: bool,
+}
+
+impl CompatFlags {
+    /// The limit as the reader takes it: `None` for no limit.
+    fn max_sv_size(self) -> Option<u64> {
+        match self.max_sv_size {
+            None => Some(fastvep_io::vcf::DEFAULT_MAX_SV_SIZE),
+            Some(n) if n < 0 => None,
+            Some(n) => Some(n as u64),
+        }
+    }
 }
 
 /// Transcripts to leave out of a run, which Ensembl VEP's cache does not hold.
@@ -291,18 +309,32 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
     if sa_only {
         annotate_sa_only_scaffold(vf);
     } else {
+        // A tandem repeat with the INFO to be read as bases is the small variant VEP makes of it
+        // (`fastvep_annotate::sv::expand_tandem_repeat`), so that comes before anything is asked of
+        // the variant's position.
+        if let Some(sequence) = seq_provider {
+            fastvep_annotate::sv::expand_tandem_repeat(
+                vf,
+                sequence as &dyn SequenceProvider,
+                config.compat.max_sv_size(),
+            );
+        }
         let chrom = &vf.position.chromosome;
-        let query_start = if vf.position.start > config.distance {
-            vf.position.start - config.distance
-        } else {
-            1
-        };
-        let query_end = vf.position.end + config.distance;
-        overlapping = transcript_provider
-            .get_transcripts(chrom, query_start, query_end)
-            .unwrap_or_default();
+        // The transcripts of a small variant are those within `--distance`; a structural variant is
+        // paired with its transcripts, and predicted, as Ensembl VEP does it
+        // (`fastvep_annotate::sv`), by the window of each of its positions and by the class it was
+        // given. The library loop the web server runs asks the same function.
+        let fastvep_annotate::sv::Overlap {
+            transcripts,
+            predictions: sv_run,
+        } = fastvep_annotate::sv::overlap(transcript_provider, vf, config.distance);
+        let is_sv = vf.sv.is_some();
+        overlapping = transcripts;
 
-        if overlapping.is_empty() {
+        if is_sv && sv_run.is_none() {
+            // No transcript is paired with it: an `intergenic_variant` for each of its alleles.
+            fastvep_annotate::sv::annotate_sv_intergenic(vf);
+        } else if !is_sv && overlapping.is_empty() {
             // Intergenic
             annotate_intergenic(vf);
             // The variant's own HGVSg is there whether or not a transcript is:
@@ -352,47 +384,15 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
 
             // Consequence prediction, one answer for each transcript with the transcript it was made
             // against, dispatching structural variants to their own predictor.
-            let predictions: Vec<Prediction<'_>> = if vf.variant_type.is_structural() {
-                let consequences = fastvep_consequence::sv_predictor::predict_sv_consequences(
-                    chrom,
-                    vf.position.start,
-                    vf.position.end,
-                    vf.variant_type,
-                    &vf.alt_alleles,
-                    &overlapping,
-                    config.distance,
-                    config.distance,
-                );
-                // The transcript each prediction was made against.
-                //
-                // The structural-variant predictor emits one consequence per transcript it was
-                // handed, in that order, whenever the record has an ALT (`predict_sv_consequences`),
-                // so index `i` is the match and the scan never runs; a miss falls back to a scan
-                // rather than losing the transcript, because nothing else holds the two together.
-                // Before this, every consequence rescanned the whole overlap set, and a variant in
-                // a gene-dense window - a protocadherin or MHC cluster, where `--distance` pulls in
-                // dozens of transcripts - paid for that lookup in proportion to the square of the
-                // overlap.
-                //
-                // Every transcript is predicted in full here, and a reducing pick only leaves rows
-                // out: the structural-variant predictor has its own answer for a transcript the
-                // change is beside, which `ConsequencePredictor::flank` does not give.
-                consequences
+            let predictions: Vec<Prediction<'_>> = if let Some(predictions) = sv_run {
+                // The predictor says one thing of each transcript it was given, with the
+                // transcript, in the order VEP writes them. Every transcript is predicted in full
+                // here, and a reducing pick only leaves rows out: the structural-variant predictor
+                // has its own answer for a transcript the change is beside, which
+                // `ConsequencePredictor::flank` does not give.
+                predictions
                     .into_iter()
-                    .enumerate()
-                    .map(|(i, tc)| {
-                        let transcript = overlapping
-                            .get(i)
-                            .copied()
-                            .filter(|t| t.stable_id == tc.transcript_id)
-                            .or_else(|| {
-                                overlapping
-                                    .iter()
-                                    .copied()
-                                    .find(|t| t.stable_id == tc.transcript_id)
-                            });
-                        Prediction::Built(tc, transcript)
-                    })
+                    .map(|p| Prediction::Built(p.consequence, Some(p.transcript)))
                     .collect()
             } else {
                 // No reference window is read for the predictor: it is given none to use (the
@@ -433,7 +433,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
             // Read only by a run that writes a description: it is a read of the FASTA for every
             // record, a page of a three-gigabyte file that is nowhere else in a run without HGVS,
             // and the mismatch it counts is about what those descriptions say.
-            let hgvs_ref = if config.hgvs || config.columns.hgvsg {
+            let hgvs_ref = if !is_sv && (config.hgvs || config.columns.hgvsg) {
                 fastvep_annotate::reference_for_hgvs(
                     seq_provider.map(|sp| sp as &dyn SequenceProvider),
                     chrom,
@@ -449,19 +449,20 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
             // the reference to place it is not free: made once per record, and only
             // when an output carries it (the `HGVSg` column or field, or JSON's key,
             // which `--hgvs` has always filled).
-            let hgvsg_by_alt =
-                if config.columns.hgvsg || (config.hgvs && config.output_format == "json") {
-                    hgvsg_per_alt(
-                        seq_provider.map(|sp| sp as &dyn SequenceProvider),
-                        chrom,
-                        vf.position.start,
-                        vf.position.end,
-                        &hgvs_ref,
-                        &vf.alt_alleles,
-                    )
-                } else {
-                    Vec::new()
-                };
+            let hgvsg_by_alt = if !is_sv
+                && (config.columns.hgvsg || (config.hgvs && config.output_format == "json"))
+            {
+                hgvsg_per_alt(
+                    seq_provider.map(|sp| sp as &dyn SequenceProvider),
+                    chrom,
+                    vf.position.start,
+                    vf.position.end,
+                    &hgvs_ref,
+                    &vf.alt_alleles,
+                )
+            } else {
+                Vec::new()
+            };
 
             // The alleles a transcript that the change is beside gets a row for, which are the
             // same for every one of them. Only a reducing pick leaves a transcript unbuilt.
@@ -570,6 +571,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                         .map(|(_, ac)| {
                             let mut ann = AlleleAnnotation {
                                 allele: ac.allele.clone(),
+                                sv_allele: ac.sv_allele,
                                 consequences: ac.consequences.clone(),
                                 impact: ac.impact,
                                 location: ac.location,
@@ -606,15 +608,23 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
 
                             // `--total_length` is a matter of the cells and of nothing that is
                             // worked out from them: `ac.location`, which the HGVS code reads, has
-                            // no totals. A structural variant's cells are not written the way
-                            // VEP writes them, with or without the flag, so it gets none.
-                            if config.compat.total_length && !vf.variant_type.is_structural() {
+                            // no totals. A structural variant's cells have them for the variants
+                            // that reach an exon, and for none that covers the transcript.
+                            if config.compat.total_length {
                                 if let Some(tr) = transcript {
-                                    tr.apply_total_length(
-                                        &mut ann.location,
-                                        vf.position.start,
-                                        vf.position.end,
-                                    );
+                                    if is_sv {
+                                        tr.apply_total_length_of_sv(
+                                            &mut ann.location,
+                                            vf.position.start,
+                                            vf.position.end,
+                                        );
+                                    } else {
+                                        tr.apply_total_length(
+                                            &mut ann.location,
+                                            vf.position.start,
+                                            vf.position.end,
+                                        );
+                                    }
                                 }
                             }
 
@@ -631,8 +641,9 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                             // How far the HGVS description moved 3' from the VCF's own position
                             let mut shift = 0u64;
 
-                            // Generate HGVS if requested
-                            if config.hgvs {
+                            // Generate HGVS if requested. A structural variant has none (its alleles
+                            // are not bases), as in the library loop.
+                            if config.hgvs && !is_sv {
                                 // An ALT that is not plain bases (`N`) has no HGVSc, as in
                                 // Ensembl (`return undef if variation_feature_seq =~
                                 // m/[^ACGT\-]/`).
@@ -931,7 +942,13 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
     }
 
     // ACMG-AMP classification pass (after all SA annotations are attached)
-    if let Some(acmg_cfg) = acmg_config {
+    //
+    // ACMG-AMP (Richards 2015) is a classification of a sequence change. A structural variant has the
+    // terms of a sequence change in a row (`frameshift_variant` for a deletion inside an exon,
+    // `start_lost` for an inversion over a start codon), and PVS1 would read them as what they are
+    // for a base, so it is not given a classification: the criteria for copy number variants are
+    // another document's (Riggs 2020).
+    if let Some(acmg_cfg) = acmg_config.filter(|_| vf.sv.is_none()) {
         // Parse sample genotypes if trio config is present
         let trio_genotypes = extract_trio_genotypes_cli(vf, acmg_cfg, sample_names);
 
@@ -1000,7 +1017,7 @@ fn annotate_variant(ctx: &AnnotationContext<'_>, vf: &mut VariationFeature, know
                     vec![], // companion_variants populated in second pass
                 );
                 let result = fastvep_classification::classify(&input, acmg_cfg);
-                aa.acmg_classification = serde_json::to_value(&result).ok();
+                aa.acmg_classification = serde_json::to_value(&result).ok().map(Box::new);
             }
         }
     }
@@ -1864,7 +1881,13 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
     let input_reader = open_vcf_input_reader(&config.input)?;
     // A record that cannot be read is skipped with a message, as Ensembl VEP does, and counted at
     // the end: one malformed line of a whole-genome VCF is not a reason to lose the run.
-    let mut vcf_parser = VcfParser::new(input_reader)?.lenient();
+    let mut vcf_parser =
+        VcfParser::new(input_reader)?
+            .lenient()
+            .with_options(fastvep_io::vcf::ParseOptions {
+                max_sv_size: config.compat.max_sv_size(),
+                insertion_as_point: config.compat.sv_insertion_as_point,
+            });
 
     // Extract sample names from VCF #CHROM header
     let sample_names: Vec<String> = vcf_parser
@@ -2262,6 +2285,12 @@ pub fn run_annotate(mut config: AnnotateConfig) -> Result<()> {
         eprintln!(
             "warning: {} record(s) of the VCF could not be read and were not annotated (the first are named above)",
             vcf_parser.skipped()
+        );
+    }
+    if vcf_parser.declined() > 0 {
+        eprintln!(
+            "warning: {} record(s) of the VCF were skipped as Ensembl VEP skips them: a structural variant of a type it has no class for, a deletion with no extent, or a variant longer than --max-sv-size (the first are named above)",
+            vcf_parser.declined()
         );
     }
     if let Some(check) = &contig_check {
@@ -3008,6 +3037,10 @@ fn enrich_compound_het_batch(
     let mut gene_variants: HashMap<String, Vec<VariantGeneInfo>> = HashMap::new();
 
     for (vf_idx, vf) in variants.iter().enumerate() {
+        // a structural variant has no classification to enrich (see the pass above)
+        if vf.sv.is_some() {
+            continue;
+        }
         let trio_genotypes = extract_trio_genotypes_cli(vf, acmg_cfg, sample_names);
         let proband_gt = &trio_genotypes.0;
 
@@ -3189,7 +3222,7 @@ fn enrich_compound_het_batch(
             let result = fastvep_classification::classify(&input, acmg_cfg);
             variants[info.vf_idx].transcript_variations[info.tv_idx].allele_annotations
                 [info.aa_idx]
-                .acmg_classification = serde_json::to_value(&result).ok();
+                .acmg_classification = serde_json::to_value(&result).ok().map(Box::new);
         }
     }
 }
