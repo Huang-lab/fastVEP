@@ -533,6 +533,22 @@ pub fn apply_pick(tvs: &mut Vec<TranscriptVariation>, plan: &PickPlan<'_>) {
             for &(ti, ai) in &winners {
                 tvs[ti].allele_annotations[ai].pick = true;
             }
+            // A variant that no transcript is beside has only placeholder rows (its
+            // `intergenic_variant`), and Ensembl flags them: they are the rows of the variant, and
+            // the filter that `--flag_pick` is for (`PICK is 1`) would leave the variant out of the
+            // answer without a word if they were not, as it did for 6,940 of the 50,284 variants
+            // of chromosome 22 of GIAB HG002 (7,001 rows). Every allele's row is flagged. For
+            // `--flag_pick_allele` and `--flag_pick_allele_gene` that is Ensembl's, row for row
+            // (VEP 116.3 over that chromosome); for `--flag_pick` Ensembl flags the first row only,
+            // and this flags every allele's as it does for the winning transcript above, which is
+            // divergence 10 of docs/VEP_DIVERGENCE.md.
+            if winners.is_empty() {
+                for tv in tvs.iter_mut().filter(|tv| tv.is_featureless()) {
+                    for aa in &mut tv.allele_annotations {
+                        aa.pick = true;
+                    }
+                }
+            }
         }
     }
 }
@@ -540,10 +556,10 @@ pub fn apply_pick(tvs: &mut Vec<TranscriptVariation>, plan: &PickPlan<'_>) {
 /// The `(row index, allele index)` pairs one pick chooses.
 ///
 /// Candidates are the rows carrying a real transcript, at every scope. A
-/// scaffold row (`transcript_id` `-`) is never a candidate, so it is never
-/// flagged - it has no transcript, so "the transcript the pick chose" is not a
-/// thing it can be - and never deleted, because it carries an alt allele that
-/// nothing else in the record reports.
+/// scaffold row (`transcript_id` `-`) is never a candidate, so no pick chooses
+/// it among transcripts and none deletes it, because it carries an alt allele
+/// that nothing else in the record reports. A variant with nothing but scaffold
+/// rows has no winner here, and [`apply_pick`] flags those rows itself.
 ///
 /// Public for the caller that settles the pick on [`PredictedRow`]s, before the rows exist, and
 /// then builds only the winners.
@@ -913,7 +929,9 @@ mod pick_tests {
         // A multi-allelic intergenic site arrives as one placeholder row per
         // alt allele, so a pick that treated them as competing transcripts
         // would keep one and silently lose the other alt - no error, just a
-        // missing allele. Nothing here is a candidate, so nothing is picked.
+        // missing allele. Nothing here is a candidate, so nothing is chosen from
+        // among them and none is deleted; a flagging pick flags every one of them,
+        // since they are the only rows the variant has and Ensembl flags its own.
         for scope in [PickScope::Variant, PickScope::Allele, PickScope::AlleleGene] {
             for mode in [PickMode::Reduce, PickMode::Flag] {
                 let mut rows: Vec<TranscriptVariation> = ["-", "-"]
@@ -941,10 +959,11 @@ mod pick_tests {
                     },
                 );
                 assert_eq!(rows.len(), 2, "{scope:?}/{mode:?} dropped a scaffold row");
+                let flagged = mode == PickMode::Flag;
                 assert!(
                     rows.iter()
-                        .all(|tv| tv.allele_annotations.iter().all(|aa| !aa.pick)),
-                    "{scope:?}/{mode:?} flagged a row with no transcript"
+                        .all(|tv| tv.allele_annotations.iter().all(|aa| aa.pick == flagged)),
+                    "{scope:?}/{mode:?}: the placeholder rows are flagged by a flagging pick, and by no other"
                 );
             }
         }

@@ -457,3 +457,49 @@ fn the_json_writer_marks_only_the_picked_consequences() {
         "a run that picks nothing should not mention pick:\n{plain}"
     );
 }
+
+/// A variant that no transcript is beside has one row, its `intergenic_variant`, and a flagging pick
+/// flags it: Ensembl does, and the filter these options are for (`PICK is 1`) would otherwise leave
+/// the variant out of its answer without a word. Every allele's row is flagged, as the rows of the
+/// winning transcript are of a variant that has one: that is Ensembl's for the two options that
+/// pick for each allele, and fastVEP's own for `--flag-pick` (Ensembl flags the first row only;
+/// divergence 10 of docs/VEP_DIVERGENCE.md).
+#[test]
+fn a_variant_that_no_transcript_is_beside_has_its_rows_flagged_by_every_flagging_pick() {
+    let dir = TempDir::new().unwrap();
+    let gff3 = write_gff3(dir.path());
+    let fasta = write_fasta(dir.path());
+    let vcf = dir.path().join("away.vcf");
+    std::fs::write(
+        &vcf,
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n1\t1280\t.\tA\tC,G\t.\t.\t.\n",
+    )
+    .unwrap();
+    for option in [
+        "--flag-pick",
+        "--flag-pick-allele",
+        "--flag-pick-allele-gene",
+    ] {
+        let out = dir.path().join(format!("away{option}.vcf"));
+        run_annotate(AnnotateConfig {
+            gff3: vec![gff3.to_string_lossy().into()],
+            fasta: Some(fasta.to_string_lossy().into()),
+            pick: flags_for(option),
+            distance: 10,
+            ..config(&vcf, &out)
+        })
+        .expect("annotation should succeed");
+        let written = std::fs::read_to_string(&out).unwrap();
+        let rows = entries(&written);
+        assert_eq!(
+            rows.len(),
+            2,
+            "{option}: one row for each allele in:\n{written}"
+        );
+        assert!(
+            rows.iter()
+                .all(|(_, _, feature, pick)| feature.is_empty() && pick == "1"),
+            "{option}: the rows of a variant with no transcript are flagged: {rows:?}"
+        );
+    }
+}
