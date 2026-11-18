@@ -1,0 +1,12 @@
+# validation/run_sv_world.py --fastvep <fastvep 0.6.0, sha256 51658615f17201cf...> --workdir <new directory> --seeds 185 11 23 37 41 59 73 97 131 --jobs 3
+# Ensembl VEP 116.3 (the image of crates/fastvep-cli/fixtures/vep_tab_sv/regen.sh, --gff, statistics on) and fastVEP over a world of crates/fastvep-cli/fixtures/vep_tab_sv/gen_world.py for each seed (185 is the seed of the fixture).
+# 'known' cells are those of divergence 11 (docs/VEP_DIVERGENCE.md): the HGVSc, HGVS_OFFSET and HGVSg of the tr_two_alleles* records, a tandem repeat with several alleles.
+seed 11: 6743 records, VEP 17439 rows, fastVEP 17439 rows, 401097 cells compared, 5 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same
+seed 23: 6742 records, VEP 17475 rows, fastVEP 17475 rows, 401925 cells compared, 5 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same
+seed 37: 6732 records, VEP 17407 rows, fastVEP 17407 rows, 400361 cells compared, 5 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same
+seed 41: 6758 records, VEP 17519 rows, fastVEP 17519 rows, 402937 cells compared, 7 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same
+seed 59: 6765 records, VEP 17522 rows, fastVEP 17522 rows, 403006 cells compared, 7 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same
+seed 73: 6757 records, VEP 17533 rows, fastVEP 17533 rows, 403259 cells compared, 5 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same
+seed 97: 6769 records, VEP 17542 rows, fastVEP 17542 rows, 403466 cells compared, 7 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same
+seed 131: 6717 records, VEP 17423 rows, fastVEP 17423 rows, 400729 cells compared, 5 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same
+seed 185: 6692 records, VEP 17284 rows, fastVEP 17284 rows, 397532 cells compared, 5 known (divergence 11), 0 unexpected, 0 rows only VEP writes, 0 only fastVEP writes, first row out of order: None  same

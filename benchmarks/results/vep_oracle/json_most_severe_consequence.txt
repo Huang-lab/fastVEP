@@ -1,0 +1,6 @@
+# The three records of the whole-genome HG002 JSON (4,048,342 records) whose most_severe_consequence differs between master (0.5.0) and 0.6.0,
+# run through Ensembl VEP 116.3 (--gff, --json --hgvs --symbol --canonical), master and the 0.6.0 build over the same gene models and reference.
+# One row per record: contig, start, allele string, then the term of VEP, of 0.6.0 and of master.
+9	136697606	T/G	splice_donor_5th_base_variant	splice_donor_5th_base_variant	splice_region_variant
+15	73341070	GTGT/GT/-	splice_donor_5th_base_variant	splice_donor_5th_base_variant	splice_region_variant
+19	48638150	AGAC/-	splice_donor_5th_base_variant	splice_donor_5th_base_variant	splice_region_variant

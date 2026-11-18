@@ -24,6 +24,9 @@ reads it (`AnnotationSource/File/BaseGXF.pm`: `transcript_support_level`, the `M
                         translation, and the sum of the lengths of its exons for one that has not
   other                 anything else
 
+It also counts the variants that no transcript is beside (every row of them has no feature): how many each tool has, and
+how many of their rows each flags, which is what `docs/VEP_DIVERGENCE.md` divergence 10 quotes.
+
 The counts are what `docs/VEP_DIVERGENCE.md`, Part 2, quotes. Standard library only.
 """
 
@@ -152,6 +155,18 @@ def main() -> None:
     print(f"--by {args.by}: {total} groups with a transcript row in both tables, {sum(differing.values())} with another transcript flagged")
     for what, n in sorted(differing.items(), key=lambda kv: (-kv[1], kv[0])):
         print(f"  {n:6d}  {what}")
+
+    def featureless(rows):
+        """The variants all of whose rows have no feature, their rows, and how many of those rows are flagged."""
+        by_variant = collections.defaultdict(list)
+        for r in rows:
+            by_variant[r["Uploaded_variation"]].append(r)
+        free = {v: rs for v, rs in by_variant.items() if all(r["Feature"] == "-" for r in rs)}
+        return len(free), sum(len(rs) for rs in free.values()), sum(r["PICK"] == "1" for rs in free.values() for r in rs)
+
+    for name, rows in (("Ensembl VEP", vep), ("fastVEP", fv)):
+        variants, n_rows, flagged = featureless(rows)
+        print(f"  {name}: {variants} variants with no transcript, {n_rows} rows, {flagged} of them flagged")
 
 
 if __name__ == "__main__":

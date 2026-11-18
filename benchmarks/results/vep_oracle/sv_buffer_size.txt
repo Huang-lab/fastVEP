@@ -1,0 +1,40 @@
+# validation/sv_buffer_size.py --fastvep <fastvep 0.6.0> --gff3 Homo_sapiens.GRCh38.115.gff3 --vep-gff Homo_sapiens.GRCh38.115.sorted.gff3.gz --fasta Homo_sapiens.GRCh38.dna.primary_assembly.fa --image <the pinned Ensembl VEP 116.3> [--runs 3] --workdir <new directory> VCF
+# Ensembl VEP 116.3 (--gff, statistics on, tab output) with its own buffer (5,000 records) and with --buffer_size 1, against fastVEP, for the strict key of the vep-rs paper.
+# File 09 of the vep-rs set (breakends) was run three times with each buffer, because VEP writes the rows of a breakend whose mate is on another contig differently from run to run;
+# the structural variants of ClinVar and the 1-in-4 sample of gnomAD-SV (both of chromosome 21) once. Tuples are counted once, and the split by kind of record counts a tuple for each record that has it.
+
+09_breakends.vcf: 1400 records; fastVEP 71433 rows, 71401 distinct tuples
+  VEP, default buffer, run 1: 68961 rows, 68929 tuples, 68889 in common, strict F1 0.9818; only VEP 40, only fastVEP 2512
+      a mate on another contig   only VEP      0   only fastVEP   1649
+      a mate on its own contig   only VEP      0   only fastVEP      0
+      single or symbolic         only VEP     40   only fastVEP    863
+  VEP, default buffer, run 2: 68972 rows, 68940 tuples, 68900 in common, strict F1 0.9819; only VEP 40, only fastVEP 2501
+      a mate on another contig   only VEP      0   only fastVEP   1638
+      a mate on its own contig   only VEP      0   only fastVEP      0
+      single or symbolic         only VEP     40   only fastVEP    863
+  VEP, default buffer, run 3: 68762 rows, 68730 tuples, 68690 in common, strict F1 0.9804; only VEP 40, only fastVEP 2711
+      a mate on another contig   only VEP      0   only fastVEP   1848
+      a mate on its own contig   only VEP      0   only fastVEP      0
+      single or symbolic         only VEP     40   only fastVEP    863
+  VEP, --buffer_size 1, run 1: 69464 rows, 69464 tuples, 69444 in common, strict F1 0.9860; only VEP 20, only fastVEP 1957
+      a mate on another contig   only VEP     20   only fastVEP   1989
+      a mate on its own contig   only VEP      0   only fastVEP      0
+      single or symbolic         only VEP      0   only fastVEP      0
+  VEP, --buffer_size 1, run 2: 69406 rows, 69406 tuples, 69384 in common, strict F1 0.9855; only VEP 22, only fastVEP 2017
+      a mate on another contig   only VEP     22   only fastVEP   2049
+      a mate on its own contig   only VEP      0   only fastVEP      0
+      single or symbolic         only VEP      0   only fastVEP      0
+  VEP, --buffer_size 1, run 3: 69612 rows, 69612 tuples, 69594 in common, strict F1 0.9871; only VEP 18, only fastVEP 1807
+      a mate on another contig   only VEP     18   only fastVEP   1839
+      a mate on its own contig   only VEP      0   only fastVEP      0
+      single or symbolic         only VEP      0   only fastVEP      0
+R2_clinvar_chr21_sv.vcf: 3060 records; fastVEP 62045 rows, 62045 distinct tuples
+  VEP, default buffer: 62045 rows, 62045 tuples, 62036 in common, strict F1 0.9999; only VEP 9, only fastVEP 9
+      single or symbolic         only VEP      9   only fastVEP      9
+  VEP, --buffer_size 1: 62045 rows, 62045 tuples, 62036 in common, strict F1 0.9999; only VEP 9, only fastVEP 9
+      single or symbolic         only VEP      9   only fastVEP      9
+R1_gnomad_sv_v41_chr21_q.vcf: 8158 records; fastVEP 105851 rows, 105851 distinct tuples
+  VEP, default buffer: 109294 rows, 109294 tuples, 97363 in common, strict F1 0.9051; only VEP 11931, only fastVEP 8488
+      single or symbolic         only VEP  11931   only fastVEP   8488
+  VEP, --buffer_size 1: 100256 rows, 100256 tuples, 100207 in common, strict F1 0.9724; only VEP 49, only fastVEP 5644
+      single or symbolic         only VEP     49   only fastVEP   5644

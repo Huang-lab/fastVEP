@@ -348,7 +348,7 @@ the record.
 A missing alt allele is indistinguishable from an alt that had no consequence, in a file whose
 reader is deciding what to report on.
 So `--pick` reduces to one transcript and keeps that transcript's annotation for every allele,
-and the option for VEP's behaviour is `--pick-allele`, which agrees with it exactly.
+and the option for VEP's behaviour is `--pick-allele`, which keeps the same entries.
 `--flag-pick` flags the same set `--pick` would have kept, for the same reason.
 
 A variant that no transcript is beside has only its `intergenic_variant` rows, one for each allele, and all three flagging forms flag them, so that a filter on `PICK is 1` keeps the variant (6,940 of the 50,284 variants of chromosome 22 of HG002 have nothing else, in 7,001 rows).
@@ -357,12 +357,8 @@ Ensembl flags them as well, which a run of VEP 116.3 in `--gff` mode over that c
 `--flag_pick` flags the first allele's row only, which is 6,940 of the 7,001 rows; the 61 it leaves are the rows of the second allele of 61 sites that have two.
 fastVEP flags every allele's row for `--flag-pick` too, for the reason above.
 
-The four allele-scoped options agree with VEP on which transcript wins as well as how many
-entries survive: over five two-alt sites at overlapping-gene loci on chromosome 22 (HDHD5,
-HIRA/C22orf39, GNB1L/RTL10, PI4KA/SERPIND1, CLTCL1/SLC25A1), `--pick-allele-gene` and
-`--flag-pick-allele-gene` picked the same (allele, gene, transcript) set as VEP at 5 of 5, once
-the comparison is restricted to the genes VEP reports at all - see the `ncRNA_gene` note under
-[What is measured](#what-is-measured).
+At five two-alt sites at overlapping-gene loci on chromosome 22 (HDHD5, HIRA/C22orf39, GNB1L/RTL10, PI4KA/SERPIND1, CLTCL1/SLC25A1), `--pick-allele-gene` and `--flag-pick-allele-gene` picked the same (allele, gene, transcript) set as VEP at 5 of 5, once the comparison is restricted to the genes VEP reports at all - see the `ncRNA_gene` note under [What is measured](#what-is-measured).
+Over the whole of that chromosome the transcript that wins is not always VEP's: where every criterion before the ninth ties, VEP keeps the longer transcript and fastVEP the lower ID, which [Which transcript `--pick` keeps](#which-transcript---pick-keeps) counts.
 
 ### 11. An allele of a record with several ALTs is described as it would be alone
 
@@ -611,8 +607,8 @@ It is `stop_retained_variant,3_prime_UTR_variant` in both tools now.
 
 ### Structural variants
 
-These were found by running Ensembl VEP 116.3 (and its own Perl reader of a record) and fastVEP over records that the generated world of the golden does not hold, and are not changed.
-`docs/STRUCTURAL_VARIANTS.md` has what is changed and what is kept on purpose.
+These come from running Ensembl VEP 116.3 (and its own Perl reader of a record) and fastVEP over records that the generated world of the golden does not hold, and are not changed.
+`docs/STRUCTURAL_VARIANTS.md` has what is changed and what is kept on purpose, and what is Ensembl VEP's own artifact and not a gap of fastVEP's: its rows for a record depend on the records read with it (`--buffer_size`).
 
 - **A tandem repeat read as bases, at the edges of its INFO.**
   VEP checks `--max_sv_size` on the small variant that it makes of the repeat, and fastVEP on the record before it is expanded, so a repeat whose bases are under a small limit while its interval is over it (`--max_sv_size 30` with `RUC=14;RB=28` over 39 bases) is a small deletion in VEP and has no row here; and with `--max_sv_size 0`, where VEP's `max_sv_size || 5000` still expands, fastVEP writes no row.
@@ -627,9 +623,9 @@ These were found by running Ensembl VEP 116.3 (and its own Perl reader of a reco
   On a GFF3 whose mRNA is wider than its exons and has no `rank`, the `DISTANCE` and the upstream and downstream terms of a small variant differ as well (a deletion 900 bases before the exons: 900 in VEP, 800 here); the GFF3 of Ensembl and of RefSeq have one extent for both.
 - **A record with fewer than eight columns** (`chr1 1060 x C <DUP>`) is annotated by VEP, whose reader of a structural variant fills in the missing ones, and skipped by fastVEP with "fewer than 8 fields".
 - **An `INFO` number that is not a whole number** (`SVLEN=1.5`, `END=+30`) is read to its integer part here, where Perl reads the number itself and writes `1085.7` for a coordinate.
-- **The order of rows** is by the transcripts' IDs here, and VEP sorts the keys `ID_dbID`, which can differ for IDs of different lengths (not checked; the IDs of the golden are all one length).
-- **A mate on another contig** gets the rows of its transcripts here whatever else the file holds, where the transcripts VEP reads for a stretch of records come from the span of the records read with them (`filter_features_by_min_max` of `AnnotationSource.pm`).
-  A record `N[chrZ:100[` at `chr1:12000` annotated alone had two `intergenic_variant` rows, and none beside a neighbour at `chr1:1100` (a differential run of the review of this branch, not repeated); it is a lead for the rows of file 09 of the vep-rs set that only fastVEP writes, which was not followed.
+- **The order of rows** is by the transcripts' IDs here, and VEP sorts the keys of its table, which are the ID with `_` and the number its GFF reader counts up from 0 (`_get_transcript_key`, and the first transcript, whose number is false, has none), so that the two orders differ where one ID is the start of another.
+  With the transcripts of the fixture renamed `ENST1`, `ENST10`, `ENST100`, `ENST1000` and `ENST10000`, both tools write the same 17,284 rows and VEP writes `ENST10` before `ENST1` (`_` sorts after the digits) in 3,162 of 6,679 records, where fastVEP writes `ENST1` first.
+  The IDs of Ensembl's GFF3 are one length, so its rows are in VEP's order.
 
 ### HGVSc
 
