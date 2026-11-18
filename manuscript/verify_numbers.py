@@ -56,6 +56,7 @@ def logical_lines(text: str) -> list[str]:
 
 PAPER = logical_lines((HERE / "manuscript.md").read_text())
 README = logical_lines((HERE.parent / "README.md").read_text())
+DOC_SV = logical_lines((HERE.parent / "docs" / "STRUCTURAL_VARIANTS.md").read_text())
 
 failures: list[str] = []
 passed: list[str] = []
@@ -323,10 +324,104 @@ assert ident and all(r["identical"] == "yes" for r in ident), "the output of 0.5
 fact(PAPER, "3.3", "Ensembl VEP's output does not depend on the build of fastVEP", f"{len(ident)} runs in all")
 big = next(r for r in ident if r["input"] == "hg002_full")
 fact(PAPER, "3.3", "Ensembl VEP's output does not depend on the build of fastVEP", f"{int(big['records']):,} records", f"{int(big['bytes_v0.5.0-rc.1']) / 1e9:.1f} GB")
-fact(PAPER, "Table 9", "| **Golden files of VEP 116.3** |", "26", "20,363")
+fact(PAPER, "Table 9", "| **Golden files of VEP 116.3** |", "31", "27,055")
 fact(PAPER, "Figure 3", "**Figure 3.", f"{int(hg['paired_rows']):,}", f"{int(hg['cells_differ']):,}")
 
 fact(PAPER, "4.4", "GFF3 as primary annotation source with binary caching.", f"{float(res['cache_load_yeast_7k_1_thread']):.2f} seconds", f"{float(res['cache_load_human_509k_1_thread']):.2f} seconds", f"{float(res['cache_load_human_509k_8_threads']):.2f} on eight")
+
+# ---- structural variants (Section 3.11) ----------------------------------------------------------------------------------------
+# The three tables are written by hand from sv_agreement.csv (scored by validation/score_strict_key.py), sv_timing.csv
+# (benchmarks/run_sv_head_to_head.sh) and small_variant_regression.csv (benchmarks/run_small_variant_regression.sh).
+sva = {r["input"]: r for r in table("sv_agreement.csv")}
+svt = {(r["input"], r["tool"], r["threads"]): float(r["median_s"]) for r in table("sv_timing.csv")}
+svr = table("small_variant_regression.csv")
+R1, R2 = "R1_gnomad_sv_v41_chr21_q", "R2_clinvar_chr21_sv"
+n_ = lambda x: f"{int(x):,}"
+SV_NINE = ["01_snv", "02_mnp_complex", "03_small_indels", "05_symbolic_del_ins", "06_symbolic_dup_inv", "07_cnv_repeat", "08_mobile_elements", "11_multi_allelic", "12_complex_imprecise"]
+assert all(sva[k]["strict_f1"] == "1.0000" for k in SV_NINE), "the text says that nine files of the vep-rs set score 1.0000"
+assert all(sva[k]["fastvep_rows"] == sva[k]["vep_rows"] for k in SV_NINE), "the text says that the nine files have the rows of Ensembl VEP, row for row"
+row_ = lambda label, k: [label, n_(sva[k]["records"]), n_(sva[k]["vep_rows"]), n_(sva[k]["fastvep_rows"]), sva[k]["strict_f1"]]
+want11 = [
+    row_("Generated world", "world"),
+    row_("Generated world, another seed", "world_seed_7"),
+    ["vep-rs files 01-03, 05-08, 11, 12 (9 files)", n_(sum(int(sva[k]["records"]) for k in SV_NINE)), n_(sum(int(sva[k]["vep_rows"]) for k in SV_NINE)),
+     n_(sum(int(sva[k]["fastvep_rows"]) for k in SV_NINE)), "1.0000"],
+    row_("vep-rs file 04 (explicit alleles)", "04_large_explicit"),
+    row_("vep-rs file 09 (breakends)", "09_breakends"),
+    ["vep-rs files 10 and 13 (`<*>` and VCF 4.5)", n_(int(sva["10_special_alleles"]["records"]) + int(sva["13_vcf45_features"]["records"])),
+     n_(int(sva["10_special_alleles"]["vep_rows"]) + int(sva["13_vcf45_features"]["vep_rows"])), n_(int(sva["10_special_alleles"]["fastvep_rows"]) + int(sva["13_vcf45_features"]["fastvep_rows"])),
+     f"{sva['10_special_alleles']['strict_f1']} and {sva['13_vcf45_features']['strict_f1']}"],
+    row_("ClinVar structural variants, chromosome 21", R2),
+    row_("gnomAD-SV v4.1, chromosome 21, 1-in-4 sample", R1),
+    row_("the same, the contig spelled `chr21` throughout", R1 + "_one_spelling"),
+]
+same("Table 11", [r[:5] for r in block(PAPER, "**Table 11.")], want11)
+sv_speed = lambda inp, th: svt[(inp, "vep", "1")] / svt[(inp, "fastvep", th)]
+want12 = [[name, n_(sva[k]["records"]), f"{svt[(f'{k}.vcf', 'vep', '1')]:.1f} s", f"{svt[(f'{k}.vcf', 'fastvep', '1')]:.2f} s", f"{sv_speed(f'{k}.vcf', '1'):.1f}x",
+           f"{svt[(f'{k}.vcf', 'fastvep', 'all')]:.2f} s", f"{sv_speed(f'{k}.vcf', 'all'):.1f}x"]
+          for name, k in (("gnomAD-SV v4.1, chromosome 21, 1-in-4 sample", R1), ("ClinVar structural variants, chromosome 21", R2))]
+same("Table 12", block(PAPER, "**Table 12."), want12)
+rg_ = {(r["workload"], r["threads"], r["build"]): r for r in svr}
+# (label, variants, workload, threads) in the order of Table 13; a workload that was not run is not in the table
+SV_WORKLOADS = [
+    ("HG002, 1-in-20 sample, tab, the flags of Table 3", "202,417", "sample_1_in_20", "all"),
+    ("HG002, chromosome 22, `--hgvs`", "50,284", "chr22", "1"),
+    ("HG002, 1-in-5 sample, consequences only", "809,668", "genome_1_in_5", "1"),
+    ("HG002, 1-in-5 sample, consequences only, tab", "809,668", "genome_1_in_5_tab", "1"),
+    ("HG002, 1-in-5 sample, `--hgvs`, JSON", "809,668", "genome_1_in_5_json", "1"),
+    ("HG002, 1-in-5 sample, `--hgvs`, with ClinVar", "809,668", "genome_1_in_5_clinvar", "1"),
+    ("HG002, 1-in-5 sample, `--hgvs`, with ClinVar and the joint gnomAD", "809,668", "genome_1_in_5_joint", "1"),
+    ("HG002, whole genome, consequences only", "4,048,342", "genome", "1"),
+    ("HG002, whole genome, consequences only", "4,048,342", "genome", "all"),
+    ("HG002, whole genome, `--hgvs` (the workload of Table 3)", "4,048,342", "genome_hgvs", "1"),
+    ("HG002, whole genome, `--hgvs` (the workload of Table 3)", "4,048,342", "genome_hgvs", "all"),
+    ("ClinVar 2-star+, 1-in-10 sample, `--acmg --pick`", "67,366", "clinvar_1_in_10_acmg", "all"),
+    ("Yeast, all variants, `--hgvs`", "260,526", "yeast_full", "all"),
+    ("Drosophila, all variants, `--hgvs`", "4,438,427", "drosophila_full", "all"),
+    ("Arabidopsis, all variants, `--hgvs`", "12,883,854", "arabidopsis_full", "all"),
+    ("Mouse, all variants, `--hgvs`", "26,062,054", "mouse_full", "all"),
+]
+want13 = []
+for label, variants, workload, threads in SV_WORKLOADS:
+    if (workload, threads, "new") not in rg_:
+        continue
+    base, new = float(rg_[(workload, threads, "base")]["median_s"]), float(rg_[(workload, threads, "new")]["median_s"])
+    r = rg_[(workload, threads, "new")]
+    # the one cell that is not the same bytes is the JSON one, by the 8 characters of `splice_donor_5th_base_variant` over `splice_region_variant`
+    # in the `most_severe_consequence` of one record (benchmarks/results/identity_sweep/json_difference.txt says which)
+    if r["output_identical"] != "yes":
+        assert workload == "genome_1_in_5_json" and int(r["output_bytes"]) - int(r["output_bytes_base"]) == 8, f"the two builds write other bytes for {workload} than the text says"
+    fastest = 100 * (float(r["min_s"]) / float(rg_[(workload, threads, "base")]["min_s"]) - 1)
+    want13.append([label, variants, "10" if threads == "all" else "1", f"{base:.2f} s", f"{new:.2f} s", f"{100 * (new / base - 1):+.1f}%", f"{fastest:+.1f}%",
+                   f"{float(r['instructions_paired_median_pct']):+.2f}%" if threads == "1" else "(threads wait)", f"{r['runs']}",
+                   "yes" if r["output_identical"] == "yes" else f"no, {int(r['output_bytes']) - int(r['output_bytes_base'])} bytes"])
+same("Table 13", block(PAPER, "**Table 13."), want13)
+# the README quotes the same runs
+for label, k in (("| gnomAD-SV v4.1, chromosome 21, a 1-in-4 sample |", R1), ("| ClinVar structural variants, chromosome 21 |", R2)):
+    fact(README, "README", label, n_(sva[k]["records"]), f"{svt[(f'{k}.vcf', 'vep', '1')]:.1f}s", f"{svt[(f'{k}.vcf', 'fastvep', '1')]:.2f}s", f"**{sv_speed(f'{k}.vcf', '1'):.1f}×**",
+         f"{svt[(f'{k}.vcf', 'fastvep', 'all')]:.2f}s", f"**{sv_speed(f'{k}.vcf', 'all'):.1f}×**")
+for label, k in (("| A generated world (`crates/fastvep-cli/fixtures/vep_tab_sv`)", "world"), ("| Another world, from another seed |", "world_seed_7"), ("| The structural variants of ClinVar on chromosome 21 |", R2),
+                 ("| gnomAD-SV v4.1 on chromosome 21, a 1-in-4 sample, as published |", R1), ("| The same, with the contig spelled `chr21` throughout", R1 + "_one_spelling")):
+    fact(README, "README", label, n_(sva[k]["records"]), n_(sva[k]["vep_rows"]), n_(sva[k]["fastvep_rows"]), sva[k]["strict_f1"])
+present_ = [x for x in SV_WORKLOADS if (x[2], x[3], "new") in rg_]
+med_pct = [100 * (float(rg_[(w, th, "new")]["median_s"]) / float(rg_[(w, th, "base")]["median_s"]) - 1) for _, _, w, th in present_]
+fast_pct = [100 * (float(rg_[(w, th, "new")]["min_s"]) / float(rg_[(w, th, "base")]["min_s"]) - 1) for _, _, w, th in present_]
+stall_pct = max(max(abs(float(rg_[(w, th, "new")]["paired_min_pct"])), abs(float(rg_[(w, th, "new")]["paired_max_pct"]))) for _, _, w, th in present_)
+ins_one = {w: float(rg_[(w, "1", "new")]["instructions_paired_median_pct"]) for _, _, w, th in present_ if th == "1"}
+ins_rest = [v for w, v in ins_one.items() if w not in ("genome_1_in_5_tab", "genome_1_in_5_json")]
+fastest_range = f"{min(fast_pct):+.1f}% to {max(fast_pct):+.1f}%"
+medians_range = f"{min(med_pct):+.1f}% to {max(med_pct):+.1f}%"
+work = (f"on one thread the two builds differ by {min(ins_rest):+.2f}% to {max(ins_rest):+.2f}% in {len(ins_rest)} of the {len(ins_one)} workloads, by {ins_one['genome_1_in_5_json']:+.2f}% for JSON "
+        f"and by {ins_one['genome_1_in_5_tab']:+.2f}% for tab output, which also takes "
+        f"{100 * (float(rg_[('genome_1_in_5_tab', '1', 'new')]['min_s']) / float(rg_[('genome_1_in_5_tab', '1', 'base')]['min_s']) - 1):.1f}% longer in its fastest run")
+fact(README, "README", "The two builds were run in turn, the order alternating from round to round, on", f"{len(med_pct)} workloads", f"the fastest run of each build differs by {fastest_range}")
+fact(README, "README", "The work that a run does is told by the instructions that it retires", work)
+fact(PAPER, "3.11", "Run in turn by the build with the rules and by the build of master (Table 13)", f"{len(med_pct)} workloads")
+fact(PAPER, "3.11", "A laptop varies from one round to the next by about 3%, more while someone uses it", f"by up to {stall_pct:.0f}% within a pair", f"differs by {fastest_range}", f"the medians by {medians_range}")
+fact(PAPER, "3.11", "The work that a run does is told by the instructions that it retires", work)
+fact(PAPER, "4.1", "and the rules for them change the time of the fastest run over small variants by", f"{fastest_range} (Table 13)")
+fact(DOC_SV, "docs/STRUCTURAL_VARIANTS.md", "The fastest run of each build, over the rounds of", f"{len(med_pct)} workloads", f"differs by {fastest_range}", f"the medians by {medians_range}")
+fact(DOC_SV, "docs/STRUCTURAL_VARIANTS.md", "The work that a run does is told by the instructions that it retires", work)
 
 # ---- the README quotes the same runs ---------------------------------------------------------------------------------------
 plain = gw[0]
@@ -342,6 +437,147 @@ fact(README, "README", "With fastVEP's default multi-threading", f"**{many:.1f}s
 fact(README, "README", "Both tools read the same ClinVar and gnomAD files", f"{int(cm['ClinVar']['both']):,} ClinVar records", f"{int(cm['gnomAD']['both']):,} gnomAD records")
 for r in gw[1:]:
     fact(README, "README", f"| {r['label']} |", f"{float(r['fastvep_1t_sec']):.1f}s", f"{float(r['vep_sec']):,.0f}s", f"**{float(r['vep_sec']) / float(r['fastvep_1t_sec']):.0f}×**")
+
+# ---- what Ensembl VEP 116.3 wrote for the runs of validation/, kept in benchmarks/results/vep_oracle/ ---------------------------------
+ORACLE = HERE.parent / "benchmarks" / "results" / "vep_oracle"
+oracle = lambda name: (ORACLE / name).read_text().splitlines()
+
+# validation/run_sv_world.py: the generated worlds of other seeds, row for row and cell by cell
+w_n = w_rows = w_cells = 0
+for line in oracle("sv_worlds.txt"):
+    m = re.match(r"seed (\d+): (\d+) records, VEP (\d+) rows, fastVEP (\d+) rows, (\d+) cells compared, (\d+) known \(divergence 11\), (\d+) unexpected, "
+                 r"(\d+) rows only VEP writes, (\d+) only fastVEP writes, first row out of order: (\w+)", line)
+    if not m:
+        continue
+    seed, _, vep_rows, fv_rows, cells, known, unexpected, only_vep, only_fv, order = m.groups()
+    assert vep_rows == fv_rows and unexpected == only_vep == only_fv == "0" and order == "None" and 5 <= int(known) <= 7, f"seed {seed} of sv_worlds.txt is not VEP's"
+    if seed != "185":  # the seed of the fixture is the golden of the test suite
+        w_n, w_rows, w_cells = w_n + 1, w_rows + int(vep_rows), w_cells + int(cells)
+assert w_n == 8, "the text says eight seeds besides the golden's own"
+fact(DOC_SV, "docs/STRUCTURAL_VARIANTS.md", "Eight seeds besides the golden's own", f"{w_rows:,} rows and {w_cells:,} cells")
+fact(DIV, "VEP_DIVERGENCE.md", "`validation/run_sv_world.py` makes the same comparison on worlds of other seeds", f"{w_rows:,} rows of VEP 116.3")
+fact(README, "README", "`validation/run_sv_world.py` makes the first comparison on worlds of other seeds", f"{w_rows:,} rows of Ensembl VEP 116.3")
+
+# validation/compare_pick.py: the transcript that each flagging form flags, over chromosome 22 of HG002
+fp: dict[str, dict] = {}
+form = None
+for line in oracle("flag_pick_chr22.txt"):
+    m = re.match(r"--by (\S+): (\d+) groups with a transcript row in both tables, (\d+) with another transcript flagged", line)
+    if m:
+        form = m.group(1)
+        fp[form] = {"groups": int(m.group(2)), "differ": int(m.group(3)), "longer": 0, "ccds": 0, "skipped": 0}
+        continue
+    m = re.match(r"\s+(\d+)\s+(.*)", line)
+    if m and form:
+        n, why = int(m.group(1)), m.group(2)
+        key_ = "longer" if why.startswith("the longer one") else "ccds" if why.startswith("a better term") else "skipped" if why.startswith("not a row of VEP's") else "other"
+        fp[form][key_] = fp[form].get(key_, 0) + n
+        continue
+    m = re.match(r"\s+(Ensembl VEP|fastVEP): (\d+) variants with no transcript, (\d+) rows, (\d+) of them flagged", line)
+    if m and form:
+        fp[form][m.group(1)] = tuple(int(x) for x in m.groups()[1:])
+assert all(f.get("other", 0) == 0 and f["longer"] + f["ccds"] + f["skipped"] == f["differ"] for f in fp.values()), "every difference of the pick is one of the three causes the text names"
+for form, label in (("variant", "| `--flag_pick`, a group is a variant |"), ("allele", "| `--flag_pick_allele`, a variant and an allele |"),
+                    ("allele-gene", "| `--flag_pick_allele_gene`, a variant, an allele and a gene |")):
+    f = fp[form]
+    fact(DIV, "VEP_DIVERGENCE.md", label, f"{f['groups']:,}", f"{f['differ']:,}", f"{f['longer']:,}", f" {f['ccds']} ", f" {f['skipped']} ")
+share = [100 * fp[k]["differ"] / fp[k]["groups"] for k in fp]
+fact(DIV, "VEP_DIVERGENCE.md", "They flag another transcript for", f"{min(share):.1f} to {max(share):.1f} % of the groups")
+fv_variants, fv_rows_, fv_flagged = fp["variant"]["fastVEP"]
+vp_variants, vp_rows_, vp_flagged = fp["variant"]["Ensembl VEP"]
+assert fv_flagged == fv_rows_ == fp["allele"]["fastVEP"][2], "fastVEP flags every row of a variant that no transcript is beside"
+assert fp["allele"]["Ensembl VEP"][2] == fp["allele-gene"]["Ensembl VEP"][2] == vp_rows_, "VEP flags every allele's row for the two allele forms"
+fact(DIV, "VEP_DIVERGENCE.md", "A variant that no transcript is beside has only its `intergenic_variant` rows", f"{fv_variants:,} of the 50,284 variants", f"in {fv_rows_:,} rows",
+     f"the 61 it leaves", f"{fv_variants:,} of the {fv_rows_:,} rows")
+assert fv_rows_ - fv_variants == 61
+fact(README, "README", "`--flag-pick*` flags the `intergenic_variant` rows that it left without a flag", f"{fv_variants:,} of the 50,284 variants of chromosome 22 of HG002, in {fv_rows_:,} rows")
+fact(DIV, "VEP_DIVERGENCE.md", "| `--flag-pick*` left a variant that no transcript is beside without a flagged row |", f"{fv_rows_:,} of the 718,065 rows", f"the rows of {fv_variants:,} of its 50,284 variants")
+
+# the three JSON records of HG002 whose most_severe_consequence changed: VEP writes the term of 0.6.0, and master wrote the other
+js = [l.split("\t") for l in oracle("json_most_severe_consequence.txt") if l and not l.startswith("#")]
+assert len(js) == 3 and all(r[3] == r[4] != r[5] for r in js), "VEP and 0.6.0 write the same term, and master another"
+fact(DIV, "VEP_DIVERGENCE.md", "| The ranks of `splice_donor_5th_base_variant` and `splice_region_variant`", f"{len(js)} of the 4,048,342 JSON records", "VEP 116.3 writes `splice_donor_5th_base_variant` as the `most_severe_consequence` of all three records")
+
+# validation/sv_buffer_size.py: Ensembl VEP with its own buffer and with a buffer of one record, over file 09 of the vep-rs set (three runs of each) and the two real sets
+sections: dict[str, list[str]] = {}
+cur_ = None
+for line in oracle("sv_buffer_size.txt"):
+    m = re.match(r"(\S+\.vcf): (\d+) records;", line)
+    if m:
+        cur_ = m.group(1)
+        sections[cur_] = []
+    elif cur_:
+        sections[cur_].append(line)
+
+
+def vep_runs(name: str, buffer_label: str) -> list[dict]:
+    out, item = [], None
+    for line in sections[name]:
+        m = re.match(r"\s+VEP, (default buffer|--buffer_size 1)(?:, run \d+)?: (\d+) rows, (\d+) tuples, (\d+) in common, strict F1 ([\d.]+); only VEP (\d+), only fastVEP (\d+)", line)
+        if m:
+            item = {"buffer": m.group(1), "tuples": int(m.group(3)), "f1": m.group(5), "only_vep": int(m.group(6)), "only_fv": int(m.group(7)), "kinds": {}}
+            out.append(item)
+            continue
+        m = re.match(r"\s+(single or symbolic|a mate on its own contig|a mate on another contig)\s+only VEP\s+(\d+)\s+only fastVEP\s+(\d+)", line)
+        if m and item:
+            item["kinds"][m.group(1)] = (int(m.group(2)), int(m.group(3)))
+    return [r for r in out if r["buffer"] == buffer_label]
+
+
+b09 = {k: vep_runs("09_breakends.vcf", k) for k in ("default buffer", "--buffer_size 1")}
+assert len(b09["default buffer"]) == len(b09["--buffer_size 1"]) == 3
+assert all(r["kinds"]["single or symbolic"] == (40, 863) and r["kinds"]["a mate on its own contig"] == (0, 0) for r in b09["default buffer"]), "the default buffer: 40 tuples only VEP's and 863 only fastVEP's on single breakends, in each run"
+assert all(r["kinds"]["single or symbolic"] == (0, 0) and r["kinds"]["a mate on its own contig"] == (0, 0) for r in b09["--buffer_size 1"]), "a buffer of one: no difference on single breakends or mates on their own contig"
+other_ = [r["kinds"]["a mate on another contig"] for r in b09["--buffer_size 1"]]
+fact(DOC_SV, "docs/STRUCTURAL_VARIANTS.md", "Run one record at a time (`--buffer_size 1`), Ensembl VEP and fastVEP write the same rows", "863 tuples of those are only fastVEP's and 40 only VEP's",
+     f"{other_[0][1]:,}, {other_[1][1]:,} and {other_[2][1]:,} tuples that only fastVEP writes", f"{other_[0][0]}, {other_[1][0]} and {other_[2][0]} that only VEP does")
+fact(PAPER, "3.11", "of its 2,575 differing tuples", f"({other_[0][1]:,}, {other_[1][1]:,} and {other_[2][1]:,} tuples in three runs)")
+for name in ("R1_gnomad_sv_v41_chr21_q.vcf", "R2_clinvar_chr21_sv.vcf"):
+    assert len(vep_runs(name, "default buffer")) == len(vep_runs(name, "--buffer_size 1")) == 1
+r1d, r1b = vep_runs("R1_gnomad_sv_v41_chr21_q.vcf", "default buffer")[0], vep_runs("R1_gnomad_sv_v41_chr21_q.vcf", "--buffer_size 1")[0]
+r2d, r2b = vep_runs("R2_clinvar_chr21_sv.vcf", "default buffer")[0], vep_runs("R2_clinvar_chr21_sv.vcf", "--buffer_size 1")[0]
+assert r2d["f1"] == r2b["f1"] == "0.9999", "the ClinVar set scores the same with either buffer"
+fact(DOC_SV, "docs/STRUCTURAL_VARIANTS.md", "It is the buffer again, since the other contig's transcripts", f"{r1b['tuples']:,} tuples of VEP", f"{r1b['only_vep']} are not fastVEP's", f"{r1d['tuples']:,} and {r1d['only_vep']:,}",
+     f"{r1b['f1']} and not {r1d['f1']}")
+fact(README, "README", "its `--gff` mode pairs 905 records with transcripts of other chromosomes", f"the strict F1 is {r1b['f1']})")
+fact(PAPER, "3.11", "pairs 905 of the records with transcripts of other chromosomes", f"the strict F1 is {r1b['f1']}.")
+
+# the release binary against the build that was timed: the instructions of one thread, kept in small_variant_regression/
+rel_pct, fmt_ = [], None
+for line in (HERE.parent / "benchmarks" / "results" / "small_variant_regression" / "instructions_release_vs_timed.txt").read_text().splitlines():
+    if line.startswith("== "):
+        fmt_ = {}
+    m = re.match(r"\s+(final|release)\s+n=\d+ instructions median\s+([\d.]+) G", line)
+    if m and fmt_ is not None:
+        fmt_[m.group(1)] = float(m.group(2))
+        if len(fmt_) == 2:
+            rel_pct.append(100 * (fmt_["release"] / fmt_["final"] - 1))
+            fmt_ = None
+assert len(rel_pct) == 3, "the release binary was counted over VCF, tab and JSON"
+rel_text = f"it retires {min(rel_pct):+.1f}% to {max(rel_pct):+.1f}% of the instructions of that build"
+fact(README, "README", "The binary of the release does the same work as the build that was timed", rel_text)
+fact(DOC_SV, "docs/STRUCTURAL_VARIANTS.md", "The binary of the release does the same work as the build that was timed", rel_text)
+fact(PAPER, "3.11", "The binary of the release does the same work as the build that was timed", rel_text)
+
+# the release binary against the build of the structural variant table: instructions on one thread, and the timings of a session in which the machine was in use
+import statistics
+SVDIR = HERE.parent / "benchmarks" / "results" / "sv_head_to_head"
+sv_ins: dict[tuple[str, str], list[float]] = {}
+with (SVDIR / "instructions_release_vs_measured.tsv").open(newline="") as f:
+    for r in csv.DictReader(f, delimiter="\t"):
+        sv_ins.setdefault((r["input"], r["build"]), []).append(float(r["instructions"]))
+sv_pct = {k: 100 * (statistics.median(sv_ins[(k, "release")]) / statistics.median(sv_ins[(k, "measured")]) - 1) for k in (R1, R2)}
+with (SVDIR / "release_binary_machine_in_use" / "summary.tsv").open(newline="") as f:
+    in_use = {(r["input"], r["tool"], r["threads"]): r for r in csv.DictReader(f, delimiter="\t")}
+with (SVDIR / "release_binary_machine_in_use" / "environment.tsv").open() as f:
+    in_use_load = next(line.split("\t")[1].split()[0] for line in f if line.startswith("load_average_at_start"))
+fast_ = [float(in_use[(k + ".vcf", "fastvep", "1")]["min_s"]) for k in (R1, R2)]
+med_ = [float(in_use[(k + ".vcf", "fastvep", "1")]["median_s"]) for k in (R1, R2)]
+table_med = [svt[(k + ".vcf", "fastvep", "1")] for k in (R1, R2)]
+assert all(abs(f / m - 1) < 0.02 for f, m in zip(fast_, table_med)), "the fastest runs of the release binary are within 2% of the medians of the table"
+for lines, where, sep in ((README, "README", ""), (DOC_SV, "docs/STRUCTURAL_VARIANTS.md", ""), (PAPER, "3.11", " ")):
+    fact(lines, where, "The binary that ships retires", f"{sv_pct[R1]:+.2f}% and {sv_pct[R2]:+.2f}%", f"the load average at the start was {float(in_use_load):.1f}",
+         f"{fast_[0]:.2f}{sep}s and {fast_[1]:.2f}{sep}s", f"{med_[0]:.2f}{sep}s and {med_[1]:.2f}{sep}s")
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("-v", action="store_true", help="also print every check that passed")

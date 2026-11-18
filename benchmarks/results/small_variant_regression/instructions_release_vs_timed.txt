@@ -1,0 +1,15 @@
+# The instructions retired on one thread (/usr/bin/time -l, RAYON_NUM_THREADS=1) by master, by the build that the paired series of this directory timed (final) and by the release binary (release, 0.6.0),
+# in turn, 3 rounds, over a 1-in-20 sample of GIAB HG002 (202,417 variants) with each output format; the machine was running other jobs, which one thread's instructions do not follow closely (the range of master's first row has one such round).
+# The release binary is built from the release commit in a clean worktree; the timed build from the working tree, so their code is the same and their layout is not (their paths differ in length).
+== HG002 1-in-20 (202,417 variants), one thread, vcf: --hgvs --symbol --canonical --output-format vcf
+  master   n=3 instructions median   63.784 G (+0.000% vs master) range 62.752..67.900
+  final    n=3 instructions median   63.132 G (-1.022% vs master) range 62.908..63.193
+  release  n=3 instructions median   62.879 G (-1.419% vs master) range 62.784..62.931
+== HG002 1-in-20 (202,417 variants), one thread, tab: --output-format tab --symbol --biotype --canonical --numbers --variant-class --show-ref-allele --hgvs --hgvsg
+  master   n=3 instructions median   55.921 G (+0.000% vs master) range 54.795..56.666
+  final    n=3 instructions median   55.396 G (-0.939% vs master) range 55.292..55.458
+  release  n=3 instructions median   55.717 G (-0.365% vs master) range 55.466..55.730
+== HG002 1-in-20 (202,417 variants), one thread, json: --hgvs --symbol --canonical --output-format json
+  master   n=3 instructions median   79.728 G (+0.000% vs master) range 79.718..79.982
+  final    n=3 instructions median   80.189 G (+0.578% vs master) range 80.119..80.726
+  release  n=3 instructions median   80.145 G (+0.523% vs master) range 80.140..80.495

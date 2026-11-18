@@ -1,0 +1,15 @@
+started_utc	2026-11-17T16:28:04Z
+system	Darwin 25.5.0 arm64
+cpu	Apple M4
+load_at_start	1.66 2.70 4.62
+caffeinate_holds_the_machine_awake	no
+binary_base	master ed17877 (clean build of the commit, rustc 1.98.0)	fastvep 0.5.0	sha256 4d81a9fb9fea32fe5a42541993af1cf7b565ac70f249e755abc0e322f95921e2
+binary_new	structural variants, uncommitted tree on ed17877 (final, rustc 1.98.0)	fastvep 0.5.0	sha256 f4fddcc2762ee2c9becaed9f300889d9dec6d5b48d0a2033863e2157f36039c7
+repo_head	ed17877bf541bf32e9009041cd3e5d481072b051
+repo_dirty_files	70
+gff3	/Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sapiens.GRCh38.115.gff3
+fasta	/Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/Homo_sapiens.GRCh38.dna.primary_assembly.fa
+hg002_vcf	/Users/kuan-lin.huang/Projects/fastVEP/test_data/organisms/human/human_giab_hg002_full.vcf
+sidecar_cache_md5_before	6c47787bc08443437afba374e3bd7a5c
+sidecar_cache_md5_after	6c47787bc08443437afba374e3bd7a5c
+note	the uncommitted tree of binary_new became the commits of the branch that ends in the release commit; the binary of the release writes the same bytes on the 25 cases of ../identity_sweep/ and retires within 0.6% of the instructions of this one (instructions_release_vs_timed.txt)

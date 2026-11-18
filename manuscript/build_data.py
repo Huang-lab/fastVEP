@@ -5,8 +5,13 @@ Until this script, the files of `manuscript/data/` had no generator: their numbe
 (July 2026), and when the code changed nothing said which of them had gone stale. Now each file is a function of
 files in a results directory that a command made, and `--check` fails when a file differs from what its inputs say.
 
-    manuscript/build_data.py --results benchmarks/results/v0.5.0            # write the files
-    manuscript/build_data.py --results benchmarks/results/v0.5.0 --check    # fail if any file is out of step
+    manuscript/build_data.py --results benchmarks/results/v0.5.0 --build benchmarks/results/v0.6.0            # write the files
+    manuscript/build_data.py --results benchmarks/results/v0.5.0 --build benchmarks/results/v0.6.0 --check    # fail if any file is out of step
+
+`--results` is where the runs of the head-to-head are (every timing of Tables 2 to 8, and Ensembl VEP's). `--build` is the build the release is cut from, for what
+depends on the build and not on a run: the lines and tests of the code, the terms of the enum, the dependencies between the crates, the tests that ran, and the size
+of the binary. It is the same directory when one set of runs measured the build that ships, and it is another when the code changed after them and the runs were
+not repeated (the outputs of the two builds are then compared in `benchmarks/results/identity_sweep/` and their times in `benchmarks/results/small_variant_regression/`).
 
 The results directory holds what these commands wrote:
 
@@ -20,6 +25,11 @@ The results directory holds what these commands wrote:
     manuscript/code_metrics.py        code_metrics.csv, so_terms.csv, crate_dependencies.csv
     benchmarks/run_sa_formats.py      sa_formats.csv, sa_formats_annotation.csv (Table 6)
     cargo test --workspace            tests_executed.csv (what ran and passed)
+
+Two files do not come from this directory but from the raw runs of the scripts that made them, beside it in `benchmarks/results/`: sv_timing.csv from
+`sv_head_to_head/timings.tsv` (benchmarks/run_sv_head_to_head.sh) and small_variant_regression.csv from `small_variant_regression/timings.tsv` and
+`identity.tsv` (benchmarks/run_small_variant_regression.sh). Their medians are kept to the millisecond: a ratio of two times rounded to the centisecond
+is wrong in the second decimal (30.0x is 29.9x from 20.9 s over 0.70 s).
 
 The times of Ensembl VEP are read from `with_vep/vep_baseline.csv` of the results directory: VEP 116.3 ran in Docker on the same Apple M4, in the
 session of the fastVEP runs of `with_vep/`, and its whole-genome time is the sum over chromosomes 1 to 22 of one run of each (`vep_genome.tsv` has them one
@@ -58,6 +68,8 @@ CONDITIONS = [("conseq", "Consequence", "plain", "wgs"), ("clinvar", "+ ClinVar"
 # Files that a run of the release made in the results directory and that the manuscript's data directory holds as they are.
 COPIED = {"vep_baseline.csv": "with_vep", "vep116_agreement.csv": "", "vep116_hg002_columns.csv": "", "code_metrics.csv": "", "so_terms.csv": "",
           "crate_dependencies.csv": "", "sa_formats.csv": "", "sa_formats_annotation.csv": "", "tests_executed.csv": ""}  # name -> subdirectory of the results
+# Those of them that describe the build and not a run: they are read from the directory of the build (`--build`).
+OF_THE_BUILD = {"code_metrics.csv", "so_terms.csv", "crate_dependencies.csv", "tests_executed.csv"}
 
 
 def read_rows(path: Path, delimiter: str = "\t") -> list[dict[str, str]]:
@@ -66,8 +78,11 @@ def read_rows(path: Path, delimiter: str = "\t") -> list[dict[str, str]]:
 
 
 class Results:
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, build: Path | None = None):
         self.dir = directory
+        self.build = build or directory
+        benv = self.build / "environment.tsv"
+        self.build_env = dict(line.rstrip("\n").split("\t", 1) for line in benv.open()) if benv.exists() else {}
         raw = directory / "raw.tsv"
         # round 0 is the harness's untimed warm-up and identity round, and is in no median
         self.raw = [r for r in read_rows(raw) if int(r["round"]) >= 1] if raw.exists() else []
@@ -168,15 +183,16 @@ def build(res: Results) -> dict[str, list[list[str]]]:
 
     # Table 4: what the binary costs. Start-up is a run of one variant, which is the time to read the transcript cache.
     needed = [("startup", "yeast_1_variant_t1"), ("startup", "human_1_variant_t1"), ("startup", "human_1_variant_t8"), ("memory", "chr1_100k_t8")]
-    if all(res.wall(p, c) for p, c in needed) and res.env.get("binary_bytes"):
+    binary_bytes = res.build_env.get("binary_bytes") or res.env.get("binary_bytes")
+    if all(res.wall(p, c) for p, c in needed) and binary_bytes:
         rows = [["metric", "value", "unit"],
-                ["binary_size", f"{int(res.env['binary_bytes']) / 1e6:.1f}", "MB"],
+                ["binary_size", f"{int(binary_bytes) / 1e6:.1f}", "MB"],
                 ["cache_load_yeast_7k_1_thread", fmt(res.wall("startup", "yeast_1_variant_t1")), "sec"],
                 ["cache_load_human_509k_1_thread", fmt(res.wall("startup", "human_1_variant_t1")), "sec"],
                 ["cache_load_human_509k_8_threads", fmt(res.wall("startup", "human_1_variant_t8")), "sec"],
                 ["peak_memory_100k_variants", f"{res.rss('memory', 'chr1_100k_t8') / 1024:.1f}", "GiB"],
                 ["peak_memory_100k_variants_no_fasta_consequence_only", f"{res.rss('memory', 'chr1_100k_nofasta_conseq_t8') / 1024:.1f}", "GiB"],
-                ["binary_bytes", res.env["binary_bytes"], "bytes"],
+                ["binary_bytes", binary_bytes, "bytes"],
                 ["external_dependencies", "0", "count"]]
         # Ensembl VEP's side of the same table, from run_vep_side.py: start-up is a run of one variant, which includes starting the container
         vs = res.vep / "vep_summary.tsv"
@@ -198,8 +214,54 @@ def build(res: Results) -> dict[str, list[list[str]]]:
         out["consequence_distribution.csv"] = [row for row in csv.reader(ms.open())]
 
     for name, sub in COPIED.items():
-        if (res.dir / sub / name).exists():
-            out[name] = [row for row in csv.reader((res.dir / sub / name).open())]
+        source = (res.build if name in OF_THE_BUILD else res.dir) / sub / name
+        if source.exists():
+            out[name] = [row for row in csv.reader(source.open())]
+    return out
+
+
+def structural_variants() -> dict[str, list[list[str]]]:
+    """sv_timing.csv and small_variant_regression.csv, from the raw runs of their scripts (see the top of this file)."""
+    out: dict[str, list[list[str]]] = {}
+    root = HERE.parent / "benchmarks" / "results"
+    sv = root / "sv_head_to_head" / "timings.tsv"
+    if sv.exists():
+        cells: dict[tuple[str, str, str], list[float]] = {}
+        for r in read_rows(sv):
+            cells.setdefault((r["input"], r["tool"], r["threads"]), []).append(float(r["wall_s"]))
+        rows = [["input", "tool", "threads", "runs", "median_s", "min_s", "max_s"]]
+        for (inp, tool, threads), v in sorted(cells.items()):
+            rows.append([inp, tool, threads, str(len(v)), f"{statistics.median(v):.3f}", f"{min(v):.3f}", f"{max(v):.3f}"])
+        out["sv_timing.csv"] = rows
+    reg = root / "small_variant_regression" / "timings.tsv"
+    ident = root / "small_variant_regression" / "identity.tsv"
+    if reg.exists() and ident.exists():
+        identity = {(r["workload"], r["threads"]): r for r in read_rows(ident)}
+        cells = {}
+        rounds: dict[tuple[str, str, str], dict[str, float]] = {}
+        instructions: dict[tuple[str, str, str], dict[str, float]] = {}
+        for r in read_rows(reg):
+            cells.setdefault((r["workload"], r["threads"], r["build"]), []).append(float(r["wall_s"]))
+            rounds.setdefault((r["workload"], r["threads"], r["build"]), {})[r["round"]] = float(r["wall_s"])
+            instructions.setdefault((r["workload"], r["threads"], r["build"]), {})[r["round"]] = float(r["instructions"])
+        rows = [["workload", "threads", "build", "runs", "median_s", "min_s", "max_s", "output_identical", "paired_median_pct", "paired_min_pct", "paired_max_pct", "output_bytes", "output_bytes_base",
+                 "median_instructions_g", "instructions_paired_median_pct", "instructions_paired_min_pct", "instructions_paired_max_pct"]]
+        for (workload, threads, build), v in sorted(cells.items()):
+            paired = ["", "", ""]
+            ins_paired = ["", "", ""]
+            if build == "new":
+                # the difference of each round's two runs, which were made in turn: what a slow minute of the machine hits on both
+                base_rounds = rounds[(workload, threads, "base")]
+                diffs = [100 * (t / base_rounds[rnd] - 1) for rnd, t in rounds[(workload, threads, "new")].items() if rnd in base_rounds]
+                paired = [f"{statistics.median(diffs):.2f}", f"{min(diffs):.2f}", f"{max(diffs):.2f}"]
+                # and of the instructions the two runs retired, which no other load on the machine moves
+                base_ins = instructions[(workload, threads, "base")]
+                idiffs = [100 * (i / base_ins[rnd] - 1) for rnd, i in instructions[(workload, threads, "new")].items() if rnd in base_ins]
+                ins_paired = [f"{statistics.median(idiffs):.3f}", f"{min(idiffs):.3f}", f"{max(idiffs):.3f}"]
+            idr = identity[(workload, threads)]
+            rows.append([workload, threads, build, str(len(v)), f"{statistics.median(v):.3f}", f"{min(v):.3f}", f"{max(v):.3f}", idr["identical"], *paired, idr["bytes"], idr["bytes_base"],
+                         f"{statistics.median(instructions[(workload, threads, build)].values()) / 1e9:.3f}", *ins_paired])
+        out["small_variant_regression.csv"] = rows
     return out
 
 
@@ -218,6 +280,9 @@ def provenance(res: Results) -> list[list[str]]:
         rows += [["with_vep_started_utc", res.env_later.get("started_utc", "")], ["with_vep_finished_utc", res.env_later.get("finished_utc", "")],
                  ["with_vep_parts", res.env_later.get("parts", "")]]
     rows += [["results_directory", str(res.dir.relative_to(HERE.parent)) if res.dir.is_relative_to(HERE.parent) else str(res.dir)]]
+    if res.build != res.dir:
+        rows += [["build_directory", str(res.build.relative_to(HERE.parent)) if res.build.is_relative_to(HERE.parent) else str(res.build)]]
+        rows += [[f"build_{k}", res.build_env[k]] for k in ("binary_version", "built_from", "binary_sha256", "binary_bytes", "rustc") if k in res.build_env]
     return rows
 
 
@@ -229,11 +294,13 @@ def write_csv(path: Path, rows: list[list[str]]) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results", required=True, type=Path)
+    ap.add_argument("--build", type=Path, help="the results directory of the build the release is cut from (default: --results)")
     ap.add_argument("--check", action="store_true", help="write nothing; exit 1 if a file differs from what the results say")
     args = ap.parse_args()
-    res = Results(args.results.resolve())
+    res = Results(args.results.resolve(), args.build.resolve() if args.build else None)
     files = build(res)
     files["provenance.csv"] = provenance(res)
+    files.update(structural_variants())
     bad = []
     for name, rows in sorted(files.items()):
         path = DATA / name

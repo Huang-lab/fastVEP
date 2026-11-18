@@ -1,0 +1,19 @@
+input,kind,records,vep_rows,fastvep_rows,strict_f1,note
+world,generated world (golden fixture),6692,17284,17284,1.0000,23 columns compared; every cell equal but 5 HGVS cells of tandem repeats with several alleles
+world_seed_7,"generated world, another seed",6741,17475,17475,1.0000,the same 5 kinds of cell
+01_snv,vep-rs synthetic file,1000,15755,15755,1.0000,
+02_mnp_complex,vep-rs synthetic file,2000,56171,56171,1.0000,
+03_small_indels,vep-rs synthetic file,2000,54896,54896,1.0000,
+04_large_explicit,vep-rs synthetic file,400,10790,10790,0.9983,"18 rows of explicit deletions: stop_retained_variant in VEP, coding_sequence_variant here"
+05_symbolic_del_ins,vep-rs synthetic file,2000,117813,117813,1.0000,
+06_symbolic_dup_inv,vep-rs synthetic file,2250,106265,106265,1.0000,
+07_cnv_repeat,vep-rs synthetic file,900,34500,34500,1.0000,
+08_mobile_elements,vep-rs synthetic file,800,22094,22094,1.0000,
+09_breakends,vep-rs synthetic file,1400,68938,71433,0.9816,against VEP with statistics on; 903 tuples on 40 single breakends (VEP's buffer: none with --buffer_size 1) and 1,672 mate rows on another chromosome that only fastVEP writes in each of three VEP runs (VEP writes those differently each time, with a buffer of one too)
+10_special_alleles,vep-rs synthetic file,1000,2595,0,0.0000,"the rows VEP writes for <*>, which has none here"
+11_multi_allelic,vep-rs synthetic file,700,37702,37702,1.0000,
+12_complex_imprecise,vep-rs synthetic file,300,9755,9755,1.0000,
+13_vcf45_features,vep-rs synthetic file,650,42338,37592,0.8808,"the rows VEP writes for <*>, which has none here"
+R1_gnomad_sv_v41_chr21_q,"gnomAD-SV v4.1 chr21, 1-in-4 sample",8158,109318,105851,0.9052,VEP statistics on
+R2_clinvar_chr21_sv,ClinVar chr21 structural variants,3060,62045,62045,0.9999,
+R1_gnomad_sv_v41_chr21_q_one_spelling,"gnomAD-SV v4.1 chr21, 1-in-4 sample, the contig spelled chr21 throughout",8158,104823,104966,0.9993,"contig column, CHR2, GFF3 and FASTA all chr21 (validation/sv_one_spelling.sh): 136 rows on unconfirmed_transcript features that VEP ignores and 14 intergenic rows of 7 breakends whose mate is on a contig the reference lacks; VEP statistics on"

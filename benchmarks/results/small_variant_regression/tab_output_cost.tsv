@@ -1,0 +1,11 @@
+run	build	instructions_g	against_master_pct	what
+1	master	87.233	0.000	the build of master (ed17877)
+1	release_candidate	87.353	0.138	v0.5.0-rc.1
+1	structural_variants_earlier	88.845	1.848	the build of the structural variant rules that the SV tables were timed with (b33186a8)
+1	structural_variants_final	88.834	1.835	the build of the tree that ships (f4fddcc2)
+2	master	87.294	0.000	the build of master (ed17877)
+2	structural_variants_final	88.907	1.848	the build of the tree that ships (f4fddcc2)
+2	final_rebuilt	88.899	1.839	the same source built again in another directory
+2	master_tab_writer_lines	89.051	2.013	the same source with the two lines of the tab writer that changed (the allele cell and the end-of-function guard) as master has them
+2	allele_cell_one_next	88.907	1.848	the allele cell takes `row.next()` once, as master's did, and writes the label or the allele into it
+2	allele_cell_one_next_inlined	88.880	1.817	that, and `#[inline(always)]` on `TabRow::next` and `TabRow::push`

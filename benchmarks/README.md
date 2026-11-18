@@ -25,6 +25,27 @@ and needs no external data.
 
 ---
 
+## Structural variants, and what a new build has to show
+
+`run_sv_head_to_head.sh` times fastVEP against Ensembl VEP 116.3 on two structural variant inputs (a 1-in-4 sample of gnomAD-SV v4.1 and the structural variants of ClinVar, both of chromosome 21) and writes `results/sv_head_to_head/`.
+`../validation/score_strict_key.py` scores the agreement with the strict key of the vep-rs paper, and `../validation/sv_one_spelling.sh` makes the gnomAD-SV run with the contig spelled one way.
+`../validation/run_sv_world.py` compares both tools cell by cell over generated worlds of any seed, `../validation/sv_buffer_size.py` runs Ensembl VEP over a VCF with its own buffer and with a buffer of one record and says what each agrees with fastVEP on, and `../validation/compare_pick.py` compares the transcript that each tool flags under `--flag-pick*`; what they print for the release is in `results/vep_oracle/`.
+`run_sv_instructions.sh` says whether a build made after that run does the same work on those inputs: the instructions that two builds retire on one thread, in turn (`results/sv_head_to_head/instructions_release_vs_measured.tsv`), which do not depend on what else the machine is doing.
+`../docs/STRUCTURAL_VARIANTS.md` has the numbers and what they mean.
+
+The tables of this file were measured with the release candidate, so a build that is not it has to show two things, and two scripts show them:
+
+- `run_identity_sweep.sh RESULTS_DIR label=BINARY ...` runs the builds over the inputs and with the flags of every benchmark above (the whole of HG002 in the conditions of Table 3, as the table of the comparison with Ensembl VEP and as JSON; chromosome 22 as VCF, tab and JSON and with each pick option; the four other organisms; the three ClinVar 2-star+ sets with and without `--acmg`) and says whether each build wrote the bytes and the warnings of the first one (`results/identity_sweep/`).
+  The builds of this repository differ in two things that a small variant meets, which the header of the script lists: the `PICK` of the `intergenic_variant` rows that `--flag-pick*` flags, and the `most_severe_consequence` of a JSON record whose transcripts carry `splice_region_variant` on one and `splice_donor_5th_base_variant` on another.
+  `json_line_diff.py A.json B.json` lists the JSON records that two runs write differently, with the two values.
+  `../validation/compare_builds.py` does the same for the inputs of the comparison with Ensembl VEP, with a cache of each build's own.
+- `run_small_variant_regression.sh RESULTS_DIR BASE NEW` runs two builds in turn, the order alternating from round to round (the second of two runs of 30 seconds was 1 to 2% slower for being second), on the workloads of Tables 2, 3 and 5 and the annotation conditions, and writes every run with its wall time, its instructions retired and its peak memory, the medians, whether the outputs are the same bytes and what the two binaries are (`results/small_variant_regression/`).
+  A laptop varies by up to about 3% from one round to the next, so a difference of that size is not told from none by one run; the medians of the rounds and the sign of the rounds are in `timings.tsv`.
+  The instructions retired of a run on one thread are the same to 0.1% from one run to the next, so a difference in them is a difference in the work done, which no wall time on a laptop shows; on every core the threads that wait move them by 0.5 to 0.8%.
+  The output of each run is removed before the next, because outputs of 10 to 22 GB written over the same two files moved the time of a run on every core by up to a factor of two.
+
+---
+
 ## Small test data (lives in-repo, 28 KB, gitignored exceptions)
 
 These tiny fixtures are tracked in git so the README quickstart and the docs
