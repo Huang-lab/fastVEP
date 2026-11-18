@@ -5,6 +5,21 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-18
+
+A release about the page and the documents that describe the comparison with Ensembl VEP.
+The page of the web server has an example of 15 variants in cancer genes, and the documents compare fastVEP with Ensembl VEP 116.3 only.
+No consequence, HGVS or ACMG output changes: the program writes the same bytes and the same warnings as 0.6.0 on 15 of the benchmark cases of the repository (`benchmarks/results/v0.6.1/identity_vs_v0.6.0/`).
+
+### Added
+
+- **web**: an example of 15 SNVs in cancer genes (TP53, KRAS, PIK3CA, IDH1, BRCA1, PTEN, MSH2, VHL, CHEK2 and EGFR) that ClinVar (release 2026-11-01) classifies as pathogenic, likely pathogenic or of uncertain significance, so that the table, the ClinVar annotation and the ACMG column can be tried on variants of clinical interest. The chip is shown only when the selected gene model is a full GRCh38 one, because the in-browser demo model has no row for them (#189).
+
+### Changed
+
+- **docs**: `docs/VEP_DIVERGENCE.md`, the README and the migration page compare fastVEP with Ensembl VEP 116.3 only. The measurements against release 115.1 are removed, each divergence carries its 116.3 count, and "Ensembl 115" in the text is said to be the release of the GFF3 and FASTA that both tools read (#188).
+- **validation**: `run_escaping_probe.sh` runs against the 116.3 image, and writes the same rows as it did for 115.1 (#188).
+
 ## [0.6.0] - 2026-11-18
 
 A release about structural variants.
