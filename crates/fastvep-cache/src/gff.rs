@@ -160,25 +160,40 @@ fn read_region_lines(
     use noodles_core::region::Interval;
     use noodles_core::Position;
 
-    // Find reference ID, trying with/without "chr" prefix
-    let ref_id = ref_names.iter().position(|n| n == chrom).or_else(|| {
-        if chrom.starts_with("chr") {
-            ref_names.iter().position(|n| n == &chrom[3..])
-        } else {
-            let with_chr = format!("chr{}", chrom);
-            ref_names.iter().position(|n| *n == with_chr)
-        }
-    });
+    // The reference ID by the name as it was asked for, and then by its aliases (with or without
+    // `chr`, and the mitochondrial spellings), as the plain path matches them: a mate of a
+    // structural variant is looked up here by the name its ALT gives it, and `MT` is not `chrM` to a
+    // toggle of the prefix.
+    let ref_id = fastvep_core::chrom_aliases(chrom)
+        .iter()
+        .find_map(|name| ref_names.iter().position(|n| n == name));
     let Some(ref_id) = ref_id else {
         return Ok(None);
     };
 
+    // An index addresses positions up to `(1 << (min_shift + 3 * depth)) - 1` (536,870,911 for a
+    // `.tbi`) and refuses an interval that reaches past it, as a whole. A structural variant whose
+    // end is far beyond the contig (a deletion of `END=1000000000`) widens the region past it, and
+    // the refusal left the contig with no transcript at all, every variant on it intergenic, without
+    // a word. The interval is cut to what the index covers instead: nothing it holds is beyond.
+    let max_position =
+        (1usize << (usize::from(index.min_shift()) + 3 * usize::from(index.depth()))) - 1;
+    if *start as usize > max_position {
+        return Ok(None);
+    }
     let pos_start = Position::try_from((*start).max(1) as usize).unwrap_or(Position::MIN);
-    let pos_end = Position::try_from(*end as usize).unwrap_or(Position::MIN);
+    let pos_end = Position::try_from((*end as usize).min(max_position)).unwrap_or(Position::MIN);
     let query_interval: Interval = (pos_start..=pos_end).into();
 
-    let Ok(chunks) = index.query(ref_id, query_interval) else {
-        return Ok(None);
+    let chunks = match index.query(ref_id, query_interval) {
+        Ok(chunks) => chunks,
+        Err(e) => {
+            eprintln!(
+                "warning: the index of {} cannot answer for {chrom}:{start}-{end} ({e}); no transcript of that region was read",
+                gff3_gz_path.display()
+            );
+            return Ok(None);
+        }
     };
 
     let file = std::fs::File::open(gff3_gz_path)?;

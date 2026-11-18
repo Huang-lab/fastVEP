@@ -196,7 +196,10 @@ fn format_csq_entry_into(
         // Write each field value directly into buf via escape_csq_str, avoiding
         // temporary String allocations for most fields.
         match *field {
-            CsqField::Allele => escape_csq_str(&aa.allele.to_string(), buf),
+            CsqField::Allele => match vf.allele_label(aa) {
+                Some(label) => escape_csq_str(label, buf),
+                None => escape_csq_str(&aa.allele.to_string(), buf),
+            },
             CsqField::Consequence => {
                 for (j, c) in aa.consequences.iter().enumerate() {
                     if j > 0 {
@@ -265,14 +268,20 @@ fn format_csq_entry_into(
             // VEP's VCF writer blanks a `-` in every field but Allele
             // (`output_hash_to_vcf_info_chunk`), so an insertion has no reference
             // allele here, where the tab file writes `-`.
+            // A structural variant's row has neither: Ensembl writes them in
+            // `VariationFeatureOverlapAllele_to_output_hash`, which its rows do not pass through.
             CsqField::RefAllele => {
-                let reference = vf.ref_allele.to_string();
-                if reference != "-" {
-                    escape_csq_str(&reference, buf);
+                if vf.sv.is_none() {
+                    let reference = vf.ref_allele.to_string();
+                    if reference != "-" {
+                        escape_csq_str(&reference, buf);
+                    }
                 }
             }
             CsqField::UploadedAllele => {
-                if let Some(ref vcf) = vf.vcf_fields {
+                if vf.sv.is_some() {
+                    // blank, as above
+                } else if let Some(ref vcf) = vf.vcf_fields {
                     escape_csq_str(&vcf.ref_allele, buf);
                     buf.push('/');
                     escape_csq_str(&vcf.alt, buf);
@@ -356,12 +365,11 @@ fn format_csq_entry_into(
                     let _ = write!(buf, "{}", o);
                 }
             }
-            CsqField::VariantClass => {
-                // a structural variant's class comes from the parser in VEP
-                if !vf.variant_type.is_structural() {
-                    buf.push_str(so_variation_class(&vf.allele_string));
-                }
-            }
+            CsqField::VariantClass => match &vf.sv {
+                // a structural variant's class comes from the parser
+                Some(sv) => buf.push_str(sv.class.so_term()),
+                None => buf.push_str(so_variation_class(&vf.allele_string)),
+            },
             CsqField::Acmg => {
                 if let Some(ref acmg) = aa.acmg_classification {
                     if let Some(sh) = acmg.get("shorthand").and_then(|v| v.as_str()) {
@@ -2438,10 +2446,14 @@ impl OptionalColumn {
                 .known_for(allele)
                 .and_then(|k| k.get(column))
                 .map_or(Cow::Borrowed("-"), Cow::Borrowed),
+            // a structural variant's row has no reference allele
+            Self::RefAllele if vf.sv.is_some() => Cow::Borrowed("-"),
             Self::RefAllele => Cow::Owned(vf.ref_allele.to_string()),
-            // a structural variant's class comes from the parser in VEP
-            Self::VariantClass if vf.variant_type.is_structural() => Cow::Borrowed("-"),
-            Self::VariantClass => Cow::Borrowed(so_variation_class(&vf.allele_string)),
+            // a structural variant's class comes from the parser
+            Self::VariantClass => match &vf.sv {
+                Some(sv) => Cow::Borrowed(sv.class.so_term()),
+                None => Cow::Borrowed(so_variation_class(&vf.allele_string)),
+            },
             Self::Hgvsg => aa
                 .and_then(|aa| aa.hgvsg.as_deref())
                 .filter(|s| !s.is_empty())
@@ -2775,7 +2787,14 @@ pub fn format_tab_line_with(
             let mut row = TabRow::with_capacity(96 + 24 * (row_capacity - 4));
             row.push(&uploaded_variation);
             row.push(&location);
-            let _ = write!(row.next(), "{}", aa.allele);
+            // The row of a small variant writes its allele straight into the line; only a structural
+            // variant has a label to write instead.
+            match vf.allele_label(aa) {
+                Some(label) => row.push(label),
+                None => {
+                    let _ = write!(row.next(), "{}", aa.allele);
+                }
+            }
             if let Some(ref r) = ref_str {
                 row.push(r);
             }
@@ -2828,7 +2847,12 @@ pub fn format_tab_line_with(
             // PICK, then the other optional columns.
             let mut optional = opts.optional;
             if let [OptionalColumn::RefAllele, rest @ ..] = optional {
-                let _ = write!(row.next(), "{}", vf.ref_allele);
+                // a structural variant's row has none (see `variant_cell`)
+                if vf.sv.is_some() {
+                    row.push("-");
+                } else {
+                    let _ = write!(row.next(), "{}", vf.ref_allele);
+                }
                 optional = rest;
             }
             row.push(aa.impact.as_str());
@@ -2888,7 +2912,7 @@ pub fn format_tab_line_with(
     // — unless a gene-set filter is active, in which case an unannotated
     // variant has nothing to match and is dropped.
     // `*` and the placeholders get no row, as in VEP, so a record with none but those has none.
-    if vf.transcript_variations.is_empty() && opts.gene_set.is_none() {
+    if vf.transcript_variations.is_empty() && opts.gene_set.is_none() && vf.sv.is_none() {
         for alt in vf.alt_alleles.iter().filter(|a| **a != Allele::Missing) {
             let mut parts: Vec<Cow<'_, str>> = Vec::with_capacity(row_capacity);
             parts.push(uploaded_variation.clone().into());
@@ -3056,7 +3080,7 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                 );
                 tc.insert(
                     "variant_allele".into(),
-                    serde_json::Value::String(aa.allele.to_string()),
+                    serde_json::Value::String(vf.allele_text(aa).into_owned()),
                 );
                 tc.insert(
                     "strand".into(),
@@ -3156,7 +3180,7 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
                 }
                 // ACMG-AMP classification
                 if let Some(ref acmg) = aa.acmg_classification {
-                    tc.insert("acmg".into(), acmg.clone());
+                    tc.insert("acmg".into(), (**acmg).clone());
                 }
                 serde_json::Value::Object(tc)
             })
@@ -3175,11 +3199,12 @@ pub fn format_json(vf: &VariationFeature, sa_only: bool) -> serde_json::Value {
             serde_json::Value::String(format!("{:?}", vf.variant_type)),
         );
     }
-    if let Some(sv_end) = vf.sv_end {
-        obj.insert("sv_end".into(), serde_json::Value::Number(sv_end.into()));
-    }
-    if let Some(sv_len) = vf.sv_len {
-        obj.insert("sv_len".into(), serde_json::Value::Number(sv_len.into()));
+    // VEP's `variant_class`: for a structural variant the class the parser gave it
+    if let Some(sv) = &vf.sv {
+        obj.insert(
+            "variant_class".into(),
+            serde_json::Value::String(sv.class.so_term().to_string()),
+        );
     }
 
     // Supplementary annotations (pre-serialized JSON from SA providers)
@@ -3580,6 +3605,7 @@ mod tests {
                 biotype: Arc::from("protein_coding"),
                 allele_annotations: vec![AlleleAnnotation {
                     allele: Allele::from_str("G"),
+                    sv_allele: None,
                     consequences: vec![Consequence::MissenseVariant],
                     impact: Impact::Moderate,
                     location: TranscriptLocation::default(),
@@ -3620,8 +3646,7 @@ mod tests {
             minimised: false,
             most_severe_consequence: None,
             variant_type: VariantType::Snv,
-            sv_end: None,
-            sv_len: None,
+            sv: None,
             supplementary_annotations: vec![SupplementaryAnnotation {
                 json_key: "customVariant".into(),
                 is_array: false,
@@ -5009,19 +5034,46 @@ mod tests {
         assert_eq!(cells[18..].to_vec(), vec!["SNV", "-", "-"]);
     }
 
-    /// A structural variant's class comes from the parser in VEP, not from its
-    /// allele string, so there is nothing to write for it here.
+    /// A structural variant's class comes from the parser in VEP, not from its allele string, and
+    /// it is the `VARIANT_CLASS` of the row. Its row has no reference allele (the cell is written
+    /// by a function that structural variants do not pass through), and its `Allele` cell is the
+    /// label of its allele: the class, or a breakend's own text.
     #[test]
-    fn a_structural_variant_has_no_variant_class() {
+    fn a_structural_variant_row_has_its_class_a_label_for_an_allele_and_no_reference_allele() {
+        use fastvep_core::{AlleleNo, AlleleSite, StructuralVariant, SvAllele, SvClass};
         let mut vf = projection_test_variant();
-        vf.variant_type = VariantType::CopyNumberLoss;
+        vf.variant_type = VariantType::Structural;
+        vf.sv = Some(Box::new(StructuralVariant {
+            class: SvClass::ChromosomeBreakpoint,
+            alleles: vec![
+                SvAllele {
+                    label: std::sync::Arc::from("A."),
+                    site: AlleleSite::Own,
+                    alt: 0,
+                },
+                SvAllele {
+                    label: std::sync::Arc::from("A[chr1:2500["),
+                    site: AlleleSite::None,
+                    alt: 0,
+                },
+            ],
+            tandem: None,
+        }));
+        // the row answers for the second allele: its cell is that allele's label, not the first's
+        vf.transcript_variations[0].allele_annotations[0].sv_allele = AlleleNo::of(1);
         let flags = ColumnFlags {
             variant_class: true,
+            show_ref_allele: true,
             ..ColumnFlags::default()
         };
-        assert_eq!(cells_with(&vf, flags, false)[17], "-");
+        let cells = cells_with(&vf, flags, false);
+        assert_eq!(cells[2], "A[chr1:2500[", "Allele");
+        assert_eq!(cells[13], "-", "REF_ALLELE");
+        assert_eq!(cells[18], "chromosome_breakpoint", "VARIANT_CLASS");
         let f = csq_by_name_with(&vf, flags);
-        assert_eq!(f["VARIANT_CLASS"], "");
+        assert_eq!(f["Allele"], "A[chr1:2500[");
+        assert_eq!(f["VARIANT_CLASS"], "chromosome_breakpoint");
+        assert_eq!(f["REF_ALLELE"], "");
     }
 
     fn csq_by_name_with(

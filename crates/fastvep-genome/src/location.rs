@@ -198,6 +198,24 @@ impl Transcript {
     }
 }
 
+impl Transcript {
+    /// [`Self::apply_total_length`] for a structural variant. One that covers the whole transcript
+    /// has none of the `exon` or `coding` flags that decide whether a cell has a total (Ensembl's
+    /// `_bvfo_preds` returns early for it, with a complete overlap and nothing else), so none of its
+    /// cells does, and its location is empty.
+    pub fn apply_total_length_of_sv(
+        &self,
+        location: &mut TranscriptLocation,
+        start: u64,
+        end: u64,
+    ) {
+        if start <= self.start && end >= self.end {
+            return;
+        }
+        self.apply_total_length(location, start, end);
+    }
+}
+
 /// The first and last of the numbers `hits` yields, with the count they are out of.
 fn ordinals(hits: impl Iterator<Item = u32>, total: usize) -> Option<Ordinals> {
     let (mut first, mut last) = (u32::MAX, 0u32);

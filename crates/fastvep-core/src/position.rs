@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-/// Classification of variant type for dispatch between small-variant and SV pipelines.
+/// Classification of variant type for dispatch between the small-variant and the structural-variant
+/// pipelines.
+///
+/// A structural variant is one thing here, and its class (the term VEP calls `class_SO_term`) is
+/// [`crate::SvClass`], held by the variant as `StructuralVariant::class`: Ensembl's consequence
+/// rules read that class and nothing finer, so the classes are not variants of this enum as well.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VariantType {
     /// Single nucleotide variant.
@@ -13,38 +18,16 @@ pub enum VariantType {
     Indel,
     /// Multi-nucleotide variant (substitution of >1 base).
     Mnv,
-    // -- Structural variant types --
-    /// Copy number variation (unspecified direction).
-    CopyNumberVariation,
-    /// Copy number loss.
-    CopyNumberLoss,
-    /// Copy number gain.
-    CopyNumberGain,
-    /// Tandem duplication.
-    TandemDuplication,
-    /// Inversion.
-    Inversion,
-    /// Translocation breakend.
-    TranslocationBreakend,
-    /// Short tandem repeat expansion/contraction.
-    ShortTandemRepeatVariation,
+    /// A symbolic allele or a breakend, which has the predictor of its own.
+    Structural,
     /// Unknown or unclassified variant.
     Unknown,
 }
 
 impl VariantType {
-    /// Returns true for structural variant types that need the SV annotation pipeline.
+    /// Returns true for the structural variants, which need the SV annotation pipeline.
     pub fn is_structural(self) -> bool {
-        matches!(
-            self,
-            Self::CopyNumberVariation
-                | Self::CopyNumberLoss
-                | Self::CopyNumberGain
-                | Self::TandemDuplication
-                | Self::Inversion
-                | Self::TranslocationBreakend
-                | Self::ShortTandemRepeatVariation
-        )
+        matches!(self, Self::Structural)
     }
 
     /// Returns true for small variant types handled by the standard pipeline.

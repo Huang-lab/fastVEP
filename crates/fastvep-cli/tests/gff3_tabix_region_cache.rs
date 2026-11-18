@@ -242,3 +242,89 @@ fn a_whole_file_gff3_load_still_writes_its_sidecar_cache() {
         "cached whole-file load should annotate gene B: {csq_b}"
     );
 }
+
+/// A VCF of one record, written as it is.
+fn write_vcf_record(dir: &Path, name: &str, record: &str) -> PathBuf {
+    let path = dir.join(name);
+    let mut f = File::create(&path).unwrap();
+    writeln!(f, "##fileformat=VCFv4.2").unwrap();
+    writeln!(f, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO").unwrap();
+    writeln!(f, "{record}").unwrap();
+    path
+}
+
+/// A structural variant is read from a tabix GFF3 for the whole of what it reaches, not for the
+/// `POS +- distance` of a small variant: a deletion of 900 kb covers the transcript 900 kb away
+/// from its position, and a breakend's mate is paired with the transcript around the mate. Before the
+/// prescan read the records it loaded only the transcripts around `POS`, and the rows of the others
+/// were missing from the answer with exit code 0 and nothing said.
+#[test]
+fn a_structural_variant_loads_the_transcripts_its_span_and_its_mates_reach() {
+    let dir = TempDir::new().unwrap();
+    let gff3 = write_tabix_gff3(dir.path());
+    let fasta = write_fasta(dir.path());
+
+    let deletion = write_vcf_record(
+        dir.path(),
+        "del.vcf",
+        "1\t900\tdel\tN\t<DEL>\t.\t.\tEND=950000",
+    );
+    let out = dir.path().join("del.out.vcf");
+    annotate(&deletion, &gff3, &fasta, &out);
+    let csq = csq_of(&out);
+    for transcript in ["ENST_A", "ENST_B"] {
+        assert!(
+            csq.contains(&format!("|{transcript}|")),
+            "the deletion covers {transcript}, which is {} bases from its position: {csq}",
+            if transcript == "ENST_A" { 100 } else { 900_000 }
+        );
+    }
+    assert!(
+        csq.contains("transcript_ablation"),
+        "a deletion that covers a transcript is its ablation: {csq}"
+    );
+
+    let breakend = write_vcf_record(
+        dir.path(),
+        "bnd.vcf",
+        &format!("1\t2000\tbnd\tN\tN[1:{}[\t.\t.\tSVTYPE=BND", GENE_B_CDS + 5),
+    );
+    let out = dir.path().join("bnd.out.vcf");
+    annotate(&breakend, &gff3, &fasta, &out);
+    let csq = csq_of(&out);
+    assert!(
+        csq.contains("|ENST_B|"),
+        "the mate of the breakend is in ENST_B: {csq}"
+    );
+    assert!(
+        csq.contains("feature_truncation"),
+        "a breakend inside a transcript is its truncation: {csq}"
+    );
+}
+
+/// An index addresses positions up to `(1 << (min_shift + 3 * depth)) - 1` (536,870,911 for a
+/// `.tbi`) and refuses an interval that reaches past it, as a whole. One record whose reach widened
+/// the region past it (a deletion with `END=2000000000`, which the run then skips as larger than
+/// `--max_sv_size`) left the contig with no transcript at all, and every variant on it intergenic,
+/// with exit code 0 and no warning: the interval is cut to what the index covers.
+#[test]
+fn a_record_that_reaches_past_what_the_index_addresses_does_not_void_its_contig() {
+    let dir = TempDir::new().unwrap();
+    let gff3 = write_tabix_gff3(dir.path());
+    let fasta = write_fasta(dir.path());
+    let vcf = write_vcf_record(
+        dir.path(),
+        "past.vcf",
+        &format!(
+            "1\t{}\t.\tG\tA\t.\t.\t.\n1\t1200\t.\tN\t<DEL>\t.\t.\tEND=2000000000",
+            GENE_A_CDS + 7
+        ),
+    );
+    let out = dir.path().join("past.out.vcf");
+    annotate(&vcf, &gff3, &fasta, &out);
+    let csq = csq_of(&out);
+    assert!(
+        csq.contains("|ENST_A|") && csq.contains("missense_variant"),
+        "the SNV in gene A is annotated against it: {csq}"
+    );
+}

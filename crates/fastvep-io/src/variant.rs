@@ -1,7 +1,7 @@
 use crate::known::{AlleleKnown, KnownCells};
 use fastvep_core::{
     Allele, Consequence, GeneAnnotation, GenomicPosition, Impact, SpliceContext, Strand,
-    SupplementaryAnnotation, TranscriptLocation, VariantType,
+    StructuralVariant, SupplementaryAnnotation, TranscriptLocation, VariantType,
 };
 use std::sync::Arc;
 
@@ -32,10 +32,10 @@ pub struct VariationFeature {
     pub most_severe_consequence: Option<Consequence>,
     /// Classified variant type (SNV, insertion, deletion, SV, etc.).
     pub variant_type: VariantType,
-    /// For structural variants: the END position from VCF INFO.
-    pub sv_end: Option<u64>,
-    /// For structural variants: the SVLEN from VCF INFO.
-    pub sv_len: Option<i64>,
+    /// What the record is when Ensembl VEP reads it as a structural variant: its class and the
+    /// alleles it writes a row for. `position` is then VEP's interval for it (`POS + 1` to the end),
+    /// and an insertion has `start = end + 1`. `None` for every other variant.
+    pub sv: Option<Box<StructuralVariant>>,
     /// Supplementary annotations from external data sources (ClinVar, gnomAD, etc.).
     pub supplementary_annotations: Vec<SupplementaryAnnotation>,
     /// Gene-level annotations (OMIM, pLI, etc.).
@@ -112,6 +112,11 @@ impl TranscriptVariation {
 #[derive(Debug, Clone)]
 pub struct AlleleAnnotation {
     pub allele: Allele,
+    /// For a structural variant, the allele of `vf.sv` the row answers for, whose label is what the
+    /// `Allele` column says (the class, `deletion`, or a breakend's own text, `A[chr1:2500[`). Then
+    /// `allele` is the ALT of the record the row answers for, which is what the annotations of a
+    /// variant are keyed by. `None` for a small variant.
+    pub sv_allele: Option<fastvep_core::AlleleNo>,
     pub consequences: Vec<Consequence>,
     pub impact: Impact,
     /// The `cDNA_position`, `CDS_position`, `Protein_position`, `EXON` and `INTRON`
@@ -153,7 +158,11 @@ pub struct AlleleAnnotation {
     /// Per-allele supplementary annotations as (json_key, json_value) pairs.
     pub supplementary: Vec<(String, String)>,
     /// ACMG-AMP classification result (serialized as serde_json::Value).
-    pub acmg_classification: Option<serde_json::Value>,
+    ///
+    /// Boxed because only a run with `--acmg` has one, and an `Option<serde_json::Value>` is 32
+    /// bytes in every row of every run; the box is 8. That is what pays for the 4 bytes of
+    /// `sv_allele`, so that a row is 616 bytes, within the 632 that the loop was measured with.
+    pub acmg_classification: Option<Box<serde_json::Value>>,
     /// Whether `--flag-pick*` chose this (transcript, allele) pair.
     ///
     /// The flag sits on the allele rather than on the `TranscriptVariation`
@@ -245,5 +254,41 @@ impl VariationFeature {
                 )
             })
             .collect()
+    }
+}
+
+impl VariationFeature {
+    /// What the `Allele` column says for `row` when it is not the allele itself: the label of the
+    /// structural variant's allele the row answers for. `None` for a small variant's row.
+    pub fn allele_label(&self, row: &AlleleAnnotation) -> Option<&str> {
+        self.sv.as_deref()?.label(row.sv_allele?)
+    }
+
+    /// The text of the `Allele` column: the label of a structural variant's allele, else the allele.
+    pub fn allele_text(&self, row: &AlleleAnnotation) -> std::borrow::Cow<'_, str> {
+        match self.allele_label(row) {
+            Some(label) => std::borrow::Cow::Borrowed(label),
+            None => std::borrow::Cow::Owned(row.allele.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A row is built for every variant, transcript and allele, and what a small variant's run pays
+    /// for it is in its size. A 16-byte label for structural variants made it 648 bytes and cost a
+    /// one-thread VCF run 2.3% against the 632 the loop was measured with (see
+    /// `fastvep_core::AlleleNo`). A field that has to be added raises this number, with a
+    /// measurement of the run beside the change.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn a_row_stays_within_the_size_the_loop_was_measured_with() {
+        assert!(
+            std::mem::size_of::<AlleleAnnotation>() <= 632,
+            "AlleleAnnotation is {} bytes",
+            std::mem::size_of::<AlleleAnnotation>()
+        );
     }
 }

@@ -678,6 +678,16 @@ struct Record<'a> {
 const ROW_BYTES: usize = 700;
 const ACMG_ROW_BYTES: usize = 5_000;
 
+/// What [`read_vcf_lines`] read of a request.
+struct Request<'a> {
+    /// the `#` lines, as they came
+    headers: Vec<&'a str>,
+    /// the records to annotate
+    records: Vec<Record<'a>>,
+    /// a note for each record Ensembl VEP skips as well: told of, and not annotated
+    skipped: Vec<String>,
+}
+
 /// Read every record of the request before annotating any, so that a line that cannot be read is
 /// refused with its number and the reason, as a `400`, and not met at record 30,000 as an internal
 /// error. The parser the annotation uses is the one used here, so what passes here parses there.
@@ -689,14 +699,14 @@ const ACMG_ROW_BYTES: usize = 5_000;
 /// answer alone would pass the response limit is refused here, with its number, before any work is
 /// spent on it.
 ///
-/// Returns the header lines and the records.
+/// Returns the header lines, the records and the notes of the records it skipped.
 fn read_vcf_lines<'a>(
     ctx: &AnnotationContext,
     vcf_text: &'a str,
     pick: Option<PickRequest>,
     acmg_requested: bool,
     limits: &Limits,
-) -> Result<(Vec<&'a str>, Vec<Record<'a>>), AppError> {
+) -> Result<Request<'a>, AppError> {
     let reduces = pick.is_some_and(|p| p.mode == PickMode::Reduce);
     let row_bytes = if acmg_requested {
         ACMG_ROW_BYTES
@@ -705,6 +715,9 @@ fn read_vcf_lines<'a>(
     };
     let mut headers = Vec::new();
     let mut records = Vec::new();
+    // The records Ensembl VEP skips too: told of, and not annotated, where a record that cannot be
+    // read refuses the request
+    let mut skipped = Vec::new();
     for (index, line) in vcf_text.lines().enumerate() {
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
@@ -727,8 +740,21 @@ fn read_vcf_lines<'a>(
                 MAX_ALT_ALLELES
             )));
         }
-        let vf = match fastvep_io::vcf::parse_vcf_line(trimmed) {
+        // Read without Ensembl's size limit, so that a coordinate beyond what this server annotates
+        // is refused as one (below) before the limit skips the record
+        let no_limit = fastvep_io::vcf::ParseOptions {
+            max_sv_size: None,
+            ..Default::default()
+        };
+        let vf = match fastvep_io::vcf::parse_vcf_line_with(trimmed, &no_limit) {
             Ok(vf) => vf,
+            Err(e) if e.downcast_ref::<fastvep_io::sv_record::Skipped>().is_some() => {
+                skipped.push(format!(
+                    "VCF line {} was not annotated: {e}, as Ensembl VEP skips it.",
+                    index + 1
+                ));
+                continue;
+            }
             Err(e) => {
                 let message = format!("{e:#}");
                 let shown: String = message.chars().take(200).collect();
@@ -752,12 +778,49 @@ fn read_vcf_lines<'a>(
                 MAX_COORDINATE
             )));
         }
-        let alleles = vf.alt_alleles.len().max(1);
-        let overlapped = ctx.overlapping_transcripts(
+        // and what VEP's `--max_sv_size` skips (a variant, SV or not, longer than its default)
+        let length = vf.position.end.saturating_sub(vf.position.start);
+        if length > fastvep_io::vcf::DEFAULT_MAX_SV_SIZE {
+            skipped.push(format!(
+                "VCF line {} was not annotated: variant size ({length}) is bigger than \
+                 --max_sv_size ({}), as Ensembl VEP skips it.",
+                index + 1,
+                fastvep_io::vcf::DEFAULT_MAX_SV_SIZE
+            ));
+            continue;
+        }
+        let mut alleles = vf.alt_alleles.len().max(1);
+        let mut overlapped = ctx.overlapping_transcripts(
             &vf.position.chromosome,
             vf.position.start,
             vf.position.end,
         );
+        // A structural variant has a row for each allele that a transcript is close to, and a
+        // breakend's own position and each mate are alleles: the transcripts around a mate are
+        // rows of the answer too.
+        if let Some(sv) = vf.sv.as_deref() {
+            alleles = sv.alleles.len().max(1);
+            // A tandem repeat with the INFO to be read as bases is annotated as a small variant with
+            // an allele for each of its repeats, which the ALT column does not count (`<CNV:TR>` is
+            // one): they are rows of the answer, and a record that lists more than a request may hold
+            // is refused as one with that many ALTs is.
+            if let Some(repeat) = &sv.tandem {
+                let repeats = repeat.allele_count();
+                if repeats > MAX_ALT_ALLELES {
+                    return Err(AppError::BadRequest(format!(
+                        "VCF line {} lists {} repeat alleles, and this server annotates up to {} for \
+                         one record. Split the record, or run `fastvep annotate` on your own machine.",
+                        index + 1,
+                        repeats,
+                        MAX_ALT_ALLELES
+                    )));
+                }
+                alleles = alleles.max(repeats);
+            }
+            for (chromosome, position) in sv.mates() {
+                overlapped += ctx.overlapping_transcripts(chromosome, position, position);
+            }
+        }
         let rows = if reduces {
             alleles
         } else {
@@ -780,7 +843,11 @@ fn read_vcf_lines<'a>(
             rows,
         });
     }
-    Ok((headers, records))
+    Ok(Request {
+        headers,
+        records,
+        skipped,
+    })
 }
 
 /// The lookups of each source that have failed so far in this process, from the tally the readers
@@ -858,7 +925,11 @@ fn annotate_with(
         None
     };
 
-    let (headers, records) = read_vcf_lines(ctx, vcf_text, pick, acmg_requested, budget.limits)?;
+    let Request {
+        headers,
+        records,
+        skipped,
+    } = read_vcf_lines(ctx, vcf_text, pick, acmg_requested, budget.limits)?;
     let failures_before = lookup_failures();
     let mut results = ResultsBuffer::new();
     let mut batch_text = String::new();
@@ -910,7 +981,7 @@ fn annotate_with(
     // A database that could not be read for some lookups while this request ran. The tally is the
     // process's, so a lookup of a concurrent request that failed is counted here too: that is
     // still a source that could not answer, which is what the client is told.
-    let mut warnings = Vec::new();
+    let mut warnings = skipped;
     for (source, count, first) in fastvep_annotate::sa_lookup_errors().snapshot() {
         let failed = count.saturating_sub(failures_before.get(&source).copied().unwrap_or(0));
         if failed > 0 {

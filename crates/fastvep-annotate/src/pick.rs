@@ -886,6 +886,7 @@ mod pick_tests {
             biotype: Arc::from(biotype),
             allele_annotations: vec![AlleleAnnotation {
                 allele: Allele::from_str("A"),
+                sv_allele: None,
                 consequences,
                 impact: Impact::Modifier,
                 location: TranscriptLocation::default(),
@@ -1052,6 +1053,46 @@ mod pick_tests {
                 "{scope:?} left the only entry unflagged"
             );
         }
+    }
+
+    /// Release 116.3 ranks `splice_donor_5th_base_variant` (15) before `splice_region_variant` (16),
+    /// and the rank is the eighth criterion of a pick: two transcripts that tie on the seven before
+    /// it are told apart by it, and Ensembl keeps the one with the donor term. The ID of the donor
+    /// one is the later, so that the last tie-break would have chosen the other. (A change at the
+    /// fifth base of a donor of one transcript and in the splice region of another, found by a
+    /// differential run of the structural variant port against Ensembl VEP.)
+    #[test]
+    fn a_donor_fifth_base_term_outranks_a_splice_region_one_when_nothing_before_it_differs() {
+        let mut tvs = vec![
+            make_tv(
+                "TX_A",
+                false,
+                "protein_coding",
+                vec![Consequence::SpliceRegionVariant, Consequence::IntronVariant],
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            make_tv(
+                "TX_B",
+                false,
+                "protein_coding",
+                vec![
+                    Consequence::SpliceDonorFifthBaseVariant,
+                    Consequence::IntronVariant,
+                ],
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        ];
+        apply_pick(&mut tvs, &PickPlan::reduce_per_variant(DEFAULT_PICK_ORDER));
+        assert_eq!(tvs.len(), 1);
+        assert_eq!(&*tvs[0].transcript_id, "TX_B");
     }
 
     #[test]

@@ -29,7 +29,12 @@ impl Impact {
 /// Sequence Ontology consequence terms used by Ensembl VEP.
 ///
 /// Variants are ordered by severity rank (lower rank = more severe).
-/// Ranks and SO terms match Ensembl VEP release 115.
+/// The terms, with their ranks and impacts, are the 41 of `%OVERLAP_CONSEQUENCES` and its default
+/// (`Bio::EnsEMBL::Variation::Utils::Constants`, release 116.3), which
+/// `the_ranks_and_impacts_are_those_of_release_116_3` holds: the four terms of a structural variant
+/// that changes the length of a feature (`transcript_ablation`, `transcript_amplification`,
+/// `feature_elongation` and `feature_truncation`) are all `HIGH` there. A structural variant gets no
+/// term of its own besides these: copy number and repeat terms of other tools are not Ensembl's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Consequence {
     TranscriptAblation,
@@ -46,8 +51,8 @@ pub enum Consequence {
     InframeDeletion,
     MissenseVariant,
     ProteinAlteringVariant,
-    SpliceRegionVariant,
     SpliceDonorFifthBaseVariant,
+    SpliceRegionVariant,
     SpliceDonorRegionVariant,
     SplicePolypyrimidineTractVariant,
     IncompleteTerminalCodonVariant,
@@ -73,17 +78,6 @@ pub enum Consequence {
     RegulatoryRegionVariant,
     IntergenicVariant,
     SequenceVariant,
-    // -- Structural variant consequence terms (Nirvana parity) --
-    CopyNumberChange,
-    CopyNumberIncrease,
-    CopyNumberDecrease,
-    ShortTandemRepeatChange,
-    ShortTandemRepeatExpansion,
-    ShortTandemRepeatContraction,
-    /// Unidirectional gene fusion (from breakend analysis).
-    UnidirectionalGeneFusion,
-    /// Transcript variant (generic SV overlap with transcript).
-    TranscriptVariant,
 }
 
 impl Consequence {
@@ -104,8 +98,8 @@ impl Consequence {
             Self::InframeDeletion => 12,
             Self::MissenseVariant => 13,
             Self::ProteinAlteringVariant => 14,
-            Self::SpliceRegionVariant => 15,
-            Self::SpliceDonorFifthBaseVariant => 16,
+            Self::SpliceDonorFifthBaseVariant => 15,
+            Self::SpliceRegionVariant => 16,
             Self::SpliceDonorRegionVariant => 17,
             Self::SplicePolypyrimidineTractVariant => 18,
             Self::IncompleteTerminalCodonVariant => 19,
@@ -131,14 +125,6 @@ impl Consequence {
             Self::RegulatoryRegionVariant => 39,
             Self::IntergenicVariant => 40,
             Self::SequenceVariant => 41,
-            Self::CopyNumberChange => 42,
-            Self::CopyNumberIncrease => 43,
-            Self::CopyNumberDecrease => 44,
-            Self::ShortTandemRepeatChange => 45,
-            Self::ShortTandemRepeatExpansion => 46,
-            Self::ShortTandemRepeatContraction => 47,
-            Self::UnidirectionalGeneFusion => 48,
-            Self::TranscriptVariant => 49,
         }
     }
 
@@ -153,18 +139,17 @@ impl Consequence {
             | Self::StopLost
             | Self::StartLost
             | Self::TranscriptAmplification
-            | Self::TfbsAblation
-            | Self::RegulatoryRegionAblation => Impact::High,
+            | Self::FeatureElongation
+            | Self::FeatureTruncation => Impact::High,
 
             Self::InframeInsertion
             | Self::InframeDeletion
             | Self::MissenseVariant
             | Self::ProteinAlteringVariant
-            | Self::RegulatoryRegionAmplification
-            | Self::TfbsAmplification => Impact::Moderate,
+            | Self::TfbsAblation => Impact::Moderate,
 
-            Self::SpliceRegionVariant
-            | Self::SpliceDonorFifthBaseVariant
+            Self::SpliceDonorFifthBaseVariant
+            | Self::SpliceRegionVariant
             | Self::SpliceDonorRegionVariant
             | Self::SplicePolypyrimidineTractVariant
             | Self::IncompleteTerminalCodonVariant
@@ -183,20 +168,13 @@ impl Consequence {
             | Self::CodingTranscriptVariant
             | Self::UpstreamGeneVariant
             | Self::DownstreamGeneVariant
+            | Self::TfbsAmplification
             | Self::TfBindingSiteVariant
+            | Self::RegulatoryRegionAblation
+            | Self::RegulatoryRegionAmplification
             | Self::RegulatoryRegionVariant
             | Self::IntergenicVariant
-            | Self::SequenceVariant
-            | Self::FeatureElongation
-            | Self::FeatureTruncation
-            | Self::CopyNumberChange
-            | Self::CopyNumberIncrease
-            | Self::CopyNumberDecrease
-            | Self::ShortTandemRepeatChange
-            | Self::ShortTandemRepeatExpansion
-            | Self::ShortTandemRepeatContraction
-            | Self::UnidirectionalGeneFusion
-            | Self::TranscriptVariant => Impact::Modifier,
+            | Self::SequenceVariant => Impact::Modifier,
         }
     }
 
@@ -244,14 +222,6 @@ impl Consequence {
             Self::RegulatoryRegionVariant => "regulatory_region_variant",
             Self::IntergenicVariant => "intergenic_variant",
             Self::SequenceVariant => "sequence_variant",
-            Self::CopyNumberChange => "copy_number_change",
-            Self::CopyNumberIncrease => "copy_number_increase",
-            Self::CopyNumberDecrease => "copy_number_decrease",
-            Self::ShortTandemRepeatChange => "short_tandem_repeat_change",
-            Self::ShortTandemRepeatExpansion => "short_tandem_repeat_expansion",
-            Self::ShortTandemRepeatContraction => "short_tandem_repeat_contraction",
-            Self::UnidirectionalGeneFusion => "unidirectional_gene_fusion",
-            Self::TranscriptVariant => "transcript_variant",
         }
     }
 
@@ -299,14 +269,6 @@ impl Consequence {
             "regulatory_region_variant" => Some(Self::RegulatoryRegionVariant),
             "intergenic_variant" => Some(Self::IntergenicVariant),
             "sequence_variant" => Some(Self::SequenceVariant),
-            "copy_number_change" => Some(Self::CopyNumberChange),
-            "copy_number_increase" => Some(Self::CopyNumberIncrease),
-            "copy_number_decrease" => Some(Self::CopyNumberDecrease),
-            "short_tandem_repeat_change" => Some(Self::ShortTandemRepeatChange),
-            "short_tandem_repeat_expansion" => Some(Self::ShortTandemRepeatExpansion),
-            "short_tandem_repeat_contraction" => Some(Self::ShortTandemRepeatContraction),
-            "unidirectional_gene_fusion" => Some(Self::UnidirectionalGeneFusion),
-            "transcript_variant" => Some(Self::TranscriptVariant),
             _ => None,
         }
     }
@@ -396,5 +358,64 @@ mod tests {
             Consequence::most_severe(&cs),
             Some(Consequence::MissenseVariant)
         );
+    }
+
+    /// Ensembl's `%OVERLAP_CONSEQUENCES` and its default overlap consequence
+    /// (`Bio::EnsEMBL::Variation::Utils::Constants`, release 116.3): every term with its `rank` and
+    /// `impact`, written out of that file by a script and not typed. Six cells were not Ensembl's
+    /// before this test: `splice_region_variant` and `splice_donor_5th_base_variant` were ranked the
+    /// other way round, and four regulatory terms, which no predictor emits, had another impact.
+    #[test]
+    fn the_ranks_and_impacts_are_those_of_release_116_3() {
+        const ENSEMBL: &[(&str, u32, &str)] = &[
+            ("transcript_ablation", 1, "HIGH"),
+            ("splice_acceptor_variant", 2, "HIGH"),
+            ("splice_donor_variant", 3, "HIGH"),
+            ("stop_gained", 4, "HIGH"),
+            ("frameshift_variant", 5, "HIGH"),
+            ("stop_lost", 6, "HIGH"),
+            ("start_lost", 7, "HIGH"),
+            ("transcript_amplification", 8, "HIGH"),
+            ("feature_elongation", 9, "HIGH"),
+            ("feature_truncation", 10, "HIGH"),
+            ("inframe_insertion", 11, "MODERATE"),
+            ("inframe_deletion", 12, "MODERATE"),
+            ("missense_variant", 13, "MODERATE"),
+            ("protein_altering_variant", 14, "MODERATE"),
+            ("splice_donor_5th_base_variant", 15, "LOW"),
+            ("splice_region_variant", 16, "LOW"),
+            ("splice_donor_region_variant", 17, "LOW"),
+            ("splice_polypyrimidine_tract_variant", 18, "LOW"),
+            ("incomplete_terminal_codon_variant", 19, "LOW"),
+            ("start_retained_variant", 20, "LOW"),
+            ("stop_retained_variant", 21, "LOW"),
+            ("synonymous_variant", 22, "LOW"),
+            ("coding_sequence_variant", 23, "MODIFIER"),
+            ("mature_miRNA_variant", 24, "MODIFIER"),
+            ("5_prime_UTR_variant", 25, "MODIFIER"),
+            ("3_prime_UTR_variant", 26, "MODIFIER"),
+            ("non_coding_transcript_exon_variant", 27, "MODIFIER"),
+            ("intron_variant", 28, "MODIFIER"),
+            ("NMD_transcript_variant", 29, "MODIFIER"),
+            ("non_coding_transcript_variant", 30, "MODIFIER"),
+            ("coding_transcript_variant", 31, "MODIFIER"),
+            ("upstream_gene_variant", 32, "MODIFIER"),
+            ("downstream_gene_variant", 33, "MODIFIER"),
+            ("TFBS_ablation", 34, "MODERATE"),
+            ("TFBS_amplification", 35, "MODIFIER"),
+            ("TF_binding_site_variant", 36, "MODIFIER"),
+            ("regulatory_region_ablation", 37, "MODIFIER"),
+            ("regulatory_region_amplification", 38, "MODIFIER"),
+            ("regulatory_region_variant", 39, "MODIFIER"),
+            ("intergenic_variant", 40, "MODIFIER"),
+            ("sequence_variant", 41, "MODIFIER"),
+        ];
+        assert_eq!(ENSEMBL.len(), 41);
+        for &(term, rank, impact) in ENSEMBL {
+            let c = Consequence::from_so_term(term).unwrap_or_else(|| panic!("no term {term}"));
+            assert_eq!(c.so_term(), term);
+            assert_eq!(c.rank(), rank, "the rank of {term}");
+            assert_eq!(c.impact().as_str(), impact, "the impact of {term}");
+        }
     }
 }

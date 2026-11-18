@@ -2,7 +2,34 @@ use anyhow::{Context, Result};
 use fastvep_core::{Allele, GenomicPosition, Strand, VariantType};
 use std::io::{BufRead, BufReader, Read};
 
+use crate::sv_record::{self, Skipped};
 use crate::variant::{VariationFeature, VcfFields};
+
+/// What a reader may be told to do with the records it reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseOptions {
+    /// `--max_sv_size`: a variant whose end is more than this far from its start is not annotated
+    /// (VEP: "variant size (N) is bigger than --max_sv_size"). `None` is VEP's `-1`.
+    pub max_sv_size: Option<u64>,
+    /// Read an insertion (`<INS>`, a mobile element insertion) as the point between `POS` and
+    /// `POS + 1`, as the VCF specification describes it. Ensembl VEP reads one that has an `SVLEN`
+    /// as the interval of that many bases after `POS`, which is the default here as well: the
+    /// interval can reach an exon that the point does not, so a long insertion has terms that its
+    /// insertion point has not.
+    pub insertion_as_point: bool,
+}
+
+/// VEP's default of `--max_sv_size`.
+pub const DEFAULT_MAX_SV_SIZE: u64 = 10_000_000;
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self {
+            max_sv_size: Some(DEFAULT_MAX_SV_SIZE),
+            insertion_as_point: false,
+        }
+    }
+}
 
 /// Parse a VCF file and yield VariationFeatures.
 pub struct VcfParser<R: Read> {
@@ -13,6 +40,11 @@ pub struct VcfParser<R: Read> {
     line_no: u64,
     lenient: bool,
     skipped: u64,
+    /// Records Ensembl VEP skips too (a structural variant of a type it has no class for, a
+    /// deletion with no extent, a variant beyond `--max_sv_size`), which are told of and counted
+    /// apart from the ones that could not be read.
+    declined: u64,
+    options: ParseOptions,
 }
 
 /// How many skipped records a lenient parser says so for, one by one; the rest are counted.
@@ -56,7 +88,15 @@ impl<R: Read> VcfParser<R> {
             line_no,
             lenient: false,
             skipped: 0,
+            declined: 0,
+            options: ParseOptions::default(),
         })
+    }
+
+    /// Read with these options.
+    pub fn with_options(mut self, options: ParseOptions) -> Self {
+        self.options = options;
+        self
     }
 
     /// Skip a record that cannot be read, with a message on stderr for the first few and a count
@@ -73,6 +113,12 @@ impl<R: Read> VcfParser<R> {
     /// How many records a lenient parser has skipped.
     pub fn skipped(&self) -> u64 {
         self.skipped
+    }
+
+    /// How many records were skipped as Ensembl VEP skips them ([`Skipped`]), whether the parser is
+    /// lenient or not: they are a reading of the record and not a failure to read it.
+    pub fn declined(&self) -> u64 {
+        self.declined
     }
 
     /// Get all VCF header lines (including #CHROM line).
@@ -106,10 +152,16 @@ impl<R: Read> VcfParser<R> {
                 continue;
             }
 
-            let result = parse_vcf_line(&self.line_buf);
+            let result = parse_vcf_line_with(&self.line_buf, &self.options);
             self.line_buf.clear(); // consumed
             match result {
                 Ok(vf) => return Ok(Some(vf)),
+                Err(e) if e.downcast_ref::<Skipped>().is_some() => {
+                    self.declined += 1;
+                    if self.declined <= SKIPPED_REPORTED {
+                        eprintln!("warning: skipped line {} of the VCF: {e}", self.line_no);
+                    }
+                }
                 Err(e) if self.lenient => {
                     self.skipped += 1;
                     if self.skipped <= SKIPPED_REPORTED {
@@ -144,6 +196,12 @@ impl<R: Read> VcfParser<R> {
 
 /// Parse a single VCF data line into a VariationFeature.
 pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
+    parse_vcf_line_with(line, &ParseOptions::default())
+}
+
+/// [`parse_vcf_line`] with options. An `Err` that is a [`Skipped`] is a record Ensembl VEP skips with
+/// a warning, and not one that could not be read.
+pub fn parse_vcf_line_with(line: &str, options: &ParseOptions) -> Result<VariationFeature> {
     let fields: Vec<&str> = line.split('\t').collect();
     if fields.len() < 8 {
         anyhow::bail!("VCF line has fewer than 8 fields: {}", line);
@@ -174,6 +232,56 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
     let info = fields[7];
 
     let rest: Vec<String> = fields[8..].iter().map(|s| s.to_string()).collect();
+
+    // What Ensembl VEP reads as a structural variant is read as one, whatever its alleles are: the
+    // interval, the class and the alleles are its (see `sv_record`).
+    if !sv_record::is_bases_only(ref_given, alt_str)
+        && sv_record::is_structural(
+            ref_given,
+            sv_record::real_alts(alt_str).map(|alt| alt.1),
+            info,
+        )
+    {
+        let alts: Vec<(usize, &str)> = sv_record::real_alts(alt_str).collect();
+        let record = sv_record::read(pos, ref_given, &alts, info, options.insertion_as_point)?;
+        check_size(record.start, record.end, options)?;
+        let vcf_fields = VcfFields {
+            chrom: chrom.to_string(),
+            pos,
+            id: id.to_string(),
+            ref_allele: ref_given.to_string(),
+            alt: alt_str.to_string(),
+            qual: qual.to_string(),
+            filter: filter.to_string(),
+            info: info.to_string(),
+            rest,
+        };
+        return Ok(VariationFeature {
+            position: GenomicPosition::new(chrom, record.start, record.end, Strand::Forward),
+            allele_string: record.allele_string,
+            ref_allele: Allele::from_str(&upper_bases(ref_given)),
+            alt_alleles: alt_str
+                .split(',')
+                .map(|alt| {
+                    if sv_record::is_placeholder(alt) {
+                        Allele::Missing
+                    } else {
+                        Allele::Symbolic(alt.to_string())
+                    }
+                })
+                .collect(),
+            variation_name: (id != ".").then(|| id.to_string()),
+            vcf_fields: Some(vcf_fields),
+            transcript_variations: Vec::new(),
+            known: Vec::new(),
+            minimised: false,
+            most_severe_consequence: None,
+            variant_type: VariantType::Structural,
+            sv: Some(Box::new(record.sv)),
+            supplementary_annotations: Vec::new(),
+            gene_annotations: Vec::new(),
+        });
+    }
 
     // Parse alt alleles (split on comma). Ensembl upper-cases the alleles it reads, and so does
     // this: a lower-case `c` was not the `C` of the genome, so a lone SNV was a
@@ -394,29 +502,17 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         rest,
     };
 
-    // Parse SV-related INFO fields for structural variants
-    let (sv_end, sv_len, variant_type) = if has_symbolic {
-        let info_map = parse_info_field(info);
-        let sv_end = info_map.get("END").and_then(|v| v.parse::<u64>().ok());
-        let sv_len = info_map.get("SVLEN").and_then(|v| v.parse::<i64>().ok());
-        let svtype = info_map.get("SVTYPE").map(|s| s.as_str());
-
-        let vtype = classify_sv_type(svtype, &alt_allele_strs);
-        (sv_end, sv_len, vtype)
+    // A symbolic allele that did not make the record a structural variant (`<>`) has no type
+    let variant_type = if has_symbolic {
+        VariantType::Unknown
     } else {
-        let vtype = classify_small_variant(&ref_allele, &alt_alleles);
-        (None, None, vtype)
+        classify_small_variant(&ref_allele, &alt_alleles)
     };
 
-    // For SVs, use END from INFO to set the genomic end coordinate
-    let final_end = if has_symbolic {
-        sv_end.unwrap_or(end)
-    } else {
-        end
-    };
+    check_size(start, end, options)?;
 
     Ok(VariationFeature {
-        position: GenomicPosition::new(chrom, start, final_end, Strand::Forward),
+        position: GenomicPosition::new(chrom, start, end, Strand::Forward),
         allele_string,
         ref_allele,
         alt_alleles,
@@ -427,11 +523,90 @@ pub fn parse_vcf_line(line: &str) -> Result<VariationFeature> {
         minimised: false,
         most_severe_consequence: None,
         variant_type,
-        sv_end,
-        sv_len,
+        sv: None,
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     })
+}
+
+/// A small variant read from a reference and alleles that have no anchor base before them, the way
+/// Ensembl VEP's parser leaves one it makes out of a tandem repeat: the interval of the reference,
+/// and a single allele of another length trimmed of the bases it shares with it at either end
+/// (`minimise_alleles`). A record with several alleles is not trimmed, and neither is one whose
+/// alleles are as long as the reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmallVariant {
+    pub start: u64,
+    pub end: u64,
+    /// `-` for none
+    pub reference: String,
+    pub alts: Vec<String>,
+    pub allele_string: String,
+    pub variant_type: VariantType,
+}
+
+impl SmallVariant {
+    /// The ALTs as the rows are written for them. An ALT that repeats the reference or an earlier
+    /// ALT is no allele of its own (`_raw_allele_hashes` skips it), so it is the placeholder that
+    /// `parse_vcf_line_with` leaves in its place, and a record whose ALTs are all such, or that has
+    /// none, has no row at all.
+    pub fn alt_alleles(&self) -> Vec<Allele> {
+        self.alts
+            .iter()
+            .enumerate()
+            .map(|(at, alt)| {
+                if *alt == self.reference || self.alts[..at].contains(alt) {
+                    Allele::Missing
+                } else {
+                    Allele::from_str(alt)
+                }
+            })
+            .collect()
+    }
+}
+
+/// See [`SmallVariant`]. `start` is where `reference` begins.
+pub fn small_variant(start: u64, reference: &str, alts: &[String]) -> SmallVariant {
+    let (start, reference, alts) = match alts {
+        [alt] if alt.len() != reference.len() => {
+            let ((front, reference), alt) = trim_shared_ends(reference, alt);
+            (start.saturating_add(front as u64), reference, vec![alt])
+        }
+        _ => (start, reference.to_string(), alts.to_vec()),
+    };
+    let end = if reference == "-" {
+        start.saturating_sub(1)
+    } else {
+        (start + reference.len() as u64).saturating_sub(1)
+    };
+    let mut allele_string = reference.clone();
+    for alt in &alts {
+        allele_string.push('/');
+        allele_string.push_str(alt);
+    }
+    let variant_type = classify_small_variant(
+        &Allele::from_str(&reference),
+        &alts.iter().map(|a| Allele::from_str(a)).collect::<Vec<_>>(),
+    );
+    SmallVariant {
+        start,
+        end,
+        reference,
+        alts,
+        allele_string,
+        variant_type,
+    }
+}
+
+/// `validate_vf`'s test of the size of a variant against `--max_sv_size`: its end less its start.
+fn check_size(start: u64, end: u64, options: &ParseOptions) -> Result<(), Skipped> {
+    match options.max_sv_size {
+        Some(max) if end > start && end - start > max => Err(Skipped(format!(
+            "variant size ({}) is bigger than --max_sv_size ({max})",
+            end - start
+        ))),
+        _ => Ok(()),
+    }
 }
 
 /// What an ALT that is no allele of its own repeats.
@@ -487,52 +662,6 @@ fn trim_shared_ends(reference: &str, alt: &str) -> ((usize, String), String) {
         (front, text(&r[..r.len() - back])),
         text(&a[..a.len() - back]),
     )
-}
-
-/// Parse VCF INFO field into key-value pairs.
-fn parse_info_field(info: &str) -> std::collections::HashMap<String, String> {
-    let mut map = std::collections::HashMap::new();
-    for pair in info.split(';') {
-        if let Some((key, value)) = pair.split_once('=') {
-            map.insert(key.to_string(), value.to_string());
-        }
-    }
-    map
-}
-
-/// Classify structural variant type from SVTYPE INFO field or symbolic allele.
-fn classify_sv_type(svtype: Option<&str>, alts: &[String]) -> VariantType {
-    // Prefer SVTYPE from INFO, fall back to parsing ALT
-    let sv = svtype.unwrap_or_else(|| {
-        alts.first()
-            .map(|a| a.trim_matches(|c| c == '<' || c == '>'))
-            .unwrap_or("")
-    });
-
-    match sv.to_uppercase().as_str() {
-        "DEL" => VariantType::CopyNumberLoss,
-        "DUP" | "DUP:TANDEM" => VariantType::TandemDuplication,
-        "INV" => VariantType::Inversion,
-        "BND" => VariantType::TranslocationBreakend,
-        "INS" => VariantType::Insertion,
-        "CNV" => VariantType::CopyNumberVariation,
-        "STR" => VariantType::ShortTandemRepeatVariation,
-        s if s.starts_with("CN") => {
-            // <CN0>, <CN1> = loss; <CN3>, <CN4> = gain
-            if let Ok(cn) = s.trim_start_matches("CN").parse::<u32>() {
-                if cn < 2 {
-                    VariantType::CopyNumberLoss
-                } else if cn > 2 {
-                    VariantType::CopyNumberGain
-                } else {
-                    VariantType::CopyNumberVariation
-                }
-            } else {
-                VariantType::CopyNumberVariation
-            }
-        }
-        _ => VariantType::Unknown,
-    }
 }
 
 /// Classify small variant type from alleles.
@@ -591,11 +720,12 @@ mod tests {
             ("g", "c")
         );
 
-        // mixed case, a multi-allelic record, and the symbols that are not bases
-        let vf = parse_vcf_line("1\t100\t.\tAc\tat,<DEL>,*,.\t.\tPASS\t.").unwrap();
+        // mixed case, a multi-allelic record, and the symbols that are not bases (a symbolic allele
+        // among them would make the record a structural variant, which is another reading)
+        let vf = parse_vcf_line("1\t100\t.\tAc\tat,N,*,.\t.\tPASS\t.").unwrap();
         assert_eq!(vf.ref_allele, Allele::Sequence(b"AC".to_vec()));
         assert_eq!(vf.alt_alleles[0], Allele::Sequence(b"AT".to_vec()));
-        assert_eq!(vf.allele_string, "AC/AT/<DEL>/*/.");
+        assert_eq!(vf.allele_string, "AC/AT/N/*/.");
     }
 
     /// An indel with a lower-case base is the indel its upper-case twin is, minimised and all:
@@ -961,45 +1091,105 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_sv_deletion() {
+    fn a_symbolic_deletion_starts_after_pos_and_takes_the_length_over_the_end() {
+        use fastvep_core::SvClass;
         let line = "chr1\t10000\t.\tN\t<DEL>\t.\tPASS\tSVTYPE=DEL;END=20000;SVLEN=-10000";
         let vf = parse_vcf_line(line).unwrap();
-        assert_eq!(vf.position.start, 10000);
-        assert_eq!(vf.position.end, 20000); // Uses END from INFO
-        assert_eq!(vf.variant_type, VariantType::CopyNumberLoss);
-        assert_eq!(vf.sv_end, Some(20000));
-        assert_eq!(vf.sv_len, Some(-10000));
+        // POS + 1, and the end from SVLEN (which wins over END): 10001 + 10000 - 1
+        assert_eq!((vf.position.start, vf.position.end), (10001, 20000));
+        assert_eq!(vf.variant_type, VariantType::Structural);
+        let sv = vf.sv.as_ref().unwrap();
+        assert_eq!(sv.class, SvClass::Deletion);
+        assert_eq!(vf.allele_string, "<DEL>");
         assert!(vf.alt_alleles[0].is_symbolic());
     }
 
     #[test]
-    fn test_parse_sv_duplication() {
-        let line = "chr2\t5000\t.\tN\t<DUP>\t.\tPASS\tSVTYPE=DUP;END=15000";
-        let vf = parse_vcf_line(line).unwrap();
-        assert_eq!(vf.variant_type, VariantType::TandemDuplication);
-        assert_eq!(vf.sv_end, Some(15000));
-        assert_eq!(vf.position.end, 15000);
+    fn the_class_is_the_alt_and_svtype_stands_for_an_alt_with_no_type() {
+        use fastvep_core::SvClass;
+        let class = |line: &str| parse_vcf_line(line).unwrap().sv.unwrap().class;
+        assert_eq!(
+            class("chr2\t5000\t.\tN\t<DUP>\t.\tPASS\tSVTYPE=DUP;END=15000"),
+            SvClass::Duplication
+        );
+        assert_eq!(
+            class("chr3\t1000\t.\tN\t<INV>\t.\tPASS\tSVTYPE=INV;END=5000"),
+            SvClass::Inversion
+        );
+        assert_eq!(
+            class("chr1\t100\t.\tN\t<CNV>\t.\tPASS\tSVTYPE=CNV;END=500"),
+            SvClass::CopyNumberVariation
+        );
+        assert_eq!(
+            class("chr1\t100\t.\tN\t<CN0>\t.\tPASS\tEND=500"),
+            SvClass::Deletion
+        );
+        assert_eq!(
+            class("chr1\t12345\t.\tN\t<BND>\t.\tPASS\tSVTYPE=BND"),
+            SvClass::ChromosomeBreakpoint
+        );
+        assert_eq!(
+            class("chr1\t100\t.\tN\t<X>\t.\tPASS\tSVTYPE=DEL;END=500"),
+            SvClass::Deletion
+        );
     }
 
     #[test]
-    fn test_parse_sv_inversion() {
-        let line = "chr3\t1000\t.\tN\t<INV>\t.\tPASS\tSVTYPE=INV;END=5000";
-        let vf = parse_vcf_line(line).unwrap();
-        assert_eq!(vf.variant_type, VariantType::Inversion);
+    fn a_breakend_in_the_alt_column_is_read_as_a_structural_variant() {
+        let vf = parse_vcf_line("chr1\t2020\t.\tA\tA[chr1:2500[\t.\tPASS\tSVTYPE=BND").unwrap();
+        assert_eq!(vf.variant_type, VariantType::Structural);
+        assert_eq!((vf.position.start, vf.position.end), (2021, 2021));
+        assert_eq!(vf.allele_string, "A/A[chr1:2500[");
+        assert_eq!(vf.sv.unwrap().alleles.len(), 2);
     }
 
     #[test]
-    fn test_parse_sv_breakend() {
-        let line = "chr1\t12345\t.\tN\t<BND>\t.\tPASS\tSVTYPE=BND";
-        let vf = parse_vcf_line(line).unwrap();
-        assert_eq!(vf.variant_type, VariantType::TranslocationBreakend);
+    fn what_vep_skips_is_a_skipped_record_and_not_an_unreadable_one() {
+        let skipped = |line: &str| -> String {
+            let e = parse_vcf_line(line).unwrap_err();
+            e.downcast_ref::<Skipped>().expect("a Skipped").0.clone()
+        };
+        assert_eq!(
+            skipped("1\t100\t.\tA\t<CPX>\t.\tPASS\tEND=200"),
+            "CPX is not a supported structural variant type"
+        );
+        assert_eq!(
+            skipped("1\t100\t.\tA\t<DEL>\t.\tPASS\t."),
+            "deletion looks incomplete"
+        );
+        assert_eq!(
+            skipped("1\t100\t.\tA\t<DEL>\t.\tPASS\tEND=20000000"),
+            "variant size (19999899) is bigger than --max_sv_size (10000000)"
+        );
+        // a size limit of -1 is no limit
+        let none = ParseOptions {
+            max_sv_size: None,
+            ..Default::default()
+        };
+        assert!(parse_vcf_line_with("1\t100\t.\tA\t<DEL>\t.\tPASS\tEND=20000000", &none).is_ok());
+        // the limit is for every variant: a deletion written in bases is one too
+        let long_ref = "A".repeat(50);
+        let tight = ParseOptions {
+            max_sv_size: Some(10),
+            ..Default::default()
+        };
+        let line = format!("1\t100\t.\t{long_ref}\tA\t.\tPASS\t.");
+        assert!(parse_vcf_line_with(&line, &tight)
+            .unwrap_err()
+            .downcast_ref::<Skipped>()
+            .is_some());
     }
 
     #[test]
-    fn test_parse_sv_cnv() {
-        let line = "chr1\t100\t.\tN\t<CNV>\t.\tPASS\tSVTYPE=CNV;END=500";
-        let vf = parse_vcf_line(line).unwrap();
-        assert_eq!(vf.variant_type, VariantType::CopyNumberVariation);
+    fn a_placeholder_beside_a_base_allele_does_not_make_a_record_structural() {
+        let vf = parse_vcf_line("1\t100\t.\tC\tG,<NON_REF>\t.\tPASS\t.").unwrap();
+        assert_eq!(vf.variant_type, VariantType::Snv);
+        assert!(vf.sv.is_none());
+        assert_eq!(vf.alt_alleles[1], Allele::Missing);
+        // and one that stands alone has no row
+        let vf = parse_vcf_line("1\t100\t.\tC\t<*>\t.\tPASS\tEND=200").unwrap();
+        assert!(vf.sv.is_none());
+        assert_eq!(vf.alt_alleles, [Allele::Missing]);
     }
 
     #[test]

@@ -15,6 +15,7 @@ The classifier implements all 28 ACMG-AMP evidence criteria and evaluates them f
 | Benign | B | Green |
 
 The numbers of the final classifier on the ClinVar benchmark are in the manuscript (`manuscript/acmg`).
+The criteria are those of a sequence change, so a structural variant (a record with a symbolic ALT or a breakend, which has the terms of a sequence change in its rows, `frameshift_variant` for a deletion inside an exon) is given no classification: copy number variants are classified by the criteria of Riggs et al. 2020, which fastVEP does not implement ([STRUCTURAL_VARIANTS.md](STRUCTURAL_VARIANTS.md)).
 Where this guide says what one change did, the counts are those measured when the change was made, in the runs of the time (`analysis/acmg_benchmark/RUN_VERSIONS.md`).
 
 ## Quick Start

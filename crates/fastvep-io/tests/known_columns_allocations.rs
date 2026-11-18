@@ -65,6 +65,7 @@ fn allocations_during<F: FnOnce()>(f: F) -> usize {
 fn annotation(allele: &str) -> AlleleAnnotation {
     AlleleAnnotation {
         allele: Allele::Sequence(allele.as_bytes().to_vec()),
+        sv_allele: None,
         consequences: vec![Consequence::MissenseVariant],
         impact: Impact::Moderate,
         location: TranscriptLocation {
@@ -148,8 +149,7 @@ fn known_columns_add_no_allocation_per_row_to_either_writer() {
         minimised: false,
         most_severe_consequence: Some(Consequence::MissenseVariant),
         variant_type: VariantType::Snv,
-        sv_end: None,
-        sv_len: None,
+        sv: None,
         supplementary_annotations: Vec::new(),
         gene_annotations: Vec::new(),
     };
