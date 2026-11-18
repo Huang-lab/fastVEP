@@ -177,7 +177,6 @@ if spot.exists():
     ratios = [v116[n] / s115[c] for n, c in cells]
     fact(PAPER, "3.2", "Release 116.3 is slower than release 115.1", ", ".join(f"{s115[c]:.2f}" for _, c in cells), ", ".join(f"{v116[n]:.2f}" for n, _ in cells),
          f"{min(ratios):.1f} to {max(ratios):.1f} times as long")
-    fact(README, "README", "Release 116.3 takes", f"{min(ratios):.1f} to {max(ratios):.1f} times as long", ", ".join(f"{s115[c]:.2f}" for _, c in cells), ", ".join(f"{v116[n]:.2f}" for n, _ in cells))
 
 # ---- Table 5: formats ---------------------------------------------------------------------------------------------------
 fm = table("format_comparison.csv")

@@ -398,7 +398,7 @@ VCF 4.3 (data lines, fixed fields) restricts only `;`, `=` and `,` inside an INF
 
 The one character that used to be encoded here and is not any more is the colon.
 It is reserved by nothing, Ensembl VEP writes it through literally, and fastVEP's own `CSQ` column already did too - every `HGVSc` carries one - so encoding it here contradicted the same record's `CSQ` field.
-`validation/run_escaping_probe.sh` measures what VEP does with each of these characters against a real VEP 115.1, so the rules above can be rechecked rather than taken on trust.
+`validation/run_escaping_probe.sh` measures what VEP does with each of these characters against a real VEP 116.3, so the rules above can be rechecked rather than taken on trust.
 
 Space and `"` are encoded although the spec permits both, and for the same reason in each case: there is no `FV_*` field in VEP to be diffed against, so matching VEP buys nothing here, while a reader of the column loses something real.
 `awk` and `cut -d' '` split a record on the space; `R`'s `read.delim` and Python's `csv` both treat `"` as opening a quoted field and swallow the rest of the line.

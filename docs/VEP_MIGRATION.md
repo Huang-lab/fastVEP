@@ -206,5 +206,4 @@ A change that runs off the end of a transcript or an exon, an indel written with
 ## Before you switch
 
 Run both tools on a sample of your own sites, with the flags you use, and compare row by row.
-`validation/run_divergence.sh` and `validation/compare_rows.py` do that for the Ensembl GFF3 and write one file per disagreeing field, which is the quickest way to see whether a disagreement touches the fields you read.
 `validation/compare_tab.py` compares two tab files cell by cell, `validation/check_hgvs_roundtrip.py` applies each `HGVSc`, `HGVSp` and `HGVSg` of a tab file back to the sequence and says which are not the change the VCF made (it needs no VEP run, and it is how the defects of VEP's own output that this series does not copy were found), `validation/run_cache_oracle.sh` runs VEP on its own cache beside fastVEP over the matching GFF3 and compares the two (`validation/compare_cache_run.py`), and `validation/run_known_columns.sh` does the same for the known-variant columns.
