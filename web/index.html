@@ -521,6 +521,7 @@
             <button type="button" class="chip" data-example="coding">OR4F5 coding (missense, frameshift, UTR)</button>
             <button type="button" class="chip" data-example="splicing">OR4F5 splice sites</button>
             <button type="button" class="chip" data-example="noncoding">lncRNA exon, intron and flanks</button>
+            <button type="button" class="chip" data-example="cancer" data-needs-genes hidden>15 cancer variants (P, LP, VUS)</button>
           </div>
           <p class="hint" id="examplesNote" hidden></p>
         </div>
@@ -771,6 +772,29 @@ const EXAMPLES = {
 1\t59000\t.\tC\tT\t30\tPASS\t.\t## intron_variant (intron 2)
 1\t55000\t.\tG\tA\t30\tPASS\t.\t## upstream_gene_variant
 1\t64200\t.\tT\tC\t30\tPASS\t.\t## downstream_gene_variant`,
+
+  // Cancer genes: 15 GRCh38 SNVs that ClinVar (release 2026-11-01, as served here) classifies as pathogenic, likely
+  // pathogenic or of uncertain significance, on the MANE Select transcript. It needs a full GRCh38 gene model, which the
+  // in-browser demo (OR4F5 and one lncRNA) is not, so its chip is shown only when the selected model is one.
+  cancer: `##fileformat=VCFv4.2
+## 15 variants in cancer genes (GRCh38); the class after each is ClinVar's, release 2026-11-01
+## The ACMG column is fastVEP's own call: it has no functional evidence (PS3) and leaves PP5 off, so it is more cautious than ClinVar's class for most of these
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+17\t7675088\t.\tC\tT\t.\t.\t.\t## TP53 p.Arg175His - Pathogenic
+12\t25245350\t.\tC\tT\t.\t.\t.\t## KRAS p.Gly12Asp - Pathogenic/Likely pathogenic
+3\t179234297\t.\tA\tG\t.\t.\t.\t## PIK3CA p.His1047Arg - Pathogenic
+3\t179218303\t.\tG\tA\t.\t.\t.\t## PIK3CA p.Glu545Lys - Pathogenic/Likely pathogenic
+2\t208248388\t.\tC\tT\t.\t.\t.\t## IDH1 p.Arg132His - Pathogenic/Likely pathogenic
+17\t43106487\t.\tA\tC\t.\t.\t.\t## BRCA1 p.Cys61Gly - Pathogenic
+17\t43082434\t.\tG\tA\t.\t.\t.\t## BRCA1 p.Arg1443Ter - Pathogenic
+10\t87933148\t.\tG\tA\t.\t.\t.\t## PTEN p.Arg130Gln - Pathogenic
+17\t43063930\t.\tC\tA\t.\t.\t.\t## BRCA1 p.Arg1699Leu - Likely pathogenic
+2\t47475072\t.\tG\tT\t.\t.\t.\t## MSH2 p.Asp603Tyr - Likely pathogenic
+3\t10142149\t.\tT\tC\t.\t.\t.\t## VHL p.Leu101Pro - Likely pathogenic
+17\t43063930\t.\tC\tG\t.\t.\t.\t## BRCA1 p.Arg1699Pro - Uncertain significance (the same codon as the pathogenic Arg1699Gln)
+22\t28695228\t.\tG\tA\t.\t.\t.\t## CHEK2 p.Pro425Leu - Uncertain significance
+2\t47480729\t.\tC\tG\t.\t.\t.\t## MSH2 p.Ala831Gly - Uncertain significance
+7\t55163734\t.\tG\tA\t.\t.\t.\t## EGFR p.Glu545Lys - Uncertain significance`,
 };
 
 // Parse GFF3 into transcript models
@@ -1788,6 +1812,9 @@ function syncPage() {
   if (g) fits = g.info.species === 'Homo_sapiens' && g.info.assembly === 'GRCh38';
   else if (state.mode === 'server-single') fits = state.selection === 'builtin' || state.selection === 'demo' || (state.selection !== 'upload' && /GRCh38|hg38/i.test(state.legacy.source || ''));
   $('examples').hidden = !fits;
+  // The cancer example needs a full GRCh38 gene model: not the in-browser demo, and not the built-in OR4F5 model.
+  const fullModel = g ? fits : state.mode === 'server-single' && fits && state.selection !== 'builtin' && state.selection !== 'demo';
+  for (const chip of document.querySelectorAll('[data-needs-genes]')) chip.hidden = !fullModel;
   const note = $('examplesNote');
   note.hidden = fits;
   if (!fits) note.textContent = `The built-in examples use GRCh38 coordinates. Paste VCF records called against ${g ? g.info.label : 'this gene model'}.`;
