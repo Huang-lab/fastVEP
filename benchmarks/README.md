@@ -162,7 +162,7 @@ Nothing else should run on the machine while it does: a browser, a backup or ano
 `run_sa_formats.py` measures the fastSA v1 against v2 table (sizes, build times, and the annotation of the ClinVar 2-star+ set against each format, which must come out as the same bytes).
 `manuscript/build_data.py` turns a results directory into the CSV files of `manuscript/data/`, and checks that they still agree with it; `manuscript/verify_numbers.py` checks that the numbers of the text are those of the CSV files.
 [`run_vep_side.py`](run_vep_side.py) is the Ensembl VEP side, in Docker with release 116.3 (pinned by its digest) in `--gff` mode against a bgzip and tabix copy of the same GFF3:
-the chromosome 22 series, start-up, peak memory and the size of the image, and the whole genome as the sum of 22 per-chromosome runs (a single process ran out of the Docker default memory above about 2.7M variants with VEP 115.1) in the three annotation conditions.
+the chromosome 22 series, start-up, peak memory and the size of the image, and the whole genome as the sum of 22 per-chromosome runs in the three annotation conditions.
 For the annotation conditions it gives VEP the very files that the fastSA databases were built from, as `--custom` sources (`data/benchmark/sa_sources/clinvar.vcf.gz`, and the `gnomad_joint_extracts/` of the joint release, one file per chromosome), and asks for the INFO fields that the databases keep.
 It writes the CPU time of VEP, read inside the container, beside the wall time of every run, and a run that is already in `vep_genome.tsv` is skipped when it is started again, so that a campaign of hours can be resumed.
 Its output (`vep_baseline.csv` and the files beside it) is in `benchmarks/results/v0.5.0/`, and `manuscript/build_data.py` reads it.
@@ -243,9 +243,8 @@ The head-to-head of benchmark 1 reads the same ClinVar and gnomAD files.
 same VCF + GFF3 + FASTA and diffs the outputs. Lives in
 [`validation/`](../validation/) — see
 [`validation/run_validation.sh`](../validation/run_validation.sh) (the VEP example variants and a mouse chromosome)
-and [`validation/run_divergence.sh`](../validation/run_divergence.sh) (the three inputs whose counts are in
-[`docs/VEP_DIVERGENCE.md`](../docs/VEP_DIVERGENCE.md): a ClinVar sample built to be hard, one in 200 of the HG002 variants, and 400 in-frame deletions).
-Both compare against VEP 115.1.
+and [`validation/run_divergence.sh`](../validation/run_divergence.sh), which prepares the bgzipped, indexed GFF3 that VEP reads.
+Both still run VEP 115.1, which is older than the release that [`docs/VEP_DIVERGENCE.md`](../docs/VEP_DIVERGENCE.md) measures, so neither writes a number of that document.
 The comparison with VEP 116.3 is [`validation/measure_vep116.py`](../validation/measure_vep116.py), one command for the VEP example set, the in-frame deletions, the HG002 and ClinVar samples, the generated worlds and, given NCBI's GFF3, RefSeq; the comparisons with VEP's own cache and with its known-variant columns (Part 3 of that document) have their own scripts, `run_cache_oracle.sh` and `run_known_columns.sh`.
 Ensembl VEP's output does not depend on the build of fastVEP, so a comparison that was measured with one build describes any build that writes the same bytes:
 [`validation/compare_builds.py`](../validation/compare_builds.py) runs two builds over the inputs of these comparisons, as a VCF and as the tab output of Part 3, and compares what they write byte for byte.
@@ -258,7 +257,7 @@ External data needed:
 - Mouse chr19 GFF3: [Ensembl 115 chromosome.19.gff3.gz](https://ftp.ensembl.org/pub/release-115/gff3/mus_musculus/Mus_musculus.GRCm39.115.chromosome.19.gff3.gz) — auto-downloaded by the script
 - Human chr22 1KGP VCF: tracked in-repo at [`validation/human/chr22_1kgp.vcf`](../validation/human/chr22_1kgp.vcf)
 - Human VEP example VCF: tracked in-repo at [`validation/human/vep_example_GRCh38.vcf`](../validation/human/vep_example_GRCh38.vcf)
-- Docker image: `ensemblorg/ensembl-vep:release_116.3` (`measure_vep116.py` and `run_vep_side.py`, pinned by digest), and `ensemblorg/ensembl-vep:release_115.1` for the two older scripts
+- Docker image: `ensemblorg/ensembl-vep:release_116.3` (`measure_vep116.py` and `run_vep_side.py`, pinned by digest), and `ensemblorg/ensembl-vep:release_115.1` for the two older scripts, `validation/run_validation.sh` and `validation/run_divergence.sh`
 
 ---
 

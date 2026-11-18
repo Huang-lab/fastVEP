@@ -819,8 +819,7 @@ The Drosophila and mouse variant files are in the coordinates of dm3 and GRCm38,
 
 Both tools single-threaded on identical GRCh38 Ensembl 115 GFF3 + FASTA with `--hgvs --symbol --canonical`.
 fastVEP uses its binary transcript cache; Ensembl VEP runs via Docker (`ensemblorg/ensembl-vep:release_116.3`, pinned by its digest) in `--gff` mode against a bgzip+tabix-indexed GFF3.
-VEP's full-genome time is measured per chromosome and summed, one run at a time: a single-process whole-genome run of VEP 115.1 ran out of the 7.65 GiB Docker default above ~2.7M variants (July 2026, not repeated), and the per-chromosome sum keeps VEP's memory bounded (its best case).
-Release 116.3 takes 1.3 to 1.9 times as long as the release 115.1 of the earlier version of this table: on the chr22 inputs below, on the same day, 115.1 took 0.46, 5.98, 12.88, 83.65 s where 116.3 took 0.64, 7.91, 24.07, 112.51 s (`benchmarks/results/v0.5.0/with_vep/vep_115_1/`).
+VEP's full-genome time is measured per chromosome and summed, one run at a time, which keeps VEP's memory bounded (its best case).
 
 **Full human WGS (4,048,342 variants), single-thread:**
 
@@ -942,10 +941,9 @@ What differs is not the rules: the rows of Ensembl VEP's `<*>` allele, which fas
 That file spells the contig `21` in one column and `chr21` in another, and Ensembl VEP compares contig names letter for letter, so for 572 of the 8,158 records the mate rows are only fastVEP's, and for others it writes the rows of one spelling or the other, and its `--gff` mode pairs 905 records with transcripts of other chromosomes, which its buffer does (run one record at a time the strict F1 is 0.9724); with one spelling the two outputs differ in 157 of 104,973 tuples, 136 of them on `unconfirmed_transcript` features, a type that Ensembl VEP's reader ignores.
 
 **HGVSp under in-frame indels.**
-For a two-residue deletion in the poly-glutamate C-terminus of NT5C2 (`10:103089678 TTCCTCC>T`) fastVEP writes `p.Glu560_Glu561del`, the 3'-most placement that HGVS asks for, and Ensembl `p.Glu559_Glu560del`: Ensembl's 3'-shift stops short of the end of the protein in two ways, both of which are in release 116 as they were in 115 (divergence 9).
+For a two-residue deletion in the poly-glutamate C-terminus of NT5C2 (`10:103089678 TTCCTCC>T`) fastVEP writes `p.Glu560_Glu561del`, the 3'-most placement that HGVS asks for, and Ensembl `p.Glu559_Glu560del`: Ensembl's 3'-shift stops short of the end of the protein in two ways, both of which hold in release 116 (divergence 9).
 
-An earlier comparison, against release 115.1 and the build of 15 September 2026 (v0.3.0), is in [docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md#what-is-measured); its output differs from this release's on every input, so its numbers are not quoted here.
-The comparisons need Docker: `validation/measure_vep116.py` makes the 116.3 one in one command (about an hour on an Apple M4, most of it Ensembl VEP over the ClinVar sample), `validation/run_divergence.sh` makes the 115.1 one again (a few minutes), and Part 3 of that document gives the commands of the 116.3 one one by one.
+The comparisons need Docker: `validation/measure_vep116.py` makes the 116.3 one in one command (about an hour on an Apple M4, most of it Ensembl VEP over the ClinVar sample), and Part 3 of that document gives its commands one by one.
 
 ### Divergences
 
@@ -953,15 +951,10 @@ Agreement is the evidence that the port is faithful, not the objective. The outp
 a clinician may act on, so where Ensembl is demonstrably wrong in a way that changes a call,
 fastVEP is right instead.
 
-Against release 115.1 there were eleven such places, and one of them mattered clinically.
-Ensembl reported a change that introduces a premature stop as `inframe_insertion,stop_retained_variant`, MODERATE.
-BRCA1 `c.5030_5033dup` - ClinVar Pathogenic - is one of 52 such variants in the ClinVar 2-star+ set, 38 of them Pathogenic or Likely pathogenic.
-fastVEP reported `stop_gained,frameshift_variant`, HIGH, so those 52 kept PVS1.
-Release 116 rewrote that clause, and Ensembl VEP 116.3 writes `stop_gained,frameshift_variant` for them too.
-Against 116.3 two of the eleven are gone, that one and the second (a start codon a deletion removes), which fastVEP now reads as VEP does.
-Four more (the count or the first residue of a frameshift or of an extension, 5 to 8) turned out not to be differences with VEP but with its `--gff` reader, which takes the 3' UTR of a reverse-strand transcript from the wrong place and which a VEP cache does not do.
-Two more were found in the protein notation, one in VEP's 3'-shifting of an insertion on the reverse strand and one in how it reads an unresolved residue (12 and 13).
-Release 116.3 itself turned up six more, found by reading the start codon, the UTR, the introns and the VCF the way a clinician's pipeline meets them: a start codon is not lost where the protein still begins with its Met or where the whole coding sequence is behind the edit (14), a change that loses the initiator is `p.Met1?` whatever Ensembl writes (15), a row that is only a UTR variant has no protein change (16), a change that the 3'-rule carries over an intron is described as the change it is in the transcript (17), a record the run cannot place is said so and a REF that is not the genome's is described against the genome (18), and an insertion in front of residue 1 has no `HGVSp` (19).
+Against Ensembl VEP 116.3 the places where fastVEP is deliberately right instead are these.
+The count or the first residue of a frameshift or of an extension (5 to 8) is not a difference with VEP's model but with its `--gff` reader, which takes the 3' UTR of a reverse-strand transcript from the wrong place and which a VEP cache does not do.
+Two are in the protein notation, one in VEP's 3'-shifting of an insertion on the reverse strand and one in how it reads an unresolved residue (12 and 13).
+The others were found by reading the start codon, the UTR, the introns and the VCF the way a clinician's pipeline meets them: a start codon is not lost where the protein still begins with its Met or where the whole coding sequence is behind the edit (14), a change that loses the initiator is `p.Met1?` whatever Ensembl writes (15), a row that is only a UTR variant has no protein change (16), a change that the 3'-rule carries over an intron is described as the change it is in the transcript (17), a record the run cannot place is said so and a REF that is not the genome's is described against the genome (18), and an insertion in front of residue 1 has no `HGVSp` (19).
 
 Every divergence, its cause in the Ensembl source, its row count, and the list of fastVEP's own
 remaining gaps in the other direction are in **[docs/VEP_DIVERGENCE.md](docs/VEP_DIVERGENCE.md)**.

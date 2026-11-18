@@ -19,7 +19,7 @@ set -euo pipefail
 #
 # Prerequisites:
 #   - cargo build --release
-#   - Docker, and ensemblorg/ensembl-vep:release_115.1 (pulled if missing)
+#   - Docker, and ensemblorg/ensembl-vep:release_116.3 (pulled if missing)
 #   - bgzip and tabix (htslib)
 #
 # Usage:
@@ -28,7 +28,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_DIR="${1:-$SCRIPT_DIR/results/escaping}"
-VEP_IMAGE="ensemblorg/ensembl-vep:release_115.1"
+VEP_IMAGE="ensemblorg/ensembl-vep:release_116.3"
 FASTVEP="$PROJECT_DIR/target/release/fastvep"
 
 mkdir -p "$OUT_DIR"
@@ -93,7 +93,7 @@ docker run --rm -e VEP_DATABASE=0 -v "$OUT_DIR:/d" "$VEP_IMAGE" vep \
   2>&1 | grep -vE '^(WARNING: Parent entries|WARNING: Ignoring)' | tail -3 || true
 
 echo ""
-echo "=== What VEP 115.1 writes for a value it copies from a file ==="
+echo "=== What VEP 116.3 writes for a value it copies from a file ==="
 printf "%-14s %-16s %s\n" "in the BED" "VEP writes" "verdict"
 if python3 - <<'PY'
 import re, sys
