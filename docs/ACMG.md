@@ -14,6 +14,7 @@ The classifier implements all 28 ACMG-AMP evidence criteria and evaluates them f
 | Likely Benign | LB | Blue |
 | Benign | B | Green |
 
+The implementation and its benchmark are described in the preprint [Huang, Ganapathi and Chung 2026, medRxiv](https://doi.org/10.64898/2026.11.16.26368228) (doi:10.64898/2026.11.16.26368228).
 The numbers of the final classifier on the ClinVar benchmark are in the manuscript (`manuscript/acmg`).
 The criteria are those of a sequence change, so a structural variant (a record with a symbolic ALT or a breakend, which has the terms of a sequence change in its rows, `frameshift_variant` for a deletion inside an exon) is given no classification: copy number variants are classified by the criteria of Riggs et al. 2020, which fastVEP does not implement ([STRUCTURAL_VARIANTS.md](STRUCTURAL_VARIANTS.md)).
 Where this guide says what one change did, the counts are those measured when the change was made, in the runs of the time (`analysis/acmg_benchmark/RUN_VERSIONS.md`).
@@ -1656,6 +1657,7 @@ mechanism is not one worth adding.
 
 ## References
 
+- Huang K, Ganapathi M, Chung W. Transparent Implementation and Benchmarking of ACMG/AMP Variant Classification in fastVEP. *medRxiv*. 2026. doi:[10.64898/2026.11.16.26368228](https://doi.org/10.64898/2026.11.16.26368228).
 - Richards S, et al. Standards and guidelines for the interpretation of sequence variants. *Genet Med*. 2015;17(5):405-424.
 - Abou Tayoun AN, et al. Recommendations for interpreting the loss of function PVS1 ACMG/AMP variant criterion. *Hum Mutat*. 2018;39(11):1517-1524.
 - Ghosh R, et al. Updated recommendation for the benign stand-alone ACMG/AMP criterion. *Hum Mutat*. 2018;39(11):1525-1530.

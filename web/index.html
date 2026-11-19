@@ -521,7 +521,7 @@
             <button type="button" class="chip" data-example="coding">OR4F5 coding (missense, frameshift, UTR)</button>
             <button type="button" class="chip" data-example="splicing">OR4F5 splice sites</button>
             <button type="button" class="chip" data-example="noncoding">lncRNA exon, intron and flanks</button>
-            <button type="button" class="chip" data-example="cancer" data-needs-genes hidden>15 cancer variants (P, LP, VUS)</button>
+            <button type="button" class="chip" data-example="acmg" data-needs-genes hidden>20 ACMG test variants (ClinVar 2-star)</button>
           </div>
           <p class="hint" id="examplesNote" hidden></p>
         </div>
@@ -664,6 +664,8 @@
       <a href="https://github.com/Huang-lab/fastVEP" target="_blank" rel="noopener">GitHub</a>
       <a href="https://join.slack.com/t/fastvep/shared_invite/zt-4g20tqjvo-wGyIEnN~Ncrc4zXiu_1XJA" target="_blank" rel="noopener">Slack community</a>
       <a href="https://labs.icahn.mssm.edu/kuanhuanglab/" target="_blank" rel="noopener">Huang Lab</a>
+      <a href="https://doi.org/10.64898/2026.04.14.718452" target="_blank" rel="noopener">Cite fastVEP</a>
+      <a href="https://doi.org/10.64898/2026.11.16.26368228" target="_blank" rel="noopener">Cite the ACMG classifier</a>
       <a href="https://github.com/Huang-lab/fastVEP/issues" target="_blank" rel="noopener">Report an issue</a>
     </nav>
   </footer>
@@ -773,28 +775,35 @@ const EXAMPLES = {
 1\t55000\t.\tG\tA\t30\tPASS\t.\t## upstream_gene_variant
 1\t64200\t.\tT\tC\t30\tPASS\t.\t## downstream_gene_variant`,
 
-  // Cancer genes: 15 GRCh38 SNVs that ClinVar (release 2026-11-01, as served here) classifies as pathogenic, likely
-  // pathogenic or of uncertain significance, on the MANE Select transcript. It needs a full GRCh38 gene model, which the
-  // in-browser demo (OR4F5 and one lncRNA) is not, so its chip is shown only when the selected model is one.
-  cancer: `##fileformat=VCFv4.2
-## 15 variants in cancer genes (GRCh38); the class after each is ClinVar's, release 2026-11-01
-## The ACMG column is fastVEP's own call: it has no functional evidence (PS3) and leaves PP5 off, so it is more cautious than ClinVar's class for most of these
+  // ACMG test variants: 20 GRCh38 SNVs that ClinVar (release 2026-11-01, as served here) classifies with the review status
+  // "criteria provided, multiple submitters, no conflicts" (two stars): four each of pathogenic, likely pathogenic, uncertain
+  // significance, likely benign and benign, one per gene. They were picked by gene and consequence, not by fastVEP's call.
+  // They need a full GRCh38 gene model, which the in-browser demo (OR4F5 and one lncRNA) is not, so the chip is shown only
+  // when the selected model is one.
+  acmg: `##fileformat=VCFv4.2
+## 20 ClinVar two-star variants (GRCh38); the class after each is ClinVar's, release 2026-11-01
+## The ACMG column is fastVEP's own call: it has no functional evidence (PS3) and leaves PP5 off, so for the pathogenic and likely pathogenic ones it is usually more cautious than ClinVar
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
-17\t7675088\t.\tC\tT\t.\t.\t.\t## TP53 p.Arg175His - Pathogenic
-12\t25245350\t.\tC\tT\t.\t.\t.\t## KRAS p.Gly12Asp - Pathogenic/Likely pathogenic
-3\t179234297\t.\tA\tG\t.\t.\t.\t## PIK3CA p.His1047Arg - Pathogenic
-3\t179218303\t.\tG\tA\t.\t.\t.\t## PIK3CA p.Glu545Lys - Pathogenic/Likely pathogenic
-2\t208248388\t.\tC\tT\t.\t.\t.\t## IDH1 p.Arg132His - Pathogenic/Likely pathogenic
-17\t43106487\t.\tA\tC\t.\t.\t.\t## BRCA1 p.Cys61Gly - Pathogenic
-17\t43082434\t.\tG\tA\t.\t.\t.\t## BRCA1 p.Arg1443Ter - Pathogenic
-10\t87933148\t.\tG\tA\t.\t.\t.\t## PTEN p.Arg130Gln - Pathogenic
-17\t43063930\t.\tC\tA\t.\t.\t.\t## BRCA1 p.Arg1699Leu - Likely pathogenic
-2\t47475072\t.\tG\tT\t.\t.\t.\t## MSH2 p.Asp603Tyr - Likely pathogenic
-3\t10142149\t.\tT\tC\t.\t.\t.\t## VHL p.Leu101Pro - Likely pathogenic
-17\t43063930\t.\tC\tG\t.\t.\t.\t## BRCA1 p.Arg1699Pro - Uncertain significance (the same codon as the pathogenic Arg1699Gln)
-22\t28695228\t.\tG\tA\t.\t.\t.\t## CHEK2 p.Pro425Leu - Uncertain significance
-2\t47480729\t.\tC\tG\t.\t.\t.\t## MSH2 p.Ala831Gly - Uncertain significance
-7\t55163734\t.\tG\tA\t.\t.\t.\t## EGFR p.Glu545Lys - Uncertain significance`,
+17\t7670658\t.\tT\tA\t.\t.\t.\t## TP53 - Pathogenic
+17\t43045794\t.\tG\tA\t.\t.\t.\t## BRCA1 - Pathogenic
+3\t36993647\t.\tG\tT\t.\t.\t.\t## MLH1 - Pathogenic
+12\t102839194\t.\tG\tT\t.\t.\t.\t## PAH - Pathogenic
+2\t47410323\t.\tG\tA\t.\t.\t.\t## MSH2 - Likely pathogenic
+11\t2445419\t.\tG\tT\t.\t.\t.\t## KCNQ1 - Likely pathogenic
+11\t47332173\t.\tA\tG\t.\t.\t.\t## MYBPC3 - Likely pathogenic
+19\t11089576\t.\tT\tA\t.\t.\t.\t## LDLR - Likely pathogenic
+18\t51047050\t.\tG\tA\t.\t.\t.\t## SMAD4 - Uncertain significance
+13\t51934763\t.\tT\tG\t.\t.\t.\t## ATP7B - Uncertain significance
+14\t23412862\t.\tC\tT\t.\t.\t.\t## MYH7 - Uncertain significance
+6\t26087458\t.\tG\tC\t.\t.\t.\t## HFE - Uncertain significance
+6\t7541921\t.\tC\tT\t.\t.\t.\t## DSP - Likely benign
+7\t117480106\t.\tG\tT\t.\t.\t.\t## CFTR - Likely benign
+13\t20188907\t.\tT\tA\t.\t.\t.\t## GJB2 - Likely benign
+13\t48303918\t.\tG\tA\t.\t.\t.\t## RB1 - Likely benign
+13\t32355250\t.\tT\tC\t.\t.\t.\t## BRCA2 - Benign
+3\t38555570\t.\tT\tC\t.\t.\t.\t## SCN5A - Benign
+15\t48408832\t.\tC\tT\t.\t.\t.\t## FBN1 - Benign
+7\t5978571\t.\tG\tA\t.\t.\t.\t## PMS2 - Benign`,
 };
 
 // Parse GFF3 into transcript models
@@ -1812,7 +1821,7 @@ function syncPage() {
   if (g) fits = g.info.species === 'Homo_sapiens' && g.info.assembly === 'GRCh38';
   else if (state.mode === 'server-single') fits = state.selection === 'builtin' || state.selection === 'demo' || (state.selection !== 'upload' && /GRCh38|hg38/i.test(state.legacy.source || ''));
   $('examples').hidden = !fits;
-  // The cancer example needs a full GRCh38 gene model: not the in-browser demo, and not the built-in OR4F5 model.
+  // The ACMG test example needs a full GRCh38 gene model: not the in-browser demo, and not the built-in OR4F5 model.
   const fullModel = g ? fits : state.mode === 'server-single' && fits && state.selection !== 'builtin' && state.selection !== 'demo';
   for (const chip of document.querySelectorAll('[data-needs-genes]')) chip.hidden = !fullModel;
   const note = $('examplesNote');

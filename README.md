@@ -27,7 +27,7 @@ Bug reports and feature requests belong in [GitHub issues](https://github.com/Hu
 - **Regulatory regions** — not annotated yet: the library has a parser and an interval index for Ensembl regulatory-build GFF3 (`fastvep-cache::regulatory`), but no command uses them, `--regulatory` is refused, and the five regulatory columns of the CSQ are empty
 - **Mitochondrial Support** — Circular coordinate handling, vertebrate mitochondrial codon table (NCBI table 2)
 - **Custom Annotations** — User-provided VCF (`--source custom_vcf`) and BED (`--source custom_bed`) files; `.osi` interval databases load alongside `.osa` via `--sa-dir`
-- **ACMG-AMP Classification** - `--acmg` runs the full Richards 2015 + ClinGen SVI rule set (28 criteria, configurable thresholds, trio / compound-het support via `--proband`/`--mother`/`--father`) for sequence changes; a structural variant is given no classification
+- **ACMG-AMP Classification** - `--acmg` runs the full Richards 2015 + ClinGen SVI rule set (28 criteria, configurable thresholds, trio / compound-het support via `--proband`/`--mother`/`--father`) for sequence changes; a structural variant is given no classification. The implementation and its benchmark against ClinVar are described in [Huang, Ganapathi and Chung 2026, medRxiv](https://doi.org/10.64898/2026.11.16.26368228)
 - **VEP `--merged` Cache** — `--gff3` is repeatable on `annotate` and `cache`; combine Ensembl + RefSeq in a single run with per-transcript SOURCE labels
 - **`--sa-only` Mode** — Skip the default CSQ pipeline and emit only supplementary annotations, useful for re-annotating already-annotated VCFs
 - **Gzipped inputs** — `annotate` auto-detects gzip-compressed VCF, GFF3, and FASTA by magic bytes, with a `.gz` / `.bgz` filename fallback. A `.gff3.gz` that has a `.tbi` is still read through tabix. A `.fai` applies only to an uncompressed FASTA, because its offsets address that file; a gzipped FASTA is loaded into memory
@@ -976,6 +976,14 @@ Kuan-lin Huang
 *bioRxiv* (2026)  
 doi: [https://doi.org/10.64898/2026.04.14.718452](https://doi.org/10.64898/2026.04.14.718452)  
 URL: [https://www.biorxiv.org/content/10.64898/2026.04.14.718452v1](https://www.biorxiv.org/content/10.64898/2026.04.14.718452v1)
+
+If you use the ACMG-AMP classification (`--acmg`), please also cite:
+
+**Transparent Implementation and Benchmarking of ACMG/AMP Variant Classification in fastVEP**  
+Kuan-lin Huang, Mythily Ganapathi, Wendy Chung  
+*medRxiv* (2026)  
+doi: [https://doi.org/10.64898/2026.11.16.26368228](https://doi.org/10.64898/2026.11.16.26368228)  
+URL: [https://www.medrxiv.org/content/10.64898/2026.11.16.26368228v1](https://www.medrxiv.org/content/10.64898/2026.11.16.26368228v1)
 
 ## License
 

@@ -4,6 +4,7 @@ This guide builds the exact set of supplementary annotation databases the ACMG-A
 It is the stack the ClinVar concordance benchmark has run against since v15, when the last of the nine sources was added, so following it end to end reproduces [`analysis/acmg_benchmark/`](../analysis/acmg_benchmark/)'s published behaviour rather than approximating it.
 
 For what the criteria mean and how to retune their thresholds, see [ACMG.md](ACMG.md).
+The classifier and its benchmark are described in the preprint [Huang, Ganapathi and Chung 2026, medRxiv](https://doi.org/10.64898/2026.11.16.26368228).
 For the on-disk format of the databases you are about to build, see [SUPPLEMENTARY_ANNOTATIONS.md](SUPPLEMENTARY_ANNOTATIONS.md).
 
 **Every source in this stack is public, and no registration, licence or account is required for any of it.**
