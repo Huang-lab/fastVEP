@@ -6,7 +6,7 @@ fastVEP is inspired by and aims to be compatible with [Ensembl VEP](https://www.
 
 **Try it now:** A hosted web server is available at [fastVEP.org](https://fastVEP.org) - paste VCF data and get annotated results instantly, no installation required.
 On 7 November 2026 it had served **3,427 genome analysis sessions** and annotated **160,983 variants**.
-Since 8 November 2026 it runs a build of the 0.5.0 release candidate and answers from nine genomes: human (GRCh38 and GRCh37), mouse, rat, zebrafish, fruit fly, *C. elegans*, yeast and Arabidopsis.
+Since 19 November 2026 it runs release 0.6.2 and answers from nine genomes: human (GRCh38 and GRCh37), mouse, rat, zebrafish, fruit fly, *C. elegans*, yeast and Arabidopsis.
 
 The hosted instance is for interactive use in the browser. For programmatic access, run your own server: see the **[REST API guide](docs/API.md)**.
 
