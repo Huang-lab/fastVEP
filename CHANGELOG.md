@@ -5,6 +5,17 @@ ISO 8601. Format loosely follows [Keep a Changelog](https://keepachangelog.com/)
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-19
+
+A release about the page and the citation of the ACMG classifier.
+The page of the web server has an example of 20 ClinVar two-star variants for the ACMG classifier, and the page, the README and the ACMG guides cite its preprint.
+No Rust source file changes since 0.6.1, so consequence, HGVS and ACMG output are those of 0.6.1; the page is embedded in the `fastvep-web` binary, which is why it is a release.
+
+### Added
+
+- **web**: an example of 20 GRCh38 SNVs that ClinVar (release 2026-11-01) holds with the review status "criteria provided, multiple submitters, no conflicts": four each of pathogenic, likely pathogenic, uncertain significance, likely benign and benign, one per gene. They were picked by gene and consequence and not by fastVEP's call, and the example replaces the 15 cancer variants of 0.6.1 (#192).
+- **docs**: the footer of the page, the README (Citation and the ACMG feature), `docs/ACMG.md` and `docs/ACMG_SETUP.md` cite Huang, Ganapathi and Chung, "Transparent Implementation and Benchmarking of ACMG/AMP Variant Classification in fastVEP", medRxiv 2026, doi:10.64898/2026.11.16.26368228 (#192).
+
 ## [0.6.1] - 2026-11-18
 
 A release about the page and the documents that describe the comparison with Ensembl VEP.

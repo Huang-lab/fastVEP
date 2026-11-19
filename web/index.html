@@ -464,7 +464,7 @@
         <img class="logo" id="logo" src="assets/logo.png" alt="" width="36" height="36">
         <h1><span>fast</span>VEP</h1>
       </a>
-      <span class="badge" id="versionBadge" title="fastVEP version">v0.6.1</span>
+      <span class="badge" id="versionBadge" title="fastVEP version">v0.6.2</span>
       <span class="mode-pill" id="modePill" hidden></span>
       <span class="header-spacer"></span>
       <div class="counters" id="counters" hidden>
@@ -1471,7 +1471,7 @@ function callBasis(a) {
 const state = {
   mode: 'unknown', // 'client' (no server) | 'server-multi' (per-request genomes) | 'server-single' (one model per process)
   status: null,
-  version: (document.getElementById('versionBadge')?.textContent || 'v0.6.1').replace(/^v/, '').trim(),
+  version: (document.getElementById('versionBadge')?.textContent || 'v0.6.2').replace(/^v/, '').trim(),
   canReplaceModel: false,
   genomes: [], // server-multi: the catalogue; server-single: genomes a server may swap in
   selection: null, // server-multi: genome name; server-single: 'active' | 'server:<name>' | 'builtin' | 'upload' | 'demo'
