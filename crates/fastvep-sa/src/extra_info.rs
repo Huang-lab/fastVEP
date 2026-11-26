@@ -24,7 +24,7 @@ use std::io::BufRead;
 
 /// Named encodings for a `Type=Float` key, as (name, multiplier, zigzag, use).
 ///
-/// A value is stored as `round(value * multiplier)` in a u32, so the multiplier sets
+/// A value is stored as `value * multiplier`, truncated toward zero, in a u32, so the multiplier sets
 /// both the smallest step (`1 / multiplier`) and the largest value stored as itself.
 pub const FLOAT_PRESETS: &[(&str, u32, bool, &str)] = &[
     (
@@ -267,23 +267,24 @@ impl Column {
     /// record does not carry it or carries VCF's missing value.
     fn raw<'m>(&self, info_map: &'m HashMap<String, String>, allele_idx: usize) -> Option<&'m str> {
         let value = info_map.get(&self.key)?;
-        let index = match self.arity {
-            Arity::Allele => allele_idx,
-            Arity::AlleleAfterRef => allele_idx + 1,
-            Arity::Site | Arity::Flag => 0,
+        let one = match self.arity {
+            Arity::Allele => value.split(',').nth(allele_idx),
+            Arity::AlleleAfterRef => value.split(',').nth(allele_idx + 1),
+            Arity::Site | Arity::Flag => Some(value.as_str()),
         };
-        value
-            .split(',')
-            .nth(index)
-            .filter(|v| !v.is_empty() && *v != ".")
+        one.filter(|v| !v.is_empty() && *v != ".")
     }
 
     fn int(&self, raw: &str) -> Option<i64> {
-        // An unsigned column cannot store a negative count, and the v2 encoder
-        // stores one as missing; v1 leaves it out too, so the formats agree.
-        raw.parse::<i64>()
-            .ok()
-            .filter(|n| self.field.zigzag || *n >= 0)
+        // A value the v2 column cannot hold would be dropped or saturated there; v1
+        // leaves it out too, so the formats agree. u32::MAX and its zigzag twin
+        // i32::MIN are the missing value.
+        let (min, max) = if self.field.zigzag {
+            (i64::from(i32::MIN) + 1, i64::from(i32::MAX))
+        } else {
+            (0, i64::from(u32::MAX) - 1)
+        };
+        raw.parse::<i64>().ok().filter(|n| (min..=max).contains(n))
     }
 }
 
@@ -713,6 +714,51 @@ mod tests {
         let stored = signed.encode(&record, 0)[0];
         assert_eq!(signed.fields()[0].decode_int(stored), -3);
         assert_eq!(json(&signed, &record, 0)["AC_nfe"], -3);
+    }
+
+    #[test]
+    fn test_an_integer_the_column_cannot_hold_is_missing_in_both_formats() {
+        let unsigned = resolve(&["AC_nfe"]).unwrap();
+        let signed = resolve(&["AC_nfe:z"]).unwrap();
+        for (extra, value) in [
+            (&unsigned, "4294967295"),
+            (&unsigned, "5000000000"),
+            (&signed, "3000000000"),
+            (&signed, "-2147483648"),
+        ] {
+            let record = info(&[("AC_nfe", value)]);
+            assert_eq!(extra.encode(&record, 0), vec![u32::MAX], "{value}");
+            assert_eq!(json(extra, &record, 0), serde_json::json!({}), "{value}");
+        }
+        let top = info(&[("AC_nfe", "4294967294")]);
+        assert_eq!(json(&unsigned, &top, 0)["AC_nfe"], 4294967294_u64);
+        assert_eq!(unsigned.encode(&top, 0), vec![u32::MAX - 1]);
+    }
+
+    #[test]
+    fn test_a_number_1_value_is_read_whole() {
+        // VCF does not permit a comma in a Number=1 value; one that has it is kept whole
+        // rather than cut at the comma with no sign.
+        let extra = ExtraInfo::resolve(
+            &entries(&["site_text"]),
+            &[r#"##INFO=<ID=site_text,Number=1,Type=String,Description="x">"#.to_string()],
+            &[],
+        )
+        .unwrap();
+        let record = info(&[("site_text", "a,b")]);
+        assert_eq!(json(&extra, &record, 1)["site_text"], "a,b");
+    }
+
+    #[test]
+    fn test_a_backslash_at_the_end_of_a_quoted_value_keeps_the_attributes() {
+        let decl = parse_info_decl(r#"##INFO=<ID=k,Number=1,Type=String,Description="ends in ">"#);
+        let decl = decl.expect("declaration");
+        assert_eq!(
+            (decl.id.as_str(), decl.number.as_str(), decl.ty.as_str()),
+            ("k", "1", "String")
+        );
+        let tail = header_attributes(r#"ID=k,Description="x"#);
+        assert_eq!(tail.len(), 2, "{tail:?}");
     }
 
     #[test]

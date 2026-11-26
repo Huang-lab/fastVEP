@@ -344,10 +344,10 @@ The `##INFO` line of the key gives the column its type and its number, so a new 
 | `Type=Integer` | integer column | number |
 | `Type=Float` | integer column, scaled by the encoding | number |
 | `Type=String`, `Type=Character` | categorical column with its own string table | string |
-| `Type=Flag` | flag column | `true`, or no key when the flag is not set |
+| `Type=Flag` | flag column | `true` when the key is present (with or without a value); when it is absent, v1 leaves the key out and v2 writes `false` |
 | `Number=A` | the value of the allele of the record | |
 | `Number=R` | the value of the allele of the record; the value of the reference is not stored | |
-| `Number=1` | the one value of the site, for each allele | |
+| `Number=1` | the whole value of the site, for each allele | |
 
 A key with another `Number` (`.`, `G`, or a count above 1) is refused, because one record holds one value per column.
 
@@ -359,12 +359,11 @@ The build stops before it writes anything when:
 - a Float key has no encoding, or a key that is not a Float or an Integer has one;
 - the source is not one that takes `--extra-info`.
 
-A missing value and `.` are both stored as missing.
-v1 leaves the key out for a missing value; v2 writes it as `null`.
+A missing value and `.` are both stored as missing, and the annotation leaves the key out, in v1 and in v2.
 
 #### Encoding of Float keys
 
-A v2 column holds unsigned 32-bit integers, so a Float is stored as `round(value × multiplier)`.
+A v2 column holds unsigned 32-bit integers, so a Float is stored as `value × multiplier`, truncated toward zero.
 The header says nothing about the range or the precision of a Float, so a Float key must name its encoding.
 The encoding is a preset, or a multiplier (a positive integer) with a trailing `z` for signed values (`1000z`).
 An Integer key takes `z` alone, when it can be negative.
@@ -375,11 +374,13 @@ An Integer key takes `z` alone, when it can be negative.
 | `score` | 1,000,000 | no | 0 to 4294 | 1e-6 |
 | `signed` | 10,000 | yes | −214,748 to 214,748 | 1e-4 |
 
-A value that the encoding cannot hold is stored wrong with no error:
+A Float that the encoding cannot hold is stored wrong with no error:
 
-- A negative value without `z` is stored as 0 (a Float) or as missing (an Integer).
-- A value above the range is stored as the top of the range.
-- A value smaller than half a step is stored as 0.
+- A negative Float without `z` is stored as 0.
+- A Float above the range is stored as the top of the range.
+- A Float is truncated toward zero to the step, so a value smaller than one step is stored as 0.
+
+An Integer that the column cannot hold (negative without `z`, above 4,294,967,294 without `z`, or outside −2,147,483,647 to 2,147,483,647 with `z`) is stored as missing, in v1 and in v2.
 
 Choose the encoding from the range of the values.
 For gnomAD and for sources like it:
@@ -389,7 +390,7 @@ For gnomAD and for sources like it:
 | `AC_*`, `AN_*`, `nhomalt_*` (Integer) | none |
 | `AF_*`, `faf95_*`, `faf99_*`, `fafmax_faf95_max*`, `fafmax_faf99_max*` | `af` |
 | probabilities and scores from 0 to 1 (SpliceAI delta scores, REVEL-like scores) | `score` |
-| `InbreedingCoeff`, `AS_VQSLOD`, phyloP, GERP | `signed` |
+| signed values: `InbreedingCoeff` (−1 to 1), `AS_VQSLOD` (a log-odds), phyloP and GERP scores | `signed` |
 | `fafmax_faf95_max_gen_anc*` (String) | none |
 
 A v1 `.osa` stores the value as JSON text and does not use the encoding, so the same build in v1 and in v2 can differ in the last digits of a Float.

@@ -84,9 +84,11 @@ fn v1_and_v2_answer_with_the_same_extra_values() {
         let one = json_of(v1.annotate_position("chr1", pos, r, a).unwrap());
         let two = json_of(v2.annotate_position("chr1", pos, r, a).unwrap());
         for key in ["nfeAc", "nfeHc", "faf95MaxGenAnc"] {
-            // v2 writes a missing value as null where v1 leaves the key out.
-            let in_two = two.get(key).filter(|v| !v.is_null());
-            assert_eq!(one.get(key), in_two, "{key} at {pos}: v1={one} v2={two}");
+            assert_eq!(
+                one.get(key),
+                two.get(key),
+                "{key} at {pos}: v1={one} v2={two}"
+            );
         }
         let faf = |v: &serde_json::Value| v.get("faf99Max").and_then(|x| x.as_f64());
         match (faf(&one), faf(&two)) {
