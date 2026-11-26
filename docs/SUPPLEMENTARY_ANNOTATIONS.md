@@ -319,6 +319,81 @@ SpliceAI: the JSON blobs for chunk chr1/1 decompress past the 256 MiB limit ...
 failing obscurely: v2 is a variant-level container and has no equivalent form
 for interval- or gene-keyed data.
 
+### Extra INFO columns (`--extra-info`)
+
+`--extra-info` stores INFO keys of the input in addition to the columns the source writes itself.
+It is supported for `--source gnomad`; for another VCF, `--source custom_vcf --info-fields` stores the INFO keys you name.
+A build without it writes the same database as before, in v1 and in v2.
+
+Each entry is `KEY[:ENCODING][=ALIAS]`, and the entries are separated by commas:
+
+```bash
+fastvep sa-build --source gnomad -i gnomad.joint.v4.1.sites.chr1.vcf.bgz -o sa_databases/gnomad_chr1 \
+  --assembly GRCh38 --chunk-bits 16 \
+  --extra-info AC_joint_nfe=nfeAc,nhomalt_joint_nfe=nfeHc,fafmax_faf99_max_joint:af=faf99Max,fafmax_faf95_max_gen_anc_joint=faf95MaxGenAnc
+```
+
+- `KEY` is the INFO key, spelled as the release spells it.
+- `ALIAS` is the JSON key of the value in the annotation. It is `KEY` when it is not given. It may hold letters, digits, `_`, `.` and `-`.
+- `ENCODING` says how a v2 `.osa2` stores a number. See [Encoding of Float keys](#encoding-of-float-keys).
+
+The `##INFO` line of the key gives the column its type and its number, so a new key needs no change to fastVEP:
+
+| `##INFO` | Stored as | JSON value |
+|---|---|---|
+| `Type=Integer` | integer column | number |
+| `Type=Float` | integer column, scaled by the encoding | number |
+| `Type=String`, `Type=Character` | categorical column with its own string table | string |
+| `Type=Flag` | flag column | `true`, or no key when the flag is not set |
+| `Number=A` | the value of the allele of the record | |
+| `Number=R` | the value of the allele of the record; the value of the reference is not stored | |
+| `Number=1` | the one value of the site, for each allele | |
+
+A key with another `Number` (`.`, `G`, or a count above 1) is refused, because one record holds one value per column.
+
+The build stops before it writes anything when:
+
+- the input has no `##INFO` line for a key;
+- a key or an alias is given twice;
+- an alias is a JSON key the source writes itself (`allAc`, `nfeAf`, …);
+- a Float key has no encoding, or a key that is not a Float or an Integer has one;
+- the source is not one that takes `--extra-info`.
+
+A missing value and `.` are both stored as missing.
+v1 leaves the key out for a missing value; v2 writes it as `null`.
+
+#### Encoding of Float keys
+
+A v2 column holds unsigned 32-bit integers, so a Float is stored as `round(value × multiplier)`.
+The header says nothing about the range or the precision of a Float, so a Float key must name its encoding.
+The encoding is a preset, or a multiplier (a positive integer) with a trailing `z` for signed values (`1000z`).
+An Integer key takes `z` alone, when it can be negative.
+
+| Preset | Multiplier | Signed | Range | Step |
+|---|---:|---|---|---|
+| `af` | 2,000,000 | no | 0 to 2147 | 5e-7 |
+| `score` | 1,000,000 | no | 0 to 4294 | 1e-6 |
+| `signed` | 10,000 | yes | −214,748 to 214,748 | 1e-4 |
+
+A value that the encoding cannot hold is stored wrong with no error:
+
+- A negative value without `z` is stored as 0 (a Float) or as missing (an Integer).
+- A value above the range is stored as the top of the range.
+- A value smaller than half a step is stored as 0.
+
+Choose the encoding from the range of the values.
+For gnomAD and for sources like it:
+
+| Keys | Encoding |
+|---|---|
+| `AC_*`, `AN_*`, `nhomalt_*` (Integer) | none |
+| `AF_*`, `faf95_*`, `faf99_*`, `fafmax_faf95_max*`, `fafmax_faf99_max*` | `af` |
+| probabilities and scores from 0 to 1 (SpliceAI delta scores, REVEL-like scores) | `score` |
+| `InbreedingCoeff`, `AS_VQSLOD`, phyloP, GERP | `signed` |
+| `fafmax_faf95_max_gen_anc*` (String) | none |
+
+A v1 `.osa` stores the value as JSON text and does not use the encoding, so the same build in v1 and in v2 can differ in the last digits of a Float.
+
 ## Pipe formats
 
 Each value is a pipe-delimited string. Multiple values for the same record

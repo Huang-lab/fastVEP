@@ -14,6 +14,7 @@ pub mod block;
 pub mod chunk;
 pub mod common;
 pub mod custom;
+pub mod extra_info;
 pub mod fields;
 pub mod gene;
 pub mod index;

@@ -449,6 +449,15 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         info_fields: Vec<String>,
 
+        /// Comma-separated INFO keys to store in addition to the source's own columns, each as
+        /// `KEY[:ENCODING][=ALIAS]` (gnomAD only). The input's `##INFO` header gives each key its
+        /// type and number. A Type=Float key needs an ENCODING: `af` (allele frequencies),
+        /// `score` (0 to 1), `signed` (signed values), or a multiplier with a trailing `z` for
+        /// signed values (`1000z`). A Type=Integer key takes `z` for signed values. ALIAS is the
+        /// JSON key; the INFO key by default. See docs/SUPPLEMENTARY_ANNOTATIONS.md.
+        #[arg(long, value_delimiter = ',')]
+        extra_info: Vec<String>,
+
         /// On-disk format: `auto` (default), `osa` (v1), or `osa2` (v2).
         /// `auto` builds v2 for the sources that support it — smaller and
         /// faster to query at genome scale — and v1 for the rest, so you get
@@ -765,22 +774,25 @@ fn main() -> Result<()> {
             assembly,
             name,
             info_fields,
+            extra_info,
             format,
             chunk_bits,
             allow_empty,
             no_progress,
         } => pipeline::with_chunk_bits(chunk_bits, || {
             pipeline::with_allow_empty(allow_empty, || {
-                pipeline::run_sa_build_format(
-                    &format,
-                    &source,
-                    &input,
-                    &output,
-                    &assembly,
-                    name.as_deref(),
-                    &info_fields,
-                    !no_progress,
-                )
+                pipeline::with_extra_info(extra_info, || {
+                    pipeline::run_sa_build_format(
+                        &format,
+                        &source,
+                        &input,
+                        &output,
+                        &assembly,
+                        name.as_deref(),
+                        &info_fields,
+                        !no_progress,
+                    )
+                })
             })
         })?,
         Commands::SaConvert {
