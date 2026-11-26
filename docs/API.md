@@ -118,7 +118,7 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
         "available": false,
         "loaded": ["clinvar"],
         "missing": [
-            {"id": "gnomad", "label": "gnomAD allele frequencies", "scope": "allele", "drives": ["BA1", "BS1", "BS2", "PM2"], "without": "no population frequency: ..."}
+            {"id": "gnomad", "label": "gnomAD allele frequencies", "scope": "allele", "drives": ["BA1", "BS1", "BS2", "PM2", "PM3"], "without": "no population frequency: ..."}
         ]
     },
     "status": "ok",
@@ -332,8 +332,8 @@ So the server decides before it classifies:
 
   ```json
   {
-    "error": "ACMG classification is not available for genome 'hg38_ensembl_115': 8 of the 9 sources it reads are not loaded, and a classification made without them would rest on less evidence than it appears to. Missing: gnomAD allele frequencies (BA1, BS1, BS2, PM2); ...",
-    "acmg": {"ready": false, "available": false, "loaded": ["clinvar"], "missing": [{"id": "gnomad", "label": "gnomAD allele frequencies", "scope": "allele", "drives": ["BA1", "BS1", "BS2", "PM2"], "without": "..."}]}
+    "error": "ACMG classification is not available for genome 'hg38_ensembl_115': 8 of the 9 sources it reads are not loaded, and a classification made without them would rest on less evidence than it appears to. Missing: gnomAD allele frequencies (BA1, BS1, BS2, PM2, PM3); ...",
+    "acmg": {"ready": false, "available": false, "loaded": ["clinvar"], "missing": [{"id": "gnomad", "label": "gnomAD allele frequencies", "scope": "allele", "drives": ["BA1", "BS1", "BS2", "PM2", "PM3"], "without": "..."}]}
   }
   ```
 

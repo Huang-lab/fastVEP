@@ -30,7 +30,7 @@ The "silent effect if absent" column is the one that matters: fastVEP marks a cr
 
 | Source | `--source` | Scope | Drives | Silent effect if absent |
 |---|---|---|---|---|
-| gnomAD v4.1 sites | `gnomad` | allele | BA1, BS1, BS2, PM2 | No frequency evidence at all: BA1, BS1, BS2 and PM2 are not evaluated, so nothing is ever called too common to be pathogenic |
+| gnomAD v4.1 sites | `gnomad` | allele | BA1, BS1, BS2, PM2, PM3 (rarity gate) | BA1, BS1, BS2 and PM2 are not evaluated. PM3 cannot establish that the assessed allele is rare enough to score |
 | ClinVar | `clinvar` | allele | PM2 frequency backstop, BA1/BS1/BS2 low-penetrance gate, PM3/BP2 companion lookup, PP5/BP6 | PM2 loses its backstop, so a common variant absent from gnomAD reads as absent from the population, and a low-penetrance or risk allele can meet BA1, BS1 or BS2 |
 | REVEL v1.3 | `revel` | allele | PP3, BP4 (missense) | No computational evidence on any missense variant |
 | SpliceAI, **from gnomAD's `spliceai_ds_max`** | `spliceai` | allele | PVS1 splice branch, PP3, BP4 (splice), BP7 | No splice prediction: PVS1 cannot check a predicted-intact site, BP7 cannot clear a synonymous variant |

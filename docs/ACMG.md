@@ -885,7 +885,7 @@ ACMG classification draws on multiple supplementary annotation (SA) sources. Pla
 
 | Source | SA Key | Used By | Description |
 |---|---|---|---|
-| **gnomAD** | `gnomad` | BA1, BS1, BS2, PM2 | Per-population allele frequencies + AN + homozygote counts (BA1/BS1 max-pop AF; BA1/BS1 require AN ≥ 2,000) |
+| **gnomAD** | `gnomad` | BA1, BS1, BS2, PM2, PM3 (rarity gate) | Per-population allele frequencies + AN + homozygote counts (BA1/BS1 max-pop AF; BA1/BS1 require AN ≥ 2,000) |
 | **ClinVar** | `clinvar` | PM2 (frequency backstop), BA1, BS1 and BS2 (low-penetrance gate), PM3 and BP2 (companion lookup); PP5, BP6 (off by default per SVI); PS4 only when `use_clinvar_stars_as_ps4_proxy = true` | Clinical significance, review status, phenotypes, population frequencies (ExAC, 1000 Genomes, ESP); companion-variant lookups for PM3 / BP2 |
 | **REVEL** | `revel` | PP3 (missense), BP4 (missense, including Very Strong band ≤ 0.003) | Missense pathogenicity score (0-1); not applied to non-missense per Pejaver 2022 |
 | **SpliceAI** | `spliceai` | PP3 (caps at Supporting per Walker 2023), BP4 (≤ 0.1 → Supporting), BP7 | Splice site delta scores |
@@ -1093,7 +1093,8 @@ So enabling the flag makes fastVEP more faithful to the guideline and less conco
 
 ### PM3 Strength Grading (SVI v1.0 Points)
 
-PM3 sums points across compound-het / homozygous observations and maps the total to a strength tier:
+PM3 sums points across compound-het / homozygous observations and maps the total to a strength tier.
+The assessed allele must meet the PM2 rarity threshold. If the frequency evidence is insufficient to evaluate PM2, PM3 is not evaluated either.
 
 | Scenario | Points |
 |---|---|
