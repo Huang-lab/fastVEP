@@ -521,6 +521,11 @@ fn evaluate_pm2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 /// Companions in cis with a pathogenic variant are excluded (those count
 /// toward BP2 instead). Requires recessive inheritance in the gene's disease
 /// annotation (ClinGen's curated `AR` or `SD`, or the words of an OMIM phenotype).
+///
+/// The assessed allele must also meet PM2's rarity threshold (ClinGen SVI PM3 v1.0,
+/// "Allele Frequency"). Without it a homozygous proband earned 0.5 points on a common
+/// allele that BA1 was calling benign (#195). The raw PM2 result is used, so turning PM2
+/// off as evidence does not turn the rarity test off.
 fn evaluate_pm3(input: &ClassificationInput, pm2: &EvidenceCriterion) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
