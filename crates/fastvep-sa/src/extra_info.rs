@@ -11,10 +11,10 @@
 //!   values. Other types take none.
 //! - `ALIAS` is the JSON key of the value; the INFO key when it is not given.
 //!
-//! The encoding of a Float is not guessed. A header says nothing about the range or the
-//! precision of a Float, and a scale that does not fit the values stores wrong ones with no
-//! error: a negative value stored without `z` reads as 0, and a value above the range reads
-//! as its top. `docs/SUPPLEMENTARY_ANNOTATIONS.md` lists the encoding to use for common keys.
+//! The encoding of a Float is not guessed: a header says nothing about the range or the
+//! precision of a Float. A value outside the range of the encoding stops a v2 build, because
+//! stored it would read back as 0 or as the top of the range. `docs/SUPPLEMENTARY_ANNOTATIONS.md`
+//! lists the encoding to use for common keys.
 
 use crate::fields::{Field, FieldType};
 use anyhow::{bail, Context, Result};
