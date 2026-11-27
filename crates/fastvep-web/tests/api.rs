@@ -1086,7 +1086,7 @@ async fn status_says_whether_acmg_will_be_answered_and_what_stands_in_the_way() 
         .iter()
         .find(|m| m["id"] == "gnomad")
         .expect("gnomAD is listed");
-    assert_eq!(gnomad["drives"], json!(["BA1", "BS1", "BS2", "PM2"]));
+    assert_eq!(gnomad["drives"], json!(["BA1", "BS1", "BS2", "PM2", "PM3"]));
     assert!(gnomad["without"]
         .as_str()
         .unwrap()

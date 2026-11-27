@@ -6,10 +6,12 @@ use crate::types::{EvidenceCriterion, EvidenceDirection, EvidenceStrength};
 
 /// Evaluate all pathogenic moderate criteria: PM1, PM2, PM3, PM4, PM5, PM6.
 pub fn evaluate_all(input: &ClassificationInput, config: &AcmgConfig) -> Vec<EvidenceCriterion> {
+    let pm2 = evaluate_pm2(input, config);
+    let pm3 = evaluate_pm3(input, &pm2);
     vec![
         evaluate_pm1(input, config),
-        evaluate_pm2(input, config),
-        evaluate_pm3(input, config),
+        pm2,
+        pm3,
         evaluate_pm4(input, config),
         evaluate_pm5(input, config),
         evaluate_pm6(input, config),
@@ -519,7 +521,12 @@ fn evaluate_pm2(input: &ClassificationInput, config: &AcmgConfig) -> EvidenceCri
 /// Companions in cis with a pathogenic variant are excluded (those count
 /// toward BP2 instead). Requires recessive inheritance in the gene's disease
 /// annotation (ClinGen's curated `AR` or `SD`, or the words of an OMIM phenotype).
-fn evaluate_pm3(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCriterion {
+///
+/// The assessed allele must also meet PM2's rarity threshold (ClinGen SVI PM3 v1.0,
+/// "Allele Frequency"). Without it a homozygous proband earned 0.5 points on a common
+/// allele that BA1 was calling benign (#195). The raw PM2 result is used, so turning PM2
+/// off as evidence does not turn the rarity test off.
+fn evaluate_pm3(input: &ClassificationInput, pm2: &EvidenceCriterion) -> EvidenceCriterion {
     let mut details = serde_json::Map::new();
 
     // Recessive inheritance gate.
@@ -560,6 +567,22 @@ fn evaluate_pm3(input: &ClassificationInput, _config: &AcmgConfig) -> EvidenceCr
                 "Proband genotype not available; PM3 requires trio VCF for compound-het analysis"
                     .to_string()
             },
+            details,
+        );
+    }
+
+    // SVI's rarity requirement also applies to homozygotes. Use the raw PM2
+    // result so disabling PM2 as evidence does not disable the rarity test.
+    if !pm2.met {
+        return mk_pm3(
+            "PM3".to_string(),
+            EvidenceStrength::Moderate,
+            false,
+            pm2.evaluated,
+            format!(
+                "PM3 requires the assessed allele to meet the PM2 rarity threshold: {}",
+                pm2.summary
+            ),
             details,
         );
     }
@@ -1483,10 +1506,17 @@ mod tests {
         }
     }
 
+    fn pm3(input: &ClassificationInput) -> EvidenceCriterion {
+        evaluate_all(input, &AcmgConfig::default())
+            .into_iter()
+            .find(|c| c.code.starts_with("PM3"))
+            .unwrap()
+    }
+
     #[test]
     fn test_pm3_not_recessive_gene_does_not_fire() {
         let input = make_input(vec![Consequence::MissenseVariant], None);
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert!(!r.met);
     }
 
@@ -1495,7 +1525,7 @@ mod tests {
         // 1 confirmed in-trans + Pathogenic = 1.0 pt → PM3 (Moderate)
         let mut input = ar_input_with_proband(true, false);
         input.companion_variants = vec![cv(true, false, Some(true), true)];
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert!(r.met);
         assert_eq!(r.strength, EvidenceStrength::Moderate);
         assert_eq!(r.code, "PM3");
@@ -1506,7 +1536,7 @@ mod tests {
         // 1 confirmed in-trans + LP = 0.5 pt → PM3_Supporting
         let mut input = ar_input_with_proband(true, false);
         input.companion_variants = vec![cv(false, true, Some(true), true)];
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert_eq!(r.strength, EvidenceStrength::Supporting);
         assert_eq!(r.code, "PM3_Supporting");
     }
@@ -1516,7 +1546,7 @@ mod tests {
         // 1 phase-unknown + Pathogenic = 0.5 pt → PM3_Supporting
         let mut input = ar_input_with_proband(true, false);
         input.companion_variants = vec![cv(true, false, None, true)];
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert_eq!(r.strength, EvidenceStrength::Supporting);
     }
 
@@ -1528,7 +1558,7 @@ mod tests {
             cv(true, false, Some(true), true),
             cv(true, false, Some(true), true),
         ];
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert_eq!(r.strength, EvidenceStrength::Strong);
         assert_eq!(r.code, "PM3_Strong");
     }
@@ -1538,15 +1568,47 @@ mod tests {
         // In-cis companion is excluded from PM3 (it's a BP2 case).
         let mut input = ar_input_with_proband(true, false);
         input.companion_variants = vec![cv(true, false, Some(false), true)];
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert!(!r.met);
+    }
+
+    #[test]
+    fn test_pm3_common_homozygote_does_not_count() {
+        let mut input = ar_input_with_proband(false, true);
+        input.gnomad = Some(GnomadData {
+            all_af: Some(0.3),
+            ..Default::default()
+        });
+        let result = pm3(&input);
+        assert!(result.evaluated);
+        assert!(!result.met);
+    }
+
+    #[test]
+    fn test_pm3_common_variant_in_trans_does_not_count() {
+        let mut input = ar_input_with_proband(true, false);
+        input.gnomad = Some(GnomadData {
+            all_af: Some(0.01),
+            ..Default::default()
+        });
+        input.companion_variants = vec![cv(true, false, Some(true), true)];
+        assert!(!pm3(&input).met);
+    }
+
+    #[test]
+    fn test_pm3_homozygote_without_usable_frequency_is_not_evaluated() {
+        let mut input = ar_input_with_proband(false, true);
+        input.gnomad = Some(GnomadData::default());
+        let result = pm3(&input);
+        assert!(!result.met);
+        assert!(!result.evaluated);
     }
 
     #[test]
     fn test_pm3_homozygous_proband_capped_at_one_point() {
         // Hom-alt proband alone earns 0.5 pt → PM3_Supporting.
         let input = ar_input_with_proband(false, true);
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert_eq!(r.strength, EvidenceStrength::Supporting);
     }
 
@@ -1555,7 +1617,7 @@ mod tests {
         // Hom-alt (0.5) + in-trans P (1.0) = 1.5 pt → PM3 (Moderate)
         let mut input = ar_input_with_proband(false, true);
         input.companion_variants = vec![cv(true, false, Some(true), true)];
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert_eq!(r.strength, EvidenceStrength::Moderate);
     }
 
@@ -1568,7 +1630,7 @@ mod tests {
             cv(true, false, Some(true), true),
             cv(true, false, Some(true), true),
         ];
-        let r = evaluate_pm3(&input, &AcmgConfig::default());
+        let r = pm3(&input);
         assert_eq!(r.strength, EvidenceStrength::VeryStrong);
         assert_eq!(r.code, "PM3_Very_Strong");
     }
@@ -1851,7 +1913,7 @@ mod tests {
                 "phenylketonuria (ClinGen Definitive/AR, MONDO:0009861)".into(),
             ]),
         });
-        let result = evaluate_pm3(&input, &AcmgConfig::default());
+        let result = pm3(&input);
         assert_eq!(result.details["is_recessive_gene"], serde_json::json!(true));
 
         input.omim = Some(OmimData {
@@ -1860,7 +1922,7 @@ mod tests {
                 "Kabuki syndrome 1 (ClinGen Definitive/AD, MONDO:0008624)".into(),
             ]),
         });
-        let result = evaluate_pm3(&input, &AcmgConfig::default());
+        let result = pm3(&input);
         assert_eq!(
             result.details["is_recessive_gene"],
             serde_json::json!(false)

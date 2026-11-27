@@ -75,8 +75,8 @@ pub const REFERENCE_STACK: [SourceInfo; 9] = [
         id: "gnomad",
         label: "gnomAD allele frequencies",
         scope: SourceScope::Allele,
-        drives: &["BA1", "BS1", "BS2", "PM2"],
-        without: "no population frequency: BA1, BS1, BS2 and PM2 cannot be evaluated, so nothing is called too common to be pathogenic",
+        drives: &["BA1", "BS1", "BS2", "PM2", "PM3"],
+        without: "no population frequency: BA1, BS1, BS2 and PM2 cannot be evaluated, and PM3 cannot establish that the assessed allele is sufficiently rare",
     },
     SourceInfo {
         source: Source::Clinvar,
@@ -398,7 +398,7 @@ mod tests {
         let text = loaded.shortfall().unwrap();
         assert!(text.starts_with("8 of the 9 sources"), "{text}");
         assert!(
-            text.contains("gnomAD allele frequencies (BA1, BS1, BS2, PM2)"),
+            text.contains("gnomAD allele frequencies (BA1, BS1, BS2, PM2, PM3)"),
             "{text}"
         );
         assert!(!text.contains("ClinVar ("), "{text}");

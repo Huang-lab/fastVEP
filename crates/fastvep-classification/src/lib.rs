@@ -575,7 +575,10 @@ mod tests {
     #[test]
     fn test_one_companion_in_trans_is_pm3_or_bp2_and_not_both_in_a_gene_with_both_modes() {
         use crate::sa_extract::{CompanionVariant, GenotypeInfo};
-        let mut input = dual_inheritance_input(GnomadData::default());
+        let mut input = dual_inheritance_input(GnomadData {
+            all_af: Some(0.00001),
+            ..Default::default()
+        });
         input.proband_genotype = Some(GenotypeInfo {
             is_het: true,
             is_hom_alt: false,
