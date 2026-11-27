@@ -374,11 +374,10 @@ An Integer key takes `z` alone, when it can be negative.
 | `score` | 1,000,000 | no | 0 to 4294 | 1e-6 |
 | `signed` | 10,000 | yes | −214,748 to 214,748 | 1e-4 |
 
-A Float that the encoding cannot hold is stored wrong with no error:
-
-- A negative Float without `z` is stored as 0.
-- A Float above the range is stored as the top of the range.
-- A Float is truncated toward zero to the step, so a value smaller than one step is stored as 0.
+A Float that the encoding cannot hold stops a v2 build, naming the key, the value and the record.
+Storing it would answer with 0 (a negative value without `z`) or with the top of the range (a value above it), and a query cannot tell either from a measurement.
+A v1 `.osa` keeps the value as written, so only a v2 build refuses.
+A Float is truncated toward zero to the step, so a value smaller than one step is stored as 0.
 
 An Integer that the column cannot hold (negative without `z`, above 4,294,967,294 without `z`, or outside −2,147,483,647 to 2,147,483,647 with `z`) is stored as missing, in v1 and in v2.
 

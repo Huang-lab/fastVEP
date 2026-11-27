@@ -143,3 +143,32 @@ fn a_build_that_cannot_store_what_was_asked_for_stops() {
     assert!(run("topmed", &["AC_nfe"]).contains("--extra-info is supported for --source gnomad"));
     assert!(!dir.path().join("out.osa2").exists());
 }
+
+#[test]
+fn a_float_the_encoding_cannot_hold_stops_the_v2_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("in.vcf");
+    // The second record's value is negative, which an unsigned `af` encoding would store as 0.
+    fs::write(
+        &input,
+        GNOMAD_VCF.replace("fafmax_faf99_max=0.0003", "fafmax_faf99_max=-0.0003"),
+    )
+    .unwrap();
+    let out = dir.path().join("out");
+    let err = with_extra_info(entries(&["fafmax_faf99_max:af"]), || {
+        run_sa_build_v2(
+            "gnomad",
+            input.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "GRCh38",
+            None,
+            &[],
+            false,
+        )
+    })
+    .unwrap_err();
+    let text = format!("{err:#}");
+    assert!(text.contains("does not fit the encoding"), "{text}");
+    assert!(text.contains("chr1:100"), "{text}");
+    assert!(!out.with_extension("osa2").exists());
+}

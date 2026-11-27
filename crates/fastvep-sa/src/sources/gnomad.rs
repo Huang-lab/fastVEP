@@ -1036,7 +1036,15 @@ impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
                     values.push(encode_ext(&self.fields[ext_off + ei], value));
                 }
                 if let Some(extra) = &self.extra {
-                    values.extend(extra.encode(&info_map, ai));
+                    match extra.encode(&info_map, ai) {
+                        Ok(extra_values) => values.extend(extra_values),
+                        Err(e) => {
+                            return Some(Err(e.context(format!(
+                                "gnomAD record {chrom}:{pos} {}>{alt}",
+                                String::from_utf8_lossy(&ref_allele)
+                            ))))
+                        }
+                    }
                 }
 
                 self.pending.push_back(Osa2Record {

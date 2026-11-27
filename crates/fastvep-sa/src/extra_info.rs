@@ -275,6 +275,35 @@ impl Column {
         one.filter(|v| !v.is_empty() && *v != ".")
     }
 
+    /// Whether `value` lies in the range this column's encoding can store.
+    ///
+    /// `Field::encode_float` clamps instead of failing, which is right for the built-in
+    /// columns whose ranges are known and wrong for one whose range the user guessed: a
+    /// negative value without `z` would be stored as 0, and a value above the range as its
+    /// top, and a query could not tell either from a measurement.
+    fn float_fits(&self, value: f64) -> Result<()> {
+        let field = &self.field;
+        let scaled = value * f64::from(field.multiplier);
+        // Truncation toward zero is the encoding's own step, so (-1, 0) still stores as 0.
+        let (low, high) = if field.zigzag {
+            (f64::from(i32::MIN) + 1.0, f64::from(i32::MAX) + 1.0)
+        } else {
+            (0.0, f64::from(u32::MAX))
+        };
+        if scaled > low - 1.0 && scaled < high {
+            return Ok(());
+        }
+        bail!(
+            "--extra-info {}: the value {value} does not fit the encoding (multiplier {}{}), which \
+             stores {} to {}. Choose an encoding whose range holds every value of the key.",
+            self.key,
+            field.multiplier,
+            if field.zigzag { ", signed" } else { "" },
+            low / f64::from(field.multiplier),
+            (high - 1.0) / f64::from(field.multiplier),
+        )
+    }
+
     fn int(&self, raw: &str) -> Option<i64> {
         // A value the v2 column cannot hold would be dropped or saturated there; v1
         // leaves it out too, so the formats agree. u32::MAX and its zigzag twin
@@ -403,7 +432,16 @@ impl ExtraInfo {
     }
 
     /// The u32 values of the extra columns for one alternate allele.
-    pub fn encode(&self, info_map: &HashMap<String, String>, allele_idx: usize) -> Vec<u32> {
+    ///
+    /// A Float the column's encoding cannot hold is an error, not a clamped value: the
+    /// `.osa2` would answer with 0 or the top of the range, which reads as data (see
+    /// [`Column::float_fits`]). An Integer the column cannot hold is stored as missing,
+    /// as `--extra-info` documents, because that one is visibly absent in every query.
+    pub fn encode(
+        &self,
+        info_map: &HashMap<String, String>,
+        allele_idx: usize,
+    ) -> Result<Vec<u32>> {
         let mut vocabularies = self.vocabularies.borrow_mut();
         self.columns
             .iter()
@@ -411,21 +449,27 @@ impl ExtraInfo {
             .map(|(column, vocabulary)| {
                 let field = &column.field;
                 if column.kind == Kind::Flag {
-                    return u32::from(info_map.contains_key(&column.key));
+                    return Ok(u32::from(info_map.contains_key(&column.key)));
                 }
                 let Some(raw) = column.raw(info_map, allele_idx) else {
-                    return field.missing_value;
+                    return Ok(field.missing_value);
                 };
-                match column.kind {
+                Ok(match column.kind {
                     Kind::Integer => column
                         .int(raw)
                         .map_or(field.missing_value, |n| field.encode_int(n)),
-                    Kind::Float => raw
-                        .parse::<f64>()
-                        .map_or(field.missing_value, |f| field.encode_float(f)),
+                    Kind::Float => match raw.parse::<f64>() {
+                        // NaN and infinities are the missing value, as for the built-in columns.
+                        Ok(f) if !f.is_finite() => field.missing_value,
+                        Ok(f) => {
+                            column.float_fits(f)?;
+                            field.encode_float(f)
+                        }
+                        Err(_) => field.missing_value,
+                    },
                     Kind::Text => vocabulary.intern(raw),
                     Kind::Flag => unreachable!("a flag returned above"),
-                }
+                })
             })
             .collect()
     }
@@ -643,15 +687,18 @@ mod tests {
             ("AN_nfe", "60000"),
             ("AD_ish", "100,30,7"),
         ]);
-        assert_eq!(extra.encode(&record, 0), vec![30, 60000, 30]);
-        assert_eq!(extra.encode(&record, 1), vec![7, 60000, 7]);
+        assert_eq!(extra.encode(&record, 0).unwrap(), vec![30, 60000, 30]);
+        assert_eq!(extra.encode(&record, 1).unwrap(), vec![7, 60000, 7]);
     }
 
     #[test]
     fn test_absent_and_dot_values_are_missing() {
         let extra = resolve(&["AC_nfe", "fafmax_faf99_max:af", "lcr"]).unwrap();
         let record = info(&[("AC_nfe", ".")]);
-        assert_eq!(extra.encode(&record, 0), vec![u32::MAX, u32::MAX, 0]);
+        assert_eq!(
+            extra.encode(&record, 0).unwrap(),
+            vec![u32::MAX, u32::MAX, 0]
+        );
         assert_eq!(json(&extra, &record, 0), serde_json::json!({}));
     }
 
@@ -679,7 +726,7 @@ mod tests {
         assert_eq!(v["faf95MaxGenAnc"], "nfe");
         assert_eq!(v["lcr"], true);
 
-        let values = extra.encode(&record, 0);
+        let values = extra.encode(&record, 0).unwrap();
         let fields = extra.fields();
         assert_eq!(values[0], 30);
         assert!((fields[1].decode_float(values[1]) - 0.0003).abs() < 1e-6);
@@ -695,7 +742,11 @@ mod tests {
         let extra = resolve(&["fafmax_faf95_max_gen_anc"]).unwrap();
         let codes: Vec<u32> = ["nfe", "afr", "nfe"]
             .iter()
-            .map(|g| extra.encode(&info(&[("fafmax_faf95_max_gen_anc", g)]), 0)[0])
+            .map(|g| {
+                extra
+                    .encode(&info(&[("fafmax_faf95_max_gen_anc", g)]), 0)
+                    .unwrap()[0]
+            })
             .collect();
         assert_eq!(codes, vec![0, 1, 0]);
         assert_eq!(
@@ -709,9 +760,9 @@ mod tests {
         let unsigned = resolve(&["AC_nfe"]).unwrap();
         let signed = resolve(&["AC_nfe:z"]).unwrap();
         let record = info(&[("AC_nfe", "-3")]);
-        assert_eq!(unsigned.encode(&record, 0), vec![u32::MAX]);
+        assert_eq!(unsigned.encode(&record, 0).unwrap(), vec![u32::MAX]);
         assert_eq!(json(&unsigned, &record, 0), serde_json::json!({}));
-        let stored = signed.encode(&record, 0)[0];
+        let stored = signed.encode(&record, 0).unwrap()[0];
         assert_eq!(signed.fields()[0].decode_int(stored), -3);
         assert_eq!(json(&signed, &record, 0)["AC_nfe"], -3);
     }
@@ -727,12 +778,37 @@ mod tests {
             (&signed, "-2147483648"),
         ] {
             let record = info(&[("AC_nfe", value)]);
-            assert_eq!(extra.encode(&record, 0), vec![u32::MAX], "{value}");
+            assert_eq!(extra.encode(&record, 0).unwrap(), vec![u32::MAX], "{value}");
             assert_eq!(json(extra, &record, 0), serde_json::json!({}), "{value}");
         }
         let top = info(&[("AC_nfe", "4294967294")]);
         assert_eq!(json(&unsigned, &top, 0)["AC_nfe"], 4294967294_u64);
-        assert_eq!(unsigned.encode(&top, 0), vec![u32::MAX - 1]);
+        assert_eq!(unsigned.encode(&top, 0).unwrap(), vec![u32::MAX - 1]);
+    }
+
+    #[test]
+    fn test_a_float_the_encoding_cannot_hold_stops_the_build() {
+        let unsigned = resolve(&["InbreedingCoeff:af"]).unwrap();
+        let signed = resolve(&["InbreedingCoeff:signed"]).unwrap();
+        let encode = |extra: &ExtraInfo, v: &str| extra.encode(&info(&[("InbreedingCoeff", v)]), 0);
+
+        // A negative value would be stored as 0, and a huge one as the top of the range.
+        let err = encode(&unsigned, "-0.25").unwrap_err().to_string();
+        assert!(
+            err.contains("InbreedingCoeff") && err.contains("-0.25"),
+            "{err}"
+        );
+        assert!(encode(&unsigned, "5000").is_err());
+        assert!(encode(&signed, "300000").is_err());
+        assert!(encode(&signed, "-300000").is_err());
+
+        // What fits is stored, including values below one step, which truncate to 0.
+        assert!(encode(&unsigned, "0.0000001").is_ok());
+        assert!(encode(&unsigned, "-0.0000001").is_ok());
+        assert!(encode(&signed, "-0.25").is_ok());
+        // Missing values are not out of range.
+        assert_eq!(encode(&unsigned, ".").unwrap(), vec![u32::MAX]);
+        assert_eq!(encode(&unsigned, "nan").unwrap(), vec![u32::MAX]);
     }
 
     #[test]
