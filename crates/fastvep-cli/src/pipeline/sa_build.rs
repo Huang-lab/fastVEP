@@ -22,6 +22,54 @@ thread_local! {
     /// the caller asks for one instead of the source's own. Set by [`with_chunk_bits`] for the same
     /// reason as [`ALLOW_EMPTY`]: the builders and their tests keep their signatures.
     static CHUNK_BITS: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+
+    /// The `--extra-info` entries of the build on this thread. Set by [`with_extra_info`] for the
+    /// same reason as [`ALLOW_EMPTY`].
+    static EXTRA_INFO: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Run `f` with the INFO keys of `entries` added to the columns of the source it builds, which is
+/// what `--extra-info` means. See [`fastvep_sa::extra_info`] for the entry syntax.
+pub fn with_extra_info<T>(entries: Vec<String>, f: impl FnOnce() -> T) -> T {
+    EXTRA_INFO.with(|cell| {
+        let before = cell.replace(entries);
+        let out = f();
+        cell.replace(before);
+        out
+    })
+}
+
+/// The sources that take `--extra-info`.
+const EXTRA_INFO_SOURCES: &[&str] = &["gnomad"];
+
+/// Resolve the `--extra-info` entries of this thread against the header of `input`.
+///
+/// A source that does not take them refuses the build rather than ignoring them: the columns
+/// would be missing from a database that was asked for them, and nothing would say so until a
+/// query read them as absent.
+fn extra_info_for(
+    source: &str,
+    input: &str,
+) -> Result<Option<std::rc::Rc<fastvep_sa::extra_info::ExtraInfo>>> {
+    let entries = EXTRA_INFO.with(|cell| cell.borrow().clone());
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    if !EXTRA_INFO_SOURCES.contains(&source) {
+        anyhow::bail!(
+            "--extra-info is supported for --source {}, not {source}. For another VCF, \
+             --source custom_vcf --info-fields stores the INFO keys you name.",
+            EXTRA_INFO_SOURCES.join(", ")
+        );
+    }
+    let header =
+        fastvep_sa::extra_info::read_header_lines(io::BufReader::new(open_sa_input(input, None)?))?;
+    let extra = fastvep_sa::extra_info::ExtraInfo::resolve(
+        &entries,
+        &header,
+        &fastvep_sa::sources::gnomad::gnomad_json_keys(),
+    )?;
+    Ok(Some(std::rc::Rc::new(extra)))
 }
 
 /// Run `f` with the `.osa2` databases it builds cut into chunks of `2^bits` bases, which is what
@@ -328,6 +376,8 @@ pub fn run_sa_build(
     use fastvep_sa::index::IndexHeader;
     use fastvep_sa::writer::SaWriter;
 
+    let extra = extra_info_for(source, input)?;
+
     // Gene-level sources (.oga) — dispatched separately from variant-level (.osa).
     if matches!(
         source,
@@ -553,7 +603,13 @@ pub fn run_sa_build(
                 &chrom_map,
                 &chrom_list,
                 show_progress,
-                |r, m| fastvep_sa::sources::gnomad::iter_gnomad_vcf(r, m),
+                move |r, m| {
+                    let records = fastvep_sa::sources::gnomad::iter_gnomad_vcf(r, m);
+                    match extra {
+                        Some(extra) => records.with_extra_info(extra),
+                        None => records,
+                    }
+                },
             );
         }
         "dbsnp" => {
@@ -848,6 +904,7 @@ pub fn run_sa_build_v2(
         scores, spliceai, topmed,
     };
 
+    let extra = extra_info_for(source, input)?;
     let (chrom_list, chrom_map) = standard_chrom_map(assembly);
     let out_path = Path::new(output).with_extension("osa2");
 
@@ -857,16 +914,28 @@ pub fn run_sa_build_v2(
         "gnomad" => {
             eprintln!("Building gnomad .osa2: {} -> {}", input, out_path.display());
             let (buf_reader, meter) = open_sa_reader_with_meter(input, show_progress)?;
-            let records = gnomad::iter_gnomad_osa2(buf_reader, &chrom_map);
-            finish_osa2_build(
+            let mut fields = gnomad::gnomad_osa2_fields();
+            let extra_offset = fields.len();
+            let mut records = gnomad::iter_gnomad_osa2(buf_reader, &chrom_map);
+            if let Some(extra) = &extra {
+                fields.extend(extra.fields());
+                records = records.with_extra_info(std::rc::Rc::clone(extra));
+            }
+            // A Type=String extra column learns its vocabulary while the records stream, so its
+            // table is handed over after the last one.
+            finish_osa2_build_deferred(
                 &out_path,
                 &gnomad::gnomad_osa2_metadata(assembly),
-                gnomad::gnomad_osa2_fields(),
-                &[],
+                fields,
                 records,
                 meter,
                 input,
                 assembly,
+                move || {
+                    extra
+                        .map(|extra| extra.string_tables(extra_offset))
+                        .unwrap_or_default()
+                },
             )
         }
         // 1000 Genomes: the v1 parser buffers + sorts; bridge each record to

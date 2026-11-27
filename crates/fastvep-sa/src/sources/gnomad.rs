@@ -18,12 +18,14 @@
 //! We pick the scheme by scanning `##INFO=<ID=...>` header lines.
 
 use crate::common::AnnotationRecord;
+use crate::extra_info::ExtraInfo;
 use crate::fields::{Field, FieldType};
 use crate::writer_v2::{Osa2Metadata, Osa2Record};
 use anyhow::{Context, Result};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::BufRead;
+use std::rc::Rc;
 
 /// Population keys to extract from gnomAD VCF INFO field. Covers both
 /// gnomAD v2.1 codes (`oth`) and the v4.1 codes (`mid`, `remaining`); a
@@ -538,6 +540,7 @@ pub fn iter_gnomad_vcf<'a, R: BufRead>(
         pending: VecDeque::new(),
         info_ids: HashSet::new(),
         field_names: None,
+        extra: None,
     }
 }
 
@@ -547,6 +550,15 @@ pub struct GnomadRecordIter<'a, R: BufRead> {
     pending: VecDeque<AnnotationRecord>,
     info_ids: HashSet<String>,
     field_names: Option<FieldNames>,
+    extra: Option<Rc<ExtraInfo>>,
+}
+
+impl<R: BufRead> GnomadRecordIter<'_, R> {
+    /// Write the `--extra-info` columns into every record, after the built-in ones.
+    pub fn with_extra_info(mut self, extra: Rc<ExtraInfo>) -> Self {
+        self.extra = Some(extra);
+        self
+    }
 }
 
 impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
@@ -620,6 +632,7 @@ impl<R: BufRead> Iterator for GnomadRecordIter<'_, R> {
                     i,
                     field_names,
                     (&chrom, pos),
+                    self.extra.as_deref(),
                 );
                 self.pending.push_back(AnnotationRecord {
                     chrom_idx,
@@ -650,6 +663,7 @@ fn build_gnomad_json(
     allele_idx: usize,
     field_names: &FieldNames,
     site: (&str, u32),
+    extra: Option<&ExtraInfo>,
 ) -> String {
     let GlobalCounts {
         af,
@@ -713,6 +727,10 @@ fn build_gnomad_json(
             ExtValue::Flag(true) => parts.push(format!("\"{}\":true", alias)),
             _ => {}
         }
+    }
+
+    if let Some(extra) = extra {
+        extra.json_members(info_map, allele_idx, &mut parts);
     }
 
     format!("{{{}}}", parts.join(","))
@@ -868,6 +886,12 @@ pub fn gnomad_osa2_fields() -> Vec<Field> {
     fields
 }
 
+/// The JSON keys a gnomAD database writes itself, in v1 and v2 alike, which an
+/// `--extra-info` alias may not take.
+pub fn gnomad_json_keys() -> Vec<String> {
+    gnomad_osa2_fields().into_iter().map(|f| f.alias).collect()
+}
+
 /// Index of the first extended column in [`gnomad_osa2_fields`].
 fn extended_offset() -> usize {
     4 + POPULATIONS.len()
@@ -906,6 +930,7 @@ pub fn iter_gnomad_osa2<'a, R: BufRead>(
         pending: VecDeque::new(),
         info_ids: HashSet::new(),
         field_names: None,
+        extra: None,
     }
 }
 
@@ -916,6 +941,16 @@ pub struct GnomadOsa2Iter<'a, R: BufRead> {
     pending: VecDeque<Osa2Record>,
     info_ids: HashSet<String>,
     field_names: Option<FieldNames>,
+    extra: Option<Rc<ExtraInfo>>,
+}
+
+impl<R: BufRead> GnomadOsa2Iter<'_, R> {
+    /// Append the `--extra-info` columns to every record, after the columns of
+    /// [`gnomad_osa2_fields`]; the writer takes `ExtraInfo::fields` in the same order.
+    pub fn with_extra_info(mut self, extra: Rc<ExtraInfo>) -> Self {
+        self.extra = Some(extra);
+        self
+    }
 }
 
 impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
@@ -999,6 +1034,17 @@ impl<R: BufRead> Iterator for GnomadOsa2Iter<'_, R> {
                         .enumerate()
                 {
                     values.push(encode_ext(&self.fields[ext_off + ei], value));
+                }
+                if let Some(extra) = &self.extra {
+                    match extra.encode(&info_map, ai) {
+                        Ok(extra_values) => values.extend(extra_values),
+                        Err(e) => {
+                            return Some(Err(e.context(format!(
+                                "gnomAD record {chrom}:{pos} {}>{alt}",
+                                String::from_utf8_lossy(&ref_allele)
+                            ))))
+                        }
+                    }
                 }
 
                 self.pending.push_back(Osa2Record {
@@ -1743,5 +1789,91 @@ chrX\t3000000\t.\tA\tG\t.\tPASS\tAF=0.001;AN=1000;AC=1;nhomalt=0;non_par
         // so, and its record is taken at its word.
         assert_eq!(flag(0), None);
         assert_eq!(flag(1), Some(true));
+    }
+
+    // ---- --extra-info ----
+
+    const EXTRA_INFO_VCF: &str = "\
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description=\"AF\">
+##INFO=<ID=AC_nfe,Number=A,Type=Integer,Description=\"Alternate allele count, nfe\">
+##INFO=<ID=nhomalt_nfe,Number=A,Type=Integer,Description=\"Homozygote count, nfe\">
+##INFO=<ID=fafmax_faf99_max,Number=A,Type=Float,Description=\"Max FAF, 99% CI\">
+##INFO=<ID=fafmax_faf95_max_gen_anc,Number=A,Type=String,Description=\"Group of the max FAF\">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+chr1\t10001\t.\tA\tG\t.\tPASS\tAF=0.001;AN=150000;AC=150;AC_nfe=30;nhomalt_nfe=1;fafmax_faf99_max=0.0003;fafmax_faf95_max_gen_anc=nfe
+chr1\t10002\t.\tC\tT\t.\tPASS\tAF=0.002;AN=150000;AC=300;AC_nfe=2;fafmax_faf95_max_gen_anc=afr
+";
+
+    fn extra_info_for(vcf: &str, entries: &[&str]) -> Rc<ExtraInfo> {
+        let header = crate::extra_info::read_header_lines(vcf.as_bytes()).unwrap();
+        let entries: Vec<String> = entries.iter().map(|s| s.to_string()).collect();
+        Rc::new(ExtraInfo::resolve(&entries, &header, &gnomad_json_keys()).unwrap())
+    }
+
+    const EXTRA_ENTRIES: &[&str] = &[
+        "AC_nfe=nfeAc",
+        "nhomalt_nfe=nfeHc",
+        "fafmax_faf99_max:af=faf99Max",
+        "fafmax_faf95_max_gen_anc=faf95MaxGenAnc",
+    ];
+
+    #[test]
+    fn test_v1_json_carries_the_extra_info_columns() {
+        let extra = extra_info_for(EXTRA_INFO_VCF, EXTRA_ENTRIES);
+        let records: Vec<AnnotationRecord> =
+            iter_gnomad_vcf(EXTRA_INFO_VCF.as_bytes(), &chr1_map())
+                .with_extra_info(extra)
+                .collect::<Result<_>>()
+                .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&records[0].json).unwrap();
+        assert_eq!(v["nfeAc"], 30);
+        assert_eq!(v["nfeHc"], 1);
+        assert!((v["faf99Max"].as_f64().unwrap() - 0.0003).abs() < 1e-12);
+        assert_eq!(v["faf95MaxGenAnc"], "nfe");
+        // The built-in columns are untouched.
+        assert!((v["allAf"].as_f64().unwrap() - 0.001).abs() < 1e-12);
+
+        let second: serde_json::Value = serde_json::from_str(&records[1].json).unwrap();
+        assert!(second.get("nfeHc").is_none());
+        assert!(second.get("faf99Max").is_none());
+        assert_eq!(second["faf95MaxGenAnc"], "afr");
+    }
+
+    #[test]
+    fn test_osa2_appends_the_extra_info_columns_after_the_built_in_ones() {
+        let extra = extra_info_for(EXTRA_INFO_VCF, EXTRA_ENTRIES);
+        let builtin = gnomad_osa2_fields();
+        let extra_fields = extra.fields();
+        let recs: Vec<Osa2Record> = iter_gnomad_osa2(EXTRA_INFO_VCF.as_bytes(), &chr1_map())
+            .with_extra_info(Rc::clone(&extra))
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(recs[0].values.len(), builtin.len() + extra_fields.len());
+
+        let at = builtin.len();
+        assert_eq!(recs[0].values[at], 30);
+        assert_eq!(recs[0].values[at + 1], 1);
+        assert!((extra_fields[2].decode_float(recs[0].values[at + 2]) - 0.0003).abs() < 1e-6);
+        assert_eq!(recs[0].values[at + 3], 0);
+        assert_eq!(recs[1].values[at + 1], u32::MAX);
+        assert_eq!(recs[1].values[at + 3], 1);
+        assert_eq!(
+            extra.string_tables(at),
+            vec![(at + 3, vec!["nfe".to_string(), "afr".to_string()])]
+        );
+    }
+
+    #[test]
+    fn test_without_extra_info_the_records_are_unchanged() {
+        let plain: Vec<Osa2Record> = iter_gnomad_osa2(EXTRA_INFO_VCF.as_bytes(), &chr1_map())
+            .collect::<Result<_>>()
+            .unwrap();
+        assert_eq!(plain[0].values.len(), gnomad_osa2_fields().len());
+        let v1: Vec<AnnotationRecord> = iter_gnomad_vcf(EXTRA_INFO_VCF.as_bytes(), &chr1_map())
+            .collect::<Result<_>>()
+            .unwrap();
+        assert!(!v1[0].json.contains("AC_nfe"));
+        assert!(!v1[0].json.contains("nfeAc"));
     }
 }
